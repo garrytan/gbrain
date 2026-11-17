@@ -13,7 +13,6 @@
  * dir is set through process.env; binds local ports.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import type { TCPSocketListener } from 'bun';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -33,8 +32,7 @@ const rows = (): SearchResult[] => ['a', 'b', 'c'].map((s, i) => ({
 } as SearchResult));
 
 let server: ReturnType<typeof Bun.serve>;
-let deadPort: number;
-let deadListener: TCPSocketListener<undefined>;
+const deadPort = 1;
 let auditDir: string;
 
 beforeAll(() => {
@@ -47,17 +45,11 @@ beforeAll(() => {
       return new Response('{"detail":"no"}', { status });
     },
   });
-  // Held for the whole run so no other process can bind this port, and it resets every connection before a byte is
-  // read. The wire now sees a reset, not a refusal; both get no HTTP response and reach `unreachable` through the same
-  // gateway branch.
-  deadListener = Bun.listen({ hostname: '127.0.0.1', port: 0, socket: { open(socket) { socket.terminate(); }, data() {} } });
-  deadPort = deadListener.port;
   auditDir = mkdtempSync(join(tmpdir(), 'gbrain-rerank-reason-'));
 });
 
 afterAll(() => {
   server.stop(true);
-  deadListener.stop(true);
   __setEmbedTransportForTests(null);
   resetGateway();
   rmSync(auditDir, { recursive: true, force: true });
@@ -79,7 +71,7 @@ async function rerankVia(baseUrl: string, timeoutMs = 2_000): Promise<{ reason?:
 }
 
 describe('rerank failure reasons on the real wire path', () => {
-  test('an unreachable endpoint (connection reset before any response) reports unreachable, not provider_error', async () => {
+  test('an unreachable endpoint (connection refused) reports unreachable, not provider_error', async () => {
     const { reason, out } = await rerankVia(`http://127.0.0.1:${deadPort}/v1`);
     expect(reason).toBe('unreachable');
     expect(out.map(r => r.slug)).toEqual(['notes/a', 'notes/b', 'notes/c']);

@@ -119,6 +119,18 @@ export function mirrorDriftRoute(sourceId: string, side = 'unknown'): string {
 }
 
 /**
+ * What settles a read-only mirror's held deleted page whose file differs. The mirror never removes its file, so a tombstone_edited
+ * page names keeping the deletion first (recorded on the hold, nothing written) and making the source writable second; a
+ * purged_differs page has no deletion to keep, so it names only the writable route. Never a --prefer file preview.
+ */
+export function mirrorDeletedRoute(sourceId: string, state: string): string {
+  const writable = `the user makes the source writable (gbrain sources mirror-writable ${sourceId}) and picks a side`;
+  if (state !== 'tombstone_edited') return `this source is a read-only mirror, so its file can't be removed; to settle the page ${writable}`;
+  return `this source is a read-only mirror: to keep the deletion, preview gbrain repair file-drift --source ${sourceId} --held --side deleted --state tombstone_edited --prefer database `
+    + `(the apply records the kept deletion on the hold and writes nothing); to bring the page back from its file instead, ${writable}`;
+}
+
+/**
  * The live drift of a page, as every held file-drift read takes it (the comparison, the window preview, the whole-class walk and its
  * apply). GST-2843: a read-only mirror never writes its files, so `liveFileDrift` calls every mirror page database-only; a held page of
  * side both, unknown or database whose file sync still imports is compared with that file instead, and only a gone file stays
@@ -149,7 +161,7 @@ export async function comparePage(engine: BrainEngine, sourceId: string, target:
   const held = { ...(side ? { side } : {}), ...(hold?.meta.state ? { state: hold.meta.state } : {}), ...(hold ? { path: hold.path } : {}) };
   if (side === 'deleted' && hold?.meta.state && hold.meta.state !== 'file_gone') {
     const state = hold.meta.state;
-    return { item, slug, ...held, would: 'needs_human', why: target.mirror ? `the page at ${hold.path} is deleted and the file differs (${state}), so a person decides; ${mirrorDriftRoute(sourceId)}`
+    return { item, slug, ...held, would: 'needs_human', why: target.mirror ? `the page at ${hold.path} is deleted and the file differs (${state}), so a person decides; ${mirrorDeletedRoute(sourceId, state)}`
       : `the page at ${hold.path} is deleted and the file differs (${state}); --prefer database would ${fileDriftActionVerb('deleted', state, 'database')} and --prefer file would ${fileDriftActionVerb('deleted', state, 'file')}, so a person decides` };
   }
   if (slug === null) return { item, slug, ...held, would: 'unknown', why: 'the hold names no page; the next sync re-classifies it' };

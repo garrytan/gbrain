@@ -14,7 +14,7 @@
  */
 
 import { importFromContent } from '../../core/import-file.ts';
-import type { PGLiteEngine } from '../../core/pglite-engine.ts';
+import type { BrainEngine } from '../../core/engine.ts';
 import type { BrainBenchFixture } from './types.ts';
 
 export class SeedError extends Error {
@@ -43,7 +43,7 @@ export interface SeedOutcome {
 const DEFAULT_SOURCE = 'default';
 
 /** Idempotent: creates any non-default sources the fixture declares. */
-async function ensureSources(engine: PGLiteEngine, fixture: BrainBenchFixture): Promise<void> {
+async function ensureSources(engine: BrainEngine, fixture: BrainBenchFixture): Promise<void> {
   const wanted = new Set<string>();
   for (const s of fixture.sources ?? []) wanted.add(s);
   if (fixture.active_source && fixture.active_source !== DEFAULT_SOURCE) {
@@ -64,7 +64,7 @@ async function ensureSources(engine: PGLiteEngine, fixture: BrainBenchFixture): 
   }
 }
 
-export async function seedBrain(engine: PGLiteEngine, fixture: BrainBenchFixture): Promise<SeedOutcome> {
+export async function seedBrain(engine: BrainEngine, fixture: BrainBenchFixture): Promise<SeedOutcome> {
   await ensureSources(engine, fixture);
 
   const slugSource = new Map<string, Set<string>>();

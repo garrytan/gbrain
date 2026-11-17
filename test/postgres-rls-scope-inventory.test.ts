@@ -154,6 +154,7 @@ const SCOPED_THROUGH_NON_THIS_CALLEE: Record<string, string> = {
   updateSlug: 'engine-sql/pages.ts updateSlug versions the page first through tx.readPageSnapshot (belief ledger W2 rename preimage)',
   replaceDerivedLinks: 'derived-links.ts replaceDerivedLinks reads the origin via readPageSnapshot',
   replaceDerivedLinksBatch: 'derived-links.ts replaceDerivedLinksBatch reads the origins via tx.readPageSnapshotsBatch',
+  sealChunks: 'engine-sql/chunks.ts sealChunks reads the page through tx.readPageSnapshot on the transaction clone',
 };
 
 const INVENTORY_NORMALIZER = defineNormalizer<{ ast: Record<string, AstMember>; runtime: Record<string, RuntimeObservation> }>(

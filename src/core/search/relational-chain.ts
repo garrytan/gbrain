@@ -27,6 +27,7 @@ import type { EdgeStatusFilter, EdgeTemporalOpts } from '../link-validity.ts';
 import { hubWeight } from './hub-dampening.ts';
 import { pageReadFilter } from './read-policy-sql.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
+import type { StoredEdgeRef } from '../eligibility/fence-overlay.ts';
 
 /** Page-type signature of each chain relation: subject types → object types. */
 export const LINK_SIGNATURES: Readonly<Record<string, { subject: readonly string[]; object: readonly string[] }>> = {
@@ -327,6 +328,11 @@ export async function resolveChainAnchors(
   const rows = await engine.executeRaw<{ id: number; source_id: string }>(
     `SELECT p.id, p.source_id FROM pages p WHERE p.slug = $1 AND ${filter} ORDER BY p.source_id`, params);
   return rows.map(r => ({ page_id: Number(r.id), slug, source_id: r.source_id }));
+}
+
+/** The stored link (from, to, type) behind a chain evidence edge; a chain stays in the source its path walked. */
+export function chainStoredEdge(e: ChainEvidenceEdge & { source_id: string }): StoredEdgeRef {
+  return { from: { sourceId: e.source_id, slug: e.stored_from }, to: { sourceId: e.source_id, slug: e.stored_to }, linkType: e.link_type };
 }
 
 /** Longest edge context shown to an untrusted caller. */

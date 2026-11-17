@@ -3752,7 +3752,10 @@ gbrain repair file-drift --source <id> --held --json           # compare every h
 <a id="file-drift-compare-mirror"></a>On a [read-only mirror](multi-source-brains.md#read-only-mirror-sources)
 (GST-2843), the held comparison reads each held page's file too: a page that
 differs reads `prefer_file` or `needs_human` with its `evidence` (a held deleted
-page whose file differs reads `needs_human` and names the same route), one that
+page whose file differs reads `needs_human` and names
+[keeping the deletion](#mirror-keep-deleted) first and `gbrain sources
+mirror-writable <id>` second, never a `--prefer file` preview; a `purged_differs`
+page has no deletion to keep and names only `mirror-writable`), one that
 matches reads `release_hold`, and only a page whose file is gone reads
 `no_drift` with `database_only`. Every compared page in `details.pages`
 carries `evidence` (null when nothing was read). The window previews read the
@@ -5516,7 +5519,11 @@ whose snapshot was written before snapshots recorded their operation catalog
 says "this grant's snapshot excludes N currently eligible operations;
 original intent unknown", and only a grant with recorded catalog provenance
 says it predates operations. Operations outside the grant's scopes are never
-counted, so a writer is not told about admin-only operations.
+counted, so a writer is not told about admin-only operations. A snapshot the
+owner narrowed on purpose (catalog provenance recorded, and every operation it
+leaves out existed when it was written, as with a guest broker's
+`--operations` list) blocks nothing by mistake, so the notice comes only with a
+refused call, never on a call the grant can make.
 
 It arrives once per session: once per (principal, transport session) on
 stdio and HTTP, and for a stateless HTTP call with no session id once per

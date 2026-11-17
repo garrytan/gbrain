@@ -24,6 +24,8 @@
 import { hostname } from 'os';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from './engine.ts';
+import { capabilityMissing } from './rust-engine/errors.ts';
+import { isRustEngineKind } from './sql-engine-kind.ts';
 import { retryReadOnlyAutocommit } from './postgres-engine/read-write-transactions.ts';
 import { noteDirectPoolLease } from './direct-pool-profile.ts';
 
@@ -375,6 +377,8 @@ export async function tryAcquireDbLock(
     };
   }
 
+  // Cycle locks live in a SQL table; the Rust engine gets typed leases later (plan, "Cycle locks").
+  if (isRustEngineKind(engine.kind)) throw capabilityMissing('raw_sql', 'cycle lock');
   throw new Error(`Unknown engine kind for db-lock: ${engine.kind}`);
   };
 
@@ -623,6 +627,8 @@ async function selectLockRows(engine: BrainEngine, opts: SelectLockRowsOpts = {}
       rows = (await maybePGLite.db.query(`SELECT ${LOCK_SELECT_COLS} FROM gbrain_cycle_locks ORDER BY acquired_at`)).rows as RawLockRow[];
     }
   } else {
+    // Cycle locks live in a SQL table; the Rust engine gets typed leases later (plan, "Cycle locks").
+    if (isRustEngineKind(engine.kind)) throw capabilityMissing('raw_sql', 'cycle lock read');
     throw new Error(`Unknown engine kind for selectLockRows: ${engine.kind}`);
   }
 
@@ -711,6 +717,8 @@ export async function deleteLockRow(
     );
     return { deleted: rows.length > 0 };
   }
+  // Cycle locks live in a SQL table; the Rust engine gets typed leases later (plan, "Cycle locks").
+  if (isRustEngineKind(engine.kind)) throw capabilityMissing('raw_sql', 'cycle lock');
   throw new Error(`Unknown engine kind for deleteLockRow: ${engine.kind}`);
 }
 
@@ -797,6 +805,8 @@ export async function deleteLockRowIfStale(
     const lastRefreshed = lr == null ? null : (lr instanceof Date ? lr : new Date(lr));
     return { deleted: true, lastRefreshedAt: lastRefreshed };
   }
+  // Cycle locks live in a SQL table; the Rust engine gets typed leases later (plan, "Cycle locks").
+  if (isRustEngineKind(engine.kind)) throw capabilityMissing('raw_sql', 'cycle lock');
   throw new Error(`Unknown engine kind for deleteLockRowIfStale: ${engine.kind}`);
 }
 
@@ -1123,8 +1133,8 @@ export async function buildTenantLockId(engine: BrainEngine, scope: string): Pro
       const dbname = rows[0]?.db || 'unknown';
       return `${scope}:${dbname}`;
     }
-    // PGLite is single-tenant by construction; suffix is cosmetic.
-    return `${scope}:pglite`;
+    // PGLite and the Rust engine are single-tenant by construction; the suffix is cosmetic.
+    return `${scope}:${isRustEngineKind(engine.kind) ? 'rust' : 'pglite'}`;
   } catch {
     return `${scope}:unknown`;
   }
