@@ -35,6 +35,9 @@ import {
 const ROOT = resolve(import.meta.dir, '..', '..');
 export const GATE_SHARD_BUDGET_MS = 12 * 60_000;
 export const GATE_UNMEASURED_QUANTILE = 0.95;
+/** GitHub refuses a job matrix over 256 entries; past it the gate re-plans at the old 25-minute budget. */
+export const GATE_MAX_SHARDS = 256;
+export const GATE_FALLBACK_SHARD_BUDGET_MS = 25 * 60_000;
 export const RACE_SHARD_BUDGET_MS = 55 * 60_000;
 export const RACE_BASE_SHARDS = 6;
 export const RACE_MAX_SHARDS = 12;
@@ -117,7 +120,9 @@ export function planGate(root: string, input: GatePlanInput, weights = loadWeigh
   }
   files = withWrappers(root, files);
   const { stress, notStressed } = classify(root, files, weights, GATE_UNMEASURED_QUANTILE);
-  const shards = planShards(stress, DEFAULT_ITERATIONS, GATE_SHARD_BUDGET_MS);
+  let shards = planShards(stress, DEFAULT_ITERATIONS, GATE_SHARD_BUDGET_MS);
+  if (shards.length > GATE_MAX_SHARDS) shards = planShards(stress, DEFAULT_ITERATIONS, GATE_FALLBACK_SHARD_BUDGET_MS);
+  if (shards.length > GATE_MAX_SHARDS) return { error: `the plan needs ${shards.length} shards of up to ${GATE_FALLBACK_SHARD_BUDGET_MS / 60_000} minutes, past GitHub's ${GATE_MAX_SHARDS}-job matrix limit. Next: split the PR, or dispatch the stress workflow with stress_files naming a subset` };
   return {
     ...emptyPlan('gate', stress.length ? `${stress.length} file(s) × ${DEFAULT_ITERATIONS} iterations` : 'no changed test files to stress'),
     run: stress.length > 0, diagnostic, base, head, helpers, notStressed, shards,
@@ -436,7 +441,7 @@ async function main(argv: string[]): Promise<number> {
     if (mode === 'gate') {
       const result = planGate(ROOT, { event: env.EVENT ?? '', baseSha: env.BASE_SHA, headSha: env.HEAD_SHA, stressFiles: env.STRESS_FILES, stressBase: env.STRESS_BASE, stressHead: env.STRESS_HEAD });
       if ('error' in result) {
-        console.error(`::error::stress gate: the changed-file list could not be computed: ${result.error}. Why: the gate stresses every test file the diff touches, so a guessed list could skip one. Docs: ${STRESS_DOCS}`);
+        console.error(`::error::stress gate: the plan could not be computed: ${result.error}. Why: the gate stresses every test file the diff touches, so a guessed list could skip one. Docs: ${STRESS_DOCS}`);
         return 1;
       }
       plan = result;
