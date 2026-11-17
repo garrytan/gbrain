@@ -7,7 +7,8 @@
  *    home and the brain as they were and says rust_engine_addon_missing or rust_engine_addon_mismatch.
  * 2. Credible regressions: skipping the digest or attestation check; renaming before verifying; leaving the staging
  *    file or a half-written addon behind; refetching when a verified addon is cached; GBRAIN_RUST_ENGINE_ADDON
- *    skipping the engine_abi or target checks too; loadRustEngineAddon swallowing an error that is not a refusal.
+ *    skipping the engine_abi or target checks too; loadRustEngineAddon swallowing an error that is not a refusal;
+ *    two starts sharing one gbrain home interleaving a replace and its rollback.
  * 3. Why not already covered: nothing else exercises the addon loader in src/core/rust-engine/.
  * 4. Production seam: AddonFetchDeps (the same shape binary-self-update.ts injects) plus `dlopen`, `target` and
  *    `rustDir`; no production caller needs them to differ, tests do.
@@ -20,10 +21,11 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, relative } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { createHash } from 'node:crypto';
 import { EXPECTED_BUILDER_IDS, type ParsedAttestation } from '../src/core/binary-self-update.ts';
 import { loadRustAddon, loadRustEngineAddon, type RustAddonLoaderDeps } from '../src/core/rust-engine/addon-loader.ts';
+import { withAddonCacheLock } from '../src/core/rust-engine/addon-fetch.ts';
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
 import {
   parseRustAddonManifest,
@@ -366,6 +368,82 @@ describe('refusals', () => {
     expect(readFileSync(dest, 'utf8')).not.toBe('previous addon');
     expect(readdirSync(dir)).toEqual([`${target}.node`]);
     expect(existsSync(join(rel.rustDir, `manifest-${VERSION_UNDER_TEST}.json`))).toBe(true);
+  });
+});
+
+describe('one start at a time per gbrain home', () => {
+  const fakeAddon = (rel: FakeRelease) => () =>
+    ({ target: rel.deps.target!, engineAbi: RUST_ENGINE_ABI, engineBuild: rel.manifest.engine_build, catalogVersion: 1, formatVersions: [] });
+
+  test('two starts that both fail to load the fetched addon leave the addon that was there', async () => {
+    const rel = fakeRelease();
+    const target = rel.deps.target!;
+    const dir = join(rel.rustDir, rel.manifest.engine_build);
+    mkdirSync(dir, { recursive: true });
+    const dest = join(dir, `${target}.node`);
+    writeFileSync(dest, 'previous addon');
+    rel.deps.dlopen = () => { throw new Error('invalid ELF header'); };
+    // Lets two starts pass the addon's attestation in the same tick, so without the cache lock one start's replace
+    // lands between the other's replace and its rollback. A start that runs alone goes on after 200ms.
+    const addonDigest = rel.manifest.targets[target]!.sha256;
+    let waiting: Array<() => void> = [];
+    const attestation = rel.deps.fetchAttestation;
+    rel.deps.fetchAttestation = async (digest) => {
+      if (digest === addonDigest) {
+        await new Promise<void>((release) => {
+          waiting.push(release);
+          if (waiting.length === 2) {
+            const both = waiting;
+            waiting = [];
+            for (const go of both) go();
+          } else {
+            setTimeout(() => {
+              if (waiting.includes(release)) {
+                waiting = waiting.filter((w) => w !== release);
+                release();
+              }
+            }, 200);
+          }
+        });
+      }
+      return attestation(digest);
+    };
+    const [a, b] = await Promise.all([refusal(loadRustAddon(rel.deps)), refusal(loadRustAddon(rel.deps))]);
+    expect(a).toMatchObject({ code: 'rust_engine_addon_mismatch', reason: 'load_failed' });
+    expect(b).toMatchObject({ code: 'rust_engine_addon_mismatch', reason: 'load_failed' });
+    expect(readFileSync(dest, 'utf8')).toBe('previous addon');
+    expect(readdirSync(dir)).toEqual([`${target}.node`]);
+    expect(readdirSync(dirname(rel.rustDir)).sort()).toEqual(['rust']);
+  });
+
+  test('a start waits while another holds the cache, then loads what that one fetched with no download', async () => {
+    const rel = fakeRelease();
+    const target = rel.deps.target!;
+    rel.deps.dlopen = fakeAddon(rel);
+    const bytes = HAVE_ADDON ? readFileSync(BUILT) : Buffer.from('not a real addon');
+    let waiter: Promise<unknown> | undefined;
+    await withAddonCacheLock(rel.rustDir, async () => {
+      waiter = loadRustAddon(rel.deps);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(rel.calls).toEqual({ release: 0, download: 0, attestation: 0 });
+      // What the holder installs: the addon and the manifest that names it.
+      const dir = join(rel.rustDir, rel.manifest.engine_build);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, `${target}.node`), bytes);
+      writeFileSync(join(rel.rustDir, `manifest-${VERSION_UNDER_TEST}.json`), JSON.stringify(rel.manifest));
+    });
+    const addon = (await waiter) as { engineBuild: string };
+    expect(addon.engineBuild).toBe(rel.manifest.engine_build);
+    expect(rel.calls).toEqual({ release: 0, download: 0, attestation: 0 });
+  });
+
+  test('a cache held for longer than the wait is rust_engine_addon_missing (cache_busy), with nothing fetched', async () => {
+    const rel = fakeRelease();
+    rel.deps.cacheLockWaitMs = 200;
+    const err = await withAddonCacheLock(rel.rustDir, () => refusal(loadRustAddon(rel.deps)));
+    expect(err).toMatchObject({ code: 'rust_engine_addon_missing', reason: 'cache_busy' });
+    expect(err.message).toContain(`pid ${process.pid}`);
+    expect(rel.calls.download).toBe(0);
   });
 });
 

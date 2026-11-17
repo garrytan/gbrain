@@ -11,10 +11,14 @@
  * A fetch writes a staging file beside its destination, verifies it, fsyncs it and renames it into
  * place. On any failure the staging file is deleted, directories this call created are removed when
  * empty, and an addon already in place is left as it was.
+ *
+ * The loader runs the whole replace, load, manifest write and rollback inside {@link withAddonCacheLock}, so two
+ * processes sharing one gbrain home never interleave: a rollback can only put back the file its own fetch set aside.
  */
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
+import { PackLockBusyError, withPackLock } from '../schema-pack/pack-lock.ts';
 import {
   defaultComputeDigest,
   defaultDownload,
@@ -222,6 +226,33 @@ export function restorePreviousAddon(fetched: FetchedAddon): void {
 /** Deletes the replaced addon once the new one loaded and its manifest is written. */
 export function dropPreviousAddon(fetched: FetchedAddon): void {
   if (fetched.previous) rmSync(fetched.previous, { force: true });
+}
+
+/** How long a start waits for another process that is fetching the addon into the same gbrain home. */
+export const ADDON_CACHE_LOCK_WAIT_MS = 10 * 60_000;
+const ADDON_CACHE_LOCK_POLL_MS = 100;
+
+/**
+ * Runs `body` holding the addon cache lock, `<rustDir>.lock` beside the cache directory (so the directory itself can
+ * still be removed when a failed fetch leaves it empty). Waits while another live process holds it; a lock whose
+ * holder died or stopped refreshing it is taken over (schema-pack/pack-lock.ts). Waiting longer than `waitMs` is
+ * rust_engine_addon_missing (cache_busy).
+ */
+export async function withAddonCacheLock<T>(rustDir: string, body: () => Promise<T>, waitMs: number = ADDON_CACHE_LOCK_WAIT_MS): Promise<T> {
+  const lockDir = dirname(rustDir);
+  const name = `${basename(rustDir)}-addon-cache`;
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    try {
+      return await withPackLock(name, { lockDir }, body);
+    } catch (err) {
+      if (!(err instanceof PackLockBusyError)) throw err;
+      if (Date.now() >= deadline) {
+        throw addonMissing('cache_busy', `Another gbrain process (pid ${err.heldBy}) has been fetching the Rust engine addon into ${rustDir} for longer than ${Math.round(waitMs / 1000)}s.`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, ADDON_CACHE_LOCK_POLL_MS));
+    }
+  }
 }
 
 /** Writes the verified manifest beside the addon so the next start can check the cached addon with no network. Atomic. */

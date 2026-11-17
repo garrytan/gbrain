@@ -4830,7 +4830,7 @@ Reasons: `digest`, `attestation`, `engine_abi`, `engine_build`, `target`, `load_
 |---|---|---|---|---|---|---|
 | The Rust engine is selected (engine: rust), but its addon could not be found or fetched on this machine, or no addon is published for this platform, so gbrain opened nothing and wrote nothing. | The Rust engine ships as a separate addon file, fetched once into the gbrain home the first time the rust engine is selected and checked against the release checksums before it loads. Without a verified addon the engine cannot open, and gbrain refuses before touching the brain. | Run the command again once github.com is reachable (the addon is fetched and checked on first use), or point GBRAIN_RUST_ENGINE_ADDON at an addon you built with bun run rust:build, or switch engine in the gbrain config back to pglite or postgres. | user | `gbrain doctor --json` | 1 | yes |
 
-Reasons: `unsupported_target`, `release_unavailable`, `manifest_unavailable`, `asset_unavailable`, `download_failed`, `attestation_unavailable`, `override_not_found`.
+Reasons: `unsupported_target`, `release_unavailable`, `manifest_unavailable`, `asset_unavailable`, `download_failed`, `attestation_unavailable`, `override_not_found`, `cache_busy`.
 
 ### schedule_install_failed
 

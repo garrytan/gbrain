@@ -30,6 +30,7 @@ import {
   fetchManifest,
   readCachedManifest,
   restorePreviousAddon,
+  withAddonCacheLock,
   writeCachedManifest,
   type AddonFetchDeps,
 } from './addon-fetch.ts';
@@ -53,6 +54,8 @@ export interface RustAddonLoaderDeps extends AddonFetchDeps {
   /** This platform's addon target name, or null when it cannot be identified. */
   target: string | null;
   dlopen(path: string): unknown;
+  /** How long to wait for another process fetching into the same cache; defaults to ADDON_CACHE_LOCK_WAIT_MS. */
+  cacheLockWaitMs?: number;
 }
 
 export function defaultRustAddonLoaderDeps(): RustAddonLoaderDeps {
@@ -125,42 +128,52 @@ export async function loadRustAddon(overrides: Partial<RustAddonLoaderDeps> = {}
   }
 
   // An addon already in place that matches the cached manifest loads with no network call.
-  const cached = readCachedManifest(deps.rustDir, deps.version);
-  const entry = cached?.targets[target];
-  if (cached && entry) {
-    const path = addonPath(deps.rustDir, cached.engine_build, target);
-    if (existsSync(path)) {
-      let digest: string | null = null;
-      try {
-        digest = deps.computeDigest(path);
-      } catch {
-        // Unreadable: fall through to a fetch.
-      }
-      if (digest === entry.sha256) return load(path, { target, manifest: cached }, deps);
-    }
-  }
+  const ready = loadCached(target, deps);
+  if (ready) return ready;
 
   const enginesDir = dirname(deps.rustDir);
   const newDirs = [enginesDir, deps.rustDir].filter((d) => !existsSync(d));
   try {
-    const { manifest, text, assets } = await fetchManifest(deps.rustDir, deps.version, deps);
-    const fetched = await fetchAddon(deps.rustDir, manifest, assets, target, deps);
-    let addon: RustAddon;
-    try {
-      addon = load(fetched.path, { target, manifest }, deps);
-      writeCachedManifest(deps.rustDir, deps.version, text);
-    } catch (err) {
-      // The file hashed and attested correctly yet is not usable here, so it must not stay where the next start
-      // would find it; an addon it replaced goes back in place.
-      restorePreviousAddon(fetched);
-      throw err;
-    }
-    dropPreviousAddon(fetched);
-    return addon;
+    // One process at a time replaces, loads and rolls back the cached addon (see withAddonCacheLock).
+    return await withAddonCacheLock(deps.rustDir, async () => {
+      // Another process may have fetched it while this one waited for the lock.
+      const fetchedMeanwhile = loadCached(target, deps);
+      if (fetchedMeanwhile) return fetchedMeanwhile;
+      const { manifest, text, assets } = await fetchManifest(deps.rustDir, deps.version, deps);
+      const fetched = await fetchAddon(deps.rustDir, manifest, assets, target, deps);
+      let addon: RustAddon;
+      try {
+        addon = load(fetched.path, { target, manifest }, deps);
+        writeCachedManifest(deps.rustDir, deps.version, text);
+      } catch (err) {
+        // The file hashed and attested correctly yet is not usable here, so it must not stay where the next start
+        // would find it; an addon it replaced goes back in place.
+        restorePreviousAddon(fetched);
+        throw err;
+      }
+      dropPreviousAddon(fetched);
+      return addon;
+    }, deps.cacheLockWaitMs);
   } catch (err) {
     pruneNew([...newDirs]);
     throw err;
   }
+}
+
+/** The addon already in place, loaded, when its SHA-256 equals this version's cached manifest; otherwise null. */
+function loadCached(target: string, deps: RustAddonLoaderDeps): RustAddon | null {
+  const cached = readCachedManifest(deps.rustDir, deps.version);
+  const entry = cached?.targets[target];
+  if (!cached || !entry) return null;
+  const path = addonPath(deps.rustDir, cached.engine_build, target);
+  if (!existsSync(path)) return null;
+  let digest: string | null = null;
+  try {
+    digest = deps.computeDigest(path);
+  } catch {
+    // Unreadable: fall through to a fetch.
+  }
+  return digest === entry.sha256 ? load(path, { target, manifest: cached }, deps) : null;
 }
 
 /** The two refusal codes {@link loadRustEngineAddon} reports; nothing else is ever caught. */
