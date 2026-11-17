@@ -1224,7 +1224,7 @@
         {
           "category": "ops",
           "elapsed_ms": "<volatile>",
-          "message": "RLS enabled on 185/185 public tables",
+          "message": "RLS enabled on 186/186 public tables",
           "name": "rls",
           "status": "ok"
         },
@@ -1247,6 +1247,16 @@
           "elapsed_ms": "<volatile>",
           "message": "Every purge and withdrawal guard refuses a write role that row-level security keeps from its ledger",
           "name": "guard_ledger_checks",
+          "status": "ok"
+        },
+        {
+          "category": "meta",
+          "details": {
+            "closed": false
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "Every owner-only delete trigger exists, so rows derived from a removed owner-only source stay owner-only",
+          "name": "owner_only_marks_triggers",
           "status": "ok"
         },
         {
@@ -4370,7 +4380,8 @@
     "stderr": [
       "[gbrain] reading doctor checks; large brains can take minutes. Progress prints here every 10 s; the result prints on stdout when it is ready.",
       "[gbrain doctor] non-interactive run: the check run (not connect or migrations) is capped at 90000 ms (doctor.default_budget_ms); checks past it report health unknown. Off for one run: --budget-ms 0; off for good: gbrain config set doctor.default_budget_ms 0. On PGLite a statement already running cannot be stopped, so a check can finish late.",
-      "[backup] checked 1 asset(s): 0 without a git remote (computed_by=doctor)"
+      "[backup] checked 1 asset(s): 0 without a git remote (computed_by=doctor)",
+      "[doctor-categories] unknown check name 'owner_only_marks_triggers' — defaulting to 'meta'. Add it to src/core/doctor-categories.ts."
     ],
     "stdout": "<json>"
   },
