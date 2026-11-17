@@ -585,7 +585,6 @@ src/core/meetings/meetings-source.ts	execute_raw	3
 src/core/mentions/coverage.ts	execute_raw	4
 src/core/mentions/newer-mentions.ts	execute_raw	1
 src/core/mentions/pass.ts	execute_raw	37
-src/core/mentions/policy.ts	execute_raw	1
 src/core/mentions/referrers.ts	execute_raw	11
 src/core/mentions/siblings.ts	execute_raw	4
 src/core/mentions/stale.ts	execute_raw	2
@@ -706,7 +705,7 @@ src/core/page-state/guards.ts	execute_raw	11
 src/core/page-state/image-seal.ts	execute_raw	5
 src/core/page-state/materialize.ts	execute_raw	5
 src/core/page-state/projection-status.ts	execute_raw	1
-src/core/page-state/projections.ts	execute_raw	43
+src/core/page-state/projections.ts	execute_raw	42
 src/core/page-state/rebuild-estimate.ts	execute_raw	1
 src/core/page-state/rename-alias.ts	execute_raw	11
 src/core/page-state/revision-backfill-schema.ts	execute_raw	12

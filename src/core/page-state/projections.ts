@@ -90,10 +90,10 @@ export async function retryProjectionConflict<T>(attempt: () => Promise<T>, rand
 }
 
 /** The vector column and model a write targets; `model` is what a stored chunk's label and provenance are compared to. */
-export async function embeddingWriteTarget(engine: Pick<BrainEngine, 'executeRaw'>): Promise<{ config: Array<{ key: string; value: string }>; model: string | null; column: ResolvedColumn; provenanceModel: string | null }> {
+export async function embeddingWriteTarget(engine: Pick<BrainEngine, 'getConfigValues'>): Promise<{ config: Array<{ key: string; value: string }>; model: string | null; column: ResolvedColumn; provenanceModel: string | null }> {
   // A missing config table reads as defaults, as upsertChunks' own resolution does.
-  const config = await engine.executeRaw<{ key: string; value: string }>(
-    "SELECT key,value FROM config WHERE key IN ('search_embedding_column','embedding_columns','embedding_model','embedding_dimensions','contextual_retrieval.mode') ORDER BY key") ?? [];
+  const config = await engine.getConfigValues(
+    ['search_embedding_column', 'embedding_columns', 'embedding_model', 'embedding_dimensions', 'contextual_retrieval.mode']) ?? [];
   let model = config.find(row => row.key === 'embedding_model')?.value ?? null;
   try { model = getEmbeddingModel(); } catch { /* Unconfigured gateway: retain the brain's recorded model. */ }
   const column = resolveWriteColumnFromConfigRows({
@@ -115,7 +115,7 @@ export function embeddingInputContext(target: { column: ResolvedColumn; provenan
  * `tier`, and return the column the hash names so the write targets it
  * (undefined when nothing was freshly embedded). Reused vectors stay unrecorded.
  */
-export async function stampEmbeddingInputs(engine: Pick<BrainEngine, 'executeRaw'>, chunks: ChunkInput[], fresh: ReadonlySet<number> | null,
+export async function stampEmbeddingInputs(engine: Pick<BrainEngine, 'getConfigValues'>, chunks: ChunkInput[], fresh: ReadonlySet<number> | null,
   page: { title: string; tier: EmbeddingTier; corpusGeneration: string | null }): Promise<ResolvedColumn | undefined> {
   if (!chunks.some((chunk, i) => chunk.embedding && (!fresh || fresh.has(i)))) return undefined;
   const target = await embeddingWriteTarget(engine);
