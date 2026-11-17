@@ -29,6 +29,7 @@ import { decideTrustProposal } from '../src/core/trust/decide.ts';
 import { listTrustProposals, parseTrustProposalRef } from '../src/core/trust/proposals.ts';
 import { renderFactsTable } from '../src/core/facts-fence.ts';
 import { LEGACY_EMBEDDING_CONFIG } from './helpers/legacy-embedding-config.ts';
+import { heldProposalRef } from './helpers/held-proposal.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -109,7 +110,8 @@ describe('GST-2875: a remote remember restating a confirmed private claim', () =
         const b = await seeded(engine, managed, slug, claim);
         const [confirmed] = await rowsOf(b, claim);
         const res = await run(b.remote, 'remember', { fact: claim, provenance: 'chat', entity: slug });
-        const ref = res.contested?.proposal_ref ?? res.outcome?.contested?.proposal_ref;
+        expect(res.contested ?? res.outcome?.contested).toBeUndefined();
+        const ref = await heldProposalRef(engine, b.sourceId, claim);
         expect(ref).toMatch(/^tp\d+$/);
         const rows = await rowsOf(b, claim);
         expect(rows.filter(r => r.visibility === 'world')).toEqual([]);
@@ -165,7 +167,8 @@ describe('GST-2875: a remote remember restating a confirmed private claim', () =
       for (const r of await engine.executeRaw<{ id: number }>('SELECT id FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', [b.sourceId, 'people/bo-example'])) await confirmFact(b, Number(r.id));
       const [other, mine] = await rowsOf(b, claim);
       const res = await run(b.remote, 'remember', { fact: claim, provenance: 'chat', entity: 'people/bo-example' });
-      const ref = res.contested?.proposal_ref;
+      expect(res.contested).toBeUndefined();
+      const ref = await heldProposalRef(engine, b.sourceId, claim);
       expect(ref).toMatch(/^tp\d+$/);
       const restated = (await rowsOf(b, claim)).find(r => r.id !== other!.id && r.id !== mine!.id)!;
       expect(restated.visibility).toBe('private');
@@ -181,13 +184,15 @@ describe('GST-2875: a remote remember restating a confirmed private claim', () =
       const b = await seeded(engine, true, slug, claim);
       const current = await run(b.remote, 'get_page', { slug, include_content: true });
       const widened = await run(b.remote, 'put_page', { slug, content: note(slug, body([row(1, 'Lives in Turin'), row(3, claim)])), expected_revision: current.revision });
-      expect(widened.contested?.proposal_ref).toMatch(/^tp\d+$/);
+      expect(widened.contested).toBeUndefined();
+      const widenedRef = await heldProposalRef(engine, b.sourceId, claim);
+      expect(widenedRef).toMatch(/^tp\d+$/);
       const restated = (await rowsOf(b, claim)).find(r => r.trust_tier !== 'user_confirmed')!;
       expect(restated.visibility).toBe('private');
       // url-clone-fences keeps an appended row database-only before it restores the file.
       await engine.transaction(tx => withCoordinatedWrite(tx, [b.sourceId], () =>
         tx.executeRaw('UPDATE facts SET row_num = NULL, source_markdown_slug = NULL WHERE id = $1', [restated.id]), TEST_WRITE_ATTRIBUTION));
-      await decideTrustProposal(engine, parseTrustProposalRef(widened.contested.proposal_ref)!, 'accept', owner);
+      await decideTrustProposal(engine, parseTrustProposalRef(widenedRef)!, 'accept', owner);
       expect((await rowsOf(b, claim)).find(r => r.id === restated.id)?.visibility).toBe('private');
     }
   }), 180_000);
@@ -201,7 +206,8 @@ describe('GST-2875: a remote remember restating a confirmed private claim', () =
       for (const r of await rowsOf(b, claim)) await confirmFact(b, r.id);
       const res = await run(b.remote, 'remember', { fact: claim, provenance: 'chat', entity });
       await engine.setConfig('sync.write_through', 'true');
-      const ref = res.contested?.proposal_ref;
+      expect(res.contested).toBeUndefined();
+      const ref = await heldProposalRef(engine, b.sourceId, claim);
       expect(ref).toMatch(/^tp\d+$/);
       const rows = await rowsOf(b, claim);
       const restated = rows.find(r => r.trust_tier === 'agent_written')!;

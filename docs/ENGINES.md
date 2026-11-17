@@ -814,6 +814,30 @@ to connect: it diagnoses the dir from disk, names the repair command, reports
 retained repair backups, and escalates when repairs keep recurring (that
 means the unclean-shutdown genesis is still active — see the ladder's rung 4).
 
+<a id="pglite-live-serve"></a>
+### PGLite while `gbrain serve` runs (`pglite_busy` reason `live_serve`)
+
+One gbrain process opens a PGLite brain at a time. While `gbrain serve` (stdio
+or `--http`) holds it, page and fact writes from the CLI (`gbrain put`,
+`gbrain remember`) go through the running server and work. Commands that need
+the database to themselves, which includes the admin commands
+(`gbrain access …`, `gbrain sources …`, `gbrain auth …`) and most reads,
+refuse with `pglite_busy` reason `live_serve`. The refusal names the server's
+PID, and its fix is two steps: stop that server, then run the command again.
+Never remove the lock of a server that is still running.
+
+On a brain that serves one person this is a short pause: quit the agent
+session (a stdio serve) or stop `gbrain serve --http`, run the command, and
+start it again. On a brain that serves several people over
+`gbrain serve --http`, every member's connection drops while the server is
+stopped, for every admin step. Move such a brain to Postgres, where the server
+and the admin commands run side by side: preview with the read-only
+`gbrain migrate --to postgres --url-env GBRAIN_TARGET_URL --plan --json`,
+then follow [Move a PGLite brain to Postgres](guides/move-to-postgres.md). The
+move carries members, tokens, `readable_by` and facts across.
+`gbrain setup <harness> --serves several` on PGLite says this in its
+`engine` line.
+
 <a id="legacy-pglite-lock"></a>
 ### Legacy PGLite lock (`pglite_busy` reason `legacy_owner_unverified`)
 

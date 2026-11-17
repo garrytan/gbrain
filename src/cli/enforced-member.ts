@@ -432,7 +432,9 @@ function writeTargets(opName: string, p: Record<string, unknown>): string[] {
 /**
  * The checks a write-checked operation passes before it runs as a trusted local write: its source and every target page
  * readable by the member, and no label change. remember: one fact on --entity, the exact slug of a page the member reads,
- * nothing inferred and no visibility or share label (params.infer_entity is set to false).
+ * nothing inferred and no visibility or share label (params.infer_entity is set to false). A put_page or edit_page is
+ * sent with keep_hidden_rows (GST-2891): the member read the page without its held rows, so the put keeps them and the
+ * edit diff leaves them out, as for a remote writer.
  */
 export async function checkEnforcedWrite(engine: BrainEngine, command: string, opName: string, params: Record<string, unknown>, sourceId: string | undefined): Promise<void> {
   const ea = await enforcedAccess(engine, command);
@@ -450,6 +452,7 @@ export async function checkEnforcedWrite(engine: BrainEngine, command: string, o
   if (opName === 'put_page') {
     const content = typeof params.content === 'string' ? params.content : '';
     if (await pageLabels(await storedPage(engine, source, slug)) !== await markdownLabels(content, slug)) return refuseEnforced(command, 'label_change', { engine });
+    params.keep_hidden_rows = true;
   }
   if (opName === 'add_timeline_entry' && [params.summary, params.detail, params.source].some(t => typeof t === 'string' && FENCE_MARKER_RE.test(t))) {
     return refuseEnforced(command, 'label_change', { engine });
@@ -459,6 +462,7 @@ export async function checkEnforcedWrite(engine: BrainEngine, command: string, o
     const stored = await storedPage(engine, source, slug);
     const hidden = stored ? await hiddenResidue(stored.compiled_truth) + await hiddenResidue(stored.timeline) : '';
     if (hidden !== '' || texts.some(t => typeof t === 'string' && LABEL_TEXT_RE.test(t))) return refuseEnforced(command, 'label_change', { engine });
+    if (opName === 'edit_page') params.keep_hidden_rows = true;
   }
 }
 

@@ -96,6 +96,7 @@
     "scripts/bench/**": [],
     "docs/eval/system-one/runners/**": [],
     "docs/eval/system-one/generators/**": [],
+    "apple/helper/**": [],
     "docs/schemas/skill-resolver.v1.turn-input.json": ["test/skill-resolver-contract.test.ts"],
     "docs/schemas/skill-resolver.v1.turn-output.json": ["test/skill-resolver-contract.test.ts"],
     "scripts/check-skill-health.ts": ["test/skill-drift.test.ts", "test/skill-health.test.ts"],

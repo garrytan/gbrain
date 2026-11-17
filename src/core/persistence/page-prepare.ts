@@ -38,7 +38,8 @@ import { recordedPathFromFileUri, scannerSlugRootMode, scannerSourcePath } from 
 import { engineMutationPrecondition, parseMutationPrecondition } from './preconditions.ts';
 import { assertPurgeParams } from './purge-params.ts';
 import { authorizeWrite, slugDisclosable } from './authority.ts';
-import { remoteLabelsChecked, defaultSourceMemberWriter, defaultSourceWriterIsOwner, defaultSourceWriterReaders, ownerRewriteOf } from './page-visibility.ts';
+import { remoteLabelsChecked, defaultSourceMemberWriter, defaultSourceWriterIsOwner, defaultSourceWriterReaders, ownerRewriteOf, storedWriterReadsHeld } from './page-visibility.ts';
+import { loadFenceChunkOverlay } from '../eligibility/fence-overlay.ts';
 import { findLiveFileClaimants, type FileClaimant, type FileClaimTarget } from './file-claims.ts';
 import { digest, sha256 } from './digest.ts';
 import { replaceableFile } from '../facts/file-body-guard.ts';
@@ -55,7 +56,7 @@ import { isStagingBodyRef, prepareStagedUpload } from './page-upload.ts';
 import { pipelined } from '../page-state/transactions.ts';
 import { overlayCanonicalBodies } from '../page-state/snapshot.ts';
 import { segmentedRevertRefusal } from '../page-state/versions.ts';
-import { bodyUnread, isSegmentedPage, pageBodySegmentedError, withoutBody } from '../page-body/page-shape.ts';
+import { bodyUnread, fenceBody, isSegmentedPage, pageBodySegmentedError, withoutBody } from '../page-body/page-shape.ts';
 import { fileBodyDigests, overlaidFileBodyDigests, storedBodyDigests, type ByteSource, type FileReading, type RegionDigests } from '../page-body/body-digests.ts';
 import { ledgerApplies, type BodyLedger } from '../page-body/segment-ledger.ts';
 import { inferredHeadPrefix } from '../page-body/streamed-import.ts';
@@ -1073,7 +1074,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   const fenceRepair = row.operation === 'put_page' && !row.authority.remote ? parseFenceRepairReceipt(p.fence_repair) : null;
   const fenceRepairOutcome = fenceRepair ? { fence_repair: fenceRepair } : {};
   // #5616: edits apply to the caller's view of the locked snapshot (revision checked above).
-  const edited = row.operation === 'edit_page' ? editLockedPage(row, snapshot) : undefined;
+  const edited = row.operation === 'edit_page' ? await editLockedPage(engine, row, snapshot) : undefined;
   let content = edited?.content ?? preparedIntent?.content ?? p.content as string;
   const privateRequest = privateRequestGuarded(row.operation, p.kind) && typeof content === 'string' ? readPrivateRequest(content, () => parseMarkdown(content as string, row.slug, { activePack }).frontmatter) : null;
   if (privateRequest) assertPrivateRequestAllowed(row, content as string, privateRequest.frontmatter);
@@ -1158,7 +1159,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   const lean = options.coordinated === true && !targetDeleted && row.operation !== 'restore_page' && !versionTags;
   enterClaimStep(clock, 'import_content', undefined, 'db');
   const result = await importFromContent(engine, row.slug, content, {
-    ...source, noEmbed: true, remote: row.authority.remote || p.keep_hidden_rows === true, activePack, fences: projected ? 'coordinated' : 'lenient', coordinated: lean, boundedChunkWrites: options.boundedChunkWrites,
+    ...source, noEmbed: true, remote: row.authority.remote || p.keep_hidden_rows === true, restoreHeldRows: p.keep_hidden_rows === true || !await storedWriterReadsHeld(engine, row.authority), activePack, fences: projected ? 'coordinated' : 'lenient', coordinated: lean, boundedChunkWrites: options.boundedChunkWrites,
     segmentedOwner: { kind: row.operation === 'edit_page' ? 'edit' : 'put', principalKind: row.principal_kind, principalId: row.principal_id, baseRevision: observedRevision },
     ...(lean ? { existingSnapshot: snapshot } : {}),
     // #6259: only owner-tier intents keep gate-owned markers; an ordinary put_page, local or remote, has them stripped.
@@ -1338,11 +1339,15 @@ function projectedRows(projected: { timelineRowsRemoved?: TimelineRowsRemoved | 
   return { removedTimeline: projected?.timelineRowsRemoved ?? null, contested: projected?.contested ?? [] };
 }
 
-function editLockedPage(row: WriteRequest, snapshot: PageSnapshot | null) {
+async function editLockedPage(engine: BrainEngine, row: WriteRequest, snapshot: PageSnapshot | null) {
   if (!snapshot || snapshot.page.deleted_at) throw pageRefusal('page_not_found', 'Page not found.', row,
     `Page ${row.slug} does not exist in source ${row.source_id} or is deleted, so the edit changed nothing. If it is soft-deleted, restore it with restore_page; otherwise write it whole with put_page.`,
     pageFix(row.source_id, row.slug));
-  return applyPageEdits(snapshot.page, snapshot.tags, row.authority.remote, parsePageEdits(row.intent?.edits), parseEditWithin(row.intent?.within));
+  // GST-2891: an enforced member's edit (keep_hidden_rows) read the page as a remote caller does, so its diff shows that view.
+  const remoteView = row.authority.remote || row.intent?.keep_hidden_rows === true;
+  const omitRows = row.intent?.keep_hidden_rows !== true && await storedWriterReadsHeld(engine, row.authority) ? undefined
+    : (await loadFenceChunkOverlay(engine, { sourceId: row.source_id, slug: row.slug, ...fenceBody(snapshot.page) }, { hideHeld: true }))?.held;
+  return applyPageEdits(snapshot.page, snapshot.tags, remoteView, parsePageEdits(row.intent?.edits), parseEditWithin(row.intent?.within), omitRows);
 }
 
 /**

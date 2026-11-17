@@ -122,6 +122,20 @@ const OP_AREAS: Record<string, string> = {
 
 const finalized = new WeakSet<Operation>();
 
+/** The ops that return a write's reply or receipt: every write, and the receipt reads. */
+const RECEIPT_READS = new Set(['get_write_request', 'list_write_requests', 'watch_write_request']);
+
+/** GST-2900: a held write's reply reads as a plain save to a caller who cannot read the private copy (trust/privacy-hold-reply.ts). */
+function withPrivacyHoldReplies(op: Operation, handler: Operation['handler']): Operation['handler'] {
+  if (op.mutating !== true && !RECEIPT_READS.has(op.name)) return handler;
+  return async (ctx, params) => {
+    const result = await handler(ctx, params);
+    if (ctx.remote === false || typeof ctx.engine?.executeRaw !== 'function') return result;
+    const grant = op.mutating === true ? ctx.auth?.privateFacts?.sources : undefined;
+    return (await import('./trust/privacy-hold-reply.ts')).hidePrivacyHoldRefs(ctx.engine, ctx.remote, result, grant);
+  };
+}
+
 export function finalizeOperation(op: Operation): void {
   if (finalized.has(op)) return;
   finalized.add(op);
@@ -130,7 +144,7 @@ export function finalizeOperation(op: Operation): void {
   }
   // The handler runs in its engine's scope, so an embedded engine's AI calls use that engine's gateway (engine-scope.ts).
   // Redaction runs after the guest stamp, so a key-like sender label in a guest mark is redacted like stored text.
-  const handler = withOutputRedaction({ handler: withGuestMarks(op, op.handler), outputRedaction: op.outputRedaction });
+  const handler = withOutputRedaction({ handler: withPrivacyHoldReplies(op, withGuestMarks(op, op.handler)), outputRedaction: op.outputRedaction });
   op.handler = (ctx, params) => withEngineScope(ctx.engine, () => handler(ctx, params));
 }
 

@@ -22,7 +22,10 @@ readback can supersede a recorded push failure without erasing that history.
 An offline, unavailable, mismatched or not-yet-probed remote is **unknown**, not
 green. Git evidence covers committed files only: DB-only pages, facts,
 configuration and credentials need a separate backup and restore drill. Managed
-Postgres placement alone is not proof of a remote database backup.
+Postgres placement alone is not proof of a remote database backup. For a source
+that is not a Git repository, doctor's fix is the engine's [full
+backup](../guides/memory-boundaries.md#full-backup): `gbrain backup create` on
+PGLite, a `pg_dump` of the brain's database on Postgres, never a Markdown export.
 
 **Not covered by Git evidence:** the DB file itself (`~/.gbrain` is
 deliberately gitignored — only Git-backed content rebuilds via `gbrain sync`);

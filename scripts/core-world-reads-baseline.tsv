@@ -454,6 +454,7 @@ src/core/git/range-secret-scan.ts	fs_import	1	W7: filesystem boundary moves to t
 src/core/git/range-secret-scan.ts	spawn_import	1	W7: process-wide effects move to src/cli (the publish scan runs git plumbing)
 src/core/git/reconcile.ts	process_env	2	W6: settings plane out of the core; the commit-push child inherits this process environment (GBRAIN_HOME, Git credentials) and resolves its CLI from it, like refresh's publish child
 src/core/git/skipped-paths.ts	fs_import	1	W7: filesystem boundary moves to the local app; GST-2767 moved commit-push's skipped-path checks here unchanged
+src/core/git/untrack-admission.ts	fs_import	1	W7: filesystem boundary moves to the local app; GST-2964 moved commit-push's untrack admission here unchanged in kind: its readFileSync of the source's gbrain.yml and its lstatSync symlink checks left src/core/git/commit-push.ts, whose fs_import row stays 1 because this lint counts one node:fs import per file and commit-push.ts still imports node:fs for its own reads; no new filesystem read beyond the brain-recorded source root's gbrain.yml and a realpath of that root
 src/core/git/upstream-history.ts	fs_import	1	W7: filesystem boundary moves to the local app; reads the tail of the checkout reflog to tell a rewritten upstream from a fast-forward (lifted out of worktree-refresh.ts)
 src/core/github-app-token.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/github-source.ts	fs_import	2	W7: filesystem boundary moves to the local app
