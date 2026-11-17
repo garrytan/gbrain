@@ -15,6 +15,12 @@ const TRUST_SETTINGS = ['gbrain.write_trust_tier', 'gbrain.write_origin'] as con
 const TRUST_PROMOTION_SETTING = 'gbrain.write_trust_promotion';
 const TRUST_BACKFILL_SETTING = 'gbrain.write_trust_backfill';
 const TRUST_KEEP_SETTING = 'gbrain.write_trust_keep';
+/**
+ * #8194: the fact ids an operator's `gbrain repair open-facts` opens in this transaction. Set only by withOpenFacts, which
+ * only that repair's maintenance intent and its unmanaged label door call; never keyed on gbrain.write_trust_keep, which
+ * agent fence edits also set.
+ */
+const OPEN_FACTS_SETTING = 'gbrain.write_open_facts';
 
 /**
  * Sets transaction-local settings around `fn` in one round trip each way. An
@@ -145,6 +151,25 @@ export function withTrustPromotion<T>(engine: Pick<BrainEngine, 'executeRaw'>, c
  */
 export function withTrustKeep<T>(engine: Pick<BrainEngine, 'executeRaw'>, tables: readonly TrustTable[], fn: () => Promise<T>): Promise<T> {
   return withTransactionSettings(engine, [TRUST_KEEP_SETTING], outer => [[...new Set([...(outer[0] ? outer[0].split(',') : []), ...tables])].join(',')], fn);
+}
+/**
+ * #8194: inside `fn`, the fence projection treats each of `factIds` whose incoming fence cell differs only private to world
+ * (same row number, same claim) as opened in place: fence-guard moves it with its new visibility keeping its id and tier,
+ * and the fact generation and the projection's expiry do not retire it (openedFactRowSql). Only `gbrain repair open-facts`
+ * calls it.
+ */
+export function withOpenFacts<T>(engine: Pick<BrainEngine, 'executeRaw'>, factIds: readonly number[], fn: () => Promise<T>): Promise<T> {
+  return withTransactionSettings(engine, [OPEN_FACTS_SETTING], () => [factIds.map(id => String(Number(id))).join(',')], fn);
+}
+/**
+ * #8194: SQL true for a stored fact row `f` that withOpenFacts names and whose cell in `incoming` (the projection's
+ * jsonb_to_recordset text of row_num, fact, visibility) is the same row number and claim at world while the row is private.
+ * False wherever the setting is unset, so every other write keeps today's behaviour.
+ */
+export function openedFactRowSql(f: string, incoming: string): string {
+  return `(${f}.visibility = 'private' AND ${f}.id::text = ANY(string_to_array(COALESCE(current_setting('${OPEN_FACTS_SETTING}', true), ''), ','))
+    AND EXISTS (SELECT 1 FROM jsonb_to_recordset(${incoming}::text::jsonb) AS o(row_num integer, fact text, visibility text)
+      WHERE o.row_num = ${f}.row_num AND o.fact = ${f}.fact AND o.visibility = 'world'))`;
 }
 /** CEO-10: the deterministic backfill may move rows from `unknown` to any tier below user_confirmed. */
 export function withTrustBackfill<T>(engine: Pick<BrainEngine, 'executeRaw'>, fn: () => Promise<T>): Promise<T> {
