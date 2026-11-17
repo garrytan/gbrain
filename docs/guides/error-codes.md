@@ -4142,6 +4142,26 @@ More: [docs/guides/shared-checkout-git.md#publish_scan_unreadable](../../docs/gu
 
 More: [docs/guides/shared-checkout-git.md#publish_secret_found](../../docs/guides/shared-checkout-git.md#publish_secret_found)
 
+### publish_secret_rebuild_race
+
+<a id="publish_secret_rebuild_race"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| HEAD moved 3 times while a publish was redacting the unpushed commits (a writer that does not take the commit lock), so nothing was rewritten or pushed; the next publish tries again. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Let the next publish retry it; if it repeats, find the writer that commits without gbrain git commit-push. Run: gbrain git redact-unpushed --source '{source_id}' | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/shared-checkout-git.md#publish_secret_rebuild_race](../../docs/guides/shared-checkout-git.md#publish_secret_rebuild_race)
+
+### publish_secret_rebuild_unbounded
+
+<a id="publish_secret_rebuild_unbounded"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Redacting the unpushed commits ran past the publish's time budget (often a checkout with no remote-tracking ref, so its whole history is unpushed); nothing was rewritten or pushed, and the publish retries in the background with a longer budget. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Run the read-only preview to see how many commits it covers; fetch the remote so a remote-tracking ref bounds the range. Run: gbrain git redact-unpushed --source '{source_id}' | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/shared-checkout-git.md#publish_secret_rebuild_unbounded](../../docs/guides/shared-checkout-git.md#publish_secret_rebuild_unbounded)
+
 ### pull_blocked_local_changes
 
 <a id="pull_blocked_local_changes"></a>

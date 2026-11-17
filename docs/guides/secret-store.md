@@ -12,7 +12,9 @@ brain's database with a key that stays on the brain's machine. Nothing is rotate
 reached the brain, its owner still rotates it.
 
 What redacts into the store today: `gbrain repair secret-spans`, which replaces credentials in the database copies of
-the pages you name (its retained page versions get the same markers, so the store is the only place the value stays).
+the pages you name (its retained page versions get the same markers, so the store is the only place the value stays),
+and every publish of a brain checkout, which replaces them in commits that have not been pushed yet
+([Publishing](#publishing)).
 
 ## Reading an original
 
@@ -63,6 +65,28 @@ Each host keeps a keyring at `~/.gbrain/secret-store/keys/`: one `<key_id>.key` 
 
 The database holds only ciphertext, the key id, and an HMAC of the value under a key derived from the store key, so a
 copy of the database or of a backup does not reveal originals without the key file.
+
+## Publishing
+
+When a push would carry a value that looks like a secret in a commit no remote has yet, gbrain no longer refuses the
+push. It rebuilds those commits with the same markers, keeps each original in the store, and pushes the rebuilt
+commits. This covers `gbrain git commit-push`, a managed worktree's page-write backups and every other automatic
+publish. The details, and what is held back instead, are in
+[shared-checkout-git.md](shared-checkout-git.md#publish_secret_redacted).
+
+- Only the scanner's named rules redact. A value you restored with `gbrain secrets restore` is left alone.
+- A commit any remote-tracking ref already has is never rewritten; a value there still refuses the push.
+- The old commits stay on this machine for 7 days under `refs/gbrain/backup/redact-<time>-<sha>`.
+- To keep the old refusal instead: `gbrain config set secrets.on_push refuse` (or `GBRAIN_SECRETS_ON_PUSH=refuse` in
+  the environment). `gbrain config set secrets.on_push redact` turns it back on.
+- `gbrain git redact-unpushed --source <id>` shows what a publish would redact, writing nothing; `--apply --expect
+  <hash>` does it without pushing.
+
+<a id="secret_store_spooled"></a>A publish runs without the database, so it first writes each original to an encrypted
+spool on this machine, `~/.gbrain/secret-store/spool/` (directory 0700, one 0600 file per entry, the same key). The
+owner moves spooled entries into the store right after its push, and maintenance (the `bookkeeping_gc` phase) moves
+any that are left. `gbrain secrets reveal <id>` reads a spooled entry meanwhile. When neither the store nor the spool
+can be written, the push is held with `secret_store_unwritable`.
 
 ## What it does not do
 

@@ -303,7 +303,7 @@ async function writePage(tx: BrainEngine, planned: Planned): Promise<{ unsealed:
  * and gives the page's inline retained versions the same markers, so the database holds the value only in the store.
  * Runs in the caller's transaction after the plan was rechecked; the proof already ran on the planned spans.
  */
-async function bindToStore(tx: BrainEngine, planned: Planned, createdBy: string): Promise<{ entries: Map<string, { id: string; rule: string }>; versions: number; segmented_versions: number }> {
+async function bindToStore(tx: BrainEngine, planned: Planned, createdBy: string, origin: 'repair' | 'publish_rebuild' = 'repair'): Promise<{ entries: Map<string, { id: string; rule: string }>; versions: number; segmented_versions: number }> {
   const { page } = planned.read;
   const entries = new Map<string, { id: string; rule: string }>();
   for (const [index, result] of planned.results.entries()) {
@@ -324,7 +324,7 @@ async function bindToStore(tx: BrainEngine, planned: Planned, createdBy: string)
     parts.push(text.slice(at));
     result.next = parts.join('');
     for (const id of new Set(result.spans.map(span => entries.get(text.slice(span.start, span.end))!.id))) {
-      await recordOccurrence(tx, { entryId: id, sourceId: page.source_id, pageId: page.id, slug: page.slug, field: result.key, origin: 'repair',
+      await recordOccurrence(tx, { entryId: id, sourceId: page.source_id, pageId: page.id, slug: page.slug, field: result.key, origin,
         preFieldSha256: result.old_sha256, createdBy });
     }
   }
@@ -440,6 +440,39 @@ function selectionOf(scope: RepairScope, slugs: readonly string[] | undefined, r
 
 function item(page: PlannedPage, hash: string, rules: string[], last: boolean): SpanItem {
   return { cursor: { phase: 0, id: page.id }, source_id: page.source_id, slug: page.slug, chars: 0, action: changeDetail(page), page, hash, rules, last };
+}
+
+/**
+ * GST-2988 PR 2: the database half of a publish redaction. After a publish replaced the values in a page's file with
+ * store markers, the page's stored copies get the same field redaction as the repair (default named rules, originals
+ * sealed in the store, so a value maps to the same entry and marker as in the file), so database and file agree.
+ * One transaction under the page key lock, attributed as maintenance; nothing is published. Returns what happened.
+ */
+export async function redactPageForPublish(engine: BrainEngine, sourceId: string, slug: string): Promise<'redacted' | 'clean' | Refusal | PlanRefusal> {
+  const rules = resolveSecretRules();
+  const written = await engine.transaction(async tx => {
+    const managed = await readManagedMode(tx, { refusal: { subject: 'publish redaction' } });
+    const attribution = await maintenanceAttribution(tx);
+    const write = () => withTrustKeep(tx, ['pages', 'facts', 'takes', 'timeline_entries'], async (): Promise<{ outcome: 'redacted' | 'clean' | Refusal | PlanRefusal; unsealed?: boolean; storage?: string }> => {
+      await tx.lockPageKeys([{ sourceId, slug }]);
+      const read = await readFields(tx, sourceId, slug);
+      if (typeof read === 'string') return { outcome: read };
+      const planned = planPage(read, rules);
+      if (!changedOf(planned).length) return { outcome: 'clean' };
+      const refusal = await planRefusal(tx, planned);
+      if (refusal) return { outcome: refusal };
+      const bound = await bindToStore(tx, planned, 'publish redact', 'publish_rebuild');
+      const { unsealed } = await writePage(tx, planned);
+      audit.log({ ts: new Date().toISOString(), kind: 'publish-redact', source_id: sourceId, slug, page_id: read.page.id, store_entries: [...bound.entries.values()].map(entry => entry.id).sort(),
+        fields: changedOf(planned).map(result => result.key), versions_redacted: bound.versions });
+      return { outcome: 'redacted', unsealed, storage: read.page.body_storage };
+    });
+    return managed ? withCoordinatedWrite(tx, [sourceId], write, attribution) : withWriteAttribution(tx, attribution, write);
+  });
+  if (written.outcome === 'redacted') {
+    try { await resealAfterRestore(engine, sourceId, slug, written.storage!, written.unsealed!); } catch { /* the projection is queued and rebuilt by the next pass */ }
+  }
+  return written.outcome;
 }
 
 export const secretSpansRepair: RepairHandler = {

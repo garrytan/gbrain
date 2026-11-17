@@ -64,6 +64,29 @@ export async function seal(engine: BrainEngine, input: { sourceId: string; rule:
   return { id: winner, created: winner === id, key_id: key.id, ...(key.created ? { key_created: key.id } : {}) };
 }
 
+/**
+ * Moves a spooled original (spool.ts) into the store under the id its markers already carry. `exists`: the row is
+ * there (an earlier drain); `duplicate`: the store holds this value under another id, so this one cannot take a row.
+ */
+export async function sealWithId(engine: BrainEngine, input: { id: string; sourceId: string; rule: string; value: string }): Promise<{ kind: 'inserted' | 'exists' } | { kind: 'duplicate'; existing: string }> {
+  if (!ENTRY_ID.test(input.id) || !input.value) throw opError('invalid_params', 'A spooled entry needs an ss_ id and a value.', 'Leave the spool file as it is.');
+  const key = currentKey({ create: true })!;
+  const mac = macOf(key.key, input.value);
+  if ((await engine.executeRaw('SELECT 1 FROM secret_store WHERE id=$1', [input.id])).length) return { kind: 'exists' };
+  const [held] = await engine.executeRaw<{ id: string }>('SELECT id FROM secret_store WHERE source_id=$1 AND value_mac=$2', [input.sourceId, mac]);
+  if (held) return { kind: 'duplicate', existing: held.id };
+  const nonce = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', key.key, nonce, { authTagLength: 16 });
+  cipher.setAAD(aad(input.id, input.sourceId, input.rule));
+  const ciphertext = Buffer.concat([cipher.update(input.value, 'utf8'), cipher.final()]);
+  const inserted = await engine.executeRaw<{ id: string }>(`INSERT INTO secret_store (id,source_id,rule,ciphertext,nonce,tag,key_id,key_host,value_mac)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING RETURNING id`,
+  [input.id, input.sourceId, input.rule, ciphertext.toString('base64'), nonce.toString('base64'), cipher.getAuthTag().toString('base64'), key.id, storeHost(), mac]);
+  if (inserted.length) return { kind: 'inserted' };
+  const [winner] = await engine.executeRaw<{ id: string }>('SELECT id FROM secret_store WHERE source_id=$1 AND value_mac=$2', [input.sourceId, mac]);
+  return winner && winner.id !== input.id ? { kind: 'duplicate', existing: winner.id } : { kind: 'exists' };
+}
+
 export interface OccurrenceInput {
   entryId: string; sourceId: string; pageId?: number | null; slug?: string | null; field: string; origin: OccurrenceOrigin;
   commit?: string | null; path?: string | null; line?: number | null; preFieldSha256?: string | null; createdBy?: string;
@@ -110,7 +133,16 @@ export interface RevealResult { id: string; source_id: string; rule: string; sta
 
 /** The original value of one entry with where it was redacted. The caller decides who may call it (ops/secrets.ts). */
 export async function reveal(engine: BrainEngine, id: string, actor: string): Promise<RevealResult> {
-  const row = await entryRow(engine, id);
+  let row: EntryRow;
+  try { row = await entryRow(engine, id); } catch (error) {
+    // An original a publish spooled (no store at hand) reads from this host's spool until maintenance moves it in.
+    const spooled = (error as { code?: string }).code === 'not_found' ? (await import('./spool.ts')).openSpooled(id) : null;
+    if (!spooled) throw error;
+    const { entry, value } = spooled;
+    secretsAudit.log({ ts: new Date().toISOString(), event: 'reveal', id, source_id: entry.source_id, rule: entry.rule, actor, spooled: true, slugs: [] });
+    return { id, source_id: entry.source_id ?? '', rule: entry.rule, status: 'active', value, occurrences: entry.occurrences.map(o => ({ page_id: null, source_id: entry.source_id ?? '',
+      slug: null, field: o.field, origin: 'publish_rebuild' as const, commit_sha: o.commit, path: o.path, line: o.line, created_at: entry.created_at })) };
+  }
   const value = openEntry(row);
   const occurrences = await occurrencesOf(engine, id);
   secretsAudit.log({ ts: new Date().toISOString(), event: 'reveal', id, source_id: row.source_id, rule: row.rule, actor,

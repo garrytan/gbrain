@@ -74,6 +74,7 @@ export async function applyRestore(engine: BrainEngine, id: string, expect: stri
       `Re-run the preview: ${preview.command}`);
   }
   await engine.executeRaw("UPDATE secret_store SET status='allowed', updated_at=now() WHERE id=$1", [id]);
+  await (await import('./spool.ts')).refreshAllowedCache(engine).catch(() => undefined);
   secretsAudit.log({ ts: new Date().toISOString(), event: 'restore', id, source_id: row.source_id, rule: row.rule, actor, slugs: restored.map(r => r.slug) });
   return { id, restored, skipped, status: 'allowed' };
 }
