@@ -1958,7 +1958,7 @@
                   "held": 8,
                   "missing": 8,
                   "next": "preview the frontmatter and other fixes with foresights repair frontmatter --source notes (writes nothing until a hash-bound apply); nothing repairs the fence and slug-conflict holds by itself (no maintenance run is active), so preview the content repairs with foresights repair content --source notes (read-only, no model call: it lists each held file with its planned repair or the exact edit, kind by kind, and prints the apply command with --expect <hash>[,<hash>]), then run the apply command it prints",
-                  "repair": "gbrain repair frontmatter --source notes; gbrain repair content --source notes",
+                  "repair": "foresights repair frontmatter --source notes; foresights repair content --source notes",
                   "source_id": "notes",
                   "stale": 0,
                   "status": "foresights sources status notes"
@@ -7423,7 +7423,7 @@
                   "held": 8,
                   "missing": 8,
                   "next": "preview the frontmatter and other fixes with foresights repair frontmatter --source notes (writes nothing until a hash-bound apply); nothing repairs the fence and slug-conflict holds by itself (no maintenance run is active), so preview the content repairs with foresights repair content --source notes (read-only, no model call: it lists each held file with its planned repair or the exact edit, kind by kind, and prints the apply command with --expect <hash>[,<hash>]), then run the apply command it prints",
-                  "repair": "gbrain repair frontmatter --source notes; gbrain repair content --source notes",
+                  "repair": "foresights repair frontmatter --source notes; foresights repair content --source notes",
                   "source_id": "notes",
                   "stale": 0,
                   "status": "foresights sources status notes"

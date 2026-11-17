@@ -489,6 +489,7 @@ async function runLive(
   // Single-quoted: validateBinPathEnv rejects quote/metacharacter values, so
   // the interpolation cannot break out of the quoting.
   const shimBody = `#!/bin/sh\nexec '${gbrainBin}' "$@"\n`;
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- shimDir is this run's own harness directory; both names are fixed literals
   for (const shimPath of [join(shimDir, 'gbrain'), join(shimDir, 'foresights')]) {
     writeFileSync(shimPath, shimBody, 'utf-8');
     chmodSync(shimPath, 0o755);
