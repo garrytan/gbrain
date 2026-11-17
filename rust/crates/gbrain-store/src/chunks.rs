@@ -294,12 +294,13 @@ pub(crate) fn replace_chunks(
         // PGLite's incremental write: a chunk whose text did not change keeps the metadata the
         // new write leaves null (`COALESCE(new, old)`); `token_count` and `model` are the new
         // write's. A chunk whose text changed takes the new write's metadata outright.
-        if merge {
-            if let Some(old) = previous.get(&index).filter(|old| old.chunk_text == text) {
-                for (key, value) in &old.meta {
-                    if key != "token_count" && key != "model" && !meta.contains_key(key) {
-                        meta.insert(key.clone(), value.clone());
-                    }
+        if let Some(old) = previous
+            .get(&index)
+            .filter(|old| merge && old.chunk_text == text)
+        {
+            for (key, value) in &old.meta {
+                if key != "token_count" && key != "model" && !meta.contains_key(key) {
+                    meta.insert(key.clone(), value.clone());
                 }
             }
         }
