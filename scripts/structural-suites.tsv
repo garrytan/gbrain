@@ -423,6 +423,7 @@ test/skillpack-flow.test.ts	skillpack flow (E2E)	17	readFileSync
 test/skillpack-harness-bridge.test.ts	review-driven hardening (ship pre-landing findings)	5	readFileSync
 test/skillpack-harvest.test.ts	addToBundleManifest	1	readFileSync
 test/skillpack-harvest.test.ts	runHarvest — happy path	2	readFileSync
+test/skillpack-harvest.test.ts	runHarvest — paired source in a sibling folder that starts with the slug	5	readFileSync
 test/skillpack-harvest.test.ts	runHarvest — privacy linter integration (T7)	2	readFileSync
 test/skillpack-init-brain-pack.test.ts	runInitBrainPack	5	readFileSync
 test/skillpack-init-pack.test.ts	runInitScaffold — cathedral default	6	readFileSync
