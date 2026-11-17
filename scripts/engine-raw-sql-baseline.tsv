@@ -281,6 +281,7 @@ src/core/access/members.ts	execute_raw	25
 src/core/access/members.ts	sql_template	1
 src/core/access/open-pages.ts	execute_raw	8	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/core/access/open-twins.ts	execute_raw	1
+src/core/access/owner-only.ts	execute_raw	2	came from #9634 (imessage source kind, owner-only sources), written before this ratchet was cut
 src/core/access/owner.ts	execute_raw	1
 src/core/access/policy-migrate.ts	execute_raw	4
 src/core/access/policy-transfer.ts	execute_raw	1
@@ -564,6 +565,7 @@ src/core/harness/client-setup.ts	sql_template	1
 src/core/heal-audit.ts	execute_raw	3
 src/core/health-memo.ts	execute_raw	1
 src/core/held-embedding.ts	execute_raw	2
+src/core/imessage/imessage-source.ts	execute_raw	3	came from #9634 (imessage source kind, owner-only sources), written before this ratchet was cut
 src/core/import-chunk-reuse.ts	execute_raw	2
 src/core/import-file.ts	execute_raw	7
 src/core/import-identity.ts	execute_raw	1
@@ -1131,7 +1133,7 @@ src/core/source-health.ts	execute_raw	6
 src/core/source-resolver.ts	execute_raw	15
 src/core/sources-load.ts	execute_raw	4
 src/core/sources-not-readable.ts	execute_raw	1
-src/core/sources-ops.ts	execute_raw	15
+src/core/sources-ops.ts	execute_raw	16	came from #9634 (imessage source kind, owner-only sources), written before this ratchet was cut
 src/core/spend-log.ts	sql_template	2
 src/core/sql-query.ts	execute_raw	2
 src/core/storage-manifest/adopt.ts	execute_raw	4
