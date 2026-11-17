@@ -281,7 +281,7 @@ async function applyFactReserve(engine: BrainEngine, query: string, results: Sea
       const c = group[0]!;
       const restated = group.length > 1 ? ` (stated ${group.length} times, last ${said(group[group.length - 1]!)})` : '';
       const row = factRow(c, 0, c.entity_slug && pageSlugs.has(`${c.source_id}\u0000${c.entity_slug}`) ? c.entity_slug : undefined, fromQuoted.has(Number(c.id)), dates);
-      const window = c.valid_until ? c : { ...c, valid_until: ends.get(Number(c.id)) ?? null };
+      const window = c.valid_until ? c : { ...c, valid_until: ends.get(Number(group[group.length - 1]!.id)) ?? null };
       row.chunk_text = `${factDateHeader(window, undefined, dates?.get(Number(c.id)))}\n${c.fact}${restated}`;
       const cost = resultTokens(row);
       if (cost > left) continue;

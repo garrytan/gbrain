@@ -74,7 +74,7 @@ import {
 import {
   valueHash,
   normalizeDimension,
-  isNovelDimension, isBackdatedObservation, ONTOLOGY_SUPERSEDE_GUARD, NOT_CONVERSATION_SLOT_SQL,
+  isNovelDimension, isBackdatedObservation, ONTOLOGY_SUPERSEDE_GUARD, NOT_CONVERSATION_SLOT_SQL, CONVERSATION_SLOT_SQL,
 } from './chronicle/ontology.ts';
 import { logBatchRetry as auditLogBatchRetry, logBatchExhausted as auditLogBatchExhausted } from './audit/batch-retry-audit.ts';
 import { supportsHnswIterativeScan } from './vector-index.ts';
@@ -2148,6 +2148,13 @@ export class PGLiteEngine implements BrainEngine {
       [sourceId, obs.entitySlug, dimension],
     );
     const current = cur.rows[0] as { id: number; value_hash: string; valid_from: string | null } | undefined;
+    // GBRA-574 B2: a conversation fact holding this exact stint key gives up its slot, so the observation is stored.
+    const freeKey = () => validFrom == null ? null : this.db.query(
+      `UPDATE facts SET dimension = NULL, value = NULL, value_hash = NULL, dim_status = NULL
+        WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND value_hash = $4 AND source_markdown_slug = $5
+          AND valid_from = $6::timestamptz AND ${CONVERSATION_SLOT_SQL}`,
+      [sourceId, obs.entitySlug, dimension, vh, obs.source, validFrom],
+    );
 
     if (current && current.value_hash === vh && !isBackdatedObservation(validFrom, current.valid_from)) {
       // This provenance already observed the value during the current stint.
@@ -2158,6 +2165,7 @@ export class PGLiteEngine implements BrainEngine {
         [sourceId, obs.entitySlug, dimension, vh, obs.source, current.valid_from],
       );
       if (seen.rows.length) return { action: 'noop', factId: null, supersededId: null };
+      await freeKey();
       const ins = await this.db.query(
         `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, dimension, value, value_hash, dim_status,
                             confidence, source, source_markdown_slug, valid_from, valid_until, expired_at, consolidated_into)
@@ -2171,6 +2179,7 @@ export class PGLiteEngine implements BrainEngine {
         : { action: 'noop', factId: null, supersededId: null };
     }
 
+    await freeKey();
     const ins = await this.db.query(
       `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, dimension, value, value_hash, dim_status,
                           confidence, source, source_markdown_slug, valid_from, valid_until)

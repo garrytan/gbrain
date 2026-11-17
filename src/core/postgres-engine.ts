@@ -58,7 +58,7 @@ import { driverPoolStats, enginePoolStats, type DriverPoolStats } from './postgr
 import {
   valueHash,
   normalizeDimension,
-  isNovelDimension, isBackdatedObservation, ONTOLOGY_SUPERSEDE_GUARD, NOT_CONVERSATION_SLOT_SQL,
+  isNovelDimension, isBackdatedObservation, ONTOLOGY_SUPERSEDE_GUARD, NOT_CONVERSATION_SLOT_SQL, CONVERSATION_SLOT_SQL,
 } from './chronicle/ontology.ts';
 import { logDbDisconnect } from './audit/db-disconnect-audit.ts';
 import { logPoolRecovery } from './audit/pool-recovery-audit.ts';
@@ -1973,6 +1973,10 @@ export class PostgresEngine implements BrainEngine {
        ORDER BY valid_from DESC NULLS LAST, confidence DESC, id DESC
        LIMIT 1`;
     const current = cur[0];
+    // GBRA-574 B2: a conversation fact holding this exact stint key gives up its slot, so the observation is stored.
+    const freeKey = () => validFrom == null ? null : sql`UPDATE facts SET dimension = NULL, value = NULL, value_hash = NULL, dim_status = NULL
+      WHERE source_id = ${sourceId} AND entity_slug = ${obs.entitySlug} AND dimension = ${dimension} AND value_hash = ${vh}
+        AND source_markdown_slug = ${obs.source} AND valid_from = ${validFrom}::timestamptz AND ${sql.unsafe(CONVERSATION_SLOT_SQL)}`;
 
     if (current && current.value_hash === vh && !isBackdatedObservation(validFrom, current.valid_from)) {
       // Same value → corroboration, or noop when this provenance already
@@ -1984,6 +1988,7 @@ export class PostgresEngine implements BrainEngine {
            AND COALESCE(valid_from, '-infinity'::timestamptz) >= COALESCE(${current.valid_from}::timestamptz, '-infinity'::timestamptz)
          LIMIT 1`;
       if (seen.length) return { action: 'noop', factId: null, supersededId: null };
+      await freeKey();
       const ins = await sql<{ id: number }[]>`
         INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, dimension, value, value_hash, dim_status,
                            confidence, source, source_markdown_slug, valid_from, valid_until, expired_at, consolidated_into)
@@ -1997,6 +2002,7 @@ export class PostgresEngine implements BrainEngine {
         : { action: 'noop', factId: null, supersededId: null };
     }
 
+    await freeKey();
     const ins = await sql<{ id: number }[]>`
       INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, dimension, value, value_hash, dim_status,
                          confidence, source, source_markdown_slug, valid_from, valid_until)

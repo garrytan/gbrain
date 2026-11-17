@@ -29,6 +29,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { TrustTier } from '../trust/tier.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
+import { CONVERSATION_SLOT_SQL } from '../chronicle/ontology.ts';
 import { factsFtsDocument, getFtsLanguage } from '../fts-language.ts';
 import { getEmbeddingModel } from '../ai/gateway.ts';
 import { privateProvenanceFilterUnderPolicy } from './private-visibility.ts';
@@ -330,7 +331,7 @@ export async function countUncomparableFacts(engine: BrainEngine, scope: FactPoo
 }
 
 /**
- * GBRA-574 B2: every active slot row (dim_status active) of the given (source, entity, dimension) slots under exactly
+ * GBRA-574 B2: every active conversation slot row (dim_status active; ontology observations never shape a window) of the given (source, entity, dimension) slots under exactly
  * the pool's read policy, so a row the caller cannot see never shapes a window the caller sees; ordered by valid_from, id.
  */
 export async function readSlotRows(engine: BrainEngine, scope: FactPoolScope, slots: ReadonlyArray<{ source_id: string; entity_slug: string; dimension: string }>): Promise<SlotRow[]> {
@@ -339,7 +340,7 @@ export async function readSlotRows(engine: BrainEngine, scope: FactPoolScope, sl
   const n = params.length;
   return engine.executeRaw<SlotRow>(
     `SELECT f.id, f.source_id, f.entity_slug, f.dimension, f.value_hash, f.valid_from, f.source_markdown_slug, f.fact FROM facts f
-     WHERE ${where} AND f.dimension IS NOT NULL AND f.value_hash IS NOT NULL AND COALESCE(f.dim_status, 'active') = 'active'
+     WHERE ${where} AND f.dimension IS NOT NULL AND f.value_hash IS NOT NULL AND COALESCE(f.dim_status, 'active') = 'active' AND ${CONVERSATION_SLOT_SQL}
        AND (f.source_id, f.entity_slug, f.dimension) IN (SELECT * FROM unnest($${n + 1}::text[], $${n + 2}::text[], $${n + 3}::text[]))
      ORDER BY f.valid_from, f.id`,
     [...params, slots.map(s => s.source_id), slots.map(s => s.entity_slug), slots.map(s => s.dimension)]);

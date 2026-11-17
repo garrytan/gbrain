@@ -24,6 +24,9 @@ import { valueHash } from '../src/core/chronicle/ontology.ts';
 import { expireGonePageFacts } from '../src/core/facts/gone-page-facts.ts';
 import { dropRekeyDuplicates } from '../src/core/facts/ontology-rekey.ts';
 import { classifyOntologyFacts } from '../src/core/repair/ontology-facts.ts';
+import { mergeTwinInto } from '../src/core/persistence/twin-merge.ts';
+import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
+import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { conversationRunEstimate } from '../src/core/facts/conversation-budget.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { handleToolCall } from '../src/mcp/server.ts';
@@ -343,6 +346,68 @@ for (const backend of testBackends()) {
         expect((await slotRows()).filter(r => r.dimension)).toHaveLength(1);
         expect((await engine.getOntology(ALICE, { sourceId: 'default' })).map(v => [v.dimension, v.value, v.source])).toEqual([['location', 'Lisbon', 'manual']]);
         expect(await engine.discoverOntologyDimensions({ sourceId: 'default' })).toEqual(before);
+      });
+
+      const convSlot = (entity: string, rowNum: number, value = 'Lisbon', page = 'meetings/chat-a', day = P1) => engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, source, source_markdown_slug, row_num, visibility, confidence, valid_from,
+          dimension, value, value_hash, dim_status)
+        VALUES ('default', $1, $2, 'fact', 'cli:extract-conversation-facts', $3, $4, 'private', 1, $5::timestamptz, 'location', $6, $7, 'active')`,
+        [entity, `${entity} lives in ${value}.`, page, rowNum, `${day}T00:00:00Z`, value, valueHash(value)]);
+
+      test('a proposal on the exact key a conversation slot holds is stored, and the conversation fact gives up its slot', async () => {
+        await putPages([PAGE]); await extract([PAGE]);
+        const merged = await engine.mergeOntologyFact({ entitySlug: ALICE, dimension: 'location', value: 'Lisbon', source: PAGE.slug, validFrom: P1, sourceId: 'default' });
+        expect(merged.action).toBe('inserted');
+        expect((await engine.getOntology(ALICE, { sourceId: 'default' })).map(v => [v.value, v.source])).toEqual([['Lisbon', PAGE.slug]]);
+        expect((await slotRows()).map(r => [r.fact, r.dimension])).toEqual([['Alice Example lives in Lisbon.', null]]);
+      });
+
+      test('a re-key keeps the ontology observation over a colliding conversation slot', async () => {
+        await convSlot('people/bob-example', 0);
+        await engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, source, source_markdown_slug, visibility, confidence, valid_from, dimension, value, value_hash, dim_status)
+          VALUES ('default', 'people/bob-old-example', 'location: Lisbon', 'fact', 'manual', 'meetings/chat-a', 'private', 0.7, $1::timestamptz, 'location', 'Lisbon', $2, 'active')`, [`${P1}T00:00:00Z`, valueHash('Lisbon')]);
+        await dropRekeyDuplicates(engine, 'default', { where: 'f.entity_slug = $2', entity: '$3::text', sms: 'f.source_markdown_slug', params: ['people/bob-old-example', 'people/bob-example'] });
+        const rows = await engine.executeRaw<{ source: string; dimension: string | null }>(`SELECT source, dimension FROM facts WHERE source_id='default' AND entity_slug LIKE 'people/bob%' ORDER BY source`);
+        expect(rows).toEqual([{ source: 'cli:extract-conversation-facts', dimension: null }, { source: 'manual', dimension: 'location' }]);
+      });
+
+      test('a twin merge over two colliding conversation slots completes and keeps both facts', async () => {
+        for (const slug of ['people/dan-example', 'people/dan-example-2']) await call('put_page', { slug, content: '---\ntitle: Dan Example\ntype: person\n---\n# Dan Example\n' });
+        await convSlot('people/dan-example', 0); await convSlot('people/dan-example-2', 1);
+        const id = async (slug: string) => Number((await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE source_id='default' AND slug=$1", [slug]))[0]!.id);
+        const [{ incarnation }] = await engine.executeRaw<{ incarnation: string }>("SELECT incarnation::text AS incarnation FROM sources WHERE id='default'");
+        const survivor = { page_id: await id('people/dan-example'), slug: 'people/dan-example' }, twin = { page_id: await id('people/dan-example-2'), slug: 'people/dan-example-2' };
+        await engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => mergeTwinInto(tx, { sourceId: 'default', incarnation, survivor, twin }), TEST_WRITE_ATTRIBUTION));
+        const rows = await engine.executeRaw<{ entity_slug: string; dimension: string | null }>(`SELECT entity_slug, dimension FROM facts WHERE source_id='default' AND entity_slug LIKE 'people/dan%' ORDER BY row_num`);
+        expect(rows).toEqual([{ entity_slug: 'people/dan-example', dimension: 'location' }, { entity_slug: 'people/dan-example', dimension: null }]);
+      });
+
+      test('a retention purge keeps the value of a fenced ontology observation filed on the page', async () => {
+        await engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, source, source_markdown_slug, row_num, visibility, confidence, valid_from, dimension, value, value_hash, dim_status)
+          VALUES ('default', $1, 'location: Lisbon', 'fact', 'manual', $1, 0, 'private', 0.7, $2::timestamptz, 'location', 'Lisbon', $3, 'active')`, [ALICE, `${P1}T00:00:00Z`, valueHash('Lisbon')]);
+        await expireGonePageFacts(engine, [{ source_id: 'default', slug: ALICE }]);
+        const [row] = await engine.executeRaw<{ dimension: string | null; value: string | null }>("SELECT dimension, value FROM facts WHERE source_id='default' AND source='manual'");
+        expect(row).toEqual({ dimension: 'location', value: 'Lisbon' });
+      });
+
+      test('a return to an earlier value keeps the restated value open', async () => {
+        const pages: Page[] = [
+          { slug: 'meetings/chat-a', title: 'Chat A', date: P1, said: [LISBON] },
+          { slug: 'meetings/chat-b', title: 'Chat B', date: P2, said: [{ fact: 'Alice Example moved to Porto.', valid: P2, slot: ['location', 'Porto'] }] },
+          { slug: 'meetings/chat-c', title: 'Chat C', date: P3, said: [] },
+        ];
+        await putPages(pages); await extract(pages.slice(0, 2));
+        await engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, source, source_markdown_slug, row_num, visibility, confidence, valid_from,
+            dimension, value, value_hash, dim_status)
+          VALUES ('default', $1, 'Alice Example lives in Lisbon.', 'fact', 'cli:extract-conversation-facts', 'meetings/chat-c', 0, 'private', 1, $2::timestamptz, 'location', 'Lisbon', $3, 'active')`,
+          [ALICE, `${P3}T00:00:00Z`, valueHash('Lisbon')]);
+        const lisbon = (await block(LIVE_Q)).find(r => r.includes('Alice Example lives in Lisbon.'));
+        expect(lisbon?.split('\n')[0]).toBe(header(P1, P1));
+      });
+
+      test('an ontology observation never ends a conversation window', async () => {
+        await putPages([PAGE]); await extract([PAGE]);
+        await engine.mergeOntologyFact({ entitySlug: ALICE, dimension: 'location', value: 'Porto', source: PAGE.slug, validFrom: P2, sourceId: 'default' });
+        expect(line('Alice Example lives in Lisbon.', await block(LIVE_Q))).toBe(quoted(header(P1, P1), 'Alice Example lives in Lisbon.'));
       });
 
       test('a rename that collides two conversation slots keeps both facts and clears the losing slot', async () => {
