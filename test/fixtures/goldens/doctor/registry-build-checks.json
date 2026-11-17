@@ -255,6 +255,10 @@
       },
       {
         "category": "ops",
+        "name": "rust_engine_addon"
+      },
+      {
+        "category": "ops",
         "name": "ipc_socket_path"
       },
       {
