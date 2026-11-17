@@ -53,6 +53,7 @@ import { describeCursorPins, readCursorPinsState, removeCursorSkillPins, syncCur
 import { describeResolverSetup, removeSkillResolverSetup, syncSkillResolverSetup, type ResolverSetupResult } from '../core/setup/skill-resolver-setup.ts';
 import type { ResolverHarness } from '../core/setup/skill-resolver-hook.ts';
 import { isValidSourceId } from '../core/source-id.ts';
+import { ACCESS_ID_RE } from '../core/access/principals.ts';
 import { peekLock } from '../core/pglite-lock.ts';
 import { claudePluginProvidesName, codexPluginProvidesName } from '../core/bootstrap/plugin-lanes.ts';
 import { claudeUserSettingsPath, type ClaudeHookEvent } from '../core/bootstrap/host-specs.ts';
@@ -171,6 +172,10 @@ Flags:
   --labelled-only      With --serves several: each member's key reads only pages labelled for
                        that member (readable_by or a rule), never the owner's. Opt-in.
   --members-file PATH  The same, one id per line.
+  --owner ID           With --serves several: the brain owner, added as a member and named with
+                       gbrain access owner set when the brain has none (default: your login name
+                       as a member id). An existing owner is kept. No key is rebound: setup lists
+                       the keys bound to no member with the auth rescope command for each.
   --stdio-member ID    claude-code or codex: write serve --stdio-member ID into this harness's
                        MCP entry, so only its sessions read as ID (an enabled member, or one
                        of --members). Other harnesses on this host are unchanged. Use it for a
@@ -309,6 +314,8 @@ interface SetupFlags {
   membersFile?: string;
   /** GST-2670: --labelled-only, passed to access serves several. */
   labelledOnly?: boolean;
+  /** GBRA-585 D: --owner, the brain owner --serves several names when none is set (default: the login name). */
+  owner?: string;
   /** GST-363: written into this harness's MCP entry as serve --stdio-member; never into config. */
   stdioMember?: string;
   noStdioMember: boolean;
@@ -324,7 +331,7 @@ interface SetupFlags {
   team?: boolean;
 }
 
-const VALUE_FLAGS = new Set(['--shape', '--notes', '--docs', '--transcripts', '--surface', '--scope', '--name', '--source', '--gbrain-bin', '--workspace', '--skill-loading', '--agent', '--live-fraction', '--pins-route', '--owner-sender', '--serves', '--members', '--members-file', '--stdio-member']);
+const VALUE_FLAGS = new Set(['--shape', '--notes', '--docs', '--transcripts', '--surface', '--scope', '--name', '--source', '--gbrain-bin', '--workspace', '--skill-loading', '--agent', '--live-fraction', '--pins-route', '--owner-sender', '--serves', '--members', '--members-file', '--stdio-member', '--owner']);
 
 function parseFlags(args: string[]): SetupFlags | string {
   const value = (flag: string): string | undefined => {
@@ -347,6 +354,9 @@ function parseFlags(args: string[]): SetupFlags | string {
   if (serves !== undefined && serves !== 'one' && serves !== 'several') return `unknown --serves '${serves}'; pass one or several`;
   if ((args.includes('--members') || args.includes('--members-file')) && serves !== 'several') return '--members and --members-file name the people of --serves several';
   if (args.includes('--labelled-only') && serves !== 'several') return '--labelled-only applies to the people of --serves several';
+  const owner = value('--owner');
+  if (owner !== undefined && serves !== 'several') return '--owner names the brain owner of --serves several';
+  if (owner !== undefined && !ACCESS_ID_RE.test(owner)) return `invalid --owner '${owner}'; a member id is lower-case letters, digits, '.', '_' and '-' (1-64 characters, starting with a letter or digit)`;
   let stdioMember: string | undefined;
   try { stdioMember = parseStdioMemberFlag(args); } catch (e) { return `${(e as Error).message}; nothing was written`; }
   const noStdioMember = args.includes('--no-stdio-member');
@@ -411,6 +421,7 @@ function parseFlags(args: string[]): SetupFlags | string {
     ...(value('--members') !== undefined ? { members: value('--members') } : {}),
     ...(value('--members-file') !== undefined ? { membersFile: value('--members-file') } : {}),
     ...(args.includes('--labelled-only') ? { labelledOnly: true } : {}),
+    ...(owner !== undefined ? { owner } : {}),
     ...(stdioMember !== undefined ? { stdioMember } : {}),
     noStdioMember,
     ...layout,

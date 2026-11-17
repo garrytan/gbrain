@@ -48,8 +48,8 @@ export interface OpenPagesError { code: string; message: string; retry: string }
 export interface OpenPagesRead { open_pages: OpenPages | null; open_pages_error?: OpenPagesError }
 
 export interface OpenPagesOptions {
-  /** Members a run is about to add or keep, the source their new keys write (access serves several), and whether it marks them labelled-only. */
-  planned?: { members: readonly string[]; source: string; labelledOnly: boolean };
+  /** Members a run is about to add or keep, the source their new keys write (access serves several), whether it marks them labelled-only, and the owner once the run is done. */
+  planned?: { members: readonly string[]; source: string; labelledOnly: boolean; owner?: string | null };
   /** Prefixes a rule the run adds will cover, left out of the count. */
   exclude?: ReadonlyArray<{ source: string; prefix: string }>;
 }
@@ -150,7 +150,7 @@ export async function withOpenScope<T>(engine: BrainEngine, opts: OpenPagesOptio
     if (state?.unreadable === true) {
       throw Object.assign(new Error('the folder-rule state cannot be read, so every page reads as covered and a count would say 0'), { code: 'open_pages_unknown' });
     }
-    const owner = await ownerMemberId(engine);
+    const owner = opts.planned?.owner !== undefined ? opts.planned.owner : await ownerMemberId(engine);
     const { reads, privateSources } = await memberReads(engine, owner, opts.planned);
     const reading = [...reads.values()].filter(s => s.size > 0);
     const readSources = [...new Set(reading.flatMap(s => [...s]))].sort();

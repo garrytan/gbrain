@@ -13,16 +13,37 @@
  *   - `--serves several --members a,b` runs `gbrain access serves several --yes --json` (members, one folder rule per
  *     member, one bound key per member in a 0600 file) and proves the labels with one bound read per member
  *     per other member (`gbrain find people/<other>/ --as <member> --json`): none returns a page.
+ *   - GBRA-585 D: on a brain with no owner it also names one: --owner <id>, else the login name as a member id
+ *     (loginOwnerId), passed to the child as --owner. An existing owner is kept and no credential is rebound.
  */
 import { closeSync, existsSync, openSync, readSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { openclawStateDir } from '../core/setup/brain-first.ts';
 import { opError, OperationError } from '../core/ops/contract.ts';
+import { ACCESS_ID_RE } from '../core/access/principals.ts';
 import { bunSpawnSync } from '../core/spawn.ts';
 import { readRoster, rosterEmpty, type ServesReceipt, type ServesStatus, receiptLines, receiptOk } from './access-serves.ts';
 
-export interface ServesFlags { serves?: 'one' | 'several'; members?: string; membersFile?: string; source?: string; stdioMember?: string; labelledOnly?: boolean; dryRun: boolean }
+export interface ServesFlags { serves?: 'one' | 'several'; members?: string; membersFile?: string; source?: string; stdioMember?: string; labelledOnly?: boolean; owner?: string; dryRun: boolean }
+
+/** GBRA-585 D: the login name of the person running setup as a member id (lower-cased, other characters as '-'), or null when none fits. */
+export function loginOwnerId(login?: string): string | null {
+  let name = login;
+  if (name === undefined) { try { name = userInfo().username; } catch { name = process.env.USER ?? process.env.LOGNAME ?? ''; } }
+  const id = name.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[^a-z0-9]+/, '').slice(0, 64).replace(/[._-]+$/, '');
+  return ACCESS_ID_RE.test(id) ? id : null;
+}
+
+/** The owner --serves several names when the brain has none: --owner, else the login name. */
+function servesOwner(flags: ServesFlags, harness: string, roster: string[]): ServesOwner | OperationError {
+  if (flags.owner) return { id: flags.owner, from: 'flag' };
+  const id = loginOwnerId();
+  return id ? { id, from: 'login' } : opError('invalid_params', `Setup names the brain owner from your login name, and it does not make a member id; nothing was written.`,
+    `Name the owner yourself: run gbrain setup ${harness} --serves several --members ${roster.join(',')} again with --owner followed by the owner's member id.`);
+}
+
+export interface ServesOwner { id: string; from: 'flag' | 'login' }
 
 /** GST-363: the --stdio-member this harness entry will carry (member) and the one it carries now (previous). */
 export interface EntryBinding { member: string | null; previous: string | null }
@@ -56,6 +77,8 @@ export interface ServesOutcome {
   receipt?: ServesReceipt;
   proof?: ProofLine[];
   stdio?: { member: string | null; action: 'write' | 'keep' | 'remove' | 'unbound'; detail: string };
+  /** GBRA-585 D: where the owner setup asked the child to name came from. */
+  owner_from?: ServesOwner['from'];
   error?: string;
 }
 
@@ -108,11 +131,12 @@ export function servesOneRefusal(status: ServesStatus | null, harness: string, e
 }
 
 /** --serves several: the labelling child (preview on a dry run) and, when applied, one bound read per member. */
-function runServesSeveral(launcher: string, roster: string[], flags: ServesFlags): Omit<ServesOutcome, 'brain_serves'> {
-  const r = child(launcher, ['access', 'serves', 'several', '--members', roster.join(','), ...(flags.source ? ['--source', flags.source] : []), ...(flags.labelledOnly ? ['--labelled-only'] : []), ...(flags.dryRun ? [] : ['--yes']), '--json']);
+function runServesSeveral(launcher: string, roster: string[], flags: ServesFlags, owner: ServesOwner | undefined): Omit<ServesOutcome, 'brain_serves'> {
+  const r = child(launcher, ['access', 'serves', 'several', '--members', roster.join(','), ...(flags.source ? ['--source', flags.source] : []), ...(flags.labelledOnly ? ['--labelled-only'] : []), ...(owner ? ['--owner', owner.id] : []), ...(flags.dryRun ? [] : ['--yes']), '--json']);
   const receipt = parsed<ServesReceipt>(r.stdout);
-  if (!receipt || !('members' in receipt)) return { mode: 'several', error: (r.stderr || r.stdout).trim() || 'gbrain access serves several failed' };
-  if (flags.dryRun || receipt.error || !receipt.applied) return { mode: 'several', receipt };
+  const from = owner ? { owner_from: owner.from } : {};
+  if (!receipt || !('members' in receipt)) return { mode: 'several', ...from, error: (r.stderr || r.stdout).trim() || 'gbrain access serves several failed' };
+  if (flags.dryRun || receipt.error || !receipt.applied) return { mode: 'several', ...from, receipt };
   const source = flags.source ? ['--source-id', flags.source] : [];
   const read = (member: string, prefix: string, limit: number) => {
     const found = child(launcher, ['find', prefix, '--as', member, '--limit', String(limit), ...source, '--json']);
@@ -130,10 +154,10 @@ function runServesSeveral(launcher: string, roster: string[], flags: ServesFlags
     }
     proof.push({ member, own: own.pages.length, leaked });
   }
-  return { mode: 'several', receipt, proof };
+  return { mode: 'several', ...from, receipt, proof };
 }
 
-export interface ServesPlan { roster: string[]; status: ServesStatus | null }
+export interface ServesPlan { roster: string[]; status: ServesStatus | null; owner?: ServesOwner }
 
 /**
  * Before setup writes anything: the roster (an empty one refuses), the brain's serves view (none for a brain setup is
@@ -152,7 +176,11 @@ export function servesPreflight(flags: ServesFlags, launcher: string, harness: s
   const read = hasBrain && !liveOurs ? readServesStatus(launcher) : null;
   if (read && 'error' in read) return servesUnreadable(read.error, harness);
   const status = read?.status ?? null;
-  if (flags.serves === 'several') return { roster, status };
+  if (flags.serves === 'several') {
+    const owner = servesOwner(flags, harness, roster);
+    if (owner instanceof OperationError) return owner;
+    return { roster, status, owner };
+  }
   if (named && !status?.enabled_members.includes(named)) {
     return opError('invalid_params', `--stdio-member ${named} is not an enabled member of this brain, so the ${harness} sessions would read as nobody; nothing was written.`,
       `Name one of: ${status?.enabled_members.join(', ') || '(none yet; label them with --serves several --members <ids>)'}.`,
@@ -165,8 +193,8 @@ export function servesPreflight(flags: ServesFlags, launcher: string, harness: s
 /** The serves part of a setup run (a preview on a dry run), or null when it has nothing to do or say: a one-person brain with no bound entry. */
 export function servesApply(flags: ServesFlags, launcher: string, harness: string, plan: ServesPlan, hasBrain: boolean, entry: EntryBinding = { member: null, previous: null }): ServesOutcome | null {
   const several = flags.serves === 'several';
-  const labelled = !several ? null : hasBrain || !flags.dryRun ? runServesSeveral(launcher, plan.roster, flags)
-    : { mode: 'several' as const, note: `the new brain is created first; then ${plan.roster.join(', ')} each get a member, a folder rule and a bound key` };
+  const labelled = !several ? null : hasBrain || !flags.dryRun ? runServesSeveral(launcher, plan.roster, flags, plan.owner)
+    : { mode: 'several' as const, note: `the new brain is created first; then ${plan.roster.join(', ')} each get a member, a folder rule and a bound key${plan.owner ? `, and ${plan.owner.id} is named the brain owner` : ''}` };
   const reread = several && !flags.dryRun ? readServesStatus(launcher) : null;
   const status = reread ? ('status' in reread ? reread.status : null) : plan.status;
   const preview = several && flags.dryRun && status?.serves !== 'several';
@@ -218,6 +246,8 @@ export function servesLines(o: ServesOutcome, dryRun: boolean): string[] {
     ...(o.proof ?? []).map(p => p.leaked.length
       ? `  proof      ${p.member} reads pages of another member's folder: ${p.leaked.join(', ')}`
       : `  proof      a read bound to ${p.member} sees its own folder (${p.own} page(s)) and no page of another member's folder${openTail(o.receipt, p.member)}`),
+    ...(o.owner_from === 'login' && o.receipt?.owner && o.receipt.owner.action !== 'keep' && o.receipt.owner.action !== 'blocked'
+      ? [`  owner      ${o.receipt.owner.id} is named from your login name; to name someone else, ${dryRun ? 'pass --owner <id>' : 'add them (gbrain access member add <id>) and run gbrain access owner set <id>'}`] : []),
     ...(o.stdio ? [`  stdio      ${o.stdio.detail}`] : []),
     ...(o.note ? [`  labels     ${o.note}`] : []),
     ...(o.error ? [`  error      ${o.error}`] : []),

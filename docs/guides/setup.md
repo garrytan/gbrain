@@ -179,6 +179,12 @@ other pages no rule or `readable_by` restricts, which every member's key still r
 by folder, with the commands that label them; `--labelled-only` keeps each member to
 the pages labelled for it instead (never the owner). See
 [pages every member's key can read](access-designations.md#pages-every-members-key-can-read).
+On a brain with no owner, setup also names one: `--owner <id>`, or by default your
+login name as a member id. It adds that member and runs `gbrain access owner set`;
+the preview shows it first, and an owner that is already set is kept. No key is
+rebound: the receipt lists each live token or OAuth client bound to no member with
+the `gbrain auth rescope --token|--client <name> --member <owner>` command that
+binds it, so you bind your own keys on purpose.
 Setup leaves the stdio server unbound: stdio sessions read only pages no rule
 restricts, and the harness's instructions keep the one-person scoping lines.
 For a Claude Code or Codex install only one person uses, bind that harness alone:
