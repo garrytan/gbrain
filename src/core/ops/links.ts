@@ -635,7 +635,10 @@ const traverse_graph: Operation = {
       );
       const why = `The walk stopped at its cap (${TRAVERSE_WALK_ROW_CAP} pages, ${TRAVERSE_PATH_ROW_CAP} edge rows; shallowest first), so deeper edges are missing; walk one level shallower or narrow with link_type or direction for a complete walk.`;
       const fix = depth > 1 ? readFix(why, {
-        mcp: { tool: 'traverse_graph', arguments: { slug, depth: depth - 1, ...(linkType ? { link_type: linkType } : {}), direction } },
+        mcp: { tool: 'traverse_graph', arguments: {
+          slug, depth: depth - 1, ...(linkType ? { link_type: linkType } : {}), direction,
+          ...(p.source_id !== undefined ? { source_id: p.source_id } : {}), ...(p.all_sources === true ? { all_sources: true } : {}),
+        } },
       }) : undefined;
       ctx.emitNotice?.({ code: 'graph_walk_truncated', kind: 'degraded', why, ...(fix ? { fix } : {}) });
     }
