@@ -1,4 +1,0 @@
-**On PGLite, a managed `gbrain sync` that holds or skips many pages in a row now stops promptly on SIGTERM and keeps its timers running, instead of going silent for seconds at a time.**
-
-### Fixed
-- PGLite runs Postgres inside the gbrain process and answers queries without ever handing control back to the event loop, so a managed pass that settled pages without waiting on a write (pages held for file drift, for example) could run for several seconds at a time with no timer, progress watchdog or signal handler able to run. On a test mirror whose pass held page after page, the longest stall was 8.3 seconds and a SIGTERM took 7.8 seconds to reach its handler; with this fix the longest stall was 89 milliseconds and the handler ran 21 milliseconds after the signal. Each step of a PGLite managed pass now lets the event loop take a turn first. Postgres syncs are unchanged (GST-2914).

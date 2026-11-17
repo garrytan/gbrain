@@ -28,12 +28,13 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-  const page = (slug: string, type: string, frontmatter?: Record<string, unknown>) =>
-    engine.putPage(slug, { type: type as 'person', title: slug.split('/')[1], compiled_truth: `${slug} body`, timeline: '', ...(frontmatter ? { frontmatter } : {}) });
+  const page = (slug: string, type: string, frontmatter?: Record<string, unknown>, body = `${slug} body`) =>
+    engine.putPage(slug, { type: type as 'person', title: slug.split('/')[1], compiled_truth: body, timeline: '', ...(frontmatter ? { frontmatter } : {}) });
   await page('people/alice-example', 'person');
   await page('people/bob-example', 'person');
   await page('people/priv-example', 'person', { visibility: 'private' });
-  await page('companies/acme-example', 'company');
+  // GST-2957: a world-only remote caller sees a body-excerpt context only when the page still holds it.
+  await page('companies/acme-example', 'company', undefined, `companies/acme-example body. founded by bob ${'x'.repeat(400)}`);
   await page('companies/lonely-example', 'company');
   await engine.addLink('people/alice-example', 'companies/acme-example', 'alice backed acme', 'invested_in', 'markdown');
   await engine.addLink('companies/acme-example', 'people/bob-example', `founded by bob ${'x'.repeat(400)}`, 'founded', 'markdown');
@@ -113,6 +114,16 @@ describe('traverse_graph hops', () => {
     const later = await runLocal({ slug: 'people/alice-example', hops: [HOPS[0], { link_type: 'advises', toward: 'subject' }] }, notices);
     expect(later.diagnostics).toMatchObject({ status: 'empty_hop', empty_hop: 2 });
     expect(notices.pop()).toMatchObject({ fix: { mcp: { tool: 'traverse_graph', arguments: { hops: [HOPS[0]] } } } });
+    await runLocal({ slug: 'companies/lonely-example', hops: [{ link_type: 'founded', toward: 'subject' }] }, notices);
+    const unscoped = (notices.pop() as any).fix.mcp.arguments;
+    expect(unscoped).not.toHaveProperty('source_id');
+    expect(unscoped).not.toHaveProperty('all_sources');
+    for (const scope of [{ source_id: 'default' }, { all_sources: true }]) {
+      await runLocal({ slug: 'companies/lonely-example', hops: [{ link_type: 'founded', toward: 'subject' }], ...scope }, notices);
+      expect(notices.pop()).toMatchObject({ fix: { mcp: { tool: 'traverse_graph', arguments: { depth: 1, ...scope } } } });
+      await runLocal({ slug: 'people/alice-example', hops: [HOPS[0], { link_type: 'advises', toward: 'subject' }], ...scope }, notices);
+      expect(notices.pop()).toMatchObject({ fix: { mcp: { tool: 'traverse_graph', arguments: { hops: [HOPS[0]], ...scope } } } });
+    }
   });
 
   test('hops is advertised on the full surface only; the starter list stays inside its budget', () => {

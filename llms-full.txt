@@ -4594,6 +4594,7 @@ Start with `gbrain doctor`. For database access failures, use `gbrain engine sta
 - [MCP task guide](docs/mcp/README.md) — deployment and per-client setup (Claude Desktop, Code, Cursor, ChatGPT, Perplexity, Cowork)
 - [MCP administration](docs/mcp/ADMIN.md) — owner dashboard access, client registration, OAuth, permissions, and token recovery
 - [Evals](docs/eval/) and [research](docs/research/) — methods and results
+- [Rust engine plan](docs/designs/RUST_ENGINE.md) — proposed design for a third storage engine, not built yet; its [research maps](docs/designs/rust-engine/research/README.md) and [review record](docs/designs/rust-engine/review-record.md)
 - [`docs/ethos/`](docs/ethos/) — philosophy (thin harness, fat skills, markdown as recipes, origin story)
 - [`AGENTS.md`](AGENTS.md) — entry point for non-Claude agents
 - [`CLAUDE.md`](CLAUDE.md) — entry point for Claude Code (deep operating context)
@@ -8459,7 +8460,8 @@ provider for comparison.
 The response carries `similar_active`: `{ state, candidates, semantic_review,
 next }`. `state` is `checked`, `not_checked_no_embedding` or
 `not_checked_pending`. `candidates` lists up to five other active facts about
-the same entity, with the same visibility (world only for remote callers),
+the same entity, with the same visibility (world only for remote callers
+other than the brain owner),
 whose embedding is at cosine 0.80 or higher to the withdrawn claim, as
 `{ fact_id, similarity }` (no stored text; zero model calls). `semantic_review`
 is `scheduled`, `off`, `unavailable` or `opted_out`; `next` tells the agent
@@ -8661,7 +8663,8 @@ source and `scope_entity` match an accepted card's `(source_id, slug)`.
 
 `entity_facts[]` holds the packed entities' own facts: up to 5 per card, newest
 first, read in the card's own source with the card's visibility (world-only
-unless a trusted-local caller passed `include_private`) and eligibility. Each
+unless a trusted-local caller passed `include_private` or the caller is the
+brain owner's own remote credential) and eligibility. Each
 row is `{ source_id, slug, fact_id, fact, kind, entity_slug, valid_from?,
 context, confidence, attributed_to, provenance, trust_tier?, origin? }`, where
 `(source_id, slug)` names the card. `facts[]` is unchanged hot memory, so a

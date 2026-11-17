@@ -81,8 +81,9 @@ export function pageDocument(page: ProjectableBody): PageDocument {
 export async function readPageDocument(
   engine: Pick<BrainEngine, 'executeRaw'>,
   page: { source_id: string; slug: string; compiled_truth: string; timeline?: string | null },
+  opts: { hideHeld?: boolean } = {},
 ): Promise<PageDocument> {
-  const fenceOverlay = await loadFenceChunkOverlay(engine, { sourceId: page.source_id, slug: page.slug, compiled_truth: page.compiled_truth, timeline: page.timeline });
+  const fenceOverlay = await loadFenceChunkOverlay(engine, { sourceId: page.source_id, slug: page.slug, compiled_truth: page.compiled_truth, timeline: page.timeline }, opts);
   return pageDocument({ compiled_truth: page.compiled_truth, timeline: page.timeline ?? '', fenceOverlay });
 }
 

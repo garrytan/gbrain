@@ -636,7 +636,7 @@ async function assemblePack(
     for (const { name, sources: nameSources } of entities) {
       if (deadlineAt !== null && Date.now() >= deadlineAt) return;
       try {
-        const res = await buildEntityCard(engine, nameSources[0]!, name, { remote, eligibility: policy, omitQuarantined: opts.includeQuarantined !== true, sources: nameSources });
+        const res = await buildEntityCard(engine, nameSources[0]!, name, { remote, readerRemote: opts.untrusted === true, eligibility: policy, omitQuarantined: opts.includeQuarantined !== true, sources: nameSources });
         if (res.found && res.card && !acc.cards.some((c) => keyOf(c) === keyOf(res.card!))) {
           // The card's OWN source decides activation: a same-slug page in another source never gates or admits it.
           const ref = { source_id: res.card.entity.source_id, slug: res.card.entity.slug };
@@ -852,7 +852,7 @@ async function assembleDelta(
     for (const name of entities) {
       if (pastDeadline()) return;
       try {
-        const res = await buildEntityCard(engine, opts.sourceId, name, { remote, eligibility: { floor: policy.floor }, omitQuarantined: true });
+        const res = await buildEntityCard(engine, opts.sourceId, name, { remote, readerRemote: opts.untrusted === true, eligibility: { floor: policy.floor }, omitQuarantined: true });
         if (res.found && res.card) {
           for (const t of res.card.open_threads ?? []) {
             if (!since || (t.date && isAfter(t.date, since))) items.push(t);
