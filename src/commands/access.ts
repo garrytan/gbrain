@@ -351,7 +351,8 @@ async function memberCmd(engine: BrainEngine, sub: string | undefined, args: str
     case 'disable':
     case 'enable': {
       const m = await (sub === 'disable' ? disableMember : enableMember)(engine, id);
-      const stranded = sub === 'disable' && !json ? await disableReadByNobodyLines(engine, m.id) : [];
+      const stranded = sub === 'disable' && !json ? await disableReadByNobodyLines(engine, m.id).catch((e: unknown) =>
+        [`Could not check which pages naming it no enabled member reads (${e instanceof Error ? e.message : String(e)}); the disable stands. gbrain access who-can-read <slug> shows who reads a page.`]) : [];
       return print(json, { member: m }, () => [`Member ${sub}d: ${m.id}`, memberLine(m),
         sub === 'disable' ? 'Its credentials are refused on their next request; gbrain access member enable undoes this.' : 'Its credentials read again on their next request.', ...stranded]);
     }

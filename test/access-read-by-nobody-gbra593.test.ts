@@ -18,6 +18,8 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runAccess, whoCanRead } from '../src/commands/access.ts';
+import { readByNobodyNote } from '../src/commands/access-read-by-nobody.ts';
+import type { MemberRecord } from '../src/core/access/members.ts';
 import { addMember } from '../src/core/access/members.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { operationsByName } from '../src/core/operations.ts';
@@ -102,6 +104,57 @@ async function cases(engine: BrainEngine, src: string): Promise<void> {
   expect(await pageState(engine, src)).toEqual(stateBefore);
   expect(await ownerReads(engine, src)).toEqual(ownerBefore);
 }
+
+describe('readByNobodyNote reasons', () => {
+  const member = (id: string, status: MemberRecord['status']): MemberRecord =>
+    ({ id, display_name: null, email: null, status, kind: 'person', labelled_only: false, groups: [], created_at: null });
+  const members = [member('owner-example', 'enabled'), member('alice-example', 'enabled'), member('bob-example', 'disabled'), member('carol-example', 'removed')];
+  const note = (readers: string[] | null, ruled: boolean) => readByNobodyNote({ slug: 'notes/x-example', source_id: 'source-a', readers }, ruled, 0, members, 'owner-example');
+
+  test('a page only folder rules close points at the rule, not a label write', () => {
+    expect(note(null, true)).toBe('No enabled member reads it remotely: the folder rules covering it admit no enabled member. The owner still reads it on the brain host. To give it to a member: change the rule\'s readers (gbrain access rule list --source source-a).');
+  });
+
+  test('readable_by and folder rules with no enabled member in common', () => {
+    expect(note(['member:alice-example'], true)).toContain('no enabled member meets both its readable_by and the folder rules covering it');
+    expect(note(['member:alice-example'], true)).toContain('gbrain repair visibility --slug notes/x-example --readers <member>,owner-example');
+  });
+
+  test('a removed reader is named like a disabled one, and a group-only label names no enabled member', () => {
+    expect(note(['member:carol-example'], false)).toContain('its readable_by names carol-example, which is disabled, removed or unknown');
+    expect(note(['group:team-example'], false)).toContain('its readable_by names no enabled member');
+  });
+
+  test('a page someone reads, an open page and a malformed label get no note', () => {
+    expect(readByNobodyNote({ slug: 'a', source_id: 's', readers: ['member:alice-example'] }, false, 1, members, null)).toBeNull();
+    expect(note(null, false)).toBeNull();
+    expect(note(['!nobody'], false)).toBeNull();
+  });
+});
+
+describe('member disable when the stranded-page check fails', () => {
+  test('the disable still succeeds and says how to check the pages by hand', async () => {
+    const engine = new PGLiteEngine();
+    await engine.connect({ engine: 'pglite' } as never);
+    await engine.initSchema();
+    try {
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+      await fixture(engine, 'source-a');
+      const original = engine.executeRaw.bind(engine);
+      const spy = spyOn(engine, 'executeRaw').mockImplementation(((sql: string, params?: unknown[]) => {
+        if (sql.includes('gbrain_access_readers(frontmatter) @>')) return Promise.reject(new Error('connection dropped'));
+        return original(sql, params as never);
+      }) as never);
+      let out: string;
+      try { out = await access(engine, ['member', 'disable', 'bob-example']); } finally { spy.mockRestore(); }
+      expect(out).toContain('Member disabled: bob-example');
+      expect(out).toContain('Could not check which pages naming it no enabled member reads (connection dropped)');
+      expect(out).toContain('gbrain access who-can-read <slug>');
+      const [row] = await engine.executeRaw<{ disabled: boolean }>("SELECT disabled_at IS NOT NULL AS disabled FROM access_members WHERE id = 'bob-example'");
+      expect(row!.disabled).toBe(true);
+    } finally { await engine.disconnect(); }
+  }, 120_000);
+});
 
 for (const backend of testBackends()) {
   describe(`read-by-nobody messages on a repo-less brain (${backend})`, () => {
