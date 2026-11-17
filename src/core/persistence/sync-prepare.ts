@@ -602,7 +602,7 @@ export async function publishPassStamp(tx: BrainEngine, row: WriteRequest, p: Sy
 export async function recordPassFenceTrend(tx: Pick<BrainEngine, 'executeRaw'>, scope: { worktreeId: string; sourceId: string; passId: string; since: string | null; prefix?: FenceTrendPrefix }): Promise<void> {
   // #9646: the requests up to the prefix were tallied before the publication; a prefix read from another watermark is not used.
   const prefix = scope.prefix && scope.prefix.since === scope.since ? scope.prefix : undefined;
-  const rows = await fenceTrendRows(tx, scope, prefix?.through ?? scope.since ?? '0', null);
+  const rows = await fenceTrendRows(tx, scope, prefix?.through ?? scope.since ?? '0', null, prefix?.open);
   let tally = prefix?.tally;
   for (const row of rows) if (row.path && row.fences.length) tally = addFencesNormalized(tally, row.path, row.fences);
   if (tally) await recordSyncRunTrend(tx, { sourceId: scope.sourceId, runId: scope.passId, day: new Date().toISOString().slice(0, 10), count: tally.count, byClass: tally.by_class, writers: tally.dirs });
@@ -612,39 +612,47 @@ export async function recordPassFenceTrend(tx: Pick<BrainEngine, 'executeRaw'>, 
 export const FENCE_TREND_PAGE = 5_000;
 
 /** The trend tally of a stamp's range up to `through`, read before its publication (`readFenceTrendPrefix`). */
-export interface FenceTrendPrefix { since: string | null; through: string; tally?: FencesTally }
+export interface FenceTrendPrefix { since: string | null; through: string; open?: string[]; tally?: FencesTally }
 
-/** The publication's read has no upper bound (`upTo` null); the prefix reads one range of the sequence index per statement. */
-function fenceTrendRows(engine: Pick<BrainEngine, 'executeRaw'>, scope: { worktreeId: string; sourceId: string }, after: string, upTo: string | null) {
-  const range = upTo === null ? 'sequence > $3::bigint' : 'sequence > $3::bigint AND sequence <= $4::bigint';
-  return engine.executeRaw<{ path: string | null; fences: Array<{ class: string }> }>(`SELECT intent->>'path' AS path, outcome->'fences_normalized' AS fences
+/**
+ * The publication's read has no upper bound (`upTo` null) and also reads, by sequence, the imports the prefix left open; the
+ * prefix reads one range of the sequence index per statement.
+ */
+function fenceTrendRows(engine: Pick<BrainEngine, 'executeRaw'>, scope: { worktreeId: string; sourceId: string }, after: string, upTo: string | null, open: string[] = []) {
+  const range = upTo !== null ? 'sequence > $3::bigint AND sequence <= $4::bigint'
+    : open.length ? '(sequence > $3::bigint OR sequence = ANY($4::text::bigint[]))' : 'sequence > $3::bigint';
+  return engine.executeRaw<{ path: string | null; fences: Array<{ class: string }>; sequence?: string }>(`SELECT intent->>'path' AS path, outcome->'fences_normalized' AS fences${upTo === null ? '' : ', sequence::text AS sequence'}
     FROM persistence_requests WHERE worktree_id=$1::uuid AND source_id=$2 AND ${range} AND state='committed'
       AND intent->>'kind'='managed_sync_import' AND intent->>'passId' IS NOT NULL AND jsonb_typeof(outcome->'fences_normalized')='array' ORDER BY sequence`,
-  upTo === null ? [scope.worktreeId, scope.sourceId, after] : [scope.worktreeId, scope.sourceId, after, upTo]);
+  upTo !== null ? [scope.worktreeId, scope.sourceId, after, upTo] : open.length ? [scope.worktreeId, scope.sourceId, after, `{${open.join(',')}}`] : [scope.worktreeId, scope.sourceId, after]);
 }
 
 /**
  * #9646: a stamp's publication runs under a 5 s statement bound, and its trend range starts at the previous watermark, or at 0
  * for a source that never recorded one, which on a large brain is the whole request table. Read before the publication, outside
- * it, in statements of FENCE_TREND_PAGE sequences each, this tallies the range up to the newest request now, or to just below
- * the first import still open; the publication
- * then reads only what committed after that (`recordPassFenceTrend`), so the stamp lands in bounded time and records its trend
- * row in the same transaction, as before.
+ * it, in statements of FENCE_TREND_PAGE sequences each, this tallies the range up to the newest request now, leaving out the
+ * imports still open in it, whose sequences it records; the publication then reads only what is newer plus those sequences
+ * (`recordPassFenceTrend`), so every import is counted once, the stamp lands in bounded time and records its trend row in the
+ * same transaction, as before.
  */
 export async function readFenceTrendPrefix(engine: Pick<BrainEngine, 'executeRaw'>, scope: { worktreeId: string; sourceId: string; incarnation: string }): Promise<FenceTrendPrefix> {
   const since = (await readPassRow(engine, scope.sourceId, scope.incarnation))?.value.obligations.converged?.request_hwm ?? null;
   const [newest] = await engine.executeRaw<{ through: string | null }>('SELECT max(sequence)::text AS through FROM persistence_requests');
-  // An import still open now commits after this read, so the prefix stops below it and the publication reads it.
-  const [open] = await engine.executeRaw<{ first: string | null }>(`SELECT min(sequence)::text AS first FROM persistence_requests WHERE worktree_id=$1::uuid AND source_id=$2
-    AND sequence > $3::bigint AND state IN ('queued','deferred','running','recovering') AND intent->>'kind'='managed_sync_import'`, [scope.worktreeId, scope.sourceId, since ?? '0']);
-  const newestSequence = BigInt(newest?.through ?? '0');
-  const through = open?.first != null && BigInt(open.first) - 1n < newestSequence ? BigInt(open.first) - 1n : newestSequence;
+  const floor = BigInt(since ?? '0'), through = BigInt(newest?.through ?? '0');
+  // Read before the tally: an import open now that commits during it is skipped here and read by the publication, once.
+  // The worktree's open requests are few, and persistence_requests_open indexes exactly them by sequence.
+  const open = through > floor ? (await engine.executeRaw<{ sequence: string }>(`SELECT sequence::text AS sequence FROM persistence_requests
+    WHERE worktree_id=$1::uuid AND sequence > $2::bigint AND sequence <= $3::bigint AND state IN ('queued','deferred','running','recovering')
+      AND source_id=$4 AND intent->>'kind'='managed_sync_import' ORDER BY sequence`, [scope.worktreeId, String(floor), String(through), scope.sourceId])).map(row => row.sequence) : [];
+  const skip = new Set(open);
   let tally: FencesTally | undefined;
-  for (let low = BigInt(since ?? '0'); low < through; low += BigInt(FENCE_TREND_PAGE)) {
+  for (let low = floor; low < through; low += BigInt(FENCE_TREND_PAGE)) {
     const high = low + BigInt(FENCE_TREND_PAGE) < through ? low + BigInt(FENCE_TREND_PAGE) : through;
-    for (const row of await fenceTrendRows(engine, scope, String(low), String(high))) if (row.path && row.fences.length) tally = addFencesNormalized(tally, row.path, row.fences);
+    for (const row of await fenceTrendRows(engine, scope, String(low), String(high))) {
+      if (row.path && row.fences.length && !skip.has(row.sequence!)) tally = addFencesNormalized(tally, row.path, row.fences);
+    }
   }
-  return { since, through: String(through > BigInt(since ?? '0') ? through : BigInt(since ?? '0')), ...(tally ? { tally } : {}) };
+  return { since, through: String(through > floor ? through : floor), ...(open.length ? { open } : {}), ...(tally ? { tally } : {}) };
 }
 
 /** The checkpoint request's publication: the whole run committed, so `last_commit` (and the slug-root pin) advance under the guard. */
