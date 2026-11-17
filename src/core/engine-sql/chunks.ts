@@ -1116,10 +1116,11 @@ export async function setChunkerVersion(exec: SqlExecutor, slug: string, version
  * sanitized timeline text the caller indexes). Writes nothing when the page's `knowledge_revision` has moved on.
  */
 export async function writeTextProjectionSeal(exec: SqlExecutor, slug: string, opts: { sourceId: string; revision: string; timelineText: string }): Promise<void> {
-  await exec.executeRaw(`UPDATE pages SET text_projection_revision=knowledge_revision,
-    search_vector=${pageSearchVectorSql('title', '$3')}
-    WHERE source_id=$1 AND slug=$2 AND knowledge_revision=$4::uuid`,
-  [opts.sourceId, slug, opts.timelineText, opts.revision]);
+  // The timeline text is bound once (v.seal_input) so the shared vector expression splices as constant text.
+  await exec.run(sqlFragment`UPDATE pages SET text_projection_revision=knowledge_revision,
+    search_vector=${trustedSql(pageSearchVectorSql('title', 'v.seal_input'))}
+    FROM (SELECT ${opts.timelineText}::text AS seal_input) v
+    WHERE pages.source_id=${opts.sourceId} AND pages.slug=${slug} AND pages.knowledge_revision=${opts.revision}::uuid`);
 }
 
 /** One UPDATE per wave: a landed row takes its new index and chunk span, a parked (negative target) row keeps its own span. */

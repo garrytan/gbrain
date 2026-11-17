@@ -1261,6 +1261,7 @@ export async function getPageSealState(exec: LegacyUnscopedRead, pageId: number)
  * generation-clock trigger). The caller holds the origin claim (`assertOriginUnclaimed`) in the same transaction.
  */
 export async function refreshPageOrigin(exec: SqlExecutor, slug: string, opts: { sourceId: string; sourcePath: string; sourceUri?: string | null }): Promise<void> {
+  // origin-guard-ok: the caller (import-file refreshSourcePath) runs assertOriginUnclaimed in the same savepoint
   await exec.executeRaw(`UPDATE pages SET source_path = $1, source_uri = COALESCE($4::text, source_uri) WHERE source_id = $2 AND slug = $3
         AND deleted_at IS NULL AND (source_path IS DISTINCT FROM $1 OR source_uri IS DISTINCT FROM COALESCE($4::text, source_uri))`,
   [opts.sourcePath, opts.sourceId, slug, opts.sourceUri ?? null]);
