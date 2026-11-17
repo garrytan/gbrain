@@ -165,7 +165,6 @@ Every hold and error has three fields, from one table
 | `rename_identity_unreadable` | page | none | yes | always: the file title or id holds characters the database cannot compare |
 | `rename_reconcile_failed` | page | none | yes | always: the old page may be a duplicate |
 | `file_drift_unknown` | page | reconcile | yes | always: the file and the page differ and no import record says which changed |
-| `file_drift` on a read-only mirror | page | reconcile ([whole class](repair.md#whole-class)) | yes | always: the user approves the whole-class preview's hash; pages listed `kept_newer_page` or `kept_protected_parts` stay held for a person |
 | `file_drift_mirror_database_only` | page | none | no | never: the page stays live and database-only because gbrain never writes a read-only mirror |
 | `mirror_keep_deleted` | page | none | no | never: the user kept the deletion; a new upstream edit of the file or a restore asks again |
 | `origin_conflict_decision` | page | none | yes | always: the pages differ, their ids conflict or none is the page the path names |
@@ -280,6 +279,10 @@ it and kept going; the receipt lists the hold (`held`, `held_count`) and
   `gbrain repair content --source <id>` previews it. A hold the lane will not
   decide is `needs_human` with the paragraph in `human_reason`
   ([held files](repair.md#held-files)).
+- `file_drift` on a read-only mirror: the held pages settle together with
+  one approval. Preview the whole class and approve its hash
+  ([whole class](repair.md#whole-class)); a page the preview lists as
+  `kept_newer_page` or `kept_protected_parts` stays held for a person.
 - `file_drift_mirror_database_only`: on a read-only mirror
   (`gbrain sources mirror-readonly <id>`) a file gone upstream whose page was
   edited in gbrain stays held and its page stays live and database-only, since
