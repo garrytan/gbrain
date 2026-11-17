@@ -33,6 +33,7 @@ import { membersReadOpen, openPageSql, withOpenScope } from '../core/access/open
 import { gitRootAbove } from './access-serves.ts';
 import { READERS_MAX_PAGES } from '../core/repair/readers.ts';
 import { callReadersFor, parseCallAttendees } from '../core/meetings/attendees.ts';
+import { boundedBodyPrefixSql } from '../core/page-window/bounded-lead.ts';
 
 export const PROPOSAL_FIELDS = ['participants', 'attendees', 'to', 'from', 'cc'] as const;
 export const PROPOSAL_DIR = 'visibility-proposals';
@@ -122,7 +123,7 @@ export async function proposeVisibility(engine: BrainEngine, opts: { source?: st
     const found = await bounded(e => e.executeRaw<{ source: string; slug: string; type: string | null; visible: unknown; fields: Record<string, unknown> | null; call_head: string | null }>(
       `SELECT p.source_id AS source, p.slug, p.type, (${privacyPartSql('p')}) AS visible,
               jsonb_strip_nulls(jsonb_build_object(${PROPOSAL_FIELDS.map(f => `'${f}', p.frontmatter->'${f}'`).join(', ')})) AS fields,
-              CASE WHEN p.frontmatter ? 'call_import' AND NOT (p.frontmatter ?| $2::text[]) THEN left(p.compiled_truth, 4096) END AS call_head
+              CASE WHEN p.frontmatter ? 'call_import' AND NOT (p.frontmatter ?| $2::text[]) THEN ${boundedBodyPrefixSql('p')} END AS call_head
          FROM pages p
         WHERE ${openPageSql('p')} AND p.source_id = ANY($1::text[])
           AND (p.frontmatter ?| $2::text[] OR p.type = ANY($3::text[]) OR p.frontmatter ? 'call_import')
