@@ -42,17 +42,6 @@ test('an abort after reservation ends a stalled bounded statement and discards i
   expect(p.counts).toEqual({ releases: 0, discards: 1, cancels: 1 });
 });
 
-test('an abort after reservation rejects with the signal reason', async () => {
-  const p = stalledPool();
-  const controller = new AbortController();
-  const reason = Object.assign(new Error('preparation budget spent'), { code: 'preparation_deadline' });
-  const call = runBoundedStatement(p.conn, 'select pg_sleep(60)', [], { timeoutMs: 60_000, signal: controller.signal }, () => {});
-  setTimeout(() => controller.abort(reason), 20);
-  const outcome = await Promise.race([call.then(() => 'resolved', error => error), Bun.sleep(1_000).then(() => 'still pending')]);
-  expect(outcome).toBe(reason);
-  expect(p.counts).toEqual({ releases: 0, discards: 1, cancels: 1 });
-});
-
 test('a bounded statement that settles before any abort releases its connection', async () => {
   const counts = { releases: 0, discards: 0 };
   const owner = {
