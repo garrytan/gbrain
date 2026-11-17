@@ -1,0 +1,4 @@
+---
+kind: fix
+---
+A world restatement of a private fact that waits for the operator's accept is now also left out of think for remote callers who cannot read the private fact, and the reply to such a held write (remember, put_page and the other page writes, their outcome and write_request copies, get_write_request and list_write_requests) no longer carries contested.proposal_ref for those callers, so it reads like a saved write. The owner's callers, the local CLI and callers who can read the private fact still get the reference. A remote page write whose Facts row restates a more trusted private fact about the page's own entity kept on another page, or on none, is now held like a same-page restatement until gbrain trust confirm tp<N>. A remote get_page or get_versions of a page stored in segments now reports a size without the held rows.

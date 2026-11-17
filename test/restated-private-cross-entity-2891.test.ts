@@ -23,6 +23,7 @@ import { decideTrustProposal } from '../src/core/trust/decide.ts';
 import { parseTrustProposalRef } from '../src/core/trust/proposals.ts';
 import { renderFactsTable } from '../src/core/facts-fence.ts';
 import { LEGACY_EMBEDDING_CONFIG } from './helpers/legacy-embedding-config.ts';
+import { heldProposalRef } from './helpers/held-proposal.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -93,7 +94,8 @@ describe('GST-2891: a world copy on another entity does not lift the restatement
         const label = engine.kind + (managed ? ' managed' : ' unmanaged');
         const lia = rows.filter(r => r.entity_slug === 'people/lia-example').map(r => r.visibility);
         expect({ label, lia, remoteSees: await remoteSees(b, 'people/lia-example', claim) }).toEqual({ label, lia: ['private', 'private'], remoteSees: false });
-        const ref = res.contested?.proposal_ref ?? res.outcome?.contested?.proposal_ref;
+        expect(JSON.stringify(res)).not.toContain('proposal_ref');
+        const ref = await heldProposalRef(engine, b.sourceId, claim);
         expect(ref).toMatch(/^tp\d+$/);
         expect((await decideTrustProposal(engine, parseTrustProposalRef(ref)!, 'accept', { confirmation: { via: 'tty' as const } })).status).toBe('accepted');
         expect(await remoteSees(b, 'people/lia-example', claim)).toBe(true);
