@@ -56,6 +56,7 @@ import { withDecideContested, type ContestedLookup } from '../facts/contested-cl
 import type { TrustTier } from '../trust/tier.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
 import { parseSinceParam } from '../facts/since-parse.ts';
+import { withClaimStatus } from '../facts/claim-status.ts';
 import { callerSessionKey } from '../access/member-facts.ts';
 import { groupFactsByEntity, parseQuestionParam, questionRecallNotices, rankFactsByQuestion, recallHintNotice, unlinkedNamesakes, type EntityCandidate, type QuestionRecall } from '../facts/question-recall.ts';
 
@@ -593,7 +594,7 @@ const recall: Operation = {
     const budgetPacking = recallBudgetPacking(p.budget_policy, queryText, budgetTokens, { rows, packedFacts, searchResults, packedResults }, recallResultCost(delivery)), contested: ContestedLookup = {};
 
     const out = {
-      facts: await withDecideContested(ctx.engine, await withFactDateHeaders(ctx.engine, await stampRowTrust(ctx.engine, 'facts', packedFacts.map(r => ({ // #5575 A6 trust labels; GBRA-216 dp contested
+      facts: withClaimStatus(await withDecideContested(ctx.engine, await withFactDateHeaders(ctx.engine, await stampRowTrust(ctx.engine, 'facts', packedFacts.map(r => ({ // #5575 A6 trust labels; GBRA-216 dp contested; claim_status (facts/claim-status.ts)
         id: r.id,
         fact: r.fact,
         kind: r.kind,
@@ -625,7 +626,7 @@ const recall: Operation = {
         provenance: r.source, ...(r.attributed_to ? { attributed_to: r.attributed_to } : {}), ...(r.quoted ? { quoted: r.quoted } : {}), ...recallClaimColumns(r),
         ...(r.entity_slugs ? { entity_slugs: r.entity_slugs } : {}), ...(r.collapsed_count ? { collapsed_count: r.collapsed_count } : {}),
         ...(ranking ? { relevance: ranking.relevance.get(r.id), ...(ranking.weighting ? { rank_score: ranking.weighting.rank.get(r.id), confidence_factor: ranking.weighting.factor.get(r.id) } : {}) } : {}),
-      })), f => f.id)), { remote: ctx.remote !== false, excludePrivate, eligibility }, contested),
+      })), f => f.id)), { remote: ctx.remote !== false, excludePrivate, eligibility }, contested)),
       total: packedFacts.length,
       facts_order: ranking ? 'relevance' : 'newest',
       ...(quoted.withheld ? { facts_degraded: { reason: 'saved_facts_withheld' } } : ranking?.degraded || contested.degraded ? { facts_degraded: { ...contested.degraded, ...ranking?.degraded } } : {}),

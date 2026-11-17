@@ -8006,6 +8006,13 @@ Retrieve saved facts and (with `query`) budget-packed page snippets.
   composes with `entity` and `session_id` in the same query, before the
   per-arm limit. An unparseable value is rejected with `invalid_params`.
 - `limit` is a PER-ARM cap (facts and search results each).
+- Each `facts[]` row carries `claim_status` (additive): `accepted`, `provisional`,
+  `contested`, `unsupported` or `stale`, and `claim_status_reason`, one plain
+  sentence. It is derived on every read from the row's own fields (expired,
+  superseded, past `valid_until` → stale; a pending owner decision → contested;
+  no source → unsupported; `user_confirmed` / `operator_curated` with confidence
+  0.5 or more → accepted; anything else → provisional), first match wins. It
+  never filters or blocks a fact; a client that does not know the field ignores it.
 - `question`: optional string (at most 2,000 characters). The FACTS arm then
   returns active facts (every fact, expired and superseded included, with
   `include_expired: true`) ranked by relevance to the question instead of newest

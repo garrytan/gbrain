@@ -20,7 +20,7 @@ jobs:
   read-performance:
     name: Read latency / ${{ matrix.engine }} / Bun ${{ matrix.bun }}
     if: ${{ github.event_name != 'pull_request' }}
-    runs-on: ubicloud-standard-4-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 55
     strategy:
       fail-fast: false
@@ -74,7 +74,7 @@ jobs:
   deployment-matrix:
     name: PgBouncer, RLS and pool capacity / Bun ${{ matrix.bun }}
     if: ${{ github.event_name != 'pull_request' }}
-    runs-on: ubicloud-standard-8-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -218,7 +218,7 @@ jobs:
   unit-postgres-arms:
     name: Unit-lane PostgreSQL arms ${{ matrix.shard }}/22 / Bun ${{ matrix.bun }}
     if: ${{ github.event_name != 'pull_request' }}
-    runs-on: ubicloud-standard-4-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -297,7 +297,7 @@ jobs:
     if: ${{ github.event_name != 'pull_request' }}
     # The soak uses 1.3-1.8 busy cores: the 2,500-write PGLite soak took 523s on
     # 4 vCPUs, 539s on 8 and 500s on 16.
-    runs-on: ubicloud-standard-4-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 110
     strategy:
       fail-fast: false
@@ -359,7 +359,7 @@ jobs:
   # manifest); pushes, schedules and manual runs crash every seam.
   crash-robot:
     name: Crash robot / ${{ matrix.engine }} / Bun ${{ matrix.bun }}
-    runs-on: ubicloud-standard-4-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -457,7 +457,7 @@ jobs:
   reconciliation:
     name: Reconciliation crashes / ${{ matrix.engine }} / Bun ${{ matrix.bun }}
     if: ${{ github.event_name != 'pull_request' }}
-    runs-on: ubicloud-standard-4-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -539,7 +539,7 @@ jobs:
   convergence:
     name: Managed-sync convergence / Bun ${{ matrix.bun }}
     if: ${{ inputs.convergence != 'skip' }}
-    runs-on: ubicloud-standard-4-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
       fail-fast: false

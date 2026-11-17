@@ -29,7 +29,7 @@ import type { Operation, OperationMeta } from '../core/ops/contract.ts';
 import { isPersistenceIpcMutation } from '../core/persistence/ipc.ts';
 import { VERSION } from '../version.ts';
 import { hiddenToolHint } from './hidden-tool-hint.ts';
-import { installInstructionsResolver, MCP_SERVER_DESCRIPTION, resolveMcpInstructions } from './instructions.ts';
+import { installInstructionsResolver, MCP_SERVER_DESCRIPTION, MCP_SERVER_NAME, resolveMcpInstructions } from './instructions.ts';
 import { BRIDGE_LOG_PREFIX, bridgeCallFailure, bridgeInternalFailure, bridgeListFailure, bridgeRefusal, endpointLabel, writeBridgeTrace, type BridgeErrorContext } from './remote-bridge-errors.ts';
 import { exitAfterStdoutDrains, installStdioShutdownTriggers, mcpStdioTransport, probeWatchdogAvailable, readLiveParentPid, resolveEofDrainMs, type StdioLifecycleDeps } from './stdio-lifecycle.ts';
 import { clampSurface, createStdioSurfaceState, isMcpSurface, resolveStdioSurface, sessionWidenAllowed, stdioToolListing, surfaceWiderThan, SURFACE_SOURCE_LABEL, type McpSurface } from './surface.ts';
@@ -154,7 +154,7 @@ async function runBridge(cfg: GBrainConfig, opts: RemoteBridgeOptions, deps: Std
     return callable.filter(t => names.has(t.name));
   };
 
-  server = new Server({ name: 'gbrain', version: VERSION, description: MCP_SERVER_DESCRIPTION },
+  server = new Server({ name: MCP_SERVER_NAME, version: VERSION, description: MCP_SERVER_DESCRIPTION },
     { capabilities: { tools: { listChanged: true } }, instructions: resolveMcpInstructions(cfg, process.env) });
   installInstructionsResolver(server, async () => {
     const relay = `This MCP server is a gbrain stdio bridge: it relays every call to the remote brain at ${endpointLabel(mcpUrl)}, which decides what each call may read or write.`;

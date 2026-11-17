@@ -110,6 +110,27 @@ gbrain config set recall.confidence_weighting on
 It works the same on a brain with no git repository. `gbrain config set
 recall.confidence_weighting off` turns it off.
 
+## How solid each fact is
+
+Every fact `recall` returns says how far you can rely on it, in `claim_status`
+with a one-sentence `claim_status_reason`:
+
+| Status | When |
+|---|---|
+| `stale` | it expired, a newer fact superseded it, or its `valid_until` date has passed |
+| `contested` | another fact disputes it and you have not decided yet (see below) |
+| `unsupported` | no source is recorded for it |
+| `accepted` | you confirmed it, or it comes from your own notes, and its confidence is 0.5 or more |
+| `provisional` | anything else: written by an agent, seen by a tool or taken from outside text, and not confirmed |
+
+The first row that matches wins. The status is worked out from the fact's own
+dates, source and trust tier each time it is read, so it changes by itself when
+a date passes or you confirm the fact. It never hides a fact or refuses a save:
+it tells the reader how to weigh it.
+
+**Say to your agent:** *"What do you know about acme-example, and how sure is each fact?"*
+**Say to your agent:** *"Which of these facts are only provisional?"*
+
 ## Old and conflicting facts
 
 Two saved facts can state different figures for the same thing: one note says

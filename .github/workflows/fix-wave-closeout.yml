@@ -19,7 +19,7 @@ permissions: {}
 jobs:
   close-superseded:
     if: github.event.pull_request.merged == true && github.event.pull_request.head.repo.full_name == 'garrytan/gbrain'
-    runs-on: ubicloud-standard-2-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read

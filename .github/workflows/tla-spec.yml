@@ -115,7 +115,7 @@ concurrency:
 jobs:
   tla:
     name: TLC and guard mutants (${{ matrix.spec }})
-    runs-on: ubicloud-standard-4-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -186,7 +186,7 @@ jobs:
   tla-nightly:
     name: TLC nightly configs (${{ matrix.spec }})
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubicloud-standard-4-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
       fail-fast: false

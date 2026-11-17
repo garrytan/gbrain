@@ -1,0 +1,4 @@
+---
+kind: add
+---
+gbrain lint on a directory now also reports links between your pages that point nowhere (dead-link) and bare [[name]] links that match more than one page (ambiguous-link), so the graph leaves them unlinked. Neither is fixable automatically: write the right target, or the full path for an ambiguous name. Links inside code, links to attachments, web addresses, frontmatter fields and [[source:slug]] links to another source are not checked, and pages skipped with --exclude still count as link targets. Turn the checks off with gbrain lint <dir> --no-links. Two new flags help in scripts and CI: --json prints the whole report as JSON on stdout, and --strict exits 1 when any issue is left after the run. The scheduled cycle's lint phase is unchanged and does not run the link checks.

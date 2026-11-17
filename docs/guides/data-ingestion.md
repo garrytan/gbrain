@@ -35,8 +35,27 @@ curl -X POST https://your-brain/ingest \
   -d "# a thought from a Shortcut"
 ```
 
-For mobile capture, the inbox folder source picks up anything dropped into
-`~/.gbrain/inbox/` from iOS Shortcuts / AirDrop / Drafts / Finder.
+For mobile capture, drop files into the inbox folder, `~/.gbrain/inbox/`, from
+iOS Shortcuts / AirDrop / Drafts / Finder, and capture them:
+
+```bash
+gbrain inbox                 # where the inbox is, what is waiting, what was archived today
+gbrain inbox run --once      # turn every waiting file into a page, then exit
+gbrain inbox run             # keep watching; capture each file as it lands (Ctrl-C stops)
+```
+
+Each text, markdown, HTML or JSON file becomes an `inbox/<date>-<hash>` page
+(stored as outside text, like a webhook capture). On a PGLite brain it is
+written right away; on Postgres it is queued for the job worker (`gbrain jobs
+work`, which autopilot runs). The original moves to
+`~/.gbrain/inbox/.archived/<date>/`, so it is kept. The same bytes dropped again
+apply once. A PDF, image, audio or video file stays in the inbox with a note:
+convert it to text first (for a PDF, `pdftotext`). `--once` archives a file
+only after its capture landed or was queued, so a failure leaves it in place.
+`--source <id>` picks the source the pages land in; `--dir <path>` another folder.
+
+**Say to your agent:** *"Capture what's in my inbox folder."* (your agent runs `gbrain inbox run --once`)
+**Say to your agent:** *"What's waiting in my inbox?"* (your agent runs `gbrain inbox`)
 
 Your Gmail, calendar, and contacts sync natively. `gbrain google setup` walks
 bring-your-own OAuth end to end (your own free Google Cloud client — you own

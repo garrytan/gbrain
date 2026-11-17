@@ -42,7 +42,7 @@ env:
 jobs:
   # Event parity: docs/ci-event-parity.md#classification (harness-check.yml): a fork head is refused, a missing token skips.
   keyless:
-    runs-on: ubicloud-standard-4-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - name: Refuse a fork head; skip without HARNESS_EVALS_READ_TOKEN

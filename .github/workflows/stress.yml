@@ -39,7 +39,7 @@ permissions:
 jobs:
   plan:
     name: Stress plan
-    runs-on: ubicloud-standard-2-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
       run: ${{ steps.plan.outputs.run }}
@@ -92,7 +92,7 @@ jobs:
     name: ${{ inputs.mode == 'gate' && 'Stress shard' || 'Race hunt shard' }} ${{ matrix.shard }}
     needs: plan
     if: needs.plan.outputs.run == 'true'
-    runs-on: ubicloud-standard-4-ubuntu-2404
+    runs-on: ubuntu-latest
     # Gate shards are planned under 25 minutes and race-hunt shards under 55;
     # the margin covers checkout, install and the snapshot build.
     timeout-minutes: ${{ fromJSON(inputs.mode == 'gate' && '35' || '65') }}
@@ -165,7 +165,7 @@ jobs:
     name: ${{ inputs.mode == 'gate' && 'stress-changed-tests result' || 'race-hunt result' }}
     needs: [plan, shards]
     if: always()
-    runs-on: ubicloud-standard-2-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read

@@ -10,11 +10,16 @@ import { readSourceFileSync, writeSourceFileSync, hasSourceFilesystemLock, withS
  * - Empty/stub sections
  * - Wrapping code fences from LLM output
  * - Page types the active schema pack does not declare (type-undeclared)
+ * - Dead and ambiguous links between pages (dead-link, ambiguous-link; directory
+ *   targets, CLI default; core/lint/link-check.ts)
  *
  * Usage:
  *   gbrain lint <dir>              # report issues
  *   gbrain lint <dir> --fix        # auto-fix what's fixable
  *   gbrain lint <dir> --fix --dry-run  # preview fixes
+ *   gbrain lint <dir> --json       # machine-readable report on stdout
+ *   gbrain lint <dir> --strict     # exit 1 when any issue is left
+ *   gbrain lint <dir> --no-links   # skip the link checks
  *   gbrain lint <file.md>          # lint single file
  */
 
@@ -49,6 +54,7 @@ import { readFix } from '../core/ops/op-fix.ts';
 import { ERROR_CATALOGUE } from '../core/error-catalogue.ts';
 import { cliRenderContext, docsUrl, renderAction, toAgentError, type RenderedAction } from '../core/agent-output.ts';
 import type { ParseOpts } from '../core/markdown.ts';
+import { checkLinks, type LinkFinding } from '../core/lint/link-check.ts';
 
 export interface LintIssue {
   file: string;
@@ -565,6 +571,23 @@ function collectPages(dir: string, extraExcludes: string[] = []): string[] {
   return pages.sort();
 }
 
+/** Every markdown file under root a link may point at: dot entries and node_modules are skipped (never pages);
+ *  underscore pages and --exclude'd pages stay, because links may point at them even though lint does not lint them. */
+function collectLinkTargets(root: string): string[] {
+  const out: string[] = [];
+  const walk = (d: string) => {
+    for (const entry of readdirSync(d)) {
+      if (entry.startsWith('.') || DEFAULT_LINT_EXCLUDE_DIRS.has(entry)) continue;
+      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- d walks down from the operator's lint target; entry is a directory entry name from readdirSync (no separators)
+      const full = join(d, entry);
+      if (lstatSync(full).isDirectory()) walk(full);
+      else if (entry.endsWith('.md')) out.push(full);
+    }
+  };
+  walk(root);
+  return out.sort();
+}
+
 export interface LintOpts {
   target: string;
   fix?: boolean;
@@ -621,6 +644,17 @@ export interface LintOpts {
    * CLI can size its progress bar without walking the tree a second time.
    */
   onPagesCollected?: (count: number) => void;
+  /**
+   * Check links between pages (`dead-link`, `ambiguous-link`; core/lint/link-check.ts).
+   * Directory targets only: a single file has no page set to resolve against.
+   * Off unless set; the CLI turns it on (`--no-links` turns it off).
+   */
+  links?: boolean;
+}
+
+/** A link finding as a lint issue (never fixable: only a person knows the right target). */
+export function linkIssue(f: LinkFinding): LintIssue {
+  return { file: f.file, line: f.line, rule: f.rule, message: f.message, fixable: false };
 }
 
 export interface LintResult {
@@ -782,6 +816,9 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
   const isSingleFile = statSync(opts.target).isFile();
   const pages = isSingleFile ? [opts.target] : collectPages(opts.target, opts.exclude ?? []);
   opts.onPagesCollected?.(pages.length);
+  const linkFindings = opts.links && !isSingleFile
+    ? checkLinks(opts.target, pages, collectLinkTargets(opts.target), (p) => readSourceFileSync(p, 'utf-8'))
+    : null;
 
   // Resolve content-sanity config and the active pack once for this lint
   // run (D1: lift DB config when reachable). Callers can pre-pass both
@@ -862,6 +899,7 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
       continue;
     }
     const issues = lintContent(content, relPath, lintOpts);
+    for (const f of linkFindings?.get(relPath) ?? []) issues.push(linkIssue(f));
     opts.onPageScanned?.();
     if (issues.length === 0) continue;
     pagesWithIssues++;
@@ -936,12 +974,18 @@ export async function runLint(args: string[]) {
   const target = args.find((a, i) => !a.startsWith('--') && !skipIdx.has(i));
   const doFix = args.includes('--fix');
   const dryRun = args.includes('--dry-run');
+  const json = args.includes('--json');
+  const strict = args.includes('--strict');
+  const links = !args.includes('--no-links');
 
   if (!target) {
-    console.error('Usage: gbrain lint <dir|file.md> [--fix] [--dry-run] [--exclude a,b]');
-    console.error('  --fix      Auto-fix fixable issues (LLM preambles, code fences)');
-    console.error('  --dry-run  Preview fixes without writing');
-    console.error('  --exclude  Comma-separated dir/file basenames to skip (in addition to node_modules)');
+    console.error('Usage: gbrain lint <dir|file.md> [--fix] [--dry-run] [--exclude a,b] [--json] [--strict] [--no-links]');
+    console.error('  --fix       Auto-fix fixable issues (LLM preambles, code fences)');
+    console.error('  --dry-run   Preview fixes without writing');
+    console.error('  --exclude   Comma-separated dir/file basenames to skip (in addition to node_modules)');
+    console.error('  --json      Print the report as JSON on stdout (progress stays on stderr)');
+    console.error('  --strict    Exit 1 when any issue is left after this run (for CI)');
+    console.error('  --no-links  Skip the dead-link and ambiguous-link checks (directory targets)');
     process.exit(1);
   }
 
@@ -964,15 +1008,18 @@ export async function runLint(args: string[]) {
   const { createProgress } = await import('../core/progress.ts');
   const { getCliOptions, cliOptsToProgressOptions } = await import('../core/cli-options.ts');
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
+  const reported: Array<{ file: string; fixed: number; issues: LintIssue[] }> = [];
 
   const result = await runLintCore({
     target,
     fix: doFix,
     dryRun,
     exclude: extraExcludes,
+    links,
     onPagesCollected: (count) => progress.start('lint.pages', count),
     onPageScanned: () => progress.tick(1),
     onPageIssues: (relPath, issues, fixedCount) => {
+      if (json) { reported.push({ file: relPath, fixed: fixedCount, issues }); return; }
       console.log(`\n${relPath}:`);
       for (const issue of issues) {
         const fixLabel = issue.fixable ? ' [fixable]' : '';
@@ -987,6 +1034,17 @@ export async function runLint(args: string[]) {
   });
 
   progress.finish();
+  // --strict: what is left after this run (fixes applied for real do not count; a dry run fixes nothing).
+  const remaining = result.total_issues - (doFix && !dryRun ? result.total_fixed : 0);
+  if (strict && remaining > 0) process.exitCode = 1;
+  if (json) {
+    console.log(JSON.stringify({ ...result, links_checked: links && statSync(target).isDirectory(), remaining_issues: remaining,
+      pages: reported.map(r => ({ file: r.file, fixed: r.fixed, issues: r.issues.map(i => ({
+        line: i.line, rule: i.rule, message: i.message, fixable: i.fixable,
+        ...(i.code ? { code: i.code } : {}), ...(i.reason ? { reason: i.reason } : {}),
+        ...(i.fix?.command ? { fix: i.fix.command } : {}), ...(i.docs ? { docs: i.docs } : {}) })) })) }, null, 2));
+    return;
+  }
   console.log(`\n${result.pages_scanned} pages scanned. ${result.total_issues} issue(s) in ${result.pages_with_issues} page(s).`);
   if (doFix) {
     console.log(`${dryRun ? '(dry run) ' : ''}${result.total_fixed} auto-fixed.`);

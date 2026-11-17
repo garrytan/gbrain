@@ -17,7 +17,7 @@ import { parseResultRowsMode, resolveResultRowsMode } from './result-rows.ts';
 import { loadConfig } from '../core/config.ts';
 import { requestConfigRows, withRequestConfigSnapshot } from '../core/config-snapshot.ts';
 import { gcSessionContextState } from '../core/context/session-state.ts';
-import { installInstructionsResolver, MCP_SERVER_DESCRIPTION, readInstructionContent, resolveMcpInstructions } from './instructions.ts';
+import { installInstructionsResolver, MCP_SERVER_DESCRIPTION, MCP_SERVER_NAME, readInstructionContent, resolveMcpInstructions } from './instructions.ts';
 import { instructionReadiness, stdioCapabilityReadiness } from './initialize-context.ts';
 import { STATUS_TOOL_DEF, STATUS_TOOL_NAME, attemptStatusRecovery, statusHeadline, statusInstructionLine, statusModeErrorResult, statusModeOf, statusPayload, statusToolResult } from './status-mode.ts';
 import { installCapabilitiesResource, mcpAdministrationGuidance } from './capabilities.ts';
@@ -374,7 +374,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   const writeback = statusMode ? null : (await resolveAgentWriteback(engine, config)).bundle;
   const writebackOpts = writeback ? await stdioAmbientOpts(engine, writeback, session.allowedOps, opts.stdioMember) : null;
   server = new Server(
-    { name: 'gbrain', version: VERSION, description: MCP_SERVER_DESCRIPTION },
+    { name: MCP_SERVER_NAME, version: VERSION, description: MCP_SERVER_DESCRIPTION },
     // listChanged: a client that handshakes during DEGRADED mode receives the
     // gate-hidden catalog (stdioVisibleTools fail-closes every publishGateKey
     // op on engine failure) and caches it — recovery sends the notification

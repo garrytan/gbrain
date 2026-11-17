@@ -25,7 +25,7 @@ concurrency:
 jobs:
   bench:
     name: Skill resolver bench (1,000 and 7,500 skills, p95 bars)
-    runs-on: ubicloud-standard-2-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - id: checkout

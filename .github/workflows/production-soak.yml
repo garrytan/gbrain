@@ -41,7 +41,7 @@ concurrency:
 
 jobs:
   plan:
-    runs-on: ubicloud-standard-2-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       rtts: ${{ steps.plan.outputs.rtts }}
@@ -67,7 +67,7 @@ jobs:
   soak:
     needs: plan
     name: Soak (${{ matrix.rtt }} ms RTT)
-    runs-on: ubicloud-standard-16-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 600
     strategy:
       fail-fast: false

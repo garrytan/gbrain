@@ -1,8 +1,4 @@
 self-hosted-runner:
-  labels:
-    - ubicloud-standard-2-ubuntu-2404
-    - ubicloud-standard-4-ubuntu-2404
-    - ubicloud-standard-8-ubuntu-2404
-    - ubicloud-standard-16-ubuntu-2404
-    - ubicloud-standard-30-ubuntu-2404
-    - ubicloud-standard-4-arm-ubuntu-2404
+  # This fork runs every job on GitHub-hosted runners (ubuntu-latest, ubuntu-24.04-arm, macOS, Windows),
+  # which actionlint already knows, so there are no custom labels.
+  labels: []

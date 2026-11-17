@@ -25,7 +25,7 @@ concurrency:
 
 jobs:
   contributor-gate:
-    runs-on: ubicloud-standard-2-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -57,7 +57,7 @@ jobs:
 
   welcome-comment:
     if: github.event.action == 'opened'
-    runs-on: ubicloud-standard-2-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read

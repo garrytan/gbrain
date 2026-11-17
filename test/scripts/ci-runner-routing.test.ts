@@ -10,31 +10,39 @@ type Job = {
 };
 const root = join(import.meta.dir, '../..');
 const load = (name: string) => loadYaml(readFileSync(join(root, '.github/workflows', name), 'utf8')) as { jobs: Record<string, Job> };
-const normal = 'ubicloud-standard-16-ubuntu-2404';
-const heavy = 'ubicloud-standard-30-ubuntu-2404';
-const small = 'ubicloud-standard-2-ubuntu-2404';
-const report = 'ubicloud-standard-4-ubuntu-2404';
+// This fork runs every Linux job on GitHub-hosted runners: one x64 size (ubuntu-latest) and the arm64
+// runner. The per-lane constants below keep the job -> runner map pinned job by job; on the upstream
+// Ubicloud fleet they were 2/4/8/16/30-vCPU sizes.
+const normal = 'ubuntu-latest';
+const heavy = 'ubuntu-latest';
+const small = 'ubuntu-latest';
+const report = 'ubuntu-latest';
 const single = report;
-const pooled = 'ubicloud-standard-8-ubuntu-2404';
-const arm = 'ubicloud-standard-4-arm-ubuntu-2404';
+const pooled = 'ubuntu-latest';
+const arm = 'ubuntu-24.04-arm';
 const targetRunners = (job: Job) =>
   JSON.parse(/fromJSON\('([^']+)'\)\[matrix\.target\]/.exec(job['runs-on']!)![1]!) as Record<string, string>;
 
 describe('CI runner routing', () => {
-  test('owned Linux validation jobs use Ubicloud without moving release publishing', () => {
+  test('owned Linux validation jobs use GitHub-hosted runners and no workflow names a Ubicloud runner', () => {
     for (const file of ['test.yml', 'e2e.yml', 'heavy-tests.yml', 'persistence-validation.yml', 'convergence-nightly.yml', 'native-locks.yml', 'actionlint.yml', 'semgrep.yml', 'harness-check.yml']) {
       for (const job of Object.values(load(file).jobs)) {
         const runner = job['runs-on'];
         if (!runner || runner.startsWith('${{')) continue;
-        expect(runner, file).toMatch(/^ubicloud-standard-(2|4|8|16|30)-ubuntu-2404$/);
+        expect(runner, file).toBe('ubuntu-latest');
       }
+    }
+    const { readdirSync } = require('node:fs') as typeof import('node:fs');
+    for (const file of readdirSync(join(root, '.github/workflows')).filter((f: string) => f.endsWith('.yml'))) {
+      const text = readFileSync(join(root, '.github/workflows', file), 'utf8');
+      expect(text.split('\n').filter(l => /runs-on:.*ubicloud-/.test(l) || /"[^"]*":"ubicloud-/.test(l)), file).toEqual([]);
     }
     const release = readFileSync(join(root, '.github/workflows/release.yml'), 'utf8');
     expect(release).not.toContain('ubicloud');
     expect(load('osv-scanner.yml').jobs['osv-scan']['runs-on']).toBeUndefined();
   });
 
-  test('single-process lanes and soaks use 4 vCPUs, pooled lanes 8, and the label-gated heavy suite keeps 30', () => {
+  test('single-process lanes, soaks, pooled lanes and the label-gated heavy suite keep their pinned runners', () => {
     // Measured: a unit shard is one bun process (1.1-1.5 busy cores on average)
     // and took the same time on 4, 8 and 16 vCPUs; verify matches 16 vCPUs at 8.
     for (const name of ['slow-brainbench-e2e', 'brainbench', 'slow-entity-resolve-perf', 'admin-browser', 'shared-skills-compatibility']) {
@@ -59,7 +67,7 @@ describe('CI runner routing', () => {
     expect(load('heavy-tests.yml').jobs.heavy['runs-on']).toBe(heavy);
   });
 
-  test('Selected E2E shards run on 2 vCPUs; unit shards and the serial pool on 4 (C1, C8; C4 reverted)', () => {
+  test('selected E2E shards, unit shards and the serial pool keep their pinned runners (C1, C8; C4 reverted)', () => {
     // A 25-file E2E sample took 442s on 2 cores vs 455s on 4. Unit shards stay on
     // 4: on PR #6013 the 2-vCPU cell raised the unit shard mean from 542s to 608s
     // and made Test the critical path (V-2 revert). The serial shards finish far
@@ -112,9 +120,9 @@ describe('CI runner routing', () => {
     expect(load('semgrep.yml').jobs.semgrep['runs-on']).toBe(report);
   });
 
-  test('actionlint recognizes every configured custom label and watches its configuration', () => {
+  test('actionlint needs no custom runner labels (GitHub-hosted only) and watches its configuration', () => {
     const config = loadYaml(readFileSync(join(root, '.github/actionlint.yaml'), 'utf8')) as { 'self-hosted-runner': { labels: string[] } };
-    expect(config['self-hosted-runner'].labels.sort()).toEqual([small, report, pooled, normal, heavy, arm].sort());
+    expect(config['self-hosted-runner'].labels).toEqual([]);
     const workflow = loadYaml(readFileSync(join(root, '.github/workflows/actionlint.yml'), 'utf8')) as { on: Record<string, { paths: string[] }> };
     for (const event of ['push', 'pull_request']) expect(workflow.on[event].paths).toContain('.github/actionlint.yaml');
   });

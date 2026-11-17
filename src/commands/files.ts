@@ -1,5 +1,6 @@
 import { assertManagedFilesystemWrite } from '../core/persistence/filesystem-guard.ts';
 import { readFileSync, readdirSync, statSync, lstatSync, existsSync, writeFileSync, unlinkSync, mkdirSync, copyFileSync } from 'fs';
+import { keptOriginalPath, placeOriginal } from '../core/file-originals.ts';
 import { join, relative, extname, basename, dirname, resolve } from 'path';
 import { createHash } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
@@ -187,15 +188,28 @@ async function uploadFile(engine: BrainEngine, args: string[]) {
   const stat = statSync(filePath);
   const hash = fileHash(filePath);
   const filename = basename(filePath);
-  const storagePath = pageSlug ? `${pageSlug}/${filename}` : `unsorted/${hash.slice(0, 8)}-${filename}`;
+  let storagePath = pageSlug ? `${pageSlug}/${filename}` : `unsorted/${hash.slice(0, 8)}-${filename}`;
   const mimeType = getMimeType(filePath);
 
   const sql = sqlQueryForEngine(engine);
 
-  // Check for existing file by hash — but only trust the row when the
+  // Originals are never overwritten (core/file-originals.ts): a different file under a taken name is stored beside it.
+  // A row counts only when the backend holds its bytes; a row with nothing stored behind it is healed in place (#4302).
+  const hashAt = async (path: string) => (await storage.exists(path).catch(() => false))
+    ? (await sql`SELECT content_hash FROM files WHERE storage_path = ${path}`)[0]?.content_hash as string | undefined : undefined;
+  const placed = placeOriginal(storagePath, hash, await hashAt(storagePath), await hashAt(keptOriginalPath(storagePath, hash)));
+  if (placed.action === 'refuse') {
+    console.error(`Not uploaded: ${placed.reason}.`);
+    process.exit(1);
+  }
+  storagePath = placed.path;
+  if (placed.action === 'write' && placed.keptOriginal) {
+    console.log(`${placed.keptOriginal} already holds a different file; it is kept, and this one goes beside it.`);
+  }
+
+  // Same bytes already stored — but only trust the row when the
   // BACKEND really holds the object (#4302); vanished bytes must re-upload.
-  const existing = await sql`SELECT id FROM files WHERE content_hash = ${hash} AND storage_path = ${storagePath}`;
-  if (existing.length > 0 && (await storage.exists(storagePath).catch(() => false))) {
+  if (placed.action === 'same' && (await storage.exists(storagePath).catch(() => false))) {
     console.log(`File already uploaded (hash match): ${storagePath}`);
     return;
   }
@@ -295,9 +309,21 @@ async function uploadRaw(engine: BrainEngine, args: string[]) {
     // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- pageDir/pageName derive from resolvePageWriteTarget's brain-repo target for the operator's own --page slug; upload-raw is a trusted-local CLI lane (runFiles is wired only from cli.ts, remote:false — the MCP file_upload op is a separate localOnly handler)
     const destDir = join(pageDir, '.raw', pageName);
     // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- filename is basename() of the operator's own CLI file arg (basename yields a single separator-free segment), joined under the brain-repo sidecar dir above
-    const dest = join(destDir, filename);
+    let dest = join(destDir, filename);
+    const hash = fileHash(filePath);
+    // Originals are never overwritten (core/file-originals.ts): a different file under a taken name goes beside it.
+    const hashOnDisk = (p: string) => (existsSync(p) ? fileHash(p) : undefined);
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- keptOriginalPath() of the basename above: a hash prefix plus that single separator-free segment, under the same sidecar dir
+    const placed = placeOriginal(filename, hash, hashOnDisk(dest), hashOnDisk(join(destDir, keptOriginalPath(filename, hash))));
+    if (placed.action === 'refuse') {
+      console.error(`files upload-raw: not uploaded: ${placed.reason}.`);
+      process.exit(1);
+    }
+    if (placed.action === 'write' && placed.keptOriginal) console.log(`${placed.keptOriginal} already holds a different file; it is kept, and this one goes beside it.`);
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- placed.path is the basename or its hash-prefixed form (see above), joined under the sidecar dir
+    dest = join(destDir, placed.path);
     // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- identity comparison only (skip self-copy when source already IS the dest); no fs path is derived from this expression
-    if (resolve(dest) !== resolve(filePath)) {
+    if (placed.action === 'write' && resolve(dest) !== resolve(filePath)) {
       // #5963: refuse on a managed root before mkdir, so a refused upload leaves no empty .raw/ directory.
       const refusal = (await import('../core/raw-file-upload.ts')).managedRawUploadRefusal(dest, filePath, pageSlug);
       if (refusal) throw refusal;
@@ -305,7 +331,6 @@ async function uploadRaw(engine: BrainEngine, args: string[]) {
       assertManagedFilesystemWrite(dest);
       copyFileSync(filePath, dest);
     }
-    const hash = fileHash(filePath);
     const storagePath = relative(target.writeRoot, dest);
     await executeRawJsonb(
       engine,
@@ -348,7 +373,19 @@ async function uploadRaw(engine: BrainEngine, args: string[]) {
   const { createStorage } = await import('../core/storage.ts');
   const storage = await createStorage(config.storage as any);
   const hash = fileHash(filePath);
-  const storagePath = pageSlug ? `${pageSlug}/${filename}` : `unsorted/${hash.slice(0, 8)}-${filename}`;
+  let storagePath = pageSlug ? `${pageSlug}/${filename}` : `unsorted/${hash.slice(0, 8)}-${filename}`;
+  // Originals are never overwritten (core/file-originals.ts): a different file under a taken name is stored beside it.
+  // A row counts only when the backend holds its bytes; a row with nothing stored behind it is healed in place (#4302).
+  const storedHash = async (path: string) => (await storage.exists(path).catch(() => false))
+    ? (await engine.executeRaw<{ content_hash: string }>('SELECT content_hash FROM files WHERE storage_path = $1', [path]))[0]?.content_hash
+    : undefined;
+  const placed = placeOriginal(storagePath, hash, await storedHash(storagePath), await storedHash(keptOriginalPath(storagePath, hash)));
+  if (placed.action === 'refuse') {
+    console.error(`files upload-raw: not uploaded: ${placed.reason}.`);
+    process.exit(1);
+  }
+  if (placed.action === 'write' && placed.keptOriginal) console.error(`${placed.keptOriginal} already holds a different file; it is kept, and this one goes beside it.`);
+  storagePath = placed.path;
   const bucket = (config.storage as any).bucket || 'brain-files';
   const backend = (config.storage as StorageConfig).backend;
   const reference = `${backend}://${bucket}/${storagePath}`;
