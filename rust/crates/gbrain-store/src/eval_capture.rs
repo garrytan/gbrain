@@ -93,8 +93,9 @@ pub(crate) struct CandidateRecord {
 }
 
 impl CandidateRecord {
-    /// The `SELECT *` row. The columns no writer of this engine sets (`as_of_ts` and the
-    /// salience/recency columns) are null, as they are for every row `logEvalCandidate` inserts.
+    /// The `SELECT *` row. The columns no writer of this engine sets (`as_of_ts`,
+    /// `schema_pack_per_source` and the salience/recency columns) are null, as they are for every
+    /// row `logEvalCandidate` inserts.
     fn to_json(&self) -> Value {
         json!({
             "id": self.id,
@@ -121,6 +122,7 @@ impl CandidateRecord {
             "salience_source": Value::Null,
             "recency_source": Value::Null,
             "embedding_column": self.embedding_column,
+            "schema_pack_per_source": Value::Null,
         })
     }
 }

@@ -98,6 +98,7 @@ fn a_candidate_round_trips_every_column() {
             "created_at": created, "as_of_ts": null, "salience_param": null,
             "recency_param": null, "salience_resolved": null, "recency_resolved": null,
             "salience_source": null, "recency_source": null, "embedding_column": "embedding",
+            "schema_pack_per_source": null,
         })
     );
     // An absent embedding column is stored as null.
