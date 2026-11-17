@@ -7,7 +7,7 @@ src/cli/enforced-commit-push.ts	execute_raw	1
 src/cli/enforced-member.ts	execute_raw	6
 src/commands/access-read-by-nobody.ts	execute_raw	2
 src/commands/access-rules.ts	execute_raw	4
-src/commands/access-serves.ts	execute_raw	2
+src/commands/access-serves.ts	execute_raw	8	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/commands/access.ts	execute_raw	6
 src/commands/agent-logs.ts	execute_raw	1
 src/commands/agent-register.ts	execute_raw	4
@@ -273,12 +273,13 @@ src/core/access/actor.ts	execute_raw	7
 src/core/access/attest-sources.ts	sql_template	8
 src/core/access/caller.ts	execute_raw	9
 src/core/access/federation-exposure.ts	execute_raw	1
+src/core/access/implicit-placement.ts	execute_raw	1	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/core/access/labelled-only.ts	execute_raw	4
 src/core/access/member-facts.ts	execute_raw	1
 src/core/access/member-sources.ts	execute_raw	8
 src/core/access/members.ts	execute_raw	25
 src/core/access/members.ts	sql_template	1
-src/core/access/open-pages.ts	execute_raw	7
+src/core/access/open-pages.ts	execute_raw	8	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/core/access/open-twins.ts	execute_raw	1
 src/core/access/owner.ts	execute_raw	1
 src/core/access/policy-migrate.ts	execute_raw	4
@@ -420,7 +421,7 @@ src/core/derived-links.ts	execute_raw	10
 src/core/destructive-guard.ts	execute_raw	17
 src/core/eligibility/activation.ts	execute_raw	2
 src/core/eligibility/explain.ts	execute_raw	4
-src/core/eligibility/fence-overlay.ts	execute_raw	1
+src/core/eligibility/fence-overlay.ts	execute_raw	3	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/core/eligibility/generation.ts	execute_raw	1
 src/core/eligibility/scan.ts	execute_raw	7
 src/core/eligibility/stamp.ts	execute_raw	5	came from master #9574 (held private restatements), which landed before this ratchet
@@ -529,6 +530,7 @@ src/core/generations/managed.ts	execute_raw	7
 src/core/generations/publish.ts	execute_raw	19
 src/core/generations/repair.ts	execute_raw	6
 src/core/ghost-pages.ts	execute_raw	4
+src/core/git/untrack-admission.ts	execute_raw	3	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/core/github-source.ts	execute_raw	3
 src/core/google/attachment-backfill.ts	execute_raw	2
 src/core/google/counterparty.ts	execute_raw	2
@@ -555,7 +557,7 @@ src/core/guests/marker.ts	execute_raw	2
 src/core/guests/note.ts	execute_raw	1
 src/core/guests/owner-credentials.ts	execute_raw	1
 src/core/guests/promote.ts	execute_raw	4
-src/core/guests/sources.ts	execute_raw	8
+src/core/guests/sources.ts	execute_raw	9	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/core/guests/stamp-readable.ts	execute_raw	1
 src/core/harness/client-setup.ts	execute_raw	1
 src/core/harness/client-setup.ts	sql_template	1
@@ -1076,7 +1078,7 @@ src/core/search/entity-facts.ts	execute_raw	1
 src/core/search/evidence-date.ts	execute_raw	3
 src/core/search/evidence-delivery.ts	execute_raw	2
 src/core/search/exact-scan.ts	execute_raw	2
-src/core/search/fact-relevance.ts	execute_raw	12
+src/core/search/fact-relevance.ts	execute_raw	13	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/core/search/facts-arm.ts	execute_raw	3
 src/core/search/feedback-boost.ts	execute_raw	1
 src/core/search/frontmatter-where.ts	execute_raw	1
@@ -1189,6 +1191,7 @@ src/core/trust/min-trust.ts	execute_raw	3
 src/core/trust/owner-actions.ts	execute_raw	7
 src/core/trust/page-handlers.ts	execute_raw	7
 src/core/trust/page-write.ts	execute_raw	9
+src/core/trust/privacy-hold-reply.ts	execute_raw	1	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/core/trust/propagation.ts	execute_raw	4
 src/core/trust/proposals.ts	execute_raw	7
 src/core/trust/provenance-drift.ts	execute_raw	3
