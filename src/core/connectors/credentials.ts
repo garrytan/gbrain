@@ -30,6 +30,7 @@ import type {
   CredentialProviderName,
   ResolvedCredential,
   TokenProviderName,
+  HelperTokenProviderName,
 } from './types.ts';
 
 /** `~/.gbrain/connectors` (GBRAIN_HOME honored via `gbrainPath`). */
@@ -123,7 +124,7 @@ export interface ResolvedApiToken { token: string; source: 'token_env' | 'env' |
  * instead of falling back to another key); otherwise env `GBRAIN_CONNECTOR_<P>_TOKEN` wins over the 0600 file.
  * `name` says where it came from (a variable name or the file path), never the value.
  */
-export function resolveApiToken(provider: TokenProviderName, tokenEnv?: string): ResolvedApiToken | null {
+export function resolveApiToken(provider: TokenProviderName | HelperTokenProviderName, tokenEnv?: string): ResolvedApiToken | null {
   if (tokenEnv) {
     const value = process.env[tokenEnv]?.trim();
     return value ? { token: value, source: 'token_env', name: tokenEnv } : null;

@@ -6,6 +6,7 @@
  * recorded as internal state.
  */
 export const RUNTIME_READER_CONFIG_KEYS: readonly string[] = [
+  'apple.helper.port', // imessage/imessage-source.ts: the GBrain Helper's loopback port an imessage source reads (set by setup; no default)
   'embed.max_usd_per_page', // page-embedding-budget.ts: large-page embedding cap, default $2 (unlimited under spend.posture tokenmax)
   'derive.max_usd_per_page', // page-spend.ts: large-page cap per paid derivation (facts, synopsis), default $2 (unlimited under spend.posture tokenmax)
   'embed.content_drift.pass_interval_hours', // content-drift-sweep.ts: hours between completed content-drift passes, default 24 (0 = every run)
