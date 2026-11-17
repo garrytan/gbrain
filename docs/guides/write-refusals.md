@@ -951,6 +951,24 @@ other machines push the same tree.
 Prefer a fingerprint over a glob. A glob skips the scan for every file it
 matches, including credentials added later.
 
+When one rule keeps firing on many harmless values in the same kind of file
+(for example `jwt` on the unsubscribe links in saved newsletter HTML), a rule
+entry allows that rule alone in the files a glob matches:
+
+```
+path:mail/*.html pattern:jwt
+```
+
+Every other rule still runs on those files, so a cloud key pasted into one of
+them is still refused. Write one rule per line; the glob is the same as a path
+glob's, and the rule name is the one the refusal prints in brackets. A line that
+starts with `pattern:`, or with `path:` and has a space in it, is read only as a
+rule entry: if it is malformed (two rules, a missing glob) or names a rule that
+does not exist, it allows nothing, and the refusal, `gbrain git scan` and
+bootstrap verify name the line and what is wrong with it. `gbrain git scan`
+also lists each hit a rule entry allowed and the line that allowed it
+(`allowed[]` in `--json`), and `gbrain sources push` logs them.
+
 ### A stale allowlist entry for a private key
 
 The fingerprint of a private key whose `END` line is missing (a cut-off

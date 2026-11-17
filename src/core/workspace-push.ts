@@ -76,10 +76,11 @@ import {
   type SecretFinding,
 } from './secret-scan.ts';
 import { scanTextStream } from './secret-scan-stream.ts';
+import { withoutRuleAllowed } from './secret-scan-allowlist.ts';
 import { shellQuote } from './mcp-registration.ts';
 import { gitChildEnv } from './git-env.ts';
 import { recordCommit, recordIntent } from './git/commit-ledger.ts';
-import { stagedScanPublishRefusal } from './git/range-secret-scan.ts';
+import { scanAllowProblems, stagedScanPublishRefusal } from './git/range-secret-scan.ts';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -1081,6 +1082,7 @@ export async function workspacePush(opts: WorkspacePushOpts): Promise<WorkspaceP
     const allowlist = loadWorkspaceAllowlist(root);
     // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- fixed filename under the resolved workspace root (same path loadWorkspaceAllowlist reads); used only in printed guidance.
     const allowlistPath = join(root, SCAN_ALLOW_FILENAME);
+    for (const p of scanAllowProblems(allowlist)) log(`${SCAN_ALLOW_FILENAME} line ${p.entry}: ${p.problem}`);
     const retryCommand = pushRetryCommand(opts);
     const findings: PushSecretFinding[] = [];
     const unscannable: string[] = [];
@@ -1093,8 +1095,9 @@ export async function workspacePush(opts: WorkspacePushOpts): Promise<WorkspaceP
         unscannable.push(fileFindings);
         continue;
       }
-      if (fileFindings.length === 0) continue;
-      for (const f of buildPushFindings({ file: rel, findings: fileFindings, allowlist, allowlistPath, retryCommand })) {
+      const blocking = withoutRuleAllowed(fileFindings, rel, allowlist, hit => log(`${rel}:${hit.line} ${hit.pattern} allowed by ${SCAN_ALLOW_FILENAME} line: ${hit.entry}`));
+      if (blocking.length === 0) continue;
+      for (const f of buildPushFindings({ file: rel, findings: blocking, allowlist, allowlistPath, retryCommand })) {
         findings.push(f);
       }
     }

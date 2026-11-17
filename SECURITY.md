@@ -641,7 +641,9 @@ complete. If you find a live credential in a page:
    value; rewrite/re-push or regenerate those as needed.
 4. Add a value's fingerprint (printed with every `gbrain sources push` finding)
    to `<workspace>/.gbrain-scan-allow` ONLY for values you have confirmed are
-   not credentials.
+   not credentials. A `path:<glob> pattern:<rule>` line allows one rule in the
+   files the glob matches and keeps every other rule active there; a malformed
+   line or an unknown rule name allows nothing and is reported.
 
 **Say to your agent:** *"a secret leaked into a brain page — rotate it and
 purge the page"* (your agent rotates the credential, then runs
