@@ -27,6 +27,9 @@ pub const REVISION_CONFLICT: &str = "revision_conflict";
 pub const REVISION_REQUIRED: &str = "revision_required";
 /// The named page does not exist (only where PGLite throws instead of returning null).
 pub const PAGE_NOT_FOUND: &str = "page_not_found";
+/// The write breaks a table constraint that PGLite enforces (a CHECK list or a unique key). The
+/// whole write rolls back.
+pub const CONSTRAINT_VIOLATION: &str = "constraint_violation";
 /// The write replaces a non-empty page with an empty one and did not ask for it.
 pub const EMPTY_OVERWRITE: &str = "empty_overwrite";
 /// A request id was used for a different write.

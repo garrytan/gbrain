@@ -136,7 +136,7 @@ pub struct PageInput {
     pub ingested_via: Option<String>,
 }
 
-fn double_option<'de, D, T>(d: D) -> std::result::Result<Option<Option<T>>, D::Error>
+pub(crate) fn double_option<'de, D, T>(d: D) -> std::result::Result<Option<Option<T>>, D::Error>
 where
     D: Deserializer<'de>,
     T: Deserialize<'de>,
@@ -300,7 +300,7 @@ fn blank(text: &str) -> bool {
 }
 
 /// `sanitizeText`: a NUL byte cannot be stored in text.
-fn clean(text: &str) -> String {
+pub(crate) fn clean(text: &str) -> String {
     text.replace('\0', "")
 }
 
@@ -370,7 +370,7 @@ pub(crate) fn write_page(tx: &mut dyn KvWrite, record: &PageRecord) -> Result<()
     tx.put(&keys::page_id(record.id), &key)
 }
 
-fn next_id(tx: &mut dyn KvWrite, name: &str) -> Result<u64> {
+pub(crate) fn next_id(tx: &mut dyn KvWrite, name: &str) -> Result<u64> {
     let key = keys::meta(name);
     let current = match tx.get(&key)? {
         Some(bytes) => keys::be8(&bytes)
@@ -396,7 +396,7 @@ pub(crate) fn all_pages(read: &dyn KvRead) -> Result<Vec<PageRecord>> {
 
 /// The sources a read covers: `source_ids` when not empty, else `source_id`, else every source
 /// (`default` first).
-fn scope_sources(
+pub(crate) fn scope_sources(
     read: &dyn KvRead,
     source_id: &Option<String>,
     source_ids: &Option<Vec<String>>,
@@ -1000,6 +1000,8 @@ pub(crate) fn remove_page(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()>
         tx.delete(&key)?;
     }
     clear_chunks(tx, page.id)?;
+    crate::links::remove_page_links(tx, page.id)?;
+    crate::timeline::remove_page_timeline(tx, page.id)?;
     tx.delete(&keys::page(&page.source_id, &page.slug))?;
     tx.delete(&keys::page_id(page.id))
 }

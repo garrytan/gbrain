@@ -289,6 +289,10 @@ impl Store {
             let Some(Some(page)) = pages.get(&hit.page_id) else {
                 continue;
             };
+            // PGLite's searchKeyword rule: a page is stale when a timeline entry was added
+            // after the page was last written.
+            let stale = crate::timeline::latest_entry_micros(&*read, page.id)?
+                .is_some_and(|latest| page.updated_at_us < latest);
             let mut row = json!({
                 "slug": page.slug,
                 "page_id": page.id,
@@ -300,7 +304,7 @@ impl Store {
                 "chunk_id": hit.chunk_id,
                 "chunk_index": hit.chunk.chunk_index,
                 "score": hit.score,
-                "stale": false,
+                "stale": stale,
             });
             if let Some(us) = page.effective_date_us {
                 row["effective_date"] = Value::String(crate::env::iso(us)[..10].to_string());

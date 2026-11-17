@@ -16,10 +16,12 @@ pub mod format;
 pub mod journal;
 pub mod keys;
 pub mod kv;
+pub mod links;
 pub mod pages;
 pub mod redb_kv;
 pub mod search;
 pub mod sources;
+pub mod timeline;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
