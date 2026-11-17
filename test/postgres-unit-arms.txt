@@ -94,6 +94,7 @@ test/db-wins-unimported-gst2579.test.ts
 test/decide/conflict-proposals-managed.test.ts
 test/declared-lineage-visibility.test.ts
 test/degraded-engine-recovered-surface-9224.test.ts
+test/delta-beliefs-link-context-2957.test.ts
 test/derived-link-reconciliation.test.ts
 test/derived-origin-carry-managed.test.ts
 test/derived-origin-carry-private.test.ts
@@ -330,6 +331,7 @@ test/large-pages/upload-over-ceiling.test.ts
 test/large-pages/upload-provenance-7873.test.ts
 test/large-pages/upload-review.test.ts
 test/large-pages/v252-master-reader-compat.test.ts
+test/link-context-world-rows-2957.test.ts
 test/link-cross-source.test.ts
 test/link-dates-per-row-gst2228.test.ts
 test/link-origin-scope.test.ts

@@ -45,7 +45,7 @@ import {
 import { collectGitVisibleFiles } from '../core/git-visible-files.ts';
 import { GIT_PATHSPEC_ENV_VARS, literalPathspecs } from '../core/git-env.ts';
 import { isMarkdownFilePath, pruneDir, slugifyPath } from '../core/sync.ts';
-import { isPathContained } from '../core/path-confine.ts';
+import { isPathContained, relativeEscapesRoot } from '../core/path-confine.ts';
 
 /** Test seams: the stream `validate --stdin` reads, and the directory `--staged` runs git in. */
 export interface FrontmatterIo {
@@ -459,7 +459,7 @@ async function runValidate(rest: string[], io: FrontmatterIo): Promise<void> {
         const rel = relative(brainRoot, file);
         // Files above/outside the brain root fall back to basename rather than
         // emitting a "../"-prefixed slug for non-brain files.
-        const slugPath = rel && !rel.startsWith('..') ? rel : basename(file);
+        const slugPath = rel && !relativeEscapesRoot(rel) ? rel : basename(file);
         const check = checkContent(content, slugPath, flags.importable);
         const result = toResult(file, check);
         const rescuable = flags.includeAmbiguous && check.warnings.some(w => w.code === 'FRONTMATTER_COMMENT_VALUE');
