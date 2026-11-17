@@ -116,11 +116,14 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
     ...Object.fromEntries(['account', 'access', 'token-command', 'services', 'future-days', 'loops-exclude-labels', 'contacts-dir', 'calendar-id'].map(key => [key, ['google']])),
     ...Object.fromEntries(['scope', 'repos', 'app-id', 'app-pem', 'app-install'].map(key => [key, ['github']])),
     ...Object.fromEntries(['provider', 'transcript'].map(key => [key, ['meetings']])),
-    ...Object.fromEntries(['lookback-days', 'sync-interval-min', 'record', 'visibility'].map(key => [key, ['meetings', 'slack']])),
-    ...Object.fromEntries(['channels', 'timezone', 'max-requests', 'skip'].map(key => [key, ['slack']])),
-    'history-days': ['google', 'meetings', 'slack'],
+    ...Object.fromEntries(['lookback-days', 'sync-interval-min'].map(key => [key, ['meetings', 'slack', 'imessage']])),
+    ...Object.fromEntries(['record', 'visibility'].map(key => [key, ['meetings', 'slack']])),
+    ...Object.fromEntries(['channels', 'max-requests', 'skip'].map(key => [key, ['slack']])),
+    timezone: ['slack', 'imessage'],
+    'history-days': ['google', 'meetings', 'slack', 'imessage'],
     'token-env': CONNECTOR_SOURCE_KINDS,
-    dir: CONNECTOR_SOURCE_KINDS,
+    // An imessage source is always database-recorded: its message text never reaches a directory.
+    dir: CONNECTOR_SOURCE_KINDS.filter(k => k !== 'imessage'),
   };
   for (const [key, kinds] of Object.entries(optionKinds)) {
     if (!values.has(key)) continue;
@@ -215,6 +218,13 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
     const maxRequests = number('max-requests');
     opts.slack = { channels, ...recordFlags('Slack page', 'pages of private channels'), ...(values.has('timezone') ? { timezone } : {}),
       ...(maxRequests !== undefined ? { maxRequests } : {}), ...(skip.length ? { skip: skip as SlackSkippable[] } : {}) };
+  }
+  if (kind === 'imessage') {
+    const timezone = values.get('timezone') ?? 'UTC';
+    if (!isValidTimeZone(timezone)) throw invalid('--timezone must be an IANA time zone.', 'Pass --timezone as an IANA zone name such as UTC or America/Los_Angeles; a day page starts at midnight there.');
+    const interval = number('sync-interval-min');
+    opts.imessage = { historyDays: number('history-days'), lookbackDays: number('lookback-days'), ...(values.has('timezone') ? { timezone } : {}),
+      ...(interval !== undefined ? { syncIntervalMin: interval } : {}), ...(values.has('token-env') ? { tokenEnv: values.get('token-env') } : {}) };
   }
   return { operation: 'source_add', params: { options: opts, request_id: requestId, ...(dryRun ? { dry_run: true } : {}) },
     brain: values.get('brain'), legacyOnly: values.has('pat-file'), json: flags.has('json') };

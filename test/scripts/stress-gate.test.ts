@@ -57,6 +57,17 @@ describe('gate plan', () => {
     expect(plan.shards.flatMap(s => s.items).reduce((n, i) => n + i.count, 0)).toBe(20);
   });
 
+  test('a changed file with no measured weight is planned at its lane p95 and split under the 12-minute budget', () => {
+    const { root, base } = repo({ 'test/a.test.ts': "test('a', () => {});\n" });
+    const head = commit(root, { 'test/new.test.ts': "test('new', () => {});\n" });
+    const unit = new Map(Array.from({ length: 20 }, (_, i) => [`test/w${i}.test.ts`, (i + 1) * 10_000] as [string, number]));
+    const plan = isPlan(planGate(root, { event: 'pull_request', baseSha: base, headSha: head }, { ...weights(), unit }));
+    expect(plan.files).toEqual([{ file: 'test/new.test.ts', profile: 'unit', iterations: 10, estimateMs: 10 * (190_000 + 3000) }]);
+    expect(plan.shards.map(s => s.items.reduce((n, i) => n + i.count, 0)).sort()).toEqual([1, 3, 3, 3]);
+    expect(plan.shards.every(s => s.estimateMs <= 12 * 60_000)).toBe(true);
+    expect(plan.shards.flatMap(s => s.items).reduce((n, i) => n + i.count, 0)).toBe(10);
+  });
+
   test('a missing merge base fails the plan with the fetch next step', () => {
     const { root } = repo({ 'test/a.test.ts': '' });
     const result = planGate(root, { event: 'merge_group', baseSha: 'f'.repeat(40), headSha: 'HEAD' }, weights());

@@ -281,6 +281,7 @@ src/core/access/members.ts	execute_raw	25
 src/core/access/members.ts	sql_template	1
 src/core/access/open-pages.ts	execute_raw	8	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/core/access/open-twins.ts	execute_raw	1
+src/core/access/owner-only.ts	execute_raw	2	#9634, pre-ratchet: reads sources.config to tell whether the brain or one source is owner-only; no typed engine method exists yet
 src/core/access/owner.ts	execute_raw	1
 src/core/access/policy-migrate.ts	execute_raw	4
 src/core/access/policy-transfer.ts	execute_raw	1
@@ -498,6 +499,7 @@ src/core/facts/relink.ts	execute_raw	5
 src/core/facts/retire.ts	execute_raw	1
 src/core/facts/similar-active.ts	execute_raw	2
 src/core/facts/single-prepare.ts	execute_raw	7
+src/core/facts/slot-tagging.ts	execute_raw	1	GBRA-574 #9668: the live person-page read that picks slot-tagging candidates, written before this ratchet landed; moves behind a typed facts engine method with its area
 src/core/facts/subject-infer.ts	execute_raw	1
 src/core/facts/unfenced-facts.ts	execute_raw	8
 src/core/facts/withdrawal-discovery.ts	execute_raw	9
@@ -564,6 +566,7 @@ src/core/harness/client-setup.ts	sql_template	1
 src/core/heal-audit.ts	execute_raw	3
 src/core/health-memo.ts	execute_raw	1
 src/core/held-embedding.ts	execute_raw	2
+src/core/imessage/imessage-source.ts	execute_raw	3	#9634, pre-ratchet: reads the source row (incarnation, local_path, config), checks a page slug exists, and stamps sources.last_sync_at/newest_content_at; no typed engine method exists yet
 src/core/import-chunk-reuse.ts	execute_raw	2
 src/core/import-file.ts	execute_raw	7
 src/core/import-identity.ts	execute_raw	1
@@ -989,6 +992,7 @@ src/core/repair/fact-claim-dates.ts	execute_raw	3
 src/core/repair/facts-rehome.ts	execute_raw	4
 src/core/repair/failed-writes.ts	execute_raw	19
 src/core/repair/fences.ts	execute_raw	4
+src/core/repair/file-drift-class.ts	execute_raw	12	came from #9614 and #9615 (whole-class held file-drift preview and apply), opened before this ratchet: the preview reads the held file_drift checkpoints and the source incarnation, and the apply adds its lease, progress and manifest reads and writes; these move behind typed engine methods with the next change in the repair area
 src/core/repair/file-drift.ts	execute_raw	6
 src/core/repair/frontmatter.ts	execute_raw	8
 src/core/repair/ghost-pages.ts	execute_raw	1
@@ -1131,7 +1135,7 @@ src/core/source-health.ts	execute_raw	6
 src/core/source-resolver.ts	execute_raw	15
 src/core/sources-load.ts	execute_raw	4
 src/core/sources-not-readable.ts	execute_raw	1
-src/core/sources-ops.ts	execute_raw	15
+src/core/sources-ops.ts	execute_raw	16	#9634, pre-ratchet: +1 is the INSERT that registers a database-only api source row (imessage); no typed engine method exists yet
 src/core/spend-log.ts	sql_template	2
 src/core/sql-query.ts	execute_raw	2
 src/core/storage-manifest/adopt.ts	execute_raw	4

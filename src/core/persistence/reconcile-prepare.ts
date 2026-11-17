@@ -30,6 +30,7 @@ import { assertAutoDecisions } from './reconcile-additive.ts';
 import { admissionAllows, readSyncAdmission } from './sync-admission.ts';
 import { bindOrigin } from './origin-guard.ts';
 import { materializedSnapshot } from './segmented-apply.ts';
+import { sourceMirrorReadOnly } from './mirror-read-only.ts';
 
 const pageFix = (sourceId: string, slug: string): Action => readFix(`Shows page ${slug} in source ${sourceId} as stored now, with its revision, read-only.`,
   { argv: ['gbrain', 'get', '--source', sourceId, '--', slug] });
@@ -167,9 +168,11 @@ export async function prepareReconcileMutation(engine: BrainEngine, row: WriteRe
     ? fileWinsContent(state.raw.toString('utf8'), state.file, prepared.result, text => readCanonicalFileText(state, row.slug, text), { sourceId: row.source_id, slug: row.slug })
     : serializePageToMarkdown({ ...state.snapshot.page, ...prepared.result }, prepared.result.tags);
   const ready = prepared.ready;
+  // A read-only mirror's checkout is never written: a file-wins result that keeps the file's exact bytes imports into the page database-only.
+  const mirror = row.intent.keep_file_bytes === true && !absent && sha256(content) === state.pins.raw_file_hash && await sourceMirrorReadOnly(engine, row.source_id);
   return {
     observedRevision: state.snapshot.revision, trust: await ownerImportTrust(engine, row, prepared.result.frontmatter, state.path),
-    file: { path: state.path, root: state.root, content, expectedBeforeHash: absent ? null : state.pins.raw_file_hash },
+    ...(mirror ? { databaseOnlyReason: 'mirror_read_only' as const } : { file: { path: state.path, root: state.root, content, expectedBeforeHash: absent ? null : state.pins.raw_file_hash } }),
     // A database-only page matched by its slug path always records that file as its origin.
     noop: ready.noop && sha256(content) === state.pins.raw_file_hash && state.origin === 'recorded',
     ...(ready.afterCommit ? { afterCommit: (target: BrainEngine) => ready.afterCommit!(target) } : {}),
