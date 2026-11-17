@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * Engine-sql dynamic-SQL guard (refactor wave 1, A2b / CQ3 / EO8 / EO17;
- * docs/TESTING.md#engine-sql-dynamic-sql).
+ * docs/ci-guards.md#engine-sql-dynamic-sql).
  *
  * In src/core/engine-sql/** every value reaches SQL as a bound parameter
  * (`sqlFragment`), and only constant text is spliced. This guard parses each
@@ -35,7 +35,7 @@ import ts from 'typescript';
 
 const ROOT = process.env.GBRAIN_GUARD_ROOT ?? join(import.meta.dir, '..');
 const SCAN_DIR = 'src/core/engine-sql';
-const ANCHOR = 'docs/TESTING.md#engine-sql-dynamic-sql';
+const ANCHOR = 'docs/ci-guards.md#engine-sql-dynamic-sql';
 
 const EXEMPT_FILES: Record<string, string> = {
   'fragment.ts': 'the renderer itself: it writes the $n placeholders and splices trustedSql text by design',

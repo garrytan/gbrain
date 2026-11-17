@@ -28,6 +28,9 @@ import { collapseFactReads } from '../facts/capture-dedup.ts';
 import type { TrustTier } from '../trust/tier.ts';
 import { conversationSignal } from './evidence-delivery.ts';
 import { factsFromQuotedPages } from './transcript-quote.ts';
+import { findTimeMentions } from '../temporal-grammar.ts';
+import { withDecideContested, type ContestedLookup } from '../facts/contested-claims.ts';
+import type { Contested } from '../eligibility/labels.ts';
 
 export { queryTerms } from './fact-relevance.ts';
 
@@ -66,6 +69,23 @@ const TEMPORAL_CUE = new RegExp(`\\b(when|before|after|since|until|till|during|a
 /** Whether `query` carries a deterministic temporal cue (the preregistered word, phrase, ISO date and month-name list). */
 export function hasTemporalCue(query: string): boolean {
   return TEMPORAL_CUE.test(query);
+}
+
+const HISTORY_CUE = /\b(before|earlier|earliest|previous(ly)?|prior|former(ly)?|used to|originally|first|history|historically|ever|over time|in order|chronolog\w*|sequence|ago|back then|at the time|no longer|any ?more|in the past)\b/i;
+const today = () => new Date().toISOString().slice(0, 10);
+
+/**
+ * GBRA-574 B1: whether `query` asks about the past, by a plain-English history word or a time it names (the shared
+ * temporal grammar, temporal-grammar.ts) that ended before `asOf` (today by default).
+ */
+export function hasHistoryCue(query: string, asOf = today()): boolean {
+  return HISTORY_CUE.test(query) || findTimeMentions(query, asOf, 'past').some(m => m.end < asOf);
+}
+
+/** GBRA-574 B3: the one date `query` names (the last day of it, YYYY-MM-DD, by the shared temporal grammar), or null for none or several. */
+export function questionDate(query: string, asOf = today()): string | null {
+  const ends = [...new Set(findTimeMentions(query, asOf, 'past').filter(m => m.kind === 'absolute').map(m => m.end))];
+  return ends.length === 1 ? ends[0]! : null;
 }
 
 export interface FactsArmScope {
@@ -214,10 +234,12 @@ interface ReservePolicy {
   rowShare: number | null;
   /** Where the facts go: after the pages (temporal reserve) or ahead of them (facts block). */
   position: 'after' | 'before';
+  /** GBRA-574 B1, B3 and G1: ended facts on a history cue, the asked date in each header, and contested labels. */
+  dated: boolean;
 }
 
-const TEMPORAL_RESERVE: ReservePolicy = { share: TEMPORAL_RESERVE_SHARE, maxRows: MAX_RESERVE_ROWS, rowShare: TEMPORAL_RESERVE_ROW_SHARE, position: 'after' };
-const FACTS_BLOCK: ReservePolicy = { share: QUERY_FACTS_BLOCK_SHARE, maxRows: MAX_FACTS_BLOCK_ROWS, rowShare: null, position: 'before' };
+const TEMPORAL_RESERVE: ReservePolicy = { share: TEMPORAL_RESERVE_SHARE, maxRows: MAX_RESERVE_ROWS, rowShare: TEMPORAL_RESERVE_ROW_SHARE, position: 'after', dated: false };
+const FACTS_BLOCK: ReservePolicy = { share: QUERY_FACTS_BLOCK_SHARE, maxRows: MAX_FACTS_BLOCK_ROWS, rowShare: null, position: 'before', dated: true };
 
 /**
  * Temporal fact reserve: for a query with a temporal cue and a token budget,
@@ -240,7 +262,12 @@ export function applyTemporalFactReserve(engine: BrainEngine, query: string, res
  * never more rows than the caller's row count (#8411), oldest first ahead of
  * the pages. Copies of one claim take one row, dated as first stated with
  * "(stated N times, last D)" after the fact (GBRA-574 A2), and each row's date
- * header carries when the fact was said (A1). Block rows take the top page's
+ * header carries when the fact was said (A1). On a history cue (`hasHistoryCue`)
+ * the pool also takes the named entity's ended facts with their windows (B1;
+ * never a withdrawn or forgotten one); when the question names one date each
+ * header says whether the fact was told after it (B3); and a fact in a pending
+ * supersede proposal ends "(contested by #<id>)" when the caller can read the
+ * other fact, as recall labels it (G1). Block rows take the top page's
  * score: they are placed, not ranked against the pages, and never outscore them. The facts add rows
  * (every page row stays) and pages fill the rest of the budget. No match or
  * any error: the results unchanged.
@@ -251,8 +278,9 @@ export function applyFactsBlock(engine: BrainEngine, query: string, results: Sea
 
 async function applyFactReserve(engine: BrainEngine, query: string, results: SearchResult[], opts: FactsArmOpts & { budget: number }, policy: ReservePolicy): Promise<SearchResult[]> {
   try {
-    const { candidates, stems } = await collectFactCandidates(engine, query, await poolScope(engine, opts), opts.queryEmbedding,
-      { depth: { keyword: 50, cosine: 50, entity: policy.maxRows }, cosineForAll: true });
+    const scope = await poolScope(engine, opts);
+    const { candidates, stems } = await collectFactCandidates(engine, query, scope, opts.queryEmbedding,
+      { depth: { keyword: 50, cosine: 50, entity: policy.maxRows }, cosineForAll: true, history: policy.dated && hasHistoryCue(query) });
     const scored = scoreFactCandidates(query, candidates, queryTerms(query), stems).filter(s => admitted(s, 'reserve')).map(s => s.candidate);
     if (!scored.length) return results;
     const callerRows = (await opts.rowCap?.().catch(() => 0)) ?? 0;
@@ -268,6 +296,13 @@ async function applyFactReserve(engine: BrainEngine, query: string, results: Sea
     const shown = groups.map(g => g[0]!);
     const pageSlugs = await readableEntityPages(engine, shown, opts.readScope).catch(() => new Set<string>());
     const fromQuoted = await factsFromQuotedPages(engine, shown.map(c => Number(c.id)));
+    const asked = policy.dated ? questionDate(query) : null;
+    const lookup: ContestedLookup = {};
+    const contested = policy.dated
+      ? new Map((await withDecideContested<{ id: number; contested?: Contested }>(engine, shown.map(c => ({ id: Number(c.id) })),
+        { remote: opts.remote, excludePrivate: scope.excludePrivate, eligibility: { floor: opts.minTrust, suppressFlagged: opts.suppressFlagged } }, lookup))
+        .flatMap(r => (r.contested ? [[r.id, r.contested.fact_id] as const] : [])))
+      : new Map<number, string>();
     let left = Math.floor(opts.budget * policy.share);
     const chosen: Array<{ c: FactCandidate; row: SearchResult }> = [];
     for (const group of groups) {
@@ -275,7 +310,9 @@ async function applyFactReserve(engine: BrainEngine, query: string, results: Sea
       const c = group[0]!;
       const restated = group.length > 1 ? ` (stated ${group.length} times, last ${said(group[group.length - 1]!)})` : '';
       const row = factRow(c, 0, c.entity_slug && pageSlugs.has(`${c.source_id}\u0000${c.entity_slug}`) ? c.entity_slug : undefined, fromQuoted.has(Number(c.id)), dates);
-      row.chunk_text = `${factDateHeader(c, undefined, dates?.get(Number(c.id)))}\n${c.fact}${restated}`;
+      const label = contested.has(Number(c.id)) ? ` (contested by #${contested.get(Number(c.id))})` : '';
+      row.chunk_text = `${factDateHeader(c, undefined, dates?.get(Number(c.id)), asked)}\n${c.fact}${restated}${label}`;
+      if (lookup.degraded) row.fact_row = { ...row.fact_row!, contested_unavailable: true };
       const cost = resultTokens(row);
       if (cost > left) continue;
       left -= cost;
