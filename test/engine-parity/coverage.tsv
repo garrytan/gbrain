@@ -128,7 +128,7 @@ getTimelineForDate	timeline	yes	2	no	yes	yes	serves
 getSince	timeline	yes	1	no	yes	yes	serves
 getOnThisDay	timeline	yes	1	no	yes	yes	serves
 getLastSeen	timeline	yes	1	no	yes	yes	serves
-upsertEventProjection	timeline	yes	4	no	yes	yes	refuses:timeline
+upsertEventProjection	timeline	yes	4	no	yes	yes	serves
 mergeOntologyFact	ontology	yes	4	no	yes	yes	refuses:ontology
 getOntology	ontology	yes	2	no	yes	yes	refuses:ontology
 discoverOntologyDimensions	ontology	yes	1	no	yes	yes	refuses:ontology
