@@ -84,16 +84,25 @@ publish. The details, and what is held back instead, are in
 - Only the scanner's named rules redact. A value you restored with `gbrain secrets restore` is left alone.
 - A commit any remote-tracking ref already has is never rewritten; a value there still refuses the push.
 - The old commits stay on this machine for 7 days under `refs/gbrain/backup/redact-<time>-<sha>`.
-- To keep the old refusal instead: `gbrain config set secrets.on_push refuse` (or `GBRAIN_SECRETS_ON_PUSH=refuse` in
-  the environment). `gbrain config set secrets.on_push redact` turns it back on.
+- To keep the old refusal instead: `gbrain config set secrets.on_push refuse`; `gbrain config set secrets.on_push redact`
+  turns it back on.
+- `GBRAIN_SECRETS_ON_PUSH=refuse` in the environment refuses too, whatever the config says. `refuse` is its only value:
+  any other value, `redact` and an empty one included, changes nothing (it never turns redaction on where the config
+  says `refuse`) and prints one `[gbrain notice]` line on stderr.
+- When a managed worktree's page-write backup runs past its 300 s budget redacting or scanning, it is tried once more in
+  the background with 4 times the budget. That checkout's backups wait for it; other checkouts carry on. Past that
+  budget again, the backups are held with `publish_scan_unreadable`
+  ([details](shared-checkout-git.md#publish_secret_rebuild_unbounded)).
 - `gbrain git redact-unpushed --source <id>` shows what a publish would redact, writing nothing; `--apply --expect
   <hash>` does it without pushing.
 
 <a id="secret_store_spooled"></a>A publish runs without the database, so it first writes each original to an encrypted
 spool on this machine, `~/.gbrain/secret-store/spool/` (directory 0700, one 0600 file per entry, the same key). The
 owner moves spooled entries into the store right after its push, and maintenance (the `bookkeeping_gc` phase) moves
-any that are left. `gbrain secrets reveal <id>` reads a spooled entry meanwhile. When neither the store nor the spool
-can be written, the push is held with `secret_store_unwritable`.
+any that are left. `gbrain secrets reveal <id>` reads a spooled entry meanwhile, and `gbrain secrets list` (field `spooled` with
+`--json`) shows how many wait. An entry leaves the spool only once its store row reads back to the same original, so a
+process that stops between its push and the move loses nothing: the next owner push or maintenance pass moves it. When
+neither the store nor the spool can be written, the push is held with `secret_store_unwritable`.
 
 ## What it does not do
 

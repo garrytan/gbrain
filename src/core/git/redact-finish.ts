@@ -18,7 +18,7 @@ import type { BrainEngine } from '../engine.ts';
 import { execFileSync } from '../spawn.ts';
 import { gitChildEnv } from '../git-env.ts';
 import { resolveSlugForPath } from '../sync.ts';
-import { drainSpool } from '../secret-store/spool.ts';
+import { drainSpool, undrainedCount } from '../secret-store/spool.ts';
 import { ledgerLocation } from './commit-ledger.ts';
 import { relativeEscapesRoot } from '../path-confine.ts';
 import { BACKUP_KEEP_DAYS, BACKUP_REF_PREFIX, onPushMode, REDACTIONS_FILE } from './redact-unpushed.ts';
@@ -45,9 +45,13 @@ export async function sourcesForRoot(engine: BrainEngine, root: string): Promise
   return (await sourceRoots(engine, root)).map(s => s.id);
 }
 
-/** A push result that carries a redaction (effect-git.ts pushGitRoot): settle it now. Never throws. */
+/**
+ * After an owner's push (effect-git.ts pushGitRoot): settle a redaction it carries, and drain anything an earlier run
+ * left in the spool (a process that stopped between its push and its drain). Never throws.
+ */
 export async function settleIfRedacted(engine: BrainEngine, root: string, outcome: unknown): Promise<void> {
-  if (outcome && typeof outcome === 'object' && (outcome as { redaction?: unknown }).redaction) await settlePublishRedactions(engine, root);
+  const redacted = !!(outcome && typeof outcome === 'object' && (outcome as { redaction?: unknown }).redaction);
+  if (redacted || undrainedCount() > 0) await settlePublishRedactions(engine, root);
 }
 
 /** The database half right after a publish redaction: originals into the store, then the pending entries. Never throws. */

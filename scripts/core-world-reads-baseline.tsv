@@ -441,6 +441,9 @@ src/core/git-transport.ts	process_env	2	W6: settings plane out of the core
 src/core/git-visible-files.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
 src/core/git-visible-files.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/git-visible-files.ts	spawn_import	1	W7: process-wide effects move to src/cli
+src/core/git/background-publish.ts	fs_import	1	W7: filesystem boundary moves to the local app (the background publish record and its output beside the checkout git dir)
+src/core/git/background-publish.ts	process_env	1	W6: settings plane out of the core (the detached publish child inherits the environment, with longer publish lock waits)
+src/core/git/background-publish.ts	spawn_import	1	W7: git boundary moves to the local app (starts the detached gbrain git commit-push child)
 src/core/git/commit-guard.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/git/commit-guard.ts	spawn_import	1	W7: process-wide effects move to src/cli; PR B owner-path guard reads git version and hook paths of the worktree it installs into
 src/core/git/commit-ledger.ts	fs_import	1	W7: filesystem boundary moves to the local app; PR B commit ledger appends to <git common dir>/gbrain/commit-ledger.jsonl

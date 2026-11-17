@@ -97,6 +97,11 @@ export function addSpoolOccurrences(id: string, occurrences: SpoolOccurrence[]):
   if (entry && occurrences.length) writeEntry({ ...entry, occurrences: [...entry.occurrences, ...occurrences] });
 }
 
+/** Spooled originals not yet in the store (a duplicate of a stored value is not counted). */
+export function undrainedCount(): number {
+  return readSpool().filter(entry => !entry.duplicate_of).length;
+}
+
 /** The original of one spooled entry, or null when this host has no such entry. */
 export function openSpooled(id: string): { entry: SpoolEntry; value: string } | null {
   const entry = readSpool().find(e => e.id === id);
@@ -124,7 +129,7 @@ export async function drainSpool(engine: BrainEngine): Promise<{ moved: number; 
   const entries = readSpool().filter(entry => !entry.duplicate_of);
   if (!entries.length) return { moved: 0, remaining: 0 };
   await refreshAllowedCache(engine).catch(() => undefined);
-  const { sealWithId, recordOccurrence } = await import('./store.ts');
+  const { sealWithId, recordOccurrence, entryRow, openEntry } = await import('./store.ts');
   const { sourcesForRoot } = await import('../git/redact-finish.ts');
   let moved = 0;
   for (const entry of entries) {
@@ -140,6 +145,10 @@ export async function drainSpool(engine: BrainEngine): Promise<{ moved: number; 
         await recordOccurrence(engine, { entryId: entry.id, sourceId, field: o.field, origin: 'publish_rebuild', commit: o.commit, path: o.path, line: o.line, createdBy: 'publish redact (spooled)' });
       }
     }
+    // The file goes only once the store row reads back and opens to the same original.
+    let stored: string;
+    try { stored = openEntry(await entryRow(engine, entry.id)); } catch { continue; }
+    if (stored !== opened.value) continue;
     try { unlinkSync(fileOf(entry.id)); } catch { /* already gone */ }
     moved++;
   }

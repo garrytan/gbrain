@@ -54,11 +54,21 @@ import { MESSAGE_PATH, rangeSecretRefusal, scanRange, type RangeScan } from './r
 
 export const ON_PUSH_KEY = 'secrets.on_push';
 export type OnPush = 'redact' | 'refuse';
-/** The environment twin of `secrets.on_push` (like GBRAIN_ALLOW_UNVERIFIED_REMOTE for push.allow_unverified_remote); it can only tighten: `refuse`. */
+/** The environment twin of `secrets.on_push` (like GBRAIN_ALLOW_UNVERIFIED_REMOTE for push.allow_unverified_remote). It can only tighten: `refuse` is its one value. */
 export const ON_PUSH_ENV = 'GBRAIN_SECRETS_ON_PUSH';
-/** `secrets.on_push` from the file plane (engine-free publishers read it) or GBRAIN_SECRETS_ON_PUSH=refuse: `refuse` keeps the old refusal; anything else redacts. */
+let ignoredEnvNoticed = false;
+/**
+ * `secrets.on_push` from the file plane (engine-free publishers read it), or GBRAIN_SECRETS_ON_PUSH=refuse: `refuse`
+ * keeps the old refusal; anything else redacts. Any other value of the variable changes nothing (it never turns
+ * redaction on where config says refuse) and prints one notice on stderr per process.
+ */
 export function onPushMode(): OnPush {
-  if (process.env[ON_PUSH_ENV] === 'refuse') return 'refuse';
+  const env = process.env[ON_PUSH_ENV];
+  if (env === 'refuse') return 'refuse';
+  if (env !== undefined && !ignoredEnvNoticed) {
+    ignoredEnvNoticed = true;
+    process.stderr.write(`[gbrain notice] ${ON_PUSH_ENV}=${JSON.stringify(env.slice(0, 40))} is ignored: its only value is refuse; secrets.on_push in the config decides.\n`);
+  }
   return loadConfigFileOnly()?.secrets?.on_push === 'refuse' ? 'refuse' : 'redact';
 }
 

@@ -1495,7 +1495,7 @@ export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
         // GST-2988: with secrets.on_push redact (the default), the checked-out branch's unpushed commits are rebuilt with store markers and published.
         if ((e as { code?: string }).code !== 'publish_secret_found' || !fromHead || elsewhere || onPushMode() !== 'redact') throw e;
         const base = git(root, ['rev-parse', '--verify', '--quiet', ctx.trackingRef]).stdout.trim();
-        const outcome = redactUnpushed(root, { base, sealer: spoolSealer(root, null), publishLockHeld: true, lockWaitMs: opts.lockWaitMs });
+        const outcome = redactUnpushed(root, { base, sealer: spoolSealer(root, null), publishLockHeld: true, lockWaitMs: opts.lockWaitMs, ...(opts.scanTimeoutMs ? { budgetMs: opts.scanTimeoutMs } : {}) });
         if (!outcome || !('redacted' in outcome)) throw e;
         redaction = outcome;
         head = outcome.new_head;

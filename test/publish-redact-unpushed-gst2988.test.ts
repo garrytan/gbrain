@@ -9,16 +9,19 @@
  * Seams: real repositories and a bare remote; synthetic tokens only. The effect-worker tests run on PGLite, and on
  * Postgres too when DATABASE_URL is set (test/postgres-unit-arms.txt).
  */
-import { afterAll, describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, spyOn, test } from 'bun:test';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { commitAndPush } from '../src/core/git/commit-push.ts';
 import { redactUnpushed, spoolSealer, type RedactOutcome, type RedactPreview } from '../src/core/git/redact-unpushed.ts';
-import { openSpooled, readSpool } from '../src/core/secret-store/spool.ts';
+import { allowedLocally, drainSpool, openSpooled, readSpool, refreshAllowedCache, undrainedCount } from '../src/core/secret-store/spool.ts';
+import { currentKey, macKeyOf } from '../src/core/secret-store/keyring.ts';
+import { backgroundPublish } from '../src/core/git/background-publish.ts';
+import { runSecrets } from '../src/commands/secrets.ts';
 import { scanText } from '../src/core/secret-scan.ts';
-import { randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { serializePageToMarkdown } from '../src/core/markdown.ts';
@@ -30,7 +33,7 @@ import { claimWorktree, getWorktreeBinding } from '../src/core/persistence/owner
 import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { secretPublishMaintenance } from '../src/core/git/redact-finish.ts';
-import { reveal } from '../src/core/secret-store/store.ts';
+import { reveal, seal } from '../src/core/secret-store/store.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -260,6 +263,36 @@ describe('GST-2988 a publish redacts unpushed secrets', () => {
     expect(applied.stdout).not.toContain(token);
     expect(readFileSync(join(r.root, 'notes.md'), 'utf8')).toMatch(MARKER);
   }, 90_000);
+  test('GBRAIN_SECRETS_ON_PUSH only tightens: refuse beats config redact, and redact, off or empty never loosens config refuse', async () => {
+    const r = repo();
+    const head = commit(r.root, 'notes.md', `token ${token}\n`);
+    const attempt = (value: string) => inHome(r, () => failure(() => commitAndPush({ repo: r.root, cwd: r.root, paths: [], pushOnly: true })), { GBRAIN_SECRETS_ON_PUSH: value });
+    expect((await attempt('refuse')).code).toBe('publish_secret_found');
+    mkdirSync(join(r.home, '.gbrain'), { recursive: true });
+    writeFileSync(join(r.home, '.gbrain', 'config.json'), JSON.stringify({ secrets: { on_push: 'refuse' } }));
+    for (const value of ['redact', 'off', '']) expect((await attempt(value)).code).toBe('publish_secret_found');
+    expect(git(r.root, 'rev-parse', 'HEAD')).toBe(head);
+    expect(git(r.root, 'for-each-ref', 'refs/gbrain/backup')).toBe('');
+    expect(remoteTip(r)).toBe(r.base);
+    expect(existsSync(join(r.home, '.gbrain', 'secret-store', 'spool'))).toBe(false);
+  }, 60_000);
+
+  test('any other GBRAIN_SECRETS_ON_PUSH value changes nothing and prints one notice on stderr', () => {
+    const r = repo();
+    const mode = (env: string | undefined, config?: object) => {
+      if (config) { mkdirSync(join(r.home, '.gbrain'), { recursive: true }); writeFileSync(join(r.home, '.gbrain', 'config.json'), JSON.stringify(config)); }
+      const child = spawnSync(process.execPath, ['-e', `const { onPushMode } = await import(${JSON.stringify(resolve(import.meta.dir, '../src/core/git/redact-unpushed.ts'))}); console.log(onPushMode(), onPushMode());`],
+        { encoding: 'utf8', env: { ...process.env, GBRAIN_HOME: r.home, GBRAIN_SECRETS_ON_PUSH: env }, timeout: 30_000 });
+      expect(child.status).toBe(0);
+      return { modes: child.stdout.trim(), notices: child.stderr.split('\n').filter(l => l.includes('GBRAIN_SECRETS_ON_PUSH')) };
+    };
+    const notice = (value: string) => `[gbrain notice] GBRAIN_SECRETS_ON_PUSH=${JSON.stringify(value)} is ignored: its only value is refuse; secrets.on_push in the config decides.`;
+    expect(mode('off')).toEqual({ modes: 'redact redact', notices: [notice('off')] });
+    expect(mode('refuse')).toEqual({ modes: 'refuse refuse', notices: [] });
+    expect(mode(undefined)).toEqual({ modes: 'redact redact', notices: [] });
+    expect(mode('redact', { secrets: { on_push: 'refuse' } })).toEqual({ modes: 'refuse refuse', notices: [notice('redact')] });
+    expect(mode('', { secrets: { on_push: 'refuse' } })).toEqual({ modes: 'refuse refuse', notices: [notice('')] });
+  }, 60_000);
 });
 
 /** A checkout with a bare remote and a child CLI wrapper, as test/effect-git-secret-gate.test.ts builds it. */
@@ -326,6 +359,29 @@ const managedRemoteClean = (c: Managed) => {
   expect(git(c.remote, 'log', '--all', '--oneline', '-S', token)).toBe('');
   expect(execFileSync('git', ['-C', c.remote, 'cat-file', '--batch-all-objects', '--batch'], { maxBuffer: 1 << 28 }).toString('latin1')).not.toContain(token);
 };
+/**
+ * The child CLI answers a foreground keep-checkout publish as one past its budget (publish_secret_rebuild_unbounded)
+ * and logs its arguments; a publish given the background budget (--scan-timeout 1200) runs for real unless always is set.
+ */
+function overBudgetChild(c: Managed, always: boolean): string {
+  const log = join(c.home, 'child-args.log');
+  const real = `exec '${process.execPath}' '${resolve(import.meta.dir, '../src/cli.ts')}' "$@"`;
+  const fake = `printf '%s\\n' '{"code":"publish_secret_rebuild_unbounded","message":"Redacting the unpushed commits ran past its budget."}'; exit 1`;
+  writeFileSync(c.cli, ['#!/bin/sh', `echo "$*" >> '${log}'`, 'case " $* " in',
+    `  *" commit-push "*"--scan-timeout 1200 "*) ${always ? fake : real} ;;`, `  *" commit-push "*) ${fake} ;;`, 'esac', real, ''].join('\n'));
+  chmodSync(c.cli, 0o700);
+  return log;
+}
+async function backgroundDone(root: string): Promise<void> {
+  for (let i = 0; i < 900 && backgroundPublish(root).state === 'running'; i++) await Bun.sleep(200);
+  expect(backgroundPublish(root).state).toBe('done');
+}
+async function secretsOutput(engine: BrainEngine, args: string[]): Promise<string> {
+  const lines: string[] = [];
+  const spy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => { lines.push(a.map(String).join(' ')); });
+  try { await runSecrets(engine, args); } finally { spy.mockRestore(); }
+  return lines.join('\n');
+}
 
 for (const [arm, databaseUrl] of [['pglite', undefined], ...(PG_URL ? [['postgres', PG_URL]] : [])] as Array<[string, string | undefined]>) describe(`GST-2988 through the effect worker (${arm})`, () => {
   test("a page write's Git effect publishes redacted: the store holds the original, the database page holds the same marker", async () => {
@@ -356,6 +412,104 @@ for (const [arm, databaseUrl] of [['pglite', undefined], ...(PG_URL ? [['postgre
       expect(await secretPublishMaintenance(w.engine)).toMatchObject({ secret_parked_pushes_retried: 1 });
       await w.runEffects();
       expect(await w.effect()).toMatchObject({ state: 'committed', error_code: null });
+      managedRemoteClean(c);
+    });
+  }, 300_000);
+
+  test('a process that stops between its push and the drain loses nothing; the next owner run drains the spool', async () => {
+    const c = managedCheckout();
+    await managedWrite(c, databaseUrl, async w => {
+      // The publish alone, with no drain after it: what a process killed between the two leaves behind.
+      expect(commitAndPush({ repo: c.root, cwd: c.root, paths: [], pushOnly: true, keepCheckout: true }).outcome).toBe('pushed');
+      managedRemoteClean(c);
+      const id = MARKER.exec(readFileSync(join(c.root, 'notes/beta-example.md'), 'utf8'))![2]!;
+      expect(undrainedCount()).toBe(1);
+      expect((await reveal(w.engine, id, 'test')).value).toBe(token);
+      expect(await secretsOutput(w.engine, ['list'])).toContain("1 original(s) a publish redacted wait in this machine's spool for the store");
+      expect(JSON.parse(await secretsOutput(w.engine, ['list', '--json']))).toMatchObject({ entries: [], spooled: 1 });
+
+      // A store row that does not read back keeps the spool file.
+      const blind = new Proxy(w.engine, { get(target, prop) {
+        const value = Reflect.get(target, prop);
+        if (prop === 'executeRaw') return (sql: string, params?: unknown[]) => sql.startsWith('SELECT id,source_id,rule,ciphertext') ? Promise.resolve([]) : target.executeRaw(sql, params);
+        return typeof value === 'function' ? value.bind(target) : value;
+      } });
+      expect(await drainSpool(blind)).toMatchObject({ moved: 0 });
+      expect(undrainedCount()).toBe(1);
+      expect(openSpooled(id)!.value).toBe(token);
+
+      // The next owner run: the page write's Git effect redacts nothing itself and still drains what was left.
+      await w.runEffects();
+      expect(await w.effect()).toMatchObject({ state: 'committed', error_code: null });
+      expect(readSpool()).toEqual([]);
+      expect(undrainedCount()).toBe(0);
+      expect((await reveal(w.engine, id, 'test')).value).toBe(token);
+      expect(JSON.parse(await secretsOutput(w.engine, ['list', '--json']))).toMatchObject({ entries: [{ id }], spooled: 0 });
+      expect(await secretsOutput(w.engine, ['list'])).not.toContain('spool');
+      expect((await w.engine.getPage('notes/beta-example', { sourceId: w.sourceId }))!.compiled_truth).toContain(`:${id}>`);
+      managedRemoteClean(c);
+    });
+  }, 300_000);
+
+  test('allowed.json holds an HMAC under the store key (never a bare hash of the value) and is mode 0600', async () => {
+    const home = realpathSync(mkdtempSync(join(dir, 'allowed-')));
+    await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined, GBRAIN_SECRET_STORE_KEY: undefined }, async () => {
+      const { engine, close } = await isolatedSharedSkillsEngine(databaseUrl);
+      try {
+        await engine.executeRaw("INSERT INTO sources(id,name) VALUES('source-a','source-a')");
+        const sealed = await seal(engine, { sourceId: 'source-a', rule: 'github_token', value: token });
+        await engine.executeRaw("UPDATE secret_store SET status='allowed' WHERE id=$1", [sealed.id]);
+        await refreshAllowedCache(engine);
+        const file = join(home, '.gbrain', 'secret-store', 'allowed.json');
+        expect(statSync(file).mode & 0o777).toBe(0o600);
+        const text = readFileSync(file, 'utf8');
+        const key = currentKey({ create: false })!;
+        const mac = createHmac('sha256', macKeyOf(key.key)).update(token, 'utf8').digest('hex');
+        expect(JSON.parse(text)).toEqual([{ key_id: sealed.key_id, value_mac: mac }]);
+        expect(text).not.toContain(token);
+        expect(text).not.toContain(createHash('sha256').update(token, 'utf8').digest('hex'));
+        expect(text).not.toContain(createHmac('sha256', key.key).update(token, 'utf8').digest('hex'));
+        expect(allowedLocally(token)).toBe(true);
+        expect(allowedLocally(token + 'x')).toBe(false);
+      } finally { await close(); }
+    });
+  }, 120_000);
+
+  test('a publish past its budget retries once in the background with 4x the budget; the root waits as a dependency, then settles the redaction', async () => {
+    const c = managedCheckout();
+    const log = overBudgetChild(c, false);
+    await managedWrite(c, databaseUrl, async w => {
+      await w.runEffects();
+      expect(await w.effect()).toMatchObject({ state: 'queued', error_code: 'publish_secret_rebuild_unbounded' });
+      expect(backgroundPublish(c.root).state).not.toBe('none');
+      await backgroundDone(c.root);
+      expect(readFileSync(log, 'utf8')).toContain(`git commit-push --push-only --keep-checkout --scan-secrets --scan-timeout 1200 --path ${c.root} --json`);
+      await w.runEffects();
+      expect(await w.effect()).toMatchObject({ state: 'committed', error_code: null });
+      expect(backgroundPublish(c.root).state).toBe('none');
+      expect(git(c.remote, 'rev-parse', 'refs/heads/main')).toBe(git(c.root, 'rev-parse', 'HEAD'));
+      managedRemoteClean(c);
+      const marker = MARKER.exec(readFileSync(join(c.root, 'notes/beta-example.md'), 'utf8'))!;
+      expect((await reveal(w.engine, marker[2]!, 'test')).value).toBe(token);
+      expect(readSpool()).toEqual([]);
+      expect((await w.engine.getPage('notes/beta-example', { sourceId: w.sourceId }))!.compiled_truth).toContain(marker[0]);
+    });
+  }, 300_000);
+
+  test('a background publish that runs past its 4x budget again for the same commit holds the pushes as publish_scan_unreadable', async () => {
+    const c = managedCheckout();
+    const before = git(c.remote, 'rev-parse', 'refs/heads/main');
+    const log = overBudgetChild(c, true);
+    await managedWrite(c, databaseUrl, async w => {
+      await w.runEffects();
+      expect(await w.effect()).toMatchObject({ state: 'queued', error_code: 'publish_secret_rebuild_unbounded' });
+      await backgroundDone(c.root);
+      await w.runEffects();
+      expect(await w.effect()).toMatchObject({ state: 'queued', error_code: 'publish_scan_unreadable' });
+      for (let i = 0; i < 8 && (await w.effect()).state !== 'failed'; i++) await w.runEffects();
+      expect(await w.effect()).toMatchObject({ state: 'failed', error_code: 'targets_parked' });
+      expect(readFileSync(log, 'utf8').split('\n').filter(line => line.includes('--scan-timeout 1200'))).toHaveLength(1);
+      expect(git(c.remote, 'rev-parse', 'refs/heads/main')).toBe(before);
       managedRemoteClean(c);
     });
   }, 300_000);

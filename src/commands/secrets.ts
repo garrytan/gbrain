@@ -53,9 +53,11 @@ export async function runSecrets(engine: BrainEngine, args: string[]): Promise<v
   if (!sub || sub === '--help' || sub === '-h' || rest.includes('--help')) { console.log(HELP); return; }
   if (sub === 'list') {
     const entries = await listEntries(engine, { sourceId: flag(rest, '--source'), slug: flag(rest, '--slug') });
-    print(json, { entries }, entries.length
-      ? entries.map(e => `${e.id}  ${e.rule}  ${e.status}  ${e.source_id}  ${e.occurrences} occurrence(s)  ${e.slugs.join(', ') || '-'}${e.readable ? '' : '  (key ' + e.key_id + ' not on this host)'}`).join('\n')
-      : 'No secret store entries.');
+    const spooled = (await import('../core/secret-store/spool.ts')).undrainedCount();
+    const spoolLine = spooled ? [`${spooled} original(s) a publish redacted wait in this machine's spool for the store; maintenance or the next push moves them (gbrain secrets reveal reads them meanwhile).`] : [];
+    print(json, { entries, spooled }, [...(entries.length
+      ? entries.map(e => `${e.id}  ${e.rule}  ${e.status}  ${e.source_id}  ${e.occurrences} occurrence(s)  ${e.slugs.join(', ') || '-'}${e.readable ? '' : '  (key ' + e.key_id + ' not on this host)'}`)
+      : ['No secret store entries.']), ...spoolLine].join('\n'));
     return;
   }
   if (sub === 'reveal') {
