@@ -88,6 +88,7 @@ export async function createPersistenceIpcProvider(engine: BrainEngine, config: 
       config, remote: verified.remote, transport: verified.remote || localSkillAdministration || localCliLocalOnly ? 'stdio' : undefined, sourceId, auth,
       ...(writeWaitMs !== undefined ? { writeWaitMs } : {}),
       ...(unrestricted ? {} : { localFederatedSourceIds: verified.grant.sourceIds }),
+      ...(request.routing.source === null && !verified.remote ? { localSourceImplicit: true } : {}),
     });
     const body = JSON.parse(result.content[0].text) as Record<string, unknown>;
     // GBRA-498: the trusted local CLI's --room is marked here, where the brain is; any other lane's answer goes back
