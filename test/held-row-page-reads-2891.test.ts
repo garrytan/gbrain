@@ -50,7 +50,7 @@ function vectorFor(text: string): number[] {
 }
 const row = (n: number, claim: string, visibility = 'world') => ({ rowNum: n, claim, kind: 'fact', confidence: 1, visibility, notability: 'medium', active: true });
 const pageText = (title: string, rows: ReturnType<typeof row>[], prose = 'Profile.') =>
-  '---\ntype: person\ntitle: ' + title + '\n---\n# ' + title + '\n\n' + prose + '\n\n## Facts\n\n' + renderFactsTable(rows as never) + '\n';
+  '---\ntype: person\ntitle: ' + title + '\nvalid_from: 2020-01-01\n---\n# ' + title + '\n\n' + prose + '\n\n## Facts\n\n' + renderFactsTable(rows as never) + '\n';
 const OWNER = 'owner-example';
 const BOB = 'bob-example';
 /** The remember path (GST-2875), the put_page path (#9196), and on a repo brain a private copy nobody confirmed. */
@@ -93,6 +93,8 @@ for (const kind of testBackends()) for (const shape of ['repo', 'repo-less'] as 
       ['get_page grep', 'get_page', { slug: p.slug, grep: 'keeps bees' }],
       ['get_page section', 'get_page', { slug: p.slug, section: 'Facts' }],
       ['get_page outline', 'get_page', { slug: p.slug, body: 'outline' }],
+      ['get_page as_of', 'get_page', { slug: p.slug, as_of: '2099-01-01' }],
+      ['get_page known_as_of', 'get_page', { slug: p.slug, known_as_of: new Date().toISOString() }],
       ['fetch', 'fetch', { id: p.slug }],
       ['search keyword', 'search', { query: p.canary, match: 'keyword', fields: 'full', limit: 20 }],
       ['search', 'search', { query: 'keeps bees ' + p.canary, fields: 'full', limit: 20 }],
@@ -182,8 +184,11 @@ for (const kind of testBackends()) for (const shape of ['repo', 'repo-less'] as 
         { slug: LIA.slug, source_id: 'default', chunk_text: 'bees zebracornheld | fact | 1.0 | world | medium |  |  |  |  |\nProfile prose.' },
         { slug: LIA.slug, source_id: 'default', chunk_text: 'Profile prose.\n| 3 | Lia keeps bees zebra' },
         { slug: LIA.slug, source_id: 'default', chunk_text: 'in Turin | fact | 1.0 | world | medium |  |  |  |  |\nProfile prose.' },
+        { slug: LIA.slug, source_id: 'default', chunk_text: '3 | Lia keeps bees zebracornheld | fact | 1.0 | world | medium |  |  |  |  |\nProfile prose.' },
+        { slug: LIA.slug, source_id: 'default', chunk_text: '| Lia keeps bees zebracornheld | fact | 1.0 | world | medium |  |  |  |  |\nProfile prose.' },
       ] as never) as Array<{ chunk_text: string }>;
-      expect(kept.map(k => k.chunk_text)).toEqual(['Profile prose.', 'Profile prose.', 'in Turin | fact | 1.0 | world | medium |  |  |  |  |\nProfile prose.']);
+      expect(kept.map(k => k.chunk_text)).toEqual(['Profile prose.', 'Profile prose.', 'in Turin | fact | 1.0 | world | medium |  |  |  |  |\nProfile prose.',
+        'Profile prose.', 'Profile prose.']);
     }, 60_000);
 
     test('a member still reads a held row on their own member page', async () => {
@@ -207,6 +212,8 @@ for (const kind of testBackends()) for (const shape of ['repo', 'repo-less'] as 
         await call('local', 'put_page', { slug: p.slug, content: String(page.content).replace('Profile.', 'Profile. Local edit.'), expected_revision: page.revision, request_id: randomUUID() });
         expect({ slug: p.slug, after: 'put_page', world: (await stored(p.claim)).includes('world') }).toEqual({ slug: p.slug, after: 'put_page', world: false });
         expect(await call('bob', 'get_page', { slug: p.slug, include_content: true })).not.toContain(p.canary);
+        for (const who of ['bob', 'unbound']) expect(await call(who, 'get_versions', { slug: p.slug, include_body: true })).not.toContain(p.canary);
+        expect(await call('local', 'get_versions', { slug: p.slug, include_body: true })).toContain(p.canary);
       }
     }), 300_000);
 
@@ -222,9 +229,23 @@ for (const kind of testBackends()) for (const shape of ['repo', 'repo-less'] as 
       expect((await decideTrustProposal(engine, refs[KIM.slug]!, 'reject', owner)).status).toBe('rejected');
       expect(await call('bob', 'get_page', { slug: KIM.slug, include_content: true })).not.toContain(KIM.canary);
       expect(await call('owner', 'get_page', { slug: KIM.slug, include_content: true })).toContain(turin(KIM));
+      if (shape === 'repo') {
+        expect((await decideTrustProposal(engine, refs[MAX.slug]!, 'reject', owner)).status).toBe('rejected');
+        const page = JSON.parse(await call('local', 'get_page', { slug: MAX.slug, include_content: true }));
+        await call('local', 'put_page', { slug: MAX.slug, content: String(page.content).replace('Profile.', 'Profile. After reject.'), expected_revision: page.revision, request_id: randomUUID() });
+        expect(await stored(MAX.claim)).not.toContain('world');
+        expect(await call('bob', 'get_page', { slug: MAX.slug, include_content: true })).not.toContain(MAX.canary);
+      }
     }), 300_000);
   });
 }
+
+test('GST-2891: a failed held-row lookup drops every fence row line (fail closed)', async () => {
+  const failing = { executeRaw: async () => { throw new Error('lookup failed'); } };
+  const kept = await dropHeldFenceRows(failing as never, [{ slug: 'people/alice-example', source_id: 'default',
+    chunk_text: 'Prose.\n| 1 | Alice likes tea | fact | 1.0 | world | medium |  |  |  |  |\nMore prose.' }] as never) as Array<{ chunk_text: string }>;
+  expect(kept.map(k => k.chunk_text)).toEqual(['Prose.\nMore prose.']);
+});
 
 /** search_exact on a page stored in segments: no body string to read, so the held row is found from the stored chunk. */
 for (const kind of testBackends()) {

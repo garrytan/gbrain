@@ -31,8 +31,8 @@ import { sanitizeRemoteBody } from '../remote-body.ts';
 import { getContentFlag } from '../quarantine.ts';
 import { fileHeldField, readHeldPages } from '../persistence/held-reads.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
-import { resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs, isPrivatePageForCaller, worldOnlyFacts } from '../search/private-visibility.ts';
-import { loadFenceChunkOverlay } from '../eligibility/fence-overlay.ts';
+import { resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs, isPrivatePageForCaller } from '../search/private-visibility.ts';
+import { heldRowsForCaller } from '../eligibility/fence-overlay.ts';
 import { unquoteAnyTranscriptText } from '../search/transcript-quote.ts';
 import { withIgnoredPrivacyLabelNotice } from '../search/ignored-privacy-labels.ts';
 import { LIST_PAGES_DESCRIPTION, CAPTURE_DESCRIPTION } from '../operations-descriptions.ts';
@@ -91,7 +91,7 @@ async function dropPrivateSlugs(
  * entirely, facts fence keeps only `world`-visibility rows, less those held from a world-only caller (GST-2891).
  */
 async function stripPrivacyFencesForRemoteReader(ctx: OperationContext, page: Page): Promise<Page> {
-  const omitRows = worldOnlyFacts(ctx.remote) ? (await loadFenceChunkOverlay(ctx.engine, { sourceId: page.source_id, slug: page.slug, compiled_truth: page.compiled_truth, timeline: page.timeline }, { hideHeld: true }))?.held : undefined;
+  const omitRows = await heldRowsForCaller(ctx.engine, ctx.remote, { sourceId: page.source_id, slug: page.slug, compiled_truth: page.compiled_truth, timeline: page.timeline });
   const opts = { includeWithdrawn: true, keepMaterializedMarkers: true, omitRows }; // #5567: markers round-trip remote edits
   return { ...page, compiled_truth: sanitizeRemoteBody(page.compiled_truth, opts), timeline: sanitizeRemoteBody(page.timeline ?? '', opts) };
 }

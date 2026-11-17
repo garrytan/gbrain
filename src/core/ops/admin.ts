@@ -3,6 +3,7 @@ import { readPolicyOpts } from './context.ts';
 import { attributeVersions, canReadWriteAttribution } from './attribution.ts';
 import { GET_VERSIONS_DEFAULT_LIMIT, GET_VERSIONS_REMOTE_MAX_LIMIT, pagingLimit, reportVersionPage } from './read-paging.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
+import { heldRowsForCaller } from '../eligibility/fence-overlay.ts';
 import { fenceTranscriptText, quotesStored } from '../search/transcript-quote.ts';
 import { historyQuarantine } from './get-page-projection.ts';
 /**
@@ -282,7 +283,9 @@ const get_versions: Operation = {
       // #8042: a third-party page's version reaches an untrusted reader quoted, as get_page's current body does;
       // GST-687: so does one whose snapshot tier is below the owner's (a version with no snapshot reads as unknown).
       const quote = quotesStored(v.type, snapshotTiers.get(Number(v.id)));
-      const body = (text: string) => { const clean = sanitizeRemoteBody(text); return quote && clean ? fenceTranscriptText(clean, String(p.slug)) : clean; };
+      const live = lives.find(l => Number(l.id) === Number(v.page_id));
+      const omitRows = await heldRowsForCaller(ctx.engine, ctx.remote, { sourceId: live?.source_id ?? ctx.sourceId ?? 'default', slug: live?.slug ?? String(p.slug), compiled_truth: v.compiled_truth, timeline: v.timeline });
+      const body = (text: string) => { const clean = sanitizeRemoteBody(text, { omitRows }); return quote && clean ? fenceTranscriptText(clean, String(p.slug)) : clean; };
       out.push({ ...v, compiled_truth: body(v.compiled_truth), ...reason(v),
         ...(typeof v.timeline === 'string' ? { timeline: body(v.timeline) } : {}), ...(quote ? { quoted: 'transcript' } : {}) });
     }

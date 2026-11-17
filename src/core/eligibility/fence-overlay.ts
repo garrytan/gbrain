@@ -34,6 +34,7 @@ import { compactTrustLabel } from './labels.ts';
 import { activationSuppressedSql } from './sql.ts';
 import { holdFingerprint } from '../write-gate-store.ts';
 import { memberFactAdmitSql } from '../access/member-facts.ts';
+import { worldOnlyFacts } from '../search/private-visibility.ts';
 
 /** The origin slot of a fence trust marker: the chunk holds facts-fence rows, not page prose. */
 export const FENCE_TRUST_ORIGIN = 'facts-fence';
@@ -285,4 +286,14 @@ export async function loadFenceChunkOverlay(
     if (isPending ? pending!.unconfirmed === true : row.row_flagged === true) unconfirmed.add(rowNum);
   }
   return omit.size || demote.size ? { omit, demote, ...(unconfirmed.size ? { unconfirmed } : {}), ...(held.size ? { held } : {}) } : undefined;
+}
+
+/**
+ * GST-2891: the world cells of a page body (the current page, an edition or a version) held from the caller when its
+ * fact reads are world-only (heldRowSql, against the facts as they stand now), as sanitizeRemoteBody's `omitRows`;
+ * undefined for any other caller, who reads the body as stored.
+ */
+export async function heldRowsForCaller(engine: Pick<BrainEngine, 'executeRaw'>, remote: boolean | undefined,
+  page: { sourceId: string; slug: string; compiled_truth: string; timeline?: string | null }): Promise<ReadonlySet<number> | undefined> {
+  return worldOnlyFacts(remote) ? (await loadFenceChunkOverlay(engine, page, { hideHeld: true }))?.held : undefined;
 }

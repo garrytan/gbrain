@@ -105,8 +105,9 @@ export async function stampPageTrust<T extends PageRef>(engine: Exec, rows: T[],
 /**
  * A text's lines that read as facts-fence table rows (`| 3 | claim |…`, inside a fence or not: a chunk can start
  * mid-table), with row number and claim. A chunk boundary can also cut a row line: the first line can start inside a
- * row (its claim fragment is the text before the first cell break, row number unknown) and the last can stop inside one;
- * both are `partial`, so the claim is matched as a fragment.
+ * row (inside its claim: the text before the first cell break; inside or just after its row-number cell of a world row:
+ * the claim cell; row number unknown) and the last can stop inside one; both are `partial`, so the claim is matched as a
+ * fragment.
  */
 function fenceRowLines(text: string): Array<{ line: number; rowNum: number; claim: string; partial: boolean }> {
   const out: Array<{ line: number; rowNum: number; claim: string; partial: boolean }> = [];
@@ -114,7 +115,9 @@ function fenceRowLines(text: string): Array<{ line: number; rowNum: number; clai
   lines.forEach((line, i) => {
     const cells = /^\s*\|\s*\d+\s*\|/.test(line) ? parseRowCells(line) : null;
     const claim = cells?.[1];
+    const cut = i === 0 && /\|\s*world\s*\|/.test(line) ? (line.trim().startsWith('|') ? parseRowCells(line)?.[0] : /^\s*\d+\s*\|/.test(line) ? parseRowCells('| ' + line)?.[1] : null) : null;
     if (cells && claim) out.push({ line: i, rowNum: Number(cells[0]), claim: claim.replace(/^~~([\s\S]*)~~$/, '$1').replace(/^~~/, ''), partial: i === lines.length - 1 });
+    else if (cut) out.push({ line: i, rowNum: -1, claim: cut.replace(/^~~|~~$/g, ''), partial: true });
     else if (i === 0 && !line.trim().startsWith('|') && /[^\\]\|/.test(line)) {
       const fragment = decodeFenceCell(line.split(/(?<!\\)\|/)[0]!.trim()).replace(/^~~|~~$/g, '');
       if (fragment) out.push({ line: i, rowNum: -1, claim: fragment, partial: true });
