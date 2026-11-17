@@ -8,6 +8,11 @@ import { setCliExitVerdict } from '../../core/cli-force-exit.ts';
 // db-availability loop (engine-free by design — these must work when the
 // DB is down; that is the point).
 export async function run(args: string[]): Promise<void> {
+  if (args[0] === 'shadow') {
+    const { runEngineShadow } = await import('../../commands/engine-shadow.ts');
+    setCliExitVerdict(await runEngineShadow(args.slice(1)));
+    return;
+  }
   const { runEngineStatus } = await import('../../commands/engine-status.ts');
   setCliExitVerdict(await runEngineStatus(args));
 }

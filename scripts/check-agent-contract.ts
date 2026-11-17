@@ -68,6 +68,9 @@ export const INTERACTIVE_IO_ALLOW: Readonly<Record<string, Readonly<Record<strin
   'src/commands/hook.ts': {
     'process.stdin.on': 'harness hook payload: bounded, fail-open stream read with its own hard timeout (a hook never blocks the agent)',
   },
+  'src/shadow/child.ts': {
+    createInterface: 'stdin IS the data: the shadow supervisor pipes mirrored reads to its child line by line until EOF',
+  },
   'src/commands/watch.ts': {
     createInterface: 'stdin IS the data: transcript turns streamed line by line until EOF or SIGINT',
   },
