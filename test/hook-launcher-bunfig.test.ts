@@ -283,19 +283,19 @@ describe('doctor: the hook_session_cwd fix and how it joins the harness_wiring c
       const codex = hookLauncherFix(problem(b, { harness: 'codex', lane: 'turn-rule', source: join(b.home, '.codex', 'hooks.json') }));
       expect(codex).toMatchObject({ actor: 'user', consent: [] });
       expect(codex.argv).toBeUndefined();
-      expect(codex.user_message).toContain('run it yourself: gbrain setup codex --instructions-only');
+      expect(codex.user_message).toContain('run it yourself: foresights setup codex --instructions-only');
       expect(hookLauncherFix(problem(b, { harness: 'codex', lane: 'mcp', source: join(b.home, '.codex', 'config.toml'), rerun: ['gbrain', 'setup', 'codex'], setupOwned: true, owner: 'setup' }))).toMatchObject({ actor: 'user', consent: [] });
       const project = join(b.root, 'proj');
       const p = hookLauncherFix(problem(b, { source: join(project, '.claude', 'settings.local.json') }));
       expect(p.actor).toBe('user');
-      expect(p.user_message).toContain(`From ${project}, run: gbrain setup claude-code --scope project`);
+      expect(p.user_message).toContain(`From ${project}, run: foresights setup claude-code --scope project`);
       const foreign = hookLauncherFix(problem(b, { reason: 'foreign', detail: 'the launcher directory holds .env' }));
       expect(foreign.actor).toBe('user');
-      expect(foreign.user_message).toContain('Remove that file (foresights did not write it), then run: gbrain setup claude-code');
+      expect(foreign.user_message).toContain('Remove that file (foresights did not write it), then run: foresights setup claude-code');
       const edited = hookLauncherFix(problem(b, { edited: true }));
       expect(edited.actor).toBe('user');
       expect(edited.user_message).toContain('Remove or rewrite that entry');
-      expect(hookLauncherFix(problem(b, { edited: true, source: join(project, '.claude', 'settings.local.json') })).user_message).toContain(`then from ${project}, run: gbrain setup claude-code --scope project`);
+      expect(hookLauncherFix(problem(b, { edited: true, source: join(project, '.claude', 'settings.local.json') })).user_message).toContain(`then from ${project}, run: foresights setup claude-code --scope project`);
     });
   });
 

@@ -1801,8 +1801,8 @@ describe('harness hooks without their marker (#6092, #6171)', () => {
     const err = f.err.join('\n');
     expect(err).toContain('[gbrain notice harness_hook_unowned kind=safety]');
     expect(err).toContain('next: tell_user_to_run');
-    expect(err).toContain('fix: gbrain bootstrap harness --remove');
-    expect(err).toContain('verify: gbrain bootstrap harness --status');
+    expect(err).toContain('fix: foresights bootstrap harness --remove');
+    expect(err).toContain('verify: foresights bootstrap harness --status');
     expect(f.out.join('\n')).not.toMatch(/fully removed/);
 
     const fixed = readJson(f.userSettings);

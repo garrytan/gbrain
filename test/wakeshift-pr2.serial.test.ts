@@ -503,7 +503,7 @@ describe('status, doctor and the gate', () => {
   test('status and doctor say when the published manifest is older than this build', async () => {
     writeConfig({ enabled: true, url: fake.url, manifest_hash: 'feedfacefeedface' });
     const st = JSON.parse((await cli(['status', '--json'])).out);
-    expect(st.manifest).toEqual({ current: false, fix: 'gbrain wakeshift enable' });
+    expect(st.manifest).toEqual({ current: false, fix: 'foresights wakeshift enable' });
     const checks = await doctorChecks();
     expect(checks[0]).toMatchObject({ status: 'warn', details: { manifest_current: false } });
     expect(checks[0]!.message).toContain('foresights wakeshift enable');

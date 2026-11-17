@@ -50,7 +50,7 @@ describe('foresights wakeshift watch on the brain host', () => {
     withEnv({ GBRAIN_HOME: home, WAKESHIFT_API_KEY: undefined }, async () => {
       await runWakeshift(engine, ['watch', 'job', '5', '--session-key', SECRET, '--harness', 'claude-code']);
       expect(err).toContain('wakeshift_needs_conversation');
-      expect(err).toContain('gbrain jobs wait 5');
+      expect(err).toContain('foresights jobs wait 5');
       expect(currentExitCode()).not.toBe(0);
       expect(out).toBe('');
       expect(err).not.toContain(SECRET);

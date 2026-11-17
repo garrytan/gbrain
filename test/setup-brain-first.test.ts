@@ -421,7 +421,7 @@ describe('brain-first block: hardening', () => {
     expect(c.fix?.argv).toEqual(['gbrain', 'setup', 'codex', '--instructions-only', '--name', 'work-brain', '--surface', 'verbs']);
     const project = withInstructionBlocks({ name: 'harness_wiring', status: 'ok', message: 'wired.' }, [{ harness: 'cursor', path: '/repo/.cursor/rules/gbrain-brain-first.mdc', state: 'missing', from: 'ledger' }]);
     expect(project.fix?.argv).toBeUndefined();
-    expect(project.fix?.user_message).toContain('From /repo, run: gbrain setup cursor --instructions-only');
+    expect(project.fix?.user_message).toContain('From /repo, run: foresights setup cursor --instructions-only');
   });
 });
 
