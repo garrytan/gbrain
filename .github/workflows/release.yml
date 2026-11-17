@@ -5,8 +5,8 @@ name: Release
 # compiled binaries attached (#3521), plus the skill resolver library bundle
 # for Node adapters (gbrain-skill-resolver.mjs, GBRA-377), plus the optional Rust
 # engine addon for linux-x64 and darwin-arm64 with its SHA-256 manifest. The addon
-# is not inside the executables: gbrain fetches it into the gbrain home the first
-# time the rust engine is selected and checks it against the manifest
+# is not inside the executables: gbrain loads it from the gbrain home cache only
+# when the rust engine is selected and checks it against the manifest
 # (src/core/rust-engine/, rust/README.md).
 #
 # Every release is published as a pre-release that never becomes GitHub's
@@ -355,12 +355,13 @@ jobs:
         run: git push origin "+${RELEASE_SHA}:refs/tags/latest-stable"
 
   # After the release is published: the executable users download, with the rust engine selected,
-  # fetches the addon from that release and checks it against the manifest. The engine itself is
-  # a shell that has no capabilities yet, so the command must stop at the shell's
-  # engine_capability_missing refusal, which is only reached after the addon verified and loaded.
-  # A rust_engine_addon_missing or _mismatch refusal here means the release is broken, except that
-  # unauthenticated attestation lookups are limited by GitHub (60 an hour per address): a run that
-  # could not read an attestation is retried up to 3 times with a growing wait, and only that case.
+  # loads the published addon from the gbrain home cache and checks it against the manifest. gbrain
+  # does not fetch the addon yet (the install command comes later), so this job downloads the addon
+  # and the manifest, checks their build-provenance attestations with gh, and puts them where the
+  # loader looks: <home>/engines/rust/manifest-<version>.json and <engine_build>/<target>.node.
+  # The engine itself is a shell that has no capabilities yet, so the command must stop at the
+  # shell's engine_capability_missing refusal, which is only reached after the addon verified and
+  # loaded. A rust_engine_addon_missing or _mismatch refusal here means the release is broken.
   smoke-rust-addon:
     needs: [version, ci-gate, release]
     if: needs.version.outputs.exists == 'false' && needs.ci-gate.outputs.publish == 'true'
@@ -378,8 +379,9 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+      attestations: read
     steps:
-      - name: Fetch the published executable and manifest, select the rust engine, open it
+      - name: Download the published executable, manifest and addon, seed the cache, open the rust engine
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -392,23 +394,24 @@ jobs:
           mkdir -p "$work"
           gh release download "v$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" --dir "$work" \
             --pattern "$EXECUTABLE" --pattern gbrain-engine-rust.sha256.json
+          manifest="$work/gbrain-engine-rust.sha256.json"
+          asset="$(jq -r --arg t "$ADDON_TARGET" '.targets[$t].asset' "$manifest")"
+          want="$(jq -r --arg t "$ADDON_TARGET" '.targets[$t].sha256' "$manifest")"
+          engine_build="$(jq -r .engine_build "$manifest")"
+          gh release download "v$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" --dir "$work" --pattern "$asset"
+          gh attestation verify "$manifest" --repo "$GITHUB_REPOSITORY"
+          gh attestation verify "$work/$asset" --repo "$GITHUB_REPOSITORY"
           chmod +x "$work/$EXECUTABLE"
           export GBRAIN_HOME="$work/home"
-          mkdir -p "$GBRAIN_HOME/.gbrain"
+          rust_dir="$GBRAIN_HOME/.gbrain/engines/rust"
+          mkdir -p "$rust_dir/$engine_build"
+          cp "$manifest" "$rust_dir/manifest-$RELEASE_VERSION.json"
+          addon="$rust_dir/$engine_build/$ADDON_TARGET.node"
+          cp "$work/$asset" "$addon"
           printf '{"engine":"rust","database_path":"%s"}\n' "$GBRAIN_HOME/.gbrain/brain.rust" > "$GBRAIN_HOME/.gbrain/config.json"
           status=0
-          for attempt in 1 2 3; do
-            status=0
-            "$work/$EXECUTABLE" list > "$work/out.log" 2>&1 || status=$?
-            cat "$work/out.log"
-            # Retry only a lookup GitHub could not answer; any other refusal is the answer.
-            if grep -q 'Could not read a build-provenance attestation' "$work/out.log" && [ "$attempt" != 3 ]; then
-              echo "::warning::attestation lookup failed (attempt $attempt of 3); waiting before retrying"
-              sleep $((attempt * 30))
-              continue
-            fi
-            break
-          done
+          "$work/$EXECUTABLE" list > "$work/out.log" 2>&1 || status=$?
+          cat "$work/out.log"
           if [ "$status" = 0 ]; then
             echo "::error::the rust engine opened and answered, but the shell implements nothing yet"
             exit 1
@@ -418,18 +421,14 @@ jobs:
             exit 1
           fi
           grep -q 'Error \[engine_capability_missing\]' "$work/out.log"
-          engine_build="$(jq -r .engine_build "$work/gbrain-engine-rust.sha256.json")"
-          want="$(jq -r --arg t "$ADDON_TARGET" '.targets[$t].sha256' "$work/gbrain-engine-rust.sha256.json")"
-          addon="$GBRAIN_HOME/.gbrain/engines/rust/$engine_build/$ADDON_TARGET.node"
-          test -f "$addon"
           got="$(shasum -a 256 "$addon" | cut -d' ' -f1)"
           if [ "$got" != "$want" ]; then
-            echo "::error::fetched addon sha256 $got does not match the manifest's $want"
+            echo "::error::published addon sha256 $got does not match the manifest's $want"
             exit 1
           fi
           # The refusal comes before any write to the brain.
           test ! -e "$GBRAIN_HOME/.gbrain/brain.rust"
-          echo "fetched $ADDON_TARGET addon verified: $got"
+          echo "published $ADDON_TARGET addon loaded from the cache: $got"
 
   # [G7/S3#4] Publishes the rendered agent-workspace template repo (the
   # GitHub "Use this template" door) from CI ONLY — no human pushes it by

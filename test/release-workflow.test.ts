@@ -104,7 +104,13 @@ describe('release.yml ↔ binary-self-update asset contract', () => {
     expect(targets.sort()).toEqual([...RELEASE_ADDON_TARGETS].sort());
     // A normal push or PR never builds release files, and a release call never runs the checks.
     expect(releaseAddon).toContain('if: ${{ inputs.for_release }}');
-    expect(RUST_WORKFLOW.match(/if: \$\{\{ !inputs\.for_release \}\}/g)).toHaveLength(3);
+    // Every job that is not a release job skips a release call.
+    for (const job of ['scope', 'checks', 'addon', 'without-rust']) {
+      const at = RUST_WORKFLOW.indexOf(`\n  ${job}:\n`);
+      expect(at).toBeGreaterThan(-1);
+      const body = RUST_WORKFLOW.slice(at, RUST_WORKFLOW.indexOf('\n    steps:', at));
+      expect(body).toMatch(/\n    if: \$\{\{ !inputs\.for_release( && github\.event_name != 'schedule')? \}\}\n/);
+    }
   });
 
   test('the rust-engine.yml addon job runs the loader and CLI suites against the built addon, required, on both targets', () => {
@@ -121,20 +127,22 @@ describe('release.yml ↔ binary-self-update asset contract', () => {
   });
 
   test('rust-engine.yml path filters cover the files under src/core/rust-engine/ on both triggers', () => {
-    // `src/core/rust-engine*` alone does not match a path with a slash after it.
-    expect(RUST_WORKFLOW.match(/- 'src\/core\/rust-engine\/\*\*'/g)).toHaveLength(2);
-    expect(RUST_WORKFLOW.match(/- 'src\/core\/rust-engine\*'/g)).toHaveLength(2);
+    // `src/core/rust-engine*` alone does not match a path with a slash after it; `**` does.
+    expect(RUST_WORKFLOW.match(/- 'src\/core\/rust-engine\*\*'/g)).toHaveLength(2);
   });
 
-  test('the post-publish smoke fetches the published addon and runs after the release exists', () => {
+  test('the post-publish smoke loads the published addon from the cache and runs after the release exists', () => {
     const smoke = WORKFLOW.slice(WORKFLOW.indexOf('\n  smoke-rust-addon:\n'), WORKFLOW.indexOf('\n  publish-template:'));
     expect(smoke).toMatch(/needs: \[[^\]]*\brelease\b[^\]]*\]/);
     expect(smoke).toContain('rust_engine_addon_(missing|mismatch)');
     expect(smoke).toContain('Error \\[engine_capability_missing\\]');
-    // Only an attestation lookup GitHub could not answer is retried, at most three times.
-    expect(smoke).toContain('for attempt in 1 2 3; do');
-    expect(smoke).toContain("grep -q 'Could not read a build-provenance attestation'");
-    expect(smoke).toContain('sleep $((attempt * 30))');
+    // gbrain does not fetch the addon yet, so the job checks both attestations and seeds the cache the loader reads.
+    expect(smoke).toContain('attestations: read');
+    expect(smoke).toContain('gh attestation verify "$manifest" --repo "$GITHUB_REPOSITORY"');
+    expect(smoke).toContain('gh attestation verify "$work/$asset" --repo "$GITHUB_REPOSITORY"');
+    expect(smoke).toContain('cp "$manifest" "$rust_dir/manifest-$RELEASE_VERSION.json"');
+    expect(smoke).toContain('addon="$rust_dir/$engine_build/$ADDON_TARGET.node"');
+    expect(smoke).toContain('test ! -e "$GBRAIN_HOME/.gbrain/brain.rust"');
   });
 
   test('release tag derives from the VERSION file, v-prefixed', () => {
