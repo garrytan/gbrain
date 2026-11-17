@@ -93,7 +93,7 @@ import { DATABASE_AHEAD_CODE, databaseAheadDetail, ghostFileBacked, GHOST_PURGE_
 import { prepareReconcileResult } from '../persistence/reconcile-prepare.ts';
 import { canonicalOriginPage, originConflictMessage, originTwinsFix } from '../persistence/origin-guard.ts';
 import { assertReconcileOutputPath, assertReconcileSize } from '../persistence/reconcile-backup.ts';
-import { authorizeReconcile, runReconcileApply } from '../persistence/reconcile.ts';
+import { authorizeReconcile, authorizeReconcileGrant, runReconcileApply } from '../persistence/reconcile.ts';
 import { discardedFilePaths, unimportedFile, unimportedFileText, type UnimportedFile } from '../persistence/unimported-file.ts';
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
 import { recordsNoFileOrigin } from '../persistence/unbound-pages.ts';
@@ -638,7 +638,8 @@ const KEEP_DELETED_VERB = 'keep the deletion and record it on the hold (the read
 
 /**
  * Records a mirror's kept deletion on its hold, bound to the previewed pin: the file's bytes, the tombstone's id and revision
- * and the hold the preview observed. Writes no file and no page; a source that is no longer a read-only mirror is refused.
+ * and the hold the preview observed. Writes no file and no page; a source that is no longer a read-only mirror is refused, and
+ * the caller's CLI grant must cover the page as it does for every other file-drift page.
  */
 async function applyKeepDeleted(ctx: OperationContext, page: ApprovedPage, artifact: KeepDeletedPage, requestId: string): Promise<RepairItemOutcome> {
   const pin = artifact.keep_deleted;
@@ -646,6 +647,7 @@ async function applyKeepDeleted(ctx: OperationContext, page: ApprovedPage, artif
     detail: { request_id: requestId, action: 'keep_deleted', message: `${pin.path} changed since its keep-the-deletion was previewed: ${why}.`,
       fix: repreviewFix(page, heldDriftPreviewArgv(page.source_id, 'deleted', pin.state, 'database', pin.path)) } });
   if (!await sourceMirrorReadOnly(ctx.engine, page.source_id)) return changed('the source is no longer a read-only mirror');
+  await asLocalCli(ctx.engine, () => authorizeReconcileGrant(ctx.engine, page.source_id, page.slug));
   try { await assertDeletedPin(ctx.engine, page.source_id, pin); } catch (error) {
     if (error instanceof OperationError && error.code === 'changed_since_preview') return changed(error.message);
     throw error;
@@ -967,7 +969,7 @@ export const fileDriftRepair: RepairHandler = {
           if (target?.state === 'tombstone_edited' || target?.state === 'purged_differs') {
             const resolved = await deletedPage(engine, sourceId, { ...target, state: target.state }, opts.prefer, mirror);
             if ('skip' in resolved) { count(resolved.skip); listing.push({ item: `${sourceId}:${label}`, class: resolved.skip, detail: resolved.detail }); continue; }
-            if (!('keep_deleted' in resolved.page)) await authorizeReconcile(engine, sourceId, resolved.page.slug);
+            await ('keep_deleted' in resolved.page ? authorizeReconcileGrant : authorizeReconcile)(engine, sourceId, resolved.page.slug);
             pages.push(resolved.page);
             listing.push({ item: `${sourceId}:${resolved.page.slug}`, class: `prefer_${opts.prefer}`, detail: resolved.detail });
             continue;

@@ -168,6 +168,49 @@ describe.each(testBackends())('keep it deleted on a read-only mirror (%s)', back
     expect(status.needs_human).toBe(false);
   }, { databaseUrl, setup }), 600_000);
 
+  test('10a: the apply refuses with changed_since_preview when the source stops being a read-only mirror after the preview', () => managedBrain(async ({ engine, ctx, root }) => {
+    await tombstoneEdited(engine, ctx, root);
+    const preview = await repair(engine, { prefer: 'database' });
+    await engine.executeRaw("UPDATE sources SET config = config - 'mirror_read_only' WHERE id='default'");
+    const before = checkout(root);
+    const applied = await repair(engine, { prefer: 'database', expect: preview.preview_hash });
+    expect(applied.applied).toBe(0);
+    expect(JSON.stringify(applied)).toContain('changed_since_preview');
+    expect((await holdOf(engine))!.meta.keep_deleted).toBeUndefined();
+    expect(checkout(root)).toEqual(before);
+  }, { databaseUrl, setup }), 600_000);
+
+  test('10b: the apply refuses with changed_since_preview when the hold was re-checked after the preview', () => managedBrain(async ({ engine, ctx, root }) => {
+    await tombstoneEdited(engine, ctx, root);
+    const preview = await repair(engine, { prefer: 'database' });
+    await oldRecoveryVersion(engine);
+    await performManagedSync(engine, OPTS);
+    const before = checkout(root);
+    const applied = await repair(engine, { prefer: 'database', expect: preview.preview_hash });
+    expect(applied.applied).toBe(0);
+    expect(JSON.stringify(applied)).toContain('changed_since_preview');
+    expect((await holdOf(engine))!.meta.keep_deleted).toBeUndefined();
+    expect(checkout(root)).toEqual(before);
+  }, { databaseUrl, setup }), 600_000);
+
+  test('10c: a CLI writer whose grant does not cover the page can neither preview nor apply keep-the-deletion', () => managedBrain(async ({ engine, ctx, root }) => {
+    await tombstoneEdited(engine, ctx, root);
+    await repair(engine, { prefer: 'file' });
+    const [{ ceiling }] = await engine.executeRaw<{ ceiling: unknown }>("SELECT grant_ceiling AS ceiling FROM persistence_local_writers WHERE lane='cli' AND revoked_at IS NULL");
+    const narrow = () => engine.executeRaw("UPDATE persistence_local_writers SET grant_ceiling = grant_ceiling || '{\"slugPrefixes\": [\"elsewhere\"]}'::jsonb WHERE lane='cli'");
+    await narrow();
+    const refused = await repair(engine, { prefer: 'database' });
+    expect(refused.details.pages).toEqual([]);
+    expect(JSON.stringify(refused)).toContain('permission_denied');
+    await engine.executeRaw("UPDATE persistence_local_writers SET grant_ceiling = $1::text::jsonb WHERE lane='cli'", [JSON.stringify(ceiling)]);
+    const preview = await repair(engine, { prefer: 'database' });
+    expect(preview.details.pages).toEqual([expect.objectContaining({ action: 'keep_deleted' })]);
+    await narrow();
+    const applied = await repair(engine, { prefer: 'database', expect: preview.preview_hash }).catch((error: unknown) => error);
+    expect(JSON.stringify(applied, Object.getOwnPropertyNames(applied ?? {}))).toContain('permission_denied');
+    expect((await holdOf(engine))!.meta.keep_deleted).toBeUndefined();
+  }, { databaseUrl, setup }), 600_000);
+
   test('9: a pass whose only work is re-checking a kept deletion is not saved work, so it still builds the abandoned streak', () => managedBrain(async ({ engine, ctx, root }) => {
     await tombstoneEdited(engine, ctx, root);
     const inc = await incarnation(engine);
