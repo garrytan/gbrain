@@ -25,9 +25,10 @@ so no record starts with the `c` tag.
 
 ## Sealed chunks
 
-The store keeps every body inline, so the segmented branches of the SQL engines (ordinal paging, occurrence
-references, the body manifest) never apply. It has no `chunker_version` column: a page's chunks are sealed when its
-`text_projection_revision` equals its `knowledge_revision`, the test the SQL engines' served-projection filter makes.
+A segmented page is one whose body columns are NULL, the shell `createSegmentedPageShell` leaves. The other segmented
+branches of the SQL engines (ordinal paging, occurrence references, the body manifest) wait for the page_body family.
+A page's chunks are served when its `text_projection_revision` equals its `knowledge_revision`, the test the SQL
+engines' served-projection filter makes.
 `sealChunks` sets that revision, and a body write moves the knowledge revision, so the old chunks stop reading.
 
 ## getChunkPage
@@ -48,8 +49,10 @@ exists, is in scope (a non-empty `sourceIds`, else a non-empty `sourceId`, else 
 its source is not archived and its frontmatter has no `quarantine` key. Unauthorized pages are absent.
 
 Each authorized page yields one page row: `prio` is the lowest priority any request gave it, `max_chunk_index` is the
-highest index over all its chunks (any chunk source), `sealed` is true (authorization already required it) and
-`segmented` is false. Chunk rows come from the authorized pages: a chunk whose `chunk_source` is in `chunkSources`,
+highest index over all its chunks (any chunk source), `sealed` is `COALESCE(chunker_version, 0) >= 4`
+(`SAFE_FENCE_CHUNKER_VERSION`, with a store page that records no version counted as sealed) and `segmented` is true
+for a page with NULL body columns. A segmented page's row carries NULL `compiled_truth` and `timeline`. Chunk rows
+come from the authorized pages that are sealed: a chunk whose `chunk_source` is in `chunkSources`,
 whose modality is `text` and whose index is inside some request's inclusive range for that page. They are ordered by
 `(prio, page_id, chunk_index)` and cut at `maxRows + 1`, so `mapChunkWindowRows` can mark `row_limited`.
 
@@ -59,18 +62,20 @@ the store does not guess at that cast.
 
 ## The chunkless reads
 
-A page counts when it is live, has a non-empty `compiled_truth` or `timeline`, has no `quarantine` frontmatter key,
+A page counts when it is live, has a non-empty `compiled_truth` or `timeline` (or is segmented with `body_bytes > 0`;
+`body_bytes` is a page column the page_body family adds, and it reads as NULL until that family writes one), has no `quarantine` frontmatter key,
 has no chunk rows, and either is not sealed or carries `embed_skip`. A page sealed with no chunks does not count.
 `sourceId` scopes the read only when it is a non-empty string, as the SQL truthiness test does.
 
-The list returns `{ id, slug, source_id, compiled_truth, timeline }` in page-id order, after `afterPageId` when it is
+The list returns `{ id, slug, source_id, compiled_truth, timeline }` in page-id order (a segmented page's NULL body
+columns as `""`), after `afterPageId` when it is
 given, at most `batchSize` rows (default 50). A negative or fractional `batchSize`, or a fractional
 `afterPageId`, is an `invalid_argument`; Postgres rejects a negative `LIMIT` too.
 
 ## Known differences
 
-- `sealed` is derived from the projection revision, not `chunker_version`. A Postgres page whose current projection
-  predates the protected-body fence reads `sealed: false` there and `true` here. The store has no such pages: it was
-  created after the fence.
+- A store page that records no `chunker_version` reads `sealed: true`. A Postgres page whose current projection
+  predates the protected-body fence reads `sealed: false` there. The store has no such pages: it was created after
+  the fence.
 - The activation sentinel revision (`ACTIVATION_SERVED_REVISION`) of the served-projection filter does not exist in
   the store.
