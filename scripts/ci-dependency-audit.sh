@@ -25,7 +25,17 @@ ignore_file=${AUDIT_IGNORE_FILE:-admin/osv-scanner.toml}
 today=${AUDIT_TODAY:-$(date -u +%F)}
 admin_ignores=()
 if [ -f "$ignore_file" ]; then
-  entries=$(bun -e 'const t = Bun.TOML.parse(await Bun.file(process.argv[1]).text()); for (const v of t.IgnoredVulns ?? []) console.log(`${v.id} ${v.ignoreUntil ?? "none"}`);' "$ignore_file") || { echo "::error::audit_ignore_unreadable: $ignore_file is not valid TOML"; exit 1; }
+  entries=$(awk '
+    function flush() { if (inblock) { if (id == "") bad = 1; else print id, (until == "" ? "none" : until) } }
+    /^[[:space:]]*(#|$)/ { next }
+    /^[[:space:]]*\[\[IgnoredVulns\]\][[:space:]]*$/ { flush(); inblock = 1; id = ""; until = ""; next }
+    /^[[:space:]]*\[/ { flush(); inblock = 0; next }
+    inblock && /^[[:space:]]*id[[:space:]]*=/ { if (match($0, /"[^"]*"/)) id = substr($0, RSTART + 1, RLENGTH - 2); else bad = 1; next }
+    inblock && /^[[:space:]]*ignoreUntil[[:space:]]*=/ { v = $0; sub(/^[^=]*=[[:space:]]*/, "", v); sub(/[[:space:]]*(#.*)?$/, "", v); until = v; next }
+    inblock && /^[[:space:]]*[A-Za-z_]+[[:space:]]*=/ { next }
+    { bad = 1 }
+    END { flush(); if (bad) exit 1 }
+  ' "$ignore_file") || { echo "::error::audit_ignore_unreadable: $ignore_file has a line or an entry this script cannot read (each [[IgnoredVulns]] needs id = \"<id>\" and ignoreUntil = YYYY-MM-DD)"; exit 1; }
   while read -r id until; do
     [ -n "$id" ] || continue
     if ! [[ "$until" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then expired+="${expired:+; }$id has no ignoreUntil date"
