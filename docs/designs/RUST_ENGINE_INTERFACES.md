@@ -95,7 +95,7 @@ Keys are byte strings compared byte by byte. The first byte is the tag.
 
 | Tag | Records | Owner |
 |---|---|---|
-| `M` | meta: format record and id counters (`M next_<name>`) | core |
+| `M` | meta: format record, id counters (`M next_<name>`), chunk stats, per-page segment chunk views (`M chunk_segment_view/<page id>`) | core |
 | `C` | config | core |
 | `S` | sources | core |
 | `P` / `I` | page by `(source, slug)` / page id to page key | core (pages) |
@@ -277,9 +277,59 @@ already deleted when it runs; the ids are sorted and all belong to `page_id`.
 - `upsertChunks`, `putPage` and every other chunk rewrite report only the chunks whose index the new set does not
   keep. A chunk that keeps its index keeps its id, as in Postgres, so its rows stay. The hook is not called when no
   chunk is gone.
+- A segment chunk delete (`delete_occurrence_chunks`, `delete_generation_chunks`, see "Segment chunks") reports the
+  chunks it removed.
 - **Owners:** code_edges (edges whose from or to chunk is gone). vectors and embeddings are on the list because their
   records hang off chunk ids in this store, while Postgres keeps them on the chunk row; their hooks stay empty if
   they key nothing by chunk id.
+
+#### Segment chunks (`chunks.rs`)
+
+```rust
+pub(crate) fn append_segment_chunks(tx: &mut dyn KvWrite, page_id: u64, generation: u64, chunks: &[SegmentChunkInput]) -> Result<Vec<u32>>;
+pub(crate) fn publish_segment_chunks(tx: &mut dyn KvWrite, page_id: u64, generation: u64, offsets: BTreeMap<u64, u64>) -> Result<()>;
+pub(crate) fn delete_occurrence_chunks(tx: &mut dyn KvWrite, page_id: u64, occurrences: &BTreeSet<u64>, max_generation: Option<u64>) -> Result<Vec<u64>>;
+pub(crate) fn delete_generation_chunks(tx: &mut dyn KvWrite, page_id: u64, generation: u64, keep: &BTreeSet<u64>) -> Result<Vec<u64>>;
+pub(crate) fn delete_chunks_matching(tx: &mut dyn KvWrite, page_id: u64, pred: &dyn Fn(&ChunkRecord) -> bool) -> Result<Vec<u64>>;
+pub(crate) fn count_chunks_matching(read: &dyn KvRead, page_id: u64, pred: &dyn Fn(&ChunkRecord) -> bool) -> Result<usize>;
+pub(crate) fn visible_chunks(read: &dyn KvRead, page_id: u64) -> Result<Vec<ChunkRecord>>;
+pub(crate) fn forget_segment_view(tx: &mut dyn KvWrite, page_id: u64) -> Result<()>;
+```
+
+The chunk rows of a segmented page body: PGLite's `content_chunks.occurrence_id`, `local_ordinal`, `raw_byte_start`,
+`raw_byte_end` and `body_generation` columns. The page_body family calls these from `stageSegmentChunks` and the
+generation flip, inside its own write transaction. They check nothing about the page body: the caller has already
+decided the write is allowed. The contract is the "Segment chunks" comment in `chunks.rs`.
+
+- **Record.** A segment chunk is a normal chunk record (`K page_id chunk_index`) with its `segment` field set
+  (`SegmentPlace`: occurrence, local ordinal, raw byte span, the body generation it was staged for). An inline chunk,
+  which `upsertChunks` and `putPage` write, has no `segment`. Records written before the field existed read as inline
+  chunks, so the store format version stays 1.
+- **Append.** `append_segment_chunks` writes the chunks at the indexes after the page's highest `chunk_index`
+  (staged, live and retired rows all count, as PGLite's `COALESCE(MAX(chunk_index), -1) + 1`), in input order, and
+  returns those indexes. It checks `chunk_source` as `upsertChunks` does, strips NUL from the text, and keeps no
+  vector.
+- **Staged chunks stay hidden until the flip.** A segment chunk is visible when its `body_generation` is at or below
+  the page's view generation; an inline chunk is always visible (PGLite's `chunkVisibleFilter`). The view generation
+  is a per-page copy kept by `chunks.rs` (`M chunk_segment_view/<page id>`, with the live occurrence offsets), because
+  the body generation lives in the page_body family. It is 0 until the first publish. Keyword postings exist only
+  for visible chunks, so a staged chunk is not searchable. `count_chunks` counts every chunk record, staged and
+  retired included, as PGLite does.
+- **Publish.** The flip calls `publish_segment_chunks` in its transaction. It records the page's new generation and
+  the manifest `byte_start` of each live occurrence, and writes or removes the postings of the chunks whose
+  visibility changed.
+- **`get_chunks` filters by the current body generation.** It returns the visible chunks only, in PGLite's document
+  order: segment chunks whose occurrence has a live offset by `(byte_start, local_ordinal, chunk_index)`, then the
+  rest by `(local_ordinal, inline last, chunk_index)`. The output has no segment fields, as PGLite's `getChunks`
+  columns have none. `visible_chunks` gives other families the same list.
+- **Delete by occurrence or by generation.** `delete_occurrence_chunks` removes the segment chunks of the given
+  occurrences (at or below `max_generation` when given). `delete_generation_chunks` removes the segment chunks of one
+  generation whose occurrence is not in `keep`. Both go through `delete_chunks_matching`, which removes the chunks
+  and their postings, updates the stats, and fires `cascade::remove_chunk_rows` once with the sorted ids of the
+  removed chunks (not at all when none match). `count_chunks_matching` counts first, for the flip's `retireMaxRows`
+  bound.
+- **Page delete.** The page_body family calls `forget_segment_view` when a page is deleted for good (from its
+  `remove_page_rows`). `deleteChunks` keeps the view, because the page and its generation remain.
 
 #### Source delete (`cascade::remove_source_rows`)
 
@@ -595,7 +645,7 @@ Segmented page bodies: segment texts, manifests, staging and derivations.
 - **Store and binding:** `allocateBodyOccurrenceIds` (`allocate_body_occurrence_ids`), `stageSegmentTexts` (`stage_segment_texts`), `readSegmentTexts` (`read_segment_texts`), `stageManifestRows` (`stage_manifest_rows`), `readManifest` (`read_manifest`), `stageSegmentChunks` (`stage_segment_chunks`), `createSegmentedPageShell` (`create_segmented_page_shell`), `flipBodyGeneration` (`flip_body_generation`), `openBodyStaging` (`open_body_staging`), `setBodyStagingState` (`set_body_staging_state`), `sweepSegments` (`sweep_segments`), `readSegmentDerivations` (`read_segment_derivations`), `upsertSegmentDerivations` (`upsert_segment_derivations`), `retireSegmentDerivations` (`retire_segment_derivations`), `refreshPageBody` (`refresh_page_body`).
 - **Postgres tables:** `page_segment_texts`, `page_body_manifest`, `page_body_stagings`, `page_segment_derivations`, `page_derivation_spend`.
 - **Keys:** `b 0x01 <source> 0x00 <sha256>` segment text; `b 0x02 <page id> <occurrence id> <gen_from> <staging id>` manifest row (ids big-endian); `b 0x03 <staging id>` staging; `b 0x04 <page id> ...` derivations; `M next_body_occurrence_id` for occurrence ids. Page-keyed rows go in `remove_page_rows`; segment texts are kept until `sweepSegments`, as in PGLite.
-- **Depends on:** Core page helpers for `createSegmentedPageShell`, `flipBodyGeneration` and `refreshPageBody` (page record writes go through `write_page`). `stageSegmentChunks` writes chunk rows: use the core chunk helpers, and refuse any input that carries vectors until the embeddings family lands. The generation-1 parity case also needs the transactions family.
+- **Depends on:** Core page helpers for `createSegmentedPageShell`, `flipBodyGeneration` and `refreshPageBody` (page record writes go through `write_page`). `stageSegmentChunks` writes chunk rows through the core segment chunk helpers (built; "Segment chunks"), and refuses any input that carries vectors until the embeddings family lands. The flip publishes the view generation (`publish_segment_chunks`) and retires chunks with the segment chunk deletes. The generation-1 parity case also needs the transactions family.
 - **Estimate:** about 7 to 8 days: texts and manifest 1 to 2, flip and staging 3, sweep 2, derivations 1.
 - **Notes:** Segment bodies are bytes; sha256 and bodies cross the binding as hex or `Buffer`. `flipBodyGeneration` and `sweepSegments` are each one store write.
 - **Parity cases (5, in `segmented-body.test.ts`, `sync-aliases.test.ts`):**
@@ -1069,4 +1119,5 @@ The estimates are judgments from the size of the PGLite code each member reprodu
 | Source-delete list (`cascade::remove_source_rows`) | built; nothing calls it yet | facts, aliases, code_edges, link_queries, raw_files, page_body, takes, extraction |
 | Source delete itself (a store member in place of the raw SQL) | nothing | serving `sources remove` on the Rust engine |
 | `putPage` with `source_path`, and the one-live-page-per-origin refusal (`o` key) | built | page_ops (`resolveSlugsByPaths`) |
+| Segment chunks (`chunks.rs`: append, publish, delete by occurrence or generation, `get_chunks` by body generation) | built | page_body (`stageSegmentChunks`, the flip) |
 | Rename slug list (`cascade::rename_slug_rows`) | built; the aliases family calls it from `updateSlug` | facts (fills in its body), aliases (caller) |
