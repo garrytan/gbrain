@@ -466,10 +466,15 @@ describe('engine parity: takes', () => {
       expect(await engine.updateTakeEmbeddings([])).toBe(0);
 
       // the takes.embedding column is the configured embedding width (1536 on a default brain)
+      // The side take leans a little toward axis 2, so no two takes tie on cosine score: vector
+      // search orders by distance alone (the shape its HNSW index serves), and an exact tie may come
+      // back in either order. Its largest component stays on axis 0.
+      const sideVector = basisEmbedding(0);
+      sideVector[2] = 0.3;
       const written = await engine.updateTakeEmbeddings([
         { take_id: ids.get('axis zero take')!, embedding: basisEmbedding(0), claim: 'axis zero take', model: 'embed-m1' },
         { take_id: ids.get('axis one take')!, embedding: basisEmbedding(1), claim: 'axis one take', model: 'embed-m1' },
-        { take_id: sideIds.get('side axis zero take')!, embedding: basisEmbedding(0), claim: 'side axis zero take', model: 'embed-m1' },
+        { take_id: sideIds.get('side axis zero take')!, embedding: sideVector, claim: 'side axis zero take', model: 'embed-m1' },
         // claim drifted while the vector was in flight: discarded
         { take_id: ids.get('never embedded take')!, embedding: basisEmbedding(2), claim: 'an older claim text', model: 'embed-m1' },
         // inactive rows are ignored
@@ -500,6 +505,7 @@ describe('engine parity: takes', () => {
       expect(stale.sideOnly).toEqual([]);
 
       // vector search: cosine against the stored vectors, active + embedded rows only
+      // scores against the query: axis zero 0.995, side 0.953, axis one 0.0995 (strictly ordered)
       const hit = (hits: TakeHit[]) => hits.map((h) => ({ claim: h.claim, score: round(h.score) }));
       const nearZero = new Float32Array(1536);
       nearZero[0] = 1;

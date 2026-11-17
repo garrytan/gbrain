@@ -340,18 +340,18 @@ describe('engine parity: salience + enrich + anomalies', () => {
       expect(empty).toBe(0);
       // score = emotional_weight*5 + ln(1+takes) + a recency term that drifts with wall time: round it.
       const view = (rows: Awaited<ReturnType<typeof engine.getRecentSalience>>) =>
-        rows.map((r) => ({ key: `${r.source_id}:${r.slug}`, title: r.title, type: r.type, ew: Math.round(r.emotional_weight * 100) / 100, takes: r.take_count, avg: Math.round(r.take_avg_weight * 100) / 100, score: Math.round(r.score) }));
+        rows.map((r) => ({ id: `${r.source_id}:${r.slug}`, title: r.title, type: r.type, ew: Math.round(r.emotional_weight * 100) / 100, takes: r.take_count, avg: Math.round(r.take_avg_weight * 100) / 100, score: Math.round(r.score) }));
       const all = view(await engine.getRecentSalience({ days: 7 }));
       const scoped = view(await engine.getRecentSalience({ days: 7, sourceId: 'sal2-other' }));
       const prefixed = view(await engine.getRecentSalience({ days: 7, slugPrefix: 'people/' }));
       const limited = view(await engine.getRecentSalience({ days: 7, limit: 2 }));
       const noWindow = await engine.getRecentSalience({ days: 0 });
-      expect(all.map((r) => r.key)).not.toContain('default:briefings/daily');
-      expect(all[0]!.key).toBe('default:notes/sal-charged');
-      expect(scoped.map((r) => r.key)).toEqual(['sal2-other:notes/sal-charged']);
-      expect(prefixed.map((r) => r.key)).toEqual(['default:people/sal-person']);
+      expect(all.map((r) => r.id)).not.toContain('default:briefings/daily');
+      expect(all[0]!.id).toBe('default:notes/sal-charged');
+      expect(scoped.map((r) => r.id)).toEqual(['sal2-other:notes/sal-charged']);
+      expect(prefixed.map((r) => r.id)).toEqual(['default:people/sal-person']);
       expect(limited).toHaveLength(2);
-      return { changed, unchanged, empty, all, scoped, prefixed, limitedKeys: limited.map((r) => r.key), noWindow: noWindow.length };
+      return { changed, unchanged, empty, all, scoped, prefixed, limitedKeys: limited.map((r) => r.id), noWindow: noWindow.length };
     },
   );
 
