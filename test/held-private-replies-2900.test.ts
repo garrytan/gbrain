@@ -253,6 +253,10 @@ describe('GST-2900: a restatement on another page about the same entity', () => 
     expect(await remoteSees(b, slug, claim)).toBe(false);
     expect(JSON.stringify(await run(b.remote, 'get_page', { slug, include_content: true }))).not.toContain(claim);
     expect(JSON.stringify(await run(b.local, 'get_page', { slug, include_content: true }))).toContain(claim);
+    const granted = { ...b.remote, auth: { ...b.remote.auth!, privateFacts: { mode: 'granted_sources' as const, sources: [b.sourceId] } } };
+    const grantedRead = (op: string, params: Record<string, unknown>) => withCallerAccess({ privateFactSources: [b.sourceId] }, () => run(granted, op, params));
+    expect({ get_page: JSON.stringify(await grantedRead('get_page', { slug, include_content: true })).includes(claim),
+      search: JSON.stringify(await grantedRead('search', { query: 'wombatheld' })).includes(claim) }).toEqual({ get_page: false, search: false });
     const [proposal] = await proposalsOf(b);
     expect(proposal).toMatchObject({ target_id: copy!.id, related_id: rows[1]!.id });
     expect((await decideTrustProposal(engine, proposal!.id, 'accept', owner)).status).toBe('accepted');
