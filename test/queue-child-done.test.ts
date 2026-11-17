@@ -792,6 +792,10 @@ describe('private queue recovery classification + lease hardening (lane A backfi
     const orphanJob = await queue.add('private-waiting', {}, {
       queue: orphanQ, private_queue_owner_token: 'mix-token', private_queue_lease_ms: 1,
     });
+    await engine.executeRaw(
+      `UPDATE minion_jobs SET private_queue_lease_until = now() - interval '1 second' WHERE id = $1`,
+      [orphanJob.id],
+    );
     const legacyJob = await queue.add('legacy-private-waiting', {}, { queue: legacyQ });
     await ageUpdatedAt([liveJob.id, orphanJob.id, legacyJob.id]);
 

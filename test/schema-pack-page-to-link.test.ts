@@ -10,6 +10,8 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { runPageToLinkCore } from '../src/core/schema-pack/page-to-link.ts';
 import type { OperationContext } from '../src/core/operations.ts';
+import { renderFactsTable } from '../src/core/facts-fence.ts';
+import { renderTakesFence } from '../src/core/takes-fence.ts';
 
 let engine: PGLiteEngine;
 
@@ -105,6 +107,30 @@ describe('runPageToLinkCore', () => {
       );
       expect(linkRows.length).toBe(1);
       expect(linkRows[0].link_type).toBe('partner_of');
+    });
+
+    it('preserve_notes keeps the page opening without its facts or takes fence (GST-2957)', async () => {
+      await seed('people/alice', 'person');
+      await seed('companies/acme', 'company');
+      const facts = renderFactsTable([{ rowNum: 1, claim: 'Deal terms kestrelfactcanary', kind: 'fact', confidence: 1, visibility: 'private', notability: 'medium', active: true }] as never);
+      const takes = renderTakesFence([{ rowNum: 1, claim: 'Deal is risky ternetakecanary', kind: 'take', holder: 'brain', weight: 0.5, active: true }] as never);
+      await seed('atoms/partner-1', 'atom-partner-link', { source: 'people/alice', target: 'companies/acme' },
+        'Partner note.\n\n' + facts + '\n\n' + takes + '\n\nSigned in spring.');
+      await runPageToLinkCore(ctxOf(), {
+        rules: [{
+          from_type: 'atom-partner-link',
+          link_type: 'partner_of',
+          source_slug_from: { frontmatter_field: 'source' },
+          target_slug_from: { frontmatter_field: 'target' },
+          preserve_notes: true,
+        }],
+        apply: true,
+      });
+      const [link] = await engine.executeRaw<{ context: string }>(
+        `SELECT l.context FROM links l JOIN pages p ON p.id = l.from_page_id WHERE p.slug = 'people/alice'`);
+      expect(link!.context).toContain('Partner note.');
+      expect(link!.context).toContain('Signed in spring.');
+      for (const text of ['kestrelfactcanary', 'ternetakecanary', 'gbrain:facts', 'gbrain:takes']) expect(link!.context).not.toContain(text);
     });
 
     it('records unresolved when source frontmatter field is missing', async () => {

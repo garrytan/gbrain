@@ -258,7 +258,7 @@ export async function assertFullReadFits(ctx: OperationContext, page: Pick<Page,
 export async function segmentedFullReadError(ctx: OperationContext, page: Page, req: BodyRequest, pin: BodyPin): Promise<OperationError> {
   let total = pageBodyBytes(page);
   if (ctx.remote !== false) {
-    const body = await openSegmentedBody(ctx.engine, { pageId: page.id, pin });
+    const body = await openSegmentedBody(ctx.engine, { pageId: page.id, pin, hideHeld: worldOnlyFacts(ctx.remote) });
     total = (await segmentedReadDocument(ctx.engine, body)).total;
     await confirmBodyPin(ctx.engine, body);
   }

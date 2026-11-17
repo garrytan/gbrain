@@ -10,6 +10,168 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.737.0] - 2026-11-17
+
+**Conversation extraction keeps wishes and preferences again: the extractor no longer asks the model for a slot on every fact.**
+
+### Fixed
+- Since 0.60.735.0, `gbrain extract-conversation-facts` asked the model for a slot (where a person lives, who employs them or their role) on every fact. That request made it save fewer facts, with wishes, preferences and ideas down about 15%. The main extraction call now sends the prompt and response shape it used before 0.60.735.0, so no new fact carries a slot, and a `--force` re-extraction adds none: skip the paid run the 0.60.735.0 notice suggested for them. A fact stored with a slot under 0.60.735.0 keeps it, and the facts block still works out its validity window, until the part of its page it came from is extracted again (an edit there, or `--force`, which re-extracts every page); the new rows carry no slot and read as they did before 0.60.735.0. Fact text is kept either way.
+
+<!-- behavior-change: conversation_extraction_no_slot_gbra574 -->
+
+## [0.60.736.0] - 2026-11-17
+
+**Contributors: the pre-merge check now accepts changes to the macOS helper's files under `apple/helper/`, which build and test only in their own macOS workflow.**
+
+### Changed
+- `.gstack/pregate.json` lists `apple/helper/**` as having no local test run, the same way `scripts/bench/**` is listed. The helper's Swift tests run on every change to `apple/**` in the `Apple helper` workflow. Nothing changes for gbrain users. (#9627)
+
+**A private fact restated as world and held for the owner's accept stays hidden in more places from callers who cannot read the private fact: `think` leaves it out, the reply to the held write reads like an ordinary save, and a restatement written onto another page about the same entity is held too.**
+
+<!-- behavior-change: held_private_replies_2900 -->
+
+### Fixed
+- `think` now leaves a held fence row out of the pages it reads and the evidence it delivers for callers who cannot read the private fact, as get_page and search already do. The owner's callers and the local CLI read the same as before.
+- The reply to a held write (`remember`, `put_page` and the other page writes) named the owner's proposal in `contested.proposal_ref`, which told a caller who guessed a claim that a more private copy of it exists. For a caller who cannot read that private fact, the reply, its `outcome` and `write_request` copies, `get_write_request` and `list_write_requests` now leave the reference out, so the reply reads like a saved write. The owner's callers, the local CLI and callers who can read the private fact still get it, and a `contested` reference for any other reason (a write that tried to replace a more trusted fact) is unchanged.
+- A page write whose `## Facts` row restated a more trusted private fact about the page's own entity, kept off that page (a remembered fact with no page row, or a row on a holding page), was stored as world. It is now stored private with a proposal, like a restatement on the same page, and `gbrain trust confirm tp<N>` makes it world. Like the same-page hold, this applies to the owner's own local writes and sync too, when the private copy is more trusted than the writer.
+- A credential with a `private_facts: granted_sources` grant reads a held row again in `get_page`, search and `think`, as it did before the held-row page reads, when it can read every private copy the row restates. A row restating a copy the grant can't read (on a member or restricted page, or on no page) stays held from it. Known: such a credential's `put_page` still restores a held row it can see, so its edit or delete of that row doesn't stick and an edit can leave two rows.
+- A remote `get_page` or `get_versions` of a page stored in segments reported a size that counted held rows. It now reports the size of what the caller can read.
+- Still not held: a restatement about another entity, a reworded claim, captured prose and extracted facts. A writer that cannot read the private fact still can't read its own held row back (page reads and recall leave it out) until the owner accepts it, which a saved row would not do.
+
+**A private fact restated as world and held for the operator's accept no longer reaches remote callers through page, chunk, search and edit reads: get_page, get_versions, fetch, search, query, search_exact, get_chunks, the entity card and the edit_page diff leave the held row out for callers who cannot read the private fact.**
+
+<!-- behavior-change: held_row_page_reads_2891 -->
+
+### Fixed
+- A remote `put_page` that restated a private fence row as world (#9196), or a remote `remember` that restated a private fact (GST-2875), stored the new fact private until the operator accepts the widening, but the page body kept the restatement in a world cell. Every remote caller who cannot read the private fact (another member, an unbound token) read it through get_page (whole, include_content, lines, grep, section, outline, as_of, known_as_of and windows around a chunk), get_versions with include_body (known_as_of bodies and diffs too), fetch, keyword and hybrid search, query, search_exact (snippets, and the match itself, on pages stored in segments too), get_chunks (on any source) and the entity card. A recorded-time read at the slug a page had before a rename leaves it out too, and search_exact still finds a page's public hit when an earlier hit in the same text is a held row. Those reads now leave out a world fence cell whose fact is stored narrower than world, including a row a chunk boundary cut in half and chunks written before the upgrade, so no rechunk is needed. The owner's callers, the local CLI and a member reading their own member page read exactly what they read before. If the held-row lookup fails, a page read fails rather than return the page, and search drops every fence row.
+- Such a caller's `put_page` keeps the held row it could not read. Writing back a page read without it (a get_page, edit, put_page round trip, a whole new body, or a body with the lines around it deleted) restores the row exactly as stored, so the operator's accept still widens it. A row the writer sends at the held row's number cannot replace or reword it. A different claim moves to a new row number, and the same claim keeps every stored cell except a narrower visibility the writer chose. A member session under GBRAIN_ENFORCED_MEMBER reads such a page the same way, so its put_page keeps the held row and its edit_page diff leaves it out. The owner's own writes and the local CLI's are unchanged.
+- The `edit_page` diff showed a remote caller the held row as unchanged context when an edit landed near it, on inline and segmented pages alike. The diff now leaves it out for callers who cannot read the private fact, as get_page does.
+- An edit elsewhere in a held page (a hand edit synced from the repository, or a local `put_page`) could re-derive the held row as world without the accept when the private copy was less trusted than `user_confirmed`. A held row now stays private whatever the writer's tier until the operator accepts it. Accept still makes it world, and reject and undo still work.
+- A remote writer could skip the GST-2875 hold by first saving the same claim as a world fact about another entity. The hold looked for an existing world copy anywhere in the source, found that one, and stored the restatement on the confirmed private fact's entity as world, so remote recall returned it. The world copy now has to be on the same entity.
+- Not covered: the page file in the brain repository still carries the world cell, so anyone who reads the repository directly, or a Markdown export, reads it. Restatements that were never held (capture, extract_facts, a restatement written onto another page or entity, a reworded claim, and a remember whose private copy is no more trusted than the writer) stay world as before.
+
+**Link context no longer shows remote callers private or held fact rows: get_backlinks, get_links, traverse_graph (walks and hops), the relationship-chain evidence on search, query and recall results, the entity card, context_pack and delta's belief changes leave that text out for callers who may read only world facts, and context_pack's always-loaded core block leaves held rows out for them too.**
+
+### Fixed
+- A link's stored context is a short excerpt of the page around the reference. When the reference sat in or next to a page's `## Facts` table, the excerpt carried rows of that table, including rows saved private and world rows held until the operator accepts a widening. Remote callers who may read only world facts (another member, an unbound token) read that text through get_backlinks, get_links, traverse_graph walks and hops, the chain evidence on search, query and recall results, the entity card's edges and context_pack's cards. An attendance edge, stored on the attendee's page but cut from the meeting page, carried the meeting's rows the same way. For those callers, a context cut from a page is now returned only when it reads, word for word, inside that page as it is now and as the caller may see it; otherwise it comes back empty. That also covers a page whose table was removed by an edit that left its links unchanged. The page bodies for one read are loaded together, for at most 200 pages; contexts cut from pages beyond that come back empty for those callers. A context written by add_link or derived from frontmatter is unchanged unless it holds a facts or takes table marker.
+- unify-types' `preserve_notes` stored the first 240 characters of a converted page as the new link's context, facts and takes tables included. It now leaves those tables out, so links written from now on store a shorter excerpt for every reader, the owner included. Contexts it stored before are emptied for callers who may read only world facts when they hold a table marker.
+- `delta` with `beliefs: true` returned each changed link's stored context in its before and after values. Those callers now get the link change without the context.
+- With `memory.core.enabled` on, context_pack's core memory block showed those callers a core page's held rows. It now leaves them out, as get_page does.
+- The owner's remote callers and the local CLI read stored links exactly as before. Stored links are not rewritten and no migration runs.
+
+**A connection gbrain throws away now frees its slot in the connection pool even when the database host has stopped answering, and the background job worker keeps running while PostgreSQL shuts down or after a TCP server has stopped.**
+
+### Fixed
+- When gbrain discards a Postgres connection (a cancelled bounded read, an aborted transaction, a statement that would not cancel) and the server or pooler at the other end has gone silent, the pool slot comes back within about 2 seconds. Before, the slot stayed taken until the operating system gave up on the socket, so a process with a small pool could stop being able to connect. Follow-up to #8155.
+- `gbrain jobs work` no longer exits when a claim meets a PostgreSQL server that is shutting down and refusing new connections (SQLSTATE 57P03), or one that has stopped listening on TCP (`connect ECONNREFUSED`). The worker reconnects and claims again on its next poll, as it already did for a vanished Unix socket. Follow-up to #9540, reported and first fixed by @javieraldape in #9624.
+
+**A pull request landed as one squashed commit now reuses its passed full test run on master again, even when master was merged into it with no file change just before landing.**
+
+### Fixed
+- `scripts/ci-reuse.ts`: a one-parent push to master looked for a passed full run only on the head GitHub names for the landed pull request. Landing first merges master into the branch, and when that merge changes no file the new head has the tested tree but only a pull-request run, so every landing ran Test and E2E in full again (about 18 minutes instead of about 4). The push's tree now decides, as in the remote gate. The newest full run on any head with that tree wins, and those heads are the pull request head, its first parents with the same tree and the heads of recent dispatch and push runs. A newer failed or in-progress full run on the tree still runs in full, and what counts as a complete full run is unchanged. A hand revert or direct push whose tree matches a passed full run now reuses it too. docs/ci-event-parity.md, "Master-push reuse", says so.
+
+**When a scoped graph walk or typed hop chain ends early, the next call it suggests now keeps the caller's source scope.**
+
+### Fixed
+- `traverse_graph` returns a `graph_walk_truncated` notice when a walk stops at its cap, with a ready-to-run retry one level shallower. That retry dropped the caller's `source_id` and `all_sources`, so an agent that followed it walked its default source instead of the one it asked for. The retry now carries both, and still leaves them out when the call didn't set them (#8498).
+- The same holds for a `hops` chain that finds no edges, stops at an empty hop or hits a chain cap: its suggested `traverse_graph` call now keeps `source_id` and `all_sources` (#8498).
+
+### Tests
+- `test/degraded-stamp-paths.serial.test.ts` checks the retry for a walk scoped to one source, an all-sources walk and an unscoped walk.
+- `test/traverse-graph-hops.test.ts` checks the no_edges and empty_hop suggestions for the same three cases.
+
+**Long-running gbrain processes recover from a lost database connection: a bounded read cancelled while the database stops answering frees its connection at once, and the background job worker keeps running through a PostgreSQL shutdown instead of exiting.**
+
+### Fixed
+- A bounded read (a statement with a time limit) whose caller cancels it after it has a connection now sends the database a cancel request, discards that connection and returns at once. Before, the call waited until the database answered, and the connection stayed reserved the whole time, so a process that hit a stalled socket or pooler again and again could run out of connections. (#8155)
+- `gbrain jobs work` no longer exits when PostgreSQL shuts down and removes its local Unix socket (`connect ENOENT <dir>/.s.PGSQL.<port>`). The worker reconnects and claims again on its next poll, the same as for other lost connections. A first connect to a socket path that doesn't exist still fails at once. (#9540)
+
+**The Rust engine setup script is safer on shared and already-used machines: each run logs to its own private folder, it ignores `PGHOST`, `PGHOSTADDR` and `PGSERVICE`, and it no longer resets an existing `gbrain` database role.**
+
+### Fixed
+- `scripts/dev/rust-engine-bootstrap.sh` now writes each run's step logs to a new private folder, and refuses a `GBRAIN_DEV_LOG_DIR` that another user can write to.
+- The script unsets `PGHOST`, `PGHOSTADDR` and `PGSERVICE` for itself, so its database steps always reach the local Postgres 16 cluster.
+- The script creates the `gbrain` role only when it is missing. An existing role keeps its password and flags; if it cannot be used, the step fails with a message that names the setting to change.
+
+**Contributors working on the Rust engine can now set up an Ubuntu machine with one command: `scripts/dev/rust-engine-bootstrap.sh` installs the pinned Bun, Postgres 16 with pgvector, Rust and the napi-rs CLI, and prints a pass/fail line per step.**
+
+### Added
+- `scripts/dev/rust-engine-bootstrap.sh`: a non-interactive, rerunnable dev setup for Ubuntu. It installs the Bun version from `package.json`, starts Postgres 16 with pgvector and a test database, installs the Rust stable toolchain and the napi-rs CLI, runs `bun install`, and writes `~/.gbrain-rust-dev.env`. It does not change gbrain itself.
+- `docs/research/rust-engine/dev-environment.md`: how to run the script, what each step does, how to run the engine parity tests, measured timings and known problems.
+
+**Install guides now say Bun's installer needs `unzip`, show how to get it, and give a tested route for machines where packages can't be installed.**
+
+### Documentation
+- README.md, INSTALL_FOR_AGENTS.md, docs/INSTALL.md, AGENTS.md and the company-brain tutorial say Bun's installer stops with `error: unzip is required to install bun` when `unzip` is missing, and give the check (`command -v unzip`) and the apt, dnf and apk install commands.
+- INSTALL_FOR_AGENTS.md#no-unzip is a tested route for Linux machines with no `unzip` and no package manager: it puts Bun's own build in `~/.bun/bin` using only `curl` and `tar`, and checks that `gbrain` runs from a fresh login shell.
+- docs/guides/troubleshooting.md has a row for the `unzip is required` error.
+
+**gbrain git commit-push --untrack now takes every file under a declared, ignored database-only folder, .json and other non-Markdown files included.**
+
+### Fixed
+- In a managed checkout, `gbrain git commit-push --untrack -- <folder>` refused `untrack_not_db_only` for a folder declared under `storage.db_only` and ignored by `.gitignore` when it held `.json` (or other non-Markdown) files, because each file was matched by its page slug. A file is now matched by its path under the declared folder. A Markdown page still needs its slug under the folder; a code-extension file is checked against the brain and refuses when it is a live page, when the source's strategy imports code (sync imports it as a page), when the source's last finished sync has not seen it at its current version (run `gbrain sync --source <id>`, then rerun), or when the brain cannot be read. Symlinks out of the folder, folders reached through a symlink and sibling folders that only share the name refuse. Each refusal's fix now names what is missing for that file, and `--dry-run --untrack` lists exactly the files the real run removes.
+- The managed sync note about pages kept from the working tree no longer tells a page under a declared `storage.db_only` folder to be committed.
+- For a source rooted in a folder of its repository (`brain/`, with `brain/gbrain.yml`), `--untrack` read the repository's top-level `gbrain.yml`: every file refused `untrack_not_db_only`, and a folder only a stray top-level `gbrain.yml` declared was admitted, so the next sync deleted its pages. In a managed checkout every untrack now reads the source's folder from the brain, read-only for at most 10 seconds, and refuses every file when the brain cannot be read. On PGLite, stop a running `gbrain serve` or sync before an untrack. The refusal names the `gbrain.yml` it read.
+
+<!-- behavior-change: untrack_db_only_by_path_gst2964 -->
+<!-- behavior-change: untrack_reads_brain_gst2964 -->
+
+**A large capture's receipt now reports the same date as the page slug it created, and five tests that failed now and then pass every run.**
+
+### Fixed
+- `gbrain capture --file` with a file over the page size limit took the slug date and the receipt's `captured_at` from two separate clock reads, so a capture that ran across UTC midnight could print a receipt dated one day for a page slug dated the next. Both now come from one timestamp. (#7980)
+- The forget test for twin inline and segmented pages froze no clock, so a run that crossed UTC midnight stamped the two pages with different dates and failed. Both halves now run under one frozen time. (#8674)
+- The sync dry-run test compared request rows read in no fixed order. It now orders them by id and compares whole rows, so it also catches a dry run that edits a request. (#8416)
+- The private-queue recovery test gave its orphan job a 1 ms lease and relied on it running out before reconcile looked. The test now expires the lease explicitly. (#8739)
+- The reranker failure test freed a random port and assumed nothing would take it again. It now points the dead endpoint at port 1, where nothing listens. (#9616)
+
+**The query facts block now shows a later retraction right after the fact it calls off.**
+
+<!-- behavior-change: facts_block_retractions_gbra574 -->
+
+### Added
+- When the facts block shows a fact about a person or company, a later fact about the same entity that retracts it or calls it off ("retracted", "scratch that", "I was wrong", "cancelled", "called off", "fell through", "never happened", "just a rumour" and similar) follows it, with its own date header, inside the block's usual share of the token budget and row count. The later fact pairs only when it is dated after the fact, its cue is not negated ("not cancelled", "wasn't called off" and "isn't a rumour" never pair), and it carries the same slot (dimension and value) or, leaving out the entity's name and the cue words, every word it has is in the fact or it shares at least two words with it. It is read under the caller's read policy, so a retraction a remote caller or another member cannot read never appears, and a forgotten or withdrawn fact never appears. No model call; a question with no such later fact gets exactly the block it got before.
+
+**The brain owner's own remote agents now get the owner's private facts on the entity and context_pack cards, in search's facts about an entity, in the list of facts saved without an entity and in forget's similar-facts check.**
+
+<!-- behavior-change: owner_remote_fact_reads_more_gst2951 -->
+
+### Fixed
+- The `entity` card (recent facts and `active_fact_count`) and the `context_pack` cards built from it, the entity facts and saved facts that `search` and `query` attach, `extraction_pending`'s unattributed list and `forget`'s `similar_active` decided fact visibility from the raw remote flag, so a credential bound to the brain owner got world facts only. They now use the same owner rule as recall, think and `find_trajectory`, and the owner's reads use the owner-aware page rule, so a fact from a private page the owner reads stays visible.
+- Nothing widens for anyone else: another member, a labelled-only member, an unbound token, a call with no credential and the owner speaking for an audience of several read what they read before, and a private-facts grant works where it already did. Member access still applies to the owner, and withdrawn facts stay out of every read.
+
+**The brain owner's own remote agents now get the owner's private facts from trajectories, ontology reads and write attribution, as they already did from recall, query and think.**
+
+<!-- behavior-change: owner_remote_fact_ops_gst2951 -->
+
+### Fixed
+- `find_trajectory`, `ontology_get`, `ontology_conflicts` and `volunteer_chronicle` decided fact visibility from the raw remote flag, so a credential bound to the brain owner got world facts only and a trajectory built from private facts came back empty. They now use the same owner rule as recall and think. `get_write_attribution` finds a private fact for the owner's admin credential the same way.
+- The owner also gets facts taken from a private page it can read on the ontology reads and in write attribution, as `find_trajectory` and recall already allowed.
+- A newer observation from a diary page no longer hides the older value behind it on `ontology_get` and `volunteer_chronicle`, and no longer makes a false conflict on `ontology_conflicts`. Diary observations are left out before each value resolves, for every remote caller, and still never reach one.
+- Nothing widens for anyone else: another member, a labelled-only member, an unbound token, a call with no credential and the owner speaking for an audience of several read no private fact they did not read before. Page rules, member access and source grants still apply to the owner, and withdrawn facts stay out of every read.
+
+**Files in a folder whose name starts with two dots, such as `..drafts` or `...`, are no longer refused or reported as outside the brain by sync, git commit-push, doctor, frontmatter, skills and the other checks listed below.**
+
+<!-- behavior-change: dotdot_folder_names_inside -->
+
+### Fixed
+- Many path checks asked "does this path start with two dots?" to catch a path that goes up and out of a folder. That question also matched a normal folder named `..drafts`, `..x` or `...`, so a file inside the brain was refused, skipped or called "outside". All of these checks now look at the first folder name exactly, through one shared helper. Remote file uploads into such a folder are still refused; a separate fix covers that check.
+- `gbrain git commit-push -- ..drafts/a.md` commits the file instead of failing with "outside the checkout", and a `gbrain.sourceRoot` of `..drafts` now scopes the commit to that folder instead of being dropped (which scoped it to the whole checkout).
+- Sync markers no longer report a file that was never committed as committed when the source sits in a `..` folder of its repository.
+- Skill packs and the skills catalog (`get_skill`, `list_skills`) read a `SKILL.md` that sits in, or is linked to, an in-pack `..shared` folder.
+- `gbrain frontmatter` expects the slug `..drafts/note` for `..drafts/note.md`, as for any other folder, instead of reporting a false slug mismatch; its backups of two `note.md` files in different `..` folders no longer overwrite each other.
+- Doctor's git-writer and foreign-writer checks, brain-repo hardening (including a `core.hooksPath` of `..hooks`), the first-turn brain rule, extract-benchmark, extract-atoms transcript labels, skillpack update bases, sync applicability, fence-write and reconcile path states, and the LongMemEval call plan treat such folders as inside.
+- Real escapes stay refused with the same messages as before: `../x`, an absolute path elsewhere, a sibling folder that shares the root's name prefix, a symlinked parent that points outside, and another Windows drive.
+
+### Added
+- `bun run verify` runs `check:relative-dotdot`, which refuses a new `.startsWith('..')` containment check in `src/` and points at `relativeEscapesRoot` in `src/core/path-confine.ts`.
+
+**On Postgres, file records now report their size as a plain number, and closing the engine a second time no longer runs its shutdown steps again. PGLite already worked this way.**
+
+### Fixed
+- On Postgres, `getFile` and `listFilesForPage` returned `size_bytes` as a BigInt. PGLite returned a number, and the declared type is a number. Both engines now return a number. The output of the `gbrain files` CLI and the MCP file operations does not change, because those paths already converted the value.
+- On Postgres, a second `disconnect()` of an engine that was already closed ran the registered shutdown hooks again. A second `disconnect()` now does nothing, as on PGLite.
+
 ## [0.60.735.0] - 2026-11-17
 
 **Conversation archive pages written while a brain was personal are now kept to the owner as soon as a command makes the brain shared, instead of staying readable by every member until the next archive run.**

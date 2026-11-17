@@ -18,7 +18,7 @@ import type { McpCall } from '../agent-output.ts';
 import { opTransport, paramUse, readFix } from './op-fix.ts';
 import { readHolders, readPolicyOpts } from './context.ts';
 import { storedTrustTier, type TrustTier, type WriteOrigin } from '../trust/tier.ts';
-import { privateFactFilterForCaller } from '../search/private-visibility.ts';
+import { privateFactFilterForReader, worldOnlyFacts } from '../search/private-visibility.ts';
 
 const DOCS = 'docs/mcp/ADMIN.md#write-attribution';
 
@@ -138,7 +138,7 @@ const get_write_attribution: Operation = {
   description: 'Admin read: who created and who last changed a page, or one of its facts, takes or timeline entries. '
     + 'Each attribution names the request id, operation, principal (kind, id, current name), time and origin '
     + '(request, maintenance or unrecorded), plus the row\'s trust_tier and write_origin (for derived rows, the inputs that set the tier). '
-    + 'Remote callers stay inside their source grant and see only world facts.',
+    + 'Remote callers stay inside their source grant and see only world facts, except credentials bound to the brain owner.',
   params: {
     slug: { type: 'string', required: true, description: 'Slug of the page to attribute (or the page that holds the fact, take or timeline entry).' },
     fact: { type: 'number', minimum: 1, description: 'Attribute this fact id (a fact about or fenced on the page) instead of the page.' },
@@ -222,7 +222,7 @@ function rowTarget(ctx: OperationContext, pageId: number, slug: string, sourceId
   if (ids.fact !== undefined) {
     return { kind: 'fact', label: `fact #${ids.fact}`, list: { tool: 'recall', arguments: { entity: slug } },
       sql: `SELECT id, ${cols} FROM facts WHERE id = $1 AND source_id = $2 AND (entity_slug = $3 OR source_markdown_slug = $3)
-        ${ctx.remote === false ? '' : "AND visibility = 'world'"} ${excludePrivate ? `AND ${privateFactFilterForCaller('facts')}` : ''}`, params: [ids.fact, sourceId, slug] };
+        ${worldOnlyFacts(ctx.remote) ? "AND visibility = 'world'" : ''} ${excludePrivate ? `AND ${privateFactFilterForReader('facts')}` : ''}`, params: [ids.fact, sourceId, slug] };
   }
   if (ids.take !== undefined) {
     const holders = readHolders(ctx);
