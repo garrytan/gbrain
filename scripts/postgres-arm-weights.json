@@ -555,6 +555,7 @@
   "test/repair-frontmatter.test.ts": 26839,
   "test/repair-ghost-database-ahead-gbra133.test.ts": 9540,
   "test/repair-lost-fence-rows.test.ts": 161571,
+  "test/repair-open-facts-8194.test.ts": 24878,
   "test/repair-private-labels-batch.test.ts": 77647,
   "test/repair-quoted-markers-8059.test.ts": 14972,
   "test/repair-receipt-compaction.test.ts": 8951,
