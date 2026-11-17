@@ -1413,6 +1413,13 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
+            "message": "Every purge and withdrawal guard refuses a write role that row-level security keeps from its ledger",
+            "name": "guard_ledger_checks",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "elapsed_ms": "<volatile>",
             "message": "The database encoding is UTF8",
             "name": "database_encoding",
             "status": "ok"
@@ -6877,6 +6884,13 @@
             "elapsed_ms": "<volatile>",
             "message": "Every gbrain function that pins a search_path ends it with pg_temp",
             "name": "function_search_path",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "elapsed_ms": "<volatile>",
+            "message": "Every purge and withdrawal guard refuses a write role that row-level security keeps from its ledger",
+            "name": "guard_ledger_checks",
             "status": "ok"
           },
           {

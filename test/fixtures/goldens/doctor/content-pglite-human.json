@@ -106,6 +106,7 @@
       "  [INFO] guest_source: Not applicable: this brain has no guest source (gbrain guests init).",
       "  [OK] rls: Skipped (PGLite — no PostgREST exposure, RLS not applicable)",
       "  [OK] function_search_path: Every gbrain function that pins a search_path ends it with pg_temp",
+      "  [OK] guard_ledger_checks: Skipped (PGLite has no row-level security, so every guard reads its ledgers in full)",
       "  [OK] database_encoding: Skipped (PGLite is always UTF8)",
       "  [OK] schema_version: Version <latest> (latest: <latest>)",
       "  [OK] schema_columns: 1393 column(s) verified against live schema",
