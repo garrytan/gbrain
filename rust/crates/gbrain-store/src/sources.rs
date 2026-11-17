@@ -86,11 +86,9 @@ pub(crate) fn read_source(read: &dyn KvRead, id: &str) -> Result<Option<SourceRe
     get_json(read, &source_key(id))
 }
 
-#[allow(dead_code)] // used by the page methods
 pub(crate) fn require_source(read: &dyn KvRead, id: &str) -> Result<SourceRecord> {
-    read_source(read, id)?.ok_or_else(|| {
-        StoreError::new(SOURCE_NOT_FOUND, format!("source \"{id}\" does not exist"))
-    })
+    read_source(read, id)?
+        .ok_or_else(|| StoreError::new(SOURCE_NOT_FOUND, format!("source \"{id}\" does not exist")))
 }
 
 /// The `default` source a fresh brain starts with: `config` is `{"federated": true}`.
@@ -110,7 +108,7 @@ pub(crate) fn seed_default_source(tx: &mut dyn KvWrite, env: &dyn Env) -> Result
     put_json(tx, &source_key(DEFAULT_SOURCE), &record)
 }
 
-fn all_sources(read: &dyn KvRead) -> Result<Vec<SourceRecord>> {
+pub(crate) fn all_sources(read: &dyn KvRead) -> Result<Vec<SourceRecord>> {
     let mut out = Vec::new();
     let mut failure = None;
     scan_prefix(read, &[keys::SOURCE], false, &mut |_, v| {
@@ -136,7 +134,8 @@ impl Store {
             (options.include_archived || !r.archived)
                 && (!options.local_path_only
                     || (r.local_path.is_some()
-                        && r.config.get("role").and_then(Value::as_str) != Some("storage_manifest")))
+                        && r.config.get("role").and_then(Value::as_str)
+                            != Some("storage_manifest")))
         });
         records.sort_by(|a, b| {
             (b.id == DEFAULT_SOURCE)

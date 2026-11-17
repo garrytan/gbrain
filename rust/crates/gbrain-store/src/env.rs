@@ -133,7 +133,10 @@ mod tests {
         for micros in [0, 1, 951_782_400_000_000, 1_786_363_200_000_123, -1] {
             assert_eq!(parse_iso(&iso(micros)), Some(micros));
         }
-        assert_eq!(parse_iso("2026-08-10T12:00:00.000Z"), Some(1_786_363_200_000_000));
+        assert_eq!(
+            parse_iso("2026-08-10T12:00:00.000Z"),
+            Some(1_786_363_200_000_000)
+        );
         assert_eq!(parse_iso("2026-08-10"), None);
     }
 

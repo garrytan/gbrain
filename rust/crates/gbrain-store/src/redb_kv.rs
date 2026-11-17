@@ -76,11 +76,7 @@ impl RedbKv {
     fn init(db: Database) -> Result<Self> {
         // The table exists from the first open, so a snapshot never has to create it. This
         // commit is not counted in the commit sequence.
-        let exists = db
-            .begin_read()
-            .map_err(map)?
-            .open_table(TABLE)
-            .is_ok();
+        let exists = db.begin_read().map_err(map)?.open_table(TABLE).is_ok();
         if !exists {
             let tx = db.begin_write().map_err(map)?;
             tx.open_table(TABLE).map_err(map)?;
@@ -98,7 +94,11 @@ fn scan_table(
     f: &mut dyn FnMut(&[u8], &[u8]) -> bool,
 ) -> Result<()> {
     // Keys that start with 0x00 are the adapter's own; a scan never reaches them.
-    let start = if start.first().is_none_or(|b| *b == 0) { &[1u8][..] } else { start };
+    let start = if start.first().is_none_or(|b| *b == 0) {
+        &[1u8][..]
+    } else {
+        start
+    };
     if start >= end {
         return Ok(());
     }
@@ -123,7 +123,9 @@ fn scan_table(
 
 fn reject_reserved(key: &[u8]) -> Result<()> {
     if key.first() == Some(&0) {
-        return Err(StoreError::invalid("keys starting with byte 0 are reserved"));
+        return Err(StoreError::invalid(
+            "keys starting with byte 0 are reserved",
+        ));
     }
     Ok(())
 }

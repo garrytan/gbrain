@@ -12,8 +12,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use gbrain_store::{OpenOptions, Store, StoreError};
-use napi::bindgen_prelude::Object;
 use napi::Env;
+use napi::bindgen_prelude::Object;
 use napi_derive::napi;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -36,8 +36,9 @@ pub(crate) fn task_error(error: StoreError) -> TaskError {
 fn arg<T: DeserializeOwned + Default>(value: Option<Value>, what: &str) -> Result<T, StoreError> {
     match value {
         None | Some(Value::Null) => Ok(T::default()),
-        Some(value) => serde_json::from_value(value)
-            .map_err(|e| StoreError::invalid(format!("{what}: {e}"))),
+        Some(value) => {
+            serde_json::from_value(value).map_err(|e| StoreError::invalid(format!("{what}: {e}")))
+        }
     }
 }
 
@@ -142,9 +143,8 @@ impl Brain {
                 ));
             }
             let store = Store::open_dir(std::path::Path::new(&path), opts).map_err(task_error)?;
-            let info = serde_json::to_value(store.info()).map_err(|e| {
-                TaskError::new(gbrain_store::error::STORE_CORRUPT, e.to_string())
-            })?;
+            let info = serde_json::to_value(store.info())
+                .map_err(|e| TaskError::new(gbrain_store::error::STORE_CORRUPT, e.to_string()))?;
             *guard = Some(Arc::new(store));
             Ok(info)
         })
@@ -278,5 +278,202 @@ impl Brain {
         archived: bool,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.set_source_archived(&id, archived))
+    }
+
+    // ---- pages ------------------------------------------------------------------------------
+
+    /// `readPageSnapshot(slug, { sourceId?, sourceIds?, includeDeleted? }?)`: `{ page, tags,
+    /// revision, sourceIncarnation, withdrawals }` or `null`. Dates are ISO strings.
+    #[napi]
+    pub fn read_page_snapshot<'env>(
+        &self,
+        env: &'env Env,
+        slug: String,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_page_snapshot(&slug, &arg(options, "readPageSnapshot options")?)
+        })
+    }
+
+    /// `putPage(slug, page, { sourceId?, allowEmptyOverwrite?, expectedRevision?, force? }?)`: the
+    /// stored `Page`. `expectedRevision` is absent, `null` or a revision UUID.
+    #[napi]
+    pub fn put_page<'env>(
+        &self,
+        env: &'env Env,
+        slug: String,
+        page: Value,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.put_page(
+                &slug,
+                &required(page, "putPage page")?,
+                &arg(options, "putPage options")?,
+            )
+        })
+    }
+
+    /// `listPages(filters?)`: `Page[]`.
+    #[napi]
+    pub fn list_pages<'env>(
+        &self,
+        env: &'env Env,
+        filters: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_pages(&arg(filters, "listPages filters")?)
+        })
+    }
+
+    /// `countPages({ sourceId? }?)`: the number of live pages.
+    #[napi]
+    pub fn count_pages<'env>(
+        &self,
+        env: &'env Env,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let scope: gbrain_store::pages::ReadScope = arg(options, "countPages options")?;
+            s.count_pages(scope.source_id.as_deref())
+        })
+    }
+
+    /// `lockPageKeys([{ sourceId, slug }])`: resolves `null`.
+    #[napi]
+    pub fn lock_page_keys<'env>(&self, env: &'env Env, keys: Value) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.lock_page_keys(&required::<Vec<gbrain_store::pages::PageKey>>(
+                keys,
+                "lockPageKeys keys",
+            )?)
+        })
+    }
+
+    /// `resolveSlugs(partial, { sourceId?, sourceIds? }?)`: up to 5 slugs.
+    #[napi]
+    pub fn resolve_slugs<'env>(
+        &self,
+        env: &'env Env,
+        partial: String,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.resolve_slugs(&partial, &arg(options, "resolveSlugs options")?)
+        })
+    }
+
+    /// `softDeletePage(slug, { sourceId? }?)`: `{ slug }` or `null` when no live page matches.
+    #[napi]
+    pub fn soft_delete_page<'env>(
+        &self,
+        env: &'env Env,
+        slug: String,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let scope: gbrain_store::pages::ReadScope = arg(options, "softDeletePage options")?;
+            Ok(s.soft_delete_page(&slug, scope.source_id.as_deref())?
+                .map(|slug| serde_json::json!({ "slug": slug })))
+        })
+    }
+
+    /// `restorePage(slug, { sourceId? }?)`: whether a deleted page came back.
+    #[napi]
+    pub fn restore_page<'env>(
+        &self,
+        env: &'env Env,
+        slug: String,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let scope: gbrain_store::pages::ReadScope = arg(options, "restorePage options")?;
+            s.restore_page(&slug, scope.source_id.as_deref())
+        })
+    }
+
+    /// `deletePage(slug, { sourceId? }?)`: removes the page for good. Resolves `null`.
+    #[napi]
+    pub fn delete_page<'env>(
+        &self,
+        env: &'env Env,
+        slug: String,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let scope: gbrain_store::pages::ReadScope = arg(options, "deletePage options")?;
+            s.delete_page(&slug, scope.source_id.as_deref())
+        })
+    }
+
+    /// `getTags(slug, { sourceId?, sourceIds? }?)`: sorted tags.
+    #[napi]
+    pub fn get_tags<'env>(
+        &self,
+        env: &'env Env,
+        slug: String,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.get_tags(&slug, &arg(options, "getTags options")?)
+        })
+    }
+
+    /// `addTag(slug, tag, { sourceId? }?)`: resolves `null`; `page_not_found` for a missing page.
+    #[napi]
+    pub fn add_tag<'env>(
+        &self,
+        env: &'env Env,
+        slug: String,
+        tag: String,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let scope: gbrain_store::pages::ReadScope = arg(options, "addTag options")?;
+            s.add_tag(&slug, &tag, scope.source_id.as_deref())
+        })
+    }
+
+    /// `removeTag(slug, tag, { sourceId? }?)`: resolves `null`.
+    #[napi]
+    pub fn remove_tag<'env>(
+        &self,
+        env: &'env Env,
+        slug: String,
+        tag: String,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let scope: gbrain_store::pages::ReadScope = arg(options, "removeTag options")?;
+            s.remove_tag(&slug, &tag, scope.source_id.as_deref())
+        })
+    }
+
+    /// `createVersion(slug, { sourceId? }?)`: snapshots the page and resolves the version row.
+    #[napi]
+    pub fn create_version<'env>(
+        &self,
+        env: &'env Env,
+        slug: String,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let scope: gbrain_store::pages::ReadScope = arg(options, "createVersion options")?;
+            s.create_version(&slug, scope.source_id.as_deref())
+        })
+    }
+
+    /// `getVersions(slug, { sourceId?, sourceIds?, limit?, includeBody? }?)`: newest first.
+    #[napi]
+    pub fn get_versions<'env>(
+        &self,
+        env: &'env Env,
+        slug: String,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.get_versions(&slug, &arg(options, "getVersions options")?)
+        })
     }
 }

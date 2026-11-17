@@ -12,6 +12,7 @@ redb = "4.6"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 getrandom = "0.3"
+sha2 = "0.10"
 
 [dev-dependencies]
 gbrain-sim = { path = "../gbrain-sim" }

@@ -165,6 +165,52 @@ last_sync_at: null, config: { federated: true } }`. A row is PGLite's `SourceRow
 `upsertSource` and `setSourceArchived` are not in PGLite's engine interface; the store needs a way
 to make a source, and the page methods below are source-scoped.
 
+### Pages
+
+Pages are keyed `(source_id, slug)`; `sourceId` defaults to `default`, and a source that does not
+exist rejects `source_not_found`. Slugs go through PGLite's `validateSlug` (`invalid_slug`) and are
+lower-cased. A `Page` is PGLite's `Page` plus `page_kind`; every date (`created_at`, `updated_at`,
+`updated_at_iso`, `deleted_at`, `effective_date`, `ingested_at`) is an ISO string with microseconds
+(`2026-08-10T12:00:00.000123Z`) or `null`, and the TypeScript wrapper turns them into `Date`.
+A page's `knowledge_revision` is a UUID that changes when its type, kind, title, body, timeline,
+frontmatter, deletion or tags change. `text_projection_revision` is `null` until chunks are
+installed for that revision. `listPages` and `resolveSlugs` scan every page; there are no
+secondary indexes yet.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.readPageSnapshot(slug, { sourceId?, sourceIds?, includeDeleted? }?)` | `{ page, tags, revision, sourceIncarnation, withdrawals: [] }` or `null`. `sourceIds` wins over `sourceId`; with neither, the first match, `default` first | `readPageSnapshot` |
+| `brain.putPage(slug, page, { sourceId?, allowEmptyOverwrite?, expectedRevision?, force? }?)` | the stored `Page` | `putPage` |
+| `brain.listPages(filters?)` | `Page[]` (default `limit` 100). Filters: `type`, `tag`, `updated_after`, `updatedAfterKeyset { updatedAt, slug }`, `slugPrefix` (literal), `excludeSlugPrefixes`, `slugAfter`, `sourceId`, `sourceIds`, `includeDeleted`, `sort` (`updated_desc` default, `updated_asc`, `created_desc`, `slug`) | `listPages` |
+| `brain.countPages({ sourceId? }?)` | number of live pages | `countPages` |
+| `brain.lockPageKeys([{ sourceId, slug }])` | `null`. One process owns the brain and one write runs at a time, so keys are already held; it checks the keys are well formed | `lockPageKeys` |
+| `brain.resolveSlugs(partial, { sourceId?, sourceIds? }?)` | `[slug]` for an exact live slug, else up to 5 live slugs whose slug or title contains `partial` (case-insensitive, ordered by slug; PGLite orders by title similarity) | `resolveSlugs` |
+| `brain.softDeletePage(slug, { sourceId? }?)` | `{ slug }` or `null` | `softDeletePage` |
+| `brain.restorePage(slug, { sourceId? }?)` | `boolean` | `restorePage` |
+| `brain.deletePage(slug, { sourceId? }?)` | `null`; removes the page and its versions | `deletePage` |
+| `brain.getTags(slug, { sourceId?, sourceIds? }?)` | sorted `string[]` | `getTags` |
+| `brain.addTag(slug, tag, { sourceId? }?)` | `null`; `page_not_found` for a missing page | `addTag` |
+| `brain.removeTag(slug, tag, { sourceId? }?)` | `null`; no error when the page or tag is absent | `removeTag` |
+| `brain.createVersion(slug, { sourceId? }?)` | the version row; `page_not_found` for a missing page | `createVersion` |
+| `brain.getVersions(slug, { sourceId?, sourceIds?, limit?, includeBody? }?)` | version rows, newest first; `includeBody: false` leaves out `compiled_truth` and `timeline` | `getVersions` |
+
+`putPage` follows PGLite:
+
+- `content_hash` is the caller's, else SHA-256 of the canonical `{ title, type, compiled_truth,
+  timeline, frontmatter, tags }` envelope. Two sample pages hash the same as the TypeScript
+  `contentHash`; parity for every JSON number and string is not proven, so a caller that needs it
+  passes `content_hash`.
+- An update clears `deleted_at`, sets `updated_at` and keeps `effective_date`,
+  `effective_date_source`, `import_filename`, `source_path`, `source_kind`, `source_uri`,
+  `ingested_via` and `ingested_at` when the new write leaves them out.
+- A blank `compiled_truth` over a page that has content rejects `empty_overwrite` unless
+  `allowEmptyOverwrite`.
+- `expectedRevision` is `undefined` (no check), `null` (the page must not exist) or a UUID. A
+  mismatch rejects `revision_conflict`; `force: false` with no `expectedRevision` over an existing
+  page rejects `revision_required`. `force: true` skips the check and cannot be combined with
+  `expectedRevision`. The check sees soft-deleted pages.
+- Tags are not part of `putPage`; `addTag` and `removeTag` change them, as in PGLite.
+
 ## Error codes
 
 Errors from the addon are real `Error` objects with a `code`:
@@ -181,6 +227,12 @@ Errors from the addon are real `Error` objects with a `code`:
 | `store_corrupt` | The records fail their integrity check, or `FORMAT` names another brain. |
 | `invalid_state` | The call does not fit the handle's state (`open` on an open handle). |
 | `invalid_argument` | A malformed argument. |
+| `invalid_slug` | The slug failed `validateSlug`. |
+| `source_not_found` | A page write named a source that does not exist. |
+| `page_not_found` | `addTag` or `createVersion` named a page that does not exist. |
+| `revision_conflict` | `expectedRevision` does not match the page. |
+| `revision_required` | The page exists and the caller sent `force: false` without `expectedRevision`. |
+| `empty_overwrite` | A blank body would replace a page that has content. |
 
 A typed-array argument of the wrong type, or a view of a `SharedArrayBuffer`, throws the
 standard Node-API `InvalidArg` error before any Rust code reads it. Rust reads and writes these

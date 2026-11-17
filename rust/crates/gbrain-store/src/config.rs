@@ -25,13 +25,18 @@ pub(crate) fn read_config(read: &dyn KvRead, key: &str) -> Result<Option<String>
 fn scan_config(read: &dyn KvRead, prefix: &str) -> Result<Vec<(String, String)>> {
     let mut out = Vec::new();
     let mut bad = false;
-    scan_prefix(read, &keys::text(keys::CONFIG, &[prefix]), false, &mut |k, v| {
-        match (std::str::from_utf8(&k[1..]), std::str::from_utf8(v)) {
-            (Ok(key), Ok(value)) => out.push((key.to_string(), value.to_string())),
-            _ => bad = true,
-        }
-        true
-    })?;
+    scan_prefix(
+        read,
+        &keys::text(keys::CONFIG, &[prefix]),
+        false,
+        &mut |k, v| {
+            match (std::str::from_utf8(&k[1..]), std::str::from_utf8(v)) {
+                (Ok(key), Ok(value)) => out.push((key.to_string(), value.to_string())),
+                _ => bad = true,
+            }
+            true
+        },
+    )?;
     if bad {
         return Err(StoreError::new(
             crate::error::STORE_CORRUPT,

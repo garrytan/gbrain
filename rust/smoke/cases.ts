@@ -373,6 +373,61 @@ export const cases: Case[] = [
       });
     },
   },
+  {
+    name: 'store: put, get, list, tags, versions and delete a page',
+    async run(addon) {
+      await withBrainDir(async dir => {
+        const pool = new addon.Pool(2);
+        const brain = new addon.Brain(pool);
+        await brain.open(dir);
+        assert.equal(await brain.readPageSnapshot('people/ada'), null);
+        assert.deepEqual(await brain.listPages(), []);
+        const put = await brain.putPage('People/Ada', {
+          type: 'person',
+          title: 'Ada Lovelace',
+          compiled_truth: 'Wrote the first program.',
+          frontmatter: { born: 1815 },
+        });
+        assert.equal(put.slug, 'people/ada');
+        assert.equal(put.source_id, 'default');
+        assert.match(put.updated_at, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$/);
+        const snapshot = await brain.readPageSnapshot('people/ada');
+        assert.equal(snapshot!.page.title, 'Ada Lovelace');
+        assert.equal(snapshot!.revision, put.knowledge_revision);
+        assert.deepEqual(snapshot!.page.frontmatter, { born: 1815 });
+        await brain.addTag('people/ada', 'math');
+        assert.deepEqual(await brain.getTags('people/ada'), ['math']);
+        assert.deepEqual((await brain.listPages({ tag: 'math' })).map(p => p.slug), ['people/ada']);
+
+        const stale = await rejection(
+          brain.putPage('people/ada', { type: 'person', title: 'x', compiled_truth: 'y' }, { expectedRevision: put.knowledge_revision }),
+        );
+        assert.equal(stale.code, 'revision_conflict', 'adding a tag moved the revision');
+        const blank = await rejection(brain.putPage('people/ada', { type: 'person', title: 'x', compiled_truth: '' }));
+        assert.equal(blank.code, 'empty_overwrite');
+        assert.equal((await rejection(brain.putPage('../x', { type: 'note', title: 'x', compiled_truth: 'y' }))).code, 'invalid_slug');
+
+        const version = await brain.createVersion('people/ada');
+        assert.equal(version.compiled_truth, 'Wrote the first program.');
+        assert.equal((await brain.getVersions('people/ada')).length, 1);
+        assert.deepEqual(await brain.resolveSlugs('ada'), ['people/ada']);
+        assert.deepEqual(await brain.softDeletePage('people/ada'), { slug: 'people/ada' });
+        assert.equal(await brain.readPageSnapshot('people/ada'), null);
+        assert.equal(await brain.countPages(), 0);
+        assert.equal(await brain.restorePage('people/ada'), true);
+        assert.equal(await brain.countPages(), 1);
+
+        await brain.close();
+        const again = new addon.Brain(pool);
+        await again.open(dir);
+        assert.equal((await again.readPageSnapshot('people/ada'))!.page.title, 'Ada Lovelace', 'the page survives a reopen');
+        await again.deletePage('people/ada');
+        assert.equal(await again.readPageSnapshot('people/ada', { includeDeleted: true }), null);
+        await again.close();
+        await pool.shutdown(1000);
+      });
+    },
+  },
 ];
 
 /** The cases that make sense inside a compiled executable (everything in-process and quick). */

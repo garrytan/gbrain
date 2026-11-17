@@ -23,6 +23,10 @@ pub const INVALID_SLUG: &str = "invalid_slug";
 pub const SOURCE_NOT_FOUND: &str = "source_not_found";
 /// `expectedRevision` does not match the stored page.
 pub const REVISION_CONFLICT: &str = "revision_conflict";
+/// The caller gave no `expectedRevision` and the page already exists (`revision_required`).
+pub const REVISION_REQUIRED: &str = "revision_required";
+/// The named page does not exist (only where PGLite throws instead of returning null).
+pub const PAGE_NOT_FOUND: &str = "page_not_found";
 /// The write replaces a non-empty page with an empty one and did not ask for it.
 pub const EMPTY_OVERWRITE: &str = "empty_overwrite";
 /// A request id was used for a different write.
@@ -69,6 +73,9 @@ impl std::error::Error for StoreError {}
 
 impl From<serde_json::Error> for StoreError {
     fn from(error: serde_json::Error) -> Self {
-        Self::new(STORE_CORRUPT, format!("a stored record is not valid JSON: {error}"))
+        Self::new(
+            STORE_CORRUPT,
+            format!("a stored record is not valid JSON: {error}"),
+        )
     }
 }

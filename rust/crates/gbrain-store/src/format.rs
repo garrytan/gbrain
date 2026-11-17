@@ -53,9 +53,8 @@ pub fn read(dir: &Path) -> Result<Option<FormatRecord>> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(StoreError::new(STORE_IO, format!("reading FORMAT: {e}"))),
     };
-    let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| {
-        StoreError::new(FORMAT_UNKNOWN, format!("FORMAT is not valid JSON: {e}"))
-    })?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|e| StoreError::new(FORMAT_UNKNOWN, format!("FORMAT is not valid JSON: {e}")))?;
     // The version is judged before the rest of the record is parsed, so a future record with new
     // required fields still reads as "newer", not "malformed".
     let version = value
@@ -76,7 +75,8 @@ pub fn write(dir: &Path, record: &FormatRecord) -> Result<()> {
     let mut file = fs::File::create(&temp).map_err(|e| io("creating FORMAT.tmp", e))?;
     let mut body = serde_json::to_vec_pretty(record)?;
     body.push(b'\n');
-    file.write_all(&body).map_err(|e| io("writing FORMAT.tmp", e))?;
+    file.write_all(&body)
+        .map_err(|e| io("writing FORMAT.tmp", e))?;
     file.sync_all().map_err(|e| io("syncing FORMAT.tmp", e))?;
     fs::rename(&temp, dir.join(FORMAT_FILE)).map_err(|e| io("renaming FORMAT", e))?;
     // Make the rename itself durable. A platform that cannot open a directory skips this.

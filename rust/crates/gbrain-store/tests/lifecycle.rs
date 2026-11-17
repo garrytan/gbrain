@@ -64,8 +64,15 @@ fn an_unknown_format_is_refused_before_the_records_are_touched() {
         .expect("refused");
     assert_eq!(error.code, FORMAT_UNKNOWN, "{error}");
     assert!(error.message.contains("99"), "{error}");
-    assert_eq!(std::fs::read(&records).unwrap(), before, "records untouched");
-    assert_eq!(std::fs::read_to_string(brain.join("FORMAT")).unwrap(), newer);
+    assert_eq!(
+        std::fs::read(&records).unwrap(),
+        before,
+        "records untouched"
+    );
+    assert_eq!(
+        std::fs::read_to_string(brain.join("FORMAT")).unwrap(),
+        newer
+    );
 }
 
 #[test]
@@ -127,7 +134,8 @@ fn kv_commit_is_durable_ordered_and_counted() {
     assert_eq!(db.version().unwrap(), 0);
     let mut tx = db.begin_write().unwrap();
     for key in ["b", "a", "c"] {
-        tx.put(key.as_bytes(), key.to_uppercase().as_bytes()).unwrap();
+        tx.put(key.as_bytes(), key.to_uppercase().as_bytes())
+            .unwrap();
     }
     assert_eq!(tx.commit().unwrap(), 1);
     let mut tx = db.begin_write().unwrap();
@@ -137,14 +145,20 @@ fn kv_commit_is_durable_ordered_and_counted() {
     assert_eq!(snapshot.get(b"b").unwrap(), None);
     let forward = collect_prefix(&*snapshot, b"", false, 10).unwrap();
     assert_eq!(
-        forward.iter().map(|(k, _)| k.as_slice()).collect::<Vec<_>>(),
+        forward
+            .iter()
+            .map(|(k, _)| k.as_slice())
+            .collect::<Vec<_>>(),
         [b"a".as_slice(), b"c".as_slice()]
     );
     let reverse = collect_prefix(&*snapshot, b"", true, 1).unwrap();
     assert_eq!(reverse[0].0, b"c");
     drop(snapshot);
     let mut tx = db.begin_write().unwrap();
-    assert!(tx.put(b"\0seq", b"x").is_err(), "the adapter's keys are reserved");
+    assert!(
+        tx.put(b"\0seq", b"x").is_err(),
+        "the adapter's keys are reserved"
+    );
     drop(tx);
     drop(db);
     let db = kv(&dir);
@@ -161,15 +175,27 @@ fn kv_dropping_a_write_rolls_it_back_and_snapshots_do_not_see_later_commits() {
     let early = db.snapshot().unwrap();
     let mut tx = db.begin_write().unwrap();
     tx.put(b"k", b"2").unwrap();
-    assert_eq!(tx.get(b"k").unwrap().unwrap(), b"2", "a write reads its own puts");
+    assert_eq!(
+        tx.get(b"k").unwrap().unwrap(),
+        b"2",
+        "a write reads its own puts"
+    );
     drop(tx);
     assert_eq!(db.snapshot().unwrap().get(b"k").unwrap().unwrap(), b"1");
     let mut tx = db.begin_write().unwrap();
     tx.put(b"k", b"3").unwrap();
     tx.commit().unwrap();
-    assert_eq!(early.get(b"k").unwrap().unwrap(), b"1", "snapshot isolation");
+    assert_eq!(
+        early.get(b"k").unwrap().unwrap(),
+        b"1",
+        "snapshot isolation"
+    );
     assert_eq!(db.snapshot().unwrap().get(b"k").unwrap().unwrap(), b"3");
-    assert_eq!(db.version().unwrap(), 2, "a rolled-back write is not counted");
+    assert_eq!(
+        db.version().unwrap(),
+        2,
+        "a rolled-back write is not counted"
+    );
 }
 
 #[test]
@@ -185,7 +211,13 @@ fn kv_prefix_helpers() {
     }
     tx.commit().unwrap();
     let snapshot = db.snapshot().unwrap();
-    assert_eq!(collect_prefix(&*snapshot, b"a", false, 10).unwrap().len(), 2);
+    assert_eq!(
+        collect_prefix(&*snapshot, b"a", false, 10).unwrap().len(),
+        2
+    );
     assert_eq!(collect_prefix(&*snapshot, b"a", false, 1).unwrap().len(), 1);
-    assert_eq!(collect_prefix(&*snapshot, b"zz", false, 10).unwrap().len(), 0);
+    assert_eq!(
+        collect_prefix(&*snapshot, b"zz", false, 10).unwrap().len(),
+        0
+    );
 }

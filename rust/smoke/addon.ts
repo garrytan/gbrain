@@ -53,6 +53,20 @@ export interface SourceRow {
   incarnation: string;
 }
 
+export interface PageSnapshot {
+  page: Record<string, any>;
+  tags: string[];
+  revision: string;
+  sourceIncarnation: string;
+  withdrawals: unknown[];
+}
+
+export interface PageScope {
+  sourceId?: string;
+  sourceIds?: string[];
+  includeDeleted?: boolean;
+}
+
 /** The store class (crates/gbrain-napi/src/store_binding.rs). Every method is documented in rust/README.md. */
 export interface Brain {
   readonly isOpen: boolean;
@@ -69,6 +83,27 @@ export interface Brain {
   upsertSource(input: { id: string; name?: string; local_path?: string; last_sync_at?: string; config?: Record<string, unknown> }): Promise<SourceRow>;
   updateSourceConfig(id: string, patch: Record<string, unknown>): Promise<boolean>;
   setSourceArchived(id: string, archived: boolean): Promise<boolean>;
+  readPageSnapshot(slug: string, options?: PageScope): Promise<PageSnapshot | null>;
+  putPage(
+    slug: string,
+    page: Record<string, unknown>,
+    options?: { sourceId?: string; allowEmptyOverwrite?: boolean; expectedRevision?: string | null; force?: boolean },
+  ): Promise<Record<string, any>>;
+  listPages(filters?: Record<string, unknown>): Promise<Record<string, any>[]>;
+  countPages(options?: { sourceId?: string }): Promise<number>;
+  lockPageKeys(keys: { sourceId: string; slug: string }[]): Promise<null>;
+  resolveSlugs(partial: string, options?: PageScope): Promise<string[]>;
+  softDeletePage(slug: string, options?: { sourceId?: string }): Promise<{ slug: string } | null>;
+  restorePage(slug: string, options?: { sourceId?: string }): Promise<boolean>;
+  deletePage(slug: string, options?: { sourceId?: string }): Promise<null>;
+  getTags(slug: string, options?: PageScope): Promise<string[]>;
+  addTag(slug: string, tag: string, options?: { sourceId?: string }): Promise<null>;
+  removeTag(slug: string, tag: string, options?: { sourceId?: string }): Promise<null>;
+  createVersion(slug: string, options?: { sourceId?: string }): Promise<Record<string, any>>;
+  getVersions(
+    slug: string,
+    options?: PageScope & { limit?: number; includeBody?: boolean },
+  ): Promise<Record<string, any>[]>;
 }
 
 export interface Addon {
