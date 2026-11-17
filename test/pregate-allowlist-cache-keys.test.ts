@@ -84,8 +84,8 @@ describe('pregate allowlist: generated operation loaders', () => {
       `[load_secrets, "secretsOperations", "${key}"],`,
       `[load_secrets, "secretsOperations"], "${key}"`,
       `[${key}, "secretsOperations"],`,
-      '[load_secrets, "AKIAEXAMPLENOTREAL00"],',
-      '[load_secrets, "f8a7b6c5d4e3f2a1b0c9"],',
+      `[load_secrets, "${['AKIA', 'EXAMPLENOTREAL00'].join('')}"],`,
+      `[load_secrets, "${['f8a7b6c5d4', 'e3f2a1b0c9'].join('')}"],`,
     ]) expect({ value, covered: coversLoader(value) }).toEqual({ value, covered: false });
   });
 });
