@@ -44,12 +44,16 @@ links, timelines, versions). The owner reads through `get_page`, `search`, `quer
 reads in every source its grant reads; the owner's source grant still bounds which sources those are. It also gets
 private facts from `recall`, the `query` facts arm, `think` trajectories, hot memory, `delta` and `context_pack` hot
 facts, except a fact taken from a page it cannot read. Facts on `entity` and `context_pack` cards stay world-only for
-every remote caller, the owner included.
+every remote caller, the owner included, except that the private-facts grant below adds private facts to `entity` cards.
 
-Two grants relax privacy for callers that are not the owner, and both are operator decisions:
+Two grants relax page privacy for callers that are not the owner, and both are operator decisions:
 `gbrain auth rescope --private-pages granted-sources` (private pages in the sources that grant names) and the
 escape hatches `GBRAIN_REMOTE_PRIVATE_PAGES=1` / `gbrain config set search.remote_private_pages visible` (every
 remote caller). Neither relaxes `readable_by` or folder rules, and neither reaches a shared-room audience.
+Fact privacy has its own operator grant, `gbrain auth rescope --private-facts granted-sources`: that credential reads
+facts saved `private` in the sources its grant names, never one held on, provenanced from or about a private,
+`readable_by`, folder-ruled, quarantined or member page, nor one with no page to check, and never under an asserted
+audience or an attested call ([MCP administration](../mcp/ADMIN.md)).
 
 `gbrain access check --token <name>` reports whether a credential reads as the owner, and
 `gbrain <operation> --as <member>` previews a member's view, the owner's included. Every remote response names the
@@ -188,7 +192,8 @@ host saved with `visibility: "private"`, or one on a page whose `readable_by` na
 on a page whose readers leave the owner out (even with `reads-restricted on`) or on another member's page stays with the brain host, and one the owner confirmed or curated files a `forget_requires_owner`
 proposal instead, as for a shared fact. The trade-off: an owner agent that follows a planted instruction can share a fact
 without passing any flag, so pass `visibility: "private"` for a fact that must stay with the owner. Extracted facts follow `facts.default_visibility` (private when unset)
-and are never wider than their page. Remote fact reads return private facts to the owner only. Facts saved `private`
+and are never wider than their page. Remote fact reads return private facts to the owner, and to a credential holding the private-facts grant
+above (only in the sources that grant names). Facts saved `private`
 before `facts.default_visibility` became `world` stay private until the operator opens them from the brain host with
 `gbrain repair open-facts` (preview first, with an undo; see [repair](repair.md#open-facts-saved-private-before-the-world-default)).
 
