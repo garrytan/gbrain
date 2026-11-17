@@ -195,6 +195,25 @@ export function isRetryableConnError(err: unknown): boolean {
 }
 
 /**
+ * #9540: a connect to a local Unix socket that is gone, because the server shut down and removed it (`connect ENOENT
+ * <dir>/.s.PGSQL.<port>`). Kept out of `isRetryableConnError`: its first-connect callers would then wait out
+ * retries on a mistyped socket path. A long-running loop that already reached the server treats it as a lost connection.
+ */
+export function isVanishedSocketError(err: unknown): boolean {
+  return getCode(err) === 'ENOENT' && (err as { syscall?: unknown }).syscall === 'connect';
+}
+
+/**
+ * #9540 follow-up: a server that refuses new connections because it is shutting down (SQLSTATE 57P03) or has stopped
+ * listening on TCP (`connect ECONNREFUSED`). Kept out of `isRetryableConnError` for the reason
+ * `isVanishedSocketError` is: a long-running loop that already reached the server treats it as a lost connection.
+ */
+export function isServerRefusingConnections(err: unknown): boolean {
+  const code = getCode(err);
+  return code === '57P03' || (code === 'ECONNREFUSED' && (err as { syscall?: unknown }).syscall === 'connect');
+}
+
+/**
  * #6355: did the database session go away under a statement that was already sent? Narrower than
  * `isRetryableConnError` (no auth or startup races): the connection-class SQLSTATEs, postgres.js's own
  * connection codes, the server's admin/crash shutdown codes (`pg_terminate_backend`, a failover) and the

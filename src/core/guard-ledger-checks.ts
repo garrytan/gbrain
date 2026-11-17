@@ -26,6 +26,19 @@ const LEDGER_GUARDS: ReadonlyArray<{ name: string; ledger: string; sql: string }
 ];
 
 /**
+ * Every installed guard whose body lacks its ledger check (regprocedure text and schema-qualified signature), the role
+ * that owns it, whether the current role may re-create it, and the current role. Read-only (doctor guard_ledger_checks).
+ */
+export async function ledgerGuardsWithoutCheck(engine: Pick<BrainEngine, 'executeRaw'>): Promise<Array<{ sig: string; qualified: string; owner: string; owned: boolean; role: string }>> {
+  return engine.executeRaw(
+    `SELECT p.oid::regprocedure::text AS sig, quote_ident(n.nspname) || '.' || quote_ident(p.proname) || '(' || oidvectortypes(p.proargtypes) || ')' AS qualified,
+            pg_get_userbyid(p.proowner)::text AS owner, pg_has_role(current_user, p.proowner, 'USAGE') AS owned, quote_ident(current_user) AS role
+      FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace JOIN unnest($1::text[], $2::text[]) AS g(name, ledger) ON g.name = p.proname
+      WHERE n.nspname = 'public' AND p.prokind = 'f' AND strpos(p.prosrc, 'row_security_active(''' || g.ledger || ''')') = 0 ORDER BY 1`,
+    [LEDGER_GUARDS.map(g => g.name), LEDGER_GUARDS.map(g => g.ledger)]);
+}
+
+/**
  * Re-creates every installed guard whose body lacks its ledger check and that the current role may replace, and returns
  * the ones another role owns (regprocedure text) with the current role, for the message naming them.
  */

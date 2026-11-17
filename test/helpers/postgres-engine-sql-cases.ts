@@ -114,7 +114,7 @@ export const DOMAIN_OF: Record<string, string> = {
   // files
   'upsertFile': 'files', 'getFile': 'files', 'listFilesForPage': 'files',
   // chunks
-  'upsertChunks': 'chunks', 'getChunks': 'chunks', 'getChunkPage': 'chunks', 'getChunkWindows': 'chunks', 'countStaleChunks': 'chunks', 'sumStaleChunkChars': 'chunks',
+  'upsertChunks': 'chunks', 'sealChunks': 'chunks', 'getChunks': 'chunks', 'getChunkPage': 'chunks', 'getChunkWindows': 'chunks', 'countStaleChunks': 'chunks', 'sumStaleChunkChars': 'chunks',
   'setPageEmbeddingSignature': 'chunks', 'invalidateStaleSignatureEmbeddings': 'chunks',
   'invalidateContentDriftEmbeddings': 'chunks', 'listStaleChunks': 'chunks',
   'countChunklessPagesWithContent': 'chunks', 'listChunklessPagesWithContent': 'chunks', 'deleteChunks': 'chunks',
@@ -272,6 +272,8 @@ const EMB = new Float32Array([0.1, 0.2, 0.3]);
 const page = { type: 'person', title: 'Alice Example', compiled_truth: 'Alice Example body.', timeline: '', frontmatter: { tags: [] } };
 const pageRet: Rule = [/^\s*INSERT INTO pages \(source_id, slug/, [PAGE_ROW]];
 const pageId: Rule = [/SELECT id FROM pages/i, [{ id: 1 }]];
+/** The sealing chunk insert stamps the page's chunker version and needs the page row back. */
+const sealedPage: Rule = [/UPDATE pages SET chunker_version/, [{ id: 1 }]];
 
 function variants(method: string, list: Array<[string, (e: any) => Promise<unknown>, Rule[]?]>): SqlCase[] {
   return list.map(([variant, run, rows]) => ({ method, variant, run, rows }));
@@ -541,6 +543,10 @@ export const SQL_CASES: SqlCase[] = [
     ['empty', (e) => e.upsertChunks(SLUG, []), [pageId]],
     ['expectedRevision', (e) => e.upsertChunks(SLUG, [{ chunk_index: 0, chunk_text: 'x', chunk_source: 'compiled_truth' }], { sourceId: SRC, expectedRevision: REVISION }), [pageId]],
     ['embeddingColumn', (e) => e.upsertChunks(SLUG, [{ chunk_index: 0, chunk_text: 'x', chunk_source: 'compiled_truth', embedding: EMB }], { embeddingColumn: { name: 'embedding_voyage', dimensions: 3, embeddingModel: 'voyage-test', vectorType: 'halfvec' } }), [pageId]],
+  ]),
+  ...variants('sealChunks', [
+    ['default', (e) => e.sealChunks(SLUG, [{ chunk_index: 0, chunk_text: 'Alice Example body.', chunk_source: 'compiled_truth' }]), [pageId, sealedPage]],
+    ['expectedRevision', (e) => e.sealChunks(SLUG, [], { sourceId: SRC, expectedRevision: REVISION }), [pageId, sealedPage]],
   ]),
   ...variants('getChunks', [
     ['default', (e) => e.getChunks(SLUG)],

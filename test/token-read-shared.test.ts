@@ -34,12 +34,14 @@ import { mutateClientLifecycle } from '../src/core/grants/lifecycle.ts';
 import { credentialReadSources } from '../src/core/grants/shared-exposure.ts';
 import { expandReadShared } from '../src/core/grants/read-shared.ts';
 import { accessPolicyNotices } from '../src/core/access/policy-notice.ts';
+import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { startHttpTransport } from '../src/mcp/http-transport.ts';
 import { RateLimiter } from '../src/mcp/rate-limit.ts';
 import type { AuthInfo, OperationContext } from '../src/core/ops/contract.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
+import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 
 const OWNER = 'owner-example';
 const PRIVATE_ALICE = 'private-alice-example';
@@ -274,8 +276,32 @@ for (const kind of testBackends()) {
     }, 60_000);
 
     // GBRA-108 ruling (2026-11-17): GBRA-575's per-key --private-facts switch opens private facts only in sources listed
-    // by id on the grant, never in a source reached through --read-shared. Written once that switch lands on master.
-    test.todo('with --private-facts and --read-shared both on, private facts stay closed in every shared source the key reaches', () => {});
+    // by id on the grant, never in a source reached through --read-shared.
+    test('with --private-facts and --read-shared both on, private facts stay closed in every shared source the key reaches', async () => {
+      const entity = 'companies/harbor-example';
+      const world = '---\ntype: company\ntitle: Harbor Example\n---\n\n# Harbor Example\n\nHarbor company page.\n';
+      const FACT = { own: 'rsharedfact own private', shared: 'rsharedfact shared private', world: 'rsharedfact shared world' };
+      const fact = (sourceId: string, text: string, visibility: 'private' | 'world') => engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], () => tx.executeRaw(
+        'INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source, source_markdown_slug) VALUES ($1, $2, $3, \'fact\', $4, \'mcp:extract_facts\', $2)', // gbrain-allow-direct-insert: database-only fact fixture
+        [sourceId, entity, text, visibility]), TEST_WRITE_ATTRIBUTION));
+      for (const sourceId of [PRIVATE_ALICE, 'company']) await importFromContent(engine, entity, world, { sourceId });
+      await fact(PRIVATE_ALICE, FACT.own, 'private');
+      await fact('company', FACT.shared, 'private');
+      await fact('company', FACT.world, 'world');
+      await mint2('both-switches', [PRIVATE_ALICE]);
+      const rescoped = await rescopeLegacyToken(engine, parseRescopeTokenArgs(['both-switches', '--private-facts', 'granted-sources']));
+      expect({ readShared: rescoped.after.readShared, privateFacts: rescoped.after.privateFacts }).toEqual({ readShared: true, privateFacts: 'granted_sources' });
+      const auth = await verify('both-switches');
+      expect(auth.allowedSources).toEqual([PRIVATE_ALICE, 'default', 'company', 'team']);
+      expect(auth.privateFacts).toEqual({ mode: 'granted_sources', sources: [PRIVATE_ALICE] });
+      const seenFacts = async (sourceId: string) => {
+        __resetPrivateVisibilityCacheForTests();
+        const text = (await call(auth, 'recall', { entity, source_id: sourceId })).text;
+        return Object.entries(FACT).filter(([, f]) => text.includes(f)).map(([k]) => k);
+      };
+      expect(await seenFacts(PRIVATE_ALICE)).toEqual(['own']);
+      expect(await seenFacts('company')).toEqual(['world']);
+    }, 120_000);
 
     test('a sources-table failure keeps the stored list and says so with read_shared_unresolved', async () => {
       const failing = (async () => { throw new Error('boom'); }) as never;

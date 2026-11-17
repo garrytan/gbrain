@@ -1,0 +1,220 @@
+access: 
+advisor: 
+agent: 
+anomalies: 
+append: 
+apply-migrations: --accept-reviewed-inventory --acknowledge-no-backup --backup-confirmed --confirm-quiesced --content-root --dry-run --export-db-only --export-source --force --force-all --force-orchestrator --force-retry --force-schema --host-dir --json --list --migration --mode --no-autopilot-install --non-interactive --require-db --skip-verify --yes
+attribution: --fact --slug --take --timeline --versions
+auth: 
+autopilot: --force --inject-bootstrap --inline --install --interval --json --no-inject --no-worker --pause --phase --reason --repo --resume --retry-global --status --target --uninstall
+backfill: 
+backlinks: --all --all-sources --as-of --cursor --group --limit --slug --source-id --status --type
+backup: 
+beliefs: 
+bench: 
+book-mirror: 
+bootstrap: 
+brain-skillpack: 
+brainstorm: 
+bundled-skill: 
+cache: 
+calibration: 
+call: 
+cancel-write-request: --request-id
+capture: 
+check-backlinks: 
+check-resolvable: 
+check-update: 
+chronicle-backfill: --dated-since --dry-run --limit --max-usd --recent --since --yes
+claw-test: 
+code-callees: 
+code-callers: 
+code-def: 
+code-refs: 
+compile-context: 
+config: 
+connect: 
+connectors: 
+context-pack: --budget-tokens --counterparty --entities --entity-refs --include-private --include-quarantined --intent --min-trust --prefer-source-id --session-id --since --source-id
+conversation-parser: 
+core: 
+creds: 
+day: --date --limit --narrative --week
+db-repair: 
+decide: 
+delete: --expected-revision --force --purge --request-id --slug --source-id
+delete-skill: --expected-revision --name --pack-id --request-id --source-id --source-incarnation
+delta: --beliefs --budget-tokens --cursor --entities --include-private --min-trust --session-id --since --since-slug
+diag: --budget-ms --json --query
+doctor: --alert --budget-ms --content-audit --dry-run --expect --fast --fix --include-repairs --index-audit --json --locks --max-cost --max-jobs --max-usd --no-embed --no-migrate --only --probe --probe-pglite --remediate --remediation-plan --resume --scope --skills-dir --source --target-score --tier --yes
+dream: 
+edge-proposals: 
+edges-backfill: 
+embed: 
+embeddings: 
+engine: 
+enrich: 
+entity: --name --names --prefer-source-id --source-id --variants
+entity-identity-link: --canonical --confidence --entity-id --slug --source-id
+entity-identity-list: --entity-id --slug
+entity-identity-unlink: --entity-id --slug --source-id
+errors: 
+eval: 
+export: 
+extract: 
+extract-conversation-facts: 
+extract-entities: --source-slug --text --trusted-extraction
+extraction-pending: --include --limit --offset --possible-duplicates-cursor --since-days --unattributed-offset
+extraction-review: --action --of --slugs
+facts: 
+features: 
+feedback: 
+fetch: --id --include-quarantined --min-trust
+files: 
+find: --limit --pattern --source-id --type --types
+find-contradictions: --limit --min-trust --severity --slug
+find-trajectory: --entity-slug --kind --limit --metric --since --until
+forget: 
+founder: 
+friction: 
+frontmatter: 
+get: --around-chunk-id --as-of --body --bytes --content-only --context --context-lines --cursor --fuzzy --grammar-diagnostics --grep --include-content --include-deleted --include-quarantined --include-timeline-entries --known-as-of --lines --max-bytes --min-trust --outline-from --section --slug --source-id --view
+get_links: --all --all-sources --as-of --cursor --during --limit --link-type --slug --source-id --status
+git: 
+google: 
+graph: --all-sources --depth --direction --hops --link-type --slug --source-id
+graph-query: 
+guests: 
+health: 
+history: --diff --include-body --known-as-of --limit --slug --source-id
+hook: 
+import: --allow-noncanonical-root --calls --fresh --include-gitignored --json --log-noop --no-embed --prefix --source --source-id --workers
+init: 
+integrations: 
+integrity: 
+jobs: 
+join-brain: --adapter --follow-policy
+last-seen: --asof --entity
+leave-brain: --enrollment-epoch --installation-id
+link: --context --from --link-source --link-type --request-id --to --valid-from --valid-until
+link-add: --context --from --link-source --link-type --request-id --to --valid-from --valid-until
+link-rm: --from --link-source --link-type --request-id --to
+link-sources: 
+links: --all --all-sources --as-of --cursor --during --limit --link-type --slug --source-id --status
+lint: 
+list: --include-deleted --limit --offset --slug-prefix --sort --source-id --source-ids --tag --type --updated-after --updated-after-slug --where
+loops: 
+lsd: 
+maintain: 
+mcp: 
+memory-proposals: 
+memory-settings: 
+migrate: 
+models: 
+mounts: 
+notability-eval: 
+notices: 
+on-this-day: --date --limit
+onboard: --auto --check --explain --history --json --max-usd --target-score
+ontology: --asof --entity --include-quarantined --min-confidence
+ontology-add: --confidence --dimension --entity --source --valid-from --valid-to --value --visibility
+ontology-contradictions: --min-confidence
+ontology-dimensions: 
+orient: --days --entities --limit
+orphans: 
+pages: 
+pglite-repair: 
+post-upgrade: 
+pricing: 
+projections: 
+protocol: 
+providers: 
+prune-skill-revisions: --source-id
+publish: 
+put: --allow-empty --allow-shrink --content --content-origin --drop-timeline --expected-revision --force --ingested-via --reason --request-id --slug --source-id --source-kind --source-uri --wait-ms
+put-pages: --pages --request-id --source-id --wait-ms
+put-skill: --description --expected-revision --files --name --pack-id --private --request-id --requirements --source-id --source-incarnation --triggers
+quarantine: 
+query: --adaptive-return --autocut --cross-modal --detail --embedding-column --expand --explain --explain-target --fields --image --image-mime --lang --limit --min-trust --mode --near-symbol --offset --query --recency --relational --return-unit --return-window --salience --since --snippet-chars --source-id --source-ids --symbol-kind --token-budget --types --until --walk-depth --where
+questions: 
+rank-entities: --direction --include-mentions --limit --link-type --source-id --types
+rate: --answer-id --pages --rating
+recall: 
+reconcile-links: 
+reindex: 
+reindex-code: 
+reindex-frontmatter: 
+reindex-search-vector: 
+reinit-pglite: 
+remember: --claim-metric --claim-period --claim-unit --claim-value --content-origin --entity --expected-revision --fact --force --infer-entity --items --kind --provenance --replaces --request-id --share --source-id --ttl --valid-from --visibility
+remote: 
+repair: 
+repair-jsonb: 
+report: 
+repos: 
+resolvers: 
+restore: --detach --expected-revision --force --request-id --slug --source-id
+retain-skill-revision: --hours --name --pack-id --revision --source-id --source-incarnation
+retrieval-upgrade: 
+revert: --expected-revision --force --reason --request-id --slug --source-id --version-id
+routing-eval: 
+salience: 
+schema: 
+search: --cursor --fields --limit --match --min-trust --mode --offset --query --recency --return-unit --return-window --salience --snippet-chars --source-id --source-ids --token-budget --types --where
+search-by-image: --image-data --image-mime --image-path --image-url --limit --offset --query --source-id
+search-exact: --after --case-sensitive --limit --max-seconds --min-trust --phrase --slug-prefix --source-id --types
+self-upgrade: 
+serve: --access --advertise --bind --cli-socket --enable-dcr --enable-dcr-insecure --fail-fast --http --log-full-params --port --print-admin-token --public-url --source-guard --stdio-idle-timeout --stdio-member --suppress-bootstrap-token --surface --token-ttl
+set-skill-policy: --expected-policy-epoch --policy --source-id
+setup: 
+since: --date --kind --limit
+skill: --expected-brain-id --name --pack-id --qualified-id --revision --schema-version --source-id --source-incarnation
+skill-asset: --expected-brain-id --name --pack-id --path --qualified-id --revision --source-id --source-incarnation
+skill-policy: --source-id
+skill-resolver: 
+skill-retention: --source-id
+skillify: 
+skillopt: 
+skillpack: 
+skillpack-check: 
+skills: --cursor --limit --query --schema-version --section --source-id
+smoke-test: 
+sources: 
+stats: --by --collapse-aliases --since
+status: --deadline-ms --delete --enable --fast --funnel --json --section
+storage: 
+storage-find: --limit --query --status --store
+storage-get: --id
+storage-list: --limit --offset --on-source-machine --status --store
+storage-register: --card
+storage-update: --expected-revision --id --patch --restored-to --restored-verified
+sweep: 
+sync: 
+sync-brain-skills: --acknowledgment --enrollment-epoch --installation-id
+synthesize: --question --since --until
+tag: --expected-revision --force --request-id --slug --tag
+tags: --slug
+takes: 
+takes-calibration: --bucket-size --holder
+takes-list: --active --holder --kind --limit --min-trust --offset --page-slug --resolved --sort-by
+takes-scorecard: --domain-prefix --group-by --holder --min-n --since --until
+takes-search: --limit --min-trust --query
+think: 
+timeline: --after --before --limit --min-trust --since --slug --source-id --source-ids --until
+timeline-add: --date --detail --expected-revision --force --request-id --slug --source --summary
+transcripts: 
+trust: 
+unlink: --from --link-source --link-type --request-id --to
+untag: --expected-revision --force --request-id --slug --tag
+upgrade: 
+volunteer-context: --days --max-pages --min-confidence --min-trust --prior-context --session-id --source-ids --stats --turn --window
+waiting: 
+wakeshift: 
+wanted: --count-only --limit --offset --source-id
+watch: 
+whoami: 
+whois: --query --source-id --types
+whoknows: 
+write-conflicts: --cursor --limit --source-id
+write-request: --applied --request-id
+write-requests: --before --limit --source-id

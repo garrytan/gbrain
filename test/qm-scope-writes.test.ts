@@ -361,6 +361,14 @@ for (const kind of testBackends()) {
       expect(await federated()).not.toContain(SCOPE_A);
       expect((await markedScopeSources(engine, [SCOPE_A])).has(SCOPE_A)).toBe(true);
       expect((await refusal(rescopeClientGrant(engine, clients.scopes!.id, { privatePages: 'granted_sources' }, { actor: 'test' })))?.message).toContain('private-pages');
+      // Value: protects=a scope (attest-sources) credential cannot take the private-facts grant; fails_when=the privateFacts attest guard in assertScopeSourceGrant is dropped; why_new=only private-pages was asserted; seam=none; no_claim=the reverse order (attest after grant) in applyAttestSources
+      expect((await refusal(rescopeClientGrant(engine, clients.scopes!.id, { privateFacts: 'granted_sources' }, { actor: 'test' })))?.message).toContain('private-facts grant');
+      // Value: protects=applyAttestSources refuses scope sources for a credential holding the private-facts grant, writing nothing; fails_when=the privateFacts guard in applyAttestSources is dropped; why_new=only the grant-after-attest order was asserted; seam=none; no_claim=the token path (client fixture only)
+      await engine.executeRaw(`UPDATE oauth_clients SET private_facts = 'granted_sources' WHERE client_id = $1`, [clients.plain!.id]);
+      expect((await refusal(bindCredential(engine, { kind: 'client', id: clients.plain!.id }, { attestActor: 'qm', attestOps: MEMORY_OPS, attestSources: [SCOPE_A] })))?.message).toContain('holds the private-facts grant, so it cannot list scope sources');
+      const [plainRow] = await engine.executeRaw<{ attest_sources: string[] | null }>('SELECT attest_sources FROM oauth_clients WHERE client_id = $1', [clients.plain!.id]);
+      expect(plainRow!.attest_sources ?? []).toEqual([]);
+      await engine.executeRaw(`UPDATE oauth_clients SET private_facts = 'none' WHERE client_id = $1`, [clients.plain!.id]);
       await engine.executeRaw(`UPDATE oauth_clients SET deleted_at = now() WHERE client_id = $1`, [clients.scopes!.id]);
       expect((await refusal(rescopeClientGrant(engine, clients.plain!.id, { federatedRead: [SHARED, SCOPE_A] }, { actor: 'test' })))?.message).toContain('QM scope source');
       await engine.executeRaw(`UPDATE oauth_clients SET deleted_at = NULL WHERE client_id = $1`, [clients.scopes!.id]);

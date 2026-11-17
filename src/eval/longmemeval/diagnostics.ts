@@ -63,7 +63,7 @@ import {
   type ResolvedSearchKnobs,
   type SearchMode,
 } from '../../core/search/mode.ts';
-import type { PGLiteEngine } from '../../core/pglite-engine.ts';
+import type { BrainEngine } from '../../core/engine.ts';
 import type { HybridSearchMeta, SearchOpts, SearchResult } from '../../core/types.ts';
 import { haystackToPages, type LongMemEvalQuestion } from './adapter.ts';
 import { resetTables } from './harness.ts';
@@ -843,7 +843,7 @@ export function renderDiagnosticsMarkdown(rows: readonly MissDiagnosticsRow[], s
 
 export interface DiagnosticsRunOpts {
   /** Caller-owned benchmark brain (createBenchmarkBrain()); config table survives resetTables. */
-  engine: PGLiteEngine;
+  engine: BrainEngine;
   receipt: ParsedReceipt;
   questions: readonly LongMemEvalQuestion[];
   splits?: Record<string, unknown> | null;
@@ -872,7 +872,7 @@ export interface DiagnosticsRunResult {
 }
 
 /** Mirror the harness: explicit pins land in the benchmark brain's config table. */
-export async function applyPins(engine: PGLiteEngine, pins: DiagnosticsPins): Promise<void> {
+export async function applyPins(engine: BrainEngine, pins: DiagnosticsPins): Promise<void> {
   if (pins.mode) await engine.setConfig('search.mode', pins.mode);
   if (pins.reranker !== undefined) await engine.setConfig('search.reranker.enabled', pins.reranker ? 'true' : 'false');
   if (pins.autocut !== undefined) await engine.setConfig('search.autocut', pins.autocut ? 'true' : 'false');
@@ -1054,7 +1054,7 @@ export function errorRow(
 }
 
 interface DiagnoseOneCtx {
-  engine: PGLiteEngine;
+  engine: BrainEngine;
   q: LongMemEvalQuestion;
   receiptRow: ReceiptRow;
   k: number;

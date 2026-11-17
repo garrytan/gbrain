@@ -1,3 +1,4 @@
+import { sqlEngineKind } from '../core/sql-engine-kind.ts';
 import { jsonRequested } from '../core/cli-force-exit.ts';
 import { prepareProseChunks } from '../core/markdown-chunks.ts';
 import type { FenceChunkOverlay } from '../core/eligibility/fence-overlay.ts';
@@ -441,7 +442,7 @@ async function preflightDimMismatch(engine: BrainEngine, dryRun: boolean): Promi
     requestedDims: resolvedDims,
     requestedModel: resolvedModel,
     source: 'embed',
-    engineKind: engine.kind,
+    engineKind: sqlEngineKind(engine.kind, 'gbrain embed'),
     databasePath,
   });
   throw new EmbeddingDimMismatchError(recipe);

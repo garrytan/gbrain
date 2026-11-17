@@ -1,4 +1,5 @@
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
+import type { EngineCapabilities } from './engine-capabilities.ts';
 import type { GetVersionsOpts, PageVersionRows } from './page-state/version-types.ts';
 import type { PageSnapshotBatch } from './page-snapshot-batch.ts';
 import type { LinkReadScope } from './link-validity.ts';
@@ -652,6 +653,8 @@ export interface NewFact {
   event_type?: string | null;
   /** Speaker attribution (migration v215). Undefined/null → NULL (unavailable). */
   attributed_to?: FactAttribution | null;
+  /** GBRA-574 B2: the slot (facts/slots.ts), conversation extractor only; insertFacts adds value_hash and dim_status 'active'. */
+  dimension?: string | null; value?: string | null;
 }
 
 /** Options shared by list-facts methods. */
@@ -744,8 +747,8 @@ export interface FactsHealth {
  *
  * `remote` (D-CDX-1) gates the visibility filter: when true the engine
  * adds `AND visibility = 'world'`, mirroring `recall`'s posture for
- * untrusted callers. Local CLI keeps `remote: false` and sees both
- * private + world facts.
+ * untrusted callers. Callers pass worldOnlyFacts(ctx.remote), so the local
+ * CLI and the brain owner see both private + world facts.
  */
 export interface TrajectoryOpts {
   entitySlug: string;
@@ -830,6 +833,7 @@ export function clampSearchLimit(limit: number | undefined, defaultLimit = 20, c
 export interface BrainEngine {
   /** Discriminator: lets migrations and other consumers branch on engine kind without instanceof + dynamic imports. */
   readonly kind: 'postgres' | 'pglite';
+  readonly capabilities: EngineCapabilities; // what this engine can do, by name (engine-capabilities.ts); ask it instead of branching on kind
 
   // Lifecycle
   connect(config: EngineConfig): Promise<void>;
@@ -1267,6 +1271,12 @@ export interface BrainEngine {
    * insert are sent together and the seal's page is checked against it (`deferSeal`: by the caller, sealImportedPage).
    */
   upsertChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; sealChunkerVersion?: number; pageId?: number; deferSeal?: true } & BatchOpts): Promise<void>;
+  /**
+   * Replace a page's chunks and seal its text projection at its current revision in one transaction, so search and
+   * `getChunks` serve them (upsertChunks alone leaves the projection unsealed). Refuses a missing, deleted or
+   * segmented page, an archived source and a stale `expectedRevision` (SQL in engine-sql/chunks.ts).
+   */
+  sealChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; expectedRevision?: string }): Promise<void>;
   /**
    * Read every chunk for a page. Scope precedence mirrors getPage (#2555):
    * a federated grant (`sourceIds[]`) wins over scalar `sourceId`; with
@@ -1931,7 +1941,7 @@ export interface BrainEngine {
   /** Meta-ontology: which dimensions exist across the brain, and how widely. */
   discoverOntologyDimensions(opts?: { sourceId?: string; sourceIds?: string[] }): Promise<OntologyDimensionStat[]>;
   /** Dimensions with ≥2 distinct current-open values from ≥2 provenances. */
-  findOntologyConflicts(opts?: PageReadScope & { minConfidence?: number; visibility?: OntologyReadOpts['visibility'] }): Promise<OntologyConflict[]>;
+  findOntologyConflicts(opts?: PageReadScope & Pick<OntologyReadOpts, 'minConfidence' | 'visibility' | 'excludeDiary'>): Promise<OntologyConflict[]>;
 
   // Raw data
   /**

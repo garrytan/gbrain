@@ -26,6 +26,7 @@ import { classifyRulebook, coversDerived, folderRulesAllow, normalizeRule, ruleC
 import { folderHoldingSlug, UNATTRIBUTED_MEMORY_SLUG } from '../core/facts-fence.ts';
 import { heldRowsInVersions } from '../core/facts/fence-fact-append.ts';
 import { identityFor } from '../core/access/principals.ts';
+import { ruleReadByNobodyLines } from './access-read-by-nobody.ts';
 import { openTwins, openTwinsLines, OPEN_TWINS_PAGES, type OpenTwins } from '../core/access/open-twins.ts';
 import { boundCredentials, listGroups, listMembers } from '../core/access/members.ts';
 import { ownerReadsRestrictedOn, ownerView, readersOmitOwnerError, readersOwner } from '../core/access/owner.ts';
@@ -393,7 +394,9 @@ async function ruleCmd(engine: BrainEngine, sub: string | undefined, args: strin
       }
       const preview = await previewRules(engine, sourceId, store, persisted, desired);
       if (!yes) {
-        return print(json, { ...preview, applied: false }, () => previewLines(preview, `gbrain access rule ${[sub, ...args.filter(a => a !== '--json')].join(' ')} --yes`));
+        const stranded = json ? [] : await ruleReadByNobodyLines(engine, sourceId, desired, Object.keys(preview.matched_pages));
+        const kept = args.filter((a, i) => a !== '--json' && a !== '--expect' && args[i - 1] !== '--expect');
+        return print(json, { ...preview, applied: false }, () => previewLines(preview, `gbrain access rule ${[sub, ...kept].join(' ')} --yes --expect ${preview.expect}`).toSpliced(-2, 0, ...stranded));
       }
       const r = await writeRules(engine, sourceId, desired, { expect, operation, message, json });
       if (r.state === 'invalid') setCliExitVerdict(1);

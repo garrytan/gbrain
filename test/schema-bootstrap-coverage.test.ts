@@ -1003,6 +1003,10 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // reads them, and grant reads treat a missing column as 'none'.
   'access_tokens.private_pages',
   'oauth_clients.private_pages',
+  // GBRA-575 access_tokens/oauth_clients.private_facts (migration
+  // principal_private_facts): the same shape and rationale as private_pages.
+  'access_tokens.private_facts',
+  'oauth_clients.private_facts',
   // T7 — search_telemetry rank-1 drift columns (migration v111). search_telemetry
   // is created entirely by migration v57 (not in the schema blob), so the v57+v111
   // chain handles fresh + upgrade; no CREATE INDEX references these columns, so

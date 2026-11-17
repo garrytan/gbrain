@@ -34,6 +34,21 @@ export function unrecordedStop(error: unknown): 'lease_lost' | 'transient' | nul
     || isRetryableConnError(error) || isStatementTimeoutError(error) ? 'transient' : null;
 }
 
+/**
+ * GST-2869: the abort reason `gbrain sync` gives the run it owns when it takes SIGTERM or SIGHUP during a managed pass. The pass
+ * ends its row `resumable` / `terminated` and the drain stops `terminated`; a deadline or SIGINT keeps `timeout` / `deadline`.
+ */
+export class SyncTerminated extends Error {
+  // Named AbortError: a check that throws the signal's reason itself (`throwIfAborted`) must still read as the caller's abort.
+  constructor(readonly signal: NodeJS.Signals) { super(`sync stopped by ${signal}`); this.name = 'AbortError'; }
+}
+
+/**
+ * The stop reason a caller's abort records on the pass row, whether the pass caught it or a batch returned `timeout` for it:
+ * the first abort's reason wins (AbortSignal.any keeps it).
+ */
+export const abortStop = (signal?: AbortSignal): 'terminated' | 'timeout' => signal?.reason instanceof SyncTerminated ? 'terminated' : 'timeout';
+
 /** The stop reason a pass row ends `resumable` with: `unrecordedStop` less a permission refusal. */
 export function resumableRowStop(error: unknown): 'lease_lost' | 'transient' | null {
   return error instanceof OperationError && error.code === 'permission_denied' ? null : unrecordedStop(error);

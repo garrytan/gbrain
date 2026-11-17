@@ -40,7 +40,7 @@ describe('check-layering.ts', () => {
     const r = run({ 'src/core/engine-sql/facts.ts': line + '\n' });
     expect(r.code).toBe(1);
     expect(r.out).toContain('FAIL: src/core/engine-sql/facts.ts:1 imports src/core/');
-    for (const label of ['Fix:', 'Why:', 'See:  docs/TESTING.md#layering-guard']) expect(r.out).toContain(label);
+    for (const label of ['Fix:', 'Why:', 'See:  docs/ci-guards.md#layering-guard']) expect(r.out).toContain(label);
   });
 
   test('schema-migrations: any import of migrate.ts fails, including from a nested dir', () => {

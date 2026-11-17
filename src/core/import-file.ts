@@ -62,57 +62,15 @@ import { warnOncePerProcess, validateSlug, contentHash, contentHashLegacy, ATOMS
 import { decorateEmbeddingDimError } from './embedding-dim-check.ts';
 import { resolveImportContextualMode } from './import-contextual-mode.ts';
 import { runGuardrails } from './guardrails.ts';
-import { fenceBody, pageBodySegmentedError } from './page-body/page-shape.ts';
+import { pageBodySegmentedError } from './page-body/page-shape.ts';
+import { mergeHiddenFactRows } from './import-hidden-rows.ts';
 import { abortSegmentedStaging, bodyStorageOf, demoteSegmentedPage, materializedPage, materializedSnapshot, sealSegmentedPage, stageSegmentedImport,
   stringWriteStorage, type SegmentedImport } from './persistence/segmented-apply.ts';
 import type { SegmentedStagingOwner } from './page-body/ingest.ts';
 import type { PageBodyPolicy } from './page-body/limits.ts';
-import { parseFactsFenceFor, renderFactsTable, restoreHiddenFactRows, factsGapWarning, replaceOrInsertFactsFence } from './facts-fence.ts';
 import { assertOriginUnclaimed, isOriginClaimRefusal } from './persistence/origin-guard.ts';
 import { fileBodyMatchesStored, readStoredBody } from './facts/file-body-guard.ts';
 import { currentEngineScope, needsEngineScope, runInEngineScope, withEngineScope } from './engine-scope.ts';
-
-/**
- * #2044 / #4548: row-level, visibility-aware fence merge for one page
- * column on the remote write-back boundary. Restores non-'world' fence
- * rows that are missing from the incoming body (a remote get_page/fetch
- * stripped them before the caller ever saw them, so their absence is not
- * an intentional delete). World-visible rows are never restored — the
- * caller saw those in full, so an edit/deletion is honored as written.
- * See restoreHiddenFactRows() in facts-fence.ts for the merge rules
- * (stable rowNums, collision renumbering, idempotence, warnings gate).
- *
- * Returns the (possibly merged) body. Emits console.warn for the two
- * surfaced conditions: a caller-authored row renumbered off a hidden
- * rowNum, and the residual malformed-fence case where the merge could not
- * run and hidden rows are genuinely dropped (factsGapWarning).
- */
-function mergeHiddenFactRowsIntoBody(
-  slug: string,
-  incomingBody: string,
-  existingBody: string | null | undefined,
-): string {
-  if (!existingBody) return incomingBody;
-  const incomingFacts = parseFactsFenceFor(incomingBody, { slug });
-  const existingFacts = parseFactsFenceFor(existingBody, { slug });
-  const merge = restoreHiddenFactRows(incomingFacts, existingFacts);
-  if (merge) {
-    if (merge.renumbered.length > 0) {
-      console.warn(
-        `[gbrain] #2044 merge on ${slug}: ${merge.renumbered.length} incoming fact row(s) reused ` +
-        `row number(s) belonging to privacy-hidden row(s) and were renumbered ` +
-        `(${merge.renumbered.map((r) => `#${r.from}->#${r.to}`).join(', ')}); ` +
-        `the hidden row(s) keep their original numbers.`,
-      );
-    }
-    // Shared #4756 placement rule (the column is already split at the
-    // sentinel here, so this is dedup, not a behaviour change for the importer).
-    return replaceOrInsertFactsFence(incomingBody, renderFactsTable(merge.merged));
-  }
-  const gapWarning = factsGapWarning(slug, incomingFacts, existingFacts, false);
-  if (gapWarning) console.warn(gapWarning);
-  return incomingBody;
-}
 
 /**
  * The parsed page metadata returned by importFromContent. Callers (specifically
@@ -327,6 +285,8 @@ export async function importFromContent(
     reuseSegments?: SegmentedImport;
     /** Untrusted caller (remote MCP put_page: `ctx.remote !== false`); drives the remote fence merge and hidden rows. */
     remote?: boolean;
+    /** GST-2891: with `remote`, the writer read the page without its held fence rows (worldOnlyFacts), so the merge restores them as stored. */
+    restoreHeldRows?: boolean;
     /**
      * #1699/#6259: gate-owned markers (`quarantine`, `content_flag`, `embed_skip`,
      * `atoms_scan_hash`, `quarantine_override`) are stripped from incoming content
@@ -474,11 +434,7 @@ export async function importFromContent(
     // #6188 (E7): Tier 1 in place before the hidden-row merge and withdrawal preservation; the hash covers the normalized body.
     const fences = await applyImportFences({ engine, sourceId: sourceId ?? 'default', slug, mode: opts.fences ?? 'lenient', screened: opts.fenceScreen, screen, parsed, activePack: opts.activePack, remote: opts.remote === true, existing });
     if (fences.refused) return fences.refused;
-    if (opts.remote === true && existing) {
-      const stored = fenceBody(existing);
-      parsed.compiled_truth = mergeHiddenFactRowsIntoBody(slug, parsed.compiled_truth, stored.compiled_truth);
-      parsed.timeline = mergeHiddenFactRowsIntoBody(slug, parsed.timeline, stored.timeline);
-    }
+    if (opts.remote === true && existing) await mergeHiddenFactRows(engine, slug, parsed, existing, opts.restoreHeldRows);
     const { assertPreparedFactWithdrawals, preserveWithdrawnFenceRows } = await import('./facts/withdrawal.ts');
     parsed.compiled_truth = (await preserveWithdrawnFenceRows(engine, sourceId ?? 'default', parsed.compiled_truth, slug)).trim();
     parsed.timeline = (await preserveWithdrawnFenceRows(engine, sourceId ?? 'default', parsed.timeline, slug)).trim();

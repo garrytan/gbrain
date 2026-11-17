@@ -116,7 +116,7 @@ while IFS= read -r line; do
 done <<< "$out"
 echo "Why:  macOS /bin/bash is GNU bash 3.2; a script it cannot parse fails on every Mac (bun run verify included)." >&2
 echo "Fix:  read heredoc text with IFS= read -r -d '' VAR <<'EOF' || true instead of VAR=\$(cat <<'EOF' ... EOF), or rewrite the shape bash 3.2 rejects." >&2
-echo "See:  docs/TESTING.md#bash-32-parse-guard" >&2
+echo "See:  docs/ci-guards.md#bash-32-parse-guard" >&2
 echo "" >&2
 echo "✗ bash 3.2 parse: $errors error line(s) under $label" >&2
 exit 1

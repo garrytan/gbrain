@@ -11,8 +11,9 @@
  */
 
 import { lstatSync, realpathSync } from 'fs';
-import { resolve, relative, sep } from 'path';
+import { resolve, sep } from 'path';
 import { OperationError, opError } from './contract.ts';
+import { resolvedPrefixContained } from '../path-confine.ts';
 import type { AuthInfo, Operation, OperationContext } from './contract.ts';
 import type { Action } from '../agent-output.ts';
 import { hostFix, invalidParam, paramUse, readFix } from './op-fix.ts';
@@ -68,10 +69,16 @@ export function withFix(fix: Action | undefined): { fix?: Action } {
  * surface-correct prose plus the matching read.
  */
 export function pageNotFoundError(
-  ctx: Pick<OperationContext, 'remote' | 'transport'>,
+  ctx: Pick<OperationContext, 'remote' | 'transport' | 'auth'>,
   slug: string,
   opts: { includeDeleted: boolean; sourceIdParam?: string; elsewhereSource?: string },
 ): OperationError {
+  // GBRA-585: a member's credential misses pages kept to other members too, and it reads the same for both, so it is
+  // sent neither after a deletion nor to the host CLI.
+  if (ctx.remote !== false && ctx.auth?.member) {
+    return opError('page_not_found', `Page not found: ${slug}`,
+      'This connection reads no page with this slug: it may not exist, or it may not be readable by this connection, since a page can be kept to other members. Do not create it to find out; ask the user whether the page exists and who can read it.');
+  }
   const retry = opts.includeDeleted ? `Check the slug or use ${paramUse(ctx, 'fuzzy')}` : `Page may be soft-deleted; pass ${paramUse(ctx, 'include_deleted')} to verify`;
   const where = opts.elsewhereSource;
   const explicit = opts.sourceIdParam !== ALL_SOURCES ? opts.sourceIdParam : undefined;
@@ -131,6 +138,16 @@ function migrationsFix(ctx: Pick<OperationContext, 'remote' | 'transport'>): Act
 // --- Upload validators (Fix 1 / B5 / H5 / M4) ---
 
 /**
+ * Strict-mode containment over two realpaths. Separator-aware: `..drafts/` is an
+ * ordinary folder name, while `../`, another drive (Windows), a UNC share and a
+ * sibling sharing the root's name prefix all fall outside. The root itself is
+ * never an uploadable file. Pure, so tests can drive it with `path.win32` shapes.
+ */
+export function uploadPathInsideRoot(real: string, realRoot: string, sepChar: string): boolean {
+  return real !== realRoot && resolvedPrefixContained(real, realRoot, sepChar);
+}
+
+/**
  * Validate an upload path. Two modes:
  *   - strict (remote=true): confines the resolved path to `root` and rejects symlinks.
  *     Used when the caller is untrusted (MCP over stdio/HTTP, agent-facing).
@@ -172,7 +189,7 @@ export function validateUploadPath(filePath: string, root: string, strict = true
 
   if (!strict) return real;
 
-  // Strict mode: confine to root via realpath + path.relative (catches parent-dir symlinks per B5).
+  // Strict mode: confine to root by realpath on both sides (catches parent-dir symlinks per B5).
   let realRoot: string;
   try {
     realRoot = realpathSync(root);
@@ -180,8 +197,7 @@ export function validateUploadPath(filePath: string, root: string, strict = true
     throw opError('invalid_params', `Confinement root not accessible: ${root}`,
       "The upload root (the server's working directory) is unreadable on the brain host; tell the user so its operator can fix that directory.");
   }
-  const rel = relative(realRoot, real);
-  if (rel === '' || rel.startsWith('..') || rel.startsWith(`..${sep}`) || resolve(realRoot, rel) !== real) {
+  if (!uploadPathInsideRoot(real, realRoot, sep)) {
     throw opError('invalid_params', `Upload path must be within the working directory: ${filePath}`,
       "Copy the file under the server's working directory and pass that path; a symlinked parent that resolves outside it is refused too.");
   }
