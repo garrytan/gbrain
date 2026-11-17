@@ -244,7 +244,7 @@ async function countingListener(): Promise<{ url: string; connections: () => num
   const server = createServer(socket => { count++; socket.destroy(); });
   await new Promise<void>(done => server.listen(0, '127.0.0.1', done));
   const { port } = server.address() as AddressInfo;
-  return { url: `postgres://example:example@127.0.0.1:${port}/gbrain_example`, connections: () => count, close: () => server.close() };
+  return { url: `postgres://127.0.0.1:${port}/gbrain_example`, connections: () => count, close: () => server.close() };
 }
 
 describe('GST-2964: a classic checkout', () => {
