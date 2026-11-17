@@ -360,7 +360,7 @@ More: [docs/guides/apple-setup.md#apple_helper_not_running](../../docs/guides/ap
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| GBrain Helper refused the token gbrain sent, or gbrain has no helper token, so nothing was imported. | The helper answers only a request that carries one of its own tokens with the read:imessage scope; the token is read from the source's --token-env variable when it names one, else GBRAIN_CONNECTOR_IMESSAGE_TOKEN, else the 0600 file ~/.gbrain/connectors/imessage.json. | Save the helper's current token where gbrain reads it, then run gbrain sync --source <id>. | user | `repeat the read that failed` | 1 | no |
+| GBrain Helper refused the token gbrain sent, or gbrain has no helper token, so nothing was imported. | The helper answers only a request that carries one of its own tokens with the read:imessage scope; the token is read from the source's --token-env variable when it names one, else GBRAIN_CONNECTOR_IMESSAGE_TOKEN, else the 0600 file ~/.gbrain/connectors/imessage.json. | Save the helper's current token where GBrain reads it, then run gbrain sync --source <id>. | user | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/apple-setup.md#apple_helper_unauthorized](../../docs/guides/apple-setup.md#apple_helper_unauthorized)
 
@@ -370,7 +370,7 @@ More: [docs/guides/apple-setup.md#apple_helper_unauthorized](../../docs/guides/a
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| GBrain Helper does not recognise the layout of the Messages database (macOS may have changed it), so nothing was imported. | The helper reads only the tables and columns it knows; it refuses a changed database rather than guess at it. | Update gbrain and GBrain Helper to their newest versions, then run gbrain sync --source <id>. | agent | `repeat the read that failed` | 1 | no |
+| GBrain Helper does not recognise the layout of the Messages database (macOS may have changed it), so nothing was imported. | The helper reads only the tables and columns it knows; it refuses a changed database rather than guess at it. | Update GBrain and the GBrain Helper to their newest versions, then run gbrain sync --source <id>. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/apple-setup.md#apple_schema_mismatch](../../docs/guides/apple-setup.md#apple_schema_mismatch)
 

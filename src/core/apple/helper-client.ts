@@ -50,7 +50,7 @@ function fullDiskAccessPending(sourceId: string): OperationError {
 
 function schemaMismatch(sourceId: string): OperationError {
   return new OperationError('apple_schema_mismatch', `GBrain Helper does not recognise the Messages database for iMessage source ${sourceId}; macOS may have changed it. Nothing was imported.`,
-    `Update gbrain and GBrain Helper to their newest versions, then run: gbrain sync --source ${sourceId}`,
+    `Update GBrain and the GBrain Helper to their newest versions, then run: gbrain sync --source ${sourceId}`,
     `${DOCS}#apple_schema_mismatch`);
 }
 

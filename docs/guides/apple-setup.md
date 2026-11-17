@@ -48,7 +48,7 @@ or the helper has its iMessage source turned off. Nothing was imported. Start GB
 
 ### apple_helper_unauthorized
 
-The helper refused gbrain's token, or gbrain has none. Save the helper's current token where gbrain reads it (above),
+The helper refused gbrain's token, or gbrain has none. Save the helper's current token where GBrain reads it (above),
 then sync again.
 
 ### apple_full_disk_access_pending

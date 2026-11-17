@@ -61,7 +61,7 @@ export function connectorAccountChanged(sourceId: string, kind: ConnectorKind, c
     break;
   }
   case 'imessage': {
-    restore = `restore the GBrain Helper token gbrain reads for ${show(recorded)}, then retry: gbrain sync --source ${sourceId}`;
+    restore = `restore the GBrain Helper token GBrain reads for ${show(recorded)}, then retry: gbrain sync --source ${sourceId}`;
     replace = `add a new source (gbrain sources add <new-id> --kind imessage), then archive this one: gbrain sources archive ${sourceId}`;
     break;
   }
