@@ -47,7 +47,9 @@ A durable cursor uses a singleton JSON-array envelope under the private
 `managed-sync` operation in `op_checkpoints`; the immutable manifest is stored
 separately so advancing one page never rewrites the entire discovered file list. Only one page is admitted ahead of
 the scan, and the scan yields after at most 25 pages or 250 milliseconds between
-page publications. Foreground requests on the same root receive service first;
+page publications. On PGLite, which answers queries without returning to the event
+loop, every step of the scan also takes a `setImmediate` turn, so a run of pages
+settled without a write (held or waived) still lets timers and signal handlers run. Foreground requests on the same root receive service first;
 after 25 foreground commits or one second of continuous foreground service, sync
 earns a bounded batch even while new interactive requests continue arriving. Interruption or a pending owner leaves the cursor and source
 checkpoint intact. A later invocation resumes the frozen target; a newer Git

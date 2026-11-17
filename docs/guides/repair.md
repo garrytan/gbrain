@@ -3751,14 +3751,53 @@ gbrain repair file-drift --source <id> --held --json           # compare every h
 
 <a id="file-drift-compare-mirror"></a>On a [read-only mirror](multi-source-brains.md#read-only-mirror-sources)
 (GST-2843), the held comparison reads each held page's file too: a page that
-differs reads `prefer_file` or `needs_human` with its `evidence`, one that
+differs reads `prefer_file` or `needs_human` with its `evidence` (a held deleted
+page whose file differs reads `needs_human` and names the same route), one that
 matches reads `release_hold`, and only a page whose file is gone reads
 `no_drift` with `database_only`. Every compared page in `details.pages`
-carries `evidence` (null when nothing was read). The comparison names no
-`--prefer` preview there, because a mirror's previews read every page as
-database-only and resolve nothing: a differing page stays held until the user
-makes the source writable again (`gbrain sources mirror-writable <id>`, which
-lets gbrain write files into its checkout) and picks a side then (GST-2869).
+carries `evidence` (null when nothing was read). The window previews read the
+same way, so `--held --side unknown --prefer file` lists a page whose file is
+newer `prefer_file`; the comparison names the [whole-class](#whole-class)
+preview of the side, which settles every such page with one approval and never
+writes the mirror's checkout.
+
+<a id="whole-class"></a>**Whole class.** `--whole-class` previews every window
+of one side (`--held --side unknown|database|both --prefer file`) as one class:
+one manifest, one hash, one approval. A large read-only mirror can hold
+thousands of pages, and a window preview covers 200.
+
+```bash
+gbrain repair file-drift --source <id> --held --side unknown --prefer file --whole-class          # read-only: writes only a private manifest
+gbrain repair file-drift --source <id> --held --side unknown --prefer file --whole-class --apply --expect <hash> --yes   # after the user agrees
+```
+
+The preview writes `repair-previews/file-drift/class-<hash>.json` under the
+gbrain config directory: per page its slug, path, revision, file blob, hold
+code, side, upstream version and lost lines. Its output (and `--json`) carries
+`details.class_manifest` with `path`, `hash`, `complete`, `pages`,
+`lost_lines_total`, `top` (the 50 pages that lose most lines) and `residual`
+(each kept group's count and next command), then the data-loss card: what is
+replaced, how many lines are lost, and how it comes back (`gbrain revert` from
+the page version saved first, and reconcile's private backup). Two groups stay
+held: `kept_newer_page` (edited in gbrain after the file's last commit) and,
+on a read-only mirror, `kept_protected_parts` (the file would need gbrain's
+protected keys, takes or private facts appended). A preview that stops early
+says `complete: false`, prints a resume command and no apply command.
+
+The apply needs the user's yes on the hash and the trusted local CLI. Each page
+is re-read: it applies only while its revision, file blob, hold code, side,
+upstream version and mirror flag still match and its lost lines did not grow,
+so a sync that only rewrote hold records keeps the approval; anything else is
+skipped and stays held. On a read-only mirror the file is imported into the
+page database-only, and the next sync releases each hold. A stopped apply
+prints its resume command first, then applied, skipped and remaining, and
+exits 1; a rerun resumes at the next window and applies no page twice.
+Refusals: `whole_class_prefer_unsupported` (`--prefer database` or `--side
+deleted`; use the window preview), `class_capacity_exceeded` (the backups would
+pass `persistence.limits.brain_recovery_bytes`; raising it is the user's call),
+`class_manifest_stale` (the manifest no longer matches its hash; preview again)
+and `class_apply_busy` (another apply of the same manifest is running). A brain
+with no repository has no held pages: the preview says so and exits 0.
 
 <a id="file-drift-kept-newer"></a>`--prefer file` never drops a page edited after its file's last commit in
 bulk. A `--held`, `--all-drifted` or `--request` preview lists such a page
@@ -3778,12 +3817,42 @@ count. Read those lines before you agree to the apply.
 
 | State | `--prefer database` | `--prefer file` |
 |---|---|---|
-| `tombstone_edited` | Keeps the deletion and removes the file. | Restores the page and imports the file. |
+| `tombstone_edited` | Keeps the deletion and removes the file (on a read-only mirror: [records the kept deletion](#mirror-keep-deleted), removes nothing). | Restores the page and imports the file. |
 | `purged_differs` | Removes the file. | Imports the file as a new page. |
 | `file_gone` | Recreates the file from the page. | Soft-deletes the page (the mass-delete valve applies). |
 
 A `file_gone` page whose file moved is listed `moved_to <slug>` under either `--prefer` and resolved by neither: its
 line names [`gbrain repair moved-pages`](#moved-pages), which folds it into the moved page.
+
+<a id="mirror-keep-deleted"></a>**Keep it deleted on a read-only mirror.** On a
+[read-only mirror](multi-source-brains.md#read-only-mirror-sources) gbrain never
+writes the checkout, so a page you deleted whose file the upstream then edited
+can't be settled by removing the file. Keep the deletion with the same
+per-window command:
+
+```bash
+gbrain repair file-drift --source <id> --held --side deleted --state tombstone_edited --prefer database               # preview: keep_deleted
+gbrain repair file-drift --source <id> --held --side deleted --state tombstone_edited --prefer database --apply --expect <hash> --yes
+```
+
+The preview lists each page `keep_deleted`, and the apply records the decision
+on the hold (`keep_deleted`: the request id, when, and the tombstone's page id
+and revision) once the user agrees. A page or file that changed since the
+preview is skipped `changed_since_preview`. Nothing is deleted, restored or
+written: the tombstone stays, no file is removed from the mirror and no page
+content changes. The hold stays too, decided: `gbrain sources status <id>`,
+`gbrain sync status --source <id>` and doctor report it carried with reason
+`mirror_keep_deleted` (beside `mirror_database_only`) and `needs_human: false`,
+and later previews list it `mirror_keep_deleted` instead of asking again. Sync
+does nothing new: it already leaves an unchanged held file alone. The decision
+holds for the file version the hold pinned, so a re-check of the same bytes
+(an upgrade that re-screens holds) carries it. It is void, and the hold asks
+again, when the upstream edits the file again or the page is restored (`gbrain
+restore`); when the tombstone is purged, the decision moves to the
+`purged_differs` hold, bound to the deletion marker. On a writable source the
+command removes the file as before, and a decision recorded while the source was
+a mirror no longer counts. A brain with no Git repository holds no files, so the
+preview finds nothing and exits 0.
 
 `--prefer file` keeps the file's bytes: it adds only protected frontmatter keys the
 file lacks and database-only timeline rows, and refuses

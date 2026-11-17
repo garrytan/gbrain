@@ -39,6 +39,9 @@ import { resolveSecretRules } from '../core/secret-spans.ts';
 import { normalizeSeatLabel } from '../core/context/seat.ts';
 import { agentSessionFlagArgs } from '../core/repair/agent-session-facts.ts';
 import { fileDriftConsentText } from '../core/repair/file-drift.ts';
+import { loadConfig } from '../core/config.ts';
+import { currentCliWriteWait } from '../core/persistence/write-wait.ts';
+import type { OperationContext } from '../core/ops/contract.ts';
 import { privateLabelsLedger } from './repair-private-labels.ts';
 import { openFactsLedger, openFactsUndoLedger, readFactIdsFile } from './repair-open-facts.ts';
 import { createdBeforeRequired, memberModeRefused } from '../core/repair/open-facts.ts';
@@ -173,7 +176,9 @@ Options:
                  file-drift: select the source's held file_drift pages of one Decision. --side deleted needs --state,
                  because --prefer file and --prefer database do opposite things in each state (tombstone_edited: restore
                  and import, or keep the deletion and remove the file; purged_differs: import as a new page, or remove the
-                 file; file_gone: soft-delete the page, or recreate the file). Held pages of several sides or states are
+                 file; file_gone: soft-delete the page, or recreate the file). On a read-only mirror tombstone_edited
+                 --prefer database removes no file: it records the kept deletion on the hold (mirror_keep_deleted), which
+                 stops asking until the upstream edits the file again. Held pages of several sides or states are
                  refused without --side; the preview prints each page's action. One preview covers a window of at most
                  200 held pages (or 60 s of work) in held-path order, reports progress on stderr, and its hash covers only
                  that window; a partial window prints next_cursor and the next preview command.
@@ -186,6 +191,11 @@ Options:
                  --prefer file accepts the deletions.
   --cursor <next_cursor>
                  file-drift --held: continue after the window the previous preview covered (its next_cursor).
+  --whole-class  file-drift --held --side unknown|database|both --prefer file: preview every window of that side as one class
+                 (one manifest, one hash; pages edited in gbrain after their file stay kept_newer_page, and on a read-only
+                 mirror pages that need protected parts in the file stay kept_protected_parts). Only a complete preview
+                 prints its apply (--apply --expect <hash> --yes, after the user agrees); on a read-only mirror it imports
+                 each file into its page database-only. A stopped apply prints its resume command first and exits 1.
   --since <ISO-8601|7d>
                  file-drift: keep only pages whose newest drift conflict is at or after the instant (with --all-drifted, or
                  the bare survey). An age (7d, 12h) is resolved once to a concrete instant; the preview, its hash and the
@@ -231,14 +241,14 @@ A sources add --url clone whose pull stops at pull_blocked_local_changes: docs/g
 Proposed readers for the pages every member's key reads (visibility --propose): docs/guides/repair.md#propose-readers.
 Renames whose identity sync did not keep (rename-identity): docs/guides/live-sync.md#renaming-a-page.`;
 
-const BOOLEAN_FLAGS = new Set(['--apply', '--all', '--json', '--no-embed', '--include-ambiguous', '--include-cross-entity', '--diff', '--yes', '--no-llm', '--all-drifted', '--include-failures', '--force', '--close', '--held', '--allow-without-owner', '--propose']);
+const BOOLEAN_FLAGS = new Set(['--apply', '--all', '--json', '--no-embed', '--include-ambiguous', '--include-cross-entity', '--diff', '--yes', '--no-llm', '--all-drifted', '--include-failures', '--force', '--close', '--held', '--allow-without-owner', '--propose', '--whole-class']);
 const VALUE_FLAGS = new Set(['--readers', '--slugs-file', '--out', '--rules', '--source', '--limit', '--expect', '--only', '--skip', '--slug', '--max-usd', '--prefer', '--request', '--class', '--since', '--keep', '--request-id', '--older-than', '--from', '--side', '--state', '--after', '--cursor', '--provenance', '--kind', '--mode', '--run', '--key', '--generation', '--day', '--cwd', '--session', '--principal', '--created-before', '--ids-file', '--undo']);
 /** Flags only some kinds accept, with the kinds that do. */
 const KIND_FLAGS: Record<string, readonly string[]> = {
   '--only': ['frontmatter', 'fences', 'slug-conflicts', 'file-drift', CONTENT_LANE], '--skip': ['frontmatter', 'fences', 'slug-conflicts', 'file-drift', CONTENT_LANE], '--diff': ['frontmatter', 'fences', 'slug-conflicts', CONTENT_LANE], '--yes': ['frontmatter', 'conversation-labels', 'stuck-recovery', 'ghost-pages', 'legacy-twins', 'rename-identity', 'url-clone-fences'],
   '--include-cross-entity': ['duplicate-facts'],
   '--slug': ['fences', 'file-drift', 'rename-identity', 'overwritten-edits', 'origin-twins', 'moved-pages', 'timeline-order', 'contact-rows', 'provenance', 'secret-spans', 'segmented-tiling', 'visibility'], '--from': ['rename-identity'], '--close': ['rename-identity'], '--prefer': ['file-drift'], '--request': ['file-drift'], '--all-drifted': ['file-drift'], '--class': ['file-drift', 'visibility', 'private-labels', 'open-facts'], '--since': ['file-drift', 'generations'],
-  '--held': ['file-drift', 'generations'], '--side': ['file-drift'], '--state': ['file-drift'], '--cursor': ['file-drift'], '--provenance': ['file-drift'],
+  '--held': ['file-drift', 'generations'], '--side': ['file-drift'], '--state': ['file-drift'], '--cursor': ['file-drift'], '--provenance': ['file-drift'], '--whole-class': ['file-drift'],
   '--keep': ['stuck-recovery'], '--request-id': ['stuck-recovery'],
   '--older-than': ['receipt-compaction'], '--include-failures': ['receipt-compaction'], '--force': ['receipt-compaction'],
   '--after': ['uncommitted-deletions', 'open-facts'], '--created-before': ['open-facts'], '--ids-file': ['open-facts'], '--undo': ['open-facts'],
@@ -258,7 +268,7 @@ const invalid = (message: string, suggestion: string, preview: string[] = ['gbra
 interface RepairArgs { kind?: string; apply: boolean; all: boolean; json: boolean; noEmbed: boolean; includeAmbiguous: boolean; includeCrossEntity: boolean; diff: boolean; yes: boolean;
   noLlm: boolean; source?: string; limit?: string; expect?: string; maxUsd?: number; only: string[]; skip: string[]; slugs: string[];
   allDrifted: boolean; prefer?: 'file' | 'database'; requests: string[]; driftClass?: string; since?: string;
-  held: boolean; side?: string; state?: string; provenance?: string; cursor?: string;
+  held: boolean; side?: string; state?: string; provenance?: string; cursor?: string; wholeClass: boolean;
   keep?: 'prior' | 'disk' | 'withdrawn'; requestId?: string; olderThan?: string; includeFailures: boolean; force: boolean; from?: string; close: boolean; afterPage?: number;
   generationKind?: string; generationMode?: string; run?: string; key?: string; generation?: number; day?: string; rules?: string[];
   cwdPrefixes: string[]; sessions: string[]; principal?: string; readers?: string; slugsFile?: string; allowWithoutOwner: boolean; propose: boolean; out?: string;
@@ -307,7 +317,7 @@ function readSlugsFile(path: string): string[] {
 /** Strict parse: every flag is known, value flags carry a value, at most one kind. */
 export function parseRepairArgs(args: string[]): RepairArgs {
   const parsed: RepairArgs = { apply: false, all: false, json: false, noEmbed: false, includeAmbiguous: false, includeCrossEntity: false, diff: false, yes: false, noLlm: false, only: [], skip: [], slugs: [],
-    allDrifted: false, held: false, requests: [], includeFailures: false, force: false, close: false, cwdPrefixes: [], sessions: [], allowWithoutOwner: false, propose: false, classes: [] };
+    allDrifted: false, held: false, wholeClass: false, requests: [], includeFailures: false, force: false, close: false, cwdPrefixes: [], sessions: [], allowWithoutOwner: false, propose: false, classes: [] };
   const used = new Set<string>();
   const positional: string[] = [];
   let maxUsdText: string | undefined;
@@ -336,6 +346,7 @@ export function parseRepairArgs(args: string[]): RepairArgs {
       else if (flag === '--no-llm') parsed.noLlm = true;
       else if (flag === '--all-drifted') parsed.allDrifted = true;
       else if (flag === '--held') parsed.held = true;
+      else if (flag === '--whole-class') parsed.wholeClass = true;
       else if (flag === '--include-failures') parsed.includeFailures = true;
       else if (flag === '--force') parsed.force = true;
       else if (flag === '--close') parsed.close = true;
@@ -494,6 +505,62 @@ export function parseRepairArgs(args: string[]): RepairArgs {
   return parsed;
 }
 
+/**
+ * `gbrain repair file-drift --held --side <side> --prefer file --whole-class [--apply --expect <hash> --yes]` (file-drift-class.ts):
+ * the preview prints the manifest summary (`details.class_manifest`) and, once complete, the data-loss card and the apply command;
+ * the apply asks for the user's consent on the hash, stops after the current page on SIGTERM or SIGHUP, and a stopped apply
+ * prints its resume command first and exits 1.
+ */
+async function runFileDriftClassCommand(engine: BrainEngine, a: { apply: boolean; json: boolean; source?: string; expect?: string; only: string[]; skip: string[]; slugs: string[];
+  requests: string[]; allDrifted: boolean; held: boolean; side?: string; state?: string; provenance?: string; cursor?: string; prefer?: string; args: string[] }): Promise<void> {
+  const { applyFileDriftClass, assertWholeClassSelection, classApplyLines, classConsentText, classPreviewArgv, previewFileDriftClass } = await import('../core/repair/file-drift-class.ts');
+  assertWholeClassSelection({ ...a, sourceId: a.source });
+  if (!a.source) throw invalid('gbrain repair file-drift --whole-class needs exactly one --source.', 'Name the source: gbrain repair file-drift --source <id> --held --side unknown --prefer file --whole-class');
+  const scope = await resolveRepairScope(engine, a.source);
+  const sel = { sourceId: a.source, side: a.side!, only: [...new Set(a.only)].sort(), skip: [...new Set(a.skip)].sort() };
+  if (!a.apply) {
+    if (a.expect) throw invalid('--expect only binds an --apply.', `Preview with ${shellQuote(classPreviewArgv(sel))}, then apply the hash it prints.`);
+    const preview = await previewFileDriftClass(engine, scope, sel, { remote: false, ...(a.cursor ? { cursor: a.cursor } : {}), progress: createProgress(cliOptsToProgressOptions(getCliOptions())) });
+    const result = preview.none ? { kind: 'file-drift', complete: true, message: 'no held pages', details: {} }
+      : { kind: 'file-drift', complete: preview.class_manifest!.complete, residuals: preview.other, details: { class_manifest: preview.class_manifest! },
+        ...(preview.resume_command ? { resume_command: preview.resume_command } : {}), ...(preview.apply_command ? { apply_command: preview.apply_command, card: preview.card } : {}) };
+    if (a.json) { console.log(JSON.stringify({ scope, mode: 'dry_run', results: [result] }, null, 2)); return; }
+    if (preview.none) { console.log(`file-drift: no held pages in source ${a.source}`); return; }
+    const m = preview.class_manifest!;
+    const lines = [`file-drift --whole-class: ${m.pages} page(s) in the class, ${m.lost_lines_total} line(s) lost in total, ${m.complete ? 'complete' : 'NOT complete'}`,
+      `  manifest: ${m.path}`, `  hash: ${m.hash}`,
+      `  kept_newer_page: ${m.residual.kept_newer_page.count} (next: ${m.residual.kept_newer_page.next})`,
+      `  kept_protected_parts: ${m.residual.kept_protected_parts.count} (next: ${m.residual.kept_protected_parts.next})`];
+    const other = Object.entries(preview.other).map(([k, v]) => `${k}=${v}`).join(', ');
+    if (other) lines.push(`  not in the class: ${other}`);
+    for (const page of m.top.slice(0, 10)) lines.push(`  loses ${page.lost_lines} line(s): ${page.slug} (${page.path})`);
+    if (preview.resume_command) lines.push(`  The preview stopped before its last window; no apply command until it completes. Resume: ${preview.resume_command}`);
+    if (preview.card) lines.push('', ...preview.card);
+    console.log(lines.join('\n'));
+    return;
+  }
+  if (!a.expect) throw invalid('gbrain repair file-drift --whole-class --apply applies only the manifest a complete preview printed.', `Preview first: ${shellQuote(classPreviewArgv(sel))}, then run the apply command it prints after the user agrees.`,
+    [...classPreviewArgv(sel), '--json']);
+  const consent = classConsentText(a.expect);
+  const auth = await consentGate({ command: 'repair file-drift', effects: ['destructive'], actor: 'agent', ...consent,
+    argv: [...classPreviewArgv(sel), '--apply', '--expect', a.expect, ...(a.json ? ['--json'] : [])], preview_argv: [...classPreviewArgv(sel), '--json'], plan_hash: a.expect, args: a.args },
+    { json: a.json, env: engineConsentEnv(engine) });
+  if (!auth) return;
+  const stop = new AbortController();
+  const release = registerSignalOwner('repair apply', signal => {
+    if (!stop.signal.aborted) { process.stderr.write(`[repair] ${signal}: stopping after the current page; send it again to exit now\n`); stop.abort(signal); return; }
+    release(); process.kill(process.pid, signal);
+  });
+  const ctx = { engine, config: loadConfig() ?? { engine: engine.kind }, logger: { info: console.error, warn: console.error, error: console.error }, dryRun: false, remote: false,
+    sourceId: a.source, writeWaitMs: currentCliWriteWait().waitMs } as OperationContext;
+  const result = await applyFileDriftClass(ctx, scope, sel, a.expect, { stop: stop.signal }).finally(release);
+  clearHealthMemo(engine);
+  if (!result.complete) setCliExitVerdict(1);
+  if (a.json) { console.log(JSON.stringify({ scope, mode: 'apply', results: [{ kind: 'file-drift', ...result }] }, null, 2)); return; }
+  const lines = classApplyLines(result);
+  console.log(lines.join('\n'));
+}
+
 export function renderRepairResult(result: RepairResult, opts: { diff: boolean } = { diff: false }): string {
   const lines = [`${result.kind}: ${result.affected} item(s) ${result.mode === 'apply' ? 'pending before this run' : 'to repair'}`];
   for (const warning of result.warnings ?? []) lines.push(`  WARNING: ${warning}`);
@@ -549,7 +616,7 @@ export function renderRepairResult(result: RepairResult, opts: { diff: boolean }
 export async function runRepairCommand(engine: BrainEngine, args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) { console.log(REPAIR_HELP); return; }
   const { kind, apply, all, json, noEmbed, includeAmbiguous, includeCrossEntity, source, expect, only, skip, slugs, diff, noLlm, maxUsd, limit: limitText,
-    prefer, requests, allDrifted, driftClass, since, held, side, state, provenance, cursor, keep, requestId, olderThan, includeFailures, force, from, close, afterPage,
+    prefer, requests, allDrifted, driftClass, since, held, side, state, provenance, cursor, wholeClass, keep, requestId, olderThan, includeFailures, force, from, close, afterPage,
     generationKind, generationMode, run, key, generation, day, rules, cwdPrefixes, sessions, principal, readers, slugsFile, allowWithoutOwner, propose, out,
     classes, createdBefore, idsFile, undo } = parseRepairArgs(args);
   if (kind === 'open-facts') {
@@ -590,6 +657,9 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
   if (!kind && apply && !all) throw invalid('Name a kind or pass --all with --apply.',
     'Review the preview of every automatic kind, then apply one by name (gbrain repair KIND --apply) or all of them with --all --apply.',
     ['gbrain', 'repair', ...(source ? ['--source', source] : []), '--json']);
+  if (kind === 'file-drift' && wholeClass) {
+    return runFileDriftClassCommand(engine, { apply, json, source, expect, only, skip, slugs, requests, allDrifted, held, side, state, provenance, cursor, prefer, args });
+  }
   const kinds: RepairKind[] = kind ? [kind as RepairKind] : AUTO_REPAIR_REGISTRY.map(spec => spec.kind);
   const explicitKindsNotRun = kind ? [] : explicitRepairNotices({ source });
   const scope = await resolveRepairScope(engine, source);
