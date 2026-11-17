@@ -104,7 +104,7 @@ Source for the table columns: each eval/systems/<x>/capability.json, read with a
 
 Entry: eval/systems/gbrain-defaults/shim.py (1272 lines). Helpers: `fake_upstream.py` (keyless provider stand-in, extends _shim/fake_provider.py), `capability.json`, `Dockerfile`, `docker-compose.yml`, `README.md`.
 
-What it measures: gbrain's shipped defaults as the documented install resolves them (PGLite, voyage-4 1024d, search mode tokenmax, reranker and LLM expansion on, limit 50). Each namespace is one clean install.
+What it measures: gbrain's shipped defaults as the documented install resolved them at the pinned gbrain commit (PGLite, voyage-4 1024d, LLM expansion and the reranker on, search mode tokenmax, limit 50). Current gbrain does not expand queries by default in any search mode. Each namespace is one clean install.
 
 Process model:
 - The shim (Python, PID of `python3 shim.py`) starts the gbrain executable as a subprocess. Name comes from env `GBRAIN_BIN` (default `gbrain`), shim.py:62. The same name is used for the CLI calls (shim.py:480, `cli`) and for serve (shim.py:684, `McpStdio([GBRAIN, "serve", ...])`).
