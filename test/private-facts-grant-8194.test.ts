@@ -39,6 +39,7 @@ import { parseAdminGrantRequest } from '../src/commands/serve-http-grants.ts';
 import { runAuth } from '../src/commands/auth.ts';
 import { runSources } from '../src/commands/sources.ts';
 import { LATEST_VERSION, runMigrations } from '../src/core/migrate.ts';
+import { v319 } from '../src/core/schema-migrations/v319-principal-private-facts.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
@@ -48,7 +49,6 @@ import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { v319 } from '../src/core/schema-migrations/v319-principal-private-facts.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 
 const GRANTED = 'pf-alpha';

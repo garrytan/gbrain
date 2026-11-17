@@ -1,8 +1,9 @@
 /**
  * GBRA-574: conversation fact slots, tagged after extraction. The main extraction call never asks for a slot (asking
  * cost wishes and preferences); this second, small call reads only the facts the main call produced whose entity is a
- * live person page named exactly (an exact page or alias match, or subject inference), and tags each with at most one
- * slot (facts/slots.ts). A failed call leaves the facts without slots; abort and an exhausted budget propagate.
+ * live person page named exactly (an exact page or alias match, or subject inference) or a name key the window kept
+ * for a full name with no page (facts.unbacked_entity_keys), and tags each with at most one slot (facts/slots.ts). A
+ * failed call leaves the facts without slots; abort and an exhausted budget propagate.
  */
 import { chat, isAvailable } from '../ai/gateway.ts';
 import { BudgetExhausted } from '../budget/budget-tracker.ts';
@@ -53,23 +54,24 @@ type TaggableRow = { fact: string; kind?: string | null; entity_slug?: string | 
 
 /**
  * Returns `rows` with a slot on each fact the model tagged (tagged rows are copies). `exact[i]` says row i's entity was
- * named exactly; `called` says a tagging call went out, `failed` that it errored or its reply could not be read.
+ * named exactly; `unbacked` maps a row whose entity is a name key this window kept to the extractor's name for it, which
+ * the call shows in brackets. `called` says a tagging call went out, `failed` that it errored or its reply could not be read.
  */
 export async function tagSlots<T extends TaggableRow>(engine: BrainEngine, sourceId: string, rows: T[], exact: readonly boolean[],
-  abortSignal?: AbortSignal): Promise<{ rows: T[]; called: boolean; failed: boolean }> {
+  abortSignal?: AbortSignal, unbacked?: ReadonlyMap<number, string>): Promise<{ rows: T[]; called: boolean; failed: boolean }> {
   const picked = rows.map((row, i) => ({ row, i }))
-    .filter(({ row, i }) => exact[i] && row.entity_slug && SLOT_KINDS.has(row.kind ?? 'fact'))
-    .slice(0, SLOT_TAG_MAX_FACTS);
+    .filter(({ row, i }) => (exact[i] || unbacked?.has(i)) && row.entity_slug && SLOT_KINDS.has(row.kind ?? 'fact'));
   if (!picked.length) return { rows, called: false, failed: false };
   const people = new Map((await engine.executeRaw<{ slug: string; title: string | null }>(
     `SELECT slug, title FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND type = 'person' AND slug = ANY($2::text[]) AND NOT ${retiredPageSql('pages')}`,
     [sourceId, [...new Set(picked.map(p => p.row.entity_slug!))]])).map(p => [p.slug, p.title || p.slug]));
-  const candidates = picked.filter(p => people.has(p.row.entity_slug!));
+  const named = (p: { row: T; i: number }) => exact[p.i] ? people.get(p.row.entity_slug!) : unbacked?.get(p.i);
+  const candidates = picked.filter(p => named(p)).slice(0, SLOT_TAG_MAX_FACTS);
   if (!candidates.length) return { rows, called: false, failed: false };
   const model = await getFactsExtractionModel(engine);
   if (!isAvailable('chat', model)) return { rows, called: false, failed: false };
 
-  const lines = candidates.map((c, n) => `${n + 1}. [${people.get(c.row.entity_slug!)}] ${c.row.fact.replace(/\s+/g, ' ').slice(0, SLOT_TAG_FACT_CHARS)}`);
+  const lines = candidates.map((c, n) => `${n + 1}. [${named(c)}] ${c.row.fact.replace(/\s+/g, ' ').slice(0, SLOT_TAG_FACT_CHARS)}`);
   let text: string;
   try {
     const result = await chat({ model, system: SLOT_TAG_SYSTEM, messages: [{ role: 'user', content: lines.join('\n') }],

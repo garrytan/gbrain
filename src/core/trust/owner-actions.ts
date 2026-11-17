@@ -29,7 +29,7 @@ import { releaseSuppressedFields, suppressedFields } from '../belief/purge.ts';
 import { decideTrustProposal } from './decide.ts';
 import { heldLabelsText } from './page-write.ts';
 import { resolveContestedFactOnConfirm } from './supersede-handlers.ts';
-import { getTrustProposal, pendingTrustProposalsFor, trustProposalRef, type TrustDecisionResult, type TrustProposalRow } from './proposals.ts';
+import { getTrustProposal, pendingTrustProposalsFor, SHARE_HELD_GUARD, trustProposalRef, type TrustDecisionResult, type TrustProposalRow } from './proposals.ts';
 import {
   confirmPage, latestPageVersionId, lowerPageState, readPageTrustState, readPageVersion, revertLoweredPage, revertPageToVersion,
   setRowTier, versionTier, type PageActionResult,
@@ -322,6 +322,11 @@ function proposalSummary(p: TrustProposalRow, verb: 'Accept' | 'Dismiss' | 'Reve
     return `Dismiss ${trustProposalRef(p.id)}: ${page} stays "${trustLabel(s.edited_tier)}"${labels ? ' and keeps its privacy labels' : ''}`;
   }
   const target = `${p.target_table === 'facts' ? 'f' : p.target_table === 'takes' ? 't' : p.target_table === 'timeline_entries' ? 'timeline row ' : ''}${p.target_id}`;
+  // GST-2897 B: a member's share about another member, held private.
+  if (p.before_state.guard === SHARE_HELD_GUARD) {
+    return verb === 'Accept' ? `Accept ${trustProposalRef(p.id)}: share ${target}, a fact about member ${String(p.before_state.member)}, with every reader of source ${p.source_id} (its trust stays as written)`
+      : `Dismiss ${trustProposalRef(p.id)}: keep ${target} private`;
+  }
   const related = p.related_id === null ? '' : ` with ${p.related_table === 'facts' ? 'f' : p.related_table === 'takes' ? 't' : ''}${p.related_id}`;
   // W1 #6783 §12 (a): a held take or timeline row names what the lower-tier write asked for.
   const held = p.action === 'forget' && p.target_table !== 'facts' ? ({ removed: 'remove', replaced: 'replace', deactivated: 'deactivate', detail_changed: 'rewrite' } as Record<string, string>)[String(p.before_state.change)] : undefined;

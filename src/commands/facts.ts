@@ -32,13 +32,16 @@ gbrain facts relink [flags]
   --examples <n>         Example facts per outcome (default 3)
   --json                 Machine-readable report (schema_version ${1})
 
-gbrain facts relink --conversation [--source <id>] [--slugs <a,b>] [--dry-run] [--json]
+gbrain facts relink --conversation [--unbacked] [--source <id>] [--slugs <a,b>] [--dry-run] [--json]
   Link the conversation extractor's facts saved without an entity (plain
   relink never examines them), free only: a fact naming exactly one entity
   page in full is linked, one write per page. Without --slugs, the
   ${CONVERSATION_RELINK_PAGES} pages with the most untried unlinked facts. Facts it cannot
   resolve are recorded, and the report prints the paid re-extraction for
-  their pages.
+  their pages. --unbacked moves facts saved under a name tag (a full name
+  with no page, facts.unbacked_entity_keys) onto the page that name now
+  resolves to (exact slug, unique basename, unique alias or the same name);
+  preview with --dry-run first.
 
 Relink never creates pages and never supersedes a fact. Exact duplicates are
 retired (expired, kept in history). Linked facts are queued for the System One
@@ -151,7 +154,8 @@ export function formatRelinkReport(report: RelinkReport, args: string[]): string
 
 export function formatConversationRelinkReport(r: ConversationRelinkReport, args: string[]): string {
   const lines = [`${r.dry_run ? 'DRY RUN: would link' : 'Linked'} ${r.linked} conversation fact(s) on ${r.pages.length} page(s) in source ${r.source_id}`
-    + ` (mention tier, no model call); ${r.unresolved} unresolved${r.changed ? `; ${r.changed} changed before the write (run again)` : ''}.`];
+    + ` (${r.unbacked ? 'name tags moved onto their page' : 'mention tier'}, no model call); ${r.unresolved} ${r.unbacked ? 'still under a name tag with no page' : 'unresolved'}`
+    + `${r.changed ? `; ${r.changed} changed before the write (run again)` : ''}.`];
   if (r.not_user_attributed) lines.push(`  not_user_attributed: ${r.not_user_attributed}. ${RELINK_REASONS.not_user_attributed.fix}`);
   for (const p of r.pages) lines.push(`  ${p.slug}: ${p.linked} linked, ${p.unresolved} unresolved`);
   if (r.dry_run && r.linked) lines.push(`Apply with:\n  gbrain facts relink ${args.filter(a => a !== '--dry-run').join(' ')}`);
@@ -162,9 +166,9 @@ export function formatConversationRelinkReport(r: ConversationRelinkReport, args
   return lines.join('\n');
 }
 
-/** `--conversation` flags: --source, --slugs, --dry-run, --json; anything else is a usage error. */
+/** `--conversation` flags: --unbacked, --source, --slugs, --dry-run, --json; anything else is a usage error. */
 async function runConversation(engine: BrainEngine, args: string[], config: GBrainConfig, sourceId: string): Promise<number> {
-  const opts: { sourceId: string; slugs?: string[]; dryRun?: boolean } = { sourceId };
+  const opts: { sourceId: string; slugs?: string[]; dryRun?: boolean; unbacked?: boolean } = { sourceId };
   let json = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
@@ -172,11 +176,12 @@ async function runConversation(engine: BrainEngine, args: string[], config: GBra
     if (a === '--conversation') continue;
     if (a === '--json') json = true;
     else if (a === '--dry-run') opts.dryRun = true;
+    else if (a === '--unbacked') opts.unbacked = true;
     else if ((a === '--source' || a === '--slugs') && v !== undefined && !v.startsWith('--')) {
       if (a === '--source') opts.sourceId = v; else opts.slugs = v.split(',').map(s => s.trim()).filter(Boolean);
       i++;
     } else {
-      console.error(`gbrain facts relink --conversation: ${a === '--source' || a === '--slugs' ? `${a} requires a value` : `unknown flag ${a} (takes --source, --slugs, --dry-run, --json)`}`);
+      console.error(`gbrain facts relink --conversation: ${a === '--source' || a === '--slugs' ? `${a} requires a value` : `unknown flag ${a} (takes --unbacked, --source, --slugs, --dry-run, --json)`}`);
       return 1;
     }
   }

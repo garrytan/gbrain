@@ -63,7 +63,7 @@ export async function guardFenceRows<T extends FenceFact>(tx: BrainEngine, input
   // GST-2511: a contested row a widening proposal stored narrower (pending, rejected or undone) is held at its visibility
   // while the fence still asks for world at its position. GST-2891: whatever the writer's tier: re-deriving the unchanged
   // row (a sync after an unrelated edit, a re-put) is not the owner's accept, which alone applies the widening.
-  const held = `f.visibility <> 'world' AND EXISTS (SELECT 1 FROM trust_proposals tp WHERE tp.action = 'supersede_fact' AND tp.related_table = 'facts'
+  const held = `f.visibility <> 'world' AND EXISTS (SELECT 1 FROM trust_proposals tp WHERE tp.action IN ('supersede_fact', 'confirm') AND tp.related_table = 'facts'
       AND tp.related_id = f.id AND tp.status IN ('pending', 'rejected', 'undone') AND tp.before_state->'visibility' IS NOT NULL)
     AND EXISTS (SELECT 1 FROM jsonb_to_recordset($3::text::jsonb) AS w(row_num integer, fact text, visibility text)
       WHERE w.row_num = f.row_num AND w.fact = f.fact AND w.visibility = 'world')`;

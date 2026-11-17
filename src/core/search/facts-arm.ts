@@ -20,8 +20,8 @@
 import type { BrainEngine } from '../engine.ts';
 import type { PageReadScope, SearchResult } from '../types.ts';
 import { resolveExcludePrivatePages, worldOnlyFacts } from './private-visibility.ts';
-import { admitted, collectFactCandidates, FACTS_ARM_COSINE_MIN, laterRetractions, queryTerms, readSlotRows, scoreFactCandidates, type FactCandidate as PoolCandidate, type FactPoolScope } from './fact-relevance.ts';
-import { deriveSlotEnds } from '../facts/slots.ts';
+import { admitted, collectFactCandidates, FACTS_ARM_COSINE_MIN, laterRetractions, queryTerms, scoreFactCandidates, type FactCandidate as PoolCandidate, type FactPoolScope } from './fact-relevance.ts';
+import { readSlotHistory, slotWindows } from './slot-history.ts';
 import { pageReadFilter } from './read-policy-sql.ts';
 import { enforceTokenBudget, resultTokens } from './token-budget.ts';
 import { configFlagOn, factDateHeader, factObservationDates } from './evidence-date.ts';
@@ -283,9 +283,15 @@ export function applyFactsBlock(engine: BrainEngine, query: string, results: Sea
 async function applyFactReserve(engine: BrainEngine, query: string, results: SearchResult[], opts: FactsArmOpts & { budget: number }, policy: ReservePolicy): Promise<SearchResult[]> {
   try {
     const scope = await poolScope(engine, opts);
+    const readScope: PageReadScope = opts.readScope ?? { sourceId: opts.sourceId, sourceIds: opts.sourceIds, excludePrivate: scope.excludePrivate };
+    // GBRA-574 F: a history question about one slot dimension of one named entity takes every value it has had, first in line (slot-history.ts).
+    let historyUnavailable = false;
+    const history = policy.dated ? await readSlotHistory(engine, query, scope, readScope).catch(() => { historyUnavailable = true; return null; }) : null;
+    const pinned = new Set((history?.rows ?? []).map(c => Number(c.id)));
     const { candidates, stems } = await collectFactCandidates(engine, query, scope, opts.queryEmbedding,
       { depth: { keyword: 50, cosine: 50, entity: policy.maxRows }, cosineForAll: true, history: policy.dated && hasHistoryCue(query) });
-    const scored = scoreFactCandidates(query, candidates, queryTerms(query), stems).filter(s => admitted(s, 'reserve')).map(s => s.candidate);
+    const scored = [...(history?.rows ?? []), ...scoreFactCandidates(query, candidates, queryTerms(query), stems)
+      .filter(s => admitted(s, 'reserve') && !pinned.has(Number(s.candidate.id))).map(s => s.candidate)];
     if (!scored.length) return results;
     const callerRows = (await opts.rowCap?.().catch(() => 0)) ?? 0;
     const rowCap = Math.max(results.length, callerRows);
@@ -301,10 +307,9 @@ async function applyFactReserve(engine: BrainEngine, query: string, results: Sea
     const said = (c: FactCandidate) => dates?.get(Number(c.id)) ?? day(c.created_at ?? c.valid_from) ?? '';
     const groups = members.map(g => g.sort((a, b) => said(a).localeCompare(said(b)) || Number(a.id) - Number(b.id)));
     const shown = groups.map(g => g[0]!);
-    // GBRA-574 B2/G4: a slot value's window ends at read time, from the slot's rows the caller may read (facts/slots.ts).
-    const slots = new Map(shown.flatMap(c => c.entity_slug && c.dimension && c.value_hash
-      ? [[[c.source_id, c.entity_slug, c.dimension].join('\u0000'), { source_id: c.source_id, entity_slug: c.entity_slug, dimension: c.dimension }] as const] : []));
-    const ends = slots.size ? await readSlotRows(engine, scope, [...slots.values()]).then(deriveSlotEnds).catch(() => new Map<number, Date>()) : new Map<number, Date>();
+    // GBRA-574 B2/G4 and F: a slot value's window ends at read time, from the rows the caller may read under every key of its entity (slot-history.ts).
+    const ends = await slotWindows(engine, scope, readScope, shown, history?.keys ?? null)
+      .catch(() => { historyUnavailable ||= history !== null; return new Map<number, Date>(); });
     const pageSlugs = await readableEntityPages(engine, shown, opts.readScope).catch(() => new Set<string>());
     const fromQuoted = await factsFromQuotedPages(engine, [...shown, ...retracting].map(c => Number(c.id)));
     const asked = policy.dated ? questionDate(query) : null;
@@ -323,6 +328,7 @@ async function applyFactReserve(engine: BrainEngine, query: string, results: Sea
       const label = contested.has(Number(c.id)) ? ` (contested by #${contested.get(Number(c.id))})` : '';
       row.chunk_text = `${factDateHeader(window, undefined, dates?.get(Number(c.id)), asked)}\n${c.fact}${restated}${label}`;
       if (lookup.degraded) row.fact_row = { ...row.fact_row!, contested_unavailable: true };
+      if (historyUnavailable) row.fact_row = { ...row.fact_row!, history_unavailable: true };
       return row;
     };
     type Shown = { c: FactCandidate; row: SearchResult; after: Array<{ c: FactCandidate; row: SearchResult }> };
