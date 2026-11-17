@@ -43,6 +43,7 @@ import { shellQuote, type Action } from '../agent-output.ts';
 import { isSyncable } from '../sync.ts';
 import { untrackAdmitted, untrackTargets, type UntrackPageVerdict } from './untrack-admission.ts';
 export { untrackAdmitted, untrackPageCandidates } from './untrack-admission.ts';
+import { relativeEscapesRoot } from '../path-confine.ts';
 
 export const COMMIT_LOCK_NAME = 'brain-commit.lock';
 /** Taken by pre-#6530 helpers and hooks; held too so they still exclude us during the mixed-version window. */
@@ -304,7 +305,7 @@ export function scopePaths(root: string, paths: string[], cwd: string): string[]
     const named = resolve(cwd, p);
     const abs = join(canonicalFilesystemPath(dirname(named)), basename(named));
     const rel = relative(root, abs);
-    if (rel === '' || rel === '.' || rel.startsWith('..') || isAbsolute(rel)) {
+    if (rel === '' || rel === '.' || relativeEscapesRoot(rel)) {
       throw opError('commit_paths_invalid', `Path ${p} is ${rel === '' || rel === '.' ? 'the whole checkout' : 'outside the checkout'}.`,
         'Pass the explicit file(s) you wrote inside the checkout; a repo-wide commit would sweep up other writers\' files.', { detail: p });
     }
@@ -322,7 +323,7 @@ export function configuredSourceRoots(root: string): string[] {
   for (const raw of git(root, ['config', '--get-all', SOURCE_ROOT_CONFIG]).stdout.split('\n').map(v => v.trim()).filter(Boolean)) {
     const rel = (isAbsolute(raw) ? relative(root, raw) : raw).split('\\').join('/').replace(/^(\.\/)+/, '').replace(/\/+$/, '');
     if (rel === '' || rel === '.') return [''];
-    if (!rel.startsWith('..')) roots.push(rel);
+    if (!relativeEscapesRoot(rel)) roots.push(rel);
   }
   return roots.length ? [...new Set(roots)] : [''];
 }
@@ -806,7 +807,7 @@ export function commitPathsLocked(repo: string, rel: string[], message: string, 
   assertNoOperationInProgress(root);
   const paths = scopePaths(root, rel, root);
   const own = relative(realpathSync(root), realpathSync(repo)).split('\\').join('/');
-  const roots = [own.startsWith('..') ? '' : own];
+  const roots = [relativeEscapesRoot(own) ? '' : own];
   let lock: CommitLock;
   try { lock = acquireCommitLock(root, opts.lockWaitMs); } catch (e) {
     if (PENDING_NOTED.has((e as { code?: string }).code ?? '')) notePending(root, paths);

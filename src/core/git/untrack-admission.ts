@@ -9,11 +9,12 @@
  * statement timeout, the whole read bounded by `UNTRACK_PAGE_READ_TIMEOUT_MS`; without that answer nothing is untracked.
  */
 import { lstatSync, readFileSync, realpathSync } from 'node:fs';
-import { isAbsolute, join, posix, relative, sep } from 'node:path';
+import { join, posix, relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { literalPathspecs } from '../git-env.ts';
 import { git } from './git-run.ts';
 import { opError } from '../ops/contract.ts';
+import { relativeEscapesRoot } from '../path-confine.ts';
 import type { ManagedFilesystemRoot } from '../persistence/filesystem-guard.ts';
 import { isDeclaredDbOnlySlug, storageConfigFromYaml, unresolvedDbOnlyIn, type StorageConfig } from '../storage-config.ts';
 import { isCodeFilePath, isImageFilePath, isSyncable, resolveSlugForPath } from '../sync.ts';
@@ -38,7 +39,7 @@ export async function readUntrackPageVerdict(engine: BrainEngine, managed: Manag
     await tx.executeRaw("SELECT set_config('statement_timeout', $1, true)", [String(UNTRACK_PAGE_READ_TIMEOUT_MS)]);
     const canonical = (path: string) => { try { return realpathSync(path); } catch { return null; } };
     const top = canonical(root) ?? root, worktree = canonical(managed.root) ?? managed.root;
-    const within = (outer: string, path: string) => { const r = relative(outer, path); return !r.startsWith('..') && !isAbsolute(r); };
+    const within = (outer: string, path: string) => !relativeEscapesRoot(relative(outer, path));
     const rows = (await tx.executeRaw<{ id: string; local_path: string | null }>(managed.sourceId
       ? 'SELECT id, local_path FROM sources WHERE id=$1' : 'SELECT id, local_path FROM sources WHERE local_path IS NOT NULL',
     managed.sourceId ? [managed.sourceId] : [])).map(row => ({ ...row, path: row.local_path ? canonical(row.local_path) : null }));
@@ -63,7 +64,7 @@ export async function readUntrackPageVerdict(engine: BrainEngine, managed: Manag
 /** The source root's path in the checkout, `<dir>/` or '' at the top. */
 function sourcePrefix(root: string, sourceRoot: string): string {
   const base = relative(realpathSync(root), sourceRoot).split(sep).join('/');
-  return base && !base.startsWith('..') ? `${base}/` : '';
+  return base && !relativeEscapesRoot(base) ? `${base}/` : '';
 }
 
 /** #7753: the files HEAD holds under each of `rel`; a named path HEAD holds nothing under is refused before anything changes. */
