@@ -22,7 +22,8 @@
  * reads that source, `company` when it exists and every source federated at mint time (memberKeyReadSources). A
  * re-run adds sources to a key of this name that already holds a list for this source, and never removes one, but only
  * while that list is still the one setup last gave the key (permissions.setup_reads): a key changed by hand is skipped
- * and named with the rescope command, and a source archived since is dropped from the list; any other kept key (today's default or scalar grant) is never changed. The preview names the list and what `company` holds.
+ * and named with the rescope command, a source archived since is dropped from the list, and a key whose write source is
+ * archived is BLOCKED (its write source never moves); any other kept key (today's default or scalar grant) is never changed. The preview names the list and what `company` holds.
  */
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
@@ -196,7 +197,10 @@ async function plan(engine: BrainEngine, roster: string[], sourceId: string, lab
       const active = new Set((await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE id = ANY($1::text[]) AND archived IS NOT TRUE', [held])).map(r => r.id));
       const reads = [...held.filter(s => active.has(s)), ...adds];
       const minted = setupReads(token.permissions);
-      if (adds.length && !(minted && sameSet(minted, held))) {
+      if (!active.has(sourceId)) {
+        keys.push({ member: id, token_name: name, path, action: 'blocked', reads: held,
+          detail: `its write source ${sourceId} is archived, so setup leaves the key as it is and never moves where it writes; repoint it with gbrain auth rescope --token ${name} --sources <new write source>${reads.length ? `,${reads.join(',')}` : ''}, or revoke it with gbrain auth revoke ${name}` });
+      } else if (adds.length && !(minted && sameSet(minted, held))) {
         keys.push({ member: id, token_name: name, path, action: 'skipped', reads: held,
           detail: `its source list (${held.join(', ')}) is not the one setup gave it${minted ? ` (${minted.join(', ')})` : ''}, so setup leaves it as it is and does not add ${adds.join(', ')}; to add them, run gbrain auth rescope --token ${name} --sources ${reads.join(',')}` });
       } else keys.push({ member: id, token_name: name, path, action: 'keep', reads: adds.length ? reads : held, ...(adds.length ? { adds } : {}) });

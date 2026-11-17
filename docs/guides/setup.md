@@ -208,7 +208,9 @@ setup again: a re-run adds sources to a key setup minted with a list and never r
 one, but only while the key's list is still the one setup gave it. A key you changed by
 hand (`gbrain auth rescope`) is skipped: the receipt names it, with `action: skipped` on
 its `keys` row under `--json`, and the rescope command that adds the new sources. A
-source archived since the key was minted is dropped from its list. Unfederating a source does not take it away from these keys either:
+source archived since the key was minted is dropped from its list; when that source is
+the key's write source, setup blocks the key instead and names the commands that repoint
+or revoke it. Unfederating a source does not take it away from these keys either:
 `gbrain sources unfederate <id>` lists each member key that still reads it, with the
 `gbrain auth rescope --token <name> --sources <ids>` command that drops it.
 Keys minted before this (the default grant) are never changed. When the same run

@@ -15,6 +15,10 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import type { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { labelSeveral, receiptLines } from '../src/commands/access-serves.ts';
 import { rescopeLegacyToken } from '../src/core/grants/legacy-token.ts';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { mintToken } from '../src/commands/auth-mint.ts';
+import { addMember } from '../src/core/access/members.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { memoryBrain, removeTempDirs, tempDir } from './helpers/setup-serves-box.ts';
 
@@ -26,7 +30,7 @@ async function brain() {
   const e = await memoryBrain();
   const home = tempDir('gbrain-regrant-');
   const label = (roster: string[]) => withEnv({ GBRAIN_HOME: home, GBRAIN_SETUP_ABORT_AFTER: undefined }, () => labelSeveral(e, roster, 'default', true, true));
-  return { e, label };
+  return { e, label, home };
 }
 
 describe('setup re-run and the member keys it minted', () => {
@@ -61,6 +65,45 @@ describe('setup re-run and the member keys it minted', () => {
     expect(r.error).toBeUndefined();
     expect(r.keys[0]).toMatchObject({ action: 'keep', adds: ['company'], reads: ['default', 'company'] });
     expect(await reads(e, 'member-alice-example')).toEqual(['default', 'company']);
+    await e.disconnect();
+  }, 120_000);
+
+  test('a key whose write source is archived is blocked and keeps its write source', async () => {
+    const e = await memoryBrain();
+    const home = tempDir('gbrain-regrant-');
+    const label = () => withEnv({ GBRAIN_HOME: home, GBRAIN_SETUP_ABORT_AFTER: undefined }, () => labelSeveral(e, ['alice-example'], 'team-a', true, true));
+    const row = async () => (await e.executeRaw<{ source_id: string; f: string[] }>("SELECT source_id, federated_read AS f FROM access_tokens WHERE name = 'member-alice-example' AND revoked_at IS NULL"))[0]!;
+    await addSource(e, 'team-a');
+    await label();
+    const before = await row();
+    expect(before.source_id).toBe('team-a');
+    await e.executeRaw("UPDATE sources SET archived = true WHERE id = 'team-a'");
+    await addSource(e, 'company');
+    const r = await label();
+    const after = await row();
+    expect(after.source_id).toBe('team-a');
+    expect([...after.f]).toEqual([...before.f]);
+    expect(r.applied).toBe(false);
+    expect(r.keys[0]).toMatchObject({ action: 'blocked' });
+    expect(r.keys[0]!.detail).toContain('write source team-a is archived');
+    expect(r.keys[0]!.detail).toContain('gbrain auth rescope --token member-alice-example --sources <new write source>');
+    expect(r.keys[0]!.detail).toContain('gbrain auth revoke member-alice-example');
+    expect(receiptLines(r).find(l => l.includes('alice-example:'))).toContain('BLOCKED');
+    await e.disconnect();
+  }, 120_000);
+
+  test('a key a released gbrain minted (default grant, no setup_reads) is kept unchanged, never skipped', async () => {
+    const { e, label, home } = await brain();
+    await addMember(e, 'alice-example');
+    const minted = await mintToken(e, 'member-alice-example', { scopes: ['read', 'write'], binding: { member: 'alice-example' } });
+    mkdirSync(join(home, '.gbrain', 'member-keys'), { recursive: true, mode: 0o700 });
+    writeFileSync(join(home, '.gbrain', 'member-keys', 'alice-example.key'), `${minted.token}\n`, { mode: 0o600 });
+    await addSource(e, 'company');
+    const r = await label(['alice-example']);
+    expect(r.error).toBeUndefined();
+    expect(r.keys[0]).toMatchObject({ action: 'keep' });
+    expect(r.keys[0]!.adds).toBeUndefined();
+    expect((await e.executeRaw<{ g: string }>("SELECT source_grant AS g FROM access_tokens WHERE name = 'member-alice-example' AND revoked_at IS NULL"))[0]!.g).toBe('default');
     await e.disconnect();
   }, 120_000);
 
