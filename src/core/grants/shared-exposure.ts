@@ -266,3 +266,19 @@ export function writeExposureNotice(notice: Notice | null): void {
     if (out.stderr) process.stderr.write(out.stderr);
   } catch { /* a warning never breaks the install */ }
 }
+
+/**
+ * GST-2898: what `sources federate` prints after a source becomes federated: the keys that now read it and those
+ * that do not, tokens and clients apart (message only; nothing is rewritten). Empty when the keys cannot be read.
+ */
+export async function federateReaderLines(engine: BrainEngine, id: string): Promise<string[]> {
+  const who = await federateReaders(engine, id).catch(() => null);
+  if (!who) return [];
+  const names = (list: string[]) => list.length ? `${list.slice(0, 8).join(', ')}${list.length > 8 ? ` and ${list.length - 8} more` : ''}` : 'none';
+  const lines = [
+    `  Tokens that read it now (no source list, or read-shared on): ${names(who.tokens.read)}. Tokens that do not (an explicit source list): ${names(who.tokens.not)}.`,
+    `  OAuth clients that read it now (read-shared on, or listing it): ${names(who.clients.read)}. Clients that do not (no source list, or a list without read-shared): ${names(who.clients.not)}.`,
+  ];
+  if (who.tokens.not.length || who.clients.not.length) lines.push('  To add it to a key, run gbrain auth rescope --token <name> --read-shared on (or --client <id>), which also reads every source shared later.');
+  return lines;
+}

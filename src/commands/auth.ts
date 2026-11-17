@@ -36,7 +36,7 @@ import { GRANT_PROFILES, GrantError, TOKEN_TTL_MAX_SECONDS, TOKEN_TTL_MIN_SECOND
 import { cliRenderContext, renderAction, type RenderedAction } from '../core/agent-output.ts';
 import type { INSTALL_SURFACE_SET_BY } from '../mcp/surface.ts';
 import { credentialCensus, credentialReadSources, exposureServes, sharedTokenNotice, writeExposureNotice } from '../core/grants/shared-exposure.ts';
-import { sharedReadSources } from '../core/grants/read-shared.ts';
+import { assertActiveSourceIds, clientReadsChange, parseCreateSourceFlags, readSetLines, readsChangeLines } from './auth-read-shared.ts';
 import { migrateLegacyTokens, parseRescopeTokenArgs, renderLegacyGrantAxis, rescopeLegacyToken, resolveRescopeTarget, type MigrateLegacyResult, type RescopeTokenResult } from '../core/grants/legacy-token.ts';
 import { bindCredential, type BindingPatch, type BindingResult } from '../core/access/members.ts';
 import { bindingLine, checkBindingTarget, takeBindingFlags } from './auth-binding.ts';
@@ -123,32 +123,6 @@ async function create(name: string, opts: { takesHolders?: string[]; scopes?: st
   }
 }
 
-/** GST-2898: refuse an unknown or archived source before minting a key that names it. */
-async function assertActiveSourceIds(engine: BrainEngine, ids: string[]): Promise<void> {
-  const rows = await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE id = ANY($1::text[]) AND archived IS NOT TRUE', [ids]);
-  const missing = ids.filter(id => !rows.some(r => r.id === id));
-  if (missing.length) throw new GrantError('invalid_grant', `Unknown or archived source: ${missing.join(', ')} (see gbrain sources list)`);
-}
-
-/**
- * GST-2898: what a key writes and reads, as `auth create`, `auth register-client` and `auth rescope` print it.
- * With the read-shared switch on it names the shared set now, and when nothing but `default` is shared, the command
- * that shares a source.
- */
-export async function readSetLines(engine: BrainEngine, grant: Pick<PrincipalGrant, 'principal' | 'scopes' | 'sources' | 'readShared'>, member: string | null): Promise<string[]> {
-  const s = grant.sources;
-  const write = s.kind === 'none' ? 'nothing' : s.kind === 'default' ? 'default' : s.writeSource;
-  const stored = s.kind === 'scalar' ? [s.writeSource] : s.kind === 'federated' ? s.readSources : s.kind === 'default' ? ['default'] : [];
-  if (grant.readShared !== true || s.kind === 'none') {
-    return [`  writes: ${write}. reads: ${(await credentialReadSources(engine, grant as PrincipalGrant, member)).join(', ') || 'nothing'}.`];
-  }
-  const shared = await sharedReadSources(sqlQueryForEngine(engine), member).catch(() => null);
-  const lines = [`  writes: ${write}. reads: ${stored.join(', ')}, plus every shared source (now: ${shared ? shared.join(', ') : 'unreadable, so only the sources listed'}; `
-    + 'sources shared later join automatically; guest sources and other members\' own sources are never included).'];
-  if (shared && shared.every(id => id === 'default')) lines.push('  No other source is shared yet; share one with gbrain sources federate <id>.');
-  return lines;
-}
-
 /** `auth set-min-trust <client|token> <tier|none>` (#5575, CEO-18): local-only, the one way to change a read floor. */
 async function setMinTrustCmd(rest: string[]) {
   const [target, value] = rest.filter(a => !a.startsWith('--'));
@@ -204,7 +178,6 @@ async function list(json: boolean) {
       console.log(JSON.stringify(rows.map(r => ({
         id: String(r.id), name: r.name, scopes: renderTokenScopes(r.scopes), created_at: r.created_at, last_used_at: r.last_used_at ?? null,
         status: r.revoked_at ? 'revoked' : 'active', private_pages: privatePagesFromColumn(r.private_pages),
-        read_shared: r.source_grant != null && readSharedFromColumns(r.read_shared_revision, r.grant_revision),
       })), null, 2));
       return;
     }
@@ -985,15 +958,6 @@ async function rescopeClientWith(engine: BrainEngine, clientId: string, parsed: 
   console.log('Restrictions apply on the next request. Added scopes require a new access token; the client secret is unchanged.');
 }
 
-/** GST-2898: a client's resolved read set before and after a rescope, through credentialReadSources. */
-async function clientReadsChange(engine: BrainEngine, clientId: string, before: ClientGrant, after: ClientGrant): Promise<RescopeTokenResult['reads']> {
-  const [row] = await engine.executeRaw<{ member_id: unknown }>('SELECT to_jsonb(c)->>\'member_id\' AS member_id FROM oauth_clients c WHERE c.client_id = $1', [clientId]);
-  const member = typeof row?.member_id === 'string' ? row.member_id : null;
-  const [was, now] = [await credentialReadSources(engine, grantFromClient(before), member), await credentialReadSources(engine, grantFromClient(after), member)];
-  const shared = after.readShared === true && !after.sourcesNone ? await sharedReadSources(sqlQueryForEngine(engine), member).catch(() => undefined) : undefined;
-  return { before: was, after: now, stops_reading: was.filter(s => !now.includes(s)), ...(shared ? { shared_now: shared } : {}) };
-}
-
 /** A grant's axes, one line each; with `before` (a preview) a changed axis reads `before -> after`. */
 function printClientGrantAxes(grant: ClientGrant, before?: ClientGrant) {
   const axes: Array<[string, (g: ClientGrant) => string]> = [['Scopes', g => g.scopes.join(' ') || '<none>'], ['Write source', g => g.sourcesNone ? 'none (every read and write refused)' : String(g.sourceId)],
@@ -1043,26 +1007,6 @@ function printTokenRescope(result: RescopeTokenResult, json: boolean, bound?: Bi
     }
   }
   if (result.changed && !result.dryRun) console.log('Grants apply on the next request; the token secret is unchanged.');
-}
-
-/**
- * GST-2898: the read set a rescope leaves, the shared set with the switch on, and the sources a narrowing stops
- * reading (it applies: narrowing is safe) with the flag that keeps every shared source.
- */
-function readsChangeLines(reads: RescopeTokenResult['reads'], before: boolean, after: boolean, target: string): string[] {
-  const lines: string[] = [];
-  if (before !== after) lines.push(`  Read shared sources: ${before ? 'on' : 'off'} -> ${after ? 'on' : 'off'}`);
-  if (after) {
-    lines.push(`  Reads: ${reads.after.join(', ') || 'nothing'} (every shared source, now: ${reads.shared_now?.join(', ') ?? 'unreadable'}; sources shared later join automatically; `
-      + 'guest sources and other members\' own sources are never included)');
-    if (reads.shared_now?.every(id => id === 'default')) lines.push('  No other source is shared yet; share one with gbrain sources federate <id>.');
-  } else if (JSON.stringify(reads.before) !== JSON.stringify(reads.after)) {
-    lines.push(`  Reads: ${reads.before.join(', ') || 'nothing'} -> ${reads.after.join(', ') || 'nothing'}`);
-  }
-  if (reads.stops_reading.length) {
-    lines.push(`  This key stops reading: ${reads.stops_reading.join(', ')}.${after ? '' : ` Add --read-shared on to keep reading every shared source (gbrain auth rescope ${target} --read-shared on).`}`);
-  }
-  return lines;
 }
 
 function printMigrateLegacy(result: MigrateLegacyResult, json: boolean) {
@@ -1290,7 +1234,6 @@ async function clientsCmd(args: string[]) {
             source_id: c.source_id,
             federated_read: c.federated_read,
             private_pages: privatePagesFromColumn(c.private_pages),
-            read_shared: c.read_shared === true,
             ...clientOperationsView(c),
             revoked_at: c.deleted_at ?? null,
             token_lifetime_clamped: lifetimeClamped.has(c.client_id),
@@ -1389,24 +1332,11 @@ export function parseAuthCreateArgs(rest: string[]): { name: string; takesHolder
   if (minIdx >= 0 && !isTrustTier(minValue)) {
     return { name: '', error: `the min-trust flag requires a tier: ${TRUST_TIERS.join(', ')}` };
   }
-  // GST-2898: --sources <write,read...> mints the key with its write source in one step; --read-shared on|off adds every
-  // shared source to its reads, now and later.
-  const sourcesIdx = rest.indexOf('--sources');
-  const sourcesValue = sourcesIdx >= 0 ? rest[sourcesIdx + 1] : undefined;
-  if (sourcesIdx >= 0 && (sourcesValue === undefined || sourcesValue.startsWith('--'))) {
-    return { name: '', error: 'the sources flag requires a value: the write source first, then any other sources it reads (e.g. private-alice-example)' };
-  }
-  const sources = sourcesValue !== undefined ? [...new Set(sourcesValue.split(',').map(s => s.trim()).filter(Boolean))] : undefined;
-  if (sources !== undefined && sources.length === 0) return { name: '', error: 'the sources flag needs at least one source id (to mint a key that reads nothing, mint it and run gbrain auth rescope --sources none)' };
-  const sharedIdx = rest.indexOf('--read-shared');
-  const sharedValue = sharedIdx >= 0 ? rest[sharedIdx + 1] : undefined;
-  if (sharedIdx >= 0 && sharedValue !== 'on' && sharedValue !== 'off') return { name: '', error: 'the read-shared flag requires on or off' };
-  if (sharedValue === 'on' && sources === undefined) {
-    return { name: '', error: '--read-shared on needs --sources <write-source>: a key with no source list already reads every shared source (read_shared_needs_source)' };
-  }
-  const positional = rest.find(a => !a.startsWith('--') && a !== takesValue && a !== scopesValue && a !== minValue && a !== sourcesValue && a !== sharedValue);
+  const shared = parseCreateSourceFlags(rest);
+  if (shared.error) return { name: '', error: shared.error };
+  const positional = rest.find(a => !a.startsWith('--') && a !== takesValue && a !== scopesValue && a !== minValue && !shared.values.includes(a));
   return { name: positional || '', takesHolders, ...(scopes !== undefined ? { scopes } : {}), ...(isTrustTier(minValue) ? { minTrust: minValue } : {}),
-    ...(sources !== undefined ? { sources } : {}), ...(sharedValue === 'on' ? { readShared: true } : {}) };
+    ...(shared.sources ? { sources: shared.sources } : {}), ...(shared.readShared ? { readShared: true } : {}) };
 }
 
 const AUTH_USAGE = `GBrain Token Management

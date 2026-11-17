@@ -16,7 +16,7 @@
 import { isSourceFederated, parseSourceConfig } from '../sources-load.ts';
 import type { SqlQuery } from '../sql-query.ts';
 import { OWNER_MEMBER_KEY } from '../search/private-visibility.ts';
-import { authSourcesFromGrant, type PrincipalGrant } from './model.ts';
+import { authSourcesFromGrant, readSharedFromColumns, type PrincipalGrant } from './model.ts';
 
 export interface SharedRow { id: string; config: unknown; guest: boolean; owners: string[]; owner_member: string | null }
 
@@ -70,14 +70,25 @@ export async function expandReadShared(sql: SqlQuery, stored: readonly string[],
 }
 
 /**
- * The AuthInfo source fields of a switched token, or null when the switch does not apply: off, the deny-all `none`
- * (also every drifted or malformed grant), or a token with no source list, which already reads the floor. Built on
- * authSourcesFromGrant, so the write source is unchanged and only the read set widens.
+ * The AuthInfo source fields of a token: authSourcesFromGrant, widened by the shared set when the switch applies. It
+ * does not apply when off, on the deny-all `none` (also every drifted or malformed grant), or on a token with no
+ * source list, which already reads the floor. The write source never changes; `member` is read only for a switched key.
  */
-export async function switchedTokenSources(sql: SqlQuery, grant: PrincipalGrant, member: string | null):
-  Promise<{ sourceId: string; allowedSources: string[]; hasSourceGrant: true; readShared: true; readSharedUnresolved?: true } | null> {
-  if (grant.readShared !== true || grant.sources.kind === 'none' || grant.sources.kind === 'default') return null;
+export async function tokenReadSources(sql: SqlQuery, grant: PrincipalGrant, member: () => Promise<string | null>):
+  Promise<{ sourceId: string; allowedSources?: string[]; hasSourceGrant: boolean; readShared?: true; readSharedUnresolved?: true }> {
   const base = authSourcesFromGrant(grant);
-  const expanded = await expandReadShared(sql, base.allowedSources ?? [base.sourceId], member);
+  if (grant.readShared !== true || grant.sources.kind === 'none' || grant.sources.kind === 'default') return base;
+  const expanded = await expandReadShared(sql, base.allowedSources ?? [base.sourceId], await member());
   return { sourceId: base.sourceId, allowedSources: expanded.sources, hasSourceGrant: true, readShared: true, ...(expanded.unresolved ? { readSharedUnresolved: true as const } : {}) };
+}
+
+/**
+ * An OAuth client's read set with the switch on, after the active-source filter and only while scopes survived it,
+ * or null when the switch does not apply. Private pages stay with the stored list; `member` is read only when it applies.
+ */
+export async function clientReadShared(sql: SqlQuery, row: { source_grant?: unknown; read_shared_revision?: unknown; grant_revision?: unknown },
+  stored: readonly string[], scopesAlive: boolean, member: () => Promise<string | null>): Promise<{ allowedSources: string[]; flags: { readShared: true; readSharedUnresolved?: true } } | null> {
+  if (row.source_grant === 'none' || !scopesAlive || !readSharedFromColumns(row.read_shared_revision, row.grant_revision)) return null;
+  const expanded = await expandReadShared(sql, stored, await member());
+  return { allowedSources: expanded.sources, flags: { readShared: true, ...(expanded.unresolved ? { readSharedUnresolved: true as const } : {}) } };
 }
