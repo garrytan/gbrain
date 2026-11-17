@@ -97,5 +97,9 @@ error rolls back the whole batch.
   revision.
 - Chronicle-style dates in the SQL engines read the host time zone; the store reads UTC (follow-up
   `chronicle-reads-host-time-zone`).
-- The derived-link insert repeats the core `add_links_batch` checks locally (`check_link`, `insert_row`); a shared
-  `pub(crate) insert_link` in `links.rs` would remove the copy.
+- The derived-link insert repeats the core `add_links_batch` checks locally (`check_link`, `insert_row`).
+
+## Follow-ups
+
+- `links-insert-link-helper`: after core lands, add `pub(crate) fn insert_link(tx: &mut dyn KvWrite, record:
+  LinkRecord) -> Result<bool>` to `links.rs` (accepted) and replace the local `check_link` and `insert_row` copy here.
