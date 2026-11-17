@@ -89,8 +89,8 @@ Pushes to master, the merge queue and schedules always run the full profile.
 ## macOS runners
 
 GitHub's macOS runners are scarce. In busy hours of 2026-11-16 to 11-17 a
-macOS job waited a median of 4 to 9 minutes for one, and up to 35, while the
-tests themselves took 1.5 to 4 minutes. So a
+macOS job waited a median of 4 to 9 minutes for one (90th percentile 14 to 35
+minutes), while the tests themselves took 1.5 to 4.3 minutes. So a
 pull request's cheap tier starts no macOS job: `security-regressions` runs its
 Linux and Windows cells, and `native-locks` runs every target except
 darwin-arm64 and darwin-x64. The one exception is the path-gated `Apple helper`

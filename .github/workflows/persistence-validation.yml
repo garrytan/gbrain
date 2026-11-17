@@ -212,7 +212,7 @@ jobs:
   # 22 shards to 99.8% of the budget and 13 went over; 23 shards brought the
   # largest to 546.7 s. Later that day gbrain#9641's list reached 568.8 s on 23
   # shards, 1.2 s inside the budget, with more arm files queued behind it; 24
-  # shards bring the largest on master's list to 531.8 s. The job runs both arms of
+  # shards bring that list's largest to 545.0 s. The job runs both arms of
   # every listed file: the unit shards skip *.slow.test.ts, so this lane is the
   # only GitHub lane that runs the PGLite side of the listed slow
   # testBackends() suites.
