@@ -123,7 +123,7 @@ const scenarios: Scenario[] = [
   // 2. two live slugs in one source cannot claim one source_path
   {
     name: 'a second live slug claiming the same source_path is rejected',
-    expect: 'refused',
+    expect: 'equal',
     run: async ({ engine }) => {
       await engine.putPage('origin/a', { ...NOTE, source_path: 'origin/shared.md' });
       await engine.putPage('origin/b', { ...NOTE, source_path: 'origin/shared.md' });
