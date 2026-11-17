@@ -40,6 +40,7 @@ let tokenMintCount = 0;
 type Stage = 'discovery' | 'token' | 'initialize' | 'notifications/initialized' | 'tools/call';
 let requests: Partial<Record<Stage, number>> = {};
 let statusFor: (stage: Stage, attempt: number) => number | undefined = () => undefined;
+let rejectionBody = 'fixture rejection';
 let hangingStage: Stage | undefined;
 let hangFromAttempt = 1;
 let hangAfterHeaders = false;
@@ -69,7 +70,7 @@ function intercept(stage: Stage, req: Request): Response | Promise<Response> | u
     });
   }
   const status = statusFor(stage, requests[stage]!);
-  if (status !== undefined) return new Response('fixture rejection', { status });
+  if (status !== undefined) return new Response(rejectionBody, { status });
 }
 
 beforeAll(() => {
@@ -130,6 +131,7 @@ beforeEach(() => {
   tokenMintCount = 0;
   requests = {};
   statusFor = () => undefined;
+  rejectionBody = 'fixture rejection';
   hangingStage = undefined;
   hangFromAttempt = 1;
   hangAfterHeaders = false;
@@ -306,6 +308,16 @@ describe('callRemoteTool — HTTP authentication boundaries', () => {
     await expect(callRemoteTool(makeConfig(), 'write_example')).rejects.toMatchObject({ reason: 'tool_error' });
     expect(tokenMintCount).toBe(2);
     expect(toolExecutions).toBe(1);
+  });
+
+  test('a 401 naming access_member_disabled is relayed: the member is disabled, not the client revoked', async () => {
+    statusFor = current => current === 'tools/call' ? 401 : undefined;
+    rejectionBody = JSON.stringify({ error: 'invalid_token', code: 'access_member_disabled', message: 'This token is bound to a member who is disabled, removed or missing.' });
+    const error = await callRemoteTool(makeConfig(), 'write_example').then(() => null, (e: unknown) => e);
+    expect(error).toMatchObject({ reason: 'auth_after_refresh', detail: { status: 401, code: 'access_member_disabled' } });
+    expect((error as Error).message).toContain('bound to a member who is disabled, removed or missing');
+    expect(tokenMintCount).toBe(2);
+    expect(toolExecutions).toBe(0);
   });
 
   test('rejected token refresh stops before a second tool request', async () => {
