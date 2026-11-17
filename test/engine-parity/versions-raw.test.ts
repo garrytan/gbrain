@@ -24,11 +24,15 @@ import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
 
-// parity-divergence: FileRow.size_bytes is a JS number on PGLite but a BigInt on Postgres (bigint column, no
-// conversion in the postgres engine). Left out of the compared view; each arm asserts its value via Number().
-const FILE_KEYS = ['source_id', 'page_slug', 'filename', 'storage_path', 'mime_type', 'content_hash', 'metadata', 'created_at'] as const;
+// FileRow.size_bytes is a JS number on every engine (the files.size_bytes column is BIGINT; Postgres used to
+// return it as a BigInt). It is part of the compared view, and `sizeOf` refuses any other type.
+const FILE_KEYS = ['source_id', 'page_slug', 'filename', 'storage_path', 'mime_type', 'size_bytes', 'content_hash', 'metadata', 'created_at'] as const;
 const fileView = (f: FileRow | null) => (f ? pick(f, FILE_KEYS) : null);
-const sizeOf = (f: FileRow | null) => (f?.size_bytes == null ? null : Number(f.size_bytes));
+const sizeOf = (f: FileRow | null) => {
+  if (f?.size_bytes == null) return null;
+  expect(typeof f.size_bytes).toBe('number');
+  return f.size_bytes;
+};
 
 describe('engine parity: versions', () => {
   parityTest(
