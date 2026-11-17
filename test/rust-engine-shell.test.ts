@@ -1,12 +1,15 @@
 /**
  * The Rust engine shell (docs/designs/RUST_ENGINE.md, "PR sequence" step 8). `openRustEngine` takes an addon the
- * loader already verified and returns an engine that declares no capabilities and refuses every unimplemented
- * member with `engine_capability_missing` before any work. SQL-only paths refuse a Rust kind instead of treating it as
- * Postgres. No real addon exists yet, so the tests pass a plain object as the verified addon.
+ * loader already verified and returns an engine that reports only the capabilities whose every member the store
+ * serves, and refuses every other member with `engine_capability_missing` before any work. SQL-only paths refuse a
+ * Rust kind instead of treating it as Postgres. These tests pass a plain object, with a fake store, as the verified
+ * addon; test/rust-engine-store.test.ts runs the real one.
  */
 import { describe, expect, test } from 'bun:test';
 import { openRustEngine, RustEngine, rustMemberCapability } from '../src/core/rust-engine.ts';
 import { RUST_ENGINE_MEMBERS } from '../src/core/rust-engine/members.ts';
+import { STORE_MEMBERS } from '../src/core/rust-engine/store-members/index.ts';
+import { servedCapabilities } from '../src/core/rust-engine/store-capabilities.ts';
 import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
 import { isSqlEngineKind, sqlEngineKind } from '../src/core/sql-engine-kind.ts';
 import { stageBatchBytes, STAGE_BATCH_BYTES } from '../src/core/page-body/limits.ts';
@@ -14,7 +17,14 @@ import { CODES } from '../src/core/error-registry.ts';
 import { ENGINE_CAPABILITIES } from '../src/core/engine-capabilities.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 
-const addon = { target: 'linux-x64-glibc', engine_abi: 1 };
+/** A store that opens and closes and does nothing else: the lifecycle tests need no real brain. */
+class FakeBrain {
+  isOpen = false;
+  async open() { this.isOpen = true; }
+  async close() { this.isOpen = false; }
+}
+class FakePool { async shutdown() {} }
+const addon = { target: 'linux-x64-glibc', engine_abi: 1, Pool: FakePool, Brain: FakeBrain };
 const open = () => openRustEngine({ addon, databasePath: '/var/brains/test.rust' });
 
 /** Runs `fn`, expecting an OperationError, and returns it. */
@@ -29,18 +39,19 @@ async function refusal(fn: () => unknown): Promise<OperationError> {
 }
 
 describe('openRustEngine', () => {
-  test('returns a Rust engine that keeps the verified addon and store path and reports no capabilities', () => {
+  test('returns a Rust engine that keeps the verified addon and store path and reports what the store serves', () => {
     const engine = open();
     expect(engine).toBeInstanceOf(RustEngine);
     expect(engine.kind).toBe('rust');
-    expect(engine.capabilities.size).toBe(0);
+    expect([...engine.capabilities].sort()).toEqual([...servedCapabilities()].sort());
+    expect([...engine.capabilities].sort()).toEqual(['config', 'schema', 'sources', 'tags']);
     expect(engine.addon).toBe(addon);
     expect(engine.databasePath).toBe('/var/brains/test.rust');
   });
 
-  test('every unimplemented member refuses engine_capability_missing naming its capability, writing nothing', async () => {
+  test('every member the store does not serve refuses engine_capability_missing naming its capability, writing nothing', async () => {
     const engine = open() as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
-    const refused = Object.entries(RUST_ENGINE_MEMBERS).filter(([, cls]) => cls !== 'implemented');
+    const refused = Object.entries(RUST_ENGINE_MEMBERS).filter(([member, cls]) => cls !== 'implemented' && !Object.hasOwn(STORE_MEMBERS, member));
     expect(refused.length).toBeGreaterThan(150);
     for (const [member, capability] of refused) {
       expect(typeof engine[member]).toBe('function');
@@ -51,6 +62,15 @@ describe('openRustEngine', () => {
       expect(rustMemberCapability(member)).toBe(capability as never);
     }
     expect(rustMemberCapability('connect')).toBeNull();
+    expect(rustMemberCapability('getConfig')).toBeNull(); // served now, so it no longer refuses
+  });
+
+  test('a served member before connect refuses engine_closed, and after disconnect too', async () => {
+    const engine = open();
+    expect((await refusal(() => engine.getConfig('k'))).code).toBe('engine_closed');
+    await engine.connect({ engine: 'pglite', database_path: '/var/brains/test.rust' });
+    await engine.disconnect();
+    expect((await refusal(() => engine.getConfig('k'))).code).toBe('engine_closed');
   });
 
   test('every member class is the lifecycle or a named engine capability', () => {

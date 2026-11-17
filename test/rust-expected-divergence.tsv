@@ -1,0 +1,5 @@
+# Parity cases where the Rust engine is expected to answer differently from PGLite. Edited by hand.
+# Columns (tab separated): parity file, case name, why the answer differs. A row makes the case an expected failure
+# on the Rust arm (GBRAIN_TEST_RUST_ARM=1); when the case starts to match PGLite the run fails until the row is removed.
+test/engine-parity/search.test.ts	searchKeyword ranks the same pages for the same query	keyword ranking is BM25 and not parity with PGLite (design D5): scores differ, and ties order differently
+test/engine-parity/search.test.ts	searchKeyword hides soft-deleted, quarantined and hard-excluded pages; include_slug_prefixes opts back in	the Rust keyword search does not read the quarantine frontmatter key, so a quarantined page still matches
