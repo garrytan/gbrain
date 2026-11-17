@@ -77,6 +77,9 @@ async function withConfiguredSql<T>(
   }
 }
 
+/** GBRA-585 E: the scopes a token bound to a member gets when --scopes is not given; an explicit --scopes always wins. */
+export const MEMBER_TOKEN_SCOPES: readonly string[] = ['read', 'write'];
+
 async function create(name: string, opts: { takesHolders?: string[]; scopes?: string[]; minTrust?: TrustTier; binding?: BindingPatch | null } = {}) {
   if (!name) { console.error('Usage: auth create <name> [--takes-holders world,garry] [--scopes read,write] [--min-trust <tier>] [--member <id>] [--reads-unscoped --yes]'); process.exit(1); }
   // #4043 least-privilege: validate scopes at mint time — the verify path
@@ -91,12 +94,16 @@ async function create(name: string, opts: { takesHolders?: string[]; scopes?: st
       process.exit(1);
     }
   }
+  const memberDefault = opts.scopes === undefined && !!opts.binding?.member;
+  if (memberDefault) opts = { ...opts, scopes: [...MEMBER_TOKEN_SCOPES] };
   try {
     await withConfiguredSql(async (_sql, engine) => {
       await assertCredentialScoped(engine, opts.binding ?? null, 'token', name);
       const { token, id, takesHolders, bound } = await mintToken(engine, name, opts);
       if (bound) auditReadsUnscoped(bound, `token ${name}`, false);
-      const scopeLine = opts.scopes !== undefined
+      const scopeLine = memberDefault
+        ? `scopes=${JSON.stringify(opts.scopes)} (the default for a token bound to a member; pass --scopes read,write,admin for admin access)`
+        : opts.scopes !== undefined
         ? `scopes=${JSON.stringify(opts.scopes)}`
         : 'scopes=full access (grandfathered — pass --scopes read,write to narrow)';
       console.log(`Token created for "${name}" (takes_holders=${JSON.stringify(takesHolders)}, ${scopeLine}${opts.minTrust ? `, min_trust=${opts.minTrust}` : ''}):\n`);
@@ -1326,8 +1333,8 @@ Usage:
                                                           field (default: ["world"]). MCP-bound calls to
                                                           takes_list / takes_search / query filter by this.
                                                           --scopes narrows the token to the listed op scopes
-                                                          (comma or space separated; omit = full access,
-                                                          grandfathered).
+                                                          (comma or space separated; omit = read,write with
+                                                          --member, else full access, grandfathered).
                                                           --min-trust sets the token's read floor: reads never
                                                           return rows below that trust tier (${TRUST_TIERS.join(', ')});
                                                           memory_confirm in --scopes lets the token confirm

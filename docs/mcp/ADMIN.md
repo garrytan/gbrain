@@ -515,7 +515,8 @@ Fix it by binding first:
   The fix is per-person access.
 - Per-person access: give each person's agent its own credential bound to
   them (`gbrain access member add <id>`, then
-  `gbrain auth create <name> --member <id>`) and put `readable_by` on pages
+  `gbrain auth create <name> --member <id>`, which mints read and write only
+  unless you pass `--scopes`) and put `readable_by` on pages
   only some people may read. One agent in a shared channel instead uses a
   credential made with `gbrain auth create <name> --may-act-for <members>`,
   and its harness names each request's audience on every call (see
