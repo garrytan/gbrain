@@ -66,7 +66,7 @@ describe('check-retired-phrases.sh', () => {
       expect(r.stderr).toContain(`FAIL: docs/guides/x.md:3 retired phrase "${match}"`);
       expect(r.stderr).toMatch(/^Why: {2}\S/m);
       expect(r.stderr).toMatch(/^Fix: {2}rewrite the sentence to the current instruction: \S/m);
-      expect(r.stderr).toContain('See:  docs/TESTING.md#retired-phrase-guard');
+      expect(r.stderr).toContain('See:  docs/ci-guards.md#retired-phrase-guard');
     });
   }
 

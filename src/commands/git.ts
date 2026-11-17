@@ -217,9 +217,11 @@ function runScan(p: Parsed): number {
   const commits = Number(execFileSync('git', ['-C', repo, 'rev-list', '--count', `${from}..${to}`], { env: gitChildEnv({ ...GIT_ENV }) }).toString().trim());
   const seconds = Math.round((Date.now() - started) / 100) / 10;
   const items = [...scan.findings.map(f => `  ${f.commit.slice(0, 7)} ${f.path}:${f.line} ${f.pattern} ${f.fingerprint}`),
-    ...scan.unscanned.map(u => `  ${u.commit.slice(0, 7)} ${u.path} too large to scan`), ...scan.gate_changes.map(g => `  ${g.commit.slice(0, 7)} ${g.path} changes what the scan sees`)];
+    ...scan.unscanned.map(u => `  ${u.commit.slice(0, 7)} ${u.path} too large to scan`), ...scan.gate_changes.map(g => `  ${g.commit.slice(0, 7)} ${g.path} changes what the scan sees`),
+    ...(scan.allowed ?? []).map(a => `  ${a.commit.slice(0, 7)} ${a.path}:${a.line} ${a.pattern} allowed by .gbrain-scan-allow line: ${a.entry}`),
+    ...(scan.allowlist_problems ?? []).map(p => `  .gbrain-scan-allow line ${p.entry}: ${p.problem}`)];
   emit(p.json, { repo, from, to, commits, seconds, would_refuse: refusal?.code ?? null, findings: scan.findings, unscanned: scan.unscanned, gate_changes: scan.gate_changes,
-    unreadable: scan.unreadable ?? null }, [`scanned ${commits} commit(s) ${from.slice(0, 12)}..${to.slice(0, 12)} in ${seconds} s: ${refusal ? `a push would refuse (${refusal.code})` : 'a push would not refuse'}`,
+    allowed: scan.allowed ?? [], allowlist_problems: scan.allowlist_problems ?? [], unreadable: scan.unreadable ?? null }, [`scanned ${commits} commit(s) ${from.slice(0, 12)}..${to.slice(0, 12)} in ${seconds} s: ${refusal ? `a push would refuse (${refusal.code})` : 'a push would not refuse'}`,
     ...(scan.unreadable !== undefined ? [`  not read in full: ${scan.unreadable}`] : []), ...items].join('\n'));
   return 0;
 }

@@ -37,7 +37,7 @@ import { maintenanceAttribution } from '../persistence/attribution.ts';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from '../spawn.ts';
-import { join, resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 
 import type { BrainEngine } from '../engine.ts';
 import { operations, type Operation, type OperationContext } from '../operations.ts';
@@ -48,6 +48,7 @@ import { realpathOrResolve } from '../path-confine.ts';
 import { runMaintenanceSweep } from '../sweep.ts';
 import { detectCapabilities, renderCapabilityReport, type CapabilityReport } from '../capability.ts';
 import { loadWorkspaceAllowlist, matchesGlob, SCAN_ALLOW_FILENAME, scanFiles, type SecretFinding } from '../secret-scan.ts';
+import { scanAllowProblems } from '../git/range-secret-scan.ts';
 import {
   PUSH_DENY_GLOBS, SECRET_SCAN_REFUSAL_DOCS, verifyRemotePrivacy, readPushStatuses, summarizePushStatuses,
 } from '../workspace-push.ts';
@@ -374,10 +375,13 @@ function checkSecretScan(ws: string): VerifyCheck {
   try {
     const { files, via } = trackedWorkspaceFiles(ws);
     const allowlist = loadWorkspaceAllowlist(ws);
+    const allowed: string[] = [];
     const findings: SecretFinding[] = scanFiles(files.map((f) => join(ws, f)), {
       allowlist,
       workspaceRoot: ws,
+      onAllowed: (hit) => allowed.push(`${relative(ws, hit.file)}:${hit.line} [${hit.pattern}] by ${hit.entry}`),
     });
+    const allowedNote = allowed.length ? `; ${allowed.length} hit(s) allowed by ${SCAN_ALLOW_FILENAME} rule lines: ${allowed.slice(0, 5).join('; ')}${allowed.length > 5 ? '; …' : ''}` : '';
     if (findings.length > 0) {
       const sample = findings.slice(0, 5).map((f) => {
         const { since } = f as SecretFinding & { since?: string };
@@ -387,10 +391,11 @@ function checkSecretScan(ws: string): VerifyCheck {
         id, ok: false,
         detail: `${findings.length} secret-scan finding(s): ${sample}${findings.length > 5 ? '; …' : ''} — ` +
           'remove a real credential first; allowlist only a reviewed false positive by appending its fingerprint to ' +
-          `${shellQuote(resolve(ws, SCAN_ALLOW_FILENAME))} (${SECRET_SCAN_REFUSAL_DOCS})`,
+          `${shellQuote(resolve(ws, SCAN_ALLOW_FILENAME))} (${SECRET_SCAN_REFUSAL_DOCS})` +
+          scanAllowProblems(allowlist).map((p) => `; ${SCAN_ALLOW_FILENAME} line ${p.entry}: ${p.problem}`).join(''),
       };
     }
-    return { id, ok: true, detail: `no secrets in ${files.length} ${via === 'git' ? 'tracked' : 'workspace'} file(s)` };
+    return { id, ok: true, detail: `no secrets in ${files.length} ${via === 'git' ? 'tracked' : 'workspace'} file(s)${allowedNote}` };
   } catch (e) {
     return { id, ok: false, detail: `secret scan failed: ${(e as Error).message}` };
   }

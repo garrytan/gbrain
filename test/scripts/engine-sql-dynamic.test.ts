@@ -65,7 +65,7 @@ describe('check-engine-sql-dynamic.ts: rejected forms', () => {
     const lastLine = PRELUDE.split('\n').length + body.split('\n').length - 1;
     const failLine = r.out.split('\n').find((l) => l.startsWith(`FAIL: src/core/engine-sql/domain.ts:${lastLine} `));
     expect(failLine).toContain(what);
-    for (const label of ['Fix:', 'Why:', 'See:  docs/TESTING.md#engine-sql-dynamic-sql']) expect(r.out).toContain(label);
+    for (const label of ['Fix:', 'Why:', 'See:  docs/ci-guards.md#engine-sql-dynamic-sql']) expect(r.out).toContain(label);
   });
 });
 
