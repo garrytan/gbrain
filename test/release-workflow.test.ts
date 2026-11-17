@@ -107,6 +107,19 @@ describe('release.yml ↔ binary-self-update asset contract', () => {
     expect(RUST_WORKFLOW.match(/if: \$\{\{ !inputs\.for_release \}\}/g)).toHaveLength(3);
   });
 
+  test('the rust-engine.yml addon job runs the loader and CLI suites against the built addon, required, on both targets', () => {
+    const job = RUST_WORKFLOW.slice(RUST_WORKFLOW.indexOf('\n  addon:\n'), RUST_WORKFLOW.indexOf('\n  without-rust:\n'));
+    expect(job).toContain('target: linux-x64-glibc');
+    expect(job).toContain('target: darwin-arm64');
+    expect(job).not.toMatch(/continue-on-error: true\n\s+run:/);
+    const build = job.indexOf('run: bun run rust:build');
+    const tests = job.indexOf('GBRAIN_TEST_RUST_ADDON_REQUIRED=1 bun test test/rust-engine-addon-loader.test.ts test/rust-engine-cli.test.ts');
+    expect(build).toBeGreaterThan(-1);
+    expect(tests).toBeGreaterThan(build);
+    // Both suites and the workflow's path filters must agree: a change to either file runs the job.
+    expect(RUST_WORKFLOW.match(/- 'test\/rust-engine-\*\.test\.ts'/g)).toHaveLength(2);
+  });
+
   test('rust-engine.yml path filters cover the files under src/core/rust-engine/ on both triggers', () => {
     // `src/core/rust-engine*` alone does not match a path with a slash after it.
     expect(RUST_WORKFLOW.match(/- 'src\/core\/rust-engine\/\*\*'/g)).toHaveLength(2);

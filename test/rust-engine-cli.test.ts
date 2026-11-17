@@ -15,7 +15,8 @@
  * 4. Production seam: none. It spawns `src/cli.ts` with GBRAIN_HOME and GBRAIN_RUST_ENGINE_ADDON.
  *
  * The happy-path tests need the real addon from `bun run rust:build`; without it they skip (set
- * GBRAIN_TEST_RUST_ADDON_REQUIRED=1, as rust-engine.yml does, to fail instead).
+ * GBRAIN_TEST_RUST_ADDON_REQUIRED=1, as the `addon` job in .github/workflows/rust-engine.yml does on both targets after
+ * its build step, to fail instead).
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';

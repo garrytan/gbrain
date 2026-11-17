@@ -14,7 +14,8 @@
  *
  * Only the network is faked: release lookup, download and attestation lookup read an in-memory "release" built from
  * the real addon that `bun run rust:build` made. Without that build the happy-path tests skip (set
- * GBRAIN_TEST_RUST_ADDON_REQUIRED=1, as rust-engine.yml does, to fail instead); the failure-path tests that never
+ * GBRAIN_TEST_RUST_ADDON_REQUIRED=1, as the `addon` job in .github/workflows/rust-engine.yml does on both targets after
+ * its build step, to fail instead); the failure-path tests that never
  * reach a load still run.
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
