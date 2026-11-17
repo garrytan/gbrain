@@ -92,10 +92,13 @@ export interface GoogleSourceState {
   /**
    * Backfill floor, epoch MILLISECONDS: everything strictly newer than this
    * within the window is already imported. Moves DOWNWARD during the initial
-   * backfill (newest→oldest, batch-committed) so a killed backfill resumes
-   * where it stopped instead of restarting (outside-voice F7a).
+   * backfill only after a complete fourteen-day listing window. A killed
+   * backfill resumes its checkpointed listing page, never a fetched thread date.
    */
   gmail_backfill_floor_ms: number | null;
+  /** The exact date window and next listing page, checkpointed only after its prior page landed. */
+  gmail_backfill_page?: { afterMs: number; beforeMs: number; token: string } | null;
+  gmail_gap_page?: { afterMs: number; beforeMs: number; token: string } | null;
   gmail_backfill_done: boolean;
   /**
    * #5438 (adopted from #5581): lower bound (epoch ms) the completed backfill

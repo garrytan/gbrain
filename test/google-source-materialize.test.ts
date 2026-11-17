@@ -745,7 +745,10 @@ describe('google-source materialize', () => {
 
         let state = readGoogleState(dir);
         expect(state.gmail_backfill_done).toBe(false);
-        expect(state.gmail_backfill_floor_ms).toBe(daysAgoMs(41)); // oldest fully-attempted thread
+        // The interrupted listing window stays open, including already landed
+        // threads. A fetched thread's timestamp is never coverage proof.
+        expect(state.gmail_backfill_floor_ms).toBeGreaterThan(daysAgoMs(40));
+        expect(state.gmail_backfill_floor_ms).toBeLessThan(daysAgoMs(27));
         expect(state.gmail_history_id).toBe('1000'); // delta anchor captured BEFORE backfill
 
         // Resume without the abort: only the remaining window is listed.
@@ -1404,25 +1407,27 @@ describe('google-source gmail recent-first cursors', () => {
     try {
       await insertGoogleSource(dir);
       await withHome(async () => {
-        // Abort after two archive threads: floor sits at 50 days.
+        // Abort after two archive threads: the second one's window stays open.
         const controller = new AbortController();
         fx.onThreadFetch = () => { if (fx.threadFetches >= 2) controller.abort(); };
         await sweepDays(dir, fx, vault, 120, { signal: controller.signal });
-        expect(readGoogleState(dir).gmail_backfill_floor_ms).toBe(daysAgoMs(50));
+        const coveredFloor = readGoogleState(dir).gmail_backfill_floor_ms!;
+        expect(coveredFloor).toBeGreaterThan(daysAgoMs(50));
+        expect(coveredFloor).toBeLessThan(daysAgoMs(40));
 
         // A 4-day scoped window: nothing to fetch, and the done bound records
-        // what was really covered (50 days), not the narrow 4-day cutoff.
+        // what was really covered, not the narrow 4-day cutoff.
         fx.onThreadFetch = undefined;
         const fetches = fx.threadFetches;
         await sweepDays(dir, fx, vault, 4);
         expect(fx.threadFetches).toBe(fetches);
         let state = readGoogleState(dir);
         expect(state.gmail_backfill_done).toBe(true);
-        expect(state.gmail_backfill_cutoff_ms).toBe(daysAgoMs(50));
+        expect(state.gmail_backfill_cutoff_ms).toBe(coveredFloor);
 
-        // Back to 120 days: only the four unimported archive threads are fetched.
+        // Back to 120 days: the unfinished window is safely replayed too.
         await sweepDays(dir, fx, vault, 120);
-        expect(fx.threadFetches - fetches).toBe(4);
+        expect(fx.threadFetches - fetches).toBe(5);
         state = readGoogleState(dir);
         expect(state.gmail_backfill_done).toBe(true);
         expect((await slugsWhere(`slug LIKE 'emails/%'`)).length).toBe(6);

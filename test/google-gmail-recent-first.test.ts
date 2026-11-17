@@ -73,7 +73,10 @@ test('managed gmail is recent-first: current mail lands and freshness is banked 
     const s1 = await state();
     expect(s1?.gmail_history_id).toBe('1000');
     expect(s1?.gmail_backfill_done).toBe(false);
-    expect(s1?.gmail_backfill_floor_ms).toBe(OLD[24].ms);
+    // Date coverage advances only at exhausted listing-window boundaries;
+    // an interrupted page can replay already-published threads safely.
+    expect(s1?.gmail_backfill_floor_ms).toBeGreaterThan(OLD[24].ms);
+    expect(s1?.gmail_backfill_floor_ms).toBeLessThan(OLD[0].ms);
     expect((await freshness()).last_sync_at).toBeNull();
 
     // Run 2: new mail arrives while the archive is still draining, and the
@@ -87,7 +90,7 @@ test('managed gmail is recent-first: current mail lands and freshness is banked 
     const s2 = await state();
     expect(s2?.gmail_history_id).toBe('1010');
     expect(s2?.gmail_backfill_done).toBe(false);
-    expect(s2?.gmail_backfill_floor_ms).toBe(OLD[24].ms); // backfill cursor untouched by the delta
+    expect(s2?.gmail_backfill_floor_ms).toBe(s1?.gmail_backfill_floor_ms); // backfill cursor untouched by the delta
     const fresh = await freshness();
     expect(fresh.last_sync_at).not.toBeNull();
     expect(new Date(fresh.newest_content_at!).getTime()).toBe(CURRENT.ms);
@@ -96,7 +99,7 @@ test('managed gmail is recent-first: current mail lands and freshness is banked 
     onThread = undefined;
     fetched.length = 0;
     expect((await run()).status).not.toBe('partial');
-    expect(fetched.sort()).toEqual(OLD.slice(25).map((o) => o.tid).sort());
+    expect(fetched.sort()).toEqual(OLD.filter(o => o.ms < s1!.gmail_backfill_floor_ms!).map(o => o.tid).sort());
     expect((await state())?.gmail_backfill_done).toBe(true);
   }
 }), 120_000);
