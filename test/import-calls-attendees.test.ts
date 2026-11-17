@@ -83,6 +83,9 @@ describe('call header and exact matching', () => {
     expect(parseCallAttendees(CALLS['2026-11-12 hiring debrief.md']!)?.map(a => a.entry)).toEqual(['owner', 'carol-example']);
     expect(parseCallAttendees(CALLS['2026-11-10 weekly eng sync.md']!)).toEqual([{ entry: 'bob-example' }, { entry: 'Carol <carol@acme-example.test>', email: 'carol@acme-example.test' }]);
     expect(parseCallAttendees('---\nattendees: [alice-example, bob-example]\n---\nhi\n')?.map(a => a.entry)).toEqual(['alice-example', 'bob-example']);
+    expect(parseCallAttendees('---\nattendees: ["Smith, Alice", \'bob-example\']\n---\nhi\n')?.map(a => a.entry)).toEqual(['Smith, Alice', 'bob-example']);
+    expect(callReadersFor(parseCallAttendees('---\nattendees: ["Smith, Alice"]\n---\nhi\n'), OWNER, [member(OWNER), member('smith'), member('alice', { display_name: 'Alice' })]))
+      .toEqual({ readers: [OWNER], matched_by: {}, unmatched: ['Smith, Alice'], no_list: false });
     expect(parseCallAttendees('---\nattendees:\n  - alice-example\n  - "bob@acme-example.test"\n---\nhi\n')).toEqual([{ entry: 'alice-example' }, { entry: 'bob@acme-example.test', email: 'bob@acme-example.test' }]);
     expect(parseCallAttendees(CALLS['2026-11-08 standup.txt']!)).toBeNull();
     expect(parseCallAttendees('Weekly\n\nalice-example: hello\nAttendees: bob-example\n')).toBeNull();
@@ -361,7 +364,7 @@ describe('call import keeps calls to their attendees (pglite, git-backed)', () =
   let managed: PGLiteEngine;
   beforeAll(async () => { managed = new PGLiteEngine(); await managed.connect({}); await managed.initSchema(); }, 120_000);
   afterAll(async () => { await managed?.disconnect(); });
-  test('the page file carries readable_by in the committed tree, and the guard is raised once it is committed', async () => {
+  test('the page file carries readable_by in the committed tree, and the guard is raised by the import even while the commit is queued', async () => {
     const fixture = temp('gbrain-calls-repo-');
     const brain = join(fixture, 'brain');
     const calls = join(fixture, 'calls');
@@ -385,7 +388,7 @@ describe('call import keeps calls to their attendees (pglite, git-backed)', () =
       const guardedNow = async () => Number((await managed.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM page_label_guards g JOIN pages p ON p.id = g.page_id WHERE p.slug = $1', [SLUG.debrief]))[0]!.n);
       const show = () => spawnSync('git', ['-C', brain, 'show', `HEAD:${SLUG.debrief}.md`], { encoding: 'utf8' }).stdout;
       expect(readFileSync(join(brain, `${SLUG.debrief}.md`), 'utf8')).toMatch(/\nreadable_by:\n {2}- owner-example\n {2}- carol-example\n/);
-      if (doc.pages[0].git_state !== 'committed') expect(await guardedNow()).toBe(0);
+      expect(await guardedNow()).toBe(1);
       for (let i = 0; i < 100 && !show(); i++) {
         await runPersistenceEffects(managed, { engine: 'pglite', embedding_disabled: true } as never, { hostId: localHostId() });
         if (!show()) await new Promise(r => setTimeout(r, 100));

@@ -279,7 +279,7 @@ export async function runCallImport(engine: BrainEngine, dir: string, args: stri
     const ids = listed.map(r => r.trim().replace(/^member:/i, ''));
     return JSON.stringify([...new Set(ids.map(r => normalizeReaders({ readable_by: r })?.[0]))].sort()) === JSON.stringify(normalized) ? ids : normalized;
   };
-  /** A scoped call's readers are guarded once its page is committed, so a later write below the operator's tier cannot drop them. */
+  /** A scoped call's readers are guarded as soon as its page row lands (its git commit may still be queued), so a later write below the operator's tier cannot drop them. */
   const guard = async (slug: string, readers: string[] | null): Promise<void> => {
     if (!scope?.scoped || !readers) return;
     await maintenanceTransaction(engine, async tx => {
@@ -362,7 +362,7 @@ export async function runCallImport(engine: BrainEngine, dir: string, args: stri
     try {
       const receipt = await putPage.handler(ctx, { slug, content: kept ? withCallReaders(page.content, kept.readers) : page.content, request_id: randomUUID() }) as { persistence?: { git_state?: string } } | null;
       const gitState = receipt?.persistence?.git_state;
-      if (kept && (gitState === undefined || gitState === 'committed')) await guard(slug, kept.readers);
+      if (kept) await guard(slug, kept.readers);
       results.push({ ...base, status: 'imported', ...(gitState ? { git_state: gitState } : {}), ...fields });
     } catch (e) {
       const receipt = pendingReceiptOf(e);

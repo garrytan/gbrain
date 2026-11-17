@@ -13,6 +13,7 @@
  * Disabled members and audience members never match. The literal `owner` is covered by the owner, who reads every
  * scoped call. Anything else stays unmatched and is listed, never guessed.
  */
+import { FAILSAFE_SCHEMA, load } from 'js-yaml';
 import type { MemberRecord } from '../access/members.ts';
 
 const HEADER_LINES = 15;
@@ -34,6 +35,14 @@ function attendeeOf(raw: string): CallAttendee | null {
 
 const splitList = (text: string): CallAttendee[] => text.split(/[,;]/).map(attendeeOf).filter((a): a is CallAttendee => a !== null);
 
+function inlineAttendees(value: string): CallAttendee[] {
+  let parsed: unknown;
+  try { parsed = load(value, { schema: FAILSAFE_SCHEMA }); } catch { return splitList(value.replace(/^\[|\]$/g, '').replace(/["']/g, '')); }
+  if (typeof parsed === 'string') return splitList(parsed);
+  if (!Array.isArray(parsed)) return [];
+  return (parsed.flat(Infinity) as unknown[]).flatMap(item => typeof item === 'string' ? [attendeeOf(item)] : []).filter((a): a is CallAttendee => a !== null);
+}
+
 function frontmatterAttendees(lines: string[]): { attendees: CallAttendee[] | null; end: number } {
   if (lines[0]?.trim() !== '---') return { attendees: null, end: 0 };
   const end = lines.findIndex((l, i) => i > 0 && l.trim() === '---');
@@ -42,7 +51,7 @@ function frontmatterAttendees(lines: string[]): { attendees: CallAttendee[] | nu
     const m = /^attendees:[ \t]*(.*)$/i.exec(lines[i]!);
     if (!m) continue;
     const inline = m[1]!.trim();
-    if (inline) return { attendees: splitList(inline.replace(/^\[|\]$/g, '').replace(/["']/g, '')), end: end + 1 };
+    if (inline) return { attendees: inlineAttendees(inline), end: end + 1 };
     const items: CallAttendee[] = [];
     for (let j = i + 1; j < end && /^\s+-\s+/.test(lines[j]!); j++) {
       const a = attendeeOf(lines[j]!.replace(/^\s+-\s+/, '').replace(/^["']|["']$/g, ''));
