@@ -58,6 +58,7 @@ import { atomFenceRowsRepair } from './atom-fence-rows.ts';
 import { extractorFactsRepair } from './extractor-facts.ts';
 import { unwithdrawnFactsRepair } from './unwithdrawn-facts.ts';
 import { purgedPageFactsRepair } from './purged-page-facts.ts';
+import { purgedChangeReasonsRepair } from './purged-change-reasons.ts';
 import { conversationLabelsRepair } from './conversation-labels.ts';
 import { capturedFactsRepair } from './captured-facts.ts';
 import { agentSessionFactsRepair, agentSessionFlagArgs } from './agent-session-facts.ts';
@@ -97,6 +98,7 @@ import { secretSpansRepair } from './secret-spans.ts';
 import { rowsBehindRepair } from './rows-behind.ts';
 import { factsHomeRepair } from './facts-home.ts';
 import { privateLabelsRepair, type PrivateLabelsLedger } from './private-labels.ts';
+import { openFactsApplyArgs, openFactsRepair, type OpenFactsRequest } from './open-facts.ts';
 import type { ReadersRequest } from './readers.ts';
 import { generationsRepair, generationsSelectionArgv, type GenerationsSelection } from '../generations/repair.ts';
 import { lostFenceRowsRepair } from './lost-fence-rows.ts';
@@ -119,6 +121,11 @@ export interface RepairKindSpec {
   explicit_only?: true;
   /** The preview prints a hash and `--apply --expect <hash>` applies exactly that set (accepted with or without `explicit_only`). */
   preview_bound?: true;
+  /**
+   * `unlisted`: an explicit-only kind whose preview needs inputs only the operator can name, so no command a surface prints
+   * would run as pasted; `--all`, the no-kind preview and the remediation plan leave it out of their explicit-only lists.
+   */
+  unlisted?: true;
   /** `destructive`: the apply rewrites user files or retires stored rows, so it also needs the user's consent (`--yes` with the preview hash, or a terminal prompt). */
   consent?: 'destructive';
   /** The consent payload's wording for a destructive kind: what the apply does and how to undo it (default: the frontmatter file rewrite). */
@@ -266,6 +273,20 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'exists. Rows of a page the purge ledger records are evidenced; rows of a page gone with no purge record (a retention purge, or a rename that did '
       + 'not carry its facts) are retired only with --include-ambiguous; withdrawn, superseded and referenced rows are never touched. Preview-bound: '
       + '--apply --expect <hash> --yes expires exactly the previewed rows; a row that changed since reports changed_since_preview. Database-only; runs only when named.',
+  },
+  'purged-change-reasons': {
+    handler: purgedChangeReasonsRepair, embeds: 'none', checks: [], explicit_only: true, preview_bound: true, consent: 'destructive',
+    consentText: {
+      what: "Set the previewed page-history change reasons that quote a purged claim to '[purged]'",
+      why: 'The preview listed each stored change reason whose text is the Git reason of a (commit, path) a fact purge tombstoned; applying it redacts exactly those rows.',
+      risk: "Database rows only: page_versions.change_reason becomes '[purged]', as the purge itself writes; no page, file or Git commit changes. "
+        + 'A row whose reason changed since the preview is kept. The old text is not kept anywhere by this repair.',
+      user_message: "Redact the previewed page-history change reasons that still quote a purged claim? They become '[purged]'; pages, files and Git history are unchanged.",
+    },
+    summary: 'Redact change reasons that a sync stored after a fact purge tombstoned them (before the #8635 fix): a page version in a source whose '
+      + 'change_reason equals the Git reason trailer of a tombstoned (commit, path), re-read from the checkout. Rows whose source_path is that path are '
+      + 'evidenced; the same text under another path is kept unless --include-ambiguous. Preview-bound: --apply --expect <hash> --yes sets exactly the '
+      + "previewed rows to '[purged]'; a row that changed since reports changed_since_preview. Repo-less sources have nothing to check. Database-only; runs only when named.",
   },
   'conversation-labels': {
     handler: conversationLabelsRepair, embeds: 'none', checks: ['conversation_label_facts'], explicit_only: true, consent: 'destructive',
@@ -723,6 +744,18 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + '(file_backed). Each change is recorded ahead of its write in ~/.gbrain/repair/private-labels/<brain>.jsonl (under $GBRAIN_HOME/.gbrain/ if set), '
       + 'and --class restore re-adds access and visibility: private from it. Runs only when named; never on upgrade.',
   },
+  'open-facts': {
+    handler: openFactsRepair, embeds: 'none', checks: [], explicit_only: true, preview_bound: true, unlisted: true,
+    summary: 'Open facts stamped private before facts.default_visibility world (#8194), which widens what remote callers that are not the brain owner can read. '
+      + 'Operator-only: runs from the CLI on the brain host, never for a remote caller or under GBRAIN_ENFORCED_MEMBER. Needs --source and --created-before <ISO-8601> '
+      + '(the instant the default became world, with its offset; a date alone is read as midnight UTC). The preview lists one window (--limit, default 1000; --after <id> for the next) of active private facts by class '
+      + '(fenced, unfenced; unpaged:<lane> for facts with no page or from a transcript lane, opened only with --class <that class>; --ids-file narrows to listed ids) '
+      + 'and counts every fact it leaves private by reason: expired, superseded, member page, withdrawn or purged, a trust contest, a private, missing or '
+      + 'quarantined holding, provenance or entity page, an unresolved provenance page. --apply --expect <hash> opens exactly that window, keeping each fact\'s '
+      + 'id, provenance and trust tier, rechecked under the page locks; a fact it could not open is reported fact_left_private. Each change is recorded ahead '
+      + 'of its write in ~/.gbrain/repair/open-facts/<brain>.jsonl (under $GBRAIN_HOME/.gbrain/ if set); --undo <ledger> previews re-privating what it opened '
+      + '(the label only: what was read stays read). Runs only when named; never on upgrade.',
+  },
   'generations': {
     handler: generationsRepair, embeds: 'effect', checks: ['generation_retirements', 'generation_held', 'generation_pending'], explicit_only: true, preview_bound: true, consent: 'destructive',
     consentText: {
@@ -796,7 +829,7 @@ export function repairPreviewCommand(kind: RepairKind, opts: { source?: string }
 export interface ExplicitRepairNotice { kind: RepairKind; code: 'explicit_kind_required'; preview_command: string; docs: string }
 
 export function explicitRepairNotices(opts: { source?: string } = {}): ExplicitRepairNotice[] {
-  return EXPLICIT_REPAIR_REGISTRY.map(spec => ({ kind: spec.kind, code: 'explicit_kind_required' as const,
+  return EXPLICIT_REPAIR_REGISTRY.filter(spec => !spec.unlisted).map(spec => ({ kind: spec.kind, code: 'explicit_kind_required' as const,
     preview_command: repairPreviewCommand(spec.kind, opts), docs: ERROR_CATALOGUE.explicit_kind_required.docs }));
 }
 
@@ -841,7 +874,7 @@ export async function repairRunner(engine: BrainEngine, opts: { apply: boolean; 
       slugs?: string[]; noLlm?: boolean; maxLlmUsd?: number; deadline?: number; stop?: AbortSignal; recordDatabaseStops?: boolean;
       prefer?: 'file' | 'database'; requests?: string[]; allDrifted?: boolean; driftClass?: string; since?: string; held?: boolean; side?: string; state?: string; provenance?: string; cursor?: string; progress?: ProgressReporter;
       keep?: 'prior' | 'disk' | 'withdrawn'; requestId?: string; olderThan?: string; includeFailures?: boolean; force?: boolean; from?: string; close?: boolean; afterPage?: number; generations?: GenerationsSelection; day?: string; rules?: string[];
-      cwdPrefixes?: string[]; sessions?: string[]; principal?: string; privateLabelsLedger?: PrivateLabelsLedger; readers?: ReadersRequest } = {}): Promise<RepairResult> {
+      cwdPrefixes?: string[]; sessions?: string[]; principal?: string; privateLabelsLedger?: PrivateLabelsLedger; readers?: ReadersRequest; openFacts?: OpenFactsRequest } = {}): Promise<RepairResult> {
       const ctx = { engine, config, logger, dryRun: !opts.apply, remote: false, sourceId: scope.source_ids[0], writeWaitMs } as OperationContext;
       const spec = repairSpec(kind, opts.registry);
       return runRepair(ctx, spec.handler, scope, { apply: opts.apply, limit: run.limit, embeddingModel, sourceFlag: run.sourceFlag, spec,
@@ -850,11 +883,12 @@ export async function repairRunner(engine: BrainEngine, opts: { apply: boolean; 
           ...(run.afterPage !== undefined ? ['--after', String(run.afterPage)] : []), ...(run.generations ? generationsSelectionArgv(run.generations) : []), ...(run.day ? ['--day', run.day] : []), ...(run.rules?.length ? ['--rules', run.rules.join(',')] : []),
           ...(kind === 'agent-session-facts' ? agentSessionFlagArgs(run).map(arg => shellQuote(arg)) : []),
           ...(run.readers ? [...(run.readers.slugsFile ? ['--slugs-file', run.readers.slugsFile.path] : []), '--readers', run.readers.readers,
-            ...(run.readers.allowWithoutOwner ? ['--allow-without-owner'] : [])].map(arg => shellQuote(arg)) : [])],
+            ...(run.readers.allowWithoutOwner ? ['--allow-without-owner'] : [])].map(arg => shellQuote(arg)) : []),
+          ...(run.openFacts ? openFactsApplyArgs(run.openFacts).map(arg => shellQuote(arg)) : [])],
         explicit: run.explicit, expect: run.expect, includeAmbiguous: run.includeAmbiguous, includeCrossEntity: run.includeCrossEntity, only: run.only, skip: run.skip, slugs: run.slugs, noLlm: run.noLlm,
         maxLlmUsd: run.maxLlmUsd, deadline: run.deadline, ...(run.stop ? { stop: run.stop } : {}), ...(run.recordDatabaseStops ? { recordDatabaseStops: true } : {}), prefer: run.prefer, requests: run.requests, allDrifted: run.allDrifted, driftClass: run.driftClass, since: run.since,
         held: run.held, side: run.side, state: run.state, provenance: run.provenance, cursor: run.cursor, progress: run.progress, keep: run.keep, requestId: run.requestId, olderThan: run.olderThan, includeFailures: run.includeFailures, force: run.force, from: run.from, close: run.close, afterPage: run.afterPage, generations: run.generations, day: run.day, rules: run.rules,
-        cwdPrefixes: run.cwdPrefixes, sessions: run.sessions, principal: run.principal, privateLabelsLedger: run.privateLabelsLedger, readers: run.readers });
+        cwdPrefixes: run.cwdPrefixes, sessions: run.sessions, principal: run.principal, privateLabelsLedger: run.privateLabelsLedger, readers: run.readers, openFacts: run.openFacts });
     },
   };
 }

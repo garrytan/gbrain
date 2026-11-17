@@ -45,7 +45,7 @@ import { WHERE_PARAM, whereOpParam } from './where-param.ts';
 import { searchFilterHint } from '../search/filter-hint.ts';
 import { TargetTrace, diagnoseProbe, diagnoseTrace, probeTarget, type ExplainTargetDiagnosis } from '../search/explain-target.ts';
 import { assembleEvidenceForHits, capDeliveredSnippets, capEvidenceToBudget, countEvidenceTokens, deliverEvidence, pagePlanHits, queryBudgetUsesAuto, resolveEvidencePlan, selectLongPages, unsupportedDelivery, withLongPagePolicy, type DeliveryMeta, type DeliveryScope, type EvidencePlan, type FrozenHit, type ReturnUnit } from '../search/evidence-delivery.ts';
-import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { resolveExcludePrivatePages, worldOnlyFacts } from '../search/private-visibility.ts';
 import { SAFE_FENCE_CHUNKER_VERSION, chunkManifestReads } from '../search/safe-chunks.ts';
 import { expandEngineTypeFilters } from '../schema-pack/query-types.ts';
 import { reconcileTypeFilter } from './search-type-filter.ts';
@@ -217,7 +217,7 @@ async function evidenceOutput(ctx: OperationContext, p: Record<string, unknown>,
     const pageTrust = loadPageTrust(ctx.engine, results.filter(r => typeof r.fact_row?.id !== 'number'));
     pageTrust.catch(() => {});
     const ev = delivered ?? await timings.part('response', 'evidence', () => withEvidence(ctx, p, results, plan, scope, meta));
-    const rows = await timings.part('response', 'trust', () => stampPageTrust(ctx.engine, keepEnumerated ? keepEnumeratedRows(results, ev.rows) : ev.rows, scope.minTrust, pageTrust));
+    const rows = await timings.part('response', 'trust', () => stampPageTrust(ctx.engine, keepEnumerated ? keepEnumeratedRows(results, ev.rows) : ev.rows, scope.minTrust, pageTrust, worldOnlyFacts(ctx.remote)));
     const responseMeta = await timings.part('response', 'meta', () => buildMeta(rows));
     return searchOutput(ctx, p, rows, responseMeta, snippetCap, timings, ev.evidence);
   });
@@ -496,6 +496,8 @@ async function buildRetrievalResponseMeta(
   const degraded = [...(m?.degraded ?? [])];
   if (safeIndexPending) degraded.push({ stage: 'safe_index_pending' });
   if (quotedFacts === null && visible.length) degraded.push({ stage: 'saved_facts_withheld' });
+  if ((results as SearchResult[]).some(r => r.fact_row?.observed_unavailable)) degraded.push({ stage: 'fact_observed_date_unavailable' });
+  if ((results as SearchResult[]).some(r => r.fact_row?.contested_unavailable)) degraded.push({ stage: 'contested_unavailable' });
   if (readiness.status === 'by_design') degraded.push({ stage: 'projection_by_design' });
   else if (readiness.status !== 'ready') {
     degraded.push({ stage: readiness.status === 'projection_pending' ? 'projection_pending' : 'projection_status_unknown' });
@@ -1024,7 +1026,7 @@ const query: Operation = {
       }))).map(r => ({ ...r }));
       stampDeepResearchIds(results);
       return timings.stage('response', async () => {
-        const labeled = await stampPageTrust(ctx.engine, results, querySourceScope.minTrust);
+        const labeled = await stampPageTrust(ctx.engine, results, querySourceScope.minTrust, undefined, worldOnlyFacts(ctx.remote));
         imageMeta.retrieved_count = labeled.length;
         return searchOutput(ctx, p, labeled, { ...await buildRetrievalResponseMeta(ctx, querySourceScope, queryText ?? '', labeled, imageMeta, { types }), ...(plan && (plan.unit !== 'auto' || plan.explicitUnit) ? { delivery: unsupportedDelivery(plan, 'image_query_unsupported') } : {}) }, snippetCap, timings);
       });

@@ -38,10 +38,19 @@
  * after an FTS language change. A page with a NULL `search_vector` is absent
  * from the arm (the BEFORE INSERT/UPDATE trigger keeps it non-NULL). Local
  * callers' strict query still matches and ranks the whole vector (title weight
- * A dominates); their OR re-run matches titles only, like remote callers,
- * because matching the whole vector let a date in a question pull every dated
- * timeline into `ts_rank_cd`: 3-5 s on a large brain (#7135, diagnosed by
- * @veltri-23 in #7136).
+ * A dominates). Their any-word retry (the OR re-run) matches the whole vector
+ * too while every matching page fits `titleWholeVectorCandidates()`, and
+ * titles only, like remote callers, when the set does not fit. Unbounded, it
+ * let a date in a question pull every dated timeline into `ts_rank_cd`: 3-5 s
+ * on a large brain (#7135, diagnosed by @veltri-23 in #7136). Titles alone
+ * lost the pages whose timeline names what a reworded question asks about
+ * ("Who is on the payroll at Acme?", GST-2899). The strict attempt ranks at most
+ * `titleWholeVectorCandidates()` matching pages (#7082: a very common word
+ * otherwise read every matching vector until the statement timeout). The whole
+ * vector is the only lexical path to timeline_entries rows no chunk holds, so a
+ * rarer term keeps its exact result; a cut attempt reports
+ * `keyword_candidates_incomplete` and puts the title-only statement's rows
+ * first, so title and exact-title matches never depend on which pages the cut kept.
  */
 import type { SearchOpts, SearchResult } from '../types.ts';
 import { searchLimitCap } from '../search/eval-pool-depth.ts';
@@ -77,33 +86,45 @@ export async function searchTitles(
   if (opts?.limit && opts.limit > searchLimitCap()) {
     console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
   }
-  const statementFor = (chunkManifest: boolean, relaxed = false) => buildSearchTitlesStatement(query, opts, { ...dialect, chunkManifest, relaxed });
+  type Attempt = { text: string; kind: 'whole' | 'title' | 'complete' };
+  const statementFor = (chunkManifest: boolean, kind: Attempt['kind'] = 'whole') => buildSearchTitlesStatement(query, opts, { ...dialect, chunkManifest, relaxed: kind === 'title', completeOnly: kind === 'complete' });
   const statement = statementFor(true);
-  /** One scoped read running the statement once per query text ($1), in order. */
-  const run = (queryTexts: string[], relaxed: boolean) => {
-    const preferIndex = relaxed && dialect.relaxedPrefersIndex && !statement.safeChunks;
+  /** One scoped read running one statement per attempt, in order; `top` replaces the caller's limit and offset. */
+  const run = (attempts: Attempt[], anyWord: boolean, top?: number) => {
+    const preferIndex = anyWord && dialect.relaxedPrefersIndex && !statement.safeChunks;
     const settings = {
       ...(dialect.statementTimeout ? { statement_timeout: dialect.statementTimeout } : {}),
       ...dialect.statementSettings,
       ...(preferIndex ? { enable_seqscan: 'off' } : {}),
     };
     return scoped(async exec => {
-      const sql = statementFor(await dialect.chunkManifest?.(exec) ?? true, relaxed).sql;
+      const manifest = await dialect.chunkManifest?.(exec) ?? true;
       const lists = [];
-      for (const text of queryTexts) lists.push((await exec.unsafe(sql, [text, ...statement.params.slice(1)])).rows);
+      for (const a of attempts) lists.push((await exec.unsafe(statementFor(manifest, a.kind).sql, [a.text, statement.params[1], ...(top === undefined ? statement.params.slice(2, 4) : [top, 0]), ...statement.params.slice(4)])).rows);
       return lists;
     }, Object.keys(settings).length ? settings : undefined);
   };
 
   const strictQuery = statement.params[0] as string;
-  const [rows] = await run([strictQuery], false);
-  if (rows.length > 0) return rows.map(rowToSearchResult);
+  const limit = statement.params[2] as number, offset = statement.params[3] as number;
+  const [rows] = await run([{ text: strictQuery, kind: 'whole' }], false, offset + limit);
+  if (rows.length > 0 && rows[0].candidates_cut === true) {
+    opts?.onKeywordIncomplete?.('candidate_budget');
+    const [titleRows] = await run([{ text: strictQuery, kind: 'title' }], true, offset + limit);
+    const titled = new Set(titleRows.map(r => r.page_id));
+    return [...titleRows, ...rows.filter(r => !titled.has(r.page_id))].slice(offset, offset + limit).map(rowToSearchResult);
+  }
+  if (rows.length > offset) return rows.slice(offset).map(rowToSearchResult);
   const orQuery = buildOrFallbackWebsearchQuery(strictQuery);
   if (!orQuery) return [];
   const terms = orFallbackTokens(strictQuery);
   const rarity = terms.length <= RARITY_MAX_TERMS && !opts?.offset;
-  const [orRows, ...wordLists] = await run([boundWebsearchQuery(orQuery), ...(rarity ? terms : [])], true);
-  const relaxedRows = (rarity ? rankByRarity(orRows, wordLists, statement.params[2] as number) : orRows).map(rowToSearchResult);
+  const anyWord = boundWebsearchQuery(orQuery);
+  const wordAttempts: Attempt[] = rarity ? terms.map(text => ({ text, kind: 'title' })) : [];
+  // A local caller's retry matches timelines too while every matching page fits the cap; otherwise, and for remote callers, titles alone.
+  let [orRows, ...wordLists] = await run([{ text: anyWord, kind: statement.safeChunks ? 'title' : 'complete' }, ...wordAttempts], true);
+  if (orRows[0]?.candidates_cut === true && !statement.safeChunks) [orRows] = await run([{ text: anyWord, kind: 'title' }], true);
+  const relaxedRows = (rarity ? rankByRarity(orRows, wordLists, limit) : orRows).map(rowToSearchResult);
   // 2026-09 (#3617 follow-up): relaxed rows are TAGGED so hybrid's fusion can
   // demote them (SearchResult.keyword_relaxed). #7491: a title holding every
   // identifier the query names (search/keyword-identifier-probe.ts) is the

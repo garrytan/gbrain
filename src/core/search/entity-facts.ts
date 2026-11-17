@@ -19,7 +19,8 @@
 
 import type { BrainEngine } from '../engine.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
-import { privateFactFilterForCaller } from './private-visibility.ts';
+import { privateFactFilterForReader, worldOnlyFacts } from './private-visibility.ts';
+import { grantedPrivateFactSql } from '../access/member-facts.ts';
 import { factEntitySlugs } from '../mentions/siblings.ts';
 import { resolveQueryEntities, type ResolvedEntity } from './alias-fanout.ts';
 import { collapseFactReads } from '../facts/capture-dedup.ts';
@@ -47,7 +48,7 @@ export function stripCollapseColumns<T extends CollapseColumns & { collapsed_ids
 }
 
 async function newestFacts(engine: BrainEngine, sourceId: string, slugs: string[], opts: { remote: boolean; minTrust?: TrustTier }, limit: number): Promise<Array<EntityFact & CollapseColumns>> {
-  const visibility = opts.remote ? `AND f.visibility = 'world' AND ${privateFactFilterForCaller('f')}` : '';
+  const visibility = opts.remote ? `${worldOnlyFacts(opts.remote) ? `AND (f.visibility = 'world' OR ${grantedPrivateFactSql('f')})` : ''} AND ${privateFactFilterForReader('f')}` : '';
   const rows = await engine.executeRaw<EntityFact & CollapseColumns>(
     `SELECT f.id, f.fact, f.entity_slug, f.kind, f.valid_from::text AS valid_from, f.source, ${SAVED_FACT_COLLAPSE_COLUMNS}
        FROM facts f

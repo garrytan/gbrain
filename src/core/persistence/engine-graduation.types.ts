@@ -92,7 +92,11 @@ export interface InventoryEntry {
   relation: string;
   kind: 'table' | 'view';
   class: InventoryClass;
-  engines: { pglite: boolean; postgres: boolean };
+  /**
+   * Which engines hold this relation. `rust` is false on every row until the Rust engine stores the relation
+   * (docs/designs/RUST_ENGINE.md); a later PR that adds Rust storage for a relation flips its row.
+   */
+  engines: { pglite: boolean; postgres: boolean; rust: boolean };
   lossKind: LossKind;
   /** The only differences verify tolerates between source snapshot and target. */
   transforms: readonly ColumnTransform[];

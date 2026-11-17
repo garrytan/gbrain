@@ -307,7 +307,9 @@ Save ONE fact with mandatory attribution.
   `share: true`, and its `visibility: "world"` is refused; the brain owner's
   own credential saves as above (shared by default, `private` on its member
   page when it asks or the page or default keeps facts private). The response
-  names the `page` and `visibility` the fact got.
+  names the `page` and `visibility` the fact got. Facts saved `private` before
+  the default became `world` stay private until the operator runs
+  `gbrain repair open-facts` on the brain host (no remote verb opens them).
 
 Response: `{ id, status, status_text, entity_slug, valid_until,
 protocol_version }` (+ `degraded_dedup: true` when no embedding provider —
@@ -818,7 +820,8 @@ provider for comparison.
 The response carries `similar_active`: `{ state, candidates, semantic_review,
 next }`. `state` is `checked`, `not_checked_no_embedding` or
 `not_checked_pending`. `candidates` lists up to five other active facts about
-the same entity, with the same visibility (world only for remote callers),
+the same entity, with the same visibility (world only for remote callers
+other than the brain owner),
 whose embedding is at cosine 0.80 or higher to the withdrawn claim, as
 `{ fact_id, similarity }` (no stored text; zero model calls). `semantic_review`
 is `scheduled`, `off`, `unavailable` or `opted_out`; `next` tells the agent
@@ -1020,7 +1023,8 @@ source and `scope_entity` match an accepted card's `(source_id, slug)`.
 
 `entity_facts[]` holds the packed entities' own facts: up to 5 per card, newest
 first, read in the card's own source with the card's visibility (world-only
-unless a trusted-local caller passed `include_private`) and eligibility. Each
+unless a trusted-local caller passed `include_private` or the caller is the
+brain owner's own remote credential) and eligibility. Each
 row is `{ source_id, slug, fact_id, fact, kind, entity_slug, valid_from?,
 context, confidence, attributed_to, provenance, trust_tier?, origin? }`, where
 `(source_id, slug)` names the card. `facts[]` is unchanged hot memory, so a

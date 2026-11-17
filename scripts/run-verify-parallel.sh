@@ -157,6 +157,7 @@ CHECKS=(
   "check:fixture-privacy"
   "check:source-scope-onboard"
   "check:getpage-scope"
+  "check:relative-dotdot"
   "check:origin-assignment"
   "check:no-double-retry"
   "check:batch-audit-site"

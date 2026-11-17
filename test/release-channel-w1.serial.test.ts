@@ -11,7 +11,7 @@
  * Serial: stubs globalThis.fetch and process-global env.
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -19,6 +19,7 @@ import { VERSION } from '../src/version.ts';
 import { parseSemver } from '../src/core/semver.ts';
 import {
   STABLE_EVIDENCE_POLICY,
+  isCacheFresh,
   offeredVersion,
   parseMarker,
   pendingUpgradeVersion,
@@ -182,6 +183,41 @@ for (const brain of ['repo-less', 'repo'] as const) {
       const path = join(dotG(), 'update-check.stable.json');
       writeFileSync(path, readFileSync(path, 'utf8').replace(STABLE_EVIDENCE_POLICY, 'stable-record-v1;matrix-from=0.60.1.0'));
       expect(readUpdateCache('stable')).toBeNull();
+    });
+
+    for (const [shape, mtimeOffset] of [['only checked_at is ahead', -2 * 3600_000], ['the file was written while the clock was ahead', 24 * 3600_000]] as const) {
+      test(`#8795: a cache stamped a day in the future (${shape}) is stale, and the next check replaces it with the withdrawal`, async () => {
+        writeConfig({}, brain);
+        const path = join(dotG(), 'update-check.stable.json');
+        writeUpdateCache({ kind: 'up_to_date', current: VERSION }, { channel: 'stable', checkedAt: Date.now() + 24 * 3600_000, latest: VERSION });
+        const mtime = (Date.now() + mtimeOffset) / 1000;
+        utimesSync(path, mtime, mtime);
+        expect(isCacheFresh(readUpdateCache('stable')!, Date.now())).toBe(false);
+        serve({ record: record(BEHIND, { known_bad: [VERSION] }) });
+        await refreshUpdateCache();
+        expect(readUpdateCache('stable')).toMatchObject({ latest: BEHIND, knownBad: [VERSION], error: null, marker: { kind: 'upgrade_available', latest: BEHIND } });
+        expect(isCacheFresh(readUpdateCache('stable')!, Date.now())).toBe(true);
+        expect(pendingUpgradeVersion(VERSION)).toBe(BEHIND);
+      });
+    }
+
+    test('#8795: a stored check a few seconds ahead still wins over an older refresh', () => {
+      writeConfig({}, brain);
+      const now = Date.now();
+      writeUpdateCache({ kind: 'upgrade_available', current: VERSION, latest: AHEAD2 }, { channel: 'stable', checkedAt: now + 30_000 });
+      expect(isCacheFresh(readUpdateCache('stable')!, now)).toBe(true);
+      writeUpdateCache({ kind: 'up_to_date', current: VERSION }, { channel: 'stable', checkedAt: now });
+      expect(readUpdateCache('stable')?.latest).toBe(AHEAD2);
+    });
+
+    test('#8795: a cache file a network home\'s file server stamped ahead, checked by this clock, stays fresh', () => {
+      writeConfig({}, brain);
+      const path = join(dotG(), 'update-check.stable.json');
+      writeUpdateCache({ kind: 'upgrade_available', current: VERSION, latest: AHEAD }, { channel: 'stable' });
+      const mtime = (Date.now() + 10 * 60_000) / 1000;
+      utimesSync(path, mtime, mtime);
+      expect(isCacheFresh(readUpdateCache('stable')!, Date.now())).toBe(true);
+      expect(pendingUpgradeVersion(VERSION)).toBe(AHEAD);
     });
 
     test('an invalid configured channel checks and offers nothing', async () => {

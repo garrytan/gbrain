@@ -4,7 +4,7 @@
  * path, with the rename map) and slugs. Peeled out of extract-atoms.ts (module-size ratchet).
  */
 import { existsSync } from 'node:fs';
-import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { relative, resolve, sep } from 'node:path';
 import type { BrainEngine, LinkBatchInput } from '../engine.ts';
 import { isAvailable } from '../ai/gateway.ts';
 import { ATOM_KIND, atomGenerationAdapter, atomOwnerKey, atomPagePin, TRANSCRIPT_KEY_PREFIX, type AtomGenerationContext } from '../generations/adapters/atoms.ts';
@@ -12,6 +12,7 @@ import { markdownItem } from '../generations/adapters/page.ts';
 import type { GenerationKey } from '../generations/contract.ts';
 import { publishGeneration } from '../generations/publish.ts';
 import type { ExtractAtomsItem } from './extract-atoms-input.ts';
+import { relativeEscapesRoot } from '../path-confine.ts';
 
 /**
  * GBRA-161: one unmanaged item's atoms, their provenance edges (#3961, #4733), the completion flip (source_hash, #4148)
@@ -54,7 +55,7 @@ export const heldLine = (originLabel: string, key: GenerationKey, reason: string
 
 /** GBRA-161 PR 1b: the corpus root a discovered transcript lies under, with the label its key carries. */
 export function transcriptRoot(filePath: string, corpusDir: string, meetingDir: string | undefined): { path: string; label: string } {
-  const inside = (dir: string) => { const rel = relative(resolve(dir), resolve(filePath)); return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel); };
+  const inside = (dir: string) => { const rel = relative(resolve(dir), resolve(filePath)); return rel !== '' && !relativeEscapesRoot(rel); };
   return meetingDir && inside(meetingDir) && !(inside(corpusDir) && resolve(corpusDir).length > resolve(meetingDir).length)
     ? { path: meetingDir, label: 'meetings' } : { path: corpusDir, label: 'corpus' };
 }

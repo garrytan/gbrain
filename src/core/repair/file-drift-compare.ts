@@ -79,15 +79,25 @@ export function newerPageParagraph(sourceId: string, slug: string, evidence: Dri
     + `To keep the file, preview gbrain repair file-drift --source ${sourceId} --slug ${slug} --prefer file. To keep the page, preview it with --prefer database instead (its apply would rewrite the file from the page and needs the user's consent), or carry the edit into the file, commit it and run gbrain sync --source ${sourceId}.`;
 }
 
+/**
+ * GST-2869: what settles a read-only mirror's differing page. Its file-drift previews read every page as database-only and
+ * resolve nothing, so naming one would send a caller to an empty preview; they apply once the source is writable again.
+ */
+export function mirrorDriftRoute(sourceId: string): string {
+  return `this source is a read-only mirror, so gbrain repair's file-drift previews read its pages as database-only and resolve nothing; `
+    + `the page stays held until the user makes the source writable again (gbrain sources mirror-writable ${sourceId}, which lets gbrain write files into its checkout) and picks a side then`;
+}
+
 /** One selected page, compared: a held page by its hold, any other by its slug. Never writes. */
-export async function comparePage(engine: BrainEngine, sourceId: string, target: { slug: string | null; hold?: GitHoldRecord }, assessmentAt: string): Promise<ComparedPage> {
+export async function comparePage(engine: BrainEngine, sourceId: string, target: { slug: string | null; hold?: GitHoldRecord; mirror?: boolean }, assessmentAt: string): Promise<ComparedPage> {
   const { slug, hold } = target;
   const item = `${sourceId}:${slug ?? hold?.path ?? ''}`;
   const side = hold ? fileDriftSide(hold.meta) : undefined;
   const held = { ...(side ? { side } : {}), ...(hold?.meta.state ? { state: hold.meta.state } : {}), ...(hold ? { path: hold.path } : {}) };
   if (side === 'deleted' && hold?.meta.state && hold.meta.state !== 'file_gone') {
     const state = hold.meta.state;
-    return { item, slug, ...held, would: 'needs_human', why: `the page at ${hold.path} is deleted and the file differs (${state}); --prefer database would ${fileDriftActionVerb('deleted', state, 'database')} and --prefer file would ${fileDriftActionVerb('deleted', state, 'file')}, so a person decides` };
+    return { item, slug, ...held, would: 'needs_human', why: target.mirror ? `the page at ${hold.path} is deleted and the file differs (${state}), so a person decides; ${mirrorDriftRoute(sourceId)}`
+      : `the page at ${hold.path} is deleted and the file differs (${state}); --prefer database would ${fileDriftActionVerb('deleted', state, 'database')} and --prefer file would ${fileDriftActionVerb('deleted', state, 'file')}, so a person decides` };
   }
   if (slug === null) return { item, slug, ...held, would: 'unknown', why: 'the hold names no page; the next sync re-classifies it' };
   try {
@@ -100,12 +110,22 @@ export async function comparePage(engine: BrainEngine, sourceId: string, target:
         why: !hold ? 'the page and its file agree' : due ? 'the page and its file agree once gbrain\'s own normalisation is read; the next sync releases the hold with no write'
           : `the page and its file agree; gbrain repair file-drift --source ${sourceId} --slug ${slug} --prefer file previews the release` };
     }
-    if (live.still_present !== true) return { item, slug, ...held, would: live.still_present === false ? 'no_drift' : 'unknown', why: live.reason };
-    const { path, ...evidence } = await readDriftEvidence(engine, sourceId, slug, assessmentAt);
+    // GST-2843: a read-only mirror never writes its files, so the live check calls every page database-only; a held page whose
+    // file sync still imports is compared with that file instead, and only a file that is gone stays database-only.
+    const mirrorHeld = live.still_present === false && live.reason === 'database_only' && !!hold && side !== 'deleted' && target.mirror === true;
+    if (live.still_present !== true && !mirrorHeld) return { item, slug, ...held, would: live.still_present === false ? 'no_drift' : 'unknown', why: live.reason };
+    const read = await readDriftEvidence(engine, sourceId, slug, assessmentAt).catch(error => {
+      if (mirrorHeld && error instanceof OperationError && error.detail === 'canonical_file_missing') return null;
+      throw error;
+    });
+    if (!read) return { item, slug, ...held, would: 'no_drift', why: live.reason };
+    const { path, ...evidence } = read;
     const base = { item, slug, ...held, path, evidence };
     if (evidence.differs === 'none') return { ...base, would: hold ? 'release_hold' : 'no_drift', why: 'nothing differs once gbrain\'s own normalisation is read' };
-    if (evidence.newer === 'file') return { ...base, would: 'prefer_file', why: `${path} was committed after the page last changed, so the file wins (Git is the parent): gbrain repair file-drift --source ${sourceId} --slug ${slug} --prefer file` };
-    if (evidence.newer === 'database') return { ...base, would: 'needs_human', why: newerPageParagraph(sourceId, slug, { path, ...evidence }) };
+    if (evidence.newer === 'file') return { ...base, would: 'prefer_file', why: mirrorHeld ? `${path} was committed after the page last changed, so the file wins (Git is the parent), but ${mirrorDriftRoute(sourceId)}`
+      : `${path} was committed after the page last changed, so the file wins (Git is the parent): gbrain repair file-drift --source ${sourceId} --slug ${slug} --prefer file` };
+    if (evidence.newer === 'database') return { ...base, would: 'needs_human', why: mirrorHeld ? `page ${slug} changed after ${path} was last committed (page updated ${evidence.page_updated_at}, file committed ${evidence.file_committed_at}), so a person decides which side to keep; ${mirrorDriftRoute(sourceId)}`
+      : newerPageParagraph(sourceId, slug, { path, ...evidence }) };
     return { ...base, would: 'needs_human', why: evidence.file_uncommitted ? `${path} has uncommitted bytes, so which side is newer is unknown; commit or restore the file, then compare again`
       : `which side is newer is unknown (${evidence.file_committed_at ? 'the page has no update time' : `no commit holds ${path}`}); a person decides` };
   } catch (error) {

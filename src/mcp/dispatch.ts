@@ -245,6 +245,8 @@ export interface DispatchOpts {
    * caller params. See OperationContext.localFederatedSourceIds.
    */
   localFederatedSourceIds?: string[];
+  /** GBRA-585: the trusted local CLI named no source (OperationContext.localSourceImplicit); ignored unless remote is false. */
+  localSourceImplicit?: boolean;
   /**
    * #5081: explicit-read admission for a stdio connection bound by
    * GBRAIN_SOURCE or a .gbrain-source pin. Stdio transport only; see
@@ -979,6 +981,7 @@ export function buildOperationContext(
     sourceId: opts.sourceId ?? 'default',
     ...(sessionId ? { sessionId } : {}),
     ...(opts.localFederatedSourceIds ? { localFederatedSourceIds: opts.localFederatedSourceIds } : {}),
+    ...(opts.localSourceImplicit && opts.remote === false ? { localSourceImplicit: true } : {}),
     ...(opts.explicitReadBinding ? { explicitReadBinding: opts.explicitReadBinding } : {}),
     ...(opts.surfaceCeiling ? { surfaceCeiling: opts.surfaceCeiling } : {}),
     ...(opts.stdioSurface ? { stdioSurface: opts.stdioSurface } : {}),
@@ -1013,7 +1016,7 @@ export async function dispatchToolCall(
   // #6721: a read op answers every config read from one snapshot of the table
   // (config-snapshot.ts); a write reads config live, so it sees its own writes.
   // GBRA-156: and reads the brain identity and each local writer's credential once for its pre-submission checks.
-  // GBRA-156: a remote read sees private pages only in the sources its grant names under private_pages: granted_sources.
+  // GBRA-156: a remote read sees private pages only in the sources its grant names under private_pages: granted_sources; GBRA-575: private facts under private_facts, only on a credential's own read (no audience, actor, scope read or enforced member).
   // Writes, local callers and every path outside this call keep the empty set, so they hide or see exactly what they did.
   // context_pack and delta stay world-only for every caller unless a trusted local one passes include_private, so no grant widens them.
   // GBRA-498: a room declaration only marks the answer; its argument is taken out here, before any validation,
@@ -1024,12 +1027,12 @@ export async function dispatchToolCall(
   const op = operations.find(o => o.name === name);
   const readOnly = op?.mutating === false;
   const args = op && params ? normalizeOptionalParams(op, params) : params;
-  const privateSources = readOnly && opts.remote !== false && !WORLD_ONLY_PACK_OPS.has(name) ? opts.auth?.privatePages?.sources : undefined;
+  const [privateSources, privateFactSources] = readOnly && opts.remote !== false && !WORLD_ONLY_PACK_OPS.has(name) ? [opts.auth?.privatePages?.sources, opts.auth?.privateFacts?.sources] : [];
   const resolved = opts.metaHook && (opts.hotMemoryOff === true || hotMemoryOffIn(params)) ? { ...opts, metaHook: undefined } : opts;
   // GBRA-218: a remote call also carries its credential's member identity, which every caller-aware read checks page readers against.
   // GBRA-231: or the audience a shared agent's harness asserts, resolved (and refused) on every call before any work.
   const run = async () => {
-    if (opts.remote === false) return qmMemoryToolResult(name, await withCallerAccess({ privateReadableSources: [] }, () => withRequestIdentityMemo(() => dispatchResolvedCall(engine, name, params, resolved))));
+    if (opts.remote === false) return qmMemoryToolResult(name, await withCallerAccess({ privateReadableSources: [], privateFactSources: [] }, () => withRequestIdentityMemo(() => dispatchResolvedCall(engine, name, params, resolved))));
     // GST-359 C1: or the person a trusted system attests (x-qm-actor), decided here too, before any work (access/actor.ts).
     let audience: AudiencePrincipal[] | null = null;
     let attested: Awaited<ReturnType<typeof resolveAttestedActor>> = null;
@@ -1090,7 +1093,7 @@ export async function dispatchToolCall(
     }
     if (audience || attested?.actor) assertion('accepted');
     const callParams = attested ? attested.params : args;
-    return withCallerAccess(access, async () => {
+    return withCallerAccess({ ...access, privateFactSources: privateFactSources && !audience && !attested?.actor && readMode === null && !opts.enforcedMember ? privateFactSources : [] }, async () => {
       const out = await withRequestIdentityMemo(() => withReadMode(readMode, () => dispatchResolvedCall(engine, name, callParams, scoped)));
       // _meta.access (MCP_META_CHANNELS.md): the view this call was answered under, for the harness; own producer, isolated.
       try { out._meta = { ...(out._meta ?? {}), access: await appliedAccessSummary(engine, scoped.auth, [scoped.sourceId, ...(scoped.localFederatedSourceIds ?? [])]) }; } catch { /* the key is absent */ }

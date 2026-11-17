@@ -18,6 +18,11 @@
  *   row's visibility and its proposal carries the widening, which only the
  *   owner's accept applies (GST-2511); until then later writes of the same
  *   fence keep that contested row narrower.
+ * - Operator open (#8194): only inside `gbrain repair open-facts`
+ *   (persistence/context.ts withOpenFacts), a named private row whose cell is
+ *   now world at the same row number and claim is guarded at any tier and
+ *   moves back in place as world, keeping its id and tier. Every other
+ *   widening keeps the rules above.
  * - Row gate (ENG-1): every new fence row is gated like other fact writers at
  *   the writer's tier; a held row is not inserted (the hold keeps it), a
  *   flagged row records its receipt after insert.
@@ -28,7 +33,7 @@
  *   (trust/held-removals.ts).
  */
 import type { BrainEngine, NewFact } from '../engine.ts';
-import { currentWriteTrust } from '../persistence/context.ts';
+import { currentWriteTrust, openedFactRowSql } from '../persistence/context.ts';
 import type { WriteGateConfig } from '../write-gate.ts';
 import { decideFactWrite, recordFlaggedRow, recordWriteGateHold, type GatedRowDecision } from '../write-gate-store.ts';
 import { gateInput } from './gate-outcomes.ts';
@@ -56,20 +61,23 @@ export async function guardFenceRows<T extends FenceFact>(tx: BrainEngine, input
   expire: () => Promise<unknown>): Promise<FenceGuard<T>> {
   const { sourceId, slug, incoming } = input;
   // GST-2511: a contested row a widening proposal stored narrower (pending, rejected or undone) is held at its visibility
-  // against a writer that could not widen the row it contests, while the fence still asks for world at its position.
+  // while the fence still asks for world at its position. GST-2891: whatever the writer's tier: re-deriving the unchanged
+  // row (a sync after an unrelated edit, a re-put) is not the owner's accept, which alone applies the widening.
   const held = `f.visibility <> 'world' AND EXISTS (SELECT 1 FROM trust_proposals tp WHERE tp.action = 'supersede_fact' AND tp.related_table = 'facts'
-      AND tp.related_id = f.id AND tp.status IN ('pending', 'rejected', 'undone') AND tp.before_state->'visibility' IS NOT NULL
-      AND ${trustRankSql("tp.before_state->'old'->>'tier'")} > ${WRITER_RANK})
+      AND tp.related_id = f.id AND tp.status IN ('pending', 'rejected', 'undone') AND tp.before_state->'visibility' IS NOT NULL)
     AND EXISTS (SELECT 1 FROM jsonb_to_recordset($3::text::jsonb) AS w(row_num integer, fact text, visibility text)
       WHERE w.row_num = f.row_num AND w.fact = f.fact AND w.visibility = 'world')`;
-  const guarded = (await tx.executeRaw<{ id: number; row_num: number; fact: string; visibility: string; trust_tier: string; above: boolean }>(
-    `SELECT f.id, f.row_num, f.fact, f.visibility, f.trust_tier, ${trustRankSql('f.trust_tier')} > ${WRITER_RANK} AS above FROM facts f
+  // #8194: a row `gbrain repair open-facts` opens (withOpenFacts: only private to world, same row number and claim) is guarded at
+  // any tier, so it is detached before the expiry and moves back in place as world, keeping its id and tier.
+  const opened = openedFactRowSql('f', '$3');
+  const guarded = (await tx.executeRaw<{ id: number; row_num: number; fact: string; visibility: string; trust_tier: string; above: boolean; opened: boolean }>(
+    `SELECT f.id, f.row_num, f.fact, f.visibility, f.trust_tier, ${trustRankSql('f.trust_tier')} > ${WRITER_RANK} AS above, ${opened} AS opened FROM facts f
       WHERE f.source_id = $1 AND f.source_markdown_slug = $2 AND f.row_num IS NOT NULL AND f.expired_at IS NULL
         AND (COALESCE(f.source, '') NOT LIKE 'cli:extract-conversation-facts%'
           OR EXISTS (SELECT 1 FROM jsonb_to_recordset($3::text::jsonb) AS c(row_num integer) WHERE c.row_num = f.row_num))
         AND NOT EXISTS (SELECT 1 FROM jsonb_to_recordset($3::text::jsonb) AS n(row_num integer, fact text, visibility text)
           WHERE n.row_num = f.row_num AND n.fact = f.fact AND n.visibility = f.visibility)
-        AND (${trustRankSql('f.trust_tier')} > ${WRITER_RANK} OR (${held}))
+        AND (${trustRankSql('f.trust_tier')} > ${WRITER_RANK} OR (${held}) OR ${opened})
       ORDER BY f.row_num FOR UPDATE`, [sourceId, slug, incoming])).filter(row => !input.kept?.includes(Number(row.id)));
   if (guarded.length) await tx.executeRaw('UPDATE facts SET row_num = NULL WHERE id = ANY($1::bigint[])', [guarded.map(g => Number(g.id))]);
   await expire();
@@ -83,6 +91,13 @@ export async function guardFenceRows<T extends FenceFact>(tx: BrainEngine, input
   const moves: Array<{ id: number; row_num: number; visibility: string }> = [];
   for (const g of guarded) {
     const free = rows.filter(r => r.fact === g.fact && !occupied.has(r.row_num));
+    const reopened = g.opened ? free.find(r => r.row_num === Number(g.row_num) && r.visibility === 'world') : undefined;
+    if (reopened) {
+      moves.push({ id: Number(g.id), row_num: reopened.row_num, visibility: 'world' });
+      occupied.add(reopened.row_num);
+      rows = rows.filter(r => r !== reopened);
+      continue;
+    }
     if (!g.above) {
       const target = free.find(r => r.row_num === Number(g.row_num));
       if (!target) continue;
@@ -110,20 +125,28 @@ export async function guardFenceRows<T extends FenceFact>(tx: BrainEngine, input
   const fresh = new Set(rows.filter(r => !occupied.has(r.row_num)).map(r => r.row_num));
   // GST-2511: a new world row that replaces a guarded non-world row, or restates the claim of a non-world fact of this page
   // more trusted than the writer, is inserted at that row's visibility; its proposal carries the widening, which only the
-  // owner's accept applies.
+  // owner's accept applies. GST-2900: so does a row restating such a fact of its own entity kept on another page (or on
+  // none), while no world fact of that entity states it (restatedPrivateCopy's rule for remember).
   const widened = new Map<number, { from: string; copy?: { id: number; trust_tier: string } }>();
   for (const g of contested) {
     const at = rows.find(r => r.row_num === Number(g.row_num) && fresh.has(r.row_num));
     if (at && g.visibility !== 'world' && at.visibility === 'world') widened.set(at.row_num, { from: g.visibility });
   }
   const restated = rows.filter(r => fresh.has(r.row_num) && r.visibility === 'world' && !widened.has(r.row_num));
-  const trustedPrivate = restated.length ? await tx.executeRaw<{ id: number; fact: string; visibility: string; trust_tier: string }>(
-    `SELECT f.id, f.fact, f.visibility, f.trust_tier FROM facts f WHERE f.source_id = $1 AND f.source_markdown_slug = $2 AND f.expired_at IS NULL
-      AND f.visibility <> 'world' AND f.fact = ANY($3::text[]) AND ${trustRankSql('f.trust_tier')} > ${WRITER_RANK}
-      AND NOT EXISTS (SELECT 1 FROM facts w WHERE w.source_id = $1 AND w.source_markdown_slug = $2 AND w.expired_at IS NULL AND w.visibility = 'world' AND w.fact = f.fact)
-      ORDER BY f.id`, [sourceId, slug, restated.map(r => r.fact)]) : [];
+  const trustedPrivate = restated.length ? await tx.executeRaw<{ row_num: number; id: number; visibility: string; trust_tier: string }>(
+    `SELECT DISTINCT ON (r.row_num) r.row_num, f.id, f.visibility, f.trust_tier
+      FROM jsonb_to_recordset($3::text::jsonb) AS r(row_num integer, fact text, entity text)
+      JOIN facts f ON f.source_id = $1 AND f.expired_at IS NULL AND (f.source_markdown_slug = $2 OR f.entity_slug = r.entity)
+        AND f.fact = r.fact AND f.visibility <> 'world' AND ${trustRankSql('f.trust_tier')} > ${WRITER_RANK}
+      WHERE (f.source_markdown_slug = $2
+          AND NOT EXISTS (SELECT 1 FROM facts w WHERE w.source_id = $1 AND w.source_markdown_slug = $2 AND w.expired_at IS NULL AND w.visibility = 'world' AND w.fact = f.fact))
+        OR (f.entity_slug = r.entity AND f.source_markdown_slug IS DISTINCT FROM $2 AND (f.valid_until IS NULL OR f.valid_until > now())
+          AND NOT EXISTS (SELECT 1 FROM facts w WHERE w.source_id = $1 AND w.entity_slug = r.entity AND w.expired_at IS NULL AND w.visibility = 'world'
+            AND w.fact = f.fact AND (w.valid_until IS NULL OR w.valid_until > now())))
+      ORDER BY r.row_num, COALESCE(f.source_markdown_slug = $2, false) DESC, f.id`,
+    [sourceId, slug, JSON.stringify(restated.map(r => ({ row_num: r.row_num, fact: r.fact, entity: r.entity_slug ?? null })))]) : [];
   for (const r of restated) {
-    const copy = trustedPrivate.find(t => t.fact === r.fact);
+    const copy = trustedPrivate.find(t => Number(t.row_num) === r.row_num);
     if (copy) widened.set(r.row_num, { from: copy.visibility, copy: { id: Number(copy.id), trust_tier: copy.trust_tier } });
   }
   if (widened.size) rows = rows.map(r => fresh.has(r.row_num) && widened.has(r.row_num) ? { ...r, visibility: widened.get(r.row_num)!.from } : r);

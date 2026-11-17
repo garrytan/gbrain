@@ -36,7 +36,7 @@
 
 import { execFileSync } from '../spawn.ts';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, appendFileSync, rmSync } from 'node:fs';
-import { dirname, isAbsolute, relative } from 'node:path';
+import { dirname, relative } from 'node:path';
 
 import type { BrainEngine, NewFact, FactVisibility, FactKind, FactAttribution } from '../engine.ts';
 import type { ResolutionSource } from '../entities/resolve.ts';
@@ -65,6 +65,7 @@ import { gitChildEnv } from '../git-env.ts';
 import { readOnlyCheckout } from '../persistence/mirror-read-only.ts';
 import { bodyUnread } from '../page-body/page-shape.ts';
 import { bestEffortStoredBodyMirror, fileBodyMatchesStored, fileDatabaseDriftToken, mirrorFileBody, readStoredBody } from './file-body-guard.ts';
+import { relativeEscapesRoot } from '../path-confine.ts';
 
 /** Resolved source binding for the entity page. */
 export interface FenceTarget {
@@ -206,7 +207,7 @@ export type FactFenceGitPathState = 'clean' | 'self_dirty' | 'foreign_dirty' | '
 export function gitPathState(repoPath: string, filePath: string): FactFenceGitPathState {
   try {
     const rel = relative(repoPath, filePath);
-    if (!rel || rel.startsWith('..') || isAbsolute(rel)) return 'unknown';
+    if (!rel || relativeEscapesRoot(rel)) return 'unknown';
     const status = execFileSync(
       'git',
       ['-C', repoPath, 'status', '--porcelain=v1', '--untracked-files=all', '--', rel],

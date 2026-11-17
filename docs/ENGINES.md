@@ -438,15 +438,86 @@ segmented chunk (`test/e2e/segmented-switch-off-write-role.test.ts`). With the
 policies above it creates segmented pages and sees only its sources' rows
 (`test/e2e/segmented-rls-scope.test.ts`).
 
+<a id="purge-and-withdrawal-guards"></a>
 **Purge and withdrawal guards.** The guards that refuse purged content and keep withdrawn
 facts withdrawn run as the writing role (`SECURITY INVOKER`) and read their ledgers
 (`fact_purges`, `fact_withdrawals`, `take_purges`, `page_purges` and the derivation purge
-tables) under that role's RLS. Every gbrain function that pins a search_path ends it with
+tables) under that role's RLS. Since migration v318 (#7632, #7659) they fail closed: when
+RLS applies to the writing role on a ledger and no permissive policy of the role covers it,
+the guard refuses the write with `writer_coordinator_required: writer state is unreadable to
+this database role` (P0001, relationship `unreadable_state`), whose `HINT` names the table
+and the policy to add, instead of reading the ledger as empty and letting a purged claim,
+take, page or derivation, or a withdrawn fact, through. The refused writes are fact inserts
+and claim updates, fact re-activations, take writes, page content writes, segment derivation
+writes, and page soft-deletes or segment retirements while the derivation purge tables are
+unreadable. The owner (without `FORCE ROW LEVEL SECURITY`), a role that bypasses RLS, a
+ledger without RLS and PGLite are not affected. A scoped write role needs these policies, on
+top of the maintainer recipe below for `pages` and `sources`; they let it read only the
+ledger rows of the sources it writes and change none:
+
+<!-- gbrain:ledger-rls-recipe:begin (applied verbatim by test/guard-ledgers-fail-closed-7632.test.ts) -->
+```sql
+-- The ledgers of the writer's own sources, with the pages_scope_filter predicate.
+CREATE POLICY fact_purges_writer_scope ON fact_purges FOR SELECT TO <writer-role>
+  USING (current_setting('app.scopes', true) = '*'
+         OR source_id = ANY(string_to_array(current_setting('app.scopes', true), ',')));
+CREATE POLICY fact_withdrawals_writer_scope ON fact_withdrawals FOR SELECT TO <writer-role>
+  USING (current_setting('app.scopes', true) = '*'
+         OR source_id = ANY(string_to_array(current_setting('app.scopes', true), ',')));
+CREATE POLICY take_purges_writer_scope ON take_purges FOR SELECT TO <writer-role>
+  USING (current_setting('app.scopes', true) = '*'
+         OR source_id = ANY(string_to_array(current_setting('app.scopes', true), ',')));
+CREATE POLICY page_purges_writer_scope ON page_purges FOR SELECT TO <writer-role>
+  USING (current_setting('app.scopes', true) = '*'
+         OR source_id = ANY(string_to_array(current_setting('app.scopes', true), ',')));
+CREATE POLICY page_segment_derivation_purges_writer_scope ON page_segment_derivation_purges FOR SELECT TO <writer-role>
+  USING (current_setting('app.scopes', true) = '*'
+         OR source_id = ANY(string_to_array(current_setting('app.scopes', true), ',')));
+-- The note a page leaving a running derivation sweep's scope leaves for that sweep.
+CREATE POLICY page_segment_derivation_purge_pages_writer_note ON page_segment_derivation_purge_pages FOR INSERT TO <writer-role>
+  WITH CHECK (EXISTS (SELECT 1 FROM page_segment_derivation_purges r
+                      WHERE r.request_id = page_segment_derivation_purge_pages.request_id));
+```
+<!-- gbrain:ledger-rls-recipe:end -->
+
+A bulk fact insert (the fence import in `src/core/engine-sql/facts.ts`) defers the withdrawal
+stamp to the end of its statement, so when one of its rows matches a withdrawal the guard
+updates that row in `facts`, and the write role then needs a permissive `UPDATE` policy on
+`facts` covering the row, beside its `SELECT` policy, or the guard refuses the insert with the
+same `writer_coordinator_required` error.
+
+**Check that the upgrade replaced every guard.** Migration v318 can only replace a guard function
+the role running it owns. A guard owned by another role is left as it was, so it still lets a
+scoped writer without ledger policies through, and v318 only names it in one stderr line
+(`guards: N purge or withdrawal guard(s) still read their ledgers as empty ...`). After upgrading,
+run this as any role that can read the catalog. Every one of the seven rows must show
+`fails_closed = t`:
+
+```sql
+SELECT p.proname, pg_get_userbyid(p.proowner) AS owner,
+       strpos(p.prosrc, 'row_security_active(') > 0 AS fails_closed
+FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public' AND p.proname IN ('gbrain_guard_inserted_facts',
+  'gbrain_preserve_fact_withdrawal', 'gbrain_refuse_purged_fact', 'gbrain_refuse_purged_take',
+  'gbrain_refuse_purged_page', 'gbrain_refuse_purging_derivation', 'gbrain_mark_derivation_scope_entry')
+ORDER BY 1;
+```
+
+For a row with `fails_closed = f`, connect as the role in its `owner` column and run
+`ALTER FUNCTION public.<proname>() OWNER TO <the role gbrain migrates as>;`. Then run
+`gbrain apply-migrations --yes`, or start gbrain: every migration run re-creates a guard that
+is missing its check, provided the migrating role owns it. You can also run gbrain once as the
+owning role instead. Run the query again to confirm. On Postgres, `gbrain doctor`
+(`guard_ledger_checks`) runs the same check and names each guard left without its ledger check
+with its owner, and the fix: `gbrain apply-migrations --yes` when the doctor's role may re-create
+it, else the `ALTER FUNCTION ... OWNER TO` SQL to run as the owning role first.
+
+The segmented storage recipe above already covers the two derivation purge tables for a
+role it applies to. A policy that filters out ledger rows of a source the role writes hides
+them from the guard, as before. Every gbrain function that pins a search_path ends it with
 `pg_temp` (migration v277, #7632), so a session's temp table or view named like a ledger
 cannot hide it from a guard; before, any session, the owner included, could store purged
-content that way. A write role with no policy on a ledger still reads it empty, so its
-purged or withdrawn writes still go through: give a scoped write role a `SELECT` policy on
-the ledgers of the sources it writes (gbrain#7659 tracks the fix). Each definition outside
+content that way. Each definition outside
 `src/core/schema-migrations/` pins `pg_catalog, public, pg_temp` itself (`bun run check:search-path`
 fails one that does not, or a pinned function missing from `PINNED_FUNCTION_NAMES`), so a schema
 replay keeps it; historical migration bodies still pin the old path, so every migration run ends by
@@ -742,6 +813,30 @@ version bump changes it.
 to connect: it diagnoses the dir from disk, names the repair command, reports
 retained repair backups, and escalates when repairs keep recurring (that
 means the unclean-shutdown genesis is still active — see the ladder's rung 4).
+
+<a id="pglite-live-serve"></a>
+### PGLite while `gbrain serve` runs (`pglite_busy` reason `live_serve`)
+
+One gbrain process opens a PGLite brain at a time. While `gbrain serve` (stdio
+or `--http`) holds it, page and fact writes from the CLI (`gbrain put`,
+`gbrain remember`) go through the running server and work. Commands that need
+the database to themselves, which includes the admin commands
+(`gbrain access …`, `gbrain sources …`, `gbrain auth …`) and most reads,
+refuse with `pglite_busy` reason `live_serve`. The refusal names the server's
+PID, and its fix is two steps: stop that server, then run the command again.
+Never remove the lock of a server that is still running.
+
+On a brain that serves one person this is a short pause: quit the agent
+session (a stdio serve) or stop `gbrain serve --http`, run the command, and
+start it again. On a brain that serves several people over
+`gbrain serve --http`, every member's connection drops while the server is
+stopped, for every admin step. Move such a brain to Postgres, where the server
+and the admin commands run side by side: preview with the read-only
+`gbrain migrate --to postgres --url-env GBRAIN_TARGET_URL --plan --json`,
+then follow [Move a PGLite brain to Postgres](guides/move-to-postgres.md). The
+move carries members, tokens, `readable_by` and facts across.
+`gbrain setup <harness> --serves several` on PGLite says this in its
+`engine` line.
 
 <a id="legacy-pglite-lock"></a>
 ### Legacy PGLite lock (`pglite_busy` reason `legacy_owner_unverified`)
@@ -1501,6 +1596,35 @@ The real backstop is `test/e2e/op-checkpoint-jsonb-parity.test.ts` +
 `test/e2e/jsonb-roundtrip.test.ts`, which round-trip writes through real Postgres
 and assert `jsonb_typeof` — the assertion PGLite cannot make.
 
+## The Rust engine shell
+
+The opt-in Rust engine (`docs/designs/RUST_ENGINE.md`) is under construction. PGLite and Postgres behave exactly
+as before, and an install needs no Rust toolchain and no addon. `openRustEngine({ addon, databasePath })`
+(`src/core/rust-engine.ts`) is the one seam: the addon loader calls it after it has loaded and verified the native
+addon, and gets back the engine: every `BrainEngine` member, with `kind` `'rust'`. `BrainEngine.kind` admits `'rust'`
+when the `rust` config value lands; no config value selects the Rust engine yet. Finding, checking and loading the
+addon, and refusing a missing or mismatched one, belong to the loader (below), not the shell.
+
+- **Capabilities.** The shell declares no capabilities. Each `BrainEngine` member it does not implement refuses
+  `engine_capability_missing` with the capability as `reason` (`raw_sql`, `pages`, `search`, ...), the member in
+  `detail`, and `written=nothing`, before any work. `src/core/rust-engine/members.ts` maps every member to its
+  capability; the type fails when a new `BrainEngine` member is not classified.
+- **SQL-only paths.** Code that only works through SQL (migrations, cycle locks, engine migration and graduation,
+  embed backfill, page-body staging) takes the kind as `EngineKind`, narrows it with `sqlEngineKind` or
+  `isRustEngineKind` (`src/core/sql-engine-kind.ts`), and refuses a Rust brain with `engine_capability_missing` reason `raw_sql` instead of treating it as Postgres.
+- **The addon loader.** `loadRustEngineAddon()` (`src/core/rust-engine/addon-loader.ts`) returns the loaded addon,
+  or the refusal `rust_engine_addon_missing` or `rust_engine_addon_mismatch` with its `reason` (`gbrain errors
+  <code>`), before the brain is touched. It uses `GBRAIN_RUST_ENGINE_ADDON` (an absolute path to a build from `bun run
+  rust:build`; it skips only the release checksum pin) first, then an addon cached at
+  `<gbrain home>/engines/rust/<engine_build>/<target>.node` whose SHA-256 equals the cached manifest of this gbrain
+  version. It never reaches the network and writes nothing: with no cached addon it refuses with reason
+  `not_installed`, and a cached file that fails a check stays as it was. Fetching the release's addon into that cache
+  arrives with the capability gate. Only the Rust engine's open path may import the loader, lazily, so a PGLite or
+  Postgres brain never loads the addon or creates `<gbrain home>/engines/`.
+- **Shared memory.** The addon refuses a typed array whose buffer the runtime (`napi_is_arraybuffer`) does not call a
+  plain `ArrayBuffer`, so a `SharedArrayBuffer` view is refused with `InvalidArg` however JavaScript globals or
+  prototypes have been changed (`rust/README.md`).
+
 ## Adding a new engine
 
 1. Create `src/core/<name>-engine.ts` implementing `BrainEngine`
@@ -1514,7 +1638,9 @@ and assert `jsonb_typeof` — the assertion PGLite cannot make.
    engines do. Declare its capabilities honestly. The binding matrix
    (`test/helpers/executor-binding-matrix.ts`) and the engine-sql contract
    tests tell you whether the adapter binds, counts, fails and cancels like the
-   others. A non-SQL engine implements every method itself.
+   others. A non-SQL engine implements typed methods instead of a `SqlExecutor`:
+   it declares no `raw_sql` capability, and each member it cannot serve yet
+   refuses `engine_capability_missing` (see "The Rust engine shell" above).
 4. Store engine type in `~/.gbrain/config.json`: `{ "engine": "myengine", ... }`
 5. Add tests. The test suite should be engine-agnostic where possible... same test cases, different engine constructor.
 6. Document in this file + add a design doc in `docs/`

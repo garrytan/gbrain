@@ -27,7 +27,7 @@ import type { BrainEngine } from '../engine.ts';
 import { stableJson } from '../persistence/digest.ts';
 import { faultPoint } from '../persistence/fault-points.ts';
 import type { Principal } from '../persistence/model.ts';
-import { BODY_LEAD_BYTES, STAGE_BATCH_BYTES } from './limits.ts';
+import { BODY_LEAD_BYTES, stageBatchBytes } from './limits.ts';
 import type { BodyRegion, JsonObject, ManifestRow, ManifestRowInput, SegmentedBodyColumns, SegmentTextInput } from './types.ts';
 import { regionFlags, regionTrust, segmentStream, SEGMENTER_VERSION, type SegmentOut, type StoredRegion } from './segmenter.ts';
 import { isCleanResumePoint, readEntryState, timelineEntryState, type EntryState } from './entry-state.ts';
@@ -159,7 +159,7 @@ async function rowAt(engine: BrainEngine, page: SplicePage, p: number): Promise<
 async function* virtualRegion(engine: BrainEngine, sourceId: string, rows: readonly ManifestRow[], reps: readonly BodyReplacement[], region: BodyRegion,
   regionOf: (r: BodyReplacement) => BodyRegion): AsyncIterable<Uint8Array> {
   const mine = rows.filter(row => row.region === region);
-  const batchBytes = STAGE_BATCH_BYTES[engine.kind];
+  const batchBytes = stageBatchBytes(engine.kind);
   for (let i = 0; i < mine.length;) {
     let j = i, bytes = 0;
     while (j < mine.length && (j === i || bytes + mine[j]!.byteLen <= batchBytes)) bytes += mine[j++]!.byteLen;
@@ -277,7 +277,7 @@ export async function spliceSegmentedBody(engine: BrainEngine, input: SegmentedS
         while (until < regionEnd && !touchedAt[until]!.touched) until++;
         for (let at = i; at < until;) {
           let to = at, bytes = 0;
-          while (to < until && (to === at || bytes + rows[to]!.byteLen <= STAGE_BATCH_BYTES[engine.kind])) bytes += rows[to++]!.byteLen;
+          while (to < until && (to === at || bytes + rows[to]!.byteLen <= stageBatchBytes(engine.kind))) bytes += rows[to++]!.byteLen;
           const texts = await readTexts(engine, input.sourceId, rows.slice(at, to));
           for (const moved of rows.slice(at, to)) push(rowCore(moved), texts.get(hex(moved.sha256))!, { moved });
           at = to;

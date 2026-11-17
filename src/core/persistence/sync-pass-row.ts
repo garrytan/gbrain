@@ -123,6 +123,12 @@ export interface ManagedSyncPassValue {
     /** #6712 PR 4b (design §9): the newest round's classes (`{count, action}`) and level summary, for `sync status`'s live `convergence`. */
     classes?: Record<string, { count: number; action: 'none' | 'owner' | 'repair' }>;
     summary?: PassRoundSummary;
+    /**
+     * GST-2843: the long step before a batch drains that an open pass was last seen in (the level read, or the Git history
+     * read of re-screened holds with how many of the batch's paths it read), written by the 30 s beat and cleared when the
+     * step ends; status names it for a pass that stopped there.
+     */
+    step?: { name: 'level_read' | 'drift_history'; at: string; done?: number; total?: number };
   };
 }
 
@@ -158,9 +164,11 @@ export const passReadClock = (row: PassRow): number => row.read_at ? Date.parse(
 /**
  * #7982: a pass that ended on a transient stop (`unrecordedStop`: a statement timeout, a lost connection, write back-pressure, a refresh fence).
  * One that recurs every pass stops every pass, so these endings build the abandoned streak as a pass left open does.
+ * GST-2869: so does a pass a termination signal stopped (`terminated`), as it did when it was left open, in every reader:
+ * the next pin's carry, abandonedPasses and sync-blocked.
  */
 export const transientEnding = (telemetry: Pick<ManagedSyncPassValue['telemetry'], 'outcome' | 'stop_reason'>): boolean =>
-  telemetry.outcome === 'resumable' && telemetry.stop_reason === 'transient';
+  telemetry.outcome === 'resumable' && (telemetry.stop_reason === 'transient' || telemetry.stop_reason === 'terminated');
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
 const iso = (value: Date | string) => new Date(value).toISOString();

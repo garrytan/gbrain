@@ -44,7 +44,7 @@ import { partitionForActivation, suppressionSummary } from '../eligibility/activ
 import { trustFields } from '../eligibility/labels.ts';
 import { quoteFacts } from '../search/transcript-quote.ts';
 import { eligibilityCacheField, readTrustGeneration } from '../eligibility/generation.ts';
-import { callerRelaxesPrivacy, resolveExcludePrivatePages, worldOnlyFacts } from '../search/private-visibility.ts';
+import { callerRelaxesPrivacy, privateFactSources, resolveExcludePrivatePages, worldOnlyFacts } from '../search/private-visibility.ts';
 import { isConfigTruthy } from '../config.ts';
 import { callerIdentityKey } from '../access/member-facts.ts';
 
@@ -163,7 +163,9 @@ export async function getBrainHotMemoryMeta(
   // GST-2089: the brain owner reads private facts too, so its remote tier is marked apart from every world-only tier.
   const worldOnly = worldOnlyFacts(ctx.remote);
   const pageTier = !excludePrivate ? 'world+private-pages' : callerRelaxesPrivacy() ? 'world+private-pages-readers' : 'world';
-  const tier = ctx.remote === false ? 'all' : worldOnly ? pageTier : `private-facts+${pageTier}`;
+  // GBRA-575: a world-only read under a private-facts grant admits private facts in the granted sources, so it has its own tier.
+  const granted = worldOnly ? [...privateFactSources()].sort().join(',') : '';
+  const tier = ctx.remote === false ? 'all' : !worldOnly ? `private-facts+${pageTier}` : granted ? `${pageTier}+xpf=${granted}` : pageTier;
   // encodeCacheField (F5): source_id / session_id are caller-controlled and
   // may contain the '::' delimiter; percent-encode ':' so bumpHotMemoryCache's
   // split('::') can never mis-slice a component.

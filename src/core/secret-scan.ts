@@ -82,6 +82,8 @@ export interface ScanOpts {
   allowlist?: string[];
   /** Workspace root: allowlist path-globs match paths relative to this. */
   workspaceRoot?: string;
+  /** scanFiles: each finding a `path:<glob> pattern:<rule>` entry allowed, with that entry and its file. */
+  onAllowed?: (hit: AllowedHit & { file: string }) => void;
   /** Opt-in generic high-entropy assignment heuristic. Default false. */
   highEntropy?: boolean;
   /**
@@ -104,7 +106,7 @@ export interface ScanOpts {
 export {
   SCAN_ALLOW_FILENAME, ALLOWLIST_FINGERPRINT_MIN_HEX, loadWorkspaceAllowlist, globToRegExp, matchesGlob, valueAllowlisted, pathAllowlisted,
 } from './secret-scan-allowlist.ts';
-import { valueAllowlisted, pathAllowlisted } from './secret-scan-allowlist.ts';
+import { valueAllowlisted, pathAllowlisted, withoutRuleAllowed, type AllowedHit } from './secret-scan-allowlist.ts';
 import { PUSH_SCAN_MAX_FILE_BYTES } from './page-size-policy.ts';
 import {
   ASSIGNMENT_QUOTED_SOURCE, ASSIGNMENT_UNQUOTED_SOURCE, HIGH_ENTROPY_MIN_BITS_PER_CHAR, HIGH_ENTROPY_REQUIRES_DIGIT_RE,
@@ -1186,7 +1188,7 @@ export function scanFiles(paths: string[], opts: ScanOpts = {}): SecretFinding[]
     } catch {
       continue;
     }
-    for (const f of scanText(text, opts)) {
+    for (const f of withoutRuleAllowed(scanText(text, opts), rel, allowlist, (hit) => opts.onAllowed?.({ ...hit, file: p }))) {
       out.push({ ...f, file: p });
     }
   }

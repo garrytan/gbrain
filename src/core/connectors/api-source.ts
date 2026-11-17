@@ -191,22 +191,35 @@ export async function deleteConnectorPage(ctx: ConnectorPublishCtx, relPath: str
   if (rows.length) { await engine.deletePages([slug], { sourceId }); summary.deleted++; }
 }
 
+/** A connector run queues fact extraction for at most this many pages; the cycle's backfill covers the rest. */
+export const CONNECTOR_FACTS_PAGE_LIMIT = 50;
+
 /** Facts and embeddings for the pages a run published (the connector path has no sync finalize). */
 export async function afterConnectorPublish(ctx: Pick<ConnectorPublishCtx, 'engine' | 'sourceId' | 'summary' | 'managed' | 'tag'>, opts: SyncOpts): Promise<void> {
   const { engine, sourceId, summary, managed } = ctx;
   if (!summary.pagesAffected.length) return;
-  if (!opts.noExtract && summary.pagesAffected.length <= 50) {
+  const overLimit = summary.pagesAffected.length > CONNECTOR_FACTS_PAGE_LIMIT;
+  // #9552: on a managed brain each import's publication queued its own fact extraction (connector-sync.ts).
+  if (!opts.noExtract && !overLimit && !managed) {
     const { runFactsBackstop } = await import('../facts/backstop.ts');
+    let failed = 0;
+    let firstError = '';
     for (const slug of summary.pagesAffected) {
       try {
         const page = await engine.getPage(slug, { sourceId });
         if (!page || isSegmentedPage(page)) continue;
         await runFactsBackstop({ slug, type: page.type, compiled_truth: page.compiled_truth ?? '', frontmatter: page.frontmatter ?? {} },
           { engine, sourceId, sessionId: connectorFactsSession(sourceId, slug), source: 'sync:import', mode: 'queue', notabilityFilter: 'high-only', sourceSlug: slug });
-      } catch { /* per-page enqueue is best-effort, as in sync */ }
+      } catch (error) {
+        failed++;
+        firstError ||= error instanceof Error ? error.message : String(error);
+        const { writeFactsAbsorbFailure } = await import('../facts/absorb-log.ts');
+        await writeFactsAbsorbFailure(engine, slug, error, sourceId);
+      }
     }
-  } else if (!opts.noExtract) {
-    process.stderr.write(`[${ctx.tag}] ${summary.pagesAffected.length} pages changed; facts are extracted by the cycle's backfill\n`);
+    if (failed) process.stderr.write(`[${ctx.tag}] ${sourceId}: fact extraction was not queued for ${failed} page(s): ${firstError}\n`);
+  } else if (!opts.noExtract && overLimit) {
+    process.stderr.write(`[${ctx.tag}] ${summary.pagesAffected.length} pages changed; ${managed ? `facts were queued for the first ${CONNECTOR_FACTS_PAGE_LIMIT}, the rest` : 'facts'} are extracted by the cycle's backfill\n`);
   }
   if (managed || opts.noEmbed || summary.pagesAffected.length > 100) return;
   try {

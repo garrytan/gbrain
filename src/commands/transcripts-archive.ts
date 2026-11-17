@@ -56,8 +56,13 @@ export async function runTranscriptsArchive(engine: BrainEngine, args: string[],
 
   if (sub === 'status') {
     const status = await archive.archiveStatus(engine, { sourceId });
+    const { resolveArchiveEnabled } = await import('../core/transcripts/archive-default.ts');
+    const { loadConfig } = await import('../core/config.ts');
+    const why = json ? null : await resolveArchiveEnabled(engine, { config: (() => { try { return loadConfig(); } catch { return null; } })() }).then(e => e.reason, () => null);
+    const upkeepOff = !json && status.enabled && !await (await import('../core/maintenance/run.ts')).upkeepEnabled(engine);
     out(status, () => {
       console.log('conversation archive: ' + (status.enabled ? 'on' : 'off') + ' (source: ' + status.source_id + ', timezone: ' + (status.timezone ?? status.configured_timezone + ', pinned at the first run') + ')');
+      if (why) console.log('  why: ' + why);
       for (const h of status.harnesses) {
         const read = h.read_at ? h.conversations + ' conversation(s) read by the last ' + (h.read_mode ?? 'run') + ' (' + h.read_at + '), newest session day ' + (h.newest_session_day ?? '-') : 'not read by an archive run yet';
         console.log('  ' + h.reader.padEnd(18) + ' ' + (h.info ?? read + ', newest archived day ' + (h.newest_archived_day ?? '-')));
@@ -66,6 +71,7 @@ export async function runTranscriptsArchive(engine: BrainEngine, args: string[],
       for (const h of status.held) console.log('  held: ' + h.harness + ' ' + h.day + ' (' + h.code + ')');
       for (const e of status.errors) console.log('  error on the last run' + (e.at ? ' (' + e.at + ')' : '') + ': ' + e.reader + ' ' + e.code + ': ' + e.message);
       if (status.rescope) console.log('  not kept to the owner yet (' + status.rescope.code + '): ' + status.rescope.message);
+      if (upkeepOff) console.log('  maintenance.auto is false, so free upkeep does not archive by itself (an installed autopilot still does); archive now with "gbrain transcripts archive run"');
     });
     if (status.errors.length) setCliExitVerdict(1);
     return;

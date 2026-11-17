@@ -551,7 +551,7 @@ const recall: Operation = {
       bumpLastRetrievedAt(ctx.engine, searchResults.map(r => r.page_id));
       const applied = recallDeliveryPlan(effectivePlan(evidencePlan, searchResults), p.budget_policy, queryText, budgetTokens, rows);
       if (applied) ({ results: searchResults, delivery } = await deliverEvidence(ctx.engine, searchResults, applied, { ...searchScope, excludePrivate, requireSafeChunks: ctx.remote !== false }));
-      searchResults = await stampPageTrust(ctx.engine, searchResults, eligibility.floor);
+      searchResults = await stampPageTrust(ctx.engine, searchResults, eligibility.floor, undefined, worldOnlyFacts(ctx.remote));
     }
 
     // Pack what is delivered: results redacted for all; facts for remote only (localVerbatim).
@@ -592,6 +592,7 @@ const recall: Operation = {
     const grouped = ranking?.groupByEntity ? groupFactsByEntity(packedFacts, ranking, p, ctx.emitNotice) : null; if (grouped) packedFacts = grouped.rows; // #2953: reorders delivered facts only
     const budgetPacking = recallBudgetPacking(p.budget_policy, queryText, budgetTokens, { rows, packedFacts, searchResults, packedResults }, recallResultCost(delivery)), contested: ContestedLookup = {};
 
+    let observedUnavailable = false;
     const out = {
       facts: await withDecideContested(ctx.engine, await withFactDateHeaders(ctx.engine, await stampRowTrust(ctx.engine, 'facts', packedFacts.map(r => ({ // #5575 A6 trust labels; GBRA-216 dp contested
         id: r.id,
@@ -625,10 +626,11 @@ const recall: Operation = {
         provenance: r.source, ...(r.attributed_to ? { attributed_to: r.attributed_to } : {}), ...(r.quoted ? { quoted: r.quoted } : {}), ...recallClaimColumns(r),
         ...(r.entity_slugs ? { entity_slugs: r.entity_slugs } : {}), ...(r.collapsed_count ? { collapsed_count: r.collapsed_count } : {}),
         ...(ranking ? { relevance: ranking.relevance.get(r.id), ...(ranking.weighting ? { rank_score: ranking.weighting.rank.get(r.id), confidence_factor: ranking.weighting.factor.get(r.id) } : {}) } : {}),
-      })), f => f.id)), { remote: ctx.remote !== false, excludePrivate, eligibility }, contested),
+      })), f => f.id), { excludePrivate, minTrust: eligibility.floor, suppressFlagged: eligibility.suppressFlagged }, () => { observedUnavailable = true; }), { remote: ctx.remote !== false, excludePrivate, eligibility }, contested),
       total: packedFacts.length,
       facts_order: ranking ? 'relevance' : 'newest',
-      ...(quoted.withheld ? { facts_degraded: { reason: 'saved_facts_withheld' } } : ranking?.degraded || contested.degraded ? { facts_degraded: { ...contested.degraded, ...ranking?.degraded } } : {}),
+      ...(quoted.withheld ? { facts_degraded: { reason: 'saved_facts_withheld' } } : ranking?.degraded || contested.degraded || observedUnavailable
+        ? { facts_degraded: { ...(observedUnavailable ? { reason: 'fact_observed_date_unavailable' } : {}), ...contested.degraded, ...ranking?.degraded } } : {}),
       ...(ranking?.calibration ? { facts_calibration: ranking.calibration } : {}), ...(ranking?.belowFloor ? { facts_below_floor: ranking.belowFloor } : {}),
       ...grouped?.fields, ...(ambiguousEntity ? { ambiguous_entity: { candidates: ambiguousEntity, suggestion: AMBIGUOUS_ENTITY_SUGGESTION } } : {}),
       ...(pending_consolidation_count !== undefined ? { pending_consolidation_count } : {}),
@@ -795,7 +797,7 @@ const context_pack: Operation = {
     // `default` plus this source, inside the caller's grant; it packs first.
     const { loadCoreBlock } = await import('../core-memory.ts');
     const allowed = named ? [sourceId] : ctx.auth?.allowedSources?.length ? ctx.auth.allowedSources : null;
-    const core = await loadCoreBlock(ctx.engine, { sessionSourceId: sourceId, allowedSources: allowed, excludePrivate: !includePrivate, forCaller: true, eligibility })
+    const core = await loadCoreBlock(ctx.engine, { sessionSourceId: sourceId, allowedSources: allowed, excludePrivate: !includePrivate, forCaller: true, eligibility, remote: ctx.remote })
       .catch(() => null);
     const coreText = core?.text ?? '';
     const coreTokens = estimateTokens(coreText);
@@ -1231,7 +1233,7 @@ const delta: Operation = {
     // structured arrays reflect — the assembler's render predates both.
     let text = renderDelta(pages, facts, threads, effectiveSince);
     const diff = p.beliefs === true ? await (await import('../belief/changes.ts')).deltaBeliefs(ctx.engine, { sourceId, since: effectiveSince, until: horizon,
-      remote: !includePrivate, takesHolders: readHolders(ctx), entities: parseEntityList(p.entities) }, budgetTokens !== null ? beliefBudget : null, text, TURN_CONTEXT_ENVELOPE) : null;
+      remote: !includePrivate, worldOnly: (await import('../search/private-visibility.ts')).worldOnlyFacts(ctx.remote), takesHolders: readHolders(ctx), entities: parseEntityList(p.entities) }, budgetTokens !== null ? beliefBudget : null, text, TURN_CONTEXT_ENVELOPE) : null;
     if (diff) text = diff.text;
     const budgetUsed = budgetTokens !== null ? estimateTokens(text) : undefined;
 

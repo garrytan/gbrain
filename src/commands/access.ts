@@ -17,6 +17,8 @@ import type { BrainEngine } from '../core/engine.ts';
 import { exitCliError, usageError } from '../cli/cli-error.ts';
 import { runAccessRules } from './access-rules.ts';
 import { runAccessServes } from './access-serves.ts';
+import { disableReadByNobodyLines, readByNobodyNote } from './access-read-by-nobody.ts';
+import { rescopeArchiveAfter, rescopeArchiveBefore } from './archive-rescope.ts';
 import { opError } from '../core/ops/contract.ts';
 import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { grantFromClient, type PrincipalGrant } from '../core/grants/model.ts';
@@ -89,13 +91,15 @@ Owner (one member who owns this brain; credentials bound to it read every page, 
 Serves several people (GST-363):
   gbrain access serves [--no-open-pages]     One or several, and why (config access.serves, else 2+ enabled members);
                                              on several, the pages every member's key reads (--no-open-pages skips the count)
-  gbrain access serves several --members a,b [--members-file <file>] [--source <id>] [--labelled-only] [--yes]
+  gbrain access serves several --members a,b [--members-file <file>] [--source <id>] [--labelled-only] [--owner <id>] [--yes]
                                              Preview first; --yes writes access.serves = several, adds each member,
                                              a folder rule people/<member>/ read only by that member, and one key
                                              bound to each member in a 0600 file under <config>/member-keys/.
                                              Both list the pages every member's key can still read (no rule or
                                              readable_by restricts them); --labelled-only keeps each member to the
-                                             pages labelled for it (never the owner)
+                                             pages labelled for it (never the owner); --owner names the brain owner
+                                             when none is set (an existing owner is kept) and lists the keys bound to
+                                             no member with the command that binds each; it rebinds none
 
 Folder rules (one rulebook per source; the database store on a repo-less source, .gbrain/access.yml on a git one):
   gbrain access rule add --prefix <folder/> | --slug <page> --readers a,group:b [--raw-only] [--allow-without-owner] [--id <rule>] [--source <id>] [--yes]
@@ -135,7 +139,7 @@ function flagValue(args: string[], name: string): string | undefined {
   return v;
 }
 
-const VALUE_FLAGS = new Set(['--name', '--groups', '--bind-token', '--members', '--members-file', '--source', '--token', '--client', '--as', '--qm', '--member', '--email', '--kind']);
+const VALUE_FLAGS = new Set(['--name', '--groups', '--bind-token', '--members', '--members-file', '--source', '--token', '--client', '--as', '--qm', '--member', '--email', '--kind', '--owner']);
 
 function positionals(args: string[]): string[] {
   const out: string[] = [];
@@ -170,7 +174,8 @@ export async function whoCanRead(engine: BrainEngine, slug: string, sourceId?: s
   const ownerId = await ownerMemberId(engine);
   const optIn = await ownerReadsRestrictedOn(engine) ? ownerId : null;
   const memberLineage = await membersReadLineageOn(engine);
-  const enabled = (await listMembers(engine)).filter(m => m.status === 'enabled');
+  const known = await listMembers(engine);
+  const enabled = known.filter(m => m.status === 'enabled');
   const audienceIds = enabled.filter(m => m.kind === 'audience').map(m => m.id);
   const members = await Promise.all(enabled.map(async m => {
     const identity = identityFor(m.id, m.groups);
@@ -204,7 +209,9 @@ export async function whoCanRead(engine: BrainEngine, slug: string, sourceId?: s
       `SELECT count(*)::int AS n FROM unnest($1::text[]) AS x WHERE NOT EXISTS (SELECT 1 FROM access_rules r WHERE r.source_id = $2 AND x = $2 || ':' || r.rule_id AND NOT r.covers_derived)`,
       [row.folder_rule_ids, row.source_id]) : [{ n: 0 }];
     const closesLineage = readers !== null || Number(lineageRules[0]?.n ?? 0) > 0;
+    const nobody = readByNobodyNote({ slug: row.slug, source_id: row.source_id, readers }, ruled, allowed.length, known, ownerId);
     const notes = [
+      ...(nobody ? [nobody] : []),
       readers === null ? (ruled ? 'No readable_by, but folder rules cover it: only members who meet every rule read it remotely.' : 'No readable_by: every caller entitled to the source reads it.')
         : readers.includes('!nobody') ? 'readable_by is malformed, so no remote caller reads it; fix the frontmatter.'
         : 'Only credentials bound to these members (directly or through a group) read it remotely; unbound credentials and stdio do not.',
@@ -322,7 +329,8 @@ async function memberCmd(engine: BrainEngine, sub: string | undefined, args: str
   const id = positionals(args)[0];
   switch (sub) {
     case 'add': {
-      const r = await addMember(engine, id, { name: flagValue(args, '--name'), email: flagValue(args, '--email'), groups: parseIdList(flagValue(args, '--groups'), 'group'), bindToken: flagValue(args, '--bind-token'), kind: flagValue(args, '--kind'), remote: false });
+      const r = await addMember(engine, id, { name: flagValue(args, '--name'), email: flagValue(args, '--email'), groups: parseIdList(flagValue(args, '--groups'), 'group'), bindToken: flagValue(args, '--bind-token'), kind: flagValue(args, '--kind'), remote: false, beforeWrite: () => rescopeArchiveBefore(engine, id, 'add') });
+      await rescopeArchiveAfter(engine);
       return print(json, r, () => [`Member added: ${r.member.id}`, memberLine(r.member),
         ...(r.groups_created.length ? [`  Groups created: ${r.groups_created.join(', ')}`] : []),
         ...(r.bound ? [`  Bound token: ${r.bound.name} (${r.bound.id})`] : ['  Bind a credential: gbrain auth rescope --token <name> --member ' + r.member.id]),
@@ -346,9 +354,13 @@ async function memberCmd(engine: BrainEngine, sub: string | undefined, args: str
     }
     case 'disable':
     case 'enable': {
+      if (sub === 'enable') await rescopeArchiveBefore(engine, id, 'enable');
       const m = await (sub === 'disable' ? disableMember : enableMember)(engine, id);
+      if (sub === 'enable') await rescopeArchiveAfter(engine);
+      const stranded = sub === 'disable' && !json ? await disableReadByNobodyLines(engine, m.id).catch((e: unknown) =>
+        [`Could not check which pages naming it no enabled member reads (${e instanceof Error ? e.message : String(e)}); the disable stands. gbrain access who-can-read <slug> shows who reads a page.`]) : [];
       return print(json, { member: m }, () => [`Member ${sub}d: ${m.id}`, memberLine(m),
-        sub === 'disable' ? 'Its credentials are refused on their next request; gbrain access member enable undoes this.' : 'Its credentials read again on their next request.']);
+        sub === 'disable' ? 'Its credentials are refused on their next request; gbrain access member enable undoes this.' : 'Its credentials read again on their next request.', ...stranded]);
     }
     case 'set': {
       const email = flagValue(args, '--email');
@@ -458,6 +470,7 @@ async function ownerCmd(engine: BrainEngine, sub: string | undefined, args: stri
     }
     case 'set': {
       const v = await setOwner(engine, positionals(args)[0]);
+      await rescopeArchiveAfter(engine);
       return print(json, v, () => ownerLines(v));
     }
     case 'clear': {

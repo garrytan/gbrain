@@ -27,7 +27,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { Action } from '../agent-output.ts';
 import { managedSyncResumeArgs } from '../sync-reconcile.ts';
 import { readManagedSyncFailures, type ManagedSyncFailure } from './sync-failures.ts';
-import { carriedHolds, type CarriedHolds, outOfAttemptsHold, fenceAutoRepairFor, fileDriftSide, gitHoldFix, mirrorDatabaseOnlyHold, holdEscalation, noteHoldEdit, readGitSourceHolds, recordHoldAttempt, requestGitHoldRetry, type GitHoldRecord } from './sync-holds.ts';
+import { carriedHolds, type CarriedHolds, outOfAttemptsHold, fenceAutoRepairFor, fileDriftSide, gitHoldFix, mirrorDatabaseOnlyHold, mirrorKeepDeletedHold, holdEscalation, noteHoldEdit, readGitSourceHolds, recordHoldAttempt, requestGitHoldRetry, type GitHoldRecord } from './sync-holds.ts';
 import type { FenceAutoRepair } from '../fence-repair/hold-fix.ts';
 import { classifySyncFault, HOLD_ATTEMPTS_NEEDS_HUMAN, PAGE_BODY_FAULT_CODES, type SyncFaultVerdict } from './sync-fault-class.ts';
 import { CONTENT_REPAIR_KINDS, contentHoldDisposition, runContentLane, type ContentHoldDisposition } from '../repair/content-lane.ts';
@@ -251,6 +251,8 @@ export const SYNC_STATUS_REASONS = ['nothing_pending', 'held_by_design', 'held_n
   'pass_abandoned',
   // #7596: the newest pass's process stopped (killed or crashed) without ending it.
   'pass_interrupted',
+  // GST-2869: a termination signal (SIGTERM or SIGHUP) stopped the newest pass, which recorded its stop.
+  'pass_terminated',
   // GST-2515: nothing else is pending, but the checkout's HEAD is past the last synced commit.
   'commits_waiting'] as const;
 export type SyncStatusReason = typeof SYNC_STATUS_REASONS[number];
@@ -318,6 +320,7 @@ export function holdVerdict(record: GitHoldRecord, auto: FenceAutoRepair | undef
   if (record.code === 'page_identity_changed') return classifySyncFault({ code: record.code, detail: 'page_identity_decision', ...escalation });
   if (record.code === 'file_drift' && fileDriftSide(record.meta) === 'unknown') return classifySyncFault({ code: record.code, detail: 'file_drift_unknown', ...escalation });
   if (mirrorDatabaseOnlyHold(record)) return classifySyncFault({ code: record.code, detail: 'file_drift_mirror_database_only' });
+  if (mirrorKeepDeletedHold(record)) return classifySyncFault({ code: record.code, detail: 'mirror_keep_deleted' });
   const bodyFault = record.code === 'page_write_failed' ? record.meta.write_failure?.code : undefined;
   if (bodyFault && PAGE_BODY_FAULT_CODES.has(bodyFault)) return classifySyncFault({ code: record.code, detail: `freeze_${bodyFault}`, ...escalation });
   const disposition = contentHoldDisposition(record, auto);
@@ -447,7 +450,11 @@ export async function readSyncStatus(engine: BrainEngine, sourceId: string, opts
     ? await passBanked(engine, sourceId, source.incarnation, passRow.value.telemetry).catch(() => undefined) : undefined;
   const passState = passRow ? passStatusState(passRow, withheld, source.writeback_failed, passReadClock(passRow), interrupted, banked) : null;
   const resume = !header && passRow ? passResumeArgs(sourceId, passRow) : managedSyncResumeArgs({ sourceId, processingOptions: header?.processingOptions, syncOptions: header?.syncOptions });
-  const human = holds.find(hold => hold.needs_human) ?? (liveError?.needs_human ? liveError : undefined);
+  // GST-2843: passes parked because they only re-hold a page that keeps moving under them (each rewrote its hold for a moved basis,
+  // up to the attempt cap): that hold's own ask is the decision, not the pass step.
+  const moving = passState?.[1] === 'pass_abandoned' ? holds.find((hold, i) => hold.needs_human && hold.attempts >= HOLD_ATTEMPTS_NEEDS_HUMAN
+    && records[i]!.meta.basis_moved && records[i]!.run_id === passRow!.value.telemetry.pass_id) : undefined;
+  const human = moving ?? holds.find(hold => hold.needs_human) ?? (liveError?.needs_human ? liveError : undefined);
   const refreshRow = typeof source.refresh === 'string' ? JSON.parse(source.refresh) as RefreshProbeRow : source.refresh;
   const worktreeRefresh = refreshRow ? { refresh_id: refreshRow.id, state: refreshRow.state, updated_at: new Date(refreshRow.updated_at).toISOString(),
     ...await (await import('./worktree-refresh.ts')).refreshHolderReport(engine, refreshRow) } : null;
@@ -499,13 +506,15 @@ export async function readSyncStatus(engine: BrainEngine, sourceId: string, opts
   const admission = await syncAdmissionStatus(engine, sourceId, source.incarnation,
     { stored: source.admission_stored, row_value: source.admission_row_value, set_at: source.admission_set_at, pinned: source.admission_pinned, destructive: source.admission_destructive });
   const passNext = passRow && passState && passState[1] === stateReason ? passStatusNext(sourceId, passState[1], passRow, resume, source.writeback_failed, interrupted, banked) : null;
+  // GST-2843: while the pass is what keeps the source from converging, its step leads; a held page's decision stays in holds and human_reason.
+  const passLeads = passNext !== null && liveJob === null && !moving && (!!human || (!refreshFix && actionable.length > 0));
   return { source_id: sourceId, last_commit: source.last_commit, last_sync_at: iso(source.last_sync_at), last_committed_at: iso(committed?.last_committed_at), live: holder ? { ...holder, job_id: holderJob, stalled: holderStalled(holder, lease?.db_now) } : null,
     interrupted: interrupted && passRow ? { pass_id: passRow.value.telemetry.pass_id, since: passRow.updated_at, holder: lease?.holder ?? null } : null, run_id: header?.runId ?? null,
     cursor: header ? { index: Number(header.index), total: Number(header.total), pinned_target: header.target ?? null, last_advance_at: p ? new Date(p.lastAt).toISOString() : null, done: !!header.done } : null,
-    committed_last_10m: Number(committed?.n ?? 0), ...estimate, live_job_id: liveJob ?? holderJob, holds, ...(carriedHolds(records).length ? { carried: carriedHolds(records) } : {}), identity_downgrades: await withIdentityRemedies(engine, await listIdentityDowngrades(engine, [sourceId])), last_error: lastError, needs_human: !!human, ...(human ? { human_reason: human.human_reason } : {}),
+    committed_last_10m: Number(committed?.n ?? 0), ...estimate, live_job_id: liveJob ?? holderJob, holds, ...(carriedHolds(records).length ? { carried: carriedHolds(records) } : {}), identity_downgrades: await withIdentityRemedies(engine, await listIdentityDowngrades(engine, [sourceId])), last_error: lastError, needs_human: passLeads && passNext ? passNext.ask_user === true : !!human, ...(human ? { human_reason: human.human_reason } : {}),
     needs_human_from: !human ? null : 'path' in human && 'held_since' in human ? { kind: 'hold', path: human.path, slug: human.slug, code: human.code } : { kind: 'last_error', code: human.code },
     resume_argv: resume, ...blockers, cursors: detail ? await liveCursors(engine, sourceId, source.incarnation, selected?.key ?? null, failures) : [],
-    terminal_failures: terminal, connector_last_error: connectorLastError, git_push_holds: gitPushHolds, fence_holds: fenceHolds, worktree_refresh: worktreeRefresh, next: next ?? recovery_next ?? passNext ?? (stateReason === 'request_pending' && oldest.status === 'ok' && oldest.request ? { argv: ['gbrain', 'sync', ...resume], consent: [], actor: 'agent', requires_exclusive: false, verify,
+    terminal_failures: terminal, connector_last_error: connectorLastError, git_push_holds: gitPushHolds, fence_holds: fenceHolds, worktree_refresh: worktreeRefresh, next: (passLeads && passNext ? passNext : next) ?? recovery_next ?? passNext ?? (stateReason === 'request_pending' && oldest.status === 'ok' && oldest.request ? { argv: ['gbrain', 'sync', ...resume], consent: [], actor: 'agent', requires_exclusive: false, verify,
       why: `Write request ${oldest.request.request_id} of this source is still ${oldest.request.state}${oldest.request.step ? ` (step ${oldest.request.step})` : ''}; a running owner finishes it on its own, and the next sync of this source drains it.` } satisfies Action
       : stateReason === 'commits_waiting' ? { argv: ['gbrain', 'sync', ...resume], consent: [], actor: 'agent', requires_exclusive: false, verify,
       why: `The checkout's HEAD is ${waiting} commit(s) past the last synced commit ${source.last_commit?.slice(0, 12)}; this sync imports them.` } satisfies Action

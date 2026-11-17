@@ -12,10 +12,11 @@
  * it so), so a schema replay keeps pg_temp. Historical migration bodies still pin the legacy settings, and so does a
  * brain created before the change, which is what the hardening below completes: ALTER FUNCTION only, no body rewritten,
  * so every guard keeps master's body, SECURITY INVOKER and BEFORE ROW timing.
- * A write role with no policy on a ledger still reads it empty under its own RLS; that fail-open stays open (#7659).
+ * A write role that RLS keeps from a ledger is refused by the guard itself since v318 (#7659, requireLedgerPoliciesSql).
  */
 
 import type { BrainEngine } from './engine.ts';
+import { failClosedLedgerGuards } from './guard-ledger-checks.ts';
 import { migrationStatementTimeoutMs } from './migration-timeout.ts';
 import { isLockTimeoutError } from './retry-matcher.ts';
 import { resolveSchemaLockTimeoutMs, schemaLockBlockedError } from './postgres-engine/schema-lock-timeout.ts';
@@ -88,13 +89,71 @@ function isConcurrentCatalogUpdate(error: unknown): boolean {
 }
 
 /**
+ * A failure to re-create a purge or withdrawal guard other than another role owning it. It carries no `code` of its own,
+ * so a lock timeout in the re-create never reads as the migration run's lock refusal; the database error is its cause.
+ */
+export class LedgerGuardRecreateError extends Error {
+  constructor(cause: unknown) {
+    super(`purge or withdrawal guards not re-created (${cause instanceof Error ? cause.message : String(cause)}); gbrain doctor (guard_ledger_checks) names the ones left without their ledger check`, { cause });
+    this.name = 'LedgerGuardRecreateError';
+  }
+}
+
+/**
+ * Re-creates every purge or withdrawal guard left without its ledger check that the role owns (guard-ledger-checks.ts,
+ * #7659) and returns the failure, or null. Only a guard another role owns stays silent (SQLSTATE 42501): v318 and doctor's
+ * guard_ledger_checks name it, and every later migration run retries it. A concurrent update of the same pg_proc row is
+ * retried like the hardening's.
+ */
+async function recreateLedgerGuards(engine: BrainEngine, attempt = 1): Promise<LedgerGuardRecreateError | null> {
+  try {
+    await failClosedLedgerGuards(engine);
+    return null;
+  } catch (error) {
+    if ((error as { code?: string } | null)?.code === '42501') return null;
+    if (isConcurrentCatalogUpdate(error) && attempt < CONCURRENT_UPDATE_ATTEMPTS) {
+      await new Promise(resolve => setTimeout(resolve, 100 * attempt));
+      return recreateLedgerGuards(engine, attempt + 1);
+    }
+    return new LedgerGuardRecreateError(error);
+  }
+}
+
+/** The stderr line a migration run prints when hardenFunctionSearchPaths throws, naming the doctor check that lists what is left. */
+export function hardenFailureLine(error: unknown): string {
+  if (error instanceof LedgerGuardRecreateError) return `  guards: ${error.message}\n`;
+  const guardFailure = (error as { guardFailure?: unknown } | null)?.guardFailure;
+  return `  search_path: pg_temp not restored on gbrain functions (${error instanceof Error ? error.message : String(error)}); gbrain doctor (function_search_path) names them\n`
+    + (guardFailure instanceof LedgerGuardRecreateError ? `  guards: ${guardFailure.message}\n` : '');
+}
+
+/**
+ * Re-creates the guards (recreateLedgerGuards), then puts pg_temp back (pinTempLast) and returns what that left. A
+ * failed re-create never skips the pg_temp hardening: it is thrown as a LedgerGuardRecreateError once the hardening has
+ * run. When the hardening fails too, its own error is thrown (a lock refusal keeps its meaning for the migration run)
+ * with the re-create failure attached as `guardFailure`, which hardenFailureLine prints as well.
+ */
+export async function hardenFunctionSearchPaths(engine: BrainEngine): Promise<string[] | null> {
+  const guardFailure = await recreateLedgerGuards(engine);
+  let left: string[] | null;
+  try {
+    left = await pinTempLast(engine);
+  } catch (error) {
+    if (guardFailure && error instanceof Error) Object.assign(error, { guardFailure });
+    throw error;
+  }
+  if (guardFailure) throw guardFailure;
+  return left;
+}
+
+/**
  * Runs the hardening in one short transaction with the migration statement and lock timeouts and returns the
  * functions it had to leave (owned by another role), [] when none needed it, or null when the hardening committed but
  * listing what it left failed. A pg_proc row lock it cannot take
  * becomes `schema_lock_blocked`; a concurrent update of the same pg_proc row (`apply-migrations --force-schema` beside
- * another process's boot) is retried, since the step is idempotent. Prints nothing: the caller decides who is told.
+ * another process's boot) is retried, since the step is idempotent.
  */
-export async function hardenFunctionSearchPaths(engine: BrainEngine, attempt = 1): Promise<string[] | null> {
+async function pinTempLast(engine: BrainEngine, attempt = 1): Promise<string[] | null> {
   if ((await legacySearchPathFunctions(engine)).length === 0) return [];
   const lockTimeoutMs = resolveSchemaLockTimeoutMs();
   try {
@@ -111,7 +170,7 @@ export async function hardenFunctionSearchPaths(engine: BrainEngine, attempt = 1
     }
     if (isConcurrentCatalogUpdate(error) && attempt < CONCURRENT_UPDATE_ATTEMPTS) {
       await new Promise(resolve => setTimeout(resolve, 100 * attempt));
-      return hardenFunctionSearchPaths(engine, attempt + 1);
+      return pinTempLast(engine, attempt + 1);
     }
     throw error;
   }

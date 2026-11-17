@@ -135,6 +135,9 @@ describe.skipIf(skip)('multimodal v0.27.1 against real Postgres', () => {
     const fetched = await pg.getFile('default', 'originals/photos/whiteboard.jpg');
     expect(fetched).not.toBeNull();
     expect(fetched!.filename).toBe('whiteboard.jpg');
+    // files.size_bytes is BIGINT; postgres.js reads it as a BigInt, and FileRow says number on every engine.
+    expect(typeof fetched!.size_bytes).toBe('number');
+    expect(fetched!.size_bytes).toBe(12345);
 
     // Re-upsert same path → no-op (created=false)
     const r2 = await pg.upsertFile({
@@ -307,9 +310,11 @@ describe.skipIf(skip)('multimodal v0.27.1 against real Postgres', () => {
       expect(pgFile).not.toBeNull();
       expect(pgliteFile!.filename).toBe(pgFile!.filename);
       expect(pgliteFile!.mime_type).toBe(pgFile!.mime_type);
-      // PGLite returns size_bytes as BigInt, Postgres as Number — both are
-      // valid for a BIGINT column. Compare numerically.
-      expect(Number(pgliteFile!.size_bytes)).toBe(Number(pgFile!.size_bytes));
+      // Both engines return size_bytes as a number.
+      expect(pgFile!.size_bytes).toBe(pgliteFile!.size_bytes);
+      const pgListed = await pg.listFilesForPage(pgPage.id);
+      expect(pgListed.map(f => f.size_bytes)).toEqual([999]);
+      expect(typeof pgListed[0]!.size_bytes).toBe('number');
       expect(pgliteFile!.content_hash).toBe(pgFile!.content_hash);
       expect(pgliteFile!.source_id).toBe(pgFile!.source_id);
 
