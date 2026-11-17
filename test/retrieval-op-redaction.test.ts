@@ -70,7 +70,7 @@ beforeAll(async () => {
     timeline: `- ${TODAY}: ${planted('timeline')}`, frontmatter: { summary: planted('summary') },
   }, { sourceId: SRC });
   await engine.putPage('notes/n1', {
-    type: 'note', title: planted('note'), compiled_truth: `${planted('note body')}\nGITHUB_TOKEN=${rand(31)}7`,
+    type: 'note', title: planted('note'), compiled_truth: `${planted('note body')}\n${planted('link')}\nGITHUB_TOKEN=${rand(31)}7`,
     timeline: `- ${TODAY}: ${planted('note timeline')}`, frontmatter: {},
   }, { sourceId: SRC });
   await engine.putPage('misc/orphan', { type: 'note', title: planted('orphan'), compiled_truth: planted('orphan body'), frontmatter: {} }, { sourceId: SRC });
