@@ -33,7 +33,7 @@ import { compareTrust, isTrustTier, minTrust, TRUST_TIERS, type TrustTier } from
 import { compactTrustLabel } from './labels.ts';
 import { activationSuppressedSql } from './sql.ts';
 import { holdFingerprint } from '../write-gate-store.ts';
-import { memberFactAdmitSql } from '../access/member-facts.ts';
+import { grantedPrivateFactSql, memberFactAdmitSql } from '../access/member-facts.ts';
 import { worldOnlyFacts } from '../search/private-visibility.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { MANAGED_LINK_SOURCES, maskLinksFence } from '../links-fence.ts';
@@ -215,13 +215,19 @@ export function fenceRowHoldTexts(row: Pick<ParsedFact, 'claim' | 'context'>): H
  * GST-2891: SQL true when the world fence cell (`rowNum`, `claim`) of page (`sourceId`, `slug`) is held from the current
  * caller: the live facts row at that row number is narrower than world, or the claim is a live narrower fact of the page
  * that no live world fact of the page states (the restatement rule without the tier, so it also holds a restatement whose
- * own row is not stored yet), and the caller's fact reads do not admit that narrower fact (memberFactAdmitSql). For a
+ * own row is not stored yet), and the caller's fact reads do not admit that narrower fact (memberFactAdmitSql, or GST-2900
+ * a private-facts grant, grantedPrivateFactSql, when the grant also reads every private copy a visibility proposal names
+ * for that fact, so a restatement of a copy kept on a page the grant cannot read stays held). For a
  * caller that reads private facts (worldOnlyFacts false) nothing is held: callers skip the check. `partial` (an SQL
  * boolean) marks a claim cut by a chunk boundary: it then matches a fact that contains it rather than one equal to it.
  */
 export function heldRowSql(sourceId: string, slug: string, rowNum: string, claim: string, partial = 'false'): string {
   const page = (a: string) => `${a}.source_id = ${sourceId} AND ${a}.source_markdown_slug = ${slug} AND ${a}.expired_at IS NULL`;
-  const narrower = (a: string) => `${page(a)} AND ${a}.visibility <> 'world' AND NOT ${memberFactAdmitSql(a)}`;
+  const granted = (a: string) => `(${grantedPrivateFactSql(a)} AND NOT EXISTS (SELECT 1 FROM trust_proposals hgp
+    LEFT JOIN facts hgc ON hgp.target_table = 'facts' AND hgc.id = hgp.target_id
+    WHERE hgp.related_table = 'facts' AND hgp.related_id = ${a}.id AND hgp.action = 'supersede_fact' AND hgp.before_state->'visibility' IS NOT NULL
+      AND (hgc.id IS NULL OR NOT (${memberFactAdmitSql('hgc')} OR ${grantedPrivateFactSql('hgc')}))))`;
+  const narrower = (a: string) => `${page(a)} AND ${a}.visibility <> 'world' AND NOT ${memberFactAdmitSql(a)} AND NOT ${granted(a)}`;
   const states = (a: string) => `(CASE WHEN ${partial} THEN strpos(${a}.fact, ${claim}) > 0 ELSE ${a}.fact = ${claim} END)`;
   return `(EXISTS (SELECT 1 FROM facts hr WHERE ${narrower('hr')} AND hr.row_num = ${rowNum})
     OR (EXISTS (SELECT 1 FROM facts hc WHERE ${narrower('hc')} AND ${states('hc')})

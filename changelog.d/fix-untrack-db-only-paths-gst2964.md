@@ -1,0 +1,9 @@
+**gbrain git commit-push --untrack now takes every file under a declared, ignored database-only folder, .json and other non-Markdown files included.**
+
+### Fixed
+- In a managed checkout, `gbrain git commit-push --untrack -- <folder>` refused `untrack_not_db_only` for a folder declared under `storage.db_only` and ignored by `.gitignore` when it held `.json` (or other non-Markdown) files, because each file was matched by its page slug. A file is now matched by its path under the declared folder. A Markdown page still needs its slug under the folder; a code-extension file is checked against the brain and refuses when it is a live page, when the source's strategy imports code (sync imports it as a page), when the source's last finished sync has not seen it at its current version (run `gbrain sync --source <id>`, then rerun), or when the brain cannot be read. Symlinks out of the folder, folders reached through a symlink and sibling folders that only share the name refuse. Each refusal's fix now names what is missing for that file, and `--dry-run --untrack` lists exactly the files the real run removes.
+- The managed sync note about pages kept from the working tree no longer tells a page under a declared `storage.db_only` folder to be committed.
+- For a source rooted in a folder of its repository (`brain/`, with `brain/gbrain.yml`), `--untrack` read the repository's top-level `gbrain.yml`: every file refused `untrack_not_db_only`, and a folder only a stray top-level `gbrain.yml` declared was admitted, so the next sync deleted its pages. In a managed checkout every untrack now reads the source's folder from the brain, read-only for at most 10 seconds, and refuses every file when the brain cannot be read. On PGLite, stop a running `gbrain serve` or sync before an untrack. The refusal names the `gbrain.yml` it read.
+
+<!-- behavior-change: untrack_db_only_by_path_gst2964 -->
+<!-- behavior-change: untrack_reads_brain_gst2964 -->
