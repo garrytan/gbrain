@@ -60,7 +60,7 @@ import { claudeUserSettingsPath, type ClaudeHookEvent } from '../core/bootstrap/
 import { readHarnessReceiptState } from '../core/bootstrap/format.ts';
 import { smokeStdioRegistration } from './doctor/checks/harness-wiring.ts';
 import { finishFreshSetupMigrations } from './setup-migrations.ts';
-import { readServesStatus, sharedStdioHarness, servesApply, servesLines, servesOk, servesPreflight, type EntryBinding, type ServesOutcome } from './setup-serves.ts';
+import { readServesStatus, sharedStdioHarness, servesAfterLayout, servesApply, servesLines, servesOk, servesPreflight, type EntryBinding, type ServesOutcome } from './setup-serves.ts';
 import type { McpSurface } from '../mcp/surface.ts';
 import {
   SETUP_CAPABILITIES,
@@ -661,7 +661,8 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
       const skills = skillsFor('claude-code', flags, launcher, { scope, projectDir }, instructions);
       const resolver = await resolverFor('claude-code', flags, launcher);
       const layout = await layoutFor('claude-code', flags, launcher, instructions, brainCreate);
-      return finish(out, { dryRun: true, target, consent, steps, states: [], verify: null, notices: layout.notices([]), notes, instructions, skills, resolver, serves, launcher, layout: layout.outcome });
+      const servesDone = servesAfterLayout(serves, flags, launcher, servesPlan, layout.outcome?.company);
+      return finish(out, { dryRun: true, target, consent, steps, states: [], verify: null, notices: layout.notices([]), notes, instructions, skills, resolver, serves: servesDone, launcher, layout: layout.outcome });
     }
 
     let notices: Notice[] = [];
@@ -686,8 +687,9 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
     const states = ['configured', ...(verify.ok ? ['connection-verified', 'native-pending'] : [])];
     const turnHook = plan.events.includes('UserPromptSubmit') && instructions?.decision.value === 'accepted' ? verifyTurnHook('claude-code', { projectDir }) : null;
     const layout = await layoutFor('claude-code', flags, launcher, instructions, brainCreate);
+    const servesDone = servesAfterLayout(serves, flags, launcher, servesPlan, layout.outcome?.company);
     const code = await finish(out, { dryRun: false, target: { ...target, registration_owner: pluginOwner ? 'plugin' : 'setup' }, consent: result.receipt.consent, steps: result.steps, states, verify, notices: layout.notices(notices), notes,
-      preserved: Object.keys(result.edited).map((event) => ({ kind: 'hook', event, reason: 'edited' })), instructions, skills, turnHook, resolver, serves, launcher, layout: layout.outcome });
+      preserved: Object.keys(result.edited).map((event) => ({ kind: 'hook', event, reason: 'edited' })), instructions, skills, turnHook, resolver, serves: servesDone, launcher, layout: layout.outcome });
     if (turnHook && !turnHook.ok) return out.json ? 1 : refuse(turnHookNotLoaded('claude-code', turnHook, ['gbrain', 'setup', 'claude-code', ...(scope === 'project' ? ['--scope', 'project'] : [])]), out);
     return verify.ok || pluginOwner ? code : 1;
   } catch (e) {
@@ -862,7 +864,8 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
       const skills = skillsFor('codex', flags, launcher, {}, instructions);
       const resolver = await resolverFor('codex', flags, launcher);
       const layout = await layoutFor('codex', flags, launcher, instructions, brainCreate);
-      return finish(out, { harness: 'codex', dryRun: true, target, consent, steps, states: [], verify: null, notices: layout.notices([]), notes, instructions, skills, resolver, serves, layout: layout.outcome });
+      const servesDone = servesAfterLayout(serves, flags, launcher, servesPlan, layout.outcome?.company);
+      return finish(out, { harness: 'codex', dryRun: true, target, consent, steps, states: [], verify: null, notices: layout.notices([]), notes, instructions, skills, resolver, serves: servesDone, layout: layout.outcome });
     }
 
     let notices: Notice[] = [];
@@ -889,8 +892,9 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     const states = ['configured', ...(verify.ok ? ['connection-verified', push === 'native-verified' && result.receipt.trust.owned.UserPromptSubmit ? 'native-verified' : 'native-pending'] : [])];
     const turnHook = plan.events.includes('UserPromptSubmit') && instructions?.decision.value === 'accepted' ? verifyTurnHook('codex') : null;
     const layout = await layoutFor('codex', flags, launcher, instructions, brainCreate);
+    const servesDone = servesAfterLayout(serves, flags, launcher, servesPlan, layout.outcome?.company);
     const code = await finish(out, { harness: 'codex', dryRun: false, target: { ...target, registration_owner: pluginOwner ? 'plugin' : 'setup' }, consent: result.receipt.consent,
-      steps: result.steps, states, verify, notices: layout.notices(notices), notes: [...notes, ...result.notes], preserved: result.preserved, instructions, skills, turnHook, resolver, serves, layout: layout.outcome });
+      steps: result.steps, states, verify, notices: layout.notices(notices), notes: [...notes, ...result.notes], preserved: result.preserved, instructions, skills, turnHook, resolver, serves: servesDone, layout: layout.outcome });
     if (turnHook && !turnHook.ok) return out.json ? 1 : refuse(turnHookNotLoaded('codex', turnHook, ['gbrain', 'setup', 'codex']), out);
     return verify.ok || pluginOwner ? code : 1;
   } catch (e) {

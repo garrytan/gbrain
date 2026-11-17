@@ -54,10 +54,18 @@ export interface OpenPagesOptions {
   exclude?: ReadonlyArray<{ source: string; prefix: string }>;
 }
 
-/** The sources a key minted for `source` reads: that source, or for default the default source and every federated one. */
-async function mintedReadSources(engine: BrainEngine, source: string): Promise<string[]> {
-  if (source !== 'default') return [source];
-  return await localFederatedSourceIds(engine, 'default', 'seed_default').catch(() => undefined) ?? ['default'];
+/** The source the company shape adds (setup-brain-layout.ts COMPANY_SOURCE). */
+export const COMPANY_SOURCE_ID = 'company';
+
+/**
+ * GBRA-585 A: the sources a member key `gbrain access serves several` mints for `source` reads, as a fixed list (the
+ * federated grant kind, readSources[0] = the write source): that source, the `company` source when it exists, and
+ * every source federated now. A source federated later is added only by a re-run (labelSeveral adds, never removes).
+ */
+export async function memberKeyReadSources(engine: BrainEngine, source: string): Promise<string[]> {
+  const federated = await localFederatedSourceIds(engine, source, 'seed_default').catch(() => undefined) ?? [source];
+  const company = source !== COMPANY_SOURCE_ID && (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE id = $1 AND archived IS NOT TRUE', [COMPANY_SOURCE_ID])).length > 0;
+  return [...new Set([source, ...(company ? [COMPANY_SOURCE_ID] : []), ...federated])];
 }
 
 /**
@@ -99,7 +107,7 @@ async function memberReads(engine: BrainEngine, owner: string | null, planned: O
   const stdioSet = stdio ? reads.get(stdio) : undefined;
   if (stdioSet) for (const s of await stdioReadSources(engine)) stdioSet.add(s);
   if (planned) {
-    const minted = await mintedReadSources(engine, planned.source);
+    const minted = await memberKeyReadSources(engine, planned.source);
     for (const id of planned.members) {
       if (id === owner) continue;
       const set = reads.get(id) ?? new Set<string>();

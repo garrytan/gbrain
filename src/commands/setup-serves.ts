@@ -23,7 +23,7 @@ import { openclawStateDir } from '../core/setup/brain-first.ts';
 import { opError, OperationError } from '../core/ops/contract.ts';
 import { ACCESS_ID_RE } from '../core/access/principals.ts';
 import { bunSpawnSync } from '../core/spawn.ts';
-import { readRoster, rosterEmpty, type ServesReceipt, type ServesStatus, receiptLines, receiptOk } from './access-serves.ts';
+import { readRoster, readsLines, rosterEmpty, type ServesReceipt, type ServesStatus, receiptLines, receiptOk } from './access-serves.ts';
 
 export interface ServesFlags { serves?: 'one' | 'several'; members?: string; membersFile?: string; source?: string; stdioMember?: string; labelledOnly?: boolean; owner?: string; dryRun: boolean }
 
@@ -79,6 +79,8 @@ export interface ServesOutcome {
   stdio?: { member: string | null; action: 'write' | 'keep' | 'remove' | 'unbound'; detail: string };
   /** GBRA-585 D: where the owner setup asked the child to name came from. */
   owner_from?: ServesOwner['from'];
+  /** GBRA-585 A: the labelling child run again after the layout step added the company source, so the keys this run minted read it. */
+  regrant?: ServesReceipt;
   error?: string;
 }
 
@@ -131,8 +133,12 @@ export function servesOneRefusal(status: ServesStatus | null, harness: string, e
 }
 
 /** --serves several: the labelling child (preview on a dry run) and, when applied, one bound read per member. */
+function servesArgv(roster: string[], flags: ServesFlags, owner: ServesOwner | undefined, apply: boolean): string[] {
+  return ['access', 'serves', 'several', '--members', roster.join(','), ...(flags.source ? ['--source', flags.source] : []), ...(flags.labelledOnly ? ['--labelled-only'] : []), ...(owner ? ['--owner', owner.id] : []), ...(apply ? ['--yes'] : []), '--json'];
+}
+
 function runServesSeveral(launcher: string, roster: string[], flags: ServesFlags, owner: ServesOwner | undefined): Omit<ServesOutcome, 'brain_serves'> {
-  const r = child(launcher, ['access', 'serves', 'several', '--members', roster.join(','), ...(flags.source ? ['--source', flags.source] : []), ...(flags.labelledOnly ? ['--labelled-only'] : []), ...(owner ? ['--owner', owner.id] : []), ...(flags.dryRun ? [] : ['--yes']), '--json']);
+  const r = child(launcher, servesArgv(roster, flags, owner, !flags.dryRun));
   const receipt = parsed<ServesReceipt>(r.stdout);
   const from = owner ? { owner_from: owner.from } : {};
   if (!receipt || !('members' in receipt)) return { mode: 'several', ...from, error: (r.stderr || r.stdout).trim() || 'gbrain access serves several failed' };
@@ -228,7 +234,22 @@ export function bindStdio(harness: string, status: ServesStatus | null, entry: E
 }
 
 export function servesOk(o: ServesOutcome | null): boolean {
-  return !o || (!o.error && (!o.receipt || receiptOk(o.receipt)) && (o.proof ?? []).every(p => p.leaked.length === 0));
+  return !o || (!o.error && (!o.receipt || receiptOk(o.receipt)) && (!o.regrant || receiptOk(o.regrant)) && (o.proof ?? []).every(p => p.leaked.length === 0));
+}
+
+/**
+ * GBRA-585 A: setup labels the people before the layout step adds the company source, so when this run added it, the
+ * labelling child runs once more and the keys it minted with a source list gain `company` (it adds, never removes).
+ * A dry run says so instead.
+ */
+export function servesAfterLayout(o: ServesOutcome | null, flags: ServesFlags, launcher: string, plan: ServesPlan, company: { action: string } | null | undefined): ServesOutcome | null {
+  if (!o || flags.serves !== 'several' || company?.action !== 'created') return o;
+  if (flags.dryRun) return { ...o, note: [o.note, 'the member keys this run mints also read source company once the layout step adds it: every page in it, including the calls it imports, which every member reads whether or not they attended'].filter(Boolean).join('; ') };
+  if (!o.receipt?.applied || o.error) return o;
+  const r = child(launcher, servesArgv(plan.roster, flags, plan.owner, true));
+  const regrant = parsed<ServesReceipt>(r.stdout);
+  if (!regrant || !('members' in regrant)) return { ...o, error: `giving the member keys source company failed: ${(r.stderr || r.stdout).trim() || 'gbrain access serves several printed nothing'}` };
+  return { ...o, regrant };
 }
 
 /** GST-2670 (F9): the proof covers the people/ folders only, so it names the open pages that member's key still reads. */
@@ -248,6 +269,7 @@ export function servesLines(o: ServesOutcome, dryRun: boolean): string[] {
       : `  proof      a read bound to ${p.member} sees its own folder (${p.own} page(s)) and no page of another member's folder${openTail(o.receipt, p.member)}`),
     ...(o.owner_from === 'login' && o.receipt?.owner && o.receipt.owner.action !== 'keep' && o.receipt.owner.action !== 'blocked'
       ? [`  owner      ${o.receipt.owner.id} is named from your login name; to name someone else, ${dryRun ? 'pass --owner <id>' : 'add them (gbrain access member add <id>) and run gbrain access owner set <id>'}`] : []),
+    ...(o.regrant ? [...o.regrant.keys.filter(k => k.adds?.length).map(k => `  key        ${k.member}: now also reads ${k.adds!.join(', ')}, which this run added`), ...readsLines(o.regrant)] : []),
     ...(o.stdio ? [`  stdio      ${o.stdio.detail}`] : []),
     ...(o.note ? [`  labels     ${o.note}`] : []),
     ...(o.error ? [`  error      ${o.error}`] : []),

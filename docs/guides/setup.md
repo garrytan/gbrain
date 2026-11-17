@@ -185,6 +185,15 @@ the preview shows it first, and an owner that is already set is kept. No key is
 rebound: the receipt lists each live token or OAuth client bound to no member with
 the `gbrain auth rescope --token|--client <name> --member <owner>` command that
 binds it, so you bind your own keys on purpose.
+Each key setup mints writes to the run's source and reads a fixed list: that source,
+the `company` source when it exists (`--shape company`), and every source federated
+when the key is minted. The preview names the list and how many pages `company` holds,
+how many of them are imported calls, and that every member reads them all, calls they
+did not attend included. A source federated later reaches these keys only when you run
+setup again: a re-run adds sources to a key setup minted with a list and never removes
+one. Keys minted before this (the default grant) are never changed. When the same run
+adds the `company` source (`--shape company`), setup labels the people first and then
+gives their new keys `company`; `company` itself stays out of default search.
 Setup leaves the stdio server unbound: stdio sessions read only pages no rule
 restricts, and the harness's instructions keep the one-person scoping lines.
 For a Claude Code or Codex install only one person uses, bind that harness alone:

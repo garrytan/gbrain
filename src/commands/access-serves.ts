@@ -18,6 +18,10 @@
  * GBRA-585 D: --owner <id> names the brain owner when none is configured (the member is added when missing, then
  * `access owner set`); a configured owner is kept. No credential is rebound: the receipt lists the live credentials
  * bound to no member, each with the `gbrain auth rescope … --member <owner>` command that binds it on purpose.
+ * GBRA-585 A: a key minted here gets a fixed source list (the federated grant kind): it writes to the run's source and
+ * reads that source, `company` when it exists and every source federated at mint time (memberKeyReadSources). A
+ * re-run adds sources to a key of this name that already holds a list for this source, and never removes one; any
+ * other kept key (today's default or scalar grant) is never changed. The preview names the list and what `company` holds.
  */
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
@@ -33,7 +37,8 @@ import { hintReaders, ownerMemberId, ownerView, setOwner } from '../core/access/
 import { stdioMemberId } from '../core/access/caller.ts';
 import { brainServes, SERVES_KEY, unlabeledPeopleFolders, type PeopleFolder, type ServesView } from '../core/access/serves.ts';
 import { setMemberLabelledOnly } from '../core/access/labelled-only.ts';
-import { openPagesLines, readOpenPages, type OpenPagesError, type OpenPagesRead } from '../core/access/open-pages.ts';
+import { COMPANY_SOURCE_ID, memberKeyReadSources, openPagesLines, readOpenPages, type OpenPagesError, type OpenPagesRead } from '../core/access/open-pages.ts';
+import { rescopeLegacyToken } from '../core/grants/legacy-token.ts';
 import type { OpenPages } from '../core/access/open-pages.ts';
 import { addFolderRules, currentFolderRules } from './access-rules.ts';
 import { mintToken } from './auth-mint.ts';
@@ -57,7 +62,10 @@ export interface ServesReceipt {
   unbound?: Array<{ kind: 'token' | 'client'; name: string; command: string }>;
   rules: Array<{ id: string; prefix: string; readers: string[]; action: 'add' | 'keep' | 'blocked'; detail?: string }>;
   rule_write?: { store: string; revision: number | null; state: string; git_commit?: string | null };
-  keys: Array<{ member: string; token_name: string; path: string; action: 'mint' | 'keep' | 'blocked'; detail?: string }>;
+  /** GBRA-585 A: reads = the source list a minted or list key holds once the run is done; adds = what a re-run adds to a kept list key. */
+  keys: Array<{ member: string; token_name: string; path: string; action: 'mint' | 'keep' | 'blocked'; detail?: string; reads?: string[]; adds?: string[] }>;
+  /** GBRA-585 A: what the keys this run mints write and read, and what the company source holds when they read it. */
+  reads?: { write: string; sources: string[]; company: { pages: number; calls: number } | null };
   key_dir: string;
   /** People folders with pages that no rule covers once this run's rules are in place: every member reads them. */
   unlabeled: PeopleFolder[];
@@ -158,22 +166,38 @@ async function plan(engine: BrainEngine, roster: string[], sourceId: string, lab
     return { id: r.rule.id, prefix: r.rule.prefix, readers: r.rule.readable_by, action: 'blocked',
       detail: `rule "${clash.id}" on ${clash.prefix} already exists, readable by ${readers}, not by ${id} alone; change it with gbrain access rule add --id ${clash.id} --prefix ${clash.prefix} --readers ${hinted[i]} --source ${sourceId}` };
   });
+  const desired = await memberKeyReadSources(engine, sourceId);
   const keys: ServesReceipt['keys'] = [];
   for (const id of roster) {
     const name = memberKeyName(id);
     const path = join(keyDir, `${id}.key`);
-    const [token] = await engine.executeRaw<{ member_id: string | null; token_hash: string }>('SELECT member_id, token_hash FROM access_tokens WHERE name = $1 AND revoked_at IS NULL', [name]);
+    const [token] = await engine.executeRaw<{ member_id: string | null; token_hash: string; source_grant: string | null; source_id: string | null; federated_read: unknown }>('SELECT member_id, token_hash, source_grant, source_id, federated_read FROM access_tokens WHERE name = $1 AND revoked_at IS NULL', [name]);
     if (members.find(m => m.id === id)?.action === 'blocked') keys.push({ member: id, token_name: name, path, action: 'blocked', detail: 'the member is not enabled' });
     else if (!token && existsSync(path)) keys.push({ member: id, token_name: name, path, action: 'blocked', detail: `a key file is already at ${path} but no live key is named ${name} (another brain's key, or one revoked by hand); move or delete the file, then run this again` });
-    else if (!token) keys.push({ member: id, token_name: name, path, action: 'mint' });
+    else if (!token) keys.push({ member: id, token_name: name, path, action: 'mint', reads: desired });
     else if (token.member_id !== id) keys.push({ member: id, token_name: name, path, action: 'blocked', detail: `a token named ${name} exists but is not bound to ${id}; revoke it (gbrain auth revoke ${name}) or bind it (gbrain auth rescope --token ${name} --member ${id})` });
     else if (!existsSync(path)) keys.push({ member: id, token_name: name, path, action: 'blocked', detail: `the key ${name} exists but its file is gone and a key is shown only once; revoke it (gbrain auth revoke ${name}) and run this again to mint a new one` });
     else if (hashToken(readFileSync(path, 'utf8').trim()) !== token.token_hash) keys.push({ member: id, token_name: name, path, action: 'blocked', detail: `the file does not hold the live key ${name} (it was revoked and made again, or another brain wrote it); revoke it (gbrain auth revoke ${name}), delete ${path} and run this again to mint a new one` });
-    else keys.push({ member: id, token_name: name, path, action: 'keep' });
+    else if (token.source_grant !== 'federated' || token.source_id !== sourceId) keys.push({ member: id, token_name: name, path, action: 'keep' });
+    else {
+      const held = textList(token.federated_read);
+      const adds = desired.filter(s => !held.includes(s));
+      keys.push({ member: id, token_name: name, path, action: 'keep', reads: [...held, ...adds], ...(adds.length ? { adds } : {}) });
+    }
   }
   return { serves: 'several', source_id: sourceId, applied: false, config: { key: SERVES_KEY, value: 'several', action: explicit === 'several' ? 'keep' : 'write' },
     members, ...(ownerPlan ? { owner: ownerPlan, unbound: ownerPlan.action === 'blocked' ? [] : await unboundCredentials(engine, ownerPlan.id) } : {}),
-    rules, keys, key_dir: keyDir, unlabeled: await unlabeledOutside(engine, sourceId, rules), ...await openPagesFor(engine, sourceId, members, rules, labelledOnly, owner), completed: [] };
+    rules, keys, reads: { write: sourceId, sources: desired, company: desired.includes(COMPANY_SOURCE_ID) ? await companyCounts(engine) : null }, key_dir: keyDir, unlabeled: await unlabeledOutside(engine, sourceId, rules), ...await openPagesFor(engine, sourceId, members, rules, labelledOnly, owner), completed: [] };
+}
+
+/** A text[] column value as a list (Postgres returns an array, PGLite may return the {a,b} literal). */
+const textList = (v: unknown): string[] => Array.isArray(v) ? v.map(String) : String(v ?? '').replace(/^\{|\}$/g, '').split(',').map(s => s.trim().replace(/^"|"$/g, '')).filter(Boolean);
+
+/** The live pages in the company source, and how many are imported calls (company/calls/<date>-<title>). */
+async function companyCounts(engine: BrainEngine): Promise<{ pages: number; calls: number }> {
+  const [row] = await engine.executeRaw<{ pages: number | string; calls: number | string }>(
+    "SELECT count(*)::int AS pages, count(*) FILTER (WHERE slug LIKE 'company/calls/%')::int AS calls FROM pages WHERE source_id = $1 AND deleted_at IS NULL", [COMPANY_SOURCE_ID]);
+  return { pages: Number(row?.pages ?? 0), calls: Number(row?.calls ?? 0) };
 }
 
 /** The open pages once this run's members, keys and rules are in place (the preview counts what it is about to add). */
@@ -233,7 +257,7 @@ export async function labelSeveral(engine: BrainEngine, roster: string[], source
     abortAfter('serves-rules');
     for (const k of receipt.keys.filter(x => x.action === 'mint')) {
       const minted = await mintToken(engine, k.token_name, { scopes: ['read', 'write'], binding: { member: k.member },
-        ...(sourceId === 'default' ? {} : { sources: { kind: 'scalar' as const, writeSource: sourceId } }) });
+        sources: { kind: 'federated', writeSource: sourceId, readSources: k.reads! } });
       try {
         writeKeyFile(k.path, minted.token);
       } catch (e) {
@@ -241,6 +265,9 @@ export async function labelSeveral(engine: BrainEngine, roster: string[], source
         throw e;
       }
       abortAfter('serves-key');
+    }
+    for (const k of receipt.keys.filter(x => x.action === 'keep' && x.adds?.length)) {
+      await rescopeLegacyToken(engine, { target: { name: k.token_name }, sources: k.reads!, reset: [], refreshOperations: false, allNew: false, dryRun: false, json: true });
     }
     receipt.completed.push('keys');
     if (receipt.config.action === 'write') await engine.setConfig(SERVES_KEY, 'several');
@@ -267,12 +294,26 @@ export function receiptLines(r: ServesReceipt): string[] {
     ...(r.unbound ?? []).map(u => `  unbound    ${u.kind === 'token' ? 'token' : 'OAuth client'} ${u.name} is bound to no member, and setup binds none; if it is the owner's, bind it with ${u.command}`),
     ...r.rules.map(x => `  rule       ${x.prefix} readable by ${x.readers.map(p => p.replace(/^member:/, '')).join(', ')} (${verb(x.action)})${x.detail ? `: ${x.detail}` : ''}`),
     ...(r.rule_write ? [`             ${r.rule_write.store} store, revision ${r.rule_write.revision ?? '-'} ${r.rule_write.state}${r.rule_write.git_commit ? `, committed ${r.rule_write.git_commit.slice(0, 12)}` : ''}`] : []),
-    ...r.keys.map(k => `  key        ${k.member}: ${k.path} (${verb(k.action)}${k.action === 'blocked' ? '' : ', 0600'}; token ${k.token_name})${k.detail ? `: ${k.detail}` : ''}`),
+    ...r.keys.map(k => `  key        ${k.member}: ${k.path} (${verb(k.action)}${k.action === 'blocked' ? '' : ', 0600'}; token ${k.token_name}${k.adds?.length ? `; ${r.applied ? 'now also reads' : 'will also read'} ${k.adds.join(', ')}` : ''})${k.detail ? `: ${k.detail}` : ''}`),
+    ...readsLines(r),
     ...(ruleWritePending(r) ? [`  The rules are not enforced yet: finish with gbrain access resume --source ${r.source_id}`] : []),
     ...r.unlabeled.map(u => `  unlabeled  ${u.source}:${u.prefix} (${u.pages} page(s)) has no folder rule, so every member reads it: name its readers with gbrain access rule add --prefix ${u.prefix} --readers <list> --source ${u.source}, or add the person with --members`),
     ...openPagesLines(r, labelledOnlyCommand(r)),
     ...(r.error ? [`Stopped: ${r.error.message}`, `  Finished before it stopped: ${r.completed.join(', ') || 'nothing'}. Every step is idempotent: run the same command again to finish.`] : []),
     ...(r.applied ? [] : [blocked(r) ? 'Nothing written: fix each BLOCKED line, then run this again.' : 'Nothing written. Add --yes to apply.']),
+  ];
+}
+
+/** GBRA-585 A: what the keys this run mints read, what the company source holds, and that a later-federated source waits for a re-run. */
+export function readsLines(r: ServesReceipt): string[] {
+  if (!r.reads) return [];
+  const { write, sources, company } = r.reads;
+  const lists = r.keys.some(k => k.reads);
+  const kept = r.keys.filter(k => k.action === 'keep' && !k.reads).map(k => k.member);
+  return [
+    `  reads      keys this run mints write to ${write} and read ${sources.join(', ')}${lists ? '' : ' (this run mints none)'}. A source federated later does not reach these keys until you run setup again.`,
+    ...(company ? [`             source company holds ${company.pages} page(s), ${company.calls} of them imported calls: every member whose key reads company reads all of them, including calls they did not attend, except pages a folder rule or readable_by keeps to others.`] : []),
+    ...(kept.length ? [`             kept as they are: the keys of ${kept.join(', ')} keep their earlier grant${company ? ' and do not read company' : ''}; setup never changes a key it did not mint with a source list.`] : []),
   ];
 }
 

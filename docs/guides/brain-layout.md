@@ -64,7 +64,10 @@ gbrain setup claude-code --shape both --notes ~/notes --docs ~/acme-example/docs
   the `company` source reads them, and no one else. Setup prints who that is, for example
   `readable by: everyone who can read source company (this brain serves one person)`, or
   on a brain that serves several people, the members the source's access rules allow
-  (`gbrain access who-can-read <slug> --source company` shows the same). These are not
+  (`gbrain access who-can-read <slug> --source company` shows the same). There, the member
+  keys `gbrain setup --serves several` mints read the `company` source, so every member
+  reads every call, including calls they did not attend; other keys read it only when
+  their grant names it, and `company` stays out of default search. These are not
   your agent conversations: those go to `conversations/` through the
   [conversation archive](conversation-archive.md), which `--transcripts` never touches.
 

@@ -330,7 +330,7 @@ function readersOf(exec: Run, launcher: string, slug: string): NonNullable<Trans
   try { page = (JSON.parse(exec([launcher, 'access', 'who-can-read', slug, '--source', COMPANY_SOURCE, '--json'], undefined, null).stdout) as { pages?: Array<NonNullable<typeof page>> }).pages?.[0]; } catch { return unknown; }
   try { serves = JSON.parse(exec([launcher, 'access', 'serves', '--json', '--no-open-pages'], undefined, null).stdout) as typeof serves; } catch { /* the serves clause is left out */ }
   if (!page) return unknown;
-  const who = serves.serves === 'several' ? `this brain serves several people: ${(serves.enabled_members ?? []).join(', ') || 'none enabled'}`
+  const who = serves.serves === 'several' ? `this brain serves several people: ${(serves.enabled_members ?? []).join(', ') || 'none enabled'}; the member keys gbrain setup mints read source ${COMPANY_SOURCE}, other keys only when their grant names it or it is in default search`
     : serves.serves === 'one' ? 'this brain serves one person' : null;
   const members = page.members;
   const clauses = [...(members === 'every_source_reader' ? [] : [`access rules on source ${COMPANY_SOURCE} cover ${CALLS_PREFIX}/`]), ...(who ? [who] : [])];

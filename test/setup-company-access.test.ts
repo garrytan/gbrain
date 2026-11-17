@@ -12,7 +12,7 @@
  *    dispatched remote=true; `bun src/cli.ts setup` spawned against a temp HOME / GBRAIN_HOME.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { userInfo } from 'node:os';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -23,7 +23,7 @@ import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { noGrantFederatedScope } from '../src/core/source-resolver.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
-import { labelSeveral } from '../src/commands/access-serves.ts';
+import { labelSeveral, receiptLines } from '../src/commands/access-serves.ts';
 import { mintToken } from '../src/commands/auth-mint.ts';
 import { addMember } from '../src/core/access/members.ts';
 import { ownerMemberId, setOwner } from '../src/core/access/owner.ts';
@@ -158,3 +158,114 @@ describe('D: gbrain setup --serves several names the owner (spawned, PGLite)', (
     expect(JSON.parse((await gbrain(b, ['access', 'owner', '--json'])).stdout).owner).toBe(login);
   }, 480_000);
 });
+
+const COMPANY: Record<string, string> = {
+  'company/facts': 'factscanary',
+  'company/calls/2026-11-01-hiring-debrief': 'callcanary',
+  'company/board/owner-only': 'boardcanary',
+};
+const companyText = (slug: string, canary: string) => slug === 'company/board/owner-only'
+  ? `---\ntype: note\ntitle: ${slug}\nreadable_by: [owner-example]\n---\n# ${slug}\n\nHarbor ledger notes ${canary}.\n`
+  : pageText(slug, canary);
+const keyFile = (home: string, member: string) => join(home, '.gbrain', 'member-keys', `${member}.key`);
+const tokenRow = async (engine: BrainEngine, name: string) => (await engine.executeRaw<{ source_grant: string; source_id: string | null; federated_read: unknown }>(
+  'SELECT source_grant, source_id, federated_read FROM access_tokens WHERE name = $1 AND revoked_at IS NULL', [name]))[0]!;
+const list = (v: unknown) => Array.isArray(v) ? v : String(v ?? '').replace(/^\{|\}$/g, '').split(',').filter(Boolean);
+
+for (const kind of testBackends()) {
+  describe(`A: setup's member keys read the company source (${kind}, repo-less)`, () => {
+    let engine: BrainEngine;
+    let close: () => Promise<void>;
+    let home: string;
+    let ownerKey: string;
+    const ALL = [...Object.values(PAGES), ...Object.values(COMPANY), 'alicecanary', 'bobcanary'];
+    const label = (roster: string[], apply = true) => withEnv({ GBRAIN_HOME: home, GBRAIN_SETUP_ABORT_AFTER: undefined }, () => labelSeveral(engine, roster, 'default', apply, true, { owner: 'owner-example' }));
+
+    beforeAll(async () => {
+      ({ engine, close } = await openEngine(kind));
+      home = tempDir('gbrain-company-');
+      for (const [slug, canary] of Object.entries(PAGES)) await importFromContent(engine, slug, pageText(slug, canary), { sourceId: 'default', noEmbed: true });
+      for (const m of ['alice-example', 'bob-example']) await importFromContent(engine, `people/${m}/plan`, pageText(`people/${m}/plan`, `${m.split('-')[0]}canary`), { sourceId: 'default', noEmbed: true });
+      await engine.executeRaw("INSERT INTO sources (id, name, config) VALUES ('company', 'company', '{}'::jsonb) ON CONFLICT (id) DO NOTHING");
+      for (const [slug, canary] of Object.entries(COMPANY)) await importFromContent(engine, slug, companyText(slug, canary), { sourceId: 'company', noEmbed: true });
+      await addMember(engine, 'owner-example');
+      await setOwner(engine, 'owner-example');
+      ownerKey = (await mintToken(engine, 'owner-laptop', { scopes: ['read', 'write'], binding: { member: 'owner-example' } })).token;
+      await addMember(engine, 'carol-example');
+      const carol = await mintToken(engine, 'member-carol-example', { scopes: ['read', 'write'], binding: { member: 'carol-example' } });
+      mkdirSync(join(home, '.gbrain', 'member-keys'), { recursive: true, mode: 0o700 });
+      writeFileSync(keyFile(home, 'carol-example'), `${carol.token}\n`, { mode: 0o600 });
+    }, 120_000);
+    afterAll(async () => { await close?.(); }, 60_000);
+
+    test('the preview names the read set, the company pages and calls, and says a later-federated source waits for a re-run', async () => {
+      const preview = await label(['alice-example', 'bob-example', 'carol-example'], false) as any;
+      expect(preview.reads).toEqual({ write: 'default', sources: ['default', 'company'], company: { pages: 3, calls: 1 } });
+      const text = receiptLines(preview).join('\n');
+      expect(text).toContain('reads      keys this run mints write to default and read default, company');
+      expect(text).toContain('source company holds 3 page(s), 1 of them imported calls');
+      expect(text).toContain("including calls they did not attend");
+      expect(text).toContain('A source federated later does not reach these keys until you run setup again');
+      expect((await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM access_members WHERE id = 'alice-example'"))[0]!.n).toBe(0);
+    }, 120_000);
+
+    test("new keys get a source list with company; a key minted before is kept as it is; the owner's key reads the same pages", async () => {
+      // The roster's own people/<member>/ folders are closed to the owner by the folder rules access serves several already
+      // wrote on master; this PR does not change them, so the owner's reads are compared on every other page.
+      const OWNER_SEES = ALL.filter(c => c !== 'alicecanary' && c !== 'bobcanary');
+      const ownerBefore = await tokenReads(engine, ownerKey, OWNER_SEES);
+      expect(ownerBefore).toEqual(['carolcanary', 'journalcanary', 'worldcanary']);
+      const r = await label(['alice-example', 'bob-example', 'carol-example']);
+      expect(r.error).toBeUndefined();
+      for (const m of ['alice-example', 'bob-example']) {
+        const row = await tokenRow(engine, `member-${m}`);
+        expect([row.source_grant, row.source_id, list(row.federated_read)]).toEqual(['federated', 'default', ['default', 'company']]);
+      }
+      expect((await tokenRow(engine, 'member-carol-example')).source_grant).toBe('default');
+      const alice = await tokenReads(engine, readFileSync(keyFile(home, 'alice-example'), 'utf8').trim(), ALL);
+      expect(alice).toContain('callcanary');
+      expect(alice).toContain('factscanary');
+      expect(alice).toContain('alicecanary');
+      expect(alice).not.toContain('bobcanary');
+      expect(alice).not.toContain('boardcanary');
+      expect(await tokenReads(engine, readFileSync(keyFile(home, 'carol-example'), 'utf8').trim(), ALL)).not.toContain('callcanary');
+      const [company] = await engine.executeRaw<{ config: unknown }>("SELECT config FROM sources WHERE id = 'company'");
+      expect(JSON.stringify(company!.config)).not.toContain('"federated":true');
+      expect(await tokenReads(engine, ownerKey, OWNER_SEES)).toEqual(ownerBefore);
+    }, 120_000);
+
+    test('a re-run adds a newly federated source to the list keys and never removes one; default-grant keys stay as they are', async () => {
+      await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ('guests', 'guests', '{"federated":true}'::jsonb) ON CONFLICT (id) DO NOTHING`);
+      const r = await label(['alice-example', 'bob-example', 'carol-example']) as any;
+      expect(r.error).toBeUndefined();
+      expect(r.keys.map((k: any) => [k.member, k.action, k.adds ?? []])).toEqual([['alice-example', 'keep', ['guests']], ['bob-example', 'keep', ['guests']], ['carol-example', 'keep', []]]);
+      expect(list((await tokenRow(engine, 'member-alice-example')).federated_read)).toEqual(['default', 'company', 'guests']);
+      expect((await tokenRow(engine, 'member-carol-example')).source_grant).toBe('default');
+      await engine.executeRaw("UPDATE sources SET config = '{}'::jsonb WHERE id = 'guests'");
+      const again = await label(['alice-example', 'bob-example', 'carol-example']) as any;
+      expect(again.keys.every((k: any) => !k.adds?.length)).toBe(true);
+      expect(list((await tokenRow(engine, 'member-alice-example')).federated_read)).toEqual(['default', 'company', 'guests']);
+    }, 120_000);
+  });
+}
+
+describe('A: gbrain setup --shape company --transcripts gives the members the calls (spawned, PGLite)', () => {
+  test("on a new brain each member's key reads an imported call, and the readers line says who reads them", async () => {
+    const b = box();
+    const dir = join(b.root, 'calls');
+    mkdirSync(dir);
+    writeFileSync(join(dir, '2026-03-04 acme-example renewal.txt'), 'Alice: harbor ledger notes callcanary, we agreed to move acme-example to annual billing.\n');
+    const r = await setup(b, ['claude-code', '--serves', 'several', '--members', ROSTER.join(','), '--owner', 'owner-example', '--shape', 'company', '--transcripts', dir, '--json']);
+    expect(r.exitCode).toBe(0);
+    expect(r.doc.serves.regrant.keys.map((k: any) => [k.member, k.adds])).toEqual([['alice-example', ['company']], ['bob-example', ['company']]]);
+    expect(r.doc.brain_layout.transcripts.readers.detail).toContain('the member keys gbrain setup mints read source company');
+    const engine = new PGLiteEngine();
+    await engine.connect({ engine: 'pglite', database_path: join(b.home, '.gbrain', 'brain.pglite') } as never);
+    try {
+      for (const m of ROSTER) expect(await tokenReads(engine, readFileSync(keyFile(b.home, m), 'utf8').trim(), ['callcanary'])).toEqual(['callcanary']);
+    } finally {
+      await engine.disconnect();
+    }
+  }, 480_000);
+});
+
