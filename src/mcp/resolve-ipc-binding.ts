@@ -172,7 +172,8 @@ export async function bindResolveIpcForServe(
 
     // The owner socket follows the brain the engine opened, which may be a mount (#5237).
     const owner = residentPersistenceConfig(cfg);
-    if (persistenceProvider && owner?.engine === 'pglite') {
+    // A Rust brain's serve owner publishes the same socket in its store directory (rust-engine/owner-ipc/).
+    if (persistenceProvider && (owner?.engine === 'pglite' || (owner?.engine as string | undefined) === 'rust')) {
       const persistenceSocket = persistenceSocketPathForConfig(owner);
       if (persistenceSocket && !tooLong(persistenceSocket)) {
         try { persistence = await startPersistenceIpcServer(persistenceSocket, persistenceProvider); }
