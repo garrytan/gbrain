@@ -6197,8 +6197,8 @@ The opt-in Rust engine (`docs/designs/RUST_ENGINE.md`) is under construction. PG
 as before, and an install needs no Rust toolchain and no addon. `openRustEngine({ addon, databasePath })`
 (`src/core/rust-engine.ts`) is the one seam: the addon loader calls it after it has loaded and verified the native
 addon, and gets back the engine: every `BrainEngine` member, with `kind` `'rust'`. `BrainEngine.kind` admits `'rust'`
-when the `rust` config value lands with the loader. Selecting the engine and refusing a missing or mismatched addon
-belong to the loader, not the shell.
+when the `rust` config value lands; no config value selects the Rust engine yet. Finding, checking and loading the
+addon, and refusing a missing or mismatched one, belong to the loader (below), not the shell.
 
 - **Capabilities.** The shell declares no capabilities. Each `BrainEngine` member it does not implement refuses
   `engine_capability_missing` with the capability as `reason` (`raw_sql`, `pages`, `search`, ...), the member in
@@ -6207,6 +6207,24 @@ belong to the loader, not the shell.
 - **SQL-only paths.** Code that only works through SQL (migrations, cycle locks, engine migration and graduation,
   embed backfill, page-body staging) takes the kind as `EngineKind`, narrows it with `sqlEngineKind` or
   `isRustEngineKind` (`src/core/sql-engine-kind.ts`), and refuses a Rust brain with `engine_capability_missing` reason `raw_sql` instead of treating it as Postgres.
+- **The addon loader.** `loadRustEngineAddon()` (`src/core/rust-engine/addon-loader.ts`; the fetch is
+  `addon-fetch.ts`) returns the loaded addon, or the refusal `rust_engine_addon_missing` or
+  `rust_engine_addon_mismatch` with its `reason` (`gbrain errors <code>`), before the brain is touched. It uses
+  `GBRAIN_RUST_ENGINE_ADDON` (an absolute path to a build from `bun run rust:build`; it skips only the release
+  checksum pin) first, then an addon cached at `<gbrain home>/engines/rust/<engine_build>/<target>.node` whose SHA-256
+  equals the cached manifest of this gbrain version (no network), and otherwise fetches the release's addon, checks
+  its checksum and build-provenance attestation, loads it and caches it. Only the Rust engine's open path may import
+  the loader, lazily, so a PGLite or Postgres brain never loads the addon, reaches the network for it or creates
+  `<gbrain home>/engines/`.
+- **Cache lock and previous addon.** One gbrain process at a time replaces the cached addon: the fetch, load,
+  manifest write and rollback run holding `<gbrain home>/engines/rust-addon-cache.lock`. A process that finds it held
+  waits, then re-checks the cache before it fetches; a lock whose holder died or stopped refreshing it is taken
+  over; after 10 minutes the wait ends in `rust_engine_addon_missing` reason `cache_busy`. An addon already in place
+  is set aside while the new one is checked and loaded: if the new one fails to load it is removed and the old one is
+  put back, and once it loads the old one is deleted.
+- **Shared memory.** The addon refuses a typed array whose buffer the runtime (`napi_is_arraybuffer`) does not call a
+  plain `ArrayBuffer`, so a `SharedArrayBuffer` view is refused with `InvalidArg` however JavaScript globals or
+  prototypes have been changed (`rust/README.md`).
 
 ## Adding a new engine
 
