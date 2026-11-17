@@ -6,29 +6,37 @@
 // first releases (or refuses with `LOCK_BUSY` if a timeout is set).
 //
 // Design (codex C8 from /plan-eng-review):
-//   - Atomic acquire via `openSync(lockPath, 'wx')` — the 'wx' flag is
-//     POSIX `O_CREAT | O_EXCL`, kernel-level atomic. The acquire either
-//     creates the file or throws EEXIST. There is NO check-then-write
-//     window. Do NOT copy `src/core/page-lock.ts:79+96`'s
-//     `existsSync` + `writeFileSync` shape — that's TOCTOU.
+//   - Atomic acquire: the record is written to a private temp file, then
+//     hard-linked to the lock path (`linkSync`, which fails with EEXIST when
+//     the lock exists). The lock file therefore never exists without its
+//     complete record, so a contender can never read an empty file and take
+//     it over as corrupt. A filesystem without hard links falls back to
+//     `openSync(lockPath, 'wx')` (POSIX `O_CREAT | O_EXCL`). Do NOT copy
+//     `src/core/page-lock.ts:79+96`'s `existsSync` + `writeFileSync` shape —
+//     that's TOCTOU.
 //   - Stale-lock detection: a holder process may crash without releasing.
 //     On EEXIST, read the lockfile, check `kill(pid, 0)` for liveness,
 //     and check `Date.now() - ts > ttlMs`. If either is true, steal.
 //   - TTL refresh: long-running DB-aware lint/stats can outlive the
 //     default 60s ttl. While `fn()` runs, a background `setInterval`
-//     rewrites `ts` every 10s so the lock stays fresh.
+//     rewrites `ts` every 10s so the lock stays fresh. The rewrite goes to a
+//     temp file renamed over the lock, never a truncating in-place write, and
+//     only while the lock still holds this holder's token.
 //   - `--force` semantics: "steal stale lock", NOT "skip locking". Even
 //     forced acquires go through the same atomic open path — the only
 //     difference is that on EEXIST + non-stale, force succeeds by
 //     stealing instead of throwing.
 //   - Cleanup: `try/finally` unconditionally releases. Refresh interval
-//     is cleared. Lockfile is unlinked.
+//     is cleared. Lockfile is unlinked only while it still holds this
+//     holder's token, so a holder that lost its lock never removes the new
+//     holder's.
 //
 // Lock path: `~/.gbrain/schema-packs/.locks/<packName>.lock`. Per-pack
 // so two different packs never block each other. Honors `GBRAIN_HOME`
 // via the shared `gbrainPath()` helper.
 
-import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { closeSync, existsSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { gbrainPath } from '../config.ts';
 
@@ -66,6 +74,8 @@ export interface LockFileRecord {
   ts: number;
   /** Holder's declared TTL in ms. */
   ttlMs: number;
+  /** Random per-acquire token; refresh and release act only on a lock that still carries it. */
+  token?: string;
 }
 
 export class PackLockBusyError extends Error {
@@ -117,33 +127,49 @@ function readLockFile(path: string): LockFileRecord | null {
   }
 }
 
-function writeLockRecord(path: string, fd: number, record: LockFileRecord): void {
-  // We hold an open fd from the atomic create; truncate-and-write via fd.
-  // Bun's fs.writeFileSync(path, ...) when the file exists is fine here
-  // because we already own the lock (exclusive create succeeded).
-  writeFileSync(path, JSON.stringify(record), 'utf-8');
-  // Keep the fd open until release so file is held by this process; some
-  // FS layers prefer this for crash detection. (Functionally a no-op on
-  // POSIX where unlink() works regardless.)
-  closeSync(fd);
+function tempPathFor(lockPath: string): string {
+  return `${lockPath}.${process.pid}.${randomUUID()}.tmp`;
 }
 
+/** Errors from `linkSync` that mean this filesystem has no hard links, not that the lock exists. */
+const NO_HARD_LINK_CODES = new Set(['EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS', 'EXDEV', 'EMLINK']);
+
 /**
- * Try to atomically acquire the lock. Returns the descriptor on success;
- * throws on EEXIST (caller decides whether to steal). Handles ENOENT on
- * the parent dir by creating it once.
+ * Create the lock file holding `record`, or throw EEXIST when it exists. The record is written to a temp file and
+ * hard-linked to the lock path, so the lock never exists half-written. Without hard links it falls back to an
+ * exclusive create followed by a write.
  */
-function atomicAcquire(lockPath: string): number {
+function createLockFile(lockPath: string, record: LockFileRecord): void {
+  const text = JSON.stringify(record);
+  const tmp = tempPathFor(lockPath);
   try {
-    return openSync(lockPath, 'wx');
+    writeFileSync(tmp, text, { encoding: 'utf-8', flag: 'wx' });
   } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT') {
-      mkdirSync(dirname(lockPath), { recursive: true });
-      return openSync(lockPath, 'wx');
-    }
-    throw err;
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    mkdirSync(dirname(lockPath), { recursive: true });
+    writeFileSync(tmp, text, { encoding: 'utf-8', flag: 'wx' });
   }
+  try {
+    linkSync(tmp, lockPath);
+  } catch (err) {
+    if (!NO_HARD_LINK_CODES.has((err as NodeJS.ErrnoException).code ?? '')) throw err;
+    const fd = openSync(lockPath, 'wx');
+    try {
+      writeFileSync(fd, text, 'utf-8');
+    } finally {
+      closeSync(fd);
+    }
+  } finally {
+    try { unlinkSync(tmp); } catch { /* already gone */ }
+  }
+}
+
+/** True when the lock file still carries `record`'s token (a record without a token matches on pid + hostname). */
+function stillHolds(lockPath: string, record: LockFileRecord): boolean {
+  const current = readLockFile(lockPath);
+  if (!current) return false;
+  if (record.token !== undefined || current.token !== undefined) return current.token === record.token;
+  return current.pid === record.pid && current.hostname === record.hostname;
 }
 
 /**
@@ -175,25 +201,25 @@ export function acquirePackLock(
   const isPidAlive = opts.isPidAlive ?? defaultIsPidAlive;
   const lockPath = resolveLockPath(packName, opts.lockDir);
 
-  const tryOnce = (): number | 'EEXIST' => {
+  const tryOnce = (): LockFileRecord | 'EEXIST' => {
+    const record: LockFileRecord = {
+      pid: process.pid,
+      hostname: process.env.HOSTNAME ?? 'unknown',
+      ts: now(),
+      ttlMs,
+      token: randomUUID(),
+    };
     try {
-      return atomicAcquire(lockPath);
+      createLockFile(lockPath, record);
+      return record;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'EEXIST') return 'EEXIST';
       throw err;
     }
   };
 
-  const writeNew = (fd: number, outcome: LockOutcome): { lockPath: string; outcome: LockOutcome; record: LockFileRecord } => {
-    const record: LockFileRecord = {
-      pid: process.pid,
-      hostname: process.env.HOSTNAME ?? 'unknown',
-      ts: now(),
-      ttlMs,
-    };
-    writeLockRecord(lockPath, fd, record);
-    return { lockPath, outcome, record };
-  };
+  const writeNew = (record: LockFileRecord, outcome: LockOutcome): { lockPath: string; outcome: LockOutcome; record: LockFileRecord } =>
+    ({ lockPath, outcome, record });
 
   // First attempt: clean acquire.
   const first = tryOnce();
@@ -201,6 +227,19 @@ export function acquirePackLock(
 
   // EEXIST: inspect.
   const existing = readLockFile(lockPath);
+  if (existing === null && !existsSync(lockPath)) {
+    // The holder released between our create and our read: a clean acquire, and nothing to unlink (unlinking here
+    // could remove a lock a third process just created).
+    const retry = tryOnce();
+    if (retry === 'EEXIST') {
+      const current = readLockFile(lockPath);
+      throw new PackLockBusyError(
+        `pack ${packName} lock was released and re-acquired by another process (pid=${current?.pid ?? '?'})`,
+        { heldBy: current?.pid ?? -1, ageMs: current ? now() - current.ts : 0, ttlMs: current?.ttlMs ?? ttlMs },
+      );
+    }
+    return writeNew(retry, 'acquired');
+  }
   if (existing === null) {
     // Lockfile is corrupt — treat as stale and steal.
     try { unlinkSync(lockPath); } catch { /* race with another stealer; retry below */ }
@@ -239,25 +278,33 @@ export function acquirePackLock(
 
 /**
  * Refresh the lock's `ts` field so long-running operations don't appear
- * stale to a concurrent acquirer. Best-effort: write failures are
- * swallowed silently. Returns true on success, false if the lockfile is
- * gone (we lost the lock).
+ * stale to a concurrent acquirer. The new record goes to a temp file renamed
+ * over the lock, so the lock file is never empty or half-written. Best-effort:
+ * write failures are swallowed. Returns true on success, false if the lock is
+ * gone or now holds another holder's token (we lost the lock), in which case
+ * nothing is written.
  */
-function refreshLock(lockPath: string, record: LockFileRecord, now: number): boolean {
+export function refreshPackLock(lockPath: string, record: LockFileRecord, now: number): boolean {
+  if (!stillHolds(lockPath, record)) return false;
+  const tmp = tempPathFor(lockPath);
   try {
     const next: LockFileRecord = { ...record, ts: now };
-    writeFileSync(lockPath, JSON.stringify(next), 'utf-8');
+    writeFileSync(tmp, JSON.stringify(next), { encoding: 'utf-8', flag: 'wx' });
+    renameSync(tmp, lockPath);
     return true;
   } catch {
+    try { unlinkSync(tmp); } catch { /* already gone */ }
     return false;
   }
 }
 
 /**
- * Release the lock by unlinking the file. Idempotent — missing file is
- * not an error (the holder may have crashed and another process stole).
+ * Release the lock by unlinking the file, only while it still holds this
+ * holder's token. Idempotent — a missing file, or one another process took
+ * over, is not an error and is left alone.
  */
-function releasePackLock(lockPath: string): void {
+function releasePackLock(lockPath: string, record: LockFileRecord): void {
+  if (!stillHolds(lockPath, record)) return;
   try {
     unlinkSync(lockPath);
   } catch (err) {
@@ -285,7 +332,7 @@ export async function withPackLock<T>(
   let currentRecord = acquired.record;
   const refresh = setInterval(() => {
     currentRecord = { ...currentRecord, ts: now() };
-    refreshLock(acquired.lockPath, currentRecord, now());
+    refreshPackLock(acquired.lockPath, currentRecord, now());
   }, REFRESH_INTERVAL_MS);
   // Don't keep the process alive just for the refresh timer.
   if (typeof (refresh as NodeJS.Timer).unref === 'function') (refresh as NodeJS.Timer).unref();
@@ -293,6 +340,6 @@ export async function withPackLock<T>(
     return await fn();
   } finally {
     clearInterval(refresh);
-    releasePackLock(acquired.lockPath);
+    releasePackLock(acquired.lockPath, acquired.record);
   }
 }
