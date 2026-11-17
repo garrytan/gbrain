@@ -13,7 +13,7 @@ import type { BrainEngine } from '../engine.ts';
 import { noGrantFloorReads } from '../source-resolver.ts';
 import { hasScope } from '../scope.ts';
 import { viewedEngine } from './switches.ts';
-import { ANY_OWNER_ONLY_SQL, ownerOnlySourceSql, ownerOnlySourcesPresent, sourceIsOwnerOnly } from '../access/owner-only.ts';
+import { ownerOnlyPresentSql, ownerOnlySourceSql, ownerOnlySourcesPresent, sourceIsOwnerOnly } from '../access/owner-only.ts';
 
 /** Publication uses fresh policy, independent of the read-side telemetry cache (read through the resolver). */
 export async function excludesPrivateWrites(engine: SqlEngine, remote: boolean): Promise<boolean> {
@@ -53,7 +53,7 @@ export async function authorizePageVisibility(engine: SqlEngine, authority: Writ
     try {
       [probe] = await engine.executeRaw<{ any_labelled: boolean; identity_may_open: boolean | null; owner_only_source: boolean; owner_only_any: boolean }>(
         `SELECT EXISTS (SELECT 1 FROM access_members WHERE labelled_only) AS any_labelled, (${hiddenSql}) AS identity_may_open,
-          ${ownerOnlySourceSql('$1')} AS owner_only_source, ${ANY_OWNER_ONLY_SQL} AS owner_only_any`, [authority.sourceId, slug]);
+          ${ownerOnlySourceSql('$1')} AS owner_only_source, ${ownerOnlyPresentSql(engine)} AS owner_only_any`, [authority.sourceId, slug]);
     } catch {
       probe = undefined;
     }

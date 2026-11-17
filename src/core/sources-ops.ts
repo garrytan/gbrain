@@ -444,6 +444,8 @@ async function insertApiSource(engine: BrainEngine, opts: AddSourceOpts, kind: '
     const { imessageSourceConfig } = await import('./imessage/source-add.ts');
     await engine.executeRaw('INSERT INTO sources (id, name, local_path, config) VALUES ($1, $2, NULL, $3::text::jsonb)',
       [opts.id, opts.name ?? opts.id, JSON.stringify(imessageSourceConfig(opts.imessage!, opts.federated))]);
+    // GST-3032: with a delete trigger missing, removing this source later would leave no marks, so lineage reads closed now.
+    await engine.ownerOnlyMarkTriggers({ ensure: true });
     return;
   }
   const { chooseMeetingsRecord, meetingsSourceConfig } = await import('./meetings/source-add.ts');
