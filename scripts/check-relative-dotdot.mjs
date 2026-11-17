@@ -32,9 +32,7 @@ const OPT_OUT = 'gbrain-allow-dotdot-prefix';
 
 // Temporary exception, paths relative to the scan root. Remove each entry when
 // its condition holds; a stale entry prints a note so the removal is not missed.
-const TEMPORARY = new Map([
-  ['core/ops/context.ts', 'validateUploadPath; fixed by PR #9570 (garrytan/gbrain), remove this entry when either PR lands second'],
-]);
+const TEMPORARY = new Map([]);
 
 function walk(dir, out) {
   for (const name of readdirSync(dir)) {

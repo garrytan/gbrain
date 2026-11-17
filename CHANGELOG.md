@@ -10,6 +10,15 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.737.0] - 2026-11-17
+
+**Conversation extraction keeps wishes and preferences again: the extractor no longer asks the model for a slot on every fact.**
+
+### Fixed
+- Since 0.60.735.0, `gbrain extract-conversation-facts` asked the model for a slot (where a person lives, who employs them or their role) on every fact. That request made it save fewer facts, with wishes, preferences and ideas down about 15%. The main extraction call now sends the prompt and response shape it used before 0.60.735.0, so no new fact carries a slot, and a `--force` re-extraction adds none: skip the paid run the 0.60.735.0 notice suggested for them. A fact stored with a slot under 0.60.735.0 keeps it, and the facts block still works out its validity window, until the part of its page it came from is extracted again (an edit there, or `--force`, which re-extracts every page); the new rows carry no slot and read as they did before 0.60.735.0. Fact text is kept either way.
+
+<!-- behavior-change: conversation_extraction_no_slot_gbra574 -->
+
 ## [0.60.736.0] - 2026-11-17
 
 **Contributors: the pre-merge check now accepts changes to the macOS helper's files under `apple/helper/`, which build and test only in their own macOS workflow.**

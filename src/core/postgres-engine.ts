@@ -1,4 +1,5 @@
 import { tryAcquirePoolLongHold, PoolCapacityError } from './pool-budget.ts';
+import { capabilitiesForEngineKind, type EngineCapabilities } from './engine-capabilities.ts';
 import { noteRequestConfigWrite, requestConfigRows, requestConfigValue } from './config-snapshot.ts';
 import { replaceDerivedLinks, replaceDerivedLinksBatch, type DerivedLinkBatchItem, type DerivedLinkOrigin, type DerivedLinkReplacementOptions } from './derived-links.ts';
 import { mutatePageTag } from './page-state/tags.ts';
@@ -234,6 +235,7 @@ export class PostgresEngine implements BrainEngine {
   /** Transaction clones keep chunk invalidation and replacement atomic. */
   private _chunkWritesInTransaction = false;
   readonly kind = 'postgres' as const;
+  readonly capabilities: EngineCapabilities = capabilitiesForEngineKind('postgres');
   private readonly _beforeDisconnect = new Set<() => Promise<void>>();
   private _disconnectPromise: Promise<void> | null = null;
 

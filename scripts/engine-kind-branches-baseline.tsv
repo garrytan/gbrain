@@ -20,6 +20,7 @@ src/commands/connectors/sync.ts	kind_compare	1
 src/commands/db-repair.ts	kind_compare	1
 src/commands/diag.ts	kind_compare	1
 src/commands/doctor.ts	kind_compare	1
+src/commands/doctor/checks/backup-coverage.ts	kind_compare	1	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/commands/doctor/checks/core-health.ts	kind_compare	1
 src/commands/doctor/checks/database-encoding.ts	kind_compare	1
 src/commands/doctor/checks/db-connection.ts	kind_compare	2
@@ -55,7 +56,7 @@ src/commands/engine-status.ts	kind_compare	6
 src/commands/enrich.ts	kind_compare	1
 src/commands/extract-attendance-repair.ts	kind_compare	3
 src/commands/extract-stale-delegate.ts	kind_compare	1
-src/commands/git.ts	kind_compare	1	came from master #9627 (untrack for database-only folders), which landed after this ratchet was cut
+src/commands/git.ts	kind_compare	1	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/commands/import.ts	kind_compare	2
 src/commands/init.ts	kind_compare	1
 src/commands/integrity.ts	kind_compare	1
@@ -98,7 +99,7 @@ src/core/analyze-lock.ts	kind_compare	1
 src/core/backfill-base.ts	kind_compare	3
 src/core/backfill-effective-date.ts	kind_compare	1
 src/core/backup/coverage.ts	kind_compare	1
-src/core/backup/snapshot.ts	kind_compare	2
+src/core/backup/snapshot.ts	kind_compare	3	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/core/bootstrap/harness-pending-verify.ts	kind_compare	1
 src/core/bootstrap/harness.ts	kind_compare	2
 src/core/brain-registry.ts	kind_compare	4
@@ -219,6 +220,7 @@ src/core/search/safe-chunks.ts	kind_compare	1
 src/core/search/vector-pool.ts	kind_compare	2
 src/core/shared-skills/restore.ts	kind_compare	1
 src/core/skillpack/shared-brain-bridge.ts	kind_compare	1
+src/core/sql-engine-kind.ts	kind_compare	2	came from #9631 (the Rust engine shell): the one helper that narrows an engine kind to pglite or postgres and refuses rust; joined at the #9641 merge with 56a9547a
 src/core/statement-deadline.ts	kind_compare	1
 src/core/sync-concurrency.ts	kind_compare	2
 src/core/sync-identity-downgrades.ts	kind_compare	1

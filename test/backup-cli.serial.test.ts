@@ -472,9 +472,12 @@ describe('runBackupCli — nag impression', () => {
 
 // ── create/restore failure diagnostic (#5312) ────────────────────────────────
 
+const REAL_CREATE = Symbol('real createPgliteBackup');
+
 describe('runBackupCli create — failure diagnostic for message-less errors (#5312)', () => {
+  /** `thrown === REAL_CREATE` runs the real createPgliteBackup against the test home's config. */
   async function failCreate(thrown: unknown, json: boolean) {
-    const spy = spyOn(snapshot, 'createPgliteBackup').mockImplementation(async () => { throw thrown; });
+    const spy = thrown === REAL_CREATE ? null : spyOn(snapshot, 'createPgliteBackup').mockImplementation(async () => { throw thrown; });
     const fd1: string[] = [];
     const realWriteSync = fs.writeSync;
     const fdSpy = spyOn(fs, 'writeSync').mockImplementation(((fd: number, buf: Buffer, off = 0, len?: number) => {
@@ -493,7 +496,7 @@ describe('runBackupCli create — failure diagnostic for message-less errors (#5
     } finally {
       (process.stderr as { write: unknown }).write = origStderr;
       fdSpy.mockRestore();
-      spy.mockRestore();
+      spy?.mockRestore();
     }
   }
 
@@ -546,6 +549,30 @@ describe('runBackupCli create — failure diagnostic for message-less errors (#5
         }
       }
     } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  test('GBRA-585: on a Postgres brain the refusal names a pg_dump/pg_restore database dump, not doctor', async () => {
+    fs.mkdirSync(home(), { recursive: true });
+    fs.writeFileSync(join(home(), 'config.json'), JSON.stringify({ engine: 'postgres', database_url: ['postgresql://alice-example', 'hunter2-secret@db.example.invalid/brain'].join(':') }));
+    for (const json of [true, false]) {
+      const r = await failCreate(REAL_CREATE, json);
+      expect(r.exitCode).toBe(1);
+      const out = `${r.stdout}${r.log}${r.stderr}`;
+      expect(out).not.toContain('hunter2-secret');
+      if (json) {
+        const doc = JSON.parse(r.stdout.trim());
+        expect(doc).toMatchObject({ ok: false, reason: 'pglite_required', code: 'storage_error' });
+        expect(doc.message).toContain('pg_dump');
+        expect(doc.message).toContain('pg_restore');
+        expect(doc.fix).toMatchObject({ next: 'tell_user_to_run', actor: 'host_admin' });
+        expect(doc.fix.argv[0]).toBe('pg_dump');
+        expect(doc.fix.verify).toBeUndefined();
+        expect(doc.message).toContain('`pg_restore --list <DUMP_FILE>` reads it back');
+      } else {
+        expect(r.stderr).toContain('pg_dump');
+        expect(r.stderr).not.toContain('gbrain doctor --json');
+      }
+    }
   });
 
   test('an error message keeps its text with URL credentials redacted; retryable is preserved', async () => {

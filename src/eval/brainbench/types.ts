@@ -17,7 +17,7 @@
  */
 
 import type { ReflexPointer } from '../../core/context/retrieval-reflex.ts';
-import type { PGLiteEngine } from '../../core/pglite-engine.ts';
+import type { BrainEngine } from '../../core/engine.ts';
 
 export const FIXTURE_SCHEMA_VERSION = 1;
 export const RESULT_SCHEMA_VERSION = 1;
@@ -310,7 +310,7 @@ export interface HarnessAdapter {
   setupRun?(): Promise<void>;
   teardownRun?(): Promise<void>;
   /** Called once per (fixture, adapter) before any turn. */
-  beginConversation(engine: PGLiteEngine, fixture: AdapterFixtureView): Promise<void>;
+  beginConversation(engine: BrainEngine, fixture: AdapterFixtureView): Promise<void>;
   /**
    * Replay one turn. `priorContextText` is the joined text of PRIOR turns +
    * prior injections — adapters whose seam has no conversation memory (e.g.

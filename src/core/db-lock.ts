@@ -25,6 +25,7 @@ import { hostname } from 'os';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine, CycleLockFilter } from './engine.ts';
 import { rethrowCapabilityRefusal } from './engine-capability-refusal.ts';
+import { isRustEngineKind } from './sql-engine-kind.ts';
 
 export interface DbLockHandle {
   id: string;
@@ -932,8 +933,8 @@ export async function buildTenantLockId(engine: BrainEngine, scope: string): Pro
       const dbname = rows[0]?.db || 'unknown';
       return `${scope}:${dbname}`;
     }
-    // PGLite is single-tenant by construction; suffix is cosmetic.
-    return `${scope}:pglite`;
+    // PGLite and the Rust engine are single-tenant by construction; the suffix is cosmetic.
+    return `${scope}:${isRustEngineKind(engine.kind) ? 'rust' : 'pglite'}`;
   } catch {
     return `${scope}:unknown`;
   }
