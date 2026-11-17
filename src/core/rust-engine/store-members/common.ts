@@ -58,3 +58,13 @@ export async function storeCall<T>(ctx: StoreErrorContext, run: () => Promise<T>
 export function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw new RetryAbortError();
 }
+
+/**
+ * The source ids of a scope that can name a source: a non-empty string. The store reads an empty `sourceId` as "no
+ * scope" and widens the read to every source, while PGLite's `source_id = ''` matches nothing, so an adapter that
+ * forwards a scope for PGLite's `?? 'default'` reads must drop these first. An id that is dropped names no source, so a
+ * scope that had ids and lost them all answers as an empty scope would (nothing), never as an unscoped one.
+ */
+export function namedSourceIds(ids: readonly unknown[]): string[] {
+  return [...new Set(ids.filter((id): id is string => typeof id === 'string' && id !== ''))];
+}

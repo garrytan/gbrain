@@ -87,14 +87,18 @@ export class RustEngine {
   }
 
   async disconnect(): Promise<void> {
+    // Abandon a pending open first, before any await: an open that finishes while a stop hook is still running must see
+    // the new generation, close the store it made, and reject its `connect` (it would otherwise publish the store and
+    // resolve `connected`). The store that is already open stays reachable until the hooks have run, since a hook may
+    // still need it.
+    this._generation++;
+    const opening = this._opening;
+    this._opening = null;
     const stops = [...this._beforeDisconnect];
     this._beforeDisconnect.clear();
     for (const stop of stops) {
       try { await stop(); } catch { /* a stop barrier never blocks shutdown */ }
     }
-    this._generation++; // an open still running is abandoned: it closes what it opened
-    const opening = this._opening;
-    this._opening = null;
     const store = this._store;
     this._store = null;
     this._connected = false;

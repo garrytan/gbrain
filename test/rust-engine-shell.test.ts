@@ -148,6 +148,28 @@ describe('openRustEngine', () => {
     expect(gate.brains.filter((brain) => brain.isOpen)).toHaveLength(0);
   });
 
+  test('a disconnect abandons a pending open at once, even while a stop hook is still running', async () => {
+    const gate = deferredAddon();
+    const engine = openRustEngine({ addon: gate.addon, databasePath: '/var/brains/test.rust' });
+    let releaseHook: (() => void) | undefined;
+    let hookRan = false;
+    engine.registerBeforeDisconnect(async () => { await new Promise<void>((resolve) => { releaseHook = resolve; }); hookRan = true; });
+    const connecting = engine.connect({ engine: 'pglite', database_path: '/var/brains/test.rust' });
+    const settled = connecting.then(() => 'resolved', (error: { code?: string }) => error.code);
+    await gate.opening();
+    const disconnecting = engine.disconnect(); // the stop hook is now pending
+    gate.finishOpen(); // the open completes while the hook is still pending
+    expect(await settled).toBe('engine_closed'); // it never resolved as connected
+    expect(engine.connected).toBe(false);
+    expect(hookRan).toBe(false); // the hook was still pending when the connect settled
+    expect(gate.brains.map((brain) => brain.isOpen)).toEqual([false]); // the store it opened is closed
+    releaseHook?.();
+    await disconnecting;
+    expect(hookRan).toBe(true);
+    expect(engine.connected).toBe(false);
+    expect((await refusal(() => engine.getConfig('k'))).code).toBe('engine_closed');
+  });
+
   test('connects that overlap open the store once', async () => {
     const gate = deferredAddon();
     const engine = openRustEngine({ addon: gate.addon, databasePath: '/var/brains/test.rust' });

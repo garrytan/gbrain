@@ -269,6 +269,18 @@ const scenarios: Scenario[] = [
       return hits.map(({ score: _score, ...rest }) => rest);
     },
   },
+  {
+    name: 'a keyword hit on an undated page carries effective_date and effective_date_source as null, and a dated one beside it carries both',
+    expect: 'equal',
+    run: async ({ engine }) => {
+      await engine.putPage('search/undated', { ...NOTE, compiled_truth: 'zephyrquill moth' });
+      await engine.sealChunks('search/undated', [text(0, 'zephyrquill moth')]);
+      await engine.putPage('search/dated-too', { ...NOTE, compiled_truth: 'zephyrquill owl', effective_date: '2026-05-06', effective_date_source: 'frontmatter' } as never);
+      await engine.sealChunks('search/dated-too', [text(0, 'zephyrquill owl')]);
+      const hits = await engine.searchKeyword('zephyrquill');
+      return hits.map(({ score: _score, ...rest }) => rest).sort((a, b) => a.slug.localeCompare(b.slug));
+    },
+  },
 
   // 9. shapes
   {
@@ -350,6 +362,96 @@ const scenarios: Scenario[] = [
     run: async ({ engine }) => {
       await engine.putPage('resolve/zulu-note', { ...NOTE, title: 'Alpha Zulu' });
       return engine.resolveSlugs('Zula');
+    },
+  },
+  {
+    name: 'an empty source id never widens a getChunks read: it matches no source, as in PGLite',
+    expect: 'equal',
+    run: async ({ engine }) => {
+      for (const sourceId of ['default', 'work']) {
+        await engine.putPage('empty/p', { ...NOTE, timeline: '- **2026-01-01** | x' }, { sourceId });
+        await engine.putPage('empty/q', NOTE, { sourceId });
+        await engine.addTag('empty/p', `tag-${sourceId}`, { sourceId });
+        await engine.sealChunks('empty/p', [text(0, `chunk from ${sourceId}`)], { sourceId });
+        await engine.addTimelineEntry('empty/p', { date: '2026-01-02', summary: `entry ${sourceId}` }, { sourceId });
+        await engine.addLink('empty/p', 'empty/q', '', 'mentions', undefined, undefined, undefined, { fromSourceId: sourceId, toSourceId: sourceId });
+        await engine.createVersion('empty/p', { sourceId });
+      }
+      const out: unknown[] = [];
+      for (const scope of [{ sourceId: '' }, { sourceIds: [''] }, { sourceIds: ['work', ''] }, { sourceId: '', sourceIds: ['work'] }, { sourceIds: [] }, { sourceId: 'nowhere' }]) out.push(await engine.getChunks('empty/p', scope).then((rows) => rows.map((c) => c.chunk_text), (e: { code?: string }) => `threw ${e.code}`));
+      return out;
+    },
+  },
+  {
+    name: 'an empty source id never widens a getTags read: it matches no source, as in PGLite',
+    expect: 'equal',
+    run: async ({ engine }) => {
+      for (const sourceId of ['default', 'work']) {
+        await engine.putPage('empty/p', { ...NOTE, timeline: '- **2026-01-01** | x' }, { sourceId });
+        await engine.putPage('empty/q', NOTE, { sourceId });
+        await engine.addTag('empty/p', `tag-${sourceId}`, { sourceId });
+        await engine.sealChunks('empty/p', [text(0, `chunk from ${sourceId}`)], { sourceId });
+        await engine.addTimelineEntry('empty/p', { date: '2026-01-02', summary: `entry ${sourceId}` }, { sourceId });
+        await engine.addLink('empty/p', 'empty/q', '', 'mentions', undefined, undefined, undefined, { fromSourceId: sourceId, toSourceId: sourceId });
+        await engine.createVersion('empty/p', { sourceId });
+      }
+      const out: unknown[] = [];
+      for (const scope of [{ sourceId: '' }, { sourceIds: [''] }, { sourceIds: ['work', ''] }, { sourceId: '', sourceIds: ['work'] }, { sourceIds: [] }, { sourceId: 'nowhere' }]) out.push(await engine.getTags('empty/p', scope));
+      return out;
+    },
+  },
+  {
+    name: 'every scoped read treats an empty source id as PGLite does (getPage, snapshot, list, links, graph, timeline, versions, search)',
+    expect: 'equal',
+    run: async ({ engine }) => {
+      for (const sourceId of ['default', 'work']) {
+        await engine.putPage('empty/p', { ...NOTE, timeline: '- **2026-01-01** | x' }, { sourceId });
+        await engine.putPage('empty/q', NOTE, { sourceId });
+        await engine.addTag('empty/p', `tag-${sourceId}`, { sourceId });
+        await engine.sealChunks('empty/p', [text(0, `chunk from ${sourceId}`)], { sourceId });
+        await engine.addTimelineEntry('empty/p', { date: '2026-01-02', summary: `entry ${sourceId}` }, { sourceId });
+        await engine.addLink('empty/p', 'empty/q', '', 'mentions', undefined, undefined, undefined, { fromSourceId: sourceId, toSourceId: sourceId });
+        await engine.createVersion('empty/p', { sourceId });
+      }
+      const out: Record<string, unknown> = {};
+      for (const [i, scope] of ([{ sourceId: '' }, { sourceIds: [''] }, { sourceIds: ['work', ''] }, { sourceId: '', sourceIds: ['work'] }] as const).entries()) {
+        const sources = (rows: Array<{ source_id?: string }>) => rows.map((r) => r.source_id);
+        out[`getPage ${i}`] = (await engine.getPage('empty/p', scope as never))?.source_id ?? null;
+        out[`snapshot ${i}`] = (await engine.readPageSnapshot('empty/p', scope as never))?.page.source_id ?? null;
+        out[`list ${i}`] = sources(await engine.listPages({ slugPrefix: 'empty/', ...scope } as never));
+        out[`links ${i}`] = (await engine.getLinks('empty/p', scope as never)).length;
+        out[`backlinks ${i}`] = (await engine.getBacklinks('empty/q', scope as never)).length;
+        out[`graph ${i}`] = (await engine.traverseGraph('empty/p', 2, scope as never)).length;
+        out[`timeline ${i}`] = (await engine.getTimeline('empty/p', scope as never)).map((t) => t.summary);
+        out[`versions ${i}`] = (await engine.getVersions('empty/p', scope as never)).length;
+        out[`search ${i}`] = sources(await engine.searchKeyword('chunk', scope as never));
+      }
+      return out;
+    },
+  },
+  {
+    name: 'an empty source id on a delete, restore or link write acts as it does in PGLite (an unscoped soft delete, no link removed)',
+    expect: 'equal',
+    run: async ({ engine }) => {
+      for (const sourceId of ['default', 'work']) {
+        await engine.putPage('empty/p', { ...NOTE, timeline: '- **2026-01-01** | x' }, { sourceId });
+        await engine.putPage('empty/q', NOTE, { sourceId });
+        await engine.addTag('empty/p', `tag-${sourceId}`, { sourceId });
+        await engine.sealChunks('empty/p', [text(0, `chunk from ${sourceId}`)], { sourceId });
+        await engine.addTimelineEntry('empty/p', { date: '2026-01-02', summary: `entry ${sourceId}` }, { sourceId });
+        await engine.addLink('empty/p', 'empty/q', '', 'mentions', undefined, undefined, undefined, { fromSourceId: sourceId, toSourceId: sourceId });
+        await engine.createVersion('empty/p', { sourceId });
+      }
+      const out: unknown[] = [];
+      out.push(await engine.removeLink('empty/p', 'empty/q', undefined, undefined, { fromSourceId: '' }));
+      out.push(await engine.removeLink('empty/p', 'empty/q', undefined, undefined, { toSourceId: '' }));
+      out.push((await engine.getLinks('empty/p', { sourceId: 'default' })).length);
+      out.push(await engine.addLink('empty/p', 'empty/q', '', 'cites', undefined, undefined, undefined, { fromSourceId: '' }).then(() => 'added', (e: { name?: string }) => e.name));
+      out.push(await engine.softDeletePage('empty/p', { sourceId: '' }));
+      out.push(await liveIn(engine, 'empty/p', ['default', 'work']));
+      out.push(await engine.restorePage('empty/p', { sourceId: '' }));
+      out.push(await liveIn(engine, 'empty/p', ['default', 'work']));
+      return out;
     },
   },
 ];

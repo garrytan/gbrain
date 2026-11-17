@@ -1,5 +1,5 @@
 /** Tag members (BrainEngine addTag, removeTag, getTags). */
-import { storeCall, takeOptions, type StoreMember } from './common.ts';
+import { namedSourceIds, storeCall, takeOptions, type StoreMember } from './common.ts';
 
 export const addTag: StoreMember<[slug: string, tag: string, opts?: { sourceId?: string; tagSource?: 'frontmatter' }], void> = async (brain, slug, tag, opts) => {
   const scope = takeOptions('addTag', opts, ['sourceId']);
@@ -16,7 +16,8 @@ type GetTagsOpts = { sourceId?: string; sourceIds?: string[]; excludePrivate?: b
 /** Like PGLite: a federated grant reads the union of the sources' tags, an unscoped read reads `default`. */
 export const getTags: StoreMember<[slug: string, opts?: GetTagsOpts], string[]> = async (brain, slug, opts) => {
   const scope = takeOptions('getTags', opts, ['sourceId', 'sourceIds', 'liveOnly']);
-  const sourceIds = (scope.sourceIds as string[] | undefined)?.length ? (scope.sourceIds as string[]) : [(scope.sourceId as string | undefined) ?? 'default'];
+  // An id that names no source (an empty string) matches nothing in PGLite; the store would read it as "no scope".
+  const sourceIds = namedSourceIds((scope.sourceIds as unknown[] | undefined)?.length ? (scope.sourceIds as unknown[]) : [scope.sourceId ?? 'default']);
   const tags = new Set<string>();
   for (const sourceId of sourceIds) {
     const found: string[] = await storeCall({ member: 'getTags', slug }, () =>

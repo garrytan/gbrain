@@ -16,6 +16,11 @@ export const searchKeyword: StoreMember<[query: string, opts?: SearchOpts], Sear
   const { offset: _offset, ...rest } = opts ?? {};
   const options = takeOptions('searchKeyword', rest, SEARCH_FILTERS, RANKING_ONLY);
   const rows: SearchResult[] = await storeCall({ member: 'searchKeyword' }, () => brain.searchKeyword(query, options));
-  // PGLite reports a page's effective date as the calendar day ("2026-03-04"), never a Date.
-  return rows.map((row) => (typeof row.effective_date === 'string' ? { ...row, effective_date: (row.effective_date as string).slice(0, 10) } : row));
+  // PGLite reports a page's effective date as the calendar day ("2026-03-04"), never a Date, and an undated hit still
+  // carries both keys, as null.
+  return rows.map((row) => ({
+    ...row,
+    effective_date: typeof row.effective_date === 'string' ? (row.effective_date as string).slice(0, 10) : null,
+    effective_date_source: row.effective_date_source ?? null,
+  }));
 };

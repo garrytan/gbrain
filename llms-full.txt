@@ -6309,6 +6309,8 @@ current revision. `deletePage` hard-deletes from the default source. `softDelete
 store cannot be cancelled, which is a difference from PGLite. Overlapping `connect()` calls share one open, and a
 `disconnect()` during a connect wins: the connect rejects `engine_closed` and the store it opened is closed.
 
+A scope that names no source (an empty string `sourceId` or `sourceIds` entry) is never widened: `getChunks` and `getTags` answer it as PGLite does, with nothing, instead of reading every source. A keyword hit always carries `effective_date` and `effective_date_source`, null when the page has no date.
+
 Keyword search hides what PGLite hides: soft-deleted pages, archived sources, and pages that carry a `quarantine` or
 `pinned_question` frontmatter key, whatever its value. Ranking-only options of `searchKeyword` are accepted and
 ignored, because Rust ranks with BM25 and this is not parity with PGLite (design D5). Its scores and tie order differ

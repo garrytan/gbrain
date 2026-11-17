@@ -4,7 +4,7 @@ import { prepareChunks } from '../chunk-input.ts';
 import { toChunk } from '../store-codec.ts';
 import { isRevisionRejection, mapStoreError } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
-import { refuseMember, storeCall, takeOptions, throwIfAborted, type StoreMember } from './common.ts';
+import { namedSourceIds, refuseMember, storeCall, takeOptions, throwIfAborted, type StoreMember } from './common.ts';
 
 type UpsertOpts = { sourceId?: string; expectedRevision?: string; deferSeal?: true; signal?: AbortSignal; auditSite?: unknown };
 
@@ -46,12 +46,17 @@ export const sealChunks: StoreMember<[slug: string, chunks: ChunkInput[], opts?:
 
 export const getChunks: StoreMember<[slug: string, opts?: { sourceId?: string; sourceIds?: string[]; includeEmbedding?: boolean; includeUnsealed?: boolean }], Chunk[]> =
   async (brain, slug, opts) => {
-    const { sourceIds, ...scope } = takeOptions('getChunks', opts, ['sourceId', 'sourceIds']) as { sourceId?: string; sourceIds?: string[] };
-    // One source is a plain scope. Chunks of one slug from several sources come back in an order PGLite leaves to the
-    // database (the sort key ties across sources), so a read over more than one source is refused, not guessed.
-    const distinct = [...new Set(sourceIds ?? [])];
-    if (distinct.length > 1) refuseMember('getChunks', 'a read over several sources');
-    if (distinct.length === 1) scope.sourceId = distinct[0];
+    const { sourceIds, sourceId } = takeOptions('getChunks', opts, ['sourceId', 'sourceIds']) as { sourceId?: unknown; sourceIds?: unknown[] };
+    // PGLite reads `sourceIds` when it is not empty and otherwise the one `sourceId` (default `default`). An id that
+    // names no source (an empty string) matches nothing there, and the store would read it as "no scope" and answer
+    // for every source, so a scope that names no source is answered here with no chunks and never forwarded.
+    const requested = sourceIds?.length ? sourceIds : [sourceId ?? 'default'];
+    const named = namedSourceIds(requested);
+    if (named.length === 0) return [];
+    // Chunks of one slug from several sources come back in an order PGLite leaves to the database (the sort key ties
+    // across sources), so a read over more than one source is refused, not guessed.
+    if (named.length > 1) refuseMember('getChunks', 'a read over several sources');
+    const scope = { sourceId: named[0]! };
     const rows: Chunk[] = await storeCall({ member: 'getChunks', slug }, () => brain.getChunks(slug, scope));
     return rows.map((row) => toChunk(row));
   };
