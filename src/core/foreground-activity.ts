@@ -47,7 +47,8 @@ export function _resetForegroundActivityForTests(): void {
 
 /**
  * GBRA-438: the HTTP serve's /mcp middleware. A POST is foreground activity, so idle upkeep waits for a quiet window
- * and a request aborts a run in flight; GET /mcp (a long-lived event stream) does not count.
+ * and a request aborts a run in flight; GET /mcp (a long-lived event stream) does not count. #9484: mounted after the
+ * bearer check on POST /mcp, so a request refused there (401) never counts and cannot hold upkeep off.
  */
 export function mcpForegroundMiddleware(req: { method: string }, res: { once(event: 'finish' | 'close', fn: () => void): unknown }, next: () => void): void {
   if (req.method === 'POST') {

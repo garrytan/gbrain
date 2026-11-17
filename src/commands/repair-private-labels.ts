@@ -11,7 +11,19 @@ import { gbrainPath } from '../core/config.ts';
 import type { PrivateLabelsLedger } from '../core/repair/private-labels.ts';
 
 export function privateLabelsLedger(brainId: string): PrivateLabelsLedger {
-  const path = gbrainPath('repair', 'private-labels', `${brainId.replace(/[^A-Za-z0-9._-]/g, '_')}.jsonl`);
+  return repairLedger('private-labels', brainId);
+}
+
+/** A repair kind's undo ledger at <gbrain home>/repair/<kind>/<brain_id>.jsonl (`gbrain repair open-facts` keeps one too). */
+export function repairLedger<Line>(kind: string, brainId: string): { path: string; lines: unknown[]; unreadable: number; record(line: Line): void } {
+  return ledgerAt<Line>(gbrainPath('repair', kind, `${brainId.replace(/[^A-Za-z0-9._-]/g, '_')}.jsonl`), true);
+}
+
+/**
+ * The JSONL ledger at `path`: its parsed lines, the count it could not parse, and an append that keeps the file 0600.
+ * `ownDir`: the directory is gbrain's own, created 0700; a ledger the operator named elsewhere leaves its directory as it is.
+ */
+export function ledgerAt<Line>(path: string, ownDir: boolean): { path: string; lines: unknown[]; unreadable: number; record(line: Line): void } {
   const lines: unknown[] = [];
   let unreadable = 0;
   for (const text of existsSync(path) ? readFileSync(path, 'utf8').split('\n') : []) {
@@ -19,8 +31,10 @@ export function privateLabelsLedger(brainId: string): PrivateLabelsLedger {
     try { lines.push(JSON.parse(text)); } catch { unreadable++; }
   }
   return { path, lines, unreadable, record(line) {
-    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-    chmodSync(dirname(path), 0o700);
+    if (ownDir) {
+      mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+      chmodSync(dirname(path), 0o700);
+    }
     appendFileSync(path, `${tornTail(path) ? '\n' : ''}${JSON.stringify(line)}\n`, { mode: 0o600 });
     chmodSync(path, 0o600);
   } };

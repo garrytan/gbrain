@@ -40,6 +40,8 @@ import { normalizeSeatLabel } from '../core/context/seat.ts';
 import { agentSessionFlagArgs } from '../core/repair/agent-session-facts.ts';
 import { fileDriftConsentText } from '../core/repair/file-drift.ts';
 import { privateLabelsLedger } from './repair-private-labels.ts';
+import { openFactsLedger, openFactsUndoLedger, readFactIdsFile } from './repair-open-facts.ts';
+import { createdBeforeRequired, memberModeRefused } from '../core/repair/open-facts.ts';
 import { isAbsolute } from 'node:path';
 import { readFileSync } from 'node:fs';
 
@@ -230,16 +232,16 @@ Proposed readers for the pages every member's key reads (visibility --propose): 
 Renames whose identity sync did not keep (rename-identity): docs/guides/live-sync.md#renaming-a-page.`;
 
 const BOOLEAN_FLAGS = new Set(['--apply', '--all', '--json', '--no-embed', '--include-ambiguous', '--include-cross-entity', '--diff', '--yes', '--no-llm', '--all-drifted', '--include-failures', '--force', '--close', '--held', '--allow-without-owner', '--propose']);
-const VALUE_FLAGS = new Set(['--readers', '--slugs-file', '--out', '--rules', '--source', '--limit', '--expect', '--only', '--skip', '--slug', '--max-usd', '--prefer', '--request', '--class', '--since', '--keep', '--request-id', '--older-than', '--from', '--side', '--state', '--after', '--cursor', '--provenance', '--kind', '--mode', '--run', '--key', '--generation', '--day', '--cwd', '--session', '--principal']);
+const VALUE_FLAGS = new Set(['--readers', '--slugs-file', '--out', '--rules', '--source', '--limit', '--expect', '--only', '--skip', '--slug', '--max-usd', '--prefer', '--request', '--class', '--since', '--keep', '--request-id', '--older-than', '--from', '--side', '--state', '--after', '--cursor', '--provenance', '--kind', '--mode', '--run', '--key', '--generation', '--day', '--cwd', '--session', '--principal', '--created-before', '--ids-file', '--undo']);
 /** Flags only some kinds accept, with the kinds that do. */
 const KIND_FLAGS: Record<string, readonly string[]> = {
   '--only': ['frontmatter', 'fences', 'slug-conflicts', 'file-drift', CONTENT_LANE], '--skip': ['frontmatter', 'fences', 'slug-conflicts', 'file-drift', CONTENT_LANE], '--diff': ['frontmatter', 'fences', 'slug-conflicts', CONTENT_LANE], '--yes': ['frontmatter', 'conversation-labels', 'stuck-recovery', 'ghost-pages', 'legacy-twins', 'rename-identity', 'url-clone-fences'],
   '--include-cross-entity': ['duplicate-facts'],
-  '--slug': ['fences', 'file-drift', 'rename-identity', 'overwritten-edits', 'origin-twins', 'moved-pages', 'timeline-order', 'contact-rows', 'provenance', 'secret-spans', 'segmented-tiling', 'visibility'], '--from': ['rename-identity'], '--close': ['rename-identity'], '--prefer': ['file-drift'], '--request': ['file-drift'], '--all-drifted': ['file-drift'], '--class': ['file-drift', 'visibility', 'private-labels'], '--since': ['file-drift', 'generations'],
+  '--slug': ['fences', 'file-drift', 'rename-identity', 'overwritten-edits', 'origin-twins', 'moved-pages', 'timeline-order', 'contact-rows', 'provenance', 'secret-spans', 'segmented-tiling', 'visibility'], '--from': ['rename-identity'], '--close': ['rename-identity'], '--prefer': ['file-drift'], '--request': ['file-drift'], '--all-drifted': ['file-drift'], '--class': ['file-drift', 'visibility', 'private-labels', 'open-facts'], '--since': ['file-drift', 'generations'],
   '--held': ['file-drift', 'generations'], '--side': ['file-drift'], '--state': ['file-drift'], '--cursor': ['file-drift'], '--provenance': ['file-drift'],
   '--keep': ['stuck-recovery'], '--request-id': ['stuck-recovery'],
   '--older-than': ['receipt-compaction'], '--include-failures': ['receipt-compaction'], '--force': ['receipt-compaction'],
-  '--after': ['uncommitted-deletions'],
+  '--after': ['uncommitted-deletions', 'open-facts'], '--created-before': ['open-facts'], '--ids-file': ['open-facts'], '--undo': ['open-facts'],
   '--kind': ['generations'], '--mode': ['generations'], '--run': ['generations'], '--key': ['generations'], '--generation': ['generations'], '--day': ['fact-claim-dates'], '--rules': ['secret-spans'],
   '--cwd': ['agent-session-facts'], '--session': ['agent-session-facts'], '--principal': ['agent-session-facts'],
   '--readers': ['visibility'], '--slugs-file': ['visibility'], '--allow-without-owner': ['visibility'], '--propose': ['visibility'], '--out': ['visibility'],
@@ -248,7 +250,7 @@ const VALUE_EXAMPLES: Record<string, string> = { '--source': 'default', '--limit
   '--slug': 'notes/a', '--max-usd': '0.50', '--prefer': 'file', '--request': 'REQUEST_UUID', '--class': 'review_required', '--since': '7d', '--side': 'deleted', '--state': 'tombstone_edited', '--keep': 'prior',
   '--request-id': '123e4567-e89b-42d3-a456-426614174000', '--older-than': '30d', '--from': 'notes/old', '--after': '1200', '--cursor': 'NEXT_CURSOR', '--provenance': 'never_committed',
   '--kind': 'atom', '--mode': 'restore', '--run': 'RUN_ID', '--key': 'page:notes/a', '--generation': '42', '--day': '2026-01-15', '--rules': 'openai,aws_access_key',
-  '--cwd': '/srv/agent-workers', '--session': 'SESSION_ID', '--principal': 'worker-a', '--readers': 'alice-example,group:team-a', '--slugs-file': 'slugs.txt', '--out': '/srv/proposals' };
+  '--cwd': '/srv/agent-workers', '--session': 'SESSION_ID', '--principal': 'worker-a', '--created-before': '2026-06-01T00:00:00Z', '--ids-file': 'ids.txt', '--undo': 'LEDGER_PATH', '--readers': 'alice-example,group:team-a', '--slugs-file': 'slugs.txt', '--out': '/srv/proposals' };
 /** A usage refusal whose fix is the read-only preview (gbrain repair without --apply writes nothing). */
 const invalid = (message: string, suggestion: string, preview: string[] = ['gbrain', 'repair', '--json']) => opError('invalid_params', message, suggestion,
   { fix: readFix('Previews the repair; without --apply it writes nothing.', { argv: preview }) });
@@ -259,7 +261,9 @@ interface RepairArgs { kind?: string; apply: boolean; all: boolean; json: boolea
   held: boolean; side?: string; state?: string; provenance?: string; cursor?: string;
   keep?: 'prior' | 'disk' | 'withdrawn'; requestId?: string; olderThan?: string; includeFailures: boolean; force: boolean; from?: string; close: boolean; afterPage?: number;
   generationKind?: string; generationMode?: string; run?: string; key?: string; generation?: number; day?: string; rules?: string[];
-  cwdPrefixes: string[]; sessions: string[]; principal?: string; readers?: string; slugsFile?: string; allowWithoutOwner: boolean; propose: boolean; out?: string }
+  cwdPrefixes: string[]; sessions: string[]; principal?: string; readers?: string; slugsFile?: string; allowWithoutOwner: boolean; propose: boolean; out?: string;
+  /** `open-facts` (#8194): every --class value, the cut, the ids file and the ledger to undo. */
+  classes: string[]; createdBefore?: string; idsFile?: string; undo?: string }
 
 /** `--max-usd` on a kind that never calls a paid model: the cap belongs to the doctor remediation run. */
 function maxUsdRefusal(flag: string, cap: string | undefined, kind: string | undefined): OperationError {
@@ -303,7 +307,7 @@ function readSlugsFile(path: string): string[] {
 /** Strict parse: every flag is known, value flags carry a value, at most one kind. */
 export function parseRepairArgs(args: string[]): RepairArgs {
   const parsed: RepairArgs = { apply: false, all: false, json: false, noEmbed: false, includeAmbiguous: false, includeCrossEntity: false, diff: false, yes: false, noLlm: false, only: [], skip: [], slugs: [],
-    allDrifted: false, held: false, requests: [], includeFailures: false, force: false, close: false, cwdPrefixes: [], sessions: [], allowWithoutOwner: false, propose: false };
+    allDrifted: false, held: false, requests: [], includeFailures: false, force: false, close: false, cwdPrefixes: [], sessions: [], allowWithoutOwner: false, propose: false, classes: [] };
   const used = new Set<string>();
   const positional: string[] = [];
   let maxUsdText: string | undefined;
@@ -359,7 +363,16 @@ export function parseRepairArgs(args: string[]): RepairArgs {
     }
     else if (flag === '--request') parsed.requests.push(value);
     else if (flag === '--from') parsed.from = value;
-    else if (flag === '--class') parsed.driftClass = value;
+    else if (flag === '--class') { parsed.driftClass = value; parsed.classes.push(value); }
+    else if (flag === '--created-before') {
+      if (!/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2}))?$/.test(value) || !Number.isFinite(Date.parse(value))) {
+        throw opError('invalid_params', `--created-before takes an ISO-8601 instant (got "${value}").`,
+          'Pass the instant facts.default_visibility became world on this brain with its offset, e.g. --created-before 2026-06-01T00:00:00Z; a date alone (2026-06-01) is read as midnight UTC.', { reason: 'created_before_invalid' });
+      }
+      parsed.createdBefore = new Date(value).toISOString();
+    }
+    else if (flag === '--ids-file') parsed.idsFile = value;
+    else if (flag === '--undo') parsed.undo = value;
     else if (flag === '--side') parsed.side = value;
     else if (flag === '--state') parsed.state = value;
     else if (flag === '--cursor') parsed.cursor = value;
@@ -469,6 +482,15 @@ export function parseRepairArgs(args: string[]): RepairArgs {
     throw new OperationError('invalid_params', `--include-ambiguous applies only to an explicit-only kind named on the command line (${explicitKinds}).`,
       `Preview one by name: ${repairPreviewCommand(EXPLICIT_REPAIR_REGISTRY[0]!.kind)}`);
   }
+  if (parsed.kind === 'open-facts') {
+    const bad = parsed.classes.find(cls => cls !== 'fenced' && cls !== 'unfenced' && !(cls.startsWith('unpaged:') && cls.slice('unpaged:'.length).trim() !== ''));
+    if (bad !== undefined) throw opError('invalid_params', `--class for gbrain repair open-facts is fenced, unfenced or unpaged:<lane> (got "${bad}").`,
+      'Pass a class the preview counts under eligible, e.g. --class unpaged:mail:extract, or omit --class for fenced and unfenced facts.', { reason: 'class_invalid' });
+    if (parsed.undo !== undefined && (parsed.createdBefore !== undefined || parsed.classes.length || parsed.idsFile !== undefined || parsed.afterPage !== undefined)) {
+      throw invalid('--undo takes only --source: it re-privates what its ledger recorded.', `Preview the undo on its own: gbrain repair open-facts${parsed.source ? ` --source ${parsed.source}` : ''} --undo ${parsed.undo}`,
+        ['gbrain', 'repair', 'open-facts', ...(parsed.source ? ['--source', parsed.source] : []), '--undo', parsed.undo, '--json']);
+    }
+  }
   return parsed;
 }
 
@@ -528,7 +550,15 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
   if (args.includes('--help') || args.includes('-h')) { console.log(REPAIR_HELP); return; }
   const { kind, apply, all, json, noEmbed, includeAmbiguous, includeCrossEntity, source, expect, only, skip, slugs, diff, noLlm, maxUsd, limit: limitText,
     prefer, requests, allDrifted, driftClass, since, held, side, state, provenance, cursor, keep, requestId, olderThan, includeFailures, force, from, close, afterPage,
-    generationKind, generationMode, run, key, generation, day, rules, cwdPrefixes, sessions, principal, readers, slugsFile, allowWithoutOwner, propose, out } = parseRepairArgs(args);
+    generationKind, generationMode, run, key, generation, day, rules, cwdPrefixes, sessions, principal, readers, slugsFile, allowWithoutOwner, propose, out,
+    classes, createdBefore, idsFile, undo } = parseRepairArgs(args);
+  if (kind === 'open-facts') {
+    if (process.env.GBRAIN_ENFORCED_MEMBER !== undefined) throw memberModeRefused();
+    if (!source) throw opError('invalid_params', 'gbrain repair open-facts opens facts in one named source.', 'Name one source with --source (gbrain sources list --json lists them).',
+      { reason: 'source_required' });
+    if (undo === undefined && createdBefore === undefined) throw createdBeforeRequired();
+  }
+  const openFactIds = kind === 'open-facts' && idsFile !== undefined ? readFactIdsFile(idsFile) : undefined;
   if (propose) {
     if (source) await resolveRepairScope(engine, source);
     const { proposeVisibility, proposalLines } = await import('./repair-propose.ts');
@@ -599,6 +629,8 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
     ...(k === kind && noLlm ? { noLlm } : {}), ...(k === kind && maxUsd !== undefined ? { maxLlmUsd: maxUsd } : {}),
     ...(k === kind && (k === 'visibility' || k === 'private-labels') && driftClass ? { driftClass } : {}),
     ...(k === kind && k === 'private-labels' ? { privateLabelsLedger: privateLabelsLedger(scope.brain_id) } : {}),
+    ...(k === kind && k === 'open-facts' ? { openFacts: { classes, ledger: undo !== undefined ? openFactsUndoLedger(undo) : openFactsLedger(scope.brain_id), ...(createdBefore !== undefined ? { createdBefore } : {}),
+      ...(openFactIds ? { ids: openFactIds } : {}), ...(idsFile !== undefined ? { idsFile } : {}), ...(undo !== undefined ? { undo } : {}) } } : {}),
     ...(k === kind && k === 'file-drift' ? { prefer, requests, allDrifted, driftClass, since, ...(held ? { held } : {}), ...(side ? { side } : {}), ...(state ? { state } : {}), ...(provenance ? { provenance } : {}), ...(cursor ? { cursor } : {}),
       progress: createProgress(cliOptsToProgressOptions(getCliOptions())) } : {}),
     ...(k === kind && keep ? { keep } : {}), ...(k === kind && requestId ? { requestId } : {}),

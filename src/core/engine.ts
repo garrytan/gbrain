@@ -2310,10 +2310,10 @@ export interface BrainEngine {
 
   /**
    * Mark a fact expired. Never DELETE. Returns true iff a row was updated.
-   * Idempotent-as-false (already expired returns false without changing state).
+   * Idempotent-as-false (already expired returns false without changing state). `successorFrom`: end by facts/supersede-interval.ts's rule.
    * @deprecated GBRA-161 PR 2: retire through publishFenceGeneration / publishExtractedFacts (docs/architecture/generations.md).
    */
-  expireFact(id: number, opts?: { supersededBy?: number; at?: Date }): Promise<boolean>;
+  expireFact(id: number, opts?: { supersededBy?: number; at?: Date; successorFrom?: Date }): Promise<boolean>;
 
   /** List active facts about an entity within a source, newest first. */
   listFactsByEntity(

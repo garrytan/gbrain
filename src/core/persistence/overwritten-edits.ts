@@ -13,7 +13,7 @@
  *   (coordinator.ts `decoratePublicationOutcome`), it is not itself an import, no `git` effect carries that revision, and
  *   it was not a read-only mirror write (upstream wins there by design);
  * - the import replaced it with different content: the import's own revision (its version row, or the live page) differs
- *   from the lost one (`reconcileCanonical` digest), and no later revision of the page holds the lost content again.
+ *   from the lost one (`contentCanonical` digest), and no later revision of the page holds the lost content again.
  *
  * `high`: every condition holds and every version involved is inline. `unknown`: the writer receipt carries no
  * `persistence` outcome, the import's content is no longer readable, or a version is segmented. A lost revision with no
@@ -23,7 +23,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { PageType } from '../types.ts';
 import { digest } from './digest.ts';
-import { reconcileCanonical } from './reconcile-merge.ts';
+import { contentCanonical } from './reconcile-merge.ts';
 
 /** Candidate versions read per source, newest first. */
 export const OVERWRITE_SCAN_LIMIT = 500;
@@ -75,7 +75,7 @@ export function overwriteContent(row: ContentRow): OverwriteContent | null {
     frontmatter: (parsed(row.frontmatter) ?? {}) as Record<string, unknown>, tags: Array.isArray(tags) ? [...new Set(tags.map(String))].sort() : [] };
 }
 
-export const overwriteDigest = (content: OverwriteContent) => digest(reconcileCanonical({ title: content.title, type: content.type as PageType,
+export const overwriteDigest = (content: OverwriteContent) => digest(contentCanonical({ title: content.title, type: content.type as PageType,
   compiled_truth: content.compiled_truth, timeline: content.timeline, frontmatter: content.frontmatter }, content.tags));
 
 const sameContent = (row: ContentRow, lostDigest: string) => {

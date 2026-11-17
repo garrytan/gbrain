@@ -59,6 +59,7 @@ export async function runTranscriptsArchive(engine: BrainEngine, args: string[],
     const { resolveArchiveEnabled } = await import('../core/transcripts/archive-default.ts');
     const { loadConfig } = await import('../core/config.ts');
     const why = json ? null : await resolveArchiveEnabled(engine, { config: (() => { try { return loadConfig(); } catch { return null; } })() }).then(e => e.reason, () => null);
+    const upkeepOff = !json && status.enabled && !await (await import('../core/maintenance/run.ts')).upkeepEnabled(engine);
     out(status, () => {
       console.log('conversation archive: ' + (status.enabled ? 'on' : 'off') + ' (source: ' + status.source_id + ', timezone: ' + (status.timezone ?? status.configured_timezone + ', pinned at the first run') + ')');
       if (why) console.log('  why: ' + why);
@@ -70,6 +71,7 @@ export async function runTranscriptsArchive(engine: BrainEngine, args: string[],
       for (const h of status.held) console.log('  held: ' + h.harness + ' ' + h.day + ' (' + h.code + ')');
       for (const e of status.errors) console.log('  error on the last run' + (e.at ? ' (' + e.at + ')' : '') + ': ' + e.reader + ' ' + e.code + ': ' + e.message);
       if (status.rescope) console.log('  not kept to the owner yet (' + status.rescope.code + '): ' + status.rescope.message);
+      if (upkeepOff) console.log('  maintenance.auto is false, so free upkeep does not archive by itself (an installed autopilot still does); archive now with "gbrain transcripts archive run"');
     });
     if (status.errors.length) setCliExitVerdict(1);
     return;

@@ -7,3 +7,4 @@ important: security
 
 ### Fixed
 - A remote caller that remembered the exact claim of a private fact on the same entity, more trusted than itself, got a new world copy that every other connected client could read, so an agent that knew a private claim could publish it. The new fact is now stored private with a trust proposal that carries the widening; `gbrain trust review` lists it and `gbrain trust confirm tp<N>` makes it world. Remembers with no private copy on that entity, with a world copy already present, or with an explicit private visibility are unchanged.
+- Two gaps remain until #9574 lands: the page that carries a held fact still shows its text to remote `get_page` and search, and a writer who first saves the same claim about a different entity is not held.

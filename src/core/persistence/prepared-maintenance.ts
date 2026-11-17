@@ -10,7 +10,7 @@ import type { Action } from '../agent-output.ts';
 import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
 import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import { fenceOperationError, scanCanonicalFences } from '../fence-repair/refusal.ts';
-import { fenceCellReadBackProblem, formatFenceDate, parseFactsFence, parseFactsFenceFor, renderFactsTable, replaceOrInsertFactsFence, isHoldingSlug, UNATTRIBUTED_MEMORY_SLUG, type ParsedFact } from '../facts-fence.ts';
+import { fenceCellReadBackProblem, formatFenceDate, normalizeClaimWhitespace, parseFactsFence, parseFactsFenceFor, renderFactsTable, replaceOrInsertFactsFence, isHoldingSlug, UNATTRIBUTED_MEMORY_SLUG, type ParsedFact } from '../facts-fence.ts';
 import { heldRowsInVersions, prepareFenceRowRetirement } from '../facts/fence-fact-append.ts';
 import { noteBelief } from '../belief/ledger.ts';
 import { extractFactsFromFenceText } from '../facts/extract-from-fence.ts';
@@ -254,14 +254,17 @@ export interface MaintenanceEventProjection { depth_slug: string; date: string; 
  * `labelEdit` (GST-2468): the label keys the write sets or removes; the canonical file keeps its bytes except those lines (page-prepare.ts labelEditFile).
  */
 type MaintenancePageOptions = { requestId?: string; expectedRevision: string | null; file?: boolean;
-  eventProjection?: MaintenanceEventProjection; derivation?: DerivationDeclaration; keepTrust?: true; labelEdit?: LabelEdit };
+  eventProjection?: MaintenanceEventProjection; derivation?: DerivationDeclaration; keepTrust?: true; labelEdit?: LabelEdit;
+  /** #8194: with keepTrust, the fence rows `gbrain repair open-facts` opens in place (repair/open-facts.ts openFactsPublication). */
+  openFacts?: Array<{ id: number; row_num: number | null; fact_md5: string }> };
 
 /** A maintenance page publication's intent and request id; `batch` (G6) is the run's batch id, part of both. */
 function maintenancePageRequest(authority: MaintenanceAuthority, slug: string, content: string, options: MaintenancePageOptions, batch?: string) {
   const projection = options.eventProjection ? { event_projection: options.eventProjection } : {};
   const derivation = options.derivation ? { derivation: options.derivation } : {};
   const grouped = batch ? { maintenance_batch: batch } : {};
-  const keep = { ...(options.keepTrust ? { keep_trust: true } : {}), ...(options.labelEdit ? { label_edit: options.labelEdit } : {}) };
+  const keep = { ...(options.keepTrust ? { keep_trust: true } : {}), ...(options.labelEdit ? { label_edit: options.labelEdit } : {}),
+    ...(options.keepTrust && options.openFacts ? { open_facts: options.openFacts } : {}) };
   return { intent: { kind: 'managed_maintenance_page', content, expected_revision: options.expectedRevision, ...projection, ...derivation, ...grouped, ...keep },
     requestId: options.requestId ?? maintenanceRequestId({ authority: authority.writer, slug, content, revision: options.expectedRevision, file: options.file ?? true,
       ...projection, ...derivation, ...grouped, ...keep }) };
@@ -375,6 +378,21 @@ export async function verifyMaintenanceOutputs(engine: BrainEngine, authority: M
 }
 
 export interface FactSnapshot { id: number; value: Record<string, unknown>; }
+
+/**
+ * Which members of a chronological consolidation cluster end, and at which later member's valid_from: the first one
+ * that says something else. A restatement (the same claim text and typed value said again later) is the value still
+ * holding, so it never ends the member before it, and a member with no differing successor stays open. A cluster's typed
+ * members already share metric, unit and period, so the value is the typed part that can differ under the same text.
+ */
+export function consolidationCloses<T>(chronological: readonly T[], claim: (member: T) => { text: string; value: unknown }): Array<{ member: T; next: T }> {
+  const key = (member: T) => { const { text, value } = claim(member); return JSON.stringify([normalizeClaimWhitespace(text), value == null ? null : Number(value)]); };
+  return chronological.flatMap((member, i) => {
+    const own = key(member);
+    const next = chronological.slice(i + 1).find(later => key(later) !== own);
+    return next ? [{ member, next }] : [];
+  });
+}
 interface EvidencePage { slug: string; revision: string; id: number; }
 
 /** Whole fact rows as comparable snapshots; `lock` takes FOR UPDATE inside a transaction. */
@@ -676,6 +694,7 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
   if (row.intent?.kind === 'managed_maintenance_agent_session_facts') return (await import('../repair/agent-session-facts.ts')).prepareAgentSessionFactsWrite(engine, row);
   if (row.intent?.kind === 'managed_maintenance_restore_redacted_facts') return (await import('../repair/redacted-facts.ts')).prepareRedactedFactsRestore(engine, row);
   if (row.intent?.kind === 'managed_maintenance_tighten_fact_visibility') return (await import('../repair/visibility.ts')).prepareFactVisibilityTighten(engine, row);
+  if (row.intent?.kind === 'managed_maintenance_open_fact_visibility') return (await import('../repair/open-facts.ts')).prepareOpenFactsIntent(engine, row);
   if (row.intent?.kind === 'managed_maintenance_conversation_label_retire') return (await import('../repair/conversation-labels.ts')).prepareConversationLabelRetirement(engine, row);
   if (row.intent?.kind === 'managed_maintenance_conversation_relink') return (await import('../facts/conversation-relink.ts')).prepareConversationRelink(engine, row);
   if (row.intent?.kind === 'managed_maintenance_conversation_facts') return (await import('../facts/conversation-publication.ts')).prepareConversationFactsPublication(engine, row, config);
@@ -689,11 +708,14 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
     const page = await preparePageMutation(engine, row.intent.expected_revision === null
       ? { ...row, intent: { ...row.intent, expected_revision: undefined } } : row, config, undefined, undefined, { clock });
     // GST-2521: keep_trust is the owner's label door, which also raises the page's label guard.
-    const prepared: PreparedMutation = row.intent.keep_trust === true ? { ...page, apply: (tx, preimage) => withTrustKeep(tx, ['pages'], async () => {
+    const kept: PreparedMutation = row.intent.keep_trust === true ? { ...page, apply: (tx, preimage) => withTrustKeep(tx, ['pages'], async () => {
       const outcome = await page.apply(tx, preimage);
       await raisePageLabelGuard(tx, row.source_id, row.slug);
       return outcome;
     }) } : page;
+    // #8194: only the owner's label door (keep_trust) may name fence rows `gbrain repair open-facts` opens in place.
+    const prepared = row.intent.keep_trust === true && row.intent.open_facts !== undefined
+      ? (await import('../repair/open-facts.ts')).openFactsPublication(row, kept) : kept;
     const projection = row.intent.event_projection as MaintenanceEventProjection | undefined;
     if (!projection) return prepared;
     // #5523: the event page and its depth-page timeline row commit together in
@@ -748,7 +770,7 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
   // take on this page, and its row derives from that cell; an unfenced fact has no fence row and is closed in the database.
   // A fenced fact whose fence is on another page stays open: this publication does not write that file.
   const chronological = [...facts].sort((a, b) => Date.parse(String(a.value.valid_from)) - Date.parse(String(b.value.valid_from)) || a.id - b.id);
-  const closes = chronological.slice(0, -1).map((fact, i) => ({ fact, until: String(chronological[i + 1].value.valid_from) }));
+  const closes = consolidationCloses(chronological, f => ({ text: String(f.value.fact), value: f.value.claim_value })).map(({ member, next }) => ({ fact: member, until: String(next.value.valid_from) }));
   const fenceCloses = new Map(closes.filter(c => c.fact.value.row_num !== null && c.fact.value.source_markdown_slug === row.slug)
     .map(c => [Number(c.fact.value.row_num), c]));
   const databaseCloses = closes.filter(c => c.fact.value.row_num === null);
