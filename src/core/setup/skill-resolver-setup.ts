@@ -110,7 +110,7 @@ export async function syncSkillResolverSetup(opts: { harness: ResolverHarness; g
 
   let skills = 0;
   if (dirs.length && dryRun) {
-    skills = fresh ? status!.receipt!.skill_count : readDirSources(dirs).skills.length;
+    skills = fresh ? status!.receipt!.skill_count : readDirSources(dirs, [], harness).skills.length;
     if (skills > 0) out.steps.push({ step: 'catalog', action: fresh ? 'keep' : 'write', detail: `${skills} skills from ${dirs.join(', ')} into ${where}` });
   } else if (dirs.length && !fresh) {
     try {
@@ -152,7 +152,7 @@ export async function syncSkillResolverSetup(opts: { harness: ResolverHarness; g
 
   const built = [...(skills ? [catalog] : []), ...(pluginSkills ? [CLAUDE_PLUGINS_CATALOG] : [])];
   const after = await Promise.all(built.map((c) => catalogStatus(c, { home })));
-  const sampleText = (readDirSources(skills ? dirs : pluginRoots).skills[0]?.description) ?? '';
+  const sampleText = (readDirSources(skills ? dirs : pluginRoots, [], skills ? harness : undefined).skills[0]?.description) ?? '';
   const sample = sampleText ? (await resolveSkills({ message: sampleText, harness }, { home, catalogs: built, failOpen: true })).output.block : '';
   const n = after.reduce((t, s) => t + (s.receipt?.skill_count ?? 0), 0);
   const allFresh = after.every((s) => s.fresh === true);
