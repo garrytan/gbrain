@@ -3,6 +3,8 @@ import { readPolicyOpts } from './context.ts';
 import { attributeVersions, canReadWriteAttribution } from './attribution.ts';
 import { GET_VERSIONS_DEFAULT_LIMIT, GET_VERSIONS_REMOTE_MAX_LIMIT, pagingLimit, reportVersionPage } from './read-paging.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
+import { heldRowsForCaller, worldFenceRows } from '../eligibility/fence-overlay.ts';
+import { ALL_SOURCES } from '../source-id.ts';
 import { fenceTranscriptText, quotesStored } from '../search/transcript-quote.ts';
 import { historyQuarantine } from './get-page-projection.ts';
 /**
@@ -22,6 +24,7 @@ import { VERSION } from '../../version.ts';
 import { resolveActiveEmbeddingColumnFromEngine } from '../search/embedding-column.ts';
 import { memoizedHealth } from '../health-memo.ts';
 import { remoteReadPolicySql } from '../persistence/page-visibility.ts';
+import { worldOnlyFacts } from '../search/private-visibility.ts';
 import { LARGE_PAGES_CAPABILITY } from './get-page-body.ts';
 import { GUEST_MARKER_CAPABILITY } from '../guests/marker.ts';
 import { isSegmentedPage, pageBodyBytes } from '../page-body/page-shape.ts';
@@ -282,7 +285,12 @@ const get_versions: Operation = {
       // #8042: a third-party page's version reaches an untrusted reader quoted, as get_page's current body does;
       // GST-687: so does one whose snapshot tier is below the owner's (a version with no snapshot reads as unknown).
       const quote = quotesStored(v.type, snapshotTiers.get(Number(v.id)));
-      const body = (text: string) => { const clean = sanitizeRemoteBody(text); return quote && clean ? fenceTranscriptText(clean, String(p.slug)) : clean; };
+      const live = lives.find(l => Number(l.id) === Number(v.page_id));
+      const sourceId = live?.source_id ?? (ctx.sourceId === ALL_SOURCES ? undefined : ctx.sourceId);
+      const omitRows = sourceId !== undefined
+        ? await heldRowsForCaller(ctx.engine, ctx.remote, { sourceId, slug: live?.slug ?? String(p.slug), compiled_truth: v.compiled_truth, timeline: v.timeline })
+        : worldOnlyFacts(ctx.remote) ? new Set([...worldFenceRows(v.compiled_truth), ...worldFenceRows(v.timeline)].map(row => row.rowNum)) : undefined;
+      const body = (text: string) => { const clean = sanitizeRemoteBody(text, { omitRows }); return quote && clean ? fenceTranscriptText(clean, String(p.slug)) : clean; };
       out.push({ ...v, compiled_truth: body(v.compiled_truth), ...reason(v),
         ...(typeof v.timeline === 'string' ? { timeline: body(v.timeline) } : {}), ...(quote ? { quoted: 'transcript' } : {}) });
     }
@@ -322,7 +330,7 @@ async function remoteVersionSize<V extends { page_id: number; body_storage?: str
   Promise<V | Omit<V, 'body_bytes'> & { total_bytes: number }> {
   if (ctx.remote === false || v.body_storage !== 'segmented') return v;
   const { body_bytes: _stored, ...rest } = v;
-  const body = await openSegmentedBody(ctx.engine, { pageId: v.page_id, generation: v.body_generation });
+  const body = await openSegmentedBody(ctx.engine, { pageId: v.page_id, generation: v.body_generation, hideHeld: worldOnlyFacts(ctx.remote) });
   return { ...rest, total_bytes: (await segmentedReadDocument(ctx.engine, body)).total };
 }
 

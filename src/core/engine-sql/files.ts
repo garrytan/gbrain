@@ -12,6 +12,10 @@ import type { FileRow, FileSpec } from '../engine.ts';
 import { jsonbParam, type SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { sqlFragment } from './fragment.ts';
+import { compileRowNormalizer } from './normalize.ts';
+
+/** files.size_bytes is BIGINT, which postgres.js decodes as a BigInt; FileRow says number on every engine. */
+const fileRow = compileRowNormalizer<FileRow>({ size_bytes: 'bigint' });
 
 export async function upsertFile(exec: SqlExecutor, spec: FileSpec): Promise<{ id: number; created: boolean }> {
     const sourceId = spec.source_id ?? 'default';
@@ -34,21 +38,21 @@ export async function upsertFile(exec: SqlExecutor, spec: FileSpec): Promise<{ i
   }
 
 export async function getFile(exec: LegacyUnscopedRead, sourceId: string, storagePath: string): Promise<FileRow | null> {
-    const { rows } = await exec.run<FileRow>(sqlFragment`
+    const { rows } = await exec.run(sqlFragment`
       SELECT id, source_id, page_slug, page_id, filename, storage_path, mime_type, size_bytes, content_hash, metadata, created_at
       FROM files
       WHERE source_id = ${sourceId} AND storage_path = ${storagePath}
       LIMIT 1
     `);
-    return rows.length > 0 ? rows[0] : null;
+    return rows.length > 0 ? fileRow(rows[0]) : null;
   }
 
 export async function listFilesForPage(exec: LegacyUnscopedRead, pageId: number): Promise<FileRow[]> {
-    const { rows } = await exec.run<FileRow>(sqlFragment`
+    const { rows } = await exec.run(sqlFragment`
       SELECT id, source_id, page_slug, page_id, filename, storage_path, mime_type, size_bytes, content_hash, metadata, created_at
       FROM files
       WHERE page_id = ${pageId}
       ORDER BY created_at ASC
     `);
-    return rows;
+    return rows.map(row => fileRow(row));
   }

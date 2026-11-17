@@ -1,0 +1,5 @@
+**A connection gbrain throws away now frees its slot in the connection pool even when the database host has stopped answering, and the background job worker keeps running while PostgreSQL shuts down or after a TCP server has stopped.**
+
+### Fixed
+- When gbrain discards a Postgres connection (a cancelled bounded read, an aborted transaction, a statement that would not cancel) and the server or pooler at the other end has gone silent, the pool slot comes back within about 2 seconds. Before, the slot stayed taken until the operating system gave up on the socket, so a process with a small pool could stop being able to connect. Follow-up to #8155.
+- `gbrain jobs work` no longer exits when a claim meets a PostgreSQL server that is shutting down and refusing new connections (SQLSTATE 57P03), or one that has stopped listening on TCP (`connect ECONNREFUSED`). The worker reconnects and claims again on its next poll, as it already did for a vanished Unix socket. Follow-up to #9540, reported and first fixed by @javieraldape in #9624.
