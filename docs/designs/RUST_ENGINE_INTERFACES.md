@@ -241,6 +241,23 @@ entry can sit on another page. `pages::remove_page` calls this function in the s
 page's own entries go. Its body is empty. The timeline_queries family fills it in: it finds the entries through its
 own `u 0x01 <event_page_id be8> <date>` index and deletes each one's `E` and `D` keys and its index key.
 
+#### Page rename (`pages::rename_page`)
+
+```rust
+pub(crate) fn rename_page(tx: &mut dyn KvWrite, env: &dyn Env, page: &PageRecord, new_slug: &str) -> Result<PageRecord>;
+```
+
+The page move of `updateSlug` (`UPDATE pages SET slug = new, updated_at = now()`). Pass the page as it is stored;
+it returns the moved record.
+
+- The page keeps its id, so its chunks, links, tags, timeline entries and versions follow it.
+- A new slug takes a new `knowledge_revision` and clears `text_projection_revision`, as the Postgres revision trigger
+  does. The same slug changes only `updated_at`.
+- `new_slug` goes through `validate_slug` (refuses with `invalid_slug`; stores the lowercase form).
+- Refuses with `constraint_violation` when the source already holds a page at the new slug, live or soft deleted.
+  Return the error from the write closure: the transaction then keeps nothing.
+- It moves only the page. The caller versions the page before the move, and records the rename alias after it.
+
 ### Write transactions and the journal
 
 - `Store::read()` returns one consistent snapshot. `Store::write(|tx| ...)` runs one write transaction: one writer at
@@ -415,7 +432,7 @@ Slug renames and page aliases.
 - **Store and binding:** `updateSlug` (`update_slug`), `resolveSlugWithAlias` (`resolve_slug_with_alias`), `resolveSlugWithAliasDetailed` (`resolve_slug_with_alias_detailed`), `resolveAliases` (`resolve_aliases`), `setPageAliases` (`set_page_aliases`), `updatePageContextualRetrievalState` (`update_page_contextual_retrieval_state`).
 - **Postgres tables:** `slug_aliases` (no FK to pages), `pages.slug` (rename), `pages.contextual_retrieval_mode`.
 - **Keys:** `k 0x01 <source> 0x00 <alias slug>` to the target slug and page id; `k 0x02 <page id> 0x00 <alias slug>` to list a page's aliases; `k 0x03 <page id>` for the contextual retrieval state. Removed by `remove_page_rows`. `getPage` returns `contextual_retrieval_mode` from that record through this family's `page_columns` hook (built).
-- **Depends on:** `updateSlug` moves the page key (`P`) from the old slug to the new one. That is a core page write: ask core for a `pages::rename_page(tx, page, new_slug)` helper before you start `updateSlug`. Links, chunks, tags, timeline and versions follow the page id and need no change.
+- **Depends on:** `updateSlug` moves the page key (`P`) from the old slug to the new one through core's `pages::rename_page` (built; "Core hooks"). This family versions the page first (`pages::snapshot_in`), then calls `rename_page`, then records the alias and moves its own slug bindings. Links, chunks, tags, timeline and versions follow the page id and need no change.
 - **Estimate:** about 5 to 6 days.
 - **Notes:** Same capability (`pages`) as page_ops and extraction. `resolveSlugWithAliasDetailed` returns how the slug was found; keep its result fields exact.
 - **Parity cases (6, in `sync-aliases.test.ts`):**
@@ -879,7 +896,7 @@ member lands. Within a group, build in the order shown.
 | Group | Families (in order) | Can start now | Estimate | Waits on |
 |---|---|---|---|---|
 | 1. Page reads and deletes | page_ops | yes | about 9 days | nothing to start; `deletePages` calls the eval_capture helper, which group 5 builds first (about half a day) |
-| 2. Page state | extraction, then aliases | yes | about 10 days | `updateSlug` needs the core rename helper |
+| 2. Page state | extraction, then aliases | yes | about 10 days | `updateSlug` uses the core rename helper (built) |
 | 3. Page bodies | page_body | yes | about 7 to 8 days | vector input to `stageSegmentChunks` refuses until embeddings; one case needs transactions |
 | 4. Memory records | dream, contradictions, facts, ontology, raw_files, stats | yes | about 9 days | three facts cases need takes (group 5); `getHealth` last |
 | 5. Takes and salience | eval_capture (first), takes, salience, code_edges | yes | about 7 to 8 days | the `takes` capability needs vectors and embeddings (core); code_edges needs the core chunk-delete hook |
@@ -897,7 +914,7 @@ The estimates are judgments from the size of the PGLite code each member reprodu
 | Core item | Waits on | Needed by |
 |---|---|---|
 | Page-columns hook (`page_columns.rs`): family values that `getPage` returns (`emotional_weight`, `contextual_retrieval_mode`, segmented-body fields) | built | salience, aliases, page_body; extraction listed, likely unused |
-| `pages::rename_page` helper | nothing | aliases (`updateSlug`) |
+| `pages::rename_page` helper | built | aliases (`updateSlug`) |
 | Chunk-delete hook (`cascade::remove_chunk_rows`) | nothing | code_edges |
 | Timeline entry helpers (`next_entry_id`, `read_entry`, `put_entry`) | built | timeline_queries (`upsertEventProjection`) |
 | Event projection delete (`timeline_queries::remove_event_projections`, called by `remove_page`) | built; the family fills in the body | timeline_queries |
