@@ -427,15 +427,29 @@ describe('engine parity: facts', () => {
   );
 
   parityTest(
-    'listFactsKeyset pages oldest-first by (created_at, id) with no gaps or repeats',
-    { methods: ['insertFact', 'expireFact', 'listFactsKeyset'] },
+    'listFactsKeyset pages oldest-first by (created_at, id) with no gaps or repeats, across two rows that share a timestamp',
+    { methods: ['insertFact', 'expireFact', 'listFactsKeyset', 'transaction'] },
     async (engine) => {
       const ent = 'people/max-example';
-      const ids = await remember(engine, ent, [
-        { fact: 'k1' }, { fact: 'k2' }, { fact: 'k3' }, { fact: 'k4' }, { fact: 'k5' },
-      ]);
+      // created_at is the database clock (millisecond steps on PGLite), so back-to-back inserts can
+      // share a timestamp. Space the inserts until the clock moves, and make k3 and k4 tie on purpose:
+      // one transaction stamps both with the same now(), which is what the id half of the cursor is for.
+      const ids = new Map<string, number>();
+      const add = async (e: BrainEngine, fact: string) => {
+        for (const [k, v] of await remember(e, ent, [{ fact }])) ids.set(k, v);
+      };
+      const nextTick = async () => {
+        const stamped = Date.now();
+        while (Date.now() <= stamped) await new Promise((resolve) => setTimeout(resolve, 1));
+      };
+      for (const fact of ['k1', 'k2']) { await add(engine, fact); await nextTick(); }
+      await engine.transaction(async (tx) => { await add(tx, 'k3'); await add(tx, 'k4'); });
+      await nextTick();
+      await add(engine, 'k5');
       const everything = await engine.listFactsKeyset(SRC, null);
       expect(texts(everything)).toEqual(['k1', 'k2', 'k3', 'k4', 'k5']);
+      const stamps = everything.map((r) => r.created_at_iso);
+      expect([stamps[2] === stamps[3], new Set(stamps).size]).toEqual([true, 4]);
       expect(everything.every((r) => /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$/.test(r.created_at_iso ?? ''))).toBe(true);
 
       // page through with limit 2, advancing the keyset by the last delivered row
@@ -450,13 +464,14 @@ describe('engine parity: facts', () => {
       }
       expect(pages).toEqual([['k1', 'k2'], ['k3', 'k4'], ['k5']]);
 
-      // id:null means strictly after the timestamp: the row at the cursor itself is excluded
+      // id:null means strictly after the timestamp: k3 and k4, which share it, are both excluded;
+      // a cursor with k3's id keeps k4, the later row inside the same timestamp
       const k3 = everything[2];
       const afterTs = texts(await engine.listFactsKeyset(SRC, { createdAt: k3.created_at_iso!, id: null }));
       const afterId = texts(await engine.listFactsKeyset(SRC, { createdAt: k3.created_at_iso!, id: k3.id }));
       const beforeAll = texts(await engine.listFactsKeyset(SRC, { createdAt: '2000-01-01T00:00:00.000000Z', id: 0 }));
       const afterAll = texts(await engine.listFactsKeyset(SRC, { createdAt: '2999-01-01T00:00:00.000000Z', id: null }));
-      expect(afterTs).toEqual(['k4', 'k5']);
+      expect(afterTs).toEqual(['k5']);
       expect(afterId).toEqual(['k4', 'k5']);
       expect(beforeAll).toHaveLength(5);
       expect(afterAll).toEqual([]);
