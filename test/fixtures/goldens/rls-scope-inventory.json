@@ -3841,6 +3841,7 @@
         "allocateBodyOccurrenceIds": "none",
         "applyForwardReferenceBootstrap": "none",
         "applyTransactionSettings": "none",
+        "autocommitSql": "none",
         "batchLoadEmotionalInputs": "none",
         "batchRetry": "none",
         "connRetry": "none",

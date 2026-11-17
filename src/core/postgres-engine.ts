@@ -330,6 +330,14 @@ export class PostgresEngine implements BrainEngine {
     return this.engineSqlOn(this.sql);
   }
 
+  /** engineSql whose statements a read-only session default refused (25006) run once more in BEGIN READ WRITE, as executeRaw's do (#7183). */
+  private get autocommitSql(): SqlExecutor {
+    return postgresExecutor(this.sql, {
+      runUnsafe: (c, sql, params, opts) => retryReadOnlyAutocommit(c, cc => this.runUnsafe(cc, sql, params, opts)),
+      gauge: this.checkoutGauge,
+    });
+  }
+
   /** Executor over a handle the engine yielded (e.g. `withScopedReadTransaction`'s `tx`). */
   private engineSqlOn(conn: ReturnType<typeof postgres>): SqlExecutor {
     return postgresExecutor(conn, {
@@ -425,7 +433,7 @@ export class PostgresEngine implements BrainEngine {
    */
   private preparationRead<T>(fn: (exec: SqlExecutor) => Promise<T>, unbounded?: boolean): Promise<T> {
     const deadlineAt = this._pageTransaction || unbounded ? undefined : readDeadline();
-    if (deadlineAt === undefined) return fn(this.engineSql);
+    if (deadlineAt === undefined) return fn(this.autocommitSql);
     return runDeadlineRead(this.sql, deadlineAt, tx => fn(this.engineSqlOn(tx)), this.checkoutGauge, cancelSettleMs());
   }
 
@@ -1063,9 +1071,9 @@ export class PostgresEngine implements BrainEngine {
   getSourceStrictness(sourceId: string) { return this.preparationRead(exec => persistenceStateImpl.getSourceStrictness(unscopedExecutor(exec, 'persistence: strict-source read ran unscoped through executeRaw'), sourceId)); }
   readPersistenceBrainId() { return this.preparationRead(exec => persistenceStateImpl.readPersistenceBrainId(unscopedExecutor(exec, 'persistence: brain identity read ran unscoped through executeRaw'))); }
   readLocalWriterRow(id: string, opts?: { lock?: boolean }) { return this.preparationRead(exec => persistenceStateImpl.readLocalWriterRow(unscopedExecutor(exec, 'persistence: local writer read ran unscoped through executeRaw'), id, opts), opts?.lock); }
-  insertLocalWriterRow(row: persistenceStateImpl.LocalWriterInsert) { return persistenceStateImpl.insertLocalWriterRow(this.engineSql, row); }
+  insertLocalWriterRow(row: persistenceStateImpl.LocalWriterInsert) { return persistenceStateImpl.insertLocalWriterRow(this.autocommitSql, row); }
   readTransactionSettings(names: readonly string[]) { return transactionSettingsImpl.readTransactionSettings(unscopedExecutor(this.engineSql, 'transaction settings: read ran through the transaction executeRaw'), names); }
-  applyTransactionSettings(names: readonly string[], values: readonly string[]) { return transactionSettingsImpl.applyTransactionSettings(this.engineSql, names, values); }
+  applyTransactionSettings(names: readonly string[], values: readonly string[]) { return transactionSettingsImpl.applyTransactionSettings(this.autocommitSql, names, values); }
   readLedgerSource(sourceId: string, opts?: { batch?: boolean }) { return this.preparationRead(exec => beliefImpl.readLedgerSource(unscopedExecutor(exec, 'belief: ledger source probe ran unscoped through executeRaw'), sourceId, opts), opts?.batch); }
   isFolderRestricted(sourceId: string, slug: string) { return this.preparationRead(exec => accessControlImpl.isFolderRestricted(unscopedExecutor(exec, 'access: folder rule read ran unscoped through executeRaw'), sourceId, slug)); }
   async listSourceLocalPaths(): Promise<string[]> {
@@ -1783,19 +1791,19 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async deleteChunksExcept(slug: string, keepIds: readonly number[], opts?: { sourceId?: string }): Promise<void> {
-    return chunksImpl.deleteChunksExcept(this.engineSql, slug, keepIds, opts);
+    return chunksImpl.deleteChunksExcept(this.autocommitSql, slug, keepIds, opts);
   }
 
   async setChunkerVersion(slug: string, version: number, opts?: { sourceId?: string }): Promise<void> {
-    return chunksImpl.setChunkerVersion(this.engineSql, slug, version, opts);
+    return chunksImpl.setChunkerVersion(this.autocommitSql, slug, version, opts);
   }
 
   async writeTextProjectionSeal(slug: string, opts: { sourceId: string; revision: string; timelineText: string }): Promise<void> {
-    return chunksImpl.writeTextProjectionSeal(this.engineSql, slug, opts);
+    return chunksImpl.writeTextProjectionSeal(this.autocommitSql, slug, opts);
   }
 
   async moveChunkIndexes(pageId: number, waves: readonly (readonly ChunkMove[])[]): Promise<void> {
-    return chunksImpl.moveChunkIndexes(this.engineSql, pageId, waves);
+    return chunksImpl.moveChunkIndexes(this.autocommitSql, pageId, waves);
   }
 
   async getChunkReuseRows(slug: string, opts?: { sourceId?: string }): Promise<ChunkReuseRow[]> {
@@ -1986,11 +1994,11 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async pruneFrontmatterTags(slug: string, keep: readonly string[], opts?: { sourceId?: string }): Promise<void> {
-    return tagsImpl.pruneFrontmatterTags(this.engineSql, slug, keep, opts);
+    return tagsImpl.pruneFrontmatterTags(this.autocommitSql, slug, keep, opts);
   }
 
   async addPageTagsById(pageId: number, tags: readonly string[], opts?: { tagSource?: 'frontmatter' }): Promise<void> {
-    return tagsImpl.addPageTagsById(this.engineSql, pageId, tags, opts);
+    return tagsImpl.addPageTagsById(this.autocommitSql, pageId, tags, opts);
   }
 
   async getTags(slug: string, opts?: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; liveOnly?: boolean }): Promise<string[]> {
@@ -2819,7 +2827,7 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async replaceDerivedAliases(slug: string, sourceId: string, aliases: readonly DerivedAliasRow[]): Promise<void> {
-    return pagesImpl.replaceDerivedAliases(this.engineSql, slug, sourceId, aliases);
+    return pagesImpl.replaceDerivedAliases(this.autocommitSql, slug, sourceId, aliases);
   }
 
   async getPageSealState(pageId: number): Promise<{ chunker_version: number | null } | null> {
@@ -2827,7 +2835,7 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async refreshPageOrigin(slug: string, opts: { sourceId: string; sourcePath: string; sourceUri?: string | null }): Promise<void> {
-    return pagesImpl.refreshPageOrigin(this.engineSql, slug, opts);
+    return pagesImpl.refreshPageOrigin(this.autocommitSql, slug, opts);
   }
 
   // Config

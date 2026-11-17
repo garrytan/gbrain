@@ -1289,6 +1289,7 @@
           "private _upsertChunksOnce",
           "private activeEmbeddingColId",
           "private applyForwardReferenceBootstrap",
+          "private autocommitSql",
           "private batchRetry",
           "private checkoutGauge",
           "private connRetry",

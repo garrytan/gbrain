@@ -275,6 +275,7 @@
         "allocateBodyOccurrenceIds",
         "applyForwardReferenceBootstrap",
         "applyTransactionSettings",
+        "autocommitSql",
         "batchLoadEmotionalInputs",
         "batchRetry",
         "connRetry",
