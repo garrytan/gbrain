@@ -49,4 +49,5 @@ jobs:
         run: swift test
       - name: Signing probe
         timeout-minutes: 15
-        run: bash scripts/signing-probe.sh
+        working-directory: .
+        run: bash apple/helper/scripts/signing-probe.sh
