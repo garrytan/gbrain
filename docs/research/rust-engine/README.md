@@ -2,9 +2,9 @@
 
 These maps describe what TypeScript gbrain does today, so a Rust storage engine
 and, later, a Rust binary can match it. TypeScript gbrain is the reference.
-`garrytan/gbrain-evals` is the parity oracle. The plan that uses these maps is
-[docs/plans/PLAN.md](../../plans/PLAN.md). It is a draft: no build phase is
-approved yet.
+`garrytan/gbrain-evals` is the parity oracle. The plan of record is
+[docs/designs/RUST_ENGINE.md](../../designs/RUST_ENGINE.md) (PR #9593). The
+draft in [docs/plans/PLAN.md](../../plans/PLAN.md) is kept as research.
 
 The maps are research only. They describe the code at a pinned commit, not a
 promise about current behavior. Every claim cites `path:line` at that commit;

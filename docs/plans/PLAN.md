@@ -1,5 +1,7 @@
 # Plan: a Rust storage engine for gbrain
 
+> **The plan of record is [docs/designs/RUST_ENGINE.md](../designs/RUST_ENGINE.md) (PR #9593). This draft is kept as research.**
+
 > **Draft, pending Garry's /autoplan review; no build phase approved yet.**
 
 Status: DRAFT for review with gstack `/autoplan`. Only decisions D1 and D2
@@ -23,7 +25,8 @@ The work is split into phases. Each phase ships as a series of small PRs.
 Each phase has a parity gate: gbrain tests, gbrain-evals runs and benchmarks
 against PGLite and Postgres. A phase is done only when its gate passes.
 
-Phase 0 needs no decision. It prepares the test and eval harness and adds an
+Phase 0 has no open decision, but like every phase it needs Garry's approval before
+any work starts. It would prepare the test and eval harness and add an
 engine switch with no behavior change. Section 9 lists the decisions. D1
 and D2 are answered. The other eight are open, each with options, a
 recommendation and the phase it blocks.
@@ -236,7 +239,7 @@ Overview:
 | 7 | Brain lifecycle and release | 8 | `init --engine rust`, `migrate --to rust`, prebuilds, compiled binaries, docs. |
 | 8 | Full parity and benchmark report | 7, 10 | Evidence for a later PGLite deprecation decision. |
 
-### Phase 0: harness and engine switch (no decision needed)
+### Phase 0: harness and engine switch (no open decision; not approved)
 
 Scope: make the test and eval harness ready for a third engine, and add the
 `'rust'` kind with no behavior change. No Rust code. Every PR in this phase is
@@ -543,7 +546,7 @@ From the gbrain-evals map, section 9.3:
 
 Garry answered D1 and D2 on 2026-11-16; their rows record the answer. The
 other eight are open. Each has options, a recommendation and the phase it
-blocks. Phase 0 is blocked by none of them.
+blocks. No open decision blocks Phase 0, but it still needs approval before any work starts.
 
 | # | Decision | Options | Recommendation | Blocks |
 |---|---|---|---|---|

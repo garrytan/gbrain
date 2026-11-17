@@ -12,4 +12,4 @@ These are historical evidence, not promises about current GBrain behavior.
 
 | Research | What it is |
 |---|---|
-| [Rust rewrite research maps](rust-engine/README.md) | Maps of what TypeScript gbrain and gbrain-evals do today (storage engine, agent contract, jobs, tests, evals), kept current as input to the draft [Rust engine plan](../plans/PLAN.md). |
+| [Rust rewrite research maps](rust-engine/README.md) | Maps of what TypeScript gbrain and gbrain-evals do today (storage engine, agent contract, jobs, tests, evals), pinned to one commit. The plan of record is [docs/designs/RUST_ENGINE.md](../designs/RUST_ENGINE.md) (PR #9593); the draft [PLAN.md](../plans/PLAN.md) is kept as research. |
