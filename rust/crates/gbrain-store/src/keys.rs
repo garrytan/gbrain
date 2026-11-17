@@ -21,6 +21,54 @@ pub const TIMELINE: u8 = b'E';
 pub const TIMELINE_DEDUP: u8 = b'D';
 pub const TIMELINE_LATEST: u8 = b'G';
 
+// Reserved, one byte per planned family (docs/designs/RUST_ENGINE_INTERFACES.md, "Key layout").
+// The family's module owns every byte after its tag. Never reuse, reorder or repurpose a byte;
+// a family that is not listed here takes an unused byte in a reviewed change to this list.
+/// Family `page_ops` (`page_ops.rs`).
+pub const PAGE_OPS: u8 = b'p';
+/// Family `extraction` (`extraction.rs`).
+pub const EXTRACTION: u8 = b'e';
+/// Family `aliases` (`aliases.rs`).
+pub const ALIAS: u8 = b'k';
+/// Family `page_body` (`page_body.rs`).
+pub const PAGE_BODY: u8 = b'b';
+/// Family `facts` (`facts.rs`).
+pub const FACT: u8 = b'F';
+/// Family `ontology` (`ontology.rs`).
+pub const ONTOLOGY: u8 = b'N';
+/// Family `takes` (`takes.rs`).
+pub const TAKE: u8 = b'A';
+/// Family `contradictions` (`contradictions.rs`).
+pub const CONTRADICTIONS: u8 = b'Q';
+/// Family `dream` (`dream.rs`).
+pub const DREAM_VERDICT: u8 = b'Y';
+/// Family `eval_capture` (`eval_capture.rs`).
+pub const EVAL_CAPTURE: u8 = b'Z';
+/// Family `code_edges` (`code_edges.rs`).
+pub const CODE_EDGE: u8 = b'H';
+/// Family `salience` (`salience.rs`).
+pub const SALIENCE: u8 = b's';
+/// Family `stats` (`stats.rs`).
+pub const INGEST_LOG: u8 = b'n';
+/// Family `raw_files` (`raw_files.rs`).
+pub const RAW_FILES: u8 = b'r';
+/// Family `link_queries` (`link_queries.rs`).
+pub const LINK_QUERIES: u8 = b'q';
+/// Family `timeline_queries` (`timeline_queries.rs`).
+pub const TIMELINE_QUERIES: u8 = b'u';
+/// Family `keyword` (`keyword.rs`).
+pub const TRIGRAM: u8 = b'R';
+/// Family `chunk_queries` (`chunk_queries.rs`).
+pub const CHUNK_QUERIES: u8 = b'c';
+/// Family `vectors` (`vectors.rs`).
+pub const VECTOR: u8 = b'X';
+/// Family `embeddings` (`embeddings.rs`).
+pub const EMBEDDING_STATE: u8 = b'B';
+/// Family `transactions` (`transactions.rs`).
+pub const LOCK_QUEUE: u8 = b'w';
+/// Family `relations` (`relations.rs`).
+pub const RELATION_CATALOG: u8 = b'v';
+
 pub fn text(tag: u8, parts: &[&str]) -> Vec<u8> {
     let mut key = vec![tag];
     for (i, part) in parts.iter().enumerate() {
@@ -110,7 +158,8 @@ pub fn writer(id: &str) -> Vec<u8> {
     text(WRITER, &[id])
 }
 
-fn id_key(tag: u8, ids: &[u64]) -> Vec<u8> {
+/// `tag id...`: the tag, then each id as 8 big-endian bytes, so byte order is id order.
+pub fn id_key(tag: u8, ids: &[u64]) -> Vec<u8> {
     let mut key = vec![tag];
     for id in ids {
         key.extend_from_slice(&id.to_be_bytes());

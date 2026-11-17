@@ -109,7 +109,7 @@ describe('the Rust arm check', () => {
     }), tally())).rejects.toThrow('does not exist');
   });
 
-  test('every row of test/rust-expected-divergence.tsv names a normaliser that exists', () => {
+  test('every row of test/rust-expected-divergence/ names a normaliser that exists', () => {
     for (const r of readDivergences()) expect(Object.keys(DIVERGENCE_NORMALIZERS)).toContain(r.normalizer);
   });
 });

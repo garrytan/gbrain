@@ -7,12 +7,12 @@
  *
  * What the Rust arm owes each case:
  *  - A case that only calls members the store serves must return what PGLite returns, unless its row in
- *    `test/rust-expected-divergence.tsv` names how it differs: Rust must still return a value, both answers must be equal
+ *    `test/rust-expected-divergence/` names how it differs: Rust must still return a value, both answers must be equal
  *    after the row's normaliser, and the raw answers must still differ (when the case starts to match, the row must go).
  *  - A case that reaches a member or an option the Rust engine refuses must END on the typed `engine_capability_missing`
  *    refusal naming that capability. A refusal the case caught on the way to another outcome does not count.
  */
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
@@ -107,13 +107,19 @@ export const DIVERGENCE_NORMALIZERS: Record<string, (value: unknown) => unknown>
   },
 };
 
-const DIVERGENCE_FILE = join(import.meta.dir, '..', 'rust-expected-divergence.tsv');
+const DIVERGENCE_DIR = join(import.meta.dir, '..', 'rust-expected-divergence');
 
-/** The rows of test/rust-expected-divergence.tsv: `file<TAB>case name<TAB>normaliser<TAB>reason`; `#` starts a comment. */
-export function readDivergences(path = DIVERGENCE_FILE): DivergenceRow[] {
-  return readFileSync(path, 'utf8').split('\n').filter((l) => l.trim() !== '' && !l.startsWith('#')).map((line) => {
-    const [file, name, normalizer, reason] = line.split('\t');
-    if (!file || !name || !normalizer || !reason) throw new Error(`${path}: a row needs file, case name, normaliser and reason, tab separated: ${line}`);
-    return { file, name, normalizer, reason };
+/**
+ * The rows of every `test/rust-expected-divergence/<family>.tsv` (one file per family, so families never edit the same
+ * file): `file<TAB>case name<TAB>normaliser<TAB>reason`; `#` starts a comment.
+ */
+export function readDivergences(dir = DIVERGENCE_DIR): DivergenceRow[] {
+  return readdirSync(dir).filter((name) => name.endsWith('.tsv')).sort().flatMap((name) => {
+    const path = join(dir, name);
+    return readFileSync(path, 'utf8').split('\n').filter((l) => l.trim() !== '' && !l.startsWith('#')).map((line) => {
+      const [file, caseName, normalizer, reason] = line.split('\t');
+      if (!file || !caseName || !normalizer || !reason) throw new Error(`${path}: a row needs file, case name, normaliser and reason, tab separated: ${line}`);
+      return { file, name: caseName, normalizer, reason };
+    });
   });
 }

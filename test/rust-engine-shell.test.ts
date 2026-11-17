@@ -72,7 +72,9 @@ describe('openRustEngine', () => {
     expect(engine).toBeInstanceOf(RustEngine);
     expect(engine.kind).toBe('rust');
     expect([...engine.capabilities].sort()).toEqual([...servedCapabilities()].sort());
-    expect([...engine.capabilities].sort()).toEqual(['config', 'schema', 'sources', 'tags']);
+    // The capabilities served before the family split stay served; a family that finishes a capability adds to this set
+    // without editing this test (docs/designs/RUST_ENGINE_INTERFACES.md).
+    expect([...engine.capabilities]).toEqual(expect.arrayContaining(['config', 'schema', 'sources', 'tags']));
     expect(engine.addon).toBe(addon);
     expect(engine.databasePath).toBe('/var/brains/test.rust');
   });
@@ -80,7 +82,8 @@ describe('openRustEngine', () => {
   test('every member the store does not serve refuses engine_capability_missing naming its capability, writing nothing', async () => {
     const engine = open() as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
     const refused = Object.entries(RUST_ENGINE_MEMBERS).filter(([member, cls]) => cls !== 'implemented' && !Object.hasOwn(STORE_MEMBERS, member));
-    expect(refused.length).toBeGreaterThan(150);
+    // The count falls as families are built; the loop below checks each refused member, whatever the count.
+    expect(refused.length).toBeGreaterThan(0);
     for (const [member, capability] of refused) {
       expect(typeof engine[member]).toBe('function');
       const error = await refusal(() => engine[member]!());
