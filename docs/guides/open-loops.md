@@ -34,7 +34,9 @@ zero LLM, free, always on). For every synced Gmail thread:
   a "Thanks!" answers one sent to you); "Can you take this one?" above the
   same forward is an ask. The note ends at Gmail's "Forwarded message" line
   or Apple Mail's "Begin forwarded message:"; a forward in any other format
-  (Outlook, a translated separator) is still judged by its whole body.
+  (a translated separator) is still judged by its whole body. A classic
+  Outlook forward is stored only up to its "Original Message" line, so it
+  is judged by its note too.
 - "unanswered" is measured from the oldest unanswered message since the
   last turn flip (the first one addressed to you, or your first question),
   so a nudge or follow-up never restarts the clock — a request that waited
