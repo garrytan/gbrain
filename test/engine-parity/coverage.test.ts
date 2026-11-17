@@ -3,7 +3,7 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: test/engine-parity/coverage.tsv equals the generator output,
- *    so the parity number (covered N/197) in review is real.
+ *    so the parity number (covered N/198) in review is real.
  *  - Regression: a new parity case, a new or renamed BrainEngine method, or
  *    a hand edit of the list that leaves the checked-in number stale.
  *  - Why existing coverage misses it: test/engine-surface-coverage.test.ts
@@ -12,12 +12,16 @@
  *    Also pins that every parity file selects its arms with `testBackends()`
  *    and has a row in test/postgres-unit-arms.txt, so its Postgres arm runs
  *    in CI (the unit lanes unset DATABASE_URL and run only the PGLite arm).
+ *    Also self-tests test/engine-parity/arm-capabilities.ts: no arm lacks
+ *    raw_sql yet, so the harness's refusal check has no live caller until the
+ *    Rust arm lands, and these assertions keep it honest meanwhile.
  *  - Seam: none (pure file generation).
  */
 import { describe, expect, test } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildCoverage, COVERAGE_FILE, FAMILIES, parityDeclarations } from './coverage.ts';
+import { armCapabilities, isCapabilityRefusal, missingCapability, PARITY_ARMS } from './arm-capabilities.ts';
 
 describe('engine parity coverage list', () => {
   test('coverage.tsv is fresh (regenerate: bun test/engine-parity/coverage.ts --write)', () => {
@@ -49,5 +53,27 @@ describe('engine parity coverage list', () => {
       expect({ file, selectsArms: text.includes('parityArms(testBackends())'), laned: lanes.has(row) })
         .toEqual({ file, selectsArms: true, laned: true });
     }
+  });
+
+  test('arm capabilities: SQL arms run raw SQL, only Postgres holds the schema lock, Rust has neither yet', () => {
+    expect(PARITY_ARMS.map((arm) => [arm, [...armCapabilities(arm)].sort()])).toEqual([
+      ['pglite', ['raw_sql']], ['postgres', ['raw_sql', 'schema_migration_lock']], ['rust', []],
+    ]);
+    expect([missingCapability('raw_sql'), missingCapability('schema_migration_lock')]).toEqual([
+      { kind: 'refuses', label: 'refuses:raw_sql' }, { kind: 'n/a', label: 'n/a:postgres-only' },
+    ]);
+  });
+
+  test('isCapabilityRefusal accepts only engine_capability_missing naming that capability', () => {
+    const refusal = Object.assign(new Error('raw SQL is not available on this engine'), { code: 'engine_capability_missing', reason: 'raw_sql' });
+    const viaEnvelope = Object.assign(new Error('x'), { envelope: { code: 'engine_capability_missing', detail: { reason: 'raw_sql' } } });
+    expect([
+      isCapabilityRefusal(refusal, 'raw_sql'),
+      isCapabilityRefusal(viaEnvelope, 'raw_sql'),
+      isCapabilityRefusal(refusal, 'schema_migration_lock'),
+      isCapabilityRefusal(Object.assign(new Error('x'), { code: 'engine_unavailable', reason: 'raw_sql' }), 'raw_sql'),
+      isCapabilityRefusal(new Error('engine_capability_missing raw_sql'), 'raw_sql'),
+      isCapabilityRefusal(null, 'raw_sql'),
+    ]).toEqual([true, true, false, false, false, false]);
   });
 });

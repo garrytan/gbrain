@@ -17,6 +17,10 @@
  * makes them deterministic). Assertions go through typed BrainEngine
  * methods, never `executeRaw` (D18: the Rust engine has no SQL dialect).
  *
+ * A case that needs a capability some arm lacks declares `requires`
+ * (arm-capabilities.ts): raw SQL runs on the SQL arms and must be refused by
+ * the Rust arm; the Postgres-only schema migration lock runs on Postgres only.
+ *
  * `methods` is read statically by `test/engine-parity/coverage.ts` to build
  * `test/engine-parity/coverage.tsv`, so it must be an array literal of
  * string literals.
@@ -30,6 +34,7 @@ import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts'
 import { resetPgliteState, truncateCascade } from '../helpers/reset-pglite.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import type { TestBackend } from '../helpers/test-backends.ts';
+import { armHas, isCapabilityRefusal, missingCapability, type EngineCapability } from './arm-capabilities.ts';
 
 /** A callable BrainEngine member name. */
 export type EngineMethod = {
@@ -58,6 +63,13 @@ export interface ParityContext {
 export interface ParityCaseOpts {
   /** BrainEngine methods this case covers. Each must be called on every arm. */
   methods: readonly EngineMethod[];
+  /**
+   * A capability the scenario needs (test/engine-parity/arm-capabilities.ts).
+   * Arms with it run the scenario and compare answers. On an arm without it,
+   * a `refuses` capability means the scenario must throw the typed
+   * `engine_capability_missing` refusal, and an `n/a` capability skips the arm.
+   */
+  requires?: EngineCapability;
   timeout?: number;
 }
 
@@ -212,8 +224,17 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
             return { engine: recordingEngine(engine, calls), config };
           },
         };
+        const runs = armHas(arm.backend, opts.requires);
+        if (!runs && missingCapability(opts.requires!).kind === 'n/a') continue;
         let value: T;
         try {
+          if (!runs) {
+            // The arm lacks a `refuses` capability: the scenario must stop on the typed refusal.
+            const refusal = await scenario(recordingEngine(arm.engine, calls), arm.backend, ctx).then(() => null, (e: unknown) => e);
+            expect({ backend: arm.backend, refused: isCapabilityRefusal(refusal, opts.requires!) })
+              .toEqual({ backend: arm.backend, refused: true });
+            continue;
+          }
           value = await scenario(recordingEngine(arm.engine, calls), arm.backend, ctx);
         } catch (error) {
           if (error instanceof Error) error.message = `[${arm.backend}] ${error.message}`;

@@ -1268,6 +1268,12 @@ export interface BrainEngine {
    */
   upsertChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; sealChunkerVersion?: number; pageId?: number; deferSeal?: true } & BatchOpts): Promise<void>;
   /**
+   * Replace a page's chunks and seal its text projection at its current revision in one transaction, so search and
+   * `getChunks` serve them (upsertChunks alone leaves the projection unsealed). Refuses a missing, deleted or
+   * segmented page, an archived source and a stale `expectedRevision` (SQL in engine-sql/chunks.ts).
+   */
+  sealChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; expectedRevision?: string }): Promise<void>;
+  /**
    * Read every chunk for a page. Scope precedence mirrors getPage (#2555):
    * a federated grant (`sourceIds[]`) wins over scalar `sourceId`; with
    * neither set, the lookup falls back to the `'default'` source (the

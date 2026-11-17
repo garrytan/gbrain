@@ -524,7 +524,8 @@ export class PostgresEngine implements BrainEngine {
   }
 
   private async disconnectInternal(): Promise<void> {
-    for (const stop of this._beforeDisconnect) await stop();
+    const open = !!this.connectionManager || !!this._sql || this._connectionStyle === 'module';
+    if (open) for (const stop of this._beforeDisconnect) await stop(); // hooks run once, as PGLite's early return does
     // v0.41.25.0 (#1570) — instrument disconnect calls to identify the
     // mid-process caller behind the singleton-null bug. The audit log
     // captures connection_style so we can tell instance-pool teardowns
@@ -541,9 +542,7 @@ export class PostgresEngine implements BrainEngine {
     // residual telemetry buffers are dropped on BOTH engines (symmetric lossy
     // semantics; the CLI-exit drain is where residuals flush). Guarded so a
     // no-op disconnect (never connected / already torn down) skips the drain.
-    if (this.connectionManager || this._sql || this._connectionStyle === 'module') {
-      await drainBackgroundWorkBeforeDisconnect();
-    }
+    if (open) await drainBackgroundWorkBeforeDisconnect();
     // v0.30.1: tear down the direct pool first if the manager owns one.
     if (this.connectionManager) {
       await this.connectionManager.disconnect();
@@ -1719,6 +1718,10 @@ export class PostgresEngine implements BrainEngine {
   async listEmbeddingStateRows(opts: { sourceIds?: string[]; slugs?: string[]; states: readonly EmbeddingState[]; limit: number; purgeWindowHours: number }): Promise<EmbeddingStateRow[]> {
     const column = (await resolveActiveEmbeddingColumnFromEngine(this, { fallbackToLegacy: true })).name;
     return this.withScopedReadTransaction(opts.sourceIds, undefined, tx => chunksImpl.listEmbeddingStateRows(scopedRead(this.engineSqlOn(tx)), column, opts));
+  }
+
+  async sealChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; expectedRevision?: string }): Promise<void> {
+    await this.transaction(tx => { const e = tx as PostgresEngine; return chunksImpl.sealChunks(e.engineSql, e, slug, chunks, opts); });
   }
 
   async deleteChunks(slug: string, opts?: { sourceId?: string }): Promise<void> {

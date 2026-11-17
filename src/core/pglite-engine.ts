@@ -1901,6 +1901,10 @@ export class PGLiteEngine implements BrainEngine {
     return chunksImpl.listEmbeddingStateRows(scopedRead(this.engineSql), column, opts);
   }
 
+  async sealChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; expectedRevision?: string }): Promise<void> {
+    await this.transaction(tx => { const e = tx as PGLiteEngine; return chunksImpl.sealChunks(e.engineSql, e, slug, chunks, opts); });
+  }
+
   async deleteChunks(slug: string, opts?: { sourceId?: string }): Promise<void> {
     return chunksImpl.deleteChunks(this.engineSql, slug, opts);
   }
