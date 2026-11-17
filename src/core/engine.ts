@@ -85,6 +85,29 @@ export interface SourceDetailRow {
   trust_frontmatter_overrides?: boolean;
 }
 
+/**
+ * One `gbrain_cycle_locks` row as `readCycleLocks` returns it: the lease the lock id names. Timestamps are the
+ * database's (`db_now` is its clock at the read, so ages compare database stamps with the database clock, #7614);
+ * the driver may hand them back as `Date` or ISO text, and the caller coerces.
+ */
+export interface CycleLockRow {
+  id: string;
+  holder_pid: number;
+  holder_host: string;
+  acquisition_token: string;
+  acquired_at: Date | string;
+  ttl_expires_at: Date | string;
+  last_refreshed_at: Date | string | null;
+  db_now: Date | string;
+}
+
+/** Which lease rows `readCycleLocks` returns: one lock id, several, every expired row, or every row (oldest first for the last two). */
+export type CycleLockFilter =
+  | { by: 'id'; lockId: string }
+  | { by: 'ids'; lockIds: readonly string[] }
+  | { by: 'stale' }
+  | { by: 'all' };
+
 export interface TraverseGraphOpts extends LinkReadScope {
   sourceId?: string;
   sourceIds?: string[];
@@ -1190,6 +1213,12 @@ export interface BrainEngine {
 
   /** One source row (id, name, local_path, last_commit, last_sync_at, config, created_at, contextual_retrieval_mode, trust_frontmatter_overrides), or null when no source has that id. */
   getSource(sourceId: string): Promise<SourceDetailRow | null>;
+
+  /**
+   * Local paths of every source that has one (non-null, non-empty), in no particular order. The filesystem lock
+   * (`withSourceFilesystemLock`) canonicalizes each to pick the outermost worktree root an import locks.
+   */
+  listSourceLocalPaths(): Promise<string[]>;
 
   /**
    * v0.37.0 — prefix-stratified page sampling for `gbrain brainstorm` / `gbrain lsd`
@@ -2876,6 +2905,59 @@ export interface BrainEngine {
    * no statement timeout, as for its keyword statements.
    */
   keywordBoundedRead<T>(read: (db: Pick<BrainEngine, 'executeRaw'>) => Promise<T>): Promise<T>;
+
+  // ============================================================
+  // Cycle locks: TTL lease rows in `gbrain_cycle_locks` (db-lock.ts owns the policy)
+  // ============================================================
+  /**
+   * Take the lease `lockId`: insert a free row, or steal an expired one whose holder has not refreshed it within
+   * `stealGraceSeconds` (a starved-but-alive holder keeps it, #1794). The caller supplies the holder identity and the
+   * `acquisitionToken` UUID that fences every later call. Returns the row's id and an epoch-text `fence` for
+   * diagnostics (never compared), or null when the lease is held and unexpired. Timestamps are the database's `NOW()`.
+   * On Postgres a successful acquire also notes a direct-pool lease (direct-pool-profile.ts).
+   */
+  acquireCycleLock(lockId: string, opts: {
+    holderPid: number;
+    holderHost: string;
+    acquisitionToken: string;
+    ttlMinutes: number;
+    stealGraceSeconds: number;
+  }): Promise<{ id: string; fence: string } | null>;
+
+  /**
+   * Renew the lease: push `ttl_expires_at` out by `ttlMinutes` and stamp `last_refreshed_at`, only when the row still
+   * carries this holder pid and token. Returns false when the lease is gone or was taken over (the holder lost it).
+   * Postgres routes it to the direct session pool and cancels the statement when `signal` aborts; PGLite runs it on
+   * its database and never forwarded the signal.
+   */
+  refreshCycleLock(lockId: string, opts: {
+    holderPid: number;
+    acquisitionToken: string;
+    ttlMinutes: number;
+  }, queryOpts?: { signal?: AbortSignal }): Promise<boolean>;
+
+  /** Release the lease: delete the row only when pid and token still match. Returns whether a row was deleted (false: already released or taken over). */
+  releaseCycleLock(lockId: string, opts: { holderPid: number; acquisitionToken: string }): Promise<boolean>;
+
+  /** Read lease rows (see `CycleLockFilter`). A read: no side effects, no acquire. */
+  readCycleLocks(filter: CycleLockFilter): Promise<CycleLockRow[]>;
+
+  /**
+   * Snapshot-matched delete (`gbrain sync --break-lock`, the dead-holder reaper, takeover): one DELETE matching the
+   * observed id, pid and token, so a reused pid or a fresh holder is never removed. True when it deleted the row.
+   */
+  deleteCycleLock(lockId: string, opts: { holderPid: number; acquisitionToken: string }): Promise<boolean>;
+
+  /**
+   * Age-gated delete (`gbrain sync --break-lock --max-age`): as `deleteCycleLock`, but only when the row's
+   * `last_refreshed_at` is older than `maxAgeSeconds` (a wedged-but-alive holder). Returns the deleted row's
+   * `last_refreshed_at` so the caller can report the stale age.
+   */
+  deleteCycleLockIfStale(lockId: string, opts: {
+    holderPid: number;
+    acquisitionToken: string;
+    maxAgeSeconds: number;
+  }): Promise<{ deleted: boolean; lastRefreshedAt: Date | null }>;
 
   // ============================================================
   // v0.20.0 Cathedral II: code edges (Layer 5 populates, Layer 7 consumes)

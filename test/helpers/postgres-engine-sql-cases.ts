@@ -46,6 +46,7 @@ const OOS = {
   searchReads: 'out-of-scope:search-reads (born in engine-sql/search-reads.ts; pinned by test/engine-parity/search-reads.test.ts)',
   importWrites: 'out-of-scope:import-writes (born in engine-sql/chunks.ts, tags.ts, pages.ts; pinned by test/engine-parity/import-writes.test.ts)',
   pageBody: 'out-of-scope:page-body (Wave B segmented storage, born in engine-sql/page-body.ts; pinned by test/engine-sql-page-body.test.ts)',
+  cycleLocks: 'out-of-scope:cycle-locks (gbrain_cycle_locks leases, born in engine-sql/cycle-locks.ts; pinned by test/engine-parity/cycle-locks.test.ts)',
 } as const;
 
 export const DOMAIN_OF: Record<string, string> = {
@@ -74,6 +75,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'registerBeforeDisconnect': OOS.lifecycle,
   'sql': OOS.lifecycle,
   'engineSql': OOS.helper,
+  'directEngineSql': OOS.helper,
   'engineSqlOn': OOS.helper,
   'rlsScopeBindingEnabled': OOS.helper,
   'withScopedReadTransaction': OOS.helper,
@@ -133,8 +135,11 @@ export const DOMAIN_OF: Record<string, string> = {
   'addTimelineEntry': 'timeline', 'addTimelineEntriesBatch': 'timeline', 'getTimeline': 'timeline',
   'getTimelineForDate': 'timeline', 'getSince': 'timeline', 'getOnThisDay': 'timeline', 'getLastSeen': 'timeline',
   'upsertEventProjection': 'timeline',
+  // cycle locks (retry/direct-pool transport differs per method; the lease statements are pinned by the parity cases)
+  'acquireCycleLock': OOS.cycleLocks, 'refreshCycleLock': OOS.cycleLocks, 'releaseCycleLock': OOS.cycleLocks,
+  'readCycleLocks': OOS.cycleLocks, 'deleteCycleLock': OOS.cycleLocks, 'deleteCycleLockIfStale': OOS.cycleLocks,
   // sources
-  'listAllSources': 'sources', 'updateSourceConfig': 'sources', 'getSource': 'sources',
+  'listAllSources': 'sources', 'listSourceLocalPaths': 'sources', 'updateSourceConfig': 'sources', 'getSource': 'sources',
   // files
   'upsertFile': 'files', 'getFile': 'files', 'listFilesForPage': 'files',
   // chunks
@@ -555,6 +560,7 @@ export const SQL_CASES: SqlCase[] = [
 
   // ── sources ──
   ...variants('listAllSources', [['default', (e) => e.listAllSources()]]),
+  ...variants('listSourceLocalPaths', [['default', (e) => e.listSourceLocalPaths()]]),
   ...variants('updateSourceConfig', [['default', (e) => e.updateSourceConfig(SRC, { federated: true })]]),
   ...variants('getSource', [['default', (e) => e.getSource(SRC)]]),
 

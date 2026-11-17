@@ -411,9 +411,7 @@ src/core/cycle/synthesize-verify-epochs.ts	execute_raw	3
 src/core/cycle/synthesize.ts	execute_raw	6
 src/core/cycle/transcript-discovery.ts	execute_raw	2
 src/core/cycle/unindexed-files.ts	execute_raw	1
-src/core/db-lock.ts	driver_call	10
-src/core/db-lock.ts	execute_raw	3
-src/core/db-lock.ts	sql_template	9
+src/core/db-lock.ts	execute_raw	2
 src/core/db.ts	driver_call	2
 src/core/db.ts	sql_template	4
 src/core/derived-links.ts	execute_raw	10
@@ -619,7 +617,6 @@ src/core/minions/legacy-selection.ts	execute_raw	2
 src/core/minions/queue-families.ts	execute_raw	1
 src/core/minions/queue.ts	execute_raw	86
 src/core/minions/rate-leases.ts	execute_raw	6
-src/core/minions/source-filesystem.ts	execute_raw	1
 src/core/minions/spend-authorization.ts	execute_raw	5
 src/core/minions/submission-authority.ts	execute_raw	7
 src/core/minions/supervisor.ts	execute_raw	2

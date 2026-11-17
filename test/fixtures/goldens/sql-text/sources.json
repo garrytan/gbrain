@@ -27,6 +27,16 @@
           }
         ]
       },
+      "listSourceLocalPaths": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT local_path FROM sources WHERE local_path IS NOT NULL AND local_path <> ''",
+            "textSha256": "c7ffb048a4fd728fc6ccb9ec8d9f4dd3eb3d14173d5a73c101a2cb8eb6449c91"
+          }
+        ]
+      },
       "updateSourceConfig": {
         "default": [
           {

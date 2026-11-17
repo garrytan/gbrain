@@ -2323,6 +2323,17 @@
           "src-a,src-b"
         ]
       },
+      "listSourceLocalPaths#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listStaleChunks#default": {
         "flagOffLanes": [
           "pool"
@@ -3815,6 +3826,7 @@
       "scoping": {
         "_searchKeywordCJK": "direct",
         "_upsertChunksOnce": "via:readPageSnapshot",
+        "acquireCycleLock": "none",
         "activeEmbeddingColId": "none",
         "addCodeEdges": "none",
         "addLink": "none",
@@ -3850,10 +3862,13 @@
         "deleteChunks": "none",
         "deleteChunksExcept": "none",
         "deleteCodeEdgesForChunks": "none",
+        "deleteCycleLock": "none",
+        "deleteCycleLockIfStale": "none",
         "deleteEvalCandidatesBefore": "none",
         "deleteFactsForPage": "none",
         "deletePage": "none",
         "deletePages": "none",
+        "directEngineSql": "none",
         "disconnect": "none",
         "disconnectInternal": "none",
         "discoverOntologyDimensions": "none",
@@ -3952,6 +3967,7 @@
         "listLinkSources": "direct",
         "listPages": "direct",
         "listPrefixSampledPages": "direct",
+        "listSourceLocalPaths": "none",
         "listStaleChunks": "direct",
         "listStaleFrontmatterKeyPages": "direct",
         "listStalePagesForExtraction": "direct",
@@ -3979,6 +3995,7 @@
         "putDreamVerdict": "none",
         "putPage": "none",
         "putRawData": "none",
+        "readCycleLocks": "none",
         "readEmbeddingStateCounts": "direct",
         "readLedgerSource": "none",
         "readLocalWriterRow": "none",
@@ -3992,11 +4009,13 @@
         "readTransaction": "none",
         "readTransactionSettings": "none",
         "reconnect": "none",
+        "refreshCycleLock": "none",
         "refreshPageBody": "none",
         "refreshPageOrigin": "none",
         "registerBeforeDisconnect": "none",
         "relationalChainHop": "none",
         "relationalFanout": "none",
+        "releaseCycleLock": "none",
         "removeLink": "none",
         "removeLinksByPagesAndSource": "none",
         "removeTag": "none",

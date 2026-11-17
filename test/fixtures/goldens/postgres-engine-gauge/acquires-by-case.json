@@ -247,6 +247,7 @@
     "listPages#updated_after": {},
     "listPrefixSampledPages#default": {},
     "listPrefixSampledPages#sourceIds": {},
+    "listSourceLocalPaths#default": {},
     "listStaleChunks#default": {
       "raw": 1
     },
