@@ -65,6 +65,13 @@ const NOTE_CONTEXT = ('Partner note.\n\n' + renderTakesFence([{ rowNum: 1, claim
 const HUB = 'notes/hub-example';
 const SPOKES = LINK_CONTEXT_PAGE_BOUND + 5;
 const SPOKE_PROSE = 'spokeprosecontext';
+/** A typed chain whose first edge keeps an excerpt the anchor page no longer holds (its fence was dropped since extraction). */
+const CH_ANCHOR = 'people/chainanchor-example';
+const CH_CO = 'companies/chainco-example';
+const CH_FOUNDER = 'people/chainfounder-example';
+const CHAIN_PRIV = 'kitestalechaincanary';
+const CHAIN_Q = 'Who founded the companies that Chainanchor Example invested in?';
+const CHAIN_HOPS = [{ link_type: 'invested_in', toward: 'object' }];
 const LINK_MATCH_SQL = 'AS u(i, fs, fslug, ts, tslug, lt, ctx)';
 const ORIGIN_BODY_SQL = 'SELECT id, source_id, slug, compiled_truth, timeline FROM pages';
 
@@ -111,6 +118,12 @@ for (const kind of testBackends()) {
       await engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => tx.executeRaw(
         "UPDATE pages SET compiled_truth = '# Stale Example\n\nProfile rewritten.\n' WHERE slug = $1", [STALE]), TEST_WRITE_ATTRIBUTION));
       await call('local', 'add_link', { from: THIRD, to: ACME, link_type: 'related_to', context: NOTE_CONTEXT, request_id: randomUUID() });
+      await put(CH_ANCHOR, '---\ntype: person\ntitle: Chainanchor Example\n---\n# Chainanchor Example\n\nA seed investor.\n');
+      await put(CH_CO, '---\ntype: company\ntitle: Chainco Example\n---\n# Chainco Example\n\nA payments company founded by Chainfounder.\n');
+      await put(CH_FOUNDER, '---\ntype: person\ntitle: Chainfounder Example\n---\n# Chainfounder Example\n\nBuilds payment rails.\n');
+      await engine.addLink(CH_ANCHOR, CH_CO, 'Chainanchor invested in [[' + CH_CO + ']] ' + CHAIN_PRIV + ' at the seed round', 'invested_in', 'markdown');
+      await engine.addLink(CH_CO, CH_FOUNDER, 'founded by Chainfounder', 'founded', 'markdown');
+      await engine.setConfig('search.relational_planner', 'true');
       await put(HUB, '---\ntype: note\ntitle: Hub\n---\n# Hub\n');
       const spokes = Array.from({ length: SPOKES }, (_, n) => ({ slug: 'notes/spoke-' + String(n).padStart(3, '0'), text: 'Spoke ' + n + ' cites the hub ' + SPOKE_PROSE + '.' }));
       for (const s of spokes) await engine.putPage(s.slug, { title: s.slug, type: 'note' as never, compiled_truth: s.text, timeline: '', frontmatter: {}, source_path: s.slug + '.md' });
@@ -148,6 +161,8 @@ for (const kind of testBackends()) {
       ['traverse_graph attendee', 'traverse_graph', { slug: KIM, depth: 1 }],
       ['entity attendee', 'entity', { name: KIM }],
       ['entity meeting', 'entity', { name: MEET }],
+      ['traverse_graph stale hop', 'traverse_graph', { slug: CH_ANCHOR, hops: CHAIN_HOPS }],
+      ['search relational chain', 'search', { query: CHAIN_Q }],
     ];
 
     test('the fixture stores the private and held rows inside link contexts', async () => {
@@ -169,7 +184,7 @@ for (const kind of testBackends()) {
       const leaks: string[] = [];
       for (const who of ['bob', 'unbound']) for (const [label, op, params] of linkReads) {
         const text = await call(who, op, params);
-        for (const canary of [PRIV, HELD, MEET_PRIV, STALE_PRIV, NOTE_PRIV]) if (text.includes(canary)) leaks.push(who + ' ' + label + ' ' + canary);
+        for (const canary of [PRIV, HELD, MEET_PRIV, STALE_PRIV, NOTE_PRIV, CHAIN_PRIV]) if (text.includes(canary)) leaks.push(who + ' ' + label + ' ' + canary);
       }
       expect(leaks).toEqual([]);
     }, 120_000);
@@ -202,8 +217,14 @@ for (const kind of testBackends()) {
         expect(await call(who, 'get_links', { slug: KIM })).toContain(MEET_PRIV);
         expect(await call(who, 'get_backlinks', { slug: TARGET })).toContain(STALE_PRIV);
         expect(await call(who, 'get_links', { slug: THIRD })).toContain(NOTE_PRIV);
+        expect(await call(who, 'traverse_graph', { slug: CH_ANCHOR, hops: CHAIN_HOPS })).toContain(CHAIN_PRIV);
+        expect(await call(who, 'search', { query: CHAIN_Q })).toContain(CHAIN_PRIV);
         const pack = await call(who, 'context_pack', { entities: LIA });
         for (const canary of [PRIV, HELD, CORE_HELD]) expect(pack).toContain(canary);
+      }
+      for (const who of ['bob', 'unbound']) {
+        expect(await call(who, 'traverse_graph', { slug: CH_ANCHOR, hops: CHAIN_HOPS })).toContain(CH_CO);
+        expect(await call(who, 'search', { query: CHAIN_Q })).toContain('founded by Chainfounder');
       }
       const walk = await call('owner', 'traverse_graph', { slug: LIA, depth: 1 });
       for (const canary of [PRIV, HELD]) expect(walk).toContain(canary);
@@ -235,6 +256,15 @@ for (const kind of testBackends()) {
           expect(hub.rows.length).toBe(SPOKES);
           expect({ match: hub.match, bodies: hub.bodies }).toEqual({ match: 1, bodies: 1 });
           expect(hub.rows.filter(r => r.context.includes(SPOKE_PROSE)).length).toBe(LINK_CONTEXT_PAGE_BOUND);
+        }
+        for (const [op, params] of [['traverse_graph', { slug: CH_ANCHOR, hops: CHAIN_HOPS }], ['search', { query: CHAIN_Q }]] as const) {
+          for (const who of ['owner', 'local', 'bob', 'unbound']) {
+            sql.length = 0;
+            await call(who, op, params);
+            const world = who === 'bob' || who === 'unbound';
+            expect({ who, op, match: sql.filter(q => q.includes(LINK_MATCH_SQL)).length, bodies: sql.filter(q => q.includes(ORIGIN_BODY_SQL)).length })
+              .toEqual({ who, op, match: world ? 1 : 0, bodies: world ? 1 : 0 });
+          }
         }
       } finally {
         engine.executeRaw = executeRaw;

@@ -17,7 +17,7 @@ import { cutLinkPage, finishLinkPage, linkId, parseLinkListing, reportLinkPage }
 
 import { opError, type Operation } from './contract.ts';
 import type { Action } from '../agent-output.ts';
-import { presentEdgeContext, resolveChainAnchors, runRelationalChain, validateChainHops, type ChainEvidenceEdge, type ChainPlan } from '../search/relational-chain.ts';
+import { chainStoredEdge, presentEdgeContext, resolveChainAnchors, runRelationalChain, validateChainHops, type ChainEvidenceEdge, type ChainPlan } from '../search/relational-chain.ts';
 import { storedEdge, worldLinkContexts } from '../eligibility/fence-overlay.ts';
 import { invalidParam, paramUse, readFix } from './op-fix.ts';
 import {
@@ -532,6 +532,9 @@ async function traverseChain(ctx: OperationContext, p: Record<string, unknown>, 
   const remote = ctx.remote !== false;
   const edge = (e: ChainEvidenceEdge) => ({ ...e, context: presentEdgeContext(e.context, remote) });
   const answers = rows.filter(r => r.role === 'answer');
+  const contexts = (await worldLinkContexts(ctx.engine, ctx.remote,
+    answers.flatMap(r => r.best_path.edges.map(e => ({ ...e, source_id: r.source_id }))), chainStoredEdge)).map(e => e.context);
+  let next = 0;
   const rawHops = p.hops as Array<Record<string, unknown>>;
   const status = diagnostics.status;
   const fix = chainFix(slug, status, rawHops, diagnostics.empty_hop);
@@ -540,7 +543,7 @@ async function traverseChain(ctx: OperationContext, p: Record<string, unknown>, 
   return {
     anchor: slug,
     answers: answers.map(r => ({ slug: r.slug, source_id: r.source_id, path_count: r.path_count, score: r.score })),
-    paths: answers.map(r => ({ nodes: r.best_path.nodes, edges: r.best_path.edges.map(edge) })),
+    paths: answers.map(r => ({ nodes: r.best_path.nodes, edges: r.best_path.edges.map(e => edge({ ...e, context: contexts[next++] ?? null })) })),
     diagnostics,
     ...(ignored.length ? { set_aside: { ignored, note: `Walked the hops chain; ignored ${ignored.length > 1 ? `${ignored.slice(0, -1).join(', ')} and ${ignored[ignored.length - 1]}` : ignored[0]}: each hop names its link type and direction (toward), and the chain length is the number of hops.` } } : {}),
   };

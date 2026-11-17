@@ -28,12 +28,13 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-  const page = (slug: string, type: string, frontmatter?: Record<string, unknown>) =>
-    engine.putPage(slug, { type: type as 'person', title: slug.split('/')[1], compiled_truth: `${slug} body`, timeline: '', ...(frontmatter ? { frontmatter } : {}) });
+  const page = (slug: string, type: string, frontmatter?: Record<string, unknown>, body = `${slug} body`) =>
+    engine.putPage(slug, { type: type as 'person', title: slug.split('/')[1], compiled_truth: body, timeline: '', ...(frontmatter ? { frontmatter } : {}) });
   await page('people/alice-example', 'person');
   await page('people/bob-example', 'person');
   await page('people/priv-example', 'person', { visibility: 'private' });
-  await page('companies/acme-example', 'company');
+  // GST-2957: a world-only remote caller sees a body-excerpt context only when the page still holds it.
+  await page('companies/acme-example', 'company', undefined, `companies/acme-example body. founded by bob ${'x'.repeat(400)}`);
   await page('companies/lonely-example', 'company');
   await engine.addLink('people/alice-example', 'companies/acme-example', 'alice backed acme', 'invested_in', 'markdown');
   await engine.addLink('companies/acme-example', 'people/bob-example', `founded by bob ${'x'.repeat(400)}`, 'founded', 'markdown');
