@@ -65,25 +65,28 @@ export function newerSide(file: { committed_at: string | null; uncommitted: bool
 
 /**
  * Whole-class (file-drift-class.ts): the commit evidence of many paths in one Git read: one `git log` naming each path's last
- * commit at HEAD and one `git status` for uncommitted bytes. A Git failure reads as no evidence for every path.
+ * commit at HEAD and one `git status` for uncommitted bytes. Git prints paths from the repository top, so a source bound to a
+ * subdirectory is matched through its prefix. A path the read did not settle, or every path when Git fails, is left out, and the
+ * caller reads it alone.
  */
 export function fileCommitEvidenceBatch(root: string, paths: readonly string[]): Map<string, CommitEvidence> {
-  const found = new Map<string, CommitEvidence>(paths.map(path => [path, { committed_at: null, uncommitted: false }]));
-  if (!paths.length) return found;
+  if (!paths.length) return new Map();
   const git = (args: string[]) => execFileSync('git', ['-C', root, '-c', 'core.quotePath=false', ...args], { env: gitChildEnv(GIT_READ_ENV), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 256 * 1024 * 1024 });
   try {
+    const prefix = git(['rev-parse', '--show-prefix']).trim();
+    const byTop = new Map(paths.map(path => [prefix + path, { committed_at: null as string | null, uncommitted: false }]));
     let at: string | null = null;
     for (const line of git(['log', '--format=%x01%cI', '--name-only', 'HEAD', '--', ...paths]).split('\n')) {
       if (line.startsWith('\u0001')) { at = line.slice(1).trim() || null; continue; }
-      const entry = found.get(line);
+      const entry = byTop.get(line);
       if (entry && entry.committed_at === null) entry.committed_at = at;
     }
     for (const record of git(['status', '--porcelain', '-z', '--', ...paths]).split('\0')) {
-      const entry = record.length > 3 ? found.get(record.slice(3)) : undefined;
+      const entry = record.length > 3 ? byTop.get(record.slice(3)) : undefined;
       if (entry) entry.uncommitted = true;
     }
-  } catch { return new Map(paths.map(path => [path, { committed_at: null, uncommitted: false }])); }
-  return found;
+    return new Map(paths.flatMap(path => { const entry = byTop.get(prefix + path)!; return entry.committed_at === null ? [] : [[path, entry] as const]; }));
+  } catch { return new Map(); }
 }
 
 /** One live page's comparison with its canonical file (read as reconcile and `repair file-drift` read it); `commit` is the file's evidence when a batch already read it. */
@@ -107,12 +110,13 @@ export function newerPageParagraph(sourceId: string, slug: string, evidence: Dri
 
 /**
  * GST-2869 / whole-class: what settles a read-only mirror's differing held pages. The whole-class preview lists every held page of
- * the side whose file is newer for one approval and its apply imports each file into its page database-only (no file is written);
- * a page edited in gbrain after its file stays held for a person.
+ * the side whose file is newer under one hash; applying it database-only (no file written) is not available yet, so a page settles
+ * today once the user makes the source writable. A page edited in gbrain after its file stays held for a person.
  */
 export function mirrorDriftRoute(sourceId: string, side = 'unknown'): string {
-  return `this source is a read-only mirror: gbrain repair file-drift --source ${sourceId} --held --side ${side} --prefer file --whole-class previews every held page of that side whose file is newer for one approval, `
-    + `and its apply imports each file into its page database-only (nothing is written to the checkout); a page edited in gbrain after its file was committed stays held for a person (kept_newer_page)`;
+  return `this source is a read-only mirror: gbrain repair file-drift --source ${sourceId} --held --side ${side} --prefer file --whole-class previews every held page of that side whose file is newer under one hash; `
+    + `applying that preview database-only (nothing written to the checkout) is not available yet, so to settle a page now the user makes the source writable (gbrain sources mirror-writable ${sourceId}) and picks a side; `
+    + `a page edited in gbrain after its file was committed stays held for a person (kept_newer_page)`;
 }
 
 /**

@@ -62,7 +62,8 @@ export const classPreviewArgv = (sel: ClassSelection, cursor?: string) =>
 const classApplyArgv = (sel: ClassSelection, hash: string) => [...classPreviewArgv(sel), '--apply', '--expect', hash, '--yes'];
 const compareArgv = (sel: ClassSelection) => ['gbrain', 'repair', 'file-drift', '--source', sel.sourceId, '--held', '--side', sel.side, ...argvSelection(sel), '--json'];
 const manifestPath = (hash: string) => join(artifactDirectory(), `class-${hash}.json`);
-const manifestHash = (manifest: ClassManifest) => previewHash({ kind: 'file-drift-class-v1', manifest });
+/** The hash binds what the class is (its pins, residual and walk), never `backup_bytes`: that estimate moves when a background text projection lands. */
+const manifestHash = ({ backup_bytes: _estimate, ...manifest }: ClassManifest) => previewHash({ kind: 'file-drift-class-v1', manifest });
 
 /** The whole-class refusals of a selection the CLI parsed; nothing was read or written when one throws. */
 export function assertWholeClassSelection(opts: { held?: boolean; side?: string; state?: string; provenance?: string; prefer?: string; slugs?: string[]; requests?: string[]; allDrifted?: boolean; sourceId?: string }): void {
