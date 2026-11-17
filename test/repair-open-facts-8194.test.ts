@@ -43,6 +43,7 @@ import { proposeRevision } from '../src/core/access/policy.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { serializePageToMarkdown } from '../src/core/markdown.ts';
 import { LEGACY_EMBEDDING_CONFIG } from './helpers/legacy-embedding-config.ts';
+import { heldProposalRef } from './helpers/held-proposal.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -636,7 +637,8 @@ describe('test 11: the #9196 / GST-2511 holds still apply to every other widenin
         for (const r of await engine.executeRaw<{ id: number }>('SELECT id FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', [b.sourceId, slug])) await confirmFact(b, Number(r.id));
         const current = await run(b.remote, 'get_page', { slug, include_content: true });
         const widened = await run(b.remote, 'put_page', { slug, content: note('Kim', body([row(1, 'Kim lives in Turin'), row(2, 'Kim keeps bees')])), expected_revision: current.revision });
-        expect(widened.contested?.proposal_ref).toMatch(/^tp\d+$/);
+        expect(widened.contested).toBeUndefined();
+        expect(await heldProposalRef(engine, b.sourceId, 'Kim keeps bees')).toMatch(/^tp\d+$/);
         expect((await facts(b, 'Kim keeps bees')).map(f => f.visibility)).toEqual(['private', 'private']);
         expect(await remoteRecall(b, slug)).not.toContain('Kim keeps bees');
       }

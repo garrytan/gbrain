@@ -8,9 +8,13 @@
  * the pooler pins the transaction to one server connection, `SET LOCAL` ends
  * with it, and a statement past the bound ends server-side with 57014 (a lock
  * wait counts toward it). `COMMIT` after a failed statement is a rollback,
- * never an error of its own. `signal` covers only the wait for a free
+ * never an error of its own. `signal` covers the wait for a free
  * connection (a saturated pool must not hold the bound off); the statement
- * itself ends at the bound, never by a cancel request. With `deadlineAt` the
+ * itself ends at the bound or, when `signal` aborts after the connection was
+ * reserved, by a cancel request: the call then rejects at once with an
+ * `AbortError` and the connection is discarded, so a socket or pooler that
+ * stopped answering never keeps it reserved (#8155). A write ended this way may
+ * have committed: its outcome is unknown. With `deadlineAt` the
  * bound is the time left after the connection was reserved (#6696 B1).
  *
  * `jitOff` adds `SET LOCAL jit = off` to the same envelope (see
@@ -39,6 +43,8 @@ export async function runBoundedStatement<T>(conn: Sql, sql: string, params: unk
     const ms = Math.max(1, Math.ceil(opts.deadlineAt !== undefined ? Math.min(opts.timeoutMs, opts.deadlineAt - Date.now()) : opts.timeoutMs));
     settings.push(`SET LOCAL statement_timeout = ${ms}`);
   }
+  let discarded = false;
+  let onAbort: (() => void) | undefined;
   try {
     const open = reserved.unsafe([READ_WRITE_BEGIN, ...settings].join('; ')).simple().execute();
     // A cancellable statement is issued through `run`, which awaits the query and so enqueues it a microtask
@@ -49,11 +55,24 @@ export async function runBoundedStatement<T>(conn: Sql, sql: string, params: unk
       : reserved.unsafe(sql, params as Parameters<typeof reserved.unsafe>[1], { prepare: opts.prepare ?? true }).execute();
     const commit = () => reserved.unsafe('COMMIT').execute();
     const close = cancellable ? read.then(commit, commit) : commit();
-    const settled = await Promise.allSettled([open, read, close]);
+    const statement = Promise.allSettled([open, read, close]);
+    const settled = opts.signal && !cancellable
+      ? await Promise.race([statement, new Promise<never>((_, reject) => {
+        onAbort = () => {
+          discarded = true;
+          try { void Promise.resolve((read as { cancel?: () => unknown }).cancel?.()).catch(() => {}); } catch { /* the discard below still retires it */ }
+          reserved.discard();
+          reject(new DOMException('aborted', 'AbortError'));
+        };
+        if (opts.signal!.aborted) onAbort();
+        else opts.signal!.addEventListener('abort', onAbort, { once: true });
+      })])
+      : await statement;
     for (const outcome of settled) if (outcome.status === 'rejected') throw outcome.reason;
     return (settled[1] as PromiseFulfilledResult<unknown>).value as T[];
   } finally {
-    reserved.release();
+    if (onAbort) opts.signal?.removeEventListener('abort', onAbort);
+    if (!discarded) reserved.release();
   }
 }
 

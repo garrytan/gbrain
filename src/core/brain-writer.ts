@@ -20,7 +20,7 @@ import { assertManagedFilesystemWrite } from './persistence/filesystem-guard.ts'
 import { createHash } from 'crypto';
 import { loadBoundedYaml as yamlLoad } from './data-frontmatter.ts';
 import { existsSync, readFileSync, readdirSync, copyFileSync, writeFileSync, mkdirSync, lstatSync } from 'fs';
-import { join, relative, resolve, dirname, basename, isAbsolute } from 'path';
+import { join, relative, resolve, dirname, basename } from 'path';
 import type { BrainEngine } from './engine.ts';
 import { isConnectorSourceKind } from './persistence/connector-kinds.ts';
 import type { ProgressReporter } from './progress.ts';
@@ -37,6 +37,7 @@ import {
 } from './markdown.ts';
 import { DEFAULT_METAFILE_PAGES_MODE, isMarkdownFilePath, isSyncable, pruneDir, readMetafilePagesMode, slugifyPath, type MetafilePagesMode } from './sync.ts';
 import { diskMetafileHeads, metafilePagePredicate } from './sync-metafile-pages.ts';
+import { relativeEscapesRoot } from './path-confine.ts';
 
 export type { ParseValidationCode };
 
@@ -153,7 +154,7 @@ export function createFrontmatterBackup(filePath: string, opts: FrontmatterBacku
   const resolvedFile = resolve(filePath);
   const resolvedSource = resolve(opts.sourcePath ?? dirname(resolvedFile));
   const rel = relative(resolvedSource, resolvedFile);
-  const safeRel = rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel : basename(resolvedFile);
+  const safeRel = rel && !relativeEscapesRoot(rel) ? rel : basename(resolvedFile);
   const root = opts.backupRoot ?? defaultFrontmatterBackupRoot(opts.runId);
   const backupPath = join(root, sourceKey(resolvedSource), safeRel + '.bak');
   mkdirSync(dirname(backupPath), { recursive: true });

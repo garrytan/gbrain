@@ -33,7 +33,7 @@ export async function noGrantFloorNext(engine: BrainEngine, id: string): Promise
   return {
     command: argv.join(' '),
     argv,
-    why: `Connections with no source grant read only the default source and federated sources, and none of them holds a page, so their reads are refused until "${id}" is federated or they are granted sources.`,
+    why: `Connections with no source grant read only the default source and federated sources, and none of them holds a page every reader of its source can read, so their empty reads are refused until "${id}" is federated or they are granted sources.`,
   };
 }
 
@@ -44,7 +44,7 @@ export function notInDefaultSearchNotice(id: string, shared: boolean, ask = shar
     kind: 'info',
     why: `The source "${id}" is not federated, so it is not in default search: a search, query or recall that names no source leaves its pages out, and a remote token or agent connection with no source grant cannot read them.`
       + (shared ? ' This brain serves several people or is not marked personal, so a new source stays out until someone chooses to add it.' : '')
-      + ` Run \`gbrain sources federate ${id}\` to add it, or grant one token with \`gbrain auth rescope --token <name> --sources ${id}\`.`,
+      + ` To share it with every connection that reads default search, run \`gbrain sources federate ${id}\`; to share it with one token, \`gbrain auth rescope --token <name> --sources ${id}\`. A source meant to stay private needs nothing.`,
     fix: {
       argv: ['gbrain', 'sources', 'federate', id],
       consent: [],
@@ -54,6 +54,7 @@ export function notInDefaultSearchNotice(id: string, shared: boolean, ask = shar
       why: 'Adds the source to default search and to what connections with no source grant can read.',
       verify: { argv: ['gbrain', 'sources', 'list', '--json'] },
     },
+    ...(ask ? { user_message: `Should the source "${id}" be shared with every connection that reads this brain's default search? If yes, the command shown adds it. If it is meant for one person or a few connections, leave it as it is.` } : {}),
   };
 }
 

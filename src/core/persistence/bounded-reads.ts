@@ -101,7 +101,7 @@ export function boundedReads(engine: BrainEngine, clock: ClaimPhaseClock | undef
         throw new PreparationDeadlineError(clock!.step, null);
       }
       try {
-        // The clock's signal ends only the wait for a free connection (a saturated pool); the statement itself ends at the bound.
+        // The clock's signal ends the wait for a free connection (a saturated pool) and cancels a reserved statement (#8155); otherwise the statement ends at the bound.
         return await target.executeRaw(sql, params, { ...opts, timeoutMs: Math.max(1, deadlineAt - Date.now()), ...(clock!.signal ? { signal: clock!.signal } : {}) });
       } catch (error) {
         // A connection the engine discarded after the budget's cancel (a pooler that never completed the round-trip) is the deadline too.

@@ -271,8 +271,10 @@ codex mcp remove gbrain
 
 ## Notes
 
-- The token is a long-lived, full-access secret. Keep `GBRAIN_REMOTE_TOKEN` out of
-  version control and prefer a scoped token if your host supports one.
+- The token is a long-lived secret that carries its grant's scopes (a
+  `gbrain auth create` token minted without `--scopes` is full-access). Keep
+  `GBRAIN_REMOTE_TOKEN` out of version control and prefer a scoped token if
+  your host supports one.
 - Local stdio also works if you run the brain on the same machine:
   `gbrain setup codex` registers `serve --surface starter --advertise verbs` behind
   gbrain's launcher, so the session directory's `bunfig.toml` and `.env` never load
