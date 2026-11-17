@@ -98,7 +98,7 @@ import { discardedFilePaths, unimportedFile, unimportedFileText, type Unimported
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
 import { recordsNoFileOrigin } from '../persistence/unbound-pages.ts';
 import { sourceMirrorReadOnly } from '../persistence/mirror-read-only.ts';
-import { comparedListing, comparePage, linesNotCarried, newerPageParagraph, readDriftEvidence, type ComparedPage } from './file-drift-compare.ts';
+import { comparedListing, comparePage, linesNotCarried, mirrorDriftRoute, newerPageParagraph, readDriftEvidence, type ComparedPage } from './file-drift-compare.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope } from './core.ts';
 
@@ -816,7 +816,8 @@ async function compareSelection(engine: BrainEngine, sourceId: string, opts: Rep
   const nextCursor = remaining > 0 && windowed > 0 ? heldCursor(held!.targets[windowed - 1]!.hold.path) : undefined;
   if (remaining > 0) residuals.after_window = remaining;
   const filesNewer = pages.filter(page => page.would === 'prefer_file').length;
-  const next = [...(filesNewer ? [`Preview the file side for the ${filesNewer} page(s) whose file is newer: ${previewCommand(sourceId, { ...opts, prefer: 'file' })} (pages newer than their file are left held, kept_newer_page)`] : []),
+  const next = [...(filesNewer ? [mirror ? `${filesNewer} page(s) have a newer file, but ${mirrorDriftRoute(sourceId)}`
+      : `Preview the file side for the ${filesNewer} page(s) whose file is newer: ${previewCommand(sourceId, { ...opts, prefer: 'file' })} (pages newer than their file are left held, kept_newer_page)`] : []),
     ...(nextCursor ? [`Compare the next window: ${shellQuote(compareArgv(sourceId, { ...opts, cursor: nextCursor }).slice(0, -1))}`] : [])];
   return { items: [], residuals, listing, ...(held ? { complete: remaining === 0 } : {}), details: { compare: true, writes: 'none',
     pages: pages.map(({ item: _item, ...page }) => ({ evidence: null, ...page })), ...(next.length ? { next_actions: next } : {}),

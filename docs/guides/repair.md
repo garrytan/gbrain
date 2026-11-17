@@ -2477,8 +2477,13 @@ open only when you name that class, for example `--class unpaged:mail:extract`
 (quote a lane that contains spaces).
 `--ids-file <file>` (one fact id per line) narrows the set.
 
+A fact someone saved private on purpose before the cut looks the same as a
+legacy one, so it is opened with them. The preview says so and shows samples
+and every listed fact; when some must stay private, put the ids you do want
+opened in a file and pass `--ids-file`.
+
 The preview also counts every fact it leaves private, by reason: `expired`,
-`superseded`, `member_page`, `withdrawn` (forgotten or purged, at any
+`superseded`, `lapsed` (its `valid_until` has passed), `member_page`, `withdrawn` (forgotten or purged, at any
 visibility), `contested` (an open trust proposal, or a widening the owner
 rejected or undid), `holding_page_private`, `holding_page_missing`,
 `holding_page_quarantined`, `provenance_private`, `provenance_unresolved`,
@@ -2493,7 +2498,8 @@ eligible inside the window since the preview refuses `preview_changed`. Each
 write locks the pages the fact names and checks it again, so a page made
 private while the apply waits keeps its facts private. A fenced row has its
 table cell set to `world` by the same label-only write the other privacy
-repairs use. A fact the apply could not open is reported `fact_left_private`
+repairs use, in the table where it sits, above or below the timeline
+sentinel. A fact the apply could not open is reported `fact_left_private`
 with the reason, never as applied.
 
 The command refuses remote callers and any CLI running under
@@ -3686,6 +3692,17 @@ are newer. A `--prefer` preview without a side names this comparison as its
 gbrain repair file-drift --source <id> --held --json           # compare every held page, no winner named
 ```
 
+<a id="file-drift-compare-mirror"></a>On a [read-only mirror](multi-source-brains.md#read-only-mirror-sources)
+(GST-2843), the held comparison reads each held page's file too: a page that
+differs reads `prefer_file` or `needs_human` with its `evidence`, one that
+matches reads `release_hold`, and only a page whose file is gone reads
+`no_drift` with `database_only`. Every compared page in `details.pages`
+carries `evidence` (null when nothing was read). The comparison names no
+`--prefer` preview there, because a mirror's previews read every page as
+database-only and resolve nothing: a differing page stays held until the user
+makes the source writable again (`gbrain sources mirror-writable <id>`, which
+lets gbrain write files into its checkout) and picks a side then (GST-2869).
+
 <a id="file-drift-kept-newer"></a>`--prefer file` never drops a page edited after its file's last commit in
 bulk. A `--held`, `--all-drifted` or `--request` preview lists such a page
 `kept_newer_page`, with the edit's time, the file's commit time and the two ways
@@ -3747,7 +3764,11 @@ reads the database a few dozen times, so a large held set against a remote
 database takes minutes per hundred pages). It reports each page on stderr as
 it goes. The hash and the printed apply command cover only that window. A
 partial window lists `after_window` in its residuals and prints the next
-preview command with `--cursor <next_cursor>` (JSON: `details.window`):
+preview command with `--cursor <next_cursor>` (JSON: `details.window`). A held
+dry run (a comparison or a `--prefer` preview) reports `complete: false` while
+held pages remain past its window, and `details.window.next_command` names the
+command for the next window; an apply's `complete` still means every item of
+the approved window was attempted:
 
 ```bash
 gbrain repair file-drift --source <id> --held --side deleted --state file_gone --prefer database             # window 1

@@ -232,12 +232,14 @@ async function batchEntries(engine: BrainEngine, level: ShadowLevel, deletes: Sh
   // GST-2843: those versions are read per batch, just before the batch drains (readDriftHistories), so a pass over tens of
   // thousands of such holds commits each batch's holds before it reads the next batch's history.
   const historyOwed = new Map<PassEntry, ShadowPath>();
+  // GST-2843 / GST-2869: why the pass re-checks a held path, stamped on the hold it writes (passBanked reads it).
+  const recheckOf = (entry: ShadowPath) => ({ ...(entry.state.hold?.moved ? { basisMoved: true as const } : {}), ...(entry.state.hold?.retryOnly ? { retryOnly: true as const } : {}) });
   const entries: PassEntry[] = [], collisions: SyncSlugCollision[] = [], skipped: ShadowPath[] = [], identity: Array<{ entry: ShadowPath; origin: ShadowPath | null; slug: string; ids: { page: string; file: string } }> = [];
   const claims = new Map<string, ShadowPath[]>();
   for (const entry of imports) {
     if (step.due()) await step.pause();
     const paths = entryPaths(level, entry.path);
-    const base = { ...paths, ...committedOnly, action: 'import' as const, working: working(entry), level: entry.state.level, ...(entry.state.hold?.moved ? { basisMoved: true as const } : {}), ...(entry.result.cls === 'drift' && entry.result.side && entry.result.side !== 'deleted' ? { drift: entry.result.side, ...(driftBaseline(entry) ? { driftBaseline: driftBaseline(entry) } : {}) } : {}) };
+    const base = { ...paths, ...committedOnly, action: 'import' as const, working: working(entry), level: entry.state.level, ...recheckOf(entry), ...(entry.result.cls === 'drift' && entry.result.side && entry.result.side !== 'deleted' ? { drift: entry.result.side, ...(driftBaseline(entry) ? { driftBaseline: driftBaseline(entry) } : {}) } : {}) };
     if (entry.state.page) {
       const built: PassEntry = { ...base, slug: entry.slug!, pageId: entry.pageId, revision: entry.revision };
       if (entry.result.cls === 'drift' && entry.result.side === 'unknown' && entry.pageId !== null && entry.state.hold?.unscreened) historyOwed.set(built, entry);
@@ -277,7 +279,7 @@ async function batchEntries(engine: BrainEngine, level: ShadowLevel, deletes: Sh
     if (losers.length) collisions.push({ slug, kept: kept ?? entryPaths(level, winner!.path).sourcePath, skipped: losers.map(entry => entryPaths(level, entry.path).sourcePath) });
     if (!winner) continue;
     const paths = entryPaths(level, winner.path);
-    const base = { ...paths, ...committedOnly, action: 'import' as const, working: working(winner), level: winner.state.level, slug, ...legacySlugs.get(winner.path) };
+    const base = { ...paths, ...committedOnly, action: 'import' as const, working: working(winner), level: winner.state.level, slug, ...recheckOf(winner), ...legacySlugs.get(winner.path) };
     if (holder) {
       // #6729: a file whose frontmatter id differs from the page's is another document; it inherits nothing. GBRA-130 B-4: it is
       // held alone and the page keeps its slug (its origin's deletion waits with it); discovery still refuses the source.
