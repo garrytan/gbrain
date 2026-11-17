@@ -1,4 +1,5 @@
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
+import type { EngineCapabilities } from './engine-capabilities.ts';
 import type { GetVersionsOpts, PageVersionRows } from './page-state/version-types.ts';
 import type { PageSnapshotBatch } from './page-snapshot-batch.ts';
 import type { LinkReadScope } from './link-validity.ts';
@@ -830,6 +831,7 @@ export function clampSearchLimit(limit: number | undefined, defaultLimit = 20, c
 export interface BrainEngine {
   /** Discriminator: lets migrations and other consumers branch on engine kind without instanceof + dynamic imports. */
   readonly kind: 'postgres' | 'pglite';
+  readonly capabilities: EngineCapabilities; // what this engine can do, by name (engine-capabilities.ts); ask it instead of branching on kind
 
   // Lifecycle
   connect(config: EngineConfig): Promise<void>;
