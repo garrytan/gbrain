@@ -19,6 +19,7 @@ import { applyFactsBlock, hasHistoryCue } from '../src/core/search/facts-arm.ts'
 import { collectFactCandidates } from '../src/core/search/fact-relevance.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { newSource, page, putPage } from './helpers/pinned-questions-fixture.ts';
+import { valueHash } from '../src/core/chronicle/ontology.ts';
 
 type Row = { result_type?: string; chunk_text?: string; fact_row?: { contested_unavailable?: true } };
 const SRC = 'cli:extract-conversation-facts:v1';
@@ -191,6 +192,23 @@ describe('B1 review fixes', () => {
     expect(after).toContain('Tromso');
     expect(after).not.toContain('Oslo');
     expect(after).not.toContain('Bergen');
+  });
+  test('a superseded conversation fact that kept its slot never comes back after its page is purged (GBRA-574 B2)', async () => {
+    const IVY = 'people/ivy-example';
+    await putPage(engine, sourceId, IVY, page('person', 'Ivy Example', 'Ivy Example is in the address book.'));
+    for (const i of [91, 92]) await putPage(engine, sourceId, session(i), page('conversation', 'Talk ' + i, '**User:** Weekly planning, session ' + i + '.\n\n**Assistant:** Noted.', 'date: ' + day(i) + '\n'));
+    await fact('lima', 'Ivy Example lives in Lima.', IVY, 91);
+    await engine.executeRaw("UPDATE facts SET dimension = 'location', value = 'Lima', value_hash = $2, dim_status = 'active' WHERE id = $1", [ids.lima, valueHash('Lima')]);
+    await fact('quito', 'Ivy Example lives in Quito.', IVY, 92);
+    await supersede('lima', 'quito', 92);
+    const Q = 'Where has Ivy Example lived before?';
+    expect((await ask(Q)).join('\n')).toContain('Lima');
+    await engine.softDeletePage(session(91), { sourceId });
+    await engine.executeRaw("UPDATE pages SET deleted_at = now() - interval '100 hours' WHERE source_id = $1 AND slug = $2", [sourceId, session(91)]);
+    expect((await engine.purgeDeletedPages(72)).slugs).toContain(session(91));
+    const after = (await ask(Q)).join('\n');
+    expect(after).toContain('Quito');
+    expect(after).not.toContain('Lima');
   });
   test('an entity with more ended facts than the pool depth keeps its most recent ones', async () => {
     const HANK = 'people/hank-example';

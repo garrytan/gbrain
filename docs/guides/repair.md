@@ -2851,7 +2851,8 @@ sweep) skips gbrain's own claude-cli model sessions and text you paste into a
 conversation. Facts a gbrain older than v0.60.30.0 captured from them stay
 active, so recall and hot memory keep returning them. `gbrain repair captured-facts` expires them. It is
 explicit-only and preview-bound, and it runs on the brain host (it reads the
-Claude Code session directory and the session corpus there).
+Claude Code session directory, the live and archived Codex session folders
+and the session corpus there).
 
 **Say to your agent:** *"Doctor says some facts were captured from gbrain's own
 sessions or from pasted text. Show me which ones before removing anything."*
@@ -3750,7 +3751,8 @@ gbrain repair file-drift --source <id> --held --json           # compare every h
 
 <a id="file-drift-compare-mirror"></a>On a [read-only mirror](multi-source-brains.md#read-only-mirror-sources)
 (GST-2843), the held comparison reads each held page's file too: a page that
-differs reads `prefer_file` or `needs_human` with its `evidence`, one that
+differs reads `prefer_file` or `needs_human` with its `evidence` (a held deleted
+page whose file differs reads `needs_human` and names the same route), one that
 matches reads `release_hold`, and only a page whose file is gone reads
 `no_drift` with `database_only`. Every compared page in `details.pages`
 carries `evidence` (null when nothing was read). The comparison names no
@@ -3777,12 +3779,42 @@ count. Read those lines before you agree to the apply.
 
 | State | `--prefer database` | `--prefer file` |
 |---|---|---|
-| `tombstone_edited` | Keeps the deletion and removes the file. | Restores the page and imports the file. |
+| `tombstone_edited` | Keeps the deletion and removes the file (on a read-only mirror: [records the kept deletion](#mirror-keep-deleted), removes nothing). | Restores the page and imports the file. |
 | `purged_differs` | Removes the file. | Imports the file as a new page. |
 | `file_gone` | Recreates the file from the page. | Soft-deletes the page (the mass-delete valve applies). |
 
 A `file_gone` page whose file moved is listed `moved_to <slug>` under either `--prefer` and resolved by neither: its
 line names [`gbrain repair moved-pages`](#moved-pages), which folds it into the moved page.
+
+<a id="mirror-keep-deleted"></a>**Keep it deleted on a read-only mirror.** On a
+[read-only mirror](multi-source-brains.md#read-only-mirror-sources) gbrain never
+writes the checkout, so a page you deleted whose file the upstream then edited
+can't be settled by removing the file. Keep the deletion with the same
+per-window command:
+
+```bash
+gbrain repair file-drift --source <id> --held --side deleted --state tombstone_edited --prefer database               # preview: keep_deleted
+gbrain repair file-drift --source <id> --held --side deleted --state tombstone_edited --prefer database --apply --expect <hash> --yes
+```
+
+The preview lists each page `keep_deleted`, and the apply records the decision
+on the hold (`keep_deleted`: the request id, when, and the tombstone's page id
+and revision) once the user agrees. A page or file that changed since the
+preview is skipped `changed_since_preview`. Nothing is deleted, restored or
+written: the tombstone stays, no file is removed from the mirror and no page
+content changes. The hold stays too, decided: `gbrain sources status <id>`,
+`gbrain sync status --source <id>` and doctor report it carried with reason
+`mirror_keep_deleted` (beside `mirror_database_only`) and `needs_human: false`,
+and later previews list it `mirror_keep_deleted` instead of asking again. Sync
+does nothing new: it already leaves an unchanged held file alone. The decision
+holds for the file version the hold pinned, so a re-check of the same bytes
+(an upgrade that re-screens holds) carries it. It is void, and the hold asks
+again, when the upstream edits the file again or the page is restored (`gbrain
+restore`); when the tombstone is purged, the decision moves to the
+`purged_differs` hold, bound to the deletion marker. On a writable source the
+command removes the file as before, and a decision recorded while the source was
+a mirror no longer counts. A brain with no Git repository holds no files, so the
+preview finds nothing and exits 0.
 
 `--prefer file` keeps the file's bytes: it adds only protected frontmatter keys the
 file lacks and database-only timeline rows, and refuses
