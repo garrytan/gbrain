@@ -161,7 +161,8 @@ Reserved tags:
 
 ### Page delete cascade
 
-`pages::remove_page` deletes a page's versions, chunks, postings, links and timeline entries, then calls
+`pages::remove_page` deletes a page's versions, chunks, postings, links and timeline entries, then the event
+projections that name the page (`timeline_queries::remove_event_projections`, below), then calls
 `cascade::remove_page_rows`, which calls `remove_page_rows(tx, page)` in each family marked "yes" above. Today every
 one of those hooks is empty. A family fills in only its own hook, inside the same write transaction, so the page and
 everything under it go together or not at all. Soft delete never cascades: reads hide rows whose page has
@@ -207,6 +208,38 @@ pub(crate) fn set(&mut self, name: &str, value: Value);
 - **Cost:** one read per listed family per page returned. A family whose record is absent for most pages does one
   failed `get` each.
 - **Tests:** a store-level unit test can open a store in memory with `crate::test_support::store()`.
+
+#### Timeline entry helpers (`timeline.rs`)
+
+```rust
+pub(crate) fn next_entry_id(tx: &mut dyn KvWrite) -> Result<u64>;
+pub(crate) fn read_entry(read: &dyn KvRead, page_id: u64, date: &str, id: u64) -> Result<Option<TimelineRecord>>;
+pub(crate) fn put_entry(tx: &mut dyn KvWrite, old: Option<&TimelineRecord>, new: &TimelineRecord) -> Result<()>;
+```
+
+A family that writes timeline entries (timeline_queries, for `upsertEventProjection`) uses only these; it never
+writes `E`, `D` or `G` keys itself.
+
+- `next_entry_id` takes the next id from the counter `addTimelineEntry` uses, so ids stay in one sequence.
+- `read_entry` reads the entry at `E page_id date id`.
+- `put_entry` writes `new` and, when `old` is given, replaces it. `old` is the entry exactly as it is stored (read
+  it with `read_entry`); its `E` key goes, and its `D` key goes when that key still points at `old.id`. When `new`'s
+  `D` key points at another entry, it refuses with `constraint_violation` (the dedup unique index of
+  `timeline_entries`). Then it writes `new`'s `E` and `D` keys and raises `G` of `new.page_id`.
+- `G` only goes up. An update that moves an entry to an older `created_at`, or to another page, leaves `G` where it
+  was. Postgres computes the newest `created_at` each time, so if a parity case shows the difference, ask core.
+- On a refusal, return the error from the write closure: the transaction then keeps nothing.
+
+#### Event projection delete (`timeline_queries::remove_event_projections`)
+
+```rust
+pub(crate) fn remove_event_projections(tx: &mut dyn KvWrite, event_page_id: u64) -> Result<()>;
+```
+
+Postgres deletes a timeline entry when the page in its `event_page_id` is deleted (`ON DELETE CASCADE`), and that
+entry can sit on another page. `pages::remove_page` calls this function in the same write transaction, after the
+page's own entries go. Its body is empty. The timeline_queries family fills it in: it finds the entries through its
+own `u 0x01 <event_page_id be8> <date>` index and deletes each one's `E` and `D` keys and its index key.
 
 ### Write transactions and the journal
 
@@ -664,8 +697,8 @@ Timeline reads by date and event projections.
 - **Members (5), capability:** `timeline` (5).
 - **Store and binding:** `getTimelineForDate` (`get_timeline_for_date`), `getSince` (`get_since`), `getOnThisDay` (`get_on_this_day`), `getLastSeen` (`get_last_seen`), `upsertEventProjection` (`upsert_event_projection`).
 - **Postgres tables:** `timeline_entries`, `pages.effective_date`.
-- **Keys:** Reads core timeline rows (`E`, `D`, `G`) through `timeline.rs` helpers. `u <date> 0x00 <entry id>` date index if a read needs one, kept by a core hook in `timeline.rs`; event projections under `u 0x01 ...`.
-- **Depends on:** Core timeline helpers; ask core for a date index hook if a scan is too slow.
+- **Keys:** Reads and writes core timeline rows (`E`, `D`, `G`) only through the timeline entry helpers ("Core hooks"). `u <date> 0x00 <entry id>` date index if a read needs one, kept by a core hook in `timeline.rs`; event projections indexed under `u 0x01 <event_page_id be8> <date>`.
+- **Depends on:** The timeline entry helpers and the `remove_event_projections` stub (both built; fill in the stub). Ask core for a date index hook if a scan is too slow.
 - **Estimate:** about 1 to 2 days.
 - **Notes:** Dates are `YYYY-MM-DD` text. `getOnThisDay` matches month and day across years.
 - **Parity cases (5, in `timeline.test.ts`):**
@@ -866,6 +899,8 @@ The estimates are judgments from the size of the PGLite code each member reprodu
 | Page-columns hook (`page_columns.rs`): family values that `getPage` returns (`emotional_weight`, `contextual_retrieval_mode`, segmented-body fields) | built | salience, aliases, page_body; extraction listed, likely unused |
 | `pages::rename_page` helper | nothing | aliases (`updateSlug`) |
 | Chunk-delete hook (`cascade::remove_chunk_rows`) | nothing | code_edges |
+| Timeline entry helpers (`next_entry_id`, `read_entry`, `put_entry`) | built | timeline_queries (`upsertEventProjection`) |
+| Event projection delete (`timeline_queries::remove_event_projections`, called by `remove_page`) | built; the family fills in the body | timeline_queries |
 | Index hooks in `write_page` and `timeline.rs` if a family needs one | a family asking | page_ops, keyword, timeline_queries |
 | `ts_rank` compatibility ranker | nothing | keyword, facts keyword arm |
 | vectors (`X`): chunk and take vectors, vector search | the coming vector store work | embeddings, takes capability, page_body chunk vectors, `findCandidateDuplicates` with an embedding |
