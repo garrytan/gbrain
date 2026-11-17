@@ -789,7 +789,7 @@ final document.
 | Kind | Meaning | What you do |
 |---|---|---|
 | `safety` | something puts the user's data at risk | tell the user; follow `fix.next` |
-| `degraded` | the result is incomplete (keyword-only recall, a stage skipped) | answer with the caveat; never say "you have no notes on X" from a degraded empty result |
+| `degraded` | the result is incomplete (keyword-only recall with no embedding provider configured, a stage skipped) | answer with the caveat; never say "you have no notes on X" from a degraded empty result |
 | `ask` | a decision belongs to the user | relay `user_message` and the `decisions`, wait for the answer |
 | `coaching` | the setup limits what the user is trying to do | mention it once, at a natural point; follow `fix.next` if the user wants it |
 | `info` | context for this result | use it; no action needed |
@@ -803,7 +803,7 @@ Notices that describe one call's result (`degraded_recall`, `empty_retrieval`,
 notices `room_above_level`, `room_hints_unavailable` and `room_conflict`)
 are never deduped on any transport, with one exception: a `degraded_recall`
 whose only stages come from the brain's configuration (`embed_unavailable` on
-a keyless brain, which degrades every search the same way) shows once per
+a brain with no embedding provider, which degrades every search the same way) shows once per
 stdio or CLI session. A transient degradation (`rerank_failed`,
 `embed_timeout`, a failed keyword or title arm, or any other stage) shows on
 every affected call, so a failure, a recovery and the same failure again show
@@ -930,8 +930,23 @@ and none of them ever refuses the work:
 
 Every successful read whose result is partial or degraded carries one stamp,
 whatever op answered and whatever transport carried it. A clean result carries
-none. Notices can be deduped (a keyless brain's `degraded_recall` shows once
-per session); the stamp never is, so it is on every affected call.
+none. Notices can be deduped (a `degraded_recall` on a brain with no embedding
+provider shows once per session); the stamp never is, so it is on every
+affected call.
+
+**Keyword-only on purpose is not degraded.** On a brain whose embeddings were
+turned off on purpose (`gbrain init --no-embedding`, config
+`embedding_disabled`), search, query and recall run keyword-only by design.
+They carry no stamp and no `degraded_recall` notice, and the keyword arm
+finding nothing (`keyword_zero`) is not degraded either. `_meta.retrieval`
+still records the run (`vector_enabled: false` and the stage
+`embed_unavailable` with reason `embedding_disabled`), recall still returns
+`search_degraded: keyword_only_embedding_disabled`, and an empty search or
+query says it was keyword-only in its `empty_retrieval` info notice. An empty
+result there is a true negative for those words: you may tell the user no page
+holds them (a synonym or the display name may still match). A brain with no
+embedding provider or key configured (reason `no_provider`), a timeout or a
+failed arm is still stamped as before. think and synthesize are unchanged.
 
 | Output | Where the stamp is |
 |---|---|

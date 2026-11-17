@@ -463,6 +463,18 @@
       },
       {
         "category": "brain",
+        "name": "access_shared_source_unread"
+      },
+      {
+        "category": "brain",
+        "name": "access_pages_unreadable"
+      },
+      {
+        "category": "brain",
+        "name": "access_disabled_member_credentials"
+      },
+      {
+        "category": "brain",
         "name": "attest_read_shared_scope"
       },
       {

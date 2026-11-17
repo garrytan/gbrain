@@ -6,6 +6,7 @@
  * helpers below from here.
  */
 import { affectsRecall } from '../core/types.ts';
+import { expectedWhenKeywordOnlyByChoice, KEYWORD_ONLY_BY_CHOICE_EMPTY, keywordOnlyByChoice } from '../core/degraded-stamp.ts';
 import { installSigchldHandler } from '../core/zombie-reap.ts';
 installSigchldHandler();
 
@@ -1505,11 +1506,13 @@ function describeEmptyRetrieval(): string {
   }
   // Ranking-only stages (a skipped reranker) never cause a miss — keep the
   // "retrieval healthy" verdict honest.
+  const byChoice = keywordOnlyByChoice(m.degraded);
   const stages = Array.isArray(m.degraded)
-    ? [...new Set((m.degraded as Array<{ stage?: string }>).filter(affectsRecall).map(d => d?.stage).filter(Boolean))]
+    ? [...new Set((m.degraded as Array<{ stage?: string }>).filter(affectsRecall).filter(d => !(byChoice && expectedWhenKeywordOnlyByChoice(d))).map(d => d?.stage).filter(Boolean))]
     : [];
   parts.push(stages.length > 0
     ? `degraded: ${stages.join(', ')}`
+    : byChoice ? KEYWORD_ONLY_BY_CHOICE_EMPTY
     : 'retrieval healthy; try the display name or --match hybrid before concluding the brain has nothing');
   return ` (${parts.join('; ')})`;
 }

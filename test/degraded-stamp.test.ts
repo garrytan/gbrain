@@ -30,6 +30,21 @@ describe('clean results carry no stamp', () => {
     expect(reasons('search', [], retrieval([]), [notice('search_filter_hint', 'info'), notice('no_worker'), notice('write_capacity_backpressure')])).toBeNull();
   });
 
+  test('a brain keyless on purpose (embedding_disabled) is not degraded; a missing provider still is', () => {
+    for (const op of ['search', 'query', 'find_experts']) {
+      expect(reasons(op, [], retrieval([{ stage: 'embed_unavailable', reason: 'embedding_disabled' }]))).toBeNull();
+      expect(reasons(op, [], retrieval([{ stage: 'embed_unavailable', reason: 'no_provider' }]))).toEqual(['embed_unavailable']);
+      expect(reasons(op, [], retrieval([{ stage: 'embed_unavailable', reason: 'embedding_disabled' }, { stage: 'keyword_arm_failed' }]))).toEqual(['keyword_arm_failed']);
+      expect(reasons(op, [], retrieval([{ stage: 'embed_unavailable', reason: 'embedding_disabled' }, { stage: 'keyword_zero' }]))).toBeNull();
+      expect(reasons(op, [], retrieval([{ stage: 'embed_unavailable', reason: 'no_provider' }, { stage: 'keyword_zero' }]))).toEqual(['embed_unavailable', 'keyword_zero']);
+    }
+    expect(reasons('recall', { search_degraded: 'keyword_only_embedding_disabled' }, retrieval([{ stage: 'embed_unavailable', reason: 'embedding_disabled' }]))).toBeNull();
+    expect(reasons('recall', { facts_degraded: { reason: 'keyword_only_embedding_disabled' } })).toBeNull();
+    expect(reasons('recall', { search_degraded: 'keyword_only_embedding_disabled' }, retrieval([{ stage: 'keyword_candidates_incomplete', reason: 'timeout' }])))
+      .toEqual(['keyword_candidates_incomplete']);
+    expect(reasons('recall', { search_degraded: 'keyword_only_no_embedding_provider' })).toEqual(['embed_unavailable']);
+  });
+
   test('search_exact paging (the caller\'s limit) is not degradation', () => {
     expect(reasons('search_exact', { complete: false, incomplete_reasons: ['limit'] })).toBeNull();
   });
@@ -57,8 +72,6 @@ describe('every degradation class stamps with a stable code', () => {
 
   test('recall keyword-only markers and question ranking name the same condition as search', () => {
     expect(reasons('recall', { search_degraded: 'keyword_only_no_embedding_provider' })).toEqual(['embed_unavailable']);
-    expect(reasons('recall', { search_degraded: 'keyword_only_embedding_disabled' })).toEqual(['embed_unavailable']);
-    expect(reasons('recall', { facts_degraded: { reason: 'keyword_only_embedding_disabled' } })).toEqual(['embed_unavailable']);
     expect(reasons('recall', { facts_degraded: { reason: 'embed_timeout', unembedded: 3 } })).toEqual(['embed_timeout', 'facts_unembedded']);
     expect(reasons('recall', { facts_degraded: { reason: 'facts_read_failed' } })).toEqual(['facts_read_failed']);
   });

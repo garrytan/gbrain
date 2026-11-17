@@ -193,7 +193,7 @@ doesn't, the trace speaks for itself.
 
 Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
-- The brain pass (`gbrain query`) comes back empty with a degraded notice (keyword-only, embeddings off): paraphrased study titles miss on keywords, so retry with the author, journal or year before saying the brain has no prior notes on the claim.
+- The brain pass (`gbrain query`) comes back empty with a degraded notice (keyword-only, no embedding provider configured): paraphrased study titles miss on keywords, so retry with the author, journal or year before saying the brain has no prior notes on the claim.
 - The web pass through perplexity-research fails (no `PERPLEXITY_API_KEY`, `rate_limited`): mark the claim UNVERIFIED, never "false", and tell the user which step could not run; on `rate_limited` retry once after the stated delay.
 - Saving the verdict returns `write_pending` (exit 10): the write is accepted; poll `gbrain write-request <request_id>` instead of writing a second verdict page.
 
