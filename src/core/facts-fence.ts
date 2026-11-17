@@ -598,7 +598,10 @@ export function renderFactsTable(facts: ParsedFact[]): string {
  *     restored, so the merge is idempotent.
  *   - GST-2891: `held` names world rows of the existing fence held from the
  *     writer (a world cell whose fact is stored narrower, which a world-only
- *     reader never saw). Each is restored like a hidden row, as stored.
+ *     reader never saw). Each is restored like a hidden row, as stored. A
+ *     same-claim incoming row at its number cannot reword it: the stored
+ *     cells win and only the writer's visibility is kept (a held row is a
+ *     world cell, so that can only narrow it: the GST-2511 withdrawal).
  *   - Either side parsing with warnings returns null: re-rendering a
  *     fence we could not fully parse would drop the caller's unparsed
  *     rows. The residual data loss is surfaced by factsGapWarning below.
@@ -619,6 +622,7 @@ export function restoreHiddenFactRows(
   const incomingByRowNum = new Map(incoming.facts.map((f) => [f.rowNum, f]));
   const restored: ParsedFact[] = [];
   const collidingRowNums = new Set<number>();
+  const heldAsStored = new Map<number, ParsedFact>();
   for (const h of hidden) {
     const inc = incomingByRowNum.get(h.rowNum);
     if (!inc) {
@@ -626,10 +630,12 @@ export function restoreHiddenFactRows(
     } else if (inc.claim !== h.claim) {
       collidingRowNums.add(h.rowNum);
       restored.push(h);
+    } else if (h.visibility === 'world') {
+      heldAsStored.set(h.rowNum, { ...h, visibility: inc.visibility });
     }
-    // claim-equal: incoming already carries the row; keep the incoming version.
+    // claim-equal hidden row: incoming already carries the row; keep the incoming version.
   }
-  if (restored.length === 0) return null;
+  if (restored.length === 0 && heldAsStored.size === 0) return null;
 
   let next = Math.max(
     0,
@@ -638,6 +644,8 @@ export function restoreHiddenFactRows(
   ) + 1;
   const renumbered: Array<{ from: number; to: number }> = [];
   const kept = incoming.facts.map((f) => {
+    const asStored = heldAsStored.get(f.rowNum);
+    if (asStored) return asStored;
     if (!collidingRowNums.has(f.rowNum)) return f;
     const to = next++;
     renumbered.push({ from: f.rowNum, to });

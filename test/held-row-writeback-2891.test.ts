@@ -124,13 +124,17 @@ for (const kind of testBackends()) {
       await heldRowKept(h);
     }, 180_000);
 
-    test('a row 3 the writer sends with the held claim is its own row: nothing is restored beside it', async () => {
+    test('a row 3 the writer sends with the held claim cannot reword it: the stored cells are restored, and the held row is not duplicated', async () => {
       const h = await heldPage('dov');
+      const heldLine = () => stored(h.slug).then(s => (JSON.parse(s) as { compiled_truth: string }).compiled_truth.split('\n').filter(l => l.startsWith('| 3 | ')));
+      const before = await heldLine();
       const cur = await page('writer', h.slug);
-      await put('writer', h.slug, pageText(h.title, [row(1, h.turin), { ...row(3, h.claim), context: 'written by the writer' }]), cur.revision);
+      await put('writer', h.slug, pageText(h.title, [row(1, h.turin), { ...row(3, h.claim), confidence: 0.5, notability: 'high', context: 'written by the writer' }]), cur.revision);
       const body = (JSON.parse(await stored(h.slug)) as { compiled_truth: string }).compiled_truth;
-      expect(body).toContain('written by the writer');
+      expect(body).not.toContain('written by the writer');
+      expect(await heldLine()).toEqual(before);
       expect(body.split('| ' + h.claim + ' |').length - 1).toBe(2);
+      await heldRowKept(h);
     }, 180_000);
 
     test('the owner\'s own write and the local CLI\'s remove the held row as on master', async () => {
