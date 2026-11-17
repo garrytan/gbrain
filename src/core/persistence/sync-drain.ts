@@ -24,6 +24,7 @@ import { cliRenderContext, renderAction, type Action, type RenderedAction } from
 import { managedSyncResumeArgs, syncResumeCommand } from '../sync-reconcile.ts';
 import { isWriteCapacityWait, outstandingCapacityOf } from './admission-retry.ts';
 import { clearDrainStep, DrainPassAbandoned, markPassAbandoned, readDrainStep } from './drain-step.ts';
+import { abortStop } from './sync-stop-class.ts';
 import { PUBLICATION_CEILING_DEFAULT_MS, readPublicationCeilingMs } from './publication-deadline.ts';
 import { isOwnerThisProcess, stampLastSql, WAITING_ON, type ClaimLastSql, type WaitingOn } from './claim-phase.ts';
 import { describeHostConsumer, headBlockedNext, headBlockerText, headClaimability, type HeadBlocker } from './head-blocker.ts';
@@ -45,7 +46,9 @@ export type DrainStopReason = 'deadline' | 'drain_stalled' | 'database_contentio
   /** #6712 PR 1: another drainer holds the source's drain lease (or took it from this run); resumable, the next run follows it. */
   | 'drain_lease_held'
   /** #6712 PR 4b (design v3.2 §9): the live pass's stops. `not_converged` and `admission_paused` are resumable; the rest need the host or a report. */
-  | 'not_converged' | 'admission_paused' | 'grant_scope' | 'reconcile_host_required' | 'reconcile_read_incomplete';
+  | 'not_converged' | 'admission_paused' | 'grant_scope' | 'reconcile_host_required' | 'reconcile_read_incomplete'
+  /** GST-2869: `gbrain sync` took SIGTERM or SIGHUP and stopped its pass; resumable, the same command continues it. */
+  | 'terminated';
 /** The pass's status reasons that end a drain, with their outcome (design v3.2 §9). */
 const PASS_STOPS: Partial<Record<string, { outcome: DrainOutcome; reason: DrainStopReason }>> = {
   not_converged: { outcome: 'resumable', reason: 'not_converged' }, admission_paused: { outcome: 'resumable', reason: 'admission_paused' },
@@ -620,11 +623,11 @@ export async function runDrain(input: DrainInput): Promise<SyncResult> {
         if (passStop) return finish(result, passStop.outcome, passStop.reason);
         if (result.status === 'blocked_by_failures') return finish(result, 'blocked', 'blocked_by_failures');
         if (result.managedWrite && result.managedWrite.write_error !== 'write_pending') return finish(result, 'blocked', 'blocked_by_failures');
-        if (result.status === 'partial' && (result.reason === 'timeout' || signal?.aborted)) return finish(result, 'resumable', 'deadline');
+        if (result.status === 'partial' && (result.reason === 'timeout' || signal?.aborted)) return finish(result, 'resumable', abortStop(signal) === 'terminated' ? 'terminated' : 'deadline');
         const outcome = syncOutcome({ ...result, drain: undefined });
         return finish(result, outcome, outcome === 'resumable' ? 'deadline' : undefined);
       }
-      if (signal?.aborted) return finish(result, 'resumable', 'deadline');
+      if (signal?.aborted) return finish(result, 'resumable', abortStop(signal) === 'terminated' ? 'terminated' : 'deadline');
       const wait = result.writeWait;
       if (wait?.status === 'blocked') {
         return finish(result, 'blocked', BLOCKED_HEAD_REASONS.has(wait.cause) ? wait.cause as DrainStopReason : 'recovery_required');
@@ -958,6 +961,7 @@ const STOP_DOCS: Record<DrainStopReason, CatalogueName> = {
   connection_lost: 'sync_drain_connection_lost', capacity_paused: 'sync_drain_capacity_paused', drain_lease_held: 'sync_drain_lease_held',
   not_converged: 'sync_drain_not_converged', admission_paused: 'sync_drain_admission_paused', grant_scope: 'sync_drain_grant_scope',
   reconcile_host_required: 'sync_drain_reconcile_host_required', reconcile_read_incomplete: 'sync_drain_reconcile_read_incomplete',
+  terminated: 'sync_drain_deadline',
 };
 
 /**
@@ -1057,6 +1061,7 @@ export function drainNext(result: SyncResult, resumeCommand: string, sourceId: s
       why: abandoned
         ? `A write's preparation outran its budget in this process${d?.stall?.step ? ` (stuck at step ${d.stall.step}${d.stall.waiting_on && d.stall.waiting_on !== 'unknown' ? `, waiting on ${d.stall.waiting_on}` : ''})` : ''}, so the sync exited to end it; `
           + 'its cursor and accepted writes are intact. The same command resumes where it stopped, and an entry that stalls again is held instead of re-entered.'
+        : d?.stop_reason === 'terminated' ? 'The sync stopped on a termination signal (SIGTERM or SIGHUP) and recorded its pass with its cursor and accepted writes intact; the same command resumes where it stopped.'
         : 'The sync stopped at its deadline with its cursor and accepted writes intact; the same command resumes where it stopped.', ...(docs ? { docs } : {}) };
   }
   if (d?.stop_reason === 'preparation_systemic') {
@@ -1149,7 +1154,7 @@ export function drainNext(result: SyncResult, resumeCommand: string, sourceId: s
         + `Run the sync from a process that can write the source's lock directory (the owner's gbrain serve, or this command outside the sandbox), then rerun: ${resumeCommand}`,
       ...(docs ? { docs } : {}) };
   }
-  const writerBlocked = d?.stop_reason && d.stop_reason !== 'blocked_by_failures' && d.stop_reason !== 'deadline';
+  const writerBlocked = d?.stop_reason && d.stop_reason !== 'blocked_by_failures' && d.stop_reason !== 'deadline' && d.stop_reason !== 'terminated';
   if (writerBlocked) {
     return { command: `gbrain sources writer status ${sourceId}`, safe_to_loop: false, retry_after_ms: 0, ...estimate,
       why: d!.stop_reason === 'drain_stalled'
