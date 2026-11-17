@@ -67,26 +67,29 @@ async function readAsCaller(ctx: OperationContext, q: Parameters<typeof readPage
   }
 }
 
-type GatedInterval = PageInterval & { quarantined?: QuarantinedView };
+type GatedInterval = PageInterval & { quarantined?: QuarantinedView; live?: { sourceId: string; slug: string } };
 
 /**
  * Readable intervals: a remote caller sees an interval only under the ledger's visibility rule and the page's current
  * trust floor. #6259: when the page is quarantined now, or was in the interval, the interval keeps no body, as the
- * current read keeps none (the same view and notice as get_page).
+ * current read keeps none (the same view and notice as get_page). GST-2891: each carries the live page's source and slug,
+ * where its held rows are looked up (a rename moves a page's facts to its new slug).
  */
 async function readable(ctx: OperationContext, read: PageAtTime, intervals: PageInterval[], minTrust: unknown): Promise<GatedInterval[]> {
   if (ctx.remote === false) return intervals;
   if (read.page_id == null || !(await pageTrustForRead(ctx, { id: read.page_id }, minTrust))) return [];
   const [live] = await ctx.engine.executeRaw<{ slug: string; source_id: string; frontmatter: Record<string, unknown> }>(
     'SELECT slug, source_id, frontmatter FROM pages WHERE id = $1', [read.page_id]);
-  const quarantine = historyQuarantine(ctx, live ?? { slug: read.slug, source_id: read.source_id, frontmatter: {} });
+  if (!live) return [];
+  const quarantine = historyQuarantine(ctx, live);
   const out: GatedInterval[] = [];
   for (const i of intervals) {
     if (!(await remoteMayRead(ctx.engine, read.page_id, i))) continue;
     const view = quarantine(i.page?.frontmatter);
+    const held = { sourceId: live.source_id, slug: live.slug };
     out.push(view?.body_omitted && i.page
-      ? { ...i, body: 'unavailable', page: { ...i.page, compiled_truth: null, timeline: null, body_bytes: 0 }, quarantined: view }
-      : i);
+      ? { ...i, live: held, body: 'unavailable', page: { ...i.page, compiled_truth: null, timeline: null, body_bytes: 0 }, quarantined: view }
+      : { ...i, live: held });
   }
   return out;
 }
@@ -101,7 +104,7 @@ async function intervalView(ctx: OperationContext, sourceId: string, i: GatedInt
   if (i.body === 'segmented' || bytes > opts.inlineMax) {
     return { ...meta, body_ref: { total_bytes: bytes } };
   }
-  const omitRows = await heldRowsForCaller(ctx.engine, ctx.remote, { sourceId, slug: i.slug, compiled_truth: i.page.compiled_truth ?? '', timeline: i.page.timeline });
+  const omitRows = await heldRowsForCaller(ctx.engine, ctx.remote, { ...(i.live ?? { sourceId, slug: i.slug }), compiled_truth: i.page.compiled_truth ?? '', timeline: i.page.timeline });
   const clean = (s: string | null) => s == null ? null : ctx.remote === false ? s : sanitizeRemoteBody(s, { includeWithdrawn: true, keepMaterializedMarkers: true, omitRows });
   // #8042: a third-party page as recorded reaches an untrusted reader quoted, as get_page's current body does.
   const quote = quotesInterval(ctx, i);
@@ -156,7 +159,7 @@ export async function getVersionsKnownAsOf(ctx: OperationContext, p: Record<stri
     const prev = intervals.slice(0, n).reverse().find(x => x.lifetime === i.lifetime);
     const text = (x: GatedInterval | undefined) => x?.page && x.body !== 'segmented' && !x.quarantined?.body_omitted ? `${x.page.compiled_truth ?? ''}${x.page.timeline ? `\n${x.page.timeline}` : ''}` : null;
     const [a, b] = [prev ? text(prev) : '', text(i)];
-    const held = (x: GatedInterval | undefined, t: string) => x ? heldRowsForCaller(ctx.engine, ctx.remote, { sourceId, slug: x.slug, compiled_truth: t }) : undefined;
+    const held = (x: GatedInterval | undefined, t: string) => x ? heldRowsForCaller(ctx.engine, ctx.remote, { ...(x.live ?? { sourceId, slug: x.slug }), compiled_truth: t }) : undefined;
     const diff = a == null || b == null ? null : unifiedDiff(ctx.remote === false ? a : sanitizeRemoteBody(a, { omitRows: await held(prev, a) }),
       ctx.remote === false ? b : sanitizeRemoteBody(b, { omitRows: await held(i, b) }),
       { oldPath: prev ? `${slug}@${prev.event.recorded_at}` : '/dev/null', newPath: `${slug}@${i.event.recorded_at}` });

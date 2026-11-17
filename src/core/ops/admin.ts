@@ -284,7 +284,9 @@ const get_versions: Operation = {
       // GST-687: so does one whose snapshot tier is below the owner's (a version with no snapshot reads as unknown).
       const quote = quotesStored(v.type, snapshotTiers.get(Number(v.id)));
       const live = lives.find(l => Number(l.id) === Number(v.page_id));
-      const omitRows = await heldRowsForCaller(ctx.engine, ctx.remote, { sourceId: live?.source_id ?? ctx.sourceId ?? 'default', slug: live?.slug ?? String(p.slug), compiled_truth: v.compiled_truth, timeline: v.timeline });
+      const sourceId = live?.source_id ?? ctx.sourceId;
+      if (sourceId === undefined) throw new Error(`get_versions: the page of version ${v.id} names no source to look its held rows up in.`);
+      const omitRows = await heldRowsForCaller(ctx.engine, ctx.remote, { sourceId, slug: live?.slug ?? String(p.slug), compiled_truth: v.compiled_truth, timeline: v.timeline });
       const body = (text: string) => { const clean = sanitizeRemoteBody(text, { omitRows }); return quote && clean ? fenceTranscriptText(clean, String(p.slug)) : clean; };
       out.push({ ...v, compiled_truth: body(v.compiled_truth), ...reason(v),
         ...(typeof v.timeline === 'string' ? { timeline: body(v.timeline) } : {}), ...(quote ? { quoted: 'transcript' } : {}) });

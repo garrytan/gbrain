@@ -104,7 +104,8 @@ export async function stampPageTrust<T extends PageRef>(engine: Exec, rows: T[],
 
 /**
  * A text's lines that read as facts-fence table rows (`| 3 | claim |…`, inside a fence or not: a chunk can start
- * mid-table), with row number and claim. A chunk boundary can also cut a row line: the first line can start inside a
+ * mid-table), with row number and claim. A chunk boundary can also cut a row line: the first line (after a leading fence
+ * trust marker line, which a low-tier fence chunk starts with) can start inside a
  * row (inside its claim: the text before the first cell break; inside or just after its row-number cell of a world row:
  * the claim cell; row number unknown) and the last can stop inside one; both are `partial`, so the claim is matched as a
  * fragment.
@@ -112,13 +113,14 @@ export async function stampPageTrust<T extends PageRef>(engine: Exec, rows: T[],
 function fenceRowLines(text: string): Array<{ line: number; rowNum: number; claim: string; partial: boolean }> {
   const out: Array<{ line: number; rowNum: number; claim: string; partial: boolean }> = [];
   const lines = text.split('\n');
+  const first = chunkFenceMarker(lines[0]) ? 1 : 0;
   lines.forEach((line, i) => {
     const cells = /^\s*\|\s*\d+\s*\|/.test(line) ? parseRowCells(line) : null;
     const claim = cells?.[1];
-    const cut = i === 0 && /\|\s*world\s*\|/.test(line) ? (line.trim().startsWith('|') ? parseRowCells(line)?.[0] : /^\s*\d+\s*\|/.test(line) ? parseRowCells('| ' + line)?.[1] : null) : null;
+    const cut = i === first && /\|\s*world\s*\|/.test(line) ? (line.trim().startsWith('|') ? parseRowCells(line)?.[0] : /^\s*\d+\s*\|/.test(line) ? parseRowCells('| ' + line)?.[1] : null) : null;
     if (cells && claim) out.push({ line: i, rowNum: Number(cells[0]), claim: claim.replace(/^~~([\s\S]*)~~$/, '$1').replace(/^~~/, ''), partial: i === lines.length - 1 });
     else if (cut) out.push({ line: i, rowNum: -1, claim: cut.replace(/^~~|~~$/g, ''), partial: true });
-    else if (i === 0 && !line.trim().startsWith('|') && /[^\\]\|/.test(line)) {
+    else if (i === first && !line.trim().startsWith('|') && /[^\\]\|/.test(line)) {
       const fragment = decodeFenceCell(line.split(/(?<!\\)\|/)[0]!.trim()).replace(/^~~|~~$/g, '');
       if (fragment) out.push({ line: i, rowNum: -1, claim: fragment, partial: true });
     }
@@ -138,14 +140,14 @@ function holdsText(text: string): boolean {
 /**
  * GST-2891: per row, the line numbers of the facts-fence row lines of its text held from a caller whose fact reads are
  * world-only (heldRowSql: a world cell whose fact is stored narrower, a widening the owner has not accepted), whenever
- * the text was cut. One batched lookup; a failed lookup returns every fence row line (fail closed).
+ * the text was cut. One batched lookup; a failed lookup, or a row that names no source, returns every fence row line
+ * (fail closed).
  */
 export async function heldFenceLines(engine: Exec, rows: readonly PageRef[]): Promise<Array<Set<number>>> {
   const perRow = rows.map(row => typeof row.chunk_text === 'string' ? fenceRowLines(row.chunk_text) : []);
-  const keys = rows.flatMap((row, i) => perRow[i]!.map(l => [row.source_id ?? 'default', row.slug, l.rowNum, l.claim, l.partial] as const));
-  if (!keys.length) return perRow.map(() => new Set());
-  let held: Set<string> | null;
-  try {
+  const keys = rows.flatMap((row, i) => { const src = row.source_id; return src == null ? [] : perRow[i]!.map(l => [src, row.slug, l.rowNum, l.claim, l.partial] as const); });
+  let held: Set<string> | null = new Set();
+  if (keys.length) try {
     const found = await engine.executeRaw<{ source_id: string; slug: string; row_num: number; claim: string }>(
       `SELECT DISTINCT k.source_id, k.slug, k.row_num, k.claim FROM unnest($1::text[], $2::text[], $3::int[], $4::text[], $5::text[]) AS k(source_id, slug, row_num, claim, partial)
         WHERE ${heldRowSql('k.source_id', 'k.slug', 'k.row_num', 'k.claim', "k.partial = 't'")}`,
@@ -153,7 +155,7 @@ export async function heldFenceLines(engine: Exec, rows: readonly PageRef[]): Pr
     held = new Set(found.map(f => `${f.source_id}\u0000${f.slug}\u0000${Number(f.row_num)}\u0000${f.claim}`));
   } catch { held = null; }
   return rows.map((row, i) => new Set(perRow[i]!
-    .filter(l => !held || held.has(`${row.source_id ?? 'default'}\u0000${row.slug}\u0000${l.rowNum}\u0000${l.claim}`)).map(l => l.line)));
+    .filter(l => !held || row.source_id == null || held.has(`${row.source_id}\u0000${row.slug}\u0000${l.rowNum}\u0000${l.claim}`)).map(l => l.line)));
 }
 
 /** GST-2891: removes from each row's text the fence row lines held from the caller (heldFenceLines), and drops a row left with nothing to read. */
