@@ -12,7 +12,7 @@ import { withEnv } from './helpers/with-env.ts';
 for (const backend of testBackends()) {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
   describe(`#9653 derivation walk and retained versions (${backend})`, () => {
-    test('a live row built from the input is reached even when its versions outnumber the limit', async () => {
+    test('a live row built from the input is reached, and every version marked, even when versions outnumber the limit', async () => {
       await withEnv({ DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
         const { engine, close } = await isolatedSharedSkillsEngine(databaseUrl);
         try {
@@ -22,7 +22,8 @@ for (const backend of testBackends()) {
           }
           const tight = await derivedRowsFrom(engine, [{ table: 'pages', id: '42' }], { limit: 3 });
           expect(tight.rows.filter(r => r.table !== 'page_versions').map(r => `${r.table}:${r.id}`).sort()).toEqual(['facts:7001', 'pages:8001']);
-          expect(tight.truncated).toBe(true);
+          expect(tight).toMatchObject({ truncated: false });
+          expect(tight.rows.filter(r => r.table === 'page_versions').length).toBe(5);
           const roomy = await derivedRowsFrom(engine, [{ table: 'pages', id: '42' }], { limit: 10 });
           expect(roomy).toMatchObject({ truncated: false });
           expect(roomy.rows.filter(r => r.table === 'page_versions').map(r => r.depth)).toEqual([1, 1, 1, 1, 1]);
@@ -33,7 +34,9 @@ for (const backend of testBackends()) {
           const duplicated = await derivedRowsFrom(engine, [{ table: 'pages', id: '42' }], { limit: 6 });
           expect(duplicated).toMatchObject({ truncated: false });
           expect(duplicated.rows.filter(r => r.table === 'page_versions').length).toBe(6);
-          expect((await derivedRowsFrom(engine, [{ table: 'pages', id: '42' }], { limit: 5 })).truncated).toBe(true);
+          const small = await derivedRowsFrom(engine, [{ table: 'pages', id: '42' }], { limit: 2 });
+          expect(small).toMatchObject({ truncated: false });
+          expect(small.rows.filter(r => r.table === 'page_versions').length).toBe(6);
         } finally { await close(); }
       });
     }, 60_000);

@@ -68,9 +68,9 @@ export interface DerivedRow { table: string; id: string; depth: number }
  * Every row derived (transitively) from `inputs`, breadth-first, bounded by
  * `limit` rows and `maxDepth` hops. `truncated` is true when a bound stopped
  * the walk; the caller reports the remainder as unverified. Retained versions
- * (#9653) are terminal: they are collected after the live walk under their own
- * `limit`, so a concept's long history never truncates the walk before it
- * reaches a live row still built from the input.
+ * (#9653) are terminal and only get a mark, so they are collected after the
+ * live walk with no bound: a concept's long history never truncates the walk
+ * before a live row, and no version built from the input is left unmarked.
  */
 export async function derivedRowsFrom(engine: BrainEngine, inputs: readonly DerivationRef[],
   opts: { limit?: number; maxDepth?: number } = {}): Promise<{ rows: DerivedRow[]; truncated: boolean }> {
@@ -99,10 +99,8 @@ export async function derivedRowsFrom(engine: BrainEngine, inputs: readonly Deri
   const versions = await engine.executeRaw<{ derived_id: string; depth: number }>(`SELECT d.derived_id,min(f.depth)::int+1 AS depth
     FROM derivation_inputs d JOIN jsonb_to_recordset($1::text::jsonb) AS f(input_table text,input_id text,depth int)
       ON d.input_table=f.input_table AND d.input_id=f.input_id
-    WHERE d.derived_table='page_versions' GROUP BY d.derived_id ORDER BY d.derived_id LIMIT $2`, [JSON.stringify(walked), limit + 1]);
-  if (versions.length > limit) return { rows, truncated: true };
-  const versionDepth = new Map(versions.map(v => [v.derived_id, Number(v.depth)] as const));
-  for (const [id, depth] of versionDepth) rows.push({ table: 'page_versions', id, depth });
+    WHERE d.derived_table='page_versions' GROUP BY d.derived_id ORDER BY d.derived_id`, [JSON.stringify(walked)]);
+  for (const v of versions) rows.push({ table: 'page_versions', id: v.derived_id, depth: Number(v.depth) });
   return { rows, truncated: false };
 }
 

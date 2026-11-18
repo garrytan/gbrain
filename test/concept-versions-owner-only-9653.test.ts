@@ -52,8 +52,8 @@ for (const kind of testBackends()) describe(`#9653 owner-only lineage of archive
     // atom 0 was extracted from the owner-only chat
     await engine.executeRaw(`INSERT INTO derivation_inputs (derived_table, derived_id, input_table, input_id, source_id) VALUES ('pages', $1, 'pages', $2, $3)`, [await id('atoms/harbor-0', OPEN), await id('imessage/chat/2026-06-14', 'messages-a'), OPEN]);
     for (const member of [OWNER, 'bob-example']) await engine.executeRaw('INSERT INTO access_members (id) VALUES ($1)', [member]);
-    for (const [name, member] of [['owner', OWNER], ['bob', 'bob-example']] as const) {
-      const minted = await mintLegacyToken(engine, { name, scopes: ['read'], takesHolders: ['world'], sourceGrant: [OPEN, 'messages-a'] });
+    for (const [name, member, scopes] of [['owner', OWNER, ['read']], ['bob', 'bob-example', ['read']], ['owner-writer', OWNER, ['read', 'write']], ['bob-writer', 'bob-example', ['read', 'write']]] as const) {
+      const minted = await mintLegacyToken(engine, { name, scopes: [...scopes], takesHolders: ['world'], sourceGrant: [OPEN, 'messages-a'] });
       tokens[name] = minted.token;
       await bindCredential(engine, { kind: 'token', id: minted.id }, { member });
     }
@@ -73,5 +73,12 @@ for (const kind of testBackends()) describe(`#9653 owner-only lineage of archive
     expect((await read('bob', 'get_page', { slug: CONCEPT })).includes('canaryv2')).toBe(true);
     expect((await read('bob', 'get_versions', { slug: CONCEPT, include_body: true })).includes('canaryv1')).toBe(false);
     expect((await read('owner', 'get_versions', { slug: CONCEPT, include_body: true })).includes('canaryv1')).toBe(true);
+  }, 240_000);
+
+  test('a member who is not the owner cannot revert to the owner-only version; the owner can', async () => {
+    const v1 = (await engine.getVersions(CONCEPT, { sourceId: OPEN })).find(v => String(v.compiled_truth).includes('canaryv1'))!;
+    expect(v1).toBeDefined();
+    expect(await read('bob-writer', 'revert_version', { slug: CONCEPT, version_id: Number(v1.id), dry_run: true })).toMatch(/not_found|not in the history/);
+    expect(await read('owner-writer', 'revert_version', { slug: CONCEPT, version_id: Number(v1.id), dry_run: true })).toMatch(/dry_run/);
   }, 240_000);
 });
