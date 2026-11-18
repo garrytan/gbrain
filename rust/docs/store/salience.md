@@ -43,13 +43,37 @@ Numbers: arithmetic widens the f32 weight to a double first, as Postgres does fo
 
 - Source scope: a non-empty `sourceIds` wins over a truthy `sourceId`; neither is no scope.
 - `takesHoldersAllowList`: honoured (see above).
-- `excludePrivate` refuses with `engine_capability_missing` on both reads: the caller's privacy filter
-  (`privatePagesFilterForCaller`) is not on the store. The same holds for links and timeline reads.
+- `excludePrivate` (any truthy value, as `pageReadFilter` tests it) applies the page policy on both reads; see
+  "Private pages" below. Links and timeline reads still refuse it.
 - `minTrust` and `suppressFlagged` refuse on `getSalienceScores` (its SQL applies `pageEligibleSql`); on
   `getRecentSalience` they change nothing, as its SQL never reads them.
 - `getSalienceScores` applies the live clauses whenever a read policy object is passed (`pageReadFilter(..., !!scope)`).
   Hybrid search passes its whole `SearchOpts` as the policy; the keys the SQL does not read are ignored.
 - `setEmotionalWeightBatch` refuses a NaN or infinite weight (JSON cannot carry it; PGLite stores it as a `real`).
+
+## Private pages (`excludePrivate`)
+
+PGLite adds `privatePagesFilterForCaller('p')` (`src/core/search/private-visibility.ts:631`) through
+`pageReadFilter` (`src/core/search/read-policy-sql.ts:27`) on both reads: `getRecentSalience` at
+`src/core/engine-sql/salience.ts:152`, and `getSalienceScores` (`src/core/pglite-engine.ts:2073`) through
+`readSalienceScores` at `src/core/search/read-enrichment.ts:322-325`. With no caller record
+(`currentCallerAccess`, `private-visibility.ts:392`: restricted, no identity) the filter is the member-access part
+(`callerAccessSql`, 584: `readersAllowedSql`, 171; `folderRulesAllowedSql`, 133, with `coverageSql`, 146;
+`originAllowedSql`, 197) and, unless privacy is relaxed (`callerPrivacySql`, 626), the privacy part
+(`privacyPartSql`, 89).
+
+The store copies it with `page_hidden` (`facts/privacy.rs`), lane 4's private-provenance rules applied to the read's
+own page: a page is hidden when it names readers, when a non-plain page's origin names readers, or, with
+`entityPrivacy`, when its snapshot, derived origin or declared lineage is private (the rules table in
+[facts.md](facts.md#private-provenance-policy-factsprivacyrs)). The store keeps no folder rules or pending folder
+coverage, so `folder_rule_ids IS NULL` and the `access_pending_coverage` clause always pass there. The filter drops a
+page before `getRecentSalience` ranks and limits.
+
+The member (`store-members/private-provenance.ts` `storePagePolicy`) renders `privatePagesFilterForCaller('p')` in
+the current context and outside any caller record. When the two differ (a caller whose member identity, folder grants,
+private-readable sources or lineage change the text), it refuses with `engine_capability_missing`. Otherwise it sends
+`honorAliases` (the text holds `privacyAliasSql('p')`, 791) and `entityPrivacy` (the text holds
+`privateSnapshotFilterFragment('p')`, 707, which is absent when privacy is relaxed).
 
 ## Cascades
 

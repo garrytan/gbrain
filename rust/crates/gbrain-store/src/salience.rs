@@ -19,6 +19,7 @@
 
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
+use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::kv::{KvRead, KvWrite};
 use crate::links::no_nul;
 use crate::page_columns::PageColumns;
@@ -62,6 +63,12 @@ pub(crate) fn page_columns(
         columns.set("salience_touched_at", json!(iso(rec.touched_at_us)));
     }
     Ok(())
+}
+
+/// The `emotional_weight` a page reads, as `page_columns` reports it: the stored weight, else the
+/// column default 0. The `'salience'` order of `listEnrichCandidates` sorts on it.
+pub(crate) fn emotional_weight(read: &dyn KvRead, page_id: u64) -> Result<f64> {
+    Ok(real_out(weight_of(record(read, page_id)?)))
 }
 
 /// One row of `setEmotionalWeightBatch`. A null weight is a null `real`.
@@ -133,6 +140,9 @@ pub struct RecentSalienceOptions {
     #[serde(default)]
     pub holders: Option<Vec<Option<String>>>,
     pub recency: Recency,
+    /// `excludePrivate`: the page policy (`facts/privacy.rs` `page_hidden`); null reads every page.
+    #[serde(default)]
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 /// A page reference of `getSalienceScores`.
@@ -156,6 +166,21 @@ pub struct SalienceScoresInput {
     /// applies them whenever a read policy is passed.
     #[serde(default)]
     pub live: bool,
+    /// `excludePrivate`: the page policy (`facts/privacy.rs` `page_hidden`); null reads every page.
+    #[serde(default)]
+    pub exclude_private: Option<PrivacyPolicy>,
+}
+
+/// Whether the read's `excludePrivate` policy hides `page`.
+fn private_hidden(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    policy: &Option<PrivacyPolicy>,
+) -> Result<bool> {
+    match policy {
+        Some(policy) => page_hidden(read, page, policy),
+        None => Ok(false),
+    }
 }
 
 fn listed(list: &Option<Vec<Option<String>>>, value: &str) -> bool {
@@ -309,6 +334,7 @@ impl Store {
                 || (opts.exclude_briefings && page.slug.starts_with("briefings/"))
                 || !listed(&opts.source_ids, &page.source_id)
                 || !live.passes(&page)?
+                || private_hidden(&*read, &page, &opts.exclude_private)?
             {
                 continue;
             }
@@ -377,6 +403,7 @@ impl Store {
             if !seen.insert(page.id)
                 || !listed(&input.source_ids, &page.source_id)
                 || (input.live && !live.passes(&page)?)
+                || private_hidden(&*read, &page, &input.exclude_private)?
             {
                 continue;
             }

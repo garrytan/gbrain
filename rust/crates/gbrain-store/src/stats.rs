@@ -14,16 +14,17 @@
 //! Scope: the TypeScript members compute the source scope the way each PGLite member does and
 //! pass it as `scope` (`null` = every source; an empty list matches nothing).
 //!
-//! Embeddings: the store keeps no chunk vectors yet, so every chunk counts as not embedded
-//! (`embedded_count` 0, `missing_embeddings` the live, eligible chunks). This is what PGLite
-//! answers for the same brain, since `upsertChunks` refuses a chunk with a vector here. See
-//! rust/docs/store/stats.md.
+//! Embeddings: a chunk counts as embedded when it has a stored vector (`EmbedState::has_vector`,
+//! PGLite's `embedding IS NOT NULL`). `getStats` counts every chunk of a page in the scope;
+//! `getHealth` counts only the chunks of live pages without `embed_skip`. The salience weight of
+//! the `'salience'` enrich order comes from the salience family. See rust/docs/store/stats.md.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::chunks::read_chunks;
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
+use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::kv::{KvRead, scan_prefix};
 use crate::links::{in_links, no_nul, out_links};
 use crate::pages::{PageRecord, all_pages, next_id};
@@ -148,6 +149,9 @@ pub struct AnomalyInput {
     pub baseline_start_us: f64,
     pub since_us: f64,
     pub since_end_us: f64,
+    /// `excludePrivate`: the page policy (`facts/privacy.rs` `page_hidden`), applied to the
+    /// baseline keys, the baseline counts and today's counts alike; null reads every page.
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 fn in_scope(scope: &Option<HashSet<String>>, page: &PageRecord) -> bool {
@@ -282,17 +286,20 @@ impl Store {
         let scoped: Vec<&PageRecord> = pages.values().filter(|p| in_scope(&scope, p)).collect();
         let live_pages: Vec<&PageRecord> = scoped.iter().copied().filter(|p| live(p)).collect();
         let mut chunk_count = 0usize;
+        let mut embedded_count = 0usize;
         let mut tags: BTreeSet<&str> = BTreeSet::new();
         let mut timeline_entry_count = 0usize;
         for page in &scoped {
-            chunk_count += read_chunks(&*read, page.id)?.len();
+            let chunks = read_chunks(&*read, page.id)?;
+            chunk_count += chunks.len();
+            embedded_count += chunks.iter().filter(|c| c.embed.has_vector()).count();
             tags.extend(page.tags.iter().map(String::as_str));
             timeline_entry_count += self.timeline_count(page, i64::MAX)?;
         }
         Ok(json!({
             "page_count": live_pages.len(),
             "chunk_count": chunk_count,
-            "embedded_count": 0,
+            "embedded_count": embedded_count,
             "link_count": count_links(&*read, &pages, &scope)?,
             "tag_count": tags.len(),
             "timeline_entry_count": timeline_entry_count,
@@ -328,6 +335,7 @@ impl Store {
 
         let mut page_count = 0u64;
         let mut eligible = 0u64;
+        let mut embedded = 0u64;
         let mut dead_links = 0u64;
         let mut entity_page_count = 0u64;
         let mut entity_linked = 0u64;
@@ -350,7 +358,9 @@ impl Store {
             }
             page_count += 1;
             if !page.frontmatter.contains_key("embed_skip") {
-                eligible += read_chunks(&*read, page.id)?.len() as u64;
+                let chunks = read_chunks(&*read, page.id)?;
+                eligible += chunks.len() as u64;
+                embedded += chunks.iter().filter(|c| c.embed.has_vector()).count() as u64;
             }
             if quarantined(page) {
                 continue;
@@ -390,8 +400,8 @@ impl Store {
         Ok(json!({
             "page_count": page_count,
             "eligible_chunks": eligible,
-            "embedded_chunks": 0,
-            "missing_embeddings": eligible,
+            "embedded_chunks": embedded,
+            "missing_embeddings": eligible - embedded,
             "dead_links": dead_links,
             "link_count": count_links(&*read, &pages, &scope)?,
             "entity_page_count": entity_page_count,
@@ -534,12 +544,7 @@ impl Store {
                 .filter(|l| l.link_source.as_deref() != Some("mentions") && l.link_type != "amends")
                 .count();
             let weight = if input.order == "salience" {
-                let mut columns = json!({});
-                crate::page_columns::add_page_columns(&*read, &page, &mut columns)?;
-                columns
-                    .get("emotional_weight")
-                    .and_then(Value::as_f64)
-                    .unwrap_or(0.0)
+                crate::salience::emotional_weight(&*read, page.id)?
             } else {
                 0.0
             };
@@ -611,6 +616,14 @@ impl Store {
                 continue;
             }
             let at = page.updated_at_us;
+            if !(baseline_start..since_end).contains(&at) {
+                continue;
+            }
+            if let Some(policy) = &input.exclude_private
+                && page_hidden(&*read, &page, policy)?
+            {
+                continue;
+            }
             let cohorts = [page.tags.clone(), vec![page.page_type.clone()]];
             if at >= baseline_start && at < since {
                 let day = at.div_euclid(DAY_US);

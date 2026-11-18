@@ -44,20 +44,25 @@ two engines share that code instead of copying it:
   and `resolveEntityTypes` then reports `pack_unavailable`, as it does for a failed read on PGLite.
 - `findAnomalies` computes the window bounds from `since` and `lookback_days` (an invalid `since`
   throws the same `RangeError`), zero-fills the store's day counts over the same days as
-  `generate_series`, and runs `computeAnomaliesFromBuckets`. `excludePrivate` is refused: the store
-  does not evaluate the private-page filter yet.
+  `generate_series`, and runs `computeAnomaliesFromBuckets`. `excludePrivate` (any truthy value) applies
+  PGLite's `pageReadFilter('p', { excludePrivate }, [], true)` (`src/core/engine-sql/salience.ts:271`) to the
+  baseline cohort keys, the baseline day counts and today's counts alike: the store skips each page that
+  `page_hidden` (`facts/privacy.rs`) hides, as described in [salience.md](salience.md#private-pages-excludeprivate).
+  A caller record that changes `privatePagesFilterForCaller('p')` refuses with `engine_capability_missing`.
 - `listEnrichCandidates` clamps `limit` and `thinThreshold` and turns `reenrichAfterMs` into the
   `enrichedAfter` text. An unknown `order` reads as `inbound-links`, as PGLite's lookup does.
 
 ## Differences and costs
 
-- Embeddings. The store keeps no chunk vectors, and `upsertChunks` refuses a chunk with one. So
-  `embedded_count` and `embedded_chunks` are 0 and `missing_embeddings` is every live, eligible
-  chunk. That is what PGLite answers for a brain whose chunks have no vectors. When the vectors
-  family lands, it must make these counters read the stored vectors.
-- Salience order. `order: 'salience'` reads `emotional_weight` through the page columns hook
-  (`page_columns`). Until the salience family stores a weight, every page reads 0, the PGLite
-  column default, so the order falls back to inbound links, then the tie-break.
+- Embeddings. A chunk counts as embedded when it has a stored vector (`EmbedState::has_vector`), as
+  PGLite counts `embedding IS NOT NULL` on the active column. `getStats` counts the chunks of every
+  page in the scope, soft-deleted and `embed_skip` pages too; `getHealth` counts only the chunks of
+  live pages without `embed_skip`, and `missing_embeddings` is the rest of those chunks. The store
+  keeps one vector column, PGLite's `embedding`: `getStats` and `getHealth` refuse a brain whose
+  config names another column (`search_embedding_column`, `embedding_columns`), as the embedding
+  members do, instead of counting the wrong column.
+- Salience order. `order: 'salience'` reads `emotional_weight` from the salience family
+  (`salience::emotional_weight`): the stored weight, else 0, the PGLite column default.
 - Segmented pages. Chunk counts include every chunk record of a page, staged segment chunks too,
   as PGLite counts every `content_chunks` row. A segmented page (NULL body) is never an enrich
   candidate: PGLite's `char_length(compiled_truth)` is NULL for it.
@@ -69,14 +74,3 @@ two engines share that code instead of copying it:
   each page in the scope through the timeline family, one prefix scan per page. This is fine at
   the parity sizes; a brain with many thousand pages will want a per-page count record.
 
-## Follow-ups
-
-These wait for core's combined store branch, which brings in lane 4 (embeddings) and lane 5
-(salience).
-
-- stats-embedding-counts. Replace the 0 embedding counts in `getStats` and `getHealth` with
-  counts read through `crate::embeddings` (`scan_chunk_vectors`, or a count function from lane 4).
-  Add a parity case with embedded and missing chunks.
-- stats-salience-weight. Read `emotional_weight` through the salience family for the `'salience'`
-  enrich order, in place of the 0 default. Extend the enrich parity case with pages of different
-  weights.

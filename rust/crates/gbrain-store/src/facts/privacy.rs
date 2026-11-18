@@ -8,11 +8,15 @@
 //! `honor_aliases` (`visibility.honor_aliases`) and `entity_privacy` (false when an operator
 //! relaxed remote privacy, which drops the privacy part of the entity-page gate only).
 //!
+//! A page read (getRecentSalience, getSalienceScores, findAnomalies) applies the page policy
+//! `privatePagesFilterForCaller(p)` with the same rendering: `page_hidden` below, where
+//! `entity_privacy` says whether the privacy part applies (it does unless an operator relaxed it).
+//!
 //! The store keeps no access rules or pending coverage, so the parts of the SQL that read those
 //! tables take their empty-table values: a page names readers only through a `readable_by` key
 //! and no folder rule covers a page. Slug aliases and rename history come from `aliases.rs`
 //! ([`read_slug_alias`], [`renamed_to`]), so an origin a rename moved is followed as PGLite
-//! follows it.
+//! follows it, for the fact rules and for `page_hidden` alike.
 
 use super::FactRecord;
 use crate::Result;
@@ -73,14 +77,25 @@ pub(crate) fn hidden_by_private_provenance(
         let Some(page) = read_page(read, &row.source_id, slug)? else {
             continue;
         };
-        let allowed = readers_allowed(read, &page)?
-            && (!policy.entity_privacy || privacy_allows(read, &page, policy.honor_aliases)?);
-        if !allowed {
+        if page_hidden(read, &page, policy)? {
             return Ok(true);
         }
     }
     // `sharedHeldRuledSql` hides a held fact only under a folder rule or pending coverage.
     Ok(false)
+}
+
+/// Whether the page policy `privatePagesFilterForCaller(p)` hides `page`: the member-access part
+/// for the empty identity, then the privacy part unless `entity_privacy` is false. It is the test
+/// the entity gate puts on an entity page.
+pub(crate) fn page_hidden(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    policy: &PrivacyPolicy,
+) -> Result<bool> {
+    let allowed = readers_allowed(read, page)?
+        && (!policy.entity_privacy || privacy_allows(read, page, policy.honor_aliases)?);
+    Ok(!allowed)
 }
 
 /// `holdingSlugSql`: `memory/unattributed`, or a slug ending in `/memory/unattributed`.

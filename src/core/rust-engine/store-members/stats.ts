@@ -9,7 +9,8 @@
  *    with countStalePagesForExtraction and scores as `engine-sql/health.ts` does;
  *  - findAnomalies computes the window bounds (an invalid `since` throws the same RangeError), zero-fills the store's
  *    per-day counts over the same days and runs `computeAnomaliesFromBuckets`.
- * The store keeps no chunk vectors, so every chunk counts as not embedded (rust/docs/store/stats.md).
+ * The store counts a chunk as embedded when it has a stored vector, and reads the salience weight. getStats and getHealth
+ * refuse a brain whose config selects another embedding column, as the embedding members do (rust/docs/store/stats.md).
  */
 import type {
   AnomaliesOpts, AnomalyResult, BrainHealth, BrainStats, EnrichCandidate, EnrichCandidatesOpts, IngestLogEntry, IngestLogInput,
@@ -22,7 +23,8 @@ import { resolveEntityTypes } from '../../schema-pack/entity-types.ts';
 import { loadTimelineGradedPredicate } from '../../timeline-grading.ts';
 import { withDates } from '../store-codec.ts';
 import type { StoreBrain } from '../store.ts';
-import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { refuseMember, requireTextColumn, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { storePagePolicy } from './private-provenance.ts';
 import { getConfig, listConfigKeys } from './config.ts';
 import { countStalePagesForExtraction } from './extraction.ts';
 import { listAllSources } from './sources.ts';
@@ -43,8 +45,9 @@ function readScope(o: Record<string, unknown>): string[] | null {
   return o.sourceId ? [o.sourceId as string] : null;
 }
 
-export const getStats: StoreMember<[opts?: ScopeOpts], BrainStats> = (brain, opts) => {
+export const getStats: StoreMember<[opts?: ScopeOpts], BrainStats> = async (brain, opts) => {
   const scope = statsScope('getStats', opts);
+  await requireTextColumn(brain, 'getStats');
   return storeCall({ member: 'getStats' }, () => brain.getStats({ scope }));
 };
 
@@ -88,6 +91,7 @@ interface StoreHealth {
 
 export const getHealth: StoreMember<[opts?: ScopeOpts], BrainHealth> = async (brain, opts) => {
   const scope = statsScope('getHealth', opts);
+  await requireTextColumn(brain, 'getHealth');
   const deps = { getConfig: (key: string) => getConfig(brain, key) };
   const [orphanOverrides, isTimelineGraded, entityTypes] = await Promise.all([
     loadOrphanPolicyOverrides(deps),
@@ -216,8 +220,9 @@ interface StoreAnomalies {
 
 export const findAnomalies: StoreMember<[opts: AnomaliesOpts], AnomalyResult[]> = async (brain, opts) => {
   // PGLite reads only excludePrivate of the read scope here: minTrust, suppressFlagged and requireSafeChunks change nothing.
-  const o = takeOptions('findAnomalies', opts, ['sourceId', 'sourceIds', 'since', 'lookback_days', 'sigma'],
+  const o = takeOptions('findAnomalies', opts, ['sourceId', 'sourceIds', 'since', 'lookback_days', 'sigma', 'excludePrivate'],
     ['minTrust', 'suppressFlagged', 'requireSafeChunks']);
+  const excludePrivate = storePagePolicy('findAnomalies', o.excludePrivate);
   const sigma = (o.sigma as number | undefined) ?? 3.0;
   const lookbackDays = Math.max(1, (o.lookback_days as number | undefined) ?? 30);
   const sinceIso = (o.since as string | undefined) ?? new Date().toISOString().slice(0, 10);
@@ -232,6 +237,7 @@ export const findAnomalies: StoreMember<[opts: AnomaliesOpts], AnomalyResult[]> 
     baselineStartUs: baselineStart.getTime() * 1000,
     sinceUs: sinceDate.getTime() * 1000,
     sinceEndUs: sinceEnd.getTime() * 1000,
+    excludePrivate: excludePrivate ?? null,
   }));
   const days = baselineDays(baselineStart, sinceDate);
   const baseline: CohortDayRow[] = [];

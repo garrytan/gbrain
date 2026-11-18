@@ -351,3 +351,107 @@ fn get_salience_scores_combines_weight_and_takes_and_applies_the_read_policy() {
     let scoped = scores(&store, json!({"refs": refs, "source_ids": ["other"]}));
     assert!(scoped.is_empty());
 }
+
+#[test]
+fn exclude_private_drops_the_pages_the_page_policy_hides_from_both_salience_reads() {
+    let dir = TempDir::new("salience-private");
+    let (store, clock) = open(&dir);
+    page(&store, "default", "sal/open", json!({}));
+    page(
+        &store,
+        "default",
+        "sal/secret",
+        json!({"visibility": "private"}),
+    );
+    page(
+        &store,
+        "default",
+        "sal/readers",
+        json!({"readable_by": ["alice-example"]}),
+    );
+    page(
+        &store,
+        "default",
+        "sal/alias",
+        json!({"access": "restricted"}),
+    );
+    page(
+        &store,
+        "default",
+        "sal/alias-world",
+        json!({"access": "restricted", "visibility": "world"}),
+    );
+    weights(
+        &store,
+        json!([{"slug": "sal/secret", "source_id": "default", "weight": 1.0}]),
+    );
+    let policy = |honor_aliases: bool, entity_privacy: bool| {
+        serde_json::to_value(
+            json!({"honorAliases": honor_aliases, "entityPrivacy": entity_privacy}),
+        )
+        .unwrap()
+    };
+    let sorted = |mut v: Vec<String>| {
+        v.sort();
+        v
+    };
+    assert_eq!(
+        ids(&recent(&store, &clock, json!({})))[0],
+        "default:sal/secret"
+    );
+    assert_eq!(
+        sorted(ids(&recent(
+            &store,
+            &clock,
+            json!({"exclude_private": policy(true, true)})
+        ))),
+        ["default:sal/alias-world", "default:sal/open"]
+    );
+    assert_eq!(
+        sorted(ids(&recent(
+            &store,
+            &clock,
+            json!({"exclude_private": policy(false, true)})
+        ))),
+        [
+            "default:sal/alias",
+            "default:sal/alias-world",
+            "default:sal/open"
+        ]
+    );
+    assert_eq!(
+        sorted(ids(&recent(
+            &store,
+            &clock,
+            json!({"exclude_private": policy(true, false)})
+        ))),
+        [
+            "default:sal/alias",
+            "default:sal/alias-world",
+            "default:sal/open",
+            "default:sal/secret"
+        ]
+    );
+    let refs = json!(
+        [
+            "sal/open",
+            "sal/secret",
+            "sal/readers",
+            "sal/alias",
+            "sal/alias-world"
+        ]
+        .iter()
+        .map(|s| json!({"slug": s, "source_id": "default"}))
+        .collect::<Vec<_>>()
+    );
+    let open_read = scores(&store, json!({"refs": refs}));
+    assert!(open_read.contains(&("default::sal/secret".to_string(), 5.0)));
+    let hidden = scores(
+        &store,
+        json!({"refs": refs, "exclude_private": policy(true, true)}),
+    );
+    assert_eq!(
+        sorted(hidden.into_iter().map(|(k, _)| k).collect()),
+        ["default::sal/alias-world", "default::sal/open"]
+    );
+}

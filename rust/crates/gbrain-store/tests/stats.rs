@@ -1,15 +1,19 @@
 //! Statistics, health counters, the ingest log, enrich candidates and anomaly buckets. The PGLite
 //! parity cases are in test/engine-parity/stats.test.ts; these cover the store's own
 //! contract: the ingest log's order and durability across a reopen, its not-null checks, the
-//! empty scope, and the raw counters the TypeScript member scores.
+//! empty scope, the raw counters the TypeScript member scores, the embedded-chunk counts and the
+//! salience weight of the enrich order.
 
 mod common;
 
 use common::{TempDir, open};
 use gbrain_store::Store;
+use gbrain_store::chunks::{ChunkInput, UpsertChunksOptions};
 use gbrain_store::error::*;
+use gbrain_store::facts::PrivacyPolicy;
 use gbrain_store::links::AddLinkOptions;
 use gbrain_store::pages::{PageInput, PutPageOptions};
+use gbrain_store::salience::EmotionalWeightRow;
 use gbrain_store::sources::SourceInput;
 use gbrain_store::stats::*;
 use gbrain_store::timeline::{AddTimelineOptions, TimelineInput};
@@ -236,6 +240,7 @@ fn anomalies_bucket_baseline_days_and_today() {
         baseline_start_us: (since - 3 * day) as f64,
         since_us: since as f64,
         since_end_us: (since + day) as f64,
+        ..Default::default()
     };
     let found = store.find_anomalies(&input).unwrap();
     assert_eq!(found["baseline"], json!({"tag": {}, "type": {}}));
@@ -257,9 +262,183 @@ fn anomalies_bucket_baseline_days_and_today() {
         baseline_start_us: since as f64,
         since_us: (since + day) as f64,
         since_end_us: (since + 2 * day) as f64,
+        ..Default::default()
     };
     let found = store.find_anomalies(&earlier).unwrap();
     assert!(found["today"].as_array().unwrap().is_empty());
     let tag = found["baseline"]["tag"]["t"].as_object().unwrap();
     assert_eq!(tag.values().next().unwrap(), 1);
+}
+
+#[test]
+fn anomalies_under_exclude_private_skip_hidden_pages_in_today_and_the_baseline() {
+    let dir = TempDir::new("stats-anomaly-private");
+    let store = open(&dir);
+    let put = |slug: &str, frontmatter: Value| {
+        let input: PageInput = serde_json::from_value(json!({
+            "type": "note", "title": slug, "compiled_truth": "x", "frontmatter": frontmatter,
+        }))
+        .unwrap();
+        store
+            .put_page(slug, &input, &PutPageOptions::default())
+            .unwrap();
+        store.add_tag(slug, "t", None).unwrap();
+    };
+    put("open", json!({}));
+    put("secret", json!({"visibility": "private"}));
+    put("readers", json!({"readable_by": ["alice-example"]}));
+    put("alias", json!({"access": "restricted"}));
+    let day: i64 = 86_400_000_000;
+    let since = (std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_micros() as i64)
+        .div_euclid(day)
+        * day;
+    let read = |since: i64, policy: Option<PrivacyPolicy>| {
+        store
+            .find_anomalies(&AnomalyInput {
+                scope: None,
+                baseline_start_us: (since - day) as f64,
+                since_us: since as f64,
+                since_end_us: (since + day) as f64,
+                exclude_private: policy,
+            })
+            .unwrap()
+    };
+    let slugs = |found: &Value| {
+        let mut slugs: Vec<String> = found["today"][0]["page_slugs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s.as_str().unwrap().to_string())
+            .collect();
+        slugs.sort();
+        slugs
+    };
+    let strict = PrivacyPolicy {
+        honor_aliases: true,
+        entity_privacy: true,
+    };
+    assert_eq!(
+        slugs(&read(since, None)),
+        ["alias", "open", "readers", "secret"]
+    );
+    assert_eq!(slugs(&read(since, Some(strict))), ["open"]);
+    // With aliases off, `access: restricted` is no longer private.
+    let no_alias = PrivacyPolicy {
+        honor_aliases: false,
+        entity_privacy: true,
+    };
+    assert_eq!(slugs(&read(since, Some(no_alias))), ["alias", "open"]);
+    // With the privacy part off (privacy relaxed), only the reader list still hides a page.
+    let relaxed = PrivacyPolicy {
+        honor_aliases: true,
+        entity_privacy: false,
+    };
+    assert_eq!(
+        slugs(&read(since, Some(relaxed))),
+        ["alias", "open", "secret"]
+    );
+    // The baseline window counts only what the policy keeps.
+    let later = read(since + day, Some(strict));
+    let tag = later["baseline"]["tag"]["t"].as_object().unwrap();
+    assert_eq!(tag.values().next().unwrap(), 1);
+}
+
+/// Writes `count` chunks on `slug`; the first `embedded` of them carry a vector.
+fn chunks(store: &Store, slug: &str, count: u32, embedded: u32) {
+    let rows: Vec<ChunkInput> = (0..count)
+        .map(|i| {
+            let mut row = json!({ "chunk_index": i, "chunk_text": format!("{slug} {i}") });
+            if i < embedded {
+                let vector: Vec<f64> = (0..1536)
+                    .map(|d| if d == i as usize { 1.0 } else { 0.0 })
+                    .collect();
+                row["model"] = json!("m1");
+                row["embedding"] = json!(vector);
+            }
+            serde_json::from_value(row).unwrap()
+        })
+        .collect();
+    store
+        .upsert_chunks(slug, &rows, &UpsertChunksOptions::default())
+        .unwrap();
+}
+
+fn health_of(store: &Store) -> Value {
+    let input: HealthInput = serde_json::from_value(json!({
+        "scope": null,
+        "entityTypes": { "types": [], "per_source": [] },
+    }))
+    .unwrap();
+    store.get_health(&input).unwrap()
+}
+
+#[test]
+fn embedded_counts_read_stored_vectors() {
+    let dir = TempDir::new("stats-embedded");
+    let store = open(&dir);
+    put_page(&store, "live", "note", "live", None);
+    put_page(&store, "gone", "note", "gone", None);
+    let skip: PageInput = serde_json::from_value(json!({
+        "type": "note", "title": "skip", "compiled_truth": "skip", "frontmatter": { "embed_skip": true },
+    }))
+    .unwrap();
+    store
+        .put_page("skip", &skip, &PutPageOptions::default())
+        .unwrap();
+    chunks(&store, "live", 3, 2);
+    chunks(&store, "gone", 1, 1);
+    chunks(&store, "skip", 2, 1);
+    store.soft_delete_page("gone", None).unwrap();
+
+    // getStats counts every chunk with a vector, soft-deleted and embed_skip pages too.
+    let stats = store.get_stats(&scope(None)).unwrap();
+    assert_eq!(stats["chunk_count"], 6);
+    assert_eq!(stats["embedded_count"], 4);
+    // getHealth counts only live, eligible chunks.
+    let health = health_of(&store);
+    assert_eq!(health["eligible_chunks"], 3);
+    assert_eq!(health["embedded_chunks"], 2);
+    assert_eq!(health["missing_embeddings"], 1);
+
+    // deleteChunks drops the vectors with the chunks.
+    store.delete_chunks("live", None).unwrap();
+    assert_eq!(store.get_stats(&scope(None)).unwrap()["embedded_count"], 2);
+    let health = health_of(&store);
+    assert_eq!(health["embedded_chunks"], 0);
+    assert_eq!(health["missing_embeddings"], 0);
+}
+
+#[test]
+fn enrich_salience_order_reads_the_emotional_weight() {
+    let dir = TempDir::new("stats-enrich-salience");
+    let store = open(&dir);
+    put_page(&store, "low", "person", "x", None);
+    put_page(&store, "high", "person", "y", None);
+    put_page(&store, "linked", "person", "z", None);
+    put_page(&store, "other", "note", "w", None);
+    link(&store, "other", "linked");
+    let input: EnrichInput = serde_json::from_value(json!({
+        "types": ["person"], "thinThreshold": 100.0, "order": "salience", "limit": 10,
+    }))
+    .unwrap();
+    let slugs = |store: &Store| -> Vec<String> {
+        store
+            .list_enrich_candidates(&input)
+            .unwrap()
+            .iter()
+            .map(|r| r["slug"].as_str().unwrap().to_string())
+            .collect()
+    };
+    // No weight: every page reads 0, so inbound links decide, then the slug.
+    assert_eq!(slugs(&store), ["linked", "high", "low"]);
+    let rows: Vec<EmotionalWeightRow> = serde_json::from_value(json!([
+        { "slug": "high", "source_id": "default", "weight": 0.9 },
+        { "slug": "low", "source_id": "default", "weight": 0.1 },
+    ]))
+    .unwrap();
+    store.set_emotional_weight_batch(&rows).unwrap();
+    assert_eq!(slugs(&store), ["high", "low", "linked"]);
 }

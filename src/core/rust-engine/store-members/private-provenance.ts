@@ -8,11 +8,16 @@
  * a grant, a lineage or owner read, a labelled-only grant, a relaxed remote read) refuses with
  * `engine_capability_missing`.
  *
+ * A page read under `excludePrivate` (pageReadFilter, src/core/search/read-policy-sql.ts) adds the page policy
+ * `privatePagesFilterForCaller('p')` instead, which the entity gate of the fact policy applies to its entity page;
+ * `storePagePolicy` refuses the same way and sends the same flags (`entityPrivacy` is then the privacy part of `p`).
+ *
  * The concept-input test is rendered either inline or as a call of `gbrain_concept_inputs_private` (migration v311),
  * by the schema version the context carries. The two forms are the same test, so the comparison reads both as one.
  */
 import {
   privacyAliasSql,
+  privatePagesFilterForCaller,
   privateSnapshotFilterFragment,
   withoutCallerAccess,
   privateProvenanceFilterUnderPolicy,
@@ -25,8 +30,8 @@ export interface StorePrivacyPolicy {
   entityPrivacy: boolean;
 }
 
-/** The page aliases the fact policy judges. */
-const PAGE_ALIASES = ['pp', 'entity_pp'] as const;
+/** The page aliases the policies judge: the fact policy's two, and `p` of a page read. */
+const PAGE_ALIASES = ['pp', 'entity_pp', 'p'] as const;
 
 /** `derivedPageSql(alias)` as derivedOriginPrivateSql opens its concept-input branch with it. */
 const conceptBranchStart = (p: string): string =>
@@ -67,5 +72,21 @@ export function storePrivacyPolicy(member: string, excludePrivate: unknown, rend
   return {
     honorAliases: baseline.includes(privacyAliasSql('pp')),
     entityPrivacy: baseline.includes(privateSnapshotFilterFragment('entity_pp')),
+  };
+}
+
+/**
+ * The store policy for a page read (`pageReadFilter`'s `excludePrivate`), or undefined when the read does not ask for
+ * it. The read's page alias is `p`; a caller whose `privatePagesFilterForCaller('p')` is not the no-caller one refuses.
+ */
+export function storePagePolicy(member: string, excludePrivate: unknown): StorePrivacyPolicy | undefined {
+  if (!excludePrivate) return undefined;
+  const baseline = withoutCallerAccess(() => privatePagesFilterForCaller('p'));
+  if (normalizeConceptInputs(privatePagesFilterForCaller('p')) !== normalizeConceptInputs(baseline)) {
+    refuseMember(member, 'excludePrivate for a caller whose member pages, grants or lineage widen the policy');
+  }
+  return {
+    honorAliases: baseline.includes(privacyAliasSql('p')),
+    entityPrivacy: baseline.includes(privateSnapshotFilterFragment('p')),
   };
 }
