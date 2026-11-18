@@ -1,5 +1,9 @@
 # TODOS
 
+## Worktree binding memo follow-ups (filed 2026-11-18, Rust engine binding-memos branch)
+
+- [ ] **P2 — Three worktree binding memos on master never match the binding read.** **What:** `WORKTREE_BINDING_SQL` (`src/core/persistence/ownership.ts`) gained `git_durability`, `prepared_at` and `canonical_git`, but three memos still list the older statement text: `STABLE_IN_PREPARATION` (`src/core/persistence/group-publish.ts:184`), `BINDING_SQL` (`src/core/persistence/preadmit-cache.ts:41`) and `BATCH_SHARED_READS` (`src/core/persistence/page-mutations.ts:85`). No statement matches that text, so each group preparation, preadmit pass and page batch reads the binding again for every member. **Fix:** derive each memo key from `WORKTREE_BINDING_SQL` itself (or answer the read through one shared helper), and keep only a present binding: `claimWorktree` reads the binding again after a claim, so a kept absence would answer null for a row that now exists. The Rust engine branch `rust-engine/binding-memos` carries this fix with a counting-engine test that fails on the old text. **Effort:** S. **Priority:** P2.
+
 ## Busy-agent soak cell follow-ups (filed 2026-11-11, GBRA-332, #8829)
 
 - [ ] **P2 — Refresh diverged-publish child waits 0 s for the push lock (#8975).** **What:** a refresh whose checkout diverged publishes through a child that runs `commit-push` with `GBRAIN_PUBLISH_LOCK_WAIT_SECONDS=0` (`publishInChild` in `worktree-refresh.ts`), so a refresh tick racing another committer refuses `push_unconfirmed` instead of waiting its turn. The busy-agent soak cell's mode (h) shows it as an informational red, parked by its `.github/nightly-known-red.tsv` row. **Fix:** give the child the normal push-lock wait, then delete the known-red row. **Effort:** S. **Priority:** P2.
