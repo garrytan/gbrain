@@ -30,7 +30,7 @@ const READ_AT = '2026-01-02T03:04:05.678Z';
 type WantedQuery = { sourceId?: string; sourceIds?: string[]; limit: number; offset: number };
 
 async function readWanted(engine: BrainEngine, backend: ParityBackend, query: WantedQuery = { limit: 50, offset: 0 }): Promise<{ total: number; rows: WantedPageRow[] }> {
-  if (backend === 'rust') return (engine as RustEngine).openStore('listWantedPages').brain.listWantedPages(query);
+  if (backend === 'rust') return (engine as unknown as RustEngine).openStore('listWantedPages').brain.listWantedPages(query);
   return listWantedPages(engine, query);
 }
 
