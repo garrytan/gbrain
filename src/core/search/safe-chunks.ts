@@ -27,6 +27,13 @@ export function protectedBodyFilter(alias: string): string {
     ELSE (${protectedTextFilter(`${alias}.compiled_truth`)} OR ${protectedTextFilter(`${alias}.timeline`)}) END)`;
 }
 
+/** GST-3058: protectedBodyFilter for takes fences only; a segmented page's flag does not tell the two apart, so it counts (fail closed). */
+export function protectedTakesFilter(alias: string): string {
+  const takes = (expression: string) => `COALESCE(${expression}, '') ~ '<!--- gbrain:takes:(begin|end) -->'`;
+  return `(CASE WHEN ${alias}.body_storage = 'segmented' THEN ${alias}.body_flags->>'has_protected' IS DISTINCT FROM 'false'
+    ELSE (${takes(`${alias}.compiled_truth`)} OR ${takes(`${alias}.timeline`)}) END)`;
+}
+
 /** A body-only write cannot certify old fragments, even after fence removal. */
 export function bodyWriteChunkVersion(compiledTruth: string, timeline: string): string {
   return `CASE WHEN pages.compiled_truth IS NOT DISTINCT FROM ${compiledTruth}

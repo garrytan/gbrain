@@ -29,7 +29,6 @@ const REVIEWED: Record<string, string> = {
   'src/core/repair/agent-session-facts.ts': 'marks previewed take rows inactive and re-renders through replaceFence, which keeps the reservations of the body it replaces',
   'src/core/repair/lost-fence-rows.ts': 'reads a lost take\'s cell from page history (reservations are never takes), numbers it past the live fence\'s rows and reservations and every stored take, and re-renders through replaceFence, which keeps the reservations',
   'src/core/repair/connector-fences.ts': 'moves fence blocks verbatim, reservations included',
-  'src/core/remote-body.ts': 'renders the brain owner\'s view of a takes fence with only the holders it reads, passing reservedRowNums through to renderTakesFence',
   'src/core/repair/take-supersession.ts': 're-renders through replaceFence, which keeps the reservations of the body it replaces',
   'src/core/shared-skills/migration-projection.ts': 'compares stored takes with fence takes; neither holds a reservation',
   'src/core/trust/held-removals.ts': 'looks up the live fence row at a held take\'s number; a reserved number has no take, so the accept deletes the held row',

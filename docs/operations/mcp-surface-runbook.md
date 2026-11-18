@@ -249,8 +249,8 @@ restores enforcement on the same schedule. Resolver:
 Page-visibility opt-outs do not change protected-body filtering: remote page
 and history bodies retain only world Facts and omit every Takes fence. The
 exception is a credential bound to the brain owner speaking for itself:
-`get_page` and `fetch_page` give it the Facts fence as stored and the Takes
-rows of the holders it reads (GST-3058). History
+`get_page` and `fetch_page` give it the Facts fence as stored, and the Takes
+fence as stored when the credential has no holders list (GST-3058). History
 also checks snapshot visibility while page privacy is enforced. Malformed
 protected sections are omitted; unterminated or interleaved sections discard
 the remaining tail. Restricted salience counts only permitted active takes and

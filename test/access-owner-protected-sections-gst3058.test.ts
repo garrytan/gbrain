@@ -38,13 +38,14 @@ const take = (n: number, claim: string, holder: string) => ({ rowNum: n, claim, 
 const page = (type: string, title: string, rows: ReturnType<typeof row>[], extra = '', fm = '') =>
   '---\ntype: ' + type + '\ntitle: ' + title + '\n' + fm + '---\n# ' + title + '\n\nProfile.\n\n## Facts\n\n' + renderFactsTable(rows as never) + '\n' + extra;
 const TARGET = 'people/target-example', THIRD = 'people/third-example', ACME = 'companies/acme-example', LIA = 'people/lia-example';
-const MEET = 'meetings/standup-example', KIM = 'people/kim-example', CORE = 'notes/core-example';
+const MEET = 'meetings/standup-example', KIM = 'people/kim-example', CORE = 'notes/core-example', TAKER = 'people/taker-example', BACKER = 'people/backer-example';
 const PRIV = 'pelicanprivcanary', HELD = 'wombatheldcanary', CORE_PRIV = 'heronprivcorecanary', CORE_HELD = 'badgerheldcorecanary', MEET_PRIV = 'lynxmeetprivcanary';
 const TAKES = [['world', 'takeworldcanary'], ['brain', 'takebraincanary'], ['self', 'takeselfcanary'], [TARGET, 'takepersoncanary']] as const;
 const HOPS = [{ link_type: 'works_at', toward: 'object' }];
+const HOP_TAKE = 'takehopcanary';
 const OWNER = 'owner-example', BOB = 'bob-example';
-const CALLERS = ['local', 'ownerT', 'ownerC', 'bob', 'unbound', 'channel'] as const;
-type Caller = typeof CALLERS[number];
+const CALLERS = ['local', 'ownerT', 'ownerC', 'bob', 'bobC', 'unbound', 'channel'] as const;
+type Caller = typeof CALLERS[number] | 'ownerW';
 
 for (const kind of testBackends()) {
   describe('GST-3058 owner-bound remote callers read protected page parts (' + kind + ')', () => {
@@ -85,7 +86,11 @@ for (const kind of testBackends()) {
         row(1, 'Lia owes [[' + TARGET + ']] money ' + PRIV, 'private'),
         row(2, 'Lia works at [[' + ACME + ']] as an engineer'),
         row(3, 'Lia dated [[' + THIRD + ']] ' + HELD),
-      ], '\n## Takes\n\n' + renderTakesFence(TAKES.map(([holder, canary], i) => take(i + 1, 'Lia view ' + canary, holder)) as never) + '\n'));
+      ]));
+      await put(TAKER, page('person', 'Taker Example', [row(1, 'Taker likes tea'), row(2, 'Taker secret ' + PRIV, 'private')],
+        '\n## Takes\n\n' + renderTakesFence(TAKES.map(([holder, canary], i) => take(i + 1, 'Taker view ' + canary, holder)) as never) + '\n'));
+      await put(BACKER, page('person', 'Backer Example', [row(1, 'Backer likes tea')], '\n## Takes\n\n' + renderTakesFence([take(1, 'Backer backs [[' + ACME + ']] ' + HOP_TAKE, 'self')] as never) + '\n'));
+      await engine.addLink(BACKER, ACME, 'Backer backs [[' + ACME + ']] ' + HOP_TAKE, 'works_at', 'markdown');
       await put(KIM, '---\ntype: person\ntitle: Kim Example\n---\n# Kim Example\n\nProfile.\n');
       await put(MEET, '---\ntype: meeting\ntitle: Standup Example\ndate: 2026-01-01\n---\n# Standup Example\n\n## Facts\n\n'
         + renderFactsTable([row(1, 'The standup ran long'), row(2, 'Budget raised ' + MEET_PRIV, 'private')] as never) + '\n\n## Attendees\n\n- [[' + KIM + ']]\n');
@@ -93,25 +98,29 @@ for (const kind of testBackends()) {
       await holdRow(HELD); await holdRow(CORE_HELD);
       await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('source-b', 'source-b') ON CONFLICT DO NOTHING");
       for (const id of [OWNER, BOB]) await engine.executeRaw('INSERT INTO access_members (id) VALUES ($1)', [id]);
-      const mint = async (name: string, member?: string, mayActFor?: string[]) => {
-        const m = await mintLegacyToken(engine, { name, scopes: ['read'], takesHolders: ['world'] });
+      const mint = async (name: string, member?: string, mayActFor?: string[], scopes = ['read']) => {
+        const m = await mintLegacyToken(engine, { name, scopes, takesHolders: ['world'] });
         tokens[name] = m.token;
         if (member) await bindCredential(engine, { kind: 'token', id: m.id }, { member, ...(mayActFor ? { mayActFor } : {}) }); else await readsUnscopedOnPurpose(engine, m.id);
       };
-      await mint('ownerT', OWNER, ['member:' + OWNER, 'member:' + BOB]); await mint('bob', BOB); await mint('unbound');
+      await mint('ownerT', OWNER, ['member:' + OWNER, 'member:' + BOB]); await mint('bob', BOB); await mint('unbound'); await mint('ownerW', OWNER, undefined, ['read', 'write']);
       const client = await provider().registerClientManual('owner-client-example', ['client_credentials'], 'admin skills_member_self', [], 'default', ['default', 'source-b']);
       await bindCredential(engine, { kind: 'client', id: client.clientId }, { member: OWNER });
       tokens.ownerC = (await provider().exchangeClientCredentials(client.clientId, client.clientSecret!)).access_token;
+      const bobClient = await provider().registerClientManual('member-client-example', ['client_credentials'], 'admin skills_member_self', [], 'default', ['default', 'source-b']);
+      await bindCredential(engine, { kind: 'client', id: bobClient.clientId }, { member: BOB });
+      tokens.bobC = (await provider().exchangeClientCredentials(bobClient.clientId, bobClient.clientSecret!)).access_token;
       await setOwner(engine, OWNER);
     }, 300_000);
     afterAll(async () => { await disposePersistenceConsumer(engine); await close?.(); }, 60_000);
 
     const OWNERS: readonly Caller[] = ['ownerT', 'ownerC'];
-    const OTHERS: readonly Caller[] = ['bob', 'unbound', 'channel'];
+    const OTHERS: readonly Caller[] = ['bob', 'bobC', 'unbound', 'channel'];
 
-    test('fixture control: the local CLI reads every protected row and take, and the owner client carries no holders list', async () => {
-      expect(seen(await call('local', 'get_page', { slug: LIA }), [PRIV, HELD, ...TAKES.map(t => t[1])])).toHaveLength(6);
-      expect((await provider().verifyAccessToken(tokens.ownerC!) as unknown as { takesHoldersAllowList?: string[] }).takesHoldersAllowList).toBeUndefined();
+    test('fixture control: the local CLI reads every protected row and take, and neither client carries a holders list', async () => {
+      expect(seen(await call('local', 'get_page', { slug: LIA }), [PRIV, HELD])).toHaveLength(2);
+      expect(seen(await call('local', 'get_page', { slug: TAKER }), [PRIV, ...TAKES.map(t => t[1])])).toHaveLength(5);
+      for (const who of ['ownerC', 'bobC']) expect((await provider().verifyAccessToken(tokens[who]!) as unknown as { takesHoldersAllowList?: string[] }).takesHoldersAllowList).toBeUndefined();
     }, 120_000);
 
     test('get_page: owner-bound callers read the private and held Facts rows; no other caller does', async () => {
@@ -137,14 +146,31 @@ for (const kind of testBackends()) {
 
     test('takes: an owner-bound caller with no holders list reads every holder, an explicit list stays honoured, every other caller reads world takes', async () => {
       const canaries = TAKES.map(t => t[1]);
-      const want: Record<Caller, { list: number; fence: number }> = { local: { list: 4, fence: 4 }, ownerC: { list: 4, fence: 4 }, ownerT: { list: 1, fence: 1 }, bob: { list: 1, fence: 0 }, unbound: { list: 1, fence: 0 }, channel: { list: 1, fence: 0 } };
+      // A credential with a holders list gets no takes fence in get_page (it reads takes through takes_list), so its page still round-trips through put_page.
+      const want: Record<Caller, { list: number; fence: number }> = { local: { list: 4, fence: 4 }, ownerC: { list: 4, fence: 4 }, ownerT: { list: 1, fence: 0 }, bob: { list: 1, fence: 0 }, bobC: { list: 1, fence: 0 }, unbound: { list: 1, fence: 0 }, channel: { list: 1, fence: 0 } };
       for (const who of CALLERS) {
         const got = {
-          takes_list: seen(await call(who, 'takes_list', { page_slug: LIA }), canaries).length,
-          takes_search: seen(await call(who, 'takes_search', { query: 'Lia view' }), canaries).length,
-          get_page: seen(await call(who, 'get_page', { slug: LIA }), canaries).length,
+          takes_list: seen(await call(who, 'takes_list', { page_slug: TAKER }), canaries).length,
+          takes_search: seen(await call(who, 'takes_search', { query: 'Taker view' }), canaries).length,
+          get_page: seen(await call(who, 'get_page', { slug: TAKER }), canaries).length,
         };
         expect({ who, ...got }).toEqual({ who, takes_list: want[who].list, takes_search: want[who].list, get_page: want[who].fence });
+      }
+    }, 240_000);
+
+    test('a holders list still applies to graph hops: an owner credential with one reads no edge context cut from a takes fence', async () => {
+      const hop = (who: Caller) => call(who, 'traverse_graph', { slug: BACKER, hops: HOPS });
+      for (const who of ['local', 'ownerC'] as Caller[]) expect({ who, seen: seen(await hop(who), [HOP_TAKE]) }).toEqual({ who, seen: [HOP_TAKE] });
+      for (const who of ['ownerT', ...OTHERS] as Caller[]) expect({ who, seen: seen(await hop(who), [HOP_TAKE]) }).toEqual({ who, seen: [] });
+    }, 240_000);
+
+    test('owner credentials round-trip a page holding private rows and takes through put_page, with or without a holders list', async () => {
+      for (const who of ['ownerW', 'ownerC'] as Caller[]) {
+        const read = JSON.parse(await call(who, 'get_page', { slug: TAKER, include_content: true }));
+        expect({ who, priv: read.content.includes(PRIV) }).toEqual({ who, priv: true });
+        await call(who, 'put_page', { slug: TAKER, content: read.content.replace(/Profile[^\n]*/, 'Profile, edited by ' + who + '.'), expected_revision: read.revision, request_id: randomUUID() });
+        const after = await call('local', 'get_page', { slug: TAKER });
+        expect({ who, edited: after.includes('Profile, edited by ' + who + '.'), kept: seen(after, [PRIV, ...TAKES.map(t => t[1])]).length }).toEqual({ who, edited: true, kept: 5 });
       }
     }, 240_000);
   });
