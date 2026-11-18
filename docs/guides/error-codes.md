@@ -4224,6 +4224,26 @@ More: [docs/guides/shared-checkout-git.md#publish_scan_unreadable](../../docs/gu
 
 More: [docs/guides/shared-checkout-git.md#publish_secret_found](../../docs/guides/shared-checkout-git.md#publish_secret_found)
 
+### publish_secret_rebuild_race
+
+<a id="publish_secret_rebuild_race"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| HEAD moved 3 times while a publish was redacting the unpushed commits (a writer that does not take the commit lock), so nothing was rewritten or pushed; the next publish tries again. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Let the next publish retry it; if it repeats, find the writer that commits without gbrain git commit-push. Run: gbrain git redact-unpushed --source '{source_id}' | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/shared-checkout-git.md#publish_secret_rebuild_race](../../docs/guides/shared-checkout-git.md#publish_secret_rebuild_race)
+
+### publish_secret_rebuild_unbounded
+
+<a id="publish_secret_rebuild_unbounded"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Redacting the unpushed commits ran past the publish's time budget (often a checkout with no remote-tracking ref, so its whole history is unpushed); nothing was rewritten or pushed, and the publish retries in the background with a longer budget. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Run the read-only preview to see how many commits it covers; fetch the remote so a remote-tracking ref bounds the range. Run: gbrain git redact-unpushed --source '{source_id}' | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/shared-checkout-git.md#publish_secret_rebuild_unbounded](../../docs/guides/shared-checkout-git.md#publish_secret_rebuild_unbounded)
+
 ### pull_blocked_local_changes
 
 <a id="pull_blocked_local_changes"></a>
@@ -5021,6 +5041,46 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | A search offset was over the 10,000 limit. | The request itself was wrong or no longer matches the brain; nothing was changed. | Page with match: "keyword" and the next object each response returns; a cursor has no depth limit. | agent | `repeat the read that failed` | 1 | no |
+
+### secret_reveal_forbidden
+
+<a id="secret_reveal_forbidden"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| This connection may not read originals from the secret store: its grant does not name reveal_secret, or it cannot read any page that holds the marker. | The step needs the user's decision before it runs. | Stop and ask the user; re-run only with the authorization the message names. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/secret-store.md#reading-an-original](../../docs/guides/secret-store.md#reading-an-original)
+
+### secret_store_key_mismatch
+
+<a id="secret_store_key_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A secret store entry did not authenticate under its key: the row was changed or moved, so its original is not returned. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/secret-store.md#keys](../../docs/guides/secret-store.md#keys)
+
+### secret_store_key_missing
+
+<a id="secret_store_key_missing"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The secret store key an entry was sealed with is not on this host (the keyring or GBRAIN_SECRET_STORE_KEY), so its original cannot be read here. | Only the operator of the brain host can change what blocks this. | Import the key's escrow copy with gbrain secrets key import <file> --passphrase-stdin, or set GBRAIN_SECRET_STORE_KEY to the key the other host uses. Run: gbrain secrets key status --json | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/secret-store.md#keys](../../docs/guides/secret-store.md#keys)
+
+### secret_store_unwritable
+
+<a id="secret_store_unwritable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The secret store could not keep an original value, so nothing that would have lost it was written. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/secret-store.md#when-an-original-cannot-be-kept](../../docs/guides/secret-store.md#when-an-original-cannot-be-kept)
 
 ### segmented_mirror_writer_gate
 

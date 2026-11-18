@@ -48,11 +48,11 @@ function stubEngine(opts: {
   sourceExists?: boolean;
 }): BrainEngine {
   return {
-    executeRaw: async (_sql: string, params?: unknown[]) => {
-      if (opts.sourceExists === false) return [];
-      return [
+    getSource: async (sourceId: string) => {
+      if (opts.sourceExists === false) return null;
+      return (
         {
-          id: (params?.[0] as string) ?? 'default',
+          id: sourceId ?? 'default',
           name: 'stub',
           local_path: opts.sourceLocalPath ?? null,
           last_commit: null,
@@ -61,8 +61,8 @@ function stubEngine(opts: {
           created_at: new Date(),
           contextual_retrieval_mode: null,
           trust_frontmatter_overrides: false,
-        },
-      ];
+        }
+      );
     },
     getConfig: async (key: string) =>
       key === 'sync.repo_path' ? (opts.repoPath ?? null) : null,

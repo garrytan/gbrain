@@ -71,7 +71,7 @@ function writeDriver(path: string, h: Harness): void {
     'const realExit = process.exit.bind(process);',
     "process.exit = ((code?: number) => { console.log('FETCHED ' + JSON.stringify(fetched)); console.log('EXIT_CALLED ' + code); realExit(code); }) as typeof process.exit;",
     `const { attemptAutopilotSelfUpgrade } = await import(${JSON.stringify(AUTOPILOT_TS)});`,
-    `await attemptAutopilotSelfUpgrade({ kind: 'pglite', db: { query: async () => ({ rows: [] }) } } as never, 'pglite', ${JSON.stringify(join(h.root, 'autopilot.lock'))});`,
+    `await attemptAutopilotSelfUpgrade({ kind: 'pglite', db: { query: async () => ({ rows: [] }) }, readCycleLocks: async () => [] } as never, 'pglite', ${JSON.stringify(join(h.root, 'autopilot.lock'))});`,
     "console.log('FETCHED ' + JSON.stringify(fetched));",
     "console.log('RETURNED');",
     '',

@@ -8,11 +8,10 @@
 import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import type { SqlEngine } from './model.ts';
+import { MANAGED_MODE_SQL, MANAGED_MODE_ROWS_JSON_SQL } from '../engine-sql/persistence-state.ts';
 
-/** The plain statement. `group-publish.ts` memoizes this exact text for a group's preparation, so every plain reader sends it unchanged. */
-export const MANAGED_MODE_SQL = 'SELECT enabled FROM persistence_brain WHERE singleton=1';
-/** The same read as a scalar subquery (a JSON array of `{enabled}` rows) for a statement that folds it into other work; parse it with `managedModeFromRows`. */
-export const MANAGED_MODE_ROWS_JSON_SQL = `(SELECT COALESCE(json_agg(json_build_object('enabled', b.enabled)), '[]'::json) FROM persistence_brain b WHERE b.singleton = 1)`;
+// The statements live with the engine's typed persistence-state reads (`engine-sql/persistence-state.ts`); every plain reader sends them unchanged.
+export { MANAGED_MODE_SQL, MANAGED_MODE_ROWS_JSON_SQL };
 /** The columns the metadata-bearing mode readers need; the later-migration columns through `to_jsonb` so an older row still answers. */
 const PERSISTENCE_BRAIN_SQL = `SELECT brain_id,enabled,to_jsonb(persistence_brain)->>'mode_epoch' AS mode_epoch,
   (to_jsonb(persistence_brain)->>'skill_bundles_enabled')::boolean AS skill_bundles_enabled,

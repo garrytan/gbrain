@@ -307,7 +307,7 @@ Each has a fixture generated from PGLite under `rust/fixtures/` and a test on th
 
 ### Track 2 rules
 
-- One subsystem (or one file family) per PR. The SQL moves into `src/core/engine-sql/<domain>.ts` behind typed methods, and both Postgres-dialect engines delegate, following the "Storage method" row of `CONTRIBUTING.md` "Where does my change go?". No behavior change; changed assertions explained in the PR body.
+- One subsystem (or one file family) per PR. The SQL moves into `src/core/engine-sql/<domain>.ts` behind typed methods, and both Postgres-dialect engines delegate, following the "Storage method" row of `CONTRIBUTING.md` "Where does my change go?". No behavior change, except an engine-parity fix the PR names with a test that fails before it (for example, ranked reads add stable `ORDER BY` tiebreakers); changed assertions explained in the PR body.
 - Methods are named for what they mean (`journal.claimNext(...)`), not for the SQL they replace.
 - New methods are grouped as domain objects on the engine (`engine.journal`, `engine.queue`, `engine.access`, ...), each declared in its own module and referenced from `engine.ts` with one line, so `engine.ts` grows by one line per domain, not per method. This limits contention on a shared file and its `check:module-size` ceiling.
 - A new shrink-only ratchet, `check:engine-raw-sql-ratchet` with `scripts/engine-raw-sql-baseline.tsv`, counts raw-SQL call sites per file outside the engines, including helpers that take the engine or an executor. It runs in `verify`. A new raw-SQL call site outside an engine fails it. Decision D6.
