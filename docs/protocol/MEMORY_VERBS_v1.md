@@ -304,7 +304,10 @@ Save ONE fact with mandatory attribution.
   operator set `facts.default_visibility` to private; a save never lands wider
   than the page it is written into. In gbrain, a remote credential bound to
   one member saves `private` on its own member page unless it passes
-  `share: true`, and its `visibility: "world"` is refused; the brain owner's
+  `share: true`, and its `visibility: "world"` is refused; a `share: true`
+  fact about another enabled member (`people/<member>`) is saved `private` with
+  a pending proposal the brain owner confirms (`gbrain trust confirm tp<N>`),
+  and the reply carries a `held` field naming it; the brain owner's
   own credential saves as above (shared by default, `private` on its member
   page when it asks or the page or default keeps facts private). The response
   names the `page` and `visibility` the fact got. Facts saved `private` before
@@ -788,8 +791,8 @@ says to keep them, or to forget them first to withdraw the claim everywhere.
 A forget never withdraws an active fact the caller cannot read; when one
 would be reached, the refusal keeps the `claim_linked:` prefix and names no fact.
 In gbrain, a credential bound to one member withdraws only facts on its own
-member page (another fact it reads is refused naming the brain host); the
-brain owner's own credential also withdraws a shared fact it reads, and any
+member page, and a shared fact about itself (another fact it reads is refused
+naming the brain host); the brain owner's own credential also withdraws a shared fact it reads, and any
 other fact it reads on a page that credential can write, such as a page whose
 `readable_by` names the owner.
 

@@ -44,6 +44,7 @@ const RECEIPT_COVERAGE: Record<string, Coverage> = {
   'src/core/bootstrap/verify.ts': { sites: 1, tables: ['facts'], todo: 'TODO(receipts): bootstrap verify deletes its own probe facts without a request; publish the cleanup as a maintenance intent' },
   'src/core/trust/held-removals.ts': { sites: 1, tables: ['takes', 'timeline_entries'], todo: 'TODO(receipts): the owner accept of a held take or timeline removal (W1 #6783 §12 (a)) re-projects that row in withCoordinatedWrite as maintenance without a request when the page no longer carries it as stored; publish the accept as an owner request (a fence-carried take already reruns as a receipted takes_remove)' },
   'src/core/trust/owner-actions.ts': { sites: 1, tables: ['facts'], todo: 'TODO(receipts): the owner release of a held fact inserts it in withCoordinatedWrite as maintenance without a request; publish the release as an owner request' },
+  'src/core/trust/supersede-handlers.ts': { sites: 1, tables: ['facts'], todo: 'TODO(receipts): the owner accept of a held share (GST-2897 B) widens the held fact\'s visibility in withCoordinatedWrite as maintenance without a request; publish it as an owner request' },
   'src/core/trust/page-handlers.ts': { sites: 1, tables: ['pages', 'facts', 'takes', 'timeline_entries'], todo: 'TODO(receipts): owner tier decisions (confirm/lower) change only trust_tier/write_origin in withCoordinatedWrite as maintenance without a request; publish them as owner requests' },
   'src/core/trust/backfill.ts': { sites: 3, tables: ['pages', 'facts', 'takes', 'timeline_entries'], todo: 'TODO(receipts): gbrain trust backfill and claim-sources --relower (#6533) set legacy trust_tier/write_origin (no content column) as attributed coordinated maintenance without a request; publish each batch as a maintenance intent' },
   'src/core/repair/frontmatter-keys.ts': { sites: 1, tables: ['pages'], todo: 'TODO(receipts): gbrain repair frontmatter-keys (#6454) strips the four parser-reserved keys from pages.frontmatter (no content column) in withCoordinatedWrite batches as explicit-only maintenance without a request; publish each batch as a maintenance intent' },
@@ -62,7 +63,7 @@ const RECEIPT_COVERAGE: Record<string, Coverage> = {
 };
 
 /** Facts/takes writers allowed without a receipt this wave, each with its TODO above. */
-const RECEIPT_EXCEPTIONS = new Set(['src/core/bootstrap/verify.ts', 'src/core/repair/secret-spans.ts', 'src/core/trust/backfill.ts', 'src/core/trust/held-removals.ts', 'src/core/trust/owner-actions.ts', 'src/core/trust/page-handlers.ts']);
+const RECEIPT_EXCEPTIONS = new Set(['src/core/bootstrap/verify.ts', 'src/core/repair/secret-spans.ts', 'src/core/trust/backfill.ts', 'src/core/trust/held-removals.ts', 'src/core/trust/owner-actions.ts', 'src/core/trust/page-handlers.ts', 'src/core/trust/supersede-handlers.ts']);
 
 const ROOT = join(import.meta.dir, '..');
 

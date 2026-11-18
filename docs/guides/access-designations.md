@@ -39,6 +39,7 @@ Five kinds of caller read a brain:
 | folder rule (`gbrain access rule`) | reads | only when listed | only when listed | hidden | only when every entry is listed |
 | derived from a `readable_by` page | reads | hidden | hidden | hidden | hidden |
 | fact `visibility: private` | reads | reads | hidden | hidden | hidden |
+| page or fact in an owner-only source (`imessage`, `owner_only: true`), or derived from one | reads | reads | hidden | hidden | hidden, under every relaxation |
 
 "Hidden" means the same `not_found` a missing page gets, on every read path (get_page, search, query, recall, lists,
 links, timelines, versions). Designations govern readers, not processing: restricted pages are embedded
@@ -186,8 +187,10 @@ for rules in the database (a repo-less brain) and in `access.yml`.
 
 Each fact row has its own visibility. `remember` defaults to `world`, except into a private page or under an
 explicit private `facts.default_visibility`. A remote credential bound to a member saves `private` on its own member
-page (`memory/members/<member>`) unless the call passes `share: true`, and its `visibility: "world"` is refused; it
-withdraws only facts on that page, and the brain host withdraws the rest (`gbrain forget <id>`). The owner's own
+page (`memory/members/<member>`) unless the call passes `share: true`, and its `visibility: "world"` is refused; a
+`share: true` fact about another enabled member is held `private` until the brain owner confirms its proposal
+(`gbrain trust review`, `gbrain trust confirm tp<N>`). It withdraws facts on that page and shared facts about
+itself, and the brain host withdraws the rest (`gbrain forget <id>`). The owner's own
 credential (or a stdio server started with `--stdio-member <owner>`), speaking for itself (no audience, not a
 subagent job, no slug fence), saves like a credential bound to no member: shared on the subject's page, or `private` on its member page when it passes `visibility: "private"` or the
 page or `facts.default_visibility` keeps facts private (the reply names the `page` and `visibility`; an explicit
@@ -242,6 +245,18 @@ One owner credential both reads every private page and writes new `default` page
 owner agent can copy private content into a shared page. A prompt planted in a page that agent reads can ask it to.
 Bind only agents you trust with the whole brain as the owner; give every other agent its own member, whose new pages
 stay kept to it.
+
+### Owner-only sources (`owner_only`)
+
+An `imessage` source, and any source whose `sources.config` has `owner_only: true`, is read only by the local CLI and
+by the owner's own credentials speaking for themselves. Every other remote caller gets `not_found` for its pages
+(private or not), for its facts and timeline rows, and for pages and facts derived from them: a synthesized concept
+with an input page there, and any page or fact whose recorded derivation inputs reach a row there. None of the
+relaxations above widens it: `--private-pages granted-sources`, `--private-facts granted-sources`,
+`search.remote_private_pages`, `access.members_read_lineage`, `access.owner_reads_restricted` and
+`visibility.honor_aliases` leave it in place, and so do shared-room audiences, guests and attested calls. A remote
+write into an owner-only source from any credential but the owner's is refused the same way. The rule is worked out
+at read time from the source, so nothing is stored per page and a repo-less brain works the same.
 
 ### Audience members (`gbrain access member kind`)
 

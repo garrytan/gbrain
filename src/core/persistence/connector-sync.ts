@@ -273,7 +273,7 @@ async function strictPrivateFile(engine: BrainEngine, row: Pick<WriteRequest, 's
 
 /** #9552: the connectors whose imports queue fact extraction, as an unmanaged sync does; never Google mail or GitHub. */
 function factsConnector(connector: ConnectorKind): boolean {
-  return connector === 'slack' || connector === 'meetings';
+  return connector === 'slack' || connector === 'meetings' || connector === 'imessage';
 }
 
 export async function beginConnectorSync(engine: BrainEngine, sourceId: string, connector: ConnectorKind,
