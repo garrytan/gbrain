@@ -28,7 +28,7 @@ use crate::embeddings::{
     StoredVector, scan_chunk_vectors, scan_take_vectors, text_hash, vector_generation,
 };
 use crate::error::{Result, StoreError};
-use crate::facts::{PrivacyPolicy, page_hidden};
+use crate::facts::{OwnerOnlyCache, PrivacyPolicy};
 use crate::kv::{KvRead, KvWrite};
 use crate::pages::{PageRecord, read_page_by_id};
 use crate::sources::read_source;
@@ -366,6 +366,7 @@ fn page_passes(
     options: &VectorSearchOptions,
     hard_excludes: &[String],
     archived: &mut HashMap<String, bool>,
+    owner_only: &mut OwnerOnlyCache,
 ) -> Result<bool> {
     let served = page.text_projection_revision.as_deref() == Some(page.knowledge_revision.as_str())
         || page.text_projection_revision.as_deref() == Some(ACTIVATION_SERVED_REVISION);
@@ -403,7 +404,7 @@ fn page_passes(
         return Ok(false);
     }
     if let Some(policy) = &options.exclude_private
-        && page_hidden(read, page, policy)?
+        && owner_only.page_hidden(read, page, policy)?
     {
         return Ok(false);
     }
@@ -485,6 +486,7 @@ fn search_chunks(
     // Read once, and only when the guard needs it.
     let mut migrating: Option<bool> = None;
     let mut archived: HashMap<String, bool> = HashMap::new();
+    let mut owner_only = OwnerOnlyCache::default();
     let mut hits: Vec<Hit> = Vec::new();
 
     for group in index.chunks.chunk_by(|a, b| a.id == b.id) {
@@ -492,7 +494,14 @@ fn search_chunks(
         let Some(page) = read_page_by_id(read, page_id)? else {
             continue;
         };
-        if !page_passes(read, &page, options, &hard_excludes, &mut archived)? {
+        if !page_passes(
+            read,
+            &page,
+            options,
+            &hard_excludes,
+            &mut archived,
+            &mut owner_only,
+        )? {
             continue;
         }
         let mut chunks: HashMap<u32, ChunkRecord> = visible_chunks(read, page_id)?
@@ -1084,7 +1093,7 @@ mod tests {
         };
         let all = ["a-exact", "m-visibility", "n-access", "o-public", "p-atom"];
         assert_eq!(top(json!({"limit": 5})), all);
-        let policy = json!({"honorAliases": true, "entityPrivacy": true});
+        let policy = json!({"honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage"});
         // The limit counts visible pages only: the hidden pages tie at the top score and take no slot.
         assert_eq!(
             top(json!({"limit": 3, "exclude_private": policy})),
@@ -1099,13 +1108,14 @@ mod tests {
             ["o-public"]
         );
         // Without the alias keys only `visibility` (and a derived page's default) hides a page.
-        let visibility_only = json!({"honorAliases": false, "entityPrivacy": true});
+        let visibility_only =
+            json!({"honorAliases": false, "entityPrivacy": true, "ownerOnly": "lineage"});
         assert_eq!(
             top(json!({"limit": 3, "exclude_private": visibility_only})),
             ["a-exact", "n-access", "o-public"]
         );
         // With the privacy part of the entity gate relaxed, only the member-access part applies: nothing here is hidden.
-        let relaxed = json!({"honorAliases": true, "entityPrivacy": false});
+        let relaxed = json!({"honorAliases": true, "entityPrivacy": false, "ownerOnly": "lineage"});
         assert_eq!(top(json!({"limit": 5, "exclude_private": relaxed})), all);
         // `null` (excludePrivate off) hides nothing, and the policy composes with the other filters.
         assert_eq!(top(json!({"limit": 5, "exclude_private": null})), all);
@@ -1117,6 +1127,60 @@ mod tests {
             top(json!({"exclude_private": policy, "exclude_slugs": ["a-exact"], "limit": 2})),
             ["o-public", "d-multi"]
         );
+    }
+
+    /// The owner-only part of the page policy: a page of an owner-only source never takes a result slot, nor (under the
+    /// lineage form) a concept synthesized from one; under the closed form no page is served while the brain holds an
+    /// owner-only source. A relaxed privacy part keeps it.
+    #[test]
+    fn exclude_private_hides_owner_only_pages_and_what_is_derived_from_them() {
+        let s = corpus();
+        let source: crate::sources::SourceInput =
+            serde_json::from_value(json!({"id": "vault", "config": {"owner_only": true}})).unwrap();
+        s.upsert_source(&source).unwrap();
+        page(&s, "vault", "q-vault", &[axis(0, 4)], json!({}));
+        let derived = json!({"frontmatter": {"synthesized_by": "dream", "visibility": "world"}, "type": "concept"});
+        page(
+            &s,
+            "default",
+            "r-from-vault",
+            &[axis(0, 4)],
+            derived.clone(),
+        );
+        page(&s, "default", "s-from-open", &[axis(0, 4)], derived);
+        let link = |from: &str, to: &str, to_source: &str| {
+            let options = crate::links::AddLinkOptions {
+                link_type: Some("synthesized_from".into()),
+                link_source: Some("concept-provenance".into()),
+                to_source_id: Some(to_source.into()),
+                ..Default::default()
+            };
+            s.add_link(from, to, &options).unwrap();
+        };
+        link("r-from-vault", "q-vault", "vault");
+        link("s-from-open", "a-exact", "default");
+        let top = |form: &str, privacy: bool| -> Vec<String> {
+            let policy = json!({"honorAliases": true, "entityPrivacy": privacy, "ownerOnly": form});
+            let o = opts(json!({"limit": 20, "exclude_private": policy}));
+            let rows = s.search_vector(&q(&axis(0, 4)), &o).unwrap();
+            let mut slugs: Vec<String> = rows
+                .iter()
+                .map(|r| r["slug"].as_str().unwrap().to_string())
+                .collect();
+            slugs.sort();
+            slugs
+        };
+        let plain = opts(json!({"limit": 20}));
+        let every = s.search_vector(&q(&axis(0, 4)), &plain).unwrap();
+        let has = |slug: &str| every.iter().any(|r| r["slug"] == slug);
+        assert!(has("q-vault") && has("r-from-vault"));
+        for privacy in [true, false] {
+            let served = top("lineage", privacy);
+            assert!(!served.iter().any(|x| x == "q-vault" || x == "r-from-vault"));
+            assert!(served.iter().any(|x| x == "a-exact"));
+            assert!(served.iter().any(|x| x == "s-from-open"));
+            assert!(top("closed", privacy).is_empty());
+        }
     }
 
     /// The feeder's guard cases that edit `content_chunks` with SQL: a chunk's model label and its

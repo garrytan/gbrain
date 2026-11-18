@@ -42,7 +42,7 @@
 //! (`facts/privacy.rs`) reads both through [`read_slug_alias`] and [`renamed_to`].
 
 use crate::error::{INVALID_ARGUMENT, Result, StoreError};
-use crate::facts::{PrivacyPolicy, page_hidden};
+use crate::facts::{OwnerOnlyCache, PrivacyPolicy};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::page_columns::PageColumns;
 use crate::pages::{
@@ -556,6 +556,7 @@ impl Store {
             .collect();
         // Titles of live pages per source, read only when a derived row needs them.
         let mut titles: Option<BTreeMap<String, Vec<(String, String)>>> = None;
+        let mut owner_only = OwnerOnlyCache::default();
         let mut out = Vec::new();
         for alias in aliases {
             let mut refs: Vec<AliasRef> = Vec::new();
@@ -573,7 +574,7 @@ impl Store {
                         continue;
                     };
                     if let Some(policy) = &scope.exclude_private
-                        && page_hidden(&*read, &page, policy)?
+                        && owner_only.page_hidden(&*read, &page, policy)?
                     {
                         continue;
                     }
@@ -581,9 +582,11 @@ impl Store {
                     if rank > 0 {
                         let titles = match &mut titles {
                             Some(t) => t,
-                            None => {
-                                titles.insert(live_titles(&*read, scope.exclude_private.as_ref())?)
-                            }
+                            None => titles.insert(live_titles(
+                                &*read,
+                                scope.exclude_private.as_ref(),
+                                &mut owner_only,
+                            )?),
                         };
                         let shadowed = titles.get(source).is_some_and(|pages| {
                             pages.iter().any(|(s, title)| title == alias && s != slug)
@@ -628,6 +631,7 @@ impl Store {
             .map(|r| (r.source_id.as_str(), r.slug.as_str()))
             .filter(|(source, slug)| !has_nul(&[source, slug]))
             .collect();
+        let mut owner_only = OwnerOnlyCache::default();
         let mut out = Vec::new();
         for (source, slug) in refs {
             let mut aliased = false;
@@ -659,7 +663,7 @@ impl Store {
                 continue;
             }
             if let Some(policy) = &query.exclude_private
-                && page_hidden(&*read, &page, policy)?
+                && owner_only.page_hidden(&*read, &page, policy)?
             {
                 continue;
             }
@@ -766,6 +770,7 @@ impl Store {
 fn live_titles(
     read: &dyn KvRead,
     exclude_private: Option<&PrivacyPolicy>,
+    owner_only: &mut OwnerOnlyCache,
 ) -> Result<BTreeMap<String, Vec<(String, String)>>> {
     let mut out: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
     let mut archived: BTreeMap<String, bool> = BTreeMap::new();
@@ -783,7 +788,7 @@ fn live_titles(
         };
         if !gone
             && !match exclude_private {
-                Some(policy) => page_hidden(read, &page, policy)?,
+                Some(policy) => owner_only.page_hidden(read, &page, policy)?,
                 None => false,
             }
         {
@@ -912,12 +917,14 @@ mod tests {
         };
         assert!(answer(json!({})).is_empty());
         assert_eq!(
-            answer(json!({ "excludePrivate": { "honorAliases": true, "entityPrivacy": true } })),
+            answer(
+                json!({ "excludePrivate": { "honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage" } })
+            ),
             vec![("acme".to_string(), vec!["companies/acme".to_string()])]
         );
         // With the privacy part of the policy off, nothing is hidden by `visibility`, so the title shadows again.
         assert!(
-            answer(json!({ "excludePrivate": { "honorAliases": true, "entityPrivacy": false } }))
+            answer(json!({ "excludePrivate": { "honorAliases": true, "entityPrivacy": false, "ownerOnly": "lineage" } }))
                 .is_empty()
         );
     }

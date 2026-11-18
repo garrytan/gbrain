@@ -162,7 +162,7 @@ async function resetPostgres(engine: BrainEngine): Promise<void> {
 }
 
 /** Return the arm to an empty brain (default source only). Harness-only SQL: cases never use it. */
-async function resetArm(arm: ParityArm): Promise<void> {
+export async function resetArm(arm: ParityArm): Promise<void> {
   switch (arm.backend) {
     case 'rust':
       await resetRustArm(arm);

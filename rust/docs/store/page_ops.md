@@ -14,7 +14,8 @@ TypeScript members send `live: true` whenever the caller passes a scope object, 
 `engine_capability_missing` for a truthy `minTrust` or `suppressFlagged`.
 
 `excludePrivate` is the page policy `pageReadFilter` adds, as `facts/privacy.rs` `page_hidden` reads it
-(`{ honorAliases, entityPrivacy }`, as `resolveAliases` takes it): a page the policy hides is not read. The
+(`{ honorAliases, entityPrivacy, ownerOnly }`, as `resolveAliases` takes it): a page the policy hides is not read,
+an owner-only page (a page of an owner-only source, or under the closed form any page of a brain that holds one) included. The
 TypeScript members `getContentFlagsByPageIds`, `getUnverifiedExtractionPageIds` and `getEffectiveDates` send it
 from a truthy `excludePrivate` through `storePagePolicy`, which refuses a caller whose policy is wider than the
 store's. They also accept and ignore the other keys of hybrid search's option bag (its settings, callbacks and

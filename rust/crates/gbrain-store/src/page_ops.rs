@@ -29,7 +29,7 @@
 
 use crate::env::{Env, iso, parse_iso};
 use crate::error::{Result, StoreError};
-use crate::facts::{PrivacyPolicy, page_hidden};
+use crate::facts::{OwnerOnlyCache, PrivacyPolicy};
 use crate::kv::{KvRead, KvWrite};
 use crate::pages::{PageRecord, VersionRecord, all_pages, read_page, remove_page, write_page};
 use crate::sources::{SourceRecord, all_sources, read_source};
@@ -209,6 +209,7 @@ fn passes_read_scope(
     page: &PageRecord,
     scope: &PageReadScope,
     sources: &HashMap<String, SourceRecord>,
+    owner_only: &mut OwnerOnlyCache,
 ) -> Result<bool> {
     if let Some(ids) = scope.source_ids.as_ref().filter(|ids| !ids.is_empty()) {
         if !ids.contains(&page.source_id) {
@@ -220,7 +221,7 @@ fn passes_read_scope(
         return Ok(false);
     }
     if let Some(policy) = &scope.exclude_private
-        && page_hidden(read, page, policy)?
+        && owner_only.page_hidden(read, page, policy)?
     {
         return Ok(false);
     }
@@ -724,6 +725,7 @@ impl Store {
         }
         let read = self.read()?;
         let sources = sources_by_id(&*read)?;
+        let mut owner_only = OwnerOnlyCache::default();
         let mut seen = HashSet::new();
         let mut out = Vec::new();
         for r in refs {
@@ -731,7 +733,7 @@ impl Store {
                 continue;
             }
             if let Some(page) = read_page(&*read, &r.source_id, &r.slug)?
-                && passes_read_scope(&*read, &page, scope, &sources)?
+                && passes_read_scope(&*read, &page, scope, &sources, &mut owner_only)?
             {
                 out.push(json!({
                     "slug": page.slug,
@@ -746,6 +748,7 @@ impl Store {
     fn pages_by_ids(&self, ids: &[i64], scope: &PageReadScope) -> Result<Vec<PageRecord>> {
         let read = self.read()?;
         let sources = sources_by_id(&*read)?;
+        let mut owner_only = OwnerOnlyCache::default();
         let wanted: BTreeSet<u64> = ids
             .iter()
             .filter_map(|id| u64::try_from(*id).ok())
@@ -753,7 +756,7 @@ impl Store {
         let mut out = Vec::new();
         for id in wanted {
             if let Some(page) = crate::pages::read_page_by_id(&*read, id)?
-                && passes_read_scope(&*read, &page, scope, &sources)?
+                && passes_read_scope(&*read, &page, scope, &sources, &mut owner_only)?
             {
                 out.push(page);
             }

@@ -812,14 +812,15 @@ fn marker_reads_under_exclude_private_hide_the_pages_the_policy_hides() {
         ids,
         "a scope alone hides nothing private"
     );
-    let policy = json!({ "honorAliases": true, "entityPrivacy": true });
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage"});
     // `visibility` decides when a page has it; the alias keys only count for a page without one.
     assert_eq!(
         read(json!({ "live": true, "excludePrivate": policy })),
         vec![ids[0], ids[3]]
     );
     // Without the alias keys (`honorAliases` false) only `visibility` hides a page.
-    let visibility_only = json!({ "honorAliases": false, "entityPrivacy": true });
+    let visibility_only =
+        json!({ "honorAliases": false, "entityPrivacy": true, "ownerOnly": "lineage"});
     assert_eq!(
         read(json!({ "live": true, "excludePrivate": visibility_only })),
         vec![ids[0], ids[2], ids[3]]

@@ -79,6 +79,7 @@ export async function runReindexMultimodal(
   engine: BrainEngine,
   opts: ReindexMultimodalOpts,
 ): Promise<ReindexMultimodalResult> {
+  if (!opts.noEmbed && !opts.costEstimate) await (await import('../core/embedding-dim-check.ts')).assertBrainEmbeddingEnabled(engine);
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
   progress.start('reindex_multimodal', 0);
 

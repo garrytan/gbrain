@@ -84,7 +84,8 @@ Where this engine differs from PGLite:
 - Text that holds a NUL byte is refused `invalid_argument` on write and finds nothing on read.
 - On the alias reads other than `resolveAliases` and `aliasCanonicalRefs`, `excludePrivate`, `minTrust`
   and `suppressFlagged` refuse with `engine_capability_missing`; `resolveAliases` serves
-  `excludePrivate` and refuses the other two. `requireSafeChunks` and `inline` change nothing.
+  `excludePrivate` and refuses the other two. Both policy reads (`resolveAliases` and `aliasCanonicalRefs`) apply
+  the owner-only rule of the page policy (`ownerOnly`) with the owner-only sources read once per call. `requireSafeChunks` and `inline` change nothing.
 - `aliasCanonicalRefs` refuses `minTrust` and `suppressFlagged`: the store keeps no `trust_tier`
   and no activation suppression.
 

@@ -14,10 +14,10 @@ use serde_json::{Map, Value, json};
 
 use super::tsearch::{TsVector, Weight, concat, fts_input, setweight, to_tsvector};
 use super::vector_cache::{VectorKind, cached};
-use crate::chunks::ChunkRecord;
+use crate::chunks::{ChunkRecord, SAFE_FENCE_CHUNKER_VERSION};
 use crate::env::iso;
 use crate::error::{Result, StoreError};
-use crate::facts::{PrivacyPolicy, page_hidden};
+use crate::facts::{OwnerOnlySources, PrivacyPolicy, page_hidden};
 use crate::kv::KvRead;
 use crate::pages::PageRecord;
 use crate::sources::read_source;
@@ -26,10 +26,6 @@ use crate::timeline_queries::jsonb_field_text;
 /// The `text_projection_revision` the v153 activation leaves on a page whose pre-upgrade index it
 /// keeps serving (`servedTextProjectionFilter`, search/safe-chunks.ts).
 const ACTIVATION_SERVED_REVISION: &str = "00000000-0000-0000-0000-000000000153";
-
-/// `SAFE_FENCE_CHUNKER_VERSION` (`src/core/search/safe-chunks.ts`): a page chunked at this version or later holds only
-/// safely fenced chunks (`safeChunksFilter`).
-const SAFE_FENCE_CHUNKER_VERSION: i16 = 4;
 
 /// Frontmatter keys whose presence hides a page from search (`buildVisibilityClause`).
 const HIDING_FRONTMATTER_KEYS: [&str; 2] = ["quarantine", "pinned_question"];
@@ -132,6 +128,8 @@ pub(super) struct PageFilter<'a> {
     after: Option<Bound>,
     before: Option<Bound>,
     live_sources: HashMap<String, bool>,
+    /// The owner-only sources, read on the first page `exclude_private` judges.
+    owner_only: Option<OwnerOnlySources>,
 }
 
 impl<'a> PageFilter<'a> {
@@ -141,6 +139,7 @@ impl<'a> PageFilter<'a> {
             after: Bound::parse(options.after_date.as_ref(), "afterDate")?,
             before: Bound::parse(options.before_date.as_ref(), "beforeDate")?,
             live_sources: HashMap::new(),
+            owner_only: None,
         })
     }
 
@@ -155,19 +154,24 @@ impl<'a> PageFilter<'a> {
         {
             return Ok(false);
         }
-        // A page that records no chunker version was chunked by this store's chunker, which seals (as `chunk_queries`
-        // reads it); only a version recorded below the safe fence chunker is unsafe.
+        // `safeChunksFilter`: `chunker_version >= 4`. A page that records no version is not safe (the comparison is NULL), and
+        // the store stamps the version when it seals chunks and takes it below the fence when a write changes them.
         if o.require_safe_chunks
-            && page
+            && !page
                 .chunker_version
-                .is_some_and(|v| v < SAFE_FENCE_CHUNKER_VERSION)
+                .is_some_and(|v| v >= SAFE_FENCE_CHUNKER_VERSION)
         {
             return Ok(false);
         }
-        if let Some(policy) = &o.exclude_private
-            && page_hidden(read, page, policy)?
-        {
-            return Ok(false);
+        if let Some(policy) = &o.exclude_private {
+            if self.owner_only.is_none() {
+                self.owner_only = Some(OwnerOnlySources::read(read)?);
+            }
+            if let Some(owner_only) = &self.owner_only
+                && page_hidden(read, page, policy, owner_only)?
+            {
+                return Ok(false);
+            }
         }
         if o.page_type.as_ref().is_some_and(|t| *t != page.page_type)
             || o.types
@@ -291,6 +295,14 @@ pub(super) fn chunk_vector(chunk: &ChunkRecord) -> Result<Arc<TsVector>> {
         let head = concat(&part(doc, Weight::A)?, &part(symbol, Weight::A)?)?;
         concat(&head, &part(&chunk.chunk_text, Weight::B)?)
     })
+}
+
+/// The chunk's vector as a search reads it, or `None` for a chunk whose vector cannot be built (a text past the
+/// tsvector size cap). SQL never stores such a chunk (its trigger raises in the write, and `check_chunk_vector` raises
+/// the same here), but a store written before that check may hold one. It matches nothing; it must not fail the searches
+/// that pass over it.
+pub(super) fn readable_chunk_vector(chunk: &ChunkRecord) -> Option<Arc<TsVector>> {
+    chunk_vector(chunk).ok()
 }
 
 /// `[[:space:]]` in a Postgres regular expression.

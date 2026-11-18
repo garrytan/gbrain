@@ -10,7 +10,7 @@ use common::{TempDir, open};
 use gbrain_store::Store;
 use gbrain_store::chunks::{ChunkInput, UpsertChunksOptions};
 use gbrain_store::error::*;
-use gbrain_store::facts::PrivacyPolicy;
+use gbrain_store::facts::{OwnerOnly, PrivacyPolicy};
 use gbrain_store::links::AddLinkOptions;
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::salience::EmotionalWeightRow;
@@ -319,6 +319,7 @@ fn anomalies_under_exclude_private_skip_hidden_pages_in_today_and_the_baseline()
     let strict = PrivacyPolicy {
         honor_aliases: true,
         entity_privacy: true,
+        owner_only: OwnerOnly::Lineage,
     };
     assert_eq!(
         slugs(&read(since, None)),
@@ -329,12 +330,14 @@ fn anomalies_under_exclude_private_skip_hidden_pages_in_today_and_the_baseline()
     let no_alias = PrivacyPolicy {
         honor_aliases: false,
         entity_privacy: true,
+        owner_only: OwnerOnly::Lineage,
     };
     assert_eq!(slugs(&read(since, Some(no_alias))), ["alias", "open"]);
     // With the privacy part off (privacy relaxed), only the reader list still hides a page.
     let relaxed = PrivacyPolicy {
         honor_aliases: true,
         entity_privacy: false,
+        owner_only: OwnerOnly::Lineage,
     };
     assert_eq!(
         slugs(&read(since, Some(relaxed))),

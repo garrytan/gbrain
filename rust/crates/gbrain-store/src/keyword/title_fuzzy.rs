@@ -23,53 +23,72 @@ use serde_json::{Value, json};
 /// `findByTitleFuzzy`'s default `minSimilarity`.
 pub(crate) const DEFAULT_MIN_SIMILARITY: f64 = 0.55;
 
+/// One element of a LIKE pattern once its escapes are read.
+#[derive(Clone, Copy)]
+enum Like {
+    /// `%`: any run of characters, also none.
+    Any,
+    /// `_`: exactly one character.
+    One,
+    /// A character that stands for itself (an escaped `%`, `_` or `\\` too).
+    Char(char),
+}
+
 /// SQL `LIKE` with the default escape character `\`: `%` matches any run of characters, `_` one
 /// character, and `\x` the character `x`. A trailing lone `\` matches nothing, as in PG 18 when
 /// the text is used up first (the patterns built here never end in one).
+///
+/// Iterative, with one backtrack point (the last `%`): once a later part of the pattern has matched
+/// after a `%`, no earlier `%` can do better, so the work is at most the text length times the
+/// pattern length and a pattern of many `%` cannot make it explode.
 pub(crate) fn sql_like(text: &str, pattern: &str) -> bool {
-    fn go(t: &[char], p: &[char]) -> bool {
-        let (mut ti, mut pi) = (0, 0);
-        while pi < p.len() {
-            match p[pi] {
-                '%' => {
-                    while pi < p.len() && p[pi] == '%' {
-                        pi += 1;
-                    }
-                    if pi == p.len() {
-                        return true;
-                    }
-                    return (ti..=t.len()).any(|start| go(&t[start..], &p[pi..]));
-                }
-                '_' => {
-                    if ti == t.len() {
-                        return false;
-                    }
-                    ti += 1;
-                    pi += 1;
-                }
-                c => {
-                    let lit = if c == '\\' {
-                        pi += 1;
-                        match p.get(pi) {
-                            Some(&n) => n,
-                            None => return false,
-                        }
-                    } else {
-                        c
-                    };
-                    if t.get(ti) != Some(&lit) {
-                        return false;
-                    }
-                    ti += 1;
-                    pi += 1;
-                }
-            }
-        }
-        ti == t.len()
+    let mut tokens: Vec<Like> = Vec::with_capacity(pattern.len());
+    let mut chars = pattern.chars();
+    while let Some(c) = chars.next() {
+        tokens.push(match c {
+            '%' => Like::Any,
+            '_' => Like::One,
+            '\\' => match chars.next() {
+                Some(escaped) => Like::Char(escaped),
+                None => return false,
+            },
+            c => Like::Char(c),
+        });
     }
     let t: Vec<char> = text.chars().collect();
-    let p: Vec<char> = pattern.chars().collect();
-    go(&t, &p)
+    let (mut ti, mut pi) = (0, 0);
+    // Where the last `%` left off: the token after it and the text position it has consumed up to.
+    let mut resume: Option<(usize, usize)> = None;
+    while ti < t.len() {
+        match tokens.get(pi) {
+            Some(Like::Any) => {
+                pi += 1;
+                resume = Some((pi, ti));
+                continue;
+            }
+            Some(Like::One) => {
+                ti += 1;
+                pi += 1;
+                continue;
+            }
+            Some(Like::Char(c)) if *c == t[ti] => {
+                ti += 1;
+                pi += 1;
+                continue;
+            }
+            _ => {}
+        }
+        match resume {
+            Some((after, consumed)) => {
+                // Let the last `%` take one more character and try the rest of the pattern again.
+                resume = Some((after, consumed + 1));
+                pi = after;
+                ti = consumed + 1;
+            }
+            None => return false,
+        }
+    }
+    tokens[pi..].iter().all(|token| matches!(token, Like::Any))
 }
 
 /// A JS number bound to a `real` parameter: PG reads its text with `strtof`, and a finite value
@@ -151,6 +170,125 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Runs `sql_like` on its own thread and fails the test, instead of hanging it, when it does not answer in time.
+    fn like_within(text: &str, pattern: &str, limit: std::time::Duration) -> Option<bool> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (text, pattern) = (text.to_string(), pattern.to_string());
+        std::thread::spawn(move || {
+            let _ = tx.send(sql_like(&text, &pattern));
+        });
+        rx.recv_timeout(limit).ok()
+    }
+
+    #[test]
+    fn like_with_many_percent_groups_answers_in_bounded_time() {
+        let limit = std::time::Duration::from_secs(2);
+        let slug = format!("{}/x", "a".repeat(64));
+        let no = format!("{}b/%", "%a".repeat(24));
+        let yes = format!("{}/%", "%a".repeat(24));
+        assert_eq!(like_within(&slug, &no, limit), Some(false));
+        assert_eq!(like_within(&slug, &yes, limit), Some(true));
+        // The codex case: a 36-a slug against 18 `%a` groups and a literal the slug lacks.
+        let slug = format!("{}/p", "a".repeat(36));
+        let pattern = format!("{}b/%", "%a".repeat(18));
+        assert_eq!(like_within(&slug, &pattern, limit), Some(false));
+        // A long text and a long pattern of mixed wildcards stay polynomial.
+        let text = "ab".repeat(5_000);
+        let pattern = format!("{}c", "%_a%b_".repeat(200));
+        assert_eq!(like_within(&text, &pattern, limit), Some(false));
+        let pattern = format!("{}%", "%a_".repeat(200));
+        assert_eq!(like_within(&text, &pattern, limit), Some(true));
+    }
+
+    #[test]
+    fn like_edge_cases() {
+        // Empty text and pattern, runs of `%`, and `%` or `_` at the ends.
+        assert!(sql_like("", ""));
+        assert!(sql_like("", "%"));
+        assert!(sql_like("", "%%%"));
+        assert!(!sql_like("", "_"));
+        assert!(!sql_like("a", ""));
+        assert!(sql_like("abc", "%%b%%"));
+        assert!(sql_like("abc", "%c"));
+        assert!(!sql_like("abc", "%d"));
+        assert!(sql_like("abc", "a%c"));
+        assert!(sql_like("ac", "a%c"));
+        assert!(!sql_like("abx", "a%c"));
+        assert!(sql_like("abc", "___"));
+        assert!(!sql_like("abc", "____"));
+        assert!(!sql_like("abc", "__"));
+        // `_` counts characters, not bytes; `%` runs over multibyte text.
+        assert!(sql_like("日本語", "___"));
+        assert!(sql_like("日本語", "日%語"));
+        assert!(!sql_like("日本語", "____"));
+        // A backslash makes the next character literal, wildcards included, and `\\` is one backslash.
+        assert!(sql_like("a%b", "a\\%b"));
+        assert!(!sql_like("axb", "a\\%b"));
+        assert!(sql_like("a_b", "a\\_b"));
+        assert!(!sql_like("axb", "a\\_b"));
+        assert!(sql_like("a\\b", "a\\\\b"));
+        assert!(sql_like("ab", "a\\b"));
+        assert!(sql_like("a%b%c", "a\\%b\\%c"));
+        // A literal needed after `%` is found after a wrong early try (the matcher must back up to the last `%`).
+        assert!(sql_like("aab", "%ab"));
+        assert!(sql_like("xaab", "%a_b"));
+        assert!(!sql_like("xaxab", "%a_b"));
+        assert!(sql_like("mississippi", "%iss%ppi"));
+        assert!(!sql_like("mississippi", "%iss%ppx"));
+        // An escape with nothing after it matches nothing.
+        assert!(!sql_like("a", "a\\"));
+        assert!(!sql_like("a\\", "a\\"));
+        assert!(!sql_like("ab", "%\\"));
+    }
+
+    /// The matcher agrees with the backtracking definition of LIKE on every small text and pattern.
+    #[test]
+    fn like_agrees_with_the_recursive_definition_on_small_inputs() {
+        fn reference(t: &[char], p: &[char]) -> bool {
+            match p.first() {
+                None => t.is_empty(),
+                Some('%') => (0..=t.len()).any(|i| reference(&t[i..], &p[1..])),
+                Some('_') => !t.is_empty() && reference(&t[1..], &p[1..]),
+                Some('\\') => match p.get(1) {
+                    None => false,
+                    Some(c) => t.first() == Some(c) && reference(&t[1..], &p[2..]),
+                },
+                Some(c) => t.first() == Some(c) && reference(&t[1..], &p[1..]),
+            }
+        }
+        fn all(alphabet: &[char], max: usize) -> Vec<Vec<char>> {
+            let mut out = vec![Vec::new()];
+            let mut level = vec![Vec::new()];
+            for _ in 0..max {
+                level = level
+                    .iter()
+                    .flat_map(|s: &Vec<char>| {
+                        alphabet.iter().map(move |c| {
+                            let mut n = s.clone();
+                            n.push(*c);
+                            n
+                        })
+                    })
+                    .collect();
+                out.extend(level.iter().cloned());
+            }
+            out
+        }
+        let texts = all(&['a', 'b', '%', '\\'], 5);
+        let patterns = all(&['a', 'b', '%', '_', '\\'], 5);
+        for p in &patterns {
+            let pattern: String = p.iter().collect();
+            for t in &texts {
+                let text: String = t.iter().collect();
+                assert_eq!(
+                    sql_like(&text, &pattern),
+                    reference(t, p),
+                    "{text:?} LIKE {pattern:?}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn like_follows_postgres() {

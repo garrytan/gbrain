@@ -19,7 +19,7 @@
 
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
-use crate::facts::{PrivacyPolicy, page_hidden};
+use crate::facts::{OwnerOnlyCache, PrivacyPolicy};
 use crate::kv::{KvRead, KvWrite};
 use crate::links::no_nul;
 use crate::page_columns::PageColumns;
@@ -315,6 +315,7 @@ impl Store {
             read: &*read,
             archived: HashMap::new(),
         };
+        let mut owner_only = OwnerOnlyCache::default();
         let mut rows: Vec<(f64, PageRecord, Value)> = Vec::new();
         for page in all_pages(&*read)? {
             if opts
@@ -328,7 +329,7 @@ impl Store {
                 continue;
             }
             if let Some(policy) = &opts.exclude_private
-                && page_hidden(&*read, &page, policy)?
+                && owner_only.page_hidden(&*read, &page, policy)?
             {
                 continue;
             }
@@ -388,6 +389,7 @@ impl Store {
             read: &*read,
             archived: HashMap::new(),
         };
+        let mut owner_only = OwnerOnlyCache::default();
         let mut seen = HashSet::new();
         let mut out = Vec::new();
         for r in &input.refs {
@@ -401,7 +403,7 @@ impl Store {
                 continue;
             }
             if let Some(policy) = &input.exclude_private
-                && page_hidden(&*read, &page, policy)?
+                && owner_only.page_hidden(&*read, &page, policy)?
             {
                 continue;
             }

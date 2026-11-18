@@ -37,9 +37,9 @@ mod collapse;
 mod embedding;
 mod privacy;
 
-pub use privacy::PrivacyPolicy;
 use privacy::hidden_by_private_provenance;
-pub(crate) use privacy::page_hidden;
+pub use privacy::{OwnerOnly, PrivacyPolicy};
+pub(crate) use privacy::{OwnerOnlyCache, OwnerOnlySources, page_hidden};
 
 use crate::chunks::embedding_dimensions;
 use crate::config::read_config;
@@ -1113,14 +1113,17 @@ pub(crate) fn hidden_by_deleted_page(read: &dyn KvRead, row: &FactRecord) -> Res
     Ok(false)
 }
 
-/// `privateProvenanceFilterUnderPolicy('facts')`, when the read passes `excludePrivate`.
+/// `privateProvenanceFilterUnderPolicy('facts')`, when the read passes `excludePrivate`. The owner-only sources are
+/// read from the same snapshot for each row (a short scan of the source records).
 pub(crate) fn hidden_by_policy(
     read: &dyn KvRead,
     row: &FactRecord,
     policy: &Option<PrivacyPolicy>,
 ) -> Result<bool> {
     match policy {
-        Some(policy) => hidden_by_private_provenance(read, row, policy),
+        Some(policy) => {
+            hidden_by_private_provenance(read, row, policy, &OwnerOnlySources::read(read)?)
+        }
         None => Ok(false),
     }
 }

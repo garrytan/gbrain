@@ -20,7 +20,7 @@
 use std::collections::BTreeMap;
 
 use super::filters::{
-    KeywordOptions, PageFilter, chunk_vector, result_row, row_count, source_factor,
+    KeywordOptions, PageFilter, readable_chunk_vector, result_row, row_count, source_factor,
 };
 use super::rank::ts_rank;
 use super::tsearch::{TsQuery, phraseto_tsquery, ts_matches, websearch_to_tsquery};
@@ -87,7 +87,9 @@ impl Store {
                 {
                     continue;
                 }
-                let vector = chunk_vector(&chunk)?;
+                let Some(vector) = readable_chunk_vector(&chunk) else {
+                    continue;
+                };
                 let text = !options.handles_only && ts_matches(&vector, &matcher.query);
                 if !text && !handle {
                     continue;
