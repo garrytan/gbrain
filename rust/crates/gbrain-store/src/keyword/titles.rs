@@ -30,9 +30,14 @@
 //!   characters of the raw timeline at C, and the first 32,768 characters of the page's
 //!   timeline entries (`summary || ' ' || detail`, by id, joined by a space) at C. The trigger
 //!   reads the entries that exist when the page row is written; the store keeps the entries
-//!   created no later than the page's `updated_at`. A NULL timeline reads as empty: PGLite's
-//!   trigger falls back to `timeline_lead`, which the store does not keep (follow-up
-//!   `title-vector-segmented-lead`).
+//!   created no later than the page's `updated_at`. A NULL timeline (a segmented page) reads
+//!   the page's `timeline_lead`, as the trigger does (`coalesce(timeline, timeline_lead, '')`).
+//!   The page_body family keeps the lead in its private body state; [`timeline_lead`] reads
+//!   NULL until page_body exposes a `pub(crate)` reader (follow-up `title-vector-segmented-lead`).
+//!
+//! A sealed segmented page takes the sealed form: PGLite's `sealSegmentedPage` writes the title
+//! plus the sanitized lead (withdrawals and purges overlaid), which only TypeScript computes, so
+//! the family that seals segmented pages records it with `pages::record_search_timeline`.
 //!
 //! PGLite's trigger also fires when a putPage writes an unchanged page after its seal (the
 //! revision, and so the served state, stays): the vector then holds the trigger form. The store
@@ -105,6 +110,25 @@ fn weighted(text: &str, weight: Weight) -> Result<TsVector> {
     Ok(setweight(to_tsvector(&fts_input(text))?, weight))
 }
 
+/// The `timeline_lead` of a segmented page (NULL for an inline page). The page_body family keeps
+/// it in its private body state; until it exposes a `pub(crate)` reader, this reads NULL (follow-up
+/// `title-vector-segmented-lead`), so a segmented page's trigger form holds the title and entries.
+fn timeline_lead(_read: &dyn KvRead, _page: &PageRecord) -> Result<Option<String>> {
+    Ok(None)
+}
+
+/// The trigger's timeline text: `coalesce(timeline, timeline_lead, '')`, the lead read only for a
+/// NULL timeline.
+fn trigger_timeline(
+    timeline: Option<&str>,
+    lead: impl FnOnce() -> Result<Option<String>>,
+) -> Result<String> {
+    Ok(match timeline {
+        Some(t) => t.to_owned(),
+        None => lead()?.unwrap_or_default(),
+    })
+}
+
 /// The page's `search_vector` (see the module doc).
 fn page_vector(read: &dyn KvRead, page: &PageRecord) -> Result<TsVector> {
     let title = weighted(&page.title, Weight::A)?;
@@ -114,13 +138,8 @@ fn page_vector(read: &dyn KvRead, page: &PageRecord) -> Result<TsVector> {
         let timeline = weighted(left(&sealed.timeline, SEARCH_TIMELINE_MAX_CHARS), Weight::C)?;
         return concat(&title, &timeline);
     }
-    let timeline = weighted(
-        left(
-            page.timeline.as_deref().unwrap_or(""),
-            TIMELINE_FTS_MAX_CHARS,
-        ),
-        Weight::C,
-    )?;
+    let raw = trigger_timeline(page.timeline.as_deref(), || timeline_lead(read, page))?;
+    let timeline = weighted(left(&raw, TIMELINE_FTS_MAX_CHARS), Weight::C)?;
     let mut entries: Vec<TimelineRecord> = Vec::new();
     let mut failure = None;
     scan_prefix(read, &keys::timeline_prefix(page.id), false, &mut |_, v| {
@@ -414,6 +433,21 @@ mod tests {
         assert_eq!(vector_of(&store), "'alpha':1A 'nebula':2A 'omega':3C");
         seal(&store, "notes/a", Some(""));
         assert_eq!(vector_of(&store), "'alpha':1A 'nebula':2A");
+    }
+
+    #[test]
+    fn a_null_timeline_reads_the_lead_and_a_present_timeline_never_does() {
+        let lead = || Ok(Some("segment lead".to_owned()));
+        assert_eq!(trigger_timeline(None, lead).unwrap(), "segment lead");
+        assert_eq!(
+            trigger_timeline(Some(""), || panic!("read the lead")).unwrap(),
+            ""
+        );
+        assert_eq!(
+            trigger_timeline(Some("raw"), || panic!("read the lead")).unwrap(),
+            "raw"
+        );
+        assert_eq!(trigger_timeline(None, || Ok(None)).unwrap(), "");
     }
 
     #[test]

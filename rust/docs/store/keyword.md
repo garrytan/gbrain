@@ -113,6 +113,13 @@ The page vector is not stored; `keyword/titles.rs` rebuilds the one PGLite last 
   than its `updated_at` (`summary || ' ' || detail` by id, `left(…, 32768)`) at C. A page whose revision is not sealed
   is not served at all (the page filter), so this form serves only a page sealed without text (the store's own
   indexing `putPage`) and an activation page.
+- A NULL timeline (a segmented page) reads `timeline_lead` in the trigger form, as the trigger's
+  `coalesce(timeline, timeline_lead, '')` does. page_body keeps the lead privately, so it reads NULL until page_body
+  exposes a reader (follow-up `title-vector-segmented-lead`).
+- A sealed segmented page takes the sealed form: PGLite's `sealSegmentedPage` writes the title plus
+  `sanitizeRemoteBody` of the lead with withdrawals and purges overlaid. Only TypeScript computes that text, so the
+  family that seals segmented pages must record it with `pages::record_search_timeline`. No Rust member seals a
+  segmented page yet, so no segmented page is searchable on the Rust engine today.
 
 
 - `searchKeywordChunks` follows PGLite: no page filters (they refuse), `stale` computed from the newest timeline entry
@@ -126,8 +133,8 @@ The page vector is not stored; `keyword/titles.rs` rebuilds the one PGLite last 
 - `searchTitles` sets `stale` from the newest timeline entry against `updated_at`, as PGLite does; Postgres returns
   `stale: false`.
 - `searchTitles` trigger form: PGLite's trigger reads the timeline entries that exist when the page row is written;
-  the store approximates that with the entries created no later than `updated_at`, and reads a NULL timeline as empty
-  where PGLite falls back to `timeline_lead` (follow-up `title-vector-segmented-lead`).
+  the store approximates that with the entries created no later than `updated_at`. A NULL timeline reads the lead
+  through a stand-in that returns NULL until page_body exposes it (follow-up `title-vector-segmented-lead`).
 - `searchTitles` after a re-put of an unchanged page: PGLite's trigger rewrites the vector to the trigger form (the
   revision, and so the seal, stays); the store keeps the sealed form (follow-up `title-vector-reput-after-seal`).
 - `searchTitles` refuses CJK queries like the other keyword members; the SQL title statement has no CJK path of its
@@ -143,7 +150,8 @@ The page vector is not stored; `keyword/titles.rs` rebuilds the one PGLite last 
 - `keyword-cjk`: serve CJK queries (the SQL engines' bigram path).
 - `keyword-chunks-page-filters`: settle which engine is right for `searchKeywordChunks` page filters and `stale`.
 - `fuzzy-title-unscoped-deleted`: the SQL unscoped arm returns soft-deleted pages.
-- `title-vector-segmented-lead`: keep `timeline_lead` so the trigger form of a segmented page matches.
+- `title-vector-segmented-lead`: page_body exposes `pub(crate) fn timeline_lead(read, page_id)` for the trigger
+  form, and the segmented seal records the sanitized, overlaid lead with `pages::record_search_timeline`.
 - `title-vector-reput-after-seal`: core drops `M page_search_timeline/<page id>` on every putPage write that sets
   `title` or `timeline`, so a re-put reads the trigger form as PGLite does.
 - Serve the refused privacy and trust options once the store records them.
