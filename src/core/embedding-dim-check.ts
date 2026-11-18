@@ -90,6 +90,18 @@ export async function assertBrainEmbeddingEnabled(engine: BrainEngine, cfg?: GBr
   assertEmbeddingEnabled({ engine: engine.kind, ...(cfg ?? loadConfig() ?? {}), embedding_disabled: true });
 }
 
+/**
+ * Refuse `gbrain embed` on a brain whose config file or own `embedding_disabled` row opts out (a failed row read
+ * counts as disabled), the planes the cycle's embed phase reads. A write consumer's config governs that consumer's fact
+ * writes only, so it is not consulted here.
+ */
+export async function assertBrainRowEmbeddingEnabled(engine: BrainEngine): Promise<void> {
+  const cfg = loadConfig();
+  assertEmbeddingEnabled(cfg);
+  const { embeddingSendBlocked } = await import('./embedding-disabled.ts');
+  if (await embeddingSendBlocked(engine)) assertEmbeddingEnabled({ engine: engine.kind, ...(cfg ?? {}), embedding_disabled: true });
+}
+
 export function assertEmbeddingEnabled(cfg: GBrainConfig | null): void {
   if (!cfg?.embedding_disabled) return;
   const fix = embeddingEnablement(cfg);

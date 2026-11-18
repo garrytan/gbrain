@@ -27,8 +27,7 @@ import {
 import { createProgress, type ProgressReporter } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { StaleChunkProgress } from '../core/embed-stale-progress.ts';
-import { assertEmbeddingEnabled } from '../core/embedding-dim-check.ts';
-import { embeddingSendBlocked } from '../core/embedding-disabled.ts';
+import { assertBrainRowEmbeddingEnabled } from '../core/embedding-dim-check.ts';
 import { writeCliError } from '../cli/cli-error.ts';
 import { countRestampOnlyChunks, hasSignatureDrift, invalidateStaleSignatureEmbeddingsGuarded } from '../core/embedding-invalidation.ts';
 import { contentDriftSweepLine, runContentDriftSweep, type ContentDriftSweepStatus } from '../core/content-drift-sweep.ts';
@@ -453,9 +452,7 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
   // v0.37.10.0 T7 (D9): refuse cleanly when init persisted the deferred-setup
   // sentinel. Skipped in dryRun mode so plan-mode introspection still works.
   if (!opts.dryRun) {
-    const config = loadConfig();
-    assertEmbeddingEnabled(config);
-    if (await embeddingSendBlocked(engine)) assertEmbeddingEnabled({ engine: engine.kind, ...(config ?? {}), embedding_disabled: true });
+    await assertBrainRowEmbeddingEnabled(engine);
   }
 
   // v0.41.6.0 D1: preflight embedding credentials. Skipped in dryRun mode
