@@ -348,7 +348,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readPrivateQueueState': OOS.minionJobs, 'listStaleWaitingJobIds': OOS.minionJobs,
   'countTtlExpiredWaiting': OOS.minionJobs, 'readJobStats': OOS.minionJobs, 'readQueueFamilyStats': OOS.minionJobs,
   'hasOverdueWatchdogSuspect': OOS.minionJobs, 'listUnreviewedJobs': OOS.minionJobs,
-  'getFailedJobForRetry': OOS.minionJobs, 'countOpenJobsByOwner': OOS.minionJobs, 'lockOAuthClient': OOS.minionJobs, 'listJobPage': OOS.minionJobs, 'listJobAttachmentNames': OOS.minionJobs,
+  'getFailedJobForRetry': OOS.minionJobs, 'countOpenJobsByOwner': OOS.minionJobs, 'readJobSourceState': OOS.minionJobs, 'lockOAuthClient': OOS.minionJobs, 'listJobPage': OOS.minionJobs, 'listJobAttachmentNames': OOS.minionJobs,
   'insertJobAttachment': OOS.minionJobs, 'listJobAttachments': OOS.minionJobs, 'getJobAttachment': OOS.minionJobs,
   'deleteJobAttachment': OOS.minionJobs,
   // cycle locks (retry/direct-pool transport differs per method; the lease statements are pinned by the parity cases)

@@ -57,6 +57,13 @@ export const upsertEventProjection: StoreMember<[opts: EventProjection], { proje
   return storeCall({ member: 'upsertEventProjection' }, () => brain.upsertEventProjection(options));
 };
 
+export const removeTimelineRows: StoreMember<[pageId: number, rows: TimelineRowRemoval[]], Array<{ date: string; removed: boolean }>> = (brain, pageId, rows) =>
+  storeCall({ member: 'removeTimelineRows' }, () => brain.removeTimelineRows(pageId, rows));
+
+export const updateTimelineDetails: StoreMember<[pageId: number, rows: TimelineDetailRefresh[]], void> = async (brain, pageId, rows) => {
+  await storeCall({ member: 'updateTimelineDetails' }, () => brain.updateTimelineDetails(pageId, rows));
+};
+
 // ---------------------------------------------------------------------------------------------------------------------
 // The timeline reads of src/core/engine-sql/timeline-reads.ts
 // ---------------------------------------------------------------------------------------------------------------------
@@ -143,10 +150,3 @@ export const listTimelineOrphanPages: StoreMember<[opts: { afterId: number; limi
     const rows: TimelineOrphanPage[] = await storeCall({ member }, () => brain.listTimelineOrphanPages(input));
     return rows.map(r => ({ ...r, id: Number(r.id) }));
   };
-
-export const removeTimelineRows: StoreMember<[pageId: number, rows: TimelineRowRemoval[]], Array<{ date: string; removed: boolean }>> = (brain, pageId, rows) =>
-  storeCall({ member: 'removeTimelineRows' }, () => brain.removeTimelineRows(pageId, rows));
-
-export const updateTimelineDetails: StoreMember<[pageId: number, rows: TimelineDetailRefresh[]], void> = async (brain, pageId, rows) => {
-  await storeCall({ member: 'updateTimelineDetails' }, () => brain.updateTimelineDetails(pageId, rows));
-};

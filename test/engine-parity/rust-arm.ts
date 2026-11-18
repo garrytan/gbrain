@@ -89,15 +89,6 @@ export async function archiveRustSource(engine: unknown, id: string): Promise<vo
   await (engine as RustEngine).openStore('archiveSource').brain.setSourceArchived(id, true);
 }
 
-/**
- * Fixture: set the Rust brain's write trust context (the store's stand-in for the transaction-local
- * `gbrain.write_trust_tier`, `gbrain.write_origin` and `gbrain.write_open_facts` settings) by setting name. Until the
- * Rust engine serves `transaction` and `applyTransactionSettings`, a parity case sets it here directly.
- */
-export async function applyRustWriteTrust(engine: unknown, names: readonly string[], values: readonly string[]): Promise<void> {
-  await (engine as RustEngine).openStore('applyWriteTrust').brain.applyWriteTrust([...names], [...values]);
-}
-
 export interface DivergenceRow { file: string; name: string; normalizer: string; reason: string }
 
 /**

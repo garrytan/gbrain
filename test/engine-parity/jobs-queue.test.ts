@@ -30,9 +30,10 @@ import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { AdmitJobPolicy, AdmitJobSpec, ClaimJobSpec, JobInsertValues, JobRow } from '../../src/core/engine-sql/jobs.ts';
 import type { JobAttachmentInsert, JobStatsRead, RetryJobPolicy } from '../../src/core/engine-sql/jobs-queue.ts';
-import { APPLICATION_AUTHORITY, coalesceDecision, parseSubmissionAuthority, type SubmissionAuthority } from '../../src/core/minions/submission-authority.ts';
+import { APPLICATION_AUTHORITY, authorityDigest, coalesceDecision, parseSubmissionAuthority, type SubmissionAuthority } from '../../src/core/minions/submission-authority.ts';
 import { WATCHDOG_SUSPECT_MARK } from '../../src/core/minions/watchdog-attribution.ts';
 import { admitDelegatedRetry, checkDelegatedCapacity } from '../../src/core/minions/delegated-admission.ts';
+import { MinionQueue } from '../../src/core/minions/queue.ts';
 import { parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
@@ -682,6 +683,56 @@ describe('engine parity: minion queue', () => {
       };
       const id = await finished(engine, 'subagent', 'failed', { data: { __owner_client_id: 'gone-client', __delegation_grant: grant } });
       const out = await denied(() => engine.retryJob(id, { admit: (tx) => admitDelegatedRetry(tx, id) }));
+      return { out, status: (await engine.getJob(id))?.status };
+    });
+
+  // readJobSourceState is the agent job authority check's source read: archived and the creation stamp, or null.
+  parityTest('readJobSourceState reads an agent job source\'s archived flag and creation stamp, and null for an unknown source',
+    { methods: ['readJobSourceState', 'getSource'] }, async (engine) => {
+      const state = await engine.readJobSourceState('default');
+      const created = (await engine.getSource('default'))?.created_at;
+      return {
+        archived: state?.archived ?? null,
+        isDate: state?.created_at instanceof Date,
+        sameStamp: !!state && !!created && state.created_at.toISOString() === new Date(created).toISOString(),
+        unknown: await engine.readJobSourceState('no-such-source'),
+      };
+    });
+
+  /** A failed agent (`remote_agent`) job accepted against `sourceId` as created at `sourceCreatedAt`. */
+  async function failedAgentJob(engine: BrainEngine, sourceId: string, sourceCreatedAt: string): Promise<number> {
+    const data = { task: 'summarize', source_id: sourceId, allowed_tools: ['search'], allowed_slug_prefixes: ['wiki/agents/'] };
+    const authority = {
+      version: 1, kind: 'remote_agent', principal: { kind: 'oauth_client', id: 'agent-client' },
+      grant: { scopes: ['read', 'write', 'agent'], sourceId, sourceCreatedAt, allowedTools: ['search'], allowedSlugPrefixes: ['wiki/agents/'] },
+      payloadHash: authorityDigest(data),
+    } as unknown as SubmissionAuthority;
+    return finished(engine, 'subagent', 'failed', { data, submission_authority: authority });
+  }
+
+  // The queue's whole retry policy (MinionQueue.retryJob: the job authority check, then the delegated retry). The
+  // authority check reads the agent job's source first; a source that is gone or was created again after the job was
+  // accepted denies the retry on every arm, before any OAuth read, and the job stays failed.
+  parityTest('MinionQueue.retryJob denies an agent job whose source is missing or was created again after acceptance',
+    { methods: ['admitJob', 'claimNextJob', 'failJob', 'retryJob', 'getJob'] }, async (engine) => {
+      const queue = new MinionQueue(engine);
+      const missing = await failedAgentJob(engine, 'gone-source', PAST);
+      const replaced = await failedAgentJob(engine, 'default', PAST);
+      return {
+        missing: await thrown(() => queue.retryJob(missing)),
+        replaced: await thrown(() => queue.retryJob(replaced)),
+        status: [(await engine.getJob(missing))?.status, (await engine.getJob(replaced))?.status],
+      };
+    });
+
+  // With a current source the authority check goes on to the job owner's OAuth client. PGLite and Postgres find no
+  // client and deny the retry; the Rust store keeps no oauth_clients rows, so the Rust arm stops on the typed refusal
+  // at that grant read, before anything is written.
+  parityTest('MinionQueue.retryJob refuses an agent job with a current source at the owner\'s grant read',
+    { methods: ['admitJob', 'claimNextJob', 'failJob', 'retryJob', 'getJob', 'getSource'] }, async (engine) => {
+      const created = (await engine.getSource('default'))?.created_at;
+      const id = await failedAgentJob(engine, 'default', new Date(created as Date).toISOString());
+      const out = await denied(() => new MinionQueue(engine).retryJob(id));
       return { out, status: (await engine.getJob(id))?.status };
     });
 

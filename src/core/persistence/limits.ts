@@ -4,7 +4,7 @@ import { DEFAULT_JOURNAL_LIMITS, principalKey, type JournalLimits, type Principa
 import type { BrainEngine } from '../engine.ts';
 import { engineKey } from '../engine-key.ts';
 import { COMPACTED_RECEIPT_BYTES_SQL, EFFECT_BYTES_SQL, RECEIPT_RESERVATION_FLOOR } from './receipt-bytes.ts';
-import { readConfigMap, readConfigValue } from '../config-values.ts';
+import { readConfigMap, readConfigValue, type ConfigReader } from '../config-values.ts';
 
 /** Fallback compacted receipt size when no receipt is sampled; a compacted put_page measures about 3.9 KB. */
 export const RETAINED_RECEIPT_BYTES = 4096;
@@ -19,9 +19,9 @@ export const DEFAULT_RECEIPT_RETENTION_DAYS = 30;
 export const RECEIPT_TARGET_KEY = 'persistence.housekeeping.receipt_target_bytes';
 export const DEFAULT_RECEIPT_TARGET_BYTES = 8 * 1024 ** 3;
 export const HOUSEKEEPING_FLOOR_DAYS = 7;
-export async function readReceiptTargetBytes(engine:Pick<BrainEngine,'getConfigValues'>):Promise<number> {
-  const [row]=await engine.getConfigValues([RECEIPT_TARGET_KEY]);
-  return row ? parseJournalConfigValue(RECEIPT_TARGET_KEY,row.value) : DEFAULT_RECEIPT_TARGET_BYTES;
+export async function readReceiptTargetBytes(engine:ConfigReader|Pick<BrainEngine,'getConfigValues'>):Promise<number> {
+  const value=await readConfigValue(engine,RECEIPT_TARGET_KEY);
+  return value!==undefined ? parseJournalConfigValue(RECEIPT_TARGET_KEY,value) : DEFAULT_RECEIPT_TARGET_BYTES;
 }
 /**
  * The reserved bytes the receipt target counts: terminal receipts not yet compacted that no recovery holds (the rows of the
@@ -80,9 +80,9 @@ export async function readJournalLimits(engine:Pick<BrainEngine,'readJournalLimi
   }
   return limits;
 }
-export async function readReceiptRetentionDays(engine:Pick<BrainEngine,'getConfigValues'>):Promise<number> {
-  const [row]=await engine.getConfigValues([RECEIPT_RETENTION_KEY]);
-  return row ? parseJournalConfigValue(RECEIPT_RETENTION_KEY,row.value) : DEFAULT_RECEIPT_RETENTION_DAYS;
+export async function readReceiptRetentionDays(engine:ConfigReader|Pick<BrainEngine,'getConfigValues'>):Promise<number> {
+  const value=await readConfigValue(engine,RECEIPT_RETENTION_KEY);
+  return value!==undefined ? parseJournalConfigValue(RECEIPT_RETENTION_KEY,value) : DEFAULT_RECEIPT_RETENTION_DAYS;
 }
 export type CapacityResource = 'lifetime_ids' | 'terminal_bytes';
 /** The cap that covers one more year: ids at the id rate; bytes at the net rate plus the retention window held at the gross rate. */
@@ -129,8 +129,7 @@ export async function oneYearCapacity(engine:SqlEngine,scope:string,setting:'Lif
   principal ? [principal[1],principal[2]] : []);
   const perDay=sample!.admissions/Math.max(1/24,(sample!.age_seconds ?? 0)/86_400);
   // Admission refusals call this under the counter locks inside their transaction, on its SqlEngine, so the setting is read there.
-  const retention=await readConfigValue(engine,RECEIPT_RETENTION_KEY)
-    .then(value=>value!==undefined ? parseJournalConfigValue(RECEIPT_RETENTION_KEY,value) : DEFAULT_RECEIPT_RETENTION_DAYS).catch(()=>DEFAULT_RECEIPT_RETENTION_DAYS);
+  const retention=await readReceiptRetentionDays(engine).catch(()=>DEFAULT_RECEIPT_RETENTION_DAYS);
   const measured=(value:number|null|undefined,fallback:number)=>Number.isFinite(Number(value)) && Number(value)>0 ? Number(value) : fallback;
   return resource==='lifetime_ids' ? recommendedLimit(resource,used,limit,{perDay},retention)
     : recommendedLimit(resource,used,limit,{perDay:perDay*measured(sample!.gross,RECEIPT_RESERVATION_FLOOR),netPerDay:perDay*measured(sample!.net,RETAINED_RECEIPT_BYTES)},retention);

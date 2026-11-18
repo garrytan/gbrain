@@ -166,6 +166,7 @@ test/engine-parity/takes.test.ts
 test/engine-parity/telemetry.test.ts
 test/engine-parity/timeline-reads.test.ts
 test/engine-parity/timeline.test.ts
+test/engine-parity/transaction-settings.test.ts
 test/engine-parity/trust-fence.test.ts
 test/engine-parity/trust-proposals.test.ts
 test/engine-parity/trust-withdrawals.test.ts

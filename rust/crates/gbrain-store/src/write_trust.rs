@@ -15,10 +15,11 @@
 //! fence reads take it through [`Store::fence_context`]; the trust stamp
 //! (`trust::stamp`, lane 4) takes it through [`Store::write_trust`] once the facts insert calls it.
 //!
-//! Lifetime: PGLite ends the settings with the transaction (`SET LOCAL`). The Rust engine has no
-//! store transaction yet (`transactions.rs`), so the context lives on the open store until
-//! [`Store::clear_write_trust`]: the engine's transaction sets it at the start and clears it at
-//! commit or rollback (docs/designs/RUST_ENGINE_INTERFACES.md, "Write trust context").
+//! Lifetime: PGLite ends the settings with the transaction (`SET LOCAL`). Each store has its own
+//! context: a store bound to a transaction (`Store::begin_transaction`) starts with an empty one,
+//! and the shared store never sees it. The engine's transaction sets it on its own handle and
+//! clears it with [`Store::clear_write_trust`] at commit or rollback
+//! (docs/designs/RUST_ENGINE_INTERFACES.md, "Write trust context").
 //!
 //! Stricter than PGLite, on purpose: a value the trust rules would refuse when they read it is
 //! refused when it is set (`invalid_argument`), with the context unchanged: a tier or promotion
@@ -201,6 +202,54 @@ mod tests {
 
     fn strings(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    #[test]
+    fn a_second_transaction_waits_for_the_writer_and_starts_with_an_empty_context() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let s = store();
+        let tier = strings(&[WRITE_TRUST_TIER]);
+        let tx1 = s.begin_transaction(false).unwrap();
+        tx1.apply_write_trust(&tier, &strings(&["agent_written"]))
+            .unwrap();
+        std::thread::scope(|scope| {
+            let (began, began_rx) = mpsc::channel();
+            let (go_on, go_on_rx) = mpsc::channel::<()>();
+            let (shared, names) = (&s, &tier);
+            let second = scope.spawn(move || {
+                let tx2 = shared.begin_transaction(false).unwrap();
+                began.send(tx2.read_write_trust(names).unwrap()).unwrap();
+                go_on_rx.recv().unwrap();
+                tx2.apply_write_trust(names, &strings(&["operator_curated"]))
+                    .unwrap();
+                let own = tx2.read_write_trust(names).unwrap();
+                tx2.commit_transaction().unwrap();
+                own
+            });
+            // The store has one writer: the second transaction cannot begin while the first is open.
+            assert!(
+                began_rx.recv_timeout(Duration::from_millis(200)).is_err(),
+                "a second write transaction began while the first was open"
+            );
+            assert_eq!(s.read_write_trust(&tier).unwrap(), vec![None]);
+            assert_eq!(
+                tx1.read_write_trust(&tier).unwrap(),
+                vec![Some("agent_written".to_string())]
+            );
+            tx1.commit_transaction().unwrap();
+            assert_eq!(
+                began_rx.recv_timeout(Duration::from_secs(10)).unwrap(),
+                vec![None]
+            );
+            go_on.send(()).unwrap();
+            assert_eq!(
+                second.join().unwrap(),
+                vec![Some("operator_curated".to_string())]
+            );
+        });
+        assert_eq!(s.read_write_trust(&tier).unwrap(), vec![None]);
     }
 
     #[test]

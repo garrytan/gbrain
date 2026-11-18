@@ -791,7 +791,7 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
     // Event-page references have a different canonical origin and remain intact;
     // new rows carry their Markdown detail on insert, pinned rows refresh only from their preimage.
     const timelineRows = [
-      () => tx.deleteTimelineRows(id, deletions)
+      () => tx.removeTimelineRows(id, deletions)
         .then(rows => { for (const row of rows) if (row.removed) removedDates.push(row.date); return rows; }),
       ...timelineChunks(timeline).map(rows => () => insertCanonicalTimeline(tx, id, rows)),
       () => tx.updateTimelineDetails(id, refreshes),

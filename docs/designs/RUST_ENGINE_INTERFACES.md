@@ -1121,6 +1121,12 @@ Timeline reads by date and event projections.
 - **Depends on:** The timeline entry helpers and the `remove_event_projections` stub (both built; fill in the stub). Ask core for a date index hook if a scan is too slow.
 - **Estimate:** about 1 to 2 days.
 - **Notes:** Dates are `YYYY-MM-DD` text. `getOnThisDay` matches month and day across years.
+- **Follow-up (timeline-member-dedupe):** `removeTimelineRows` (`engine-sql/timeline.ts`) and `deleteTimelineRows`
+  (`engine-sql/timeline-reads.ts`) do the same work: delete a page's timeline rows that still match field for field,
+  and report each date. The canonical projection (`persistence/canonical-projections.ts`) calls `removeTimelineRows`
+  on the persistence branch and `deleteTimelineRows` on the CLI members branch. Both members stay, each with its own
+  Rust store member, until a later change moves every caller to one of them and retires the other on all three
+  engines and the Rust store.
 - **Parity cases (8, in `timeline.test.ts`):**
   - `timeline.test.ts`: removeTimelineRows deletes only the rows that still match field for field, never an event projection or another page, and reports each deleted date
   - `timeline.test.ts`: removeTimelineRows reads dates as dates and keeps the page order of the deleted rows
@@ -1241,6 +1247,7 @@ Transactions and the page-key lock queue.
   - `lifecycle.test.ts`: transactionDirect commits on success and rolls back on throw
   - `lifecycle.test.ts`: a nested transaction joins the outer one: an outer throw rolls back inner writes too
   - `pages.test.ts`: lockPageKeys holds keys inside a transaction
+  - `pages.test.ts`: lockPageKeys refuses a missing source and a recreated one, and holds a key whose source matches
   - `raw-sql.test.ts`: executeRawDirect answers like executeRaw and joins an open transaction
   - `segmented-body.test.ts`: a segmented page publishes generation 1 from staged texts and manifest rows
 
@@ -1511,6 +1518,14 @@ The Minion job queue, cycle locks, spend and rate leases, and wake subscriptions
     counts and inserts in one write, so no second admission can see the count before the insert. The cases in
     `test/minions-admission.test.ts` stay as they are. Budget reservations (`budget-meter.ts`) and rate leases
     (`rate-leases.ts`) follow the same rule: count, check the cap, write, in one member.
+  - Delegated admission and retry: the refuse-before-write guard. `admitJob` with a delegated client's policy and
+    `retryJob` run the TypeScript policy on a narrow handle (`src/core/rust-engine/delegated-policy-handle.ts`) that
+    serves the job reads, `countOpenJobsByOwner` and `readJobSourceState` from the store. When the policy has called
+    `lockOAuthClient`, the handle records it (`handle.locked()`), and the member refuses (`engine_capability_missing`)
+    before it writes anything: the lock, the capacity count and the write are separate store calls, so they are not
+    one admission. The guard stays until admission is one store write. The store keeps no `oauth_clients` or
+    `access_tokens` table, so the policy's grant read refuses the same way, and `lockOAuthClient` called directly
+    refuses too (a lock that locks nothing would hide a missing guarantee).
   - Cycle locks. PGLite's acquire (`src/core/db-lock.ts`) is an upsert that takes a held row only when
     `ttl_expires_at` has passed and `last_refreshed_at` is null or older than the steal grace, and returns the fence
     `extract(epoch from acquired_at)`. `acquireLease` does the same check and write in one member and returns the same
@@ -1628,13 +1643,21 @@ and write provenance on content rows, and the trust records.
   `listFenceRetireCandidates`) take the writer's tier and the opened ids from it (`Store::fence_context`);
   `trust::stamp` will take `Store::write_trust()` once the writers stamp. See
   [`rust/docs/store/write_trust.md`](../../rust/docs/store/write_trust.md).
-- **Hook (interfaces owns it, proposed):** the Rust engine's `applyTransactionSettings` and `readTransactionSettings`,
-  and the trust half of `setWriteContext`, route the six names to `applyWriteTrust` / `readWriteTrust` on the
-  transaction's store; the transaction calls `clearWriteTrust()` at commit and at rollback. Other setting names
-  (attribution, `gbrain.write_sources`) are not the write trust context's.
-- **Depends on:** the transactions family for the settings of an open store write; until then a write outside a
-  transaction stamps with no writer, which is `unknown`, and the parity cases set the context directly
-  (`test/engine-parity/rust-arm.ts` `applyRustWriteTrust`).
+- **Hook (built):** the Rust engine's `applyTransactionSettings` and `readTransactionSettings`
+  (`store-members/transactions.ts`) route the six names to `applyWriteTrust` / `readWriteTrust` on the
+  transaction's store. The attribution and source-scope names (`gbrain.write_sources`, `gbrain.write_request`,
+  `gbrain.write_principal_kind`, `gbrain.write_principal_id`, `gbrain.git_protocol`) stay on the transaction in
+  TypeScript. The transaction calls `clearWriteTrust()` when it ends, at commit and at rollback; a savepoint rollback
+  restores both halves. Any other name refuses with `engine_capability_missing` (`setting=<name>` in the detail).
+  Contract: [`rust/docs/store/transactions.md`](../../rust/docs/store/transactions.md), item 12. The trust half of
+  `setWriteContext` will call the same store methods.
+- **One writer rule:** the store admits one write transaction at a time (`kv.begin_write()` holds the writer), and
+  each transaction's handle has its own context, which starts empty. Two transactions opened together run one after
+  the other and never read each other's settings; the shared store never reads a transaction's settings. Pinned by
+  `test/engine-parity/transaction-settings.test.ts` and the store test
+  `a_second_transaction_waits_for_the_writer_and_starts_with_an_empty_context`.
+- **Depends on:** nothing more for the settings of an open store write. A write outside a transaction stamps with no
+  writer, which is `unknown`, as on PGLite.
 
 ### catalog probes (core)
 

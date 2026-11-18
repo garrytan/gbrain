@@ -32,12 +32,12 @@ settings on the open store. It writes no records and has no keys.
 
 ## Lifetime
 
-PGLite's settings end with the transaction. The Rust engine has no store transaction yet (`transactions.rs`), so
-the context stays on the open store until `clear_write_trust`. The engine's transaction must clear it at commit and
-at rollback; until the engine serves `transaction`, the parity cases set and clear it directly
-(`test/engine-parity/rust-arm.ts` `applyRustWriteTrust`). The context is per open store, not per call: two
-transactions open at once on one store would share it. When the engine binds a transaction to its own store
-handle, the context moves to that handle.
+PGLite's settings end with the transaction. Each store has its own context. A store bound to a transaction
+(`begin_transaction`, `transactions.rs`) starts with an empty context, and the shared store never sees it, so two
+transactions never share one. The engine's `applyTransactionSettings` and `readTransactionSettings` route these six
+names to the transaction's handle (`store-members/transactions.ts`; contract in
+[`transactions.md`](transactions.md), item 12). The transaction clears the context when it ends, at commit and at
+rollback, and a savepoint rollback sets the six back to what they were when the savepoint opened.
 
 ## Rust guesses and gaps (1x parity)
 

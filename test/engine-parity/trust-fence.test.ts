@@ -10,18 +10,16 @@
  *    re-publish; the Rust engine has no SQL, so the read has to exist as a typed member.
  *  - Why existing coverage misses it: the statement ran through `executeRaw` inside trust/fence-guard.ts, which the
  *    parity cases cannot call (D18).
- *  - Seam: `withWriteTrustSettings`, a fixture behind the backend switch (as harness.ts `createSource` is). The writer's
- *    tier and the opened ids are transaction-local settings (`gbrain.write_trust_tier`, `gbrain.write_open_facts`). The
- *    SQL arms set them with `applyTransactionSettings` inside `transaction`; the Rust engine serves neither yet, so the
- *    Rust arm sets the store's write trust context directly (rust-arm.ts `applyRustWriteTrust`) and clears it after,
- *    which is what the interfaces hook will do. Reads stay typed members (no executeRaw: D18).
+ *  - Seam: `withWriteTrustSettings`. The writer's tier and the opened ids are transaction-local settings
+ *    (`gbrain.write_trust_tier`, `gbrain.write_open_facts`); every arm sets them with `applyTransactionSettings` inside
+ *    `transaction` (on Rust they go to the store's write trust context on the transaction's handle). Reads stay typed
+ *    members (no executeRaw: D18).
  *  - Rust fact rows store the tier their writer declared (rust/docs/store/facts.md), and the held arm reads the Rust
  *    `trust_proposals` family, so every case below expects one answer on every arm.
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
-import { parityArms, type ParityBackend } from './harness.ts';
-import { applyRustWriteTrust } from './rust-arm.ts';
+import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -37,22 +35,13 @@ const fenceRow = (n: number, fact: string, extra: Record<string, unknown> = {}) 
 
 const incomingOf = (rows: Array<{ row_num: number; fact: string; visibility: string }>) => JSON.stringify(rows);
 
-/**
- * Fixture: run `fn` with the write trust settings `names` set to `values` for one transaction. The SQL arms set them
- * with `applyTransactionSettings` inside `transaction` (SET LOCAL ends with it); the Rust arm sets the store's write
- * trust context and sets every name back to empty after, as `withTransactionSettings` restores an unset outer scope.
- */
-async function withWriteTrustSettings<T>(engine: BrainEngine, backend: ParityBackend, names: string[], values: string[],
+/** Fixture: run `fn` with the write trust settings `names` set to `values` for one transaction (SET LOCAL ends with it). */
+async function withWriteTrustSettings<T>(engine: BrainEngine, names: string[], values: string[],
   fn: (tx: BrainEngine) => Promise<T>): Promise<T> {
-  if (backend !== 'rust') {
-    return engine.transaction(async (tx) => {
-      await tx.applyTransactionSettings(names, values);
-      return fn(tx);
-    });
-  }
-  await applyRustWriteTrust(engine, names, values);
-  try { return await fn(engine); }
-  finally { await applyRustWriteTrust(engine, names, names.map(() => '')); }
+  return engine.transaction(async (tx) => {
+    await tx.applyTransactionSettings(names, values);
+    return fn(tx);
+  });
 }
 
 /** Replaces each fact id in a fence read with the claim it was inserted with, so answers compare across arms. */
@@ -90,7 +79,7 @@ describe('engine parity: the fence guard read of a page\'s fact rows', () => {
 
   parityTest('gbrain repair open-facts: a named private row whose cell turns world is opened in place, and the context clears after', {
     methods: ['insertFacts', 'listFenceFactRows', 'listFenceRetireCandidates'],
-  }, async (engine, backend) => {
+  }, async (engine) => {
     // Every row is written undeclared (`unknown`), so no row is above the undeclared writer: only the opened ids decide.
     const rows = [
       fenceRow(1, 'Alpha', { visibility: 'private' }),
@@ -116,7 +105,7 @@ describe('engine parity: the fence guard read of a page\'s fact rows', () => {
       guarded: label(await db.listFenceFactRows(target) as never),
       retired: label(await db.listFenceRetireCandidates(target) as never),
     });
-    const opened = await withWriteTrustSettings(engine, backend, ['gbrain.write_open_facts'], [[alpha, beta, elsewhere].join(',')], read);
+    const opened = await withWriteTrustSettings(engine, ['gbrain.write_open_facts'], [[alpha, beta, elsewhere].join(',')], read);
     const after = await read(engine);
     expect(opened.guarded).toEqual([{ id: 'Alpha', row_num: 1, fact: 'Alpha', visibility: 'private', trust_tier: 'unknown', above: false, opened: true }]);
     expect(opened.retired.map((r) => r.id)).toEqual(['Beta', 'Delta']);
@@ -126,9 +115,9 @@ describe('engine parity: the fence guard read of a page\'s fact rows', () => {
 
   parityTest('an agent writer below a stored fact\'s tier: the more trusted row is listed above the writer, the opened row as opened', {
     methods: ['insertFacts', 'listFenceFactRows'],
-  }, async (engine, backend) => {
+  }, async (engine) => {
     // An operator curated Gamma; an undeclared write left Zeta private. An MCP agent put (agent_written) then rewrites both.
-    const write = (tier: string, rows: Array<ReturnType<typeof fenceRow>>) => withWriteTrustSettings(engine, backend,
+    const write = (tier: string, rows: Array<ReturnType<typeof fenceRow>>) => withWriteTrustSettings(engine,
       ['gbrain.write_trust_tier'], [tier], async (tx) => (await tx.insertFacts(rows as never, { source_id: SRC })).ids as number[]);
     const [gamma] = await write('operator_curated', [fenceRow(3, 'Gamma')]);
     const [zeta] = await write('', [fenceRow(6, 'Zeta', { visibility: 'private' })]);
@@ -137,7 +126,7 @@ describe('engine parity: the fence guard read of a page\'s fact rows', () => {
       { row_num: 3, fact: 'Gamma changed by an agent', visibility: 'world' },
       { row_num: 6, fact: 'Zeta', visibility: 'world' },
     ]);
-    const answer = label(await withWriteTrustSettings(engine, backend, ['gbrain.write_trust_tier', 'gbrain.write_origin', 'gbrain.write_open_facts'],
+    const answer = label(await withWriteTrustSettings(engine, ['gbrain.write_trust_tier', 'gbrain.write_origin', 'gbrain.write_open_facts'],
       ['agent_written', JSON.stringify({ channel: 'mcp:put_page' }), String(zeta)],
       (tx) => tx.listFenceFactRows({ sourceId: SRC, slug: SLUG, incoming })) as never);
     // Gamma stays listed (operator_curated is above agent_written), so the guard files a proposal instead of expiring it.
@@ -150,9 +139,9 @@ describe('engine parity: the fence guard read of a page\'s fact rows', () => {
 
   parityTest('a row above the writer, held by a widening proposal, or opened, is listed in row order with its stored tier', {
     methods: ['insertFacts', 'insertTrustProposal', 'listFenceFactRows'],
-  }, async (engine, backend) => {
+  }, async (engine) => {
     // A row is stamped with its writer's declared tier, so the tiers are set by writing under them.
-    const write = (tier: string, rows: Array<ReturnType<typeof fenceRow>>) => withWriteTrustSettings(engine, backend,
+    const write = (tier: string, rows: Array<ReturnType<typeof fenceRow>>) => withWriteTrustSettings(engine,
       ['gbrain.write_trust_tier'], [tier], async (tx) => (await tx.insertFacts(rows as never, { source_id: SRC })).ids as number[]);
     const [gamma, alpha] = await write('operator_curated', [fenceRow(3, 'Gamma'), fenceRow(1, 'Alpha')]);
     const [beta] = await write('external_untrusted', [fenceRow(2, 'Beta')]);
@@ -178,7 +167,7 @@ describe('engine parity: the fence guard read of a page\'s fact rows', () => {
       { row_num: 6, fact: 'Zeta', visibility: 'world' },
       { row_num: 7, fact: 'Eta', visibility: 'world' },
     ]);
-    const read = (tier: string, opened: string) => withWriteTrustSettings(engine, backend,
+    const read = (tier: string, opened: string) => withWriteTrustSettings(engine,
       ['gbrain.write_trust_tier', 'gbrain.write_open_facts'], [tier, opened],
       async (tx) => (await tx.listFenceFactRows({ sourceId: SRC, slug: SLUG, incoming })).map((r) => ({
         row_num: Number(r.row_num), fact: r.fact, trust_tier: r.trust_tier, above: r.above, opened: r.opened,

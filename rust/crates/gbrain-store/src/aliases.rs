@@ -86,6 +86,15 @@ pub(crate) struct CrState {
     pub corpus_generation: Option<String>,
 }
 
+/// `PageWriteOptions.contextualRetrieval`: the stamp `putPage` writes with the page.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextualRetrievalStamp {
+    pub mode: String,
+    #[serde(default)]
+    pub corpus_generation: Option<String>,
+}
+
 /// One row of `replaceDerivedAliases` (`DerivedAliasRow` of `engine-sql/pages.ts`).
 #[derive(Debug, Clone, Deserialize)]
 pub struct DerivedAliasRow {
@@ -459,6 +468,25 @@ fn move_page_aliases(tx: &mut dyn KvWrite, source: &str, old: &str, new: &str) -
 
 fn read_cr(read: &dyn KvRead, page_id: u64) -> Result<Option<CrState>> {
     get_json(read, &cr_key(page_id))
+}
+
+/// Writes the stamp `putPage` was given for the page it just wrote. A `none` mode writes nothing,
+/// as PGLite's `putPage` leaves both columns alone for it (`engine-sql/pages.ts`).
+pub(crate) fn stamp_contextual_retrieval(
+    tx: &mut dyn KvWrite,
+    page_id: u64,
+    stamp: &ContextualRetrievalStamp,
+) -> Result<()> {
+    if stamp.mode == "none" {
+        return Ok(());
+    }
+    let generation = stamp.corpus_generation.as_deref();
+    refuse_nul("putPage", &[&stamp.mode, generation.unwrap_or("")])?;
+    let state = CrState {
+        mode: stamp.mode.clone(),
+        corpus_generation: generation.map(str::to_string),
+    };
+    put_json(tx, &cr_key(page_id), &state)
 }
 
 /// The page's `contextual_retrieval_mode` column: `None` when it has no state (NULL).
