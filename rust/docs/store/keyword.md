@@ -41,7 +41,7 @@ Every keyword member except `findByTitleFuzzy` refuses:
 - any option the member does not know.
 
 `searchKeywordChunks` also refuses `type`, a non-empty `types`, a non-empty `where` and a non-empty `exclude_slugs`:
-Postgres applies them and PGLite ignores them (follow-up `keyword-chunks-page-filters`).
+Postgres applies them and PGLite ignores them (follow-up `pglite-keyword-chunks-page-filters`).
 
 Ignored, as in the SQL statements: the vector, reranking, recency and reporting options (`onVectorPoolMeta`,
 `cjkKeyword`, `embeddingColumn`, `recencyBoost`, `tokenBudget`, `reranker`, `relationalRetrieval` and the rest of
@@ -111,8 +111,10 @@ The page vector is not stored; `keyword/titles.rs` rebuilds the one PGLite last 
   (its revision equals `text_projection_revision`): title at weight A, `left(sanitized timeline, 65536)` at C.
 - Trigger form otherwise: title at A, `left(timeline, 65536)` at C and the page's timeline entries created no later
   than its `updated_at` (`summary || ' ' || detail` by id, `left(…, 32768)`) at C. A page whose revision is not sealed
-  is not served at all (the page filter), so this form serves only a page sealed without text (the store's own
-  indexing `putPage`) and an activation page.
+  is not served at all (the page filter), so this form serves a page sealed without text (the store's own
+  indexing `putPage`), an activation page, and a sealed page written again since its seal: every write that sets the
+  title or timeline deletes the seal's record (`pages::forget_search_timeline`), as PGLite's trigger rewrites the
+  vector then, also for a `putPage` of unchanged input, which keeps the revision and the seal.
 - A NULL timeline (a segmented page) reads `timeline_lead` in the trigger form, as the trigger's
   `coalesce(timeline, timeline_lead, '')` does. page_body keeps the lead privately, so it reads NULL until page_body
   exposes a reader (follow-up `title-vector-segmented-lead`).
@@ -122,21 +124,20 @@ The page vector is not stored; `keyword/titles.rs` rebuilds the one PGLite last 
   segmented page yet, so no segmented page is searchable on the Rust engine today.
 
 
-- `searchKeywordChunks` follows PGLite: no page filters (they refuse), `stale` computed from the newest timeline entry
-  against `updated_at`. Postgres applies the page filters and always returns `stale: false`
-  (follow-up `keyword-chunks-page-filters`).
+- `searchKeywordChunks` page filters: Postgres applies `type`, `types`, `where` and `exclude_slugs`; PGLite drops
+  them. The store applies them, but the member refuses them until the engines agree (follow-up
+  `pglite-keyword-chunks-page-filters`). No production code calls `searchKeywordChunks`.
+- `stale` on `searchKeywordChunks`, `searchKeyword` and `searchTitles` follows PGLite: true when the newest timeline
+  entry is newer than `updated_at`. Postgres always returns `stale: false`. This is the SQL engines' shared dialect
+  rule (`staleProbe`), not a follow-up.
 - `searchKeywordChunks` lets image chunks match, as both SQL engines do; the paging members keep text chunks only.
 - `where` compares a JSON number with a number through f64, where Postgres compares `numeric` exactly; numbers past
   2^53 can match differently.
 - `message_id` is blank when it is only ASCII `[[:space:]]`, as the SQL trims it; other Unicode spaces count as text.
 - Lexemes of 2047 bytes or more are dropped from the vector, as in PG (`MAXSTRLEN`).
-- `searchTitles` sets `stale` from the newest timeline entry against `updated_at`, as PGLite does; Postgres returns
-  `stale: false`.
 - `searchTitles` trigger form: PGLite's trigger reads the timeline entries that exist when the page row is written;
   the store approximates that with the entries created no later than `updated_at`. A NULL timeline reads the lead
   through a stand-in that returns NULL until page_body exposes it (follow-up `title-vector-segmented-lead`).
-- `searchTitles` after a re-put of an unchanged page: PGLite's trigger rewrites the vector to the trigger form (the
-  revision, and so the seal, stays); the store keeps the sealed form (follow-up `title-vector-reput-after-seal`).
 - `searchTitles` refuses CJK queries like the other keyword members; the SQL title statement has no CJK path of its
   own, so this is conservative (follow-up `keyword-cjk`).
 - `findByTitleFuzzy` without a `sourceId` reads soft-deleted pages too, as the SQL does (follow-up
@@ -148,10 +149,10 @@ The page vector is not stored; `keyword/titles.rs` rebuilds the one PGLite last 
 - `keyword-lexeme-index`: every member scans every live page and recomputes `to_tsvector` per chunk per query. Add a
   positional lexeme index (or cache the chunk vectors) when the brains it serves outgrow a scan.
 - `keyword-cjk`: serve CJK queries (the SQL engines' bigram path).
-- `keyword-chunks-page-filters`: settle which engine is right for `searchKeywordChunks` page filters and `stale`.
+- `pglite-keyword-chunks-page-filters`: PGLite's `searchKeywordChunks` drops `type`, `types`, `where` and
+  `exclude_slugs`, which Postgres applies; no production caller. A PGLite behavior change, so it waits until after
+  1x parity. Then the member serves the four filters with a parity case.
 - `fuzzy-title-unscoped-deleted`: the SQL unscoped arm returns soft-deleted pages.
 - `title-vector-segmented-lead`: page_body exposes `pub(crate) fn timeline_lead(read, page_id)` for the trigger
   form, and the segmented seal records the sanitized, overlaid lead with `pages::record_search_timeline`.
-- `title-vector-reput-after-seal`: core drops `M page_search_timeline/<page id>` on every putPage write that sets
-  `title` or `timeline`, so a re-put reads the trigger form as PGLite does.
 - Serve the refused privacy and trust options once the store records them.

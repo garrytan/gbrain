@@ -25,8 +25,11 @@
 //! - Sealed form (`pageSearchVectorSql`): the title at weight A and the sanitized timeline the
 //!   seal sent at weight C (`pages::search_timeline`), when that seal is the page's current one:
 //!   its revision equals the page's `text_projection_revision`.
-//! - Trigger form (`update_page_search_vector`): otherwise (no record, or one from an older
-//!   seal: PGLite's vector is then the one the trigger wrote at the last title/timeline write), the title at A, the first 65,536
+//! - Trigger form (`update_page_search_vector`): otherwise. Every write that sets the title or
+//!   timeline deletes the record (`pages::forget_search_timeline`), as PGLite's trigger then
+//!   rewrites the vector, also for a putPage of an unchanged page, whose revision and seal stay.
+//!   So no record, or one from an older seal, means PGLite's vector is the one the trigger wrote
+//!   at the last title or timeline write: the title at A, the first 65,536
 //!   characters of the raw timeline at C, and the first 32,768 characters of the page's
 //!   timeline entries (`summary || ' ' || detail`, by id, joined by a space) at C. The trigger
 //!   reads the entries that exist when the page row is written; the store keeps the entries
@@ -38,11 +41,6 @@
 //! A sealed segmented page takes the sealed form: PGLite's `sealSegmentedPage` writes the title
 //! plus the sanitized lead (withdrawals and purges overlaid), which only TypeScript computes, so
 //! the family that seals segmented pages records it with `pages::record_search_timeline`.
-//!
-//! PGLite's trigger also fires when a putPage writes an unchanged page after its seal (the
-//! revision, and so the served state, stays): the vector then holds the trigger form. The store
-//! keeps the sealed form until the seal's timeline is dropped (follow-up
-//! `title-vector-reput-after-seal`).
 //!
 //! `ts_rank_cd` is a `real`; times the numeric source factor it is a `double precision`.
 

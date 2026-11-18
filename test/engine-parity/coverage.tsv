@@ -67,7 +67,7 @@ listCorpusSample	pages	yes	1	no	yes	yes	refuses:pages
 searchKeyword	search	yes	9	yes	yes	yes	serves
 countKeywordPages	search	yes	2	no	yes	yes	serves
 searchKeywordPages	search	yes	2	no	yes	yes	serves
-searchTitles	search	yes	2	yes	yes	yes	serves
+searchTitles	search	yes	3	yes	yes	yes	serves
 searchVector	search	yes	2	yes	yes	yes	refuses:vector_search
 getEmbeddingsByChunkIds	search	yes	1	no	yes	yes	refuses:embeddings
 searchKeywordChunks	search	yes	2	yes	yes	yes	serves
