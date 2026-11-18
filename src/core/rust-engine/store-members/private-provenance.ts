@@ -15,6 +15,7 @@
  * The concept-input test is rendered either inline or as a call of `gbrain_concept_inputs_private` (migration v311),
  * by the schema version the context carries. The two forms are the same test, so the comparison reads both as one.
  */
+import { ANY_OWNER_ONLY_SQL, ownerOnlyPageSql } from '../../access/owner-only.ts';
 import {
   privacyAliasSql,
   privatePagesFilterForCaller,
@@ -28,6 +29,22 @@ import { refuseMember } from './common.ts';
 export interface StorePrivacyPolicy {
   honorAliases: boolean;
   entityPrivacy: boolean;
+  ownerOnly: StoreOwnerOnly;
+}
+
+/**
+ * The owner-only part of the policy, as the baseline renders it (src/core/access/owner-only.ts): `lineage` is the v320
+ * form (a page of an owner-only source, or a concept or question synthesized from one, is hidden), which a brain at or
+ * above that schema version renders; `closed` is the form below it or outside an engine scope (any owner-only source in
+ * the brain hides every page). The part always applies to the no-caller baseline, whatever the other settings say.
+ */
+export type StoreOwnerOnly = 'lineage' | 'closed';
+
+/** Which owner-only form `baseline` renders for the page alias `alias`; a text that holds neither refuses (the store has no third form). */
+function ownerOnlyOf(member: string, baseline: string, alias: string): StoreOwnerOnly {
+  if (baseline.includes(ownerOnlyPageSql(alias, 'fn'))) return 'lineage';
+  if (baseline.includes(ANY_OWNER_ONLY_SQL)) return 'closed';
+  return refuseMember(member, 'excludePrivate under an owner-only rule the store does not model');
 }
 
 /** The page aliases the policies judge: the fact policy's two, and `p` of a page read. */
@@ -72,6 +89,7 @@ export function storePrivacyPolicy(member: string, excludePrivate: unknown, rend
   return {
     honorAliases: baseline.includes(privacyAliasSql('pp')),
     entityPrivacy: baseline.includes(privateSnapshotFilterFragment('entity_pp')),
+    ownerOnly: ownerOnlyOf(member, baseline, 'pp'),
   };
 }
 
@@ -88,5 +106,6 @@ export function storePagePolicy(member: string, excludePrivate: unknown): StoreP
   return {
     honorAliases: baseline.includes(privacyAliasSql('p')),
     entityPrivacy: baseline.includes(privateSnapshotFilterFragment('p')),
+    ownerOnly: ownerOnlyOf(member, baseline, 'p'),
   };
 }

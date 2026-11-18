@@ -8,6 +8,11 @@
 //! `honor_aliases` (`visibility.honor_aliases`) and `entity_privacy` (false when an operator relaxed
 //! remote privacy, which drops the privacy part of the page policy only).
 //!
+//! The owner-only rule is the one part of the member-access test the store can answer for a page: a page of an
+//! owner-only source, and a concept or question synthesized from one, is hidden (`OwnerOnly::Lineage`), or every page
+//! is while the brain holds an owner-only source (`OwnerOnly::Closed`). The store keeps no `derivation_inputs` or
+//! `owner_only_marks`, so a page derived from an owner-only row by those tables alone is not hidden here.
+//!
 //! The store keeps no access rules or pending coverage, so the parts of the SQL that read those tables
 //! take their empty-table values: a page names readers only through a `readable_by` key and no folder
 //! rule covers a page. It keeps no slug aliases or rename history either (the aliases family is not
@@ -19,9 +24,11 @@ use crate::Result;
 use crate::kv::KvRead;
 use crate::links::out_links;
 use crate::pages::{PageRecord, read_page, read_page_by_id};
+use crate::sources::all_sources;
 use crate::timeline_queries::jsonb_field_text;
 use serde::Deserialize;
 use serde_json::{Map, Value};
+use std::collections::HashSet;
 
 /// The policy settings the TypeScript member read from the rendered SQL.
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -33,6 +40,45 @@ pub struct PrivacyPolicy {
     /// `privacyForCaller`: false when an operator relaxed remote privacy, which drops the privacy part of the
     /// page policy and leaves the member-access part.
     pub entity_privacy: bool,
+    /// The owner-only form the baseline rendered (`src/core/access/owner-only.ts`): see [`OwnerOnly`].
+    pub owner_only: OwnerOnly,
+}
+
+/// The owner-only part of `accessAllowedSql` for the no-caller baseline (`ownerOnlyPageSql`). It is part of the
+/// member-access test, so `entity_privacy` does not switch it off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum OwnerOnly {
+    /// `gbrain_owner_only_lineage('pages', id)` behind its guard (schema v320 and above): a page held in an owner-only
+    /// source is hidden, and so is a concept or question with a `concept-provenance` input page in one. The rows
+    /// `derivation_inputs` and `owner_only_marks` name are not here: this store keeps neither table.
+    Lineage,
+    /// `ANY_OWNER_ONLY_SQL` (a brain below v320, or a call outside an engine scope): any owner-only source in the
+    /// brain hides every page.
+    Closed,
+}
+
+/// The ids of the owner-only sources (`isOwnerOnlySourceConfig`: kind `imessage`, or `owner_only` true), read once
+/// per query and passed to [`page_hidden`].
+pub(crate) struct OwnerOnlySources(HashSet<String>);
+
+impl OwnerOnlySources {
+    pub(crate) fn read(read: &dyn KvRead) -> Result<Self> {
+        let mut ids = HashSet::new();
+        for source in all_sources(read)? {
+            // `config ->> 'kind' IN ('imessage') OR config ->> 'owner_only' = 'true'`.
+            if text(&source.config, "kind").as_deref() == Some("imessage")
+                || text(&source.config, "owner_only").as_deref() == Some("true")
+            {
+                ids.insert(source.id);
+            }
+        }
+        Ok(Self(ids))
+    }
+
+    fn holds(&self, source_id: &str) -> bool {
+        self.0.contains(source_id)
+    }
 }
 
 /// `PRIVACY_ALIASES`: the keys a page may carry instead of `visibility`, with their private values.
@@ -52,15 +98,42 @@ const EDGE_SPACE: &[char] = &[
 ];
 
 /// Whether the page policy `privatePagesFilterForCaller(p)` hides `page`: the member-access part
-/// for the empty identity, then the privacy part unless `entity_privacy` is false.
+/// for the empty identity (named readers, origin readers, the owner-only rule), then the privacy part
+/// unless `entity_privacy` is false.
 pub(crate) fn page_hidden(
     read: &dyn KvRead,
     page: &PageRecord,
     policy: &PrivacyPolicy,
+    owner_only: &OwnerOnlySources,
 ) -> Result<bool> {
-    let allowed = readers_allowed(read, page)?
+    let allowed = !owner_only_hidden(read, page, policy.owner_only, owner_only)?
+        && readers_allowed(read, page)?
         && (!policy.entity_privacy || privacy_allows(read, page, policy.honor_aliases)?);
     Ok(!allowed)
+}
+
+/// `ownerOnlyPageSql(p, form)` for the no-caller baseline (the caller is never the owner).
+fn owner_only_hidden(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    form: OwnerOnly,
+    sources: &OwnerOnlySources,
+) -> Result<bool> {
+    if sources.0.is_empty() {
+        return Ok(false);
+    }
+    if form == OwnerOnly::Closed || sources.holds(&page.source_id) {
+        return Ok(true);
+    }
+    // `gbrain_owner_only_lineage_strict`: a concept or question with an input page in an owner-only source.
+    if matches!(page.page_type.as_str(), "concept" | "question") {
+        for input in concept_inputs(read, page)? {
+            if sources.holds(&input.source_id) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 /// `frontmatter ->> key`.
