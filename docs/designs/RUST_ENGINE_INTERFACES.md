@@ -1595,14 +1595,16 @@ Trust tiers, the write gate, trust review, fact withdrawal and the belief ledger
   - `t 0x10` to `t 0x14`: belief events, lifetimes, commit marks, retier manifest and redactions.
   - Built so far (rust/docs/store/trust.md is the record of the bytes): `t 0x01` fact withdrawals, `t 0x02` to
     `t 0x05` write gate receipts and holds, `t 0x06` to `t 0x08` trust proposals and their pending and by-row indexes.
+    The proposed bytes above were not kept. A page's tier and write origin have no key: they are fields of the page
+    record and of each version record, and no read looks a page up by tier, so there is no tier index. A later
+    record kind takes `t 0x09`.
 - **Transaction rules:** a tier change and its tier index change in one write. `lowerPageTrustTiers` and
   `relowerClaimedRows` read the current tier and write the lower one in the same write, so a concurrent raise is not
   lost. `insertFactWithdrawal` checks for an existing withdrawal and writes in one write (PGLite's unique key gives
   `constraint_violation`). Belief lifetimes are minted and resolved in the caller's transaction.
-- **Page columns:** the Rust page record keeps `trust_tier` at the fixed default `'unknown'` today
-  (`PAGE_ROW_DEFAULTS` and `TIMELINE_DEFAULTS` in `store-codec.ts`; `trust_tier` is in `HASH_EPHEMERAL_KEYS` in
-  `pages.rs`). This family adds `trust.rs` to the page-columns list (core adds the one line) and returns
-  `trust_tier` and the write provenance fields from `t 0x04`.
+- **Page columns:** the Rust page record stores the stamped `trust_tier` and `write_origin` (built). `getPage` maps
+  no trust column on any engine, so `trust::page_columns` adds none; `readPageTrustRows` and `createVersion` return
+  them. Timeline entries still read the fixed `TIMELINE_DEFAULTS` tier in `store-codec.ts`.
 - **Overlaps to settle before the first commit:** `fact_withdrawals` is on the facts family's (`F`) source-delete
   list; trust owns the table, and facts calls `trust::remove_source_rows` or drops the entry. The access tables
   (`access_rules`, `access_members`, `access_tokens`, `access_policy_state`, `oauth_clients`, `oauth_grant_audit`,
@@ -1641,7 +1643,10 @@ and write provenance on content rows, and the trust records.
   - `WriteTrust` holds the writer tier, the origin, the promotion ceiling, the backfill flag and the keep list.
     `StampRow` is an insert with the supplied tier, or an update with the old and new tier, whether content changed
     and whether the origin was set. `Stamped` holds the tier and the origin (keep, or set).
-  - The guest-source rules of the trigger are not in `stamp`: the store has no `guest_sources` records yet.
+  - The guest-source rules of the trigger are not in `stamp`: the store has no `guest_sources` records yet. The
+    trigger keys those rules on a `guest_sources` row only, so a store page is stamped as a Postgres page in a source
+    with no such row. No such row can exist on Rust: `guests/sources.ts` writes `guest_sources` through
+    `executeRaw`, which the engine refuses, so `readGuestSourceRow` finding none is the true answer.
 - **Trust hook (persistence owns it):** a typed `setWriteContext` member holds the attribution and trust settings of
   the open store write. The attribution seam (`persistence/context.ts`, the `set_config` calls) calls it on a Rust
   brain in place of `executeRaw`. `write_page` and the facts insert build a `WriteTrust` from it and call

@@ -271,10 +271,12 @@ impl Store {
         if let Some(tx) = &self.bound {
             // A bound store's env is the transaction's clock (`transactions.rs`, "Time").
             let _clock = crate::env::transaction_clock::open(self.env.clone());
+            let _trust = crate::write_trust::stamp_context::open(self.write_trust()?);
             return tx.statement(f);
         }
         let mut tx = self.kv.begin_write()?;
         let _clock = crate::env::transaction_clock::open(self.env.clone());
+        let _trust = crate::write_trust::stamp_context::open(self.write_trust()?);
         let value = f(&mut *tx)?;
         tx.commit()?;
         Ok(value)
