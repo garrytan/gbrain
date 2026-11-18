@@ -600,6 +600,7 @@ test/purge-global-marker.test.ts
 test/purge-missing-cache-6911.test.ts
 test/purge-name-stores-9068.test.ts
 test/purge-read-surfaces.test.ts
+test/purge-rederive-concept-hold-9653.test.ts
 test/purge-root-metafile-7613.test.ts
 test/purge-scrub-followups-9068.test.ts
 test/purge-slug-stores-9146.test.ts
