@@ -13,9 +13,10 @@
 
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
+use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::kv::{KvRead, KvWrite, prefix_end, scan_prefix};
 use crate::links::{missing, no_nul};
-use crate::pages::{clean, next_id, read_page, scope_sources};
+use crate::pages::{PageRecord, clean, next_id, read_page, read_page_by_id, scope_sources};
 use crate::sources::DEFAULT_SOURCE;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
@@ -99,7 +100,9 @@ pub struct TimelineOptions {
     pub source_ids: Option<Vec<String>>,
     pub after: Option<String>,
     pub before: Option<String>,
-    pub exclude_private: Option<bool>,
+    /// `excludePrivate`: the page policy (`facts/privacy.rs` `page_hidden`) the TypeScript member
+    /// reads from the rendered SQL; null reads every row.
+    pub exclude_private: Option<PrivacyPolicy>,
     pub eligibility: Option<Value>,
 }
 
@@ -302,13 +305,32 @@ pub(crate) fn remove_page_timeline(tx: &mut dyn KvWrite, page_id: u64) -> Result
     tx.delete(&keys::timeline_latest(page_id))
 }
 
-/// The entries of one page, newest first, inside `[after, before]`, at most `limit`.
+/// `privateTimelineEventFilterForCaller(te)`: an entry with no event page passes. Otherwise its
+/// event page, read by id whatever its source or deleted state (the SQL is an `EXISTS` on the id
+/// alone), must exist and pass the page policy.
+fn event_visible(
+    read: &dyn KvRead,
+    entry: &TimelineRecord,
+    policy: &PrivacyPolicy,
+) -> Result<bool> {
+    let Some(id) = entry.event_page_id else {
+        return Ok(true);
+    };
+    match read_page_by_id(read, id)? {
+        None => Ok(false),
+        Some(event) => Ok(!page_hidden(read, &event, policy)?),
+    }
+}
+
+/// The entries of one page that `keep` accepts, newest first, inside `[after, before]`, at most
+/// `limit`. The filter runs before the limit, as a SQL `WHERE` does.
 fn page_entries(
     read: &dyn KvRead,
     page_id: u64,
     after: Option<&str>,
     before: Option<&str>,
     limit: usize,
+    keep: &dyn Fn(&TimelineRecord) -> Result<bool>,
 ) -> Result<Vec<TimelineRecord>> {
     let prefix = keys::timeline_prefix(page_id);
     let mut start = prefix.clone();
@@ -324,16 +346,28 @@ fn page_entries(
         None => prefix_end(&prefix),
     }
     .unwrap_or_else(|| vec![0xFF; 64]);
-    let mut raw = Vec::new();
+    let mut rows = Vec::new();
+    let mut failure = None;
     if limit > 0 && start < end {
         read.scan(&start, &end, true, &mut |_, v| {
-            raw.push(v.to_vec());
-            raw.len() < limit
+            let step = serde_json::from_slice::<TimelineRecord>(v)
+                .map_err(StoreError::from)
+                .and_then(|row| Ok(if keep(&row)? { Some(row) } else { None }));
+            match step {
+                Ok(Some(row)) => rows.push(row),
+                Ok(None) => {}
+                Err(error) => {
+                    failure = Some(error);
+                    return false;
+                }
+            }
+            rows.len() < limit
         })?;
     }
-    raw.iter()
-        .map(|v| serde_json::from_slice(v).map_err(StoreError::from))
-        .collect()
+    match failure {
+        Some(error) => Err(error),
+        None => Ok(rows),
+    }
 }
 
 impl Store {
@@ -437,21 +471,15 @@ impl Store {
     }
 
     /// `getTimeline(slug, opts)`: newest first (`date DESC, id DESC`), `limit` rows (0 or absent
-    /// means 100). Soft-deleted pages keep their timeline readable, as in PGLite.
+    /// means 100). Soft-deleted pages keep their timeline readable, as in PGLite. Under
+    /// `excludePrivate` a page the policy hides reads no rows (`privatePagesFilterForCaller(p)`),
+    /// and an entry drops when its event page is hidden ([`event_visible`]).
     pub fn get_timeline(&self, slug: &str, options: &TimelineOptions) -> Result<Vec<Value>> {
-        for (name, refused) in [
-            ("excludePrivate", options.exclude_private == Some(true)),
-            (
-                "eligibility",
-                options.eligibility.as_ref().is_some_and(|v| !v.is_null()),
-            ),
-        ] {
-            if refused {
-                return Err(StoreError::new(
-                    INVALID_ARGUMENT,
-                    format!("getTimeline: the {name} option is not supported by the rust engine"),
-                ));
-            }
+        if options.eligibility.as_ref().is_some_and(|v| !v.is_null()) {
+            return Err(StoreError::new(
+                INVALID_ARGUMENT,
+                "getTimeline: the eligibility option is not supported by the rust engine",
+            ));
         }
         no_nul("getTimeline", &[("slug", slug)])?;
         let limit = match options.limit {
@@ -475,19 +503,38 @@ impl Store {
         let read = self.read()?;
         let mut rows = Vec::new();
         for source in scope_sources(&*read, &options.source_id, &options.source_ids)? {
-            if let Some(page) = read_page(&*read, &source, slug)? {
+            if let Some(page) = read_page(&*read, &source, slug)?
+                && page_visible(&*read, &page, &options.exclude_private)?
+            {
+                let keep = |row: &TimelineRecord| match &options.exclude_private {
+                    Some(policy) => event_visible(&*read, row, policy),
+                    None => Ok(true),
+                };
                 rows.extend(page_entries(
                     &*read,
                     page.id,
                     after.as_deref(),
                     before.as_deref(),
                     limit,
+                    &keep,
                 )?);
             }
         }
         rows.sort_by(|a, b| (&b.date, b.id).cmp(&(&a.date, a.id)));
         rows.truncate(limit);
         Ok(rows.iter().map(TimelineRecord::to_json).collect())
+    }
+}
+
+/// Whether the page policy, when there is one, lets `page` read.
+fn page_visible(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    policy: &Option<PrivacyPolicy>,
+) -> Result<bool> {
+    match policy {
+        Some(policy) => Ok(!page_hidden(read, page, policy)?),
+        None => Ok(true),
     }
 }
 
@@ -696,5 +743,89 @@ mod tests {
             latest_entry_micros(&*store.read().unwrap(), a).unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn exclude_private_hides_a_private_page_and_an_entry_whose_event_page_in_another_source_is_private()
+     {
+        let store = crate::test_support::store();
+        let alt: crate::sources::SourceInput =
+            serde_json::from_value(json!({"id": "alt", "name": "alt"})).unwrap();
+        store.upsert_source(&alt).unwrap();
+        let put = |slug: &str, source: &str, frontmatter: Value| -> u64 {
+            let input: PageInput = serde_json::from_value(json!({
+                "type": "note", "title": slug, "compiled_truth": "body", "frontmatter": frontmatter,
+            }))
+            .unwrap();
+            let options: PutPageOptions =
+                serde_json::from_value(json!({"sourceId": source})).unwrap();
+            store.put_page(slug, &input, &options).unwrap()["id"]
+                .as_u64()
+                .unwrap()
+        };
+        let depth = put("people/a", "default", json!({}));
+        let private = put("people/b", "default", json!({"visibility": "private"}));
+        let foreign_private = put("events/x", "alt", json!({"visibility": "private"}));
+        let foreign_open = put("events/y", "alt", json!({}));
+        store
+            .write(|tx| {
+                for (page_id, event, date, summary) in [
+                    (depth, None, "2026-01-01", "plain"),
+                    (
+                        depth,
+                        Some(foreign_private),
+                        "2026-01-02",
+                        "foreign private event",
+                    ),
+                    (
+                        depth,
+                        Some(foreign_open),
+                        "2026-01-03",
+                        "foreign open event",
+                    ),
+                    (depth, Some(999_999), "2026-01-04", "missing event page"),
+                    (private, None, "2026-01-01", "private page"),
+                ] {
+                    let id = next_entry_id(tx)?;
+                    let mut row = entry(id, page_id, date, summary, 1);
+                    row.event_page_id = event;
+                    put_entry(tx, None, &row)?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        let summaries = |slug: &str, options: Value| -> Vec<Value> {
+            let options: TimelineOptions = serde_json::from_value(options).unwrap();
+            store
+                .get_timeline(slug, &options)
+                .unwrap()
+                .iter()
+                .map(|row| row["summary"].clone())
+                .collect()
+        };
+        let policy = json!({"honorAliases": true, "entityPrivacy": true});
+        assert_eq!(summaries("people/a", json!({})).len(), 4);
+        // The event page is judged by id: a read scoped to `default` still hides the private event
+        // page in `alt`, and an entry whose event page is gone fails the EXISTS.
+        for options in [
+            json!({"excludePrivate": policy}),
+            json!({"sourceId": "default", "excludePrivate": policy}),
+        ] {
+            assert_eq!(
+                summaries("people/a", options),
+                vec![json!("foreign open event"), json!("plain")]
+            );
+        }
+        // The filter runs before the limit.
+        assert_eq!(
+            summaries("people/a", json!({"limit": 1, "excludePrivate": policy})),
+            vec![json!("foreign open event")]
+        );
+        assert_eq!(summaries("people/b", json!({})).len(), 1);
+        assert!(summaries("people/b", json!({"excludePrivate": policy})).is_empty());
+        // Eligibility still refuses.
+        let options: TimelineOptions =
+            serde_json::from_value(json!({"eligibility": {"x": 1}})).unwrap();
+        assert!(store.get_timeline("people/a", &options).is_err());
     }
 }

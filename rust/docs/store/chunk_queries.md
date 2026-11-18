@@ -9,8 +9,8 @@ methods in `rust/crates/gbrain-napi/src/families/chunk_queries.rs` and the membe
 
 | Member | State |
 |---|---|
-| `getChunkPage(slug, { sourceId?, sourceIds?, fromIndex, limit })` | served for one named source |
-| `getChunkWindows(requests, { sourceId?, sourceIds?, chunkSources, maxRows })` | served; the TypeScript member groups the rows with the shared `mapChunkWindowRows` |
+| `getChunkPage(slug, { sourceId?, sourceIds?, fromIndex, limit, excludePrivate?, requireSafeChunks? })` | served for one named source |
+| `getChunkWindows(requests, { sourceId?, sourceIds?, chunkSources, maxRows, excludePrivate?, requireSafeChunks? })` | served; the TypeScript member groups the rows with the shared `mapChunkWindowRows` |
 | `countChunklessPagesWithContent({ sourceId? })` | served |
 | `listChunklessPagesWithContent({ sourceId?, batchSize?, afterPageId? })` | served |
 | `deleteChunksExcept(slug, keepIds, { sourceId? })` | served |
@@ -22,8 +22,12 @@ methods in `rust/crates/gbrain-napi/src/families/chunk_queries.rs` and the membe
 | `listContextualModeCandidates(sourceIds)` | served |
 | `resolveFrozenHits(hits, scope)` | served; a safe-chunk, trust or flag scope refuses |
 
-`excludePrivate: true` and `requireSafeChunks: true` refuse on `getChunkPage` and `getChunkWindows`: the SQL engines
-apply a privacy filter for the first and a `chunker_version` fence for the second, and the store records neither.
+On `getChunkPage` and `getChunkWindows`, `excludePrivate: true` applies the store page policy (`storePagePolicy`, the
+`page_hidden` test of `privatePagesFilterForCaller('p')`), and a safe-chunk read (`requiresSafeChunks`: `requireSafeChunks`,
+else `excludePrivate`) applies the chunker-version fence, `chunker_version >= 4`, which a page with no recorded version
+fails, as NULL fails the SQL comparison. A page either test drops reads as a page with no chunks in `getChunkPage` and is
+absent from the `getChunkWindows` rows. A caller whose member pages, grants or lineage widen the page policy refuses.
+The code chunk reads in the table (`findCodeDefinitions` and the others) still refuse a safe-chunk read.
 `minTrust` and `suppressFlagged` are ignored, because those SQL statements ignore them too.
 
 ## Keys
@@ -127,6 +131,9 @@ the page projection, repair contextual-mode and evidence delivery. Each answers 
 
 ## Follow-ups
 
+- `code-chunk-safe-fence`: the code chunk reads and `resolveFrozenHits` refuse a safe-chunk read, and so an
+  `excludePrivate` read that does not pass `requireSafeChunks: false`. The store records `chunker_version`, so they
+  can apply the same fence as `getChunkPage`.
 - `frozen-hit-manifest-liveness`: for a segmented chunk the SQL engines also require a live `page_body_manifest`
   row. The manifest is the page_body family's private state, so `resolveFrozenHits` joins a segmented chunk at or
   below the page's body generation instead.

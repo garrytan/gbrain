@@ -14,14 +14,16 @@ use serde_json::{Map, Value, json};
 
 use super::tsearch::{TsVector, Weight, concat, fts_input, setweight, to_tsvector};
 use super::vector_cache::{VectorKind, cached};
+use crate::chunk_queries::SAFE_FENCE_CHUNKER_VERSION;
 use crate::chunks::ChunkRecord;
 use crate::env::iso;
 use crate::error::{Result, StoreError};
+use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::kv::KvRead;
 use crate::pages::PageRecord;
 use crate::sources::read_source;
 use crate::timeline_queries::jsonb_field_text;
-use crate::trust::{TrustPolicy, TrustTier};
+use crate::trust::{TrustTier, activation_suppressed};
 
 /// The `text_projection_revision` the v153 activation leaves on a page whose pre-upgrade index it
 /// keeps serving (`servedTextProjectionFilter`, search/safe-chunks.ts).
@@ -93,9 +95,17 @@ pub struct KeywordOptions {
     pub handles_only: bool,
     /// `searchKeyword`: the per-page candidates kept before the window (`LIMIT $2`, 3x the limit).
     pub inner_limit: Option<f64>,
-    /// `minTrust`: `buildVisibilityClause`'s trust floor over the page's stored tier.
+    /// `excludePrivate`: the store page policy (`storePagePolicy`) that `privatePagesFilterForCaller(p)`
+    /// renders, applied by `facts/privacy.rs` `page_hidden`; `null` when the read does not ask for it.
+    pub exclude_private: Option<PrivacyPolicy>,
+    /// `requiresSafeChunks(opts)`: only pages past the chunker-version fence (`safeChunksFilter(p)`).
+    /// An `excludePrivate` read asks for it unless it says otherwise.
+    pub require_safe_chunks: bool,
+    /// `minTrust`: the trust floor (`trustFloorSql(p)`), a page's stamped tier at or above it.
+    /// `null` or empty keeps every tier; a name that is no tier refuses.
     pub min_trust: Option<String>,
-    /// `suppressFlagged`: drop a page `activationSuppressedSql('pages')` flags.
+    /// `suppressFlagged`: drops a page `activationSuppressedSql('pages', p)` suppresses, a page at or
+    /// below `agent_written` that holds a `flag` receipt in an activation reason family.
     pub suppress_flagged: bool,
 }
 
@@ -121,10 +131,27 @@ impl Bound {
     }
 }
 
+/// `safeChunksFilter(p)`: `chunker_version >= SAFE_FENCE_CHUNKER_VERSION`. A page that records no
+/// version fails it, as NULL fails the SQL comparison.
+fn safe_chunks(page: &PageRecord) -> bool {
+    page.chunker_version
+        .is_some_and(|v| v >= SAFE_FENCE_CHUNKER_VERSION)
+}
+
+/// The read's trust floor (`trustFloorSql`): none when unset or empty, and a refusal for a name
+/// that is no tier.
+fn trust_floor(o: &KeywordOptions) -> Result<Option<TrustTier>> {
+    match o.min_trust.as_deref() {
+        None | Some("") => Ok(None),
+        Some(name) => TrustTier::parse(name).map(Some).ok_or_else(|| {
+            StoreError::invalid(format!("minTrust: \"{name}\" names no trust tier"))
+        }),
+    }
+}
+
 /// The page-level predicates, with the source table read once per source.
 pub(super) struct PageFilter<'a> {
     options: &'a KeywordOptions,
-    trust: TrustPolicy,
     after: Option<Bound>,
     before: Option<Bound>,
     live_sources: HashMap<String, bool>,
@@ -134,7 +161,6 @@ impl<'a> PageFilter<'a> {
     pub(super) fn new(options: &'a KeywordOptions) -> Result<Self> {
         Ok(Self {
             options,
-            trust: TrustPolicy::parse(options.min_trust.as_deref(), options.suppress_flagged)?,
             after: Bound::parse(options.after_date.as_ref(), "afterDate")?,
             before: Bound::parse(options.before_date.as_ref(), "beforeDate")?,
             live_sources: HashMap::new(),
@@ -146,6 +172,7 @@ impl<'a> PageFilter<'a> {
         let o = self.options;
         if page.deleted_at_us.is_some()
             || !served(page)
+            || (o.require_safe_chunks && !safe_chunks(page))
             || HIDING_FRONTMATTER_KEYS
                 .iter()
                 .any(|key| page.frontmatter.contains_key(*key))
@@ -198,12 +225,19 @@ impl<'a> PageFilter<'a> {
         if !live {
             return Ok(false);
         }
-        self.trust.admits(
-            read,
-            "pages",
-            page.id,
-            TrustTier::stored(page.trust_tier.as_deref()),
-        )
+        if let Some(policy) = &o.exclude_private
+            && page_hidden(read, page, policy)?
+        {
+            return Ok(false);
+        }
+        // `pageEligibleSql(p)`: the trust floor, then the flagged-page filter.
+        let tier = TrustTier::stored(page.trust_tier.as_deref());
+        if let Some(floor) = trust_floor(o)?
+            && tier.rank() < floor.rank()
+        {
+            return Ok(false);
+        }
+        Ok(!(o.suppress_flagged && activation_suppressed(read, "pages", page.id, tier)?))
     }
 
     /// The chunk predicates: `detail` low, `language`, `symbolKind`.

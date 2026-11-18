@@ -11,12 +11,14 @@
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
  * unexported.
  *
+ * getChunkPage and getChunkWindows model the page privacy policy (storePagePolicy) and the chunker-version fence of a
+ * safe-chunk read (`requiresSafeChunks`, which an `excludePrivate` read asks for unless it says otherwise).
+ *
  * The chunk-reads members model the source filter, the page privacy policy (storePagePolicy) and the live test of the
  * read policy (src/core/search/read-policy-sql.ts); resolveFrozenHits also models the trust floor and flag suppression
- * (`minTrust`, `suppressFlagged`). A safe-chunk policy refuses with `engine_capability_missing` (the store records no
- * chunker-version fence). The other chunk-reads members refuse a trust or flag option: no production caller passes
- * one, so no store read was built. getChunkPage and getChunkWindows ignore both, as their SQL does. See
- * rust/docs/store/chunk_queries.md.
+ * (`minTrust`, `suppressFlagged`). A safe-chunk policy on a chunk-reads member refuses with `engine_capability_missing`.
+ * The other chunk-reads members refuse a trust or flag option: no production caller passes one, so no store read was
+ * built. getChunkPage and getChunkWindows ignore both, as their SQL does. See rust/docs/store/chunk_queries.md.
  */
 import { mapChunkWindowRows, type ChunkWindowOpts, type ChunkWindowPage, type ChunkWindowRequest } from '../../search/chunk-windows.ts';
 import type { Chunk, ChunklessPageRow, PageReadScope } from '../../types.ts';
@@ -31,23 +33,27 @@ import { toChunk } from '../store-codec.ts';
 import { namedSourceIds, refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 
 // The SQL engines never read these PageReadScope keys in these statements, so the store ignores them too.
-// `excludePrivate` (a privacy filter) and `requireSafeChunks` (the chunker-version fence the store does not record)
-// are not here: when true they refuse.
+// `excludePrivate` (the page privacy filter) and `requireSafeChunks` (the chunker-version fence) are served.
 const UNREAD_SCOPE = ['minTrust', 'suppressFlagged'] as const;
 
 type ChunkPage = { chunks: Chunk[]; total_chunks: number; max_chunk_index: number | null };
 
 export const getChunkPage: StoreMember<[slug: string, opts: PageReadScope & { fromIndex: number; limit: number }], ChunkPage> =
   async (brain, slug, opts) => {
-    const { sourceIds, sourceId, fromIndex, limit } = takeOptions('getChunkPage', opts, ['sourceId', 'sourceIds', 'fromIndex', 'limit'], UNREAD_SCOPE) as
-      { sourceId?: unknown; sourceIds?: unknown[]; fromIndex?: number; limit?: number };
+    const { sourceIds, sourceId, fromIndex, limit, excludePrivate } = takeOptions('getChunkPage', opts,
+      ['sourceId', 'sourceIds', 'fromIndex', 'limit', 'excludePrivate', 'requireSafeChunks'], UNREAD_SCOPE) as
+      { sourceId?: unknown; sourceIds?: unknown[]; fromIndex?: number; limit?: number; excludePrivate?: unknown };
     // The scope resolves as getChunks resolves it: `sourceIds` when not empty, else `sourceId` (default `default`). A
     // scope that names no source matches nothing, and a read over several sources is refused (the chunk order ties).
     const requested = sourceIds?.length ? sourceIds : [sourceId ?? 'default'];
     const named = namedSourceIds(requested);
     if (named.length === 0) return { chunks: [], total_chunks: 0, max_chunk_index: null };
     if (named.length > 1) refuseMember('getChunkPage', 'a read over several sources');
-    const options = { sourceId: named[0]!, fromIndex, limit };
+    const options = {
+      sourceId: named[0]!, fromIndex, limit,
+      excludePrivate: storePagePolicy('getChunkPage', excludePrivate) ?? null,
+      requireSafeChunks: requiresSafeChunks(opts),
+    };
     const page: ChunkPage = await storeCall({ member: 'getChunkPage', slug }, () => brain.getChunkPage(slug, options));
     return { chunks: page.chunks.map((row) => toChunk(row)), total_chunks: page.total_chunks, max_chunk_index: page.max_chunk_index };
   };
@@ -56,7 +62,8 @@ export const getChunkWindows: StoreMember<[requests: ChunkWindowRequest[], opts:
   async (brain, requests, opts) => {
     // The SQL engines answer an empty request list before they read any option.
     if (requests.length === 0) return [];
-    const options = takeOptions('getChunkWindows', opts, ['sourceId', 'sourceIds', 'chunkSources', 'maxRows'], UNREAD_SCOPE);
+    const options = takeOptions('getChunkWindows', opts,
+      ['sourceId', 'sourceIds', 'chunkSources', 'maxRows', 'excludePrivate', 'requireSafeChunks'], UNREAD_SCOPE);
     // The SQL engines bind every request field into an int[]; a value that is not an integer is not guessed at.
     for (const r of requests) {
       if (![r.page_id, r.from_index, r.to_index, r.priority].every(Number.isSafeInteger)) refuseMember('getChunkWindows', 'a request field that is not an integer');
@@ -65,7 +72,11 @@ export const getChunkWindows: StoreMember<[requests: ChunkWindowRequest[], opts:
     if (!Number.isSafeInteger(maxRows)) refuseMember('getChunkWindows', 'a maxRows that is not a finite number');
     const wire = requests.map((r) => ({ page_id: r.page_id, from_index: r.from_index, to_index: r.to_index, priority: r.priority }));
     const rows: Record<string, unknown>[] =
-      await storeCall({ member: 'getChunkWindows' }, () => brain.getChunkWindows(wire, { ...options, maxRows }));
+      await storeCall({ member: 'getChunkWindows' }, () => brain.getChunkWindows(wire, {
+        ...options, maxRows,
+        excludePrivate: storePagePolicy('getChunkWindows', opts.excludePrivate) ?? null,
+        requireSafeChunks: requiresSafeChunks(opts),
+      }));
     return mapChunkWindowRows(rows, maxRows);
   };
 

@@ -1,7 +1,7 @@
 //! The read-side trust policy of `src/core/eligibility/sql.ts`: a trust floor (`trustFloorSql`)
 //! and flag suppression (`activationSuppressedSql`), applied to one stored row at a time.
 //!
-//! Every read member that takes `minTrust` / `suppressFlagged` builds one [`TrustPolicy`] and asks
+//! A read member that takes `minTrust` / `suppressFlagged` builds one [`TrustPolicy`] and asks
 //! [`TrustPolicy::admits`] per row, so the floor and the suppression rule stay in one place.
 
 use crate::error::{Result, StoreError};

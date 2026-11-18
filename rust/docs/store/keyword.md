@@ -29,9 +29,6 @@ Every keyword member except `findByTitleFuzzy` refuses:
 
 - a CJK query (`hasCJK`): the SQL engines take a separate CJK path (follow-up `keyword-cjk`);
 - a text search configuration other than `english` (`getFtsLanguage()`);
-- truthy `excludePrivate` or `requireSafeChunks`: the store does not model this privacy filter or record chunk
-  safety. (`minTrust` and `suppressFlagged` are served: every member's page filter applies `trust::TrustPolicy` to
-  the page's stamped tier and its write-gate receipts, as `buildVisibilityClause` does);
 - a date bound (`afterDate`, `beforeDate`) that is not an ISO date or date-time
   (`YYYY-M-D[( |T)H:MM[:SS[.ffffff]][Z|±HH[:MM]]]`), that is outside the calendar, or that has more than six fraction
   digits. Postgres reads more shapes (`Jan 5 2026`); those refuse rather than guess;
@@ -41,8 +38,28 @@ Every keyword member except `findByTitleFuzzy` refuses:
   non-integer `after.page_id`: Postgres rejects them as a `bigint`;
 - any option the member does not know.
 
-`searchKeywordChunks` also refuses `type`, a non-empty `types`, a non-empty `where` and a non-empty `exclude_slugs`:
-Postgres applies them and PGLite ignores them (follow-up `pglite-keyword-chunks-page-filters`).
+`searchKeywordChunks` applies `type`, `types`, `where` and `exclude_slugs` like the page members, as both SQL
+engines do.
+
+### Visibility
+
+`excludePrivate`, `requireSafeChunks`, `minTrust` and `suppressFlagged` are served by every keyword member except
+`findByTitleFuzzy`, as `buildVisibilityClause` (`src/core/search/sql-ranking.ts`) adds them, before any rank, limit
+or count:
+
+- `excludePrivate`: the TS member sends the store page policy (`storePagePolicy`), and the page filter drops a page
+  `facts/privacy.rs` `page_hidden` hides (`privatePagesFilterForCaller('p')`). A caller whose member pages, grants or
+  lineage widen the policy refuses.
+- `requireSafeChunks`, which an `excludePrivate` read asks for unless it says otherwise (`requiresSafeChunks`): the
+  page filter drops a page whose `chunker_version` is short of `SAFE_FENCE_CHUNKER_VERSION` or not recorded
+  (`safeChunksFilter('p')`).
+- A safe-chunk `searchTitles` runs every attempt as the `title` kind, as `buildSearchTitlesStatement` makes the
+  statement title-only and uncapped: no attempt matches a page on its timeline and none is cut.
+- `minTrust` (`trustFloorSql('p')`): the page filter drops a page whose stamped trust tier (`PageRecord::trust_tier`,
+  `unknown` when none) ranks below the floor. An empty floor keeps every tier; a name that is no tier refuses.
+- `suppressFlagged` (`activationSuppressedSql('pages', 'p')`): the page filter drops a page at or below
+  `agent_written` that holds a `flag` write-gate receipt in an activation reason family
+  (`trust::activation_suppressed`).
 
 Ignored, as in the SQL statements: the vector, reranking, recency and reporting options (`onVectorPoolMeta`,
 `cjkKeyword`, `embeddingColumn`, `recencyBoost`, `tokenBudget`, `reranker`, `relationalRetrieval` and the rest of
@@ -143,9 +160,6 @@ The page vector is not stored; `keyword/titles.rs` rebuilds the one PGLite last 
   `sealSegmentedPage`), so a sealed segmented page is searchable by its title and lead.
 
 
-- `searchKeywordChunks` page filters: Postgres applies `type`, `types`, `where` and `exclude_slugs`; PGLite drops
-  them. The store applies them, but the member refuses them until the engines agree (follow-up
-  `pglite-keyword-chunks-page-filters`). No production code calls `searchKeywordChunks`.
 - `stale` on `searchKeywordChunks`, `searchKeyword` and `searchTitles` follows PGLite: true when the newest timeline
   entry is newer than `updated_at`. Postgres always returns `stale: false`. This is the SQL engines' shared dialect
   rule (`staleProbe`), not a follow-up.
@@ -169,8 +183,4 @@ The page vector is not stored; `keyword/titles.rs` rebuilds the one PGLite last 
   and the first query after a start, or after the text outgrows the 64 MiB cache, rebuilds every vector. Add a stored
   positional lexeme index when the scan or a cold cache becomes the bottleneck for the brains the store serves.
 - `keyword-cjk`: serve CJK queries (the SQL engines' bigram path).
-- `pglite-keyword-chunks-page-filters`: PGLite's `searchKeywordChunks` drops `type`, `types`, `where` and
-  `exclude_slugs`, which Postgres applies; no production caller. A PGLite behavior change, so it waits until after
-  1x parity. Then the member serves the four filters with a parity case.
 - `fuzzy-title-unscoped-deleted`: the SQL unscoped arm returns soft-deleted pages.
-- Serve the refused privacy and trust options once the store records them.
