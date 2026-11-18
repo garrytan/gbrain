@@ -55,16 +55,9 @@ export interface PriorToolV2Row {
  * consults during replay.
  */
 export async function loadPriorToolsV2(engine: BrainEngine, jobId: number): Promise<PriorToolV2Row[]> {
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT message_idx, tool_use_id, tool_name, ordinal, gbrain_tool_use_id::text AS gbrain_tool_use_id,
-            status, output, error
-       FROM subagent_tool_executions
-      WHERE job_id = $1
-      ORDER BY message_idx, COALESCE(ordinal, 0), id`,
-    [jobId],
-  );
+  const rows = await engine.listSubagentToolExecutions(jobId, 'replay');
   return rows.map(r => {
-    const gbrainId = r.gbrain_tool_use_id as string | null;
+    const gbrainId = r.gbrain_tool_use_id;
     const stableKey = gbrainId
       ? gbrainId
       // D5 legacy shim: derive a stable key from (job, msg_idx, tool_name, tool_use_id).
@@ -73,76 +66,56 @@ export async function loadPriorToolsV2(engine: BrainEngine, jobId: number): Prom
       : `legacy:${jobId}:${r.message_idx}:${r.tool_use_id}:${r.tool_name}`;
     return {
       stableKey,
-      status: r.status as 'pending' | 'complete' | 'failed',
+      status: r.status,
       output: r.output,
-      error: (r.error as string | null) ?? null,
+      error: r.error ?? null,
     };
   });
 }
 
 export async function loadPriorMessages(engine: BrainEngine, jobId: number): Promise<PersistedMessage[]> {
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT message_idx, role, content_blocks, tokens_in, tokens_out,
-            tokens_cache_read, tokens_cache_create, model
-       FROM subagent_messages
-      WHERE job_id = $1
-      ORDER BY message_idx ASC`,
-    [jobId],
-  );
+  const rows = await engine.listSubagentMessages(jobId);
   return rows.map(r => ({
-    message_idx: r.message_idx as number,
-    role: r.role as 'user' | 'assistant',
+    message_idx: r.message_idx,
+    role: r.role,
     content_blocks: (typeof r.content_blocks === 'string'
       ? JSON.parse(r.content_blocks as string)
       : r.content_blocks) as ContentBlock[],
-    tokens_in: (r.tokens_in as number) ?? null,
-    tokens_out: (r.tokens_out as number) ?? null,
-    tokens_cache_read: (r.tokens_cache_read as number) ?? null,
-    tokens_cache_create: (r.tokens_cache_create as number) ?? null,
-    model: (r.model as string) ?? null,
+    tokens_in: r.tokens_in ?? null,
+    tokens_out: r.tokens_out ?? null,
+    tokens_cache_read: r.tokens_cache_read ?? null,
+    tokens_cache_create: r.tokens_cache_create ?? null,
+    model: r.model ?? null,
   }));
 }
 
 export async function loadPriorTools(engine: BrainEngine, jobId: number): Promise<PersistedToolExec[]> {
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT message_idx, ordinal, tool_use_id, tool_name, input, status, output, error
-       FROM subagent_tool_executions
-      WHERE job_id = $1
-      ORDER BY message_idx, COALESCE(ordinal, 0), id`,
-    [jobId],
-  );
+  const rows = await engine.listSubagentToolExecutions(jobId, 'replay');
   return rows.map(r => ({
-    message_idx: r.message_idx as number,
-    ordinal: (r.ordinal as number | null) ?? null,
-    tool_use_id: r.tool_use_id as string,
-    tool_name: r.tool_name as string,
+    message_idx: r.message_idx,
+    ordinal: r.ordinal ?? null,
+    tool_use_id: r.tool_use_id,
+    tool_name: r.tool_name,
     input: typeof r.input === 'string' ? JSON.parse(r.input) : r.input,
-    status: r.status as 'pending' | 'complete' | 'failed',
+    status: r.status,
     output: r.output == null
       ? null
       : (typeof r.output === 'string' ? JSON.parse(r.output) : r.output),
-    error: (r.error as string) ?? null,
+    error: r.error ?? null,
   }));
 }
 
 export async function persistMessage(engine: BrainEngine, jobId: number, msg: PersistedMessage): Promise<void> {
-  await engine.executeRaw(
-    `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks,
-        tokens_in, tokens_out, tokens_cache_read, tokens_cache_create, model)
-     VALUES ($1, $2, $3, $4::text::jsonb, $5, $6, $7, $8, $9)
-     ON CONFLICT (job_id, message_idx) DO NOTHING`,
-    [
-      jobId,
-      msg.message_idx,
-      msg.role,
-      JSON.stringify(msg.content_blocks),
-      msg.tokens_in,
-      msg.tokens_out,
-      msg.tokens_cache_read,
-      msg.tokens_cache_create,
-      msg.model,
-    ],
-  );
+  await engine.insertSubagentMessage(jobId, {
+    message_idx: msg.message_idx,
+    role: msg.role,
+    content_blocks: JSON.stringify(msg.content_blocks),
+    tokens_in: msg.tokens_in,
+    tokens_out: msg.tokens_out,
+    tokens_cache_read: msg.tokens_cache_read,
+    tokens_cache_create: msg.tokens_cache_create,
+    model: msg.model,
+  });
 }
 
 export async function persistToolExecPending(
@@ -173,16 +146,10 @@ export async function persistToolExecPending(
   //      ordinal) is the constraint-backed backstop for the residual race —
   //      a lease bounds honest workers to one owner per job, but an expired
   //      job can be reclaimed while a partitioned old worker still writes.
-  await engine.executeRaw(
-    `INSERT INTO subagent_tool_executions (job_id, message_idx, tool_use_id, tool_name, input, status, ordinal)
-     SELECT $1, $2, $3, $4, $5::text::jsonb, 'pending', $6
-      WHERE NOT EXISTS (
-        SELECT 1 FROM subagent_tool_executions
-         WHERE job_id = $1 AND message_idx = $2 AND tool_use_id = $3
-           AND ordinal IS NULL
-      )
-     ON CONFLICT (job_id, message_idx, ordinal) DO NOTHING`,
-    [jobId, messageIdx, toolUseId, toolName, jsonStr, ordinal],
+  await engine.recordSubagentToolExecutions(
+    jobId,
+    [{ message_idx: messageIdx, ordinal, tool_use_id: toolUseId, tool_name: toolName, input: jsonStr, status: 'pending' }],
+    { legacyGuard: true },
   );
 }
 
@@ -204,18 +171,9 @@ export async function persistToolExecComplete(
   // call's own row is always reachable via its ordinal (persistToolExecPending
   // stamps the same value) or via the legacy NULL, so a broader status-based
   // disjunct could only ever capture a sibling's row.
-  await engine.executeRaw(
-    `UPDATE subagent_tool_executions
-        SET status = 'complete', output = $4::text::jsonb, ended_at = now()
-      WHERE id = (
-        SELECT id FROM subagent_tool_executions
-         WHERE job_id = $1 AND message_idx = $2 AND tool_use_id = $3
-           AND (ordinal = $5 OR ordinal IS NULL)
-           AND status <> 'complete'
-         ORDER BY CASE WHEN ordinal = $5 THEN 0 ELSE 1 END, id
-         LIMIT 1
-      )`,
-    [jobId, messageIdx, toolUseId, typeof output === 'string' ? output : JSON.stringify(output), ordinal],
+  await engine.completeSubagentToolExecution(
+    { jobId, messageIdx, ordinal, toolUseId },
+    typeof output === 'string' ? output : JSON.stringify(output),
   );
 }
 
@@ -252,14 +210,7 @@ export async function finalizeWriteAccounting(
 ): Promise<SubagentResult> {
   let rows: Array<{ status: string; error: string | null; output: unknown }>;
   try {
-    rows = await engine.executeRaw<{ status: string; error: string | null; output: unknown }>(
-      opts.scopeToolUseIdPrefix
-        ? `SELECT status, error, output FROM subagent_tool_executions
-            WHERE job_id = $1 AND tool_name = 'brain_put_page' AND tool_use_id LIKE $2`
-        : `SELECT status, error, output FROM subagent_tool_executions
-            WHERE job_id = $1 AND tool_name = 'brain_put_page'`,
-      opts.scopeToolUseIdPrefix ? [jobId, `${opts.scopeToolUseIdPrefix}%`] : [jobId],
-    );
+    rows = await engine.listSubagentWriteOutcomes(jobId, opts.scopeToolUseIdPrefix);
   } catch (e) {
     if (opts.requireWrites) {
       // Fail CLOSED for write-required jobs: returning the result unchanged
@@ -322,15 +273,7 @@ async function isLegitimateZeroWrite(
   if (result.stop_reason !== 'end_turn') return false;
   if (result.synth_mode_used === 'oneshot' && result.oneshot_skipped === true) return true;
   if (!opts.allowCleanZeroWrites) return false;
-  const completed = await engine.executeRaw<{ id: number }>(
-    opts.scopeToolUseIdPrefix
-      ? `SELECT id FROM subagent_tool_executions
-          WHERE job_id = $1 AND status = 'complete' AND tool_use_id LIKE $2 LIMIT 1`
-      : `SELECT id FROM subagent_tool_executions
-          WHERE job_id = $1 AND status = 'complete' LIMIT 1`,
-    opts.scopeToolUseIdPrefix ? [jobId, `${opts.scopeToolUseIdPrefix}%`] : [jobId],
-  );
-  return completed.length > 0;
+  return engine.hasSubagentToolExecution(jobId, { status: 'complete', toolUseIdPrefix: opts.scopeToolUseIdPrefix });
 }
 
 export async function persistToolExecFailed(
@@ -360,29 +303,9 @@ export async function persistToolExecFailed(
   // residual zombie-worker race, mirroring persistToolExecPending; its
   // conflict update is predicated on the SAME tool_use_id and a non-complete
   // row for the same reason.
-  const updated = await engine.executeRaw<{ id: number }>(
-    `UPDATE subagent_tool_executions
-        SET status = 'failed', error = $4, ended_at = now()
-      WHERE id = (
-        SELECT id FROM subagent_tool_executions
-         WHERE job_id = $1 AND message_idx = $2 AND tool_use_id = $3
-           AND (ordinal = $5 OR ordinal IS NULL)
-           AND status <> 'complete'
-         ORDER BY CASE WHEN ordinal = $5 THEN 0 ELSE 1 END, id
-         LIMIT 1
-      )
-      RETURNING id`,
-    [jobId, messageIdx, toolUseId, error, ordinal],
+  await engine.failSubagentToolExecution(
+    { jobId, messageIdx, ordinal, toolUseId },
+    error,
+    { tool_name: toolName, input: typeof input === 'string' ? input : JSON.stringify(input) },
   );
-  if (updated.length === 0) {
-    await engine.executeRaw(
-      `INSERT INTO subagent_tool_executions (job_id, message_idx, tool_use_id, tool_name, input, status, error, ended_at, ordinal)
-       VALUES ($1, $2, $3, $4, $5::text::jsonb, 'failed', $6, now(), $7)
-       ON CONFLICT (job_id, message_idx, ordinal) DO UPDATE
-         SET status = 'failed', error = EXCLUDED.error, ended_at = now()
-         WHERE subagent_tool_executions.tool_use_id = EXCLUDED.tool_use_id
-           AND subagent_tool_executions.status <> 'complete'`,
-      [jobId, messageIdx, toolUseId, toolName, typeof input === 'string' ? input : JSON.stringify(input), error, ordinal],
-    );
-  }
 }

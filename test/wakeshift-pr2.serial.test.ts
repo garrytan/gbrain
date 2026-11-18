@@ -490,7 +490,8 @@ describe('watch ownership', () => {
 
 describe('status, doctor and the gate', () => {
   test('doctor on a brain behind the Wakeshift migration reads as off when off, and warns when enabled', async () => {
-    const behind = { kind: 'pglite', executeRaw: async () => { throw Object.assign(new Error('relation "wake_forgets" does not exist'), { code: '42P01' }); } };
+    const missing = async () => { throw Object.assign(new Error('relation "wake_forgets" does not exist'), { code: '42P01' }); };
+    const behind = { kind: 'pglite', executeRaw: missing, countPendingWakeForgets: missing, readWakeDoctor: missing, listActiveAccessMembers: missing };
     const run = () => inHome(async () => wakeshiftEntry.run({ engine: behind, args: [], jsonOutput: true, fastMode: false, doFix: false, dryRun: false } as unknown as DoctorContext));
     writeConfig({ enabled: false, url: fake.url });
     expect(await run()).toEqual([expect.objectContaining({ status: 'ok', readiness_state: 'disabled_by_choice' })]);

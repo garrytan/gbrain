@@ -74,6 +74,11 @@ const INTERFACE_METHODS: readonly string[] = [
   'readQueuedSpendRows', 'listBuildSkewStacktraceLines', 'countDeadDreamSubmissionRows', 'listFactsAbsorbJobsByKeyPrefix', 'listDeadFactsAbsorbJobsByKeys',
   // group D (jobs insight)
   'readJobInsight',
+  // group C (spend reservations and lease pressure)
+  'readJobSpendTree', 'insertSpendReservation', 'expireSpendReservations', 'settleSpendReservation', 'markSpendUsageUnknown',
+  'insertLeasePressure', 'countLeasePressure', 'listRecentLeasePressure',
+  // group B (subagent transcript and tool ledger)
+  'listSubagentMessages', 'countSubagentMessages', 'insertSubagentMessage', 'listSubagentToolExecutions', 'hasSubagentToolExecution', 'listSubagentWriteOutcomes', 'listSubagentOneshotLedger', 'summarizeSubagentToolExecutions', 'listSubagentPutPageSlugs', 'listSubagentPutPageWrites', 'listSubagentRetainedPutPages', 'listSubagentStagedPages', 'listSubagentTimelineAppendCalls', 'recordSubagentToolExecutions', 'startSubagentToolExecution', 'completeSubagentToolExecution', 'failSubagentToolExecution',
   // group D (takes, salience and code-edge reads)
   'countOffGridTakeWeights', 'countTakes', 'planFactPurgeTakes',
   'listTakeRowsForPage', 'countMcpResolvedTakes', 'listTakeSupersessionCandidates', 'countZeroWeightWithTakes', 'hasCodeEdgesSymbol',
@@ -207,6 +212,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'readSourceState', 'readAdmissionSource', 'sharedSkillPackTablePresent', 'listSharedSkillPackRoots', 'getWorktreeBinding', 'hasExtractedEvents', 'listActiveAccessMembers', 'expireMemoryProposals', 'listAwaitingMemoryProposals', 'purgeMemoryProposals', 'attachSourcePath',
   // Code edges
   'addCodeEdges', 'deleteCodeEdgesForChunks', 'getCallersOf', 'getCalleesOf', 'getEdgesByChunk',
+  'getCodeTraversalCache', 'putCodeTraversalCache', 'clearCodeTraversalCache',
   'searchKeywordChunks',
   // Eval capture
   'logEvalCandidate', 'listEvalCandidates', 'deleteEvalCandidatesBefore', 'logEvalCaptureFailure',
@@ -227,6 +233,10 @@ const INTERFACE_METHODS: readonly string[] = [
   'deleteStaleWriteGateReceipts', 'upsertWriteGateHold', 'listWriteGateHoldRows', 'getWriteGateHoldRow', 'decideWriteGateHold',
   // Open loops (engine-sql/open-loops.ts)
   'upsertOpenLoop', 'listOpenLoops', 'closeOpenLoop',
+  // Group A (jobs-tables): the Wakeshift report-back tables (engine-sql/jobs-wake.ts)
+  'openWakeWatch', 'listWakeWatches', 'endWakeWatches', 'countWakeWatches', 'readWakeDoctor', 'countPendingWakeForgets', 'listWakeCrons',
+  'addWakeCron', 'removeWakeCron', 'hasWakeCron', 'recordWakeCronRun', 'hasWakeTermsAcceptance', 'recordWakeTermsAcceptance', 'listDueWakeWatches',
+  'claimWakeWatch', 'settleWakeWatch', 'queueWakeForget', 'claimWakeForgets', 'settleWakeForget',
 ];
 
 /**
