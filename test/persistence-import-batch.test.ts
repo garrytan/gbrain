@@ -294,6 +294,12 @@ test('an unchanged re-import screens its files with one read of each batch-share
       counted.set("profile='company-brain'", (counted.get("profile='company-brain'") ?? 0) + 1);
       return receipt.call(this, id);
     };
+    // The knowledge guard's shared skillpack roots read is the typed listSharedSkillPackRoots member, counted under its old statement text.
+    const packRoots = brain.engine.listSharedSkillPackRoots;
+    brain.engine.listSharedSkillPackRoots = function(this: BrainEngine, hostId: string) {
+      counted.set('FROM shared_skill_packs', (counted.get('FROM shared_skill_packs') ?? 0) + 1);
+      return packRoots.call(this, hostId);
+    };
     // The local writer reads are the typed readLocalWriterRow member, counted under the same key.
     const writer = brain.engine.readLocalWriterRow;
     brain.engine.readLocalWriterRow = function(this: BrainEngine, ...args: Parameters<BrainEngine['readLocalWriterRow']>) {
@@ -302,7 +308,8 @@ test('an unchanged re-import screens its files with one read of each batch-share
     };
     let again: PromiseSettledResult<unknown>[];
     try { again = await importManagedFiles(brain.engine, files, { sourceId, noEmbed: true }); } finally {
-      brain.engine.executeRaw = original; brain.engine.hasCompanyBrainReceipt = receipt; brain.engine.readLocalWriterRow = writer;
+      brain.engine.executeRaw = original; brain.engine.hasCompanyBrainReceipt = receipt;
+      brain.engine.listSharedSkillPackRoots = packRoots; brain.engine.readLocalWriterRow = writer;
     }
     expect(again.map(r => r.status === 'fulfilled' && (r.value as { status: string }).status)).toEqual(files.map(() => 'skipped'));
     // A per-file screen would read each of these at least once per file (12 here).

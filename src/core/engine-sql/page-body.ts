@@ -37,7 +37,7 @@ import { compileRowNormalizer } from './normalize.ts';
 import { liveTilingSql, stagingNeedsTextSql, untiledSql } from '../page-body/schema.ts';
 import { DerivationWriteRefused, type SegmentDerivationInput, type SegmentDerivationKind, type SegmentDerivationRow, type SegmentDerivationState } from '../page-body/derivations.ts';
 import { RELEASE_STAGED_CTE } from '../persistence/limits.ts';
-import { SEGMENTED_CHUNKER_VERSION } from '../page-body/segment-chunks.ts';
+import { SEGMENTED_CHUNKER_VERSION } from '../page-body/chunker-version.ts';
 import { pageSearchVectorSql } from '../fts-language.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { overlayCanonicalBodies, readPageSnapshot } from '../page-state/snapshot.ts';

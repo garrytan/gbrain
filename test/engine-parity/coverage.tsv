@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 512/512
+# covered: 520/520
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -15,7 +15,7 @@
 # link_temporal: 12/12
 # search_vector: 4/4
 # retrieval_coverage: 5/5
-# chunks: 36/36
+# chunks: 37/37
 # extraction: 7/7
 # links: 23/23
 # tags: 5/5
@@ -51,11 +51,12 @@
 # open_loops: 3/3
 # cli_reads_import: 11/11
 # wanted_links: 2/2
-# write_misc: 10/10
+# write_misc: 11/11
 # telemetry: 8/8
 # alias_fanout_reads: 4/4
 # write_guards: 7/7
 # trust_fence: 1/1
+# trust_proposals: 6/6
 # connect_gate: 4/4
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
 connect	lifecycle	yes	1	yes	yes	yes	serves
@@ -71,7 +72,7 @@ getPage	pages	yes	58	yes	yes	yes	serves
 readPageSnapshot	pages	yes	16	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	220	yes	yes	yes	serves
+putPage	pages	yes	222	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	6	yes	yes	yes	serves
@@ -145,12 +146,13 @@ countSearchVectorRows	search_vector	yes	1	no	yes	yes	serves
 replaceSearchVectorTriggerFunction	search_vector	yes	1	no	yes	yes	serves
 backfillSearchVectors	search_vector	yes	1	no	yes	yes	serves
 ensureFactsKeywordIndex	search_vector	yes	1	no	yes	yes	serves
-countPendingProjectionPages	retrieval_coverage	yes	6	no	yes	yes	serves
+countPendingProjectionPages	retrieval_coverage	yes	7	no	yes	yes	serves
 countEmbeddingHeldPages	retrieval_coverage	yes	1	no	yes	yes	serves
 projectionRebuildProgress	retrieval_coverage	yes	1	no	yes	yes	serves
-readProjectionReadinessGeneration	retrieval_coverage	yes	1	no	yes	yes	serves
-readProjectionReadiness	retrieval_coverage	yes	2	no	yes	yes	serves
+readProjectionReadinessGeneration	retrieval_coverage	yes	2	no	yes	yes	serves
+readProjectionReadiness	retrieval_coverage	yes	3	no	yes	yes	serves
 readSourceChunkerVersion	chunks	yes	2	no	yes	yes	serves
+setSourceChunkerVersion	chunks	yes	1	no	yes	yes	serves
 findCodeDefinitions	chunks	yes	1	no	yes	yes	serves
 listSymbolTypesForName	chunks	yes	1	no	yes	yes	serves
 findCodeRefChunks	chunks	yes	1	no	yes	yes	serves
@@ -274,10 +276,10 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	31	yes	yes	yes	serves
-insertFacts	facts	yes	24	no	yes	yes	serves
+insertFact	facts	yes	32	yes	yes	yes	serves
+insertFacts	facts	yes	27	no	yes	yes	serves
 deleteFactsForPage	facts	yes	2	no	yes	yes	serves
-expireFact	facts	yes	18	no	yes	yes	serves
+expireFact	facts	yes	19	no	yes	yes	serves
 listFactsByEntity	facts	yes	14	yes	yes	yes	serves
 listFactsSince	facts	yes	8	yes	yes	yes	serves
 listFactsKeyset	facts	yes	2	no	yes	yes	serves
@@ -342,7 +344,7 @@ readHeldPageRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldCoverageRows	persistence_journal	yes	1	no	yes	yes	serves
 readWriteRequest	persistence_journal	yes	2	no	yes	yes	serves
 readWriteRequestById	persistence_journal	yes	4	no	yes	yes	serves
-lockPersistenceCounters	persistence_journal	yes	9	no	yes	yes	serves
+lockPersistenceCounters	persistence_journal	yes	10	no	yes	yes	serves
 insertWriteRequest	persistence_journal	yes	9	no	yes	yes	serves
 stampWriteClaim	persistence_journal	yes	8	no	yes	yes	serves
 lockWriteRequest	persistence_journal	yes	2	no	yes	yes	serves
@@ -360,7 +362,7 @@ readReceiptBudget	persistence_journal	yes	1	no	yes	yes	serves
 listCompactableReceipts	persistence_journal	yes	1	no	yes	yes	serves
 listReservationsAfter	persistence_journal	yes	1	no	yes	yes	serves
 listTrueUpRequests	persistence_journal	yes	1	no	yes	yes	serves
-readCapacityForecastInputs	persistence_journal	yes	1	no	yes	yes	serves
+readCapacityForecastInputs	persistence_journal	yes	2	no	yes	yes	serves
 listPendingSegmentedProjections	persistence_journal	yes	2	no	yes	yes	serves
 selectProjectionWindowJobs	persistence_journal	yes	2	no	yes	yes	serves
 readMentionLastPass	entity_reads	yes	1	no	yes	yes	serves
@@ -469,7 +471,7 @@ listHeldFenceFactRows	facts_purge	yes	1	no	yes	yes	serves
 listWithdrawalSlugs	facts_purge	yes	2	no	yes	yes	serves
 expireFactsByWithdrawal	facts_purge	yes	1	no	yes	yes	serves
 loopFactDrift	facts_repair	yes	1	no	yes	yes	refuses:facts
-closedLoopWithActiveFact	facts_repair	yes	1	no	yes	yes	refuses:facts
+closedLoopWithActiveFact	facts_repair	yes	2	no	yes	yes	serves
 listSessionFactsForClassification	facts_repair	yes	1	no	yes	yes	serves
 listSessionFactTwins	facts_repair	yes	1	no	yes	yes	serves
 listCapturedFactsForClassification	facts_repair	yes	1	no	yes	yes	serves
@@ -520,8 +522,8 @@ upsertWriteGateHold	trust	yes	2	no	yes	yes	serves
 listWriteGateHoldRows	trust	yes	1	no	yes	yes	serves
 getWriteGateHoldRow	trust	yes	1	no	yes	yes	serves
 decideWriteGateHold	trust	yes	2	no	yes	yes	serves
-upsertOpenLoop	open_loops	yes	4	no	yes	yes	serves
-closeOpenLoop	open_loops	yes	4	no	yes	yes	serves
+upsertOpenLoop	open_loops	yes	5	no	yes	yes	serves
+closeOpenLoop	open_loops	yes	5	no	yes	yes	serves
 listOpenLoops	open_loops	yes	3	no	yes	yes	serves
 listSourceRecords	cli_reads_import	yes	3	no	yes	yes	serves
 readSourceIncarnation	cli_reads_import	yes	3	no	yes	yes	serves
@@ -540,6 +542,7 @@ readSourceState	write_misc	yes	2	no	yes	yes	serves
 readAdmissionSource	write_misc	yes	1	no	yes	yes	serves
 sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
 listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
+getWorktreeBinding	write_misc	yes	2	no	yes	yes	serves
 hasExtractedEvents	write_misc	yes	1	no	yes	yes	serves
 listActiveAccessMembers	write_misc	yes	1	no	yes	yes	serves
 expireMemoryProposals	write_misc	yes	1	no	yes	yes	serves
@@ -565,7 +568,13 @@ bindPageOrigin	write_guards	yes	1	no	yes	yes	serves
 stampPageIngest	write_guards	yes	1	no	yes	yes	serves
 sealImportedPage	write_guards	yes	1	no	yes	yes	serves
 readLivePageBody	write_guards	yes	1	no	yes	yes	serves
-listFenceFactRows	trust_fence	yes	3	no	yes	yes	serves
+listFenceFactRows	trust_fence	yes	4	no	yes	yes	serves
+insertTrustProposal	trust_proposals	yes	4	no	yes	yes	serves
+getTrustProposal	trust_proposals	yes	2	no	yes	yes	serves
+listTrustProposals	trust_proposals	yes	2	no	yes	yes	serves
+pendingTrustProposalsFor	trust_proposals	yes	2	no	yes	yes	serves
+updatePendingTrustProposalAfter	trust_proposals	yes	1	no	yes	yes	serves
+transitionTrustProposal	trust_proposals	yes	1	no	yes	yes	serves
 hasPersistenceTable	connect_gate	yes	3	no	yes	yes	serves
 listManagedRootBindings	connect_gate	yes	1	no	yes	yes	serves
 readGraduationGateRow	connect_gate	yes	2	no	yes	yes	serves

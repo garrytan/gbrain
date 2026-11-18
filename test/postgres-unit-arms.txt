@@ -169,6 +169,7 @@ test/engine-parity/timeline-reads.test.ts
 test/engine-parity/timeline.test.ts
 test/engine-parity/transaction-settings.test.ts
 test/engine-parity/trust-fence.test.ts
+test/engine-parity/trust-proposals.test.ts
 test/engine-parity/trust-withdrawals.test.ts
 test/engine-parity/trust-write-gate.test.ts
 test/engine-parity/typed-config-reads.test.ts
@@ -310,6 +311,7 @@ test/large-pages/projection-claim-ownership.test.ts
 test/large-pages/projection-demotion-race.test.ts
 test/large-pages/projection-lock-hold.test.ts
 test/large-pages/projection-parity.test.ts
+test/large-pages/projection-queue-order.test.ts
 test/large-pages/publication-seal-bounded.test.ts
 test/large-pages/purge-fact-inflight-staging.test.ts
 test/large-pages/purge-fact-segmented-preimage.test.ts

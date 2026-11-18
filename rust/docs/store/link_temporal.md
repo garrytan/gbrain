@@ -27,6 +27,7 @@ writes the rows the builder returns.
 | `brain.countSearchVectorRows()` | `{ pages, chunks }`: every page (deleted ones too) and every chunk | `countSearchVectorRows` |
 | `brain.countPendingProjectionPages({ scope, relevance })` | `{ total, could_affect, capped, top_counted?, could_affect_images }`: the live pages in scope whose text projection waits and needs work, at most 1000 | `countPendingProjectionPages` |
 | `brain.projectionRebuildProgress(scope)` | `{ done, total, pages_per_second }` while `protocol_activation` jobs are queued, else null | `projectionRebuildProgress` |
+| `brain.readProjectionReadinessGeneration()` | `<brain id>/<commit sequence>`: every commit advances it, so a cached probe answer lasts until the next write | `readProjectionReadinessGeneration` |
 | `brain.readProjectionReadiness(scope)` | `{ pending, by_design }`: whether a waiting page in scope needs work, and when none does, whether protected images wait | `readProjectionReadiness` |
 
 ## Rules
@@ -51,8 +52,8 @@ writes the rows the builder returns.
 | `doctor/checks/edge-validity.ts` | edgeValidityCounts | equal |
 | `mentions/referrers.ts` | listPageStatusByRef, listRecordMetadataRows | equal |
 | `search/retrieval-coverage.ts` | countEmbeddingHeldPages | equal (always 0: the store keeps no embedding budget rows) |
-| `search/retrieval-coverage.ts` | countPendingProjectionPages, projectionRebuildProgress | equal |
-| `search/projection-readiness.ts` | readProjectionReadinessGeneration, readProjectionReadiness | equal statuses (the generation is null: see Known differences) |
+| `search/retrieval-coverage.ts` | countPendingProjectionPages, projectionRebuildProgress | equal (a capped count refuses: see Known differences) |
+| `search/projection-readiness.ts` | readProjectionReadinessGeneration, readProjectionReadiness | equal statuses, cached until the next write |
 | `commands/reindex-search-vector.ts` | countSearchVectorRows, replaceSearchVectorTriggerFunction, backfillSearchVectors, ensureFactsKeywordIndex | equal JSON (a no-op under `english`) |
 
 Pinned by `test/engine-parity/link-temporal.test.ts` and `test/engine-parity/retrieval-coverage.test.ts` on every arm.
@@ -82,16 +83,18 @@ language is refused with `engine_capability_missing` (`keyword_search`) at the f
   `staleLinkRelationshipKeys` sweep finds them. They become one transaction when the transactions core item lands
   (`docs/designs/RUST_ENGINE_INTERFACES.md`, link_temporal).
 - The stale-relationship sweep itself refuses on Rust (it runs in `maintenanceTransaction`).
-- `readProjectionReadinessGeneration` is null: the store has no page clock, so `probeProjectionReadiness` reads its
-  statement on every call and never caches an answer on Rust.
+- `readProjectionReadinessGeneration` is the store's commit sequence. Any commit advances it, so the cached probe answer
+  is dropped after a write the SQL engines' generation ignores. A cached answer is never stale.
 - `projectionRebuildProgress` is null unless `protocol_activation` jobs are queued, and no store writer queues them yet
   (an upgrade's activation runs only on the SQL engines), so on a store it is null in practice.
 - A coverage read with `minTrust` or `suppressFlagged` in its scope refuses (`health`): the store keeps no trust tiers.
   `requireSafeChunks` changes nothing, because these reads count pages, not chunks.
 - A relevance pattern that is not the `(^|[^[:alnum:]])<word>([^[:alnum:]]|$)` shape `coverageRelevance` builds refuses
   (`health`): the store runs no POSIX regex.
-- When the pending count reaches its cap of 1000, the store counts the first 1000 pages in source and slug order. The SQL
-  engines' `LIMIT` takes 1000 rows in no fixed order, so `could_affect` of a capped count can differ.
+- A pending count that reaches its cap of 1000 refuses (`health`). The SQL engines' `LIMIT` takes 1000 rows in no fixed
+  order, so `could_affect` of a capped count depends on the scan order: PGLite and Postgres can give different answers
+  for the same pages, and no store order matches both. A search on a brain with 1000 or more waiting pages in scope
+  stops on this refusal.
 - The store does not tell an image page that a seal fixes (`sealable`) from one a re-import fixes (`reimport`): both
   count as `could_affect_images`, as on the SQL engines.
 - `gbrain reindex-search-vector` for a language other than `english` refuses (`keyword_search`): see "The keyword

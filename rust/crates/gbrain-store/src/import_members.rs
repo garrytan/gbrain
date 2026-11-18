@@ -2,21 +2,20 @@
 //! TypeScript `engine-sql/pages.ts`, `engine-sql/chunks.ts` and `engine-sql/sources.ts`).
 //!
 //! Members: getPageSealState, refreshPageOrigin, setChunkerVersion, readSourceChunkerVersion,
-//! writeTextProjectionSeal, moveChunkIndexes, getChunkReuseRows. `replaceDerivedAliases` is in
+//! setSourceChunkerVersion, writeTextProjectionSeal, moveChunkIndexes, getChunkReuseRows. `replaceDerivedAliases` is in
 //! `aliases.rs`, with the other page alias rows.
 //!
 //! Each write member has an `_in` function that runs in the caller's write transaction, so a page
 //! transaction can run it among its other steps; the `Store` method runs it in a write of its own.
 //! PGLite's row locks (`FOR UPDATE`) are plain reads here: the store runs one write at a time.
 //!
-//! Keys: this family adds none. It reads and writes page records through `pages.rs`, chunk records
+//! Keys: this family adds none. It reads and writes page records through `pages.rs`, the source
+//! record's chunker stamp through `sources.rs`, chunk records
 //! and postings under `keys::CHUNK` and `keys::POSTING`, chunk vectors through `embeddings.rs`,
 //! the search timeline record, and the contextual retrieval state of `aliases.rs`.
 //!
 //! Where the store answers differently from PGLite (rust/docs/store/import-members.md):
 //!
-//! - `readSourceChunkerVersion` is always NULL: the store keeps no `sources.chunker_version`, and
-//!   its only writers are raw SQL that the Rust engine refuses.
 //! - `moveChunkIndexes` refuses a call that leaves a chunk at a negative index (`invalid_argument`):
 //!   a chunk key holds an unsigned index. A parked index inside a call is fine. A Rust brain is
 //!   never a managed publication, so its move budget is unbounded and every parked chunk lands.
@@ -35,6 +34,7 @@ use crate::kv::{KvRead, KvWrite};
 use crate::pages::{
     assert_origin_unclaimed, read_page, read_page_by_id, record_search_timeline, write_page,
 };
+use crate::sources::{read_source, source_key};
 use crate::{Result, Store, StoreError, keys, put_json};
 
 const DEFAULT_SOURCE: &str = "default";
@@ -369,11 +369,23 @@ impl Store {
         self.write(|tx| set_chunker_version_in(tx, slug, version, source_id))
     }
 
-    /// `readSourceChunkerVersion(sourceId)`: always `None` (module docs).
-    pub fn read_source_chunker_version(&self, _source_id: &str) -> Result<Option<String>> {
-        // The read checks the store is open, as every member does.
-        self.read()?;
-        Ok(None)
+    /// `readSourceChunkerVersion(sourceId)`: the chunker version the source's last full sync
+    /// stamped, or `None` before the first stamp and for an unknown source.
+    pub fn read_source_chunker_version(&self, source_id: &str) -> Result<Option<String>> {
+        Ok(read_source(&*self.read()?, source_id)?.and_then(|r| r.chunker_version))
+    }
+
+    /// `setSourceChunkerVersion(sourceId, version)`: stamps the source's chunker version. An
+    /// unknown source changes nothing. Returns whether the source exists.
+    pub fn set_source_chunker_version(&self, source_id: &str, version: &str) -> Result<bool> {
+        self.write(|tx| {
+            let Some(mut record) = read_source(&*tx, source_id)? else {
+                return Ok(false);
+            };
+            record.chunker_version = Some(version.to_owned());
+            put_json(tx, &source_key(source_id), &record)?;
+            Ok(true)
+        })
     }
 
     /// `writeTextProjectionSeal(slug, { sourceId, revision, timelineText })`: when the page's
@@ -723,5 +735,27 @@ mod tests {
                 .is_empty()
         );
         assert_eq!(store.read_source_chunker_version("default").unwrap(), None);
+    }
+
+    #[test]
+    fn source_chunker_version_reads_the_last_stamp_and_skips_an_unknown_source() {
+        let store = crate::test_support::store();
+        assert_eq!(store.read_source_chunker_version("default").unwrap(), None);
+        assert!(store.set_source_chunker_version("default", "7").unwrap());
+        assert!(
+            store
+                .set_source_chunker_version("default", "8;lua=1")
+                .unwrap()
+        );
+        assert_eq!(
+            store
+                .read_source_chunker_version("default")
+                .unwrap()
+                .as_deref(),
+            Some("8;lua=1")
+        );
+        assert!(!store.set_source_chunker_version("missing", "9").unwrap());
+        assert_eq!(store.read_source_chunker_version("missing").unwrap(), None);
+        assert_eq!(store.read_source_chunker_version("bad\0id").unwrap(), None);
     }
 }

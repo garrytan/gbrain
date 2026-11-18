@@ -3992,6 +3992,17 @@
         ],
         "flagOnScopes": []
       },
+      "setSourceChunkerVersion#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "softDeletePage#default": {
         "flagOffLanes": [
           "pool"
@@ -4622,8 +4633,10 @@
         "getTakeEmbeddings": "none",
         "getTimeline": "none",
         "getTimelineForDate": "none",
+        "getTrustProposal": "none",
         "getUnverifiedExtractionPageIds": "none",
         "getVersions": "none",
+        "getWorktreeBinding": "none",
         "getWriteGateHoldRow": "none",
         "hasClaimableWrite": "none",
         "hasCompanyBrainReceipt": "none",
@@ -4645,6 +4658,7 @@
         "insertLocalWriterRow": "none",
         "insertSource": "none",
         "insertTopologyChange": "none",
+        "insertTrustProposal": "none",
         "insertWriteRequest": "none",
         "invalidateContentDriftEmbeddings": "none",
         "invalidateStaleSignatureEmbeddings": "none",
@@ -4748,6 +4762,7 @@
         "listTakes": "none",
         "listTimelineOrphanPages": "none",
         "listTrueUpRequests": "none",
+        "listTrustProposals": "none",
         "listUnattributedFacts": "none",
         "listUnfencedFactRows": "none",
         "listUnlinkedConversationSlugs": "none",
@@ -4790,6 +4805,7 @@
         "pageCollapseFacts": "none",
         "pagesLinkingTo": "none",
         "pauseJob": "none",
+        "pendingTrustProposalsFor": "none",
         "planFactPurgeIds": "none",
         "postInboxMessage": "none",
         "preparationRead": "none",
@@ -4928,6 +4944,7 @@
         "setEmotionalWeightBatch": "none",
         "setPageAliases": "none",
         "setPageEmbeddingSignature": "none",
+        "setSourceChunkerVersion": "none",
         "sharedSkillPackTablePresent": "none",
         "slugsEndingIn": "none",
         "softDeletePage": "none",
@@ -4952,12 +4969,14 @@
         "transaction": "none",
         "transactionDirect": "none",
         "transactionOn": "none",
+        "transitionTrustProposal": "none",
         "traverseGraph": "none",
         "traversePaths": "none",
         "traversePathsDetailed": "none",
         "unsetConfig": "none",
         "updateJobProgress": "none",
         "updatePageContextualRetrievalState": "none",
+        "updatePendingTrustProposalAfter": "none",
         "updateSlug": "none",
         "updateSourceConfig": "none",
         "updateTake": "none",

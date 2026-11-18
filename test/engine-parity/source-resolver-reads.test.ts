@@ -189,15 +189,23 @@ describe('engine parity: source-resolution reads', () => {
     return { plain, locked };
   });
 
-  // The Rust store keeps no per-source chunker stamp, so its arm stops on the typed chunks refusal at the first read.
-  parityTest('readSourceChunkerVersion reads the stamped chunker version, null before the first stamp', { methods: ['readSourceChunkerVersion'] }, async (engine, backend) => {
+  parityTest('readSourceChunkerVersion reads the version setSourceChunkerVersion stamped, null before the first stamp', { methods: ['readSourceChunkerVersion', 'setSourceChunkerVersion'] }, async (engine, backend) => {
     await createSource(engine, backend, 'wiki');
+    await createSource(engine, backend, 'other');
     const before = [await engine.readSourceChunkerVersion('wiki'), await engine.readSourceChunkerVersion('missing')];
     expect(before).toEqual([null, null]);
-    await engine.executeRaw('UPDATE sources SET chunker_version = $1 WHERE id = $2', ['7', 'wiki']);
-    const after = await engine.readSourceChunkerVersion('wiki');
-    expect(after).toEqual('7');
-    return { before, after };
+    await engine.setSourceChunkerVersion('wiki', '7');
+    const first = await engine.readSourceChunkerVersion('wiki');
+    await engine.setSourceChunkerVersion('wiki', '8;lua=1');
+    await engine.setSourceChunkerVersion('missing', '9');
+    const after = {
+      wiki: await engine.readSourceChunkerVersion('wiki'),
+      other: await engine.readSourceChunkerVersion('other'),
+      missing: await engine.readSourceChunkerVersion('missing'),
+      sources: (await engine.listAllSources()).map(s => s.id).sort(),
+    };
+    expect({ first, after }).toEqual({ first: '7', after: { wiki: '8;lua=1', other: null, missing: null, sources: ['default', 'other', 'wiki'] } });
+    return { before, first, after };
   });
 
   parityTest('countSourcePages counts one source\'s pages, soft-deleted pages only when asked', { methods: ['countSourcePages'] }, async (engine, backend) => {

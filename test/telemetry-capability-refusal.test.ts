@@ -8,7 +8,8 @@
  * brain that predates the table still shows zeros).
  *
  * The engine here is a real PGLite brain whose executeRaw refuses, with the error the Rust engine throws, every
- * statement that names the telemetry table under test. Everything else runs on PGLite.
+ * statement that names the telemetry table under test, and whose typed members that read that table (TYPED_READERS)
+ * refuse the same way, as a Rust engine without the member's capability does. Everything else runs on PGLite.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
@@ -17,6 +18,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
+import type { Capability } from '../src/core/engine-capabilities.ts';
 import { readSearchStats } from '../src/core/search/telemetry.ts';
 import { usageOperations } from '../src/core/ops/usage.ts';
 import { SemanticQueryCache } from '../src/core/search/query-cache.ts';
@@ -37,11 +39,29 @@ afterAll(async () => { await pglite.disconnect(); });
 
 type Failure = 'refusal' | 'missing-table';
 
-/** PGLite, except that executeRaw fails every statement naming `table`: with the Rust refusal, or as a missing table. */
+/**
+ * Typed engine members that read a table under test, with the capability the Rust engine gates them on
+ * (src/core/rust-engine/members.ts). readSearchStats left executeRaw for the typed member (engine-sql/telemetry.ts).
+ */
+const TYPED_READERS: Record<string, Record<string, Capability>> = {
+  search_telemetry: { readSearchStats: 'telemetry' },
+};
+
+/**
+ * PGLite, except that executeRaw fails every statement naming `table`, and each typed member in TYPED_READERS[table]
+ * fails every call: with the Rust refusal, or as a missing table.
+ */
 function failing(table: string, failure: Failure): BrainEngine {
   const hit = new RegExp(`\\b${table}\\b`);
+  const typed = TYPED_READERS[table] ?? {};
   return new Proxy(pglite, {
     get(target, prop) {
+      if (typeof prop === 'string' && Object.hasOwn(typed, prop)) {
+        return async () => {
+          if (failure === 'refusal') throw capabilityMissing(typed[prop]!, prop);
+          throw new Error(`relation "${table}" does not exist`);
+        };
+      }
       if (prop === 'executeRaw') {
         return async (sql: string, params?: unknown[]) => {
           if (hit.test(sql)) {

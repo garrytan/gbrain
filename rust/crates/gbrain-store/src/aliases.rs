@@ -884,6 +884,7 @@ impl Store {
     ) -> Result<u64> {
         let new_slug = validate_slug(new_slug)?;
         let source = source_id.unwrap_or(DEFAULT_SOURCE);
+        let trust = &self.write_trust()?;
         self.write(|tx| {
             let Some(page) = read_page(&*tx, source, old_slug)? else {
                 return Ok(0);
@@ -894,7 +895,7 @@ impl Store {
                 record_rename_alias(tx, source, &page.slug, &moved.slug)?;
                 // `moveSlugBindings`: the other families' records keyed by slug (steps 1-6), then
                 // this family's page aliases (steps 7-8).
-                crate::cascade::rename_slug_rows(tx, source, &page.slug, &moved.slug)?;
+                crate::cascade::rename_slug_rows(tx, trust, source, &page.slug, &moved.slug)?;
                 move_page_aliases(tx, source, &page.slug, &moved.slug)?;
             }
             Ok(1)

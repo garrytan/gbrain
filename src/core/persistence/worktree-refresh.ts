@@ -37,6 +37,7 @@ import { checkpointRetryCommand } from './checkpoint-validation.ts';
 import { persistenceHome, hostIdFor, existingHostIdFor } from './identity.ts';
 import { acquireNativeLock, tryAcquireNativeLock, type NativeLockHandle } from './native-lock.ts';
 import { getWorktreeBinding, managedPersistenceEnabled, type WorktreeBinding } from './ownership.ts';
+import { withReadDeadline } from '../read-deadline.ts';
 import { isPhysicalRootMetadata } from './physical-root-record.ts';
 import { startPersistenceConsumer } from './service.ts';
 import { lockTopologyPrincipal, lockTopologyRows, topologyPrincipal, withTopologyLocks } from './topology-locks.ts';
@@ -895,6 +896,9 @@ async function boundedLookup<T>(engine: BrainEngine, read: (engine: BrainEngine)
   const bounded = new Proxy(engine, { get(target, key) {
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: object) =>
       target.executeRaw(sql, params, { ...opts, signal: controller.signal, timeoutMs: LOOKUP_MS, deadlineAt });
+    // The writer-binding read is a typed member: the engine ends it at the same bound and on the same signal.
+    if (key === 'getWorktreeBinding') return (sourceId: string, hostId: string | null) =>
+      withReadDeadline(deadlineAt, () => target.getWorktreeBinding(sourceId, hostId), controller.signal);
     const value = Reflect.get(target, key, target);
     return typeof value === 'function' ? value.bind(target) : value;
   } });

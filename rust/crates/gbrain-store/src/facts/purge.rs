@@ -583,6 +583,7 @@ impl Store {
         )?;
         let now = self.env.now_micros();
         let hash = fact_fingerprint(&q.fact);
+        let trust = &self.write_trust()?;
         self.write(|tx| {
             let mut expired = Vec::new();
             for old in source_rows(tx, &q.source_id)? {
@@ -596,7 +597,7 @@ impl Store {
                 let mut new = old.clone();
                 new.expired_at_us = Some(now);
                 new.valid_until_us = Some(old.valid_until_us.map_or(now, |until| until.min(now)));
-                write_fact(tx, Some(&old), &new)?;
+                write_fact(tx, trust, Some(&old), &new)?;
                 expired.push(old.id);
             }
             expired.sort_unstable();

@@ -38,9 +38,9 @@ function stub(gitPull: string | null, singleton: readonly unknown[] = [{ enabled
     executeRaw: async (sql: string) => {
       queries.push(sql);
       if (sql.includes('FROM persistence_brain')) return singleton;
-      if (sql.includes('FROM persistence_source_bindings')) return [];
       throw new Error(`unexpected query: ${sql}`);
     },
+    getWorktreeBinding: async (sourceId: string) => { queries.push(`getWorktreeBinding:${sourceId}`); return null; },
   } as unknown as SqlEngine & { queries: string[] };
 }
 
@@ -65,7 +65,10 @@ describe('automaticSyncPull honors autopilot.git_pull (#6451)', () => {
   });
 
   test('an engine without a config reader keeps the default (pull on)', async () => {
-    const bare = { executeRaw: async (sql: string) => (sql.includes('FROM persistence_brain') ? [{ enabled: false }] : []) } as unknown as SqlEngine;
+    const bare = {
+      executeRaw: async (sql: string) => (sql.includes('FROM persistence_brain') ? [{ enabled: false }] : []),
+      getWorktreeBinding: async () => null,
+    } as unknown as SqlEngine;
     expect(await automaticSyncPull(bare, source)).toBe(true);
   });
 });

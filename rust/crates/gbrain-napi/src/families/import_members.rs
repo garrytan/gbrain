@@ -56,7 +56,7 @@ impl Brain {
         })
     }
 
-    /// `readSourceChunkerVersion(sourceId)`: always `null` (the store keeps no source stamp).
+    /// `readSourceChunkerVersion(sourceId)`: the source's stamped chunker version, or `null`.
     #[napi]
     pub fn read_source_chunker_version<'env>(
         &self,
@@ -64,6 +64,19 @@ impl Brain {
         source_id: String,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.read_source_chunker_version(&source_id))
+    }
+
+    /// `setSourceChunkerVersion(sourceId, version)`: whether the source exists.
+    #[napi]
+    pub fn set_source_chunker_version<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        version: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.set_source_chunker_version(&source_id, &version)
+        })
     }
 
     /// `writeTextProjectionSeal(slug, { sourceId, revision, timelineText })`.

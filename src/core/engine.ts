@@ -37,13 +37,15 @@ import type { TimelineDetailRefresh, TimelineRowRemoval } from './engine-sql/tim
 import type { TakeFenceRow } from './engine-sql/takes.ts';
 import type { FactPreimage, FenceProjectionTarget } from './engine-sql/facts.ts';
 import type { FenceFactRow, FenceRowsTarget } from './engine-sql/trust-fence.ts';
+import type { TrustTable } from './trust/schema.ts';
+import type { NewTrustProposal, TrustProposalFilter, TrustProposalRow, TrustProposalStatus, TrustProposalTransition } from './engine-sql/trust-proposals.ts';
 import type { GraduationGateRow, ManagedRootBindingRow, PersistenceTable, RetiredDeactivationRow } from './engine-sql/connect-gate.ts';
 import type { ImportedPageSeal, LivePageBodyRow, OriginClaimRow, PageIngestStamp, PageOriginRow, PageOriginTarget } from './engine-sql/write-guards.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type { ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, MentionDueQuery, SiblingCandidateQuery, SiblingCandidateRow } from './engine-sql/entity-reads.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
 import type {
-  AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow,
+  AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from './engine-sql/write-misc.ts';
 import type { AdmitJobPolicy, AdmitJobResult, AdmitJobSpec, ClaimJobSpec, JobRow, ListJobsFilter } from './engine-sql/jobs.ts';
 import type {
@@ -1317,6 +1319,8 @@ export interface BrainEngine {
   lockSourceRow(sourceId: string): Promise<SourceCheckRow | null>;
   /** The source's stamped chunker version, or null (engine-sql/sources.ts). */
   readSourceChunkerVersion(sourceId: string): Promise<string | null>;
+  /** Stamps the source's chunker version; an unknown source changes nothing (engine-sql/sources.ts). */
+  setSourceChunkerVersion(sourceId: string, version: string): Promise<void>;
   /** Pages of one source, soft-deleted pages only with `includeDeleted`; an unknown source has none (engine-sql/sources.ts). */
   countSourcePages(sourceId: string, opts?: { includeDeleted?: boolean }): Promise<number>;
   /** Inserts one source row (id, name, local_path, config); a taken id or name throws and writes nothing. */
@@ -1345,6 +1349,8 @@ export interface BrainEngine {
   readAdmissionSource(sourceId: string): Promise<AdmissionSourceRow | null>;
   sharedSkillPackTablePresent(): Promise<boolean>;
   listSharedSkillPackRoots(hostId: string): Promise<SharedSkillPackRoot[]>;
+  /** The source's writer binding with host `hostId`'s paths (null host columns for a null or unbound host); null when unbound. */
+  getWorktreeBinding(sourceId: string, hostId: string | null): Promise<WorktreeBinding | null>;
   hasExtractedEvents(sourceId: string, pageId: number): Promise<boolean>;
   listActiveAccessMembers(): Promise<string[]>;
   expireMemoryProposals(reason: string): Promise<number>;
@@ -2987,6 +2993,22 @@ export interface BrainEngine {
    * fence still asks to widen, or opened by `gbrain repair open-facts`. Each row carries its stored `trust_tier`.
    */
   listFenceFactRows(target: FenceRowsTarget): Promise<FenceFactRow[]>;
+  /**
+   * Trust decisions (engine-sql/trust-proposals.ts): inserts a pending proposal, or returns the pending one already recorded
+   * for the same (action, target, related) with `created: false`. The proposer principal and request come from the
+   * transaction's attribution settings.
+   */
+  insertTrustProposal(input: NewTrustProposal): Promise<{ id: number; created: boolean }>;
+  /** One trust proposal by id, or null; `lock` takes it `FOR UPDATE` for the decision that follows. */
+  getTrustProposal(id: number, lock?: boolean): Promise<TrustProposalRow | null>;
+  /** Trust proposals by status (`pending` by default; `all`), source, action and creation time, oldest first (500 by default, at most 5000). */
+  listTrustProposals(filter?: TrustProposalFilter): Promise<TrustProposalRow[]>;
+  /** The pending trust proposals naming a row as target or related, by id. */
+  pendingTrustProposalsFor(table: TrustTable, id: number): Promise<TrustProposalRow[]>;
+  /** Replaces a pending trust proposal's after state; a decided one is left alone. */
+  updatePendingTrustProposalAfter(id: number, after: Record<string, unknown>): Promise<void>;
+  /** Compare-and-set on a trust proposal's status, recording an after state and the decider; false when it was not in `from`. */
+  transitionTrustProposal(id: number, from: TrustProposalStatus, to: TrustProposalStatus, opts?: TrustProposalTransition): Promise<boolean>;
 
   /**
    * v0.35.5 — narrow UPDATE of `pages.compiled_truth`, `pages.timeline`, and

@@ -231,6 +231,7 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
       kind: 'postgres' as const,
       // An unmanaged brain with no worktree bindings: automatic pull follows remote_url (#5463).
       executeRaw: async (sql: string) => (sql.includes('FROM persistence_brain') ? [{ enabled: false }] : []),
+      getWorktreeBinding: async () => null,
       listAllSources: async () => {
         if (opts?.listError) throw opts.listError;
         if (opts?.listThrows) throw new Error('sources table missing');
@@ -448,9 +449,11 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
     const normal = src('normal-5198', undefined, { remote_url: 'https://github.com/x/y' });
     const { engine, queue, added, events, fanoutOpts } = makeStubs([claimed, normal]);
     // Unmanaged brain; claimed-5198 is bound (activation pending), normal-5198 is not.
-    (engine as unknown as { executeRaw: (sql: string, params?: unknown[]) => Promise<unknown[]> }).executeRaw = async (sql, params) =>
+    (engine as unknown as { executeRaw: (sql: string) => Promise<unknown[]> }).executeRaw = async sql =>
       sql.startsWith('SELECT enabled FROM persistence_brain') ? [{ enabled: false }]
-        : sql.includes('WHERE s.source_id=$1') && params?.[0] !== 'claimed-5198' ? [] : [{ source_id: 'claimed-5198' }];
+        : sql.includes('FROM persistence_source_bindings') ? [{ source_id: 'claimed-5198' }] : [];
+    (engine as unknown as { getWorktreeBinding: (sourceId: string) => Promise<unknown> }).getWorktreeBinding = async sourceId =>
+      sourceId === 'claimed-5198' ? { source_id: 'claimed-5198' } : null;
     await dispatchPerSource(engine, queue, fanoutOpts);
     const byId = new Map<string, AddedJob>(
       added.map(j => [(j.data as Record<string, unknown>).source_id as string, j]),
@@ -554,6 +557,7 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
       listAllSources: async () => [src('a'), src('b')],
       getConfig: async () => null,
       executeRaw: async () => [],
+      getWorktreeBinding: async () => null,
     } as unknown as BrainEngine;
     const queue = {
       add: async (name: string, data: Record<string, unknown>, addOpts: Record<string, unknown>) => {

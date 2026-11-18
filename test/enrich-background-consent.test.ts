@@ -23,6 +23,8 @@ function fakePostgres(sourceIds: string[]) {
     kind: 'postgres',
     getConfig: async () => null,
     ...stubSourceMembers(sourceIds.map(id => ({ id }))),
+    // listSources counts each source's pages through the typed countSourcePages member; this brain holds no pages.
+    countSourcePages: async () => 0,
     executeRaw: async () => [{ n: 0 }],
   } as never;
 }

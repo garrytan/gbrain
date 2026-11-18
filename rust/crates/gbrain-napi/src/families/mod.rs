@@ -20,6 +20,7 @@ mod tags;
 mod timeline;
 mod trust;
 mod trust_fence;
+mod trust_proposals;
 mod versions;
 mod write_guards;
 mod write_misc;

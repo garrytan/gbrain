@@ -61,6 +61,7 @@ import * as linkTemporal from './link-temporal.ts';
 import * as aliasFanoutReads from './alias-fanout-reads.ts';
 import * as writeGuards from './write-guards.ts';
 import * as trustFence from './trust-fence.ts';
+import * as trustProposals from './trust-proposals.ts';
 import * as connectGate from './connect-gate.ts';
 import * as telemetry from './telemetry.ts';
 import * as importMembers from './import-members.ts';
@@ -97,7 +98,7 @@ export const STORE_MEMBERS = {
   ...persistence, ...housekeeping,
   ...writeMisc,
   // The page write guards a page write runs around the page row (rust/docs/store/write-guards.md).
-  ...writeGuards, ...trustFence,
+  ...writeGuards, ...trustFence, ...trustProposals,
   // The connect gate's persistence reads, answered from the unmanaged brain the store keeps (rust/docs/store/journal.md).
   ...connectGate,
   // The page and chunk statements a page import runs around its chunk write (rust/docs/store/import-members.md).
