@@ -48,7 +48,7 @@ getPage	pages	yes	34	yes	yes	yes	serves
 readPageSnapshot	pages	yes	7	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	refuses:pages
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	110	yes	yes	yes	serves
+putPage	pages	yes	111	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	refuses:pages
 findDuplicatePages	pages	yes	1	no	yes	yes	refuses:pages
 deletePage	pages	yes	6	yes	yes	yes	serves
@@ -130,7 +130,7 @@ removeLinksByPagesAndSource	links	yes	1	yes	yes	yes	refuses:links
 getLinks	links	yes	9	yes	yes	yes	serves
 getBacklinks	links	yes	3	yes	yes	yes	serves
 listLinkSources	links	yes	1	yes	yes	yes	refuses:links
-findByTitleFuzzy	links	yes	4	no	yes	yes	serves
+findByTitleFuzzy	links	yes	5	no	yes	yes	serves
 traverseGraph	links	yes	3	yes	yes	yes	serves
 traversePaths	links	yes	3	yes	yes	yes	serves
 traversePathsDetailed	links	yes	1	yes	yes	yes	serves

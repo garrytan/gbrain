@@ -149,6 +149,7 @@ test/engine-parity/segmented-body.test.ts
 test/engine-parity/sync-aliases.test.ts
 test/engine-parity/takes.test.ts
 test/engine-parity/timeline.test.ts
+test/engine-parity/title-fuzzy-like-bound.test.ts
 test/engine-parity/title-fuzzy-unicode.test.ts
 test/engine-parity/versions-raw.test.ts
 test/engine-sql-facts-keyset.test.ts

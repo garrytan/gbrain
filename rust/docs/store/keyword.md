@@ -245,6 +245,9 @@ The page vector is not stored; `keyword/titles.rs` rebuilds the one PGLite last 
 - `findByTitleFuzzy` without a `sourceId` reads soft-deleted pages too, as the SQL does (follow-up
   `fuzzy-title-unscoped-deleted`). PGLite types `$minSimilarity` as `real`; Postgres may bind it as `float8`, which
   would compare in f64 (not verified).
+- `findByTitleFuzzy`'s `dirPrefix` is a LIKE pattern (`sql_like`): `%`, `_` and `\\` escapes as PostgreSQL reads them. The
+  matcher is iterative with one backtrack point (the last `%`), so its work is bounded by the text length times the
+  pattern length; a prefix of many `%` groups answers at once (`title-fuzzy-like-bound.test.ts`).
 
 ## Follow-ups
 
