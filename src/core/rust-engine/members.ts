@@ -229,6 +229,8 @@ export const RUST_ENGINE_MEMBERS = {
   listUnattributedFacts: 'facts',
   listSupersessions: 'facts',
   countUnconsolidatedFacts: 'facts',
+  listFenceRetireCandidates: 'facts',
+  listFenceFactRows: 'facts',
   findCandidateDuplicates: 'facts',
   consolidateFact: 'facts',
   findTrajectory: 'facts',

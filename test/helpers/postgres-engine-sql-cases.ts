@@ -49,6 +49,7 @@ const OOS = {
   wantedLinks: 'out-of-scope:wanted-links (born in engine-sql/wanted-links.ts; pinned by test/engine-parity/wanted-links.test.ts)',
   journal: 'out-of-scope:persistence-journal (born in engine-sql/persistence-journal.ts; pinned by test/engine-parity/persistence.test.ts and test/persistence-journal-statements.test.ts)',
   writeGuards: 'out-of-scope:write-guards (born in engine-sql/write-guards.ts; pinned by test/engine-parity/write-guards.test.ts and test/fold-hook-noop-6712.test.ts)',
+  trustFence: 'out-of-scope:trust-fence (born in engine-sql/facts.ts and engine-sql/trust-fence.ts; pinned by test/engine-parity/facts.test.ts, test/engine-parity/trust-fence.test.ts and test/fold-hook-noop-6712.test.ts)',
   pageBody: 'out-of-scope:page-body (Wave B segmented storage, born in engine-sql/page-body.ts; pinned by test/engine-sql-page-body.test.ts)',
   cycleLocks: 'out-of-scope:cycle-locks (gbrain_cycle_locks leases, born in engine-sql/cycle-locks.ts; pinned by test/engine-parity/cycle-locks.test.ts)',
 } as const;
@@ -82,6 +83,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'sealImportedPage': OOS.writeGuards,
   'readLivePageBody': OOS.writeGuards,
   'hasSegmentStorage': OOS.writeGuards,
+  'listFenceRetireCandidates': OOS.trustFence,
+  'listFenceFactRows': OOS.trustFence,
   'constructor': OOS.lifecycle,
   'registerBeforeDisconnect': OOS.lifecycle,
   'sql': OOS.lifecycle,

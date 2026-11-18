@@ -499,7 +499,7 @@ src/core/function-search-path.ts	execute_raw	3
 src/core/generations/adapters/atoms.ts	execute_raw	3
 src/core/generations/adapters/chronicle-events.ts	execute_raw	13
 src/core/generations/adapters/extracted-facts.ts	execute_raw	4
-src/core/generations/adapters/fact-rows.ts	execute_raw	7
+src/core/generations/adapters/fact-rows.ts	execute_raw	6
 src/core/generations/adapters/page.ts	execute_raw	2
 src/core/generations/adapters/single-page.ts	execute_raw	1
 src/core/generations/adapters/synthesis.ts	execute_raw	1
@@ -1147,7 +1147,7 @@ src/core/trust/claim-state.ts	execute_raw	1
 src/core/trust/claim.ts	execute_raw	9
 src/core/trust/derived-gate.ts	execute_raw	1
 src/core/trust/fence-append.ts	execute_raw	3
-src/core/trust/fence-guard.ts	execute_raw	9
+src/core/trust/fence-guard.ts	execute_raw	8
 src/core/trust/held-removals.ts	execute_raw	4
 src/core/trust/label-lowerings.ts	execute_raw	1
 src/core/trust/marker-repair.ts	execute_raw	4

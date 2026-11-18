@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 276/276
+# covered: 278/278
 # lifecycle: 9/9
 # pages: 31/31
 # search: 7/7
@@ -21,7 +21,7 @@
 # takes: 15/15
 # dream: 3/3
 # contradictions: 5/5
-# facts: 14/14
+# facts: 15/15
 # segmented_body: 14/14
 # versions: 3/3
 # stats_ingest: 5/5
@@ -38,6 +38,7 @@
 # cli_reads_import: 11/11
 # wanted_links: 2/2
 # write_guards: 7/7
+# trust_fence: 1/1
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
 connect	lifecycle	yes	1	yes	yes	yes	serves
 disconnect	lifecycle	yes	1	yes	yes	yes	serves
@@ -193,15 +194,16 @@ getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
 insertFact	facts	yes	27	yes	yes	yes	serves
-insertFacts	facts	yes	14	no	yes	yes	serves
+insertFacts	facts	yes	16	no	yes	yes	serves
 deleteFactsForPage	facts	yes	2	no	yes	yes	serves
-expireFact	facts	yes	10	no	yes	yes	serves
+expireFact	facts	yes	11	no	yes	yes	serves
 listFactsByEntity	facts	yes	13	yes	yes	yes	serves
 listFactsSince	facts	yes	8	yes	yes	yes	serves
 listFactsKeyset	facts	yes	2	no	yes	yes	serves
 listFactsBySession	facts	yes	3	yes	yes	yes	serves
 listSupersessions	facts	yes	5	yes	yes	yes	serves
 countUnconsolidatedFacts	facts	yes	2	yes	yes	yes	serves
+listFenceRetireCandidates	facts	yes	1	no	yes	yes	serves
 findCandidateDuplicates	facts	yes	6	yes	yes	yes	serves
 consolidateFact	facts	yes	3	no	yes	yes	serves
 findTrajectory	facts	yes	3	yes	yes	yes	serves
@@ -315,3 +317,4 @@ bindPageOrigin	write_guards	yes	1	no	yes	yes	serves
 stampPageIngest	write_guards	yes	1	no	yes	yes	serves
 sealImportedPage	write_guards	yes	1	no	yes	yes	serves
 readLivePageBody	write_guards	yes	1	no	yes	yes	serves
+listFenceFactRows	trust_fence	yes	1	no	yes	yes	serves
