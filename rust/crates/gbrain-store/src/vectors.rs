@@ -18,8 +18,8 @@
 //!   `invalid_argument` and the PostgreSQL message.
 //!
 //! The decoded vectors and their norms are kept in a [`VectorIndex`]. A [`VectorCache`] holds one
-//! per store, keyed by the vector generation, so a search after a vector write rebuilds it. The
-//! store does not hold a cache field yet, so each search builds its index from its snapshot.
+//! per store (`Store::vectors`), keyed by the vector generation, so a search after a vector write
+//! rebuilds it and a search with no write between reuses the decoded vectors.
 
 use crate::chunks::{ChunkRecord, visible_chunks};
 use crate::config::read_config;
@@ -155,12 +155,10 @@ impl VectorIndex {
 /// snapshots (`Store::read`), so a rolled-back write never reaches it. An older snapshot never
 /// replaces a newer index.
 #[derive(Debug, Default)]
-#[cfg_attr(not(test), allow(dead_code))] // until `Store` holds one (rust/docs/store/vectors.md)
 pub(crate) struct VectorCache {
     slot: Mutex<Option<Arc<VectorIndex>>>,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl VectorCache {
     /// The index of `read`'s snapshot, from the cache when its generation matches.
     pub(crate) fn index(&self, read: &dyn KvRead) -> Result<Arc<VectorIndex>> {
@@ -643,7 +641,7 @@ impl Store {
         options: &VectorSearchOptions,
     ) -> Result<Vec<Value>> {
         let read = self.read()?;
-        let index = load_index(&*read, None)?;
+        let index = load_index(&*read, Some(&self.vectors))?;
         search_chunks(&*read, &index, query, options)
     }
 
@@ -654,7 +652,7 @@ impl Store {
         options: &TakesVectorOptions,
     ) -> Result<Vec<Value>> {
         let read = self.read()?;
-        let index = load_index(&*read, None)?;
+        let index = load_index(&*read, Some(&self.vectors))?;
         search_takes(&*read, &index, query, options)
     }
 }
