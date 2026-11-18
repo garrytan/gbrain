@@ -26,6 +26,8 @@ allow = [
     "Apache-2.0",
     "ISC",
     "Unicode-3.0",
+    # foldhash, through serde_json's `preserve_order` (frontmatter keeps the order it was written in).
+    "Zlib",
 ]
 confidence-threshold = 0.9
 
