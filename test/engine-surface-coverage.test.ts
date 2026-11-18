@@ -61,6 +61,10 @@ const INTERFACE_METHODS: readonly string[] = [
   // Graph and doctor link reads (engine-sql/link-reads.ts)
   'inboundLinkCoverage', 'listJunkEntityHubs', 'countEntityPages', 'entityGraphCoverage', 'countForeignEdges',
   'listLivePageSummaries', 'countInboundLinks', 'listLinkEndpointPages', 'listPagesTitledIn', 'wordLexemes',
+  // Code, doctor, withdrawal, repair and evidence chunk reads (engine-sql/chunk-reads.ts)
+  'findCodeDefinitions', 'listSymbolTypesForName', 'findCodeRefChunks', 'countOversizedEmbedSkips', 'countOrphanChunks',
+  'countCodeChunkPages', 'codeChunksExist', 'currentCodeChunksExist', 'listQualifiedSymbolNames', 'listWithdrawalChunks',
+  'deleteChunksForPages', 'listContextualModeCandidates', 'resolveFrozenHits',
   // CLI reads (engine-sql/cli-reads-ops.ts; covered by test/engine-parity/cli-reads-ops.test.ts)
   'scanExactBatch', 'nextLivePageAfter', 'listExactIdentityCandidates', 'rankEntities', 'listExtractionPendingPages',
   'listUnattributedFacts', 'listWantedPages',
@@ -178,6 +182,8 @@ const ENGINE_INTERNAL_HELPERS: readonly string[] = [
   'searchRead',
   // Graph and doctor link reads: the unscoped engine-sql executor the link-read methods run through.
   'linkRead',
+  // Code, doctor, withdrawal, repair and evidence chunk reads: the unscoped engine-sql executor they run through.
+  'chunkRead',
   // CLI reads: the executors the CLI read members run through (PGLite rawRead wraps executeRaw; cliReads is the unscoped engine-sql executor).
   'rawRead',
   'cliReads',

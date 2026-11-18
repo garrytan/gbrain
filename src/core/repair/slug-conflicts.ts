@@ -51,6 +51,7 @@ import { execFileSync } from '../spawn.ts';
 import { existsSync, lstatSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
+import { nullUnlessCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { OperationError, type OperationContext } from '../ops/contract.ts';
 import { trustedCliRequired } from '../ops/op-fix.ts';
 import { shellQuote, type Action } from '../agent-output.ts';
@@ -248,7 +249,7 @@ interface Settings {
 
 async function settings(engine: BrainEngine, opts: Pick<RepairPlanOptions, 'noLlm' | 'maxLlmUsd'>): Promise<Settings> {
   const caps = await readFenceRepairCaps(engine);
-  const day = await dailyLedger(engine, FENCE_REPAIR_LEDGER).readDay().catch(() => null);
+  const day = await dailyLedger(engine, FENCE_REPAIR_LEDGER).readDay().catch(nullUnlessCapabilityRefusal);
   return { llmEnabled: !opts.noLlm && await fenceRepairLlmEnabled(engine), model: await resolveContentRepairModel(engine), overrides: await loadPricingOverrides(engine),
     capSource: caps.perPageSource === 'user' || caps.perDaySource === 'user' || opts.maxLlmUsd !== undefined ? 'user' : 'default',
     perPageUsd: caps.perPageUsd, perDayUsd: caps.perDayUsd, dayRemaining: day ? Math.max(0, caps.perDayUsd - day.committedUsd - day.reservedUsd) : null, runMaxUsd: opts.maxLlmUsd ?? null };
@@ -721,7 +722,7 @@ async function judge(ctx: OperationContext, src: FenceSource, cand: Candidate, i
     const next = nextAttempt(result.reason, result.resetsAt);
     const out = await pending(result.reason, result.message, next, { ...(result.guidance ? { guidance: result.guidance } : {}) });
     if (!result.stop) return { ...out, ...spend };
-    const day = await dailyLedger(engine, FENCE_REPAIR_LEDGER).readDay().catch(() => null);
+    const day = await dailyLedger(engine, FENCE_REPAIR_LEDGER).readDay().catch(nullUnlessCapabilityRefusal);
     const resets = result.resetsAt ?? nextUtcMidnight(new Date());
     const message = opts.allowanceUsd !== undefined && !result.resetsAt
       ? `Stopped: ${result.message} ${entry.llm_waiting} file(s) wait for the model. Rerun with a larger --max-usd, or leave them to the maintenance run.`

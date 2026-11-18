@@ -1,7 +1,7 @@
 /**
  * Test: `childTableOrphansCheck` (closes #1063).
  *
- * Pure-helper test surface — the check function only consumes `engine.executeRaw`,
+ * Pure-helper test surface — the check function only consumes `engine.executeRaw` (and `countOrphanChunks`),
  * so a structurally-typed mock satisfies the contract. This is faster and more
  * focused than spinning up real PGLite, AND it doesn't require disabling FK
  * constraints to seed orphans (which PGLite blocks at INSERT time anyway via
@@ -15,11 +15,18 @@
 import { describe, test, expect } from 'bun:test';
 import { childTableOrphansCheck } from '../src/commands/doctor.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { countOrphanChunks } from '../src/core/engine-sql/chunk-reads.ts';
 
-/** Build a structurally-typed BrainEngine whose executeRaw returns per-SQL results. */
+/**
+ * Build a structurally-typed BrainEngine whose executeRaw returns per-SQL results. The content_chunks target
+ * reads through the engine member `countOrphanChunks`; the mock runs the SQL engines' statement for it through
+ * the same handler, so every target's SQL is still seen here.
+ */
 function makeMockEngine(handler: (sql: string) => Promise<unknown[]>): BrainEngine {
+  const executeRaw = handler as BrainEngine['executeRaw'];
   return {
-    executeRaw: handler,
+    executeRaw,
+    countOrphanChunks: () => countOrphanChunks({ executeRaw } as never),
   } as unknown as BrainEngine;
 }
 

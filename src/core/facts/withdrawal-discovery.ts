@@ -121,9 +121,10 @@ export async function discoverWithdrawalTargets(engine: BrainEngine, sourceId: s
       FROM jsonb_to_recordset($2::text::jsonb) w(visibility text,fact_hash text,subject text,claim text)
     ) SELECT * FROM w`,
   [sourceId, JSON.stringify(claims.map(c => ({ visibility: c.visibility, fact_hash: c.fact_hash, subject: c.subject ?? '*', claim: c.claim ?? null })))]);
-  const keys = JSON.stringify(keyed.map(k => ({ ...k,
+  const keyRows = keyed.map(k => ({ ...k,
     patterns: (k.norm ? k.norm.split(' ').filter(Boolean) : []).map(token => `%${token.replace(/[\\%_]/g, '\\$&')}%`),
-  })));
+  }));
+  const keys = JSON.stringify(keyRows);
   const subjects = keyed.some(k => k.subject === '*') ? null : [...new Set(keyed.map(k => k.subject))];
   const affected = new Set<number>();
   const provenance = await engine.executeRaw<{ id: number }>(`SELECT DISTINCT p.id
@@ -183,12 +184,7 @@ export async function discoverWithdrawalTargets(engine: BrainEngine, sourceId: s
   for await (const split of splitFactsFences(engine, sourceId, keyed, subjects, deadline)) await match(fenceClaims(split.id, split.slug, split.fence), split.slug);
   for (let after = 0; ;) {
     if (performance.now() > deadline) refuse();
-    const chunks = await engine.executeRaw<{ id: number; page_id: number; slug: string; chunk_text: string }>(`SELECT c.id,c.page_id,p.slug,c.chunk_text
-      FROM content_chunks c JOIN pages p ON p.id=c.page_id
-      WHERE p.source_id=$1 AND c.id>$3 AND ($5::text[] IS NULL OR p.slug=ANY($5::text[]))
-        AND EXISTS (SELECT 1 FROM jsonb_to_recordset($2::text::jsonb) k(subject text,patterns text[])
-          WHERE (k.subject='*' OR k.subject=p.slug) AND ${shortlist('c.chunk_text')})
-      ORDER BY c.id LIMIT $4`, [sourceId, keys, after, WITHDRAWAL_LIMITS.batch, subjects]);
+    const chunks = await engine.listWithdrawalChunks(sourceId, keyRows, { after, limit: WITHDRAWAL_LIMITS.batch, subjects });
     await match(chunks.flatMap(chunk => {
       const rows = [{ id: chunk.page_id, slug: chunk.slug, claim: chunk.chunk_text, visibility: null as string | null, ambiguous: false }];
       for (const line of chunk.chunk_text.split('\n')) {

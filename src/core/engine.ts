@@ -29,6 +29,7 @@ import type { ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, Ment
 import type { DefaultSourceSplit, LocalPathSourceRow, SourceCheckRow, SourceRoutingRow } from './engine-sql/sources.ts';
 import type { AdmitJobPolicy, AdmitJobResult, AdmitJobSpec, ClaimJobSpec, JobRow, ListJobsFilter } from './engine-sql/jobs.ts';
 import type { JunkEntityHubRow, LinkEndpointPage, LivePageSummary, TitledPage } from './engine-sql/link-reads.ts';
+import type { CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuery, ContextualModeCandidate, FrozenHitKey, FrozenHitRow, WithdrawalChunkKey, WithdrawalChunkRow } from './engine-sql/chunk-reads.ts';
 export type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions, PageMutationPrecondition, PageWithdrawal } from './page-state/types.ts';
 import type {
   Page, PageInput, PageFilters, GetPageOpts, PageReadScope, PageReadPolicy,
@@ -1412,6 +1413,20 @@ export interface BrainEngine {
   listLinkEndpointPages(sourceId: string, slugs: string[], crossSourceSlugs: string[]): Promise<LinkEndpointPage[]>;
   listPagesTitledIn(queryLower: string, scope: PageReadScope): Promise<TitledPage[]>;
   wordLexemes(words: string[]): Promise<Map<string, string[]>>;
+  /** Code-symbol lookups, code readiness probes, doctor chunk counts, withdrawal's chunk scan, contextual-mode and frozen hits (SQL and contracts in engine-sql/chunk-reads.ts). */
+  findCodeDefinitions(symbol: string, opts?: CodeSymbolQuery): Promise<CodeDefinitionRow[]>;
+  listSymbolTypesForName(symbol: string, opts?: Omit<CodeSymbolQuery, 'limit'>): Promise<Array<string | null>>;
+  findCodeRefChunks(symbol: string, opts?: CodeSymbolQuery): Promise<CodeRefChunkRow[]>;
+  countOversizedEmbedSkips(maxBytes: number): Promise<{ marked: number; chunkless: number }>;
+  countOrphanChunks(): Promise<number>;
+  countCodeChunkPages(): Promise<{ chunks: number; pages: number }>;
+  codeChunksExist(sourceId: string | undefined, policy?: PageReadScope): Promise<boolean>;
+  currentCodeChunksExist(scope: CodeChunkScope, predicate: 'any' | 'with_symbol'): Promise<boolean>;
+  listQualifiedSymbolNames(sourceId: string, symbol: string, opts: { match: 'exact' | 'contains'; limit: number }): Promise<string[]>;
+  listWithdrawalChunks(sourceId: string, keys: WithdrawalChunkKey[], opts: { after: number; limit: number; subjects: string[] | null }): Promise<WithdrawalChunkRow[]>;
+  deleteChunksForPages(pageIds: readonly number[]): Promise<void>;
+  listContextualModeCandidates(sourceIds: string[]): Promise<ContextualModeCandidate[]>;
+  resolveFrozenHits(hits: FrozenHitKey[], scope: PageReadScope): Promise<FrozenHitRow[]>;
 
   // Chunks
   /**

@@ -24,8 +24,6 @@ src/commands/autopilot-retry-global.ts	execute_raw	1
 src/commands/autopilot.ts	execute_raw	1
 src/commands/autopilot/install-repo.ts	execute_raw	1
 src/commands/calibration.ts	execute_raw	1
-src/commands/code-def.ts	execute_raw	2
-src/commands/code-refs.ts	execute_raw	1
 src/commands/code-scope.ts	execute_raw	1
 src/commands/config.ts	execute_raw	1
 src/commands/core.ts	execute_raw	6
@@ -40,7 +38,7 @@ src/commands/doctor/checks/attest-read-access.ts	execute_raw	1
 src/commands/doctor/checks/calibration.ts	execute_raw	10
 src/commands/doctor/checks/connectors.ts	execute_raw	1
 src/commands/doctor/checks/consolidation-cycle.ts	execute_raw	2
-src/commands/doctor/checks/content-quality.ts	execute_raw	9
+src/commands/doctor/checks/content-quality.ts	execute_raw	8
 src/commands/doctor/checks/coordination-lock.ts	execute_raw	1
 src/commands/doctor/checks/core-health.ts	execute_raw	9
 src/commands/doctor/checks/core-memory.ts	execute_raw	1
@@ -57,7 +55,7 @@ src/commands/doctor/checks/embedding-health.ts	execute_raw	4
 src/commands/doctor/checks/embedding-plane.ts	execute_raw	1
 src/commands/doctor/checks/entity-duplicates.ts	execute_raw	2
 src/commands/doctor/checks/extraction-input.ts	execute_raw	2
-src/commands/doctor/checks/extraction-sync.ts	execute_raw	12
+src/commands/doctor/checks/extraction-sync.ts	execute_raw	11
 src/commands/doctor/checks/facts-pages.ts	execute_raw	1
 src/commands/doctor/checks/fence-integrity.ts	execute_raw	1
 src/commands/doctor/checks/folder-access.ts	execute_raw	3
@@ -316,8 +314,8 @@ src/core/chronicle/publish.ts	execute_raw	4
 src/core/chunkers/symbol-resolver.ts	execute_raw	8
 src/core/claw-test/seed-pglite.ts	driver_call	1
 src/core/code-chunks.ts	execute_raw	3
-src/core/code-graph-readiness.ts	execute_raw	2
-src/core/code-intel/recursive-walk.ts	execute_raw	4
+src/core/code-graph-readiness.ts	execute_raw	1
+src/core/code-intel/recursive-walk.ts	execute_raw	2
 src/core/code-intel/traversal-cache.ts	execute_raw	4
 src/core/company-brain/admission.ts	execute_raw	12
 src/core/company-brain/demo.ts	execute_raw	2
@@ -469,8 +467,8 @@ src/core/facts/single-prepare.ts	execute_raw	5
 src/core/facts/slot-tagging.ts	execute_raw	1	GBRA-574 #9668: the live person-page read that picks slot-tagging candidates, written before this ratchet landed; moves behind a typed facts engine method with its area
 src/core/facts/subject-infer.ts	execute_raw	1
 src/core/facts/unfenced-facts.ts	execute_raw	3
-src/core/facts/withdrawal-discovery.ts	execute_raw	9
-src/core/facts/withdrawal.ts	execute_raw	15
+src/core/facts/withdrawal-discovery.ts	execute_raw	8
+src/core/facts/withdrawal.ts	execute_raw	14
 src/core/facts/write-single.ts	execute_raw	3
 src/core/facts/writeback-settings.ts	execute_raw	2
 src/core/feedback/store.ts	execute_raw	19
@@ -670,7 +668,7 @@ src/core/page-state/guards.ts	execute_raw	11
 src/core/page-state/image-seal.ts	execute_raw	5
 src/core/page-state/materialize.ts	execute_raw	5
 src/core/page-state/projection-status.ts	execute_raw	1
-src/core/page-state/projections.ts	execute_raw	41
+src/core/page-state/projections.ts	execute_raw	40
 src/core/page-state/rebuild-estimate.ts	execute_raw	1
 src/core/page-state/rename-alias.ts	execute_raw	11
 src/core/page-state/revision-backfill-schema.ts	execute_raw	12
@@ -937,7 +935,6 @@ src/core/repair/connector-fences.ts	execute_raw	2
 src/core/repair/consolidate-ties.ts	execute_raw	3
 src/core/repair/contact-rows.ts	execute_raw	4
 src/core/repair/content-receipt-root.ts	execute_raw	4
-src/core/repair/contextual-mode.ts	execute_raw	1
 src/core/repair/conversation-labels.ts	execute_raw	13
 src/core/repair/core.ts	execute_raw	5
 src/core/repair/duplicate-facts.ts	execute_raw	6
@@ -1029,7 +1026,7 @@ src/core/search/dedup.ts	execute_raw	1
 src/core/search/entity-anchor.ts	execute_raw	4
 src/core/search/entity-facts.ts	execute_raw	1
 src/core/search/evidence-date.ts	execute_raw	3
-src/core/search/evidence-delivery.ts	execute_raw	2
+src/core/search/evidence-delivery.ts	execute_raw	1
 src/core/search/fact-relevance.ts	execute_raw	9	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut; GBRA-574 F #9674 (opened before this ratchet): +1 poolUnbackedKeys, the name-tag lookup for the slot-history arm
 src/core/search/facts-arm.ts	execute_raw	3
 src/core/search/feedback-boost.ts	execute_raw	1

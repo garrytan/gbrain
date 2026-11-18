@@ -155,7 +155,7 @@ export async function recordFactWithdrawal(
       const inline = affected.length ? await tx.executeRaw<{ id: number; slug: string; knowledge_revision: string }>(
         `UPDATE pages SET knowledge_revision=gen_random_uuid(),text_projection_revision=NULL,embedding_signature=NULL
           WHERE source_id=$1 AND slug=ANY($2::text[]) AND body_storage<>'segmented' RETURNING id,slug,knowledge_revision`, [sourceId, affected.map(page => page.slug)]) : [];
-      if (inline.length) await tx.executeRaw('DELETE FROM content_chunks WHERE page_id=ANY($1::integer[])', [inline.map(page => page.id)]);
+      if (inline.length) await tx.deleteChunksForPages(inline.map(page => Number(page.id)));
       const pages = [...inline, ...segmented.length ? await tx.executeRaw<{ id: number; slug: string; knowledge_revision: string }>(
         'SELECT id,slug,knowledge_revision FROM pages WHERE id=ANY($1::int[])', [segmented.map(page => page.id)]) : []];
       if (opts.requestId && !opts.publication) {

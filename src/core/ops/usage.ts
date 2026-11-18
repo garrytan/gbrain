@@ -12,6 +12,7 @@
  */
 
 import type { Operation } from './contract.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 interface UsageRow {
   model: string;
@@ -72,7 +73,9 @@ const get_usage: Operation = {
         [],
       );
       loggedSince = since[0]?.since ?? null;
-    } catch {
+    } catch (err) {
+      // An engine that cannot read the ledger refuses; table_present:false would read as a pre-v136 brain.
+      rethrowCapabilityRefusal(err);
       // Pre-v136 brain (table absent). Report empty with coverage saying so
       // rather than erroring — the op is a read surface, not a migration gate.
       tableMissing = true;
