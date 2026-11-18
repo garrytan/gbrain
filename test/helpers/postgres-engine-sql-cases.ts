@@ -477,7 +477,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'declarePersistence': OOS.persistenceDeclaration,
   'readManagedModeRows': OOS.importGuards, 'getSourceStrictness': OOS.importGuards, 'readPersistenceBrainId': OOS.importGuards,
   'readLocalWriterRow': OOS.importGuards, 'insertLocalWriterRow': OOS.importGuards, 'readTransactionSettings': OOS.importGuards,
-  'applyTransactionSettings': OOS.importGuards, 'readCurrentWriteTrust': OOS.importGuards, 'readLedgerSource': OOS.importGuards, 'isFolderRestricted': OOS.importGuards,
+  'applyTransactionSettings': OOS.importGuards, 'readCurrentWriteTrust': OOS.importGuards, 'setWriteContext': OOS.importGuards, 'readLedgerSource': OOS.importGuards, 'isFolderRestricted': OOS.importGuards,
   // the page-write reads and upkeep that belong to no other domain
   'readSourceState': OOS.writeMisc,
   'readAdmissionSource': OOS.writeMisc,
@@ -1203,6 +1203,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('readTransactionSettings', [['default', (e) => e.transaction((tx: any) => tx.readTransactionSettings(['gbrain.write_attribution']))]]),
   ...variants('applyTransactionSettings', [['default', (e) => e.transaction((tx: any) => tx.applyTransactionSettings(['gbrain.write_attribution'], ['x']))]]),
   ...variants('readCurrentWriteTrust', [['default', (e) => e.transaction((tx: any) => tx.readCurrentWriteTrust())]]),
+  ...variants('setWriteContext', [['default', (e) => e.transaction((tx: any) => tx.setWriteContext({ sourceIds: ['default'], requestId: null, principalKind: 'agent', principalId: 'a', tier: 'agent_written', origin: '' }))]]),
   ...variants('readLedgerSource', [
     ['default', (e) => e.readLedgerSource(SRC)],
     ['batch', (e) => e.readLedgerSource(SRC, { batch: true })],

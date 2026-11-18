@@ -67,6 +67,12 @@ becomes visible to the brain in one commit, or not at all.
       for `gbrain.write_trust_tier` and `gbrain.write_origin`, returned as `{ tier, origin }`.
       PGLite and Postgres send the text `persistence/context.ts` `currentWriteTrust` always sent
       (`CURRENT_WRITE_TRUST_SQL` in `src/core/engine-sql/transaction-settings.ts`).
+    - `setWriteContext(input)` (same file) is the coordinated write's context in steps: it reads the
+      seven `WRITE_CONTEXT_SETTINGS` ('' where unset) and the persistence identity, and sets nothing
+      when there is none. Otherwise it applies the source scope and `gbrain.git_protocol = '1'`, keeps
+      an enclosing actor (one with a principal kind), and, for a declared tier, keeps an enclosing tier
+      of lower nonzero rank and takes the declared origin or the enclosing one. PGLite and Postgres
+      send `SET_WRITE_CONTEXT_SQL`, the one statement `withCoordinatedWrite` always sent.
 
 An `AbortSignal` in `opts` is honoured before the transaction starts and while it waits at the
 gate (`cancelled`); once `fn` runs the signal is ignored, as on PGLite.

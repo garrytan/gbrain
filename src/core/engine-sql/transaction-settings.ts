@@ -8,6 +8,7 @@
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { SqlExecutor } from './executor.ts';
 import { sqlFragment } from './fragment.ts';
+import { trustRankSql } from '../trust/tier.ts';
 
 const SETTING_NAME = /^[a-z_][a-z0-9_.]*$/;
 function assertSettingNames(names: readonly string[]): void {
@@ -33,6 +34,53 @@ export const CURRENT_WRITE_TRUST_SQL = `SELECT current_setting('gbrain.write_tru
 export async function readCurrentWriteTrust(exec: LegacyUnscopedRead): Promise<{ tier: string | null; origin: string | null }> {
   const [row] = await exec.executeRaw<{ tier: string | null; origin: string | null }>(CURRENT_WRITE_TRUST_SQL);
   return { tier: row?.tier ?? null, origin: row?.origin ?? null };
+}
+
+/**
+ * The settings a coordinated write establishes (persistence/context.ts `withCoordinatedWrite`), in the order
+ * `setWriteContext` reads them back as `previous`: the source scope, the actor, the trust declaration, and
+ * `gbrain.git_protocol` (this build applies the git-canonical rules, git-declared.ts).
+ */
+export const WRITE_CONTEXT_SETTINGS = ['gbrain.write_sources', 'gbrain.write_request', 'gbrain.write_principal_kind',
+  'gbrain.write_principal_id', 'gbrain.write_trust_tier', 'gbrain.write_origin', 'gbrain.git_protocol'] as const;
+
+/** What `setWriteContext` declares: the sources written, the actor, and the trust tier and origin ('' when undeclared). */
+export interface WriteContextInput {
+  sourceIds: readonly string[];
+  requestId: string | null;
+  principalKind: string;
+  principalId: string;
+  /** The declared tier, or '' to leave the enclosing trust settings as they are. */
+  tier: string;
+  /** The declared origin as JSON, or '' to keep the enclosing origin. */
+  origin: string;
+}
+
+/** The persistence identity (null when its row is missing: nothing was set) and the enclosing values, in WRITE_CONTEXT_SETTINGS order. */
+export interface WriteContextResult { brainId: string | null; previous: string[] }
+
+/**
+ * `setWriteContext`: the text `withCoordinatedWrite` has always sent, byte for byte (#6007): the persistence identity,
+ * the enclosing settings and the new settings in one round trip; nothing is set when the identity row is missing. The
+ * OFFSET 0 subquery reads the enclosing values first. A nested scope keeps the outer actor; a declared trust tier nests
+ * as min(outer, inner) (ranks compared in SQL); an undeclared one leaves the enclosing trust settings.
+ */
+export const SET_WRITE_CONTEXT_SQL = `SELECT b.brain_id,prev.*,
+      CASE WHEN b.brain_id IS NOT NULL THEN concat(set_config('gbrain.write_sources',$1,true),set_config('gbrain.git_protocol','1',true),
+        set_config('gbrain.write_request',CASE WHEN prev.s2<>'' THEN prev.s1 ELSE $2 END,true),
+        set_config('gbrain.write_principal_kind',CASE WHEN prev.s2<>'' THEN prev.s2 ELSE $3 END,true),
+        set_config('gbrain.write_principal_id',CASE WHEN prev.s2<>'' THEN prev.s3 ELSE $4 END,true),
+        CASE WHEN $5::text<>'' THEN concat(
+          set_config('gbrain.write_trust_tier',CASE WHEN ${trustRankSql('prev.s4')}>0 AND ${trustRankSql('prev.s4')}<${trustRankSql('$5::text')} THEN prev.s4 ELSE $5::text END,true),
+          set_config('gbrain.write_origin',CASE WHEN $6::text<>'' THEN $6::text ELSE prev.s5 END,true)) END) END AS applied
+    FROM (SELECT ${WRITE_CONTEXT_SETTINGS.map((name, index) => `COALESCE(current_setting('${name}',true),'') AS s${index}`).join(',')} OFFSET 0) prev
+    LEFT JOIN persistence_brain b ON b.singleton=1`;
+
+/** Establishes the coordinated write context on the current transaction and returns what it replaced. */
+export async function setWriteContext(exec: SqlExecutor, input: WriteContextInput): Promise<WriteContextResult> {
+  const [row] = await exec.executeRaw<Record<string, string | null>>(SET_WRITE_CONTEXT_SQL,
+    [JSON.stringify(input.sourceIds), input.requestId ?? '', input.principalKind, input.principalId, input.tier, input.origin]);
+  return { brainId: row?.brain_id ?? null, previous: WRITE_CONTEXT_SETTINGS.map((_, index) => row?.[`s${index}`] ?? '') };
 }
 
 /** Sets each setting to the value at the same index, for the rest of the current transaction (`set_config(name, value, true)`), in one statement. */

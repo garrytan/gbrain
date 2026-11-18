@@ -1,6 +1,7 @@
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type * as TrustWithdrawalsSql from './engine-sql/trust-withdrawals.ts';
 import type * as OpenLoopsSql from './engine-sql/open-loops.ts';
+import type { WriteContextInput, WriteContextResult } from './engine-sql/transaction-settings.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
 import type * as TrustWriteGateSql from './engine-sql/trust-write-gate.ts';
 import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
@@ -3379,6 +3380,14 @@ export interface BrainEngine {
    * `gbrain.write_origin` settings, each null (or '') where unset (persistence/context.ts `currentWriteTrust` parses them).
    */
   readCurrentWriteTrust(): Promise<{ tier: string | null; origin: string | null }>;
+
+  /**
+   * Establishes a coordinated write's context on the current transaction in one statement (persistence/context.ts
+   * `withCoordinatedWrite`): source scope, actor (an enclosing actor is kept), trust (nests as min(outer, inner)) and the
+   * git protocol. Sets nothing when the persistence identity row is missing (`brainId` null). `previous` holds the values
+   * it replaced, '' where unset, in engine-sql/transaction-settings.ts WRITE_CONTEXT_SETTINGS order.
+   */
+  setWriteContext(input: WriteContextInput): Promise<WriteContextResult>;
 
   // The connect gate's persistence reads (engine-sql/connect-gate.ts): table probes, managed roots, graduation, retired epochs.
   /** Whether persistence table `table` exists (a brain before the persistence migrations has none). */

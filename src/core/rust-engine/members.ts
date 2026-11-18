@@ -498,6 +498,7 @@ export const RUST_ENGINE_MEMBERS = {
   // persistence_journal
   readManagedModeRows: 'persistence_journal',
   readPersistenceBrainId: 'persistence_journal',
+  setWriteContext: 'persistence_journal',
   readLocalWriterRow: 'persistence_journal',
   insertLocalWriterRow: 'persistence_journal',
   readJournalLimitRows: 'persistence_journal',

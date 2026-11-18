@@ -1,4 +1,5 @@
-**On an experimental Rust brain, the background writer reads the writer's trust settings through a typed engine call instead of raw SQL. PGLite and Postgres brains send the same SQL as before.**
+**On an experimental Rust brain, the background writer sets and reads the write context (source scope, writer and trust settings) through typed engine calls instead of raw SQL. PGLite and Postgres brains send the same SQL as before.**
 
 ### Changed
 - The write trust read behind the fence guard and fact supersession is a typed engine call, `readCurrentWriteTrust`: the trust tier and origin declared on the current transaction. Postgres and PGLite send the same SQL text as before, byte for byte, from `src/core/engine-sql/transaction-settings.ts`. A Rust brain answers it from the transaction's write trust context.
+- Starting a coordinated write sets its context through a typed engine call, `setWriteContext`: the sources written, the writer, the trust tier and origin, and the git protocol, in one statement as before. A Rust brain sets the same values on the transaction, so a coordinated write no longer stops there.
