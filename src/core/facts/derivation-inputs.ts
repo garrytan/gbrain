@@ -95,15 +95,13 @@ export async function derivedRowsFrom(engine: BrainEngine, inputs: readonly Deri
     }
     if (depth === maxDepth && frontier.length) return { rows, truncated: true };
   }
-  const depthOf = new Map([...inputs.map(i => [`${i.table}:${i.id}`, 0] as const), ...rows.map(r => [`${r.table}:${r.id}`, r.depth] as const)]);
-  const versions = await engine.executeRaw<{ derived_id: string; input_table: string; input_id: string }>(`SELECT d.derived_id,d.input_table,d.input_id
-    FROM derivation_inputs d JOIN jsonb_to_recordset($1::text::jsonb) AS f(input_table text,input_id text)
+  const walked = [...inputs.map(i => ({ input_table: i.table, input_id: i.id, depth: 0 })), ...rows.map(r => ({ input_table: r.table, input_id: r.id, depth: r.depth }))];
+  const versions = await engine.executeRaw<{ derived_id: string; depth: number }>(`SELECT d.derived_id,min(f.depth)::int+1 AS depth
+    FROM derivation_inputs d JOIN jsonb_to_recordset($1::text::jsonb) AS f(input_table text,input_id text,depth int)
       ON d.input_table=f.input_table AND d.input_id=f.input_id
-    WHERE d.derived_table='page_versions' ORDER BY d.derived_id LIMIT $2`,
-  [JSON.stringify([...depthOf.keys()].map(k => { const at = k.indexOf(':'); return { input_table: k.slice(0, at), input_id: k.slice(at + 1) }; })), limit + 1]);
-  const versionDepth = new Map<string, number>();
-  for (const v of versions) versionDepth.set(v.derived_id, Math.min(versionDepth.get(v.derived_id) ?? Infinity, depthOf.get(`${v.input_table}:${v.input_id}`)! + 1));
-  if (versionDepth.size > limit) return { rows, truncated: true };
+    WHERE d.derived_table='page_versions' GROUP BY d.derived_id ORDER BY d.derived_id LIMIT $2`, [JSON.stringify(walked), limit + 1]);
+  if (versions.length > limit) return { rows, truncated: true };
+  const versionDepth = new Map(versions.map(v => [v.derived_id, Number(v.depth)] as const));
   for (const [id, depth] of versionDepth) rows.push({ table: 'page_versions', id, depth });
   return { rows, truncated: false };
 }

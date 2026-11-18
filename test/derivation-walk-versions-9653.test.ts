@@ -26,6 +26,14 @@ for (const backend of testBackends()) {
           const roomy = await derivedRowsFrom(engine, [{ table: 'pages', id: '42' }], { limit: 10 });
           expect(roomy).toMatchObject({ truncated: false });
           expect(roomy.rows.filter(r => r.table === 'page_versions').map(r => r.depth)).toEqual([1, 1, 1, 1, 1]);
+          for (let i = 0; i < 5; i++) {
+            await engine.executeRaw(`INSERT INTO derivation_inputs(derived_table,derived_id,input_table,input_id,source_id) VALUES('page_versions',$1,'pages','8001','default')`, [String(9000 + i)]);
+          }
+          await engine.executeRaw(`INSERT INTO derivation_inputs(derived_table,derived_id,input_table,input_id,source_id) VALUES('page_versions','9005','pages','42','default')`);
+          const duplicated = await derivedRowsFrom(engine, [{ table: 'pages', id: '42' }], { limit: 6 });
+          expect(duplicated).toMatchObject({ truncated: false });
+          expect(duplicated.rows.filter(r => r.table === 'page_versions').length).toBe(6);
+          expect((await derivedRowsFrom(engine, [{ table: 'pages', id: '42' }], { limit: 5 })).truncated).toBe(true);
         } finally { await close(); }
       });
     }, 60_000);
