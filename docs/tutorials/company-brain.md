@@ -148,6 +148,8 @@ gbrain repair visibility --source team-a --slugs-file <file> --readers <list> --
 
 Names that matched nobody are listed under their own heading. Declare the right member's email (`gbrain access member set <id> --email <address>`) and preview again, or add those readers by hand. The owner reads every call before and after. This works the same on a repo-less brain, because members, owners and readers live in the database.
 
+`--propose` does not cover meeting pages an agent writes (the meeting-ingestion skill links attendees as `people/` pages, and `--propose` matches only email addresses), so don't wait for it there. Label those pages by hand with `gbrain repair visibility --slug <slug> --readers <list>`, or give their folder a rule (`gbrain access rule add --prefix meetings/ --readers <list> --source team-a`).
+
 **Folder rules: keep a whole folder to some members.** Instead of tagging every page, give a prefix its readers. On a repo-less brain (the default install) the rules live in the database:
 
 ```bash
