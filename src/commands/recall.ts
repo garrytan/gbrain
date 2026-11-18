@@ -1220,6 +1220,13 @@ export async function runForget(engine: BrainEngine | (() => Promise<BrainEngine
     process.exit(1);
   }
   const id = parseInt(idArg, 10);
+  // Refuse extra ids rather than silently forgetting only the first one.
+  const flagValueFlags = new Set(['--reason', '--source', '--request-id']);
+  const positionalIds = new Set(args.filter((a, i) => /^\d+$/.test(a) && !flagValueFlags.has(args[i - 1] ?? '')).map(a => parseInt(a, 10)));
+  if (positionalIds.size > 1) {
+    process.stderr.write(`gbrain forget takes one fact id per run; got ${positionalIds.size} (${[...positionalIds].join(', ')}). Run it once per id.\n`);
+    process.exit(1);
+  }
 
   // Optional --reason <text> passes through to the fence's "forgotten:
   // <reason>" context cell so the markdown carries the rationale.
