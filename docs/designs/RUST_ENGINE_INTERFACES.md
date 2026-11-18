@@ -519,6 +519,7 @@ refuses as above), and core `auto_chunks` (`putPage` never reaches a shell now).
 pub(crate) struct SearchTimeline { pub revision: String, pub timeline: String }
 pub(crate) fn search_timeline(read: &dyn KvRead, page_id: u64) -> Result<Option<SearchTimeline>>;
 pub(crate) fn record_search_timeline(tx: &mut dyn KvWrite, page_id: u64, revision: &str, timeline: &str) -> Result<()>;
+pub(crate) fn forget_search_timeline(tx: &mut dyn KvWrite, page_id: u64) -> Result<()>;
 pub(crate) const SEARCH_TIMELINE_MAX_CHARS: usize = 65_536;
 ```
 
@@ -533,11 +534,18 @@ carries its output to the store.
   transaction: the page's `knowledge_revision` at the seal, and the text with NUL removed and cut to
   `SEARCH_TIMELINE_MAX_CHARS` characters (Postgres `left` counts characters).
 - **Read.** The keyword family (`searchTitles`) reads it with `search_timeline`. The text describes the page's
-  current text when `revision` equals the page's `text_projection_revision`. A seal without the text (the store's own
-  indexing `putPage`) leaves the record at its older revision; `None` means no seal sent one.
+  current text when `revision` equals the page's `text_projection_revision`. `None` means no seal sent the text since
+  the last write that set the title or timeline.
+- **Forget.** `pub(crate) fn forget_search_timeline(tx: &mut dyn KvWrite, page_id: u64) -> Result<()>` deletes it.
+  PGLite's `trg_pages_search_vector` (`BEFORE INSERT OR UPDATE OF title, timeline`) puts the trigger form back on
+  every write whose `SET` list names either column, also with an unchanged value. `put_page_in` calls it on every
+  `putPage`; `write_page` calls it when the title or timeline changed. The page_body family calls it from
+  `refresh_page_body` and the body generation flip. `rust/docs/store/pages.md` ("Search timeline") lists each PGLite
+  statement.
 - **Delete.** `remove_page` deletes it on a hard delete. A soft delete keeps it.
 - **Other writers.** A family that seals a page by another path and has the sanitized text from TypeScript calls
-  `record_search_timeline` in the same transaction; no family writes the key itself.
+  `record_search_timeline` in the same transaction, and a family whose PGLite SQL sets the title or timeline calls
+  `forget_search_timeline`; no family touches the key directly.
 
 ### Write transactions and the journal
 
@@ -1224,5 +1232,5 @@ The estimates are judgments from the size of the PGLite code each member reprodu
 | Nullable page fields (`PageText`, `content_hash: Option`, `chunker_version: Option<i16>`; codec `guardNullBody`) | built | page_body (shell and flip writes) |
 | Segmented guard (`putPage` refuses a segmented page with PGLite's CHECK message) | built | page_body; chunk_queries, extraction and page_ops match PGLite for a NULL body (see "Segmented guard") |
 | Rename slug list (`cascade::rename_slug_rows`) | built; the aliases family calls it from `updateSlug` | facts (fills in its body), aliases (caller) |
-| Search timeline (`pages::search_timeline`: the sanitized timeline `sealChunks` sends, kept per page at the sealed revision) | built | keyword (`searchTitles`) |
+| Search timeline (`pages::search_timeline`: the sanitized timeline `sealChunks` sends, kept per page at the sealed revision; `forget_search_timeline` on every write that sets the title or timeline) | built | keyword (`searchTitles`); page_body calls `forget_search_timeline` |
 | Vector cache store field (`Store::vectors`, a `VectorCache` made in `open_kv`) | built | vectors (`load_index`) |

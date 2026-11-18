@@ -467,6 +467,13 @@ pub(crate) fn read_page_by_id(read: &dyn KvRead, id: u64) -> Result<Option<PageR
 /// page index hook (`page_index::reindex_page`) with the record as stored before and after.
 pub(crate) fn write_page(tx: &mut dyn KvWrite, record: &PageRecord) -> Result<()> {
     let before = read_page_by_id(&*tx, record.id)?;
+    // A write that changes the title or timeline sets them, so PGLite's search vector trigger fires.
+    if before
+        .as_ref()
+        .is_some_and(|b| b.title != record.title || b.timeline != record.timeline)
+    {
+        forget_search_timeline(tx, record.id)?;
+    }
     let key = page_key(&record.source_id, &record.slug);
     put_json(tx, &key, record)?;
     tx.put(&keys::page_id(record.id), &key)?;
@@ -871,6 +878,9 @@ pub(crate) fn put_page_in(
             }
         }
     };
+    // PGLite's `trg_pages_search_vector` (BEFORE INSERT OR UPDATE OF title, timeline) rewrites the
+    // page keyword vector on every `putPage`, also when the values are unchanged.
+    forget_search_timeline(tx, record.id)?;
     write_page(tx, &record)?;
     let mut record = record;
     if options.index == Some(false) {
@@ -1299,8 +1309,12 @@ pub(crate) fn snapshot_in(
 //
 // - `search_timeline` reads it. The text describes the page's current text when its `revision`
 //   equals the page's `text_projection_revision` (the seal that wrote it is the current seal).
-// - A seal without the text (the store's own `putPage` index path) writes nothing, so the record
-//   keeps the older revision.
+// - A seal without the text (the store's own `putPage` index path) writes nothing.
+// - Every write that sets the title or timeline deletes it (`forget_search_timeline`), as PGLite's
+//   `trg_pages_search_vector` (BEFORE INSERT OR UPDATE OF title, timeline) puts the trigger form
+//   back: `put_page_in` on every call, `write_page` when either value changed, and a family
+//   whose PGLite SQL sets either column with an unchanged value calls it itself. Only a later
+//   seal with the text writes the record again.
 // - A hard page delete removes it (`remove_page`).
 
 const SEARCH_TIMELINE: &str = "page_search_timeline";
@@ -1349,6 +1363,12 @@ pub(crate) fn record_search_timeline(
     put_json(tx, &search_timeline_key(page_id), &record)
 }
 
+/// Deletes the search timeline of page `page_id`: the write sets the title or timeline, so PGLite's
+/// search vector trigger replaces the sealed vector until the next seal.
+pub(crate) fn forget_search_timeline(tx: &mut dyn KvWrite, page_id: u64) -> Result<()> {
+    tx.delete(&search_timeline_key(page_id))
+}
+
 /// Deletes a page and everything that hangs off it.
 pub(crate) fn remove_page(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()> {
     let mut doomed = Vec::new();
@@ -1360,7 +1380,7 @@ pub(crate) fn remove_page(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()>
         tx.delete(&key)?;
     }
     clear_chunks(tx, page.id)?;
-    tx.delete(&search_timeline_key(page.id))?;
+    forget_search_timeline(tx, page.id)?;
     crate::links::remove_page_links(tx, page.id)?;
     crate::timeline::remove_page_timeline(tx, page.id)?;
     crate::timeline_queries::remove_event_projections(tx, page.id)?;
@@ -1792,7 +1812,7 @@ mod tests {
     }
 
     #[test]
-    fn a_seal_keeps_the_search_timeline_at_the_sealed_revision() {
+    fn a_seal_keeps_the_search_timeline_and_a_title_or_timeline_write_forgets_it() {
         let store = crate::test_support::store();
         let page = put(&store, "a");
         assert_eq!(stored_timeline(&store, page.id), None);
@@ -1821,7 +1841,25 @@ mod tests {
         seal(&store, "a", None);
         assert_eq!(stored_timeline(&store, page.id), Some(kept.clone()));
 
-        // A new revision sealed by the store alone leaves the record at the older revision.
+        // A putPage sets the title and timeline, so the record goes, also when nothing changed.
+        let same = PageInput {
+            page_type: "note".into(),
+            title: "a".into(),
+            compiled_truth: "body".into(),
+            ..PageInput::default()
+        };
+        store
+            .put_page("a", &same, &PutPageOptions::default())
+            .unwrap();
+        let unchanged = read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "a")
+            .unwrap()
+            .unwrap();
+        assert_eq!(unchanged.knowledge_revision, kept.revision);
+        assert_eq!(stored_timeline(&store, page.id), None);
+        seal(&store, "a", Some(&long));
+        assert_eq!(stored_timeline(&store, page.id), Some(kept.clone()));
+
+        // A new revision: the record goes, and the store's own seal does not write it again.
         let input = PageInput {
             page_type: "note".into(),
             title: "a".into(),
@@ -1834,16 +1872,37 @@ mod tests {
         let moved = read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "a")
             .unwrap()
             .unwrap();
-        assert_ne!(
+        assert_ne!(moved.knowledge_revision, kept.revision);
+        assert_eq!(
             moved.text_projection_revision.as_deref(),
-            Some(kept.revision.as_str())
+            Some(moved.knowledge_revision.as_str())
         );
-        assert_eq!(stored_timeline(&store, page.id), Some(kept));
+        assert_eq!(stored_timeline(&store, page.id), None);
 
         seal(&store, "a", Some("2026-01-01 event"));
         let resealed = stored_timeline(&store, page.id).unwrap();
         assert_eq!(resealed.revision, moved.knowledge_revision);
         assert_eq!(resealed.timeline, "2026-01-01 event");
+
+        // A write through `write_page` that changes the title forgets it; one that keeps both
+        // values (a tag change, a soft delete) keeps it.
+        store
+            .write(|tx| {
+                let mut page = read_page(&*tx, DEFAULT_SOURCE, "a")?.unwrap();
+                page.updated_at_us += 1;
+                write_page(tx, &page)
+            })
+            .unwrap();
+        assert_eq!(stored_timeline(&store, page.id), Some(resealed));
+        store
+            .write(|tx| {
+                let mut page = read_page(&*tx, DEFAULT_SOURCE, "a")?.unwrap();
+                page.title = "renamed title".into();
+                write_page(tx, &page)
+            })
+            .unwrap();
+        assert_eq!(stored_timeline(&store, page.id), None);
+        seal(&store, "a", Some("2026-01-01 event"));
 
         store.delete_page("a", None).unwrap();
         assert_eq!(stored_timeline(&store, page.id), None);
