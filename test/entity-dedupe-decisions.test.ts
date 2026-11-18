@@ -466,6 +466,37 @@ describe('with a repository', () => {
     expect(invalid.details.drift.invalid_files).toEqual([`${IDENTITY_DIR}/${decisionId(bad)}.md`]);
   });
 
+  test('doctor keeps offering reconcile for a confirmed page restored outside sync, which reconcile links', async () => {
+    const alice = await groupOf('people/alice-example');
+    await cli(['confirm', alice]);
+    await engine.deletePage('people/alice-example', { sourceId: 'source-b' });
+    await engine.applyIdentityDecisions({});
+    await page('people/alice-example', 'Alice Example', { linkedin: 'linkedin.com/in/alice-example' }, 'source-b');
+    expect((await engine.listIdentityDecisions()).pending.map(p => p.reason)).toEqual(['unlinked']);
+    expect((await doctor()).fix.argv).toEqual(['gbrain', 'dedupe', 'reconcile']);
+    await cli(['reconcile']);
+    expect((await engine.listIdentityDecisions()).pending).toEqual([]);
+  });
+
+  test('a projection whose apply goes stale reads again; five stale applies in a row throw and write nothing', async () => {
+    const members = [{ source_id: 'default', slug: 'people/alice-example' }, { source_id: 'source-b', slug: 'people/alice-example' }];
+    await cli(['confirm', await groupOf('people/alice-example')]);
+    await engine.applyIdentityDecisions({ remove: [decisionId(members)] });
+    const home = (await identityHome(engine))!;
+    const real = engine.applyIdentityDecisions.bind(engine);
+    let staleLeft = 1;
+    const spy = spyOn(engine, 'applyIdentityDecisions').mockImplementation(async (input) =>
+      input.expectRevision !== undefined && staleLeft-- > 0 ? { upserted: 0, removed: 0, linked: 0, unlinked: 0, stale: true } : real(input));
+    try {
+      expect((await projectIdentityDecisions(engine, home)).upserted).toBe(1);
+      expect((await rows()).decisions.map(d => d.verdict)).toEqual(['same']);
+      await real({ remove: [decisionId(members)] });
+      staleLeft = 5;
+      await expect(projectIdentityDecisions(engine, home)).rejects.toThrow('changed while they were being projected, 5 times in a row');
+      expect((await rows()).decisions).toEqual([]);
+    } finally { spy.mockRestore(); }
+  });
+
   test('a failed read of the committed decisions removes nothing', async () => {
     await cli(['confirm', await groupOf('people/alice-example')]);
     const before = await rows();

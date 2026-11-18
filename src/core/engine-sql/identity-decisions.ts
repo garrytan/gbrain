@@ -40,7 +40,8 @@ export interface IdentityDecision {
   git_blob: string | null;
 }
 
-export interface PendingIdentityMember extends IdentityMemberRef { decision_id: string; reason: 'page_missing' | 'other_group' }
+/** page_missing: no live page; unlinked: the page exists and sits in no group (the next apply links it); other_group: it sits in another group. */
+export interface PendingIdentityMember extends IdentityMemberRef { decision_id: string; reason: 'page_missing' | 'unlinked' | 'other_group' }
 
 /** revision: decisionsRevision of the rows read, for an apply that must not overwrite a newer change (expectRevision). */
 export interface IdentityDecisionsRead { decisions: IdentityDecision[]; pending: PendingIdentityMember[]; revision: string }
@@ -80,7 +81,7 @@ export async function listIdentityDecisions(exec: LegacyUnscopedRead): Promise<I
      ORDER BY decision_id`);
   const { rows: pending } = await exec.query<PendingIdentityMember>(`
     SELECT r.decision_id, m.member->>'source_id' AS source_id, m.member->>'slug' AS slug,
-           CASE WHEN p.id IS NULL THEN 'page_missing' ELSE 'other_group' END AS reason
+           CASE WHEN p.id IS NULL THEN 'page_missing' WHEN x.entity_id IS NULL THEN 'unlinked' ELSE 'other_group' END AS reason
       FROM ${MEMBER_PAGES}
       LEFT JOIN entity_identities x ON x.source_id = p.source_id AND x.page_id = p.id
      WHERE r.verdict = 'same' AND (p.id IS NULL OR x.entity_id IS DISTINCT FROM r.entity_id)

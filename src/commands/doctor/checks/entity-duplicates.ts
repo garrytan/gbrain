@@ -121,7 +121,8 @@ async function runEntityDuplicates(ctx: DoctorContext): Promise<Check[]> {
     const shown = groups.slice(0, SHOWN).map(g => ({ id: g.id, kind: g.kind, class: g.class, members: g.members }));
     const drift = await identityDrift(engine, read);
     const driftText = driftLine(drift);
-    const reconcilable = drift.store_mismatch || drift.database_only > 0 || drift.unsynced_files > 0 || drift.rows_without_file > 0;
+    const reconcilable = drift.store_mismatch || drift.database_only > 0 || drift.unsynced_files > 0 || drift.rows_without_file > 0
+      || drift.pending.some(p => p.reason === 'unlinked');
     if (driftText && !reconcilable) {
       checks.push({
         name: 'entity_duplicates', status: 'warn', message: `${driftText} ${groups.length} duplicate group(s) are undecided.`,
