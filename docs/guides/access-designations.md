@@ -256,7 +256,19 @@ relaxations above widens it: `--private-pages granted-sources`, `--private-facts
 `search.remote_private_pages`, `access.members_read_lineage`, `access.owner_reads_restricted` and
 `visibility.honor_aliases` leave it in place, and so do shared-room audiences, guests and attested calls. A remote
 write into an owner-only source from any credential but the owner's is refused the same way. The rule is worked out
-at read time from the source, so nothing is stored per page and a repo-less brain works the same.
+at read time from the source and works the same on a repo-less brain. Only a delete stores anything: when an owner-only
+source or one of its rows goes, a trigger records the rows derived from it in `owner_only_marks`, so they stay
+owner-only ([owner-only delete triggers](../ENGINES.md#owner-only-delete-triggers)).
+
+### Keys that read every shared source (`--read-shared on`)
+
+A member's key with a write source of its own reads only the sources its grant lists, unless the read-shared switch is
+on (`gbrain auth rescope --token <name> --read-shared on`, `--client <id>` for an OAuth client). Then it also reads
+`default` and every federated source, now and later, never a guest source or (unless it is the owner's key) another member's own source, and it
+still writes only to its write source. The switch widens which sources the key reaches, not what it reads inside them:
+`visibility: private` pages and private facts stay closed in every source it reaches only through the switch
+(`--private-pages granted-sources` and `--private-facts granted-sources` open only sources the grant lists by id), and
+`readable_by` and folder rules apply as before. `gbrain access check --token <name>` lists what the key reads now.
 
 ### Audience members (`gbrain access member kind`)
 

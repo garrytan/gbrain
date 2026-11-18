@@ -839,8 +839,8 @@ function withheldOperationsNote(name: string, count: number): string {
 }
 
 async function harnessOperationSnapshot(follow: boolean): Promise<string[]> {
-  const { operations } = await import('../operations.ts');
-  return operations.filter(op => !op.localOnly && (op.scope === 'read' || op.scope === 'write') &&
+  const [{ operations }, { addedOnlyByName }] = await Promise.all([import('../operations.ts'), import('../ops/execution-prerequisites.ts')]);
+  return operations.filter(op => !op.localOnly && (op.scope === 'read' || op.scope === 'write') && !addedOnlyByName(op.name) &&
     (op.requiredScopes ?? []).every(scope => follow && scope === 'skills_member_self')).map(op => op.name).sort();
 }
 

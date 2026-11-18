@@ -1,1 +1,0 @@
-**Big pull requests no longer break the stress gate (it re-plans at 25 minutes past GitHub's 256-job matrix limit), an untimed `.slow.test.ts` file is planned at a fixed 120 s, and three persistence-validation lanes moved to smaller runners.**

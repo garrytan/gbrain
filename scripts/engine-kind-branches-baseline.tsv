@@ -115,7 +115,7 @@ src/core/context/resolve-ipc.ts	kind_compare	4
 src/core/cycle.ts	kind_compare	1
 src/core/cycle/facts-drain.ts	kind_compare	1
 src/core/cycle/synthesize.ts	kind_compare	1
-src/core/db-lock.ts	kind_compare	9
+src/core/db-lock.ts	kind_compare	1
 src/core/direct-pool-profile.ts	kind_compare	1
 src/core/embed-concurrency.ts	kind_compare	1
 src/core/embedding-ann-build.ts	kind_compare	1
@@ -131,7 +131,6 @@ src/core/function-search-path.ts	kind_compare	1
 src/core/link-source-check-repair.ts	kind_compare	1
 src/core/maintenance/run.ts	kind_compare	2
 src/core/mcp-request-log-retention.ts	kind_compare	2
-src/core/mentions/policy.ts	kind_compare	2
 src/core/migrate.ts	kind_compare	4
 src/core/migration-orchestration-lock.ts	kind_compare	2
 src/core/migration-preludes.ts	kind_compare	3

@@ -47,6 +47,7 @@ const load_salience = () => import('./ops/salience.ts') as Promise<Record<string
 const load_schema_packs = () => import('./ops/schema-packs.ts') as Promise<Record<string, unknown>>;
 const load_search_exact = () => import('./ops/search-exact.ts') as Promise<Record<string, unknown>>;
 const load_search = () => import('./ops/search.ts') as Promise<Record<string, unknown>>;
+const load_secrets = () => import('./ops/secrets.ts') as Promise<Record<string, unknown>>;
 const load_skillopt = () => import('./ops/skillopt.ts') as Promise<Record<string, unknown>>;
 const load_skills_catalog = () => import('./ops/skills-catalog.ts') as Promise<Record<string, unknown>>;
 const load_sources = () => import('./ops/sources.ts') as Promise<Record<string, unknown>>;
@@ -157,6 +158,7 @@ export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<st
   "storage_list": [load_storage_manifest, "storageManifestOperations"],
   "storage_register": [load_storage_manifest, "storageManifestOperations"],
   "storage_update": [load_storage_manifest, "storageManifestOperations"],
+  "reveal_secret": [load_secrets, "secretsOperations"],
   "submit_job": [load_jobs, "jobsOperations"],
   "get_job": [load_jobs, "jobsOperations"],
   "wait_job": [load_jobs, "jobsOperations"],

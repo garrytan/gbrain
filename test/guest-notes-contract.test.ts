@@ -79,6 +79,7 @@ const CLASSIFIED: Record<string, Args | { skip: string }> = {
   get_raw_data: { slug: GUEST },
   get_chunks: { slug: GUEST },
   whois: { query: SENTINEL },
+  reveal_secret: skip('returns one value a secret-scanner rule matched (a key or token shape), never a page title or body, so no guest text can reach the answer; needs a grant that names it'),
   get_ingest_log: {},
   submit_job: skip(JOBS), get_job: skip(JOBS), wait_job: skip(JOBS), list_jobs: skip(JOBS), cancel_job: skip(JOBS), retry_job: skip(JOBS),
   get_job_progress: skip(JOBS), pause_job: skip(JOBS), resume_job: skip(JOBS), replay_job: skip(JOBS), send_job_message: skip(JOBS),

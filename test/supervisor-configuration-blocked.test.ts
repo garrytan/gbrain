@@ -388,7 +388,8 @@ import {${kind === 'supervisor' ? 'MinionSupervisor' : 'runAutopilot'}} from ${J
 const engine = {
  kind:'postgres', sql:async()=>[{id:'fixture',fence:'1'}],
  getConfig:async()=>null, executeRaw:async()=>[], executeRawDirect:async()=>[{id:'fixture'}],
- getHealth:async()=>({brain_score:100}), disconnect:async()=>{}, reconnect:async()=>{}
+ getHealth:async()=>({brain_score:100}), disconnect:async()=>{}, reconnect:async()=>{},
+ acquireCycleLock:async(id:string)=>({id,fence:'1'}), refreshCycleLock:async()=>true, releaseCycleLock:async()=>true
 };
 ${kind === 'supervisor'
   ? `await new MinionSupervisor(engine as any,{cliPath:process.execPath,cliArgsPrefix:[${JSON.stringify(worker)}],pidFile:${JSON.stringify(pidFile)},healthInterval:10,_backoffFloorMs:1}).start();`

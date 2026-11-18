@@ -454,6 +454,13 @@ export interface AuthInfo {
    */
   privatePages?: { mode: 'granted_sources'; sources: string[] };
   /**
+   * GST-2898: the credential's read-shared switch is on, so `allowedSources` already holds its stored list plus every
+   * shared source (grants/read-shared.ts). `readSharedUnresolved`: the shared set could not be read, so it reads its
+   * stored list only and read results carry the `read_shared_unresolved` degraded notice.
+   */
+  readShared?: boolean;
+  readSharedUnresolved?: boolean;
+  /**
    * GBRA-575: the grant's `private_facts: granted_sources` axis, set at token
    * verification from the live row, with the same explicitly named sources.
    * MCP dispatch makes them the private-fact sources of each non-mutating call

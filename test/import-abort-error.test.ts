@@ -102,7 +102,9 @@ const directoryCases: Array<{
   {
     name: 'lock admission fails on a non-operation error',
     setup: root => join(root, 'notes'),
-    engine: answering("local_path <> ''", new Error('synthetic sources lookup failure')),
+    // The source-path lookup is the typed `listSourceLocalPaths` read.
+    engine: ({ ...answering('no SQL statement matches this', []),
+      listSourceLocalPaths: async () => { throw new Error('synthetic sources lookup failure'); } }) as unknown as BrainEngine,
     reason: 'synthetic sources lookup failure',
     stderr: () => ['Error: synthetic sources lookup failure', 'Fix: gbrain doctor --json'],
     cause: 'synthetic sources lookup failure',
