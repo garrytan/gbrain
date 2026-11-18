@@ -42,13 +42,8 @@ export function cronSpoolDir(databasePath: string): string {
 
 /** Record one run: the direct emit (no time, so now()) or a spooled one (its own time, skipped when already recorded). */
 export async function recordCronRun(engine: BrainEngine, run: { name: string; status: string; finished_at?: string }): Promise<void> {
-  await engine.executeRaw(
-    `INSERT INTO wake_cron_runs (name, status, finished_at) SELECT $1, $2, COALESCE($3::timestamptz, now())
-      WHERE $3::timestamptz IS NULL OR NOT EXISTS (SELECT 1 FROM wake_cron_runs WHERE name = $1 AND status = $2 AND finished_at = $3::timestamptz)`,
-    [run.name, run.status, run.finished_at ?? null]);
-  await engine.executeRaw("DELETE FROM wake_cron_runs WHERE name = $1 AND finished_at < now() - interval '30 days'", [run.name]);
-  const registered = await engine.executeRaw('SELECT 1 FROM wake_crons WHERE name = $1', [run.name]);
-  if (registered.length === 0) console.error(`[wakeshift] cron ${run.name} is not registered, so no agent can watch it: run gbrain wakeshift cron add ${run.name}.`);
+  const { registered } = await engine.recordWakeCronRun({ name: run.name, status: run.status, finishedAt: run.finished_at ?? null });
+  if (!registered) console.error(`[wakeshift] cron ${run.name} is not registered, so no agent can watch it: run gbrain wakeshift cron add ${run.name}.`);
 }
 
 /** Write one run to the spool; 'full' when SPOOL_MAX_FILES runs already wait. */

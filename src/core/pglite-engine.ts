@@ -151,6 +151,7 @@ import { pgliteExecutor } from './engine-sql/dialect-pglite.ts';
 import type { SqlExecutor } from './engine-sql/executor.ts';
 import { scopedRead, unscopedExecutor } from './engine-sql/brands.ts';
 import * as codeEdgesImpl from './engine-sql/code-edges.ts';
+import * as codeTraversalCache from './engine-sql/code-traversal-cache.ts';
 import { getEdgesByChunk as getEdgesByChunkPglite, type PgliteCodeEdgesDeps } from './pglite-engine/code-edges.ts';
 import * as salienceImpl from './engine-sql/salience.ts';
 import * as pageLookupImpl from './engine-sql/page-lookup.ts';
@@ -174,6 +175,7 @@ import * as writeGuardsImpl from './engine-sql/write-guards.ts';
 import * as trustFenceImpl from './engine-sql/trust-fence.ts';
 import * as persistenceClaimsImpl from './engine-sql/persistence-claims.ts';
 import * as housekeepingImpl from './engine-sql/persistence-housekeeping.ts';
+import * as effectScansImpl from './engine-sql/persistence-effect-scans.ts';
 import type { ProjectionScanCursor } from './page-state/projection-window.ts';
 import type { TrustTable } from './trust/schema.ts';
 import * as trustProposalsImpl from './engine-sql/trust-proposals.ts';
@@ -201,8 +203,11 @@ import type { QueueDivergenceSpec, QueueHealthSpec } from './engine-sql/jobs-hea
 import * as jobsStatus from './engine-sql/jobs-status.ts';
 import type { JobStatusFilter } from './engine-sql/jobs-status.ts';
 import * as jobsChecks from './engine-sql/jobs-checks.ts';
+import * as jobsWake from './engine-sql/jobs-wake.ts';
 import type { DeadDreamSubmissionSpec } from './engine-sql/jobs-checks.ts';
 import * as jobsInsight from './engine-sql/jobs-insight.ts';
+import * as jobsSpend from './engine-sql/jobs-spend.ts';
+import * as jobsSubagent from './engine-sql/jobs-subagent.ts';
 import * as takesReads from './engine-sql/takes-reads.ts';
 import type {
   CancelJobsSpec, DelayActiveJobSpec, JobAttachmentInsert, JobPageSpec, JobTokenCounts, PruneJobsSpec, RetryJobPolicy,
@@ -1589,6 +1594,8 @@ export class PGLiteEngine implements BrainEngine {
   readCapacityForecastInputs(opts?: { light?: boolean }) { return housekeepingImpl.readCapacityForecastInputs(unscopedExecutor(this.engineSql, 'persistence: capacity forecast read ran unscoped through executeRaw'), opts); }
   listPendingSegmentedProjections(filter: housekeepingImpl.SegmentedProjectionFilter) { return housekeepingImpl.listPendingSegmentedProjections(unscopedExecutor(this.engineSql, 'projections: segmented queue read ran unscoped through executeRaw'), filter); }
   selectProjectionWindowJobs(cursor: Pick<ProjectionScanCursor, 'after' | 'highWater'>, retryCooldown: boolean) { return housekeepingImpl.selectProjectionWindowJobs(unscopedExecutor(this.engineSql, 'projections: resident window read ran unscoped through executeRaw'), cursor, retryCooldown); }
+  listGatedMirrorRequests(hostId: string, gateCode: string, allowedCodes: readonly string[]) { return effectScansImpl.listGatedMirrorRequests(unscopedExecutor(this.engineSql, 'persistence: gated mirror scan ran unscoped through executeRaw'), hostId, gateCode, allowedCodes); }
+  listEffectRecoveries<R = Record<string, unknown>>(hostId: string, after: string | null, limit: number) { return effectScansImpl.listEffectRecoveries<R>(unscopedExecutor(this.engineSql, 'persistence: effect recovery scan ran unscoped through executeRaw'), hostId, after, limit); }
   readTransactionSettings(names: readonly string[]) { return transactionSettingsImpl.readTransactionSettings(unscopedExecutor(this.engineSql, 'transaction settings: read ran through the transaction executeRaw'), names); }
   applyTransactionSettings(names: readonly string[], values: readonly string[]) { return transactionSettingsImpl.applyTransactionSettings(this.engineSql, names, values); }
   hasPersistenceTable(table: connectGateImpl.PersistenceTable) { return connectGateImpl.hasPersistenceTable(unscopedExecutor(this.engineSql, 'connect gate: persistence read ran unscoped through executeRaw'), table); }
@@ -3498,6 +3505,33 @@ export class PGLiteEngine implements BrainEngine {
   async listFactsAbsorbJobsByKeyPrefix(spec: { prefix: string; keys: readonly string[] }) { return jobsChecks.listFactsAbsorbJobsByKeyPrefix(this, spec); }
   async listDeadFactsAbsorbJobsByKeys(keys: readonly string[]) { return jobsChecks.listDeadFactsAbsorbJobsByKeys(this, keys); }
   async readJobInsight(spec: jobsInsight.JobInsightSpec) { return jobsInsight.readJobInsight(this, spec); }
+  // Group C (spend reservations and lease pressure).
+  async readJobSpendTree(spec: jobsSpend.JobSpendTreeSpec) { return jobsSpend.readJobSpendTree(this, spec); }
+  async insertSpendReservation(row: jobsSpend.SpendReservationInsert) { return jobsSpend.insertSpendReservation(this, row); }
+  async expireSpendReservations(scope?: jobsSpend.ExpireSpendScope) { return jobsSpend.expireSpendReservations(this, scope); }
+  async settleSpendReservation(reservationId: string, actualCents: number) { return jobsSpend.settleSpendReservation(this, reservationId, actualCents); }
+  async markSpendUsageUnknown(reservationId: string, reason: string) { return jobsSpend.markSpendUsageUnknown(this, reservationId, reason); }
+  async insertLeasePressure(row: jobsSpend.LeasePressureInsert) { return jobsSpend.insertLeasePressure(this, row); }
+  async countLeasePressure(filter?: jobsSpend.LeasePressureFilter) { return jobsSpend.countLeasePressure(this, filter); }
+  async listRecentLeasePressure(windowMs: number, limit: number) { return jobsSpend.listRecentLeasePressure(this, windowMs, limit); }
+  // Group B (subagent transcript and tool ledger; engine-sql/jobs-subagent.ts).
+  async listSubagentMessages(jobId: number, opts?: { last?: boolean }) { return jobsSubagent.listSubagentMessages(this, jobId, opts); }
+  async countSubagentMessages(jobId: number) { return jobsSubagent.countSubagentMessages(this, jobId); }
+  async insertSubagentMessage(jobId: number, message: jobsSubagent.SubagentMessageInsert) { return jobsSubagent.insertSubagentMessage(this, jobId, message); }
+  async listSubagentToolExecutions(jobId: number, order: jobsSubagent.SubagentToolOrder) { return jobsSubagent.listSubagentToolExecutions(this, jobId, order); }
+  async hasSubagentToolExecution(jobId: number, opts?: { status?: string; toolUseIdPrefix?: string }) { return jobsSubagent.hasSubagentToolExecution(this, jobId, opts); }
+  async listSubagentWriteOutcomes(jobId: number, toolUseIdPrefix?: string) { return jobsSubagent.listSubagentWriteOutcomes(this, jobId, toolUseIdPrefix); }
+  async listSubagentOneshotLedger(jobId: number, toolUseIdPrefix: string) { return jobsSubagent.listSubagentOneshotLedger(this, jobId, toolUseIdPrefix); }
+  async summarizeSubagentToolExecutions(jobIds: readonly number[], spec: { toolName: string; status: string }) { return jobsSubagent.summarizeSubagentToolExecutions(this, jobIds, spec); }
+  async listSubagentPutPageSlugs(jobIds: readonly number[]) { return jobsSubagent.listSubagentPutPageSlugs(this, jobIds); }
+  async listSubagentPutPageWrites(jobIds: readonly number[]) { return jobsSubagent.listSubagentPutPageWrites(this, jobIds); }
+  async listSubagentRetainedPutPages(jobIds: readonly number[]) { return jobsSubagent.listSubagentRetainedPutPages(this, jobIds); }
+  async listSubagentStagedPages(jobId: number) { return jobsSubagent.listSubagentStagedPages(this, jobId); }
+  async listSubagentTimelineAppendCalls(jobIds: readonly number[], sourceId: string) { return jobsSubagent.listSubagentTimelineAppendCalls(this, jobIds, sourceId); }
+  async recordSubagentToolExecutions(jobId: number, rows: readonly jobsSubagent.SubagentToolInsert[], opts?: { legacyGuard?: boolean }) { return this.transaction(tx => jobsSubagent.recordSubagentToolExecutions(tx, jobId, rows, opts)); }
+  async startSubagentToolExecution(jobId: number, row: jobsSubagent.SubagentToolStart) { return jobsSubagent.startSubagentToolExecution(this, jobId, row); }
+  async completeSubagentToolExecution(target: jobsSubagent.SubagentToolTarget, output: string) { return jobsSubagent.completeSubagentToolExecution(this, target, output); }
+  async failSubagentToolExecution(target: jobsSubagent.SubagentToolTarget, error: string, fallback?: jobsSubagent.SubagentFailureFallback) { return this.transaction(tx => jobsSubagent.failSubagentToolExecution(tx, target, error, fallback)); }
   async countOffGridTakeWeights() { return takesReads.countOffGridTakeWeights(this); }
   async countTakes() { return takesReads.countTakes(this); }
   async planFactPurgeTakes(spec: takesReads.PurgeTakesSpec) { return takesReads.planFactPurgeTakes(this, spec); }
@@ -3552,6 +3586,11 @@ export class PGLiteEngine implements BrainEngine {
   ): Promise<import('./types.ts').CodeEdgeResult[]> {
     return getEdgesByChunkPglite(this.codeEdgesDeps, chunkId, opts);
   }
+
+  // jobs-tables group D: the code_traversal_cache table (./engine-sql/code-traversal-cache.ts).
+  async getCodeTraversalCache(key: codeTraversalCache.CodeTraversalCacheKey) { return codeTraversalCache.getCodeTraversalCache(this, key); }
+  async putCodeTraversalCache(key: codeTraversalCache.CodeTraversalCacheKey, response: unknown, maxChunkUpdatedAt: string, xminMax: number) { return codeTraversalCache.putCodeTraversalCache(this, key, response, maxChunkUpdatedAt, xminMax); }
+  async clearCodeTraversalCache(opts: codeTraversalCache.CodeTraversalCacheClear) { return codeTraversalCache.clearCodeTraversalCache(this, opts); }
 
   // Eval capture (v0.25.0). See BrainEngine interface docs.
   async logEvalCandidate(input: EvalCandidateInput): Promise<number> {
@@ -3653,4 +3692,25 @@ export class PGLiteEngine implements BrainEngine {
   listWriteGateHoldRows(opts: trustWriteGateImpl.WriteGateHoldListOpts) { return trustWriteGateImpl.listWriteGateHoldRows(unscopedExecutor(this.engineSql, 'trust: the write gate read ran through executeRaw unscoped'), opts); }
   getWriteGateHoldRow(id: number) { return trustWriteGateImpl.getWriteGateHoldRow(unscopedExecutor(this.engineSql, 'trust: the write gate read ran through executeRaw unscoped'), id); }
   decideWriteGateHold(id: number, status: 'released' | 'dropped', decidedBy: string) { return trustWriteGateImpl.decideWriteGateHold(this.engineSql, id, status, decidedBy); }
+
+  // Group A (jobs-tables): the Wakeshift report-back tables (engine-sql/jobs-wake.ts).
+  openWakeWatch(watch: jobsWake.WakeWatchInsert) { return jobsWake.openWakeWatch(this, watch); }
+  listWakeWatches(filter: jobsWake.WakeWatchFilter) { return jobsWake.listWakeWatches(this, filter); }
+  endWakeWatches(spec: jobsWake.EndWakeWatches) { return jobsWake.endWakeWatches(this, spec); }
+  countWakeWatches() { return jobsWake.countWakeWatches(this); }
+  readWakeDoctor() { return jobsWake.readWakeDoctor(this); }
+  countPendingWakeForgets() { return jobsWake.countPendingWakeForgets(this); }
+  listWakeCrons() { return jobsWake.listWakeCrons(this); }
+  addWakeCron(name: string) { return jobsWake.addWakeCron(this, name); }
+  removeWakeCron(name: string) { return jobsWake.removeWakeCron(this, name); }
+  hasWakeCron(name: string) { return jobsWake.hasWakeCron(this, name); }
+  recordWakeCronRun(run: { name: string; status: string; finishedAt: string | null }) { return jobsWake.recordWakeCronRun(this, run); }
+  hasWakeTermsAcceptance(principalKey: string, termsVersion: string) { return jobsWake.hasWakeTermsAcceptance(this, principalKey, termsVersion); }
+  recordWakeTermsAcceptance(principalKey: string, termsVersion: string) { return jobsWake.recordWakeTermsAcceptance(this, principalKey, termsVersion); }
+  listDueWakeWatches(spec: { ids?: readonly number[] } = {}) { return jobsWake.listDueWakeWatches(this, spec); }
+  claimWakeWatch(id: number, leaseSeconds: number) { return jobsWake.claimWakeWatch(this, id, leaseSeconds); }
+  settleWakeWatch(settle: jobsWake.WakeWatchSettle) { return jobsWake.settleWakeWatch(this, settle); }
+  queueWakeForget(wakeUser: string, memberId: string | null) { return jobsWake.queueWakeForget(this, wakeUser, memberId); }
+  claimWakeForgets(spec: { leaseSeconds: number; limit: number }) { return jobsWake.claimWakeForgets(this, spec); }
+  settleWakeForget(settle: jobsWake.WakeForgetSettle) { return jobsWake.settleWakeForget(this, settle); }
 }

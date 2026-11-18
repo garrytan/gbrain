@@ -62,3 +62,5 @@ that source (`ON DELETE CASCADE` on `source_id`).
   index keyed by chunk id would make these reads O(rows read). Correctness does not need it; it is deferred to core.
 
 `hasCodeEdgesSymbol(sourceId)` (whether the source owns an unresolved symbol-table edge) is documented in [takes-reads.md](takes-reads.md).
+
+The `code_traversal_cache` table (`getCodeTraversalCache`, `putCodeTraversalCache`, `clearCodeTraversalCache`) is documented in [code-traversal-cache.md](code-traversal-cache.md).

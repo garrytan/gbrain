@@ -110,8 +110,13 @@ export * from './jobs-health.ts';
 // The status reads (engine-sql/jobs-status.ts).
 export * from './jobs-status.ts';
 export * from './jobs-checks.ts';
+export * from './jobs-wake.ts';
 // The reads behind `describeJobs` (engine-sql/jobs-insight.ts).
 export * from './jobs-insight.ts';
+// Group C: the spend reservations and the lease-pressure log (engine-sql/jobs-spend.ts).
+export * from './jobs-spend.ts';
+// The subagent transcript and tool ledger (engine-sql/jobs-subagent.ts).
+export * from './jobs-subagent.ts';
 
 // ---------------------------------------------------------------- cycle locks
 

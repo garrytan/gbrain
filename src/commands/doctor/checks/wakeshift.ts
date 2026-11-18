@@ -38,33 +38,25 @@ async function runWakeshiftCheck(ctx: DoctorContext): Promise<Check[]> {
     if (read.source === 'file_too_open') {
       checks.push({ name: 'wakeshift', status: 'warn', message: `${wakeshiftKeyFile()} is readable by other users (mode ${read.mode}); gbrain ignores it until it is 0600. Fix: chmod 600 ${wakeshiftKeyFile()}`, details: { enabled, key_source: read.source, docs: DOCS } });
     } else if (!enabled) {
-      const [queued] = await connectedEngine(ctx).executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM wake_forgets WHERE state = 'pending'");
-      const pending = Number(queued?.n ?? 0);
+      const pending = await connectedEngine(ctx).countPendingWakeForgets();
       checks.push(pending > 0
         ? { name: 'wakeshift', status: 'warn', message: `Reporting back through Wakeshift is off, but ${pending} Wakeshift forget(s) for removed members or revoked credentials are queued, and nothing sends them while it is off. Fix: gbrain wakeshift enable (with the key in place), then gbrain serve or the job worker sends them.`, details: { enabled, key_source: read.source, pending_forgets: pending, docs: DOCS } }
         : { name: 'wakeshift', status: 'ok', severity: 'info', readiness_state: 'disabled_by_choice', message: 'Reporting back through Wakeshift is off (gbrain wakeshift enable turns it on).', details: { enabled, key_source: read.source, docs: DOCS } });
     } else if (!kid) {
       checks.push({ name: 'wakeshift', status: 'warn', message: `Wakeshift is enabled but has no usable key (${keyProblem}), so the watch tools are hidden. Fix: put the key in ${wakeshiftKeyFile()} (0600) or WAKESHIFT_API_KEY, then run gbrain wakeshift test.`, details: { enabled, key_source: read.source, docs: DOCS } });
     } else {
-      const rows = await connectedEngine(ctx).executeRaw<{ state: string; id_reused: boolean; n: number }>(
-        `SELECT state, (last_error = 'id_reused') AS id_reused, count(*)::int AS n FROM wake_subscriptions
-          WHERE state = 'open' OR updated_at > now() - interval '7 days' GROUP BY 1, 2`);
+      const engine = connectedEngine(ctx);
+      const wake = await engine.readWakeDoctor();
       const counts: Record<string, number> = { open: 0, delivered: 0, dead: 0, ended: 0, id_reused: 0 };
-      for (const r of rows) {
+      for (const r of wake.watches) {
         counts[r.state] = (counts[r.state] ?? 0) + Number(r.n);
         if (r.id_reused) counts.id_reused! += Number(r.n);
       }
-      const engine = connectedEngine(ctx);
       const members = await liveAccessMembers(engine);
       const termsMissing = members > 0 && !operatorTerms(file);
-      const [extra] = await engine.executeRaw<{ unregistered: string[] | null; stale_forgets: number; dead_forgets: number }>(
-        `SELECT (SELECT array_agg(DISTINCT r.name ORDER BY r.name) FROM wake_cron_runs r
-                  WHERE r.finished_at > now() - interval '7 days' AND NOT EXISTS (SELECT 1 FROM wake_crons c WHERE c.name = r.name)) AS unregistered,
-                (SELECT count(*)::int FROM wake_forgets WHERE state = 'pending' AND created_at < now() - interval '1 day') AS stale_forgets,
-                (SELECT count(*)::int FROM wake_forgets WHERE state = 'dead' AND updated_at > now() - interval '30 days') AS dead_forgets`);
-      const unregistered = (extra?.unregistered ?? []).slice(0, 10);
-      const staleForgets = Number(extra?.stale_forgets ?? 0);
-      const deadForgets = Number(extra?.dead_forgets ?? 0);
+      const unregistered = wake.unregistered.slice(0, 10);
+      const staleForgets = wake.stale_forgets;
+      const deadForgets = wake.dead_forgets;
       const manifestStale = file.manifest_hash !== wakeshiftManifestHash();
       const details = { enabled, key_source: read.source, kid, watches_7d: counts, live_members: members, terms_set: !termsMissing,
         unregistered_crons_7d: unregistered, stale_forgets: staleForgets, dead_forgets_30d: deadForgets, manifest_current: !manifestStale, docs: DOCS };

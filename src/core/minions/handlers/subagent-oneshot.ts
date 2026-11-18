@@ -308,14 +308,7 @@ function ledgerBatchWriters(ctx: MinionJobContext, engine: BrainEngine, tool: To
 }
 
 async function loadOneshotLedger(engine: BrainEngine, jobId: number): Promise<LedgerRow[]> {
-  return engine.executeRaw<LedgerRow>(
-    `SELECT tool_use_id, ordinal, status, input->>'slug' AS slug, input->>'content' AS content, input->>'request_id' AS request_id,
-            input->>'skip_reason' AS skip_reason, input->>'batch_id' AS batch_id
-       FROM subagent_tool_executions
-      WHERE job_id = $1 AND tool_use_id LIKE $2
-      ORDER BY id`,
-    [jobId, `${ONESHOT_TOOL_USE_ID_PREFIX}%`],
-  );
+  return engine.listSubagentOneshotLedger(jobId, ONESHOT_TOOL_USE_ID_PREFIX);
 }
 
 export async function runSubagentOneshot(args: OneshotArgs): Promise<OneshotOutcome> {
@@ -517,13 +510,14 @@ export async function runSubagentOneshot(args: OneshotArgs): Promise<OneshotOutc
     // job (accounting failure, crash, lost outcome write) takes ledger-first
     // recovery and completes as the same skip instead of replaying a
     // marker-less transcript that require_writes would dead-letter.
-    await engine.executeRaw(
-      `INSERT INTO subagent_tool_executions (job_id, message_idx, tool_use_id, tool_name, input, status, ordinal)
-       VALUES ($1, 1, $2, 'oneshot_skip', $3::text::jsonb, 'complete', 0)
-       ON CONFLICT (job_id, message_idx, ordinal) DO NOTHING`,
-      [ctx.id, `${ONESHOT_TOOL_USE_ID_PREFIX}${randomUUID().replace(/-/g, '').slice(0, 8)}${ONESHOT_SKIP_SUFFIX}`,
-        JSON.stringify({ skip_reason: parsed.skip_reason })],
-    );
+    await engine.recordSubagentToolExecutions(ctx.id, [{
+      message_idx: 1,
+      ordinal: 0,
+      tool_use_id: `${ONESHOT_TOOL_USE_ID_PREFIX}${randomUUID().replace(/-/g, '').slice(0, 8)}${ONESHOT_SKIP_SUFFIX}`,
+      tool_name: 'oneshot_skip',
+      input: JSON.stringify({ skip_reason: parsed.skip_reason }),
+      status: 'complete',
+    }]);
     await persistOneshotTranscript(engine, ctx.id, data.prompt, chatResult.text ?? oneshotSkipText(parsed.skip_reason), model, tokens);
     return { kind: 'done', result: oneshotSkipResult(parsed.skip_reason, tokens) };
   }
@@ -607,20 +601,16 @@ export async function runSubagentOneshot(args: OneshotArgs): Promise<OneshotOutc
   // consumed — no future cycle rewrites it). Atomic banking makes recovery's
   // universe all-or-nothing: either every page is re-executable or none was
   // started. Same $N::text::jsonb discipline as persistToolExecPending.
-  await engine.transaction(async (tx) => {
-    for (let i = 0; i < plannedWrites.length; i++) {
-      const w = plannedWrites[i];
-      // ordinal = page index: row identity is (job_id, message_idx, ordinal)
-      // post-v131 (the job-wide tool_use_id unique is gone), and oneshot ids
-      // are invocation-unique anyway.
-      await tx.executeRaw(
-        `INSERT INTO subagent_tool_executions (job_id, message_idx, tool_use_id, tool_name, input, status, ordinal)
-         VALUES ($1, 1, $2, 'brain_put_page', $3::text::jsonb, 'pending', $4)
-         ON CONFLICT (job_id, message_idx, ordinal) DO NOTHING`,
-        [ctx.id, w.toolUseId, JSON.stringify(w.ledger), i],
-      );
-    }
-  });
+  // ordinal = page index: row identity is (job_id, message_idx, ordinal) post-v131 (the job-wide tool_use_id
+  // unique is gone), and oneshot ids are invocation-unique anyway. The member banks the batch atomically.
+  await engine.recordSubagentToolExecutions(ctx.id, plannedWrites.map((w, i) => ({
+    message_idx: 1,
+    ordinal: i,
+    tool_use_id: w.toolUseId,
+    tool_name: 'brain_put_page',
+    input: JSON.stringify(w.ledger),
+    status: 'pending' as const,
+  })));
   const writtenRefs: Array<{ slug: string; status: 'complete' | 'failed' }> = [];
   for (let i = 0; i < parsed.pages.length; i++) {
     const page = parsed.pages[i];

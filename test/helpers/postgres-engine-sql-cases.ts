@@ -49,6 +49,7 @@ const OOS = {
   writeMisc: 'out-of-scope:write-misc (born in engine-sql/write-misc.ts; pinned by test/engine-parity/write-misc.test.ts)',
   journal: 'out-of-scope:persistence-journal (born in engine-sql/persistence-journal.ts, persistence-claims.ts and persistence-housekeeping.ts; pinned by test/engine-parity/persistence.test.ts and test/persistence-journal-statements.test.ts)',
   writeGuards: 'out-of-scope:write-guards (born in engine-sql/write-guards.ts; pinned by test/engine-parity/write-guards.test.ts and test/fold-hook-noop-6712.test.ts)',
+  effectScans: 'out-of-scope:persistence-effect-scans (born in engine-sql/persistence-effect-scans.ts; pinned by test/engine-parity/effect-scans.test.ts)',
   persistenceDeclaration: 'out-of-scope:persistence-declaration (born in engine-sql/persistence-declaration.ts; pinned by test/engine-parity/persistence-declaration.test.ts)',
   pageWriteRows: 'out-of-scope:page-write-rows (born in engine-sql/timeline.ts and takes.ts; pinned by test/engine-parity/timeline.test.ts, takes.test.ts and test/fold-hook-noop-6712.test.ts)',
   trustFence: 'out-of-scope:trust-fence (born in engine-sql/facts.ts and engine-sql/trust-fence.ts; pinned by test/engine-parity/facts.test.ts, test/engine-parity/trust-fence.test.ts and test/fold-hook-noop-6712.test.ts)',
@@ -413,6 +414,33 @@ export const DOMAIN_OF: Record<string, string> = {
   'listDeadFactsAbsorbJobsByKeys': OOS.minionJobs,
   // group D (jobs insight)
   'readJobInsight': OOS.minionJobs,
+  // group C (spend reservations and lease pressure)
+  'readJobSpendTree': OOS.minionJobs,
+  'insertSpendReservation': OOS.minionJobs,
+  'expireSpendReservations': OOS.minionJobs,
+  'settleSpendReservation': OOS.minionJobs,
+  'markSpendUsageUnknown': OOS.minionJobs,
+  'insertLeasePressure': OOS.minionJobs,
+  'countLeasePressure': OOS.minionJobs,
+  'listRecentLeasePressure': OOS.minionJobs,
+  // group B (subagent transcript and tool ledger)
+  'listSubagentMessages': OOS.minionJobs,
+  'countSubagentMessages': OOS.minionJobs,
+  'insertSubagentMessage': OOS.minionJobs,
+  'listSubagentToolExecutions': OOS.minionJobs,
+  'hasSubagentToolExecution': OOS.minionJobs,
+  'listSubagentWriteOutcomes': OOS.minionJobs,
+  'listSubagentOneshotLedger': OOS.minionJobs,
+  'summarizeSubagentToolExecutions': OOS.minionJobs,
+  'listSubagentPutPageSlugs': OOS.minionJobs,
+  'listSubagentPutPageWrites': OOS.minionJobs,
+  'listSubagentRetainedPutPages': OOS.minionJobs,
+  'listSubagentStagedPages': OOS.minionJobs,
+  'listSubagentTimelineAppendCalls': OOS.minionJobs,
+  'recordSubagentToolExecutions': OOS.minionJobs,
+  'startSubagentToolExecution': OOS.minionJobs,
+  'completeSubagentToolExecution': OOS.minionJobs,
+  'failSubagentToolExecution': OOS.minionJobs,
   // group D (takes, salience and code-edge reads)
   'countOffGridTakeWeights': OOS.takesReads,
   'countTakes': OOS.takesReads,
@@ -461,6 +489,7 @@ export const DOMAIN_OF: Record<string, string> = {
   // code-edges
   'addCodeEdges': 'code-edges', 'deleteCodeEdgesForChunks': 'code-edges', 'getCallersOf': 'code-edges',
   'getCalleesOf': 'code-edges', 'getEdgesByChunk': 'code-edges',
+  'getCodeTraversalCache': 'code-edges', 'putCodeTraversalCache': 'code-edges', 'clearCodeTraversalCache': 'code-edges',
   // cjk-search: the CJK branch of the two keyword methods (cases tagged #cjk)
   'searchKeyword': 'cjk-search', 'searchKeywordChunks': 'cjk-search',
 
@@ -503,11 +532,18 @@ export const DOMAIN_OF: Record<string, string> = {
   'claimHousekeepingTurn': OOS.journal, 'completeHousekeepingTurn': OOS.journal, 'readReceiptBudget': OOS.journal,
   'listCompactableReceipts': OOS.journal, 'listReservationsAfter': OOS.journal, 'listTrueUpRequests': OOS.journal,
   'readCapacityForecastInputs': OOS.journal, 'listPendingSegmentedProjections': OOS.journal, 'selectProjectionWindowJobs': OOS.journal,
+  'listGatedMirrorRequests': OOS.effectScans, 'listEffectRecoveries': OOS.effectScans,
   'logIngest': OOS.ingest, 'getIngestLog': OOS.ingest,
   'logEvalCandidate': OOS.eval, 'listEvalCandidates': OOS.eval, 'deleteEvalCandidatesBefore': OOS.eval,
   'logEvalCaptureFailure': OOS.eval, 'listEvalCaptureFailures': OOS.eval,
   'getDreamVerdict': OOS.dream, 'putDreamVerdict': OOS.dream, 'sweepDreamVerdicts': OOS.dream,
   'putRawData': OOS.raw, 'getRawData': OOS.raw,
+  // group A of jobs-tables (Wakeshift report-back tables)
+  'openWakeWatch': OOS.minionJobs, 'listWakeWatches': OOS.minionJobs, 'endWakeWatches': OOS.minionJobs, 'countWakeWatches': OOS.minionJobs,
+  'readWakeDoctor': OOS.minionJobs, 'countPendingWakeForgets': OOS.minionJobs, 'listWakeCrons': OOS.minionJobs, 'addWakeCron': OOS.minionJobs,
+  'removeWakeCron': OOS.minionJobs, 'hasWakeCron': OOS.minionJobs, 'recordWakeCronRun': OOS.minionJobs, 'hasWakeTermsAcceptance': OOS.minionJobs,
+  'recordWakeTermsAcceptance': OOS.minionJobs, 'listDueWakeWatches': OOS.minionJobs, 'claimWakeWatch': OOS.minionJobs, 'settleWakeWatch': OOS.minionJobs,
+  'queueWakeForget': OOS.minionJobs, 'claimWakeForgets': OOS.minionJobs, 'settleWakeForget': OOS.minionJobs,
 };
 
 /** Every own member of PostgresEngine.prototype (methods + accessors), sorted. */
@@ -1156,6 +1192,18 @@ export const SQL_CASES: SqlCase[] = [
     ['in+edgeType', (e) => e.getEdgesByChunk(1, { direction: 'in', edgeType: 'calls' })],
     ['out', (e) => e.getEdgesByChunk(1, { direction: 'out' })],
   ]),
+  ...variants('getCodeTraversalCache', [
+    ['default', (e) => e.getCodeTraversalCache({ symbol_qualified: 'A.f', depth: 2, source_id: SRC, cluster_generation: 3 })],
+  ]),
+  ...variants('putCodeTraversalCache', [
+    ['default', (e) => e.putCodeTraversalCache(
+      { symbol_qualified: 'A.f', depth: 2, source_id: SRC, cluster_generation: 3 }, { nodes: ['A.f'] }, '2026-01-02T00:00:00.000Z', 7,
+    )],
+  ]),
+  ...variants('clearCodeTraversalCache', [
+    ['sourceId', (e) => e.clearCodeTraversalCache({ sourceId: SRC })],
+    ['allSources', (e) => e.clearCodeTraversalCache({ allSources: true })],
+  ]),
 
   // ── cjk-search (CJK branch only) ──
   ...variants('searchKeyword', [
@@ -1275,4 +1323,6 @@ export const EXTRA_READ_CASES: SqlCase[] = [
     (e: any) => e.readCapacityForecastInputs({ light })])),
   ...variants('listPendingSegmentedProjections', [['default', (e) => e.listPendingSegmentedProjections({ limit: 10, reasons: ['segmented_projecting'] })]]),
   ...variants('selectProjectionWindowJobs', [['default', (e) => e.selectProjectionWindowJobs({ after: { source_incarnation: JOURNAL_REQUEST, slug: SLUG }, highWater: null }, true)]]),
+  ...variants('listGatedMirrorRequests', [['default', (e) => e.listGatedMirrorRequests(JOURNAL_REQUEST, 'segmented_mirror_writer_gate', ['segmented_mirror_writer_gate', 'withdrawal_mirror_failed'])]]),
+  ...variants('listEffectRecoveries', [['default', (e) => e.listEffectRecoveries(JOURNAL_REQUEST, null, 10)], ['after', (e) => e.listEffectRecoveries(JOURNAL_REQUEST, '12', 10)]]),
 ];

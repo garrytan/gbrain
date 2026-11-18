@@ -2968,16 +2968,7 @@ async function collectChildPutPageSlugs(
   // cycle's resolved source via SubagentHandlerData.source_id, and stamps
   // the SAME source here so reverseWriteRefs / provenance reads target the
   // correct (source_id, slug) row. Unset → legacy 'default'.
-  const rows = await engine.executeRaw<{ job_id: number | bigint; slug: string; started_at?: Date | string }>(
-    `SELECT job_id,
-            COALESCE(input->>'slug', (input #>> '{}')::jsonb->>'slug') AS slug,
-            started_at
-       FROM subagent_tool_executions
-      WHERE job_id = ANY($1::int[])
-        AND tool_name = 'brain_put_page'
-        AND status = 'complete'`,
-    [childIds],
-  );
+  const rows = await engine.listSubagentPutPageWrites(childIds);
   // #1978: slug → source transcript path (first writer wins) so the
   // provenance stamp can record WHERE the synthesized content came from.
   const rewritten = new Map<string, string | undefined>();
