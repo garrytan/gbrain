@@ -49,8 +49,9 @@ engines do.
 or count:
 
 - `excludePrivate`: the TS member sends the store page policy (`storePagePolicy`), and the page filter drops a page
-  `facts/privacy.rs` `page_hidden` hides (`privatePagesFilterForCaller('p')`). A caller whose member pages, grants or
-  lineage widen the policy refuses.
+  `facts/privacy.rs` `page_hidden` hides (`privatePagesFilterForCaller('p')`). A caller whose record holds only a
+  reader identity and a private-readable grant is served with both (the `callerReaders` opt-in); any other caller
+  whose policy differs (folder grants, lineage, an owner read) refuses.
 - `requireSafeChunks`, which an `excludePrivate` read asks for unless it says otherwise (`requiresSafeChunks`): the
   page filter drops a page whose `chunker_version` is short of `SAFE_FENCE_CHUNKER_VERSION` or not recorded
   (`safeChunksFilter('p')`).
