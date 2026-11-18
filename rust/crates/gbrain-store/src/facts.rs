@@ -436,12 +436,11 @@ pub(crate) fn write_fact(
     }
     let entries = index_keys(new);
     for (key, unique) in &entries {
-        if let Some(name) = unique {
-            if let Some(holder) = tx.get(key)? {
-                if keys::be8(&holder) != Some(new.id) {
-                    return Err(duplicate(name));
-                }
-            }
+        if let Some(name) = unique
+            && let Some(holder) = tx.get(key)?
+            && keys::be8(&holder) != Some(new.id)
+        {
+            return Err(duplicate(name));
         }
     }
     let id = new.id.to_be_bytes();
@@ -1167,10 +1166,10 @@ impl FactQuery {
         {
             return Ok(false);
         }
-        if let Some(pattern) = &self.grep {
-            if !like(&row.fact, pattern, true)? {
-                return Ok(false);
-            }
+        if let Some(pattern) = &self.grep
+            && !like(&row.fact, pattern, true)?
+        {
+            return Ok(false);
         }
         Ok(!hidden_by_deleted_page(read, row)?
             && !hidden_by_policy(read, row, &self.exclude_private)?)
@@ -1208,6 +1207,7 @@ fn page_of(
 }
 
 impl Store {
+    #[allow(clippy::too_many_arguments)]
     fn list_facts(
         &self,
         op: &str,
@@ -1253,14 +1253,14 @@ impl Store {
             let Some(supersede) = args.supersede_id else {
                 return Ok(json!({ "id": row.id, "status": "inserted" }));
             };
-            if let Some(old) = fact_by_number(tx, OP, "supersedeId", supersede)? {
-                if old.expired_at_us.is_none() {
-                    let mut new = old.clone();
-                    new.expired_at_us = Some(now);
-                    new.superseded_by = Some(row.id);
-                    new.valid_until_us = Some(closed_until(&old, row.valid_from_us, now));
-                    write_fact(tx, Some(&old), &new)?;
-                }
+            if let Some(old) = fact_by_number(tx, OP, "supersedeId", supersede)?
+                && old.expired_at_us.is_none()
+            {
+                let mut new = old.clone();
+                new.expired_at_us = Some(now);
+                new.superseded_by = Some(row.id);
+                new.valid_until_us = Some(closed_until(&old, row.valid_from_us, now));
+                write_fact(tx, Some(&old), &new)?;
             }
             Ok(json!({ "id": row.id, "status": "superseded" }))
         })
@@ -1816,10 +1816,10 @@ fn drop_rekey_duplicates(
             if t.dimension.is_none() || moving_ids.contains(&t.id) {
                 continue;
             }
-            if let Some(key) = key_of(&t, t.entity_slug.clone(), t.source_markdown_slug.clone()) {
-                if moving_keys.contains(&key) {
-                    cand.push((key, t, false));
-                }
+            if let Some(key) = key_of(&t, t.entity_slug.clone(), t.source_markdown_slug.clone())
+                && moving_keys.contains(&key)
+            {
+                cand.push((key, t, false));
             }
         }
     }
@@ -1903,10 +1903,10 @@ pub(crate) fn move_slug_rows(
         .filter_map(|r| r.row_num)
         .collect();
     for row in page_rows(tx, source_id, new)? {
-        if row.row_num.is_some_and(|n| held.contains(&n)) {
-            if let Some(current) = read_fact(tx, row.id)? {
-                delete_fact(tx, &current)?;
-            }
+        if row.row_num.is_some_and(|n| held.contains(&n))
+            && let Some(current) = read_fact(tx, row.id)?
+        {
+            delete_fact(tx, &current)?;
         }
     }
     let moving = page_rows(tx, source_id, old)?
@@ -1989,10 +1989,11 @@ fn link_supersessions(
         // supersessionChainOf: the struck rows of this page that name a successor.
         let mut chain: HashMap<u64, f64> = HashMap::new();
         for other in rows {
-            if other.source_markdown_slug == slug && other.expired_at.is_some() {
-                if let (Some(from), Some(to)) = (other.row_num, other.superseded_by_row) {
-                    chain.insert(num_key(from), to);
-                }
+            if other.source_markdown_slug == slug
+                && other.expired_at.is_some()
+                && let (Some(from), Some(to)) = (other.row_num, other.superseded_by_row)
+            {
+                chain.insert(num_key(from), to);
             }
         }
         let key = match (&slug, int4_ref(target_row)) {
@@ -2041,10 +2042,10 @@ fn link_supersessions(
         }
         let target_id = found.map(|f| f.id).unwrap_or_default();
         links.push((*id, target_id));
-        if let (Some(s), Some(own_n)) = (&slug, row.row_num.and_then(int4_ref)) {
-            if let Some(own_target) = targets.get_mut(&(s.clone(), own_n)) {
-                own_target.next_row = Some(target_row);
-            }
+        if let (Some(s), Some(own_n)) = (&slug, row.row_num.and_then(int4_ref))
+            && let Some(own_target) = targets.get_mut(&(s.clone(), own_n))
+        {
+            own_target.next_row = Some(target_row);
         }
     }
     for (id, target) in links {
@@ -2220,36 +2221,38 @@ mod tests {
         );
     }
 
+    /// A test fence row: (fact, entity, row_num, (dimension, value, value_hash)).
+    type Row<'a> = (&'a str, &'a str, f64, Option<(&'a str, &'a str, &'a str)>);
+
     #[test]
     fn move_slug_rows_matches_move_slug_bindings() {
         // PGLite moveSlugBindings on these rows gives the outcome below (probed).
         let store = crate::test_support::store();
-        let page =
-            |sms: &str, rows: &[(&str, &str, f64, Option<(&str, &str, &str)>)]| -> Vec<u64> {
-                let rows = rows
-                    .iter()
-                    .map(|(fact, entity, row_num, dim)| NewFactInput {
-                        fact: Some((*fact).into()),
-                        source: Some("test".into()),
-                        valid_from: Some("2026-01-01T00:00:00.000Z".into()),
-                        entity_slug: Some((*entity).into()),
-                        row_num: Some(*row_num),
-                        source_markdown_slug: Some(sms.into()),
-                        dimension: dim.map(|d| d.0.into()),
-                        value: dim.map(|d| d.1.into()),
-                        value_hash: dim.map(|d| d.2.into()),
-                        ..NewFactInput::default()
-                    })
-                    .collect();
-                let out = store
-                    .insert_facts(&InsertFactsArgs {
-                        rows,
-                        source_id: "default".into(),
-                        delete_for_page_first: None,
-                    })
-                    .unwrap();
-                serde_json::from_value(out["ids"].clone()).unwrap()
-            };
+        let page = |sms: &str, rows: &[Row]| -> Vec<u64> {
+            let rows = rows
+                .iter()
+                .map(|(fact, entity, row_num, dim)| NewFactInput {
+                    fact: Some((*fact).into()),
+                    source: Some("test".into()),
+                    valid_from: Some("2026-01-01T00:00:00.000Z".into()),
+                    entity_slug: Some((*entity).into()),
+                    row_num: Some(*row_num),
+                    source_markdown_slug: Some(sms.into()),
+                    dimension: dim.map(|d| d.0.into()),
+                    value: dim.map(|d| d.1.into()),
+                    value_hash: dim.map(|d| d.2.into()),
+                    ..NewFactInput::default()
+                })
+                .collect();
+            let out = store
+                .insert_facts(&InsertFactsArgs {
+                    rows,
+                    source_id: "default".into(),
+                    delete_for_page_first: None,
+                })
+                .unwrap();
+            serde_json::from_value(out["ids"].clone()).unwrap()
+        };
         let old = page(
             "people/old",
             &[
