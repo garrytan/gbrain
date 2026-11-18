@@ -13,7 +13,7 @@ use serde_json::Value;
 use crate::store_binding::{Brain, required};
 use gbrain_store::facts::{
     DuplicateQuery, ExpireFactArgs, FactQuery, InsertFactArgs, InsertFactsArgs, PageDeleteArgs,
-    SupersessionQuery, TrajectoryQuery,
+    SupersessionQuery, TrajectoryQuery, UnattributedQuery,
 };
 
 #[napi]
@@ -169,6 +169,20 @@ impl Brain {
         take_id: f64,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.consolidate_fact(id, take_id))
+    }
+
+    /// `listUnattributedFacts` (src/core/review-lists.ts): resolves the unattributed rows, newest
+    /// first.
+    #[napi]
+    pub fn list_unattributed_facts<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: UnattributedQuery = required(query, "listUnattributedFacts query")?;
+            s.list_unattributed_facts(&a)
+        })
     }
 
     /// `getFactsHealth(source_id)`: resolves the counts and the top entities.
