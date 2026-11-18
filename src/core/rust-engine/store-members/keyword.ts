@@ -1,8 +1,7 @@
 /**
  * Keyword search members of the keyword_search capability and title trigrams. findByTitleFuzzy, searchKeyword,
- * searchKeywordChunks, countKeywordPages, searchKeywordPages and searchTitles are served. searchTitles refuses with
- * `engine_capability_missing` until the store holds the sealed search timeline (core-hooks item 13,
- * `SEALED_SEARCH_TIMELINE` below): without it a sealed page's title vector cannot be rebuilt.
+ * searchKeywordChunks, countKeywordPages, searchKeywordPages and searchTitles are served. searchTitles rebuilds each
+ * page's keyword vector from the sanitized timeline the last seal sent (`pages::search_timeline`).
  *
  * The keyword members resolve every engine default here (the hard-exclude list, the source-boost map, the slug
  * handles, the dash-run collapse, the date bounds) and send the store only predicates; rust/docs/store/keyword.md
@@ -269,13 +268,6 @@ export const searchKeyword: StoreMember<[query: string, opts?: SearchOpts], Sear
   });
 };
 
-/**
- * Whether the store holds the sealed search timeline (core-hooks item 13). Until it does, the store cannot rebuild the
- * title vector of a sealed page (title plus sanitized timeline) and searchTitles refuses; hybrid's title arm fails
- * open on the refusal.
- */
-const SEALED_SEARCH_TIMELINE = false;
-
 type TitleKind = 'whole' | 'title' | 'complete';
 type TitleAttempt = { text: string; kind: TitleKind; limit: number; offset: number };
 
@@ -289,7 +281,6 @@ export const searchTitles: StoreMember<[query: string, opts?: SearchOpts], Searc
   // Chunk-grain code filters have no page-grain meaning: the SQL engines answer nothing.
   if (opts?.language || opts?.symbolKind) return [];
   const options = keywordOptions('searchTitles', query, opts);
-  if (!SEALED_SEARCH_TIMELINE) refuseMember('searchTitles', 'the sealed search timeline (core-hooks item 13)');
   const cap = searchLimitCap();
   if (opts?.limit && opts.limit > cap) {
     console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${cap}`);

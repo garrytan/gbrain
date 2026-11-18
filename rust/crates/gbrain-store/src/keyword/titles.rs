@@ -23,9 +23,10 @@
 //! The page `search_vector` is not stored; it is rebuilt from the page as PGLite last wrote it:
 //!
 //! - Sealed form (`pageSearchVectorSql`): the title at weight A and the sanitized timeline the
-//!   seal sent at weight C, when the store holds that timeline for the page's served revision
-//!   ([`search_timeline`]).
-//! - Trigger form (`update_page_search_vector`): otherwise, the title at A, the first 65,536
+//!   seal sent at weight C (`pages::search_timeline`), when that seal is the page's current one:
+//!   its revision equals the page's `text_projection_revision`.
+//! - Trigger form (`update_page_search_vector`): otherwise (no record, or one from an older
+//!   seal: PGLite's vector is then the one the trigger wrote at the last title/timeline write), the title at A, the first 65,536
 //!   characters of the raw timeline at C, and the first 32,768 characters of the page's
 //!   timeline entries (`summary || ' ' || detail`, by id, joined by a space) at C. The trigger
 //!   reads the entries that exist when the page row is written; the store keeps the entries
@@ -58,7 +59,7 @@ use crate::env::iso;
 use crate::error::{Result, StoreError};
 use crate::keys;
 use crate::kv::{KvRead, scan_prefix};
-use crate::pages::{PageRecord, all_pages};
+use crate::pages::{PageRecord, SEARCH_TIMELINE_MAX_CHARS, all_pages, search_timeline};
 use crate::timeline::{TimelineRecord, latest_entry_micros};
 
 /// `PAGE_TIMELINE_FTS_MAX_CHARS` (fts-language.ts): the timeline characters a page vector reads.
@@ -68,29 +69,6 @@ const TIMELINE_ENTRIES_FTS_MAX_CHARS: usize = 32_768;
 
 /// The characters `btrim(title, ' "''' || chr(160))` strips from both ends.
 const EXACT_TITLE_TRIM: [char; 4] = [' ', '"', '\'', '\u{A0}'];
-
-/// The sanitized timeline a seal sent for a page (core-hooks item 13).
-// The fields are read once `crate::pages::search_timeline` replaces the stub below.
-#[allow(dead_code)]
-struct SearchTimeline {
-    revision: String,
-    timeline: String,
-}
-
-/// Stand-in for `crate::pages::search_timeline` (core-hooks item 13) until that branch merges:
-/// without the sealed timeline the store cannot rebuild a sealed page's vector, so every call
-/// refuses rather than read the raw timeline. Tests read the trigger form.
-#[cfg(not(test))]
-fn search_timeline(_read: &dyn KvRead, _page_id: u64) -> Result<Option<SearchTimeline>> {
-    Err(StoreError::invalid(
-        "searchTitles needs the sealed search timeline (core-hooks item 13)",
-    ))
-}
-
-#[cfg(test)]
-fn search_timeline(_read: &dyn KvRead, _page_id: u64) -> Result<Option<SearchTimeline>> {
-    Ok(None)
-}
 
 /// Which vector an attempt matches and ranks, and whether it is capped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -133,7 +111,7 @@ fn page_vector(read: &dyn KvRead, page: &PageRecord) -> Result<TsVector> {
     if let Some(sealed) = search_timeline(read, page.id)?
         && page.text_projection_revision.as_deref() == Some(sealed.revision.as_str())
     {
-        let timeline = weighted(left(&sealed.timeline, TIMELINE_FTS_MAX_CHARS), Weight::C)?;
+        let timeline = weighted(left(&sealed.timeline, SEARCH_TIMELINE_MAX_CHARS), Weight::C)?;
         return concat(&title, &timeline);
     }
     let timeline = weighted(
@@ -407,6 +385,35 @@ mod tests {
         );
         assert_eq!(left("héllo", 2), "hé");
         assert_eq!(left("hi", 5), "hi");
+    }
+
+    fn seal(store: &Store, slug: &str, search_timeline: Option<&str>) {
+        let options = crate::chunks::UpsertChunksOptions {
+            seal: true,
+            search_timeline: search_timeline.map(str::to_owned),
+            ..crate::chunks::UpsertChunksOptions::default()
+        };
+        store.upsert_chunks(slug, &[], &options).unwrap();
+    }
+
+    fn vector_of(store: &Store) -> String {
+        let read = store.read().unwrap();
+        let page = all_pages(&*read).unwrap().remove(0);
+        page_vector(&*read, &page).unwrap().to_text()
+    }
+
+    #[test]
+    fn the_sealed_form_reads_the_seal_timeline_only_at_the_current_seal() {
+        let store = crate::test_support::store();
+        put(&store, "notes/a", "Alpha Nebula", "gamma linex");
+        // The seal's sanitized text replaces the raw timeline.
+        seal(&store, "notes/a", Some("delta"));
+        assert_eq!(vector_of(&store), "'alpha':1A 'delta':3C 'nebula':2A");
+        // A new revision sealed without text: the record is from an older seal, so the trigger form.
+        put(&store, "notes/a", "Alpha Nebula", "omega");
+        assert_eq!(vector_of(&store), "'alpha':1A 'nebula':2A 'omega':3C");
+        seal(&store, "notes/a", Some(""));
+        assert_eq!(vector_of(&store), "'alpha':1A 'nebula':2A");
     }
 
     #[test]

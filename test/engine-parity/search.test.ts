@@ -456,4 +456,67 @@ describe('engine parity: search', () => {
       return out;
     },
   );
+
+  parityTest(
+    'searchTitles: sealed timelines, timeline entries, the candidate cut, the OR retry by rarity, identifiers and paging',
+    { methods: ['searchTitles'] },
+    async (engine) => {
+      const { __setTitleWholeVectorCandidatesForTests, titleWholeVectorCandidates } = await import('../../src/core/search/title-statement.ts');
+      const put = (slug: string, title: string, timeline: string, sealed = true) =>
+        seedPage(engine, {
+          slug,
+          input: { type: 'note', title, compiled_truth: `${title} body`, timeline },
+          chunks: sealed ? [chunk(0, `${title} body`)] : undefined,
+        });
+      await put('notes/flight-log', 'Flight Log', 'quokka sighted near the hangar');
+      await put('notes/comet-tally', 'Comet Tally', '');
+      await put('notes/comet-vault', 'Comet Vault', 'atlas mention');
+      await put('notes/vault-atlas', 'Vault Atlas', '');
+      await put('notes/weekly-digest', 'Weekly Digest 412', '');
+      await put('people/matthew-example', 'Matthew Example', '');
+      // A page never sealed is not served (servedTextProjectionFilter), even with a timeline entry in its trigger vector.
+      await put('notes/walrus-page', 'Walrus Page', 'first', false);
+      await engine.addTimelineEntry('notes/walrus-page', { date: '2026-01-02', summary: 'pinniped migration', detail: 'tundra' });
+      await put('notes/walrus-page', 'Walrus Page', 'second', false);
+      // An entry added after the seal is not in the sealed vector.
+      await engine.addTimelineEntry('notes/flight-log', { date: '2026-01-03', summary: 'zebra crossing', detail: '' });
+
+      const incomplete: string[] = [];
+      const view = (rows: SearchResult[]) =>
+        rows.map((r) => ({ slug: r.slug, relaxed: r.keyword_relaxed === true, score: round(r.score), chunk: r.chunk_text }));
+      const search = async (q: string, opts: Parameters<BrainEngine['searchTitles']>[1] = {}) =>
+        view(await engine.searchTitles(q, { limit: 5, onKeywordIncomplete: (r) => incomplete.push(r), ...opts }));
+      const out = {
+        timeline: await search('quokka hangar'),
+        pinniped: await search('pinniped tundra'),
+        zebra: await search('zebra'),
+        comet: await search('comet'),
+        paged: await search('comet', { limit: 1, offset: 1 }),
+        rarity: await search('comet atlas quokka'),
+        rarityPaged: await search('comet atlas quokka', { offset: 1 }),
+        ident: await search('what did digest #412 say'),
+        variant: await search('Matt Example'),
+        cut: [] as ReturnType<typeof view>,
+        cutRelaxed: [] as ReturnType<typeof view>,
+        incomplete,
+      };
+      const cap = titleWholeVectorCandidates();
+      __setTitleWholeVectorCandidatesForTests(1);
+      try {
+        out.cut = await search('comet');
+        out.cutRelaxed = await search('comet atlas quokka');
+      } finally {
+        __setTitleWholeVectorCandidatesForTests(cap);
+      }
+      expect(out.timeline.map((r) => r.slug)).toEqual(['notes/flight-log']);
+      expect(out.zebra).toEqual([]);
+      expect(out.pinniped).toEqual([]);
+      expect(out.comet.length).toBe(2);
+      expect(out.rarity.every((r) => r.relaxed)).toBe(true);
+      expect(out.ident[0]!.slug).toBe('notes/weekly-digest');
+      expect(out.variant[0]!.slug).toBe('people/matthew-example');
+      expect(out.incomplete).toContain('candidate_budget');
+      return out;
+    },
+  );
 });
