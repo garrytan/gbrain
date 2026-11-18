@@ -235,6 +235,22 @@ describe('without a repository', () => {
     expect(after.decisions.map(d => d.verdict)).toEqual(['different', 'different']);
   });
 
+  test('two confirmed identities that share a page are rejected together, as the refusal names', async () => {
+    await seed();
+    const pair = (entity: string, slug: string) => {
+      const members = [{ source_id: 'default', slug: 'people/alice-example' }, { source_id: 'source-b', slug }];
+      return { decision_id: decisionId(members), verdict: 'same', members, group_id: entity, entity_id: entity,
+        canonical: members[0], decided_by: 'test', origin: 'database', home_source_id: 'default', git_blob: null };
+    };
+    await engine.applyIdentityDecisions({ upsert: [pair('ga-example', 'people/alice-example'), pair('gb-example', 'people/dan-sample')] } as never);
+    const err = await cli(['reject', 'ga-example']).catch(e => e);
+    expect(err).toMatchObject({ code: 'identity_member_in_other_group' });
+    expect(err.fix.argv).toEqual(['gbrain', 'dedupe', 'reject', 'ga-example', 'gb-example']);
+    await cli(err.fix.argv.slice(2));
+    expect((await rows()).decisions.map(d => d.verdict)).toEqual(['different', 'different']);
+    expect((await rows()).identities).toEqual([]);
+  });
+
   test('a rejected group cannot be confirmed by its id; the different decision stays', async () => {
     await seed();
     const bob = await groupOf('people/bob-sample');

@@ -165,11 +165,12 @@ function commitDecisionFiles(root: string, decisions: Array<DecisionInput & { de
         return { outcome: r.outcome, commit: r.committed ?? r.sha, paths: files.map(f => f.path),
           ...(r.outcome === 'committed_local' ? { note: 'Committed locally; this checkout has no remote or is managed, so nothing was pushed.' } : {}) };
       } catch (e) {
-        if (committedAll(root, files)) {
-          const code = (e as { code?: string }).code ?? 'error';
-          return { outcome: 'committed_not_pushed', commit: null, paths: files.map(f => f.path), note: `Committed locally; nothing was pushed. ${code}: ${(e as Error).message}` };
+        const landed = committedAll(root, files);
+        if (landed && e instanceof OperationError && (e.code === 'push_unconfirmed' || e.code === 'push_credential_refused'
+          || e.code === 'publish_secret_found' || e.code === 'publish_scan_unreadable')) {
+          return { outcome: 'committed_not_pushed', commit: null, paths: files.map(f => f.path), note: `Committed locally; nothing was pushed. ${e.code}: ${e.message}` };
         }
-        for (const [abs, text] of before) if (text === null) rmSync(abs, { force: true }); else writeFileSync(abs, text);
+        if (!landed) for (const [abs, text] of before) if (text === null) rmSync(abs, { force: true }); else writeFileSync(abs, text);
         throw e;
       }
     } finally {

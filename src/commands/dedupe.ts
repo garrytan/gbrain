@@ -310,7 +310,7 @@ async function runConfirm(engine: BrainEngine, args: string[]): Promise<void> {
   const pending = (await engine.listIdentityDecisions()).pending;
   if (f.json) {
     console.log(JSON.stringify({ confirmed: decisions.map(d => ({ group_id: d.group_id, entity_id: d.entity_id, canonical: d.canonical, members: d.members })), store: r.store,
-      ...(r.receipt ? { commit: r.receipt.commit, outcome: r.receipt.outcome } : {}), pending }, null, 2));
+      ...(r.receipt ? { commit: r.receipt.commit, outcome: r.receipt.outcome, ...(r.receipt.note ? { note: r.receipt.note } : {}) } : {}), pending }, null, 2));
     return;
   }
   for (const d of decisions) console.log(`Confirmed ${d.group_id} as one: ${d.members.map(memberText).join(', ')} (identity ${d.entity_id}, canonical ${memberText(d.canonical!)}).`);
@@ -339,19 +339,20 @@ async function runReject(engine: BrainEngine, args: string[]): Promise<void> {
     const other = same.find(s => !undone.has(s.decision_id) && s.members.some(m => keys.has(memberText(m))));
     if (!other) continue;
     const member = other.members.find(m => keys.has(memberText(m)))!;
+    const both = [...new Set([...f.ids, other.entity_id!])];
     throw opError('identity_member_in_other_group',
       `gbrain dedupe reject: ${memberText(member)} of ${d.group_id} is in the group you confirmed as one person (${other.entity_id}); nothing was written.`,
-      `Undo that confirm first with gbrain dedupe reject ${other.entity_id}, then reject ${d.group_id}.`,
-      { fix: { ask_user: true, argv: ['gbrain', 'dedupe', 'reject', other.entity_id!], consent: [], actor: 'user', requires_exclusive: false,
-        why: 'Records the confirmed group as different people and removes its links, so the larger group can be rejected after it.',
-        user_message: `${memberText(member)} is in the group you confirmed as one person (${other.entity_id}). Should I undo that confirm first?`,
+      `To undo that confirm too, reject them together: gbrain dedupe reject ${both.join(' ')}.`,
+      { fix: { ask_user: true, argv: ['gbrain', 'dedupe', 'reject', ...both], consent: [], actor: 'user', requires_exclusive: false,
+        why: 'Records the groups as different people in one command and removes the confirmed links.',
+        user_message: `${memberText(member)} is in the group you confirmed as one person (${other.entity_id}). Should I undo that confirm as well?`,
         verify: { argv: ['gbrain', 'doctor', '--only', 'entity_duplicates', '--json'] } } });
   }
   const r = await recordDecisions(engine, decisions, `dedupe: record ${decisions.length} group(s) as different people`);
   const sameSource = await markDistinct(engine, decisions);
   if (f.json) {
     console.log(JSON.stringify({ rejected: decisions.map(d => ({ group_id: d.group_id, members: d.members })), store: r.store,
-      ...(r.receipt ? { commit: r.receipt.commit, outcome: r.receipt.outcome } : {}), distinct_from: sameSource }, null, 2));
+      ...(r.receipt ? { commit: r.receipt.commit, outcome: r.receipt.outcome, ...(r.receipt.note ? { note: r.receipt.note } : {}) } : {}), distinct_from: sameSource }, null, 2));
   } else {
     for (const d of decisions) console.log(`Recorded ${d.group_id} as different people: ${d.members.map(memberText).join(', ')}. It will not be proposed again.`);
     console.log(storedText(r));
