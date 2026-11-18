@@ -209,6 +209,10 @@ describe('collect-stalled-jobs', () => {
         if (new RegExp(`FROM ${table}\\b`).test(sql)) throw err;
         return [];
       },
+      listStuckActiveJobsByName: async () => {
+        if (table === 'minion_jobs') throw err;
+        return [];
+      },
       ...stubSourceMembers([], { fail: (member) => (table === 'sources' && member === 'listStaleSyncSourceIds' ? err as Error : undefined) }),
     };
   }
@@ -236,13 +240,8 @@ describe('collect-stalled-jobs', () => {
   });
 
   test('reports stalled jobs and stale sync', async () => {
-    let call = 0;
     const engine = {
-      executeRaw: async () => {
-        call++;
-        if (call === 1) return [{ name: 'embed-backfill', n: 2 }];
-        return [];
-      },
+      listStuckActiveJobsByName: async () => [{ name: 'embed-backfill', n: 2 }],
       ...stubSourceMembers([{ id: 'wiki', last_sync_at: new Date(Date.now() - 30 * 86400_000) }]),
     };
     const out = await collectStalledJobs.collect(ctx(engine as never));

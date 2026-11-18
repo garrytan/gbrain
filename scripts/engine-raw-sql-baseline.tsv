@@ -102,7 +102,6 @@ src/commands/doctor/checks/projection-readiness.ts	execute_raw	1
 src/commands/doctor/checks/purge-mirror.ts	execute_raw	1
 src/commands/doctor/checks/queue-assets.ts	execute_raw	2
 src/commands/doctor/checks/queue-assets.ts	sql_template	1
-src/commands/doctor/checks/queue-jobs.ts	execute_raw	12
 src/commands/doctor/checks/routing-federation.ts	execute_raw	6
 src/commands/doctor/checks/runtime-build-skew.ts	execute_raw	1
 src/commands/doctor/checks/safe-index.ts	execute_raw	1
@@ -260,7 +259,6 @@ src/core/access/serves.ts	execute_raw	2
 src/core/access/token-member-status.ts	sql_template	1
 src/core/advisor/collect-chronicle.ts	execute_raw	1
 src/core/advisor/collect-mcp-client-fit.ts	execute_raw	1
-src/core/advisor/collect-stalled-jobs.ts	execute_raw	1
 src/core/agent-install/setup.ts	execute_raw	2
 src/core/agent-install/shared-skills.ts	execute_raw	1
 src/core/ai/chat-usage.ts	execute_raw	1
@@ -579,7 +577,6 @@ src/core/minions/legacy-selection.ts	execute_raw	2
 src/core/minions/rate-leases.ts	execute_raw	6
 src/core/minions/spend-authorization.ts	execute_raw	5
 src/core/minions/submission-authority.ts	execute_raw	4
-src/core/minions/supervisor.ts	execute_raw	2
 src/core/minions/sync-queue-wake.ts	execute_raw	2
 src/core/minions/terminal-events.ts	execute_raw	1
 src/core/minions/terminal-hook.ts	execute_raw	1
