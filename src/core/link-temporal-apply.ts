@@ -11,20 +11,20 @@
  *    before or after the change.
  *
  * Zero LLM. Explicit-grammar targets must be live pages in the same source;
- * unusable lines are returned so callers can report them.
+ * unusable lines are returned so callers can report them. The evidence is
+ * computed here; the rows are written through engine members
+ * (engine-sql/link-temporal.ts, or the Rust store).
  */
 import type { BrainEngine, LinkBatchInput } from './engine.ts';
 import type { Page } from './types.ts';
-import { executeRawJsonb } from './sql-query.ts';
 import { datedLines, deriveTemporalEvidence, narrativeRefs, rowKey, temporalEvidenceFrom, type TemporalEvidence, type TemporalInputs } from './link-temporal-evidence.ts';
-import { refreshRelationships, type RelationshipKey } from './link-relationships.ts';
-import { temporalLinkTypes } from './link-validity.ts';
+import { refreshRelationships, type RelationshipKey, type RelationshipStateStore } from './link-relationships.ts';
 import { inlineTransitions, inlineTransitionsFrom, rangedRelationLines, type RangedRelationLine } from './link-effective.ts';
-import { pipelined } from './page-state/transactions.ts';
 
-type Tx = Pick<BrainEngine, 'executeRaw'>;
-
-const DERIVED_PRODUCERS = ['timeline', 'explicit', 'frontmatter', 'dream', 'inline'];
+/** The engine members one origin's temporal evidence is written and refreshed through. */
+export type TemporalTx = Pick<BrainEngine, 'applyLinkTemporalRows' | 'writeManualLinkTransitions' | 'removeManualLinkTransitions'>
+  & RelationshipStateStore;
+type Tx = TemporalTx;
 
 /** What the evidence reads from the page body, collected outside the transaction (a segmented page's body is not read here). */
 export interface TemporalBody extends TemporalInputs { ranged: RangedRelationLine[] }
@@ -42,16 +42,8 @@ export interface TemporalApplyResult {
 }
 
 /** Relationship keys whose evidence this origin page owns (links rows + derived transitions + state rows it starts). */
-export async function relationshipKeysForOrigin(tx: Tx, pageId: number): Promise<RelationshipKey[]> {
-  const rows = await tx.executeRaw<RelationshipKey>(
-    `SELECT from_page_id, to_page_id, link_type FROM links
-      WHERE (origin_page_id = $1 OR (origin_page_id IS NULL AND from_page_id = $1)) AND link_type = ANY($2::text[])
-     UNION
-     SELECT from_page_id, to_page_id, link_type FROM link_transitions WHERE origin_page_id = $1
-     UNION
-     SELECT from_page_id, to_page_id, link_type FROM link_relationships WHERE from_page_id = $1 AND scope = 'all'`,
-    [pageId, temporalLinkTypes()]);
-  return rows.map(r => ({ from_page_id: Number(r.from_page_id), to_page_id: Number(r.to_page_id), link_type: r.link_type }));
+export function relationshipKeysForOrigin(tx: Pick<BrainEngine, 'linkRelationshipKeysForOrigin'>, pageId: number): Promise<RelationshipKey[]> {
+  return tx.linkRelationshipKeysForOrigin(pageId);
 }
 
 export async function applyTemporalEvidence(
@@ -76,41 +68,13 @@ export async function applyTemporalEvidence(
   const tenseRows = rows.filter(r => evidence.tense.has(rowKey(r))).map(r => ({
     from_slug: r.from_slug, to_slug: r.to_slug, link_type: r.link_type ?? '', link_source: r.link_source ?? 'markdown',
     from_source_id: r.from_source_id ?? sourceId, to_source_id: r.to_source_id ?? sourceId,
-    tense: evidence.tense.get(rowKey(r)) === 'past' ? 'past' : null,
+    tense: evidence.tense.get(rowKey(r)) === 'past' ? 'past' as const : null,
   }));
-  // The tense update, the transition replacement, the target check and the after-read are sent together, in this order.
-  const tense = tenseRows.length ? () => executeRawJsonb(tx,
-      `UPDATE links l SET assertion_tense = v.tense
-         FROM jsonb_to_recordset(($2::jsonb)->'rows') AS v(from_slug text, to_slug text, link_type text, link_source text,
-           from_source_id text, to_source_id text, tense text)
-         JOIN pages f ON f.slug = v.from_slug AND f.source_id = v.from_source_id
-         JOIN pages t ON t.slug = v.to_slug AND t.source_id = v.to_source_id
-        WHERE l.from_page_id = f.id AND l.to_page_id = t.id AND l.link_type = v.link_type AND l.link_source = v.link_source
-          AND (l.origin_page_id = $1 OR (l.origin_page_id IS NULL AND l.from_page_id = $1))
-          AND l.assertion_tense IS DISTINCT FROM v.tense`,
-      [pageId], [{ rows: tenseRows }]) : async () => undefined;
-  const insert = transitions.length ? () => executeRawJsonb<RelationshipKey>(tx,
-      `INSERT INTO link_transitions (source_id, from_page_id, to_page_id, link_type, kind, occurred_on, date_precision, producer, origin_page_id, line_hash)
-       SELECT $2, f.id, t.id, v.link_type, v.kind, v.occurred_on::date, v.date_precision, v.producer, $1, v.line_hash
-         FROM jsonb_to_recordset(($3::jsonb)->'rows') AS v(from_slug text, to_slug text, link_type text, kind text,
-           occurred_on text, date_precision text, producer text, line_hash text)
-         JOIN pages f ON f.slug = v.from_slug AND f.source_id = $2 AND f.deleted_at IS NULL
-         JOIN pages t ON t.slug = v.to_slug AND t.source_id = $2 AND t.deleted_at IS NULL
-       ON CONFLICT DO NOTHING
-       RETURNING from_page_id, to_page_id, link_type`,
-      [pageId, sourceId], [{ rows: transitions }]) : async () => [] as RelationshipKey[];
   const unmatched = [...evidence.unmatched, ...inline.unmatched];
   const explicitTargets = [...new Set(evidence.transitions.filter(t => t.producer === 'explicit' || t.producer === 'dream').map(t => t.to_slug))];
-  const [, , inserted, liveTargets, keysAfter] = await pipelined(tx, [
-    tense,
-    () => tx.executeRaw(`DELETE FROM link_transitions WHERE origin_page_id = $1 AND producer = ANY($2::text[])`, [pageId, DERIVED_PRODUCERS]),
-    insert,
-    () => explicitTargets.length ? tx.executeRaw<{ slug: string }>(
-      `SELECT slug FROM pages WHERE source_id = $1 AND slug = ANY($2::text[]) AND deleted_at IS NULL`, [sourceId, explicitTargets]) : Promise.resolve([]),
-    () => relationshipKeysForOrigin(tx, pageId),
-  ]) as [unknown, unknown, RelationshipKey[], Array<{ slug: string }>, RelationshipKey[]];
+  const { inserted, liveTargets, keysAfter } = await tx.applyLinkTemporalRows({ pageId, sourceId, tenseRows, transitions, explicitTargets });
   if (explicitTargets.length) {
-    const live = new Set(liveTargets.map(r => r.slug));
+    const live = new Set(liveTargets);
     for (const t of evidence.transitions) {
       if ((t.producer === 'explicit' || t.producer === 'dream') && !live.has(t.to_slug)) {
         unmatched.push({ line: `${t.kind === 'start' ? 'Started' : 'Ended'} ${t.link_type} [[${t.to_slug}]]`, reason: 'no_target' });
@@ -132,24 +96,13 @@ export async function writeManualTransitions(
   dates: { validFrom?: string; validUntil?: string },
 ): Promise<number> {
   const rows = [
-    ...(dates.validFrom ? [{ kind: 'start', occurred_on: dates.validFrom }] : []),
-    ...(dates.validUntil ? [{ kind: 'end', occurred_on: dates.validUntil }] : []),
+    ...(dates.validFrom ? [{ kind: 'start' as const, occurred_on: dates.validFrom }] : []),
+    ...(dates.validUntil ? [{ kind: 'end' as const, occurred_on: dates.validUntil }] : []),
   ];
   if (!rows.length) return 0;
-  const inserted = await executeRawJsonb<RelationshipKey>(tx,
-    `INSERT INTO link_transitions (source_id, from_page_id, to_page_id, link_type, kind, occurred_on, producer, origin_page_id)
-     SELECT $1, f.id, t.id, $4, v.kind, v.occurred_on::date, 'manual', NULL
-       FROM jsonb_to_recordset(($5::jsonb)->'rows') AS v(kind text, occurred_on text)
-       JOIN pages f ON f.slug = $2 AND f.source_id = $1 AND f.deleted_at IS NULL
-       JOIN pages t ON t.slug = $3 AND t.source_id = $1 AND t.deleted_at IS NULL
-     ON CONFLICT DO NOTHING
-     RETURNING from_page_id, to_page_id, link_type`,
-    [rel.sourceId, rel.from, rel.to, rel.linkType], [{ rows }]);
-  const [key] = await tx.executeRaw<RelationshipKey>(
-    `SELECT f.id AS from_page_id, t.id AS to_page_id, $4::text AS link_type FROM pages f, pages t
-      WHERE f.slug = $2 AND f.source_id = $1 AND t.slug = $3 AND t.source_id = $1`, [rel.sourceId, rel.from, rel.to, rel.linkType]);
+  const { inserted, key } = await tx.writeManualLinkTransitions(rel, rows);
   if (key) await refreshRelationships(tx, [key]);
-  return inserted.length;
+  return inserted;
 }
 
 /**
@@ -157,11 +110,6 @@ export async function writeManualTransitions(
  * statements a links fence projected (origin_page_id set), which belong to the fence's rows, not to a database-only edge.
  */
 export async function removeManualTransitions(tx: Tx, rel: { from: string; to: string; linkType?: string; sourceId: string; databaseOnly?: boolean }): Promise<void> {
-  const keys = await tx.executeRaw<RelationshipKey>(
-    `DELETE FROM link_transitions lt USING pages f, pages t
-      WHERE f.id = lt.from_page_id AND t.id = lt.to_page_id AND f.slug = $1 AND t.slug = $2
-        AND f.source_id = $3 AND t.source_id = $3 AND lt.producer = 'manual'
-        AND ($4::text IS NULL OR lt.link_type = $4) AND (NOT $5::boolean OR lt.origin_page_id IS NULL)
-      RETURNING lt.from_page_id, lt.to_page_id, lt.link_type`, [rel.from, rel.to, rel.sourceId, rel.linkType ?? null, rel.databaseOnly === true]);
+  const keys = await tx.removeManualLinkTransitions(rel);
   if (keys.length) await refreshRelationships(tx, keys);
 }

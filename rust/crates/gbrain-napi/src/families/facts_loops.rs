@@ -1,5 +1,5 @@
-//! Open loops (`gbrain_store::facts::loops`): `upsertOpenLoop`, `listOpenLoops` and
-//! `closeOpenLoop`.
+//! Open loops (`gbrain_store::facts::loops`): `upsertOpenLoop`, `listOpenLoops`,
+//! `closeOpenLoop` and `closedLoopWithActiveFact`.
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
 //! Each method decodes its arguments, runs one `Store` call on the pool through `Brain::run`,
@@ -49,6 +49,20 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.close_open_loop(source_id.as_deref(), id, &status, &closed_by)
+        })
+    }
+
+    /// `closedLoopWithActiveFact(sourceId | null, loopId)`: resolves `{ id, status, fact_id }`
+    /// for a closed loop whose fact is still active, or null.
+    #[napi]
+    pub fn closed_loop_with_active_fact<'env>(
+        &self,
+        env: &'env Env,
+        source_id: Option<String>,
+        loop_id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.closed_loop_with_active_fact(source_id.as_deref(), loop_id)
         })
     }
 }

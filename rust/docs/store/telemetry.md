@@ -31,8 +31,9 @@ page column, so page and source deletes never touch them.
 | `brain.pruneMcpRequestLogBatch(cutoff, keepOperations, limit)` | `{ deleted, newest }`. In one write, deletes the oldest `limit` rows created before `cutoff` whose operation is not in `keepOperations` and adds them to the tally: `requests` grows by the count, `last_used_at` and `pruned_through` take the newest deleted `created_at` (`GREATEST`, which skips a NULL). `newest` is that time as ISO text, null when nothing was deleted. A null cutoff, a null list or a list holding a null takes nothing (`<> ALL` is never true); a null limit takes every row; a negative or fractional limit is `invalid_argument` | `pruneMcpRequestLogBatch` |
 | `brain.readClientOpUsage(days)` | one `{ token_name, operation, n, last_seen }` row per token and operation over the rows created after `now - days` with a token and status `success`, `success_with_warnings` or `accepted_pending`; `n` is an integer, `last_seen` the newest `created_at` as ISO text. A null day count matches no row | `readClientOpUsage` |
 | `brain.readMcpRollupPrunedBefore()` | `{ pruned_before, now }`: the newest `pruned_through` of the tally (null when nothing was pruned) and the store clock, as ISO text | `readMcpRollupPrunedBefore` |
+| `brain.readMcpLifetimeUsage(tokenNames)` | one `{ token_name, requests, last_used_at }` row per asked token that has log rows or a tally row, in token byte order: `requests` is the token's request log rows (every status and operation) plus its tally `requests`, `last_used_at` the newest of the newest `created_at` and the tally's `last_used_at`, as ISO text. A null list or a null name matches nothing; a NULL-token log row never matches, and the tally's `''` row matches only an asked `''`. A NUL in a name is `invalid_argument`; a sum past `int8` is `invalid_argument` (`integer out of range`) | `readMcpLifetimeUsage` |
 
-The TypeScript members turn each ISO time (`cutoff`, `newest`, `last_seen`, `pruned_before`, `now`) into a
+The TypeScript members turn each ISO time (`cutoff`, `newest`, `last_seen`, `pruned_before`, `now`, `last_used_at`) into a
 `Date`, as PGLite's driver reads a `timestamptz`, and pass a `Date` `created_at` as ISO text.
 
 Differences from PGLite:
@@ -55,10 +56,11 @@ Differences from PGLite:
   Postgres also reads other `timestamptz` spellings. Every caller passes a `Date` or nothing.
 - `readMcpLogPruneCutoff` always answers `rollup_present: true`: a store brain has no migration that could be
   missing the tally.
+- `readMcpLifetimeUsage` always adds the tally, for the same reason; the TypeScript statement reads the log alone
+  when the tally table is missing. Both return token byte order (`ORDER BY token_name COLLATE "C"`).
 
 ## Known gaps
 
-- `src/mcp/http-transport.ts` (`logRequest`, the legacy HTTP transport) still inserts its request log row through
-  its own `sql` tag, not `logMcpRequest`. That transport runs on Postgres only and never on a Rust engine.
-- `lifetimeUsage` and `rollupTablePresent` in `src/core/mcp-request-log-retention.ts` (the lifetime usage column
-  of `gbrain auth`) still read through `executeRaw`; on the Rust engine they refuse as before.
+None in this family. The legacy HTTP transport (`src/mcp/http-transport.ts`, `logRequest`) writes its request
+log row through `logMcpRequest`, and `lifetimeUsage` (`src/core/mcp-request-log-retention.ts`) reads through
+`readMcpLifetimeUsage`, which also absorbs the tally-table probe `rollupTablePresent` used to make.

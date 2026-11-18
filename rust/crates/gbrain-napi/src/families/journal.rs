@@ -354,10 +354,37 @@ impl Brain {
         self.run(env, move |s| s.read_capacity_forecast_inputs(light))
     }
 
-    /// True when every live page's text projection is sealed, so the projection queue is empty.
+    /// `listPendingSegmentedProjections(filter)`: `{ source_id, source_incarnation, slug, revision }`
+    /// rows, oldest first.
     #[napi]
-    pub fn projection_queue_empty<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.projection_queue_empty())
+    pub fn list_pending_segmented_projections<'env>(
+        &self,
+        env: &'env Env,
+        filter: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_pending_segmented_projections(&required(
+                filter,
+                "listPendingSegmentedProjections filter",
+            )?)
+        })
+    }
+
+    /// `selectProjectionWindowJobs(cursor, retryCooldown)`: the recency lane, then the key window;
+    /// one row of nulls carrying the high water when no job is selected.
+    #[napi]
+    pub fn select_projection_window_jobs<'env>(
+        &self,
+        env: &'env Env,
+        cursor: Value,
+        retry_cooldown: bool,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.select_projection_window_jobs(
+                &required(cursor, "selectProjectionWindowJobs cursor")?,
+                retry_cooldown,
+            )
+        })
     }
 
     /// `insertTopologyChange(input)`: the stored row.

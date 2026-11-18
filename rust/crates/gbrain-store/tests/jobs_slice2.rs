@@ -1394,3 +1394,20 @@ fn open_jobs_are_counted_per_delegated_owner_across_live_statuses() {
         "a completed row frees its slot"
     );
 }
+
+#[test]
+fn job_source_state_reads_archived_and_the_creation_stamp() {
+    let b = brain("s2-job-source");
+    let created = b.get_source("default").unwrap().unwrap().created_at;
+    assert_eq!(
+        b.read_job_source_state("default").unwrap(),
+        Some(json!({ "archived": false, "created_at": created.clone() }))
+    );
+    assert_eq!(b.read_job_source_state("nope").unwrap(), None);
+    assert_eq!(b.read_job_source_state("de\0fault").unwrap(), None);
+    assert!(b.set_source_archived("default", true).unwrap());
+    assert_eq!(
+        b.read_job_source_state("default").unwrap(),
+        Some(json!({ "archived": true, "created_at": created }))
+    );
+}

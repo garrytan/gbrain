@@ -20,17 +20,11 @@ import type { GenerationAdapter, GenerationKey, ItemRow } from '../contract.ts';
 import { factRowIdentity, fenceRowKey, FACT_FENCE_KIND, publishFenceGeneration, type FenceGenerationOutcome, type FenceItem, type FenceRead } from '../fence.ts';
 import { activateGeneration, generationKeyLock, itemSetHash, readLiveGeneration, recordHeld } from '../publish.ts';
 import { factsFenceHeld } from '../fence-evidence.ts';
-import { openedFactRowSql } from '../../persistence/context.ts';
+import { FACT_PREIMAGE_SQL, type FactPreimage } from '../../engine-sql/facts.ts';
+
+export type { FactPreimage };
 
 export const CONSOLIDATION_KIND = 'consolidation';
-
-/** The columns a fact's before-state keeps. */
-const FACT_PREIMAGE_SQL = `jsonb_build_object('id', f.id, 'row_num', f.row_num, 'fact', f.fact, 'visibility', f.visibility, 'kind', f.kind,
-  'entity_slug', f.entity_slug, 'source', f.source, 'expired_at', f.expired_at, 'valid_from', f.valid_from, 'valid_until', f.valid_until,
-  'superseded_by', f.superseded_by, 'consolidated_at', f.consolidated_at, 'consolidated_into', f.consolidated_into, 'attributed_to', f.attributed_to)`;
-
-export type FactPreimage = { id: number; row_num: number | null; fact: string; visibility: string; expired_at: string | null; valid_until: string | null;
-  superseded_by: number | null; consolidated_at: string | null; consolidated_into: number | null; entity_slug: string | null; attributed_to: string | null; source?: string | null };
 
 /** The fence rows of the new generation (one per row number; a duplicate number keeps its first row, as the reconcile does). */
 export function factFenceItems(rows: ReadonlyArray<{ row_num: number; fact: string; visibility?: string | null }>): FenceItem[] {
@@ -69,14 +63,7 @@ export async function factPreimages(db: BrainEngine, sourceId: string, ids: read
 export async function projectFactFenceGeneration(tx: BrainEngine, input: { sourceId: string; slug: string; read: FenceRead; incoming: string;
   rows: ReadonlyArray<{ row_num: number; fact: string; visibility?: string | null }>; writer: string; prior?: ReadonlySet<string> | null }):
   Promise<FenceGenerationOutcome & { retiring: number; retireIds: number[]; kept: number[] }> {
-  const candidates = (await tx.executeRaw<{ preimage: FactPreimage }>(`SELECT ${FACT_PREIMAGE_SQL} AS preimage FROM facts f
-      WHERE f.source_id=$1 AND f.source_markdown_slug=$2 AND f.row_num IS NOT NULL
-        AND (COALESCE(f.source,'') NOT LIKE 'cli:extract-conversation-facts%'
-          OR EXISTS (SELECT 1 FROM jsonb_to_recordset($3::text::jsonb) AS c(row_num integer) WHERE c.row_num=f.row_num))
-        AND NOT EXISTS (SELECT 1 FROM jsonb_to_recordset($3::text::jsonb) AS n(row_num integer,fact text,visibility text)
-          WHERE n.row_num=f.row_num AND n.fact=f.fact AND n.visibility=f.visibility)
-        AND NOT ${openedFactRowSql('f', '$3')}
-      ORDER BY f.row_num, f.id`, [input.sourceId, input.slug, input.incoming])).map(row => row.preimage);
+  const candidates = await tx.listFenceRetireCandidates({ sourceId: input.sourceId, slug: input.slug, incoming: input.incoming });
   const extractor = (row: FactPreimage) => (row.source ?? '').startsWith('cli:extract-conversation-facts');
   const { held } = await factsFenceHeld(tx, { sourceId: input.sourceId, slug: input.slug, rows: candidates.filter(row => !extractor(row)), prior: input.prior });
   const claims = new Set(input.rows.map(row => row.fact));

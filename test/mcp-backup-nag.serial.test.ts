@@ -74,23 +74,22 @@ let rawCalls: string[] = [];
 // A source listing. Search's own live read policy (the safe-chunk probe runs on
 // every remote result) references `FROM sources read_source`; that is not one.
 const BACKUP_SOURCES_QUERY = /\bfrom\s+sources\b(?!\s+read_source)/i;
-// loadAllSources (the backup sweep) lists sources through the typed member, so
-// each call is a source listing too.
+// The backup compute lists sources through the typed `listSourceRecords` member.
 let sourceListings = 0;
-const sourcesQueries = () => [
-  ...rawCalls.filter((sql) => BACKUP_SOURCES_QUERY.test(sql)),
-  ...Array.from({ length: sourceListings }, () => 'listSourceRecords'),
-];
+const sourceReads = () => sourceListings + rawCalls.filter((sql) => BACKUP_SOURCES_QUERY.test(sql)).length;
 const engineStub = {
   kind: 'pglite',
   getConfig: async () => null,
-  listSourceRecords: async () => {
-    sourceListings++;
-    return [];
-  },
-  // The search trust stamp reads page trust rows through the typed member; the
-  // stub holds no page rows, so it finds none (the old executeRaw read got []).
+  // Search reads result trust through this typed member; the stub has no pages.
   readPageTrustRows: async () => [],
+  countEmbeddingHeldPages: async () => null,
+  // Alias fan-out reads titles and aliases through typed members; the stub has no pages, so each finds nothing.
+  findPagesByTitles: async () => [],
+  resolveAliases: async () => new Map(),
+  resolveCaseSensitiveAliases: async () => [],
+  readPageTitle: async () => null,
+  readPageAliasRows: async () => [],
+  listSourceRecords: async () => { sourceListings++; return []; },
   executeRaw: async (sql: string) => {
     rawCalls.push(String(sql));
     // countLivePages treats an EMPTY rowset as UNESTABLISHED (null → degraded
@@ -337,7 +336,7 @@ describe('stdio-gated refresher (TRUST PIN)', () => {
     // to land before asserting it never did.
     await new Promise((r) => setTimeout(r, 300));
     expect(existsSync(backupStatusPath())).toBe(false);
-    expect(sourcesQueries()).toEqual([]);
+    expect(sourceReads()).toBe(0);
   });
 
   test('transport UNSET is fail-closed: no compute, no sources query', async () => {
@@ -345,7 +344,7 @@ describe('stdio-gated refresher (TRUST PIN)', () => {
     await callSearch({ remote: true, transport: undefined });
     await new Promise((r) => setTimeout(r, 300));
     expect(existsSync(backupStatusPath())).toBe(false);
-    expect(sourcesQueries()).toEqual([]);
+    expect(sourceReads()).toBe(0);
   });
 
   test("transport 'stdio' kicks the in-process refresher: absent cache gets computed + persisted", async () => {
@@ -361,7 +360,7 @@ describe('stdio-gated refresher (TRUST PIN)', () => {
     expect(s!.overall).toBe('ok'); // zero sources, zero pages → nothing at risk
     expect(s!.totals.assets).toBe(0);
     // The refresher DID walk the sources table on the stdio path.
-    expect(sourcesQueries().length > 0).toBe(true);
+    expect(sourceReads()).toBeGreaterThan(0);
   });
 
   test('attempt floor arms on the fresh-cache no-op path: a deleted cache is NOT recomputed within the hour', async () => {
@@ -370,7 +369,7 @@ describe('stdio-gated refresher (TRUST PIN)', () => {
     saveBackupStatus(okStatus());
     await callSearch({ remote: true, transport: 'stdio' });
     await new Promise((r) => setTimeout(r, 100));
-    expect(sourcesQueries()).toEqual([]);
+    expect(sourceReads()).toBe(0);
 
     // Delete the cache. A second stdio call within the hour is still a no-op
     // — the floor, not the cache, gates the attempt.
@@ -378,13 +377,13 @@ describe('stdio-gated refresher (TRUST PIN)', () => {
     await callSearch({ remote: true, transport: 'stdio' });
     await new Promise((r) => setTimeout(r, 300));
     expect(existsSync(backupStatusPath())).toBe(false);
-    expect(sourcesQueries()).toEqual([]);
+    expect(sourceReads()).toBe(0);
 
     // __resetBackupRefreshForTests clears the floor → the compute runs.
     __resetBackupRefreshForTests();
     await callSearch({ remote: true, transport: 'stdio' });
     const appeared = await waitFor(() => existsSync(backupStatusPath()), 2000);
     expect(appeared).toBe(true);
-    expect(sourcesQueries().length > 0).toBe(true);
+    expect(sourceReads()).toBeGreaterThan(0);
   });
 });

@@ -445,6 +445,48 @@ describe('engine parity: write-journal housekeeping', () => {
     return read;
   });
 
+  parityTest('page writes queue, re-queue and drop projection jobs, and the window read lists them in key order', {
+    methods: ['putPage', 'sealChunks', 'softDeletePage', 'deletePage', 'restorePage', 'updateSlug', 'readPageSnapshot', 'readSourceMembership',
+      'listPendingSegmentedProjections', 'selectProjectionWindowJobs'],
+  }, async (engine) => {
+    const page = (slug: string) => ({ type: 'note' as const, title: slug, compiled_truth: `${slug} body` });
+    for (const slug of ['notes/a', 'notes/b', 'notes/c', 'notes/d', 'notes/e']) await engine.putPage(slug, page(slug));
+    // The same text again keeps the revision, so the job stays as it is.
+    await engine.putPage('notes/a', page('notes/a'));
+    await engine.sealChunks('notes/e', [{ chunk_index: 0, chunk_text: 'notes/e body', chunk_source: 'compiled_truth' }]);
+    await engine.softDeletePage('notes/c');
+    await engine.deletePage('notes/d');
+    await engine.restorePage('notes/c');
+    await engine.updateSlug('notes/b', 'notes/b2');
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    const revisions = new Map<string, string>();
+    for (const slug of ['notes/a', 'notes/b2', 'notes/c']) revisions.set(slug, (await engine.readPageSnapshot(slug))!.revision);
+    const TS = /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(\.\d{1,6})?\+00$/;
+    const rows = (all: Awaited<ReturnType<BrainEngine['selectProjectionWindowJobs']>>) => all.map(r => ({
+      lane: r.lane, ord: r.ord === null ? null : Number(r.ord), ordType: typeof r.ord, slug: r.slug,
+      inc: r.source_incarnation === null ? null : r.source_incarnation === incarnation,
+      revision: r.revision === null ? null : r.revision === revisions.get(r.slug ?? ''), highWater: r.high_water === null ? null : TS.test(r.high_water),
+    })).sort((x, y) => (x.lane ?? '').localeCompare(y.lane ?? '') || (x.ord ?? 0) - (y.ord ?? 0) || (x.slug ?? '').localeCompare(y.slug ?? ''));
+    const start = { after: { source_incarnation: '00000000-0000-0000-0000-000000000000', slug: '' }, highWater: null };
+    const first = await engine.selectProjectionWindowJobs(start, true);
+    const highWater = first[0]!.high_water!;
+    const wrapped = await engine.selectProjectionWindowJobs({ after: { source_incarnation: incarnation, slug: 'notes/a' }, highWater }, false);
+    const later = await engine.selectProjectionWindowJobs({ ...start, highWater: '2999-01-01 00:00:00+00' }, true);
+    const pending = await engine.listPendingSegmentedProjections({ limit: 10 });
+    const anyPending = await engine.listPendingSegmentedProjections({ limit: 10, retryCooldown: false });
+    const answers = { first: rows(first), wrapped: rows(wrapped), later: rows(later), pending, anyPending };
+    const row = (lane: string, ord: number, slug: string) => ({ lane, ord, ordType: 'number' as const, slug, inc: true, revision: true, highWater: true });
+    expect(answers).toEqual({
+      first: [row('recent', 0, 'notes/a'), row('recent', 0, 'notes/b2'), row('recent', 0, 'notes/c'),
+        row('window', 1, 'notes/a'), row('window', 2, 'notes/b2'), row('window', 3, 'notes/c')],
+      wrapped: [row('recent', 0, 'notes/a'), row('recent', 0, 'notes/b2'), row('recent', 0, 'notes/c'),
+        row('window', 1, 'notes/b2'), row('window', 2, 'notes/c'), row('window', 3, 'notes/a')],
+      later: [row('window', 1, 'notes/a'), row('window', 2, 'notes/b2'), row('window', 3, 'notes/c')],
+      pending: [], anyPending: [],
+    });
+    return answers;
+  });
+
   parityTest('the projection queue reads find no pending job on a brain whose pages are projected', {
     methods: ['listPendingSegmentedProjections', 'selectProjectionWindowJobs'],
   }, async (engine) => {

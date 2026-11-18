@@ -47,7 +47,6 @@ import { assertPhysicalRoot, assertPhysicalRootReservation, PHYSICAL_ROOT_MARKER
 import { preActivationClaims, releasePreActivationClaims, type PreActivationClaim } from './pre-activation-release.ts';
 import { PARK_AFTER_FAILURES } from './effect-model.ts';
 import { EMBEDDING_ZERO_NORM } from '../ai/embedding-guard.ts';
-import { lacksRawSql } from '../engine-capabilities.ts';
 
 export const DEACTIVATE_DOCS = 'docs/architecture/topologies.md#deactivate-runbook';
 
@@ -328,8 +327,7 @@ interface RetiredRecord { epochs: Set<number>; worktrees: Set<string>; roots: Se
 
 /** GBRA-133: `brain` is awaited only after the read is sent, so the caller's persistence_brain read shares its round trip. */
 async function readRetired(engine: BrainEngine, brain: Promise<{ brain_id: string }>): Promise<RetiredRecord> {
-  const rowsRead = engine.executeRaw<{ outcome: { brain_id?: string; retired_mode_epoch?: number; worktrees?: Array<{ id: string; roots: string[] }>; source_roots?: string[] } }>(
-    "SELECT outcome FROM persistence_topology_changes WHERE operation='writer_deactivate' AND state='committed'");
+  const rowsRead = engine.listRetiredDeactivations();
   const [rows, { brain_id: brainId }] = await Promise.all([rowsRead, brain]);
   const retired: RetiredRecord = { epochs: new Set(), worktrees: new Set(), roots: new Set() };
   const canonical = (path: string) => { try { return canonicalFilesystemPath(path); } catch { return path; } };
@@ -357,10 +355,7 @@ function readJson(path: string): Record<string, unknown> | null {
  */
 export async function cleanupRetiredManagedMarkers(engine: BrainEngine): Promise<LocalMarkerReport> {
   const report: LocalMarkerReport = { state: 'cleared', removed: [], pending: [] };
-  // An engine without raw SQL (Rust, D18) has no topology-change table, so it has no retired epoch to clean up.
-  if (lacksRawSql(engine)) return report;
-  const [present] = await engine.executeRaw<{ present: boolean }>("SELECT to_regclass('persistence_topology_changes') IS NOT NULL AS present");
-  if (!present?.present) return report;
+  if (!await engine.hasPersistenceTable('persistence_topology_changes')) return report;
   const brainRead = readPersistenceBrain(engine);
   const [brain, retired] = await Promise.all([brainRead, readRetired(engine, brainRead)]);
   const current = Number(brain.mode_epoch ?? 1);

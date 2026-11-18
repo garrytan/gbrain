@@ -1,10 +1,11 @@
 //! Timeline reads by date (the Life Chronicle reads) and event projections.
 //!
-//! Store methods for getTimelineForDate, getSince, getOnThisDay, getLastSeen and
-//! upsertEventProjection, and the timeline reads of `src/core/engine-sql/timeline-reads.ts`
-//! (sampleEffectiveDates, sampleEffectiveDateSources, readMaxTimelineEntryId,
-//! listStoredTimelineRowsOrdered, deleteTimelineRows, storedTimelineRowsByPageIds,
-//! countSegmentedTimelinePages, countTimelineCommentMarkupRows, listTimelineOrphanPages).
+//! Store methods for getTimelineForDate, getSince, getOnThisDay, getLastSeen,
+//! upsertEventProjection, removeTimelineRows and updateTimelineDetails, and the timeline reads
+//! of `src/core/engine-sql/timeline-reads.ts` (sampleEffectiveDates, sampleEffectiveDateSources,
+//! readMaxTimelineEntryId, listStoredTimelineRowsOrdered, deleteTimelineRows,
+//! storedTimelineRowsByPageIds, countSegmentedTimelinePages, countTimelineCommentMarkupRows,
+//! listTimelineOrphanPages).
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
 //! Each method decodes its arguments, runs one `Store` call on the pool through `Brain::run`,
@@ -15,7 +16,8 @@ use napi::bindgen_prelude::Object;
 use napi_derive::napi;
 use serde_json::Value;
 
-use crate::store_binding::{Brain, arg};
+use crate::store_binding::{Brain, arg, required};
+use gbrain_store::timeline_queries;
 
 #[napi]
 impl Brain {
@@ -84,6 +86,36 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.upsert_event_projection(&arg(Some(input), "upsertEventProjection options")?)
+        })
+    }
+
+    /// `removeTimelineRows(pageId, rows)`: resolves `[{ date, removed }]` for each deleted row.
+    #[napi]
+    pub fn remove_timeline_rows<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        rows: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let rows: Vec<timeline_queries::TimelineRowRemoval> =
+                required(rows, "removeTimelineRows rows")?;
+            s.remove_timeline_rows(page_id as i64, &rows)
+        })
+    }
+
+    /// `updateTimelineDetails(pageId, rows)`: resolves null.
+    #[napi]
+    pub fn update_timeline_details<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        rows: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let rows: Vec<timeline_queries::TimelineDetailRefresh> =
+                required(rows, "updateTimelineDetails rows")?;
+            s.update_timeline_details(page_id as i64, &rows)
         })
     }
 

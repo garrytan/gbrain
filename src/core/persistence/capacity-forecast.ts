@@ -38,6 +38,7 @@ const SPIKE_FACTOR = 3;
 
 export type { CapacityResource } from './limits.ts';
 import type { CapacityResource } from './limits.ts';
+import { readConfigMap } from '../config-values.ts';
 export interface CapacityForecastRow {
   scope: string; resource: CapacityResource; used: number; limit: number; pct: number; config_key: string;
   /** Window days actually observed (under 7 when the history is younger). */
@@ -75,8 +76,6 @@ function daysSetting(raw: string | undefined, fallback: number): number {
   return Number.isFinite(value) && value >= 0 ? value : fallback;
 }
 
-
-
 export interface CapacityConfig { warnDays: number; failDays: number; retentionDays: number; pauseShare: number }
 
 /**
@@ -85,8 +84,7 @@ export interface CapacityConfig { warnDays: number; failDays: number; retentionD
  * unreadable retention setting keeps the default, as the forecast always treated it.
  */
 export async function readCapacityConfig(engine: Pick<BrainEngine, 'getConfigValues'>): Promise<CapacityConfig> {
-  const rows = await engine.getConfigValues([CAPACITY_WARN_DAYS_KEY, CAPACITY_FAIL_DAYS_KEY, RECEIPT_RETENTION_KEY, BACKGROUND_PAUSE_KEY]);
-  const value = new Map(rows.map(row => [row.key, row.value]));
+  const value = await readConfigMap(engine, [CAPACITY_WARN_DAYS_KEY, CAPACITY_FAIL_DAYS_KEY, RECEIPT_RETENTION_KEY, BACKGROUND_PAUSE_KEY]);
   const retention = value.get(RECEIPT_RETENTION_KEY);
   let retentionDays = DEFAULT_RECEIPT_RETENTION_DAYS;
   try {
@@ -100,7 +98,7 @@ export async function readCapacityConfig(engine: Pick<BrainEngine, 'getConfigVal
 
 /** The configured days-to-exhaustion thresholds every capacity finding uses. */
 export async function readCapacityThresholds(engine: Pick<BrainEngine, 'getConfigValues'>): Promise<{ warnDays: number; failDays: number }> {
-  const value = new Map((await engine.getConfigValues([CAPACITY_WARN_DAYS_KEY, CAPACITY_FAIL_DAYS_KEY])).map(row => [row.key, row.value]));
+  const value = await readConfigMap(engine, [CAPACITY_WARN_DAYS_KEY, CAPACITY_FAIL_DAYS_KEY]);
   return { warnDays: daysSetting(value.get(CAPACITY_WARN_DAYS_KEY), DEFAULT_CAPACITY_WARN_DAYS), failDays: daysSetting(value.get(CAPACITY_FAIL_DAYS_KEY), DEFAULT_CAPACITY_FAIL_DAYS) };
 }
 

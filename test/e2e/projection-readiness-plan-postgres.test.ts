@@ -16,6 +16,7 @@ import { probeProjectionReadiness, type ProjectionReadinessScope } from '../../s
 import { ACTIVATION_SERVED_REVISION } from '../../src/core/search/safe-chunks.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { withEnv } from '../helpers/with-env.ts';
+import { readinessOver } from '../helpers/readiness-engine.ts';
 import { hasDatabase } from './helpers.ts';
 
 const describePostgres = hasDatabase() ? describe : describe.skip;
@@ -41,10 +42,10 @@ describePostgres('projection readiness probe plan on Postgres (GBRA-156)', () =>
 
   async function probeStatement(scope: ProjectionReadinessScope) {
     const captured: Array<{ sql: string; params?: unknown[] }> = [];
-    const recording = { executeRaw: (sql: string, params?: unknown[]) => {
+    const recording = readinessOver((sql: string, params?: unknown[], opts?: Parameters<BrainEngine['executeRaw']>[2]) => {
       captured.push({ sql, params });
-      return engine.executeRaw(sql, params);
-    } } as unknown as BrainEngine;
+      return engine.executeRaw(sql, params, opts);
+    });
     const result = await withEnv({ GBRAIN_PROJECTION_READINESS_CACHE: '0' }, () => probeProjectionReadiness(recording, scope));
     const probe = captured.find(call => call.sql.includes('IS DISTINCT FROM'));
     expect(probe).toBeDefined();
@@ -92,10 +93,10 @@ describePostgres('projection readiness probe plan on Postgres (GBRA-156)', () =>
       const explain = async (sql: string, params?: unknown[], opts?: Parameters<BrainEngine['executeRaw']>[2]) =>
         JSON.stringify((await reader.executeRaw<Record<string, unknown>>(`EXPLAIN (ANALYZE, FORMAT JSON) ${sql}`, params, opts))[0]);
       const plans: Array<{ asRun: string; jitOn: string }> = [];
-      const recording = { executeRaw: async (sql: string, params?: unknown[], opts?: Parameters<BrainEngine['executeRaw']>[2]) => {
+      const recording = readinessOver(async (sql: string, params?: unknown[], opts?: Parameters<BrainEngine['executeRaw']>[2]) => {
         if (sql.includes('IS DISTINCT FROM')) plans.push({ asRun: await explain(sql, params, opts), jitOn: await explain(sql, params) });
         return reader.executeRaw(sql, params, opts);
-      } } as unknown as BrainEngine;
+      });
       const result = await withEnv({ GBRAIN_PROJECTION_READINESS_CACHE: '0' }, () =>
         probeProjectionReadiness(recording, { sourceIds: ['source-a', 'source-b'], excludePrivate: true, requireSafeChunks: true }));
       expect(result).toEqual({ status: 'ready', ready: true });

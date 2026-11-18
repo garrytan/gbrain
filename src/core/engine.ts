@@ -33,6 +33,13 @@ import type { ClaimExpiry, ClaimRenewal, SourceMembership, TopologyChange, Topol
 import type { CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionWindowRow, ReceiptBudget, SegmentedProjectionFilter } from './engine-sql/persistence-housekeeping.ts';
 import type { ProjectionScanCursor } from './page-state/projection-window.ts';
 import type { WriteRequest } from './persistence/model.ts';
+import type { TimelineDetailRefresh, TimelineRowRemoval } from './engine-sql/timeline.ts';
+import type { TakeFenceRow } from './engine-sql/takes.ts';
+import type { FactPreimage, FenceProjectionTarget } from './engine-sql/facts.ts';
+import type { FenceFactRow, FenceRowsTarget } from './engine-sql/trust-fence.ts';
+import type { TrustTable } from './trust/schema.ts';
+import type { NewTrustProposal, TrustProposalFilter, TrustProposalRow, TrustProposalStatus, TrustProposalTransition } from './engine-sql/trust-proposals.ts';
+import type { GraduationGateRow, ManagedRootBindingRow, PersistenceTable, RetiredDeactivationRow } from './engine-sql/connect-gate.ts';
 import type { ImportedPageSeal, LivePageBodyRow, OriginClaimRow, PageIngestStamp, PageOriginRow, PageOriginTarget } from './engine-sql/write-guards.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type { ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, MentionDueQuery, SiblingCandidateQuery, SiblingCandidateRow } from './engine-sql/entity-reads.ts';
@@ -43,13 +50,19 @@ import type {
 import type { AdmitJobPolicy, AdmitJobResult, AdmitJobSpec, ClaimJobSpec, JobRow, ListJobsFilter } from './engine-sql/jobs.ts';
 import type {
   CancelJobsSpec, DelayActiveJobSpec, JobAttachmentInsert, JobPageSpec, JobStatsRead, JobTokenCounts, PrivateQueueState, PruneJobsSpec,
-  SynthesisCompletion, SynthesisCompletionPrefix,
+  SynthesisCompletion, SynthesisCompletionPrefix, JobSourceState,
   QueueFamilyRow, RetryJobPolicy,
 } from './engine-sql/jobs-queue.ts';
 import type { JunkEntityHubRow, LinkEndpointPage, LivePageSummary, TitledPage } from './engine-sql/link-reads.ts';
 import type { CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuery, ContextualModeCandidate, FrozenHitKey, FrozenHitRow, WithdrawalChunkKey, WithdrawalChunkRow } from './engine-sql/chunk-reads.ts';
 import type { EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRow, PageTimelineRow, SegmentedTimelinePages, TimelineOrphanPage, TimelineRowDeletion } from './engine-sql/timeline-reads.ts';
-import type { McpLogPruneBatch, McpLogPruneCutoff, McpOpUsageRow, McpRequestLogRow, McpRollupPrunedBefore, SearchTelemetryBucket, SearchTelemetryRow } from './engine-sql/telemetry.ts';
+import type { CaseSensitiveAliasRow, PageAliasRow, TitleHitRow } from './engine-sql/alias-fanout-reads.ts';
+import type { McpLifetimeUsageRow, McpLogPruneBatch, McpLogPruneCutoff, McpOpUsageRow, McpRequestLogRow, McpRollupPrunedBefore, SearchTelemetryBucket, SearchTelemetryRow } from './engine-sql/telemetry.ts';
+import type * as LinkTemporalSql from './engine-sql/link-temporal.ts';
+import type { RelationshipEvidence, RelationshipKey, RelationshipStateWrite } from './link-relationships.ts';
+import type { CoverageRelevance, ProjectionRebuildProgress, ScopedCount } from './search/retrieval-coverage.ts';
+import type { ProjectionReadinessRow, ProjectionReadinessScope } from './search/projection-readiness.ts';
+import type { VectorBackfillOpts } from './search-vector-backfill.ts';
 export type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions, PageMutationPrecondition, PageWithdrawal } from './page-state/types.ts';
 import type {
   Page, PageInput, PageFilters, GetPageOpts, PageReadScope, PageReadPolicy,
@@ -1452,6 +1465,36 @@ export interface BrainEngine {
   listLinkEndpointPages(sourceId: string, slugs: string[], crossSourceSlugs: string[]): Promise<LinkEndpointPage[]>;
   listPagesTitledIn(queryLower: string, scope: PageReadScope): Promise<TitledPage[]>;
   wordLexemes(words: string[]): Promise<Map<string, string[]>>;
+  /** Link temporal state: relationship evidence and state rows, temporal link rows, manual transitions and their reads (SQL and contracts in engine-sql/link-temporal.ts). */
+  readLinkRelationshipEvidence(keys: readonly RelationshipKey[]): Promise<RelationshipEvidence>;
+  /** Upsert and remove relationship state rows; returns how many rows changed. */
+  writeLinkRelationshipState(write: RelationshipStateWrite): Promise<number>;
+  linkRelationshipKeysForPages(pageIds: readonly number[]): Promise<RelationshipKey[]>;
+  staleLinkRelationshipKeys(limit: number): Promise<RelationshipKey[]>;
+  linkRelationshipKeysForOrigin(pageId: number): Promise<RelationshipKey[]>;
+  applyLinkTemporalRows(input: LinkTemporalSql.LinkTemporalRows): Promise<LinkTemporalSql.LinkTemporalApplied>;
+  writeManualLinkTransitions(rel: LinkTemporalSql.ManualLinkRelationship, rows: ReadonlyArray<{ kind: 'start' | 'end'; occurred_on: string }>): Promise<{ inserted: number; key: RelationshipKey | null }>;
+  removeManualLinkTransitions(rel: { from: string; to: string; linkType?: string; sourceId: string; databaseOnly?: boolean }): Promise<RelationshipKey[]>;
+  listRelationshipNoteRows(subjects: ReadonlyArray<{ slug: string; source_id: string }>, opts: { excludePrivate: boolean }): Promise<LinkTemporalSql.RelationshipNoteRow[]>;
+  edgeValidityCounts(opts: { sourceIds?: readonly string[]; staleLimit: number }): Promise<LinkTemporalSql.EdgeValidityCounts | null>;
+  listPageStatusByRef(refs: ReadonlyArray<{ source_id: string; slug: string }>, scope: { excludePrivate: boolean; includeQuarantined?: boolean }): Promise<Array<{ source_id: string; slug: string; status: unknown }>>;
+  listRecordMetadataRows(pageIds: readonly number[], scope: { referrerSources: readonly string[]; excludePrivate: boolean; includeQuarantined?: boolean }): Promise<LinkTemporalSql.RecordMetadataRows>;
+  /** reindex-search-vector's steps (SQL in engine-sql/search-vector.ts and search-vector-backfill.ts). */
+  countSearchVectorRows(): Promise<{ pages: number; chunks: number }>;
+  replaceSearchVectorTriggerFunction(target: 'pages' | 'chunks', lang: string): Promise<void>;
+  backfillSearchVectors(target: 'pages' | 'chunks', opts: Pick<VectorBackfillOpts, 'lang' | 'checkpoint' | 'tick'>): Promise<number>;
+  ensureFactsKeywordIndex(lang: string, notice?: (line: string) => void): Promise<'present' | 'swapped'>;
+  /** Retrieval coverage counts in a read scope; null when a count fails (SQL in engine-sql/retrieval-coverage.ts). */
+  countPendingProjectionPages(scope: ProjectionReadinessScope, relevance: CoverageRelevance): Promise<ScopedCount | null>;
+  countEmbeddingHeldPages(scope: ProjectionReadinessScope, relevance: CoverageRelevance): Promise<ScopedCount | null>;
+  projectionRebuildProgress(scope: ProjectionReadinessScope): Promise<ProjectionRebuildProgress | null>;
+  /**
+   * The readiness probe (search/projection-readiness.ts): the generation its cached answer depends on (null when no
+   * stable generation can be read, so the probe does not cache), and whether the scope has unsealed pages that need
+   * work (`pending`) or only protected pages no repair seals (`by_design`). The second throws when the read fails.
+   */
+  readProjectionReadinessGeneration(): Promise<string | null>;
+  readProjectionReadiness(scope: ProjectionReadinessScope): Promise<ProjectionReadinessRow>;
   /** Code-symbol lookups, code readiness probes, doctor chunk counts, withdrawal's chunk scan, contextual-mode and frozen hits (SQL and contracts in engine-sql/chunk-reads.ts). */
   findCodeDefinitions(symbol: string, opts?: CodeSymbolQuery): Promise<CodeDefinitionRow[]>;
   listSymbolTypesForName(symbol: string, opts?: Omit<CodeSymbolQuery, 'limit'>): Promise<Array<string | null>>;
@@ -1481,10 +1524,16 @@ export interface BrainEngine {
   readSearchStats(cutoffDate: string): Promise<SearchTelemetryRow[]>;
   readClientOpUsage(days: number): Promise<McpOpUsageRow[]>;
   readMcpRollupPrunedBefore(): Promise<McpRollupPrunedBefore>;
-  /** The MCP request log insert and its retention prune (SQL and contracts in engine-sql/telemetry.ts). */
+  /** The MCP request log insert, its retention prune and the lifetime usage read (SQL and contracts in engine-sql/telemetry.ts). */
   logMcpRequest(row: McpRequestLogRow): Promise<void>;
   readMcpLogPruneCutoff(days: number): Promise<McpLogPruneCutoff>;
   pruneMcpRequestLogBatch(cutoff: string, keepOperations: readonly string[], limit: number): Promise<McpLogPruneBatch>;
+  readMcpLifetimeUsage(tokenNames: readonly string[]): Promise<McpLifetimeUsageRow[]>;
+  /** Alias fan-out's exact-title lookup, case-sensitive alias read, page title and alias rows (SQL and contracts in engine-sql/alias-fanout-reads.ts). */
+  findPagesByTitles(titleNorms: readonly string[], sourceIds: readonly string[], types: readonly string[], opts?: { excludePrivate?: boolean }): Promise<TitleHitRow[]>;
+  resolveCaseSensitiveAliases(aliasNorms: readonly string[], sourceIds: readonly string[]): Promise<CaseSensitiveAliasRow[]>;
+  readPageTitle(sourceId: string, slug: string): Promise<string | null>;
+  readPageAliasRows(sourceIds: readonly string[], slugs: readonly string[]): Promise<PageAliasRow[]>;
 
   // Chunks
   /**
@@ -2203,6 +2252,19 @@ export interface BrainEngine {
    */
   upsertEventProjection(opts: { depthSlug: string; eventSlug: string; date: string; summary: string; detail?: string; sourceId?: string }): Promise<{ projected: boolean }>;
 
+  /**
+   * Delete the page's own (non-event) timeline rows that `rows` name and that still match them on every field (id,
+   * date, source, summary, detail): a row changed since it was read stays, and an event projection (a row with an
+   * event page) is never touched. Returns each deleted row's date (`YYYY-MM-DD`) and its `removed` mark. A page write
+   * calls it inside its own transaction (engine-sql/timeline.ts).
+   */
+  removeTimelineRows(pageId: number, rows: readonly TimelineRowRemoval[]): Promise<Array<{ date: string; removed: boolean }>>;
+  /**
+   * Replace the detail of the page's own (non-event) timeline rows named in `rows` with `next` when the stored detail
+   * still equals the preimage `detail`; any other row stays. Event projections are never touched.
+   */
+  updateTimelineDetails(pageId: number, rows: readonly TimelineDetailRefresh[]): Promise<void>;
+
   // v0.42.x — Life Chronicle (#2390) per-entity ontology (rides `facts`).
   /**
    * Record one ontology observation (entity has dimension=value). Idempotent on
@@ -2390,6 +2452,14 @@ export interface BrainEngine {
     pageIds: number[],
     opts?: { takesHoldersAllowList?: string[] },
   ): Promise<Map<number, Take[]>>;
+
+  /**
+   * The row numbers of the page's stored takes whose claim, kind or holder differs (null-safe) from the fence row of
+   * the same number in `rows`, ascending, at most `limit`. A page write refuses a fence that would take them over.
+   */
+  matchTakeRows(pageId: number, rows: readonly TakeFenceRow[], limit: number): Promise<number[]>;
+  /** Delete the page's takes at `rowNums`, with their synthesis evidence; an empty list deletes nothing. */
+  deleteTakeRows(pageId: number, rowNums: readonly number[]): Promise<void>;
 
   /**
    * Persist a single contradiction-probe run row. Caller supplies a full
@@ -2669,6 +2739,14 @@ export interface BrainEngine {
   countUnconsolidatedFacts(source_id: string): Promise<number>;
 
   /**
+   * The facts a page publication's fence projection would retire (engine-sql/facts.ts `listFenceRetireCandidates`): the
+   * before-state of each fact attached to the page at a fence position that the incoming fence (`target.incoming`, the
+   * JSON text of its row_num, fact and visibility) does not hold as it is, by row number then id. A conversation-extractor
+   * row counts only when a fence row claims its number; a private row `gbrain repair open-facts` opens never does.
+   */
+  listFenceRetireCandidates(target: FenceProjectionTarget): Promise<FactPreimage[]>;
+
+  /**
    * Find candidate duplicates for a new fact within a source+entity bucket.
    * Entity-prefilter is mandatory (bounds the contradiction-classifier blast
    * radius). Hard cap k=5 by default. Embedding-cosine when both sides have
@@ -2905,6 +2983,28 @@ export interface BrainEngine {
   sealImportedPage(slug: string, seal: ImportedPageSeal): Promise<{ id: number } | null>;
   /** A live page's frontmatter, body columns, body storage and content hash (the valid-time advisory's after image), or null. */
   readLivePageBody(slug: string, opts: { sourceId: string }): Promise<LivePageBodyRow | null>;
+  /**
+   * The page's live fence facts the writer may not simply expire (engine-sql/trust-fence.ts), by row number and locked until
+   * the transaction ends: more trusted than the writer's declared tier, held narrower by a widening proposal the incoming
+   * fence still asks to widen, or opened by `gbrain repair open-facts`. Each row carries its stored `trust_tier`.
+   */
+  listFenceFactRows(target: FenceRowsTarget): Promise<FenceFactRow[]>;
+  /**
+   * Trust decisions (engine-sql/trust-proposals.ts): inserts a pending proposal, or returns the pending one already recorded
+   * for the same (action, target, related) with `created: false`. The proposer principal and request come from the
+   * transaction's attribution settings.
+   */
+  insertTrustProposal(input: NewTrustProposal): Promise<{ id: number; created: boolean }>;
+  /** One trust proposal by id, or null; `lock` takes it `FOR UPDATE` for the decision that follows. */
+  getTrustProposal(id: number, lock?: boolean): Promise<TrustProposalRow | null>;
+  /** Trust proposals by status (`pending` by default; `all`), source, action and creation time, oldest first (500 by default, at most 5000). */
+  listTrustProposals(filter?: TrustProposalFilter): Promise<TrustProposalRow[]>;
+  /** The pending trust proposals naming a row as target or related, by id. */
+  pendingTrustProposalsFor(table: TrustTable, id: number): Promise<TrustProposalRow[]>;
+  /** Replaces a pending trust proposal's after state; a decided one is left alone. */
+  updatePendingTrustProposalAfter(id: number, after: Record<string, unknown>): Promise<void>;
+  /** Compare-and-set on a trust proposal's status, recording an after state and the decider; false when it was not in `from`. */
+  transitionTrustProposal(id: number, from: TrustProposalStatus, to: TrustProposalStatus, opts?: TrustProposalTransition): Promise<boolean>;
 
   /**
    * v0.35.5 — narrow UPDATE of `pages.compiled_truth`, `pages.timeline`, and
@@ -3215,6 +3315,16 @@ export interface BrainEngine {
   /** Sets each named setting to the value at its index for the rest of the current transaction (`set_config(name, value, true)`), in one statement. */
   applyTransactionSettings(names: readonly string[], values: readonly string[]): Promise<void>;
 
+  // The connect gate's persistence reads (engine-sql/connect-gate.ts): table probes, managed roots, graduation, retired epochs.
+  /** Whether persistence table `table` exists (a brain before the persistence migrations has none). */
+  hasPersistenceTable(table: PersistenceTable): Promise<boolean>;
+  /** The managed roots host `hostId` binds, plus every source with a local path, in one snapshot. */
+  listManagedRootBindings(hostId: string, opts?: { signal?: AbortSignal }): Promise<ManagedRootBindingRow[]>;
+  /** The graduation custody row, or null; `withRunSetting` adds the run the current transaction declares. */
+  readGraduationGateRow(opts?: { withRunSetting?: boolean }): Promise<GraduationGateRow | null>;
+  /** The outcome of every committed writer deactivation. */
+  listRetiredDeactivations(): Promise<RetiredDeactivationRow[]>;
+
   /**
    * What the belief ledger knows about one source (incarnation, purge epoch, newest coverage event, whether any purge
    * exists), or null for an unknown source. `batch` also returns the managed-mode rows and the plan-cache mode it
@@ -3492,6 +3602,8 @@ export interface BrainEngine {
   countOpenJobsByOwner(clientId: string): Promise<number>;
   /** Lock a delegated client's OAuth row for the rest of the transaction (delegated job admission). */
   lockOAuthClient(clientId: string): Promise<void>;
+  /** An agent job's source: archived and created_at, or null (the job authority check). */
+  readJobSourceState(sourceId: string): Promise<JobSourceState | null>;
   /** One `list_jobs` page, newest first on `(created_at, id)`, each row with `created_us` for the next cursor. */
   listJobPage(spec: JobPageSpec): Promise<JobRow[]>;
   /** The attachment filenames of a job, or null when the job does not exist. */

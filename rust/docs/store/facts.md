@@ -20,11 +20,14 @@ typed claims. Each member gives the answer PGLite gives today, odd behavior incl
 | `findTrajectory` | Typed claims and events of an entity, oldest first, world rows only for remote callers. A point carries its `embedding` only when its `embedding_model` is the `embedding_model` config value and its `embedded_text_hash` is `md5(fact)`; otherwise null. |
 | `listUnattributedFacts` | The review-list read of `src/core/review-lists.ts`: active rows with no `entity_slug` in any of `sourceIds` (duplicates read once), less rows whose page or entity page is soft-deleted, `worldOnly` keeping `visibility = 'world'`, newest id first, then `offset` and `limit`. Each row is `id, fact, kind, visibility, source_id, created_at, source`, `created_at` in the `timestamptz::text` form (`2026-06-18 09:00:00.5+00`). `excludePrivate` applies the private-provenance policy below, as `src/core/review-lists.ts:30` does. The `BrainEngine` member `listUnattributedFacts` (`src/core/rust-engine/store-members/facts.ts`) calls it in place of the SQL of `src/core/engine-sql/cli-reads-ops.ts`; its `excludePrivateProvenance` becomes this policy. |
 | `pageCollapseFacts` | The collapse-stage read of hybrid search (`facts/collapse.rs`, SQL in `src/core/engine-sql/search-reads.ts`): one `{ id, target, body_chars, body, lead }` row per page row whose id is in `ids`, soft-deleted pages and every source included, by id (the SQL has no `ORDER BY`); a missing id has no row. `target` is the first of `redirect_to`, `redirect` and `merged_into` that is a non-empty string after trimming spaces, then `superseded_by` when the lower-cased `status` holds the word `alias`, `redirect` or `redirected`. `BODY` is the first 65,536 code points of `compiled_truth`, spaces trimmed; `body_chars` is its length in code points, `body` its md5 hex for an id in `bodyIds` with at least 200 code points, `lead` its first 4,000 code points for an id in `bodyIds`. The TypeScript member refuses an id that is not a 32-bit integer, as the SQL casts both lists to `int[]`. It reads pages, not facts; it sits here because its `BrainEngine` capability class is `facts`. |
+| `listFenceRetireCandidates`, `listFenceFactRows` | The fence guard's two reads of a page's fence rows (`facts/fence.rs`): the rows a publication would retire, and the live rows the writer may not supersede. See "The fence guard's reads". |
 | `migrateFactsToCanonical` | Moves a phantom page's active rows onto the canonical slug, `row_num` offset past the canonical page's largest. The ontology duplicates the move would make are dropped first, in its own write, as PGLite runs the two statements outside one transaction. |
 
-Rows go out with dates as microsecond ISO text, `embedding` as a number list (or null),
-`trust_tier` `unknown` and
-`write_origin` null. `fact_fingerprint` follows `gbrain_fact_fingerprint` (lowercase, fold the
+Rows go out with dates as microsecond ISO text, `embedding` as a number list (or null), and the
+stored `trust_tier` and `write_origin`. Every write of a fact row (insert, update, supersede, rename,
+purge) stamps them through `trust::stamp` from the store's write trust context
+([trust.md](trust.md#the-tier-stamp-truststamp), [write_trust.md](write_trust.md)), as PGLite's
+`gbrain_stamp_trust_tier` trigger does; a record written before the field existed reads `unknown`. `fact_fingerprint` follows `gbrain_fact_fingerprint` (lowercase, fold the
 fingerprint punctuation, collapse spaces, sha256 hex).
 
 ## Private-provenance policy (`facts/privacy.rs`)
@@ -212,7 +215,7 @@ table the store does not hold and refuse with `engine_capability_missing` (they 
 | `listCapturedFactsForClassification` | The same lane facts with their fingerprint and `legit_twin` (another non-expired fact of the source with the same visibility, entity and fingerprint outside the lanes). By (source, id). | Served |
 | `listWorldFactsFromPrivateSources` | Active `world` facts held in, or extracted from, a page that is private by `visibility`, a privacy alias or `readable_by`, with `readable`. By id. | Served |
 | `loopFactDrift` | Closed loops whose commitment fact is still active. | Refused: needs `open_loops` |
-| `closedLoopWithActiveFact` | One closed loop whose commitment fact is still active. | Refused: needs `open_loops` |
+| `closedLoopWithActiveFact` | One closed loop whose commitment fact is still active. | Served from `facts/loops.rs`: a `done` or `dropped` loop whose fact exists with no `expired_at` |
 | `countLabelFacts` | The bounded count of evidenced label facts. | Refused: needs `open_loops` and `fact_withdrawals` (it also matches a regular expression with `~*` over page text) |
 | `listExtractorFactsForClassification` | Expired fenceless extractor facts with page, withdrawal, duplicate, fence and receipt evidence. | Refused: needs `persistence_requests` and `fact_withdrawals` |
 | `countPurgedPageFacts` | The bounded count of facts of a purged page, by class. | Refused: needs `page_purges`, `fact_withdrawals` and `open_loops` |
@@ -274,15 +277,17 @@ provenance page hides the row; then the entity, session, `since` (on `valid_from
 
 ## Open loops (`facts/loops.rs`)
 
-The `open_loops` table, for the three members loops-store.ts calls through the engine. The other loop
-statements (thread auto-close, the staleness pass, mutes and the loop-fact reads) still run through
-`executeRaw`, so they refuse on this engine.
+The `open_loops` table, for the three members loops-store.ts calls through the engine and the
+`loops_close` retry read `closedLoopWithActiveFact`. The other loop statements (thread auto-close,
+the staleness pass, mutes and the other loop-fact reads) still run through `executeRaw`, so they
+refuse on this engine.
 
 | Member | What it does |
 |---|---|
 | `upsertOpenLoop` | Inserts a loop, or updates the row with the same `(source_id, dedup_key)`. The update runs only when the row is open, the new activity is newer, or `closed_by` is `mute_recheck`; and only when `closed_by` is not `muted` or the counterparty email changed. It keeps `thread_id` and `detector`, keeps the old slug, email, page, due time and fact id when the new one is NULL, and keeps the old counterparty source when the new slug is NULL. An open row keeps its earlier `opened_at`; a reopened row takes the new one. Returns `{ id, created, applied }`. |
 | `listOpenLoops` | The rows that pass the source list, status, type, counterparty (slug in the counterparty source, or email) and id filters, by `last_activity_at` descending, then id descending, at most the clamped limit. |
 | `closeOpenLoop` | Closes an open row (in the named source when one is given) with a status, `closed_by` and now. NULL when no open row matches. |
+| `closedLoopWithActiveFact` | `{ id, status, fact_id }` of a `done` or `dropped` row (in the named source when one is given) whose fact exists with no `expired_at`; NULL otherwise, also for a row with no fact. |
 
 - Every upsert takes an id from the counter, also one that lands on an existing row, as `nextval`
   does before `ON CONFLICT`. A refused upsert (a CHECK value, an unknown source) rolls back and takes
@@ -298,8 +303,35 @@ statements (thread auto-close, the staleness pass, mutes and the loop-fact reads
   Postgres would read it in the session time zone.
 - Deleting a source removes its loops (`ON DELETE CASCADE`).
 
+## The fence guard's reads (`facts/fence.rs`)
+
+Two reads of one page's fact rows, for the page publication path (`engine-sql/facts.ts`
+`listFenceRetireCandidates`, `engine-sql/trust-fence.ts` `listFenceFactRows`). Both read the page's
+rows through the by-page index, keep the rows at a fence position (`row_num` set), and compare each
+with the incoming fence: a JSON array of `{ row_num, fact, visibility }` cells. A cell field that is
+absent or null equals nothing, as SQL `=` does. A document that is not an array of objects, or a
+`row_num` that is not an integer, refuses with `invalid_argument` (PGLite's `jsonb_to_recordset`
+raises).
+
+- `list_fence_retire_candidates`: the before-state (`FACT_PREIMAGE_SQL`'s keys, the times as the
+  `jsonb` text `2026-06-18T09:00:00.5+00:00`) of each row the incoming fence does not hold at the
+  same number, fact and visibility, in row number then id order, expired rows included. A
+  conversation-extractor row (`source` starting `cli:extract-conversation-facts`) is a candidate
+  only when a cell claims its number. A private row that `open-facts` opens in place is not.
+- `list_fence_fact_rows`: the live (`expired_at` null) rows under the same filters that are more
+  trusted than the writer (`above`), held narrower by a widening proposal, or opened (`opened`):
+  `{ id, row_num, fact, visibility, trust_tier, above, opened }`, by row number.
+
+What PGLite reads from the transaction, the store takes as a `FenceContext`: the writer's tier
+(`gbrain.write_trust_tier`, undeclared reads as `unknown`, a name that is no tier ranks 0) and the
+opened ids (`gbrain.write_open_facts`). Both napi members take it from the store's write trust context
+(`Store::fence_context`, [write_trust.md](write_trust.md)), which the engine's transaction sets.
+`above` compares the row's stored tier with the writer's. A row is held when it is not `world`, a
+cell at its number with its fact asks for `world`, and a `confirm` or `supersede_fact` proposal
+names it as the related fact, is `pending`, `rejected` or `undone`, and has a `visibility` key in its
+before state (`trust::proposals::held_narrower`, [trust.md](trust.md#trust-proposals-trustproposals)).
+
 ## Not modeled
 
-The withdrawal ledger and the insert/update guards that read it, the write-attribution and
-trust-tier triggers. Inputs whose PGLite outcome the store cannot
+The withdrawal ledger and the insert/update guards that read it, and the write-attribution trigger. Inputs whose PGLite outcome the store cannot
 reproduce refuse in the member with `engine_capability_missing`.

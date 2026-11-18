@@ -6,9 +6,11 @@ use common::{TempDir, open};
 use gbrain_store::Store;
 use gbrain_store::error::*;
 use gbrain_store::journal::Principal;
+use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::persistence::{
     ClaimStamp, ClaimableSpec, ExpireClaims, HousekeepingClaim, HousekeepingTurn,
-    TopologyChangeInsert, WriteCompletion, WriteRequestInsert,
+    ProjectionWindowCursor, SegmentedProjectionFilter, TopologyChangeInsert, WriteCompletion,
+    WriteRequestInsert,
 };
 use serde_json::{Value, json};
 
@@ -718,11 +720,165 @@ fn the_capacity_inputs_bucket_the_window_by_principal_and_day() {
     assert!(light["reclaim"].as_array().unwrap().is_empty());
 }
 
+/// Writes `slug` as PGLite's `putPage` does (`index: false`): the page alone, its projection unsealed.
+fn put_unsealed(store: &Store, slug: &str, body: &str) {
+    let input: PageInput = serde_json::from_value(json!({
+        "type": "note", "title": slug, "compiled_truth": body,
+    }))
+    .unwrap();
+    let options: PutPageOptions = serde_json::from_value(json!({ "index": false })).unwrap();
+    store.put_page(slug, &input, &options).unwrap();
+}
+
+fn window(
+    store: &Store,
+    after: (&str, &str),
+    high_water: Option<&str>,
+    cooldown: bool,
+) -> Vec<Value> {
+    let cursor: ProjectionWindowCursor = serde_json::from_value(json!({
+        "after": { "source_incarnation": after.0, "slug": after.1 }, "highWater": high_water,
+    }))
+    .unwrap();
+    store
+        .select_projection_window_jobs(&cursor, cooldown)
+        .unwrap()
+}
+
+/// `(lane, ord, slug)` of each window row.
+fn lanes(rows: &[Value]) -> Vec<(Value, Value, Value)> {
+    rows.iter()
+        .map(|r| (r["lane"].clone(), r["ord"].clone(), r["slug"].clone()))
+        .collect()
+}
+
+const NIL: &str = "00000000-0000-0000-0000-000000000000";
+
 #[test]
 fn an_empty_brain_has_an_empty_projection_queue() {
     let dir = TempDir::new("persist-projq");
     let store = open(&dir);
     assert!(store.projection_queue_empty().unwrap());
+    let rows = window(&store, (NIL, ""), None, true);
+    assert_eq!(
+        rows,
+        vec![json!({
+            "lane": null, "ord": null, "source_incarnation": null, "slug": null, "revision": null,
+            "high_water": null,
+        })]
+    );
+}
+
+#[test]
+fn page_writes_keep_the_projection_queue_as_the_trigger_does() {
+    let dir = TempDir::new("persist-projq-writes");
+    let store = open(&dir);
+    let inc = incarnation(&store);
+    for slug in ["notes/a", "notes/b", "notes/c", "notes/d", "notes/e"] {
+        put_unsealed(&store, slug, &format!("{slug} body"));
+    }
+    // A sealed write (the default put indexes and seals) drops the job.
+    let sealed: PageInput = serde_json::from_value(json!({
+        "type": "note", "title": "notes/e", "compiled_truth": "notes/e body",
+    }))
+    .unwrap();
+    store
+        .put_page("notes/e", &sealed, &PutPageOptions::default())
+        .unwrap();
+    store.soft_delete_page("notes/c", None).unwrap();
+    store.delete_page("notes/d", None).unwrap();
+    store.restore_page("notes/c", None).unwrap();
+    store.update_slug("notes/b", "notes/b2", None).unwrap();
+    assert!(!store.projection_queue_empty().unwrap());
+
+    let rows = window(&store, (NIL, ""), None, true);
+    let high_water = rows[0]["high_water"].as_str().unwrap().to_owned();
+    assert!(high_water.ends_with("+00"), "{high_water}");
+    let mut recent: Vec<_> = rows
+        .iter()
+        .filter(|r| r["lane"] == "recent")
+        .map(|r| r["slug"].clone())
+        .collect();
+    recent.sort_by_key(|s| s.to_string());
+    let window_lane: Vec<_> = lanes(&rows)
+        .into_iter()
+        .filter(|r| r.0 == "window")
+        .collect();
+    // A rename drops the old key's job and queues the new key at a new revision. The soft delete
+    // dropped notes/c's job; the restore gives it a new revision, so it is queued again.
+    let slugs: Vec<_> = window_lane
+        .iter()
+        .map(|r| r.2.as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(slugs, ["notes/a", "notes/b2", "notes/c"]);
+    assert_eq!(recent.len(), slugs.len());
+    for (i, row) in window_lane.iter().enumerate() {
+        assert_eq!(row.1, json!(i + 1));
+    }
+    assert!(rows.iter().all(|r| r["source_incarnation"] == inc.as_str()));
+
+    // The key window starts after the cursor and wraps to the start.
+    let wrapped = window(&store, (&inc, "notes/a"), Some(&high_water), true);
+    let order: Vec<_> = lanes(&wrapped)
+        .into_iter()
+        .filter(|r| r.0 == "window")
+        .map(|r| r.2)
+        .collect();
+    assert_eq!(order.last(), Some(&json!("notes/a")));
+    // A high water 11 minutes later leaves the recency lane empty.
+    let later = window(&store, (NIL, ""), Some("2999-01-01 00:00:00+00"), true);
+    assert!(later.iter().all(|r| r["lane"] == "window"));
+}
+
+#[test]
+fn the_window_refuses_a_cursor_that_is_not_a_uuid_or_time() {
+    let dir = TempDir::new("persist-projq-bad");
+    let store = open(&dir);
+    let cursor: ProjectionWindowCursor = serde_json::from_value(json!({
+        "after": { "source_incarnation": "nope", "slug": "" }, "highWater": null,
+    }))
+    .unwrap();
+    assert_eq!(
+        store
+            .select_projection_window_jobs(&cursor, true)
+            .unwrap_err()
+            .code,
+        INVALID_ARGUMENT
+    );
+    let cursor: ProjectionWindowCursor = serde_json::from_value(json!({
+        "after": { "source_incarnation": NIL, "slug": "" }, "highWater": "yesterday",
+    }))
+    .unwrap();
+    assert_eq!(
+        store
+            .select_projection_window_jobs(&cursor, true)
+            .unwrap_err()
+            .code,
+        INVALID_ARGUMENT
+    );
+}
+
+#[test]
+fn no_inline_page_is_a_pending_segmented_projection() {
+    let dir = TempDir::new("persist-projq-seg");
+    let store = open(&dir);
+    put_unsealed(&store, "notes/a", "body");
+    let filter: SegmentedProjectionFilter = serde_json::from_value(json!({ "limit": 10 })).unwrap();
+    assert!(
+        store
+            .list_pending_segmented_projections(&filter)
+            .unwrap()
+            .is_empty()
+    );
+    let filter: SegmentedProjectionFilter =
+        serde_json::from_value(json!({ "limit": 10, "notAfter": "soon" })).unwrap();
+    assert_eq!(
+        store
+            .list_pending_segmented_projections(&filter)
+            .unwrap_err()
+            .code,
+        INVALID_ARGUMENT
+    );
 }
 
 const WRITER: &str = "e0000000-0000-4000-8000-0000000000e1";

@@ -10,8 +10,6 @@
 //! - The capacity forecast's inputs: the principal rows, then the topology-change rows
 //!   (`topology::topology_capacity_days`). This engine has no relation size, so `tableBytes` is
 //!   null.
-//! - Whether the page projection queue is empty (`projection_queue_empty`): the queue stub stores
-//!   nothing, so it is empty exactly when every live page's projection is sealed.
 //!
 //! Lengths are `octet_length` of the Postgres text form (`timeline_queries::jsonb_text` for
 //! jsonb). Times are microseconds; a day is 86,400 seconds, as `interval '1 day'` is on a UTC
@@ -460,19 +458,6 @@ pub(crate) fn read_capacity_forecast_inputs_in(
     }))
 }
 
-// ---------------------------------------------------------------------------------------------
-// The page projection queue.
-
-/// True when the page projection queue would be empty: every live page's text projection is
-/// sealed at its knowledge revision. The queue stub (`queue_page_projection`) stores no rows, so a
-/// live page that is not sealed stands for a row this engine cannot list.
-pub(crate) fn projection_queue_empty_in(read: &dyn KvRead) -> Result<bool> {
-    Ok(crate::pages::all_pages(read)?.iter().all(|p| {
-        p.deleted_at_us.is_some()
-            || p.text_projection_revision.as_deref() == Some(p.knowledge_revision.as_str())
-    }))
-}
-
 impl Store {
     /// `claimHousekeepingTurn(claim)`: true when the turn was free and is now leased.
     pub fn claim_housekeeping_turn(&self, claim: &HousekeepingClaim) -> Result<bool> {
@@ -507,10 +492,5 @@ impl Store {
     /// `readCapacityForecastInputs({ light })`.
     pub fn read_capacity_forecast_inputs(&self, light: bool) -> Result<Value> {
         read_capacity_forecast_inputs_in(&*self.read()?, &*self.env, light)
-    }
-
-    /// Whether the page projection queue is empty (`selectProjectionWindowJobs`).
-    pub fn projection_queue_empty(&self) -> Result<bool> {
-        projection_queue_empty_in(&*self.read()?)
     }
 }

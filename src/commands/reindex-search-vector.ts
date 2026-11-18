@@ -44,17 +44,19 @@
  * Deliberately NOT one engine.transaction(): on Postgres that would hold every
  * page/chunk row lock for the whole run (the batching exists to avoid that),
  * and a hang inside it would bank zero progress.
+ *
+ * Each step is a BrainEngine member. The Rust engine keeps no stored keyword
+ * vector and no trigger, so under its one language ('english') every step is a
+ * no-op and the result reports the same counts; another language refuses
+ * (rust/docs/store/link_temporal.md).
  */
 
 import type { BrainEngine } from '../core/engine.ts';
-import { getFtsLanguage, FTS_REINDEX_MARKER_KEY, pageSearchVectorTriggerFnSql, chunkSearchVectorTriggerFnSql } from '../core/fts-language.ts';
-import { FUNCTION_SEARCH_PATH_HARDENING_SQL } from '../core/function-search-path.ts';
+import { getFtsLanguage, FTS_REINDEX_MARKER_KEY } from '../core/fts-language.ts';
 import { checkpointKey } from '../core/backfill-base.ts';
-import { ensureFactsFtsIndex } from '../core/facts/fts-index.ts';
 import { consentGate } from '../core/consent-cli.ts';
 import type { ConsentEnv } from '../core/consent.ts';
 import { createProgress } from '../core/progress.ts';
-import { backfillChunkVectors, backfillPageVectors } from '../core/search-vector-backfill.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 
 export interface ReindexSearchVectorOpts {
@@ -77,11 +79,6 @@ export interface ReindexSearchVectorResult {
   durationMs: number;
 }
 
-interface CountRow {
-  pages: number;
-  chunks: number;
-}
-
 /** Checkpoint names (→ `backfill.<name>.last_id`), one per backfilled table. */
 const CHECKPOINT_NAME = { pages: 'fts_pages', content_chunks: 'fts_content_chunks' } as const;
 
@@ -98,13 +95,7 @@ export async function runReindexSearchVector(
   const startedAt = Date.now();
 
   // Inventory: how many rows will the backfill touch?
-  const counts = await engine.executeRaw<CountRow>(
-    `SELECT
-       (SELECT COUNT(*)::int FROM pages WHERE search_vector IS NOT NULL) AS pages,
-       (SELECT COUNT(*)::int FROM content_chunks WHERE search_vector IS NOT NULL) AS chunks`
-  );
-  const pagesCount = counts[0]?.pages ?? 0;
-  const chunksCount = counts[0]?.chunks ?? 0;
+  const { pages: pagesCount, chunks: chunksCount } = await engine.countSearchVectorRows();
 
   if (opts.dryRun) {
     const result: ReindexSearchVectorResult = {
@@ -149,11 +140,9 @@ export async function runReindexSearchVector(
   }
 
   // Trigger bodies come from the shared builders (fts-language.ts), the same
-  // text the fts-cjk-boundary migration applies. gbrain_fts_input(), which
-  // they call, exists on every brain: the schema blob and that migration
-  // create it before any command runs.
-  const recreatePagesFn = pageSearchVectorTriggerFnSql(lang);
-  const recreateChunksFn = chunkSearchVectorTriggerFnSql(lang);
+  // text the fts-cjk-boundary migration applies (engine-sql/search-vector.ts).
+  // gbrain_fts_input(), which they call, exists on every brain: the schema
+  // blob and that migration create it before any command runs.
 
   // #4795: marker first (see the docblock). A prior run interrupted on the
   // SAME language resumes from its checkpoints; any other state starts over.
@@ -167,7 +156,7 @@ export async function runReindexSearchVector(
   await engine.setConfig(FTS_REINDEX_MARKER_KEY, lang);
 
   try {
-    await engine.executeRaw(recreatePagesFn);
+    await engine.replaceSearchVectorTriggerFunction('pages', lang);
   } catch (err) {
     // Nothing landed (e.g. no CREATE FUNCTION privilege): put the marker back
     // the way THIS run found it. Absent before → clear it, so doctor doesn't
@@ -181,9 +170,8 @@ export async function runReindexSearchVector(
     ).catch(() => {});
     throw err;
   }
-  await engine.executeRaw(recreateChunksFn);
-  // CREATE OR REPLACE reset both functions' search_path; pg_temp goes back last (#7632, function-search-path.ts).
-  await engine.executeRaw(FUNCTION_SEARCH_PATH_HARDENING_SQL);
+  // CREATE OR REPLACE reset both functions' search_path; the chunks step puts pg_temp back last (#7632, function-search-path.ts).
+  await engine.replaceSearchVectorTriggerFunction('chunks', lang);
 
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
 
@@ -191,15 +179,15 @@ export async function runReindexSearchVector(
   // timeline; content_chunks gets a direct vector compute since the column
   // itself is what we want.
   progress.start('reindex_search_vector.pages', pagesCount);
-  await backfillPageVectors(engine, { lang, checkpoint: CHECKPOINT_NAME.pages, tick: n => progress.tick(n) });
+  await engine.backfillSearchVectors('pages', { lang, checkpoint: CHECKPOINT_NAME.pages, tick: n => progress.tick(n) });
   progress.finish();
 
   progress.start('reindex_search_vector.chunks', chunksCount);
-  await backfillChunkVectors(engine, { lang, checkpoint: CHECKPOINT_NAME.content_chunks, tick: n => progress.tick(n) });
+  await engine.backfillSearchVectors('chunks', { lang, checkpoint: CHECKPOINT_NAME.content_chunks, tick: n => progress.tick(n) });
   progress.finish();
 
   // The facts keyword index is an expression index under a literal language: build the new one beside it and swap (no row rewrite, no gap).
-  await ensureFactsFtsIndex(engine, { lang, version: 0, notice: line => process.stderr.write(line) });
+  await engine.ensureFactsKeywordIndex(lang, line => process.stderr.write(line));
 
   // Both backfills returned: the index is whole again under `lang`.
   await engine.unsetConfig(checkpointKey(CHECKPOINT_NAME.pages));

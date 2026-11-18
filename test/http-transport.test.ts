@@ -31,7 +31,10 @@ interface FakeEngine {
   // expected after the migration, but harmless if it sticks around).
   executeRaw: <T = Record<string, unknown>>(sql: string, params?: unknown[]) => Promise<T[]>;
   sql: ReturnType<typeof makeSqlTag>;
-  audit: { token_name: string | null; operation: string; status: string; latency_ms: number }[];
+  audit: { token_name: string | null; agent_name?: string | null; operation: string; status: string; latency_ms: number }[];
+  /** Raw `INSERT INTO mcp_request_log` statements that reached executeRaw (none expected). */
+  rawLogInserts: string[];
+  logMcpRequest: (row: { token_name: string | null; agent_name: string | null; operation: string; latency_ms: number | null; status: string }) => Promise<void>;
 }
 
 function makeSqlTag(handler: SqlHandler) {
@@ -78,6 +81,7 @@ function makeFakeEngine(cfg: FakeEngineConfig = {}): FakeEngine {
   const validTokens = cfg.validTokens ?? new Map();
   const revokedTokens = cfg.revokedTokens ?? new Set();
   const audit: FakeEngine['audit'] = [];
+  const rawLogInserts: string[] = [];
 
   // Legacy template-tag handler. Preserved so any non-migrated call path
   // still has a place to land (defense in depth). The new code path routes
@@ -111,12 +115,8 @@ function makeFakeEngine(cfg: FakeEngineConfig = {}): FakeEngine {
     }
 
     if (norm.startsWith('insert into mcp_request_log')) {
-      audit.push({
-        token_name: values[0] as string | null,
-        operation: values[1] as string,
-        latency_ms: values[2] as number,
-        status: values[3] as string,
-      });
+      // The request log row goes through engine.logMcpRequest, never raw SQL.
+      rawLogInserts.push(query);
       return [];
     }
 
@@ -138,7 +138,12 @@ function makeFakeEngine(cfg: FakeEngineConfig = {}): FakeEngine {
     return Promise.resolve(result as T[]);
   };
 
-  return { kind: 'postgres', executeRaw, sql, audit };
+  // The typed request log member (BrainEngine.logMcpRequest) the transport's logRequest calls.
+  const logMcpRequest = async (row: { token_name: string | null; agent_name: string | null; operation: string; latency_ms: number | null; status: string }) => {
+    audit.push({ token_name: row.token_name, agent_name: row.agent_name, operation: row.operation, latency_ms: row.latency_ms as number, status: row.status });
+  };
+
+  return { kind: 'postgres', executeRaw, sql, audit, rawLogInserts, logMcpRequest };
 }
 
 interface TestServer {
@@ -735,6 +740,8 @@ describe('http-transport: mcp_request_log audit', () => {
       expect(row.operation).toBe('tools/list');
       expect(row.status).toBe('success');
       expect(row.latency_ms).toBeGreaterThanOrEqual(0);
+      expect(row.agent_name).toBeNull();
+      expect(srv.engine.rawLogInserts).toEqual([]);
     } finally { srv.stop(); }
   });
 
@@ -767,6 +774,27 @@ describe('http-transport: mcp_request_log audit', () => {
       const row = srv.engine.audit[srv.engine.audit.length - 1];
       expect(row.token_name).toBeNull();
       expect(row.status).toBe('auth_failed');
+      expect(srv.engine.rawLogInserts).toEqual([]);
+    } finally { srv.stop(); }
+  });
+
+  test('22b. a request log write that throws (at once or later) never fails the request', async () => {
+    const TOK = 'audit-tok-throws';
+    const srv = await startTest({ validTokens: new Map([[hash(TOK), { id: 'a-3', name: 'audit-throws' }]]) });
+    try {
+      const call = async () => {
+        const r = await fetch(`${srv.url}/mcp`, { method: 'POST', headers: { 'Authorization': `Bearer ${TOK}`, 'Content-Type': 'application/json' }, body: rpc('tools/list') });
+        const body = await r.json();
+        return { status: r.status, hasTools: Array.isArray(body.result?.tools) && body.result.tools.length > 0 };
+      };
+      srv.engine.logMcpRequest = () => { throw new TypeError('log write threw before it started'); };
+      const sync = await call();
+      srv.engine.logMcpRequest = async () => { throw new Error('log write rejected'); };
+      const rejected = await call();
+      await new Promise(r => setTimeout(r, 10));
+      expect({ sync, rejected, audit: srv.engine.audit.length, raw: srv.engine.rawLogInserts }).toEqual({
+        sync: { status: 200, hasTools: true }, rejected: { status: 200, hasTools: true }, audit: 0, raw: [],
+      });
     } finally { srv.stop(); }
   });
 });
