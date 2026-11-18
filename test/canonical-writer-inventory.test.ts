@@ -13,9 +13,12 @@ function files(directory: string): string[] {
     ? files(join(directory, entry.name)) : entry.name.endsWith('.ts') && !entry.name.endsWith('.generated.ts') ? [join(directory, entry.name)] : []);
 }
 type Inventory = Map<string, { ceiling: number; boundary: string; reason: string }>;
-function loadInventory(): Inventory {
-  const rows = readFileSync(join(root, 'docs/architecture/canonical-writers.tsv'), 'utf8').split('\n')
+function inventoryRows(): string[][] {
+  return readFileSync(join(root, 'docs/architecture/canonical-writers.tsv'), 'utf8').split('\n')
     .filter(line => line && !line.startsWith('#')).map(line => line.split('\t'));
+}
+function loadInventory(): Inventory {
+  const rows = inventoryRows();
   return new Map(rows.map(([path, ceiling, boundary, reason]) => [path, { ceiling: Number(ceiling), boundary, reason }]));
 }
 function gapsFor(sources: Iterable<[string, string]>, inventory: Inventory): string[] {
@@ -35,6 +38,12 @@ test('new canonical write callsites require a reviewed inventory and an enforcem
     expect(readFileSync(join(root, path), 'utf8').length).toBeGreaterThan(0);
   }
   expect(gaps, 'Classify each addition in canonical-writers.tsv after checking DB and filesystem ordering.').toEqual([]);
+});
+// A Map keeps the last row for a path, so a second row silently replaced the reviewed one.
+test('each file has exactly one row in canonical-writers.tsv', () => {
+  const seen = new Set<string>(); const duplicates: string[] = [];
+  for (const [path] of inventoryRows()) { if (seen.has(path)) duplicates.push(path); seen.add(path); }
+  expect(duplicates, 'Merge the duplicate rows into one reviewed row.').toEqual([]);
 });
 test('a planted bypass in a converted writer or a new file fails the census', () => {
   const inventory = loadInventory();

@@ -19,7 +19,7 @@
  *    connection the INSERT waits behind the DELETE, as it must.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import postgres from 'postgres';
+import postgres from '#postgres';
 import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 

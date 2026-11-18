@@ -1202,7 +1202,7 @@ export class PostgresEngine implements BrainEngine {
   readHeldCoverageRows(sourceIds: string[] | null) { return this.preparationRead(exec => persistenceJournalImpl.readHeldCoverageRows(unscopedExecutor(exec, 'persistence: hold summary read ran unscoped through executeRaw'), sourceIds)); }
   readWriteRequest(principalKind: string, principalId: string, requestId: string) { return this.preparationRead(exec => persistenceJournalImpl.readWriteRequest(unscopedExecutor(exec, 'persistence: request read ran unscoped through executeRaw'), principalKind, principalId, requestId)); }
   readWriteRequestById(id: string, opts?: { signal?: AbortSignal }) { return this.preparationRead(exec => persistenceJournalImpl.readWriteRequestById(unscopedExecutor(exec, 'persistence: request read ran unscoped through executeRaw'), id, opts)); }
-  lockPersistenceCounters(keys: readonly string[]) { return persistenceJournalImpl.lockPersistenceCounters(this.autocommitSql, keys); }
+  lockPersistenceCounters(keys: readonly string[]): Promise<persistenceJournalImpl.CounterRow[]> { return this._pageTransaction ? persistenceJournalImpl.lockPersistenceCounters(this.autocommitSql, keys) : this.transaction(tx => tx.lockPersistenceCounters(keys)); } // pipelined: one connection only, so open a transaction
   insertWriteRequest(row: persistenceJournalImpl.WriteRequestInsert) { return persistenceJournalImpl.insertWriteRequest(this.autocommitSql, row); }
   stampWriteClaim(id: string, token: string, leaseMs: number, phaseJson: string) { return persistenceJournalImpl.stampWriteClaim(this.autocommitSql, id, token, leaseMs, phaseJson); }
   lockWriteRequest(id: string) { return persistenceJournalImpl.lockWriteRequest(this.autocommitSql, id); }
