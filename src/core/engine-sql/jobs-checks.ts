@@ -9,7 +9,7 @@
  * depended on one, an order is added so the engines agree on it.
  */
 import type { BrainEngine } from '../engine.ts';
-import { UNREVIEWED_LIVE_JOBS_WHERE } from './jobs-queue.ts';
+import { listUnreviewedJobAuthorities } from './jobs-queue.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
 
@@ -39,7 +39,7 @@ export interface GlobalMaintenanceDeaths {
 export async function readGlobalMaintenanceDeaths(tx: Raw, spec: { deaths: number }): Promise<GlobalMaintenanceDeaths> {
   const recent = await tx.executeRaw<{ id: number | string; status: string; error_text: string | null }>(
     `SELECT id, status, error_text FROM minion_jobs
-      WHERE name = 'autopilot-global-maintenance' AND status IN ${TERMINAL}
+      WHERE name = 'autopilot-global-maintenance' AND status IN ('completed', 'failed', 'dead', 'cancelled')
       ORDER BY finished_at DESC NULLS LAST, id DESC LIMIT $1`, [spec.deaths]);
   const children = await tx.executeRaw<{ phase: 'patterns' | 'synthesize'; deaths: number | string; last_at: string | null }>(
     `SELECT phase, count(*)::int AS deaths, max(finished_at)::text AS last_at FROM (
@@ -50,7 +50,7 @@ export async function readGlobalMaintenanceDeaths(tx: Raw, spec: { deaths: numbe
                  FROM (SELECT id, status, error_text, finished_at,
                               COALESCE(idempotency_key, data->>'__released_idempotency_key') AS key
                          FROM minion_jobs
-                        WHERE name = 'subagent' AND status IN ${TERMINAL}) keyed
+                        WHERE name = 'subagent' AND status IN ('completed', 'failed', 'dead', 'cancelled')) keyed
                 WHERE key LIKE 'dream:patterns:%' OR key LIKE 'dream:synth%') phased
      ) recent
       WHERE n <= $1
@@ -119,9 +119,7 @@ export interface LegacyJobAuthorityRead {
 }
 
 export async function readLegacyJobAuthority(tx: Raw): Promise<LegacyJobAuthorityRead> {
-  const live = await tx.executeRaw<{ id: number | string; status: string; submission_authority: unknown; legacy_authority_is_null: boolean }>(
-    `SELECT id, status, submission_authority, submission_authority IS NULL AS legacy_authority_is_null
-       FROM minion_jobs WHERE ${UNREVIEWED_LIVE_JOBS_WHERE} ORDER BY id`);
+  const live = await listUnreviewedJobAuthorities(tx);
   const active = await tx.executeRaw<{ id: number | string }>("SELECT id FROM minion_jobs WHERE status = 'active' ORDER BY id LIMIT 10");
   const terminal = await tx.executeRaw<{ status: string; count: number | string }>(
     `SELECT status, count(*) AS count FROM minion_jobs
@@ -238,8 +236,6 @@ export interface FactsAbsorbJobRow {
   finished_at: Date | string | null;
 }
 
-const FACTS_ABSORB_COLUMNS = "id, idempotency_key, status, error_text, data->>'slug' AS slug, COALESCE(data->>'sourceId', 'default') AS source_id, finished_at";
-
 type RawFactsAbsorbJob = Omit<FactsAbsorbJobRow, 'id'> & { id: number | string };
 const factsAbsorbRow = (r: RawFactsAbsorbJob): FactsAbsorbJobRow => ({ ...r, id: Number(r.id) });
 
@@ -249,7 +245,8 @@ const factsAbsorbRow = (r: RawFactsAbsorbJob): FactsAbsorbJobRow => ({ ...r, id:
  */
 export async function listFactsAbsorbJobsByKeyPrefix(tx: Raw, spec: { prefix: string; keys: readonly string[] }): Promise<FactsAbsorbJobRow[]> {
   const rows = await tx.executeRaw<RawFactsAbsorbJob>(
-    `SELECT ${FACTS_ABSORB_COLUMNS} FROM minion_jobs
+    `SELECT id, idempotency_key, status, error_text, data->>'slug' AS slug, COALESCE(data->>'sourceId', 'default') AS source_id, finished_at
+       FROM minion_jobs
       WHERE name = 'facts-absorb' AND left(idempotency_key, length($1::text)) = $1::text
         AND (status = 'dead' OR idempotency_key = ANY($2::text[]))
       ORDER BY id`, [spec.prefix, spec.keys]);
@@ -259,7 +256,8 @@ export async function listFactsAbsorbJobsByKeyPrefix(tx: Raw, spec: { prefix: st
 /** The dead facts-absorb jobs whose idempotency key is in `keys`, by id. */
 export async function listDeadFactsAbsorbJobsByKeys(tx: Raw, keys: readonly string[]): Promise<FactsAbsorbJobRow[]> {
   const rows = await tx.executeRaw<RawFactsAbsorbJob>(
-    `SELECT ${FACTS_ABSORB_COLUMNS} FROM minion_jobs
+    `SELECT id, idempotency_key, status, error_text, data->>'slug' AS slug, COALESCE(data->>'sourceId', 'default') AS source_id, finished_at
+       FROM minion_jobs
       WHERE name = 'facts-absorb' AND status = 'dead' AND idempotency_key = ANY($1::text[])
       ORDER BY id`, [keys]);
   return rows.map(factsAbsorbRow);

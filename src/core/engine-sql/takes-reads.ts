@@ -8,6 +8,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
 
@@ -69,21 +70,12 @@ export interface McpResolvedSpec {
 
 /** Resolved takes whose `resolved_by` carries the MCP server stamp, in the caller's source and holder scope. */
 export async function countMcpResolvedTakes(tx: Raw, spec: McpResolvedSpec): Promise<number> {
-  const where: string[] = [`t.resolved_at IS NOT NULL`, `t.resolved_by LIKE 'mcp:%'`];
-  if (spec.excludePrivate) where.push(privatePagesFilterForCaller('p'));
-  const params: unknown[] = [];
-  if (spec.sourceIds) {
-    params.push([...spec.sourceIds]);
-    where.push(`p.source_id = ANY($${params.length}::text[])`);
-  }
-  if (spec.holders) {
-    params.push([...spec.holders]);
-    where.push(`t.holder = ANY($${params.length}::text[])`);
-  }
-  const rows = await tx.executeRaw<{ n: string }>(
-    `SELECT count(*)::text AS n FROM takes t JOIN pages p ON p.id = t.page_id WHERE ${where.join(' AND ')}`,
-    params,
-  );
+  const privacy = spec.excludePrivate ? sqlFragment` AND ${trustedSql(privatePagesFilterForCaller('p'))}` : sqlFragment``;
+  const sources = spec.sourceIds ? sqlFragment` AND p.source_id = ANY(${[...spec.sourceIds]}::text[])` : sqlFragment``;
+  const holders = spec.holders ? sqlFragment` AND t.holder = ANY(${[...spec.holders]}::text[])` : sqlFragment``;
+  const { text, params } = renderFragment(sqlFragment`SELECT count(*)::text AS n FROM takes t JOIN pages p ON p.id = t.page_id
+    WHERE t.resolved_at IS NOT NULL AND t.resolved_by LIKE 'mcp:%'${privacy}${sources}${holders}`);
+  const rows = await tx.executeRaw<{ n: string }>(text, params);
   return parseInt(rows[0]?.n ?? '0', 10);
 }
 
