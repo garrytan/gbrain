@@ -66,12 +66,17 @@ language is refused with `engine_capability_missing` (`keyword_search`) at the f
 
 - The refresh after a link write and the temporal and wanted steps of a derived-link publication are separate store
   calls, not one transaction as on PGLite and Postgres. A crash between them leaves the state rows stale; the next
-  `staleLinkRelationshipKeys` sweep finds them.
+  `staleLinkRelationshipKeys` sweep finds them. They become one transaction when the transactions core item lands
+  (`docs/designs/RUST_ENGINE_INTERFACES.md`, link_temporal).
 - The stale-relationship sweep itself refuses on Rust (it runs in `maintenanceTransaction`).
 - `countPendingProjectionPages` and `projectionRebuildProgress` refuse. Search reaches them only after
   `probeProjectionReadiness`, which reads through `executeRaw` and so also refuses or reports unknown on Rust.
+- `gbrain reindex-search-vector` for a language other than `english` refuses (`keyword_search`): see "The keyword
+  index rebuild is a no-op".
 - The store has no `graph_generation_seq`: a relationship write does not bump a graph generation.
 - `lineGrammar` publication checks the generation config value but takes no `FOR SHARE` lock: the store's write
   transaction is serial.
 - `edgeValidityCounts` reports counts on every store (the SQL arm returns null when the tables are absent, which never
   happens on a store), and `proposals` is always zero: the store keeps no `link_edge_proposals` rows.
+- The `temporal` read option of a link read (`LinkReadScope.temporal`) still refuses (`links`): the store reads link
+  rows as they are, with no point-in-time view. See [link_queries.md](link_queries.md), "Refusals".

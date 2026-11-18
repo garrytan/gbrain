@@ -1103,6 +1103,11 @@ rebuild counts and the retrieval coverage counts. Detail: `rust/docs/store/link_
 - **Members (19), capability:** `links` (12), `keyword_search` (4, a no-op under `english`), `health` (3; `countPendingProjectionPages` and `projectionRebuildProgress` refuse).
 - **Postgres tables:** `link_transitions`, `link_relationships`, `links.assertion_tense`; SQL in `src/core/engine-sql/link-temporal.ts`, `search-vector.ts`, `retrieval-coverage.ts`.
 - **Parity cases:** `test/engine-parity/link-temporal.test.ts`.
+- **Follow-ups:** `retrieval-coverage-health`: serve the projection readiness probe (`probeProjectionReadiness`, which
+  reads through `executeRaw` today) and the pending-projection counts (`countPendingProjectionPages`,
+  `projectionRebuildProgress`), so retrieval coverage reports on a Rust brain. When the transactions core item lands,
+  the refresh after a link write and the temporal and wanted steps of a derived-link publication run in one store
+  transaction, as on PGLite and Postgres.
 
 ### timeline_queries
 
@@ -1739,7 +1744,7 @@ brain; then the first persistence slice (about 4 days, core) comes first.
 | Timeline date index hook in `timeline.rs` | a family asking | timeline_queries |
 | vectors (`X`): chunk and take vectors, vector search | the coming vector store work | embeddings, takes capability, page_body chunk vectors, `findCandidateDuplicates` with an embedding |
 | embeddings (`B`): stale counts, signatures, embedding state | vectors | stats `getHealth`, chunk_queries shared cases, takes capability |
-| transactions (`w`): the BrainEngine `transaction` callback across napi and `lockPageKeys` | a store transaction that stays open across napi calls | the nine cases that open a transaction |
+| transactions (`w`): the BrainEngine `transaction` callback across napi and `lockPageKeys` | a store transaction that stays open across napi calls | the nine cases that open a transaction; link_temporal (one transaction for the link refresh and the derived-link steps) |
 | relations (`v`): the relation API in place of raw SQL | Track 2 of the design (D18) | not in the Dec 1 scope; `executeRaw` and the rest keep refusing |
 | Source-delete list (`cascade::remove_source_rows`) | built; nothing calls it yet | facts, aliases, code_edges, link_queries, raw_files, page_body, takes, extraction |
 | Source delete itself (a store member in place of the raw SQL) | nothing | serving `sources remove` on the Rust engine |
