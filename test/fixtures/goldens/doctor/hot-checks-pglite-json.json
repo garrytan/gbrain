@@ -1378,6 +1378,15 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
+            "message": "Not applicable: this brain has no members (gbrain access member add <id>).",
+            "name": "access_pages_read_by_nobody",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
             "message": "Not applicable: no attest credential reads named sources as the person (--attest-read person).",
             "name": "attest_read_shared_scope",
             "readiness_state": "not_applicable",
@@ -1438,7 +1447,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 186 table(s) the applied migrations create exist.",
+            "message": "All 187 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -6851,6 +6860,15 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
+            "message": "Not applicable: this brain has no members (gbrain access member add <id>).",
+            "name": "access_pages_read_by_nobody",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
             "message": "Not applicable: no attest credential reads named sources as the person (--attest-read person).",
             "name": "attest_read_shared_scope",
             "readiness_state": "not_applicable",
@@ -6911,7 +6929,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 186 table(s) the applied migrations create exist.",
+            "message": "All 187 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },

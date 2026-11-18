@@ -14,7 +14,6 @@
 import type { Check } from '../../doctor.ts';
 import { agentFix, checkError, infoCheck } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
-import { listMembers } from '../../../core/access/members.ts';
 import { appliedRules } from '../../../core/access/policy.ts';
 import { ruleCoversSql } from '../../../core/access/folder-rules.ts';
 import { MEMBER_PAGE_PREFIX, NOBODY } from '../../../core/access/principals.ts';
@@ -30,7 +29,7 @@ async function verdict(ctx: DoctorContext): Promise<Check> {
   const engine = connectedEngine(ctx);
   const started = Date.now();
   try {
-    const members = await listMembers(engine, { includeRemoved: true });
+    const members = await engine.executeRaw<{ id: string; status: string }>("SELECT id, CASE WHEN tombstoned_at IS NOT NULL THEN 'removed' WHEN disabled_at IS NOT NULL THEN 'disabled' ELSE 'enabled' END AS status FROM access_members ORDER BY id");
     if (!members.length) return infoCheck(name, 'Not applicable: this brain has no members (gbrain access member add <id>).', 'not_applicable');
     const enabled = members.filter(m => m.status === 'enabled');
     const groups = await engine.executeRaw<{ group_id: string; member_id: string }>('SELECT group_id, member_id FROM access_group_members');
