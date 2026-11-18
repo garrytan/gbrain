@@ -315,7 +315,6 @@ export async function importFromContent(
     onPostCommitEmbedding?: (complete: () => Promise<ImportEmbeddingResult>) => void;
   } & ImportFenceOptions = {},
 ): Promise<ImportResult> {
-  const viaOwner = forwardWholeOperation<ImportResult>(engine, 'importFromContent', [slug, content, opts]); if (viaOwner) return viaOwner;
   // Normalize BEFORE any tx write: putPage lowercases via validateSlug but upsertChunks used to query by the
   // caller's raw slug, so a mixed-case slug created the page row then failed the chunk upsert with "Page not found",
   // rolling back the whole import (#430).
@@ -327,13 +326,14 @@ export async function importFromContent(
   // silently fabricated a duplicate at (default, slug) — causing later
   // bare-slug subqueries (getTags, deleteChunks, etc.) to crash with 21000.
   const sourceId = opts.sourceId;
-  // Reject oversized payloads before any parsing, chunking, or embedding happens.
+  // Reject oversized or refused payloads (executable frontmatter) before any engine access, chunking or embedding; a client of a Rust brain's owner screens here too.
   // Uses Buffer.byteLength to count UTF-8 bytes the same way disk size would,
   // so the network path behaves identically to the file path.
   const screen = screenImportContent({ content, path: slug + '.md', ...(opts.activePack ? { activePack: opts.activePack } : {}), ...(opts.fenceScreen === undefined ? { fences: opts.fences ?? 'lenient' } : {}), ...(opts.holdNoncanonicalPrivate ? { holdNoncanonicalPrivate: true } : {}) });
   if (screen.status === 'refused') {
     return { slug, status: screen.refusal.code === 'file_too_large' ? 'skipped' : 'error', chunks: 0, error: screen.refusal.message, refusal: screen.refusal, skip_reason: screen.refusal.code };
   }
+  const viaOwner = forwardWholeOperation<ImportResult>(engine, 'importFromContent', [slug, content, opts]); if (viaOwner) return viaOwner;
   const parsed = (screen as { parsed: ParsedMarkdown }).parsed;
   if (!opts.prepare) await assertUnmanagedCanonicalWriter(engine, 'direct content import', { sourceId: sourceId ?? 'default' });
   const importScreened = async (): Promise<ImportResult> => {
