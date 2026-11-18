@@ -2,7 +2,9 @@
 //! `decide_calibrations` tables of the PGLite engine (src/core/ai/decide/store.ts).
 //!
 //! Members: readDecideState, upsertDecideState, deleteDecideState, ensureDecideState,
-//! insertDecideSpend, dailyDecideSpend, listDecideSpendBySlot.
+//! insertDecideSpend, dailyDecideSpend, listDecideSpendBySlot; and, in `receipts`, insertDecideReceipts,
+//! pruneDecideReceipts, listDecideReceiptStats, decideSlotUsage, decideConflictNoEntityCounts,
+//! listDecideReplayReceipts, listDecideResolvedModels, listDecideMixedModelDecisions.
 //!
 //! Keys (every record starts with `keys::EVAL_CAPTURE`, `Z`; this family owns sub-tags
 //! `0x10..=0x1F`):
@@ -13,6 +15,8 @@
 //!   rows. Walking it is walking the table in insertion order, which is the order Postgres sums
 //!   a float column in.
 //! - Counter `M decide_spend_seq`.
+//! - `Z 0x13 <id u64 BE>` and `Z 0x14 <created_at u64 BE><id u64 BE>`, counter `M decide_receipt_id`: the
+//!   receipts and their time index (see `receipts`).
 //!
 //! Records are small and read whole. Nothing here has a foreign key, so nothing cascades.
 //! Floats are kept as their bit pattern: JSON text would not give every `f64` back exactly.
@@ -26,6 +30,9 @@ use crate::{keys, put_json, Store};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
+
+mod receipts;
+pub use receipts::DecideReceiptInput;
 
 const STATE: u8 = 0x10;
 const SPEND: u8 = 0x11;
@@ -269,8 +276,6 @@ fn spend_rows_since(read: &dyn KvRead, since_us: i64) -> Result<Vec<SpendRecord>
 }
 
 /// Drops the spend rows older than `cutoff_us` and their index entries; returns how many.
-// The receipt prune (a later member of this family) is its caller; until then only tests reach it.
-#[allow(dead_code)]
 fn prune_spend_before(tx: &mut dyn KvWrite, cutoff_us: i64) -> Result<u64> {
     let prefix = [keys::EVAL_CAPTURE, SPEND_BY_TIME];
     let end = spend_time_key(cutoff_us, 0);

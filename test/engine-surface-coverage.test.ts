@@ -183,6 +183,8 @@ const INTERFACE_METHODS: readonly string[] = [
   // Group A (decide store)
   'readDecideState', 'upsertDecideState', 'deleteDecideState', 'ensureDecideState',
   'insertDecideSpend', 'dailyDecideSpend', 'listDecideSpendBySlot',
+  'insertDecideReceipts', 'pruneDecideReceipts', 'listDecideReceiptStats', 'decideSlotUsage', 'decideConflictNoEntityCounts',
+  'listDecideReplayReceipts', 'listDecideResolvedModels', 'listDecideMixedModelDecisions',
   // Search
   'searchKeyword', 'countKeywordPages', 'searchKeywordPages', 'searchTitles', 'searchVector', 'getEmbeddingsByChunkIds',
   // Chunks

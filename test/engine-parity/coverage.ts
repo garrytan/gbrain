@@ -274,6 +274,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
   decide_store: [
     'readDecideState', 'upsertDecideState', 'deleteDecideState', 'ensureDecideState',
     'insertDecideSpend', 'dailyDecideSpend', 'listDecideSpendBySlot',
+    'insertDecideReceipts', 'pruneDecideReceipts', 'listDecideReceiptStats', 'decideSlotUsage', 'decideConflictNoEntityCounts',
+    'listDecideReplayReceipts', 'listDecideResolvedModels', 'listDecideMixedModelDecisions',
   ],
 };
 
