@@ -45,6 +45,7 @@ import { entityDuplicatesEntry } from '../src/commands/doctor/checks/entity-dupl
 import { parseSchemaPackManifest } from '../src/core/schema-pack/manifest-v1.ts';
 import { nameWords } from '../src/core/entities/name-variants.ts';
 import type { DoctorContext } from '../src/commands/doctor/context.ts';
+import { GITHUB_RESERVED_NAMES } from '../src/core/entities/github-reserved.ts';
 
 for (const backend of testBackends()) describe(backend, () => {
 let engine: BrainEngine;
@@ -343,6 +344,10 @@ describe('phone numbers', () => {
 });
 
 describe('GitHub URLs', () => {
+  test('every reserved GitHub name is a lowercase login-shaped word, since the github key compares a lowercased login against the set', () => {
+    expect([...GITHUB_RESERVED_NAMES].filter(n => !/^[a-z0-9][a-z0-9-]{0,38}$/.test(n))).toEqual([]);
+  });
+
   test('route words GitHub serves its own pages at (enterprises, watching, customer-stories) and the deleted-user placeholder give no key', async () => {
     await page('companies/acme-example', 'company', 'Acme Example', { github: 'https://github.com/enterprises/acme-example' });
     await page('companies/acme-example', 'company', 'Acme Example', { github: 'github.com/enterprises/acme-example/people' }, 'source-b');
