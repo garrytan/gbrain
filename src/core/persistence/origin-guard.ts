@@ -78,9 +78,8 @@ function gitRootOf(path: string): string | null {
 
 /** The origin form of a source pinned to source-root slugs at a subdirectory of its repository; undefined otherwise. */
 async function originScopeOf(tx: Exec, sourceId: string): Promise<SyncOriginScope | undefined> {
-  const [source] = await tx.executeRaw<{ local_path: string | null; mode: string | null }>(
-    "SELECT local_path, config->>'slug_root_mode' AS mode FROM sources WHERE id=$1", [sourceId]);
-  return sourceOriginScope(sourceId, source?.local_path ?? null, source?.mode ?? null);
+  const source = await (tx as unknown as Pick<BrainEngine, 'readSourceState'>).readSourceState(sourceId);
+  return sourceOriginScope(sourceId, source?.local_path ?? null, source?.config.slug_root_mode ?? null);
 }
 
 /** `originScopeOf` from a source's `local_path` and `config.slug_root_mode`, for a caller that already has the source row. */

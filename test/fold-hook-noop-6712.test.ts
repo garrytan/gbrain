@@ -25,6 +25,8 @@
  * The typed engine methods of the import path rewrite three statement texts one-for-one: the config read
  * (getConfigValues, `key = ANY($1::text[])`), the write-settings set_config (applyTransactionSettings, one unnest)
  * and the managed-rows coverage read (parameters renumbered); same statements, same order.
+ * The write-misc engine reads (engine-sql/write-misc.ts `readSourceState`) rewrite the source reads of authorization, the
+ * mirror check and the origin scope one-for-one into one source-state statement; same statements, same order.
  * CAPTURE_FOLD_NOOP=1 rewrites the fixture for the engine under test (only ever from the pre-hook commit).
  */
 import { describe, expect, test } from 'bun:test';
