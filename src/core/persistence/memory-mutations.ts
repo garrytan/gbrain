@@ -23,7 +23,7 @@ import { assertPersistenceAccepting, registerMutationPreparer, waitForWrite, wri
 import { claimWorktree, getWorktreeBinding } from './ownership.ts';
 import { resolveFactWriteTarget } from './fact-write-target.ts';
 import { clientRequestIdOf, parseMutationPrecondition } from './preconditions.ts';
-import { grantedWriteSource, writeGrantRefusal } from './write-grant.ts';
+import { grantedWriteSource, readsButWritesOnly, writeGrantRefusal } from './write-grant.ts';
 import type { WriteRequest } from './model.ts';
 import { prepareMemoryMutation } from './memory-prepare.ts';
 import { ownerReachesFact, readForgetTarget, refuseForgetReachingOtherCopies } from './forget-prepare.ts';
@@ -60,7 +60,7 @@ async function submission(ctx: OperationContext, operation: string, params: Reco
   const granted = grantedWriteSource(ctx);
   if (ctx.remote !== false && sourceId !== granted && !perCallWriteSource(ctx, sourceId)) {
     throw writeGrantRefusal(ctx,
-      `This connection may write only to source ${granted}. Omit source_id to write there, or ask the brain host's operator to grant source ${sourceId}.`,
+      `${readsButWritesOnly(ctx, sourceId, granted)}This connection may write only to source ${granted}. Omit source_id to write there, or ask the brain host's operator to grant source ${sourceId}.`,
       retryArguments ? { tool: operation, arguments: retryArguments } : undefined);
   }
   await initializeLocalPersistence(ctx);

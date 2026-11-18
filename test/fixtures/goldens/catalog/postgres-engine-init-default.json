@@ -665,7 +665,7 @@
       "gbrain_owner_only_hold()": "RETURNS void kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=d0ee3312051b94da21f27c362f3d2c14bfff3fc1580a3b1f40b5deefde9f67ee",
       "gbrain_owner_only_lineage()": "RETURNS boolean kind=f lang=sql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=b2a72ae1d405880ca463581b749956b12636a0b90bd1e3b565eb2514e25e5f86",
       "gbrain_owner_only_lineage(p_table text, p_id bigint)": "RETURNS boolean kind=f lang=plpgsql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=70f4b23bf7cbc4eae90239edcb15f0ef9e053c4594a15b4fd204ccde810ea4bd",
-      "gbrain_owner_only_lineage(p_table text, p_id bigint, p_mode text)": "RETURNS boolean kind=f lang=plpgsql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=57e9a359a8e784b2db988b2e86f3aea65245fc7eb3b7342d280e95cc20a76055",
+      "gbrain_owner_only_lineage(p_table text, p_id bigint, p_mode text)": "RETURNS boolean kind=f lang=plpgsql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=122c3a34cd9c8b76b0165f04b486560fce3e112c2dd503910766d1e392efea6d",
       "gbrain_owner_only_lineage_strict(p_table text, p_id bigint)": "RETURNS boolean kind=f lang=plpgsql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=aed1f34e198c091cc01ea0dc315feac7afdfbf9d586cef2ffc16206a2f009ffe",
       "gbrain_owner_only_mark_derived(p_table text, p_ids bigint[])": "RETURNS void kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=8e55ba7ae1ed99b8f8207a1dcef230cd04d7c278f2e911fffa098f9c73f6e3f3",
       "gbrain_owner_only_marks_denied(p_cmd text)": "RETURNS boolean kind=f lang=sql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=8b0d760100c3fe99f4aaccd96f4a6cc9a46c2ef6cfe8faa9262786d40052a1ae",
@@ -1999,7 +1999,8 @@
           "21 attest_sources ARRAY/_text NULL",
           "22 attest_read text/text NULL",
           "23 reads_unscoped timestamp with time zone/timestamptz NULL",
-          "24 private_facts text/text NOT NULL DEFAULT 'none'::text"
+          "24 private_facts text/text NOT NULL DEFAULT 'none'::text",
+          "25 read_shared_revision integer/int4 NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
@@ -3335,7 +3336,8 @@
           "38 attest_sources ARRAY/_text NULL",
           "39 attest_read text/text NULL",
           "40 reads_unscoped timestamp with time zone/timestamptz NULL",
-          "41 private_facts text/text NOT NULL DEFAULT 'none'::text"
+          "41 private_facts text/text NOT NULL DEFAULT 'none'::text",
+          "42 read_shared_revision integer/int4 NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

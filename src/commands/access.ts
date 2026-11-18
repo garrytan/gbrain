@@ -24,6 +24,7 @@ import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { grantFromClient, type PrincipalGrant } from '../core/grants/model.ts';
 import { readClientGrant } from '../core/grants/service.ts';
 import { resolveTokenGrant } from '../core/grants/legacy-token.ts';
+import { credentialReadSources } from '../core/grants/shared-exposure.ts';
 import { accessAllowedSql, folderRulesAllowedSql, isPrivacyPrivatePage, withCallerAccess } from '../core/search/private-visibility.ts';
 import { membersReadLineageOn, setMembersReadLineage } from '../core/access/lineage.ts';
 import { setMemberLabelledOnly } from '../core/access/labelled-only.ts';
@@ -248,6 +249,10 @@ export interface AccessCheckResult {
   labelled_only: boolean;
   explanation: string;
   audience?: Array<{ principal: string; covered_by_may_act_for: boolean }>;
+  /** GST-2898: the read-shared switch is on (also read every shared source, now and later). */
+  read_shared: boolean;
+  /** GST-2898: the sources it reads unqualified now, resolved through credentialReadSources (the switch included). */
+  reads_now: string[];
 }
 
 /** Every grant axis and the member identity of one credential, as the verifier and dispatch would see it. */
@@ -298,7 +303,9 @@ export async function accessCheck(engine: BrainEngine, target: { token?: string;
     grant: { scopes: grant.scopes, sources: grant.sources, takes_holders: grant.takesHolders, private_pages: grant.privatePages,
       operations: grant.allowedOperations ?? 'unrestricted', revision: grant.revision },
     member, identity, may_act_for: mayActFor, verdict, reads_unscoped: readsUnscoped, owner, owner_reads_restricted: ownerReadsRestricted, members_read_lineage: memberLineage, labelled_only: labelledOnly, explanation,
+    read_shared: grant.readShared === true, reads_now: await credentialReadSources(engine, grant, boundId),
   };
+ 
   if (target.as !== undefined) {
     const audience: NonNullable<AccessCheckResult['audience']> = [];
     for (const entry of target.as.split(',').map(s => s.trim()).filter(Boolean)) {
@@ -556,6 +563,7 @@ export async function runAccess(engine: BrainEngine, args: string[]): Promise<vo
           `  Sources: ${JSON.stringify(r.grant.sources)}`,
           `  Operations: ${r.grant.operations === 'unrestricted' ? 'every operation the scopes allow' : r.grant.operations.length}`,
           `  Private pages: ${r.grant.private_pages}`,
+          `  Reads now: ${r.reads_now.join(', ') || 'nothing'}${r.read_shared ? '  (read-shared on: sources shared later join automatically; guest sources and other members\' own sources never do)' : ''}`,
           `  Member: ${r.member ? `${r.member.id} (${r.member.status})` : 'none'}${r.member?.groups.length ? `  groups: ${r.member.groups.join(', ')}` : ''}${r.labelled_only ? '  labelled-only' : ''}`,
           `  May act for: ${r.may_act_for?.join(', ') ?? 'none'}`,
           ...(r.audience ? [`  Audience: ${r.audience.map(a => `${a.principal}${a.covered_by_may_act_for ? '' : ' (not in may_act_for)'}`).join(', ')}`] : []),

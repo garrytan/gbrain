@@ -1,12 +1,11 @@
 {
   "golden": {
-    "count": 318,
+    "count": 319,
     "gaps": [
       17,
       18,
       19,
       100,
-      323,
       324
     ],
     "helpers": {
@@ -74,7 +73,7 @@
       "ensureFactsFtsIndex": "95e723314ac30cea2db48e0e167c554ef1fa06df80cae765faa2a080a3a655c2",
       "failClosedLedgerGuards": "8a095ef92247a83e7d569c0a721facf0bb4c4213bd2ed5149a81947469bbd5e6",
       "getFtsLanguage": "0d790b4c4af1f67a2a1bbd59470beb13f434917b381931baf8404a41c5d903db",
-      "grantFromRow": "d0b537d687ed3f88f61e33b88490c6dcc74b829485b0c2c44d3238d100c4c3a7",
+      "grantFromRow": "5e476f2df993a1de223727c72ddad3351462a1981c9a02285a2d847f7c29188d",
       "hardenFunctionSearchPaths": "ca7bce96a087bfb4644268e5c2ad0ace76532905ceffb4efdc69608e0ef11894",
       "hnswMaxDimsForType": "a187cdcc520f813b7c39da97ce53da58509232ed9f851627ef41abfe1b68bd26",
       "identityIndexHasSource": "ab7e4cad64ebf233f3a884816c114b0c582f4f2166c3bcf19ed8d92bcfcf3807",
@@ -5274,10 +5273,23 @@
       {
         "handler": "absent",
         "idempotent": true,
+        "name": "token_read_shared",
+        "sql": {
+          "length": 173,
+          "sha256": "e277245cb7ddc3d040b7c8a179f8a8b5fe732958eabb5f40c91ce31b0f9ad1df"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 323
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
         "name": "owner_only_reads_complete",
         "sql": {
-          "length": 4194,
-          "sha256": "a74d68c43710ac7b8648b0ab47cfa32a2d47f06f58920c851c0b20a877291a9d"
+          "length": 4368,
+          "sha256": "be7268671a0dae503f88067a019c7f7af2181566b695b85f1fd9a241cbf25c6c"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -5603,6 +5615,7 @@
       320,
       321,
       322,
+      323,
       325
     ]
   },
