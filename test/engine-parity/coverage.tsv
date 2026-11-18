@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 355/355
+# covered: 365/365
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -16,14 +16,14 @@
 # extraction: 7/7
 # links: 23/23
 # tags: 5/5
-# timeline: 8/8
+# timeline: 17/17
 # ontology: 4/4
 # raw_files: 5/5
 # takes: 15/15
 # dream: 3/3
 # contradictions: 5/5
 # facts: 14/14
-# segmented_body: 14/14
+# segmented_body: 15/15
 # versions: 3/3
 # stats_ingest: 5/5
 # sync_aliases: 10/10
@@ -54,17 +54,17 @@ transaction	lifecycle	yes	11	no	yes	yes	refuses:transactions
 transactionDirect	lifecycle	yes	1	no	yes	yes	refuses:transactions
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	31	yes	yes	yes	serves
+getPage	pages	yes	36	yes	yes	yes	serves
 readPageSnapshot	pages	yes	7	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	160	yes	yes	yes	serves
+putPage	pages	yes	165	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	5	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	57	yes	yes	yes	serves
+softDeletePage	pages	yes	59	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	8	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -90,10 +90,10 @@ listPrefixSampledPages	pages	yes	1	no	yes	yes	serves
 listCorpusSample	pages	yes	1	no	yes	yes	serves
 getPageSealState	pages	yes	1	no	yes	yes	refuses:pages
 refreshPageOrigin	pages	yes	1	no	yes	yes	refuses:pages
-searchKeyword	search	yes	9	yes	yes	yes	serves
+searchKeyword	search	yes	10	yes	yes	yes	serves
 countKeywordPages	search	yes	2	no	yes	yes	serves
 searchKeywordPages	search	yes	2	no	yes	yes	serves
-searchTitles	search	yes	4	yes	yes	yes	serves
+searchTitles	search	yes	5	yes	yes	yes	serves
 searchVector	search	yes	2	yes	yes	yes	refuses:vector_search
 getEmbeddingsByChunkIds	search	yes	1	no	yes	yes	serves
 searchKeywordChunks	search	yes	2	yes	yes	yes	serves
@@ -132,7 +132,7 @@ listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	1	no	yes	yes	serves
 upsertChunks	chunks	yes	20	yes	yes	yes	serves
 sealChunks	chunks	yes	15	no	yes	yes	serves
-getChunks	chunks	yes	21	yes	yes	yes	serves
+getChunks	chunks	yes	22	yes	yes	yes	serves
 getChunkPage	chunks	yes	3	no	yes	yes	serves
 getChunkWindows	chunks	yes	1	no	yes	yes	serves
 countStaleChunks	chunks	yes	5	no	yes	yes	serves
@@ -187,14 +187,23 @@ removeTag	tags	yes	2	no	yes	yes	serves
 pruneFrontmatterTags	tags	yes	2	no	yes	yes	serves
 addPageTagsById	tags	yes	1	no	yes	yes	serves
 getTags	tags	yes	3	yes	yes	yes	serves
-addTimelineEntry	timeline	yes	10	yes	yes	yes	serves
+sampleEffectiveDates	timeline	yes	1	no	yes	yes	serves
+sampleEffectiveDateSources	timeline	yes	1	no	yes	yes	serves
+readMaxTimelineEntryId	timeline	yes	1	no	yes	yes	serves
+listStoredTimelineRowsOrdered	timeline	yes	2	no	yes	yes	serves
+deleteTimelineRows	timeline	yes	2	no	yes	yes	serves
+storedTimelineRowsByPageIds	timeline	yes	1	no	yes	yes	serves
+countSegmentedTimelinePages	timeline	yes	1	no	yes	yes	serves
+countTimelineCommentMarkupRows	timeline	yes	1	no	yes	yes	serves
+listTimelineOrphanPages	timeline	yes	1	no	yes	yes	serves
+addTimelineEntry	timeline	yes	13	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	1	no	yes	yes	serves
 getTimeline	timeline	yes	3	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	2	no	yes	yes	serves
 getSince	timeline	yes	1	no	yes	yes	serves
 getOnThisDay	timeline	yes	1	no	yes	yes	serves
 getLastSeen	timeline	yes	1	no	yes	yes	serves
-upsertEventProjection	timeline	yes	4	no	yes	yes	serves
+upsertEventProjection	timeline	yes	6	no	yes	yes	serves
 mergeOntologyFact	ontology	yes	7	no	yes	yes	serves
 getOntology	ontology	yes	3	no	yes	yes	serves
 discoverOntologyDimensions	ontology	yes	1	no	yes	yes	serves
@@ -241,20 +250,21 @@ findCandidateDuplicates	facts	yes	6	yes	yes	yes	serves
 consolidateFact	facts	yes	3	no	yes	yes	serves
 findTrajectory	facts	yes	3	yes	yes	yes	serves
 getFactsHealth	facts	yes	2	yes	yes	yes	serves
-allocateBodyOccurrenceIds	segmented_body	yes	1	no	yes	yes	refuses:page_body
-stageSegmentTexts	segmented_body	yes	1	no	yes	yes	refuses:page_body
-readSegmentTexts	segmented_body	yes	2	no	yes	yes	refuses:page_body
-stageManifestRows	segmented_body	yes	1	no	yes	yes	refuses:page_body
-readManifest	segmented_body	yes	3	no	yes	yes	refuses:page_body
-stageSegmentChunks	segmented_body	yes	1	no	yes	yes	refuses:page_body
-createSegmentedPageShell	segmented_body	yes	1	no	yes	yes	refuses:page_body
-flipBodyGeneration	segmented_body	yes	2	no	yes	yes	refuses:page_body
-openBodyStaging	segmented_body	yes	2	no	yes	yes	refuses:page_body
-setBodyStagingState	segmented_body	yes	1	no	yes	yes	refuses:page_body
+allocateBodyOccurrenceIds	segmented_body	yes	2	no	yes	yes	serves
+stageSegmentTexts	segmented_body	yes	3	no	yes	yes	serves
+readSegmentTexts	segmented_body	yes	3	no	yes	yes	serves
+stageManifestRows	segmented_body	yes	4	no	yes	yes	serves
+readManifest	segmented_body	yes	7	no	yes	yes	serves
+stageSegmentChunks	segmented_body	yes	3	no	yes	yes	serves
+createSegmentedPageShell	segmented_body	yes	6	no	yes	yes	serves
+flipBodyGeneration	segmented_body	yes	6	no	yes	yes	serves
+sealSegmentedPage	segmented_body	yes	2	no	yes	yes	serves
+openBodyStaging	segmented_body	yes	6	no	yes	yes	serves
+setBodyStagingState	segmented_body	yes	5	no	yes	yes	serves
 sweepSegments	segmented_body	yes	1	no	yes	yes	refuses:page_body
-readSegmentDerivations	segmented_body	yes	1	no	yes	yes	refuses:page_body
-upsertSegmentDerivations	segmented_body	yes	1	no	yes	yes	refuses:page_body
-retireSegmentDerivations	segmented_body	yes	1	no	yes	yes	refuses:page_body
+readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
+upsertSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
+retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 createVersion	versions	yes	4	no	yes	yes	serves
 getVersions	versions	yes	3	no	yes	yes	serves
 revertToVersion	versions	yes	2	no	yes	yes	serves
@@ -270,7 +280,7 @@ resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
 resolveAliases	sync_aliases	yes	4	no	yes	yes	serves
 setPageAliases	sync_aliases	yes	4	no	yes	yes	serves
 replaceDerivedAliases	sync_aliases	yes	1	no	yes	yes	refuses:pages
-refreshPageBody	sync_aliases	yes	1	no	yes	yes	refuses:page_body
+refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	1	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
 getConfig	config	yes	5	no	yes	yes	serves

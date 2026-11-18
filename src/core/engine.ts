@@ -30,6 +30,7 @@ import type { DefaultSourceSplit, LocalPathSourceRow, SourceCheckRow, SourceInse
 import type { AdmitJobPolicy, AdmitJobResult, AdmitJobSpec, ClaimJobSpec, JobRow, ListJobsFilter } from './engine-sql/jobs.ts';
 import type { JunkEntityHubRow, LinkEndpointPage, LivePageSummary, TitledPage } from './engine-sql/link-reads.ts';
 import type { CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuery, ContextualModeCandidate, FrozenHitKey, FrozenHitRow, WithdrawalChunkKey, WithdrawalChunkRow } from './engine-sql/chunk-reads.ts';
+import type { EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRow, PageTimelineRow, SegmentedTimelinePages, TimelineOrphanPage, TimelineRowDeletion } from './engine-sql/timeline-reads.ts';
 export type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions, PageMutationPrecondition, PageWithdrawal } from './page-state/types.ts';
 import type {
   Page, PageInput, PageFilters, GetPageOpts, PageReadScope, PageReadPolicy,
@@ -1431,6 +1432,16 @@ export interface BrainEngine {
   deleteChunksForPages(pageIds: readonly number[]): Promise<void>;
   listContextualModeCandidates(sourceIds: string[]): Promise<ContextualModeCandidate[]>;
   resolveFrozenHits(hits: FrozenHitKey[], scope: PageReadScope): Promise<FrozenHitRow[]>;
+  /** Doctor's effective-date sample and timeline clock, the projection's stored-timeline read and delete, repair timeline's reads, the orphan prune's walk (SQL and contracts in engine-sql/timeline-reads.ts). */
+  sampleEffectiveDates(): Promise<EffectiveDateSampleCounts>;
+  sampleEffectiveDateSources(): Promise<EffectiveDateFallbackRow[]>;
+  readMaxTimelineEntryId(): Promise<number>;
+  listStoredTimelineRowsOrdered(pageId: number): Promise<OwnTimelineRow[]>;
+  deleteTimelineRows(pageId: number, deletions: readonly TimelineRowDeletion[]): Promise<Array<{ date: string; removed: boolean }>>;
+  storedTimelineRowsByPageIds(pageIds: readonly number[]): Promise<PageTimelineRow[]>;
+  countSegmentedTimelinePages(sourceIds: readonly string[], limit: number): Promise<SegmentedTimelinePages>;
+  countTimelineCommentMarkupRows(sourceIds: readonly string[]): Promise<number>;
+  listTimelineOrphanPages(opts: { afterId: number; limit: number; sourceId?: string }): Promise<TimelineOrphanPage[]>;
 
   // Chunks
   /**
@@ -2674,6 +2685,13 @@ export interface BrainEngine {
   createSegmentedPageShell(slug: string, meta: SegmentedPageMeta, opts: { sourceId: string }): Promise<{ id: number }>;
   /** The generation flip, inside the publication transaction: closes and publishes manifest rows, retires chunk rows (bounded), updates the page row. Refuses `revision_changed` when the page's body_generation is not `expectedGeneration`. */
   flipBodyGeneration(input: BodyFlipInput): Promise<BodyFlipResult>;
+  /**
+   * Seal a segmented page's text projection at its current revision: its chunks become visible, and its title and
+   * sanitized timeline lead (`timelineLead`, else the stored lead, after the page's withdrawal overlay) become its keyword
+   * vector. The chunker stamp keeps an older segmented chunker while any chunk row from before this generation remains.
+   * A missing page is a no-op. Runs inside the caller's publication transaction as its last step.
+   */
+  sealSegmentedPage(pageId: number, opts?: { timelineLead?: string }): Promise<void>;
   /** Record a body staging (GC root while open/sealed/prepared). */
   openBodyStaging(input: BodyStagingInput): Promise<void>;
   /** Move a staging to a new state; `commitRequestId` with `committed`. */
