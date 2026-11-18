@@ -233,11 +233,12 @@ export async function moveRuledSharedHeld(engine: BrainEngine, sourceId: string)
  */
 function planningView(engine: BrainEngine, deadlineAt: number): BrainEngine {
   if (engine.kind !== 'postgres') return engine;
+  // #6040: the deadline also ends the wait for a free connection, which reads queued on the same lock can hold (#8155).
+  const deadline = AbortSignal.timeout(Math.max(1, deadlineAt - Date.now()));
   const view: BrainEngine = registerEngineView(new Proxy(engine, { get(target, key) {
     if (key === 'executeRaw') return async (sql: string, params?: unknown[], opts?: Parameters<BrainEngine['executeRaw']>[2]) => {
       if (Date.now() >= deadlineAt) throw new PreparationDeadlineError('held_move_plan', null);
-      // #6040: the deadline also ends the wait for a free connection, which reads queued on the same lock can hold (#8155).
-      const signal = opts?.signal ?? AbortSignal.timeout(Math.max(1, deadlineAt - Date.now()));
+      const signal = opts?.signal ?? deadline;
       try { return await target.executeRaw(sql, params, { ...opts, timeoutMs: Math.max(1, deadlineAt - Date.now()), signal }); } catch (error) {
         if (isStatementTimeout(error)) throw new PreparationDeadlineError('held_move_plan', error.code, error);
         if (!opts?.signal && (signal.aborted || (isConnectionEnd(error) && Date.now() >= deadlineAt))) throw new PreparationDeadlineError('held_move_plan', null, error);

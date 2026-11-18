@@ -2258,7 +2258,7 @@ same way (`--kind fact_fence`, `take_fence`, `consolidation`,
 earlier fence block into the page as it is now, through a guarded page write
 that leaves the rest of the page alone; it works on managed brains too, and a
 fence edited since is refused. A consolidation restore reopens the chain's
-`valid_until` and consolidation marks, on managed brains too.
+`valid_until` and consolidation marks.
 
 Life Chronicle events publish the same way (`--kind chronicle-event`, key
 `depth:<slug>`): a restore brings back the events a re-judgment or a deleted

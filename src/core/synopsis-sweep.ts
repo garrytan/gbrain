@@ -56,7 +56,7 @@ export async function readSynopsisTierConfig(engine: BrainEngine): Promise<Synop
      UNION ALL
      SELECT NULL WHERE NOT $1::boolean AND EXISTS (SELECT 1 FROM pages p LEFT JOIN sources s ON s.id = p.source_id
        WHERE p.deleted_at IS NULL AND p.page_kind = 'markdown' AND NOT COALESCE(s.archived, false)
-         AND p.frontmatter->>'contextual_retrieval' = 'per_chunk_synopsis'
+         AND p.frontmatter @> '{"contextual_retrieval":"per_chunk_synopsis"}'::jsonb
          AND (p.source_id = 'default' OR COALESCE(s.trust_frontmatter_overrides, false)))
      ORDER BY id`, [killSwitch || knobs.contextual_retrieval === 'per_chunk_synopsis']);
   const synopsisSources = rows.flatMap(r => r.id === null ? [] : [r.id]);
