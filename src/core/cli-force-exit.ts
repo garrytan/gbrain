@@ -65,6 +65,7 @@ import {
   SINK_DRAIN_TIMEOUT_MS,
 } from './background-work.ts';
 import { POOL_END_TIMEOUT_SECONDS } from './pool-end-timeout.ts';
+import { jsonDocumentDelegated } from './json-document-delegation.ts';
 import { parseGlobalFlags } from './cli-options.ts';
 import { setInterruptedDocumentWriter, slowReadElapsedMs, withReadMeta } from './read-heartbeat.ts';
 
@@ -838,18 +839,13 @@ let jsonGuardMode: 'document' | 'ndjson' | null = null;
 let jsonDocumentWritten = false;
 let lastRenderedErrorCode: string | undefined;
 
-/** #9717: a re-run that inherits fd 1 writes the command's document itself, so this process never adds a fallback or reports one missing. */
-export function noteJsonDocumentDelegated(): void {
-  jsonDocumentWritten = true;
-}
-
 /** renderCliError's callers record the code they rendered so the fallback document can carry it. */
 export function noteRenderedErrorCode(code: string): void {
   lastRenderedErrorCode = code;
 }
 
 function writeJsonFallbackIfMissing(exitCode: number): void {
-  if (!jsonGuardMode || jsonDocumentWritten) return;
+  if (!jsonGuardMode || jsonDocumentWritten || jsonDocumentDelegated()) return;
   if (exitCode === 0) {
     // Exit 0 with no document is a bug in the command (D5 fails it); log it, never invent a result.
     // An NDJSON stream may legitimately be empty (e.g. `eval export` with no rows).
