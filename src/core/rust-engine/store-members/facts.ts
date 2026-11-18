@@ -4,13 +4,15 @@
  * findCandidateDuplicates, consolidateFact, findTrajectory, getFactsHealth, migrateFactsToCanonical).
  *
  * Each member applies the defaults and clamps of src/core/engine-sql/facts.ts, then makes one store call. What the
- * store cannot answer exactly refuses with `engine_capability_missing`: a read eligibility policy, `excludePrivate`,
- * stored embeddings (the cosine candidate arm, the keyword arm with an embedding, an insert that carries a vector), the
+ * store cannot answer exactly refuses with `engine_capability_missing`: a read eligibility policy, `excludePrivate`, the
  * keyword arm in an FTS language other than `english`, a visibility list that
  * the member-page or grant rules widen, and inputs whose PGLite outcome the store cannot reproduce (a non-finite
  * `claim_value`, `row_num` or `superseded_by_row`, a fractional offset, a keyset time in another text form).
+ *
+ * A vector travels as the literal PGLite inlines (`'[a,b,...]'`); the store casts it to the column's `halfvec` and
+ * returns stored vectors as number lists, which become `Float32Array`s here.
  */
-import { clampSearchLimit, MAX_SEARCH_LIMIT, type BrainEngine, type FactListOpts, type NewFact, type RecallFactReadOpts } from '../../engine.ts';
+import { clampSearchLimit, MAX_SEARCH_LIMIT, type BrainEngine, type FactListOpts, type RecallFactReadOpts } from '../../engine.ts';
 import { escapeLikePattern } from '../../cjk.ts';
 import { valueHash } from '../../chronicle/ontology.ts';
 import { factVisibilitySql } from '../../access/member-facts.ts';
@@ -25,7 +27,13 @@ type TrajectoryPoint = Awaited<ReturnType<BrainEngine['findTrajectory']>>[number
 type Row = Record<string, unknown>;
 
 const FACT_DATES = ['valid_from', 'valid_until', 'expired_at', 'consolidated_at', 'embedded_at', 'created_at'] as const;
-const facts = (rows: Row[]): FactRow[] => rows.map((row) => withDates(row, FACT_DATES) as unknown as FactRow);
+/** A returned vector (a number list or null) as the `Float32Array` PGLite hands back. */
+const withVector = (row: Row): Row =>
+  Array.isArray(row.embedding) ? { ...row, embedding: new Float32Array(row.embedding as number[]) } : row;
+const facts = (rows: Row[]): FactRow[] => rows.map((row) => withDates(withVector(row), FACT_DATES) as unknown as FactRow);
+
+/** PGLite's inlined vector literal (engine-sql/facts.ts `toPgVectorLiteral`). */
+const vectorLiteral = (v: Float32Array | number[]): string => '[' + Array.from(v).join(',') + ']';
 
 /** The options every list read declares; each member reads its own subset and ignores the rest, as PGLite does. */
 const LIST_OPTIONS = ['activeOnly', 'unconsolidatedOnly', 'limit', 'offset', 'kinds', 'visibility', 'grep', 'sessionId',
@@ -80,12 +88,7 @@ function listQuery(member: string, sourceId: string, opts: FactListOpts | Recall
   };
 }
 
-function refuseEmbedding(member: string, input: NewFact): void {
-  if (input.embedding != null) refuseMember(member, 'a stored embedding');
-}
-
 export const insertFact: Member<'insertFact'> = (brain, input, ctx) => {
-  refuseEmbedding('insertFact', input);
   if (input.claim_value != null && !Number.isFinite(input.claim_value)) refuseMember('insertFact', 'a non-finite claim_value');
   const confidence = input.confidence == null ? undefined : Number.isFinite(input.confidence) ? input.confidence : 2;
   const row = {
@@ -94,6 +97,7 @@ export const insertFact: Member<'insertFact'> = (brain, input, ctx) => {
     source_session: input.source_session, confidence, notability: input.notability, claim_metric: input.claim_metric,
     claim_value: input.claim_value, claim_unit: input.claim_unit, claim_period: input.claim_period,
     attributed_to: input.attributed_to,
+    ...(input.embedding ? { embedding: vectorLiteral(input.embedding), embedding_model: input.embedding_model ?? undefined } : {}),
   };
   return storeCall({ member: 'insertFact' }, () =>
     brain.insertFact({ input: row, sourceId: ctx.source_id, supersedeId: ctx.supersedeId }));
@@ -103,7 +107,6 @@ export const insertFacts: Member<'insertFacts'> = async (brain, rows, ctx, opts)
   const o = takeOptions('insertFacts', opts, ['deleteForPageFirst']) as NonNullable<typeof opts>;
   if (rows.length === 0) return { inserted: 0, ids: [], warnings: [], deleted: 0 };
   const mapped = rows.map((input) => {
-    refuseEmbedding('insertFacts', input);
     if (input.row_num != null && !Number.isFinite(input.row_num)) refuseMember('insertFacts', 'a non-finite row_num');
     if (input.superseded_by_row !== undefined && !Number.isFinite(input.superseded_by_row)) {
       refuseMember('insertFacts', 'a non-finite superseded_by_row');
@@ -124,6 +127,9 @@ export const insertFacts: Member<'insertFacts'> = async (brain, rows, ctx, opts)
       claim_unit: wellFormed(input.claim_unit), claim_period: wellFormed(input.claim_period),
       event_type: wellFormed(input.event_type), attributed_to: input.attributed_to,
       superseded_by_row: input.superseded_by_row,
+      ...(input.embedding
+        ? { embedding: vectorLiteral(input.embedding), embedding_model: wellFormed(input.embedding_model ?? null) ?? undefined }
+        : {}),
       ...ontology,
     };
   });
@@ -206,16 +212,14 @@ export const findCandidateDuplicates: Member<'findCandidateDuplicates'> = async 
   const o = takeOptions('findCandidateDuplicates', opts,
     ['k', 'embedding', 'embeddingModel', 'arm', 'attributedTo', 'excludeMemberPages', 'onlyPage']) as NonNullable<typeof opts>;
   const keyword = o.arm === 'keyword';
-  if (o.embedding) {
-    if (!o.embeddingModel) return [];
-    refuseMember('findCandidateDuplicates', keyword ? 'the keyword arm over stored embeddings' : 'the embedding arm');
-  }
+  if (o.embedding && !o.embeddingModel) return [];
   // The store's full-text search is the `english` configuration only.
   if (keyword && getFtsLanguage() !== 'english') refuseMember('findCandidateDuplicates', `the keyword arm in FTS language ${getFtsLanguage()}`);
   const rows: Row[] = await storeCall({ member: 'findCandidateDuplicates' }, () => brain.findCandidateDuplicates({
     sourceId, entitySlug, k: Math.min(Math.max(o.k ?? 5, 1), 20), attributedTo: o.attributedTo || undefined,
     onlyPage: o.onlyPage || undefined, excludeMemberPages: o.excludeMemberPages === true,
     ...(keyword ? { keyword: true, factText: wellFormed(factText) } : {}),
+    ...(o.embedding ? { embedding: vectorLiteral(o.embedding), embeddingModel: o.embeddingModel } : {}),
   }));
   return facts(rows);
 };
@@ -237,7 +241,7 @@ export const findTrajectory: Member<'findTrajectory'> = async (brain, opts) => {
     since: o.since ? new Date(o.since).toISOString() : undefined, until: o.until ? new Date(o.until).toISOString() : undefined,
     limit: clampSearchLimit(o.limit, 100, 500),
   }));
-  return rows.map((row) => withDates(row, ['valid_from', 'valid_until']) as unknown as TrajectoryPoint);
+  return rows.map((row) => withDates(withVector(row), ['valid_from', 'valid_until']) as unknown as TrajectoryPoint);
 };
 
 export const getFactsHealth: Member<'getFactsHealth'> = (brain, sourceId) =>

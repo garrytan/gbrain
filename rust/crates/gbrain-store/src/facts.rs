@@ -25,9 +25,16 @@
 //! Time: every `*_us` field is a UTC microsecond time from the store's clock; one write or read
 //! reads the clock once, as `now()` is the transaction's start time.
 //!
+//! Vectors: `embedding` is the `halfvec(N)` column, held in the row as `f16` bit patterns;
+//! `facts/embedding.rs` reads the literal, rounds it and computes the cosine distance as pgvector.
+//!
 //! Text: `ILIKE` and `gbrain_fact_normalize` lower-case with `pg_lower` (Postgres `lower()` on a
 //! UTF-8 database); `ILIKE` and `LIKE` read `\` as the escape character.
 
+mod embedding;
+
+use crate::chunks::embedding_dimensions;
+use crate::config::read_config;
 use crate::dream::int4;
 use crate::env::{iso, parse_iso};
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
@@ -103,6 +110,13 @@ pub(crate) struct FactRecord {
     pub source_session: Option<String>,
     /// A `REAL` column: stored as the `f32` Postgres keeps.
     pub confidence: f32,
+    /// The `halfvec(N)` column: every element an `f16` value, held as its 16-bit pattern.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "embedding::half_hex"
+    )]
+    pub embedding: Option<Vec<f32>>,
     pub embedding_model: Option<String>,
     pub embedded_text_hash: Option<String>,
     pub embedded_at_us: Option<i64>,
@@ -125,6 +139,14 @@ impl FactRecord {
     /// `expired_at IS NULL AND (valid_until IS NULL OR valid_until > now())`.
     pub(crate) fn active(&self, now: i64) -> bool {
         self.expired_at_us.is_none() && self.valid_until_us.is_none_or(|until| until > now)
+    }
+
+    /// The cosine arm's comparability: a vector from `model`, of `len` elements, whose
+    /// `embedded_text_hash` is `md5(fact)` (the text has not changed since it was embedded).
+    fn comparable(&self, model: &str, len: usize) -> bool {
+        self.embedding.as_ref().is_some_and(|v| v.len() == len)
+            && self.embedding_model.as_deref() == Some(model)
+            && self.embedded_text_hash.as_deref() == Some(embedding::md5_hex(&self.fact).as_str())
     }
 
     fn audit_row(&self) -> bool {
@@ -166,7 +188,7 @@ impl FactRecord {
         out.insert("source".into(), json!(self.source));
         out.insert("source_session".into(), json!(self.source_session));
         out.insert("confidence".into(), json!(real(self.confidence)));
-        out.insert("embedding".into(), Value::Null);
+        out.insert("embedding".into(), vector_json(self.embedding.as_deref()));
         out.insert("embedding_model".into(), json!(self.embedding_model));
         out.insert("embedded_text_hash".into(), json!(self.embedded_text_hash));
         out.insert("embedded_at".into(), json!(time(self.embedded_at_us)));
@@ -199,6 +221,13 @@ impl FactRecord {
         }
         Value::Object(out)
     }
+}
+
+/// A stored vector as the plain number list the TypeScript member turns into a `Float32Array`.
+fn vector_json(vector: Option<&[f32]>) -> Value {
+    vector.map_or(Value::Null, |v| {
+        Value::Array(v.iter().map(|&x| json!(f64::from(x))).collect())
+    })
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -739,6 +768,10 @@ pub struct NewFactInput {
     pub row_num: Option<f64>,
     pub source_markdown_slug: Option<String>,
     pub superseded_by_row: Option<f64>,
+    /// The vector as the literal PGLite casts (`'[a,b,...]'`); absent when the fact has none.
+    pub embedding: Option<String>,
+    /// The model the vector came from; read only with `embedding`.
+    pub embedding_model: Option<String>,
     /// `insertFacts` only: the confidence was not a finite number, which `JSON.stringify` sends
     /// as `null` into the NOT NULL column.
     pub confidence_null: bool,
@@ -830,6 +863,11 @@ pub struct DuplicateQuery {
     pub keyword: bool,
     /// The new claim's text, read by the keyword arm.
     pub fact_text: String,
+    /// The new claim's vector, as a vector literal: the cosine arm ranks by it; the keyword arm
+    /// reads only its length.
+    pub embedding: Option<String>,
+    /// The model of `embedding`: only rows stamped with it compare.
+    pub embedding_model: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -902,18 +940,27 @@ fn new_record(
     source_id: &str,
     now: i64,
     fence: bool,
+    dims: usize,
 ) -> Result<FactRecord> {
+    let confidence = input.confidence.unwrap_or(1.0);
+    let confidence32 = confidence as f32;
+    if !input.confidence_null && confidence.is_finite() && confidence32.is_infinite() {
+        return Err(invalid(format!(
+            "{op}: value out of range: overflow (confidence)"
+        )));
+    }
+    // The vector cast runs before the row's NOT NULL checks, as it does in the INSERT.
+    let vector = match &input.embedding {
+        Some(literal) => Some(embedding::to_halfvec(
+            &embedding::parse_vector(literal)?,
+            Some(dims),
+        )?),
+        None => None,
+    };
     let fact = input.fact.clone().ok_or_else(|| not_null("fact"))?;
     let source = input.source.clone().ok_or_else(|| not_null("source"))?;
     if input.confidence_null {
         return Err(not_null("confidence"));
-    }
-    let confidence = input.confidence.unwrap_or(1.0);
-    let confidence32 = confidence as f32;
-    if confidence.is_finite() && confidence32.is_infinite() {
-        return Err(invalid(format!(
-            "{op}: value out of range: overflow (confidence)"
-        )));
     }
     let mut row = FactRecord {
         source_id: source_id.to_string(),
@@ -936,6 +983,17 @@ fn new_record(
         attributed_to: input.attributed_to.clone(),
         ..FactRecord::default()
     };
+    if let Some(vector) = vector {
+        // `embedded_text_hash = md5(fact)` only when the model is a non-empty text.
+        row.embedded_text_hash = input
+            .embedding_model
+            .as_deref()
+            .filter(|m| !m.is_empty())
+            .map(|_| embedding::md5_hex(&row.fact));
+        row.embedding_model = input.embedding_model.clone();
+        row.embedded_at_us = Some(now);
+        row.embedding = Some(vector);
+    }
     if fence {
         row.expired_at_us = opt_time(op, "expired_at", &input.expired_at)?;
         row.row_num = input.row_num.map(|n| int4(op, "row_num", n)).transpose()?;
@@ -1126,7 +1184,11 @@ impl Store {
         const OP: &str = "insertFact";
         let now = self.env.now_micros();
         self.write(|tx| {
-            let mut row = new_record(OP, &args.input, &args.source_id, now, false)?;
+            let dims = match args.input.embedding {
+                Some(_) => embedding_dimensions(tx)?,
+                None => 0,
+            };
+            let mut row = new_record(OP, &args.input, &args.source_id, now, false, dims)?;
             check_row(OP, &row)?;
             require_fact_source(tx, &args.source_id)?;
             row.id = next_id(tx, COUNTER)?;
@@ -1195,9 +1257,14 @@ impl Store {
                 }
                 None => 0,
             };
+            let dims = if args.rows.iter().any(|r| r.embedding.is_some()) {
+                embedding_dimensions(tx)?
+            } else {
+                0
+            };
             let mut records = Vec::with_capacity(args.rows.len());
             for input in &args.rows {
-                let row = new_record(OP, input, &args.source_id, now, true)?;
+                let row = new_record(OP, input, &args.source_id, now, true, dims)?;
                 check_row(OP, &row)?;
                 records.push(row);
             }
@@ -1321,11 +1388,17 @@ impl Store {
             .count() as u64)
     }
 
-    /// `findCandidateDuplicates` with no embedding. The recency arm returns the entity's newest
-    /// `k` active rows. The keyword arm (`keyword`) drops audit checkpoint rows, keeps the rows whose
-    /// `to_tsvector('english', fact)` matches the OR of the lexemes of
-    /// `plainto_tsquery('english', fact_text)`, and orders them by `ts_rank_cd` descending, then
-    /// `created_at` and `id` descending. A claim with no lexemes (stop words only) matches nothing.
+    /// `findCandidateDuplicates`: the entity's active rows, in one of three arms.
+    /// - Recency (no `keyword`, no `embedding`): the newest `k`.
+    /// - Cosine (`embedding`, no `keyword`): drops audit checkpoint rows and keeps the comparable
+    ///   rows (a vector from `embedding_model`, `embedded_text_hash = md5(fact)`, the query's
+    ///   length), ordered by `halfvec` cosine distance to the query (NaN last).
+    /// - Keyword (`keyword`): drops audit checkpoint rows (and, with an `embedding`, the rows that
+    ///   are not comparable), keeps the rows whose `to_tsvector('english', fact)` matches the OR of
+    ///   the lexemes of `plainto_tsquery('english', fact_text)`, and orders them by `ts_rank_cd`
+    ///   descending, then `created_at` and `id` descending. A claim with no lexemes matches nothing.
+    ///
+    /// An `embedding` with no (or an empty) `embedding_model` finds nothing.
     pub fn find_candidate_duplicates(&self, q: &DuplicateQuery) -> Result<Vec<Value>> {
         const OP: &str = "findCandidateDuplicates";
         let mut texts = vec![
@@ -1335,8 +1408,29 @@ impl Store {
         if q.keyword {
             texts.push(("factText", &q.fact_text));
         }
+        if q.embedding.is_some()
+            && let Some(model) = &q.embedding_model
+        {
+            texts.push(("embeddingModel", model));
+        }
         no_nul(OP, &texts)?;
         let k = count_arg(OP, "k", q.k)?;
+        let model = q.embedding_model.as_deref().filter(|m| !m.is_empty());
+        if q.embedding.is_some() && model.is_none() {
+            return Ok(Vec::new());
+        }
+        // The comparable rows' model and length, when the caller sent a vector.
+        let comparable = match (&q.embedding, model) {
+            (Some(literal), Some(model)) => Some((model, embedding::literal_len(literal))),
+            _ => None,
+        };
+        let cosine_query = match (&q.embedding, q.keyword) {
+            (Some(literal), false) => Some(embedding::to_halfvec(
+                &embedding::parse_vector(literal)?,
+                None,
+            )?),
+            _ => None,
+        };
         let query = if q.keyword {
             match or_of_lexemes(&plainto_tsquery(&q.fact_text)?) {
                 Some(query) => Some(query),
@@ -1347,11 +1441,13 @@ impl Store {
         };
         let read = self.read()?;
         let now = self.env.now_micros();
+        let filtered = q.keyword || cosine_query.is_some();
         let rows: Vec<FactRecord> = entity_rows(&*read, &q.source_id, &q.entity_slug)?
             .into_iter()
             .filter(|r| {
                 r.active(now)
-                    && !(q.keyword && r.audit_row())
+                    && !(filtered && r.audit_row())
+                    && comparable.is_none_or(|(model, len)| r.comparable(model, len))
                     && q.attributed_to
                         .as_ref()
                         .is_none_or(|who| r.attributed_to.as_ref().is_none_or(|a| a == who))
@@ -1361,6 +1457,28 @@ impl Store {
                     }
             })
             .collect();
+        if let Some(target) = cosine_query {
+            let mut ranked: Vec<(f64, FactRecord)> = rows
+                .into_iter()
+                .map(|r| {
+                    let d =
+                        embedding::cosine_distance(r.embedding.as_deref().unwrap_or(&[]), &target);
+                    (d, r)
+                })
+                .collect();
+            // Ascending, NaN after every number; equal distances keep insertion order.
+            ranked.sort_by(|(da, a), (db, b)| {
+                da.is_nan()
+                    .cmp(&db.is_nan())
+                    .then(da.total_cmp(db))
+                    .then(a.id.cmp(&b.id))
+            });
+            return Ok(ranked
+                .iter()
+                .take(k)
+                .map(|(_, r)| r.to_json(false, false))
+                .collect());
+        }
         let Some(query) = query else {
             return Ok(page_of(rows, |r| r.created_at_us, true, 0, k)
                 .iter()
@@ -1413,6 +1531,8 @@ impl Store {
         let until = opt_time(OP, "until", &q.until)?;
         let kind = q.kind.as_deref().unwrap_or("all");
         let read = self.read()?;
+        // The vector rides along only when it is from the brain's model and the text is current.
+        let brain_model = read_config(&*read, "embedding_model")?;
         let mut seen = HashSet::new();
         let mut rows = Vec::new();
         for source in &q.source_ids {
@@ -1454,7 +1574,11 @@ impl Store {
                     "text": r.fact,
                     "source_session": r.source_session,
                     "source_markdown_slug": r.source_markdown_slug,
-                    "embedding": Value::Null,
+                    "embedding": vector_json(r.embedding.as_deref().filter(|_| {
+                        brain_model.as_deref().is_some_and(|m| r.embedding_model.as_deref() == Some(m))
+                            && r.embedded_text_hash.as_deref()
+                                == Some(embedding::md5_hex(&r.fact).as_str())
+                    })),
                 })
             })
             .collect())

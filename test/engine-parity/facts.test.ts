@@ -848,4 +848,164 @@ describe('engine parity: facts', () => {
       return { full, k3, defaultK, byUser, byAssistant, noMembers, onlyPage, stemmed, punctuation, accented, unaccented, noModel, otherEntity };
     },
   );
+
+  /** A 1536-wide vector: `head` in the first slots, zero elsewhere. */
+  const vec = (...head: number[]) => {
+    const v = new Float32Array(1536);
+    head.forEach((x, i) => { v[i] = x; });
+    return v;
+  };
+  const vectorView = (r: FactRow) => ({
+    fact: r.fact,
+    head: r.embedding ? Array.from(r.embedding.slice(0, 6)) : null,
+    dims: r.embedding ? r.embedding.length : null,
+    model: r.embedding_model ?? null,
+    hash: r.embedded_text_hash ?? null,
+    embedded: r.embedded_at instanceof Date,
+  });
+  const messageOf = (p: Promise<unknown>) => p.then(() => 'ok', (e: unknown) => (e instanceof Error ? e.message : String(e)));
+
+  parityTest(
+    'insertFact and insertFacts store a vector rounded to halfvec, with the model and text hash only when a model is named',
+    { methods: ['insertFact', 'insertFacts', 'listFactsByEntity'] },
+    async (engine) => {
+      const ent = 'people/wren-example';
+      await remember(engine, ent, [
+        { fact: 'w-model', embedding: vec(0.1, 1 / 3, 0.7, 1e-5, 3e-8, -65519), embedding_model: 'm1' },
+        { fact: 'w-no-model', embedding: vec(0.5, 0.25) },
+        { fact: 'w-empty-model', embedding: vec(0.2), embedding_model: '' },
+        { fact: 'w-model-no-vector', embedding_model: 'm1' },
+        { fact: 'w-plain' },
+      ]);
+      await engine.insertFacts([
+        { row_num: 1, source_markdown_slug: ent, fact: 'w-fence-model', entity_slug: ent, source: 'fence', embedding: vec(0.6, 0.8), embedding_model: 'm1' },
+        { row_num: 2, source_markdown_slug: ent, fact: 'w-fence-no-model', entity_slug: ent, source: 'fence', embedding: vec(0.3) },
+      ], { source_id: SRC });
+      const rows = sorted((await engine.listFactsByEntity(SRC, ent, { limit: 50 })).map(vectorView), (r) => r.fact);
+      const byFact = new Map(rows.map((r) => [r.fact, r]));
+      expect(byFact.get('w-model')).toEqual({
+        fact: 'w-model', head: [0.0999755859375, 0.333251953125, 0.7001953125, 0.000010013580322265625, 5.960464477539063e-8, -65504],
+        dims: 1536, model: 'm1', hash: '91a02c860e5d683d07d5f56055e9fa8d', embedded: true,
+      });
+      expect(byFact.get('w-no-model')).toMatchObject({ model: null, hash: null, embedded: true, dims: 1536 });
+      expect(byFact.get('w-empty-model')).toMatchObject({ model: '', hash: null, embedded: true });
+      expect(byFact.get('w-model-no-vector')).toMatchObject({ head: null, model: null, hash: null, embedded: false });
+      expect(byFact.get('w-plain')).toMatchObject({ head: null, model: null, hash: null, embedded: false });
+      expect(byFact.get('w-fence-model')).toMatchObject({ model: 'm1', embedded: true });
+      expect(byFact.get('w-fence-no-model')).toMatchObject({ model: null, hash: null, embedded: true });
+      return rows;
+    },
+  );
+
+  parityTest(
+    'insertFact refuses a vector of the wrong width, a NaN, an empty vector and a value past the halfvec range',
+    { methods: ['insertFact', 'insertFacts', 'listFactsByEntity'] },
+    async (engine) => {
+      const ent = 'people/xan-example';
+      const one = (embedding: Float32Array) =>
+        messageOf(engine.insertFact({ fact: 'x-bad', entity_slug: ent, source: 'mcp:remember', embedding, embedding_model: 'm1' }, { source_id: SRC }));
+      const narrow = await one(new Float32Array([0.1, 0.2, 0.3]));
+      const nan = await one(vec(0.1, Number.NaN));
+      const empty = await one(new Float32Array(0));
+      const huge = await one(vec(70000));
+      const big = await one(vec(1e6));
+      const edge = await one(vec(65520));
+      const batch = await messageOf(engine.insertFacts(
+        [{ row_num: 1, source_markdown_slug: ent, fact: 'x-fence', entity_slug: ent, source: 'fence', embedding: new Float32Array([1, 2]), embedding_model: 'm1' }],
+        { source_id: SRC },
+      ));
+      const left = texts(await engine.listFactsByEntity(SRC, ent));
+      for (const m of [narrow, nan, empty, huge, big, edge, batch]) expect(m).not.toBe('ok');
+      expect(left).toEqual([]);
+      return { narrow, nan, empty, huge, big, edge, batch, left };
+    },
+  );
+
+  parityTest(
+    'findCandidateDuplicates (embedding arm) orders by halfvec cosine distance and skips rows with no model, another model, another width or an audit source',
+    { methods: ['insertFact', 'findCandidateDuplicates'] },
+    async (engine) => {
+      const ent = 'people/yara-example';
+      await remember(engine, ent, [
+        { fact: 'y-far', embedding: vec(0.1, 1 / 3, 0.7), embedding_model: 'm1' },
+        { fact: 'y-near', embedding: vec(0.3, 0.25, 0.05), embedding_model: 'm1' },
+        { fact: 'y-mid', embedding: vec(0.2, 0.5, 0.1), embedding_model: 'm1' },
+        { fact: 'y-opposite', embedding: vec(-0.3, -0.2, -0.1), embedding_model: 'm1' },
+        { fact: 'y-no-model', embedding: vec(0.3, 0.2, 0.1) },
+        { fact: 'y-other-model', embedding: vec(0.3, 0.2, 0.1), embedding_model: 'm2' },
+        { fact: 'y-audit', embedding: vec(0.3, 0.2, 0.1), embedding_model: 'm1', source: 'cli:extract-conversation-facts:terminal:v2' },
+        { fact: 'y-said-by-assistant', embedding: vec(0.3, 0.2, 0.11), embedding_model: 'm1', attributed_to: 'assistant' },
+        { fact: 'y-plain' },
+      ]);
+      const q = vec(0.3, 0.2, 0.1);
+      const dup = (opts: Parameters<BrainEngine['findCandidateDuplicates']>[3]) =>
+        engine.findCandidateDuplicates(SRC, ent, 'whatever', opts).then(texts);
+      const all = await dup({ embedding: q, embeddingModel: 'm1', k: 20 });
+      const top2 = await dup({ embedding: q, embeddingModel: 'm1', k: 2 });
+      const byUser = await dup({ embedding: q, embeddingModel: 'm1', k: 20, attributedTo: 'user' });
+      const otherModel = await dup({ embedding: q, embeddingModel: 'm2' });
+      const narrow = await dup({ embedding: new Float32Array([0.3, 0.2, 0.1]), embeddingModel: 'm1' });
+      const emptyModel = await dup({ embedding: q, embeddingModel: '' });
+      const tooBig = await messageOf(dup({ embedding: vec(70000), embeddingModel: 'm1' }));
+      expect(all).toEqual(['y-said-by-assistant', 'y-near', 'y-mid', 'y-far', 'y-opposite']);
+      expect(top2).toEqual(['y-said-by-assistant', 'y-near']);
+      expect(byUser).toEqual(['y-near', 'y-mid', 'y-far', 'y-opposite']);
+      expect(otherModel).toEqual(['y-other-model']);
+      expect(narrow).toEqual([]);
+      expect(emptyModel).toEqual([]);
+      expect(tooBig).not.toBe('ok');
+      return { all, top2, byUser, otherModel, narrow, emptyModel, tooBig };
+    },
+  );
+
+  parityTest(
+    'findCandidateDuplicates (keyword arm) with an embedding keeps only rows whose vector is comparable, in keyword order',
+    { methods: ['insertFact', 'findCandidateDuplicates'] },
+    async (engine) => {
+      const ent = 'people/zed-example';
+      await remember(engine, ent, [
+        { fact: 'Zed runs the harbor ferry', embedding: vec(1), embedding_model: 'm1' },
+        { fact: 'Zed fixed the harbor ferry engine', embedding: vec(0, 1), embedding_model: 'm1' },
+        { fact: 'Zed harbor ferry with another model', embedding: vec(1), embedding_model: 'm2' },
+        { fact: 'Zed harbor ferry with no vector' },
+        { fact: 'Zed harbor ferry with no model', embedding: vec(1) },
+      ]);
+      const kw = (opts: Parameters<BrainEngine['findCandidateDuplicates']>[3]) =>
+        engine.findCandidateDuplicates(SRC, ent, 'harbor ferry', { arm: 'keyword', ...opts }).then(texts);
+      const plain = await kw({});
+      const m1 = await kw({ embedding: vec(0.5), embeddingModel: 'm1' });
+      const m2 = await kw({ embedding: vec(0.5), embeddingModel: 'm2' });
+      const narrow = await kw({ embedding: new Float32Array([1, 2]), embeddingModel: 'm1' });
+      expect(plain).toHaveLength(5);
+      expect(sorted(m1)).toEqual(['Zed fixed the harbor ferry engine', 'Zed runs the harbor ferry']);
+      expect(m2).toEqual(['Zed harbor ferry with another model']);
+      expect(narrow).toEqual([]);
+      return { plain, m1, m2, narrow };
+    },
+  );
+
+  parityTest(
+    'findTrajectory returns a point\'s vector only when it comes from the brain\'s embedding model and the text is current',
+    { methods: ['setConfig', 'insertFact', 'findTrajectory'] },
+    async (engine) => {
+      const ent = 'companies/willow-example';
+      await engine.setConfig('embedding_model', 'm-traj');
+      await remember(engine, ent, [
+        { fact: 'ARR 1m', claim_metric: 'arr', claim_value: 1e6, valid_from: at('2026-01-01T00:00:00Z'), embedding: vec(0.1, 0.7), embedding_model: 'm-traj' },
+        { fact: 'ARR 2m', claim_metric: 'arr', claim_value: 2e6, valid_from: at('2026-02-01T00:00:00Z'), embedding: vec(0.4), embedding_model: 'other' },
+        { fact: 'ARR 3m', claim_metric: 'arr', claim_value: 3e6, valid_from: at('2026-03-01T00:00:00Z'), embedding: vec(0.4) },
+        { fact: 'ARR 4m', claim_metric: 'arr', claim_value: 4e6, valid_from: at('2026-04-01T00:00:00Z') },
+      ]);
+      const points = (await engine.findTrajectory({ entitySlug: ent, remote: false })).map((p) => ({
+        text: p.text, head: p.embedding ? Array.from(p.embedding.slice(0, 3)) : null, dims: p.embedding ? p.embedding.length : null,
+      }));
+      expect(points).toEqual([
+        { text: 'ARR 1m', head: [0.0999755859375, 0.7001953125, 0], dims: 1536 },
+        { text: 'ARR 2m', head: null, dims: null },
+        { text: 'ARR 3m', head: null, dims: null },
+        { text: 'ARR 4m', head: null, dims: null },
+      ]);
+      return points;
+    },
+  );
 });

@@ -15,14 +15,32 @@ typed claims. Each member gives the answer PGLite gives today, odd behavior incl
 | `listFactsKeyset` | Oldest first by `(created_at, id)` after a microsecond ISO cursor. |
 | `listSupersessions` | Superseded rows, newest supersession first. |
 | `countUnconsolidatedFacts`, `getFactsHealth` | Counts of active rows (and the five entities with the most). |
-| `findCandidateDuplicates` | The recency arm: active same-entity rows, newest first, capped by `k`. The keyword arm (`keyword`, `factText`): the same rows less audit checkpoints, kept when `to_tsvector('english', fact)` matches the OR of the claim's `plainto_tsquery` lexemes (`keyword::or_of_lexemes`; none matches nothing), ordered by `ts_rank_cd` descending, then `created_at` and `id` descending. The member refuses the embedding arm, the keyword arm with an embedding (facts store no vectors yet), and the keyword arm when `GBRAIN_FTS_LANGUAGE` is not `english`. |
+| `findCandidateDuplicates` | The recency arm: active same-entity rows, newest first, capped by `k`. The keyword arm (`keyword`, `factText`): the same rows less audit checkpoints, kept when `to_tsvector('english', fact)` matches the OR of the claim's `plainto_tsquery` lexemes (`keyword::or_of_lexemes`; none matches nothing), ordered by `ts_rank_cd` descending, then `created_at` and `id` descending. The cosine arm (`embedding`, no `keyword`): the same rows less audit checkpoints, kept when comparable (a vector from `embeddingModel`, `embedded_text_hash = md5(fact)`, the query's width), ordered by `halfvec` cosine distance to the query (cast to `halfvec` too; NaN last; equal distances by id). The keyword arm with an `embedding` keeps only the comparable rows and does not read the vector. An `embedding` with no (or an empty) `embeddingModel` finds nothing. The member refuses the keyword arm when `GBRAIN_FTS_LANGUAGE` is not `english`. |
 | `consolidateFact` | Stamps `consolidated_at` and `consolidated_into`. |
-| `findTrajectory` | Typed claims and events of an entity, oldest first, world rows only for remote callers. |
+| `findTrajectory` | Typed claims and events of an entity, oldest first, world rows only for remote callers. A point carries its `embedding` only when its `embedding_model` is the `embedding_model` config value and its `embedded_text_hash` is `md5(fact)`; otherwise null. |
 | `migrateFactsToCanonical` | Moves a phantom page's active rows onto the canonical slug, `row_num` offset past the canonical page's largest. The ontology duplicates the move would make are dropped first, in its own write, as PGLite runs the two statements outside one transaction. |
 
-Rows go out with dates as microsecond ISO text, `embedding` null, `trust_tier` `unknown` and
+Rows go out with dates as microsecond ISO text, `embedding` as a number list (or null),
+`trust_tier` `unknown` and
 `write_origin` null. `fact_fingerprint` follows `gbrain_fact_fingerprint` (lowercase, fold the
 fingerprint punctuation, collapse spaces, sha256 hex).
+
+## Vectors (`facts/embedding.rs`)
+
+`facts.embedding` is `halfvec(N)` in PGLite, with N the `embedding_dimensions` config value
+(1536 when unset). The member sends the literal PGLite inlines (`'[a,b,...]'`). The store reads it
+as pgvector's `vector_in` does (each element an `f32`; `NaN not allowed in vector`,
+`infinite value not allowed in vector`, `vector must have at least 1 dimension`), checks the width
+(`expected N dimensions, not M`) and rounds each element to the nearest `f16`, ties to even
+(`"<float4 text>" is out of range for type halfvec` past 65504). These checks run before the
+`NOT NULL` checks, as the cast does in the INSERT.
+
+A row with a vector gets `embedded_at` now and the input's `embedding_model`.
+`embedded_text_hash` is `md5(fact)` only when the model is a non-empty text. A vector with no
+model is kept with no model and no hash; PGLite raises no error for it. The `FactRecord` holds the
+vector as hex `f16` bit patterns, four digits an element (`embedding`, absent when null). Cosine
+distance follows `halfvec_cosine_distance`: `f32` sums, the similarity in `f64`, clamped to
+[-1, 1]; a zero vector gives NaN. `md5` is computed in place (no hash crate carries it).
 
 ## Keys
 
@@ -61,5 +79,5 @@ counter is `M next_facts_id`.
 ## Not modeled
 
 The withdrawal ledger and the insert/update guards that read it, the write-attribution and
-trust-tier triggers, and stored embeddings. Inputs whose PGLite outcome the store cannot
+trust-tier triggers. Inputs whose PGLite outcome the store cannot
 reproduce refuse in the member with `engine_capability_missing`.

@@ -123,8 +123,8 @@ impl Brain {
         })
     }
 
-    /// `findCandidateDuplicates` with no embedding (the recency and keyword arms): resolves the
-    /// entity's candidate rows.
+    /// `findCandidateDuplicates` (the recency, cosine and keyword arms): resolves the entity's
+    /// candidate rows.
     #[napi]
     pub fn find_candidate_duplicates<'env>(
         &self,
