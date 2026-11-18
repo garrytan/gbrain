@@ -416,3 +416,95 @@ fn a_rename_moves_a_soft_deleted_page_and_keeps_its_state() {
     assert!(!moved["deleted_at"].is_null());
     assert_eq!(moved["contextual_retrieval_mode"], "title");
 }
+
+fn canonical_refs(store: &Store, refs: &[(&str, &str)], policy: Value) -> Vec<String> {
+    let mut query = json!({
+        "refs": refs.iter().map(|(s, slug)| json!({ "source_id": s, "slug": slug })).collect::<Vec<_>>(),
+    });
+    query
+        .as_object_mut()
+        .unwrap()
+        .extend(policy.as_object().unwrap().clone());
+    let query: AliasCanonicalQuery = serde_json::from_value(query).unwrap();
+    store
+        .alias_canonical_refs(&query)
+        .unwrap()
+        .iter()
+        .map(|r| {
+            format!(
+                "{}/{}",
+                r["source_id"].as_str().unwrap(),
+                r["canonical_slug"].as_str().unwrap()
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn alias_canonical_refs_reads_live_and_private_pages_by_policy() {
+    let dir = TempDir::new("aliases-canonical");
+    let store = open(&dir);
+    source(&store, "other");
+    for slug in ["c/open", "c/private", "c/gone", "c/quiet"] {
+        put(&store, &format!("{slug}-old"));
+        store
+            .update_slug(&format!("{slug}-old"), slug, None)
+            .unwrap();
+    }
+    put_in(&store, "c/away-old", "away", json!({}), Some("other"));
+    store
+        .update_slug("c/away-old", "c/away", Some("other"))
+        .unwrap();
+    put_in(
+        &store,
+        "c/private",
+        "p",
+        json!({ "visibility": "private" }),
+        None,
+    );
+    put_in(&store, "c/quiet", "q", json!({ "quarantine": true }), None);
+    store.soft_delete_page("c/gone", None).unwrap();
+    put(&store, "c/plain");
+    let refs = [
+        ("default", "c/quiet"),
+        ("default", "c/open"),
+        ("default", "c/private"),
+        ("default", "c/gone"),
+        ("default", "c/plain"),
+        ("other", "c/away"),
+        ("default", "c/open"),
+        ("default", "c/open-old"),
+        ("default", "c/\0nul"),
+    ];
+    let all = strings(&[
+        "default/c/gone",
+        "default/c/open",
+        "default/c/private",
+        "default/c/quiet",
+        "other/c/away",
+    ]);
+    assert_eq!(canonical_refs(&store, &refs, json!({})), all);
+    assert_eq!(
+        canonical_refs(&store, &refs, json!({ "live": true })),
+        strings(&["default/c/open", "default/c/private", "other/c/away"])
+    );
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true });
+    assert_eq!(
+        canonical_refs(
+            &store,
+            &refs,
+            json!({ "live": true, "exclude_private": policy })
+        ),
+        strings(&["default/c/open", "other/c/away"])
+    );
+    assert_eq!(
+        canonical_refs(&store, &refs, json!({ "source_ids": ["other"] })),
+        strings(&["other/c/away"])
+    );
+    store.set_source_archived("other", true).unwrap();
+    assert_eq!(
+        canonical_refs(&store, &refs, json!({ "live": true })),
+        strings(&["default/c/open", "default/c/private"])
+    );
+    assert!(canonical_refs(&store, &[], json!({ "live": true })).is_empty());
+}

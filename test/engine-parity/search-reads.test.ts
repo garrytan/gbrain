@@ -21,8 +21,7 @@
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
-import { basisEmbedding, createSource, parityArms, sorted } from './harness.ts';
-import { archiveSource } from './harness.ts';
+import { archiveSource, basisEmbedding, createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { chunk, seedPage } from './chunk-fixtures.ts';
 
@@ -95,6 +94,83 @@ describe('engine parity: search reads', () => {
       const empty = key(await engine.aliasCanonicalRefs([]));
       expect(open).toEqual(['default::concepts/after']);
       return { open, scoped, elsewhere, empty };
+    },
+  );
+
+  parityTest(
+    'aliasCanonicalRefs: a policy reads only live pages the caller may see; no policy reads every page row',
+    { methods: ['putPage', 'updateSlug', 'softDeletePage', 'aliasCanonicalRefs'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'arch');
+      for (const slug of ['c/open', 'c/private', 'c/gone', 'c/quiet', 'c/aliased-priv']) {
+        await put(engine, `${slug}-old`);
+        await engine.updateSlug(`${slug}-old`, slug);
+      }
+      await put(engine, 'c/away-old', {}, { sourceId: 'arch' });
+      await engine.updateSlug('c/away-old', 'c/away', { sourceId: 'arch' });
+      await put(engine, 'c/private', { frontmatter: { visibility: 'private' } });
+      await put(engine, 'c/aliased-priv', { frontmatter: { access: 'private' } });
+      await put(engine, 'c/quiet', { frontmatter: { quarantine: { reason: 'test' } } });
+      await engine.softDeletePage('c/gone');
+      await put(engine, 'c/plain');
+      const refs = [
+        { slug: 'c/quiet', source_id: 'default' }, { slug: 'c/open', source_id: 'default' },
+        { slug: 'c/private', source_id: 'default' }, { slug: 'c/gone', source_id: 'default' },
+        { slug: 'c/plain', source_id: 'default' }, { slug: 'c/away', source_id: 'arch' },
+        { slug: 'c/open', source_id: 'default' }, { slug: 'c/open-old', source_id: 'default' },
+        { slug: 'c/aliased-priv', source_id: 'default' }, { slug: 'c/away', source_id: 'default' },
+      ];
+      const key = (rows: Array<{ source_id: string; canonical_slug: string }>) => sorted(rows.map(r => `${r.source_id}::${r.canonical_slug}`));
+      const raw = await engine.aliasCanonicalRefs(refs);
+      const types = sorted(raw.map(r => Object.entries(r).map(([k, v]) => `${k}:${typeof v}`).sort().join(',')));
+      const open = key(raw);
+      const live = key(await engine.aliasCanonicalRefs(refs, { sourceIds: [] }));
+      const hidden = key(await engine.aliasCanonicalRefs(refs, { excludePrivate: true }));
+      // Hybrid search passes its whole option bag; keys the SQL does not read change nothing.
+      const bag = key(await engine.aliasCanonicalRefs(refs, { excludePrivate: true, limit: 5, requireSafeChunks: true, sourceId: 'default' } as never));
+      const federated = key(await engine.aliasCanonicalRefs(refs, { sourceIds: ['arch', 'nowhere'], sourceId: 'default' }));
+      await archiveSource(engine, backend, 'arch');
+      const archivedOpen = key(await engine.aliasCanonicalRefs(refs));
+      const archivedLive = key(await engine.aliasCanonicalRefs(refs, { sourceId: 'arch' }));
+      expect(open).toEqual(['arch::c/away', 'default::c/aliased-priv', 'default::c/gone', 'default::c/open', 'default::c/private', 'default::c/quiet']);
+      expect(live).toEqual(['arch::c/away', 'default::c/aliased-priv', 'default::c/open', 'default::c/private']);
+      expect(hidden).not.toContain('default::c/private');
+      expect(federated).toEqual(['arch::c/away']);
+      expect(archivedOpen).toEqual(open);
+      expect(archivedLive).toEqual([]);
+      return { types, open, live, hidden, bag, federated, archivedOpen, archivedLive };
+    },
+  );
+
+  parityTest(
+    'pageCollapseFacts: every page row answers by id, any source or deletion, with text-cast frontmatter and code-point bounds',
+    { methods: ['putPage', 'softDeletePage', 'pageCollapseFacts'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      const body = `  ${'é'.repeat(230)}\u{1F600}  `;
+      const pages = [
+        await put(engine, 'notes/numeric', { frontmatter: { redirect_to: '   ', redirect: 7, merged_into: 'notes/t' } }),
+        await put(engine, 'notes/re', { compiled_truth: '\tlead ', frontmatter: { status: 'Re-Redirected', superseded_by: ' notes/s ' } }, { sourceId: 'other' }),
+        await put(engine, 'notes/aliased', { compiled_truth: body, frontmatter: { status: 'aliased', superseded_by: 'notes/s' } }),
+        await put(engine, 'notes/alias-x', { frontmatter: { status: 'alias-x', superseded_by: 'notes/s', merged_into: { slug: 'x' } } }),
+        await put(engine, 'notes/gone', { compiled_truth: body }),
+        await put(engine, 'notes/empty-status', { frontmatter: { status: null, redirect: '', superseded_by: 'notes/s' } }),
+      ];
+      await engine.softDeletePage('notes/gone');
+      const name = slugsOf(pages);
+      const ids = pages.map(p => p.id);
+      const byName = (slug: string) => pages.find(p => p.slug === slug)!.id;
+      const bodyIds = [byName('notes/re'), byName('notes/aliased'), byName('notes/gone')];
+      const rows = await engine.pageCollapseFacts([...ids, ids[0]!, 2_000_000_000], bodyIds);
+      const view = sorted(rows.map(r => ({
+        slug: name([r.id])[0], idType: typeof r.id, target: r.target, body_chars: r.body_chars === null ? null : Number(r.body_chars),
+        body: r.body, lead: r.lead,
+      })), r => r.slug!);
+      expect(view.map(r => r.slug)).toEqual(['notes/alias-x', 'notes/aliased', 'notes/empty-status', 'notes/gone', 'notes/numeric', 'notes/re']);
+      expect(view.find(r => r.slug === 'notes/numeric')!.target).toBe('7');
+      expect(view.find(r => r.slug === 'notes/aliased')).toMatchObject({ target: null, body_chars: 231 });
+      expect(view.find(r => r.slug === 'notes/gone')!.body).toBe(view.find(r => r.slug === 'notes/aliased')!.body);
+      return { view, unbodied: (await engine.pageCollapseFacts(ids, [])).map(r => r.lead) };
     },
   );
 

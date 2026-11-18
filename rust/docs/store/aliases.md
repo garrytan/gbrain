@@ -35,6 +35,7 @@ serve source delete yet, so nothing calls it today.
 | `brain.updateSlug(oldSlug, newSlug, sourceId?)` | the number of pages moved, 0 or 1. The page at `(sourceId ?? 'default', oldSlug)`, soft-deleted or not, is versioned as it stood, moved by `pages::rename_page` (same id, new knowledge revision, cleared text projection revision, new `updated_at`), then its old slug becomes an alias of the new one and its alias rows move with it. `invalid_slug` for a bad new slug and `constraint_violation` for a taken one; either keeps nothing. Moving a page onto its own slug changes only `updated_at` | `updateSlug` |
 | `brain.resolveSlugWithAliasDetailed(slug, sources)` | `{ canonical_slug, source_id, matches }` from the first source in `sources` that has `slug` as an alias, or `null`. The TypeScript member warns once per process when `matches > 1` and returns `canonical_slug` (or `slug`) for `resolveSlugWithAlias` | `resolveSlugWithAliasDetailed`, `resolveSlugWithAlias` |
 | `brain.resolveAliases(aliasNorms, { sourceId?, sourceIds? }?)` | `[aliasNorm, [{ slug, source_id }]]` pairs in alias byte order, pages by source then slug, for aliases that name a live page (not soft deleted, not quarantined, source not archived) in the scope. Within one source only the best origin answers (frontmatter, then declared, then subject), and a derived alias yields to another live page whose lower-cased title is the alias. The TypeScript member builds the `Map` | `resolveAliases` |
+| `brain.aliasCanonicalRefs({ refs, source_ids, live, exclude_private })` | `[{ source_id, canonical_slug }]` for each distinct ref that is the canonical slug of a `slug_aliases` row (one `k 0x05` prefix scan per ref) and whose page row exists, in byte order by source then slug (the SQL has no `ORDER BY`). With `live` (the TypeScript member sets it when a policy was passed, as `pageReadFilter('p', policy, !!policy)` does) the page must be live: not soft deleted, not quarantined, its source present and not archived; without it a soft-deleted page still answers. `source_ids` keeps the named sources. `exclude_private` applies the page policy of `facts/privacy.rs` (`page_hidden`). The TypeScript member reads `sourceIds`, else `sourceId`, and `excludePrivate` through `storePagePolicy`; it refuses `minTrust` and `suppressFlagged` with `engine_capability_missing` (the store keeps no trust tiers) and ignores the other search options the SQL does not read | `aliasCanonicalRefs` |
 | `brain.setPageAliases(slug, sourceId, aliasNorms)` | nothing. Replaces the page's `frontmatter` rows with the non-empty, distinct names; rows of other origins stay. The page need not exist; the source must when there is a row to insert (`source_not_found`) | `setPageAliases` |
 | `brain.updatePageContextualRetrievalState(slug, sourceId, mode, corpusGeneration)` | nothing. Stamps the live page at `(sourceId, slug)` and sets its `updated_at`; a missing or soft-deleted page is left alone. The knowledge revision does not move | `updatePageContextualRetrievalState` |
 
@@ -63,10 +64,13 @@ Where this engine differs from PGLite:
 - The `constraint_violation` message for a taken slug is `pages::rename_page`'s, not Postgres's
   unique-violation text.
 - Text that holds a NUL byte is refused `invalid_argument` on write and finds nothing on read.
-- `excludePrivate`, `minTrust` and `suppressFlagged` refuse with `engine_capability_missing`: the
-  store keeps no page visibility. `requireSafeChunks` and `inline` change nothing.
+- On the other alias reads `excludePrivate`, `minTrust` and `suppressFlagged` refuse with
+  `engine_capability_missing`. `requireSafeChunks` and `inline` change nothing.
+- `aliasCanonicalRefs` refuses `minTrust` and `suppressFlagged`: the store keeps no `trust_tier`
+  and no activation suppression.
 
 `crates/gbrain-store/tests/aliases.rs` covers what the parity cases in
 `test/engine-parity/sync-aliases.test.ts` cannot show: state across a reopen, the hard-delete
-rules, the rename's alias bookkeeping, the visibility filter of `resolveAliases` and the refused
-inputs.
+rules, the rename's alias bookkeeping, the visibility filter of `resolveAliases`, the live and
+privacy filters of `aliasCanonicalRefs` and the refused inputs. `aliasCanonicalRefs` has its
+parity cases in `test/engine-parity/search-reads.test.ts`.
