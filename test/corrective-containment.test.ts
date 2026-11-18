@@ -71,6 +71,8 @@ describe('remote history uses strict body sanitization', () => {
           getVersions: getVersions as never,
           // Trusted local history also reads write attribution (Foundations 1 F1b); none is recorded here.
           executeRaw: (async () => []) as never,
+          // Guest stamping reads page trust through the typed member; no page rows are recorded here either.
+          readPageTrustRows: (async () => []) as never,
           // Even an operator opt-out cannot disable the Facts/Takes boundary.
           getConfig: async () => 'visible',
         }, { remote: remote as boolean, sourceId: 'default', takesHoldersAllowList }), { slug: 'example-page', include_body: true }) as Array<{ compiled_truth: string }>;

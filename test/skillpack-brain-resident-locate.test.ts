@@ -14,6 +14,7 @@ import {
   deriveBrainId,
 } from '../src/core/skillpack/brain-resident-locate.ts';
 import { OperationError, type OperationContext } from '../src/core/operations.ts';
+import { stubSourceMembers } from './helpers/source-members-stub.ts';
 
 let root: string;
 let packDir: string;
@@ -31,20 +32,10 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-/** Minimal fake engine: only executeRaw (sources SELECT) + getConfig are used. */
+/** Minimal fake engine: only the typed sources read (listSourceRecords, via loadAllSources) + getConfig are used. */
 function fakeEngine(sources: Array<{ id: string; local_path: string | null; config?: Record<string, unknown> }>, cfg: Record<string, string> = {}) {
   return {
-    executeRaw: async () =>
-      sources.map((s) => ({
-        id: s.id,
-        name: s.id,
-        local_path: s.local_path,
-        last_commit: null,
-        last_sync_at: null,
-        config: s.config ?? {},
-        created_at: new Date(),
-        archived: false,
-      })),
+    ...stubSourceMembers(sources),
     getConfig: async (k: string) => cfg[k] ?? null,
   } as unknown as OperationContext['engine'];
 }
@@ -136,10 +127,11 @@ async function expectOpError(p: Promise<unknown>, code: string): Promise<Operati
 }
 
 /** Engine that counts calls — proves a rejection fired before any engine (and
- *  therefore any source-path/FS) access. loadAllSources only uses executeRaw. */
+ *  therefore any source-path/FS) access. loadAllSources reads the typed listSourceRecords member. */
 function countingEngine() {
-  const calls = { executeRaw: 0, getConfig: 0 };
+  const calls = { executeRaw: 0, getConfig: 0, sourceReads: 0 };
   const engine = {
+    ...stubSourceMembers([], { onCall: () => { calls.sourceReads += 1; } }),
     executeRaw: async () => {
       calls.executeRaw += 1;
       return [];
@@ -164,6 +156,7 @@ describe('getResidentSkillDetail — slug shape gate (pre-FS, pre-engine)', () =
         'invalid_params',
       );
       expect(calls.executeRaw).toBe(0);
+      expect(calls.sourceReads).toBe(0);
       expect(calls.getConfig).toBe(0);
     });
   }
@@ -175,6 +168,7 @@ describe('getResidentSkillDetail — slug shape gate (pre-FS, pre-engine)', () =
       'invalid_params',
     );
     expect(calls.executeRaw).toBe(0);
+    expect(calls.sourceReads).toBe(0);
   });
 
   test('boundary: a 64-char slug passes the shape gate (fails later as not_found)', async () => {

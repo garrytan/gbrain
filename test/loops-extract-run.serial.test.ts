@@ -17,6 +17,12 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll, mock, spyOn } from 'bun:test';
+import * as realGateway from '../src/core/ai/gateway.ts';
+
+// mock.module patches a loaded module's exports in place and mock.restore()
+// does not undo it: snapshot the real gateway BEFORE mocking so afterAll can
+// put it back for later files in the same bun process.
+const realGatewayExports = { ...realGateway };
 
 // ── Gateway mock (must precede every import that can reach ai/gateway.ts) ──
 interface ChatReq {
@@ -145,6 +151,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await engine.disconnect();
+  mock.module('../src/core/ai/gateway.ts', () => realGatewayExports);
 });
 
 describe('isLoopsExtractionEnabled', () => {

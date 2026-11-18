@@ -34,6 +34,11 @@ const COMPACTION_PATH = [
   'src/core/facts/extract.ts',
   'src/core/facts/extraction-availability.ts',
   'src/core/persistence/filesystem-guard.ts',
+  // The reflex's direct-Postgres rung (reflex.ts getPostgresEngine, shared by compact()) lazy-loads these; a Bun
+  // asset import under postgres-engine.ts makes createEngine throw under Node, so recall silently injects nothing.
+  'src/core/postgres-engine.ts',
+  'src/core/context/retrieval-reflex.ts',
+  'src/core/context/volunteer-events.ts',
 ];
 
 function resolveImport(from: string, spec: string): string {

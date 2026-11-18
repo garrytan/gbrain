@@ -107,9 +107,12 @@ export function listCompactableReceipts<R = Record<string, unknown>>(exec: Legac
   return exec.executeRaw<R>(COMPACTABLE_RECEIPTS_SQL, [retentionDays]);
 }
 
-/** `sweepCompactedReservations`' window: $1 the sequence walked through, $2 rows. */
+/**
+ * `sweepCompactedReservations`' window: $1 the sequence walked through, $2 rows. ORDER BY names the table's bigint
+ * column: a bare `sequence` would sort the text alias ("10" before "9") and the cursor would skip rows.
+ */
 export const RESERVATIONS_AFTER_SQL = `SELECT id,sequence::text AS sequence,compacted
-    FROM persistence_requests WHERE sequence>$1::bigint ORDER BY sequence LIMIT $2`;
+    FROM persistence_requests WHERE sequence>$1::bigint ORDER BY persistence_requests.sequence LIMIT $2`;
 
 export function listReservationsAfter(exec: LegacyUnscopedRead, after: string, limit: number): Promise<Array<{ id: string; sequence: string; compacted: boolean }>> {
   return exec.executeRaw(RESERVATIONS_AFTER_SQL, [after, limit]);
@@ -133,7 +136,7 @@ export function listTrueUpRequests<R = Record<string, unknown>>(exec: LegacyUnsc
 export const CAPACITY_WINDOW_DAYS = 7;
 export const CAPACITY_WALK_STEP = 1000;
 
-export const CAPACITY_COUNTERS_SQL = "SELECT key,lifetime_ids::text,terminal_bytes::text FROM persistence_counters WHERE key='brain' OR key LIKE 'principal:%' ORDER BY key";
+export const CAPACITY_COUNTERS_SQL = "SELECT key,lifetime_ids::text,terminal_bytes::text FROM persistence_counters WHERE key='brain' OR key LIKE 'principal:%' ORDER BY key COLLATE \"C\"";
 
 /** One principal's window by UTC day (`COMPACTED_RECEIPT_BYTES_SQL('w','e')` written out): $1 kind, $2 id, $3 window days, $4 walk step. */
 export const CAPACITY_PRINCIPAL_DAYS_SQL = `WITH RECURSIVE walk(lo,oldest,n) AS (
@@ -249,11 +252,14 @@ export async function listPendingSegmentedProjections(exec: LegacyUnscopedRead, 
   const { rows } = await exec.run<PendingSegmentedProjection>(sqlFragment`SELECT s.id AS source_id,
       j.source_incarnation::text AS source_incarnation, j.slug, j.revision::text AS revision
     FROM page_projection_jobs j ${trustedSql(SEGMENTED_JOB_PROBES_SQL)}
-    WHERE ${joinFragments(filters, ' AND ')} ORDER BY j.updated_at, j.slug LIMIT ${Math.max(1, filter.limit)}`);
+    WHERE ${joinFragments(filters, ' AND ')} ORDER BY j.updated_at, j.slug COLLATE "C" LIMIT ${Math.max(1, filter.limit)}`);
   return rows;
 }
 
-/** One row of the resident's window selection; on an empty queue one row of nulls carries the high water. */
+/**
+ * One row of the resident's window selection; on an empty queue one row of nulls carries the high water. `ord` is an
+ * int4 in SQL (row_number() is int8, which the Postgres engine reads as a BigInt), so it is a number on every engine.
+ */
 export interface ProjectionWindowRow {
   lane: string | null; ord: number | null; source_incarnation: string | null; slug: string | null; revision: string | null; high_water: string | null;
 }
@@ -274,7 +280,7 @@ export function projectionWindowFragment(cursor: Pick<ProjectionScanCursor, 'aft
       ORDER BY j.source_incarnation,j.slug LIMIT 400),
     wrap AS (SELECT ${cols} FROM page_projection_jobs j WHERE (j.source_incarnation,j.slug) <= (${inc}::uuid,${slug}) AND ${filter}
       ORDER BY j.source_incarnation,j.slug LIMIT 400),
-    win AS (SELECT *,'window'::text AS lane,row_number() OVER (ORDER BY part,source_incarnation,slug) AS ord FROM (
+    win AS (SELECT *,'window'::text AS lane,(row_number() OVER (ORDER BY part,source_incarnation,slug))::int AS ord FROM (
       (SELECT *,0 AS part FROM fwd ORDER BY source_incarnation,slug) UNION ALL (SELECT *,1 AS part FROM wrap ORDER BY source_incarnation,slug)
       ORDER BY part,source_incarnation,slug LIMIT 400) w),
     high_water AS (SELECT max(updated_at)::text AS at FROM page_projection_jobs)
