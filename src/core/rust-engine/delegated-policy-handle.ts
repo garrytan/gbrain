@@ -2,10 +2,10 @@
  * The handle a delegated client's admission policy (src/core/minions/delegated-admission.ts) runs on in the Rust engine,
  * for `admitJob` and `retryJob`.
  *
- * It serves the job reads and the client's open-job count from the store. The store keeps no `oauth_clients` table (the
- * grants family is not in the Rust store), so `lockOAuthClient` resolves without locking anything and the policy's next
- * step, the grant read (`readClientGrant`, which runs `executeRaw`), stops on a typed refusal. Any other member refuses
- * as before.
+ * It serves the job reads, the client's open-job count and an agent job's source state from the store. The store keeps
+ * no `oauth_clients` or `access_tokens` table (the grants family is not in the Rust store), so `lockOAuthClient`
+ * resolves without locking anything and the policy's grant read (`readClientGrant`, or the job authority check's
+ * owner read, both through `executeRaw`) stops on a typed refusal. Any other member refuses as before.
  *
  * `locked()` reports whether the policy took the client lock. A caller refuses before it writes when it did: the policy's
  * reads and the store's write are separate store calls, so on Rust the lock would hold nothing across them, and the grant
@@ -14,6 +14,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { JobRow } from '../engine-sql/jobs.ts';
+import type { JobSourceState } from '../engine-sql/jobs-queue.ts';
 import { withDates } from './store-codec.ts';
 import { refuseMember, storeCall } from './store-members/common.ts';
 import type { StoreBrain } from './store.ts';
@@ -35,8 +36,12 @@ export function delegatedPolicyHandle(brain: StoreBrain, member: string): Delega
     },
     getFailedJobForRetry: (jobId: number) => call(() => brain.getFailedJobForRetry(jobId)),
     countOpenJobsByOwner: (clientId: string) => call(() => brain.countOpenJobsByOwner(clientId)),
+    readJobSourceState: async (sourceId: string) => {
+      const row: JobSourceState | null = await call(() => brain.readJobSourceState(sourceId));
+      return row ? withDates(row, ['created_at']) : null;
+    },
     lockOAuthClient: async () => { locked = true; },
-    executeRaw: async () => refuseMember(member, 'the delegated grant read (oauth_clients) is not in the Rust store'),
+    executeRaw: async () => refuseMember(member, 'the job owner\'s grant read (oauth_clients or access_tokens) is not in the Rust store'),
   };
   const tx = new Proxy(served, {
     get: (target, prop) => (prop in target ? target[prop as keyof typeof target] : refuseMember(member, 'the delegated admission policy read the database')),

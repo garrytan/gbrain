@@ -4101,6 +4101,7 @@
         "readEmbeddingStateCounts": "direct",
         "readGuestSourceRow": "none",
         "readJobInbox": "none",
+        "readJobSourceState": "none",
         "readJobStats": "none",
         "readLedgerSource": "none",
         "readLocalWriterRow": "none",
