@@ -18,7 +18,7 @@
  * `reproduceCommand` builds the one reproduce line every issue prints from
  * validated fields only (a strict test-path pattern), never from run text.
  */
-import { checkManifest, MANIFEST_ARTIFACT, MANIFEST_FILE, passedFiles, type CiManifest } from '../ci-manifest.ts';
+import { checkManifest, MANIFEST_ARTIFACT, MANIFEST_FILE, passedFiles, rerunProblem, type CiManifest } from '../ci-manifest.ts';
 import { checkRecord, REUSE_ARTIFACT, REUSE_FILE, REUSE_JOB } from '../ci-reuse.ts';
 import { fetchArtifactJson, inert, redactCredentials, type GitHubClient } from './gh-issue.ts';
 
@@ -233,6 +233,8 @@ export async function collectEvidence(client: GitHubClient, run: RunInfo, opts: 
       manifestState = 'read';
       const m: CiManifest = checked.manifest;
       if (!m.complete) problems.push(`the ${MANIFEST_ARTIFACT} artifact is incomplete: ${m.problems.slice(0, 3).map(p => inert(p, 160)).join('; ')}${m.problems.length > 3 ? ` (+${m.problems.length - 3} more)` : ''}`);
+      const rerun = rerunProblem(m);
+      if (rerun) problems.push(inert(rerun, 300));
       for (const f of m.failures) {
         if (!TEST_FILE.test(f.file)) continue;
         tests.push({ file: f.file, test: inert(f.test, 300), lane: inert(f.lane, 60), arm: inert(f.arm, 60), postgres: POSTGRES_SIGNAL.test(`${f.arm} ${f.lane}`), ...(f.signature && f.test.length <= 500 ? { name: f.test, signature: f.signature.slice(0, 200) } : {}) });
