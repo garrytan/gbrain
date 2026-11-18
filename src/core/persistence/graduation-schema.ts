@@ -9,6 +9,7 @@
  * security boundaries.
  */
 import type { BrainEngine } from '../engine.ts';
+import { lacksRawSql } from '../engine-capabilities.ts';
 import {
   assertTransition, SOURCE_ROW_STATES, SOURCE_TRANSITIONS, TARGET_ROW_STATES, TARGET_TRANSITIONS,
   type ReplayProbeResult, type SourceRowState, type TableReceipt, type TargetRowState, type TriggerBypass,
@@ -127,7 +128,7 @@ export async function readGraduationRow(engine: BrainEngine, opts: { forUpdate?:
  * answer as a brain before the migration. PGLite and Postgres report `raw_sql`, so they always read the table.
  */
 export async function readGraduationConnectRow(engine: BrainEngine): Promise<Pick<GraduationRow, 'role' | 'run_id' | 'state' | 'source_data_dir'> | null> {
-  if (engine.capabilities && !engine.capabilities.has('raw_sql')) return null;
+  if (lacksRawSql(engine)) return null;
   let row: Record<string, unknown> | undefined;
   try {
     [row] = await engine.executeRaw<Record<string, unknown>>(
