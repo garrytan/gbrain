@@ -28,6 +28,7 @@ import { join } from 'path';
 import { runInitBrainPack } from '../src/core/skillpack/init-brain-pack.ts';
 import { getResidentSkillDetail } from '../src/core/skillpack/brain-resident-locate.ts';
 import { OperationError, type OperationContext } from '../src/core/operations.ts';
+import { stubSourceMembers } from './helpers/source-members-stub.ts';
 
 let root: string;
 let packDir: string;
@@ -43,10 +44,7 @@ afterEach(() => {
 
 function engineFor(localPath: string): OperationContext['engine'] {
   return {
-    executeRaw: async () => [{
-      id: 'default', name: 'default', local_path: localPath, last_commit: null, last_sync_at: null,
-      config: {}, created_at: new Date(), archived: false,
-    }],
+    ...stubSourceMembers([{ id: 'default', local_path: localPath }]),
     getConfig: async () => null,
   } as unknown as OperationContext['engine'];
 }
