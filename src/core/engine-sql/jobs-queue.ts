@@ -741,6 +741,27 @@ export async function getFailedJobForRetry(tx: Raw, id: number): Promise<{ name:
   return row ?? null;
 }
 
+/**
+ * A delegated client's open `subagent` jobs: every queue and every non-terminal status, matched on
+ * `data->>'__owner_client_id'`. Coalesced existing work adds no row, so it adds no slot.
+ */
+export async function countOpenJobsByOwner(tx: Raw, clientId: string): Promise<number> {
+  const counts = await tx.executeRaw<{ n: number }>(
+    `SELECT count(*)::int AS n FROM minion_jobs
+     WHERE name = 'subagent' AND status IN ('waiting','active','delayed','waiting-children','paused')
+       AND data->>'__owner_client_id' = $1`, [clientId],
+  );
+  return Number(counts[0]?.n ?? 0);
+}
+
+/**
+ * Locks a delegated client's `oauth_clients` row until the caller's transaction ends, so its grant check, capacity
+ * count and insert run as one admission. A missing client locks nothing; the grant read that follows refuses it.
+ */
+export async function lockOAuthClient(tx: Raw, clientId: string): Promise<void> {
+  await tx.executeRaw('SELECT client_id FROM oauth_clients WHERE client_id = $1 FOR UPDATE', [clientId]);
+}
+
 /** One `list_jobs` page request. Empty filters are dropped by the caller. */
 export interface JobPageSpec {
   status?: string;

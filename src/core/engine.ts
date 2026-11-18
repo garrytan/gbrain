@@ -3203,6 +3203,10 @@ export interface BrainEngine {
   listUnreviewedJobs(): Promise<Array<{ id: number; submission_authority: unknown }>>;
   /** The name and data of a failed or dead job, or null. */
   getFailedJobForRetry(id: number): Promise<{ name: string; data: Record<string, unknown> } | null>;
+  /** A delegated client's open `subagent` jobs, across queues and non-terminal statuses (its used slots). */
+  countOpenJobsByOwner(clientId: string): Promise<number>;
+  /** Lock a delegated client's OAuth row for the rest of the transaction (delegated job admission). */
+  lockOAuthClient(clientId: string): Promise<void>;
   /** One `list_jobs` page, newest first on `(created_at, id)`, each row with `created_us` for the next cursor. */
   listJobPage(spec: JobPageSpec): Promise<JobRow[]>;
   /** The attachment filenames of a job, or null when the job does not exist. */

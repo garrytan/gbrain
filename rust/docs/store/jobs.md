@@ -78,6 +78,7 @@ said.
 | `brain.readJobStats(since, queue)` / `readQueueFamilyStats(since, prefix)` | `{ by_status, types, drained, depth, stalled, wedge }`; one row per queue family, by family name |
 | `brain.hasOverdueWatchdogSuspect({ queue, names, mark, waitMs })` | true when a `waiting` row with an authority is marked and untouched for `waitMs` |
 | `brain.listUnreviewedJobs()` / `getFailedJobForRetry(id)` | `{ id, submission_authority }` of live rows whose authority is not exactly the application one (NULL included); `{ name, data }` of a `failed`/`dead` row |
+| `brain.countOpenJobsByOwner(clientId)` | how many `subagent` rows in a non-terminal status (`waiting`, `active`, `delayed`, `waiting-children`, `paused`), in any queue, have `data->>'__owner_client_id'` equal to `clientId` (a number owner matches its text; a null owner matches nothing) |
 | `brain.listJobPage({ status?, queue?, name?, ownerClientId?, ownerActor?, limit, cursor })` | rows with `created_us`, newest first by `(created_at, id)`, after the `{ micros, id }` cursor |
 | `brain.listJobAttachmentNames(jobId)` / `insertJobAttachment(jobId, input)` / `listJobAttachments(jobId)` / `getJobAttachment(jobId, filename)` / `deleteJobAttachment(jobId, filename)` | names (null for a missing job); the metadata; metadata by `(created_at, id)`; metadata plus `content_b64`, or null; whether a row went. A missing job, a negative size or a repeated filename (`uniq_minion_attachments_job_filename`) is `constraint_violation` |
 
@@ -86,9 +87,13 @@ The actor match of `cancelJobs` and `listJobPage` is `jobActorSql`: the `grant.a
 distinct elements sorted and joined with `,` when it is an array (`''` when empty), `!` for any other
 value, and `''` when missing. A NULL authority or no grant matches the four `''`.
 
-Still refused by the TypeScript members before the store is called (`engine_capability_missing`, capability
-`minion_queue`): `admitJob` with a delegated client's `lock` or `checkCapacity` policy, and the retry of a
-delegated job. Those two read the delegated-client tables, which only the TypeScript policy holds.
+Delegated client admission (`admitJob` with a `lock` or `checkCapacity` policy, and `retryJob` of a delegated
+job) runs the TypeScript policy on a narrow handle (`src/core/rust-engine/delegated-policy-handle.ts`): the job
+reads and `countOpenJobsByOwner` come from the store. The store keeps no `oauth_clients` table, so the handle's
+`lockOAuthClient` locks nothing and the policy's next step, the client's grant read, refuses
+(`engine_capability_missing`, capability `minion_queue`) before anything is written. A policy that got past the
+lock would still refuse before the write: the lock, the capacity count and the write are separate store calls, so
+they are not one admission. `lockOAuthClient` called directly is not served and refuses the same way.
 
 Differences from PGLite:
 

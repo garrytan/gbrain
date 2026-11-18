@@ -12,6 +12,7 @@ import {
   type SynthesisCompletion, type SynthesisCompletionPrefix,
 } from '../../engine-sql/jobs-queue.ts';
 import { WATCHDOG_SUSPECT_MARK } from '../../minions/watchdog-attribution.ts';
+import { delegatedPolicyHandle } from '../delegated-policy-handle.ts';
 import { withDates } from '../store-codec.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
@@ -100,21 +101,17 @@ export const listRecentSynthesisCompletions: StoreMember<[sourceId: string, hour
     .map(r => withDates(r, ['at']));
 
 /**
- * The retry policy runs against a handle that reads only the job (getJob, getFailedJobForRetry); anything else, such
- * as a delegated client's lock and capacity check, refuses before the store writes. The store's UPDATE re-checks that
+ * The retry policy runs on the delegated policy handle (../delegated-policy-handle.ts): the job reads and the client's
+ * open-job count; a delegated client's grant read, and anything else, refuses before the store writes. A policy that
+ * took the client lock refuses too, since the lock holds nothing across store calls. The store's UPDATE re-checks that
  * the job is still failed or dead.
  */
 export const retryJob: StoreMember<[id: number, policy: RetryJobPolicy], JobRow | null> = async (brain, id, policy) => {
   const prior = jobRow(await call('retryJob', () => brain.getJob(id)));
   if (!prior) return null;
-  const reads: Partial<BrainEngine> = {
-    getJob: async (jobId: number) => jobRow(await call('retryJob', () => brain.getJob(jobId))),
-    getFailedJobForRetry: (jobId: number) => call('retryJob', () => brain.getFailedJobForRetry(jobId)),
-  };
-  const tx = new Proxy(reads, {
-    get: (target, prop) => (prop in target ? target[prop as keyof typeof target] : refuseMember('retryJob', 'the retry policy read the database')),
-  }) as BrainEngine;
-  if (!await policy.admit(tx, prior)) return null;
+  const handle = delegatedPolicyHandle(brain, 'retryJob');
+  if (!await policy.admit(handle.tx, prior)) return null;
+  if (handle.locked()) refuseMember('retryJob', 'delegated client admission across store calls');
   return jobRow(await call('retryJob', () => brain.retryJobUpdate(id)));
 };
 
@@ -166,6 +163,13 @@ export const listUnreviewedJobs: StoreMember<[], Array<{ id: number; submission_
 
 export const getFailedJobForRetry: StoreMember<[id: number], { name: string; data: Record<string, unknown> } | null> = (brain, id) =>
   call('getFailedJobForRetry', () => brain.getFailedJobForRetry(id));
+
+/**
+ * A delegated client's open `subagent` jobs. Its pair `lockOAuthClient` is not served: the store keeps no
+ * `oauth_clients` rows to lock, so a direct call refuses.
+ */
+export const countOpenJobsByOwner: StoreMember<[clientId: string], number> = (brain, clientId) =>
+  call('countOpenJobsByOwner', () => brain.countOpenJobsByOwner(clientId));
 
 export const listJobPage: StoreMember<[spec: JobPageSpec], JobRow[]> = async (brain, spec) =>
   jobRows(await call('listJobPage', () => brain.listJobPage({ ...spec, cursor: spec.cursor ?? null })));

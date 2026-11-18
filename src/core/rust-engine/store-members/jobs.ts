@@ -8,6 +8,7 @@ import type { BrainEngine, CycleLockFilter, CycleLockRow } from '../../engine.ts
 import type { AdmitJobPolicy, AdmitJobResult, AdmitJobSpec, ClaimJobSpec, JobRow, ListJobsFilter } from '../../engine-sql/jobs.ts';
 import { QueueQuotaExceededError } from '../../minions/admission.ts';
 import { WATCHDOG_SUSPECT_MARK } from '../../minions/watchdog-attribution.ts';
+import { delegatedPolicyHandle } from '../delegated-policy-handle.ts';
 import { withDates } from '../store-codec.ts';
 import { storeErrorCode } from '../store-errors.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
@@ -49,11 +50,15 @@ function admitError(error: unknown, spec: AdmitJobSpec): unknown {
 /**
  * The store runs the whole admission in one write and decides coalesce or release itself (same authority: coalesce a
  * live row, release a dead or cancelled one). A row held under another authority comes back as `conflict`, and the
- * caller's `decide` then throws the refusal PGLite throws. A delegated client's lock and capacity check is a policy the
- * store cannot run, so it refuses before anything is written.
+ * caller's `decide` then throws the refusal PGLite throws. A delegated client's lock runs on the delegated policy handle
+ * (../delegated-policy-handle.ts), where its grant read refuses; past it the admission still refuses before anything is
+ * written, because the lock, the capacity count and the insert would be separate store calls.
  */
 export const admitJob: StoreMember<[spec: AdmitJobSpec, policy: AdmitJobPolicy], AdmitJobResult> = async (brain, spec, policy) => {
-  if (policy.lock || policy.checkCapacity) refuseMember('admitJob', 'delegated client admission');
+  if (policy.lock || policy.checkCapacity) {
+    if (policy.lock) await policy.lock(delegatedPolicyHandle(brain, 'admitJob').tx);
+    refuseMember('admitJob', 'delegated client admission across store calls');
+  }
   const out: { outcome: 'inserted' | 'coalesced' | 'conflict'; row: JobRow; audit: AdmitJobResult['audit'] } =
     await storeCall({ member: 'admitJob' }, async () => {
       try {

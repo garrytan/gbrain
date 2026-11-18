@@ -32,6 +32,7 @@ import type { AdmitJobPolicy, AdmitJobSpec, ClaimJobSpec, JobInsertValues, JobRo
 import type { JobAttachmentInsert, JobStatsRead, RetryJobPolicy } from '../../src/core/engine-sql/jobs-queue.ts';
 import { APPLICATION_AUTHORITY, coalesceDecision, parseSubmissionAuthority, type SubmissionAuthority } from '../../src/core/minions/submission-authority.ts';
 import { WATCHDOG_SUSPECT_MARK } from '../../src/core/minions/watchdog-attribution.ts';
+import { admitDelegatedRetry, checkDelegatedCapacity } from '../../src/core/minions/delegated-admission.ts';
 import { parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
@@ -106,6 +107,17 @@ async function thrown(run: () => Promise<unknown>) {
     await run();
     return null;
   } catch (error) {
+    return refusal(error);
+  }
+}
+
+/** Like `thrown`, but a typed refusal propagates, so the Rust arm counts it as refused instead of comparing it. */
+async function denied(run: () => Promise<unknown>) {
+  try {
+    await run();
+    return null;
+  } catch (error) {
+    if ((error as { code?: unknown } | null)?.code === 'engine_capability_missing') throw error;
     return refusal(error);
   }
 }
@@ -632,13 +644,45 @@ describe('engine parity: minion queue', () => {
       };
     });
 
-  // A delegated client's retry locks the client and checks its capacity through the transaction; the Rust arm lets the
-  // retry policy read only the job, so it stops on the typed refusal (follow-up: jobs-delegation-grants).
+  // The retry policy runs on a handle that serves the job reads and the open-job count; any other read, like this
+  // listJobs, makes the Rust arm stop on the typed refusal before the store writes.
   parityTest('retryJob runs a delegated client\'s retry policy through the retry transaction',
     { methods: ['admitJob', 'claimNextJob', 'failJob', 'retryJob'] }, async (engine) => {
       const id = await finished(engine, 'failed', 'failed');
       const out = await engine.retryJob(id, { admit: async (tx) => { await tx.listJobs({ limit: 1 }); return true; } });
       return { status: out?.status ?? null };
+    });
+
+  // The queue's own retry policy (MinionQueue.retryJob's admitDelegatedRetry). A job with no delegated owner needs no
+  // client lock, so every arm re-queues it.
+  parityTest('retryJob with the delegated retry policy re-queues a failed job that has no delegated owner',
+    { methods: ['admitJob', 'claimNextJob', 'failJob', 'retryJob'] }, async (engine) => {
+      const id = await finished(engine, 'subagent', 'failed', { data: { task: 'mine' } });
+      const out = await engine.retryJob(id, { admit: (tx) => admitDelegatedRetry(tx, id) });
+      return { status: out?.status ?? null, again: await engine.retryJob(id, { admit: (tx) => admitDelegatedRetry(tx, id) }) };
+    });
+
+  // A legacy delegated job (an owner but no frozen grant snapshot) is never replayed: the policy refuses it before any
+  // client lock or grant read, so every arm returns the same refusal and the job stays failed.
+  parityTest('retryJob with the delegated retry policy refuses a legacy delegated job that has no frozen grant snapshot',
+    { methods: ['admitJob', 'claimNextJob', 'failJob', 'retryJob', 'getJob'] }, async (engine) => {
+      const id = await finished(engine, 'subagent', 'failed', { data: { __owner_client_id: 'gone-client', allowed_tools: ['search'], source_id: 'default' } });
+      const out = await thrown(() => engine.retryJob(id, { admit: (tx) => admitDelegatedRetry(tx, id) }));
+      return { out, status: (await engine.getJob(id))?.status };
+    });
+
+  // A delegated job with a frozen grant snapshot: the policy locks the client (lockOAuthClient) and reads the client's
+  // grant. PGLite and Postgres find no OAuth row and refuse the retry (client_deleted); the Rust store keeps no OAuth
+  // rows, so the Rust arm stops on the typed refusal at the grant read, before anything is written.
+  parityTest('retryJob with the delegated retry policy refuses a delegated job whose OAuth client is gone',
+    { methods: ['admitJob', 'claimNextJob', 'failJob', 'retryJob', 'getJob'] }, async (engine) => {
+      const grant = {
+        clientId: 'gone-client', sourceId: 'default', brainId: null, namespace: 'job', tools: ['search'], allowedOperations: null,
+        slugPrefixes: ['wiki/agents/{job_id}/*'], readSources: ['default'], scopes: ['read', 'write', 'agent'], maxConcurrent: 2, budgetUsdPerDay: null,
+      };
+      const id = await finished(engine, 'subagent', 'failed', { data: { __owner_client_id: 'gone-client', __delegation_grant: grant } });
+      const out = await denied(() => engine.retryJob(id, { admit: (tx) => admitDelegatedRetry(tx, id) }));
+      return { out, status: (await engine.getJob(id))?.status };
     });
 
   // ------------------------------------------------------------ inbox
@@ -871,6 +915,43 @@ describe('engine parity: minion queue', () => {
         waiting: await engine.getFailedJobForRetry(waiting), missing: await engine.getFailedJobForRetry(failed + 100_000),
       };
     });
+
+  // The delegated client's slot count (checkDelegatedCapacity). Owner matching is on the text of `__owner_client_id`, so a
+  // number owner matches its digits and a null owner matches nothing.
+  parityTest('countOpenJobsByOwner counts a delegated client\'s subagent jobs in every queue and non-terminal status',
+    { methods: ['admitJob', 'claimNextJob', 'completeJob', 'failJob', 'pauseJob', 'getJob', 'countOpenJobsByOwner'] }, async (engine) => {
+      const owned = (owner: unknown, extra: Partial<JobInsertValues> = {}) => ({ data: { __owner_client_id: owner, task: 't' }, ...extra });
+      const claimed = await active(engine, 'subagent', 'w1:a', owned('c1'), { names: ['subagent'] });
+      await finished(engine, 'subagent', 'completed', owned('c1'));
+      await finished(engine, 'subagent', 'failed', owned('c1'));
+      const waiting = await add(engine, 'subagent', owned('c1'));
+      const paused = await add(engine, 'subagent', owned('c1'));
+      await engine.pauseJob(paused);
+      await add(engine, 'subagent', owned('c1', { queue: 'side' }));
+      await add(engine, 'subagent', owned('c1', { status: 'delayed', delay_until: FAR }));
+      await add(engine, 'work', owned('c1'));
+      await add(engine, 'subagent', owned('c2'));
+      await add(engine, 'subagent', owned(7));
+      await add(engine, 'subagent', owned(null));
+      await add(engine, 'subagent', { data: { task: 'unowned' } });
+      const count = (c: string) => engine.countOpenJobsByOwner(c);
+      const before = { c1: await count('c1'), c2: await count('c2'), seven: await count('7'), nul: await count('null'), nobody: await count('nobody-example') };
+      await engine.completeJob(claimed, 'w1:a');
+      return { before, afterComplete: await count('c1'), statuses: [(await engine.getJob(waiting))?.status, (await engine.getJob(paused))?.status] };
+    });
+
+  parityTest('checkDelegatedCapacity refuses a delegated client at its limit and counts nothing without a limit',
+    { methods: ['admitJob', 'countOpenJobsByOwner'] }, async (engine) => {
+      await add(engine, 'subagent', { data: { __owner_client_id: 'c1' } });
+      await add(engine, 'subagent', { data: { __owner_client_id: 'c1' }, queue: 'side' });
+      const outcome = (limit: number | null) => checkDelegatedCapacity(engine, 'c1', limit).then(() => 'admitted', refusal);
+      return { atLimit: await outcome(2), under: await outcome(3), unlimited: await outcome(null) };
+    });
+
+  // PGLite and Postgres lock the client's oauth_clients row (none here, so nothing is locked); the Rust store keeps no
+  // OAuth rows and does not serve the member, so the Rust arm stops on the typed refusal.
+  parityTest('lockOAuthClient resolves for a client with no OAuth row',
+    { methods: ['lockOAuthClient'] }, async (engine) => ({ locked: (await engine.lockOAuthClient('nobody-example')) ?? null }));
 
   parityTest('listJobPage filters by status, queue, name and the owner fence, newest first, and pages on the (created_at, id) cursor',
     { methods: ['admitJob', 'claimNextJob', 'listJobPage'] }, async (engine) => {
