@@ -43,6 +43,7 @@ pub mod embeddings;
 pub mod eval_capture;
 pub mod extraction;
 pub mod facts;
+pub mod field_usage;
 pub mod import_members;
 pub mod jobs;
 pub mod keyword;
