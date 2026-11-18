@@ -87,6 +87,28 @@ export interface SourceDetailRow {
   trust_frontmatter_overrides?: boolean;
 }
 
+/** One `sources` row as `listSourceRecords` returns it; `archived` and `newest_content_at` are absent on a schema that lacks them. */
+export interface SourceRecordRow {
+  id: string; name: string; local_path: string | null; last_commit: string | null; last_sync_at: Date | null;
+  /** Postgres returns an object; PGLite may return JSON text. */
+  config: Record<string, unknown> | string;
+  created_at: Date; archived?: boolean; newest_content_at?: Date | null;
+}
+/** A source's config and incarnation (`readSourceIncarnation`). */
+export interface SourceIncarnationRow { config: unknown; incarnation: string }
+/** `readGuestSourceRow`: the source's guest_sources row (null fields without one) and whether row-level security hides guest_sources. */
+export interface GuestSourceLookupRow { hidden: boolean; source_id: string | null; writers: string[] | null; trust_ceiling: string | null }
+/** `readPageTrustRows` input: page ids, and (source_id, slug) keys read live unless `includeDeleted`. */
+export interface PageTrustLookup { ids?: readonly number[]; keys?: ReadonlyArray<{ source_id: string; slug: string }>; includeDeleted?: boolean }
+/** One page's trust fields; `byId` marks a row found by id, `flagged` an activation-suppressed page, `guest` a page in a guest source. */
+export interface PageTrustRow { id: number; source_id: string; slug: string; trust_tier: string; write_origin: unknown; flagged: boolean; guest: boolean; byId: boolean }
+/** A live page with its frontmatter aliases and knowledge revision (`listLinkPageMetadata`). */
+export interface LinkPageMetadataRow { slug: string; source_id: string; type: string; title: string; aliases?: unknown; knowledge_revision: string }
+/** One stored non-event timeline row (`listStoredTimelineRows`); `date` is `YYYY-MM-DD`. */
+export interface StoredTimelineRow { id: number; date: string; source: string; summary: string; detail: string | null }
+/** A page and the knowledge revision `filterPagesAtRevision` checks it is still at. */
+export interface PageAtRevisionRef { source_id: string; slug: string; revision: string }
+
 /**
  * One `gbrain_cycle_locks` row as `readCycleLocks` returns it: the lease the lock id names. Timestamps are the
  * database's (`db_now` is its clock at the read, so ages compare database stamps with the database clock, #7614);
@@ -1227,6 +1249,28 @@ export interface BrainEngine {
   listLocalPathSources(): Promise<LocalPathSourceRow[]>;
   listSourceRoutingRows(): Promise<SourceRoutingRow[]>;
   countDefaultSourceSplit(): Promise<DefaultSourceSplit>;
+  /** Every source with the columns `loadAllSources` reads, `default` first then by id; a schema without `archived`/`newest_content_at` omits them. */
+  listSourceRecords(): Promise<SourceRecordRow[]>;
+  /** A source's config and incarnation, or null for an unknown id. */
+  readSourceIncarnation(sourceId: string): Promise<SourceIncarnationRow | null>;
+  /** Whether the source's current incarnation has a company-brain ingestion receipt. */
+  hasCompanyBrainReceipt(sourceId: string): Promise<boolean>;
+  /** The source's guest_sources row and whether row-level security hides guest_sources; throws the missing-table error on an old schema. */
+  readGuestSourceRow(sourceId: string): Promise<GuestSourceLookupRow>;
+  /** The guest sources (config `guest: true` or a guest_sources row) among `sourceIds`, in no particular order. */
+  listGuestSourceIds(sourceIds: readonly string[]): Promise<string[]>;
+  /** Whether any source is a guest source. */
+  hasGuestSource(): Promise<boolean>;
+  /** Trust tier, write origin, activation flag and guest flag of pages by id and by (source_id, slug). */
+  readPageTrustRows(lookup: PageTrustLookup): Promise<PageTrustRow[]>;
+  /** The database clock as a UTC ISO string with microseconds (`YYYY-MM-DDTHH:MM:SS.ffffffZ`). */
+  readDatabaseClock(): Promise<string>;
+  /** Every live page (of one source when given) with aliases and knowledge revision, by source then slug. */
+  listLinkPageMetadata(sourceId?: string): Promise<LinkPageMetadataRow[]>;
+  /** A page's stored non-event timeline rows, in no particular order. */
+  listStoredTimelineRows(sourceId: string, slug: string): Promise<StoredTimelineRow[]>;
+  /** The live pages among `refs` still at the knowledge revision each names, in no particular order. */
+  filterPagesAtRevision(refs: readonly PageAtRevisionRef[]): Promise<Array<{ slug: string; source_id: string }>>;
 
   /**
    * v0.37.0 — prefix-stratified page sampling for `gbrain brainstorm` / `gbrain lsd`

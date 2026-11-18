@@ -147,9 +147,7 @@ async function stampCompletedIntersection(engine: BrainEngine, links: Set<string
   const both = [...links].filter(key => timeline.has(key)).map(key => key.split('\0'));
   for (let i = 0; i < both.length; i += BATCH_SIZE) {
     const chunk = both.slice(i, i + BATCH_SIZE);
-    const live = await engine.executeRaw<{ slug: string; source_id: string }>(`SELECT p.slug,p.source_id FROM pages p
-      JOIN unnest($1::text[],$2::text[],$3::text[]) AS t(source_id,slug,revision) ON p.source_id=t.source_id AND p.slug=t.slug
-      WHERE p.knowledge_revision::text=t.revision AND p.deleted_at IS NULL`, [chunk.map(k => k[0]), chunk.map(k => k[1]), chunk.map(k => k[2])]);
+    const live = await engine.filterPagesAtRevision(chunk.map(k => ({ source_id: k[0]!, slug: k[1]!, revision: k[2]! })));
     await stampExtracted(engine, live);
   }
 }

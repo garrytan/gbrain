@@ -243,28 +243,9 @@ export async function loadAllSources(
   engine: BrainEngine,
   opts: LoadAllSourcesOpts = {},
 ): Promise<SourceRow[]> {
-  // Defensive on legacy brains pre-v0.26.5 that lack the archived column.
-  let rows: SourceRow[];
-  try {
-    rows = await engine.executeRaw<SourceRow>(
-      `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at, archived, newest_content_at
-         FROM sources
-       ORDER BY (id = 'default') DESC, id`,
-    );
-  } catch (err) {
-    // Forward-reference safety: pre-v0.26.5 brains lack `archived`; pre-v109
-    // brains lack `newest_content_at`. Re-issue with the historical minimal
-    // set; archived defaults false, newest_content_at undefined → wall-clock.
-    if (isUndefinedColumnError(err)) {
-      rows = await engine.executeRaw<SourceRow>(
-        `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at
-           FROM sources
-         ORDER BY (id = 'default') DESC, id`,
-      );
-    } else {
-      throw err;
-    }
-  }
+  // Pre-v0.26.5 brains lack `archived` and pre-v109 brains lack `newest_content_at`: the member reads them with the
+  // historical minimal columns (archived reads false, newest_content_at undefined → wall-clock).
+  const rows: SourceRow[] = await engine.listSourceRecords();
 
   let filtered = rows;
   if (!opts.includeArchived) {

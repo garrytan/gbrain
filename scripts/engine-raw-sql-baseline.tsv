@@ -176,7 +176,7 @@ src/commands/extract-mentions-explain.ts	execute_raw	6
 src/commands/extract-stale-options.ts	execute_raw	1
 src/commands/extract-status.ts	execute_raw	1
 src/commands/extract-timeline-db.ts	execute_raw	2
-src/commands/extract.ts	execute_raw	4
+src/commands/extract.ts	execute_raw	3
 src/commands/files.ts	execute_raw	4
 src/commands/files.ts	sql_template	6
 src/commands/frontmatter-install-hook.ts	execute_raw	3
@@ -352,7 +352,7 @@ src/core/code-intel/traversal-cache.ts	execute_raw	4
 src/core/company-brain/admission.ts	execute_raw	12
 src/core/company-brain/demo.ts	execute_raw	2
 src/core/company-brain/evidence.ts	execute_raw	3
-src/core/company-brain/profile.ts	execute_raw	4
+src/core/company-brain/profile.ts	execute_raw	2
 src/core/company-brain/receipts.ts	execute_raw	9
 src/core/company-brain/runtime.ts	execute_raw	14
 src/core/company-brain/status.ts	execute_raw	1
@@ -423,7 +423,7 @@ src/core/eligibility/explain.ts	execute_raw	4
 src/core/eligibility/fence-overlay.ts	execute_raw	3	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/core/eligibility/generation.ts	execute_raw	1
 src/core/eligibility/scan.ts	execute_raw	7
-src/core/eligibility/stamp.ts	execute_raw	5	came from master #9574 (held private restatements), which landed before this ratchet
+src/core/eligibility/stamp.ts	execute_raw	3	came from master #9574 (held private restatements), which landed before this ratchet
 src/core/embed-backfill-stall.ts	execute_raw	1
 src/core/embed-backfill-submit.ts	execute_raw	2
 src/core/embed-consent.ts	execute_raw	2
@@ -553,9 +553,8 @@ src/core/grants/rescope.ts	sql_template	7
 src/core/grants/service.ts	sql_template	11
 src/core/grants/shared-exposure.ts	execute_raw	1
 src/core/guard-ledger-checks.ts	execute_raw	3
-src/core/guests/admission.ts	execute_raw	4
-src/core/guests/marker.ts	execute_raw	2
-src/core/guests/note.ts	execute_raw	1
+src/core/guests/admission.ts	execute_raw	3
+src/core/guests/marker.ts	execute_raw	1
 src/core/guests/owner-credentials.ts	execute_raw	1
 src/core/guests/promote.ts	execute_raw	4
 src/core/guests/sources.ts	execute_raw	9	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
@@ -573,7 +572,7 @@ src/core/ingestion/applied-captures.ts	execute_raw	5
 src/core/last-retrieved.ts	execute_raw	1
 src/core/line-grammar-config.ts	execute_raw	2
 src/core/link-extraction.ts	execute_raw	1
-src/core/link-reconciliation.ts	execute_raw	5
+src/core/link-reconciliation.ts	execute_raw	4
 src/core/link-relationship-notes.ts	execute_raw	1
 src/core/link-relationships.ts	execute_raw	10
 src/core/link-single-value.ts	execute_raw	2
@@ -1123,7 +1122,7 @@ src/core/source-default-search.ts	execute_raw	2
 src/core/source-delete.ts	execute_raw	2
 src/core/source-health.ts	execute_raw	6
 src/core/source-resolver.ts	execute_raw	12
-src/core/sources-load.ts	execute_raw	4
+src/core/sources-load.ts	execute_raw	2
 src/core/sources-not-readable.ts	execute_raw	1
 src/core/sources-ops.ts	execute_raw	16	#9634, pre-ratchet: +1 is the INSERT that registers a database-only api source row (imessage); no typed engine method exists yet
 src/core/spend-log.ts	sql_template	2
@@ -1160,7 +1159,7 @@ src/core/takes-write.ts	execute_raw	5
 src/core/think/index.ts	execute_raw	2
 src/core/think/persist-take.ts	execute_raw	1
 src/core/timeline-dedup-repair.ts	execute_raw	11
-src/core/timeline-extract.ts	execute_raw	11
+src/core/timeline-extract.ts	execute_raw	10
 src/core/timeline-write-through.ts	execute_raw	1
 src/core/token-mint.ts	execute_raw	3
 src/core/token-mint.ts	sql_template	1
@@ -1212,7 +1211,7 @@ src/core/wakeshift/drain.ts	execute_raw	10
 src/core/wakeshift/forget.ts	sql_template	6
 src/core/wakeshift/spool.ts	execute_raw	3
 src/core/wakeshift/terms.ts	execute_raw	2
-src/core/wanted-links-store.ts	execute_raw	6
+src/core/wanted-links-store.ts	execute_raw	5
 src/core/write-gate-scan.ts	execute_raw	2
 src/core/write-gate-store.ts	execute_raw	8
 src/core/write-through.ts	execute_raw	3
