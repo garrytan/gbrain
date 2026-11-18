@@ -54,6 +54,13 @@ const CONSTANT_ALLOWLIST: Record<string, string> = {
 
 const VETTED_BUILDERS: Record<string, string> = {
   // facts-doctor.ts builders
+  entityLinkableSql: 'src/core/engine-sql/facts-doctor.ts: returns the constant ENTITY_LINKABLE_SQL predicate (attribution.ts) over the facts alias f; no values',
+  relinkTriedSql: 'src/core/engine-sql/facts-doctor.ts: the constant conversationTriedSql EXISTS predicate (conversation-memo.ts; code-constant outcome and reason codes) or the literal false; no values',
+  relinkPaidSql: 'src/core/engine-sql/facts-doctor.ts: the constant conversationPaidSql EXISTS predicate (conversation-memo.ts; code-constant tier) or the literal false; no values',
+  staleFactEmbeddingSql: 'src/core/engine-sql/facts-doctor.ts: returns the constant staleFactEmbedding predicate (embedding-identity.ts, placeholders $3 model and $4 width bound by the caller); no values',
+  partiallyEmbeddedFactSql: 'src/core/engine-sql/facts-doctor.ts: returns the constant partiallyEmbeddedFact predicate (embedding-identity.ts, EMBED_MAX_CHARS literal); no values',
+  eligibleFactEmbeddingSql: 'src/core/engine-sql/facts-doctor.ts: returns the constant eligibleFactEmbedding predicate (embedding-identity.ts, placeholder $2 audit sources bound by the caller); no values',
+  factSourceScopeSql: 'src/core/engine-sql/facts-doctor.ts: constant optional-source scope over the facts alias f with the hand-numbered $1 source id bound by the caller; no values',
 
   // facts-cycle.ts builders
 

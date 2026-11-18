@@ -54,10 +54,7 @@ async function runQueueHealth(ctx: DoctorContext): Promise<Check[]> {
         .join(', ') || '—';
       // #5831: atom pages are no longer a fact source; name what earlier extraction left behind.
       // Fenced rows name their page in source_markdown_slug; DB-only rows lead their context with it.
-      const [atoms] = await engine.executeRaw<{ n: number }>(
-        `SELECT count(*)::int AS n FROM facts
-          WHERE expired_at IS NULL AND (source_markdown_slug LIKE 'atoms/%' OR context LIKE 'atoms/%')`);
-      const atomFacts = Number(atoms?.n ?? 0);
+      const atomFacts = await engine.countAtomFacts();
       checks.push({
         name: 'facts_health',
         status,
