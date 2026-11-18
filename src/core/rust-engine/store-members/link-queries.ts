@@ -2,7 +2,9 @@
  * Link and graph members beyond the core links members: derived-link replacement (replaceDerivedLinks,
  * replaceDerivedLinksBatch), provenance-scoped deletes (removeLinksByPagesAndSource), provenance counts
  * (listLinkSources), the ranking signals (getBacklinkCounts, getAdjacencyBoosts), the relational walks
- * (relationalFanout, relationalChainHop), orphan detection (findOrphanPages) and rewriteLinks (a no-op on every engine).
+ * (relationalFanout, relationalChainHop), orphan detection (findOrphanPages), rewriteLinks (a no-op on every engine)
+ * and the link reads of hybrid search's ranking stage (hasSupersedeEdges, supersedingPageSlugs, pagesLinkingTo; the
+ * SQL is src/core/engine-sql/search-reads.ts).
  *
  * Export only BrainEngine members from this file, each a `StoreMember` named after the member it serves (see tags.ts):
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
@@ -20,7 +22,7 @@ import {
 import type { LinkBatchInput } from '../../engine.ts';
 import { PageRevisionConflictError } from '../../page-state/types.ts';
 import type {
-  AdjacencyRow, ChainHopEdge, ChainHopOpts, PageReadScope, RelationalFanoutOpts, RelationalFanoutRow,
+  AdjacencyRow, ChainHopEdge, ChainHopOpts, PageReadPolicy, PageReadScope, RelationalFanoutOpts, RelationalFanoutRow,
 } from '../../types.ts';
 import { mapStoreError, storeErrorCode } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
@@ -50,6 +52,18 @@ function int32Ids(member: string, ids: readonly number[], label?: string): numbe
 }
 
 const scopeOf = (o: Record<string, unknown>) => ({ sourceId: o.sourceId, sourceIds: o.sourceIds });
+
+/**
+ * Ids the SQL engines cast to `bigint[]`: a non-integer is refused (the cast fails there). An id below 1 or past
+ * `Number.MAX_SAFE_INTEGER` names no page the store can hold, so it matches nothing, as in the SQL, and is dropped.
+ */
+function bigintIds(member: string, ids: readonly number[]): number[] {
+  for (const id of ids) if (!Number.isInteger(id)) refuseMember(member, 'a page id that is not an integer');
+  return ids.filter(id => id >= 1 && Number.isSafeInteger(id));
+}
+
+/** Ids already checked by `int32Ids`: an id below 1 names no page, so it matches nothing and is dropped. */
+const pageIdsOnly = (ids: readonly number[]) => ids.filter(id => id >= 1);
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Derived links
@@ -245,4 +259,39 @@ export const findOrphanPages: StoreMember<[opts?: PageReadScope & { mode?: 'inbo
   (brain, opts) => {
     const options = takeOptions('findOrphanPages', opts, [...SCOPE_KEYS, 'mode', 'scopeInbound']);
     return storeCall({ member: 'findOrphanPages' }, () => brain.findOrphanPages(options));
+  };
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Search reads (src/core/engine-sql/search-reads.ts)
+// ---------------------------------------------------------------------------------------------------------------------
+
+export const hasSupersedeEdges: StoreMember<[], boolean> = async (brain) =>
+  storeCall({ member: 'hasSupersedeEdges' }, () => brain.hasSupersedeEdges());
+
+/**
+ * Superseded page id → the slug of a live page in the same source that supersedes it. A policy (any object, as the
+ * SQL's `policy ?` test) turns on the live filter for both pages and the link's origin page; the first row per id wins.
+ */
+export const supersedingPageSlugs: StoreMember<[pageIds: number[], policy?: PageReadPolicy], Map<number, string>> =
+  async (brain, pageIds, policy) => {
+    const result = new Map<number, string>();
+    if (pageIds.length === 0) return result;
+    const options = takeOptions('supersedingPageSlugs', policy, SCOPE_KEYS, UNREAD_BY_FILTER);
+    const ids = bigintIds('supersedingPageSlugs', pageIds);
+    const rows: Array<{ to_page_id: number; by_slug: string }> = await storeCall({ member: 'supersedingPageSlugs' },
+      () => brain.supersedingPageSlugs(ids, { ...scopeOf(options), scoped: !!policy }));
+    for (const row of rows) {
+      const id = Number(row.to_page_id);
+      if (!result.has(id)) result.set(id, row.by_slug);
+    }
+    return result;
+  };
+
+/** The pages among `fromIds` with a ranking link to a page in `toIds`. */
+export const pagesLinkingTo: StoreMember<[fromIds: number[], toIds: number[]], number[]> =
+  async (brain, fromIds, toIds) => {
+    const from = pageIdsOnly(int32Ids('pagesLinkingTo', fromIds));
+    const to = pageIdsOnly(int32Ids('pagesLinkingTo', toIds));
+    const rows: number[] = await storeCall({ member: 'pagesLinkingTo' }, () => brain.pagesLinkingTo(from, to));
+    return rows.map(Number);
   };

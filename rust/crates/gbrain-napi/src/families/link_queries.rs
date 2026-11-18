@@ -2,7 +2,8 @@
 //!
 //! Store methods for replaceDerivedLinks, replaceDerivedLinksBatch, removeLinksByPagesAndSource,
 //! listLinkSources, getBacklinkCounts, getAdjacencyBoosts, relationalFanout, relationalChainHop
-//! and findOrphanPages. rewriteLinks needs no store call.
+//! and findOrphanPages, and the search-reads link reads hasSupersedeEdges, supersedingPageSlugs
+//! and pagesLinkingTo. rewriteLinks needs no store call.
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
 //! Each method decodes its arguments, runs one `Store` call on the pool through `Brain::run`,
@@ -128,6 +129,41 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.find_orphan_pages(&arg(options, "findOrphanPages options")?)
+        })
+    }
+
+    /// `hasSupersedeEdges()`: whether any `supersedes` link exists.
+    #[napi]
+    pub fn has_supersede_edges<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.has_supersede_edges())
+    }
+
+    /// `supersedingPageSlugs(ids, { sourceId?, sourceIds?, scoped })`: `[{ to_page_id, by_slug }]`.
+    #[napi]
+    pub fn superseding_page_slugs<'env>(
+        &self,
+        env: &'env Env,
+        ids: Option<Value>,
+        scope: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let ids: Vec<u64> = arg(ids, "supersedingPageSlugs ids")?;
+            s.superseding_page_slugs(&ids, &arg(scope, "supersedingPageSlugs scope")?)
+        })
+    }
+
+    /// `pagesLinkingTo(fromIds, toIds)`: the linking page ids, ascending.
+    #[napi]
+    pub fn pages_linking_to<'env>(
+        &self,
+        env: &'env Env,
+        from_ids: Option<Value>,
+        to_ids: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let from_ids: Vec<u64> = arg(from_ids, "pagesLinkingTo fromIds")?;
+            let to_ids: Vec<u64> = arg(to_ids, "pagesLinkingTo toIds")?;
+            s.pages_linking_to(&from_ids, &to_ids)
         })
     }
 }
