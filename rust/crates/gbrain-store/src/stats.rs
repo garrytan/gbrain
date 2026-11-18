@@ -14,14 +14,14 @@
 //! Scope: the TypeScript members compute the source scope the way each PGLite member does and
 //! pass it as `scope` (`null` = every source; an empty list matches nothing).
 //!
-//! Embeddings: the store keeps no chunk vectors yet, so every chunk counts as not embedded
-//! (`embedded_count` 0, `missing_embeddings` the live, eligible chunks). This is what PGLite
-//! answers for the same brain, since `upsertChunks` refuses a chunk with a vector here. See
-//! rust/docs/store/stats.md.
+//! Embeddings: a chunk counts as embedded when it has a stored vector
+//! (`embeddings::read_chunk_vector`), as PGLite counts a non-NULL vector column, not
+//! `embedded_at`. See rust/docs/store/stats.md.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use crate::chunks::read_chunks;
+use crate::chunks::{ChunkRecord, read_chunks};
+use crate::embeddings::read_chunk_vector;
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
 use crate::kv::{KvRead, scan_prefix};
@@ -214,6 +214,17 @@ fn not_null(column: &str) -> StoreError {
 }
 
 /// Every page by id, soft-deleted pages included.
+/// How many of `chunks` of `page_id` have a stored vector.
+fn embedded(read: &dyn KvRead, page_id: u64, chunks: &[ChunkRecord]) -> Result<usize> {
+    let mut n = 0;
+    for chunk in chunks {
+        if read_chunk_vector(read, page_id, chunk.chunk_index)?.is_some() {
+            n += 1;
+        }
+    }
+    Ok(n)
+}
+
 fn pages_by_id(read: &dyn KvRead) -> Result<HashMap<u64, PageRecord>> {
     Ok(all_pages(read)?.into_iter().map(|p| (p.id, p)).collect())
 }
@@ -282,17 +293,20 @@ impl Store {
         let scoped: Vec<&PageRecord> = pages.values().filter(|p| in_scope(&scope, p)).collect();
         let live_pages: Vec<&PageRecord> = scoped.iter().copied().filter(|p| live(p)).collect();
         let mut chunk_count = 0usize;
+        let mut embedded_count = 0usize;
         let mut tags: BTreeSet<&str> = BTreeSet::new();
         let mut timeline_entry_count = 0usize;
         for page in &scoped {
-            chunk_count += read_chunks(&*read, page.id)?.len();
+            let chunks = read_chunks(&*read, page.id)?;
+            chunk_count += chunks.len();
+            embedded_count += embedded(&*read, page.id, &chunks)?;
             tags.extend(page.tags.iter().map(String::as_str));
             timeline_entry_count += self.timeline_count(page, i64::MAX)?;
         }
         Ok(json!({
             "page_count": live_pages.len(),
             "chunk_count": chunk_count,
-            "embedded_count": 0,
+            "embedded_count": embedded_count,
             "link_count": count_links(&*read, &pages, &scope)?,
             "tag_count": tags.len(),
             "timeline_entry_count": timeline_entry_count,
@@ -328,6 +342,7 @@ impl Store {
 
         let mut page_count = 0u64;
         let mut eligible = 0u64;
+        let mut eligible_embedded = 0u64;
         let mut dead_links = 0u64;
         let mut entity_page_count = 0u64;
         let mut entity_linked = 0u64;
@@ -350,7 +365,9 @@ impl Store {
             }
             page_count += 1;
             if !page.frontmatter.contains_key("embed_skip") {
-                eligible += read_chunks(&*read, page.id)?.len() as u64;
+                let chunks = read_chunks(&*read, page.id)?;
+                eligible += chunks.len() as u64;
+                eligible_embedded += embedded(&*read, page.id, &chunks)? as u64;
             }
             if quarantined(page) {
                 continue;
@@ -390,8 +407,8 @@ impl Store {
         Ok(json!({
             "page_count": page_count,
             "eligible_chunks": eligible,
-            "embedded_chunks": 0,
-            "missing_embeddings": eligible,
+            "embedded_chunks": eligible_embedded,
+            "missing_embeddings": eligible - eligible_embedded,
             "dead_links": dead_links,
             "link_count": count_links(&*read, &pages, &scope)?,
             "entity_page_count": entity_page_count,

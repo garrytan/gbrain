@@ -51,10 +51,10 @@ two engines share that code instead of copying it:
 
 ## Differences and costs
 
-- Embeddings. The store keeps no chunk vectors, and `upsertChunks` refuses a chunk with one. So
-  `embedded_count` and `embedded_chunks` are 0 and `missing_embeddings` is every live, eligible
-  chunk. That is what PGLite answers for a brain whose chunks have no vectors. When the vectors
-  family lands, it must make these counters read the stored vectors.
+- Embeddings. A chunk counts as embedded when it has a stored vector
+  (`embeddings::read_chunk_vector`), as PGLite counts a non-NULL vector column rather than
+  `embedded_at`. `embedded_count` counts every chunk of the scope; `embedded_chunks` and
+  `missing_embeddings` split the live, eligible chunks. Each chunk costs one point read.
 - Salience order. `order: 'salience'` reads `emotional_weight` through the page columns hook
   (`page_columns`). Until the salience family stores a weight, every page reads 0, the PGLite
   column default, so the order falls back to inbound links, then the tie-break.
@@ -71,12 +71,8 @@ two engines share that code instead of copying it:
 
 ## Follow-ups
 
-These wait for core's combined store branch, which brings in lane 4 (embeddings) and lane 5
-(salience).
+This waits for lane 5 (salience).
 
-- stats-embedding-counts. Replace the 0 embedding counts in `getStats` and `getHealth` with
-  counts read through `crate::embeddings` (`scan_chunk_vectors`, or a count function from lane 4).
-  Add a parity case with embedded and missing chunks.
 - stats-salience-weight. Read `emotional_weight` through the salience family for the `'salience'`
   enrich order, in place of the 0 default. Extend the enrich parity case with pages of different
   weights.
