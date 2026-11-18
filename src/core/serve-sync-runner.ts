@@ -589,7 +589,8 @@ export async function maybeDrainDeferredEmbeds(engine: BrainEngine): Promise<voi
     for (const source of [...state.pending]) if (source && await getCompanyBrainProfile(engine, source)) state.pending.delete(source);
     if (!state.pending.size) { decideDeferredEmbed({ decision: 'no_sources' }); return; }
     const { detectCapabilities } = await import('./capability.ts');
-    if (!detectCapabilities().embeddings.available) { decideDeferredEmbed({ decision: 'keyless' }); return; }
+    const { embeddingsDisabled } = await import('./embedding-disabled.ts');
+    if (!detectCapabilities().embeddings.available || await embeddingsDisabled(engine)) { decideDeferredEmbed({ decision: 'keyless' }); return; }
     const passStart = performance.now();
     log(`embed-drain started sources=${state.pending.size}`);
     const { runEmbedCore } = await import('../commands/embed.ts');
