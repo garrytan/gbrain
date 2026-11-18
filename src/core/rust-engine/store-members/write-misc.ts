@@ -1,6 +1,7 @@
 /**
  * The page-write reads and upkeep that belong to no other domain (BrainEngine readSourceState through
- * purgeMemoryProposals; SQL in engine-sql/write-misc.ts). The source and link-endpoint reads are served by gbrain-store
+ * purgeMemoryProposals; SQL in engine-sql/write-misc.ts), and the folder access read beside the access members
+ * (isFolderRestricted; SQL in engine-sql/access-control.ts). The source and link-endpoint reads are served by gbrain-store
  * `write_misc`; the rest answer for state the store does not keep. What each member answers and why:
  * rust/docs/store/write_misc.md.
  */
@@ -55,6 +56,13 @@ export const hasExtractedEvents: StoreMember<[sourceId: string, pageId: number],
 
 /** The store keeps no access members, so none is active. */
 export const listActiveAccessMembers: StoreMember<[], string[]> = async () => [];
+
+/**
+ * The store keeps no access state: no folder rules, no pending coverage and no row-level security (every write of that
+ * state is raw SQL, which this engine refuses). A slug is restricted under none of them, so the answer is false, as
+ * PGLite answers for a brain with no folder rules and no pending covers (engine-sql/access-control.ts).
+ */
+export const isFolderRestricted: StoreMember<[sourceId: string, slug: string], boolean> = async () => false;
 
 /** The store keeps no memory proposals, so upkeep expires nothing. */
 export const expireMemoryProposals: StoreMember<[reason: string], number> = async () => 0;

@@ -252,7 +252,7 @@ insertLocalWriterRow	import_guards	yes	1	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	1	no	yes	yes	refuses:transactions
 applyTransactionSettings	import_guards	yes	1	no	yes	yes	refuses:transactions
 readLedgerSource	import_guards	yes	2	no	yes	yes	refuses:persistence_journal
-isFolderRestricted	import_guards	yes	1	no	yes	yes	refuses:access_control
+isFolderRestricted	import_guards	yes	2	no	yes	yes	serves
 readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldPageRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldCoverageRows	persistence_journal	yes	1	no	yes	yes	serves

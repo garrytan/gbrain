@@ -3,7 +3,7 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: readSourceState, readAdmissionSource, listLinkEndpointPages, sharedSkillPackTablePresent,
- *    listSharedSkillPackRoots, hasExtractedEvents, listActiveAccessMembers, expireMemoryProposals,
+ *    listSharedSkillPackRoots, hasExtractedEvents, listActiveAccessMembers, isFolderRestricted, expireMemoryProposals,
  *    listAwaitingMemoryProposals and purgeMemoryProposals return the same observable result on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: a source-state read that differs changes whether page admission, the mirror read-only guard, the
@@ -12,7 +12,7 @@
  *  - Why existing coverage misses it: the call sites ran these statements through `executeRaw`, which the parity cases
  *    cannot call (D18), so no case compared them across engines (docs/research/rust-put-write-path.md).
  *  - Seam: none. Generated values (incarnation uuids, knowledge revisions) are compared by shape, never by value. The
- *    Rust store keeps no skillpacks, chronicle state, access members or memory proposals, so those cases
+ *    Rust store keeps no skillpacks, chronicle state, access members, folder rules or memory proposals, so those cases
  *    compare the empty answer every arm gives on a fresh brain (rust/docs/store/write_misc.md).
  */
 import { describe, expect } from 'bun:test';
@@ -109,6 +109,21 @@ describe('engine parity: write misc', () => {
     const members = await engine.listActiveAccessMembers();
     expect(members).toEqual([]);
     return { members };
+  });
+
+  // The restricted half (true under a folder rule or a pending prefix) is import-path.test.ts's case: the SQL arms answer
+  // true there; on Rust its folder-rule fixture is raw SQL and stops on the typed refusal, because no Rust brain can hold
+  // a folder rule.
+  parityTest('isFolderRestricted answers false for every folder of a brain with no folder rules or pending covers', { methods: ['isFolderRestricted'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'work');
+    const answers = {
+      plain: await engine.isFolderRestricted('work', 'people/alice-example'),
+      nested: await engine.isFolderRestricted('work', 'private/diary/2026'),
+      otherSource: await engine.isFolderRestricted('default', 'private/diary'),
+      unknownSource: await engine.isFolderRestricted('no-such-source', 'notes/a'),
+    };
+    expect(answers).toEqual({ plain: false, nested: false, otherSource: false, unknownSource: false });
+    return answers;
   });
 
   parityTest('expireMemoryProposals expires nothing on a fresh brain', { methods: ['expireMemoryProposals'] }, async (engine) => {

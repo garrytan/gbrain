@@ -26,5 +26,6 @@ on the order.
 | `listSharedSkillPackRoots(hostId)` | `[]` | No shared skillpacks exist. |
 | `hasExtractedEvents(sourceId, pageId)` | `false` | The store keeps no chronicle extraction state. |
 | `listActiveAccessMembers()` | `[]` | The store keeps no access members. |
+| `isFolderRestricted(sourceId, slug)` | `false` | The store keeps no access state: no folder rules, no pending coverage, no row-level security. Every write of that state is raw SQL, which this engine refuses, so no slug is restricted. PGLite answers the same for a brain with no folder rules and no pending covers (`src/core/engine-sql/access-control.ts`). |
 | `expireMemoryProposals(reason)`, `purgeMemoryProposals(days)` | `0` | The store keeps no memory proposals. |
 | `listAwaitingMemoryProposals(limit)` | `[]` | The store keeps no memory proposals. |
