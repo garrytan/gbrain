@@ -65,12 +65,11 @@ const SHARED = new Set([
 /** The page filters `searchKeywordChunks` does not apply on PGLite but Postgres does (follow-up pglite-keyword-chunks-page-filters). */
 const PAGE_FILTERS = ['type', 'types', 'where', 'exclude_slugs'] as const;
 /**
- * Visibility options the store applies: the page privacy policy (storePagePolicy) and the chunker-version fence of a
- * safe-chunk read (`requiresSafeChunks`, which an `excludePrivate` read asks for unless it says otherwise).
+ * Visibility options the store applies (`buildVisibilityClause`): the page privacy policy (storePagePolicy), the
+ * chunker-version fence of a safe-chunk read (`requiresSafeChunks`, which an `excludePrivate` read asks for unless it
+ * says otherwise), the trust floor and the flagged-page filter (`pageEligibleSql`) on the page's stamped trust tier.
  */
-const SERVED_VISIBILITY = ['excludePrivate', 'requireSafeChunks'] as const;
-/** Visibility options the store cannot apply: the trust floor and the flag suppression read page trust state it does not keep. */
-const VISIBILITY = ['minTrust', 'suppressFlagged'] as const;
+const VISIBILITY = ['excludePrivate', 'requireSafeChunks', 'minTrust', 'suppressFlagged'] as const;
 
 type Member = 'searchKeyword' | 'searchKeywordChunks' | 'countKeywordPages' | 'searchKeywordPages' | 'searchTitles';
 
@@ -84,7 +83,7 @@ function keywordOptions(member: Member, query: string, opts: (SearchOpts & { tim
   for (const [key, value] of Object.entries(o)) {
     if (value === undefined || value === false || NOT_READ.has(key) || SHARED.has(key)) continue;
     if (key === 'limit' || key === 'offset') continue;
-    if ((SERVED_VISIBILITY as readonly string[]).includes(key)) continue;
+    if ((VISIBILITY as readonly string[]).includes(key)) continue;
     if (key === 'timeoutMs' && member === 'countKeywordPages') continue;
     if (pageGrain && (key === 'keywordPhrase' || (PAGE_FILTERS as readonly string[]).includes(key))) continue;
     if (!pageGrain && (PAGE_FILTERS as readonly string[]).includes(key)) {
@@ -93,10 +92,6 @@ function keywordOptions(member: Member, query: string, opts: (SearchOpts & { tim
         || (key === 'where' && typeof value === 'object' && Object.keys(value as object).length === 0);
       if (empty) continue;
       refuseMember(member, `option ${key} (follow-up pglite-keyword-chunks-page-filters)`);
-    }
-    if ((VISIBILITY as readonly string[]).includes(key)) {
-      if (!value) continue;
-      refuseMember(member, `option ${key}`);
     }
     refuseMember(member, `option ${key}`);
   }
@@ -122,6 +117,8 @@ function keywordOptions(member: Member, query: string, opts: (SearchOpts & { tim
   const policy = storePagePolicy(member, o.excludePrivate);
   if (policy) out.excludePrivate = policy;
   if (requiresSafeChunks(opts)) out.requireSafeChunks = true;
+  if (o.minTrust) out.minTrust = String(o.minTrust);
+  if (o.suppressFlagged) out.suppressFlagged = true;
   return out;
 }
 

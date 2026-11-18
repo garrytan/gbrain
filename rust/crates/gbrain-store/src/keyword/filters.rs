@@ -23,6 +23,7 @@ use crate::kv::KvRead;
 use crate::pages::PageRecord;
 use crate::sources::read_source;
 use crate::timeline_queries::jsonb_field_text;
+use crate::trust::{TrustTier, activation_suppressed};
 
 /// The `text_projection_revision` the v153 activation leaves on a page whose pre-upgrade index it
 /// keeps serving (`servedTextProjectionFilter`, search/safe-chunks.ts).
@@ -100,6 +101,12 @@ pub struct KeywordOptions {
     /// `requiresSafeChunks(opts)`: only pages past the chunker-version fence (`safeChunksFilter(p)`).
     /// An `excludePrivate` read asks for it unless it says otherwise.
     pub require_safe_chunks: bool,
+    /// `minTrust`: the trust floor (`trustFloorSql(p)`), a page's stamped tier at or above it.
+    /// `null` or empty keeps every tier; a name that is no tier refuses.
+    pub min_trust: Option<String>,
+    /// `suppressFlagged`: drops a page `activationSuppressedSql('pages', p)` suppresses, a page at or
+    /// below `agent_written` that holds a `flag` receipt in an activation reason family.
+    pub suppress_flagged: bool,
 }
 
 /// A parsed date bound.
@@ -129,6 +136,17 @@ impl Bound {
 fn safe_chunks(page: &PageRecord) -> bool {
     page.chunker_version
         .is_some_and(|v| v >= SAFE_FENCE_CHUNKER_VERSION)
+}
+
+/// The read's trust floor (`trustFloorSql`): none when unset or empty, and a refusal for a name
+/// that is no tier.
+fn trust_floor(o: &KeywordOptions) -> Result<Option<TrustTier>> {
+    match o.min_trust.as_deref() {
+        None | Some("") => Ok(None),
+        Some(name) => TrustTier::parse(name).map(Some).ok_or_else(|| {
+            StoreError::invalid(format!("minTrust: \"{name}\" names no trust tier"))
+        }),
+    }
 }
 
 /// The page-level predicates, with the source table read once per source.
@@ -207,10 +225,19 @@ impl<'a> PageFilter<'a> {
         if !live {
             return Ok(false);
         }
-        match &o.exclude_private {
-            Some(policy) => Ok(!page_hidden(read, page, policy)?),
-            None => Ok(true),
+        if let Some(policy) = &o.exclude_private
+            && page_hidden(read, page, policy)?
+        {
+            return Ok(false);
         }
+        // `pageEligibleSql(p)`: the trust floor, then the flagged-page filter.
+        let tier = TrustTier::stored(page.trust_tier.as_deref());
+        if let Some(floor) = trust_floor(o)?
+            && tier.rank() < floor.rank()
+        {
+            return Ok(false);
+        }
+        Ok(!(o.suppress_flagged && activation_suppressed(read, "pages", page.id, tier)?))
     }
 
     /// The chunk predicates: `detail` low, `language`, `symbolKind`.

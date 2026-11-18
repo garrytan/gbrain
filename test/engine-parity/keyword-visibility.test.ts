@@ -1,17 +1,21 @@
 /**
- * BrainEngine parity — `excludePrivate` and the safe-chunk fence on the keyword members (searchKeyword,
- * searchKeywordChunks, countKeywordPages, searchKeywordPages, searchTitles).
+ * BrainEngine parity — `excludePrivate`, the safe-chunk fence, the trust floor (`minTrust`) and the flagged-page filter
+ * (`suppressFlagged`) on the keyword members (searchKeyword, searchKeywordChunks, countKeywordPages,
+ * searchKeywordPages, searchTitles).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: under `excludePrivate` each keyword member drops the pages the page policy
  *    (`privatePagesFilterForCaller('p')`, src/core/search/private-visibility.ts) hides, and under
  *    `requiresSafeChunks` (which `excludePrivate` implies unless the read says otherwise) the pages short of the
  *    chunker-version fence, before it ranks, limits or counts (`buildVisibilityClause`, search/sql-ranking.ts). A
- *    safe-chunk searchTitles matches and ranks title lexemes only (`buildSearchTitlesStatement`). Every engine arm
- *    returns the same rows.
+ *    safe-chunk searchTitles matches and ranks title lexemes only (`buildSearchTitlesStatement`). Under `minTrust`
+ *    each member drops the pages whose stamped trust tier ranks below the floor, and under `suppressFlagged` the
+ *    pages at or below `agent_written` with a flag receipt in an activation reason family (`pageEligibleSql`).
+ *    Every engine arm returns the same rows.
  *  - Regression: an engine that ignores the flag (a private page ranks first in remote keyword search, a hidden page
  *    is counted by the keyword pager), that skips the fence, that applies the fence without `excludePrivate`, or that
- *    lets a safe-chunk title search match a page on its timeline.
+ *    lets a safe-chunk title search match a page on its timeline; one that ignores the trust floor or the flag, reads
+ *    a flag receipt outside the activation families, or suppresses a flagged page above `agent_written`.
  *  - Why existing coverage misses it: search.test.ts never passes `excludePrivate` or `requireSafeChunks`, and
  *    private-page-reads.test.ts covers the salience, anomaly and chunk reads, not keyword search.
  *  - Seam: none. Real engines, typed methods only.
@@ -51,6 +55,53 @@ async function fixture(engine: BrainEngine): Promise<void> {
   // Sealed text, but a chunker version short of the safe fence: only the safe-chunk reads drop it.
   await engine.setChunkerVersion('notes/fence-short', 3);
 }
+
+/** One page per trust case: [slug, declared tier (none: the default), flag receipt reason families]. */
+const TRUSTED: Array<[slug: string, tier: string | null, flag: string[] | null]> = [
+  ['notes/curated', 'operator_curated', null],
+  ['notes/curated-flagged', 'operator_curated', ['override']],
+  ['notes/observed', 'tool_observed', null],
+  ['notes/agent', 'agent_written', null],
+  ['notes/agent-flagged', 'agent_written', ['override']],
+  ['notes/agent-other-flag', 'agent_written', ['other']],
+  ['notes/unknown-flagged', null, ['credential']],
+  ['notes/outside', 'external_untrusted', null],
+];
+
+async function trustFixture(engine: BrainEngine): Promise<void> {
+  for (const [i, [slug, tier, flag]] of TRUSTED.entries()) {
+    // The less trusted pages rank first, so a limited read must filter before it limits.
+    const text = `${Array(i + 1).fill('nimbus').join(' ')} ledger notes about ${slug}.`;
+    const write = async (e: BrainEngine) => {
+      await e.putPage(slug, { type: 'note', title: `Nimbus ${slug}`, compiled_truth: text, timeline: '' });
+      await installChunks(e, slug, [chunk(0, text)]);
+    };
+    if (tier) {
+      await engine.transaction(async (tx) => {
+        await tx.applyTransactionSettings(['gbrain.write_trust_tier', 'gbrain.write_origin'], [tier, JSON.stringify({ channel: tier })]);
+        await write(tx);
+      });
+    } else {
+      await write(engine);
+    }
+    if (flag) {
+      await engine.upsertPageWriteGateReceipt('default', slug, {
+        content_hash: 'h1', tier: 'agent_written', detector_version: 1, verdict: 'flag', reason_families: flag,
+        reasons: flag, detector_error: false, request_id: null,
+      });
+    }
+  }
+}
+
+const TRUST_SCOPES: Record<string, SearchOpts> = {
+  none: {},
+  emptyFloor: { minTrust: '' as never },
+  curated: { minTrust: 'operator_curated' },
+  agent: { minTrust: 'agent_written' },
+  any: { minTrust: 'external_untrusted' },
+  suppressed: { suppressFlagged: true },
+  agentSuppressed: { minTrust: 'agent_written', suppressFlagged: true },
+};
 
 const view = (rows: SearchResult[]) => rows.map((r) => `${r.slug}:${r.chunk_index}${r.keyword_relaxed ? ':relaxed' : ''}`);
 
@@ -122,6 +173,40 @@ describe('engine parity: excludePrivate and the safe-chunk fence on keyword sear
       expect(slugs(strict.fenceOnly!)).not.toContain('notes/timeline-only');
       expect(slugs(anyWord.private!)).toEqual(['atoms/origin-open', 'notes/access-plain', 'notes/open']);
       return { strict, limited, anyWord };
+    },
+  );
+
+  parityTest(
+    'every keyword member drops pages below the trust floor and flagged pages before it ranks, limits or counts',
+    { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'sealChunks', 'upsertPageWriteGateReceipt',
+      'searchKeyword', 'searchKeywordChunks', 'countKeywordPages', 'searchKeywordPages', 'searchTitles'] },
+    async (engine) => {
+      await trustFixture(engine);
+      const out: Record<string, Record<string, unknown>> = {};
+      for (const [name, scope] of Object.entries(TRUST_SCOPES)) {
+        out[name] = {
+          keyword: view(await engine.searchKeyword('nimbus', { limit: 2, ...scope })),
+          all: sorted(view(await engine.searchKeyword('nimbus', { limit: 20, ...scope }))),
+          chunks: view(await engine.searchKeywordChunks('nimbus', { limit: 2, ...scope })),
+          count: await engine.countKeywordPages('nimbus', scope),
+          pages: view(await engine.searchKeywordPages('nimbus', scope, { limit: 2, offset: 1 })),
+          titles: sorted(view(await engine.searchTitles('nimbus', { limit: 20, ...scope }))),
+          titlesAnyWord: view(await engine.searchTitles('nimbus qqqqzzzz', { limit: 2, ...scope })),
+        };
+      }
+      const slugs = (name: string) => (out[name]!.all as string[]).map((r) => r.split(':')[0]!).sort();
+      expect(out.none!.count).toBe(TRUSTED.length);
+      expect(slugs('emptyFloor')).toEqual(slugs('none'));
+      expect(slugs('any')).toEqual(slugs('none'));
+      expect(slugs('curated')).toEqual(['notes/curated', 'notes/curated-flagged']);
+      expect(slugs('agent')).toEqual(['notes/agent', 'notes/agent-flagged', 'notes/agent-other-flag', 'notes/curated',
+        'notes/curated-flagged', 'notes/observed']);
+      // A flag outside the activation families, or on a page above agent_written, suppresses nothing.
+      expect(slugs('suppressed')).toEqual(['notes/agent', 'notes/agent-other-flag', 'notes/curated', 'notes/curated-flagged',
+        'notes/observed', 'notes/outside']);
+      expect(out.agentSuppressed!.count).toBe(5);
+      expect(out.suppressed!.keyword).toEqual(['notes/outside:0', 'notes/agent-other-flag:0']);
+      return out;
     },
   );
 });

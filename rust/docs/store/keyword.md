@@ -29,7 +29,6 @@ Every keyword member except `findByTitleFuzzy` refuses:
 
 - a CJK query (`hasCJK`): the SQL engines take a separate CJK path (follow-up `keyword-cjk`);
 - a text search configuration other than `english` (`getFtsLanguage()`);
-- truthy `minTrust` or `suppressFlagged`: the store keeps no page trust tier and no page write-gate flag;
 - a date bound (`afterDate`, `beforeDate`) that is not an ISO date or date-time
   (`YYYY-M-D[( |T)H:MM[:SS[.ffffff]][Z|±HH[:MM]]]`), that is outside the calendar, or that has more than six fraction
   digits. Postgres reads more shapes (`Jan 5 2026`); those refuse rather than guess;
@@ -44,8 +43,9 @@ Postgres applies them and PGLite ignores them (follow-up `pglite-keyword-chunks-
 
 ### Visibility
 
-`excludePrivate` and `requireSafeChunks` are served by every keyword member except `findByTitleFuzzy`, as
-`buildVisibilityClause` (`src/core/search/sql-ranking.ts`) adds them, before any rank, limit or count:
+`excludePrivate`, `requireSafeChunks`, `minTrust` and `suppressFlagged` are served by every keyword member except
+`findByTitleFuzzy`, as `buildVisibilityClause` (`src/core/search/sql-ranking.ts`) adds them, before any rank, limit
+or count:
 
 - `excludePrivate`: the TS member sends the store page policy (`storePagePolicy`), and the page filter drops a page
   `facts/privacy.rs` `page_hidden` hides (`privatePagesFilterForCaller('p')`). A caller whose member pages, grants or
@@ -55,6 +55,11 @@ Postgres applies them and PGLite ignores them (follow-up `pglite-keyword-chunks-
   (`safeChunksFilter('p')`).
 - A safe-chunk `searchTitles` runs every attempt as the `title` kind, as `buildSearchTitlesStatement` makes the
   statement title-only and uncapped: no attempt matches a page on its timeline and none is cut.
+- `minTrust` (`trustFloorSql('p')`): the page filter drops a page whose stamped trust tier (`PageRecord::trust_tier`,
+  `unknown` when none) ranks below the floor. An empty floor keeps every tier; a name that is no tier refuses.
+- `suppressFlagged` (`activationSuppressedSql('pages', 'p')`): the page filter drops a page at or below
+  `agent_written` that holds a `flag` write-gate receipt in an activation reason family
+  (`trust::activation_suppressed`).
 
 Ignored, as in the SQL statements: the vector, reranking, recency and reporting options (`onVectorPoolMeta`,
 `cjkKeyword`, `embeddingColumn`, `recencyBoost`, `tokenBudget`, `reranker`, `relationalRetrieval` and the rest of
@@ -185,4 +190,3 @@ The page vector is not stored; `keyword/titles.rs` rebuilds the one PGLite last 
   `exclude_slugs`, which Postgres applies; no production caller. A PGLite behavior change, so it waits until after
   1x parity. Then the member serves the four filters with a parity case.
 - `fuzzy-title-unscoped-deleted`: the SQL unscoped arm returns soft-deleted pages.
-- Serve the refused privacy and trust options once the store records them.

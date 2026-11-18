@@ -155,3 +155,8 @@ event page (the hard delete of its depth page removes the entry and leaves the r
   the SQL path. Done when the record carries the tier the write path stamps, `heldRows` for `timeline_entries` is a
   typed member served from the store, and a parity case compares a held row on both arms.
 - `chronicle-reads-host-time-zone`: see Known differences.
+- `timeline-get-exclude-private` (gap): `getTimeline` (links-graph-timeline.md) refuses `excludePrivate: true` on
+  Rust, while the SQL engines drop a row whose depth page or event page the page policy hides. Pattern: commit
+  64719a12da, which serves it for `getTimelineForDate`, `getSince`, `getOnThisDay` and `getLastSeen` (the event page
+  judged by id, whatever its source scope; a policy widened by grants still refuses). Done when `getTimeline` applies
+  the same policy and a parity case compares a private depth page and a private event page on both arms.
