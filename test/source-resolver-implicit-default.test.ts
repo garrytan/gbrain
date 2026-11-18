@@ -9,14 +9,15 @@
  * (and any future bare-command caller) keeps working on a brain whose
  * default source went away.
  *
- * Hermetic: stub engines answer the three queries the resolution runs
- * (assertSourceExists probe, sole-non-default listing, default-emptiness
- * guard).
+ * Hermetic: stub engines answer the three reads the resolution runs through
+ * the typed source members (assertSourceExists probe, sole-non-default
+ * listing, default-emptiness guard).
  */
 
 import { describe, test, expect, beforeEach, spyOn } from 'bun:test';
 import { resolveImplicitDefaultSourceId, __testing } from '../src/core/source-resolver.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { stubSourceMembers } from './helpers/source-members-stub.ts';
 
 function makeStub(opts: {
   defaultKey: string | null;
@@ -26,19 +27,11 @@ function makeStub(opts: {
 }): BrainEngine {
   return {
     kind: 'pglite',
-    executeRaw: async <T>(sql: string, params?: unknown[]): Promise<T[]> => {
-      if (sql.includes('SELECT id FROM sources WHERE id = $1')) {
-        const target = params?.[0] as string;
-        return opts.activeSources.includes(target) ? ([{ id: target }] as unknown as T[]) : [];
-      }
-      if (sql.includes("local_path IS NOT NULL AND id != 'default'")) {
-        return opts.soleNonDefault ? ([{ id: opts.soleNonDefault }] as unknown as T[]) : [];
-      }
-      if (sql.includes("FROM pages WHERE source_id = 'default'")) {
-        return opts.defaultHasPages ? ([{ one: 1 }] as unknown as T[]) : [];
-      }
-      return [];
-    },
+    // The active ids exist; the sole non-default source (if any) is the one with a local_path.
+    ...stubSourceMembers([
+      ...opts.activeSources.map(id => ({ id, local_path: id === opts.soleNonDefault ? `/vault/${id}` : null })),
+      ...(opts.soleNonDefault && !opts.activeSources.includes(opts.soleNonDefault) ? [{ id: opts.soleNonDefault, local_path: `/vault/${opts.soleNonDefault}` }] : []),
+    ], { defaultHasPages: opts.defaultHasPages === true }),
     getConfig: async (key: string) => (key === 'sources.default' ? opts.defaultKey : null),
   } as unknown as BrainEngine;
 }
@@ -100,7 +93,7 @@ describe('resolveImplicitDefaultSourceId — stale sources.default is fail-open 
   test('a genuine engine failure still propagates (fail-open covers stale config only)', async () => {
     const engine = {
       kind: 'pglite',
-      executeRaw: async () => { throw new TypeError('connection torn down'); },
+      ...stubSourceMembers([], { fail: () => new TypeError('connection torn down') }),
       getConfig: async (key: string) => (key === 'sources.default' ? 'primary' : null),
     } as unknown as BrainEngine;
     await expect(resolveImplicitDefaultSourceId(engine)).rejects.toThrow('connection torn down');

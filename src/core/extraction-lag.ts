@@ -10,13 +10,13 @@ import type { BrainEngine } from './engine.ts';
 import { withRequestConfigSnapshot } from './config-snapshot.ts';
 import { AGENT_TOOL_LIMIT_MS, type Action, type Decision } from './agent-output.ts';
 import { cliRouting, pinRouting, type FixRouting } from './fix-routing.ts';
-import { extractionLagStatement, heldLinkExtractionStatement } from './engine-sql/pages.ts';
+import { heldLinkExtractionStatement } from './engine-sql/pages.ts';
 import { effectiveLinkExtractorWatermark } from './link-extraction-watermark.ts';
 import { previewMentionPass } from './mentions/stale.ts';
 import { readMentionPolicy } from './mentions/policy.ts';
 import { resolveEnvNumber, warnOnceForEnv } from './env-number.ts';
 import { isMissingSchemaObject } from './utils.ts';
-import { managedPersistenceEnabled } from './persistence/ownership.ts';
+import { readManagedModeTyped } from './persistence/ownership.ts';
 import { resolveIncludeFrontmatter } from './extract-frontmatter.ts';
 import { LINK_HOLD_THRESHOLD_RUNS, linkExtractionRetryFix } from './persistence/links-extraction-holds.ts';
 
@@ -61,12 +61,10 @@ export async function readExtractionLag(engine: BrainEngine, opts: { sourceId?: 
 async function readLagRow(engine: BrainEngine, opts: { sourceId?: string; timeoutMs?: number }) {
   // #9295: count the wanted rows the configured sweep re-resolves (a managed or frontmatter sweep: every producer). The
   // managed-mode read needs no config, so it goes out with the config read rather than one round trip before the count.
-  const [versionTs, managed] = await Promise.all([effectiveLinkExtractorWatermark(engine), managedPersistenceEnabled(engine)]);
+  const [versionTs, managed] = await Promise.all([effectiveLinkExtractorWatermark(engine), readManagedModeTyped(engine)]);
   const wantedProducers = managed || await resolveIncludeFrontmatter(engine) ? undefined : ['body'];
-  const read = async (attendance: boolean, held: boolean, guests: boolean) => {
-    const { text, params } = extractionLagStatement({ sourceId: opts.sourceId, versionTs, attendance, held, guests, wantedProducers });
-    return (await engine.executeRaw<{ total: number; stale: number; attendance_blocked: number; held: number }>(text, params, { timeoutMs: opts.timeoutMs ?? 10_000 }))[0];
-  };
+  const read = (attendance: boolean, held: boolean, guests: boolean) =>
+    engine.readExtractionLagCounts({ sourceId: opts.sourceId, versionTs, attendance, held, guests, wantedProducers, timeoutMs: opts.timeoutMs });
   const readShape = async (guests: boolean) => {
     try { return await read(true, true, guests); } catch (e) {
       if (isMissingSchemaObject(e, 'column', 'links_extract_failure')) return read(true, false, guests).catch(async inner => {

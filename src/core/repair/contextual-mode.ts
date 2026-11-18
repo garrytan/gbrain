@@ -24,11 +24,7 @@ export const contextualModeRepair: RepairHandler = {
   kind: 'contextual-mode',
   publication: 'projection',
   async plan(engine: BrainEngine, scope: RepairScope, after: RepairCursor | null) {
-    const rows = await engine.executeRaw<{ id: number; source_id: string; slug: string; chars: number; sealed: boolean; embed_skip: boolean }>(`SELECT p.id,p.source_id,p.slug,
-        (p.text_projection_revision = p.knowledge_revision) AS sealed, (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AS embed_skip,
-        COALESCE((SELECT sum(length(c.chunk_text)) FROM content_chunks c WHERE c.page_id=p.id), 0)::int AS chars
-      FROM pages p WHERE p.source_id=ANY($1::text[]) AND p.deleted_at IS NULL AND p.page_kind='markdown'
-        AND p.contextual_retrieval_mode IS NULL ORDER BY p.id`, [scope.source_ids]);
+    const rows = await engine.listContextualModeCandidates(scope.source_ids);
     const items: RepairItem[] = rows.filter(row => row.sealed && !row.embed_skip)
       .map(row => ({ cursor: { phase: 0, id: Number(row.id) }, source_id: row.source_id, slug: row.slug, chars: Number(row.chars),
         action: 'stamp contextual retrieval mode' }))

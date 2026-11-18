@@ -30,7 +30,10 @@ import { asciiLower, asciiLowerSql, edgeTrimSql } from '../edge-whitespace.ts';
 import { ACCESS_ID_RE, hasReaders, MEMBER_PAGE_PREFIX, normalizePrincipal, readersAllow, validIdentity } from '../access/principals.ts';
 import { ruleCoversSql, validPrefix, validQualifiedRuleId } from '../access/folder-rules.ts';
 import { holdingSlugSql } from '../facts-fence.ts';
+import { NAME_KEY_PAGE_DIRS } from '../entities/basename-dirs.ts';
 import { atomMovedOriginPrivateSql, atomOriginSlugsSql } from '../persistence/atom-origin.ts';
+import { ownerOnlyFactSql, ownerOnlyForm, ownerOnlyPageSql, ownerOnlySourcesPresent } from '../access/owner-only.ts';
+import { readConfigRows, type ConfigReader } from '../config-values.ts';
 
 export const REMOTE_PRIVATE_PAGES_KEY = 'search.remote_private_pages';
 
@@ -114,9 +117,19 @@ export function accessAllowedSql(pageAlias: string, identity: readonly string[],
  * the origin of what was derived from it (a fact's provenance page): raw-only rules (covers_derived false) do not count.
  */
 export function accessAllowedForAllSql(pageAlias: string, identities: readonly (readonly string[])[], satisfied: readonly string[], derived = false): string {
-  if (!currentCallerAccess().restricted) return `(${pageAlias}.page_readers IS NULL AND ${pageAlias}.folder_rule_ids IS NULL)`;
+  const ownerOnly = ownerOnlyAllowedSql(pageAlias, currentCallerAccess());
+  if (!currentCallerAccess().restricted) return `(${pageAlias}.page_readers IS NULL AND ${pageAlias}.folder_rule_ids IS NULL${ownerOnly})`;
   const readers = (identities.length ? identities : [[]]).map(identity => readersAllowedSql(pageAlias, identity)).join(' AND ');
-  return `(${readers} AND ${folderRulesAllowedSql(pageAlias, satisfied, derived)} AND ${originAllowedSql(pageAlias)})`;
+  return `(${readers} AND ${folderRulesAllowedSql(pageAlias, satisfied, derived)} AND ${originAllowedSql(pageAlias)}${ownerOnly})`;
+}
+
+/**
+ * Owner-only sources (access/owner-only.ts): a page in one, or derived from one, passes only for an owner read
+ * (CallerAccess.owner, never an audience of others or an attested call). Part of the member-access predicate, so no
+ * grant, hatch, lineage setting or owner opt-in relaxes it; empty for the owner.
+ */
+function ownerOnlyAllowedSql(pageAlias: string, access: Pick<CallerAccess, 'owner'>): string {
+  return access.owner ? '' : ` AND NOT ${ownerOnlyPageSql(pageAlias, ownerOnlyForm(readSchemaVersion()))}`;
 }
 
 /**
@@ -255,14 +268,15 @@ function lineageOriginAllowedSql(p: string, access: CallerAccess, ownPage: strin
 function lineageAccessSql(pageAlias: string, access: CallerAccess, ownPage: string, derived = false): string {
   const audience = audiencePages(access);
   const notOther = notOtherMemberPageSql(pageAlias, ownPage, audience);
+  const ownerOnly = ownerOnlyAllowedSql(pageAlias, access);
   if (!access.restricted) {
     const unrestricted = `(${pageAlias}.page_readers IS NULL AND ${pageAlias}.folder_rule_ids IS NULL)`;
-    return access.ownerReadsRestricted ? `(${unrestricted} OR ${notOther})` : unrestricted;
+    return `(${access.ownerReadsRestricted ? `(${unrestricted} OR ${notOther})` : unrestricted}${ownerOnly})`;
   }
   const readers = audience.length ? `(${readersAllowedSql(pageAlias, access.identity)} OR ${audiencePageSql(pageAlias, audience)})` : readersAllowedSql(pageAlias, access.identity);
   const listed = `(${readers} AND ${folderRulesAllowedSql(pageAlias, access.satisfiedRuleIds, derived)})`;
   const page = access.ownerReadsRestricted ? `(${listed} OR (${notOther}${coverageSql(pageAlias)}))` : listed;
-  return `(${page} AND ${lineageOriginAllowedSql(pageAlias, access, ownPage)})`;
+  return `(${page} AND ${lineageOriginAllowedSql(pageAlias, access, ownPage)}${ownerOnly})`;
 }
 
 /**
@@ -271,7 +285,7 @@ function lineageAccessSql(pageAlias: string, access: CallerAccess, ownPage: stri
  * access.owner_reads_restricted and audience members never apply here: a page kept to other members stays closed.
  */
 export function ownerReadPolicyFragment(pageAlias: string, identity: readonly string[], satisfied: readonly string[]): string {
-  const access: CallerAccess = { ...currentCallerAccess(), identity, satisfiedRuleIds: satisfied, lineage: true, ownerReadsRestricted: false, audienceKindMembers: [], restricted: true };
+  const access: CallerAccess = { ...currentCallerAccess(), identity, satisfiedRuleIds: satisfied, owner: true, lineage: true, ownerReadsRestricted: false, audienceKindMembers: [], restricted: true };
   const ownPage = lineageReadPage(access);
   return ownPage ? `(${lineageAccessSql(pageAlias, access, ownPage)} AND ${privacyPartSql(pageAlias)})` : 'FALSE';
 }
@@ -730,12 +744,17 @@ export function privateSnapshotFilterFragment(alias: string): string {
 /** The schema version (migration v311) that creates gbrain_concept_inputs_private; a literal so the CLI dispatcher never loads a migration module. */
 export const CONCEPT_INPUTS_PRIVATE_SINCE = 311;
 
+/** The read's schema version: the one its remote, scope or attested caller record carries, else the one the engine in scope recorded (schemaVersionSeen); undefined when neither. */
+function readSchemaVersion(): number | undefined {
+  const { remotePolicy } = currentCallerAccess();
+  const scoped = engineScopeStore.getStore();
+  return remotePolicy ? remotePolicy.schemaVersion : scoped ? schemaVersionSeen(scoped) : undefined;
+}
+
 function derivedOriginPrivateSql(p: string, shadowedPages: boolean): string {
   const privateOrigin = (atom: string, alias: string) => `EXISTS (SELECT 1 FROM pages ${alias} WHERE ${alias}.source_id = ${atom}.source_id
       AND ${alias}.slug = ANY(${atomOriginSlugsSql(atom)}) AND ${alias}.frontmatter->>'visibility' = 'private')`;
-  const { remotePolicy } = currentCallerAccess();
-  const scoped = engineScopeStore.getStore();
-  const schema = remotePolicy ? remotePolicy.schemaVersion : scoped ? schemaVersionSeen(scoped) : undefined;
+  const schema = readSchemaVersion();
   const conceptInputsPrivate = !shadowedPages && schema !== undefined && schema >= CONCEPT_INPUTS_PRIVATE_SINCE ? `gbrain_concept_inputs_private((${p}.id)::integer)`
     : `EXISTS (SELECT 1 FROM links derived_input_link
       JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id
@@ -869,18 +888,16 @@ export function folderRestrictedSql(alias: string): string {
  * folderRestrictedSql for a page known by its slug (a parsed page, a row read without the column, a page about to be
  * written): judged against the applied folder rules, not the stamp. A failed read counts as restricted.
  */
-export async function folderRestricted(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string): Promise<boolean> {
+export async function folderRestricted(engine: Pick<BrainEngine, 'isFolderRestricted'>, sourceId: string, slug: string): Promise<boolean> {
   try {
-    const [row] = await engine.executeRaw<{ restricted: boolean }>(
-      'SELECT (gbrain_access_folder_rules($1, $2) IS NOT NULL OR gbrain_access_pending_covers($1, $2) OR gbrain_access_state_unreadable()) AS restricted', [sourceId, slug]);
-    return row?.restricted === true;
+    return await engine.isFolderRestricted(sourceId, slug);
   } catch {
     return true;
   }
 }
 
 /** `page` with folder_restricted looked up (folderRestricted), for a page read without it, such as a page snapshot. */
-export async function withFolderRestricted(engine: Pick<BrainEngine, 'executeRaw'>, page: { source_id: string; slug: string; type?: string | null; frontmatter?: unknown }): Promise<{ type?: string | null; frontmatter?: unknown; folder_restricted: boolean }> {
+export async function withFolderRestricted(engine: Pick<BrainEngine, 'isFolderRestricted'>, page: { source_id: string; slug: string; type?: string | null; frontmatter?: unknown }): Promise<{ type?: string | null; frontmatter?: unknown; folder_restricted: boolean }> {
   return { type: page.type, frontmatter: page.frontmatter, folder_restricted: await folderRestricted(engine, page.source_id, page.slug) };
 }
 
@@ -969,7 +986,7 @@ export function privateProvenanceFilterUnderPolicy(factAlias: string, perCandida
   const policy = member && ACCESS_ID_RE.test(member)
     ? `CASE WHEN pp.slug = '${MEMBER_PAGE_PREFIX}${member}' THEN ${readPolicyFragment('pp', access.identity, hide, access.satisfiedRuleIds, true)} ELSE ${otherwise} END`
     : otherwise;
-  return `(NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = ${factAlias}.source_id AND pp.slug = ${factAlias}.source_markdown_slug AND NOT (${policy})) AND ${privateEntityFilterForCaller(factAlias, perCandidate)}${labelledOnlyFactSql(factAlias)})`;
+  return `(NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = ${factAlias}.source_id AND pp.slug = ${factAlias}.source_markdown_slug AND NOT (${policy})) AND ${privateEntityFilterForCaller(factAlias, perCandidate)}${labelledOnlyFactSql(factAlias)}${ownerOnlyFactAllowedSql(factAlias)})`;
 }
 
 /**
@@ -984,7 +1001,10 @@ export function privateProvenanceFilterUnderPolicy(factAlias: string, perCandida
 export function privateEntityFilterForCaller(factAlias: string, perCandidate = false): string {
   const entityPolicy = currentCallerAccess().labelledOnly ? withCallerAccess({ labelledOnly: false }, () => privatePagesFilterForCaller('entity_pp')) : privatePagesFilterForCaller('entity_pp');
   const held = `CASE WHEN ${factAlias}.entity_slug IS NOT NULL AND ${holdingSlugSql(`${factAlias}.source_markdown_slug`)} THEN ${factAlias}.source_markdown_slug END`;
-  return `(NOT EXISTS (SELECT 1 FROM pages entity_pp WHERE entity_pp.source_id = ${factAlias}.source_id AND entity_pp.slug IN (${factAlias}.entity_slug, ${held}) AND NOT ${entityPolicy}${perCandidate ? ' OFFSET 0' : ''})${sharedHeldRuledSql(factAlias)})`;
+  // GBRA-574: a bare name key reads as the page later written at <dir>/<key>, so that page's privacy covers it.
+  const keyedSlugs = `ARRAY[${NAME_KEY_PAGE_DIRS.map(dir => `'${dir}/' || ${factAlias}.entity_slug`).join(', ')}]`;
+  const keyed = `CASE WHEN strpos(${factAlias}.entity_slug, '/') = 0 THEN NOT EXISTS (SELECT 1 FROM pages entity_pp WHERE entity_pp.source_id = ${factAlias}.source_id AND entity_pp.slug = ANY(${keyedSlugs}) AND NOT ${entityPolicy}${perCandidate ? ' OFFSET 0' : ''}) ELSE TRUE END`;
+  return `(NOT EXISTS (SELECT 1 FROM pages entity_pp WHERE entity_pp.source_id = ${factAlias}.source_id AND entity_pp.slug IN (${factAlias}.entity_slug, ${held}) AND NOT ${entityPolicy}${perCandidate ? ' OFFSET 0' : ''}) AND ${keyed}${sharedHeldRuledSql(factAlias)})`;
 }
 
 /**
@@ -1028,8 +1048,13 @@ export function callerRelaxesPrivacy(): boolean {
 }
 
 export function privateProvenanceFilterFragment(factAlias: string): string {
-  return `NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = ${factAlias}.source_id ` +
-    `AND pp.slug = ${factAlias}.source_markdown_slug AND NOT (${privatePagesFilterFragment('pp', true)}))`;
+  return `(NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = ${factAlias}.source_id ` +
+    `AND pp.slug = ${factAlias}.source_markdown_slug AND NOT (${privatePagesFilterFragment('pp', true)}))${ownerOnlyFactAllowedSql(factAlias)})`;
+}
+
+/** A fact held in or derived from an owner-only source (access/owner-only.ts) passes only for an owner read; empty for the owner. */
+function ownerOnlyFactAllowedSql(factAlias: string): string {
+  return currentCallerAccess().owner ? '' : ` AND NOT ${ownerOnlyFactSql(factAlias, ownerOnlyForm(readSchemaVersion()))}`;
 }
 
 /**
@@ -1220,8 +1245,8 @@ export async function schemaVersionNow(engine: Pick<BrainEngine, 'executeRaw'>):
 }
 
 /** GST-363: whom the brain serves, read on its own (the requester-scope gate's re-read after an unreadable policy read). Throws when unreadable. */
-export async function readServesPolicy(engine: Pick<BrainEngine, 'executeRaw'>): Promise<ServesPolicy> {
-  const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key = ANY($1::text[])', [[SERVES_KEY, SERVES_DERIVED_KEY, SERVES_SINCE_KEY, REQUESTER_SCOPE_ENFORCE_KEY]]);
+export async function readServesPolicy(engine: ConfigReader): Promise<ServesPolicy> {
+  const rows = await readConfigRows(engine, [SERVES_KEY, SERVES_DERIVED_KEY, SERVES_SINCE_KEY, REQUESTER_SCOPE_ENFORCE_KEY]);
   return servesPolicyFrom(Object.fromEntries(rows.map(r => [r.key, r.value])));
 }
 
@@ -1274,5 +1299,5 @@ export async function resolveExcludePrivatePages(
   if (!await remotePrivacyRelaxed(engine)) return true;
   const access = currentCallerAccess();
   if (access.audience?.length && access.hidePrivate) return true;
-  return accessRestrictionsPresent(engine);
+  return await accessRestrictionsPresent(engine) || (!access.owner && await ownerOnlySourcesPresent(engine));
 }

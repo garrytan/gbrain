@@ -154,10 +154,7 @@ describe('routeCodeIntelScope — federated code-source re-route (#3242 sibling)
   /** Engine stub whose codeChunksExist probe answers true for the given sources. */
   function engineWithCodeIn(...sourcesWithCode: string[]) {
     return {
-      executeRaw: async (_sql: string, params: unknown[] = []) => {
-        const sourceId = params[params.length - 1] as string | undefined;
-        return [{ e: sourceId !== undefined && sourcesWithCode.includes(sourceId) }];
-      },
+      codeChunksExist: async (sourceId: string | undefined) => sourceId !== undefined && sourcesWithCode.includes(sourceId),
     } as any;
   }
 
@@ -214,7 +211,7 @@ describe('routeCodeIntelScope — federated code-source re-route (#3242 sibling)
     const ctx = ctxOf({
       remote: true,
       sourceId: 'default',
-      engine: { executeRaw: async () => { throw new Error('db down'); } } as any,
+      engine: { codeChunksExist: async () => { throw new Error('db down'); } } as any,
       localFederatedSourceIds: ['default', 'code-src'],
     });
     expect(await routeCodeIntelScope(ctx, undefined)).toEqual({ allSources: false, sourceId: 'default' });

@@ -7,15 +7,12 @@
  * test/search/saved-facts-probe.test.ts.
  */
 import type { OperationContext } from '../ops/contract.ts';
-import { trustRankSql, type TrustTier } from '../trust/tier.ts';
-import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
+import type { TrustTier } from '../trust/tier.ts';
 import { collapseFactReads } from '../facts/capture-dedup.ts';
-import { projectionEligibleSql } from '../eligibility/sql.ts';
-import { factsFtsDocument, getFtsLanguage } from '../fts-language.ts';
+import { getFtsLanguage } from '../fts-language.ts';
 import { hasCJK } from '../cjk.ts';
-import { privateFactFilterForReader, resolveExcludePrivatePages, worldOnlyFacts } from './private-visibility.ts';
-import { grantedPrivateFactSql } from '../access/member-facts.ts';
-import { SAVED_FACT_COLLAPSE_COLUMNS, type CollapseColumns } from './entity-facts.ts';
+import { resolveExcludePrivatePages, worldOnlyFacts } from './private-visibility.ts';
+import { type CollapseColumns } from './entity-facts.ts';
 
 /** Words too common to count toward a saved-fact match; also the coverage relevance stopwords in ops/search.ts. */
 export const FACT_MATCH_STOPWORDS = new Set(['the', 'and', 'for', 'who', 'what', 'when', 'where', 'which', 'with', 'from', 'that', 'this', 'are', 'was', 'were', 'our', 'your', 'their', 'now', 'current', 'currently', 'should', 'does', 'did', 'has', 'have', 'how', 'any', 'all', 'about', 'into', 'its', 'next']);
@@ -38,7 +35,7 @@ export const SAVED_FACTS_SUPERSEDE_KEY = 'search.saved_facts_supersede';
 export const RETRACTION = String.raw`retract(s|ed|ing|ion)?|disregard|scratch that|i misspoke|i was wrong|not what (i|we) (posted|said|wrote)|ignore (the|my|that|what)`;
 const RETRACTION_CUE = new RegExp(String.raw`\b(${RETRACTION})\b`, 'i');
 /** What marks a saved fact as making a correction (Postgres ARE, matched case-insensitively); "corrected" and "correcting" report one made elsewhere. */
-const CORRECTION_CUE = String.raw`\m(correction|${RETRACTION})\M`;
+export const CORRECTION_CUE = String.raw`\m(correction|${RETRACTION})\M`;
 
 const MONTH = String.raw`(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b\.?`;
 const DATES = new RegExp(String.raw`\b\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?|\b\d{1,2}:\d{2}\b|\b\d{1,2}(?:st|nd|rd|th)? ${MONTH}|\b${MONTH} \d{1,2}(?:st|nd|rd|th)?\b`, 'gi');
@@ -119,14 +116,7 @@ export async function matchingSavedFacts(ctx: OperationContext, scope: { sourceI
   if (terms.length === 0 || !ctx.emitResponseMeta) return none;
   const sources = scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? ctx.sourceId ?? 'default'];
   const [excludePrivate, supersede] = await Promise.all([resolveExcludePrivatePages(ctx.engine, ctx.remote), savedFactsSupersedeEnabled(ctx.engine)]);
-  const active = `f.source_id = ANY($1::text[])
-         AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())
-         AND f.source != ALL($2::text[])
-         ${worldOnlyFacts(ctx.remote) ? `AND (f.visibility = 'world' OR ${grantedPrivateFactSql('f')})` : ''}`;
-  const eligible = `${excludePrivate ? `AND ${privateFactFilterForReader('f', true)}` : ''}
-         AND ${projectionEligibleSql('facts', 'f', { floor: scope.minTrust })}`;
   const lang = getFtsLanguage();
-  const doc = factsFtsDocument('f');
   // CJK words match as substrings; without one the scan is the any-word tsquery alone, which the facts keyword index serves.
   const pats = terms.map(t => hasCJK(t) ? `%${t.replace(/[\\%_]/g, m => `\\${m}`)}%` : null);
   try {
@@ -140,34 +130,7 @@ export async function matchingSavedFacts(ctx: OperationContext, scope: { sourceI
     // The threshold is applied before the cut: a fact matching every word is never crowded
     // out by newer facts that match fewer.
     // Cue rows below the threshold rank in a pool of their own, so full matches never push a correction past the cut.
-    const rows = await ctx.engine.executeRaw<SavedFactMatch & CollapseColumns & { at: unknown; matched: unknown[]; need: unknown; cue: boolean; trust_rank: unknown; pool_rank: unknown }>(
-      `WITH w AS (
-         SELECT t.i, t.pat, plainto_tsquery('${lang}'::regconfig, t.term) AS tq
-         FROM unnest($3::text[], $4::text[]) WITH ORDINALITY AS t(term, pat, i)
-         WHERE t.pat IS NOT NULL OR numnode(plainto_tsquery('${lang}'::regconfig, t.term)) > 0
-       ), k AS (
-         SELECT count(*)::int AS n,
-           NULLIF(string_agg('(' || tq::text || ')', ' | ') FILTER (WHERE pat IS NULL), '')::tsquery AS anyq,
-           COALESCE(array_agg(pat) FILTER (WHERE pat IS NOT NULL), '{}') AS pats
-         FROM w
-       )
-       SELECT * FROM (SELECT m.*, row_number() OVER (PARTITION BY m.cue AND cardinality(m.matched) < m.need ORDER BY cardinality(m.matched) DESC, m.at DESC, m.id DESC) AS pool_rank FROM (
-         SELECT f.id, f.fact, f.entity_slug, f.kind, f.valid_from::text AS valid_from, f.source, f.valid_from AS at, ${SAVED_FACT_COLLAPSE_COLUMNS},
-           ARRAY(SELECT w.i FROM w, (SELECT ${doc} AS d OFFSET 0) x WHERE CASE WHEN w.pat IS NOT NULL THEN lower(f.fact || ' ' || COALESCE(f.entity_slug, '')) LIKE w.pat
-             ELSE x.d @@ w.tq END ORDER BY w.i) AS matched,
-           LEAST(4, GREATEST(LEAST(2, k.n), ceil(k.n * 0.75)::int)) AS need,
-           ($6::boolean AND f.fact ~* $5) AS cue, ${trustRankSql('f.trust_tier')} AS trust_rank
-         FROM facts f, k
-         WHERE ${active}
-           ${eligible}
-           AND ${pats.some(Boolean) ? `(${doc} @@ k.anyq OR lower(f.fact || ' ' || COALESCE(f.entity_slug, '')) LIKE ANY(k.pats))` : `${doc} @@ k.anyq`}
-           AND EXISTS (SELECT 1 FROM facts f WHERE ${active} LIMIT 1)
-       ) m
-       WHERE cardinality(m.matched) >= CASE WHEN m.cue THEN LEAST(2, m.need) ELSE m.need END) p
-       WHERE p.pool_rank <= 200
-       ORDER BY cardinality(p.matched) DESC, p.at DESC, p.id DESC`,
-      [sources, [...AUDIT_ROW_SOURCES], terms, pats, CORRECTION_CUE, supersede],
-    );
+    const rows = await ctx.engine.matchSavedFacts({ sources, terms, pats, cue: CORRECTION_CUE, supersede, excludePrivate, worldOnly: worldOnlyFacts(ctx.remote), minTrust: scope.minTrust });
     const found = rows.map(({ at, matched, need, cue, trust_rank, pool_rank: _p, ...fact }) => ({ fact: { ...fact, id: Number(fact.id) } as SavedFactMatch & CollapseColumns,
       at: new Date(at as string).getTime(), words: new Set(matched.map(Number)), need: Number(need), cue, trust: Number(trust_rank), figures: figures(fact.fact) }));
     const admitted = found.filter(r => r.words.size >= r.need);

@@ -34,7 +34,7 @@ describe('trust_release_unpreviewed_fields doctor check', () => {
   // seam=none; no_claim=the SQL itself (a stub engine returns the rows; the listing is exercised against real releases in trust-release-preview-binding.test.ts)
   test('a listing past five rows names five, counts the rest, and points the fix at the first row', async () => {
     const rows = Array.from({ length: 7 }, (_, i) => ({ id: i + 1, source_id: 'default', slug: 'people/alice-example', row_num: i + 1, hold_id: 10 + i, total: 52 }));
-    const [check] = await trustReleaseUnpreviewedEntry.run({ engine: { executeRaw: async () => rows } } as unknown as DoctorContext) as Check[];
+    const [check] = await trustReleaseUnpreviewedEntry.run({ engine: { listUnpreviewedTrustFacts: async () => rows } } as unknown as DoctorContext) as Check[];
     expect(check).toMatchObject({ name: 'trust_release_unpreviewed_fields', status: 'warn', details: { total: 52 } });
     expect(check!.message).toContain('f5 (default/people/alice-example row 5, released h14)');
     expect(check!.message).not.toContain('f6 ');
@@ -46,7 +46,7 @@ describe('trust_release_unpreviewed_fields doctor check', () => {
   // fails_when=the missing-schema classification swallows every error, or a pre-trust schema reports a failure; why_new=only the empty-brain path was covered;
   // seam=none; no_claim=real pre-trust schemas (the errors are the exact Postgres wording, thrown by a stub engine)
   test('a missing trust table is ok (pre_trust); any other error is reported, never swallowed', async () => {
-    const run = (error: unknown) => trustReleaseUnpreviewedEntry.run({ engine: { executeRaw: async () => { throw error; } } } as unknown as DoctorContext) as Promise<Check[]>;
+    const run = (error: unknown) => trustReleaseUnpreviewedEntry.run({ engine: { listUnpreviewedTrustFacts: async () => { throw error; } } } as unknown as DoctorContext) as Promise<Check[]>;
     const [preTrust] = await run(Object.assign(new Error('relation "write_gate_holds" does not exist'), { code: '42P01' }));
     expect(preTrust).toMatchObject({ status: 'ok', details: { schema: 'pre_trust' } });
     const [failed] = await run(new Error('connection reset by peer'));

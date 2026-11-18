@@ -28,7 +28,7 @@ export async function derivedVisibilityCheck(engine: BrainEngine, sourceId?: str
   const name = 'derived_visibility';
   try {
     const aliasesHonored = await readHonorAliases(engine);
-    const sources = (await engine.executeRaw<{ id: string }>(`SELECT id FROM sources WHERE archived IS NOT TRUE${sourceId ? ' AND id=$1' : ''}`, sourceId ? [sourceId] : [])).map(s => s.id);
+    const sources = (await engine.listAllSources()).filter(s => !sourceId || s.id === sourceId).map(s => s.id);
     const facts = await worldFactsFromPrivateSources(engine, sources);
     const readable = facts.filter(f => f.readable);
     const factDetails = { world_facts_from_private_sources: facts.length, world_facts_remotely_readable: readable.length,

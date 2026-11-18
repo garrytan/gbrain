@@ -58,8 +58,10 @@ export function racingEngine(engine: BrainEngine): BrainEngine {
     const value = Reflect.get(target, prop);
     return typeof value === 'function' ? value.bind(target) : value;
   };
-  return new Proxy(engine, {
+  const racing: BrainEngine = new Proxy(engine, {
     get(target, prop) {
+      // admitJob opens its own transaction: run it with this proxy as `this` so that transaction is the racing one.
+      if (prop === 'admitJob') return (...args: unknown[]) => Reflect.apply(Reflect.get(target, prop), racing, args);
       if (prop !== 'transaction') return bind(target, prop);
       return <T>(fn: (tx: BrainEngine) => Promise<T>) => target.transaction(tx => {
         let hidden = false;
@@ -75,6 +77,7 @@ export function racingEngine(engine: BrainEngine): BrainEngine {
       });
     },
   });
+  return racing;
 }
 
 function optsFor(path: CoalescePath): Partial<MinionJobInput> {

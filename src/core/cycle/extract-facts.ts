@@ -360,18 +360,7 @@ async function listExistingFactsForPage(
   slug: string,
   sourceId: string,
 ): Promise<ExistingPageFact[]> {
-  return engine.executeRaw<ExistingPageFact>(
-    `SELECT id, fact, source, row_num, superseded_by, expired_at, kind, visibility, notability, context,
-            valid_from, valid_until, confidence, claim_metric, claim_value, claim_unit, claim_period,
-            embedding IS NOT NULL AS has_embedding
-       FROM facts
-      WHERE source_id = $1
-        AND source_markdown_slug = $2
-        AND COALESCE(source, '') NOT LIKE 'cli:%'
-        AND NOT (row_num IS NULL AND expired_at IS NOT NULL)
-      ORDER BY row_num ASC, id ASC`,
-    [sourceId, slug],
-  );
+  return engine.listFactsForPage(sourceId, slug);
 }
 
 /** The page a reconcile plans from: its body as strings, or a segmented page whose fences are read from its segments. */
@@ -466,7 +455,7 @@ async function planFenceReconcile(db: BrainEngine, page: PageFenceInput, slug: s
     return fact && fact.visibility !== 'world' && (f.visibility ?? 'private') === 'world' ? [Number(fact.id)] : [];
   });
   const heldWidening = new Set(widening.length ? (await db.executeRaw<{ id: number }>(
-    `SELECT related_id AS id FROM trust_proposals WHERE source_id = $1 AND action = 'supersede_fact' AND related_table = 'facts'
+    `SELECT related_id AS id FROM trust_proposals WHERE source_id = $1 AND action IN ('supersede_fact', 'confirm') AND related_table = 'facts'
       AND related_id = ANY($2::bigint[]) AND status IN ('pending', 'rejected', 'undone') AND before_state->'visibility' IS NOT NULL`,
     [sourceId, widening])).map(r => Number(r.id)) : []);
   const updates = extracted.map((f): FenceExtractedFact => {
@@ -776,29 +765,8 @@ export interface ExtractFactsResult {
  * never gate.
  */
 async function pendingLegacyRows(engine: BrainEngine, sourceId: string): Promise<Map<string, number>> {
-  const legacy = await engine.executeRaw<{ entity_slug: string; n: string }>(
-    `SELECT f.entity_slug, COUNT(*) AS n
-       FROM facts f
-      WHERE f.source_id = $1
-        AND f.row_num IS NULL
-        AND f.dimension IS NULL
-        AND f.entity_slug IS NOT NULL
-        AND f.expired_at IS NULL
-        AND EXISTS (
-          SELECT 1 FROM pages p
-           WHERE p.source_id = f.source_id
-             AND p.slug = f.entity_slug
-             AND p.deleted_at IS NULL
-        )
-        AND EXISTS (
-          SELECT 1 FROM sources s
-           WHERE s.id = f.source_id
-             AND s.local_path IS NOT NULL
-        )
-      GROUP BY f.entity_slug`,
-    [sourceId],
-  );
-  return new Map(legacy.map(row => [row.entity_slug, parseInt(row.n ?? '0', 10)]));
+  const legacy = await engine.countLegacyFactsPending(sourceId);
+  return new Map(legacy.map(row => [row.entity_slug, Number(row.n ?? 0)]));
 }
 
 /** Pages between macrotask yields in the reconcile walk (about 10 ms of work on PGLite). */

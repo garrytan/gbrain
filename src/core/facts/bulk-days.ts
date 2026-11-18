@@ -17,14 +17,9 @@
  * doctor counts with) read the same token and apply the same bounds.
  */
 import type { BrainEngine } from '../engine.ts';
+import { DATE_TOKEN, EARLIEST } from '../engine-sql/facts-cycle.ts';
 
 export const BULK_DAY_RULE = { min_facts: 200, min_share: 0.25, min_entities: 20 } as const;
-
-/** How many source tags a bulk day reports, most frequent first. */
-const TOP_SOURCES = 5;
-
-const DATE_TOKEN = '(^|[^0-9])([0-9]{4}-[0-9]{2}-[0-9]{2})(?![0-9])';
-const EARLIEST = '1900-01-01';
 
 export interface BulkFactDay {
   source_id: string;
@@ -52,43 +47,12 @@ export function claimDate(claim: string, day: string): ClaimDate {
   return real && token >= EARLIEST && token < day ? { date: token } : { skip: 'date_not_earlier' };
 }
 
-/** SQL truth of claimDate(claim, day) returning a date, for a text expression claim and a date expression day. */
-function claimDateSql(claim: string, day: string): string {
-  const d = 'x.dates[1]';
-  return `(SELECT CASE WHEN cardinality(x.dates) = 1 AND ${d} >= '${EARLIEST}' AND ${d} < to_char(${day}, 'YYYY-MM-DD')
-                          AND substr(${d}, 6, 2) BETWEEN '01' AND '12' AND substr(${d}, 9, 2) BETWEEN '01' AND '31'
-                     THEN to_char(make_date(substr(${d}, 1, 4)::int, substr(${d}, 6, 2)::int, 1) + (substr(${d}, 9, 2)::int - 1), 'YYYY-MM-DD') = ${d}
-                     ELSE false END
-               FROM (SELECT array_agg(m[2]) AS dates FROM regexp_matches(${claim}, '${DATE_TOKEN}', 'g') AS m) x)`;
-}
-
 /**
  * Every bulk day of the active sources (sourceIds narrows them), in (source, day) order. One read-only aggregate
  * over the sources' active facts.
  */
 export async function findBulkFactDays(engine: BrainEngine, sourceIds?: string[]): Promise<BulkFactDay[]> {
-  const rows = await engine.executeRaw<{ source_id: string; day: string; facts: number | string; entities: number | string; source_facts: number | string;
-    top_sources: Array<{ source: string; facts: number | string }> | string | null; dated_claims: number | string }>(`
-    WITH active AS MATERIALIZED (
-      SELECT f.source_id, f.entity_slug, f.source, f.fact, (f.valid_from AT TIME ZONE 'UTC')::date AS day
-        FROM facts f
-       WHERE f.expired_at IS NULL
-         AND f.source_id IN (SELECT id FROM sources WHERE archived IS NOT TRUE AND ($1::text[] IS NULL OR id = ANY($1::text[])))
-    ), totals AS (
-      SELECT source_id, count(*) AS n FROM active GROUP BY source_id
-    ), bulk AS (
-      SELECT a.source_id, a.day, count(*) AS n, count(DISTINCT a.entity_slug) AS entities, t.n AS source_facts
-        FROM active a JOIN totals t ON t.source_id = a.source_id
-       GROUP BY a.source_id, a.day, t.n
-      HAVING count(*) >= $2::int AND count(*) >= t.n * $3::float8 AND count(DISTINCT a.entity_slug) >= $4::int
-    )
-    SELECT b.source_id, to_char(b.day, 'YYYY-MM-DD') AS day, b.n::int AS facts, b.entities::int AS entities, b.source_facts::int AS source_facts,
-           (SELECT json_agg(json_build_object('source', s.source, 'facts', s.n) ORDER BY s.n DESC, s.source)
-              FROM (SELECT a.source, count(*)::int AS n FROM active a WHERE a.source_id = b.source_id AND a.day = b.day
-                     GROUP BY a.source ORDER BY count(*) DESC, a.source LIMIT ${TOP_SOURCES}) s) AS top_sources,
-           (SELECT count(*)::int FROM active a WHERE a.source_id = b.source_id AND a.day = b.day AND ${claimDateSql('a.fact', 'b.day')}) AS dated_claims
-      FROM bulk b
-     ORDER BY b.source_id, b.day`, [sourceIds ?? null, BULK_DAY_RULE.min_facts, BULK_DAY_RULE.min_share, BULK_DAY_RULE.min_entities]);
+  const rows = await engine.findBulkFactDays(sourceIds, BULK_DAY_RULE);
   return rows.map(row => {
     const tops = typeof row.top_sources === 'string' ? JSON.parse(row.top_sources) as Array<{ source: string; facts: number | string }> : row.top_sources ?? [];
     return { source_id: row.source_id, day: row.day, facts: Number(row.facts), entities: Number(row.entities), source_facts: Number(row.source_facts),

@@ -32,6 +32,7 @@ import {
 import { __testing as patterns } from '../src/core/cycle/patterns.ts';
 import { __testing as synthesize } from '../src/core/cycle/synthesize.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { stubSourceMembers } from './helpers/source-members-stub.ts';
 
 // Every slug resolves to a page, so the only thing standing between a bad
 // source_id and a file write is the validator.
@@ -41,6 +42,7 @@ const pageEngine = {
   }),
   getTags: async () => [],
   getConfig: async () => null,
+  ...stubSourceMembers([]),
   executeRaw: async () => [],
 } as unknown as BrainEngine;
 

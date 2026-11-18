@@ -33,6 +33,7 @@ import { isMissingSchemaObject } from '../utils.ts';
 import { privatePagesFilterForCaller, remoteReadFloorSql } from '../search/private-visibility.ts';
 import { rankingLinkSql } from '../link-ranking-policy.ts';
 import { isHoldingSlug } from '../facts-fence.ts';
+import { BASENAME_DIRS, PREFIX_EXPANSION_DIRS } from './basename-dirs.ts';
 
 /**
  * Canonicalize a free-form entity reference to a page slug.
@@ -127,7 +128,7 @@ export async function resolveEntitySlug(
  * (`slugifySegment`), so `Мария` lands on `мария`, not `''`. Latin names keep
  * the ASCII form (`o-brien`, `soren`). Null when nothing is left.
  */
-function fallbackSlugify(trimmed: string): string | null {
+export function fallbackSlugify(trimmed: string): string | null {
   const slug = trimmed.split('/').map(fallbackSegment).filter(Boolean).join('/');
   return slug || null;
 }
@@ -351,15 +352,7 @@ function isBareName(raw: string): boolean {
   return true;
 }
 
-// hosts/projects joined people/companies after the 2026-08-06 memory eval: a
-// bare infra token ("hive") fell through to slugify and recall returned
-// nothing while the canonical hosts/<token> page + its facts sat one prefix
-// away. `infra/` is deliberately NOT here — it is a mixed namespace of
-// analysis/runbook documents (`infra/hive-dependency-audit-…`), and any such
-// doc would trip the ambiguity gate and re-break bare-token resolution.
-const PREFIX_EXPANSION_DIRS = ['people', 'companies', 'hosts', 'projects'] as const;
-/** Directories a bare entity name resolves under (findExactBasenameCandidates); factEntitySlugs reads the same set. */
-export const BASENAME_DIRS = [...PREFIX_EXPANSION_DIRS, 'concepts'] as const;
+export { BASENAME_DIRS };
 
 async function findExactBasenameCandidates(
   engine: BrainEngine,
@@ -855,14 +848,10 @@ async function tryExactSlug(
 ): Promise<{ slug: string; retired: boolean } | null> {
   // A database error propagates: degrading to the fallback slug would
   // silently attribute the caller's facts to a different entity.
-  const exact = (retired: boolean) => engine.executeRaw<{ slug: string }>(
-    `SELECT slug FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL AND ${retired ? '' : 'NOT'} ${retiredPageSql('pages')} LIMIT 1`,
-    [source_id, candidate],
-  );
-  const [live] = await exact(false);
-  if (live) return { slug: live.slug, retired: false };
-  const [retired] = await exact(true);
-  return retired ? { slug: retired.slug, retired: true } : null;
+  const live = await engine.findExactSlug(source_id, [candidate], { retired: false });
+  if (live) return { slug: live, retired: false };
+  const retired = await engine.findExactSlug(source_id, [candidate], { retired: true });
+  return retired ? { slug: retired, retired: true } : null;
 }
 
 async function tryFuzzyMatch(

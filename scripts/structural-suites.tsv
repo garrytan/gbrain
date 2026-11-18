@@ -103,7 +103,7 @@ test/cycle-abort.test.ts	#1972 — complete cooperative-abort coverage	3	readFil
 test/cycle-abort.test.ts	#4077 — synthesize/patterns cooperative-abort threading	3	readFileSync
 test/cycle-abort.test.ts	CycleOpts.signal contract (v0.20.5)	3	readFileSync
 test/cycle-abort.test.ts	autopilot-cycle handler contract (v0.20.5)	3	readFileSync,source-surface-helper
-test/cycle-drain-renewal.test.ts	db-lock heartbeat wiring (structural — issue #6 cancellation)	1	readFileSync
+test/cycle-drain-renewal.test.ts	db-lock heartbeat wiring (structural — issue #6 cancellation)	1	readFileSync,source-surface-helper
 test/cycle-drain-renewal.test.ts	drain-loop wiring (structural — the shape guard only covers worker.ts)	2	readFileSync
 test/cycle-embed-phase-warn.serial.test.ts	cycle embed phase reports embed failures (E-A)	4	source-surface-helper
 test/cycle-legacy-phases.test.ts	cycle.lint_exclude (#6134)	4	readFileSync
@@ -159,6 +159,7 @@ test/e2e/workspace-generic-compat.test.ts	generic agent-workspace compat (INSTAL
 test/embedding-dim-check-facts.test.ts	doctor checkFactsEmbeddingWidthConsistency wiring (T6)	4	doctor-source-helper
 test/embedding-dim-check-facts.test.ts	postgres-engine fact insert cast (T6, codex #20)	1	source-surface-helper
 test/enforced-member-classes.test.ts	enforced member allow-list	6	readFileSync
+test/engine-sql-jobs.test.ts	engine-sql/jobs.ts copied constants	2	readFileSync
 test/env-trust-protected-keys.test.ts	CWD_DOTENV_PROTECTED_KEYS covers every suspicious GBRAIN_* env read in src/	3	readFileSync
 test/error-catalogue.test.ts	error code registry (agent contract v1)	5	readFileSync
 test/error-registry-6317-contract.test.ts	#6317 codes are registered with a full envelope	3	readFileSync
@@ -217,6 +218,7 @@ test/harness-onboarding.test.ts	harness identity and private handoff	6	readFileS
 test/hook-command.serial.test.ts	user-prompt	18	source-surface-helper
 test/hook-push-spawn-env.test.ts	spawnDetachedPush env handoff	2	readFileSync
 test/hook-push-spawn-env.test.ts	tryExecAsync env handoff	1	readFileSync
+test/imessage-source.test.ts	repo-less brain (${kind})	10	readFileSync
 test/import-calls.test.ts	operations filter guard	1	exec-scan
 test/import-private-hold-callers-7897.test.ts	import entry points hold a non-canonical private request (#7897)	2	readFileSync
 test/init-mode-picker.test.ts	cost matrix: newest models, priced from model-pricing	6	readFileSync
@@ -380,7 +382,7 @@ test/scripts/run-verify-parallel.test.ts	run-verify-parallel.sh — no-timeout-b
 test/scripts/serial-files.test.ts	scripts/serial-files.tsv (serial lane manifest)	5	readFileSync
 test/scripts/stable-daily.test.ts	stable-daily.yml	2	readFileSync
 test/scripts/stress-gate.test.ts	docs anchors	1	readFileSync
-test/scripts/stress-gate.test.ts	gate plan	5	readFileSync
+test/scripts/stress-gate.test.ts	gate plan	8	readFileSync
 test/scripts/stress-plan.test.ts	execution profiles	3	readFileSync
 test/scripts/stress-plan.test.ts	shards	5	readFileSync
 test/scripts/test-env-opt-ins-guard.test.ts	check-test-env-opt-ins	5	readFileSync
@@ -458,6 +460,7 @@ test/sync.test.ts	resolveSlugByPathOrSourcePath (CJK wave v0.32.7, codex F4)	3	s
 test/sync.test.ts	sync auto-embed arguments	2	source-surface-helper
 test/sync.test.ts	sync regression — #132 nested transaction deadlock	3	source-surface-helper
 test/takes-reservation-callers.test.ts	(file-level)	1	readFileSync
+test/telemetry-capability-refusal.test.ts	a refused telemetry read refuses instead of reporting invented values	7	readFileSync
 test/template-repo-generator.test.ts	generateTemplateTree	0	readFileSync
 test/template-repo-generator.test.ts	renderTemplateReadme	5	readFileSync
 test/think-embed-question-wiring.serial.test.ts	#3734 — CRAG think escalation wires embedQuestion (source pin)	1	readFileSync

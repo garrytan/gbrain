@@ -32,7 +32,8 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { SearchResult } from '../types.ts';
-import { boundedBodyPrefixSql, pageLeadSource, projectedLead } from '../page-window/bounded-lead.ts';
+import { pageLeadSource, projectedLead } from '../page-window/bounded-lead.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { type IdentityTierOpts, isExcludedIdentity } from './alias-hop.ts';
 import { isPrivatePageForCaller } from './private-visibility.ts';
 
@@ -51,11 +52,7 @@ const ENTITY_TYPES = new Set(['person', 'company', 'organization', 'deal', 'yc',
 const DATED_SOURCES = new Set(['date', 'published', 'filename', 'event_date']);
 /** Pages compared pairwise for families: the head the reranker and the caller read. */
 const FAMILY_HEAD = 40;
-/** Identical bodies shorter than this (empty templates, one-line stubs) say nothing about a shared document. */
-const IDENTICAL_BODY_MIN_CHARS = 200;
 const INJECTED_LEAD_CHARS = 1500;
-/** Body prefix compared for word overlap. */
-const OVERLAP_PREFIX_CHARS = 4000;
 /** Share of the shorter body's words the other must contain: twins are copies, a summary keeps fewer. */
 const TWIN_OVERLAP = 0.5;
 const FAMILY_OVERLAP = 0.4;
@@ -124,7 +121,6 @@ class Groups {
   reasonOf(k: string): CollapseReason | undefined { return this.reason.get(k); }
 }
 
-const STATUS_REDIRECT = `lower(COALESCE(frontmatter->>'status', '')) ~ '(^|[^a-z])(alias|redirect|redirected)([^a-z]|$)'`;
 
 export interface PageFacts { target: string | null; body: string | null; bodyChars: number | null; words: Set<string> | null }
 
@@ -133,19 +129,8 @@ export interface PageFacts { target: string | null; body: string | null; bodyCha
  * and, for `bodyIds`, an identity hash of a substantial body and its leading words. Every id gets an entry: a page
  * the read does not return has no facts.
  */
-async function readFactRows(engine: Pick<BrainEngine, 'executeRaw'>, ids: number[], bodyIds: number[]): Promise<Map<number, PageFacts>> {
-  const body = `btrim(COALESCE(${boundedBodyPrefixSql('p')}, ''))`;
-  const rows = await engine.executeRaw<{ id: number; target: string | null; body: string | null; body_chars: number | null; lead: string | null }>(
-    `SELECT p.id,
-            COALESCE(NULLIF(btrim(p.frontmatter->>'redirect_to'), ''), NULLIF(btrim(p.frontmatter->>'redirect'), ''),
-                     NULLIF(btrim(p.frontmatter->>'merged_into'), ''),
-                     CASE WHEN ${STATUS_REDIRECT} THEN NULLIF(btrim(p.frontmatter->>'superseded_by'), '') END) AS target,
-            length(${body}) AS body_chars,
-            CASE WHEN p.id = ANY($2::int[]) AND length(${body}) >= ${IDENTICAL_BODY_MIN_CHARS} THEN md5(${body}) END AS body,
-            CASE WHEN p.id = ANY($2::int[]) THEN left(${body}, ${OVERLAP_PREFIX_CHARS}) END AS lead
-       FROM pages p WHERE p.id = ANY($1::int[])`,
-    [ids, bodyIds],
-  );
+async function readFactRows(engine: Pick<BrainEngine, 'pageCollapseFacts'>, ids: number[], bodyIds: number[]): Promise<Map<number, PageFacts>> {
+  const rows = await engine.pageCollapseFacts(ids, bodyIds);
   const facts = new Map<number, PageFacts>(ids.map(id => [id, { target: null, body: null, bodyChars: null, words: null }]));
   for (const r of rows) facts.set(Number(r.id), { target: r.target, body: r.body, bodyChars: r.body_chars === null ? null : Number(r.body_chars), words: wordSet(r.lead) });
   return facts;
@@ -156,13 +141,16 @@ async function readFactRows(engine: Pick<BrainEngine, 'executeRaw'>, ids: number
  * pages beside the post-fusion reads; collapseResults then takes its pages' entries from it (body identity only for
  * the pages it compares, as its own read would) instead of a round trip of its own. Null when the read fails.
  */
-export function prefetchPageFacts(engine: Pick<BrainEngine, 'executeRaw'>, ids: number[]): Promise<Map<number, PageFacts> | null> {
+export function prefetchPageFacts(engine: Pick<BrainEngine, 'pageCollapseFacts'>, ids: number[]): Promise<Map<number, PageFacts> | null> {
   const valid = [...new Set(ids)].filter(id => Number.isSafeInteger(id) && id > 0);
-  return valid.length ? readFactRows(engine, valid, valid).catch(() => null) : Promise.resolve(null);
+  if (!valid.length) return Promise.resolve(null);
+  const read = readFactRows(engine, valid, valid).catch(err => { rethrowCapabilityRefusal(err); return null; });
+  read.catch(() => undefined); // a refusal counts as handled until collapse awaits it
+  return read;
 }
 
 /** The facts of `allIds` into `cache` (ids already there are not read again; `prefetched` entries are not read at all). */
-async function readPageFacts(engine: Pick<BrainEngine, 'executeRaw'>, allIds: number[], bodyIds: number[], cache: Map<number, PageFacts>,
+async function readPageFacts(engine: Pick<BrainEngine, 'pageCollapseFacts'>, allIds: number[], bodyIds: number[], cache: Map<number, PageFacts>,
   prefetched?: Promise<Map<number, PageFacts> | null>): Promise<Map<number, PageFacts>> {
   const ids = allIds.filter(id => !cache.has(id));
   if (ids.length === 0) return cache;
@@ -176,23 +164,22 @@ async function readPageFacts(engine: Pick<BrainEngine, 'executeRaw'>, allIds: nu
   if (unread.length === 0) return cache;
   try {
     for (const [id, facts] of await readFactRows(engine, unread, bodyIds)) cache.set(id, facts);
-  } catch {
+  } catch (err) {
+    rethrowCapabilityRefusal(err);
     // fail-open: no frontmatter redirects or body identity this call
   }
   return cache;
 }
 
 /** A bare-word target resolves only to the one page of the source whose slug is that word or ends in it. */
-async function resolveBareTarget(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, word: string, pages: Map<string, SearchResult[]>): Promise<string | null> {
+async function resolveBareTarget(engine: Pick<BrainEngine, 'slugsEndingIn'>, sourceId: string, word: string, pages: Map<string, SearchResult[]>): Promise<string | null> {
   const inPool = [...pages.values()].map(rows => rows[0]).filter(r => (r.source_id ?? 'default') === sourceId && leaf(r.slug) === word.toLowerCase());
   if (inPool.length === 1) return inPool[0].slug;
   try {
-    const rows = await engine.executeRaw<{ slug: string }>(
-      `SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND (slug = $2 OR slug LIKE $3) LIMIT 2`,
-      [sourceId, word, `%/${word.replace(/[%_\\]/g, '\\$&')}`],
-    );
-    return rows.length === 1 ? rows[0].slug : null;
-  } catch {
+    const slugs = await engine.slugsEndingIn(sourceId, word);
+    return slugs.length === 1 ? slugs[0] : null;
+  } catch (err) {
+    rethrowCapabilityRefusal(err);
     return null;
   }
 }

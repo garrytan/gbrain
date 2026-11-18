@@ -1,5 +1,6 @@
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
+import { answersFromCatalog, catalogSkipCheck } from '../../../core/rust-engine/store-members/catalog.ts';
 import { GUARDED_TABLES, PAGE_CHILD_TABLES } from '../../../core/persistence/writer-guard-schema.ts';
 
 const RUNBOOK = 'docs/guides/write-refusals.md#managed-guard-page-children';
@@ -53,6 +54,7 @@ export const GUARDED_TABLE_COLUMNS: Readonly<Record<string, readonly string[]>> 
  */
 export async function checkManagedGuardSchemaDrift(engine: BrainEngine): Promise<Check> {
   const name = 'managed_guard_schema_drift';
+  if (answersFromCatalog(engine)) return catalogSkipCheck(name, 'no_relation_catalog');
   try {
     const rows = await engine.executeRaw<{ table_name: string; column_name: string; is_nullable: string; column_default: string | null; is_identity: string | null; is_generated: string | null }>(
       `SELECT table_name,column_name,is_nullable,column_default,is_identity,is_generated FROM information_schema.columns

@@ -49,7 +49,7 @@ import { acceptedPendingReceipt } from '../core/persistence/accepted-pending.ts'
 import { estimateCostFromChars, lookupEmbeddingPrice } from '../core/embedding-pricing.ts';
 import { getEmbeddingModel } from '../core/ai/gateway.ts';
 import { managedRootMarkerFor } from '../core/persistence/root-registry.ts';
-import { readManagedMode } from '../core/persistence/ownership.ts';
+import { readManagedModeTyped } from '../core/persistence/ownership.ts';
 import { readPageBodyPolicy } from '../core/page-body/limits.ts';
 import { importSourceRefusal } from './import-source-refusal.ts';
 
@@ -518,7 +518,7 @@ export async function runImport(
   }
   if (args.includes('--calls')) return (await import('./import-calls.ts')).runCallImport(engine, dir, args, { sourceId, json: jsonOutput });
 
-  const managedImport = await readManagedMode(engine);
+  const managedImport = await readManagedModeTyped(engine);
   if (managedImport && dir !== resolve(dirArg)) throw symlinkedRootAbort(dirArg, dir);
   const preAdmission = managedImport && !opts.managedBookmark && !currentCompanyBrainSync(sourceId) ? await managedImportWriteThroughRefusal(engine, sourceId ?? 'default') : null;
   if (preAdmission) {
@@ -973,16 +973,10 @@ export async function runImport(
   if (imported > 0) {
     try {
       const sid = sourceId ?? 'default';
-      const rows = await engine.executeRaw<{ total: string | number; untyped: string | number }>(
-        `SELECT
-           COUNT(*)::text AS total,
-           COUNT(*) FILTER (WHERE type IS NULL OR type = '')::text AS untyped
-         FROM pages
-         WHERE source_id = $1 AND deleted_at IS NULL`,
-        [sid],
-      );
-      const total = Number(rows[0]?.total ?? 0);
-      const untyped = Number(rows[0]?.untyped ?? 0);
+      // pages.type is NOT NULL, so the untyped pages are the empty-type bucket.
+      const stats = await engine.getStats({ sourceId: sid });
+      const total = Number(stats.page_count);
+      const untyped = Number(stats.pages_by_type[''] ?? 0);
       if (total > 0 && untyped / total >= 0.1) {
         const pct = ((untyped / total) * 100).toFixed(1);
         console.error(

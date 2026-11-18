@@ -41,9 +41,8 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
-import { derivationPrivateSql, effectiveVisibility, folderRestrictedSql, privacyAliasSql, privateSnapshotFilterFragment, strictestVisibility, type Visibility } from '../search/private-visibility.ts';
+import { effectiveVisibility, folderRestrictedSql, privacyAliasSql, strictestVisibility, type Visibility } from '../search/private-visibility.ts';
 import { strikeFenceRow } from '../facts/forget.ts';
-import { factProvenanceSlugSql } from '../facts/private-fact-pages.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { authorizeWrite } from '../persistence/authority.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
@@ -217,15 +216,7 @@ export async function planVisibilityRepair(engine: BrainEngine, sourceIds: strin
  * through the provenance filter.
  */
 export async function worldFactsFromPrivateSources(engine: BrainEngine, sourceIds: string[], ids?: number[]) {
-  return engine.executeRaw<{ id: number; source_id: string; row_num: number | null; source_markdown_slug: string | null; entity_slug: string | null; readable: boolean }>(
-    `SELECT f.id,f.source_id,f.row_num,f.source_markdown_slug,f.entity_slug,
-      (f.source_markdown_slug IS NULL OR h.id IS NULL OR ${privateSnapshotFilterFragment('h')}) AS readable
-    FROM facts f
-      LEFT JOIN pages h ON h.source_id=f.source_id AND h.slug=f.source_markdown_slug
-      LEFT JOIN pages o ON o.source_id=f.source_id AND o.slug=${factProvenanceSlugSql('f')} AND o.deleted_at IS NULL
-    WHERE f.visibility='world' AND f.expired_at IS NULL AND f.source_id=ANY($1::text[]) AND ($2::bigint[] IS NULL OR f.id=ANY($2::bigint[]))
-      AND ((h.id IS NOT NULL AND h.deleted_at IS NULL AND ${derivationPrivateSql('h')}) OR (o.id IS NOT NULL AND ${derivationPrivateSql('o')}))
-    ORDER BY f.id`, [sourceIds, ids ?? null]);
+  return engine.listWorldFactsFromPrivateSources(sourceIds, ids ?? null);
 }
 
 /** Pages that carry a privacy alias but no `visibility` (derived atoms, concepts and chronicle events have their own phases). */

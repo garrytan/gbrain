@@ -1,0 +1,136 @@
+# chunk_queries: chunk pages, chunk windows and chunkless pages
+
+Code: `rust/crates/gbrain-store/src/chunk_queries.rs` (the site reads in `chunk_queries/site_reads.rs`), the napi
+methods in `rust/crates/gbrain-napi/src/families/chunk_queries.rs` and the members in
+`src/core/rust-engine/store-members/chunk-queries.ts`. The references are `src/core/engine-sql/chunks.ts` and
+`src/core/engine-sql/chunk-reads.ts`.
+
+## Members
+
+| Member | State |
+|---|---|
+| `getChunkPage(slug, { sourceId?, sourceIds?, fromIndex, limit })` | served for one named source |
+| `getChunkWindows(requests, { sourceId?, sourceIds?, chunkSources, maxRows })` | served; the TypeScript member groups the rows with the shared `mapChunkWindowRows` |
+| `countChunklessPagesWithContent({ sourceId? })` | served |
+| `listChunklessPagesWithContent({ sourceId?, batchSize?, afterPageId? })` | served |
+| `deleteChunksExcept(slug, keepIds, { sourceId? })` | served |
+| `findCodeDefinitions`, `listSymbolTypesForName`, `findCodeRefChunks` | served; a safe-chunk, trust or flag scope refuses |
+| `codeChunksExist`, `currentCodeChunksExist` | served; `currentCodeChunksExist` under a safe-chunk scope refuses |
+| `listQualifiedSymbolNames(sourceId, symbol, { match, limit })` | served |
+| `countOversizedEmbedSkips`, `countOrphanChunks`, `countCodeChunkPages` | served |
+| `listWithdrawalChunks`, `deleteChunksForPages` | served |
+| `listContextualModeCandidates(sourceIds)` | served |
+| `resolveFrozenHits(hits, scope)` | served; a safe-chunk, trust or flag scope refuses |
+
+`excludePrivate: true` and `requireSafeChunks: true` refuse on `getChunkPage` and `getChunkWindows`: the SQL engines
+apply a privacy filter for the first and a `chunker_version` fence for the second, and the store records neither.
+`minTrust` and `suppressFlagged` are ignored, because those SQL statements ignore them too.
+
+## Keys
+
+None. Every member reads pages, chunks and sources through their families' `pub(crate)` readers and writes nothing,
+so no record starts with the `c` tag.
+
+## Sealed chunks
+
+A segmented page is one whose body columns are NULL, the shell `createSegmentedPageShell` leaves. The other segmented
+branches of the SQL engines (ordinal paging, occurrence references, the body manifest) wait for the page_body family.
+A page's chunks are served when its `text_projection_revision` equals its `knowledge_revision`, the test the SQL
+engines' served-projection filter makes.
+`sealChunks` sets that revision, and a body write moves the knowledge revision, so the old chunks stop reading.
+
+## getChunkPage
+
+The page is found as `getChunks` finds it: the slug as written (no case fold), in the one source the member resolves
+(`sourceIds` when not empty, else `sourceId`, default `default`), and a soft-deleted page is read like a live one. An
+unsealed or absent page answers `{ chunks: [], total_chunks: 0, max_chunk_index: null }`. Otherwise `total_chunks`
+counts every chunk of the page, `max_chunk_index` is the highest index, and `chunks` holds the chunks with
+`fromIndex <= chunk_index < fromIndex + limit` in index order, decoded with the shared `toChunk`.
+
+A scope that names no source answers no chunks without a store call. A scope of several sources refuses: the SQL
+engines sum the counts of every matching page and order the chunks by a key that ties across sources.
+
+## getChunkWindows
+
+An empty request list answers `[]` before any option is read. Otherwise a requested page is authorized when it
+exists, is in scope (a non-empty `sourceIds`, else a non-empty `sourceId`, else every source), is live, is sealed,
+its source is not archived and its frontmatter has no `quarantine` key. Unauthorized pages are absent.
+
+Each authorized page yields one page row: `prio` is the lowest priority any request gave it, `max_chunk_index` is the
+highest index over all its chunks (any chunk source), `sealed` is `COALESCE(chunker_version, 0) >= 4`
+(`SAFE_FENCE_CHUNKER_VERSION`, with a store page that records no version counted as sealed) and `segmented` is true
+for a page with NULL body columns. A segmented page's row carries NULL `compiled_truth` and `timeline`. Chunk rows
+come from the authorized pages that are sealed: a chunk whose `chunk_source` is in `chunkSources`,
+whose modality is `text` and whose index is inside some request's inclusive range for that page. They are ordered by
+`(prio, page_id, chunk_index)` and cut at `maxRows + 1`, so `mapChunkWindowRows` can mark `row_limited`.
+
+The TypeScript member floors `maxRows` and clamps it at zero as the SQL engines do. A request field that is not a
+safe integer, or a `maxRows` that is not finite, refuses: Postgres casts the values into `int[]` and `LIMIT`, and
+the store does not guess at that cast.
+
+## The chunkless reads
+
+A page counts when it is live, has a non-empty `compiled_truth` or `timeline` (or is segmented with `body_bytes > 0`;
+`body_bytes` reads as NULL for now, see the follow-up below), has no `quarantine` frontmatter key,
+has no chunk rows, and either is not sealed or carries `embed_skip`. A page sealed with no chunks does not count.
+`sourceId` scopes the read only when it is a non-empty string, as the SQL truthiness test does.
+
+The list returns `{ id, slug, source_id, compiled_truth, timeline }` in page-id order (a segmented page's NULL body
+columns as `""`), after `afterPageId` when it is
+given, at most `batchSize` rows (default 50). A negative or fractional `batchSize`, or a fractional
+`afterPageId`, is an `invalid_argument`; Postgres rejects a negative `LIMIT` too.
+
+## The site reads (chunk-reads.ts)
+
+These members replace raw SQL at code-def, code-refs, doctor, code readiness, the recursive code walk, withdrawal,
+the page projection, repair contextual-mode and evidence delivery. Each answers what its statement in
+`chunk-reads.ts` answers.
+
+- The read policy is `pageReadFilter`'s source clause, its page privacy policy and its live test: not deleted, no
+  `quarantine` frontmatter key, in a source that exists and is not archived. The TypeScript member sends the scope;
+  a `requireSafeChunks`, `minTrust` or `suppressFlagged` scope refuses with `engine_capability_missing` before any
+  store call. Under `allSources` with no `sourceIds`, the code reads drop `sourceId`, as `codeReadFilter` does. An
+  empty `sourceIds` list answers `[]` or `false` without a store call.
+- A served page is sealed or carries the activation revision (`servedTextProjectionFilter`).
+- `findCodeDefinitions` orders by the definition-type rank (function, class, interface, type, enum, struct, then the
+  rest), slug, start line (NULL last), source and chunk id, at most `limit` rows (default 20).
+  `findCodeRefChunks` matches `chunk_text ILIKE '%symbol%'` with the symbol unescaped and orders by slug, start line,
+  source and chunk id, at most 50 rows by default. `listSymbolTypesForName` answers the distinct types, NULL last,
+  at most 20.
+- `listQualifiedSymbolNames` reads the served live pages of one source with no `page_kind` test, as the SQL does.
+  `exact` matches the qualified or bare name; `contains` matches `ILIKE '%symbol%'`. The names are distinct and in
+  byte order: `chunk-reads.ts` adds `ORDER BY symbol_name_qualified` before its `LIMIT`, so every engine cuts the
+  same names.
+- `countOversizedEmbedSkips(maxBytes)` counts live pages with `embed_skip.reason = 'oversized'` and a body of at most
+  `maxBytes` bytes, and how many of them have no chunk row. `countOrphanChunks` counts chunk rows whose page id names
+  no page. `countCodeChunkPages` counts the chunks with no symbol name and no language on live `type: code` pages.
+- `listWithdrawalChunks` lowers each chunk's text as Postgres `lower()` does and keeps a chunk when every pattern of
+  some key for its page (subject `*` or the page slug) matches, by chunk id after the cursor.
+- `deleteChunksForPages` removes every chunk of the named pages and seals nothing. `deleteChunksExcept` keeps the
+  seal.
+- `listContextualModeCandidates` lists live markdown pages of the named sources with no contextual retrieval mode,
+  in page-id order, with `sealed` (NULL when there is no projection revision), `embed_skip` and the character count
+  of their chunks.
+- `resolveFrozenHits` answers one row per hit in scope and per joined chunk, in hit order. A positive chunk id joins
+  that chunk, any other id joins chunk index 0, and a page that holds no such chunk gives a row with NULL chunk
+  columns.
+
+## Known differences
+
+- A store page that records no `chunker_version` reads `sealed: true`. A Postgres page whose current projection
+  predates the protected-body fence reads `sealed: false` there. The store has no such pages: it was created after
+  the fence.
+- The activation sentinel revision (`ACTIVATION_SERVED_REVISION`) of the served-projection filter does not exist in
+  the store.
+
+## Follow-ups
+
+- `frozen-hit-manifest-liveness`: for a segmented chunk the SQL engines also require a live `page_body_manifest`
+  row. The manifest is the page_body family's private state, so `resolveFrozenHits` joins a segmented chunk at or
+  below the page's body generation instead.
+
+- `chunkless-segmented-body-bytes`: the page_body family (lane 3) stores a segmented page's `body_bytes` in its
+  private body state under the page_body tag, not as a page column. This family reads `body_bytes` as NULL today, so
+  a segmented page never counts as chunkless with content. After core lands the combined branch, read `body_bytes`
+  through a `pub(crate)` accessor in `page_body.rs` (ask the Rust BrainEngine owner for it) and add one unit test
+  where a segmented page with `body_bytes > 0` counts.

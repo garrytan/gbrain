@@ -166,8 +166,8 @@ describe('runPhaseConsolidate', () => {
       );
     }
     const r = await runPhaseConsolidate(engine, {});
-    // Bucket processed (passes count + age gates) but cluster skipped (no page).
-    expect(r.details.buckets_processed).toBeGreaterThanOrEqual(1);
+    // GBRA-574 E1: a bucket whose entity has no page is never listed, so it is never read.
+    expect(r.details.buckets_processed).toBe(0);
     expect(r.details.facts_consolidated).toBe(0);
     expect(r.details.takes_written).toBe(0);
   });

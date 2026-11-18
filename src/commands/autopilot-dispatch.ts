@@ -9,6 +9,7 @@ import { assertNever, type BrainHealth } from '../core/types.ts';
 import { syncIntervalMinutes } from '../core/meetings/source-config.ts';
 import { MEETINGS_DEFAULT_SYNC_INTERVAL_MIN } from '../core/meetings/types.ts';
 import { SLACK_DEFAULT_SYNC_INTERVAL_MIN } from '../core/slack/types.ts';
+import { IMESSAGE_DEFAULT_SYNC_INTERVAL_MIN } from '../core/imessage/types.ts';
 import type { MinionQueue } from '../core/minions/queue.ts';
 import { loadAllSources, parseSourceConfig, sourceConfigHasRemoteUrl, sourceLocalPathSkipWarning, type SourceRow } from '../core/sources-load.ts';
 import { isConnectorSourceKind } from '../core/persistence/connector-identity.ts';
@@ -584,6 +585,7 @@ export function connectorSyncIntervalMs(config: unknown, baseIntervalMs: number)
     case 'github': return baseIntervalMs;
     case 'meetings': return syncIntervalMinutes(parsed, MEETINGS_DEFAULT_SYNC_INTERVAL_MIN)! * 60_000;
     case 'slack': return syncIntervalMinutes(parsed, SLACK_DEFAULT_SYNC_INTERVAL_MIN)! * 60_000;
+    case 'imessage': return syncIntervalMinutes(parsed, IMESSAGE_DEFAULT_SYNC_INTERVAL_MIN)! * 60_000;
     default: return assertNever(kind);
   }
 }

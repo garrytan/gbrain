@@ -13,8 +13,7 @@ export async function runConnectorSync(engine: BrainEngine, opts: SyncOpts, mana
   if (opts.resetCheckpoint) await assertResetCheckpointSource(engine, opts.sourceId);
   if (!opts.sourceId && !opts.githubItem) return null;
   const sourceId = opts.sourceId ?? 'default';
-  const [source] = await engine.executeRaw<{ local_path: string | null; config: unknown }>(
-    'SELECT local_path,config FROM sources WHERE id=$1', [sourceId]);
+  const source = await engine.getSource(sourceId);
   assertSyncDispatchActive();
   if (!source) {
     if (opts.githubItem) throw new Error(`github_item refresh requires a github-kind source; source "${sourceId}" not found.`);
@@ -54,6 +53,11 @@ async function runConnectorKind(engine: BrainEngine, sourceId: string, config: R
       const { parseSlackSourceConfig } = await import('../../core/slack/source-config.ts');
       const { runSlackSync } = await import('../../core/slack/slack-source.ts');
       return runSlackSync(engine, sourceId, parseSlackSourceConfig(config, fallbackDir), options);
+    }
+    case 'imessage': {
+      const { parseIMessageSourceConfig } = await import('../../core/imessage/source-config.ts');
+      const { runIMessageSync } = await import('../../core/imessage/imessage-source.ts');
+      return runIMessageSync(engine, sourceId, parseIMessageSourceConfig(config), options);
     }
     default: return assertNever(config.kind);
   }

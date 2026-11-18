@@ -3,6 +3,11 @@
 //! so building a family never edits this list.
 
 mod chunks;
+mod cli_entities;
+mod cli_reads_import;
+mod cli_reads_ops;
+mod cli_reads_search_pages;
+mod cli_sources;
 mod config;
 mod graph;
 mod journal;
@@ -25,6 +30,12 @@ mod embeddings;
 mod eval_capture;
 mod extraction;
 mod facts;
+mod facts_cycle;
+mod facts_doctor;
+mod facts_purge;
+mod facts_repair;
+mod facts_trust;
+mod jobs;
 mod keyword;
 mod link_queries;
 mod ontology;
@@ -38,3 +49,4 @@ mod takes;
 mod timeline_queries;
 mod transactions;
 mod vectors;
+mod wanted_links;

@@ -157,18 +157,19 @@ for (const kind of testBackends()) {
     test('a member-bound write is refused when the source config cannot be read, not published unstamped', async () => {
       const canary = marker('unreadable');
       const slug = 'notes/alice-unreadable-' + canary;
-      const target = engine as unknown as { executeRaw: (this: BrainEngine, sql: string, ...rest: unknown[]) => Promise<unknown> };
-      const original = Object.getPrototypeOf(engine).executeRaw as typeof target.executeRaw;
+      // The resolver reads the source configs through listAllSources (the active list), and through listSourceRecords
+      // when that read fails (a brain older than the archived column): both refuse, so the config cannot be read.
+      const target = engine as unknown as Record<'listAllSources' | 'listSourceRecords', (this: BrainEngine, ...rest: unknown[]) => Promise<unknown>>;
       let rejected = 0;
-      target.executeRaw = function (sql, ...rest) {
-        if (/^\s*SELECT id, config(, archived)? FROM sources\b/.test(sql)) { rejected++; return Promise.reject(new Error('sources unreadable (test fixture)')); }
-        return original.call(this, sql, ...rest);
-      };
+      for (const member of ['listAllSources', 'listSourceRecords'] as const) {
+        target[member] = function () { rejected++; return Promise.reject(new Error('sources unreadable (test fixture)')); };
+      }
       let put: Awaited<ReturnType<typeof call>>;
       try {
         put = await call('alice-a', 'put_page', { slug, content: note('Alice unreadable', 'Alice unreadable code ' + canary + '.'), request_id: randomUUID() });
       } finally {
-        delete (target as Partial<typeof target>).executeRaw;
+        delete (target as Partial<typeof target>).listAllSources;
+        delete (target as Partial<typeof target>).listSourceRecords;
       }
       expect({ rejected: rejected > 0, isError: put.isError }).toEqual({ rejected: true, isError: true });
       expect(await stored(slug, FEDERATED)).toBeUndefined();

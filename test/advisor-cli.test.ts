@@ -8,7 +8,7 @@
  *     engine-shaped: collect-migration (the ONLY collector that can emit
  *     `critical`) keys on engine.getConfig('version') vs LATEST_VERSION,
  *     collect-chronicle emits `warn` from engine.findOntologyConflicts, and
- *     collect-stalled-jobs emits `info` (stale_sync) from engine.executeRaw.
+ *     collect-stalled-jobs emits `info` (stale_sync) from engine.listStaleSyncSourceIds.
  *   - --apply's consent gate (requireConsent: exit 3 with the payload when
  *     non-interactive without --yes) and its spawn seam (child_process.spawn
  *     behind spawnCliChild, spied via the module namespace — Bun named imports
@@ -38,6 +38,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { COLLECTORS } from '../src/core/advisor/run.ts';
 import type { AdvisorCollector, AdvisorFinding, AdvisorReport } from '../src/core/advisor/types.ts';
 import { withEnv, emptyHome } from './helpers/with-env.ts';
+import { stubSourceMembers } from './helpers/source-members-stub.ts';
 
 /** The env key the EFFECTIVE default embedding model requires (dynamic so a
  * default-provider change doesn't silently reopen the embedding_key_missing
@@ -74,13 +75,9 @@ function fakeEngine(opts: FakeEngineOpts = {}): BrainEngine {
       if (key === 'version') return opts.schemaVersion ?? String(LATEST_VERSION);
       return null; // schema_pack → default resolution; everything else unset
     },
-    executeRaw: async (sql: string): Promise<unknown[]> => {
-      // collect-stalled-jobs' stale-sync arm (the deterministic `info` lever).
-      if (sql.includes("interval '7 days'")) {
-        return (opts.staleSyncIds ?? []).map((id) => ({ id }));
-      }
-      return []; // minion_jobs, sources, chronicle gap, mcp-client-fit → quiet
-    },
+    executeRaw: async (): Promise<unknown[]> => [], // minion_jobs, chronicle gap, mcp-client-fit → quiet
+    // collect-stalled-jobs' stale-sync arm (the deterministic `info` lever): sources last synced 30 days ago.
+    ...stubSourceMembers((opts.staleSyncIds ?? []).map((id) => ({ id, last_sync_at: new Date(Date.now() - 30 * 86400_000) }))),
     getStats: async () => ({
       page_count: 0,
       chunk_count: 0,

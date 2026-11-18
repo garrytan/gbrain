@@ -13,6 +13,8 @@ import { execFileSync } from 'child_process';
 import { join } from 'path';
 import { runSources } from '../src/commands/sources.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { countSourcePages } from '../src/core/engine-sql/sources.ts';
+import { withTypedSourceReads } from './helpers/typed-source-reads.ts';
 
 // ── Stub engine that records queries ───────────────────────
 
@@ -21,7 +23,7 @@ interface RecordedCall {
   params: unknown[];
 }
 
-function makeStub(rowsByPattern: Record<string, unknown[]> = {}): {
+function makeStub(rowsByPattern: Record<string, unknown[]> = {}, opts: { appearsOnInsert?: boolean } = {}): {
   engine: BrainEngine;
   calls: RecordedCall[];
   configSet: Array<{ key: string; value: string }>;
@@ -44,14 +46,44 @@ function makeStub(rowsByPattern: Record<string, unknown[]> = {}): {
   };
 
   // Minimal BrainEngine stub — only the methods sources.ts touches.
-  const engine = {
+  // The typed source reads answer from the same fake rows. With `appearsOnInsert` (the `add` tests) getSource sees a
+  // row only once the INSERT ran (the pre-flight collision check finds nothing, the re-read after the insert finds
+  // it), as on a real brain; otherwise the seeded rows already exist.
+  const DETAIL = 'SELECT id, name, local_path, last_commit, last_sync_at, config, created_at';
+  const inserted = () => new Set(calls.filter(c => c.sql.includes('INSERT INTO sources')).map(c => c.params[0]));
+  const detailRows = () => (rowsByPattern[DETAIL] ?? []) as Array<{ id: string }>;
+  const getSource = async (id: string) => {
+    if (opts.appearsOnInsert === true && !inserted().has(id)) return null;
+    return detailRows().find(r => r.id === id) ?? null;
+  };
+  // listSourceRecords answers in the member's order (default first, then by id); the rows carry no archived flag.
+  const listSourceRecords = async () => {
+    const rows = [...detailRows()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    return [...rows.filter(r => r.id === 'default'), ...rows.filter(r => r.id !== 'default')].map(r => ({ archived: false, ...r }));
+  };
+  const listLocalPathSources = async () =>
+    ((rowsByPattern['SELECT id, local_path FROM sources WHERE local_path'] ?? []) as Array<{ id: string; local_path: string }>)
+      .map(r => ({ id: r.id, local_path: r.local_path, archived: false }));
+  // countSourcePages runs the real engine-sql member over the recording executeRaw, so the tests see its SQL.
+  // insertSource records its typed row as one INSERT call (config as JSON text), the shape the add tests read.
+  const insertSource = async (row: { id: string; name: string; local_path: string | null; config: Record<string, unknown> }) => {
+    calls.push({ sql: 'INSERT INTO sources (id, name, local_path, config)', params: [row.id, row.name, row.local_path, JSON.stringify(row.config)] });
+  };
+  const engine = withTypedSourceReads({
     kind: 'pglite' as const,
     executeRaw,
+    countSourcePages: (sourceId: string, o?: { includeDeleted?: boolean }) => countSourcePages({ executeRaw } as never, sourceId, o),
+    insertSource,
+    getSource,
+    listSourceRecords,
+    listLocalPathSources,
+    // The strict mode reader is a typed method; it answers from the same fake rows as executeRaw.
+    readManagedModeRows: () => executeRaw('SELECT enabled FROM persistence_brain WHERE singleton=1'),
     setConfig,
     transaction: async (fn: (tx: BrainEngine) => Promise<unknown>) => fn(engine),
     // Unused methods throw if called accidentally during these tests.
     getConfig: async () => null,
-  } as unknown as BrainEngine;
+  } as unknown as BrainEngine);
 
   return { engine, calls, configSet };
 }
@@ -108,7 +140,7 @@ describe('sources add', () => {
         config: '{}',
         created_at: new Date(),
       }],
-    });
+    }, { appearsOnInsert: true });
     await runSources(engine, ['add', 'gstack', '--path', '/tmp/gstack']);
     const insert = calls.find(c => c.sql.includes('INSERT INTO sources'));
     expect(insert).toBeDefined();
@@ -130,7 +162,7 @@ describe('sources add', () => {
         config: '{"federated":true}',
         created_at: new Date(),
       }],
-    });
+    }, { appearsOnInsert: true });
     await runSources(engine, ['add', 'wiki', '--path', '/tmp/wiki', '--federated']);
     const insert = calls.find(c => c.sql.includes('INSERT INTO sources'));
     expect(insert!.params[3]).toBe('{"federated":true}');
@@ -147,7 +179,7 @@ describe('sources add', () => {
         config: '{"federated":false}',
         created_at: new Date(),
       }],
-    });
+    }, { appearsOnInsert: true });
     await runSources(engine, ['add', 'yc-media', '--path', '/tmp/yc', '--no-federated']);
     const insert = calls.find(c => c.sql.includes('INSERT INTO sources'));
     expect(insert!.params[3]).toBe('{"federated":false}');
@@ -200,7 +232,7 @@ describe('sources add — #2707 --force flag wiring', () => {
         config: '{}',
         created_at: new Date(),
       }],
-    });
+    }, { appearsOnInsert: true });
     await runSources(engine, ['add', 'cli-forced', '--path', plainDir, '--force']);
     const insert = calls.find(c => c.sql.includes('INSERT INTO sources'));
     expect(insert).toBeDefined();
@@ -212,15 +244,23 @@ describe('sources add — #2707 --force flag wiring', () => {
 
 describe('sources list', () => {
   test('orders default source first, then alphabetical', async () => {
-    const { engine, calls } = makeStub({
+    // The order comes from listSourceRecords (pinned by the engine parity suite); list keeps it as given.
+    const { engine } = makeStub({
       'SELECT id, name, local_path, last_commit, last_sync_at, config, created_at': [
+        { id: 'zeta', name: 'zeta', local_path: null, last_commit: null, last_sync_at: null, config: '{}', created_at: new Date() },
+        { id: 'alpha', name: 'alpha', local_path: null, last_commit: null, last_sync_at: null, config: '{}', created_at: new Date() },
         { id: 'default', name: 'default', local_path: null, last_commit: null, last_sync_at: null, config: '{"federated":true}', created_at: new Date() },
       ],
       'COUNT(*)::int AS n FROM pages': [{ n: 0 }],
     });
-    await runSources(engine, ['list']);
-    const select = calls.find(c => c.sql.includes('ORDER BY (id = \'default\') DESC'));
-    expect(select).toBeDefined();
+    const lines: string[] = [];
+    const logSpy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => { lines.push(a.map(String).join(' ')); });
+    try {
+      await runSources(engine, ['list', '--json']);
+    } finally {
+      logSpy.mockRestore();
+    }
+    expect((JSON.parse(lines.join('\n')).sources as Array<{ id: string }>).map(s => s.id)).toEqual(['default', 'alpha', 'zeta']);
   });
 
   test('counts only visible pages', async () => {
@@ -231,10 +271,26 @@ describe('sources list', () => {
       'COUNT(*)::int AS n FROM pages': [{ n: 1 }],
     });
 
-    await runSources(engine, ['list']);
+    const asked: unknown[] = [];
+    const countSourcePages = engine.countSourcePages.bind(engine);
+    (engine as { countSourcePages: unknown }).countSourcePages = (id: string, opts?: { includeDeleted?: boolean }) => {
+      asked.push({ id, opts });
+      return countSourcePages(id, opts);
+    };
+    const lines: string[] = [];
+    const logSpy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => { lines.push(a.map(String).join(' ')); });
+    try {
+      await runSources(engine, ['list']);
+    } finally {
+      logSpy.mockRestore();
+    }
 
-    const count = calls.find(c => c.sql.includes('COUNT(*)::int AS n FROM pages'));
-    expect(count?.sql).toContain('deleted_at IS NULL');
+    // The count comes from the typed page count for this one source, live pages only (no includeDeleted).
+    expect(asked).toEqual([{ id: 'default', opts: undefined }]);
+    expect(calls.find(c => c.sql.includes('COUNT(*)::int AS n FROM pages'))?.sql).toContain('deleted_at IS NULL');
+    // The rows come from the typed source listing, so no list statement reaches executeRaw.
+    expect(calls.some(c => c.sql.includes('ORDER BY (id = \'default\') DESC'))).toBe(false);
+    expect(lines.find(l => l.includes('default'))).toContain('1');
   });
 
   test('distinguishes explicit false / absent key / explicit true in the human-readable label', async () => {

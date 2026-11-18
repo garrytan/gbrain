@@ -14,3 +14,4 @@ These are historical evidence, not promises about current GBrain behavior.
 | Research | What it is |
 |---|---|
 | [Rust rewrite research maps](rust-engine/README.md) | Maps of what TypeScript gbrain and gbrain-evals do today (storage engine, agent contract, jobs, tests, evals), pinned to one commit. The plan of record is [docs/designs/RUST_ENGINE.md](../designs/RUST_ENGINE.md) (PR #9593); the draft [PLAN.md](../plans/PLAN.md) is kept as research. |
+| [executeRaw calls on the CLI path](rust-cli-executeraw-map.md) | Each `executeRaw` call that `import`, `extract` and seven read commands make on a PGLite brain, with the typed member that can replace it on a Rust brain. Pinned to one commit. |

@@ -748,17 +748,18 @@ Extraction state of pages.
 
 - **Files:** `gbrain-store/src/extraction.rs`, `gbrain-napi/src/families/extraction.rs`, `store-members/extraction.ts`.
 - **Tag:** `e` (`EXTRACTION`). Cascade on page delete: yes.
-- **Members (7), capability:** `pages` (7).
-- **Store and binding:** `countStalePagesForExtraction` (`count_stale_pages_for_extraction`), `listStalePagesForExtraction` (`list_stale_pages_for_extraction`), `markPagesExtractedBatch` (`mark_pages_extracted_batch`), `markPagesAttendanceBlocked` (`mark_pages_attendance_blocked`), `countStaleFrontmatterKeyPages` (`count_stale_frontmatter_key_pages`), `listStaleFrontmatterKeyPages` (`list_stale_frontmatter_key_pages`), `stripStaleFrontmatterKeys` (`strip_stale_frontmatter_keys`).
+- **Members (8), capability:** `pages` (8).
+- **Store and binding:** `countStalePagesForExtraction` (`count_stale_pages_for_extraction`), `listStalePagesForExtraction` (`list_stale_pages_for_extraction`), `readExtractionLagCounts` (`read_extraction_lag_counts`, the `links_extraction_lag` doctor row), `markPagesExtractedBatch` (`mark_pages_extracted_batch`), `markPagesAttendanceBlocked` (`mark_pages_attendance_blocked`), `countStaleFrontmatterKeyPages` (`count_stale_frontmatter_key_pages`), `listStaleFrontmatterKeyPages` (`list_stale_frontmatter_key_pages`), `stripStaleFrontmatterKeys` (`strip_stale_frontmatter_keys`).
 - **Postgres tables:** `pages.links_extracted_at`, `pages.timeline_extracted_at`, attendance-blocked state, `page_extraction_state`; frontmatter key rewrites go through core `write_page`.
 - **Keys:** `e <page id>` holds one record with the extraction stamps and the attendance-blocked flag for that page. Removed by `remove_page_rows`.
 - **Depends on:** Core page helpers. `stripStaleFrontmatterKeys` changes a page body: it writes through `write_page` and the version rules core uses. `getStats`/`getHealth` (stats family) read these stamps.
 - **Estimate:** about 4 to 5 days.
 - **Notes:** A page is stale for extraction when its body changed after the stamp: compare `updated_at_us` (or the body revision) with the stamp, as the PGLite query does. Same capability (`pages`) as page_ops and aliases.
-- **Parity cases (5, in `extraction.test.ts`):**
+- **Parity cases (6, in `extraction.test.ts`):**
   - `extraction.test.ts`: countStalePagesForExtraction: NULL stamp, older-than-version and edited-since-stamp are stale; deleted and quarantined are not
   - `extraction.test.ts`: listStalePagesForExtraction pages by id keyset, scopes by source and carries the page content
   - `extraction.test.ts`: markPagesExtractedBatch returns the rows stamped: wrong-source and unknown refs match nothing, empty input is 0
+  - `extraction.test.ts`: readExtractionLagCounts counts live, actionable-stale, attendance-blocked and held pages in each statement shape
   - `extraction.test.ts`: markPagesAttendanceBlocked marks a page at its revision; attendance narrows the stale set and an edit releases it
   - `extraction.test.ts`: countStaleFrontmatterKeyPages, listStaleFrontmatterKeyPages and stripStaleFrontmatterKeys sweep parser-reserved keys per source
 
@@ -1212,6 +1213,378 @@ The relation API that replaces raw SQL.
   - `raw-sql.test.ts`: runMigration runs every statement of a multi-statement script
   - `raw-sql.test.ts`: keywordBoundedRead runs the read and returns its value; a throw propagates and the engine stays usable
 
+### New families from the CLI contract map
+
+The CLI contract map (`docs/research/rust-cli-contract-map.md` on the `rust-cli-contract-map` branch) counts the CLI
+and MCP sites that still reach the database through raw SQL. Four of its groups have no family yet. The four
+sections below design them: persistence (map group 1, with groups 9 and 12), jobs (map group 4), trust (map group
+3) and catalog probes (map groups 6 and 34). The map counts sites and calls; this section merges sites that read
+the same rows into one member, so the member counts here are smaller than the site counts.
+
+These four sections are design only. No file, tag, constant or list entry below exists yet. The tags are proposed:
+core adds them to the reserved block in `keys.rs` and to the reserved tag table above in one reviewed change, and
+until then no family writes under them. The free lowercase bytes today are `a d f g h i m t x y z`.
+
+| Family | Proposed tag | Proposed constant | Cascade on page delete | Owner |
+|---|---|---|---|---|
+| persistence (core) | `d` | `PERSISTENCE` | no | core |
+| jobs (core) | `m` | `JOBS` | no | core |
+| trust | `t` | `TRUST` | yes | group 4 (memory records), next to facts and contradictions |
+| catalog probes (core) | none: no records | none | no | core |
+
+Transaction rules shared by all four:
+
+- **A typed operation in place of a lock.** Every claim, lease, cap check and fence in these sections is one store
+  member that reads and writes in one store write transaction (D20, "Concurrency without PGLite-style locks" in
+  `RUST_ENGINE.md`). TypeScript never holds a store lock across two calls. A member that PGLite runs as
+  `SELECT ... FOR UPDATE` followed by an `UPDATE` is one member here, not two.
+- **Same results, not same mechanism.** A store write transaction is serializable: today the store runs one write
+  transaction at a time, and a later store with concurrent writers must detect the conflict and retry the
+  transaction, never commit both. So "read the first eligible row in PGLite's order, then change it" inside one
+  write gives the result `FOR UPDATE SKIP LOCKED` gives: no row is claimed twice, and a second caller gets the next
+  eligible row or none.
+- **Inside a BrainEngine transaction.** A member called with a tx handle joins the open store transaction (the core
+  transactions family, `w`). Members that PGLite runs only inside a transaction (map group 9) refuse with
+  `engine_capability_missing` until the transactions family lands, as the other families do.
+- **Refusal before the capability.** A family reports its capability only when every member under it is served.
+  Until then each served member answers and each other member refuses, so a CLI path either gets PGLite's answer or a
+  typed refusal, never a guess.
+
+### persistence (core)
+
+The write journal, its effects and recoveries, the operation checkpoints, the page projection queue and the sync
+holds: the tables the TypeScript persistence coordinator reads and writes.
+
+- **Files:** `gbrain-store/src/persistence.rs` (new), `gbrain-store/src/journal.rs` (exists),
+  `gbrain-napi/src/families/persistence.rs`, `store-members/persistence.ts`.
+- **Tag:** `d` (`PERSISTENCE`, proposed), next to the existing journal tags `J` / `j` (requests) and `W` (local
+  writers). Cascade on page delete: no. The projection queue entry for a deleted page goes through the projection
+  hook below, not the cascade list.
+- **Members (about 60 after merging 180 sites), capability:** `persistence_journal`.
+- **Store and binding:** grouped by the table they read. Every name is the BrainEngine member; the Rust method is the
+  same name in snake_case (for example `claimNextWrite` and `claim_next_write`).
+  - Brain and writers: `readPersistenceBrainId` (over the existing `get_brain_identity`), `readWriterVersionCutoff`,
+    `readPersistenceBrainLock` (PGLite's `FOR SHARE` read becomes a plain read inside the caller's write),
+    `getLocalWriter` (over the existing `read_local_writer`), `insertLocalWriterRow` (over `register_local_writer`),
+    `readLocalWriterRow`, `readManagedModeRows`, `readLedgerSource`.
+  - Requests (`persistence_requests`): `admitWrite` (over the existing `admit_write`), `getWriteRequest` (by id, by
+    principal, or a list by principal: one member with a key option, in place of three readers),
+    `getWriteReceipt`, `hasClaimableWrite`, `claimNextWrite`, `renewWriteClaim`, `completeWrite` (over
+    `finish_write`), `releaseAbandonedWriteClaims`, `listWriteRequests` (one filtered list in place of the
+    stalled, lost-caller, host-owned, expired-deferred, suppressed, drifted-since and carrying readers),
+    `countWriteRequests` (the matching counts), `readMaxRequestSequence`, `recentWriterVersions`,
+    `listCompactibleReceipts`, `compactReceipts`.
+  - Effects (`persistence_effects`): `queuePublicationEffects`, `claimPersistenceEffect`, `completeEffect`,
+    `releaseAbandonedEffectClaims`, `selectEffectRecoveries`, `listEffects` (one filtered list in place of the
+    parked, stale-embedding, gated-mirror, true-up, withdrawal-mirror and rearmable readers), `countEffects`,
+    `batchLinkEffectStates`, `trueUpRequestReceipts`.
+  - Capacity (`persistence_counters`): `reserveCapacity(key, delta, cap)` (the compare-and-add D20 names, in place of
+    `reserveWriteBudget`), `readPersistenceCounters` (one read for the counter, capacity and compaction readers),
+    `readJournalLimits`.
+  - Worktrees and bindings (`persistence_worktrees`, `persistence_source_bindings`, `persistence_host_bindings`,
+    `persistence_worktree_refreshes`, `persistence_topology_changes`, `persistence_graduation`):
+    `getWorktreeBinding`, `listCoordinationRoots`, `readCheckoutRoot`, `resolveSyncPersistenceMode`,
+    `readSourceMovement`, `listWorktreeRefreshes`, `getTopologyChange` (by request), `listTopologyRecoveries`,
+    `getGraduationRun`.
+  - Consumers (`persistence_consumers`): `registerConsumer`, `heartbeatConsumer`, `claimSweep`,
+    `countLivePersistenceConsumers`.
+  - Operation checkpoints (`op_checkpoints`, `op_checkpoint_paths`): `readOpCheckpoint`, `listOpCheckpoints`,
+    `writeOpCheckpoint`, `deleteOpCheckpoint`, all keyed by `(op, fingerprint)`. These four replace the separate
+    readers for the fence census, sync holds, git holds, managed sync orphans and failures, tombstones, purge
+    parks, credential reseal, soak counters, the housekeeping turn, `readSyncHoldHeldAt` and the trust backfill
+    checkpoints: each of those is a checkpoint `op` with its own payload, and the TypeScript caller keeps decoding
+    the payload.
+  - Projection queue (`page_projection_jobs`): `selectProjectionJobWindow`, `clearProjectionJob`,
+    `readProjectionBacklog` (one read for the backlog, drain preview, pending rebuilds, job reason and live-job
+    readers).
+  - Smaller tables: `memory_proposals` (`listMemoryProposals`, `expireMemoryProposals`,
+    `deleteSettledMemoryProposals`, `summarizeMemoryProposals`), `page_purges` (`listPagePurges`),
+    `sync_notifier_sources` and `sync_notifier_leases` (`readNotifierFreshness`), `sync_wanted_markers`
+    (`readSyncFirstDue`), `persistence_writer_protocols` (`readWriterProtocols`).
+  - Inside a transaction (map group 9): `declarePersistenceProtocol` and `declareDurablePersistence` (both become
+    a store-side check of the writer protocol, with no session setting), `lockWriteRequest` and
+    `lockSourceForAdmission` (become part of the admitting or claiming member's own write), `pageAdmissionSource`
+    (a fixed answer: the Rust store has no row policies), `setSynchronousCommit`, `setPlannerSettingLocal` and
+    `setStatementTimeoutLocal` (no-ops: the store commits durably and every call carries a deadline).
+  - Shared skills (map group 12): the shared skills catalog and retention reads go through `listWriteRequests` and
+    `getWriteReceipt`; the shared skill tables (`shared_skill_*`) are their own later family, not this one.
+- **Postgres tables:** `persistence_brain`, `persistence_local_writers`, `persistence_requests`,
+  `persistence_effects`, `persistence_counters`, `persistence_consumers`, `persistence_worktrees`,
+  `persistence_source_bindings`, `persistence_host_bindings`, `persistence_worktree_refreshes`,
+  `persistence_topology_changes`, `persistence_writer_protocols`, the graduation table, `op_checkpoints`,
+  `op_checkpoint_paths`, `page_projection_jobs`, `memory_proposals`, `page_purges`, `sync_notifier_sources`,
+  `sync_notifier_leases`, `sync_wanted_markers`.
+- **Keys:** requests stay under `J` / `j` and local writers under `W` (the existing `journal.rs` layout; brain
+  identity is in `M`). New records go under `d` with a sub-table byte:
+  - `d 0x01 <request id BE8> <effect kind> 0x00 <effect id BE8>`: an effect; `d 0x02 <kind> 0x00 <state> 0x00
+    <effect id BE8>`: the claim index.
+  - `d 0x03 <counter key>`: a capacity counter.
+  - `d 0x04 <worktree id>`, `d 0x05 <source id>`, `d 0x06 <host id>`: worktrees and bindings; `d 0x07 ...`:
+    refreshes, topology changes and graduation runs.
+  - `d 0x08 <consumer id>`: a consumer.
+  - `d 0x09 <op> 0x00 <fingerprint>`: a checkpoint; `d 0x0a <op> 0x00 <fingerprint> 0x00 <path>`: a checkpoint path
+    (deleted with its checkpoint in the same write, as the Postgres foreign key cascades).
+  - `d 0x0b <source id> 0x00 <slug>`: a projection job; `d 0x0c <updated_at BE8> <source id> 0x00 <slug>`: the
+    window index.
+  - `d 0x0d ...` to `d 0x10`: proposals, purges, notifier rows and wanted markers.
+- **Transaction rules:**
+  - `claimNextWrite` reads the claimable requests in `CLAIM_ORDER` (`src/core/persistence/journal.ts`) with
+    `claimableWriteSql`'s rules (foreground priority first when `foreground_priority` is on, then `sequence`),
+    takes the first, and writes the claim with a new fencing token and the lease expiry, in one write.
+    `renewWriteClaim` and `completeWrite` check the token in the same write and refuse a stale one. An expired lease
+    is claimable again.
+  - `claimPersistenceEffect` does the same for effects with a fenced `execution_token`; an expired or dead-owner
+    claim is reclaimed.
+  - `reserveCapacity` reads the counter, refuses when `delta` would pass `cap`, and writes the new value in one
+    write. It replaces both the counter row lock and `reserveWriteBudget`.
+  - `admitWrite` checks the idempotency key, the source, the capacity and the writer, then writes the request and its
+    index, in one write. A retry with the same key returns the same request (`idempotency_conflict` when the payload
+    differs), as the existing `admit_write` does.
+- **Projection hook (core):** PGLite fills `page_projection_jobs` from the `gbrain_queue_page_projection` trigger
+  on every page insert, update and delete. On Rust, core calls a projection hook from `write_page` and `remove_page`,
+  like `page_index::reindex_page`. The hook deletes the job when the page is deleted, soft deleted, moved to another
+  slug or source, or when `text_projection_revision` equals `knowledge_revision`, and writes the job when the page
+  is new or its `knowledge_revision` changed. The persistence family fills in the body.
+- **Depends on:** the transactions family (`w`) for map group 9; the projection hook (core); `journal.rs` (built).
+- **Estimate:** about 15 days for the whole family. The first slice below is about 4 days.
+- **Notes:** see "Persistence: option (a) or option (b)" below. On a brain with no managed worktree, the worktree,
+  binding, topology and graduation reads answer "none" from an empty table, which is PGLite's answer on the same
+  brain; they need records only when managed worktrees are served on Rust.
+- **Parity cases:** none exist yet. The family adds `test/engine-parity/persistence.test.ts`. Its first cases: brain
+  id is stable across reopen; a local writer reads back as registered; `admitWrite` with the same key returns the
+  same request; `claimNextWrite` returns foreground requests first, then by sequence; two claims never return the
+  same request; a stale fencing token cannot complete a write; an expired lease is claimable again;
+  `reserveCapacity` refuses past the cap and writes nothing; a checkpoint and its paths are deleted together; a
+  page write queues a projection job and a matching revision clears it. The existing
+  `test/persistence-claim-lease.test.ts` and `test/persistence-capacity.test.ts` cases are the source for the
+  expected answers.
+
+#### Persistence: option (a) or option (b)
+
+Two ways to serve the persistence paths on Rust:
+
+- **(a) A `persistence` family of typed members**, as above. The TypeScript persistence coordinator stays as it is
+  and calls the members; Rust stores the rows.
+- **(b) A Rust journal that the write members call directly.** `putPage` and the other write members admit, apply
+  and commit inside the store through `journal.rs` (`submit_page_mutation` already does this for one page), and the
+  coordinator does not run on a Rust brain.
+
+| Question | (a) typed members | (b) Rust journal |
+|---|---|---|
+| Matches the design | yes: "No Rust rewrite of the persistence coordinator" and D20's typed operations | no: it moves the coordinator into Rust |
+| File publication (managed and git sources) | kept: the coordinator publishes files after the commit | lost: `submit_page_mutation` publishes no files |
+| Post-commit effects (embedding, the links effect, mirrors) and holds | kept | lost, or rebuilt in Rust |
+| Leases, claims, recovery records, worktree fences, refresh deferral | kept | not in `journal.rs` |
+| Same answers as PGLite on the same brain | yes | no: parity diverges on every write that has an effect |
+| Read sites (doctor, sync status, holds) | served by the members | still need a member or a fixed answer each, so (b) saves little |
+| Work already done | `journal.rs` becomes the storage for requests and writers | `journal.rs` is the whole path |
+
+Recommendation: **(a)**. It is the shape of every other family, the design already requires it, and it keeps the
+answers equal to PGLite's. `journal.rs` is not wasted: its `J` / `j` and `W` records and its `admit_write`,
+`finish_write`, `get_brain_identity` and local writer functions become the storage under the request and writer
+members. `submit_page_mutation` can stay as a store-level path for store tests and the simulation; core decides.
+
+Effect on Dec 1: none on the family plan above. The persistence paths are CLI work, outside the 54 days of family
+work, so they do not move Dec 1 unless Dec 1 includes CLI writes on a Rust brain. Two notes for that decision:
+
+- The quickest win is `readPersistenceBrainId` over the existing `get_brain_identity`. The contract map names it
+  as the first refusal for 43 commands; with it served they reach their next member instead of refusing at the
+  start.
+- If Dec 1 includes CLI `put_page` and import on Rust, build this first slice first (about 4 days, core): brain id,
+  local writers, `admitWrite` and `getWriteReceipt`, `claimNextWrite` and `completeWrite`, `readJournalLimits`,
+  `readManagedModeRows`, and the hold reads (empty on a brain with no holds). The CLI also needs the `rust` case in
+  `constructEngine`, which is on the `rust-engine/pr8-construct` branch, not on the base the contract map used.
+
+### jobs (core)
+
+The Minion job queue, cycle locks, spend and rate leases, and wake subscriptions.
+
+- **Files:** `gbrain-store/src/jobs.rs`, `gbrain-napi/src/families/jobs.rs`, `store-members/jobs.ts`.
+- **Tag:** `m` (`JOBS`, proposed). Cascade on page delete: no.
+- **Members (about 40 after merging 60 sites, plus the queue members the sites do not reach), capability:**
+  `minion_queue`.
+- **Store and binding:** the Rust method is the member name in snake_case.
+  - Admission and claim: `admitJob(spec)` (the idempotency key, coalescing, quota and caps, then the insert, in one
+    write; in place of `insertOrCoalesceJob` and the three advisory locks), `submitChildJob`, `claimNextJob(queue,
+    worker, lease)`, `renewJobLease`, `completeJob` (in place of `completeJobRow`; also rolls up the parent, the
+    `rollUpChild` step), `failJob`, `reclaimStalledJobs`, `handleTimeouts`, `requeueDelayedJobs`, `pauseJob`,
+    `resumeJob`, `retryJob` (in place of `getFailedJobForRetry`), `cancelJobs`, `removeTerminalJob`.
+  - Reads: `getJob`, `getJobParentId`, `listJobs` (one filtered, paged list in place of `listJobsRecent`,
+    `listJobPage`, `listActiveJobsOwned` and `listUnreviewedJobs`), `listDescendantJobIds` (in place of the recursive
+    query), `listJobTreeOwners`, `listJobSubmitters`, `countWaitingAhead`, `countJobs` (one grouped count in place of
+    the status, name, daily, source, cycle, legacy authority, stalled, timeout, dead absorb and dream, facts drain
+    backlog and wedge signal counts), `oldestWaitingJob`, `lastCompletedJobAt`, `hasOverdueWatchdogSuspect`,
+    `countTtlExpiredWaiting`, `queueFamilyStats`.
+  - Messages: `insertInboxMessage`, `readInbox`, `appendSubagentMessage`, `listSubagentMessages`,
+    `recordToolExecution`, `listToolExecutions`, `readJobAttachments`.
+  - Spend and rate: `reserveBudget` (budget-meter's reservations), `acquireRateLease`, `releaseRateLease`.
+  - Cycle locks: `acquireLease(id, ttl)`, `renewLease(token)`, `releaseLease(token)`, `assertLease(token)`,
+    `listLeases` (one read in place of `readCycleLocks`, `listActiveCycleLocks` and `listLiveCycleLockIds`, with an
+    id and live-only filter). The existing members `acquireCycleLock`, `refreshCycleLock`, `releaseCycleLock`,
+    `readCycleLocks`, `deleteCycleLock` and `deleteCycleLockIfStale` keep their names and call these.
+  - Wake: `countWakeSubscriptions`, `countPendingWakeForgets`.
+- **Postgres tables:** `minion_jobs`, `minion_inbox`, `minion_attachments`, `subagent_messages`,
+  `subagent_tool_executions`, `subagent_rate_leases`, `gbrain_cycle_locks`, `mcp_spend_reservations` (read with
+  `mcp_spend_log` and `oauth_clients`), `wake_subscriptions`, `wake_forgets`.
+- **Keys:**
+  - `m 0x01 <job id BE8>`: a job; ids from `M next_job_id`.
+  - `m 0x02 <queue> 0x00 <status> 0x00 <priority BE4 with sign flipped> <created_at BE8> <job id BE8>`: the claim
+    index, kept in step with every status change in the same write. A forward scan of `m 0x02 <queue> 0x00
+    waiting 0x00` gives PGLite's `priority ASC, created_at ASC` order.
+  - `m 0x03 <parent id BE8> <child id BE8>`: children; `m 0x04 <queue> 0x00 <idempotency key>`: the key index.
+  - `m 0x05 <job id BE8> <message id BE8>`: inbox and subagent messages; `m 0x06 ...`: tool executions and
+    attachments.
+  - `m 0x07 <lock id>`: a cycle lock; `m 0x08 <key>`: a rate lease or budget reservation.
+  - `m 0x09 ...`: wake subscriptions and forgets.
+- **How the store replaces `SKIP LOCKED` and the advisory locks:**
+  - Claim. PGLite's claim (`src/core/minions/queue.ts`, the `UPDATE ... WHERE id = (SELECT ... FOR UPDATE SKIP
+    LOCKED LIMIT 1)`) picks the first waiting job in the queue whose name the worker handles, whose
+    `submission_authority` is set, with the optional suspect and excluded-name filters, ordered by overdue first
+    (when asked), then `priority`, then `created_at`. `claimNextJob` scans the claim index in that order, skips rows
+    the filters drop, and in the same write sets `status = 'active'`, `claim_generation + 1`, a new `lock_token`,
+    `lock_until` (from the row, then the handler map, then the worker default; row and map values clamped to 5,000
+    to 3,600,000 ms), `timeout_at`, `attempts_started + 1`, `started_at` and `updated_at`. Because the write is
+    serializable, two workers never get the same job, which is what `SKIP LOCKED` guarantees; a worker that loses a
+    conflict retries and takes the next job.
+  - Protocol checks. The `minion_queue_protocol` trigger becomes checks inside the same members: an insert needs
+    `submission_authority` and `claim_generation = 0`; only a claim advances `claim_generation`; a spend-authorized
+    job needs `spend_claim_token = claim_generation`. The member refuses with PGLite's message.
+  - Completion. PGLite locks the parent `FOR UPDATE`, then updates the job `WHERE status = 'active' AND lock_token =
+    $3`. `completeJob` checks the status and token, writes the job, and rolls up the parent, in one write. A stale
+    token completes nothing and returns PGLite's "not active" answer.
+  - Stall and timeout sweeps (`handleStalled`, `handleTimeouts`, the dead-letter path). PGLite selects with `SKIP
+    LOCKED` and updates. Each sweep is one write that reads the expired rows and changes them, so a job claimed again
+    in between is not swept twice.
+  - Admission caps. PGLite takes `pg_advisory_xact_lock` on `minion_admission:<queue>:<name>:<key>`,
+    `minion_quota:<owner>` and `minion_maxwaiting:<queue>:<name>:<group>` before it counts and inserts. `admitJob`
+    counts and inserts in one write, so no second admission can see the count before the insert. The cases in
+    `test/minions-admission.test.ts` stay as they are. Budget reservations (`budget-meter.ts`) and rate leases
+    (`rate-leases.ts`) follow the same rule: count, check the cap, write, in one member.
+  - Cycle locks. PGLite's acquire (`src/core/db-lock.ts`) is an upsert that takes a held row only when
+    `ttl_expires_at` has passed and `last_refreshed_at` is null or older than the steal grace, and returns the fence
+    `extract(epoch from acquired_at)`. `acquireLease` does the same check and write in one member and returns the same
+    fence. Refresh and release match the id, holder pid and acquisition token. The fence check (`fenceLockRow`, `FOR
+    KEY SHARE`) becomes `assertLease(token)`, called inside the writing member's own write, so a lease that expired
+    refuses the write that depends on it.
+  - Wake. The `minion_job_notify` trigger's `pg_notify` has no store equivalent: a Rust worker uses the short poll,
+    which `sync-queue-wake.ts` already chooses when LISTEN is not available.
+- **Depends on:** the transactions family (`w`) for the members a caller runs inside its own transaction.
+- **Estimate:** about 10 days. `src/core/minions/queue.ts` is about 2,600 lines, and the traced sites cover only
+  the happy paths; submit, lock renewal, failure, timeouts and stall reclaim are in scope as well.
+- **Notes:** `minion_queue` is reported only when the whole `MinionQueue` is served. The existing cycle lock members
+  ship with this family.
+- **Parity cases:** none exist yet. The family adds `test/engine-parity/jobs.test.ts`, with cases taken from
+  `test/minions-admission.test.ts`, `test/minions-submission-authority.test.ts`,
+  `test/minions-lease-full-retry.test.ts`, `test/db-lock-fencing.test.ts` and `test/cycle-lock-steal.serial.test.ts`:
+  claim order (overdue, priority, created_at); two concurrent claims get different jobs; a stale lock token cannot
+  complete; a completed child rolls up its parent; admission caps hold under concurrent submits; an idempotent
+  submit coalesces; a stale cycle lock is taken only after the grace; a released or expired lease fails
+  `assertLease`.
+
+### trust
+
+Trust tiers, the write gate, trust review, fact withdrawal and the belief ledger.
+
+- **Files:** `gbrain-store/src/trust.rs`, `gbrain-napi/src/families/trust.rs`, `store-members/trust.ts`.
+- **Tag:** `t` (`TRUST`, proposed). Cascade on page delete: yes (per-page tier and gate receipt records).
+- **Members (about 35 after merging 64 sites), capability:** `trust` (proposed; core adds it to
+  `ENGINE_CAPABILITIES`) for the policy, tier, gate, withdrawal and review members, and the existing
+  `belief_ledger` for the belief members, so the belief part can ship later without holding the rest.
+- **Store and binding:** the Rust method is the member name in snake_case.
+  - Policy and gate: `readTrustGeneration`, `readWriteGateReceipt`, `clearStalePageGateReceipts`,
+    `listWriteGateHolds`, `listTrustAllowRules`, `insertTrustProposal`, `listTrustProposals`.
+  - Page tiers: `readPageTrustRows` (one read for the four sites that read page tiers), `readTrustTierCounts`,
+    `lowerPageTrustTiers`, `relowerClaimedRows`, `readTaintInputPages`, `findPageVersionByTier`, `listFlaggedPages`,
+    `listTrustClaimCandidates`, `listClaimedSourceTiers`, `countLegacyUnknownBySource`, `scanProvenanceDrift`,
+    `guardFenceFactRows`.
+  - Withdrawal: `insertFactWithdrawal`, `isFactWithdrawn` (one member for the current and v1 forms), `isFactPurged`,
+    `planFactWithdrawal`, `listWithdrawals` (one filtered list for the discovery, dates and export readers),
+    `hasSourcePurges`.
+  - Review: `insertWithdrawReviewItem`, `countPurgeReviewQueueRefs`.
+  - Beliefs (`belief_ledger`): `readCoverageIntervals`, `listCoveredSources`, `readOpenLifetimes`,
+    `mintBeliefLifetime`, `resolveBeliefLifetimes`, `readBeliefRedactions`, `readBeliefState`.
+- **Postgres tables:** `trust_policy_state`, `trust_allow_rules`, `trust_proposals`, `write_gate_receipts`,
+  `write_gate_holds`, `fact_withdrawals`, `fact_purges`, `take_purges`, `decide_review_queue`, `belief_events`,
+  `belief_page_lifetimes`, `belief_commit_marks`, `belief_retier_manifest`, `belief_redactions`, and the
+  `trust_tier` and write provenance columns of `pages`.
+- **Keys:**
+  - `t 0x01`: the policy state (one record); `t 0x02 <rule id BE8>`: allow rules; `t 0x03 <proposal id BE8>`:
+    proposals.
+  - `t 0x04 <page id BE8>`: a page's tier and write provenance; `t 0x05 <tier> 0x00 <page id BE8>`: the tier index.
+  - `t 0x06 <page id BE8>`: a gate receipt; `t 0x07 <hold id BE8>`: a gate hold.
+  - `t 0x08 <fact id BE8>`: a withdrawal; `t 0x09 ...`: fact and take purges; `t 0x0a ...`: review queue rows.
+  - `t 0x10` to `t 0x14`: belief events, lifetimes, commit marks, retier manifest and redactions.
+- **Transaction rules:** a tier change and its tier index change in one write. `lowerPageTrustTiers` and
+  `relowerClaimedRows` read the current tier and write the lower one in the same write, so a concurrent raise is not
+  lost. `insertFactWithdrawal` checks for an existing withdrawal and writes in one write (PGLite's unique key gives
+  `constraint_violation`). Belief lifetimes are minted and resolved in the caller's transaction.
+- **Page columns:** the Rust page record keeps `trust_tier` at the fixed default `'unknown'` today
+  (`PAGE_ROW_DEFAULTS` and `TIMELINE_DEFAULTS` in `store-codec.ts`; `trust_tier` is in `HASH_EPHEMERAL_KEYS` in
+  `pages.rs`). This family adds `trust.rs` to the page-columns list (core adds the one line) and returns
+  `trust_tier` and the write provenance fields from `t 0x04`.
+- **Overlaps to settle before the first commit:** `fact_withdrawals` is on the facts family's (`F`) source-delete
+  list; trust owns the table, and facts calls `trust::remove_source_rows` or drops the entry. The access tables
+  (`access_rules`, `access_members`, `access_tokens`, `access_policy_state`, `oauth_clients`, `oauth_grant_audit`,
+  `guest_sources`) belong to the `access` family in the contract map, not to trust.
+- **Depends on:** the facts family (fact ids and the withdrawal overlap); the page-columns hook (built).
+- **Owner:** group 4 (memory records), after facts and contradictions.
+- **Estimate:** about 8 days, plus about 4 for the belief ledger.
+- **Notes:** the `tableExists` probes on `write_gate_holds` and `write_gate_receipts` become a check of the `trust`
+  capability (see catalog probes).
+- **Parity cases:** none exist yet. The family adds `test/engine-parity/trust.test.ts`, with cases taken from
+  `test/trust-tier.test.ts`, `test/trust-generation.test.ts`, `test/write-gate-store.test.ts`,
+  `test/fact-withdrawal-normalized.test.ts` and `test/belief-ledger-lifecycle.test.ts`: `getPage` returns the stored
+  tier; lowering never raises; a withdrawn fact reads as withdrawn; a second withdrawal is refused; gate receipts
+  clear when stale; a belief lifetime opens and resolves.
+
+### catalog probes (core)
+
+Doctor checks, migration probes and session settings that ask Postgres about itself. They keep no records, so this
+family has no tag. Each probe either gets a fixed answer on Rust or answers from a capability.
+
+- **Files:** `store-members/catalog.ts`, plus the relation catalog `rust/catalog/relations.json` the design plans
+  (generated from the PGLite schema; it does not exist yet). The schema-verify answers wait on it.
+- **Tag:** none. Cascade on page delete: no.
+- **Members (about 20 after merging 35 sites), capability:** none of its own. A probe that reports a fixed answer is
+  always served; a probe that depends on a family answers from that family's capability.
+- **Rule:** a doctor check about Postgres internals reports "skipped: not applicable on this engine", never a pass
+  it did not measure. A probe that feeds a decision (a migration step, a cap) gets the fixed answer below.
+
+Fixed answers on Rust:
+
+| Probe | Sites | Rust answer |
+|---|---|---|
+| `pg_proc`: `functionSearchPathProblems`, `functionBodyDrift` | doctor | not applicable: the store has no SQL functions |
+| `set_config`: `setStatementTimeout`, `setStatementTimeoutLocal`, `setPlannerSettingLocal`, `setSynchronousCommit` | doctor, persistence | no-op: every store call carries a deadline and commits durably |
+| `pg_stat_activity`: `probeOldestXactAge` | doctor | null: no long-lived session transactions |
+| `pg_index`, planner statistics: `listExpressionIndexesWithoutStats`, `readPlannerStatsState`, the `pg_index` probe in `readJournalLimits` | doctor, persistence | empty or not applicable: no planner |
+| `information_schema` and `pg_constraint` in migrations v0_14, v0_16, v0_18, v0_28, v0_31, v0_32_2 | migrations | not reached: a Rust brain upgrades with store format steps (`upgrade_format`) |
+| schema verify: `listActualColumns`, `listActualTables`, `listTableColumns`, `readColumnNames`, `readColumnDefault`, `revisionColumnNotNull` | doctor, schema verify | from the relation catalog at the store format version (skipped until the catalog exists) |
+| `listRelationNames`, `relationRowEstimate`, `persistenceRequestBytes`, `readRequestIndexStates`, `noteProjectionRebuilds` | doctor, persistence | from the relation catalog, or the owning family's count when it is served |
+| `pg_policy`: `pageAdmissionSource` | persistence | none: the store has no row policies |
+| `postgres_admin` checks (pooler, roles, server settings) | doctor | skipped: the capability is not reported |
+
+Need a capability check:
+
+| Probe | Sites | Rust answer |
+|---|---|---|
+| `tableExists` / `to_regclass` on a family table | `core-health`, `edge-validity` (`link_relationships`), `owner-host-stale` (persistence tables), `queue-assets`, `unlinked-facts` (`fact_relink_attempts`), `trust/owner-actions` (write gate tables), `listMissingRelations` | true only when the owning family's capability is reported |
+| `probeLinksTable`, `probeLinkSourceConstraint` | link source check | the `links` capability; the constraint answer is "present", since the links family enforces it |
+| `hasPgvectorExtension` | doctor, setup | the `vector_search` capability |
+| `relationSizeBytes` | doctor | the owning family's size estimate when it reports one, otherwise "not measured" |
+
+Counts that look like probes but read a family's rows go to that family, not here: `countRetirementsBySource` and
+`countRestorableRetirements` (facts), `sumExtractionCostByKind` (extraction), `readActiveBiasTags` (eval_capture),
+`countMcpRequestLogRows` (search telemetry), `countPendingWakeForgets` (jobs), `sampleVisibleEntityCoverage` and
+`countPageTypePairs` (page_ops).
+
+- **Depends on:** nothing for the fixed answers; each capability check depends on its family.
+- **Estimate:** about 3 days.
+- **Notes:** the capability checks need no new store member: `engine.capabilities` already answers them.
+- **Parity cases:** none exist yet. A `test/engine-parity/catalog.test.ts` checks that each fixed answer and each
+  capability answer matches the table above on the Rust arm, and that every doctor check that probes Postgres
+  internals reports "skipped" on Rust, not a pass.
+
 ## Cases that need more than one family
 
 These parity cases call members of several families. Each turns green only when every family it names is built;
@@ -1270,6 +1643,10 @@ Dec 1 is `sweepSegments`; it is a single member that refuses cleanly, so the res
 
 The estimates are judgments from the size of the PGLite code each member reproduces, not measurements.
 
+The four families in "New families from the CLI contract map" (about 40 days in all) are not in the 54 days: they
+serve CLI and MCP paths, not the parity suite. None of them moves Dec 1 unless Dec 1 includes CLI writes on a Rust
+brain; then the first persistence slice (about 4 days, core) comes first.
+
 ### What stays with core and what it waits on
 
 | Core item | Waits on | Needed by |
@@ -1299,3 +1676,7 @@ The estimates are judgments from the size of the PGLite code each member reprodu
 | Wanted links stub (`wanted_links.rs`: sub-tag `W` under `q`, an empty `remove_page_rows` on the page-delete list) | built; the family fills in the body | wanted_links (`listWantedPages`) |
 | Chunk-write hook (`chunks::write_chunk` calls `code_edges::put_chunk_index(tx, id, page_id, symbol_name)` for every chunk record it writes) | built on code_edges' branch (`rust-lane-code-edges-index`, in its own commit); arrives with that merge | code_edges (chunk index `H 0x07`, `H 0x08`) |
 | Open-time index build (`Store::open` calls `code_edges::build_chunk_index(&*kv)`, which indexes a brain written before the index once; `seed` calls `code_edges::seed_chunk_index(tx)`, which marks a new brain's empty index complete) | built on code_edges' branch (`rust-lane-code-edges-index`, in its own commit); arrives with that merge | code_edges (`H 0x09`) |
+| Proposed tags `d`, `m`, `t` and constants `PERSISTENCE`, `JOBS`, `TRUST` in the reserved block of `keys.rs` | a yes on the new families | persistence, jobs, trust |
+| Projection hook (`write_page` and `remove_page` keep `page_projection_jobs` as PGLite's `gbrain_queue_page_projection` trigger does) | the persistence family | persistence (projection queue) |
+| `trust.rs` on the page-columns list (one line) | the trust family | trust (`trust_tier` and write provenance on `getPage`) |
+| `trust` capability in `ENGINE_CAPABILITIES` | the trust family | trust |

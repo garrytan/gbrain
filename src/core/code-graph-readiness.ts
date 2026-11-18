@@ -2,7 +2,7 @@ import type { BrainEngine } from './engine.ts';
 import type { PageReadScope } from './types.ts';
 import { EDGE_EXTRACTOR_VERSION_TS, OWNS_EDGE } from './chunkers/symbol-resolver.ts';
 import { codeReadFilter } from './code-intel/read-scope.ts';
-import { pageReadFilter } from './search/read-policy-sql.ts';
+import type { CodeChunkScope } from './engine-sql/chunk-reads.ts';
 import { resolveExcludePrivatePages } from './search/private-visibility.ts';
 import { probeProjectionReadiness } from './search/projection-readiness.ts';
 
@@ -25,31 +25,32 @@ export async function codeChunksExist(
   sourceId: string | undefined,
   policy: PageReadScope = {},
 ): Promise<boolean> {
-  const params: unknown[] = [];
-  const filter = pageReadFilter('p', { ...policy, sourceId }, params, true);
-  const rows = await engine.executeRaw<{ e: boolean }>(
-    `SELECT EXISTS(
-       SELECT 1 FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
-       WHERE p.page_kind = 'code' AND ${filter}
-         ${policy.sourceIds?.length === 0 ? 'AND FALSE' : ''}
-     ) AS e`,
-    params,
-  );
-  if (typeof rows[0]?.e !== 'boolean') throw new Error('Invalid code readiness result');
-  return rows[0].e;
+  return engine.codeChunksExist(sourceId, policy);
+}
+
+/** The read-policy keys of `scope` that `codeReadFilter` reads; the readiness keys (kind, count, remote) stay here. */
+function chunkScope(scope: ReadinessScope): CodeChunkScope {
+  const { sourceId, sourceIds, allSources, excludePrivate, requireSafeChunks, minTrust, suppressFlagged } = scope;
+  return { sourceId, sourceIds, allSources, excludePrivate, requireSafeChunks, minTrust, suppressFlagged };
 }
 
 async function currentChunksExist(
   engine: BrainEngine,
   scope: ReadinessScope,
-  predicate: string,
-  params: unknown[] = [],
+  predicate: 'any' | 'with_symbol',
 ): Promise<boolean> {
+  return engine.currentCodeChunksExist(chunkScope(scope), predicate);
+}
+
+/** Whether a current code chunk in scope still waits for edge extraction at the current extractor version. */
+async function pendingEdgesExist(engine: BrainEngine, scope: ReadinessScope): Promise<boolean> {
+  const params: unknown[] = [EDGE_EXTRACTOR_VERSION_TS];
   const filter = codeReadFilter(params, scope);
   const rows = await engine.executeRaw<{ e: boolean }>(
     `SELECT EXISTS(
        SELECT 1 FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
-       WHERE p.page_kind = 'code' AND ${filter} AND ${predicate}
+       WHERE p.page_kind = 'code' AND ${filter}
+         AND (cc.edges_backfilled_at IS NULL OR cc.edges_backfilled_at < $1::timestamptz) AND ${OWNS_EDGE}
      ) AS e`,
     params,
   );
@@ -75,10 +76,10 @@ export async function resolveCodeReadiness(
     if (opts.count > 0) {
       return { status: 'ready', ready: true, has_code: true, pending_edges: false };
     }
-    const hasCode = await currentChunksExist(engine, scope, 'TRUE');
+    const hasCode = await currentChunksExist(engine, scope, 'any');
     if (!hasCode) {
       if (sourceId !== undefined && opts.remote === false && opts.sourceIds === undefined
-        && await currentChunksExist(engine, { ...scope, sourceId: undefined }, 'TRUE')) {
+        && await currentChunksExist(engine, { ...scope, sourceId: undefined }, 'any')) {
         return {
           status: 'out_of_scope', ready: false, has_code: false,
           pending_edges: false, scoped_source_id: sourceId,
@@ -87,11 +88,10 @@ export async function resolveCodeReadiness(
       return { status: 'not_built', ready: false, has_code: false, pending_edges: false };
     }
     if (opts.kind === 'symbol') {
-      const hasSymbols = await currentChunksExist(engine, scope, 'cc.symbol_name IS NOT NULL');
+      const hasSymbols = await currentChunksExist(engine, scope, 'with_symbol');
       return { status: hasSymbols ? 'ready' : 'no_symbols', ready: hasSymbols, has_code: true, pending_edges: false };
     }
-    const pending = await currentChunksExist(engine, scope,
-      `(cc.edges_backfilled_at IS NULL OR cc.edges_backfilled_at < $1::timestamptz) AND ${OWNS_EDGE}`, [EDGE_EXTRACTOR_VERSION_TS]);
+    const pending = await pendingEdgesExist(engine, scope);
     return { status: pending ? 'indexing' : 'ready', ready: !pending, has_code: true, pending_edges: pending };
   } catch {
     return { status: 'unknown', ready: false, has_code: opts.count > 0, pending_edges: false };

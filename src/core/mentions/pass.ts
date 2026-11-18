@@ -55,7 +55,7 @@ import type { BrainEngine, LinkBatchInput } from '../engine.ts';
 import { pipelined } from '../page-state/transactions.ts';
 import { isCrossSourceLinksEnabled } from '../link-extraction.ts';
 import {
-  buildGazetteer, findMentionedEntities, gazetteerEntryKeys, tokenizeTitle,
+  buildGazetteer, entryNameNorm, findMentionedEntities, gazetteerEntryKeys, tokenizeTitle,
   type FindMentionsOpts, type Gazetteer, type GazetteerEntry, type GazetteerEntryKey, type Mention,
 } from '../by-mention.ts';
 import { bodyBlocks, detachedValue } from '../page-body/segment-blocks.ts';
@@ -116,12 +116,8 @@ export interface MentionPassOpts {
 const DUE_PREDICATE = `(s.page_id IS NULL OR s.mention_revision IS DISTINCT FROM p.knowledge_revision OR s.mention_version IS DISTINCT FROM $2)`;
 
 /** Mention-due live pages, per source (or one source). */
-export async function countMentionDuePages(engine: Pick<BrainEngine, 'executeRaw'>, sourceId?: string): Promise<number> {
-  const rows = await engine.executeRaw<{ n: number }>(
-    `SELECT count(*)::int AS n FROM pages p LEFT JOIN page_mention_state s ON s.page_id = p.id
-      WHERE p.deleted_at IS NULL AND ($1::text IS NULL OR p.source_id = $1) AND ${DUE_PREDICATE}`,
-    [sourceId ?? null, MENTION_EXTRACTOR_VERSION]);
-  return Number(rows[0]?.n ?? 0);
+export async function countMentionDuePages(engine: Pick<BrainEngine, 'countPagesDueForMentions'>, sourceId?: string): Promise<number> {
+  return engine.countPagesDueForMentions({ sourceId: sourceId ?? null, mentionVersion: MENTION_EXTRACTOR_VERSION });
 }
 
 /**
@@ -129,13 +125,9 @@ export async function countMentionDuePages(engine: Pick<BrainEngine, 'executeRaw
  * pages (`types`) whose derived aliases are behind their content or
  * ALIAS_DERIVATION_VERSION. The status row's `pending` holds this count.
  */
-export async function countIndexDuePages(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, types: string[]): Promise<number> {
-  const rows = await engine.executeRaw<{ n: number }>(
-    `SELECT count(*)::int AS n FROM pages p LEFT JOIN page_mention_state s ON s.page_id = p.id
-      WHERE p.deleted_at IS NULL AND p.source_id = $1 AND (${DUE_PREDICATE}
-        OR (p.type = ANY($3::text[]) AND (s.alias_revision IS DISTINCT FROM p.knowledge_revision OR s.alias_version IS DISTINCT FROM $4)))`,
-    [sourceId, MENTION_EXTRACTOR_VERSION, types, ALIAS_DERIVATION_VERSION]);
-  return Number(rows[0]?.n ?? 0);
+export async function countIndexDuePages(engine: Pick<BrainEngine, 'countPagesDueForMentions'>, sourceId: string, types: string[]): Promise<number> {
+  return engine.countPagesDueForMentions({ sourceId, mentionVersion: MENTION_EXTRACTOR_VERSION,
+    aliases: { types, version: ALIAS_DERIVATION_VERSION } });
 }
 
 /**
@@ -207,7 +199,7 @@ async function aliasWrite<T>(engine: BrainEngine, managed: boolean, sourceId: st
  * write). A page that is not a linkable entity, or linking that is off,
  * leaves no derived rows. Frontmatter rows are untouched.
  */
-export async function writeDerivedAliases(tx: Pick<BrainEngine, 'executeRaw' | 'getConfig'>, sourceId: string,
+export async function writeDerivedAliases(tx: Pick<BrainEngine, 'replaceDerivedAliases' | 'executeRaw' | 'getConfig'>, sourceId: string,
   page: { slug: string; title: string | null; type: string | null; compiled_truth: string | null; timeline?: string | null; frontmatter?: Record<string, unknown> | null },
   opts: { pack?: PackTypes | null; policy?: MentionPolicy | null } = {}): Promise<number> {
   // A config read that fails (null policy) leaves the rows for the next sweep rather than failing the caller's write.
@@ -215,13 +207,7 @@ export async function writeDerivedAliases(tx: Pick<BrainEngine, 'executeRaw' | '
   if (!policy) return 0;
   const types = policy.enabled ? linkableTypesFor(opts.pack !== undefined ? opts.pack : await loadSourcePack(tx, sourceId), policy) : [];
   const aliases = types.includes(page.type ?? '') ? deriveEntityAliases(page, aliasOptsOf(policy)).aliases : [];
-  await tx.executeRaw(`DELETE FROM page_aliases WHERE source_id = $1 AND slug = $2 AND origin IN ('declared','subject')`, [sourceId, page.slug]);
-  if (aliases.length) {
-    await tx.executeRaw(
-      `INSERT INTO page_aliases (source_id, alias_norm, slug, origin, case_sensitive, alias_text)
-       SELECT $1, a, $2, o, c::boolean, t FROM unnest($3::text[], $4::text[], $5::text[], $6::text[]) AS x(a, o, c, t) ON CONFLICT DO NOTHING`,
-      [sourceId, page.slug, aliases.map(a => a.alias_norm), aliases.map(a => a.origin), aliases.map(a => String(a.case_sensitive)), aliases.map(a => a.alias_text)]);
-  }
+  await tx.replaceDerivedAliases(page.slug, sourceId, aliases);
   return aliases.length;
 }
 
@@ -464,7 +450,7 @@ function miniGazetteer(gazetteer: Gazetteer, keys: Set<string>): Gazetteer {
 
 function entryKey(e: GazetteerEntry | GazetteerEntryKey): string {
   if ('target_slug' in e) return `${e.source_id}\0${e.name_norm}\0${e.target_slug}\0${e.case_sensitive}`;
-  return `${e.source_id}\0${(e.caseTokens ?? e.tokens).join(' ')}\0${e.slug}\0${!!e.caseTokens}`;
+  return `${e.source_id}\0${entryNameNorm(e)}\0${e.slug}\0${!!e.caseTokens}`;
 }
 
 /**

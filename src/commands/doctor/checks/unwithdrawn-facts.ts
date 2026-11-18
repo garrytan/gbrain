@@ -1,6 +1,7 @@
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import { classifyUnwithdrawnFacts } from '../../../core/repair/unwithdrawn-facts.ts';
+import { sortSourcesById } from '../../../core/source-rows.ts';
 
 /**
  * #8819: facts a facts-fence generation retired although no fence of their page ever held them (often the page's first
@@ -10,7 +11,7 @@ import { classifyUnwithdrawnFacts } from '../../../core/repair/unwithdrawn-facts
  */
 export async function unwithdrawnFactsCheck(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {
   try {
-    const sources = sourceIds ?? (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(row => row.id);
+    const sources = sourceIds ?? sortSourcesById(await engine.listAllSources()).map(row => row.id);
     const facts = await classifyUnwithdrawnFacts(engine, sources);
     const count = (klass: string) => facts.filter(f => f.class === klass).length;
     const details = { evidenced: count('evidenced'), ambiguous: count('ambiguous'), excluded: count('excluded'),

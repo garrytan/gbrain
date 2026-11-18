@@ -35,8 +35,10 @@ import { createHash } from 'node:crypto';
 export function semanticResultCacheAvailable(): boolean { return false; }
 
 import type { BrainEngine } from '../engine.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import type { SearchResult, HybridSearchMeta } from '../types.ts';
 import { buildPageGenerationsSnapshot, CACHE_GATE_WHERE_CLAUSE } from './query-cache-gate.ts';
+import { readConfigRows } from '../config-values.ts';
 
 /** Default cosine similarity threshold for cache hits. */
 export const DEFAULT_SIMILARITY_THRESHOLD = 0.92;
@@ -411,7 +413,8 @@ export class SemanticQueryCache {
          SELECT COUNT(*)::int AS n FROM deleted`,
       );
       return rows[0]?.n ?? 0;
-    } catch {
+    } catch (err) {
+      rethrowCapabilityRefusal(err);
       return 0;
     }
   }
@@ -433,7 +436,8 @@ export class SemanticQueryCache {
          FROM query_cache`,
       );
       return rows[0] ?? { total_rows: 0, total_hits: 0, fresh_rows: 0, stale_rows: 0 };
-    } catch {
+    } catch (err) {
+      rethrowCapabilityRefusal(err);
       // Best-effort by design (parity with readSearchStats): a brain without
       // the cache table shows all-zero, not a crash. cache_stats wraps this in
       // withRelationGuard for other unexpected relation errors; the
@@ -491,10 +495,7 @@ export async function loadCacheConfig(engine: BrainEngine): Promise<QueryCacheCo
     ttlSeconds: DEFAULT_TTL_SECONDS,
   };
   try {
-    const rows = await engine.executeRaw<{ key: string; value: string }>(
-      `SELECT key, value FROM config WHERE key = ANY($1)`,
-      [keys],
-    );
+    const rows = await readConfigRows(engine, keys);
     for (const row of rows) {
       if (row.key === 'search.cache.enabled') {
         config.enabled = row.value === '1' || row.value.toLowerCase() === 'true';

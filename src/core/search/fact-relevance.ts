@@ -29,18 +29,13 @@
  * and each caller picks its policy.
  */
 import type { BrainEngine } from '../engine.ts';
-import type { TrustTier } from '../trust/tier.ts';
-import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { CONVERSATION_SLOT_SQL } from '../chronicle/ontology.ts';
-import { PAGE_EXTRACTION_SOURCE_LIST, contextHeadSql } from '../facts/gone-page-facts.ts';
-import { factsFtsDocument, getFtsLanguage } from '../fts-language.ts';
+import { getFtsLanguage } from '../fts-language.ts';
 import { getEmbeddingModel } from '../ai/gateway.ts';
-import { privateProvenanceFilterUnderPolicy } from './private-visibility.ts';
-import { factVisibilitySql, withdrawalCoversFactSql } from '../access/member-facts.ts';
-import { quarantinedProvenanceFilterFragment } from '../quarantine.ts';
 import { namedEntity } from './entity-anchor.ts';
-import { projectionEligibleSql } from '../eligibility/sql.ts';
-import { escapeLikePattern } from '../cjk.ts';
+import { poolWhere, FACT_POOL_COLUMNS, type FactPoolScope, type FactPoolFilters, type RelevanceVector } from '../engine-sql/facts-trust.ts';
+import { renderFragment } from '../engine-sql/fragment.ts';
 import { supportsHnswIterativeScan } from '../vector-index.ts';
 import { VECTOR_EXTENSION_VERSION_SQL } from './vector-statement.ts';
 import { withVectorSettings } from './vector-settings.ts';
@@ -97,27 +92,7 @@ export const FACTS_ARM_COSINE_MIN = 0.6;
  */
 export const FACT_ADMISSION_FLOOR_EVIDENCE: Readonly<Record<string, string>> = {};
 
-export interface FactPoolScope {
-  sourceId?: string; sourceIds?: string[];
-  /** World-only facts: worldOnlyFacts(remote) for the caller (private facts only for the local CLI and the brain owner). */
-  worldOnly: boolean;
-  /** #5575 read floor and activation control, applied in the pool SQL like every retrieval arm. */
-  minTrust?: TrustTier; suppressFlagged?: boolean;
-  /** Hide facts whose provenance page is private (resolveExcludePrivatePages for the caller). */
-  excludePrivate: boolean;
-}
-
-/** recall's fact filters, applied inside every arm before its LIMIT. */
-export interface FactPoolFilters {
-  /** (source_id, entity_slug) pairs the entity resolved to, one per source. */
-  entities?: Array<{ sourceId: string; slug: string }>;
-  sessionId?: string;
-  /** Event time, COALESCE(valid_from, created_at). */
-  since?: Date;
-  grep?: string;
-  /** Also pool expired, superseded and lapsed facts (recall's `include_expired`). */
-  includeExpired?: boolean;
-}
+export type { FactPoolScope, FactPoolFilters };
 
 export interface FactPoolOpts {
   depth: { keyword: number; cosine: number; entity: number };
@@ -163,34 +138,18 @@ export type WordStems = Map<string, string[]>;
 async function wordStems(engine: BrainEngine, words: string[]): Promise<WordStems | null> {
   if (!words.length) return new Map();
   try {
-    const rows = await engine.executeRaw<{ w: string; lexemes: string[] | string | null }>(
-      `SELECT w, tsvector_to_array(to_tsvector('${getFtsLanguage()}'::regconfig, w)) AS lexemes FROM unnest($1::text[]) AS w`, [words]);
-    return new Map(rows.map(r => {
-      const all = Array.isArray(r.lexemes) ? r.lexemes : typeof r.lexemes === 'string' ? r.lexemes.replace(/^\{|\}$/g, '').split(',').filter(Boolean) : [];
-      const whole = all.filter(l => l.length > 1 || l === r.w);
-      return [r.w, whole.length ? whole : all];
+    const lexemes = await engine.wordLexemes(words);
+    return new Map([...lexemes].map(([w, all]) => {
+      const whole = all.filter(l => l.length > 1 || l === w);
+      return [w, whole.length ? whole : all];
     }));
-  } catch {
+  } catch (err) {
+    rethrowCapabilityRefusal(err);
     return null;
   }
 }
 
-/**
- * An ended fact a history read may show: superseded by a successor, or closed by a valid_until in the past while still
- * unexpired. A fact expired with no successor (forgotten or withdrawn) never matches, nor does any fact whose claim the
- * withdrawal ledger covers, nor one whose page a purge removed: a purge expires only the page's unexpired facts
- * (gone-page-facts.ts), so a superseded fact filed on or extracted from that page would otherwise come back. Only an
- * ontology observation's page is provenance; a conversation fact's slot (GBRA-574 B2) is filed on its page.
- */
-const ENDED_FACT_SQL = `(f.superseded_by IS NOT NULL OR (f.expired_at IS NULL AND f.valid_until <= now()))
-  AND NOT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = f.source_id AND w.visibility = f.visibility
-    AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact)) AND ${withdrawalCoversFactSql('w', 'f')})
-  AND (f.source_markdown_slug IS NULL OR (f.dimension IS NOT NULL AND NOT ${CONVERSATION_SLOT_SQL})
-    OR EXISTS (SELECT 1 FROM pages hp WHERE hp.source_id = f.source_id AND hp.slug = f.source_markdown_slug))
-  AND (f.source_markdown_slug IS NOT NULL OR f.source NOT IN (${PAGE_EXTRACTION_SOURCE_LIST.map(s => `'${s}'`).join(', ')})
-    OR EXISTS (SELECT 1 FROM pages hp WHERE hp.source_id = f.source_id AND hp.slug = ${contextHeadSql('f')}))`;
-
-const COLS = 'f.id, f.fact, f.kind, f.entity_slug, f.source_id, f.source, f.valid_from, f.valid_until, f.created_at, f.claim_metric, f.claim_period, f.source_markdown_slug, f.visibility, f.attributed_to, f.dimension, f.value_hash';
+const COLS = FACT_POOL_COLUMNS;
 
 /** The facts embedding column's type and declared dimensions, or null when there is none. */
 async function factsEmbeddingColumn(engine: BrainEngine): Promise<{ type: string; dims: number } | null> {
@@ -205,40 +164,13 @@ async function factsEmbeddingColumn(engine: BrainEngine): Promise<{ type: string
  * read policy plus the filters. Arms append their own params after these.
  */
 function poolPredicate(scope: FactPoolScope, filters: FactPoolFilters | undefined): { where: string; params: unknown[] } {
-  const params: unknown[] = [scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? 'default'], [...AUDIT_ROW_SOURCES]];
-  const bind = (v: unknown) => { params.push(v); return `$${params.length}`; };
-  const clauses = [
-    filters?.includeExpired ? 'f.source_id = ANY($1::text[])' : 'f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL',
-    filters?.includeExpired ? 'f.source != ALL($2::text[])' : '(f.valid_until IS NULL OR f.valid_until > now()) AND f.source != ALL($2::text[])',
-    quarantinedProvenanceFilterFragment('f'),
-    ...(scope.worldOnly ? [factVisibilitySql('f', ['world'])] : []),
-    ...(scope.excludePrivate ? [privateProvenanceFilterUnderPolicy('f')] : []),
-    projectionEligibleSql('facts', 'f', { floor: scope.minTrust, suppressFlagged: scope.suppressFlagged }),
-  ];
-  if (filters?.entities) {
-    clauses.push(`(f.source_id, f.entity_slug) IN (SELECT * FROM unnest(${bind(filters.entities.map(e => e.sourceId))}::text[], ${bind(filters.entities.map(e => e.slug))}::text[]))`);
-  }
-  if (filters?.sessionId) clauses.push(`f.source_session = ${bind(filters.sessionId)}`);
-  if (filters?.since) clauses.push(`COALESCE(f.valid_from, f.created_at) >= ${bind(filters.since.toISOString())}::text::timestamptz`);
-  if (filters?.grep?.trim()) clauses.push(`f.fact ILIKE ${bind(`%${escapeLikePattern(filters.grep.trim())}%`)} ESCAPE '\\'`);
-  return { where: clauses.join(' AND '), params };
+  const { text, params } = renderFragment(poolWhere(scope, filters));
+  return { where: text, params };
 }
 
 /** The comparable-embedding predicate: same model, current text hash, same dimensions (`dims` null when the column declares the query's). */
 const comparable = (model: string, dims: string | null) =>
   `f.embedding IS NOT NULL AND f.embedding_model = ${model} AND f.embedded_text_hash = md5(f.fact)${dims ? ` AND vector_dims(f.embedding) = ${dims}` : ''}`;
-
-/**
- * Run with a custom plan per call. A cached generic plan (PGLite reuses named
- * statements) cannot see the source arrays, estimates one matching fact and
- * nests the policy anti-joins over every match: about 9x slower at 100k facts.
- */
-function customPlan<T>(engine: BrainEngine, sql: string, params: unknown[]): Promise<T[]> {
-  return engine.transaction(async tx => {
-    await tx.executeRaw('SET LOCAL plan_cache_mode = force_custom_plan');
-    return tx.executeRaw<T>(sql, params);
-  });
-}
 
 /**
  * GST-1304: a question of up to MAX_QUERY_TERMS content terms is scored on them all. A longer one (a provider's
@@ -282,15 +214,10 @@ export async function collectFactCandidates(engine: BrainEngine, question: strin
   };
 
   type Row = FactCandidate & { similarity?: number | null };
+  const vector: RelevanceVector | null = allSim ? { literal: vec!.lit, type: column!.type === 'halfvec' ? 'halfvec' : 'vector', model: getEmbeddingModel(), dims: queryEmbedding!.length } : null;
   const keyword = async (): Promise<Row[]> => {
     if (!searched.length) return [];
-    const p = armParams(allSim ? simParams : []);
-    const doc = factsFtsDocument('f');
-    const tsq = `NULLIF(replace(plainto_tsquery('${getFtsLanguage()}'::regconfig, $${p.length + 1})::text, ' & ', ' | '), '')::tsquery`;
-    return customPlan<Row>(engine,
-      `SELECT ${COLS}, ${allSim ? simSql : 'NULL::float8 AS similarity'} FROM facts f WHERE ${where} AND ${doc} @@ ${tsq}
-       ORDER BY ts_rank_cd(${doc}, ${tsq}) DESC, f.valid_from DESC, f.id DESC LIMIT $${p.length + 2}`,
-      [...p, searched.join(' '), opts.depth.keyword]);
+    return engine.listFactsForRelevance({ arm: 'keyword', scope, filters: opts.filters, vector, terms: searched.join(' '), limit: opts.depth.keyword }) as Promise<Row[]>;
   };
   const nearest = async (): Promise<Row[]> => {
     if (!vec) return [];
@@ -310,18 +237,11 @@ export async function collectFactCandidates(engine: BrainEngine, question: strin
     const sourceIds = scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? 'default'];
     const named = await namedEntity(engine, question, { sourceIds, excludePrivate: scope.excludePrivate });
     if (!named) return [];
-    const p = armParams(allSim ? simParams : []);
-    const active = await engine.executeRaw<Row>(
-      `SELECT ${COLS}, ${allSim ? simSql : 'NULL::float8 AS similarity'} FROM facts f WHERE ${where} AND f.source_id = $${p.length + 1} AND f.entity_slug = $${p.length + 2}
-       ORDER BY f.valid_from DESC, f.id DESC LIMIT $${p.length + 3}`,
-      [...p, named.source_id, named.slug, opts.depth.entity]);
+    const read = (arm: 'entity' | 'entity_ended') => engine.listFactsForRelevance({ arm, scope, filters: opts.filters, vector,
+      entity: { sourceId: named.source_id, slug: named.slug }, limit: opts.depth.entity }) as Promise<Row[]>;
+    const active = await read('entity');
     if (!opts.history) return active;
-    const ended = poolPredicate(scope, { ...opts.filters, includeExpired: true });
-    const e = [...ended.params, ...(allSim ? simParams : [])];
-    return [...active, ...await engine.executeRaw<Row>(
-      `SELECT ${COLS}, ${allSim ? simSql : 'NULL::float8 AS similarity'} FROM facts f WHERE ${ended.where} AND ${ENDED_FACT_SQL} AND f.source_id = $${e.length + 1} AND f.entity_slug = $${e.length + 2}
-       ORDER BY f.valid_from DESC, f.id DESC LIMIT $${e.length + 3}`,
-      [...e, named.source_id, named.slug, opts.depth.entity])];
+    return [...active, ...await read('entity_ended')];
   };
   // Independent arms run concurrently (separate connections on Postgres); merged in a fixed order.
   const [byKeyword, byCosine, byEntity] = await Promise.all([keyword(), nearest(), entityFacts()]);
@@ -340,22 +260,9 @@ export async function collectFactCandidates(engine: BrainEngine, question: strin
  * dimensions), per source. Only meaningful when an embedding was compared.
  */
 export async function countUncomparableFacts(engine: BrainEngine, scope: FactPoolScope, filters: FactPoolFilters | undefined, dims: number): Promise<Array<{ source_id: string; n: number }>> {
-  const { where, params } = poolPredicate(scope, filters);
-  const model = `$${params.length + 1}`;
   const column = await factsEmbeddingColumn(engine);
   if (!column) return [];
-  const declared = column.dims === dims;
-  const active = filters?.includeExpired ? '' : ' AND f.expired_at IS NULL';
-  // Cheap candidates first (idx_facts_unembedded, idx_facts_embedding_model), then the read policy on those rows only.
-  const uncomparable = declared
-    ? `SELECT f.id FROM facts f WHERE f.source_id = ANY($1::text[])${active} AND (f.embedding IS NULL OR f.embedded_text_hash IS DISTINCT FROM md5(f.fact))
-       UNION SELECT f.id FROM facts f WHERE f.source_id = ANY($1::text[])${active} AND (f.embedding_model IS NULL OR f.embedding_model < ${model} OR f.embedding_model > ${model})`
-    : `SELECT f.id FROM facts f WHERE f.source_id = ANY($1::text[])${active} AND NOT (${comparable(model, `$${params.length + 2}`)})`;
-  const rows = await customPlan<{ source_id: string; n: number | string }>(engine,
-    `WITH u AS MATERIALIZED (${uncomparable})
-     SELECT f.source_id, count(*) AS n FROM facts f WHERE f.id IN (SELECT id FROM u) AND ${where}
-     GROUP BY f.source_id ORDER BY count(*) DESC, f.source_id`, [...params, getEmbeddingModel(), ...(declared ? [] : [dims])]);
-  return rows.map(r => ({ source_id: r.source_id, n: Number(r.n) }));
+  return engine.countUncomparableFacts({ scope, filters, dims, model: getEmbeddingModel(), declared: column.dims === dims });
 }
 
 /**
@@ -363,16 +270,30 @@ export async function countUncomparableFacts(engine: BrainEngine, scope: FactPoo
  * the pool's read policy, so a row the caller cannot see never shapes a window the caller sees; ordered by valid_from, id.
  * A row whose stored valid_until has passed still ends the value before it; withdrawn and superseded rows never do.
  */
-export async function readSlotRows(engine: BrainEngine, scope: FactPoolScope, slots: ReadonlyArray<{ source_id: string; entity_slug: string; dimension: string }>): Promise<SlotRow[]> {
+export async function readSlotRows(engine: BrainEngine, scope: FactPoolScope, slots: ReadonlyArray<{ source_id: string; entity_slug: string; dimension: string }>): Promise<Array<SlotRow & Omit<FactCandidate, 'entity'>>> {
   if (!slots.length) return [];
   const { where, params } = poolPredicate(scope, { includeExpired: true });
   const n = params.length;
-  return engine.executeRaw<SlotRow>(
-    `SELECT f.id, f.source_id, f.entity_slug, f.dimension, f.value_hash, f.valid_from, f.source_markdown_slug, f.fact FROM facts f
+  return engine.executeRaw<SlotRow & Omit<FactCandidate, 'entity'>>(
+    `SELECT ${COLS} FROM facts f
      WHERE ${where} AND f.expired_at IS NULL AND f.superseded_by IS NULL AND f.dimension IS NOT NULL AND f.value_hash IS NOT NULL AND COALESCE(f.dim_status, 'active') = 'active' AND ${CONVERSATION_SLOT_SQL}
        AND (f.source_id, f.entity_slug, f.dimension) IN (SELECT * FROM unnest($${n + 1}::text[], $${n + 2}::text[], $${n + 3}::text[]))
      ORDER BY f.valid_from, f.id`,
     [...params, slots.map(s => s.source_id), slots.map(s => s.entity_slug), slots.map(s => s.dimension)]);
+}
+
+/**
+ * GBRA-574 F (D1): the distinct (source_id, entity_slug) pairs among `keys` that hold an active fact in the pool under
+ * its read policy and have no live page at that slug (an unbacked name key), at most `limit`, by source then slug.
+ */
+export async function poolUnbackedKeys(engine: BrainEngine, scope: FactPoolScope, keys: readonly string[], limit: number): Promise<Array<{ source_id: string; entity_slug: string }>> {
+  if (!keys.length) return [];
+  const { where, params } = poolPredicate(scope, undefined);
+  const n = params.length;
+  return engine.executeRaw<{ source_id: string; entity_slug: string }>(
+    `SELECT DISTINCT f.source_id, f.entity_slug FROM facts f WHERE ${where} AND f.entity_slug = ANY($${n + 1}::text[])
+       AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.entity_slug AND p.deleted_at IS NULL)
+     ORDER BY f.source_id, f.entity_slug LIMIT $${n + 2}`, [...params, [...keys], limit]);
 }
 
 /** GBRA-574 B5: what marks a later fact as calling an earlier one off: saved-facts-match.ts's RETRACTION plus plain cancellation words. Fixed, never configurable. */

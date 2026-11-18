@@ -1025,7 +1025,7 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
           const filePublication = loadConfigFileOnly()?.mcp?.publish_skills;
           const current = await engine.getConfig('mcp.publish_skills') ?? (filePublication == null ? null : String(filePublication));
           if (prompted !== 'true' && current == null) {
-            const sources = await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE NOT archived AND local_path IS NOT NULL');
+            const sources = (await engine.listAllSources()).filter(s => s.local_path !== null);
             const dirLine = sources.length
               ? `${sources.length} registered content source(s); shared skills require reviewed source-local publication.`
               : 'No registered content root: choose a canonical source and complete host content migration first.';

@@ -59,6 +59,17 @@ function failing(pattern: RegExp, error: Error): BrainEngine {
   }) as unknown as BrainEngine;
 }
 
+/** The engine with one typed member that always throws `error`. */
+function failingMember(member: keyof BrainEngine, error: Error): BrainEngine {
+  return new Proxy(engine, {
+    get(target, prop, receiver) {
+      if (prop === member) return async () => { throw error; };
+      const value = Reflect.get(target, prop, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  }) as unknown as BrainEngine;
+}
+
 const input = {
   fact: 'Founded Acme in 2017', kind: 'fact' as const, notability: 'high' as const, source: 'test',
   visibility: 'world' as const, confidence: 1.0, validFrom: new Date(Date.UTC(2017, 0, 1)), embedding: null, sessionId: null,
@@ -66,7 +77,7 @@ const input = {
 
 describe('facts write-path failures (B-21)', () => {
   test('an exact-slug lookup error is not a fallback slug', async () => {
-    const broken = failing(/SELECT slug FROM pages WHERE source_id = \$1 AND slug = \$2/, new Error('connection reset'));
+    const broken = failingMember('findExactSlug', new Error('connection reset'));
     await expect(resolveEntitySlugWithSource(broken, 'default', 'people/alice-example')).rejects.toThrow('connection reset');
   });
 

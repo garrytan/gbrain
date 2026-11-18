@@ -205,6 +205,17 @@ page_types:
     extractable: true
     expert_routing: false
 
+  # imessage source kind: one private, owner-only page per chat per day. Not
+  # extractable: atom extraction never sends other people's messages to a
+  # model on its own (facts follow the connector's own extraction setting).
+  - name: imessage
+    primitive: temporal
+    path_prefixes:
+      - imessage/
+    aliases: []
+    extractable: false
+    expert_routing: false
+
   - name: calendar-event
     primitive: temporal
     path_prefixes:

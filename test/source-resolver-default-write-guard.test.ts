@@ -22,12 +22,13 @@ import {
   GBRAIN_ALLOW_DEFAULT_WRITE_ENV,
 } from '../src/core/source-resolver.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { withSourceResolutionReads } from './helpers/source-resolution-reads.ts';
 
 type Dist = { defaultPages: number; nonDefaultPages: number; nonDefaultSources: number };
 
 /** Stub engine that answers the guard's page-distribution aggregate. */
 function makeStub(dist: Dist | 'throw') {
-  return {
+  return withSourceResolutionReads({
     kind: 'pglite' as const,
     async executeRaw<T>(sql: string): Promise<T[]> {
       if (dist === 'throw') throw new Error('no pages table');
@@ -40,7 +41,7 @@ function makeStub(dist: Dist | 'throw') {
       }
       return [];
     },
-  } as unknown as Parameters<typeof assessDefaultWriteGuard>[0];
+  }) as unknown as Parameters<typeof assessDefaultWriteGuard>[0];
 }
 
 /** A stub distribution the guard fires on: bulk-non-default brain. */
@@ -76,12 +77,12 @@ describe('assessDefaultWriteGuard', () => {
   });
 
   test('coerces string/bigint aggregate results (pglite SUM/COUNT shapes)', async () => {
-    const engine = {
+    const engine = withSourceResolutionReads({
       kind: 'pglite' as const,
       async executeRaw<T>(): Promise<T[]> {
         return [{ default_pages: '3', non_default_pages: '900', non_default_sources: BigInt(2) }] as unknown as T[];
       },
-    } as unknown as Parameters<typeof assessDefaultWriteGuard>[0];
+    }) as unknown as Parameters<typeof assessDefaultWriteGuard>[0];
     const a = await assessDefaultWriteGuard(engine);
     expect(a.shouldGuard).toBe(true);
     expect(a.nonDefaultPages).toBe(900);
@@ -97,10 +98,10 @@ describe('assessDefaultWriteGuard', () => {
   });
 
   test('fail-open: an empty result set returns shouldGuard=false', async () => {
-    const engine = {
+    const engine = withSourceResolutionReads({
       kind: 'pglite' as const,
       async executeRaw<T>(): Promise<T[]> { return [] as T[]; },
-    } as unknown as Parameters<typeof assessDefaultWriteGuard>[0];
+    }) as unknown as Parameters<typeof assessDefaultWriteGuard>[0];
     const a = await assessDefaultWriteGuard(engine);
     expect(a.shouldGuard).toBe(false);
     // An empty result IS a measurement (no rows), not a failure.

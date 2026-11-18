@@ -63,6 +63,7 @@ import { resolveSourceWithTier, type SourceTier } from './source-resolver.ts';
 import { deleteSourceRow } from './source-delete.ts';
 import { defaultCloneDir, isOwnedClone } from './url-clone.ts';
 import { hookSessionCwd } from './session-cwd.ts';
+import { sourceRecordsRawConfig } from './source-rows.ts';
 
 // ── Errors ──────────────────────────────────────────────────────────────────
 
@@ -229,6 +230,8 @@ export interface AddSourceOpts {
    * `tokenEnv`; no secret lands in sources.config. See src/core/slack/.
    */
   slack?: import('./slack/source-add.ts').AddSourceSlackOpts;
+  /** Register an imessage-kind source (the GBrain Helper on this Mac); always database-recorded and owner-only. See src/core/imessage/. */
+  imessage?: import('./imessage/source-add.ts').AddSourceIMessageOpts;
 }
 
 export interface RemoveSourceOpts {
@@ -294,39 +297,11 @@ function getRemoteUrl(config: unknown): string | null {
 }
 
 async function fetchSourceRow(engine: BrainEngine, id: string): Promise<SourceRow | null> {
-  const rows = await engine.executeRaw<{
-    id: string;
-    name: string;
-    local_path: string | null;
-    last_commit: string | null;
-    last_sync_at: Date | null;
-    config: unknown;
-    created_at: Date;
-  }>(
-    `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at
-       FROM sources WHERE id = $1`,
-    [id],
-  );
-  const r = rows[0];
+  const r = await engine.getSource(id);
   if (!r) return null;
-  return { ...r, config: parseConfig(r.config) };
+  return { id: r.id, name: r.name, local_path: r.local_path, last_commit: r.last_commit, last_sync_at: r.last_sync_at, created_at: r.created_at, config: parseConfig(r.config) };
 }
 
-async function countAllPages(engine: BrainEngine, id: string): Promise<number> {
-  const rows = await engine.executeRaw<{ n: number }>(
-    `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1`,
-    [id],
-  );
-  return rows[0]?.n ?? 0;
-}
-
-async function countVisiblePages(engine: BrainEngine, id: string): Promise<number> {
-  const rows = await engine.executeRaw<{ n: number }>(
-    `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1 AND deleted_at IS NULL`,
-    [id],
-  );
-  return rows[0]?.n ?? 0;
-}
 
 /** Temp clone dir under $GBRAIN_HOME/clones/.tmp/<id>-<rand>/ */
 function makeTempCloneDir(id: string): string {
@@ -386,10 +361,7 @@ export async function assertNoOverlappingPath(
   id: string,
   path: string,
 ): Promise<void> {
-  const others = await engine.executeRaw<{ id: string; local_path: string }>(
-    `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL AND id != $1`,
-    [id],
-  );
+  const others = (await engine.listLocalPathSources()).filter(row => row.id !== id);
   // Compare by spelling AND by realpath: a symlink whose spelling shares no
   // prefix with another source's tree still resolves onto that tree, and the
   // sibling may itself be registered via a symlink. Realpath only when the
@@ -437,7 +409,13 @@ export async function assertNoOverlappingPath(
  * pages into --dir, inside a Git checkout that no other source covers (a nested
  * root would import every page twice).
  */
-async function insertApiSource(engine: BrainEngine, opts: AddSourceOpts, kind: 'meetings' | 'slack'): Promise<void> {
+async function insertApiSource(engine: BrainEngine, opts: AddSourceOpts, kind: 'meetings' | 'slack' | 'imessage'): Promise<void> {
+  if (kind === 'imessage') {
+    const { imessageSourceConfig } = await import('./imessage/source-add.ts');
+    await engine.insertSource({ id: opts.id, name: opts.name ?? opts.id, local_path: null,
+      config: imessageSourceConfig(opts.imessage!, opts.federated) });
+    return;
+  }
   const { chooseMeetingsRecord, meetingsSourceConfig } = await import('./meetings/source-add.ts');
   const { slackSourceConfig } = await import('./slack/source-add.ts');
   const request = kind === 'slack' ? opts.slack! : opts.meetings!;
@@ -449,12 +427,9 @@ async function insertApiSource(engine: BrainEngine, opts: AddSourceOpts, kind: '
       `${choice.dir} overlaps source "${overlap.id}" at ${overlap.local_path}; its pages would be imported by both sources. Choose a directory no other source covers.`);
     mkdirPrivate(choice.dir);
   }
-  await engine.executeRaw(
-    `INSERT INTO sources (id, name, local_path, config)
-         VALUES ($1, $2, $3, $4::text::jsonb)`,
-    [opts.id, opts.name ?? opts.id, choice.dir, JSON.stringify(kind === 'slack' ? slackSourceConfig(opts.slack!, choice, opts.federated, false)
-      : meetingsSourceConfig(opts.meetings!, choice, opts.federated, false))],
-  );
+  await engine.insertSource({ id: opts.id, name: opts.name ?? opts.id, local_path: choice.dir ?? null,
+    config: (kind === 'slack' ? slackSourceConfig(opts.slack!, choice, opts.federated, false)
+      : meetingsSourceConfig(opts.meetings!, choice, opts.federated, false)) });
 }
 
 export async function addSource(
@@ -505,10 +480,7 @@ export async function addSource(
   }
 
   // Q4: pre-flight collision check before any clone work.
-  const existing = await engine.executeRaw<{ id: string; local_path: string | null }>(
-    `SELECT id, local_path FROM sources WHERE id = $1`,
-    [opts.id],
-  );
+  const existing = await engine.getSource(opts.id);
   // #3903: attach, don't collide. `gbrain sync --source X` on a path-less
   // source prints "Run: gbrain sources add X --path <path>" — so when the
   // existing row has NO local_path and the caller supplies exactly a --path
@@ -516,15 +488,15 @@ export async function addSource(
   // the existing row (non-destructive UPDATE) instead of demanding
   // `sources remove --confirm-destructive`, which cascades page deletion.
   const attachPath =
-    existing.length > 0 &&
-    existing[0]!.local_path === null &&
+    existing !== null &&
+    existing.local_path === null &&
     !!opts.localPath &&
     !opts.remoteUrl &&
     !opts.github &&
-    !opts.google && !opts.meetings && !opts.slack;
-  if (existing.length > 0 && !attachPath) {
-    const pathNote = existing[0]!.local_path
-      ? ` with local_path ${existing[0]!.local_path}`
+    !opts.google && !opts.meetings && !opts.slack && !opts.imessage;
+  if (existing !== null && !attachPath) {
+    const pathNote = existing.local_path
+      ? ` with local_path ${existing.local_path}`
       : '';
     throw new SourceOpError(
       'source_id_taken',
@@ -584,11 +556,7 @@ export async function addSource(
     const displayName = opts.name ?? opts.id;
 
     try {
-      await engine.executeRaw(
-        `INSERT INTO sources (id, name, local_path, config)
-             VALUES ($1, $2, $3, $4::text::jsonb)`,
-        [opts.id, displayName, finalPath, JSON.stringify(config)],
-      );
+      await engine.insertSource({ id: opts.id, name: displayName, local_path: finalPath, config });
     } catch (e) {
       rmSync(tempDir, { recursive: true, force: true });
       throw new SourceOpError(
@@ -656,11 +624,7 @@ export async function addSource(
       }
     }
     const displayName = opts.name ?? opts.id;
-    await engine.executeRaw(
-      `INSERT INTO sources (id, name, local_path, config)
-           VALUES ($1, $2, $3, $4::text::jsonb)`,
-      [opts.id, displayName, finalPath, JSON.stringify(config)],
-    );
+    await engine.insertSource({ id: opts.id, name: displayName, local_path: finalPath, config });
   } else if (opts.google) {
     // ── Path D: --kind google (v0.47) ─────────────────────────────────────
     // API-backed source: no git repo, no clone. Credentials live in the
@@ -692,13 +656,9 @@ export async function addSource(
       federated: opts.federated ?? true,
     };
     const displayName = opts.name ?? opts.id;
-    await engine.executeRaw(
-      `INSERT INTO sources (id, name, local_path, config)
-           VALUES ($1, $2, $3, $4::text::jsonb)`,
-      [opts.id, displayName, finalPath, JSON.stringify(config)],
-    );
-  } else if (opts.meetings || opts.slack) {
-    await insertApiSource(engine, opts, opts.slack ? 'slack' : 'meetings');
+    await engine.insertSource({ id: opts.id, name: displayName, local_path: finalPath, config });
+  } else if (opts.meetings || opts.slack || opts.imessage) {
+    await insertApiSource(engine, opts, opts.imessage ? 'imessage' : opts.slack ? 'slack' : 'meetings');
   } else {
     // ── Path B: --path or no path (existing behavior, pre-v0.28) ─────────
     // #2707: only validate when the path actually exists — a not-yet-created
@@ -757,11 +717,7 @@ export async function addSource(
         config.federated = opts.federated;
       }
       const displayName = opts.name ?? opts.id;
-      await engine.executeRaw(
-        `INSERT INTO sources (id, name, local_path, config)
-             VALUES ($1, $2, $3, $4::text::jsonb)`,
-        [opts.id, displayName, finalPath, JSON.stringify(config)],
-      );
+      await engine.insertSource({ id: opts.id, name: displayName, local_path: finalPath, config });
     }
   }
 
@@ -875,7 +831,7 @@ export async function listSources(
   // v0.28.1 codex finding (MEDIUM): the prior version ignored the
   // includeArchived flag and returned every row. That leaked archived
   // sources' ids, local_paths, and remote_urls to read-scoped MCP callers
-  // who shouldn't see soft-deleted state. Filter at the SQL level so the
+  // who shouldn't see soft-deleted state. Filter in the source read so the
   // archived rows never reach the wire by default.
   //
   // #4433: `allowedSourceIds` row-filters to the caller's source scope —
@@ -885,36 +841,20 @@ export async function listSources(
   // nothing (fail-closed); undefined = unscoped (trusted local CLI and
   // internal callers — since wave-L, remote scalar/no-grant callers pass
   // their resolved scope here too instead of arriving unscoped).
-  const conds: string[] = [];
-  const params: unknown[] = [];
-  if (!opts.includeArchived) conds.push('archived IS NOT TRUE');
-  if (opts.allowedSourceIds !== undefined) {
-    params.push([...opts.allowedSourceIds]);
-    conds.push(`id = ANY($${params.length})`);
-  }
-  const where = conds.length > 0 ? `WHERE ${conds.join(' AND ')}` : '';
-  const rows = await engine.executeRaw<{
-    id: string;
-    name: string;
-    local_path: string | null;
-    last_sync_at: Date | null;
-    config: unknown;
-  }>(
-    `SELECT id, name, local_path, last_sync_at, config
-       FROM sources ${where} ORDER BY (id = 'default') DESC, id`,
-    params,
-  );
+  const allowed = opts.allowedSourceIds === undefined ? undefined : new Set(opts.allowedSourceIds);
+  const rows = (await sourceRecordsRawConfig(engine, { includeArchived: opts.includeArchived === true }))
+    .filter(r => !allowed || allowed.has(r.id));
   const out: SourceListEntry[] = [];
   for (const r of rows) {
     const cfg = parseConfig(r.config);
     out.push({
       id: r.id,
-      name: r.name,
+      name: r.name as string,
       local_path: r.local_path,
       remote_url: typeof cfg.remote_url === 'string' ? cfg.remote_url : null,
       federated: cfg.federated === true,
       strategy: isSyncStrategy(cfg.strategy) ? cfg.strategy : null,
-      page_count: await countVisiblePages(engine, r.id),
+      page_count: await engine.countSourcePages(r.id),
       last_sync_at: r.last_sync_at ? new Date(r.last_sync_at).toISOString() : null,
     });
   }
@@ -971,7 +911,7 @@ export async function removeSource(
     throw new SourceOpError('not_found', `Source "${opts.id}" not found.`);
   }
 
-  const pageCount = await countAllPages(engine, opts.id);
+  const pageCount = await engine.countSourcePages(opts.id, { includeDeleted: true });
 
   if (opts.dryRun) {
     return {
@@ -1092,7 +1032,7 @@ export async function getSourceStatus(
     local_path: src.local_path,
     remote_url: remoteUrl,
     federated: isFederated(src.config),
-    page_count: await countVisiblePages(engine, id),
+    page_count: await engine.countSourcePages(id),
     last_sync_at: src.last_sync_at ? new Date(src.last_sync_at).toISOString() : null,
     last_commit: src.last_commit,
     archived,

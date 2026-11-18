@@ -115,10 +115,9 @@ export async function buildSyncStatusReport(
   // with stale rows). Empty source list → skip the round-trip.
   const sourceRows = sourceIds.length === 0
     ? []
-    : await engine.executeRaw<SourceRow>(
-        `SELECT id, last_commit, last_sync_at, newest_content_at FROM sources WHERE id = ANY($1::text[])`,
-        [sourceIds],
-      );
+    : (await engine.listSourceRecords())
+        .filter(r => sourceIds.includes(r.id))
+        .map((r): SourceRow => ({ id: r.id, last_commit: r.last_commit, last_sync_at: r.last_sync_at, newest_content_at: r.newest_content_at ?? null }));
   const sourceMap = new Map<string, SourceRow>();
   for (const r of sourceRows) sourceMap.set(r.id, r);
 

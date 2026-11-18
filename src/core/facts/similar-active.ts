@@ -11,7 +11,6 @@ import { readDecideConfig, providerKind } from '../ai/decide/config.ts';
 import { hasTypesafeKey } from '../ai/decide/index.ts';
 import { CONFLICT_MIN_COSINE } from '../ai/decide/conflict.ts';
 import { REVIEW_WITHDRAW_KEY, reviewWithdrawOn } from './withdrawal.ts';
-import { privateProvenanceFilterUnderPolicy } from '../search/private-visibility.ts';
 
 export const SIMILAR_ACTIVE_LIMIT = 5;
 
@@ -49,23 +48,12 @@ export async function similarActiveAfterForget(engine: BrainEngine, opts: {
   const finish = (state: SimilarActive['state'], candidates: SimilarActive['candidates'], lead: string): SimilarActive =>
     ({ state, candidates, semantic_review, next: `${lead} ${REVIEW_LINE[semantic_review]}` });
   if (!opts.committed) return finish('not_checked_pending', [], 'Similar facts were not checked because the withdrawal has not committed yet.');
-  const [anchor] = await engine.executeRaw<{ has_embedding: boolean; entity_slug: string | null }>(
-    `SELECT embedding IS NOT NULL AS has_embedding, entity_slug FROM facts WHERE id=$1 AND source_id=$2`, [opts.factId, opts.sourceId]);
+  const { anchor, rows } = await engine.listSimilarActiveFacts({
+    sourceId: opts.sourceId, factId: opts.factId, remote: opts.remote, excludePrivate: opts.excludePrivate === true,
+    minCosine: CONFLICT_MIN_COSINE, limit: SIMILAR_ACTIVE_LIMIT });
   if (!anchor?.has_embedding) {
     return finish('not_checked_no_embedding', [], 'The withdrawn fact has no embedding, so close rewordings could not be checked; recall the entity and ask the user if any remaining fact restates it.');
   }
-  const rows = await engine.executeRaw<{ id: number | string; similarity: number | string }>(
-    `SELECT c.id, (1 - (c.embedding <=> n.embedding))::float8 AS similarity
-       FROM facts n JOIN facts c
-         ON c.source_id = n.source_id AND c.entity_slug IS NOT DISTINCT FROM n.entity_slug AND c.visibility = n.visibility AND c.id <> n.id
-      WHERE n.id = $1 AND n.source_id = $2
-        AND c.expired_at IS NULL AND (c.valid_until IS NULL OR c.valid_until > now())
-        AND c.embedding IS NOT NULL AND c.embedding_model = n.embedding_model
-        AND ($3::boolean = false OR c.visibility = 'world')${opts.excludePrivate ? ` AND ${privateProvenanceFilterUnderPolicy('c')}` : ''}
-        AND (1 - (c.embedding <=> n.embedding)) >= $4
-      ORDER BY c.embedding <=> n.embedding, c.id
-      LIMIT $5`,
-    [opts.factId, opts.sourceId, opts.remote, CONFLICT_MIN_COSINE, SIMILAR_ACTIVE_LIMIT]);
   const candidates = rows.map(r => ({ fact_id: String(r.id), similarity: Math.round(Number(r.similarity) * 1000) / 1000 }));
   if (!candidates.length) return finish('checked', [], 'No close matches found among the remaining active facts (this does not prove every rewording is gone).');
   const entity = anchor.entity_slug ? ` (recall entity: ${anchor.entity_slug})` : '';

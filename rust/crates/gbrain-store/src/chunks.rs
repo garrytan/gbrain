@@ -23,7 +23,8 @@ const MAX_TERM_BYTES: usize = 64;
 pub const CHUNK_TARGET_CHARS: usize = 1500;
 
 /// ChunkInput fields that are kept on the chunk and returned by `get_chunks`. `model` is the label
-/// the caller stamps on the chunk (the embedding model PGLite would record); no vector is stored.
+/// of the chunk's vector (the embedding model PGLite records); the vector itself is a record of the
+/// embeddings family (`crate::embeddings`).
 const META_KEYS: &[&str] = &[
     "language",
     "symbol_name",
@@ -39,8 +40,9 @@ const META_KEYS: &[&str] = &[
     "model",
 ];
 
-/// `ChunkInput` of `src/core/types.ts`. Vectors are not stored; any `embedding*` field is
-/// ignored.
+/// `ChunkInput` of `src/core/types.ts`. `embedding` (an array of numbers, or null) and
+/// `embedding_input_hash` arrive in `rest`; `replace_chunks_at` stores the vector. Any other
+/// `embedding*` field is ignored.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct ChunkInput {
@@ -69,10 +71,51 @@ pub(crate) struct ChunkRecord {
     /// Records written before this field decode as inline chunks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub segment: Option<SegmentPlace>,
+    /// The embedding bookkeeping of the chunk (PGLite's `embedded_at`, `embedded_text_hash`,
+    /// `embedding_input_hash`, `embedding_pending_since` and the vector's width). Records written
+    /// before this field decode as a chunk with no vector.
+    #[serde(default, skip_serializing_if = "EmbedState::is_empty")]
+    pub embed: EmbedState,
+}
+
+/// What a chunk record keeps about its vector. The vector itself is the embeddings family's record
+/// `B 'c' page_id chunk_index`; `dims` is 0 exactly when that record is absent.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct EmbedState {
+    /// Width of the stored vector; 0 when the chunk has none.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub dims: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub embedded_at_us: Option<i64>,
+    /// sha256 hex of the chunk text the vector was computed from (PGLite keeps md5).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_hash: Option<String>,
+    /// When the chunk lost (or was written without) its vector.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pending_since_us: Option<i64>,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
+impl EmbedState {
+    fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    pub(crate) fn has_vector(&self) -> bool {
+        self.dims > 0
+    }
 }
 
 impl ChunkRecord {
-    pub(crate) fn to_chunk(&self) -> Value {
+    /// The chunk as `getChunks` returns it. `vector` is the stored vector when the caller asked for
+    /// it; `embedding` is null otherwise.
+    pub(crate) fn to_chunk(&self, vector: Option<&[f32]>) -> Value {
         let mut v = json!({
             "id": self.id,
             "page_id": self.page_id,
@@ -80,11 +123,11 @@ impl ChunkRecord {
             "chunk_text": self.chunk_text,
             "chunk_source": self.chunk_source,
             "modality": self.modality,
-            "embedding": Value::Null,
+            "embedding": vector.map_or(Value::Null, |values| json!(values)),
             "model": self.meta.get("model").cloned().unwrap_or_else(|| json!("")),
             "token_count": self.meta.get("token_count").cloned().unwrap_or(Value::Null),
-            "embedded_at": Value::Null,
-            "has_embedding": false,
+            "embedded_at": self.embed.embedded_at_us.map_or(Value::Null, |us| json!(crate::env::iso(us))),
+            "embedding_is_null": !self.embed.has_vector(),
         });
         for key in META_KEYS {
             if let Some(value) = self.meta.get(*key) {
@@ -327,14 +370,14 @@ fn remove_chunk_record(
 ) -> Result<()> {
     delete_postings(tx, chunk)?;
     tx.delete(&keys::chunk(chunk.page_id, chunk.chunk_index))?;
+    crate::embeddings::remove_chunk_vector(tx, chunk.page_id, chunk.chunk_index)?;
     stats.chunks = stats.chunks.saturating_sub(1);
     stats.total_length = stats.total_length.saturating_sub(u64::from(chunk.length));
     Ok(())
 }
 
-/// Replaces a page's chunks with `chunks` (an empty list removes them all). A chunk that keeps
-/// its index keeps its id; the chunk-delete hook gets the ids of the indexes that are gone. When `seal` is set the page's `text_projection_revision` becomes its
-/// `knowledge_revision`: the chunks now describe the current text.
+/// Replaces a page's chunks with `chunks` (an empty list removes them all), at the page's
+/// `updated_at` (see `replace_chunks_at`).
 pub(crate) fn replace_chunks(
     tx: &mut dyn KvWrite,
     page: &mut PageRecord,
@@ -342,10 +385,73 @@ pub(crate) fn replace_chunks(
     seal: bool,
     merge: bool,
 ) -> Result<()> {
+    let now_us = page.updated_at_us;
+    replace_chunks_at(tx, page, chunks, seal, merge, now_us)
+}
+
+/// The vector a chunk write carries: `None` for an absent or null `embedding`. A vector must be
+/// `dims` finite numbers wide.
+fn input_vector(input: &ChunkInput, dims: usize) -> Result<Option<Vec<f32>>> {
+    let values = match input.rest.get("embedding") {
+        None | Some(Value::Null) => return Ok(None),
+        Some(Value::Array(values)) => values,
+        Some(_) => {
+            return Err(StoreError::invalid(
+                "a chunk embedding must be an array of numbers",
+            ));
+        }
+    };
+    let vector: Vec<f32> = values
+        .iter()
+        .map(|v| v.as_f64().map(|n| n as f32).filter(|n| n.is_finite()))
+        .collect::<Option<_>>()
+        .ok_or_else(|| StoreError::invalid("a chunk embedding must hold finite numbers"))?;
+    if vector.len() != dims {
+        return Err(StoreError::invalid(format!(
+            "expected {dims} dimensions, not {}",
+            vector.len()
+        )));
+    }
+    Ok(Some(vector))
+}
+
+/// The configured vector width (`embedding_dimensions`, 1536 when unset).
+pub(crate) fn embedding_dimensions(read: &dyn KvRead) -> Result<usize> {
+    Ok(crate::config::read_config(read, "embedding_dimensions")?
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(1536))
+}
+
+/// Replaces a page's chunks with `chunks` (an empty list removes them all). A chunk that keeps
+/// its index keeps its id; the chunk-delete hook gets the ids of the indexes that are gone. When
+/// `seal` is set the page's `text_projection_revision` becomes its `knowledge_revision`: the
+/// chunks now describe the current text.
+///
+/// Vectors follow PGLite's upsert. A chunk written fresh (`merge` false, or a new index) takes
+/// the write's vector, or none and a pending stamp of `now_us`. On a merge, a chunk whose text
+/// changed takes the write's vector or loses its own; a chunk whose text did not change keeps its
+/// vector unless it had none or the write carries one newer than it (`now_us` after its
+/// `embedded_at`). The `model` label follows the vector that wins.
+pub(crate) fn replace_chunks_at(
+    tx: &mut dyn KvWrite,
+    page: &mut PageRecord,
+    chunks: &[ChunkInput],
+    seal: bool,
+    merge: bool,
+    now_us: i64,
+) -> Result<()> {
     let previous: HashMap<u32, ChunkRecord> = read_chunks(&*tx, page.id)?
         .into_iter()
         .map(|c| (c.chunk_index, c))
         .collect();
+    let mut old_vectors = HashMap::new();
+    for old in previous.values().filter(|old| old.embed.has_vector()) {
+        if let Some(stored) = crate::embeddings::read_chunk_vector(&*tx, page.id, old.chunk_index)?
+        {
+            old_vectors.insert(old.chunk_index, stored);
+        }
+    }
     drop_chunks(tx, page.id)?;
     // The last chunk given for an index wins.
     let mut by_index: BTreeMap<u32, &ChunkInput> = BTreeMap::new();
@@ -361,30 +467,102 @@ pub(crate) fn replace_chunks(
     if !removed.is_empty() {
         crate::cascade::remove_chunk_rows(tx, page.id, &removed)?;
     }
+    let dims = if by_index
+        .values()
+        .any(|c| c.rest.get("embedding").is_some_and(|v| !v.is_null()))
+    {
+        embedding_dimensions(&*tx)?
+    } else {
+        0
+    };
     let mut stats = read_stats(&*tx)?;
     let view_generation = segment_view_generation(&*tx, page.id)?;
     for (index, input) in by_index {
         let source = checked_source(input)?;
         let text = input.chunk_text.replace('\0', "");
         let length = term_frequencies(&text).1;
-        let id = match previous.get(&index) {
+        let new_vector = input_vector(input, dims)?;
+        let old = previous.get(&index);
+        let id = match old {
             Some(old) => old.id,
             None => next_chunk_id(tx)?,
         };
         let mut meta = kept_meta(input);
+        let new_model = meta
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        if new_vector.is_some() && new_model.is_empty() {
+            return Err(StoreError::invalid(
+                "Embedding model provenance is unknown. Supply an explicit chunk model or run gbrain migrate embeddings --status before an explicit migration.",
+            ));
+        }
+        let merged = old.filter(|_| merge);
+        let text_changed = merged.is_some_and(|old| old.chunk_text != text);
         // PGLite's incremental write: a chunk whose text did not change keeps the metadata the
-        // new write leaves null (`COALESCE(new, old)`); `token_count` and `model` are the new
-        // write's. A chunk whose text changed takes the new write's metadata outright.
-        if let Some(old) = previous
-            .get(&index)
-            .filter(|old| merge && old.chunk_text == text)
-        {
+        // new write leaves null (`COALESCE(new, old)`); `token_count` is the new write's and
+        // `model` the label of the vector that wins. A chunk whose text changed takes the new
+        // write's metadata outright.
+        if let Some(old) = merged.filter(|_| !text_changed) {
             for (key, value) in &old.meta {
                 if key != "token_count" && key != "model" && !meta.contains_key(key) {
                     meta.insert(key.clone(), value.clone());
                 }
             }
         }
+        let kept = merged.filter(|old| {
+            !text_changed
+                && old_vectors.contains_key(&old.chunk_index)
+                && (new_vector.is_none() || old.embed.embedded_at_us.is_some_and(|at| now_us <= at))
+        });
+        let pending_since_us = match merged {
+            None => new_vector.is_none().then_some(now_us),
+            Some(_) if new_vector.is_some() => None,
+            Some(old) if !old_vectors.contains_key(&old.chunk_index) => {
+                Some(old.embed.pending_since_us.unwrap_or(now_us))
+            }
+            Some(_) if text_changed => Some(now_us),
+            Some(old) => old.embed.pending_since_us,
+        };
+        let (vector, embed) = match kept {
+            Some(old) => {
+                let stored = old_vectors.remove(&old.chunk_index).expect("checked above");
+                meta.insert("model".into(), Value::String(stored.model.clone()));
+                let embed = EmbedState {
+                    pending_since_us,
+                    ..old.embed.clone()
+                };
+                (
+                    Some((stored.model, stored.embedded_at_us, stored.vector)),
+                    embed,
+                )
+            }
+            None => match new_vector {
+                Some(vector) => {
+                    let embed = EmbedState {
+                        dims: u32::try_from(vector.len())
+                            .map_err(|_| StoreError::invalid("vector too long"))?,
+                        embedded_at_us: Some(now_us),
+                        text_hash: Some(crate::embeddings::text_hash(&text)),
+                        input_hash: input
+                            .rest
+                            .get("embedding_input_hash")
+                            .and_then(Value::as_str)
+                            .map(str::to_string),
+                        pending_since_us,
+                    };
+                    (Some((new_model, now_us, vector)), embed)
+                }
+                None => (
+                    None,
+                    EmbedState {
+                        pending_since_us,
+                        ..EmbedState::default()
+                    },
+                ),
+            },
+        };
         let record = ChunkRecord {
             id,
             page_id: page.id,
@@ -396,9 +574,20 @@ pub(crate) fn replace_chunks(
             meta,
             // PGLite's upsert (`ON CONFLICT (page_id, chunk_index) DO UPDATE`) leaves a row's
             // segment columns as they were.
-            segment: previous.get(&index).and_then(|old| old.segment),
+            segment: old.and_then(|old| old.segment),
+            embed,
         };
         write_chunk(tx, &record, view_generation, &mut stats)?;
+        if let Some((model, embedded_at_us, vector)) = vector {
+            crate::embeddings::put_chunk_vector(
+                tx,
+                page.id,
+                index,
+                &model,
+                embedded_at_us,
+                &vector,
+            )?;
+        }
     }
     put_json(tx, &keys::meta(STATS), &stats)?;
     if seal {
@@ -582,6 +771,10 @@ pub(crate) fn append_segment_chunks(
                 raw_byte_end: input.raw_byte_end,
                 body_generation: generation,
             }),
+            // A segment chunk is written without a vector; it carries no pending stamp (the
+            // page-body writer has no clock here), which `readEmbeddingStateCounts` reports as
+            // `unstamped_pending`.
+            embed: EmbedState::default(),
         };
         write_chunk(tx, &record, view_generation, &mut stats)?;
         indexes.push(index);
@@ -723,6 +916,36 @@ pub(crate) fn delete_generation_chunks(
     })
 }
 
+/// Options of `get_chunks_with` (PGLite's `getChunks` options).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct GetChunksOptions {
+    pub source_id: Option<String>,
+    pub source_ids: Option<Vec<String>>,
+    /// Kept for the shape of `ReadScope`; a chunk read never filters soft-deleted pages.
+    pub include_deleted: bool,
+    pub include_embedding: bool,
+    pub include_unsealed: bool,
+}
+
+/// The page's visible chunks as `getChunks` returns them, with their vectors when `with_vectors`.
+pub(crate) fn chunk_rows(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    with_vectors: bool,
+) -> Result<Vec<Value>> {
+    let mut out = Vec::new();
+    for chunk in visible_chunks(read, page.id)? {
+        let stored = if with_vectors && chunk.embed.has_vector() {
+            crate::embeddings::read_chunk_vector(read, page.id, chunk.chunk_index)?
+        } else {
+            None
+        };
+        out.push(chunk.to_chunk(stored.as_ref().map(|s| s.vector.as_slice())));
+    }
+    Ok(out)
+}
+
 /// Options of `upsert_chunks`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -748,6 +971,7 @@ impl Store {
         chunks: &[ChunkInput],
         options: &UpsertChunksOptions,
     ) -> Result<()> {
+        let now_us = self.env.now_micros();
         self.write(|tx| {
             let source = options.source_id.as_deref().unwrap_or(DEFAULT_SOURCE);
             let Some(mut page) = read_page(&*tx, source, &slug.to_lowercase())? else {
@@ -779,52 +1003,71 @@ impl Store {
             }
             if chunks.is_empty() && !seal {
                 // PGLite: an empty write removes the chunks and leaves the page unsealed.
-                replace_chunks(tx, &mut page, chunks, false, true)?;
+                replace_chunks_at(tx, &mut page, chunks, false, true, now_us)?;
                 if page.text_projection_revision.is_some() {
                     page.text_projection_revision = None;
                     write_page(tx, &page)?;
                 }
                 return Ok(());
             }
-            replace_chunks(tx, &mut page, chunks, seal, !seal)
+            replace_chunks_at(tx, &mut page, chunks, seal, !seal, now_us)
         })
     }
 
-    /// `getChunks(slug, opts)`: the page's visible chunks in document order (inline chunks in
-    /// index order), without vectors, while they
-    /// describe the page's current text. PGLite reads a page's chunks only when its
-    /// `text_projection_revision` equals its `knowledge_revision` (the chunks are sealed), so a page
-    /// that was never sealed, or whose revision moved since (a tag change, a soft delete), reads as
-    /// no chunks.
+    /// `getChunks(slug, opts)` with the scope only (no vectors, sealed chunks only).
     pub fn get_chunks(&self, slug: &str, scope: &ReadScope) -> Result<Vec<Value>> {
+        self.get_chunks_with(
+            slug,
+            &GetChunksOptions {
+                source_id: scope.source_id.clone(),
+                source_ids: scope.source_ids.clone(),
+                ..GetChunksOptions::default()
+            },
+        )
+    }
+
+    /// `getChunks(slug, opts)`: the page's visible chunks in document order (inline chunks in
+    /// index order) while they describe the page's current text. PGLite reads a page's chunks only
+    /// when its `text_projection_revision` equals its `knowledge_revision` (the chunks are sealed),
+    /// so a page that was never sealed, or whose revision moved since (a tag change, a soft
+    /// delete), reads as no chunks unless `include_unsealed` is set. `include_embedding` returns
+    /// each stored vector.
+    pub fn get_chunks_with(&self, slug: &str, options: &GetChunksOptions) -> Result<Vec<Value>> {
         let read = self.read()?;
-        let scope_default =
-            if scope.source_id.is_none() && scope.source_ids.as_ref().is_none_or(Vec::is_empty) {
-                Some(DEFAULT_SOURCE.to_string())
-            } else {
-                scope.source_id.clone()
-            };
+        let scope_default = if options.source_id.is_none()
+            && options.source_ids.as_ref().is_none_or(Vec::is_empty)
+        {
+            Some(DEFAULT_SOURCE.to_string())
+        } else {
+            options.source_id.clone()
+        };
         // The slug is matched as written, and a soft-deleted page is read like a live one: PGLite's
         // chunk read has neither a case fold nor a `deleted_at` filter.
-        let Some(page) = find_in_scope(&*read, slug, &scope_default, &scope.source_ids, true)?
+        let Some(page) = find_in_scope(&*read, slug, &scope_default, &options.source_ids, true)?
         else {
             return Ok(Vec::new());
         };
-        if page.text_projection_revision.as_deref() != Some(page.knowledge_revision.as_str()) {
+        if !options.include_unsealed
+            && page.text_projection_revision.as_deref() != Some(page.knowledge_revision.as_str())
+        {
             return Ok(Vec::new());
         }
-        Ok(visible_chunks(&*read, page.id)?
-            .iter()
-            .map(ChunkRecord::to_chunk)
-            .collect())
+        chunk_rows(&*read, &page, options.include_embedding)
     }
 
-    /// `deleteChunks(slug, {sourceId})`: removes the page's chunks. The page stays.
+    /// `deleteChunks(slug, {sourceId})`: removes the page's chunks and, when there were any, clears
+    /// the page's `text_projection_revision` (the seal). The page stays.
     pub fn delete_chunks(&self, slug: &str, source_id: Option<&str>) -> Result<()> {
         self.write(|tx| {
             let source = source_id.unwrap_or(DEFAULT_SOURCE);
-            if let Some(page) = read_page(&*tx, source, &slug.to_lowercase())? {
+            if let Some(mut page) = read_page(&*tx, source, &slug.to_lowercase())? {
+                // PGLite: removing chunks voids the seal that certified them (#8502).
+                let had_chunks = !read_chunks(&*tx, page.id)?.is_empty();
                 clear_chunks(tx, page.id)?;
+                if had_chunks && page.text_projection_revision.is_some() {
+                    page.text_projection_revision = None;
+                    write_page(tx, &page)?;
+                }
             }
             Ok(())
         })
@@ -1137,5 +1380,34 @@ mod segment_tests {
         assert_eq!(input.chunk.chunk_source.as_deref(), Some("timeline"));
         assert_eq!(input.chunk.rest.get("token_count"), Some(&json!(3)));
         assert!(input.chunk.rest.get("occurrence_id").is_none());
+    }
+
+    fn seal_of(store: &Store) -> Option<String> {
+        read_page(&*store.read().unwrap(), "default", "a")
+            .unwrap()
+            .unwrap()
+            .text_projection_revision
+    }
+
+    /// PGLite's deleteChunks clears the seal when it removed chunks (#8502), so the page reads as
+    /// chunkless again; a delete that removed nothing leaves the seal alone.
+    #[test]
+    fn delete_chunks_clears_the_seal_only_when_chunks_were_removed() {
+        let store = crate::test_support::store();
+        page(&store);
+        assert!(seal_of(&store).is_some());
+        store.delete_chunks("a", None).unwrap();
+        assert!(texts(&store).is_empty());
+        assert_eq!(seal_of(&store), None);
+
+        let seal = UpsertChunksOptions {
+            seal: true,
+            ..UpsertChunksOptions::default()
+        };
+        store.upsert_chunks("a", &[], &seal).unwrap();
+        let sealed = seal_of(&store);
+        assert!(sealed.is_some());
+        store.delete_chunks("a", None).unwrap();
+        assert_eq!(seal_of(&store), sealed);
     }
 }

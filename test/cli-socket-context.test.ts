@@ -24,6 +24,8 @@ import { _uninstallOutputCaptureForTests, installOutputCapture } from '../src/co
 
 let engine: PGLiteEngine;
 const op = { params: {} };
+/** The typed `sources` reads source resolution makes (they run SQL inside the engine, past the proxy's executeRaw). */
+const SOURCE_READ_MEMBERS = ['listAllSources', 'getSource', 'listSourceRecords', 'listLocalPathSources', 'listSourceRoutingRows', 'countDefaultSourceSplit'];
 const noop = { emitResponseMeta: () => {}, emitNotice: () => {} };
 
 beforeAll(async () => {
@@ -74,18 +76,19 @@ describe('cliRequestContext mirrors makeContext', () => {
   });
 
   test('a serve-side timeout answers a retryable timeout error (no cold rerun) while the work keeps the request active until it settles', async () => {
-    // Config reads and SQL wait on a gate, so the request is still working when its deadline passes. A bare short
+    // Config reads, SQL and the typed source reads wait on a gate, so the request is still working when its deadline passes. A bare short
     // deadline is not enough: PGLite can finish the whole search before the timer gets a turn (stress gate, seed
     // 193478). The capture is installed as the serve installs it (process-global, so an earlier test in the same
-    // process may already have done it), and with SQL gated the source resolution cannot finish first: the
+    // process may already have done it), and with the source reads gated the source resolution cannot finish first: the
     // timeout frame carries no resolved source whatever ran before this test.
     installOutputCapture();
     let release!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
+    const gatedMembers = new Set<PropertyKey>(['getConfig', 'getAllConfig', 'executeRaw', ...SOURCE_READ_MEMBERS]);
     const gated = new Proxy(engine, {
       get(target, key) {
         const value = Reflect.get(target, key, target);
-        if (key === 'getConfig' || key === 'getAllConfig' || key === 'executeRaw') return async (...args: unknown[]) => { await gate; return (value as (...a: unknown[]) => unknown).apply(target, args); };
+        if (gatedMembers.has(key)) return async (...args: unknown[]) => { await gate; return (value as (...a: unknown[]) => unknown).apply(target, args); };
         return typeof value === 'function' ? value.bind(target) : value;
       },
     });

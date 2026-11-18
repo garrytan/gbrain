@@ -60,7 +60,7 @@ import { claudeUserSettingsPath, type ClaudeHookEvent } from '../core/bootstrap/
 import { readHarnessReceiptState } from '../core/bootstrap/format.ts';
 import { smokeStdioRegistration } from './doctor/checks/harness-wiring.ts';
 import { finishFreshSetupMigrations } from './setup-migrations.ts';
-import { readServesStatus, sharedStdioHarness, servesAfterLayout, servesApply, servesLines, servesOk, servesPreflight, type EntryBinding, type ServesOutcome } from './setup-serves.ts';
+import { readServesStatus, sharedStdioHarness, servesAfterLayout, servesApply, servesLines, servesOk, servesPreflight, type EntryBinding, type ServesOutcome, type ServesPlan } from './setup-serves.ts';
 import type { McpSurface } from '../mcp/surface.ts';
 import {
   SETUP_CAPABILITIES,
@@ -184,8 +184,10 @@ Flags:
                        of --members). Other harnesses on this host are unchanged. Use it for a
                        harness only ID uses; refused where OpenClaw or Hermes is installed
                        (give each person their own HTTP key there). A re-run keeps the entry's
-                       member; setup never adds one on its own.
-  --no-stdio-member    Remove --stdio-member from this harness's entry.
+                       member. With --serves several and --shape company or both, an entry
+                       with no member is tied to the brain owner.
+  --no-stdio-member    Remove --stdio-member from this harness's entry, or leave it unbound.
+
   --remove             Remove exactly what setup wrote (unchanged entries only), the
                        brain-first instruction block included. The brain and your
                        notes stay. Combine with --dry-run to preview.
@@ -618,7 +620,7 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
       const again = inspectClaudeSetup(listed);
       if (again.mcp.state === 'current') { plan = listed; found = again; }
     }
-    const binding = entryBinding(flags, found.mcp.stdioMember);
+    let binding = entryBinding(flags, found.mcp.stdioMember);
     if (binding.member) { plan = { ...plan, stdioMember: binding.member }; found = inspectClaudeSetup(plan); }
     if (found.mcp.state === 'remote') return refuse(hostedConnection(found.mcp.url ?? 'a hosted brain', true, flags), out);
 
@@ -653,6 +655,8 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
     }
     const servesPlan = servesPreflight(flags, launcher, 'claude-code', !!cfg, !!liveOwner?.ours, binding);
     if (servesPlan instanceof OperationError) return refuse(servesPlan, out);
+    const tie = ownerTie(flags, servesPlan, binding, !!pluginOwner);
+    if (tie) { binding = { member: tie, previous: binding.previous }; plan = { ...plan, stdioMember: tie }; found = inspectClaudeSetup(plan); target.stdio_member = tie; say(out, `note: ${tieNote(tie)}`); }
 
     const brainCreate = !cfg;
     const initArgv = [launcher, 'init', '--pglite', ...(consent.providers.value === 'accepted' ? [] : ['--no-embedding']), '--json'];
@@ -819,7 +823,7 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
       const again = inspectCodexSetup(listed);
       if (again.mcp.state === 'current') { plan = listed; found = again; }
     }
-    const binding = entryBinding(flags, found.mcp.stdioMember);
+    let binding = entryBinding(flags, found.mcp.stdioMember);
     if (binding.member) { plan = { ...plan, stdioMember: binding.member }; found = inspectCodexSetup(plan); }
     if (found.mcp.state === 'remote') return refuse(hostedConnection(found.mcp.url ?? 'a hosted brain', true, flags, 'codex'), out);
 
@@ -854,6 +858,8 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     }
     const servesPlan = servesPreflight(flags, launcher, 'codex', !!cfg, !!liveOwner?.ours, binding);
     if (servesPlan instanceof OperationError) return refuse(servesPlan, out);
+    const tie = ownerTie(flags, servesPlan, binding, !!pluginOwner);
+    if (tie) { binding = { member: tie, previous: binding.previous }; plan = { ...plan, stdioMember: tie }; found = inspectCodexSetup(plan); target.stdio_member = tie; say(out, `note: ${tieNote(tie)}`); }
 
     const brainCreate = !cfg;
     const initArgv = [launcher, 'init', '--pglite', ...(consent.providers.value === 'accepted' ? [] : ['--no-embedding']), '--json'];
@@ -975,6 +981,18 @@ function pluginBindingRefusal(plugin: string, harness: SetupHarnessId, member: s
 function entryBinding(flags: SetupFlags, previous: string | undefined): EntryBinding {
   return { member: flags.noStdioMember ? null : flags.stdioMember ?? previous ?? null, previous: previous ?? null };
 }
+
+/**
+ * GST-2904 (P1): a company setup for several people with no member named for this entry ties the entry it installs to
+ * the brain owner, so the owner's local assistant reads as the owner and imported calls can be kept to their
+ * attendees. Never where a plugin serves the entry, a shared-stdio harness is installed, or --no-stdio-member is given.
+ */
+function ownerTie(flags: SetupFlags, plan: ServesPlan, entry: EntryBinding, plugin: boolean): string | null {
+  if (flags.serves !== 'several' || (flags.brain !== 'company' && flags.brain !== 'both') || flags.noStdioMember || entry.member || plugin || !plan.tie) return null;
+  return sharedStdioHarness() ? null : plan.tie;
+}
+
+const tieNote = (owner: string): string => `this connection reads as the brain owner ${owner} (serve --stdio-member ${owner}), so it reads every call; --no-stdio-member leaves it unbound`;
 
 /** The access the brain-first block names; a brain that serves several people says the connection is already scoped. */
 function mcpAccess(server: string, surface: McpSurface, serves: ServesOutcome | null): BrainFirstAccess {

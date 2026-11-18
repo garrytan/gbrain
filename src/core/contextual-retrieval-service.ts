@@ -902,18 +902,13 @@ function readSourceTextWithFallback(page: Page, chunks: ChunkInput[]): string {
  */
 export class SourceRowNotFoundError extends Error {}
 
-export async function loadSourceRow(engine: BrainEngine, sourceId: string): Promise<SourceRow> {
-  const rows = await engine.executeRaw<SourceRow>(
-    `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at,
-            contextual_retrieval_mode, trust_frontmatter_overrides
-     FROM sources WHERE id = $1`,
-    [sourceId],
-  );
-  // A missing result set (unit-test engine doubles) reads as no row.
-  if (!rows?.length) {
+export async function loadSourceRow(engine: Pick<BrainEngine, 'getSource'>, sourceId: string): Promise<SourceRow> {
+  const row = await engine.getSource(sourceId);
+  // A missing result (unit-test engine doubles) reads as no row.
+  if (!row) {
     throw new SourceRowNotFoundError(`Source not found: ${sourceId}`);
   }
-  return rows[0];
+  return row;
 }
 
 function sourcePolicy(source: SourceRow) {

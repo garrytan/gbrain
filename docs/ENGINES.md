@@ -404,10 +404,11 @@ CREATE POLICY page_segment_derivation_purge_pages_scope_filter ON page_segment_d
   USING (current_setting('app.scopes', true) = '*'
          OR EXISTS (SELECT 1 FROM page_segment_derivation_purges r WHERE r.request_id = page_segment_derivation_purge_pages.request_id));
 
--- A read role that searches and reads pages. The other tables it reads
+-- A read role that searches and reads pages. Search also reads
+-- timeline_entries for each result's `stale` flag. The other tables it reads
 -- (config, timeline_entries, facts, ...) need policies of their own.
 GRANT SELECT ON pages, content_chunks, page_body_manifest, page_segment_texts,
-  page_view_digests, sources TO <reader-role>;
+  page_view_digests, sources, timeline_entries TO <reader-role>;
 
 -- If the runtime role OWNS these tables, as for pages:
 ALTER TABLE page_segment_texts FORCE ROW LEVEL SECURITY;
@@ -486,12 +487,14 @@ updates that row in `facts`, and the write role then needs a permissive `UPDATE`
 `facts` covering the row, beside its `SELECT` policy, or the guard refuses the insert with the
 same `writer_coordinator_required` error.
 
-**Check that the upgrade replaced every guard.** Migration v318 can only replace a guard function
-the role running it owns. A guard owned by another role is left as it was, so it still lets a
-scoped writer without ledger policies through, and v318 only names it in one stderr line
-(`guards: N purge or withdrawal guard(s) still read their ledgers as empty ...`). After upgrading,
-run this as any role that can read the catalog. Every one of the seven rows must show
-`fails_closed = t`:
+**Check that the upgrade replaced every guard.** Migrations v318 and v321 can only replace a guard
+function the role running them owns. A guard owned by another role is left as it was, and each
+migration only names it in one stderr line. Left by v318, it still lets a scoped writer without
+ledger policies through (`guards: N purge or withdrawal guard(s) still read their ledgers as empty ...`).
+Left by v321, a facts guard still lacks the name-tag rule, so a claim forgotten or
+purged under another subject can come back on a name tag (`guards: N purge or withdrawal guard(s)
+keep their body from before name keys ...`). After upgrading, run this as any role that can read
+the catalog. Every one of the seven rows must show `fails_closed = t`:
 
 ```sql
 SELECT p.proname, pg_get_userbyid(p.proowner) AS owner,
@@ -506,11 +509,14 @@ ORDER BY 1;
 For a row with `fails_closed = f`, connect as the role in its `owner` column and run
 `ALTER FUNCTION public.<proname>() OWNER TO <the role gbrain migrates as>;`. Then run
 `gbrain apply-migrations --yes`, or start gbrain: every migration run re-creates a guard that
-is missing its check, provided the migrating role owns it. You can also run gbrain once as the
-owning role instead. Run the query again to confirm. On Postgres, `gbrain doctor`
-(`guard_ledger_checks`) runs the same check and names each guard left without its ledger check
-with its owner, and the fix: `gbrain apply-migrations --yes` when the doctor's role may re-create
-it, else the `ALTER FUNCTION ... OWNER TO` SQL to run as the owning role first.
+is missing its check or its current body, provided the migrating role owns it. You can also run
+gbrain once as the owning role instead. Run the query again to confirm. The query sees only the
+ledger check, so a facts guard v321 left still shows `fails_closed = t`. On Postgres, `gbrain doctor`
+(`guard_ledger_checks`) runs the same check, also checks the current body of the three facts guards
+(`unbacked_page` in `gbrain_refuse_purged_fact`, `memory/scope` in `gbrain_preserve_fact_withdrawal`
+and `gbrain_guard_inserted_facts`), and names each guard left behind with its owner, and the fix:
+`gbrain apply-migrations --yes` when the doctor's role may re-create it, else the
+`ALTER FUNCTION ... OWNER TO` SQL to run as the owning role first.
 
 The segmented storage recipe above already covers the two derivation purge tables for a
 role it applies to. A policy that filters out ledger rows of a source the role writes hides
@@ -1635,8 +1641,12 @@ store cannot read refuses `rust_store_unreadable` with its reason (`gbrain error
 that is not connected refuses `engine_closed`. These members run on the store (`src/core/rust-engine/store-members/`):
 
 - Config, sources and tags: `getConfig`, `setConfig`, `unsetConfig`, `listConfigKeys`, `getAllConfig`,
-  `listAllSources`, `updateSourceConfig`, `addTag`, `removeTag`, `getTags`. These are the members that make the `config`, `sources`, `tags` and `schema`
-  capabilities complete.
+  `getConfigValues`, `listAllSources`, `updateSourceConfig`, `getSource`, `listSourceLocalPaths`,
+  `getSourceStrictness`, `addTag`, `removeTag`, `getTags`, `pruneFrontmatterTags`, `addPageTagsById`. These are the
+  members that make the `config`, `sources`, `tags` and `schema` capabilities complete. The store keeps each tag's
+  claim (`added` or `frontmatter`) as PGLite's `tags.tag_source` does, so an import prune removes only the tags the
+  import claimed. `getSource` reads `last_commit`, `contextual_retrieval_mode` and `trust_frontmatter_overrides` as
+  null, null and false: only the sync anchor and source admin SQL write those columns, and neither runs on a Rust brain.
 - Pages: `getPage`, `readPageSnapshot`, `putPage`, `deletePage`, `softDeletePage`, `restorePage`, `listPages`,
   `resolveSlugs`. A stale `expectedRevision` refuses with `PageRevisionConflictError`, as on PGLite.
 - Versions, chunks, keyword search, links, graph and timeline: `createVersion`, `getVersions`, `upsertChunks`,

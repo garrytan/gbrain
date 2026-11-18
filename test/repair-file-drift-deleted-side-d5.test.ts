@@ -207,5 +207,17 @@ for (const backend of testBackends()) describe(`[${backend}] PR A item 5: repair
       expect(uncommitted.residuals).toMatchObject({ deletion_uncommitted: 1, other_provenance: 2 });
       expect(uncommitted.listing![0]!.detail).toContain('deletion uncommitted: HEAD still holds the file');
     }
+
+    // On a read-only mirror the purged_differs --prefer database preview still plans remove_file; the coordinator's mirror guard
+    // refuses any prepared file target, a removal included, so its apply leaves the upstream file and the checkout as they were.
+    await engine.executeRaw(`UPDATE sources SET config = config || '{"mirror_read_only": true}'::jsonb WHERE id='default'`);
+    const mirrorPreview = await run(engine, { state: 'purged_differs', prefer: 'database' });
+    expect(pages(mirrorPreview)).toEqual([expect.objectContaining({ slug: 'notes/gamma-example', action: 'remove_file' })]);
+    const mirrorBefore = await state(engine, root);
+    const mirrorApplied = await run(engine, { state: 'purged_differs', prefer: 'database', expect: mirrorPreview.preview_hash! });
+    expect(existsSync(join(root, 'notes/gamma-example.md'))).toBe(true);
+    const mirrorAfter = await state(engine, root);
+    expect([mirrorAfter.files, mirrorAfter.head, mirrorAfter.status]).toEqual([mirrorBefore.files, mirrorBefore.head, mirrorBefore.status]);
+    expect(mirrorApplied.outcomes).not.toHaveProperty('repaired');
   }, { databaseUrl, setup }), 300_000);
 });

@@ -50,9 +50,7 @@ function siblingNote(relative: PathRow[], pathless: string[]): string {
 }
 
 export async function defaultSourceLocalPathCheck(engine: BrainEngine): Promise<Check | null> {
-  const [defaultSource] = await engine.executeRaw<{ local_path: string | null }>(
-    `SELECT local_path FROM sources WHERE id = 'default'`,
-  );
+  const defaultSource = (await engine.getSource('default')) ?? undefined;
 
   let livePages = 0;
   let fileBackedPages = 0;

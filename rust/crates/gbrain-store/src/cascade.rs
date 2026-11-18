@@ -66,7 +66,6 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
 }
 
 // The aliases family's `updateSlug` is the first caller.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn rename_slug_rows(
     tx: &mut dyn KvWrite,
     source_id: &str,

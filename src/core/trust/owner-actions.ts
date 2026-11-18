@@ -19,6 +19,7 @@
  */
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
+import { answersFromCatalog, catalogTableExists } from '../rust-engine/store-members/catalog.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { opError } from '../ops/contract.ts';
@@ -29,7 +30,7 @@ import { releaseSuppressedFields, suppressedFields } from '../belief/purge.ts';
 import { decideTrustProposal } from './decide.ts';
 import { heldLabelsText } from './page-write.ts';
 import { resolveContestedFactOnConfirm } from './supersede-handlers.ts';
-import { getTrustProposal, pendingTrustProposalsFor, trustProposalRef, type TrustDecisionResult, type TrustProposalRow } from './proposals.ts';
+import { getTrustProposal, pendingTrustProposalsFor, SHARE_HELD_GUARD, trustProposalRef, type TrustDecisionResult, type TrustProposalRow } from './proposals.ts';
 import {
   confirmPage, latestPageVersionId, lowerPageState, readPageTrustState, readPageVersion, revertLoweredPage, revertPageToVersion,
   setRowTier, versionTier, type PageActionResult,
@@ -134,9 +135,7 @@ function notFound(ref: string, what: string): Error {
 interface RowTarget { table: 'facts' | 'takes'; id: number; sourceId: string; tier: TrustTier; text: string; binding: string; live: boolean }
 
 async function readFactTarget(engine: BrainEngine, id: number): Promise<RowTarget | null> {
-  const [row] = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT id, source_id, trust_tier, fact, entity_slug, kind, claim_metric, claim_value, claim_unit, claim_period, value, event_type, dimension, context,
-            expired_at, superseded_by FROM facts WHERE id = $1`, [id]);
+  const row = await engine.readFactForOwnerAction(id);
   if (!row) return null;
   return { table: 'facts', id, sourceId: String(row.source_id), tier: storedTrustTier(row.trust_tier), text: String(row.fact ?? ''),
     binding: bindingOf({ ...row, expired_at: row.expired_at ? String(row.expired_at) : null }), live: !row.expired_at };
@@ -166,6 +165,7 @@ export interface HoldStoreAdapter {
   publish?(engine: BrainEngine, id: number, by: string, config?: GBrainConfig, approved?: string): Promise<boolean | null>;
 }
 async function holdTableExists(engine: BrainEngine): Promise<boolean> {
+  if (answersFromCatalog(engine)) return catalogTableExists(engine, 'write_gate_holds');
   const [row] = await engine.executeRaw<{ t: string | null }>(`SELECT to_regclass('write_gate_holds')::text AS t`);
   return !!row?.t;
 }
@@ -322,6 +322,11 @@ function proposalSummary(p: TrustProposalRow, verb: 'Accept' | 'Dismiss' | 'Reve
     return `Dismiss ${trustProposalRef(p.id)}: ${page} stays "${trustLabel(s.edited_tier)}"${labels ? ' and keeps its privacy labels' : ''}`;
   }
   const target = `${p.target_table === 'facts' ? 'f' : p.target_table === 'takes' ? 't' : p.target_table === 'timeline_entries' ? 'timeline row ' : ''}${p.target_id}`;
+  // GST-2897 B: a member's share about another member, held private.
+  if (p.before_state.guard === SHARE_HELD_GUARD) {
+    return verb === 'Accept' ? `Accept ${trustProposalRef(p.id)}: share ${target}, a fact about member ${String(p.before_state.member)}, with every reader of source ${p.source_id} (its trust stays as written)`
+      : `Dismiss ${trustProposalRef(p.id)}: keep ${target} private`;
+  }
   const related = p.related_id === null ? '' : ` with ${p.related_table === 'facts' ? 'f' : p.related_table === 'takes' ? 't' : ''}${p.related_id}`;
   // W1 #6783 §12 (a): a held take or timeline row names what the lower-tier write asked for.
   const held = p.action === 'forget' && p.target_table !== 'facts' ? ({ removed: 'remove', replaced: 'replace', deactivated: 'deactivate', detail_changed: 'rewrite' } as Record<string, string>)[String(p.before_state.change)] : undefined;

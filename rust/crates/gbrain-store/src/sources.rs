@@ -49,6 +49,39 @@ impl From<SourceRecord> for SourceRow {
     }
 }
 
+/// One source as `getSource` returns it: `SourceDetailRow` of `src/core/engine.ts`, dates as ISO
+/// strings. The store keeps no `last_commit`, `contextual_retrieval_mode` or
+/// `trust_frontmatter_overrides`: only the sync anchor and source admin SQL write those columns,
+/// and neither runs on a Rust brain, so they read as the column defaults (null, null, false).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SourceDetailRow {
+    pub id: String,
+    pub name: Option<String>,
+    pub local_path: Option<String>,
+    pub last_commit: Option<String>,
+    pub last_sync_at: Option<String>,
+    pub config: Map<String, Value>,
+    pub created_at: String,
+    pub contextual_retrieval_mode: Option<String>,
+    pub trust_frontmatter_overrides: bool,
+}
+
+impl From<SourceRecord> for SourceDetailRow {
+    fn from(r: SourceRecord) -> Self {
+        Self {
+            id: r.id,
+            name: r.name,
+            local_path: r.local_path,
+            last_commit: None,
+            last_sync_at: r.last_sync_at_us.map(iso),
+            config: r.config,
+            created_at: iso(r.created_at_us),
+            contextual_retrieval_mode: None,
+            trust_frontmatter_overrides: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ListSourcesOptions {
@@ -221,5 +254,26 @@ impl Store {
             put_json(tx, &source_key(id), &record)?;
             Ok(true)
         })
+    }
+
+    /// `getSource(id)`: the source row, archived or not, or `None`. Mirrors `getSource`.
+    pub fn get_source(&self, id: &str) -> Result<Option<SourceDetailRow>> {
+        Ok(read_source(&*self.read()?, id)?.map(SourceDetailRow::from))
+    }
+
+    /// `listSourceLocalPaths()`: the local path of every source that has a non-empty one,
+    /// archived sources included, in id order. Mirrors `listSourceLocalPaths`.
+    pub fn list_source_local_paths(&self) -> Result<Vec<String>> {
+        Ok(all_sources(&*self.read()?)?
+            .into_iter()
+            .filter_map(|r| r.local_path.filter(|p| !p.is_empty()))
+            .collect())
+    }
+
+    /// `getSourceStrictness(id)`: true when the source's `config.canonical` is the string `git`;
+    /// false otherwise, an unknown id included. Mirrors `getSourceStrictness`.
+    pub fn get_source_strictness(&self, id: &str) -> Result<bool> {
+        Ok(read_source(&*self.read()?, id)?
+            .is_some_and(|r| r.config.get("canonical").and_then(Value::as_str) == Some("git")))
     }
 }

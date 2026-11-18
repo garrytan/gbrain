@@ -128,31 +128,23 @@ const parseConfig = parseSourceConfig;
 const isFederated = isSourceFederated;
 
 async function fetchSource(engine: BrainEngine, id: string): Promise<SourceRow | null> {
-  const rows = await engine.executeRaw<SourceRow>(
-    `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at
-       FROM sources WHERE id = $1`,
-    [id],
-  );
-  return rows[0] ?? null;
+  // getSource also returns the retrieval and trust columns; only these seven reach the subcommands' output.
+  const row = await engine.getSource(id);
+  if (!row) return null;
+  const { name, local_path, last_commit, last_sync_at, config, created_at } = row;
+  return { id: row.id, name, local_path, last_commit, last_sync_at, config, created_at };
 }
 
-async function countPages(engine: BrainEngine, sourceId: string): Promise<number> {
-  const rows = await engine.executeRaw<{ n: number }>(
-    `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1 AND deleted_at IS NULL`,
-    [sourceId],
-  );
-  return rows[0]?.n ?? 0;
-}
 
 // ── Subcommand: add ─────────────────────────────────────────
 
 async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   const apiKind = args.includes('--kind') ? args[args.indexOf('--kind') + 1] : undefined;
-  if (args[0] && (apiKind === 'meetings' || apiKind === 'slack')) return (await import('./sources-add-api.ts')).runApiSourceAdd(engine, args);
+  if (args[0] && (apiKind === 'meetings' || apiKind === 'slack' || apiKind === 'imessage')) return (await import('./sources-add-api.ts')).runApiSourceAdd(engine, args);
   const id = args[0];
   if (!id) {
     console.error(
-      'Usage: gbrain sources add <id> [--path <path> | --url <https-url> | --kind github|google|meetings|slack] ' +
+      'Usage: gbrain sources add <id> [--path <path> | --url <https-url> | --kind github|google|meetings|slack|imessage] ' +
         '[--name <display>] [--federated|--no-federated] [--clone-dir <path>] [--force] [--json]\n' +
         '       github kind: [--token-env <env>] [--scope auto|repos] ' +
         '[--repos owner/name,...] [--dir <path>] ' +
@@ -737,7 +729,7 @@ async function runList(engine: BrainEngine, args: string[]): Promise<void> {
 
   const entries: SourceListEntry[] = [];
   for (const r of rows) {
-    const pageCount = await countPages(engine, r.id);
+    const pageCount = await engine.countSourcePages(r.id);
     entries.push({
       id: r.id,
       name: r.name,

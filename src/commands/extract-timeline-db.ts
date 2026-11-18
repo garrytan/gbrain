@@ -21,7 +21,7 @@ import type { Page, PageType } from '../core/types.ts';
 import { parseTimelineEntries, deriveTimelineAnchor } from '../core/link-extraction.ts';
 import { eachStoredTimelineRow, retractRemovedTimelineEntries, segmentedTimelineText, storedTimelineKey, TimelineKeySet, unkeptTimelineRows, versionTimelineScan, type VersionTimelineScan } from '../core/timeline-extract.ts';
 import { timelineKey } from '../core/timeline-marker.ts';
-import { managedPersistenceEnabled } from '../core/persistence/ownership.ts';
+import { readManagedModeTyped } from '../core/persistence/ownership.ts';
 import { maintenanceTransaction } from '../core/persistence/attribution.ts';
 import { segmentedCanonicalCollector, unrecordedCanonicalTimeline } from '../core/persistence/canonical-projections.ts';
 import { isSegmentedPage } from '../core/page-body/page-shape.ts';
@@ -120,7 +120,7 @@ export async function extractTimelineFromDB(engine: BrainEngine, opts: TimelineD
   const codes = new Set<string>();
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
   progress.start('extract.timeline_db', refs.length);
-  const managed = !opts.dryRun && await managedPersistenceEnabled(engine);
+  const managed = !opts.dryRun && await readManagedModeTyped(engine);
   const dryRunSeen = opts.dryRun ? new Set<string>() : null;
   const batch: TimelineBatchInput[] = [];
   // PGLite has no autovacuum: a walk that grows timeline_entries from empty
