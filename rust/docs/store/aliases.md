@@ -98,5 +98,5 @@ Where this engine differs from PGLite:
 rules, the rename's alias bookkeeping, the visibility, trust and privacy filters of `resolveAliases`, the live and
 privacy filters of `aliasCanonicalRefs` and the refused inputs. `aliasCanonicalRefs` has its
 parity cases in `test/engine-parity/search-reads.test.ts`, and the trust and privacy scope of
-`resolveAliases`, with the search alias fan-out that reads it, in
-`test/engine-parity/alias-trust.test.ts`.
+`resolveAliases`, with the search alias fan-out that reads it and the byte order of the aliases and
+their pages (which `readAliases` pins with `COLLATE "C"`), in `test/engine-parity/alias-trust.test.ts`.

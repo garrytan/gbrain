@@ -812,7 +812,7 @@ Slug renames and page aliases.
 - **Estimate:** about 5 to 6 days.
 - **Notes:** Same capability (`pages`) as page_ops and extraction. `resolveSlugWithAliasDetailed` returns how the slug was found; keep its result fields exact.
 - **Known gap:** the Rust store keeps no `alias_text` and no `case_sensitive` flag on `page_aliases` rows, so `resolveCaseSensitiveAliases` is always empty, `readPageAliasRows` gives `alias_text: null`, and `replaceDerivedAliases` stays unserved until alias storage exists (`rust/docs/store/alias_fanout_reads.md`). `findPagesByTitles` with `excludePrivate` refuses with `engine_capability_missing` for a caller whose reader identity widens the page policy; the caller's fail-open fallback reads that as no rows.
-- **Parity cases (10, in `sync-aliases.test.ts` and `alias-trust.test.ts`):**
+- **Parity cases (11, in `sync-aliases.test.ts` and `alias-trust.test.ts`):**
   - `sync-aliases.test.ts`: updateSlug renames a page in place, keeps its chunks, and returns 0 when the old slug is absent
   - `sync-aliases.test.ts`: updateSlug is source-scoped and rejects a path-traversal new slug
   - `sync-aliases.test.ts`: a rename records an alias: resolveSlugWithAlias maps the old slug to the new one, per source
@@ -823,6 +823,7 @@ Slug renames and page aliases.
   - `alias-trust.test.ts`: resolveAliases under excludePrivate drops aliases of hidden pages, and a hidden title no longer shadows a derived alias
   - `alias-trust.test.ts`: resolveAliases under excludePrivate for a caller with a reader identity: SQL arms apply the caller policy, the Rust store refuses
   - `alias-trust.test.ts`: the search alias fan-out resolves an entity by its alias under excludePrivate and a trust floor
+  - `alias-trust.test.ts`: resolveAliases lists mixed-case and non-ASCII aliases, and the pages of one alias, in byte order
 
 ### page_body
 
@@ -1041,20 +1042,21 @@ Brain statistics, health and the ingest log.
 
 - **Files:** `gbrain-store/src/stats.rs`, `gbrain-napi/src/families/stats.rs`, `store-members/stats.ts`.
 - **Tag:** `n` (`INGEST_LOG`). Cascade on page delete: no.
-- **Members (6), capability:** `health` (4), `ingest_log` (2).
-- **Store and binding:** `getStats` (`get_stats`), `getHealth` (`get_health`), `logIngest` (`log_ingest`), `getIngestLog` (`get_ingest_log`), `listEnrichCandidates` (`list_enrich_candidates`), `findAnomalies` (`find_anomalies`).
+- **Members (7), capability:** `health` (5), `ingest_log` (2).
+- **Store and binding:** `getStats` (`get_stats`), `getHealth` (`get_health`), `countOnboardSignal` (`count_onboard_signal`), `logIngest` (`log_ingest`), `getIngestLog` (`get_ingest_log`), `listEnrichCandidates` (`list_enrich_candidates`), `findAnomalies` (`find_anomalies`).
 - **Postgres tables:** Counts over every table; `ingest_log`.
 - **Keys:** `n <created_at us> <id>` ingest log row; `M next_ingest_log_id`.
 - **Depends on:** Reads every family. `getHealth` reads extraction stamps and embedding coverage, so finish it last; the embedding counts refuse until the embeddings family lands, unless the store has no chunks. `listEnrichCandidates` and `findAnomalies` read salience and timeline.
 - **Estimate:** about 2 to 3 days.
-- **Notes:** Health lists order with `COLLATE "C"` (byte order). `getStats` counts links only when both ends are in scope.
-- **Parity cases (6, in `code-eval-salience.test.ts`, `config-ingest.test.ts`):**
+- **Notes:** Health lists order with `COLLATE "C"` (byte order). `getStats` counts links only when both ends are in scope. `countOnboardSignal` is served because a production caller reaches it on a Rust brain: the MCP onboarding coach (`src/core/onboard/mcp-onboarding.ts:72`, started by `src/mcp/server.ts:551` and read by `src/mcp/dispatch.ts:1464`). It counts brain-wide, with no source scope.
+- **Parity cases (7, in `code-eval-salience.test.ts`, `config-ingest.test.ts`, `search-reads.test.ts`):**
   - `code-eval-salience.test.ts`: listEnrichCandidates picks thin pages by type, counts inbound links, orders and limits, and scopes by source
   - `code-eval-salience.test.ts`: findAnomalies flags a cohort with unusual activity today and respects source scope and sigma
   - `config-ingest.test.ts`: getStats counts pages, chunks, embeddings, links, tags and timeline entries
   - `config-ingest.test.ts`: getStats and getHealth confine to a source scope
   - `config-ingest.test.ts`: getHealth reports coverage, orphans, missing embeddings and the score parts
   - `config-ingest.test.ts`: logIngest then getIngestLog returns entries newest-first with a limit and source scope
+  - `search-reads.test.ts`: countOnboardSignal: the six onboarding counts under a per-source entity-type filter
 
 ### raw_files
 
@@ -1546,7 +1548,9 @@ The Minion job queue, cycle locks, spend and rate leases, and wake subscriptions
     before it writes anything: the lock, the capacity count and the write are separate store calls, so they are not
     one admission. The guard stays until admission is one store write. The store keeps no `oauth_clients` or
     `access_tokens` table, so the policy's grant read refuses the same way, and `lockOAuthClient` called directly
-    refuses too (a lock that locks nothing would hide a missing guarantee).
+    refuses too (a lock that locks nothing would hide a missing guarantee). No production caller reaches the engine
+    member on a Rust brain: its one caller, `lockDelegatedSubmission` (`src/core/minions/delegated-admission.ts:38`),
+    runs on the handle above, so the member stays refused.
   - Cycle locks. PGLite's acquire (`src/core/db-lock.ts`) is an upsert that takes a held row only when
     `ttl_expires_at` has passed and `last_refreshed_at` is null or older than the steal grace, and returns the fence
     `extract(epoch from acquired_at)`. `acquireLease` does the same check and write in one member and returns the same
