@@ -359,8 +359,10 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
   // The contract here is that doctor runs on a Rust brain: it finishes, fails nothing, never falls back to the
   // filesystem-only checks, and says why for each check it could not run. The lists below pin every difference
   // from PGLite that is not a typed refusal, so a new one fails this test until it is reviewed and listed.
+  // The reference is the mirror: PGLite holding exactly the writes the Rust brain completed (a recorded write above
+  // adds a page to the PGLite brain only), so a warning that counts pages or chunks compares on the same data.
   test('doctor --json on a Rust brain runs every check and names the cause of each warning', async () => {
-    const [pg, rust] = await Promise.all([cli(brains.pglite, ['doctor', '--json']), rustArm === 'on' ? cli(brains.rust, ['doctor', '--json']) : Promise.resolve(null)]);
+    const [pg, rust] = await Promise.all([cli(brains.mirror, ['doctor', '--json']), rustArm === 'on' ? cli(brains.rust, ['doctor', '--json']) : Promise.resolve(null)]);
     type Check = { name: string; status: string; message: string };
     const pgReport = parseJson(pg.stdout) as { checks?: Check[] } | undefined;
     expect({ exitCode: pg.exitCode, checks: Array.isArray(pgReport?.checks) }).toEqual({ exitCode: 0, checks: true });
