@@ -60,7 +60,7 @@ const SHARED = new Set([
   'detail', 'language', 'symbolKind', 'afterDate', 'afterDateInclusive', 'beforeDate', 'beforeDateInclusive', 'sourceId',
   'sourceIds', 'exclude_slug_prefixes', 'include_slug_prefixes', 'source_boosts',
 ]);
-/** The page filters `searchKeywordChunks` does not apply on PGLite but Postgres does (follow-up keyword-chunks-page-filters). */
+/** The page filters `searchKeywordChunks` does not apply on PGLite but Postgres does (follow-up pglite-keyword-chunks-page-filters). */
 const PAGE_FILTERS = ['type', 'types', 'where', 'exclude_slugs'] as const;
 /** Visibility options the store cannot apply (private pages, safe chunks, the trust floor). */
 const VISIBILITY = ['excludePrivate', 'requireSafeChunks', 'minTrust', 'suppressFlagged'] as const;
@@ -84,7 +84,7 @@ function keywordOptions(member: Member, query: string, opts: (SearchOpts & { tim
       const empty = value === null || value === '' || (Array.isArray(value) && value.length === 0)
         || (key === 'where' && typeof value === 'object' && Object.keys(value as object).length === 0);
       if (empty) continue;
-      refuseMember(member, `option ${key} (follow-up keyword-chunks-page-filters)`);
+      refuseMember(member, `option ${key} (follow-up pglite-keyword-chunks-page-filters)`);
     }
     if ((VISIBILITY as readonly string[]).includes(key)) {
       if (!value) continue;

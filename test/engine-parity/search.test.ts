@@ -519,4 +519,25 @@ describe('engine parity: search', () => {
       return out;
     },
   );
+
+  parityTest(
+    'searchTitles: a re-put of an unchanged sealed page reads the trigger vector (title, raw timeline, every entry)',
+    { methods: ['searchTitles'] },
+    async (engine) => {
+      const page = { type: 'note' as const, title: 'Harbor Log', compiled_truth: 'Harbor Log body', timeline: 'ferry arrived at dawn' };
+      await seedPage(engine, { slug: 'notes/harbor-log', input: page, chunks: [chunk(0, 'Harbor Log body')] });
+      // An entry added after the seal is not in the sealed vector.
+      await engine.addTimelineEntry('notes/harbor-log', { date: '2026-01-04', summary: 'narwhal surfaced', detail: 'fjord' });
+      const view = (rows: SearchResult[]) => rows.map((r) => ({ slug: r.slug, score: round(r.score), chunk: r.chunk_text }));
+      const search = async (q: string) => view(await engine.searchTitles(q, { limit: 5 }));
+      const sealed = { entry: await search('narwhal fjord'), timeline: await search('ferry dawn') };
+      // The same input again: the page keeps its revision and seal, and the trigger rewrites the vector.
+      await seedPage(engine, { slug: 'notes/harbor-log', input: page });
+      const reput = { entry: await search('narwhal fjord'), timeline: await search('ferry dawn'), title: await search('harbor') };
+      expect(sealed.entry).toEqual([]);
+      expect(sealed.timeline.map((r) => r.slug)).toEqual(['notes/harbor-log']);
+      expect(reput.entry.map((r) => r.slug)).toEqual(['notes/harbor-log']);
+      return { sealed, reput };
+    },
+  );
 });
