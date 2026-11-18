@@ -51,6 +51,7 @@ public final class SendService {
     let nonces = NonceCache()
     let queue = DispatchQueue(label: "io.gbrain.apple-helper.send")
     let lock = NSLock()
+    let stateLock = NSRecursiveLock()
     var inflight = Set<String>()
     var lastRetention: Date?
 
@@ -87,8 +88,12 @@ public final class SendService {
 
     func observeKill(_ state: inout SendState) {
         guard state.enabled, !switchedOn() else { return }
-        state.enabled = false
+        stateLock.lock()
+        defer { stateLock.unlock() }
         do {
+            state = try store.load() ?? state
+            guard state.enabled else { return }
+            state.enabled = false
             try store.save(state)
         } catch {
             Log.line("send: could not record that the config switch turned sending off")
@@ -128,15 +133,15 @@ public final class SendService {
             inflight.remove(idempotencyKey)
             lock.unlock()
         }
-        return queue.sync { serially(send, key: idempotencyKey, keyName: key.name, peer: peer) }
+        return queue.sync { serially(send, key: idempotencyKey, signer: key, peer: peer) }
     }
 
-    func serially(_ send: SendRequest, key: String, keyName: String, peer: UInt32) -> SendReply {
+    func serially(_ send: SendRequest, key: String, signer: SendKey, peer: UInt32) -> SendReply {
         let limits: SendLimits
         do {
             let state = try store.load() ?? SendState()
             guard state.enabled, switchedOn() else { return fail(.sendDisabled) }
-            guard state.keys.contains(where: { $0.name == keyName }) else { return fail(.unknownSendKey) }
+            guard state.keys.contains(signer) else { return fail(.unknownSendKey) }
             limits = state.limits
         } catch {
             return fail((error as? Problem) ?? .sendKeysUnreadable)
@@ -166,7 +171,7 @@ public final class SendService {
         if let limited = rateProblem(send.to, firstContact: firstContact, limits: limits, now: now) { return fail(limited) }
         var pending = AuditRecord(t: SendAudit.stamp(now), kind: "pending", key: key)
         pending.hash = hash
-        pending.keyName = keyName
+        pending.keyName = signer.name
         pending.peer = IPv4.string(peer)
         pending.to = send.to
         pending.toHash = Recipient.hash(send.to)
@@ -336,6 +341,8 @@ public final class SendService {
         guard let fields = StrictJSON.flatObject(request.body), let action = fields["action"] else {
             return .problem(.badParam("the body must be a JSON object with an action"))
         }
+        stateLock.lock()
+        defer { stateLock.unlock() }
         do {
             var state = try store.load() ?? SendState()
             observeKill(&state)

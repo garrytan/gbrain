@@ -93,7 +93,7 @@ public struct ACLEntry: Equatable {
 public enum SendKeychainPolicy {
     public static let service = HelperIdentity.bundleId
     public static let account = "send-keys"
-    static let sensitive: Set<String> = ["ACLAuthorizationAny", "ACLAuthorizationDecrypt", "ACLAuthorizationEncrypt", "ACLAuthorizationChangeACL",
+    static let sensitive: Set<String> = ["ACLAuthorizationAny", "ACLAuthorizationDecrypt", "ACLAuthorizationChangeACL",
                                          "ACLAuthorizationChangeOwner", "ACLAuthorizationExportClear", "ACLAuthorizationExportWrapped"]
 
     public static func trusted(_ entries: [ACLEntry], helperPath: String) -> Bool {

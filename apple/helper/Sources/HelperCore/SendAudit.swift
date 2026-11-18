@@ -175,8 +175,12 @@ public final class SendAudit {
         let fd = Darwin.open(path, O_WRONLY | O_CREAT | O_APPEND, 0o600)
         guard fd >= 0 else { throw Problem.auditUnavailable }
         defer { close(fd) }
+        let start = lseek(fd, 0, SEEK_END)
         let written = data.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) }
-        guard written == data.count, fsync(fd) == 0 else { throw Problem.auditUnavailable }
+        guard written == data.count, fsync(fd) == 0 else {
+            if start >= 0 { _ = ftruncate(fd, start) }
+            throw Problem.auditUnavailable
+        }
         unwritten.removeAll()
     }
 

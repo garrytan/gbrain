@@ -87,8 +87,10 @@ final class FakeBanner: Banner {
 final class FakePresence: OwnerPresence {
     var answer = Presence.confirmed
     var reasons: [String] = []
+    var gate: DispatchSemaphore?
     func confirm(reason: String) -> Presence {
         reasons.append(reason)
+        gate?.wait()
         return answer
     }
 }
@@ -288,7 +290,7 @@ final class Harness {
         #expect(h.send(h.request(h.body())).json["replayed"] as? Bool == true)
     }
 
-    @Test func queuedSendsStopWhenSendingIsTurnedOff() {
+    func queuedSecondSend(_ change: (Harness) -> Void) -> (first: Int, second: [String: Any], sent: Int) {
         let h = Harness()
         h.messages.gate = DispatchSemaphore(value: 0)
         let group = DispatchGroup()
@@ -314,13 +316,22 @@ final class Harness {
             return h.service.inflight.contains("owner-msg-0002")
         }
         while !queued() && Date() < deadline { Thread.sleep(forTimeInterval: 0.01) }
-        h.switchedOn = false
+        change(h)
         h.messages.gate?.signal()
         h.messages.gate?.signal()
         group.wait()
-        #expect(first == 200)
-        #expect(second.json["code"] as? String == "send_disabled")
-        #expect(h.messages.count == 1)
+        return (first, second.json, h.messages.count)
+    }
+
+    @Test func queuedSendsStopWhenSendingIsTurnedOff() {
+        let off = queuedSecondSend { $0.switchedOn = false }
+        #expect(off.first == 200)
+        #expect(off.second["code"] as? String == "send_disabled")
+        #expect(off.sent == 1)
+        let other = Base64URL.encode(Array(Curve25519.Signing.PrivateKey().publicKey.rawRepresentation))
+        let replaced = queuedSecondSend { $0.store.state?.keys = [SendKey(name: "box", publicKey: other)] }
+        #expect(replaced.second["code"] as? String == "unknown_send_key")
+        #expect(replaced.sent == 1)
     }
 
     @Test func parallelSendsCannotPassTheLimit() {
@@ -572,6 +583,31 @@ final class Harness {
         #expect(admin(h, ["action": "add_key", "name": "bad", "public_key": "abc"]).1["code"] as? String == "bad_param")
     }
 
+    @Test func aSendSeeingTheSwitchOffKeepsAKeyAddedMeanwhile() {
+        let h = Harness()
+        h.presence.gate = DispatchSemaphore(value: 0)
+        let group = DispatchGroup()
+        group.enter()
+        DispatchQueue.global().async {
+            _ = self.admin(h, ["action": "add_key", "name": "second", "public_key": boxPublic])
+            group.leave()
+        }
+        let deadline = Date().addingTimeInterval(10)
+        while h.presence.reasons.isEmpty && Date() < deadline { Thread.sleep(forTimeInterval: 0.01) }
+        h.switchedOn = false
+        group.enter()
+        DispatchQueue.global().async {
+            _ = h.send(h.request(h.body()))
+            group.leave()
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+        h.presence.gate?.signal()
+        group.wait()
+        #expect(h.store.state?.keys.map(\.name).sorted() == ["box", "second"])
+        #expect(h.store.state?.enabled == false)
+        #expect(h.messages.count == 0)
+    }
+
     @Test func turningSendingBackOnAfterTheConfigSwitchNeedsTheOwner() {
         let h = Harness()
         h.switchedOn = false
@@ -604,6 +640,11 @@ final class Harness {
         let attacker = [ACLEntry(authorizations: ["ACLAuthorizationAny"], applications: [helper, "/tmp/attacker"])]
         #expect(!SendKeychainPolicy.trusted(attacker, helperPath: helper))
         #expect(!SendKeychainPolicy.trusted([], helperPath: helper))
+        let macDefault = [ACLEntry(authorizations: ["ACLAuthorizationEncrypt"], applications: nil),
+                          ACLEntry(authorizations: ["ACLAuthorizationDecrypt", "ACLAuthorizationDerive", "ACLAuthorizationExportClear", "ACLAuthorizationExportWrapped",
+                                                    "ACLAuthorizationMAC", "ACLAuthorizationSign"], applications: [helper]),
+                          ACLEntry(authorizations: ["ACLAuthorizationChangeACL"], applications: [])]
+        #expect(SendKeychainPolicy.trusted(macDefault, helperPath: helper))
     }
 }
 
