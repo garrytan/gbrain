@@ -52,6 +52,8 @@ export interface RustTransactionScope {
   readonly brain: StoreBrain;
   live: boolean;
   ended: boolean;
+  /** The attribution and source-scope settings applied in it (store-members/transactions.ts); trust ones live in the store. */
+  readonly settings: Map<string, string>;
 }
 
 /** The transactions whose callback the current async context runs inside, innermost first. */
@@ -104,6 +106,8 @@ export class RustEngine {
   private _leaveOwner: (() => void) | null = null;
   /** Set on a transaction-bound clone (store-members/transactions.ts); null on the engine itself. */
   _txScope: RustTransactionScope | null = null;
+  /** Transaction setting names set on this engine's connection so far (store-members/transactions.ts). */
+  readonly _seenSettings = new Set<string>();
   /** The open transaction and the promise that settles when it ends: the writer gate. */
   private _writer: { scope: RustTransactionScope; done: Promise<void> } | null = null;
   /** The transaction executor's pool, made on the first transaction and shut down by `disconnect`. */
@@ -278,7 +282,7 @@ export class RustEngine {
     const { Pool, Brain } = this.addon as { Pool: new (threads: number) => { shutdown(waitMs: number): Promise<unknown> }; Brain: new (pool: unknown) => StoreBrain };
     this._txPool ??= new Pool(TRANSACTION_POOL_THREADS);
     const brain = new Brain(this._txPool);
-    const scope: RustTransactionScope = { root: this, brain, live: true, ended: false };
+    const scope: RustTransactionScope = { root: this, brain, live: true, ended: false, settings: new Map() };
     this._writer = { scope, done };
     try {
       try {
@@ -305,6 +309,9 @@ export class RustEngine {
       return value;
     } finally {
       scope.live = false;
+      // The settings end with the transaction, as SET LOCAL does.
+      scope.settings.clear();
+      await brain.clearWriteTrust().catch(() => undefined);
       await brain.close().catch(() => undefined);
       if (this._writer?.scope === scope) this._writer = null;
       release();

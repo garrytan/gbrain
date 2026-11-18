@@ -45,6 +45,24 @@ becomes visible to the brain in one commit, or not at all.
     The time moves on again for the next transaction.
 11. **Error codes** are the existing ones: `invalid_state`, `store_closed` (mapped to
     `engine_closed`), `source_not_found`, `source_changed`, `internal_error`, `cancelled`.
+12. **Transaction-local settings.** `applyTransactionSettings(names, values)` and
+    `readTransactionSettings(names)` are `set_config(name, value, true)` and
+    `current_setting(name, true)`:
+    - Inside a transaction, a setting reads back what was last applied in it. The six write trust
+      settings go to the write trust context on the transaction's handle
+      ([`write_trust.md`](write_trust.md)). `gbrain.write_sources`, `gbrain.write_request`,
+      `gbrain.write_principal_kind`, `gbrain.write_principal_id` and `gbrain.git_protocol` stay
+      on the transaction in TypeScript (`RustTransactionScope.settings`).
+    - They end with the transaction. A savepoint rollback restores them; a release keeps them.
+    - Outside a transaction an apply keeps nothing, as a lone `set_config(..., true)` on PGLite.
+    - A name never set reads `null`. A name set before on the engine reads `''`, as Postgres
+      keeps a placeholder for it on the connection.
+    - A name outside `^[a-z_][a-z0-9_.]*$` throws `Invalid transaction setting name: <name>`, as
+      on PGLite. Any other name refuses with `engine_capability_missing`, reason `transactions`,
+      `detail: "member=<m> capability=transactions setting=<name> outcome=none written=nothing"`.
+    - Two transactions never see each other's settings. The store admits one write transaction at
+      a time: a second `begin_transaction` waits for the writer, and each transaction's handle has
+      its own context, which starts empty.
 
 An `AbortSignal` in `opts` is honoured before the transaction starts and while it waits at the
 gate (`cancelled`); once `fn` runs the signal is ignored, as on PGLite.

@@ -1626,13 +1626,21 @@ and write provenance on content rows, and the trust records.
   `listFenceRetireCandidates`) take the writer's tier and the opened ids from it (`Store::fence_context`);
   `trust::stamp` will take `Store::write_trust()` once the writers stamp. See
   [`rust/docs/store/write_trust.md`](../../rust/docs/store/write_trust.md).
-- **Hook (interfaces owns it, proposed):** the Rust engine's `applyTransactionSettings` and `readTransactionSettings`,
-  and the trust half of `setWriteContext`, route the six names to `applyWriteTrust` / `readWriteTrust` on the
-  transaction's store; the transaction calls `clearWriteTrust()` at commit and at rollback. Other setting names
-  (attribution, `gbrain.write_sources`) are not the write trust context's.
-- **Depends on:** the transactions family for the settings of an open store write; until then a write outside a
-  transaction stamps with no writer, which is `unknown`, and the parity cases set the context directly
-  (`test/engine-parity/rust-arm.ts` `applyRustWriteTrust`).
+- **Hook (built):** the Rust engine's `applyTransactionSettings` and `readTransactionSettings`
+  (`store-members/transactions.ts`) route the six names to `applyWriteTrust` / `readWriteTrust` on the
+  transaction's store. The attribution and source-scope names (`gbrain.write_sources`, `gbrain.write_request`,
+  `gbrain.write_principal_kind`, `gbrain.write_principal_id`, `gbrain.git_protocol`) stay on the transaction in
+  TypeScript. The transaction calls `clearWriteTrust()` when it ends, at commit and at rollback; a savepoint rollback
+  restores both halves. Any other name refuses with `engine_capability_missing` (`setting=<name>` in the detail).
+  Contract: [`rust/docs/store/transactions.md`](../../rust/docs/store/transactions.md), item 12. The trust half of
+  `setWriteContext` will call the same store methods.
+- **One writer rule:** the store admits one write transaction at a time (`kv.begin_write()` holds the writer), and
+  each transaction's handle has its own context, which starts empty. Two transactions opened together run one after
+  the other and never read each other's settings; the shared store never reads a transaction's settings. Pinned by
+  `test/engine-parity/transaction-settings.test.ts` and the store test
+  `a_second_transaction_waits_for_the_writer_and_starts_with_an_empty_context`.
+- **Depends on:** nothing more for the settings of an open store write. A write outside a transaction stamps with no
+  writer, which is `unknown`, as on PGLite.
 
 ### catalog probes (core)
 

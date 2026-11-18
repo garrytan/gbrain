@@ -58,7 +58,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	13	no	yes	yes	serves
+transaction	lifecycle	yes	18	no	yes	yes	serves
 transactionDirect	lifecycle	yes	1	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -307,8 +307,8 @@ getSourceStrictness	import_guards	yes	2	no	yes	yes	serves
 readPersistenceBrainId	import_guards	yes	1	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	1	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	1	no	yes	yes	serves
-readTransactionSettings	import_guards	yes	1	no	yes	yes	refuses:transactions
-applyTransactionSettings	import_guards	yes	1	no	yes	yes	refuses:transactions
+readTransactionSettings	import_guards	yes	7	no	yes	yes	serves
+applyTransactionSettings	import_guards	yes	6	no	yes	yes	serves
 readLedgerSource	import_guards	yes	2	no	yes	yes	refuses:persistence_journal
 isFolderRestricted	import_guards	yes	1	no	yes	yes	refuses:access_control
 readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves

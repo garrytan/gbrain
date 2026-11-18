@@ -34,8 +34,10 @@ settings on the open store. It writes no records and has no keys.
 
 PGLite's settings end with the transaction. Each store has its own context. A store bound to a transaction
 (`begin_transaction`, `transactions.rs`) starts with an empty context, and the shared store never sees it, so two
-transactions never share one. The engine's transaction sets the context on its own handle and must clear it at
-commit and at rollback.
+transactions never share one. The engine's `applyTransactionSettings` and `readTransactionSettings` route these six
+names to the transaction's handle (`store-members/transactions.ts`; contract in
+[`transactions.md`](transactions.md), item 12). The transaction clears the context when it ends, at commit and at
+rollback, and a savepoint rollback sets the six back to what they were when the savepoint opened.
 
 ## Rust guesses and gaps (1x parity)
 
