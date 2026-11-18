@@ -526,3 +526,18 @@ fn search_reads_pages_linking_to() {
         Vec::<u64>::new()
     );
 }
+
+#[test]
+fn projection_readiness_generation_moves_only_on_a_commit() {
+    let brain = Brain::new("readiness-generation");
+    brain.source("default");
+    let before = brain.store.projection_readiness_generation().unwrap();
+    assert_eq!(
+        before,
+        brain.store.projection_readiness_generation().unwrap()
+    );
+    brain.page("notes/a", "default", "note");
+    let after = brain.store.projection_readiness_generation().unwrap();
+    assert_ne!(before, after);
+    assert!(after.starts_with(&format!("{}/", brain.store.brain_id())));
+}
