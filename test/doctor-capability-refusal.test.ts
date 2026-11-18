@@ -4,6 +4,8 @@
  * - A check that reaches a refused capability reports each check it emits as a warning with unknown health, the
  *   capability named in details, and the run goes on to the next check; doctor does not stop on it.
  * - Any other error a check throws still propagates, as before.
+ * - A check that catches its own read error (an info-only skip) reports a refusal the same way: warn with unknown
+ *   health, never ok.
  */
 import { describe, expect, test } from 'bun:test';
 import type { Check } from '../src/commands/doctor.ts';
@@ -11,6 +13,10 @@ import { runDoctorRegistry } from '../src/commands/doctor/registry.ts';
 import { startDoctorDeadline } from '../src/commands/doctor/budget.ts';
 import type { DoctorContext, DoctorEntry } from '../src/commands/doctor/context.ts';
 import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
+import { contentSanityEntry, quarantineEntry } from '../src/commands/doctor/checks/content-quality.ts';
+import { localEditAdoptionsEntry } from '../src/commands/doctor/checks/local-edit-adoptions.ts';
+import { checkVolunteerChannels } from '../src/commands/doctor/checks/core-health.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
 
 const noProgress = new Proxy({}, { get: () => () => undefined }) as DoctorContext['progress'];
 
@@ -43,5 +49,27 @@ describe('doctor: a capability refusal is unknown health, not a stopped run', ()
   test('any other error still propagates', async () => {
     const broken: DoctorEntry = { name: 'broken', emits: ['broken'], run: async () => { throw new Error('boom'); } };
     await expect(runDoctorRegistry(ctxFor(), [broken, after])).rejects.toThrow('boom');
+  });
+});
+
+/** An engine whose every member refuses, as the Rust engine refuses a member it does not serve. */
+const refusingEngine = new Proxy({}, {
+  get: (_t, key) => (key === 'then' ? undefined : async () => { throw capabilityMissing('raw_sql', String(key)); }),
+}) as unknown as BrainEngine;
+
+describe('doctor: a check that catches its own read error still reports a refusal as unknown health', () => {
+  const unknown = { status: 'warn', health: 'unknown', reason: 'engine_capability_missing', capability: 'raw_sql' };
+  const view = (c: Check | undefined) => ({ status: c?.status, health: (c?.details as any)?.health, reason: (c?.details as any)?.reason, capability: (c?.details as any)?.capability });
+  const run = async (entry: DoctorEntry) => (await entry.run({ ...ctxFor(), engine: refusingEngine } as DoctorContext)) as Check[];
+
+  test('scraper_junk_pages, quarantined_pages, flagged_pages and local_edit_adoptions', async () => {
+    const checks = [...await run(contentSanityEntry), ...await run(quarantineEntry), ...await run(localEditAdoptionsEntry)];
+    for (const name of ['scraper_junk_pages', 'quarantined_pages', 'flagged_pages', 'local_edit_adoptions']) {
+      expect({ name, ...view(checks.find((c) => c.name === name)) }).toEqual({ name, ...unknown });
+    }
+  });
+
+  test('volunteer_channels', async () => {
+    expect(view(await checkVolunteerChannels(refusingEngine))).toEqual(unknown);
   });
 });

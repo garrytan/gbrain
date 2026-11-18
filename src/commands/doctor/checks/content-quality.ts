@@ -13,7 +13,7 @@ import { checkUnverifiedExtractions } from './extraction-sync.ts';
 import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { agentFix, checkError, doctorVerify, withSkippedSegmented } from '../check-fix.ts';
-import { scanDeadline } from '../budget.ts';
+import { capabilityRefusal, capabilityUnknownCheck, scanDeadline } from '../budget.ts';
 import { boundUnknownDetails } from '../bounded-unknown.ts';
 
 /** Oversized pages `oversized_pages` lists before it reports a floor. */
@@ -185,8 +185,10 @@ async function runContentSanity(ctx: DoctorContext): Promise<Check[]> {
       }, segmentedScanned));
     }
   } catch (err) {
+    const refusal = capabilityRefusal(err);
     const msg = err instanceof Error ? err.message : String(err);
-    checks.push({
+    if (refusal) checks.push(capabilityUnknownCheck('scraper_junk_pages', refusal));
+    else checks.push({
       name: 'scraper_junk_pages',
       status: 'ok',
       message: `Skipped (${msg})`,
@@ -308,7 +310,8 @@ async function runQuarantine(ctx: DoctorContext): Promise<Check[]> {
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    checks.push({ name: 'quarantined_pages', status: 'ok', message: `Skipped (${msg})` });
+    const refusal = capabilityRefusal(err);
+    checks.push(refusal ? capabilityUnknownCheck('quarantined_pages', refusal) : { name: 'quarantined_pages', status: 'ok', message: `Skipped (${msg})` });
   }
 
   progress.heartbeat('flagged_pages');
@@ -328,7 +331,8 @@ async function runQuarantine(ctx: DoctorContext): Promise<Check[]> {
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    checks.push({ name: 'flagged_pages', status: 'ok', message: `Skipped (${msg})` });
+    const refusal = capabilityRefusal(err);
+    checks.push(refusal ? capabilityUnknownCheck('flagged_pages', refusal) : { name: 'flagged_pages', status: 'ok', message: `Skipped (${msg})` });
   }
 
   // issue #160: extraction quarantine lane review nudge.

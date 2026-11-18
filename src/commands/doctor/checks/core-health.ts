@@ -15,6 +15,7 @@ import type { ProgressReporter } from '../../../core/progress.ts';
 import type { Check } from '../../doctor.ts';
 import { PAGE_CHILD_FK_TARGETS, orphanPredicate } from '../../../core/repair/orphan-children.ts';
 import { checkError } from '../check-fix.ts';
+import { capabilityRefusal, capabilityUnknownCheck } from '../budget.ts';
 import { answersFromCatalog, catalogSkipCheck, reportsCapability } from '../../../core/rust-engine/store-members/catalog.ts';
 import { isMissingSchemaObject } from '../../../core/utils.ts';
 
@@ -403,6 +404,11 @@ export async function checkVolunteerChannels(
     // Discriminate table-absent (pre-v117 brain) from transient failures —
     // a connection blip on a fully-migrated brain must not be misreported
     // as an old schema. Info-only either way; never block doctor.
+    const refusal = capabilityRefusal(e);
+    if (refusal) {
+      const unknown = capabilityUnknownCheck(name, refusal);
+      return { ...unknown, details: { ...unknown.details, window_days: 7, channels: {} } };
+    }
     const msg = e instanceof Error ? e.message : String(e);
     const tableAbsent = isMissingSchemaObject(e, 'table', 'context_volunteer_events');
     return {
