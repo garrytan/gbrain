@@ -425,8 +425,8 @@ pub(crate) fn embedding_dimensions(read: &dyn KvRead) -> Result<usize> {
 
 /// Replaces a page's chunks with `chunks` (an empty list removes them all). A chunk that keeps
 /// its index keeps its id; the chunk-delete hook gets the ids of the indexes that are gone. When
-/// `seal` is set the page's `text_projection_revision` becomes its `knowledge_revision`: the
-/// chunks now describe the current text.
+/// `seal` is set the page's `text_projection_revision` becomes its `knowledge_revision` and its
+/// `chunker_version` the safe fence version: the chunks now describe the current text.
 ///
 /// Vectors follow PGLite's upsert. A chunk written fresh (`merge` false, or a new index) takes
 /// the write's vector, or none and a pending stamp of `now_us`. On a merge, a chunk whose text
@@ -591,7 +591,9 @@ pub(crate) fn replace_chunks_at(
     }
     put_json(tx, &keys::meta(STATS), &stats)?;
     if seal {
+        // PGLite's seal (`upsertChunks` with `sealChunkerVersion`) stamps the safe fence version too.
         page.text_projection_revision = Some(page.knowledge_revision.clone());
+        page.chunker_version = Some(crate::chunk_queries::SAFE_FENCE_CHUNKER_VERSION);
         write_page(tx, page)?;
     }
     Ok(())

@@ -24,6 +24,9 @@ import type { EntityTypeFilter } from './schema-pack/entity-types.ts';
 import type { ChunkMove } from './page-state/chunk-moves.ts';
 import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence-state.ts';
+import type { ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, WriteCompletion, WriteRequestInsert } from './engine-sql/persistence-journal.ts';
+import type { WriteRequest } from './persistence/model.ts';
+import type { ImportedPageSeal, LivePageBodyRow, OriginClaimRow, PageIngestStamp, PageOriginRow, PageOriginTarget } from './engine-sql/write-guards.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type { ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, MentionDueQuery, SiblingCandidateQuery, SiblingCandidateRow } from './engine-sql/entity-reads.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
@@ -2708,6 +2711,8 @@ export interface BrainEngine {
   setBodyStagingState(id: string, state: BodyStagingState, opts?: { commitRequestId?: string | null }): Promise<void>;
   /** Garbage collection: retired chunks and dead manifest rows (versions are roots), unreferenced texts past the grace window, expired stagings. */
   sweepSegments(opts?: SegmentSweepOptions): Promise<SegmentSweepResult>;
+  /** Whether any body staging or segment text exists: the vacuum's one probe before it sweeps (engine-sql/write-guards.ts). */
+  hasSegmentStorage(): Promise<boolean>;
   // Per-segment derivation watermarks (Wave B PR 4; types in page-body/derivations.ts, SQL in engine-sql/page-body.ts).
   /** A page's rows (every kind, or `kind`; optionally only `occurrenceIds`), by kind then occurrence. */
   readSegmentDerivations(pageId: number, opts?: { kind?: SegmentDerivationKind; occurrenceIds?: readonly number[] }): Promise<SegmentDerivationRow[]>;
@@ -2857,6 +2862,19 @@ export interface BrainEngine {
   getPageSealState(pageId: number): Promise<{ chunker_version: number | null } | null>;
   /** Record where a live page's file lives (`source_path`, and `source_uri` when given); a page already holding both writes nothing. */
   refreshPageOrigin(slug: string, opts: { sourceId: string; sourcePath: string; sourceUri?: string | null }): Promise<void>;
+  // Page write guards (engine-sql/write-guards.ts): the origin check and bind, the ingest stamp and the import seal.
+  /** The page `target` names, live or a tombstone (by `pageId` within the source, else by `slug`), or null. */
+  readPageOrigin(target: PageOriginTarget): Promise<PageOriginRow | null>;
+  /** Locks each origin key (`opts.lockKeys`) until the transaction ends, then the live pages other than `excludePageId` recording one of `spellings`, by slug. */
+  listOriginClaims(sourceId: string, spellings: readonly string[], opts: { lockKeys: readonly string[]; excludePageId?: number | null }): Promise<OriginClaimRow[]>;
+  /** Records `sourcePath` as a page's origin (persistence/origin-guard.ts `bindOrigin` only); the number of pages whose origin changed. */
+  bindPageOrigin(target: PageOriginTarget & { sourcePath: string; onlyIfUnset?: boolean; liveOnly?: boolean }): Promise<number>;
+  /** Records a page's ingest provenance (`source_kind`, `ingested_via`, `ingested_at`); a missing page writes nothing. */
+  stampPageIngest(slug: string, stamp: PageIngestStamp): Promise<void>;
+  /** An import's closing seal: the chunker version always, the text seal when the page is at `seal.revision`; the page id, or null. */
+  sealImportedPage(slug: string, seal: ImportedPageSeal): Promise<{ id: number } | null>;
+  /** A live page's frontmatter, body columns, body storage and content hash (the valid-time advisory's after image), or null. */
+  readLivePageBody(slug: string, opts: { sourceId: string }): Promise<LivePageBodyRow | null>;
 
   /**
    * v0.35.5 — narrow UPDATE of `pages.compiled_truth`, `pages.timeline`, and
@@ -3102,6 +3120,28 @@ export interface BrainEngine {
 
   /** Registers a local writer unless its id or credential hash is already registered; true when this call inserted the row. */
   insertLocalWriterRow(row: LocalWriterInsert): Promise<boolean>;
+
+  // Write-journal statements (engine-sql/persistence-journal.ts): the text journal.ts, limits.ts and held-reads.ts sent through executeRaw.
+  /** The journal limit config rows, then one row with a null key: the largest page stored in segments, or 'unindexed'. */
+  readJournalLimitRows(): Promise<Array<{ key: string | null; value: string | null }>>;
+  /** The current-incarnation hold rows (`record`, page `revision`) naming these page ids, in fingerprint order. */
+  readHeldPageRows<R = Record<string, unknown>>(pageIds: string[]): Promise<Array<{ record: R; revision: string | null }>>;
+  /** The held-file summary rows of live sources with at least one held file, in source order; null reads every source. */
+  readHeldCoverageRows(sourceIds: string[] | null): Promise<HeldCoverageRow[]>;
+  /** The request a principal admitted under `requestId` (a uuid), or null. */
+  readWriteRequest(principalKind: string, principalId: string, requestId: string): Promise<WriteRequest | null>;
+  /** The request with journal id `id`, or null; `signal` cancels the read. */
+  readWriteRequestById(id: string, opts?: { signal?: AbortSignal }): Promise<WriteRequest | null>;
+  /** Creates the missing counter rows and locks them all FOR UPDATE in key order; returns the locked rows. */
+  lockPersistenceCounters(keys: readonly string[]): Promise<CounterRow[]>;
+  /** Inserts an admitted request and charges its (already locked) counters; returns the stored row. */
+  insertWriteRequest(row: WriteRequestInsert): Promise<WriteRequest>;
+  /** Stamps a claim (running, token, lease, first phase) on request `id`; null when the refresh barrier refused it. */
+  stampWriteClaim(id: string, token: string, leaseMs: number, phaseJson: string): Promise<ClaimedWriteRow | null>;
+  /** Request `id` locked FOR UPDATE until the transaction ends, or null. */
+  lockWriteRequest(id: string): Promise<WriteRequest | null>;
+  /** Records a request's terminal state and releases its counters; null when the result exceeds its reservation. */
+  completeWriteRow(completion: WriteCompletion): Promise<CompletedWriteRow | null>;
 
   /**
    * The current value of each named transaction-local setting (`current_setting(name, true)`), in `names` order, null

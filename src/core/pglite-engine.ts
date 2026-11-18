@@ -162,6 +162,8 @@ import * as timelineImpl from './engine-sql/timeline.ts';
 import * as sourcesImpl from './engine-sql/sources.ts';
 import * as cliReadsImpl from './engine-sql/cli-reads-import.ts';
 import * as persistenceStateImpl from './engine-sql/persistence-state.ts';
+import * as persistenceJournalImpl from './engine-sql/persistence-journal.ts';
+import * as writeGuardsImpl from './engine-sql/write-guards.ts';
 import * as cliReadsOpsImpl from './engine-sql/cli-reads-ops.ts';
 import * as factsDoctorImpl from './engine-sql/facts-doctor.ts';
 import * as factsCycleImpl from './engine-sql/facts-cycle.ts';
@@ -1522,6 +1524,16 @@ export class PGLiteEngine implements BrainEngine {
   readPersistenceBrainId() { return persistenceStateImpl.readPersistenceBrainId(unscopedExecutor(this.engineSql, 'persistence: brain identity read ran unscoped through executeRaw')); }
   readLocalWriterRow(id: string, opts?: { lock?: boolean }) { return persistenceStateImpl.readLocalWriterRow(unscopedExecutor(this.engineSql, 'persistence: local writer read ran unscoped through executeRaw'), id, opts); }
   insertLocalWriterRow(row: persistenceStateImpl.LocalWriterInsert) { return persistenceStateImpl.insertLocalWriterRow(this.engineSql, row); }
+  readJournalLimitRows() { return persistenceJournalImpl.readJournalLimitRows(unscopedExecutor(this.engineSql, 'persistence: journal limit read ran unscoped through executeRaw')); }
+  readHeldPageRows<R = Record<string, unknown>>(pageIds: string[]) { return persistenceJournalImpl.readHeldPageRows<R>(unscopedExecutor(this.engineSql, 'persistence: hold read ran unscoped through executeRaw'), pageIds); }
+  readHeldCoverageRows(sourceIds: string[] | null) { return persistenceJournalImpl.readHeldCoverageRows(unscopedExecutor(this.engineSql, 'persistence: hold summary read ran unscoped through executeRaw'), sourceIds); }
+  readWriteRequest(principalKind: string, principalId: string, requestId: string) { return persistenceJournalImpl.readWriteRequest(unscopedExecutor(this.engineSql, 'persistence: request read ran unscoped through executeRaw'), principalKind, principalId, requestId); }
+  readWriteRequestById(id: string, opts?: { signal?: AbortSignal }) { return persistenceJournalImpl.readWriteRequestById(unscopedExecutor(this.engineSql, 'persistence: request read ran unscoped through executeRaw'), id, opts); }
+  lockPersistenceCounters(keys: readonly string[]) { return persistenceJournalImpl.lockPersistenceCounters(this.engineSql, keys); }
+  insertWriteRequest(row: persistenceJournalImpl.WriteRequestInsert) { return persistenceJournalImpl.insertWriteRequest(this.engineSql, row); }
+  stampWriteClaim(id: string, token: string, leaseMs: number, phaseJson: string) { return persistenceJournalImpl.stampWriteClaim(this.engineSql, id, token, leaseMs, phaseJson); }
+  lockWriteRequest(id: string) { return persistenceJournalImpl.lockWriteRequest(this.engineSql, id); }
+  completeWriteRow(completion: persistenceJournalImpl.WriteCompletion) { return persistenceJournalImpl.completeWriteRow(this.engineSql, completion); }
   readTransactionSettings(names: readonly string[]) { return transactionSettingsImpl.readTransactionSettings(unscopedExecutor(this.engineSql, 'transaction settings: read ran through the transaction executeRaw'), names); }
   applyTransactionSettings(names: readonly string[], values: readonly string[]) { return transactionSettingsImpl.applyTransactionSettings(this.engineSql, names, values); }
   readLedgerSource(sourceId: string, opts?: { batch?: boolean }) { return beliefImpl.readLedgerSource(unscopedExecutor(this.engineSql, 'belief: ledger source probe ran unscoped through executeRaw'), sourceId, opts); }
@@ -2817,6 +2829,7 @@ export class PGLiteEngine implements BrainEngine {
   async openBodyStaging(input: BodyStagingInput): Promise<void> { return pageBodyImpl.openBodyStaging(this.engineSql, input); }
   async setBodyStagingState(id: string, state: BodyStagingState, opts?: { commitRequestId?: string | null }): Promise<void> { return pageBodyImpl.setBodyStagingState(this.engineSql, id, state, opts); }
   async sweepSegments(opts?: SegmentSweepOptions): Promise<SegmentSweepResult> { return pageBodyImpl.sweepSegments(this.engineSql, opts); }
+  hasSegmentStorage() { return writeGuardsImpl.hasSegmentStorage(unscopedExecutor(this.engineSql, 'page body: segment storage probe ran unscoped through executeRaw')); }
   async readSegmentDerivations(pageId: number, opts?: { kind?: SegmentDerivationKind; occurrenceIds?: readonly number[] }): Promise<SegmentDerivationRow[]> {
     return pageBodyImpl.readSegmentDerivations(unscopedExecutor(this.engineSql, 'page-body: page-id keyed internal read'), pageId, opts);
   }
@@ -3135,6 +3148,12 @@ export class PGLiteEngine implements BrainEngine {
   async refreshPageOrigin(slug: string, opts: { sourceId: string; sourcePath: string; sourceUri?: string | null }): Promise<void> {
     return pagesImpl.refreshPageOrigin(this.engineSql, slug, opts);
   }
+  readPageOrigin(target: writeGuardsImpl.PageOriginTarget) { return writeGuardsImpl.readPageOrigin(unscopedExecutor(this.engineSql, 'origin guard: page read ran unscoped through executeRaw'), target); }
+  listOriginClaims(sourceId: string, spellings: readonly string[], opts: { lockKeys: readonly string[]; excludePageId?: number | null }) { return writeGuardsImpl.listOriginClaims(this.engineSql, sourceId, spellings, opts); }
+  bindPageOrigin(target: writeGuardsImpl.PageOriginTarget & { sourcePath: string; onlyIfUnset?: boolean; liveOnly?: boolean }) { return writeGuardsImpl.bindPageOrigin(this.engineSql, target); }
+  stampPageIngest(slug: string, stamp: writeGuardsImpl.PageIngestStamp) { return writeGuardsImpl.stampPageIngest(this.engineSql, slug, stamp); }
+  sealImportedPage(slug: string, seal: writeGuardsImpl.ImportedPageSeal) { return writeGuardsImpl.sealImportedPage(this.engineSql, slug, seal); }
+  readLivePageBody(slug: string, opts: { sourceId: string }) { return writeGuardsImpl.readLivePageBody(unscopedExecutor(this.engineSql, 'valid-time advisory: page body read ran unscoped through executeRaw'), slug, opts); }
 
   // Config
   async getConfig(key: string): Promise<string | null> {

@@ -10,6 +10,7 @@ mod cli_reads_search_pages;
 mod cli_sources;
 mod config;
 mod graph;
+mod import_members;
 mod journal;
 mod links;
 mod pages;
@@ -18,6 +19,7 @@ mod sources;
 mod tags;
 mod timeline;
 mod versions;
+mod write_guards;
 
 // Planned families: no methods yet (docs/designs/RUST_ENGINE_INTERFACES.md).
 mod aliases;

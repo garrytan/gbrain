@@ -43,6 +43,7 @@ import * as cliReadsImport from './cli-reads-import.ts';
 import * as cliReadsOps from './cli-reads-ops.ts';
 import * as cliReadsSearchPages from './cli-reads-search-pages.ts';
 import * as wantedLinks from './wanted-links.ts';
+import * as persistence from './persistence.ts';
 import * as cliEntities from './cli-entities.ts';
 import * as factsDoctor from './facts-doctor.ts';
 import * as factsCycle from './facts-cycle.ts';
@@ -52,6 +53,8 @@ import * as factsTrust from './facts-trust.ts';
 import * as jobs from './jobs.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 import * as telemetry from './telemetry.ts';
+import * as writeGuards from './write-guards.ts';
+import * as importMembers from './import-members.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
 const initSchema: StoreMember<[], void> = async () => undefined;
@@ -78,6 +81,11 @@ export const STORE_MEMBERS = {
   ...persistenceIdentity,
   // Search telemetry (rust/docs/store/telemetry.md).
   ...telemetry,
+  ...persistence,
+  // The page write guards a page write runs around the page row (rust/docs/store/write-guards.md).
+  ...writeGuards,
+  // The page and chunk statements a page import runs around its chunk write (rust/docs/store/import-members.md).
+  ...importMembers,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

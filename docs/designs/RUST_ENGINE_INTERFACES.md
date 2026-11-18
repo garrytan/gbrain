@@ -516,6 +516,11 @@ store keeps the same rule in `pages.rs`.
   `store-members/pages.ts` refuses `putPage` with a `source_path` for such a source.
 - **Advisory locks.** PGLite takes a lock per origin so that two writers serialize. The store has one writer at a
   time, so it needs none.
+- **Write guards.** The origin check, the origin bind, the ingest stamp, the import seal and the valid-time body
+  read are typed engine members (`readPageOrigin`, `listOriginClaims`, `bindPageOrigin`, `stampPageIngest`,
+  `sealImportedPage`, `readLivePageBody`; SQL in `engine-sql/write-guards.ts`). The store answers them in
+  `write_guards.rs`, and `bindPageOrigin` runs the same origin check as `putPage`. See
+  [`rust/docs/store/write-guards.md`](../../rust/docs/store/write-guards.md).
 - **Parity case:** `pages.test.ts`: putPage records source_path and refuses a second live page of the same file.
 
 #### Nullable page fields (`PageText` in `pages.rs`)
@@ -527,7 +532,7 @@ PGLite lets four `pages` columns hold NULL. The page record holds NULL in the sa
 | --- | --- | --- | --- |
 | `compiled_truth`, `timeline` | `PageText` | a segmented shell page: its body lives in segment texts. PGLite's `pages_body_storage_chk` makes both NULL exactly when `body_storage = 'segmented'`; an inline page holds a string (`''` when empty) | the page_body family (`createSegmentedPageShell`, a generation flip); never `putPage` |
 | `content_hash` | `Option<String>` | a shell page whose body is not published yet, as `createSegmentedPageShell` leaves it | the page_body family; `putPage` always sets a hash |
-| `chunker_version` | `Option<i16>` | the store has not recorded one. `putPage` keeps the stored value and sets none on a new page | the page_body family; not part of the page JSON (PGLite's `rowToPage` leaves it out) |
+| `chunker_version` | `Option<i16>` | a record written before the store recorded one. `putPage` writes PGLite's value (`rust/docs/store/pages.md`) and a seal writes the safe fence version | nothing new; not part of the page JSON (PGLite's `rowToPage` leaves it out) |
 
 - **Reading in Rust.** A NULL body reads as `""` through `&str` (`Deref`), so inline readers (`auto_chunks`, sizes,
   text matching) see an empty body. Use `is_null` or `as_deref` where NULL and `""` differ.
@@ -819,6 +824,7 @@ Segmented page bodies: segment texts, manifests, staging and derivations.
 - **Depends on:** Core page helpers for `createSegmentedPageShell`, `flipBodyGeneration`, `sealSegmentedPage` and `refreshPageBody` (page record writes go through `write_page`; the seal records the sanitized lead with `record_search_timeline`). `stageSegmentChunks` writes chunk rows through the core segment chunk helpers (built; "Segment chunks"), and refuses any input that carries vectors until the embeddings family lands. The flip publishes the view generation (`publish_segment_chunks`) and retires chunks with the segment chunk deletes. The generation-1 parity case also needs the transactions family.
 - **Estimate:** about 7 to 8 days: texts and manifest 1 to 2, flip and staging 3, sweep 2, derivations 1.
 - **Notes:** Segment bodies are bytes; sha256 and bodies cross the binding as hex or `Buffer`. `flipBodyGeneration` and `sweepSegments` are each one store write.
+- **Segment storage probe:** `hasSegmentStorage` (capability `page_body`, in `write_guards.rs`) is true when any segment text (`b 0x01`) or body staging (`b 0x03`) exists. The journal reads it before it looks for segmented pages.
 - **Parity cases (6, in `segmented-body.test.ts`, `sync-aliases.test.ts`):**
   - `segmented-body.test.ts`: a segmented page publishes generation 1 from staged texts and manifest rows
   - `segmented-body.test.ts`: a replace flips to generation 2, closes retired rows and refuses a stale generation
@@ -1559,6 +1565,38 @@ Trust tiers, the write gate, trust review, fact withdrawal and the belief ledger
   `test/fact-withdrawal-normalized.test.ts` and `test/belief-ledger-lifecycle.test.ts`: `getPage` returns the stored
   tier; lowering never raises; a withdrawn fact reads as withdrawn; a second withdrawal is refused; gate receipts
   clear when stale; a belief lifetime opens and resolves.
+
+#### trust: what is built
+
+The design above is the whole family. This part is built on the trust family's branch (caa958bbd3): trust tiers
+and write provenance on content rows, and the trust records.
+
+- **Files:** `gbrain-store/src/trust.rs` and `gbrain-store/src/trust/stamp.rs`, then the napi and TypeScript files of
+  each trust member.
+- **Tag:** `t` (`TRUST`). Cascade on page delete: not yet. The design above asks for it; the trust family asks core
+  for the page-delete hook when it needs one.
+- **Build order:** page `trust_tier` and `write_origin` first (returned through the page-columns hook), then
+  `fact_withdrawals`, then `write_gate_holds` and `write_gate_receipts`.
+- **`trust::stamp`:** `stamp(ctx: &WriteTrust, table: TrustTable, row: StampRow) -> Result<Stamped>` gives the
+  tier and origin of one row, with the rules of the PGLite trigger `gbrain_stamp_trust_tier`
+  (`src/core/trust/schema.ts`):
+  - an insert gets the writer's tier, or `unknown` without one; a supplied tier counts only under backfill;
+  - a content change by an owner-tier writer restamps the row; a lower writer sets the minimum of the stored tier
+    and its own; a table in the keep list keeps its stored tier, and can still lower it;
+  - a raise needs a promotion ceiling that covers it (or backfill from `unknown` to a tier below
+    `user_confirmed`), and is otherwise refused with `trust_raise_refused`.
+  - `WriteTrust` holds the writer tier, the origin, the promotion ceiling, the backfill flag and the keep list.
+    `StampRow` is an insert with the supplied tier, or an update with the old and new tier, whether content changed
+    and whether the origin was set. `Stamped` holds the tier and the origin (keep, or set).
+  - The guest-source rules of the trigger are not in `stamp`: the store has no `guest_sources` records yet.
+- **Trust hook (persistence owns it):** a typed `setWriteContext` member holds the attribution and trust settings of
+  the open store write. The attribution seam (`persistence/context.ts`, the `set_config` calls) calls it on a Rust
+  brain in place of `executeRaw`. `write_page` and the facts insert build a `WriteTrust` from it and call
+  `trust::stamp`. A page version snapshot copies the page's tier and origin. The takes and timeline families call
+  `stamp` when they write their rows. The statements are in
+  [the put write path map](../research/rust-put-write-path.md#trust-hook).
+- **Depends on:** the transactions family for the settings of an open store write; until then a write outside a
+  transaction stamps with no writer, which is `unknown`.
 
 ### catalog probes (core)
 

@@ -139,6 +139,7 @@ test/engine-parity/facts-purge.test.ts
 test/engine-parity/facts-repair.test.ts
 test/engine-parity/facts-trust.test.ts
 test/engine-parity/facts.test.ts
+test/engine-parity/import-members.test.ts
 test/engine-parity/import-path.test.ts
 test/engine-parity/import-writes.test.ts
 test/engine-parity/jobs-queue.test.ts
@@ -147,6 +148,7 @@ test/engine-parity/lifecycle.test.ts
 test/engine-parity/link-reads.test.ts
 test/engine-parity/links.test.ts
 test/engine-parity/pages.test.ts
+test/engine-parity/persistence.test.ts
 test/engine-parity/private-page-reads.test.ts
 test/engine-parity/raw-sql.test.ts
 test/engine-parity/search-reads.test.ts
@@ -163,6 +165,7 @@ test/engine-parity/timeline.test.ts
 test/engine-parity/typed-config-reads.test.ts
 test/engine-parity/versions-raw.test.ts
 test/engine-parity/wanted-links.test.ts
+test/engine-parity/write-guards.test.ts
 test/engine-sql-facts-keyset.test.ts
 test/eval-log-tables-parity.test.ts
 test/extract-all-stamp-intersection.serial.test.ts

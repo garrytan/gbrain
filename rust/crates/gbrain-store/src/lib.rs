@@ -41,6 +41,7 @@ pub mod embeddings;
 pub mod eval_capture;
 pub mod extraction;
 pub mod facts;
+pub mod import_members;
 pub mod jobs;
 pub mod keyword;
 pub mod link_queries;
@@ -59,6 +60,7 @@ pub mod transactions;
 pub mod trust;
 pub mod vectors;
 pub mod wanted_links;
+pub mod write_guards;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;

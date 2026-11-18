@@ -46,6 +46,8 @@ const OOS = {
   importGuards: 'out-of-scope:import-guards (born in engine-sql/persistence-state.ts, transaction-settings.ts, belief.ts, access-control.ts; pinned by test/engine-parity/import-path.test.ts)',
   searchReads: 'out-of-scope:search-reads (born in engine-sql/search-reads.ts; pinned by test/engine-parity/search-reads.test.ts)',
   importWrites: 'out-of-scope:import-writes (born in engine-sql/chunks.ts, tags.ts, pages.ts; pinned by test/engine-parity/import-writes.test.ts)',
+  journal: 'out-of-scope:persistence-journal (born in engine-sql/persistence-journal.ts; pinned by test/engine-parity/persistence.test.ts and test/persistence-journal-statements.test.ts)',
+  writeGuards: 'out-of-scope:write-guards (born in engine-sql/write-guards.ts; pinned by test/engine-parity/write-guards.test.ts and test/fold-hook-noop-6712.test.ts)',
   pageBody: 'out-of-scope:page-body (Wave B segmented storage, born in engine-sql/page-body.ts; pinned by test/engine-sql-page-body.test.ts)',
   cycleLocks: 'out-of-scope:cycle-locks (gbrain_cycle_locks leases, born in engine-sql/cycle-locks.ts; pinned by test/engine-parity/cycle-locks.test.ts)',
   linkReads: 'out-of-scope:link-reads (born in engine-sql/link-reads.ts; pinned by test/engine-parity/link-reads.test.ts)',
@@ -201,6 +203,13 @@ export const DOMAIN_OF: Record<string, string> = {
   'getPageSealState': OOS.importWrites,
   'replaceDerivedAliases': OOS.importWrites,
   'refreshPageOrigin': OOS.importWrites,
+  'readPageOrigin': OOS.writeGuards,
+  'listOriginClaims': OOS.writeGuards,
+  'bindPageOrigin': OOS.writeGuards,
+  'stampPageIngest': OOS.writeGuards,
+  'sealImportedPage': OOS.writeGuards,
+  'readLivePageBody': OOS.writeGuards,
+  'hasSegmentStorage': OOS.writeGuards,
   'constructor': OOS.lifecycle,
   'registerBeforeDisconnect': OOS.lifecycle,
   'sql': OOS.lifecycle,
@@ -337,6 +346,10 @@ export const DOMAIN_OF: Record<string, string> = {
   'readManagedModeRows': OOS.importGuards, 'getSourceStrictness': OOS.importGuards, 'readPersistenceBrainId': OOS.importGuards,
   'readLocalWriterRow': OOS.importGuards, 'insertLocalWriterRow': OOS.importGuards, 'readTransactionSettings': OOS.importGuards,
   'applyTransactionSettings': OOS.importGuards, 'readLedgerSource': OOS.importGuards, 'isFolderRestricted': OOS.importGuards,
+  // the write journal (typed admission, claim, completion, limit and hold reads)
+  'readJournalLimitRows': OOS.journal, 'readHeldPageRows': OOS.journal, 'readHeldCoverageRows': OOS.journal,
+  'readWriteRequest': OOS.journal, 'readWriteRequestById': OOS.journal, 'lockPersistenceCounters': OOS.journal,
+  'insertWriteRequest': OOS.journal, 'stampWriteClaim': OOS.journal, 'lockWriteRequest': OOS.journal, 'completeWriteRow': OOS.journal,
   // entity and mention reads the CLI made through executeRaw
   'readMentionLastPass': OOS.entityReads, 'countPagesDueForMentions': OOS.entityReads, 'readIdentitySiblingCandidates': OOS.entityReads,
   'findExactSlug': OOS.entityReads, 'readExtractionLagCounts': OOS.entityReads, 'readIgnoredPrivacyLabelPages': OOS.entityReads,
@@ -457,6 +470,8 @@ const SLUG = 'people/alice-example';
 const SLUG2 = 'companies/acme-example';
 const SRC = 'src-a';
 const SRCS = ['src-a', 'src-b'];
+const JOURNAL_REQUEST = 'b0000000-0000-4000-8000-0000000000b1';
+const JOURNAL_KEYS = ['brain', 'principal:local_cli:writer-1'];
 const EMB = new Float32Array([0.1, 0.2, 0.3]);
 const page = { type: 'person', title: 'Alice Example', compiled_truth: 'Alice Example body.', timeline: '', frontmatter: { tags: [] } };
 const pageRet: Rule = [/^\s*INSERT INTO pages \(source_id, slug/, [PAGE_ROW]];
@@ -1039,6 +1054,29 @@ export const EXTRA_READ_CASES: SqlCase[] = [
     ['batch', (e) => e.readLedgerSource(SRC, { batch: true })],
   ]),
   ...variants('isFolderRestricted', [['default', (e) => e.isFolderRestricted(SRC, SLUG)]]),
+  ...variants('readJournalLimitRows', [['default', (e) => e.readJournalLimitRows()]]),
+  ...variants('readHeldPageRows', [['default', (e) => e.readHeldPageRows(['1', '2'])]]),
+  ...variants('readHeldCoverageRows', [
+    ['all', (e) => e.readHeldCoverageRows(null)],
+    ['sources', (e) => e.readHeldCoverageRows([SRC])],
+  ]),
+  ...variants('readWriteRequest', [['default', (e) => e.readWriteRequest('local_cli', 'writer-1', JOURNAL_REQUEST)]]),
+  ...variants('readWriteRequestById', [['default', (e) => e.readWriteRequestById(JOURNAL_REQUEST)]]),
+  ...variants('lockPersistenceCounters', [['default', (e) => e.transaction((tx: any) => tx.lockPersistenceCounters(JOURNAL_KEYS))]]),
+  ...variants('insertWriteRequest', [['default', (e) => e.transaction((tx: any) => tx.insertWriteRequest({
+    principalKind: 'local_cli', principalId: 'writer-1', requestId: JOURNAL_REQUEST, operation: 'put_page', sourceId: SRC,
+    sourceIncarnation: JOURNAL_REQUEST, pageId: null, slug: SLUG, worktreeId: null, topologyGeneration: null, digest: 'd'.repeat(64),
+    intent: { kind: 'put_page' }, authority: { scopes: ['write'] }, intentBytes: 100, terminalReservation: 4096, targetKind: 'page',
+    protocolVersion: 1, admitterVersion: 'test', admitterHostId: null, counterKeys: JOURNAL_KEYS, clientRequestId: null, state: 'queued',
+    deferredRefreshId: null,
+  }))]]),
+  ...variants('stampWriteClaim', [['default', (e) => e.transaction((tx: any) => tx.stampWriteClaim(JOURNAL_REQUEST, JOURNAL_REQUEST, 60_000, '{}'))]]),
+  ...variants('lockWriteRequest', [['default', (e) => e.transaction((tx: any) => tx.lockWriteRequest(JOURNAL_REQUEST))]]),
+  ...variants('completeWriteRow', ([false, true] as const).map((probePurges) => [probePurges ? 'purge-probe' : 'default', (e: any) => e.transaction((tx: any) => tx.completeWriteRow({
+    id: JOURNAL_REQUEST, state: 'committed', outcome: { status: 'ok' }, errorCode: null, errorMessage: null, consumerVersion: 'test',
+    consumerHostId: null, errorDetail: null, resultBytes: 10, counterKeys: JOURNAL_KEYS, intentBytes: 100, retainedBytes: 110,
+    terminalReservation: 4096, probePurges,
+  }))])),
   ...variants('readMentionLastPass', [['default', (e) => e.readMentionLastPass()], ['sourceId', (e) => e.readMentionLastPass(SRC)]]),
   ...variants('countPagesDueForMentions', [
     ['default', (e) => e.countPagesDueForMentions({ sourceId: null, mentionVersion: 1 })],

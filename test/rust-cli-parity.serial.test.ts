@@ -28,6 +28,9 @@
  * every command is listed as `no-engine` and only the PGLite half runs, so the fixture and the command list stay
  * checked. The table goes to stdout at the end of the file.
  *
+ * Write commands in RECORDED_WRITES run last. Each one must write on the PGLite brain and refuse on the Rust brain with
+ * the typed refusal that names the next engine member its write path needs.
+ *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  * 1. Protects: the agent-facing contract of the read commands, end to end (flag parsing, operation dispatch, engine
  *    members, JSON rendering), on a Rust brain.
@@ -220,6 +223,17 @@ const COMMANDS: string[][] = [
   ['whoknows', 'search', '--json'],
 ];
 
+/**
+ * Write commands whose Rust outcome is recorded: the PGLite brain must write, and the Rust brain must refuse with the
+ * typed refusal that names the member given here, the next engine member the write path needs. When a later change
+ * serves that member, this case fails and names the new next member, so the record stays current.
+ */
+const RECORDED_WRITES: Array<{ args: string[]; member: string }> = [
+  { args: ['put', 'notes/parity-put', '--content', '---\ntype: note\ntitle: Parity put\n---\nBody text.\n', '--json'], member: 'executeRaw' },
+];
+// `put` passes the brain id and the source resolver, then stops at the raw read of persistence_topology_changes in
+// assertPageRequestIdentity (src/core/persistence/journal.ts).
+
 type State = 'equal' | 'refused' | 'diverged' | 'no-engine' | 'runs';
 interface Row { command: string; state: State; note: string }
 const table: Row[] = [];
@@ -300,6 +314,21 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
     }, 240_000);
   }
 
+  for (const { args, member: next } of RECORDED_WRITES) {
+    test(`${label(args)} writes on PGLite and refuses on Rust at ${next}`, async () => {
+      const [pg, rust] = await Promise.all([cli(brains.pglite, args), rustArm === 'on' ? cli(brains.rust, args) : Promise.resolve(null)]);
+      expect({ exitCode: pg.exitCode, json: parseJson(pg.stdout) !== undefined }).toEqual({ exitCode: 0, json: true });
+      if (!rust || engineMissing(rust)) {
+        table.push({ command: label(args), state: 'no-engine', note: '' });
+        return;
+      }
+      const member = refusedMember(rust);
+      table.push({ command: label(args), state: member ? 'refused' : 'diverged', note: member ?? `exit ${rust.exitCode}` });
+      // Nothing ran on Rust: the refusal is typed, names the next member, and reports that nothing was written.
+      expect({ member, written: /written=nothing/.test(rust.stdout) }).toEqual({ member: next, written: true });
+    }, 240_000);
+  }
+
   // Doctor reads every health table, so its report is not expected to equal PGLite's while members still refuse.
   // The contract here is that doctor runs on a Rust brain: it finishes, fails nothing, never falls back to the
   // filesystem-only checks, and says why for each check it could not run. The lists below pin every difference
@@ -336,8 +365,10 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
         'quarantined_changes', 'shared_skills_sources', 'sync_failures', 'tracked_ownership_marker',
         'transcript_secret_exposure'],
       untypedWarnings: ['backup_coverage', 'canonical_content_writes', 'child_table_orphans', 'embedding_provider',
-        'entity_link_coverage', 'extract_atoms_backlog', 'fact_take_vectors', 'graph_coverage', 'orphan_ratio', 'raw_provenance',
-        'retrieval_reflex_health', 'sync_failures', 'text_projection_readiness', 'timeline_coverage'],
+        'entity_link_coverage', 'extract_atoms_backlog', 'fact_take_vectors', 'graph_coverage', 'orphan_ratio',
+        // pack_upgrade_available warns with the same message as PGLite: the pack reads are served.
+        'pack_upgrade_available', 'raw_provenance', 'retrieval_reflex_health', 'sync_failures', 'text_projection_readiness',
+        'timeline_coverage'],
       okWhileRefused: [],
     });
     const count = (s: string) => checks.filter((c) => c.status === s).length;

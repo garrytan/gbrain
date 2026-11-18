@@ -551,3 +551,61 @@ fn local_writers_register_once_and_mismatches_are_rejected() {
     let store = open(&dir);
     assert!(store.read_local_writer(WRITER).unwrap().unwrap()["revoked_at"].is_string());
 }
+
+#[test]
+fn inserting_a_local_writer_row_stores_it_once_and_never_replaces_a_row() {
+    let dir = TempDir::new("journal-writer-insert");
+    let store = open(&dir);
+    let other = "44444444-4444-4444-8444-444444444444";
+    assert!(
+        store
+            .insert_local_writer_row(&writer(WRITER, "cli", "hash-a"))
+            .unwrap()
+    );
+    let row = store.read_local_writer(WRITER).unwrap().unwrap();
+    assert_eq!(row["lane"], "cli");
+    assert_eq!(row["credential_hash"], "hash-a");
+    assert_eq!(row["grant_ceiling"], json!({"scopes": ["read"]}));
+    assert_eq!(row["revoked_at"], Value::Null);
+    // the same id, with the same or another lane or credential: nothing written
+    assert!(
+        !store
+            .insert_local_writer_row(&writer(WRITER, "cli", "hash-a"))
+            .unwrap()
+    );
+    assert!(
+        !store
+            .insert_local_writer_row(&writer(&WRITER.to_uppercase(), "stdio", "hash-b"))
+            .unwrap()
+    );
+    // the credential under another id: nothing written
+    assert!(
+        !store
+            .insert_local_writer_row(&writer(other, "stdio", "hash-a"))
+            .unwrap()
+    );
+    assert!(store.read_local_writer(other).unwrap().is_none());
+    assert_eq!(store.read_local_writer(WRITER).unwrap().unwrap(), row);
+    // a revoked row still holds its id and credential
+    assert!(store.revoke_local_writer(WRITER).unwrap());
+    assert!(
+        !store
+            .insert_local_writer_row(&writer(WRITER, "cli", "hash-a"))
+            .unwrap()
+    );
+    // the table's constraints are errors
+    for (id, lane) in [("nope", "cli"), (other, "web")] {
+        assert_eq!(
+            store
+                .insert_local_writer_row(&writer(id, lane, "hash-c"))
+                .unwrap_err()
+                .code,
+            INVALID_ARGUMENT
+        );
+    }
+    assert!(
+        store
+            .insert_local_writer_row(&writer(other, "stdio", "hash-c"))
+            .unwrap()
+    );
+}
