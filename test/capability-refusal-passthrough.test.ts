@@ -19,6 +19,7 @@ import { findExperts, runWhoknows } from '../src/commands/whoknows.ts';
 import { runExtract } from '../src/commands/extract.ts';
 import type { Capability } from '../src/core/engine-capabilities.ts';
 import { setStdoutCapture } from '../src/core/cli-force-exit.ts';
+import { appendRelationshipNotes } from '../src/core/link-relationship-notes.ts';
 
 let engine: PGLiteEngine;
 
@@ -184,5 +185,20 @@ describe('extract --json', () => {
     expect(r.code).toBe(1);
     expect(r.stdout).toBe('');
     expect(r.stderr).toContain('getConfig failed');
+  });
+});
+
+describe('relationship notes in the ambient turn context', () => {
+  const items = () => [{ slug: 'people/alice-example', source_id: 'default', synopsis: 'Alice Example.' }];
+
+  test('a refused relationship-note read refuses the turn context', async () => {
+    const e = await refusalOf(appendRelationshipNotes(failing('listRelationshipNoteRows', 'links', 'refusal'), items()));
+    expect(isCapabilityMissing(e)).toBe(true);
+  });
+
+  test('any other failure leaves the synopses unchanged', async () => {
+    const rows = items();
+    await appendRelationshipNotes(failing('listRelationshipNoteRows', 'links', 'plain'), rows);
+    expect(rows[0]!.synopsis).toBe('Alice Example.');
   });
 });

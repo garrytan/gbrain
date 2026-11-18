@@ -4,6 +4,9 @@ import { runReindexSearchVector } from '../src/commands/reindex-search-vector.ts
 import { resetFtsLanguageCache } from '../src/core/fts-language.ts';
 import { KNOWN_CONFIG_KEYS } from '../src/core/config.ts';
 import { currentExitCode, setCliExitVerdict } from '../src/core/cli-force-exit.ts';
+import * as searchVector from '../src/core/engine-sql/search-vector.ts';
+import { ensureFactsFtsIndex } from '../src/core/facts/fts-index.ts';
+import { backfillChunkVectors, backfillPageVectors } from '../src/core/search-vector-backfill.ts';
 
 const ENV_KEY = 'GBRAIN_FTS_LANGUAGE';
 const originalLang = process.env[ENV_KEY];
@@ -23,7 +26,7 @@ interface MockState {
 function makeMockEngine(state: MockState): BrainEngine {
   const config = state.config ?? (state.config = new Map());
   const order = state.order ?? (state.order = []);
-  const engine = {
+  const engine: BrainEngine = {
     executeRaw: async (sql: string) => {
       state.calls.push(sql);
       order.push(sql);
@@ -39,6 +42,13 @@ function makeMockEngine(state: MockState): BrainEngine {
       order.push(sql);
     },
     transaction: async <T>(fn: (tx: BrainEngine) => Promise<T>) => fn(engine),
+    // The search-vector members as both engines build them, over this mock's executeRaw (engine-sql/search-vector.ts).
+    countSearchVectorRows: () => searchVector.countSearchVectorRows(engine),
+    replaceSearchVectorTriggerFunction: (target: 'pages' | 'chunks', lang: string) =>
+      searchVector.replaceSearchVectorTriggerFunction(engine, target, lang),
+    backfillSearchVectors: (target: 'pages' | 'chunks', opts: Parameters<typeof backfillPageVectors>[1]) =>
+      target === 'pages' ? backfillPageVectors(engine, opts) : backfillChunkVectors(engine, opts),
+    ensureFactsKeywordIndex: (lang: string, notice?: (line: string) => void) => ensureFactsFtsIndex(engine, { lang, version: 0, notice }),
     getConfig: async (key: string) => config.get(key) ?? null,
     setConfig: async (key: string, value: string) => {
       order.push(`set:${key}`);

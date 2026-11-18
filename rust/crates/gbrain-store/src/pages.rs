@@ -780,7 +780,7 @@ fn assert_body_inline(existing: Option<&PageRecord>) -> Result<()> {
 }
 
 /// PGLite's `PROTECTED_MARKER` (`src/core/search/safe-chunks.ts`): `<!--- gbrain:(facts|takes):(begin|end) -->`.
-fn has_protected_text(text: &str) -> bool {
+pub(crate) fn has_protected_text(text: &str) -> bool {
     ["facts", "takes"].iter().any(|kind| {
         ["begin", "end"]
             .iter()
