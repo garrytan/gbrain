@@ -34,6 +34,7 @@ use crate::kv::{KvRead, scan_prefix};
 use crate::pages::{PageRecord, all_pages, read_page, read_page_by_id};
 use crate::sources::{DEFAULT_SOURCE, read_source};
 use crate::timeline_queries::jsonb_field_text;
+use crate::trust::{TrustPolicy, TrustTier};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use std::cmp::Ordering;
@@ -42,14 +43,17 @@ use std::collections::{BTreeSet, HashMap};
 /// `ACTIVATION_SERVED_REVISION` (`src/core/search/safe-chunks.ts`).
 const ACTIVATION_SERVED_REVISION: &str = "00000000-0000-0000-0000-000000000153";
 
-/// The read policy the TypeScript members send: `pageReadFilter`'s source clause and, under
-/// `excludePrivate`, the page privacy policy. `allSources` has already dropped `sourceId`.
+/// The read policy the TypeScript members send: `pageReadFilter`'s source clause, under
+/// `excludePrivate` the page privacy policy, and its `pageEligibleSql` trust floor and flag
+/// suppression (`minTrust`, `suppressFlagged`). `allSources` has already dropped `sourceId`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ChunkReadScope {
     pub source_id: Option<String>,
     pub source_ids: Option<Vec<String>>,
     pub exclude_private: Option<PrivacyPolicy>,
+    pub min_trust: Option<String>,
+    pub suppress_flagged: bool,
 }
 
 impl ChunkReadScope {
@@ -209,6 +213,11 @@ impl<'a> Policy<'a> {
         if let Some(policy) = &scope.exclude_private
             && page_hidden(self.read, page, policy)?
         {
+            return Ok(false);
+        }
+        let trust = TrustPolicy::parse(scope.min_trust.as_deref(), scope.suppress_flagged)?;
+        let tier = TrustTier::stored(page.trust_tier.as_deref());
+        if !trust.admits(self.read, "pages", page.id, tier)? {
             return Ok(false);
         }
         Ok(page.deleted_at_us.is_none()

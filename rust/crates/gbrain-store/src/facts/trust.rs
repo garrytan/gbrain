@@ -14,14 +14,15 @@
 //! - `projectionEligibleSql('facts')`: a soft-deleted page hides the row. The quarantine clause
 //!   of that predicate is the live-page case of the check above. Its `needs_rederive` clause is
 //!   not modelled: the store has no re-derive queue, so no row is ever hidden by it (the takes
-//!   family does the same, rust/docs/store/takes.md). A `minTrust` floor or `suppressFlagged`
-//!   needs `trust_tier` and write-gate receipts, so the TypeScript member refuses them.
+//!   family does the same, rust/docs/store/takes.md). Its trust floor (`minTrust`) and flagged-fact
+//!   filter (`suppressFlagged`) read the row's stamped `trust_tier` and its write-gate receipts
+//!   (`trust::TrustPolicy`).
 //!
 //! Refused (no store member): `matchSavedFacts`, `readFactForOwnerAction`,
 //! `listStandingPreferences`, `listLexicalContestCandidates`, `listRestatedPrivateCopies` and
-//! `countDerivedFactTaint`, each of which reads `trust_tier`, `write_origin` or write-gate
-//! receipts that the store does not keep. The `entity_ended` history arm reads the withdrawal
-//! ledger and `gbrain_fact_fingerprint`, which the store does not keep either.
+//! `countDerivedFactTaint`. The store keeps the columns they read (`trust_tier`, `write_origin`,
+//! the write-gate receipts), but no store read for them is built yet. The `entity_ended` history
+//! arm reads the withdrawal ledger through `gbrain_fact_fingerprint`, which no store read joins yet.
 //!
 //! `similarity` is `1 - (embedding <=> query)` for a row whose embedding is comparable (a vector
 //! of the query's model and length whose `embedded_text_hash` is `md5(fact)`), else NULL.
@@ -39,6 +40,7 @@ use crate::keyword::{or_of_lexemes, plainto_tsquery, to_tsvector, ts_matches, ts
 use crate::kv::KvRead;
 use crate::links::no_nul;
 use crate::pages::read_page;
+use crate::trust::TrustPolicy;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -59,6 +61,10 @@ pub struct PoolArgs {
     pub world_only: bool,
     /// `excludePrivate`: the private-provenance policy (`facts/privacy.rs`).
     pub exclude_private: Option<PrivacyPolicy>,
+    /// `minTrust`: `trustFloorSql` over the row's stored tier; null sets none.
+    pub min_trust: Option<String>,
+    /// `suppressFlagged`: drop a row `activationSuppressedSql('facts')` flags.
+    pub suppress_flagged: bool,
     /// `filters.entities`: the `(source_id, entity_slug)` pairs the pool is limited to.
     pub entities: Option<Vec<EntityRef>>,
     pub session_id: Option<String>,
@@ -105,6 +111,7 @@ pub struct UncomparableQuery {
 /// `poolWhere` over one row, with the clock read once.
 struct Pool<'a> {
     args: &'a PoolArgs,
+    trust: TrustPolicy,
     sources: BTreeSet<&'a str>,
     since: Option<i64>,
     now: i64,
@@ -129,6 +136,7 @@ impl<'a> Pool<'a> {
         no_nul(op, &texts)?;
         Ok(Self {
             args,
+            trust: TrustPolicy::parse(args.min_trust.as_deref(), args.suppress_flagged)?,
             sources: args.source_ids.iter().map(String::as_str).collect(),
             since: opt_time(op, "since", &args.since)?,
             now,
@@ -158,6 +166,9 @@ impl<'a> Pool<'a> {
             return Ok(false);
         }
         if hidden_by_policy(read, row, &a.exclude_private)? || hidden_by_deleted_page(read, row)? {
+            return Ok(false);
+        }
+        if !self.trust.admits(read, "facts", row.id, row.tier())? {
             return Ok(false);
         }
         if let Some(entities) = &a.entities

@@ -30,8 +30,9 @@ Every keyword member except `findByTitleFuzzy` refuses:
 - a CJK query (`hasCJK`): the SQL engines take a separate CJK path (follow-up `keyword-cjk`);
 - a text search configuration other than `english` (`getFtsLanguage()`);
 - a date bound (`afterDate`, `beforeDate`) that is not an ISO date or date-time
-  (`YYYY-M-D[( |T)H:MM[:SS[.ffffff]][Z|±HH[:MM]]]`), that is outside the calendar, or that has more than six fraction
-  digits. Postgres reads more shapes (`Jan 5 2026`); those refuse rather than guess;
+  (`YYYY-M-D[( |T|t)H:MM[:SS[.f…]][Z|z|±HH[:MM]]]`) or that is outside the calendar. A fraction of any length rounds
+  to the nearest microsecond, a tie to the even one, as Postgres's `rint` does, and may carry into the next second.
+  Postgres reads more shapes (`Jan 5 2026`); those refuse rather than guess;
 - a `where` that is not an object of non-empty lists of strings, numbers and booleans: the SQL engines read only the
   normalized form and fail on anything else;
 - an offset, page limit or page offset that is not a whole number of 0 or more, a non-finite `after.score` and a

@@ -338,6 +338,54 @@ describe('engine parity: search', () => {
     },
   );
   parityTest(
+    'keyword date bounds round a fraction past microseconds as Postgres does and read a lowercase t and z',
+    { methods: ['searchKeywordPages'] },
+    async (engine) => {
+      await seedPage(engine, {
+        slug: 'notes/nebula-early',
+        input: { type: 'note', title: 'Nebula early', compiled_truth: 'x', timeline: '', effective_date: new Date('2026-03-01T00:00:00.123Z'), effective_date_source: 'date' },
+        chunks: [chunk(0, 'the nebula drive hums')],
+      });
+      await seedPage(engine, {
+        slug: 'notes/nebula-late',
+        input: { type: 'note', title: 'Nebula late', compiled_truth: 'x', timeline: '', effective_date: new Date('2026-05-10T12:00:00Z'), effective_date_source: 'date' },
+        chunks: [chunk(0, 'a nebula drive log')],
+      });
+      const slugs = async (opts: Record<string, unknown>) =>
+        (await engine.searchKeywordPages('nebula', opts, { limit: 10 })).map((r) => r.slug).sort();
+      const out = {
+        // 122999.6 microseconds rounds up to the page's own instant: an exclusive bound drops it, truncation would keep it.
+        afterRoundsUp: await slugs({ afterDate: '2026-03-01T00:00:00.1229996Z' }),
+        afterRoundsUpInclusive: await slugs({ afterDate: '2026-03-01T00:00:00.1229996Z', afterDateInclusive: true }),
+        // 123000.4 rounds down to the page's instant: an exclusive upper bound drops it.
+        beforeRoundsDown: await slugs({ beforeDate: '2026-03-01T00:00:00.1230004Z' }),
+        // Nine digits and an offset: 05:30:00.122999999+05:30 rounds to 00:00:00.123 UTC.
+        beforeNineDigits: await slugs({ beforeDate: '2026-03-01 05:30:00.122999999+05:30', beforeDateInclusive: true }),
+        // 11:59:59.9999996 carries into 12:00:00.
+        afterCarry: await slugs({ afterDate: '2026-05-10T11:59:59.9999996Z' }),
+        afterCarryInclusive: await slugs({ afterDate: '2026-05-10T11:59:59.9999996Z', afterDateInclusive: true }),
+        lowercase: await slugs({ afterDate: '2026-04-01t00:00:00z' }),
+        // 0.0000005 s is exactly half a microsecond: the tie goes to the even 0, so 12:00:00 itself is excluded.
+        tieToEven: await slugs({ beforeDate: '2026-05-10T12:00:00.0000005Z' }),
+        // 24:00:00 with a fraction that rounds to 0 is the next midnight.
+        midnight: await slugs({ beforeDate: '2026-05-09T24:00:00.0000001Z' }),
+      };
+      expect(out).toEqual({
+        afterRoundsUp: ['notes/nebula-late'],
+        afterRoundsUpInclusive: ['notes/nebula-early', 'notes/nebula-late'],
+        beforeRoundsDown: [],
+        beforeNineDigits: ['notes/nebula-early'],
+        afterCarry: [],
+        afterCarryInclusive: ['notes/nebula-late'],
+        lowercase: ['notes/nebula-late'],
+        tieToEven: ['notes/nebula-early'],
+        midnight: ['notes/nebula-early'],
+      });
+      return out;
+    },
+  );
+
+  parityTest(
     'keyword pages and chunks agree on scores, phrase and handle boosts, where, dates, sources and boosts',
     { methods: ['countKeywordPages', 'searchKeywordPages', 'searchKeywordChunks'] },
     async (engine, backend) => {

@@ -131,8 +131,8 @@ describe('Rust engine on the store', () => {
   withAddon('an option the store does not keep refuses engine_capability_missing instead of being dropped', async () => {
     const { engine } = await open();
     await engine.putPage('notes/a', page);
-    // The store does not evaluate the trust floor getSalienceScores reads.
-    const refused = await code(() => engine.getSalienceScores([{ slug: 'notes/a', source_id: 'default' }], { minTrust: 'agent_written' }));
+    // findOrphanPages takes no trust floor on Rust: no production caller sends one, so it refuses.
+    const refused = await code(() => engine.findOrphanPages({ minTrust: 'agent_written' }));
     expect(refused).toBe('engine_capability_missing');
   });
 
@@ -232,6 +232,43 @@ describe('Rust store members', () => {
       expect(needed.length).toBeGreaterThan(0);
       for (const member of needed) expect(Object.hasOwn(STORE_MEMBERS, member)).toBe(true);
     }
+  });
+
+  test('keyword date bounds reach the store as the microseconds Postgres reads for each ISO shape', async () => {
+    let sent: Record<string, unknown> = {};
+    const brain = { searchKeywordPages: async (_query: string, options: Record<string, unknown>) => { sent = options; return []; } };
+    const search = STORE_MEMBERS.searchKeywordPages as (brain: unknown, query: string, opts: unknown, page: unknown) => Promise<unknown>;
+    const micros = async (afterDate: string) => {
+      await search(brain, 'nebula', { afterDate }, { limit: 1 });
+      return (sent.afterDate as { micros: string }).micros;
+    };
+    const at = (iso: string, extra: number) => (BigInt(Date.parse(iso)) * 1000n + BigInt(extra)).toString();
+    // Each expected value is what `SET TimeZone='UTC'; SELECT $1::text::timestamptz` returns on Postgres 17.
+    expect({
+      sixDigits: await micros('2026-01-05T10:00:00.123456Z'),
+      roundsDown: await micros('2026-01-05T10:00:00.1234565Z'),
+      roundsUp: await micros('2026-01-05T10:00:00.1234575Z'),
+      tieToEvenZero: await micros('2026-01-05T10:00:00.0000005Z'),
+      tieToEvenTwo: await micros('2026-01-05T10:00:00.0000025Z'),
+      tieToEvenFour: await micros('2026-01-05T10:00:00.0000035Z'),
+      carry: await micros('2026-12-31T23:59:59.9999999Z'),
+      nineDigitsOffset: await micros('2026-01-05 10:00:00.123456789+05:30'),
+      lowercase: await micros('2026-01-05t10:00:00.123456789z'),
+      midnight: await micros('2026-05-10T24:00:00.0000005Z'),
+    }).toEqual({
+      sixDigits: at('2026-01-05T10:00:00Z', 123456),
+      roundsDown: at('2026-01-05T10:00:00Z', 123456),
+      roundsUp: at('2026-01-05T10:00:00Z', 123458),
+      tieToEvenZero: at('2026-01-05T10:00:00Z', 0),
+      tieToEvenTwo: at('2026-01-05T10:00:00Z', 2),
+      tieToEvenFour: at('2026-01-05T10:00:00Z', 4),
+      carry: at('2027-01-01T00:00:00Z', 0),
+      nineDigitsOffset: at('2026-01-05T04:30:00Z', 123457),
+      lowercase: at('2026-01-05T10:00:00Z', 123457),
+      midnight: at('2026-05-11T00:00:00Z', 0),
+    });
+    // 24:00:00.0000006 rounds to one microsecond past midnight, which Postgres rejects as out of range.
+    expect(await micros('2026-05-10T24:00:00.0000006Z').catch((e: unknown) => (e as { code?: string }).code)).toBe('engine_capability_missing');
   });
 
   test("revertToVersion turns the store's page_body_segmented refusal into PGLite's segmentedRevertRefusal", async () => {

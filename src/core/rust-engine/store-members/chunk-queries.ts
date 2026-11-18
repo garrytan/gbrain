@@ -15,8 +15,10 @@
  * safe-chunk read (`requiresSafeChunks`, which an `excludePrivate` read asks for unless it says otherwise).
  *
  * The chunk-reads members model the source filter, the page privacy policy (storePagePolicy) and the live test of the
- * read policy (src/core/search/read-policy-sql.ts). A trust, flag or safe-chunk policy refuses with
- * `engine_capability_missing`. See rust/docs/store/chunk_queries.md.
+ * read policy (src/core/search/read-policy-sql.ts); resolveFrozenHits also models the trust floor and flag suppression
+ * (`minTrust`, `suppressFlagged`). A safe-chunk policy on a chunk-reads member refuses with `engine_capability_missing`.
+ * The other chunk-reads members refuse a trust or flag option: no production caller passes one, so no store read was
+ * built. getChunkPage and getChunkWindows ignore both, as their SQL does. See rust/docs/store/chunk_queries.md.
  */
 import { mapChunkWindowRows, type ChunkWindowOpts, type ChunkWindowPage, type ChunkWindowRequest } from '../../search/chunk-windows.ts';
 import type { Chunk, ChunklessPageRow, PageReadScope } from '../../types.ts';
@@ -97,6 +99,11 @@ export const listChunklessPagesWithContent: StoreMember<[opts?: { batchSize?: nu
 const POLICY_KEYS = ['sourceId', 'sourceIds', 'allSources', 'excludePrivate', 'requireSafeChunks'] as const;
 /** `pageReadFilter` never reads it, so the SQL engines ignore it in these statements and the store does too. */
 const UNREAD_BY_FILTER = ['takesHoldersAllowList'] as const;
+/**
+ * `pageReadFilter`'s trust floor and flag suppression. Only resolveFrozenHits takes them (assemble_evidence passes the
+ * caller's floor); the other members have no caller that passes one and still refuse them.
+ */
+const TRUST_KEYS = ['minTrust', 'suppressFlagged'] as const;
 const INT32_MAX = 2 ** 31 - 1;
 
 /** Ids the SQL engines cast to `int[]`: an id that is not an int4 is refused rather than guessed at. */
@@ -111,13 +118,15 @@ function int32Ids(member: string, ids: readonly number[]): number[] {
  * The wire scope of `pageReadFilter`: the source filter (`codeReadFilter` drops `sourceId` under `allSources` when no
  * `sourceIds` is given) and, under `excludePrivate`, the store page policy. A safe-chunk scope refuses.
  */
-function wireScope(member: string, o: Record<string, unknown>, code: boolean): { sourceId?: unknown; sourceIds?: unknown; excludePrivate: unknown } {
+function wireScope(member: string, o: Record<string, unknown>, code: boolean) {
   if (requiresSafeChunks(o as PageReadScope)) refuseMember(member, 'a safe-chunk read (the store records no chunker-version fence)');
   const dropSource = code && !!o.allSources && o.sourceIds === undefined;
   return {
     sourceId: dropSource ? undefined : o.sourceId,
     sourceIds: o.sourceIds,
     excludePrivate: storePagePolicy(member, o.excludePrivate) ?? null,
+    minTrust: (o.minTrust as string | undefined) || null,
+    suppressFlagged: o.suppressFlagged === true,
   };
 }
 
@@ -235,7 +244,7 @@ export const listContextualModeCandidates: StoreMember<[sourceIds: string[]], Co
 export const resolveFrozenHits: StoreMember<[hits: FrozenHitKey[], scope: PageReadScope], FrozenHitRow[]> =
   async (brain, hits, scope) => {
     if (hits.length === 0) return [];
-    const o = takeOptions('resolveFrozenHits', scope, POLICY_KEYS.filter(k => k !== 'allSources'), UNREAD_BY_FILTER);
+    const o = takeOptions('resolveFrozenHits', scope, [...POLICY_KEYS.filter(k => k !== 'allSources'), ...TRUST_KEYS], UNREAD_BY_FILTER);
     const wire = wireScope('resolveFrozenHits', o, false);
     // The SQL engines bind chunk ids and ords into int[]; a value outside int4 is refused there.
     int32Ids('resolveFrozenHits', hits.flatMap(h => [h.chunk_id, h.ord]));

@@ -29,9 +29,11 @@
 
 use crate::env::{Env, iso, parse_iso};
 use crate::error::{Result, StoreError};
+use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::kv::{KvRead, KvWrite};
 use crate::pages::{PageRecord, VersionRecord, all_pages, read_page, remove_page, write_page};
 use crate::sources::{SourceRecord, all_sources, read_source};
+use crate::trust::{TrustPolicy, TrustTier};
 use crate::{Store, get_json, keys};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -63,12 +65,18 @@ pub struct PageRef {
 
 /// The `PageReadScope` of the id and ref reads. `live` is true when the caller passed a scope at
 /// all: PGLite then adds its live filter (not deleted, not quarantined, source not archived).
+/// `exclude_private` is the page policy of `excludePrivate` (`facts/privacy.rs` `page_hidden`);
+/// `min_trust` and `suppress_flagged` are `pageEligibleSql`'s trust floor and flagged-page filter
+/// over the page's stored tier and write-gate receipts (`trust::TrustPolicy`).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct PageReadScope {
     pub source_id: Option<String>,
     pub source_ids: Option<Vec<String>>,
     pub live: bool,
+    pub exclude_private: Option<PrivacyPolicy>,
+    pub min_trust: Option<String>,
+    pub suppress_flagged: bool,
 }
 
 /// `readPageSnapshotsBatch` options. `absentIsNull` is the caller's: the store answers `null` for
@@ -199,20 +207,23 @@ fn sources_by_id(read: &dyn KvRead) -> Result<HashMap<String, SourceRecord>> {
         .collect())
 }
 
-/// `pageReadFilter(alias, scope, params, live)` for the scope fields the store has.
+/// `pageReadFilter(alias, scope, params, live)`: the source clause, the page policy, the trust
+/// policy and, with `live`, the live filter.
 fn passes_read_scope(
+    read: &dyn KvRead,
     page: &PageRecord,
     scope: &PageReadScope,
+    trust: &TrustPolicy,
     sources: &HashMap<String, SourceRecord>,
-) -> bool {
+) -> Result<bool> {
     if let Some(ids) = scope.source_ids.as_ref().filter(|ids| !ids.is_empty()) {
         if !ids.contains(&page.source_id) {
-            return false;
+            return Ok(false);
         }
     } else if let Some(id) = scope.source_id.as_ref().filter(|id| !id.is_empty())
         && *id != page.source_id
     {
-        return false;
+        return Ok(false);
     }
     if scope.live {
         let unarchived = sources.get(&page.source_id).is_some_and(|s| !s.archived);
@@ -220,10 +231,20 @@ fn passes_read_scope(
             || page.frontmatter.contains_key("quarantine")
             || !unarchived
         {
-            return false;
+            return Ok(false);
         }
     }
-    true
+    if let Some(policy) = &scope.exclude_private
+        && page_hidden(read, page, policy)?
+    {
+        return Ok(false);
+    }
+    trust.admits(
+        read,
+        "pages",
+        page.id,
+        TrustTier::stored(page.trust_tier.as_deref()),
+    )
 }
 
 /// Live pages in unarchived sources, in the source scope (`visiblePages` of
@@ -714,6 +735,7 @@ impl Store {
         }
         let read = self.read()?;
         let sources = sources_by_id(&*read)?;
+        let trust = TrustPolicy::parse(scope.min_trust.as_deref(), scope.suppress_flagged)?;
         let mut seen = HashSet::new();
         let mut out = Vec::new();
         for r in refs {
@@ -721,7 +743,7 @@ impl Store {
                 continue;
             }
             if let Some(page) = read_page(&*read, &r.source_id, &r.slug)?
-                && passes_read_scope(&page, scope, &sources)
+                && passes_read_scope(&*read, &page, scope, &trust, &sources)?
             {
                 out.push(json!({
                     "slug": page.slug,
@@ -736,6 +758,7 @@ impl Store {
     fn pages_by_ids(&self, ids: &[i64], scope: &PageReadScope) -> Result<Vec<PageRecord>> {
         let read = self.read()?;
         let sources = sources_by_id(&*read)?;
+        let trust = TrustPolicy::parse(scope.min_trust.as_deref(), scope.suppress_flagged)?;
         let wanted: BTreeSet<u64> = ids
             .iter()
             .filter_map(|id| u64::try_from(*id).ok())
@@ -743,7 +766,7 @@ impl Store {
         let mut out = Vec::new();
         for id in wanted {
             if let Some(page) = crate::pages::read_page_by_id(&*read, id)?
-                && passes_read_scope(&page, scope, &sources)
+                && passes_read_scope(&*read, &page, scope, &trust, &sources)?
             {
                 out.push(page);
             }

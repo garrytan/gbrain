@@ -11,7 +11,7 @@ test/engine-parity/connect-gate.test.ts	6	0
 test/engine-parity/cycle-locks.test.ts	10	0
 test/engine-parity/entity-reads.test.ts	7	0
 test/engine-parity/extraction.test.ts	6	0
-test/engine-parity/facts-cycle.test.ts	11	2
+test/engine-parity/facts-cycle.test.ts	12	1
 test/engine-parity/facts-doctor.test.ts	8	5
 test/engine-parity/facts-purge.test.ts	12	3
 test/engine-parity/facts-repair.test.ts	6	5
@@ -48,11 +48,12 @@ test/engine-parity/sync-aliases.test.ts	9	0
 test/engine-parity/takes.test.ts	22	1
 test/engine-parity/telemetry.test.ts	8	0
 test/engine-parity/timeline-reads.test.ts	4	0
-test/engine-parity/timeline.test.ts	16	1
+test/engine-parity/timeline.test.ts	18	1
 test/engine-parity/transaction-settings.test.ts	5	1
 test/engine-parity/traversal-cache.test.ts	0	2
 test/engine-parity/trust-fence.test.ts	4	0
 test/engine-parity/trust-proposals.test.ts	3	0
+test/engine-parity/trust-reads.test.ts	6	0
 test/engine-parity/trust-withdrawals.test.ts	4	0
 test/engine-parity/trust-write-gate.test.ts	4	0
 test/engine-parity/typed-config-reads.test.ts	2	0
