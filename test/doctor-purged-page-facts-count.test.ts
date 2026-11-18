@@ -14,6 +14,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { countPurgedPageFacts as countPurgedPageFactsSql } from '../src/core/engine-sql/facts-repair.ts';
 import { classifyPurgedPageFacts, countPurgedPageFacts } from '../src/core/repair/purged-page-facts.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -119,13 +120,15 @@ for (const kind of testBackends()) {
       await engine.executeRaw('ANALYZE facts');
       await engine.executeRaw('ANALYZE pages');
       const loops: number[] = [];
+      // The statement now lives in the engine member; run it over an `executeRaw` that EXPLAINs each statement first.
+      const explained = async (sql: string, params?: unknown[], opts?: unknown) => {
+        const [plan] = await engine.executeRaw<{ 'QUERY PLAN': unknown }>(`EXPLAIN (ANALYZE, FORMAT JSON) ${sql}`, params, opts as never);
+        const parsed = (typeof plan!['QUERY PLAN'] === 'string' ? JSON.parse(plan!['QUERY PLAN'] as string) : plan!['QUERY PLAN']) as Array<{ Plan: PlanNode }>;
+        loops.push(loopsOn(parsed[0]!.Plan, 'fact_withdrawals'));
+        return engine.executeRaw(sql, params, opts as never);
+      };
       const measured = new Proxy(engine, { get(target, key) {
-        if (key === 'executeRaw') return async (sql: string, params?: unknown[], opts?: unknown) => {
-          const [plan] = await target.executeRaw<{ 'QUERY PLAN': unknown }>(`EXPLAIN (ANALYZE, FORMAT JSON) ${sql}`, params, opts as never);
-          const parsed = (typeof plan!['QUERY PLAN'] === 'string' ? JSON.parse(plan!['QUERY PLAN'] as string) : plan!['QUERY PLAN']) as Array<{ Plan: PlanNode }>;
-          loops.push(loopsOn(parsed[0]!.Plan, 'fact_withdrawals'));
-          return target.executeRaw(sql, params, opts as never);
-        };
+        if (key === 'countPurgedPageFacts') return (sourceIds: string[], cap: number) => countPurgedPageFactsSql(explained as never, sourceIds, cap);
         const value = Reflect.get(target, key, target);
         return typeof value === 'function' ? value.bind(target) : value;
       } });

@@ -60,6 +60,12 @@ const VETTED_BUILDERS: Record<string, string> = {
   // facts-purge.ts builders
 
   // facts-repair.ts builders
+  contextHeadSql: 'src/core/facts/gone-page-facts.ts: constant head-of-context expression over a caller facts alias; no values',
+  withdrawalCoversFactSql: 'src/core/access/member-facts.ts: constant withdrawal-covers-fact predicate over caller withdrawal and fact aliases; no values',
+  factProvenanceSlugSql: 'src/core/facts/private-fact-pages.ts: constant provenance-slug expression over a caller facts alias; prefixes and source lanes are module constants; no values',
+  derivationPrivateSql: 'src/core/search/private-visibility.ts: constant derivation-private predicate over a caller page alias; no values',
+  expiryTextSql: 'src/core/engine-sql/facts-repair.ts: constant to_char UTC microsecond text of a caller column expression (code-provided); no values',
+  instantTextSql: 'src/core/engine-sql/facts-repair.ts: constant to_char UTC microsecond text of a caller column expression (code-provided); no values',
 
   // facts-trust.ts builders
 

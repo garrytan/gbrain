@@ -41,6 +41,7 @@
 import { closeSync, existsSync, openSync, readdirSync, readSync, realpathSync, statSync, type Dirent } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
+import type { SessionFactRow } from '../engine-sql/facts-repair.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { parseFactsFence } from '../facts-fence.ts';
@@ -128,10 +129,7 @@ interface ApprovedPage {
 /** `indexes`: the run's corpus index by corpus dir, shared by every item of one run (each run plans new items). */
 interface PageItem extends RepairItem { page: ApprovedPage; hash: string; last: boolean; options: AgentSessionOptions; indexes: Map<string | null, CorpusIndex> }
 
-interface FactRow {
-  id: number | string; source_id: string; source_session: string | null; fact: string; visibility: string; entity_slug: string | null;
-  row_num: number | null; source_markdown_slug: string | null; attributed_to: string | null; context: string | null;
-}
+type FactRow = SessionFactRow;
 
 type Verdict = { klass: 'evidenced' | 'ambiguous'; reason: string; evidence: string; principal: string } | 'not_suspect' | 'unclassifiable';
 
@@ -255,12 +253,7 @@ const targetSlug = (row: Pick<FactRow, 'source_markdown_slug' | 'entity_slug'>) 
  */
 export async function classifyAgentSessionFacts(db: BrainEngine, sourceIds: string[],
   opts: AgentSessionOptions & { corpusDir?: string | null; ids?: number[]; indexes?: Map<string | null, CorpusIndex> } = {}): Promise<AgentSessionFactsClassification> {
-  const rows = await db.executeRaw<FactRow>(`
-    SELECT f.id, f.source_id, f.source_session, f.fact, f.visibility, f.entity_slug, f.row_num, f.source_markdown_slug, f.attributed_to, f.context
-      FROM facts f
-     WHERE f.source_id=ANY($1::text[]) AND f.source=ANY($2::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL
-       AND (f.attributed_to IS NULL OR f.attributed_to='user') AND ($3::bigint[] IS NULL OR f.id=ANY($3::bigint[]))
-     ORDER BY f.source_id, f.id`, [sourceIds, [...CAPTURE_LANES], opts.ids ?? null]);
+  const rows = await db.listSessionFactsForClassification(sourceIds, [...CAPTURE_LANES], opts.ids ?? null);
   if (!rows.length) return { candidates: [], unclassifiable: 0, not_suspect: 0, unreadable_corpus_files: [] };
   const corpusDir = (opts.corpusDir === undefined ? await db.getConfig(CORPUS_KEY) : opts.corpusDir) ?? null;
   const index = opts.indexes?.get(corpusDir) ?? corpusIndex(corpusDir);
@@ -282,16 +275,7 @@ export async function classifyAgentSessionFacts(db: BrainEngine, sourceIds: stri
     else if (hit === 'not_suspect') notSuspect++;
     else suspect.push({ row, hit });
   }
-  const twins = new Map(!suspect.length ? [] : (await db.executeRaw<{ id: number | string; owner_twin: boolean; twin_sessions: Array<string | null> | null }>(`
-    SELECT f.id,
-           EXISTS (SELECT 1 FROM facts a WHERE a.source_id=f.source_id AND a.visibility IN ('private','world') AND gbrain_fact_fingerprint(a.fact)=gbrain_fact_fingerprint(f.fact)
-             AND a.id<>f.id AND a.expired_at IS NULL AND a.superseded_by IS NULL AND a.entity_slug IS NOT DISTINCT FROM f.entity_slug
-             AND (a.attributed_to IS NULL OR a.attributed_to='user') AND COALESCE(a.source,'') <> ALL($2::text[])) AS owner_twin,
-           ARRAY(SELECT DISTINCT COALESCE(a.source_session,'') FROM facts a WHERE a.source_id=f.source_id AND a.visibility IN ('private','world')
-             AND gbrain_fact_fingerprint(a.fact)=gbrain_fact_fingerprint(f.fact) AND a.id<>f.id AND a.expired_at IS NULL AND a.superseded_by IS NULL
-             AND a.entity_slug IS NOT DISTINCT FROM f.entity_slug AND (a.attributed_to IS NULL OR a.attributed_to='user') AND a.source=ANY($2::text[])) AS twin_sessions
-      FROM facts f
-     WHERE f.id=ANY($1::bigint[])`, [suspect.map(({ row }) => Number(row.id)), [...CAPTURE_LANES]])).map(row => [Number(row.id), row]));
+  const twins = new Map(!suspect.length ? [] : (await db.listSessionFactTwins(suspect.map(({ row }) => Number(row.id)), [...CAPTURE_LANES])).map(row => [Number(row.id), row]));
   const candidates: AgentSessionFactCandidate[] = suspect.map(({ row, hit }) => {
     const twin = twins.get(Number(row.id));
     const owner = !!twin && (twin.owner_twin || (twin.twin_sessions ?? []).some(s => typeof verdict(s) === 'string'));

@@ -234,6 +234,16 @@ export const RUST_ENGINE_MEMBERS = {
   // facts: purge, withdrawal, relink and fence repair (engine-sql/facts-purge.ts)
 
   // facts: repair classifiers and loop retirement (engine-sql/facts-repair.ts)
+  loopFactDrift: 'facts',
+  closedLoopWithActiveFact: 'facts',
+  listSessionFactsForClassification: 'facts',
+  listSessionFactTwins: 'facts',
+  listCapturedFactsForClassification: 'facts',
+  countLabelFacts: 'facts',
+  listExtractorFactsForClassification: 'facts',
+  countPurgedPageFacts: 'facts',
+  listUnwithdrawnFacts: 'facts',
+  listWorldFactsFromPrivateSources: 'facts',
 
   // facts: search relevance and trust reads (engine-sql/facts-trust.ts)
 

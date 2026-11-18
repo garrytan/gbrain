@@ -2927,6 +2927,26 @@ export interface BrainEngine {
   // Facts statements, purge, withdrawal, relink and fence repair (engine-sql/facts-purge.ts). Each runs the statement its caller ran through executeRaw.
 
   // Facts statements, repair classifiers and loop retirement (engine-sql/facts-repair.ts). Each runs the statement its caller ran through executeRaw.
+  /** Closed loops whose commitment fact is still active and retirable (same source, no other open loop references it), in id order; `loopId` null is every loop. Reads open_loops. */
+  loopFactDrift(sourceIds: string[], loopId: number | null): Promise<FactsRepairSql.LoopFactDriftRow[]>;
+  /** A loop already closed whose commitment fact is still active (the retry path of `loops_close`); `sourceId` null is unscoped. Reads open_loops. */
+  closedLoopWithActiveFact(sourceId: string | null, loopId: number): Promise<FactsRepairSql.ClosedLoopRow | null>;
+  /** Active, unsuperseded facts of the capture `lanes` in these sources whose attribution is the user or unset, optionally only `ids`, in (source, id) order. */
+  listSessionFactsForClassification(sourceIds: string[], lanes: string[], ids: number[] | null): Promise<FactsRepairSql.SessionFactRow[]>;
+  /** For each fact in `ids`: whether an owner twin exists outside the capture `lanes`, and the sessions of its capture-lane twins. */
+  listSessionFactTwins(ids: number[], lanes: string[]): Promise<FactsRepairSql.SessionFactTwinRow[]>;
+  /** Active, unsuperseded capture-lane facts of these sources with their fingerprint and whether a legitimate (other-lane) twin exists, in (source, id) order. */
+  listCapturedFactsForClassification(sourceIds: string[], lanes: string[], ids: number[] | null): Promise<FactsRepairSql.CapturedFactRow[]>;
+  /** The bounded count of the default (evidenced) set of label facts, capped at `cap`. Reads open_loops and fact_withdrawals. */
+  countLabelFacts(sourceIds: string[], cap: number, args: FactsRepairSql.LabelFactCountArgs): Promise<{ count: number; capped: boolean }>;
+  /** Expired fenceless extractor facts of these sources (or of one page `slug`) with the page, withdrawal, duplicate, fence and receipt evidence, in (source, page, id) order. Reads persistence_requests and fact_withdrawals. */
+  listExtractorFactsForClassification(sourceIds: string[], slug: string | null): Promise<FactsRepairSql.ExtractorFactRow[]>;
+  /** The bounded count of facts of a purged page, by class, capped at `cap`. Reads page_purges, fact_withdrawals and open_loops. */
+  countPurgedPageFacts(sourceIds: string[], cap: number): Promise<{ evidenced: number; ambiguous: number; capped: boolean }>;
+  /** Facts a facts-fence generation (`fenceKind`) retired that no withdrawal covers, in (source, page, id) order; `slug` null is every page. Reads derived_generations, derived_generation_items and fact_withdrawals. */
+  listUnwithdrawnFacts(sourceIds: string[], slug: string | null, fenceKind: string): Promise<FactsRepairSql.UnwithdrawnFactRow[]>;
+  /** Active `world` facts held in, or extracted from, a page that is private by its visibility, declared lineage or a privacy alias, optionally only `ids`, in id order; `readable` is whether the holding page hides the row from a remote caller. */
+  listWorldFactsFromPrivateSources(sourceIds: string[], ids: number[] | null): Promise<FactsRepairSql.WorldFactFromPrivateSourceRow[]>;
 
   // Facts statements, search relevance and trust reads (engine-sql/facts-trust.ts). Each runs the statement its caller ran through executeRaw.
 
