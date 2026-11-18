@@ -61,11 +61,11 @@ transaction	lifecycle	yes	12	no	yes	yes	refuses:transactions
 transactionDirect	lifecycle	yes	1	no	yes	yes	refuses:transactions
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	49	yes	yes	yes	serves
+getPage	pages	yes	50	yes	yes	yes	serves
 readPageSnapshot	pages	yes	9	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	182	yes	yes	yes	serves
+putPage	pages	yes	183	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	5	yes	yes	yes	serves
@@ -103,7 +103,7 @@ searchKeywordPages	search	yes	2	no	yes	yes	serves
 searchTitles	search	yes	5	yes	yes	yes	serves
 searchVector	search	yes	2	yes	yes	yes	refuses:vector_search
 getEmbeddingsByChunkIds	search	yes	1	no	yes	yes	serves
-searchKeywordChunks	search	yes	2	yes	yes	yes	serves
+searchKeywordChunks	search	yes	3	yes	yes	yes	serves
 cosinesByChunkIds	search_reads	yes	1	no	yes	yes	refuses:vector_search
 hasSupersedeEdges	search_reads	yes	1	no	yes	yes	serves
 supersedingPageSlugs	search_reads	yes	3	no	yes	yes	serves
@@ -138,10 +138,10 @@ deleteChunksForPages	chunks	yes	1	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	1	no	yes	yes	serves
 upsertChunks	chunks	yes	20	yes	yes	yes	serves
-sealChunks	chunks	yes	18	no	yes	yes	serves
+sealChunks	chunks	yes	19	no	yes	yes	serves
 getChunks	chunks	yes	23	yes	yes	yes	serves
-getChunkPage	chunks	yes	3	no	yes	yes	serves
-getChunkWindows	chunks	yes	1	no	yes	yes	serves
+getChunkPage	chunks	yes	4	no	yes	yes	serves
+getChunkWindows	chunks	yes	2	no	yes	yes	serves
 countStaleChunks	chunks	yes	5	no	yes	yes	serves
 sumStaleChunkChars	chunks	yes	2	no	yes	yes	serves
 setPageEmbeddingSignature	chunks	yes	1	no	yes	yes	serves
@@ -154,7 +154,7 @@ readEmbeddingStateCounts	chunks	yes	1	no	yes	yes	serves
 listEmbeddingStateRows	chunks	yes	1	no	yes	yes	serves
 deleteChunks	chunks	yes	3	no	yes	yes	serves
 deleteChunksExcept	chunks	yes	2	no	yes	yes	serves
-setChunkerVersion	chunks	yes	4	no	yes	yes	serves
+setChunkerVersion	chunks	yes	5	no	yes	yes	serves
 writeTextProjectionSeal	chunks	yes	2	no	yes	yes	serves
 moveChunkIndexes	chunks	yes	2	no	yes	yes	serves
 getChunkReuseRows	chunks	yes	2	no	yes	yes	serves
@@ -166,7 +166,7 @@ markPagesAttendanceBlocked	extraction	yes	2	no	yes	yes	serves
 countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
-addLink	links	yes	40	yes	yes	yes	serves
+addLink	links	yes	41	yes	yes	yes	serves
 addLinksBatch	links	yes	6	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	1	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
