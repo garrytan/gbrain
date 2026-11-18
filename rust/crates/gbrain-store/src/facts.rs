@@ -61,7 +61,7 @@ use crate::links::no_nul;
 use crate::pages::{next_id, read_page};
 use crate::sources::read_source;
 use crate::timeline_queries::timestamptz_text;
-use crate::trust::{OriginStamp, StampRow, TrustTable, TrustTier, WriteTrust, stamp};
+use crate::trust::{OriginStamp, StampRow, TrustPolicy, TrustTable, TrustTier, WriteTrust, stamp};
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -943,6 +943,13 @@ pub struct SupersessionQuery {
     pub visibility: Option<Vec<String>>,
     /// `excludePrivate`: the private-provenance policy (`facts/privacy.rs`).
     pub exclude_private: Option<PrivacyPolicy>,
+    /// The caller passed a read eligibility: `projectionEligibleSql('facts')` replaces the
+    /// deleted-page clause, so a row whose live provenance page is quarantined is hidden too.
+    pub eligible: bool,
+    /// `eligibility.floor`: `trustFloorSql` over the fact's stored tier; null sets none.
+    pub min_trust: Option<String>,
+    /// `eligibility.suppressFlagged`: drop a fact `activationSuppressedSql('facts')` flags.
+    pub suppress_flagged: bool,
 }
 
 /// The `listUnattributedFacts` read of src/core/review-lists.ts. The caller passes the page size
@@ -1482,12 +1489,15 @@ impl Store {
     }
 
     /// `listSupersessions`: rows with a successor, by `COALESCE(expired_at, valid_until)` (NULL
-    /// first) then id, both descending.
+    /// first) then id, both descending. With a read eligibility it also hides a row whose live
+    /// provenance page is quarantined and applies the trust floor and flag suppression; the store
+    /// keeps no `needs_rederive` queue, so that clause hides nothing.
     pub fn list_supersessions(&self, q: &SupersessionQuery) -> Result<Vec<Value>> {
         const OP: &str = "listSupersessions";
         no_nul(OP, &[("sourceId", &q.source_id)])?;
         let limit = count_arg(OP, "limit", q.limit)?;
         let since = opt_time(OP, "since", &q.since)?;
+        let trust = TrustPolicy::parse(q.min_trust.as_deref(), q.suppress_flagged)?;
         let read = self.read()?;
         let mut rows = Vec::new();
         for row in source_rows(&*read, &q.source_id)? {
@@ -1495,8 +1505,10 @@ impl Store {
             if row.superseded_by.is_none()
                 || since.is_some_and(|s| ended.is_none_or(|e| e < s))
                 || !listed(&q.visibility, &row.visibility)
-                || hidden_by_deleted_page(&*read, &row)?
                 || hidden_by_policy(&*read, &row, &q.exclude_private)?
+                || hidden_by_deleted_page(&*read, &row)?
+                || (q.eligible && hidden_by_quarantine(&*read, &row)?)
+                || !trust.admits(&*read, "facts", row.id, row.tier())?
             {
                 continue;
             }

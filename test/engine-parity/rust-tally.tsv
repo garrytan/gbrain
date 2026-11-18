@@ -53,7 +53,7 @@ test/engine-parity/transaction-settings.test.ts	5	1
 test/engine-parity/traversal-cache.test.ts	0	2
 test/engine-parity/trust-fence.test.ts	4	0
 test/engine-parity/trust-proposals.test.ts	3	0
-test/engine-parity/trust-reads.test.ts	6	0
+test/engine-parity/trust-reads.test.ts	7	0
 test/engine-parity/trust-withdrawals.test.ts	4	0
 test/engine-parity/trust-write-gate.test.ts	4	0
 test/engine-parity/typed-config-reads.test.ts	2	0
