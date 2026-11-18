@@ -74,13 +74,13 @@ describe('a page whose search vector overflows', () => {
     { methods: ['putPage', 'addTimelineEntry', 'searchTitles'] },
     async (engine) => {
       // A title that overflows with the entries added is out of reach here: the SQL engines refuse a title past a few KB
-      // at their `lower(title)` index before the vector is built. The Rust unit tests of pages.rs cover that boundary.
+      // at their `lower(title)` index before the vector is built. The Rust unit tests of keyword/titles.rs cover that boundary.
       const input = { type: 'note' as const, title: 'Marmot burrow', compiled_truth: 'marmot burrow ledger', timeline: '' };
       await seedPage(engine, { slug: SLUG, input, chunks: [chunk(0, 'marmot burrow ledger')] });
       await engine.addTimelineEntry(SLUG, { date: '2026-01-02', summary: 'pinniped migration', detail: '' });
       const found = async (query: string) => (await engine.searchTitles(query, { limit: 10 })).map((r) => r.slug);
       const before = { title: await found('marmot'), entry: await found('pinniped') };
-      await engine.putPage(SLUG, input, { index: false });
+      await engine.putPage(SLUG, input);
       const after = { title: await found('marmot'), entry: await found('pinniped') };
       expect(after).toEqual({ title: [SLUG], entry: [SLUG] });
       return { before, after };
