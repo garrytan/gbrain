@@ -10,16 +10,20 @@
  *    re-publish; the Rust engine has no SQL, so the read has to exist as a typed member.
  *  - Why existing coverage misses it: the statement ran through `executeRaw` inside trust/fence-guard.ts, which the
  *    parity cases cannot call (D18).
- *  - Seam: none in the parity case. Typed members only (no executeRaw: D18). The writer's tier and the opened ids are
- *    transaction-local settings (`gbrain.write_trust_tier`, `gbrain.write_open_facts`), and a typed member cannot set
- *    them on the Rust arm, so the parity case runs in the default context (no writer tier, nothing opened): there every
- *    stored row is `unknown` and none is above the writer, so the answer is empty on both arms. The arms that decide a row
- *    (above the writer, opened, held) are pinned by the PGLite-only case below and, on the Rust store, by
- *    rust/crates/gbrain-store/tests/fence_reads.rs.
+ *  - Seam: `withWriteTrustSettings`, a fixture behind the backend switch (as harness.ts `createSource` is). The writer's
+ *    tier and the opened ids are transaction-local settings (`gbrain.write_trust_tier`, `gbrain.write_open_facts`). The
+ *    SQL arms set them with `applyTransactionSettings` inside `transaction`; the Rust engine serves neither yet, so the
+ *    Rust arm sets the store's write trust context directly (rust-arm.ts `applyRustWriteTrust`) and clears it after,
+ *    which is what the interfaces hook will do. Reads stay typed members (no executeRaw: D18).
+ *  - Rust facts store no trust tier yet (every row reads `unknown`), so the writer-above case has a row in
+ *    test/rust-expected-divergence/trust_fence.tsv. The held arm (a widening proposal) needs `trust_proposals`, which the
+ *    Rust store does not keep; it is pinned by the PGLite-only case below.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
-import { parityArms } from './harness.ts';
+import type { BrainEngine } from '../../src/core/engine.ts';
+import { parityArms, type ParityBackend } from './harness.ts';
+import { applyRustWriteTrust } from './rust-arm.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -34,6 +38,30 @@ const fenceRow = (n: number, fact: string, extra: Record<string, unknown> = {}) 
 });
 
 const incomingOf = (rows: Array<{ row_num: number; fact: string; visibility: string }>) => JSON.stringify(rows);
+
+/**
+ * Fixture: run `fn` with the write trust settings `names` set to `values` for one transaction. The SQL arms set them
+ * with `applyTransactionSettings` inside `transaction` (SET LOCAL ends with it); the Rust arm sets the store's write
+ * trust context and sets every name back to empty after, as `withTransactionSettings` restores an unset outer scope.
+ */
+async function withWriteTrustSettings<T>(engine: BrainEngine, backend: ParityBackend, names: string[], values: string[],
+  fn: (tx: BrainEngine) => Promise<T>): Promise<T> {
+  if (backend !== 'rust') {
+    return engine.transaction(async (tx) => {
+      await tx.applyTransactionSettings(names, values);
+      return fn(tx);
+    });
+  }
+  await applyRustWriteTrust(engine, names, values);
+  try { return await fn(engine); }
+  finally { await applyRustWriteTrust(engine, names, names.map(() => '')); }
+}
+
+/** Replaces each fact id in a fence read with the claim it was inserted with, so answers compare across arms. */
+const labelled = (ids: number[], facts: string[]) => {
+  const label = new Map(ids.map((id, i) => [Number(id), facts[i]!]));
+  return (rows: Array<Record<string, unknown>>): Array<Record<string, unknown>> => rows.map((row) => ({ ...row, id: label.get(Number(row.id)) ?? `other:${String(row.id)}` }));
+};
 
 describe('engine parity: the fence guard read of a page\'s fact rows', () => {
   parityTest('listFenceFactRows answers the guard\'s question in the default context: no writer tier, nothing opened', {
@@ -60,6 +88,69 @@ describe('engine parity: the fence guard read of a page\'s fact rows', () => {
     // Every stored row is `unknown` and the writer is undeclared (`unknown`): nothing is above the writer, held or opened.
     expect({ answer, empty, otherSource, otherSlug }).toEqual({ answer: [], empty: [], otherSource: [], otherSlug: [] });
     return { answer, empty, otherSource, otherSlug };
+  });
+
+  parityTest('gbrain repair open-facts: a named private row whose cell turns world is opened in place, and the context clears after', {
+    methods: ['insertFacts', 'listFenceFactRows', 'listFenceRetireCandidates'],
+  }, async (engine, backend) => {
+    // Every row is written undeclared (`unknown`), so no row is above the undeclared writer: only the opened ids decide.
+    const rows = [
+      fenceRow(1, 'Alpha', { visibility: 'private' }),
+      fenceRow(2, 'Beta', { visibility: 'private' }),
+      fenceRow(3, 'Gamma'),
+      fenceRow(4, 'Delta', { visibility: 'private' }),
+      { ...fenceRow(1, 'Alpha'), visibility: 'private' as const, source_markdown_slug: 'people/other-fence' },
+    ];
+    const { ids } = await engine.insertFacts(rows as never, { source_id: SRC });
+    expect(ids).toHaveLength(rows.length);
+    const [alpha, beta, , , elsewhere] = ids as number[];
+    const label = labelled(ids as number[], ['Alpha', 'Beta', 'Gamma', 'Delta', 'Alpha elsewhere']);
+    // Alpha: same row and claim, private to world (opened). Beta: named, but its claim changed (not opened). Gamma: stated
+    // as it is. Delta: private to world but not named. The other page's Alpha is named but is not this page's row.
+    const incoming = incomingOf([
+      { row_num: 1, fact: 'Alpha', visibility: 'world' },
+      { row_num: 2, fact: 'Beta changed', visibility: 'world' },
+      { row_num: 3, fact: 'Gamma', visibility: 'world' },
+      { row_num: 4, fact: 'Delta', visibility: 'world' },
+    ]);
+    const target = { sourceId: SRC, slug: SLUG, incoming };
+    const read = async (db: BrainEngine) => ({
+      guarded: label(await db.listFenceFactRows(target) as never),
+      retired: label(await db.listFenceRetireCandidates(target) as never),
+    });
+    const opened = await withWriteTrustSettings(engine, backend, ['gbrain.write_open_facts'], [[alpha, beta, elsewhere].join(',')], read);
+    const after = await read(engine);
+    expect(opened.guarded).toEqual([{ id: 'Alpha', row_num: 1, fact: 'Alpha', visibility: 'private', trust_tier: 'unknown', above: false, opened: true }]);
+    expect(opened.retired.map((r) => r.id)).toEqual(['Beta', 'Delta']);
+    expect({ guarded: after.guarded, retired: after.retired.map((r) => r.id) }).toEqual({ guarded: [], retired: ['Alpha', 'Beta', 'Delta'] });
+    return { opened, after };
+  });
+
+  parityTest('an agent writer below a stored fact\'s tier: the more trusted row is listed above the writer, the opened row as opened', {
+    methods: ['insertFacts', 'listFenceFactRows'],
+  }, async (engine, backend) => {
+    // An operator curated Gamma; an undeclared write left Zeta private. An MCP agent put (agent_written) then rewrites both.
+    const write = (tier: string, rows: Array<ReturnType<typeof fenceRow>>) => withWriteTrustSettings(engine, backend,
+      ['gbrain.write_trust_tier'], [tier], async (tx) => (await tx.insertFacts(rows as never, { source_id: SRC })).ids as number[]);
+    const [gamma] = await write('operator_curated', [fenceRow(3, 'Gamma')]);
+    const [zeta] = await write('', [fenceRow(6, 'Zeta', { visibility: 'private' })]);
+    const label = labelled([gamma!, zeta!], ['Gamma', 'Zeta']);
+    const incoming = incomingOf([
+      { row_num: 3, fact: 'Gamma changed by an agent', visibility: 'world' },
+      { row_num: 6, fact: 'Zeta', visibility: 'world' },
+    ]);
+    const answer = label(await withWriteTrustSettings(engine, backend, ['gbrain.write_trust_tier', 'gbrain.write_origin', 'gbrain.write_open_facts'],
+      ['agent_written', JSON.stringify({ channel: 'mcp:put_page' }), String(zeta)],
+      (tx) => tx.listFenceFactRows({ sourceId: SRC, slug: SLUG, incoming })) as never);
+    const zetaRow = { id: 'Zeta', row_num: 6, fact: 'Zeta', visibility: 'private', trust_tier: 'unknown', above: false, opened: true };
+    // PGLite keeps Gamma (operator_curated is above agent_written), so the guard files a proposal instead of expiring it.
+    // Rust stores no tier, so Gamma reads unknown, which is not above agent_written: the guard would expire it
+    // (test/rust-expected-divergence/trust_fence.tsv). The opened row is the same on both.
+    expect(answer).toEqual(backend === 'rust' ? [zetaRow] : [
+      { id: 'Gamma', row_num: 3, fact: 'Gamma', visibility: 'world', trust_tier: 'operator_curated', above: true, opened: false },
+      zetaRow,
+    ]);
+    return answer;
   });
 });
 

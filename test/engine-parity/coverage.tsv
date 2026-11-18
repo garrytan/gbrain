@@ -199,7 +199,7 @@ getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
 insertFact	facts	yes	27	yes	yes	yes	serves
-insertFacts	facts	yes	16	no	yes	yes	serves
+insertFacts	facts	yes	18	no	yes	yes	serves
 deleteFactsForPage	facts	yes	2	no	yes	yes	serves
 expireFact	facts	yes	11	no	yes	yes	serves
 listFactsByEntity	facts	yes	13	yes	yes	yes	serves
@@ -208,7 +208,7 @@ listFactsKeyset	facts	yes	2	no	yes	yes	serves
 listFactsBySession	facts	yes	3	yes	yes	yes	serves
 listSupersessions	facts	yes	5	yes	yes	yes	serves
 countUnconsolidatedFacts	facts	yes	2	yes	yes	yes	serves
-listFenceRetireCandidates	facts	yes	1	no	yes	yes	serves
+listFenceRetireCandidates	facts	yes	2	no	yes	yes	serves
 findCandidateDuplicates	facts	yes	6	yes	yes	yes	serves
 consolidateFact	facts	yes	3	no	yes	yes	serves
 findTrajectory	facts	yes	3	yes	yes	yes	serves
@@ -322,7 +322,7 @@ bindPageOrigin	write_guards	yes	1	no	yes	yes	serves
 stampPageIngest	write_guards	yes	1	no	yes	yes	serves
 sealImportedPage	write_guards	yes	1	no	yes	yes	serves
 readLivePageBody	write_guards	yes	1	no	yes	yes	serves
-listFenceFactRows	trust_fence	yes	1	no	yes	yes	serves
+listFenceFactRows	trust_fence	yes	3	no	yes	yes	serves
 hasPersistenceTable	connect_gate	yes	3	no	yes	yes	serves
 listManagedRootBindings	connect_gate	yes	1	no	yes	yes	serves
 readGraduationGateRow	connect_gate	yes	2	no	yes	yes	serves
