@@ -78,14 +78,19 @@ describe('Rust engine on the store', () => {
     expect(await second.engine.getConfig('k')).toBe('v');
   });
 
-  withAddon('a second engine on an open brain directory refuses rust_store_locked, and works once the first closes', async () => {
+  withAddon('a second engine on an open brain directory becomes a client of the first, and opens the store once the first closes', async () => {
     const first = await open();
-    const second = await newEngine(first.dir);
-    expect(await code(() => second.engine.connect({ engine: 'pglite', database_path: first.dir } as never))).toBe('rust_store_locked');
-    expect(second.engine.connected).toBe(false);
+    await first.engine.putPage('notes/a', page);
+    expect(first.engine.ownerRole).toBe('owner');
+    // Connect elects an owner: the first engine holds the brain, so the second never opens the store and asks the first.
+    const second = await open(first.dir);
+    expect(second.engine.ownerRole).toBe('client');
+    expect((await second.engine.getPage('notes/a'))?.title).toBe('A');
+    await second.engine.disconnect();
     await first.engine.disconnect();
     await second.engine.connect({ engine: 'pglite', database_path: first.dir } as never);
-    expect(second.engine.connected).toBe(true);
+    expect(second.engine.ownerRole).toBe('owner');
+    expect((await second.engine.getPage('notes/a'))?.compiled_truth).toBe('Body.');
   });
 
   withAddon('a served member on a closed engine refuses engine_closed', async () => {
