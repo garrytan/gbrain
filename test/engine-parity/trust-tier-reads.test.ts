@@ -224,10 +224,19 @@ describe('engine parity: typed trust tier reads', () => {
   );
 
   parityTest(
-    'readBeliefHistoryRows and listVisibleBeliefLifetimes answer an empty ledger and an unknown lifetime',
+    'readBeliefHistoryRows and listVisibleBeliefLifetimes answer an empty ledger and an unknown lifetime, and Rust refuses both for its missing ledger',
     { methods: ['readBeliefHistoryRows', 'listVisibleBeliefLifetimes'] },
-    async (engine) => {
+    async (engine, backend) => {
       const base = { sourceId: 'default', slug: null, subjectKey: null, afterId: 0, limit: 10, recordedAfter: null, recordedUntil: null, subjectKeys: null, beforeId: null };
+      if (backend === 'rust') {
+        // The store keeps no belief ledger, so no input, an empty lifetime list included, may answer an empty list.
+        const refusals = [await engine.readBeliefHistoryRows({ ...base, descending: false }).then(() => null, (e: unknown) => e),
+          await engine.listVisibleBeliefLifetimes([]).then(() => null, (e: unknown) => e),
+          await engine.listVisibleBeliefLifetimes(['00000000-0000-4000-8000-000000000001']).then(() => null, (e: unknown) => e)];
+        expect(refusals.map(e => (e instanceof Error ? /the belief ledger, which the store does not keep/.test(e.message) : e)))
+          .toEqual([true, true, true]);
+        throw refusals[0];
+      }
       const asc = await engine.readBeliefHistoryRows({ ...base, descending: false });
       const desc = await engine.readBeliefHistoryRows({ ...base, slug: 'x', subjectKeys: ['k'], beforeId: 5, recordedAfter: '2026-01-01T00:00:00Z', descending: true });
       const lifetimes = await engine.listVisibleBeliefLifetimes(['00000000-0000-4000-8000-000000000001']);

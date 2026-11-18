@@ -1707,7 +1707,8 @@ and write provenance on content rows, and the trust records.
     (`get_versions`) and valid time are typed members (`engine-sql/trust-tier-reads.ts`). The Rust store serves
     `listCorePageRows`, the pages and facts arms of `listTrustScanRows` and `countUnscannedTrustRows`,
     `listVersionTrustTiers` and `listVersionReasonWriters` (`trust/tier_reads.rs`); it refuses the takes and
-    timeline scan tables, the belief history members and `pickValidTimeEdition`.
+    timeline scan tables and `pickValidTimeEdition`, and the belief history members refuse for the missing belief
+    ledger (TODOS.md `rust-belief-ledger`).
   - `resolveAliases` serves the floor, the flagged-page filter and `excludePrivate` on both the alias page and its
     title shadow (`alias-trust.test.ts`); it still refuses `excludePrivate` for a caller whose member pages, grants or
     lineage widen the page policy, and the search fan-out reads that refusal as no aliases.

@@ -7,7 +7,9 @@
  *  - `listCorePageRows` under `excludePrivate` for a caller whose page policy is not the no-caller one (a member
  *    page, a grant, a lineage read, a labelled-only caller), as `storePagePolicy` refuses it;
  *  - the trust scan over `takes` and `timeline_entries`, which the store does not stamp yet;
- *  - `readBeliefHistoryRows` and `listVisibleBeliefLifetimes`: the store keeps no belief ledger;
+ *  - `readBeliefHistoryRows` and `listVisibleBeliefLifetimes`, always and before any store call: the store keeps no
+ *    belief ledger (every `belief_events` and `belief_page_lifetimes` write goes through `executeRaw`), so a read could
+ *    only answer an empty list where PGLite has events (TODOS.md `rust-belief-ledger`);
  *  - `pickValidTimeEdition`: the store has no valid-time read;
  *  - a limit, cursor or id that is not an integer, rather than guess at PGLite's bind error.
  */
@@ -73,3 +75,10 @@ export const listVersionReasonWriters: Member<'listVersionReasonWriters'> = (bra
   for (const id of ids) requireInteger(member, 'version id', id);
   return storeCall({ member }, () => brain.listVersionReasonWriters({ ids: [...ids] }));
 };
+
+/** Why the belief reads refuse: an answer from the store would be an empty ledger, never the one PGLite keeps. */
+const NO_BELIEF_LEDGER = 'the belief ledger, which the store does not keep yet';
+
+export const readBeliefHistoryRows: Member<'readBeliefHistoryRows'> = async () => refuseMember('readBeliefHistoryRows', NO_BELIEF_LEDGER);
+
+export const listVisibleBeliefLifetimes: Member<'listVisibleBeliefLifetimes'> = async () => refuseMember('listVisibleBeliefLifetimes', NO_BELIEF_LEDGER);

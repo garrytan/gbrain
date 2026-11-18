@@ -172,6 +172,7 @@ the family adds no key prefix. Versions have no by-id index: the version reads s
 - The TypeScript members refuse a caller page policy that is not the no-caller one, the `takes` and
   `timeline_entries` scan tables, and a cursor, limit or id that is not an integer. The store refuses any other
   table and a NUL byte with `invalid_argument`.
-- The belief history reads (`readBeliefHistoryRows`, `listVisibleBeliefLifetimes`) and `pickValidTimeEdition` are
-  not served.
+- The belief history reads (`readBeliefHistoryRows`, `listVisibleBeliefLifetimes`) refuse in their TypeScript
+  members before any store call, for every input: the store keeps no belief ledger, so it could only answer an empty
+  one (TODOS.md `rust-belief-ledger`). `pickValidTimeEdition` is not served.
 - Pinned by `test/engine-parity/trust-tier-reads.test.ts` on every arm and by `tests/trust_tier_reads.rs`.

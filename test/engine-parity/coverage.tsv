@@ -535,8 +535,8 @@ countDerivedFactTaint	facts_trust	yes	1	no	yes	yes	refuses:facts
 listCorePageRows	trust_tier_reads	yes	1	no	yes	yes	serves
 listTrustScanRows	trust_tier_reads	yes	2	no	yes	yes	serves
 countUnscannedTrustRows	trust_tier_reads	yes	2	no	yes	yes	serves
-readBeliefHistoryRows	trust_tier_reads	yes	1	no	yes	yes	refuses:belief_ledger
-listVisibleBeliefLifetimes	trust_tier_reads	yes	1	no	yes	yes	refuses:belief_ledger
+readBeliefHistoryRows	trust_tier_reads	yes	1	no	yes	yes	serves
+listVisibleBeliefLifetimes	trust_tier_reads	yes	1	no	yes	yes	serves
 listVersionTrustTiers	trust_tier_reads	yes	1	no	yes	yes	serves
 listVersionReasonWriters	trust_tier_reads	yes	1	no	yes	yes	serves
 pickValidTimeEdition	trust_tier_reads	yes	1	no	yes	yes	refuses:page_versions
