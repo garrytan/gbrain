@@ -357,6 +357,8 @@ export async function readAliases(query: ReadQuery, aliases: string[], scope?: P
   // the caller can read (a private title a remote caller can't see must not
   // hide a readable alias),
   // so "Acme Example" stays the company page beside "CRM record: Acme Example".
+  // Text keys sort COLLATE "C" (byte order), so every engine lists aliases and
+  // their pages in the same order whatever the database collation.
   const rows = await query<PageRef & { alias_norm: string; rank: number }>(`
     WITH a AS MATERIALIZED (
       SELECT m.alias_norm, m.slug, m.source_id,
@@ -369,7 +371,7 @@ export async function readAliases(query: ReadQuery, aliases: string[], scope?: P
     WHERE ${filter}
       AND (a.rank = 0 OR NOT EXISTS (SELECT 1 FROM pages t WHERE t.source_id = a.source_id AND ${titleFilter}
                                      AND lower(t.title) = a.alias_norm AND t.slug <> a.slug))
-    ORDER BY a.alias_norm, a.source_id, a.rank, a.slug`, params);
+    ORDER BY a.alias_norm COLLATE "C", a.source_id COLLATE "C", a.rank, a.slug COLLATE "C"`, params);
   const best = new Map<string, number>();
   for (const row of rows) {
     const k = `${row.alias_norm}\0${row.source_id}`;
