@@ -178,7 +178,7 @@ describe('Rust engine on the store', () => {
     const { engine } = await open();
     await engine.putPage('notes/a', page);
     await engine.insertFacts([{ fact: 'f', entity_slug: 'people/a-example', source_markdown_slug: 'notes/a', row_num: 1, kind: 'fact', visibility: 'world', source: 'fence' }] as never, { source_id: 'default' });
-    const reads = {
+    const reads: Record<string, () => Promise<unknown>> = {
       listFactsSince: () => engine.listFactsSince('default', new Date('2020-01-01T00:00:00Z'), { excludePrivate: true }),
       countWorldFacts: () => engine.countWorldFacts({ sourceId: 'default', entitySlugs: ['people/a-example'], worldOnly: false, excludePrivate: true }),
       getOntology: () => engine.getOntology('people/a-example', { excludePrivate: true }),

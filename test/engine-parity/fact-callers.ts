@@ -57,7 +57,7 @@ export const CALLERS = {
 export async function readAsCallers<T>(read: () => Promise<T>): Promise<Record<'none' | keyof typeof CALLERS, T>> {
   const out = { none: await read() } as Record<'none' | keyof typeof CALLERS, T>;
   for (const [name, access] of Object.entries(CALLERS) as Array<[keyof typeof CALLERS, Parameters<typeof withCallerAccess>[0]]>) {
-    out[name] = await withCallerAccess({ ...access, identity: [...access.identity], privateReadableSources: [...(access.privateReadableSources ?? [])] }, read);
+    out[name] = await withCallerAccess({ ...access, identity: [...(access.identity ?? [])], privateReadableSources: [...(access.privateReadableSources ?? [])] }, read);
   }
   return out;
 }
