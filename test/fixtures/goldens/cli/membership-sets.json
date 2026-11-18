@@ -348,6 +348,7 @@
         "compile-context",
         "connectors",
         "core",
+        "dedupe",
         "dream",
         "edge-proposals",
         "edges-backfill",
