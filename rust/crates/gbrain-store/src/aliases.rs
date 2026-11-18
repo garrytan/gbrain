@@ -1,6 +1,6 @@
 //! Slug renames, slug aliases, page aliases and the contextual retrieval state of pages: the
-//! PGLite `slug_aliases` and `page_aliases` tables and the `pages.contextual_retrieval_mode` /
-//! `pages.corpus_generation` columns.
+//! PGLite `slug_aliases`, `slug_rename_history` and `page_aliases` tables and the
+//! `pages.contextual_retrieval_mode` / `pages.corpus_generation` columns.
 //!
 //! Members: updateSlug, resolveSlugWithAlias, resolveSlugWithAliasDetailed, resolveAliases,
 //! setPageAliases, updatePageContextualRetrievalState, aliasCanonicalRefs.
@@ -16,6 +16,9 @@
 //! - `k 0x03 source \0 slug \0 alias_norm \0 origin` is empty: the same row seen from its page, for
 //!   `setPageAliases` and the rename move.
 //! - `k 0x04 page_id` (8 big-endian bytes) holds the page's [`CrState`].
+//! - `k 0x06 source \0 old_slug \0 new_slug` is empty: one `slug_rename_history` row, unique on
+//!   `(source_id, old_slug, new_slug)` as in PGLite (migration v285). `created_at` is not kept;
+//!   nothing reads it. A lookup by `new_slug` scans the source's rows.
 //!
 //! Text that holds a NUL byte cannot be part of a key: a write refuses it with
 //! `invalid_argument` (Postgres refuses NUL in `text` too) and a read finds nothing.
@@ -23,14 +26,19 @@
 //! The alias rows hang off `(source, slug)`, not the page id: neither PGLite table has a foreign
 //! key to `pages`, so its rows outlive a hard delete of the page and answer again for a page
 //! created later at the same slug. [`remove_page_rows`] therefore removes only the contextual
-//! retrieval state, which is a column of the page row. Both tables cascade from `sources`:
-//! [`remove_source_rows`] removes every row of a deleted source.
+//! retrieval state, which is a column of the page row. `slug_rename_history` has no foreign key to
+//! `pages` either, and PGLite's single `deletePage` keeps its rows; the batch purges
+//! (`deletePages`, `purgeDeletedPages`) drop the rows that end at a purged slug
+//! (`scrubPurgedSlugStores`), which [`scrub_purged_rename_history`] does for their Rust caller.
+//! All three tables cascade from `sources`: [`remove_source_rows`] removes every row of a deleted
+//! source.
 //!
 //! Only `setPageAliases` writes page aliases here, so every row has origin `frontmatter`; the
 //! `declared` and `subject` rows of the mention pass have no typed writer. `resolveAliases` still
 //! applies PGLite's precedence (frontmatter, then declared, then subject, and a derived alias
 //! yields to another page's exact title), so a later writer needs no reader change. Only
-//! `updateSlug` writes slug aliases. `slug_rename_history` has no typed reader and is not kept.
+//! `updateSlug` writes slug aliases and rename history. The private-provenance policy
+//! (`facts/privacy.rs`) reads both through [`read_slug_alias`] and [`renamed_to`].
 
 use crate::error::{INVALID_ARGUMENT, Result, StoreError};
 use crate::facts::{PrivacyPolicy, page_hidden};
@@ -51,6 +59,7 @@ const PAGE_ALIAS: u8 = 0x02;
 const PAGE_ALIAS_BY_SLUG: u8 = 0x03;
 const CR_STATE: u8 = 0x04;
 const SLUG_ALIAS_BY_CANONICAL: u8 = 0x05;
+const RENAME_HISTORY: u8 = 0x06;
 
 /// The origin `setPageAliases` writes and replaces (the column default).
 const FRONTMATTER: &str = "frontmatter";
@@ -208,7 +217,8 @@ fn delete_page_alias(
     tx.delete(&key(PAGE_ALIAS_BY_SLUG, &[source, slug, alias, origin]))
 }
 
-fn read_slug_alias(
+/// The `slug_aliases` row of `alias` in `source`, if any.
+pub(crate) fn read_slug_alias(
     read: &dyn KvRead,
     source: &str,
     alias: &str,
@@ -252,7 +262,90 @@ fn delete_slug_alias(tx: &mut dyn KvWrite, source: &str, alias: &str) -> Result<
     Ok(())
 }
 
-/// `recordRenameAlias(source, old, new)` on `slug_aliases`: drops the alias spelled like the new
+/// Every `new_slug` of the `slug_rename_history` rows of `old` in `source`, in key order.
+pub(crate) fn renamed_to(read: &dyn KvRead, source: &str, old: &str) -> Result<Vec<String>> {
+    if has_nul(&[source, old]) {
+        return Ok(Vec::new());
+    }
+    Ok(scan_tails(read, &prefix(RENAME_HISTORY, &[source, old]))?
+        .into_iter()
+        .filter_map(|(_, parts)| match parts.as_slice() {
+            [new] => Some(new.clone()),
+            _ => None,
+        })
+        .collect())
+}
+
+/// Every `(old_slug, new_slug)` row of `source`, in key order.
+fn rename_rows(read: &dyn KvRead, source: &str) -> Result<Vec<(String, String)>> {
+    Ok(scan_tails(read, &prefix(RENAME_HISTORY, &[source]))?
+        .into_iter()
+        .filter_map(|(_, parts)| match parts.as_slice() {
+            [old, new] => Some((old.clone(), new.clone())),
+            _ => None,
+        })
+        .collect())
+}
+
+fn rename_key(source: &str, old: &str, new: &str) -> Vec<u8> {
+    key(RENAME_HISTORY, &[source, old, new])
+}
+
+/// The `slug_rename_history` half of `recordRenameAlias(source, old, new)`
+/// (src/core/page-state/rename-alias.ts), its four statements in order, before the alias half:
+/// 1. `INSERT ... SELECT source_id, alias_slug, canonical_slug FROM slug_aliases WHERE alias_slug
+///    = new ON CONFLICT DO NOTHING`: keeps the alias the rename is about to drop.
+/// 2. `DELETE ... h WHERE h.new_slug = old AND EXISTS (o WHERE o.old_slug = h.old_slug AND
+///    o.new_slug = new)`: a row that would repeat an existing one after the move goes.
+/// 3. `UPDATE ... SET new_slug = new WHERE new_slug = old`: rows that ended at the old slug follow
+///    the page.
+/// 4. `INSERT (source, old, new) ON CONFLICT DO NOTHING`.
+fn record_rename_history(tx: &mut dyn KvWrite, source: &str, old: &str, new: &str) -> Result<()> {
+    if let Some(dropped) = read_slug_alias(&*tx, source, new)? {
+        tx.put(&rename_key(source, new, &dropped.canonical_slug), &[])?;
+    }
+    let rows = rename_rows(&*tx, source)?;
+    let taken: BTreeSet<&str> = rows
+        .iter()
+        .filter(|(_, n)| n == new)
+        .map(|(o, _)| o.as_str())
+        .collect();
+    for (o, _) in rows.iter().filter(|(_, n)| n == old) {
+        if taken.contains(o.as_str()) {
+            tx.delete(&rename_key(source, o, old))?;
+        }
+    }
+    for (o, _) in rename_rows(&*tx, source)?.iter().filter(|(_, n)| n == old) {
+        tx.delete(&rename_key(source, o, old))?;
+        tx.put(&rename_key(source, o, new), &[])?;
+    }
+    tx.put(&rename_key(source, old, new), &[])
+}
+
+/// `scrubPurgedSlugStores` on `slug_rename_history`: drops the rows of `source` that end at a
+/// purged slug (a row from a purged slug to another page stays).
+// page_ops (`deletePages`, `purgeDeletedPages`) is its caller; until that lands only tests call it.
+#[allow(dead_code)]
+pub(crate) fn scrub_purged_rename_history(
+    tx: &mut dyn KvWrite,
+    source: &str,
+    slugs: &[String],
+) -> Result<u64> {
+    if has_nul(&[source]) {
+        return Ok(0);
+    }
+    let mut removed = 0;
+    for (old, new) in rename_rows(&*tx, source)? {
+        if slugs.contains(&new) {
+            tx.delete(&rename_key(source, &old, &new))?;
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
+/// `recordRenameAlias(source, old, new)`: the rename history first ([`record_rename_history`]),
+/// then on `slug_aliases`: drops the alias spelled like the new
 /// slug (a page owns that slug now), repoints every alias of the old slug at the new one, then
 /// upserts `old -> new` with notes `rename` (an existing row keeps its notes, as `ON CONFLICT DO
 /// UPDATE SET canonical_slug` does).
@@ -260,6 +353,7 @@ fn record_rename_alias(tx: &mut dyn KvWrite, source: &str, old: &str, new: &str)
     if old == new {
         return Ok(());
     }
+    record_rename_history(tx, source, old, new)?;
     delete_slug_alias(tx, source, new)?;
     for (_, parts) in scan_tails(&*tx, &prefix(SLUG_ALIAS_BY_CANONICAL, &[source, old]))? {
         let [alias] = parts.as_slice() else {
@@ -308,8 +402,8 @@ pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Resul
 }
 
 /// Deletes this family's records of a source that is deleted (`cascade::remove_source_rows`), as
-/// Postgres's `ON DELETE CASCADE` on `slug_aliases` and `page_aliases` does: every slug alias and
-/// page alias of the source, and the contextual retrieval state of any page still in it (core
+/// Postgres's `ON DELETE CASCADE` on `slug_aliases`, `slug_rename_history` and `page_aliases` does:
+/// every slug alias, rename row and page alias of the source, and the contextual retrieval state of any page still in it (core
 /// removes the source's pages first, which already drops theirs through [`remove_page_rows`]).
 pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
     if has_nul(&[source_id]) {
@@ -318,6 +412,7 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
     for sub in [
         SLUG_ALIAS,
         SLUG_ALIAS_BY_CANONICAL,
+        RENAME_HISTORY,
         PAGE_ALIAS,
         PAGE_ALIAS_BY_SLUG,
     ] {
@@ -596,7 +691,7 @@ impl Store {
     /// `updateSlug(oldSlug, newSlug, { sourceId })`: moves the page at `(sourceId ?? 'default',
     /// oldSlug)`, soft-deleted or not, to `newSlug`, and returns the number of pages moved (0 when
     /// there is none). The page is versioned as it stood first, then moved by
-    /// `pages::rename_page`; a real move records `old -> new` in the slug aliases, moves the records
+    /// `pages::rename_page`; a real move records `old -> new` in the rename history and the slug aliases, moves the records
     /// other families key by slug (`cascade::rename_slug_rows`) and moves the page's alias rows. `invalid_slug` for a bad new slug, `constraint_violation` when the new
     /// slug is taken; either keeps nothing.
     pub fn update_slug(
@@ -709,11 +804,11 @@ mod tests {
         };
         fill("default");
         let kept = family_keys(&store);
-        assert_eq!(kept.len(), 5);
+        assert_eq!(kept.len(), 6);
         fill("other2");
         let both = family_keys(&store);
         fill("other");
-        assert_eq!(family_keys(&store).len(), 15);
+        assert_eq!(family_keys(&store).len(), 18);
         store.write(|tx| remove_source_rows(tx, "other")).unwrap();
         assert_eq!(family_keys(&store), both);
         store
@@ -765,6 +860,64 @@ mod tests {
             .unwrap();
         }
         assert_eq!(count, 6);
+    }
+
+    #[test]
+    fn rename_history_keeps_dropped_aliases_and_follows_the_page() {
+        let store = crate::test_support::store();
+        let input = crate::pages::PageInput {
+            page_type: "note".into(),
+            title: "A".into(),
+            compiled_truth: "body".into(),
+            ..crate::pages::PageInput::default()
+        };
+        let put = |slug: &str| {
+            store
+                .put_page(slug, &input, &crate::pages::PutPageOptions::default())
+                .unwrap();
+        };
+        let rows = || {
+            let read = store.read().unwrap();
+            rename_rows(&*read, "default").unwrap()
+        };
+        let pair = |o: &str, n: &str| (o.to_string(), n.to_string());
+        put("x");
+        assert_eq!(store.update_slug("x", "d", None).unwrap(), 1);
+        assert_eq!(rows(), [pair("x", "d")]);
+        // A second page leaves `x` for `b`: the alias `x -> b` replaces `x -> d`, both rows stay.
+        put("x");
+        assert_eq!(store.update_slug("x", "b", None).unwrap(), 1);
+        assert_eq!(rows(), [pair("x", "b"), pair("x", "d")]);
+        // A single page delete keeps the rows that end at it, as PGLite's plain DELETE does.
+        store.delete_page("d", None).unwrap();
+        assert_eq!(rows().len(), 2);
+        // `b -> d`: `x -> b` would repeat `x -> d` once moved, so it goes (statement 2).
+        assert_eq!(store.update_slug("b", "d", None).unwrap(), 1);
+        assert_eq!(rows(), [pair("b", "d"), pair("x", "d")]);
+        // A page renamed onto `b` drops the alias `b -> d`; the history still answers for `b`.
+        put("e");
+        assert_eq!(store.update_slug("e", "b", None).unwrap(), 1);
+        let read = store.read().unwrap();
+        assert!(read_slug_alias(&*read, "default", "b").unwrap().is_none());
+        assert_eq!(renamed_to(&*read, "default", "b").unwrap(), ["d"]);
+        assert_eq!(renamed_to(&*read, "default", "e").unwrap(), ["b"]);
+        drop(read);
+        // `d -> f`: every row that ended at `d` follows the page (statement 3).
+        assert_eq!(store.update_slug("d", "f", None).unwrap(), 1);
+        assert_eq!(
+            rows(),
+            [
+                pair("b", "f"),
+                pair("d", "f"),
+                pair("e", "b"),
+                pair("x", "f")
+            ]
+        );
+        let removed = store
+            .write(|tx| scrub_purged_rename_history(tx, "default", &["f".to_string()]))
+            .unwrap();
+        assert_eq!(removed, 3);
+        assert_eq!(rows(), [pair("e", "b")]);
     }
 
     #[test]
