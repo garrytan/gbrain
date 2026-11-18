@@ -74,6 +74,7 @@ const OOS = {
   trustWriteGate: 'out-of-scope:trust-write-gate (born in engine-sql/trust-write-gate.ts; pinned by test/engine-parity/trust-write-gate.test.ts)',
   openLoops: 'out-of-scope:open-loops (born in engine-sql/open-loops.ts; pinned by test/engine-parity/open-loops.test.ts)',
   minionJobs: 'out-of-scope:minion-jobs (born in engine-sql/jobs.ts and engine-sql/jobs-queue.ts; pinned by test/engine-parity/jobs.test.ts and jobs-queue.test.ts)',
+  decideProposals: 'out-of-scope:decide-proposals (born in engine-sql/decide-proposals.ts; pinned by test/engine-parity/decide-proposals.test.ts)',
   takesReads: 'out-of-scope:takes-reads (born in engine-sql/takes-reads.ts; pinned by test/engine-parity/takes.test.ts, code-eval-salience.test.ts and test/engine-sql-takes-reads.test.ts)',
   calibrationProfiles: 'out-of-scope:calibration-profiles (decide family group B, born in engine-sql/calibration-profiles.ts; pinned by test/engine-parity/calibration-profiles.test.ts)',
 } as const;
@@ -506,6 +507,23 @@ export const DOMAIN_OF: Record<string, string> = {
   'logEvalCaptureFailure': OOS.eval, 'listEvalCaptureFailures': OOS.eval,
   'getDreamVerdict': OOS.dream, 'putDreamVerdict': OOS.dream, 'sweepDreamVerdicts': OOS.dream,
   'putRawData': OOS.raw, 'getRawData': OOS.raw,
+  // Group C: decide proposals and review proposals
+  'insertDecideProposal': OOS.decideProposals,
+  'getDecideProposal': OOS.decideProposals,
+  'listDecideProposalIds': OOS.decideProposals,
+  'listDecideProposals': OOS.decideProposals,
+  'transitionDecideProposal': OOS.decideProposals,
+  'listDecideProposedPairs': OOS.decideProposals,
+  'insertDecideReviewProposal': OOS.decideProposals,
+  'listDecideReviewProposals': OOS.decideProposals,
+  'getDecideReviewProposal': OOS.decideProposals,
+  'transitionDecideReviewProposal': OOS.decideProposals,
+  'listDecideReviewProposalIds': OOS.decideProposals,
+  'readProposalReviewRates': OOS.decideProposals,
+  'listDueDecideReviewQueue': OOS.decideProposals,
+  'applyDecideReviewQueue': OOS.decideProposals,
+  'listDueDecideSweepDeferred': OOS.decideProposals,
+  'applyDecideSweepDeferred': OOS.decideProposals,
 };
 
 /** Every own member of PostgresEngine.prototype (methods + accessors), sorted. */

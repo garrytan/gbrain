@@ -134,6 +134,7 @@ test/engine-parity/code-eval-salience.test.ts
 test/engine-parity/config-ingest.test.ts
 test/engine-parity/connect-gate.test.ts
 test/engine-parity/cycle-locks.test.ts
+test/engine-parity/decide-proposals.test.ts
 test/engine-parity/entity-reads.test.ts
 test/engine-parity/extraction.test.ts
 test/engine-parity/facts-cycle.test.ts

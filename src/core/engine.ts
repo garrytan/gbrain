@@ -74,6 +74,7 @@ import type { EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRo
 import type { CaseSensitiveAliasRow, PageAliasRow, TitleHitRow } from './engine-sql/alias-fanout-reads.ts';
 import type { McpLifetimeUsageRow, McpLogPruneBatch, McpLogPruneCutoff, McpOpUsageRow, McpRequestLogRow, McpRollupPrunedBefore, SearchTelemetryBucket, SearchTelemetryRow } from './engine-sql/telemetry.ts';
 import type * as LinkTemporalSql from './engine-sql/link-temporal.ts';
+import type * as DecideProposalsSql from './engine-sql/decide-proposals.ts';
 import type { RelationshipEvidence, RelationshipKey, RelationshipStateWrite } from './link-relationships.ts';
 import type { CoverageRelevance, ProjectionRebuildProgress, ScopedCount } from './search/retrieval-coverage.ts';
 import type { ProjectionReadinessRow, ProjectionReadinessScope } from './search/projection-readiness.ts';
@@ -3926,4 +3927,40 @@ export interface BrainEngine {
   getWriteGateHoldRow(id: number): Promise<TrustWriteGateSql.WriteGateHoldRow | null>;
   /** Mark a held row released or dropped; false when it does not exist or was already decided. */
   decideWriteGateHold(id: number, status: 'released' | 'dropped', decidedBy: string): Promise<boolean>;
+
+  // ============================================================
+  // Decide proposals (group C; engine-sql/decide-proposals.ts, rust/docs/store/decide-proposals.md)
+  // ============================================================
+  /** Insert a supersede proposal. Returns its id, or null when its sweep slot or claim-sweep fact pair already carries one. */
+  insertDecideProposal(p: DecideProposalsSql.NewProposal): Promise<number | null>;
+  /** One supersede proposal; `lock` takes the row lock inside a transaction (a store with no row locks reads it plain). */
+  getDecideProposal(id: number, lock?: boolean): Promise<DecideProposalsSql.ProposalRow | null>;
+  /** The ids of one sweep's proposals in a status, by pair index. */
+  listDecideProposalIds(sweepId: string, status: DecideProposalsSql.ProposalStatus): Promise<number[]>;
+  /** Supersede proposals with both facts' text, oldest first; default status `pending`, default limit 200. */
+  listDecideProposals(opts?: { status?: DecideProposalsSql.ProposalStatus | 'all'; limit?: number }): Promise<DecideProposalsSql.ProposalListing[]>;
+  /** Compare-and-set a supersede proposal's status; false when it is no longer `from`. */
+  transitionDecideProposal(id: number, from: DecideProposalsSql.ProposalStatus, to: DecideProposalsSql.ProposalStatus, state?: { before?: string | null; after?: string | null }): Promise<boolean>;
+  /** The ordered fact pairs that already carry a proposal, in any status, and name `factId`. */
+  listDecideProposedPairs(sourceId: string, factId: number): Promise<Array<{ a: number; b: number }>>;
+  /** Insert a review proposal. Returns its id, or null when the (kind, source, a, b, subject) proposal exists. */
+  insertDecideReviewProposal(p: DecideProposalsSql.NewReviewProposal): Promise<number | null>;
+  /** Review proposals in a status (`all` for every one), by id. */
+  listDecideReviewProposals(status: string): Promise<DecideProposalsSql.ReviewProposalRecord[]>;
+  /** One review proposal; `lock` takes the row lock inside a transaction (a store with no row locks reads it plain). */
+  getDecideReviewProposal(id: number, lock?: boolean): Promise<DecideProposalsSql.ReviewProposalRecord | null>;
+  /** Compare-and-set a review proposal's status; false when it is no longer `from`. */
+  transitionDecideReviewProposal(id: number, from: string, to: string): Promise<boolean>;
+  /** The pending review proposals of one sweep, by id; withdrawals only when asked. */
+  listDecideReviewProposalIds(sweepId: string, includeWithdrawals: boolean): Promise<number[]>;
+  /** The doctor's review rates: per kind the pending count, oldest pending age in days and 30-day decisions, over both proposal tables. */
+  readProposalReviewRates(): Promise<DecideProposalsSql.ProposalReviewCounts[]>;
+  /** Review-queue rows of one kind and source that are due and not exhausted, oldest due first. */
+  listDueDecideReviewQueue(kind: string, sourceId: string, limit: number): Promise<DecideProposalsSql.ReviewQueueRow[]>;
+  /** Queue a review pair (idempotent), drop a queue row or defer it with a reason; the number of rows it touched. */
+  applyDecideReviewQueue(op: DecideProposalsSql.ReviewQueueOp): Promise<number>;
+  /** Due conflict-sweep retries of a source, oldest due first. */
+  listDueDecideSweepDeferred(sourceId: string, limit: number): Promise<Array<{ fact_id: number; attempts: number }>>;
+  /** Defer a swept fact, hand over relinked facts or clear a fact's retry row; the number of rows it touched. */
+  applyDecideSweepDeferred(sourceId: string, op: DecideProposalsSql.SweepDeferredOp): Promise<number>;
 }

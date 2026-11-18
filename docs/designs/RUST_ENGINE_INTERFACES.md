@@ -1002,6 +1002,17 @@ Generated calibration profiles per holder and source (decide family, group B). S
 - **Parity cases (5, in `calibration-profiles.test.ts`):** newest profile with filters and id tie-break; unchanged check (REAL-rounded, NULL-safe); insert defaults and refusals that write nothing; voice-gate health over the 7-day window; wave purge dry run and delete.
 - **Notes:** The other undo-wave statements (takes, take_grade_cache, take_nudge_log) stay raw SQL and refuse on a Rust brain.
 
+### decide_proposals
+
+The decide loop's four proposal tables (group C). All members use the `eval_capture` capability and its key tag.
+
+- **Files:** `gbrain-store/src/eval_capture/decide_proposals.rs`, `gbrain-napi/src/families/decide_proposals.rs`, `store-members/decide-proposals.ts`, `src/core/engine-sql/decide-proposals.ts`.
+- **Tag:** `Z` (`EVAL_CAPTURE`), sub-tags `0x30..=0x3D`. Cascade on page delete: no.
+- **Members (16), capability:** `eval_capture` (16): `insertDecideProposal`, `getDecideProposal`, `listDecideProposalIds`, `listDecideProposals`, `transitionDecideProposal`, `listDecideProposedPairs`, `insertDecideReviewProposal`, `listDecideReviewProposals`, `getDecideReviewProposal`, `transitionDecideReviewProposal`, `listDecideReviewProposalIds`, `readProposalReviewRates`, `listDueDecideReviewQueue`, `applyDecideReviewQueue`, `listDueDecideSweepDeferred`, `applyDecideSweepDeferred`.
+- **Postgres tables:** `decide_proposals`, `decide_review_proposals`, `decide_review_queue`, `decide_sweep_deferred`.
+- **Keys and contract:** [rust/docs/store/decide-proposals.md](../../rust/docs/store/decide-proposals.md). `lock` on the two `get` members is ignored (one writer); `engine.transaction` is served.
+- **Parity cases (8, in `decide-proposals.test.ts`).**
+
 ### code_edges
 
 Code call edges between chunks and symbols.

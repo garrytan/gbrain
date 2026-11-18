@@ -66,6 +66,8 @@ import * as connectGate from './connect-gate.ts';
 import * as telemetry from './telemetry.ts';
 import * as importMembers from './import-members.ts';
 import * as calibrationProfiles from './calibration-profiles.ts';
+// Group C: decide proposals and review proposals (rust/docs/store/decide-proposals.md).
+import * as decideProposals from './decide-proposals.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
 const initSchema: StoreMember<[], void> = async () => undefined;
@@ -106,6 +108,8 @@ export const STORE_MEMBERS = {
   ...importMembers,
   // Decide family, group B: calibration profiles (rust/docs/store/calibration-profiles.md).
   ...calibrationProfiles,
+  // Group C: the decide proposal tables (rust/docs/store/decide-proposals.md).
+  ...decideProposals,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

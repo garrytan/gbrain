@@ -2,7 +2,8 @@
 //! `eval_capture_failures` tables of the PGLite engine.
 //!
 //! Members: logEvalCandidate, listEvalCandidates, deleteEvalCandidatesBefore,
-//! logEvalCaptureFailure, listEvalCaptureFailures.
+//! logEvalCaptureFailure, listEvalCaptureFailures. The decide proposal tables share this key tag:
+//! `decide_proposals.rs` (rust/docs/store/decide-proposals.md).
 //!
 //! Keys (every record starts with `keys::EVAL_CAPTURE`, `Z`):
 //! - `Z 0x01 <candidate id u64 BE>` -> `CandidateRecord` (JSON).
@@ -10,6 +11,8 @@
 //! - Id counters: `M next_eval_candidate_id`, `M next_eval_failure_id`.
 //! - `Z 0x20` and `Z 0x21`: the `calibration_profiles` table, a child module
 //!   (`eval_capture/calibration_profiles.rs`, rust/docs/store/calibration-profiles.md).
+//! - `Z 0x30..=0x3F`: the decide proposal tables (`decide_proposals.rs`): sub-tags 0x30, 0x31, 0x32,
+//!   0x38, 0x39, 0x3C and 0x3D.
 //!
 //! Both tables are small logs read whole: the list members scan every record of their table,
 //! filter, and sort `created_at DESC, id DESC` (candidates) or `ts DESC, id DESC` (failures).
@@ -36,6 +39,8 @@ use crate::pages::{next_id, read_page, scope_sources};
 use crate::{Store, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
+pub mod decide_proposals;
 
 const NEXT_CANDIDATE_ID: &str = "next_eval_candidate_id";
 const NEXT_FAILURE_ID: &str = "next_eval_failure_id";

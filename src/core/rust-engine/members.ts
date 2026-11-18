@@ -641,6 +641,25 @@ export const RUST_ENGINE_MEMBERS = {
   insertCalibrationProfile: 'eval_capture',
   readVoiceGateHealth: 'eval_capture',
   purgeCalibrationProfilesByWave: 'eval_capture',
+  // Decide proposals, review queue and sweep retries (group C; rust/docs/store/decide-proposals.md). All use the eval_capture
+  // capability, whose key tag holds the records. getDecideProposal and getDecideReviewProposal ignore `lock`: the Rust store
+  // has one writer, so a read inside `engine.transaction` is not overtaken.
+  insertDecideProposal: 'eval_capture',
+  getDecideProposal: 'eval_capture',
+  listDecideProposalIds: 'eval_capture',
+  listDecideProposals: 'eval_capture',
+  transitionDecideProposal: 'eval_capture',
+  listDecideProposedPairs: 'eval_capture',
+  insertDecideReviewProposal: 'eval_capture',
+  listDecideReviewProposals: 'eval_capture',
+  getDecideReviewProposal: 'eval_capture',
+  transitionDecideReviewProposal: 'eval_capture',
+  listDecideReviewProposalIds: 'eval_capture',
+  readProposalReviewRates: 'eval_capture',
+  listDueDecideReviewQueue: 'eval_capture',
+  applyDecideReviewQueue: 'eval_capture',
+  listDueDecideSweepDeferred: 'eval_capture',
+  applyDecideSweepDeferred: 'eval_capture',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;
