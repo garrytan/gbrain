@@ -21,6 +21,22 @@ Keys (tag `H`, `keys::CODE_EDGE`; a table byte is 0 for the chunk table and 1 fo
 - `H 0x04 <chunk u64 BE> <table> <id>`: every row with this chunk at either end (one entry when both ends are the same chunk).
 - `H 0x05 <to_symbol> NUL <table> <id>` and `H 0x06 <from_symbol> NUL <table> <id>`: rows by target and by caller name.
 
+The chunk index (the chunk store keys a chunk by page and index, not by id), under the same tag:
+
+- `H 0x07 <chunk u64 BE>` -> `<page_id u64 BE>`, then `0` for no `symbol_name` or `1` and the name's bytes: every chunk
+  by id. The foreign key checks of `addCodeEdges` and the live-endpoint filter of the caller and callee reads look a
+  chunk up here.
+- `H 0x08 <symbol_name> NUL <chunk u64 BE>`: the chunks by `symbol_name`, for the bare-name fallback. A name that holds
+  a NUL gets no entry; a lookup name never holds one, so it could never match.
+- `H 0x09`: set once the index covers every chunk. A new brain sets it when it is created. A brain written before the
+  index existed has no marker and is indexed once, in one write transaction, when it is opened (`build_chunk_index`).
+
+Every chunk record the chunk store writes updates its entry (a kept chunk id whose `symbol_name` changed moves its name
+entry), and the chunk-delete hook `remove_chunk_rows` drops the entries of the chunks that are gone. A page delete and a
+source delete remove their chunks through that hook, so the index follows them. A build older than the index does not
+keep it, so a brain opened by such a build after a newer one can hold stale entries; the Rust engine is experimental and
+not selectable by users, so `FORMAT_VERSION` stays 1.
+
 Reads return the chunk table first, then the symbol table, each in id order (the `UNION ALL` order PGLite returns
 with no `ORDER BY`).
 
@@ -50,13 +66,9 @@ that source (`ON DELETE CASCADE` on `source_id`).
 - The `resolved_chunk_id` cast reads what `int4in` reads in decimal (blanks, a sign, digits joined by single `_`);
   hex, octal and binary literals (`0x1A`) are refused, where Postgres 16+ accepts them. The cast runs on every
   symbol-table row of a by-chunk callers read, so one bad stamp fails the read, as the statement fails.
-- Performance: the live filter and the bare fallback read every chunk once per call to map chunk ids to pages and
-  symbol names (the chunk store has no index by chunk id). Cost is O(chunks) per callers/callees read.
+- Performance: the live filter, the bare fallback and the foreign key checks look chunks up in the chunk index, so a
+  callers/callees read costs O(rows read), not O(chunks). On 2,000 pages of 5 chunks (release build), one
+  `getCallersOf` went from 6.6 ms to 1.5 ms and one bare-fallback `getCalleesOf` from 5.2 ms to 0.01 ms (the
+  ignored `timing_callers_and_callees_on_2000_pages` test in `tests/code_edges.rs`).
 - The member refuses (`engine_capability_missing`) a limit that is not a whole number and a non-finite chunk id,
   which Postgres rejects as a bind error.
-
-## Follow-up notes
-
-- `code-edges-chunk-id-index`: the store keeps no index from a chunk id to its page and `symbol_name`, so the live
-  filter and the bare fallback of `getCallersOf` / `getCalleesOf` scan every chunk once per call (O(chunks)). A core
-  index keyed by chunk id would make these reads O(rows read). Correctness does not need it; it is deferred to core.

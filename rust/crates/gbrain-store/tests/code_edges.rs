@@ -259,3 +259,64 @@ fn deleting_chunks_drops_their_edges_both_ways() {
     assert!(seed(&store, "default", "a", &[]).is_empty());
     assert!(by_chunk(&store, a[0], "both").is_empty());
 }
+
+/// Times one `getCallersOf` and one `getCalleesOf` (bare-name fallback) on a brain with 2,000 code
+/// pages of 5 chunks each. Run it with a release build:
+/// `cargo test --release -p gbrain-store --test code_edges -- --ignored --nocapture timing`.
+#[test]
+#[ignore = "timing, run by hand with --release"]
+fn timing_callers_and_callees_on_2000_pages() {
+    use std::time::Instant;
+    let dir = TempDir::new("code-edges-timing");
+    let store = open(&dir);
+    let started = Instant::now();
+    let mut chunks = Vec::new();
+    for p in 0..2000 {
+        let names: Vec<String> = (0..5).map(|c| format!("sym_{p}_{c}")).collect();
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        chunks.extend(seed(&store, "default", &format!("code/p{p}"), &refs));
+    }
+    // Each chunk calls the next one; every tenth chunk also calls `target`.
+    let mut batch = Vec::new();
+    for (i, pair) in chunks.windows(2).enumerate() {
+        batch.push(edge(
+            pair[0],
+            Some(pair[1]),
+            &format!("q.{i}"),
+            &format!("q.{}", i + 1),
+        ));
+        if i % 10 == 0 {
+            batch.push(edge(pair[0], None, &format!("q.{i}"), "target"));
+        }
+    }
+    for part in batch.chunks(1000) {
+        store.add_code_edges(part).unwrap();
+    }
+    eprintln!("seeded {} chunks in {:?}", chunks.len(), started.elapsed());
+    let time = |label: &str, f: &dyn Fn() -> usize| {
+        let mut runs = Vec::new();
+        let mut rows = 0;
+        for _ in 0..21 {
+            let t = Instant::now();
+            rows = f();
+            runs.push(t.elapsed());
+        }
+        runs.sort();
+        eprintln!(
+            "{label}: median {:?} (min {:?}, max {:?}), {rows} rows",
+            runs[10], runs[0], runs[20]
+        );
+    };
+    time("getCallersOf(target)", &|| {
+        store
+            .get_callers_of(&lookup("target", json!({})))
+            .unwrap()
+            .len()
+    });
+    time("getCalleesOf(sym_1000_2, bare fallback)", &|| {
+        store
+            .get_callees_of(&lookup("sym_1000_2", json!({"bare_fallback": true})))
+            .unwrap()
+            .len()
+    });
+}

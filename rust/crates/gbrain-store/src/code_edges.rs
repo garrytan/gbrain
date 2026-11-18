@@ -19,16 +19,28 @@
 //! - `H 0x05 to_symbol NUL table id` and `H 0x06 from_symbol NUL table id` -> empty: the rows by
 //!   target and by caller name, for getCallersOf and getCalleesOf.
 //!
+//! The chunk index (not rows; the chunk store keys chunks by page and index, not by id):
+//! - `H 0x07 chunk_id` -> `page_id`, then 0 for no `symbol_name` or 1 and the name's bytes: every
+//!   chunk by id. The foreign key check of addCodeEdges and the live-endpoint filter of the caller
+//!   and callee reads look a chunk up here.
+//! - `H 0x08 symbol_name NUL chunk_id` -> empty: the chunks by `symbol_name`, for the bare-name
+//!   fallback of getCalleesOf. A name that holds a NUL gets no entry: a lookup name never holds
+//!   one, so it never matches.
+//! - `H 0x09` -> empty: set once the index covers every chunk. A new brain sets it when it is
+//!   created; a brain written before the index existed is indexed once when it is opened
+//!   (`build_chunk_index`).
+//!
+//! `chunks::write_chunk` calls `put_chunk_index` for every chunk record it writes (a kept id whose
+//! name changed moves its name entry), and the chunk-delete hook `remove_chunk_rows` drops the
+//! entries of the chunks that are gone, so the index follows every chunk write and delete (a page
+//! delete and a source delete remove their chunks through that hook).
+//!
 //! Cascades: the foreign keys `from_chunk_id` / `to_chunk_id` -> `content_chunks ON DELETE
 //! CASCADE` are `remove_chunk_rows`, which every chunk delete (a page delete included) calls;
 //! `source_id -> sources ON DELETE CASCADE` is `remove_source_rows`.
-//!
-//! The chunk store has no index by chunk id, so a call that needs a chunk's page (the foreign key
-//! check of addCodeEdges, the live-endpoint filter of the caller and callee reads, the bare-name
-//! fallback) reads every chunk record once.
 
 use crate::dream::{jsonb, jsonb_check};
-use crate::error::{Result, StoreError};
+use crate::error::{Result, STORE_CORRUPT, StoreError};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::{PageRecord, next_id, read_page_by_id};
@@ -46,6 +58,9 @@ const SYMBOL_UNIQUE: u8 = 0x03;
 const BY_CHUNK: u8 = 0x04;
 const BY_TO_SYMBOL: u8 = 0x05;
 const BY_FROM_SYMBOL: u8 = 0x06;
+const CHUNK_BY_ID: u8 = 0x07;
+const CHUNK_BY_NAME: u8 = 0x08;
+const CHUNK_INDEX_BUILT: u8 = 0x09;
 
 const CHUNK_TABLE: &str = "code_edges_chunk";
 const SYMBOL_TABLE: &str = "code_edges_symbol";
@@ -291,12 +306,14 @@ pub(crate) fn remove_page_rows(_tx: &mut dyn KvWrite, _page: &PageRecord) -> Res
 
 /// Deletes the rows of chunks that are gone (`cascade::remove_chunk_rows`): every row of either
 /// table whose `from_chunk_id` is one of them, and every chunk-table row whose `to_chunk_id` is,
-/// as the two `ON DELETE CASCADE` foreign keys do. Rows of other chunks of the page stay.
+/// as the two `ON DELETE CASCADE` foreign keys do. Rows of other chunks of the page stay. The
+/// chunk index drops the chunks too.
 pub(crate) fn remove_chunk_rows(
     tx: &mut dyn KvWrite,
     _page_id: u64,
     chunk_ids: &[u64],
 ) -> Result<()> {
+    remove_chunk_index(tx, chunk_ids)?;
     delete_for_chunks(tx, chunk_ids)
 }
 
@@ -324,42 +341,175 @@ struct ChunkLite {
     meta: Map<String, Value>,
 }
 
-/// Every chunk by id: its page and its `symbol_name`.
-struct Chunks(HashMap<u64, (u64, Option<String>)>);
+impl ChunkLite {
+    fn symbol_name(&self) -> Option<&str> {
+        self.meta.get("symbol_name").and_then(Value::as_str)
+    }
+}
 
-impl Chunks {
-    fn load(read: &dyn KvRead) -> Result<Self> {
-        let mut map = HashMap::new();
-        let mut failure = None;
-        scan_prefix(read, &[keys::CHUNK], false, &mut |_, v| {
-            match serde_json::from_slice::<ChunkLite>(v) {
-                Ok(c) => {
-                    let symbol = c
-                        .meta
-                        .get("symbol_name")
-                        .and_then(Value::as_str)
-                        .map(str::to_string);
-                    map.insert(c.id, (c.page_id, symbol));
-                }
-                Err(e) => failure = Some(StoreError::from(e)),
+fn chunk_by_id_key(chunk_id: u64) -> Vec<u8> {
+    let mut key = vec![keys::CODE_EDGE, CHUNK_BY_ID];
+    key.extend_from_slice(&chunk_id.to_be_bytes());
+    key
+}
+
+fn chunk_by_name_prefix(name: &str) -> Vec<u8> {
+    let mut key = vec![keys::CODE_EDGE, CHUNK_BY_NAME];
+    key.extend_from_slice(name.as_bytes());
+    key.push(0);
+    key
+}
+
+fn chunk_by_name_key(name: &str, chunk_id: u64) -> Option<Vec<u8>> {
+    if name.contains('\0') {
+        return None;
+    }
+    let mut key = chunk_by_name_prefix(name);
+    key.extend_from_slice(&chunk_id.to_be_bytes());
+    Some(key)
+}
+
+fn chunk_index_built_key() -> Vec<u8> {
+    vec![keys::CODE_EDGE, CHUNK_INDEX_BUILT]
+}
+
+fn encode_chunk_entry(page_id: u64, symbol: Option<&str>) -> Vec<u8> {
+    let mut value = page_id.to_be_bytes().to_vec();
+    match symbol {
+        None => value.push(0),
+        Some(name) => {
+            value.push(1);
+            value.extend_from_slice(name.as_bytes());
+        }
+    }
+    value
+}
+
+fn decode_chunk_entry(value: &[u8]) -> Result<(u64, Option<String>)> {
+    let corrupt = || StoreError::new(STORE_CORRUPT, "code_edges chunk index entry is malformed");
+    let page: [u8; 8] = value
+        .get(..8)
+        .and_then(|b| b.try_into().ok())
+        .ok_or_else(corrupt)?;
+    let symbol = match value.get(8) {
+        Some(0) if value.len() == 9 => None,
+        Some(1) => Some(String::from_utf8(value[9..].to_vec()).map_err(|_| corrupt())?),
+        _ => return Err(corrupt()),
+    };
+    Ok((u64::from_be_bytes(page), symbol))
+}
+
+/// The page and `symbol_name` of a chunk, from the chunk index; `None` when no chunk has the id.
+fn chunk_entry(read: &dyn KvRead, chunk_id: u64) -> Result<Option<(u64, Option<String>)>> {
+    read.get(&chunk_by_id_key(chunk_id))?
+        .map(|v| decode_chunk_entry(&v))
+        .transpose()
+}
+
+fn chunk_exists(read: &dyn KvRead, chunk_id: u64) -> Result<bool> {
+    Ok(read.get(&chunk_by_id_key(chunk_id))?.is_some())
+}
+
+/// `SELECT id FROM content_chunks WHERE symbol_name = name` (any page, any state).
+fn chunks_named(read: &dyn KvRead, name: &str) -> Result<HashSet<u64>> {
+    let mut out = HashSet::new();
+    if name.contains('\0') {
+        return Ok(out);
+    }
+    let prefix = chunk_by_name_prefix(name);
+    let mut failure = None;
+    scan_prefix(read, &prefix, false, &mut |k, _| {
+        match k
+            .get(prefix.len()..)
+            .and_then(|b| <[u8; 8]>::try_from(b).ok())
+        {
+            Some(id) => {
+                out.insert(u64::from_be_bytes(id));
             }
-            failure.is_none()
-        })?;
-        failure.map_or(Ok(Chunks(map)), Err)
-    }
+            None => {
+                failure = Some(StoreError::new(
+                    STORE_CORRUPT,
+                    "code_edges chunk name entry is malformed",
+                ))
+            }
+        }
+        failure.is_none()
+    })?;
+    failure.map_or(Ok(out), Err)
+}
 
-    fn page_of(&self, chunk_id: u64) -> Option<u64> {
-        self.0.get(&chunk_id).map(|(page, _)| *page)
+/// Writes the index entries of a chunk record `chunks::write_chunk` just wrote. A kept chunk id
+/// whose `symbol_name` changed loses its old name entry.
+pub(crate) fn put_chunk_index(
+    tx: &mut dyn KvWrite,
+    chunk_id: u64,
+    page_id: u64,
+    symbol: Option<&str>,
+) -> Result<()> {
+    if let Some((_, Some(old))) = chunk_entry(&*tx, chunk_id)?
+        && Some(old.as_str()) != symbol
+        && let Some(key) = chunk_by_name_key(&old, chunk_id)
+    {
+        tx.delete(&key)?;
     }
+    tx.put(
+        &chunk_by_id_key(chunk_id),
+        &encode_chunk_entry(page_id, symbol),
+    )?;
+    if let Some(key) = symbol.and_then(|name| chunk_by_name_key(name, chunk_id)) {
+        tx.put(&key, &[])?;
+    }
+    Ok(())
+}
 
-    /// `SELECT id FROM content_chunks WHERE symbol_name = name` (any page, any state).
-    fn named(&self, name: &str) -> HashSet<u64> {
-        self.0
-            .iter()
-            .filter(|(_, (_, symbol))| symbol.as_deref() == Some(name))
-            .map(|(id, _)| *id)
-            .collect()
+/// Drops the index entries of chunks that are gone.
+fn remove_chunk_index(tx: &mut dyn KvWrite, chunk_ids: &[u64]) -> Result<()> {
+    for &id in chunk_ids {
+        if let Some((_, symbol)) = chunk_entry(&*tx, id)? {
+            if let Some(key) = symbol.and_then(|name| chunk_by_name_key(&name, id)) {
+                tx.delete(&key)?;
+            }
+            tx.delete(&chunk_by_id_key(id))?;
+        }
     }
+    Ok(())
+}
+
+/// Every chunk record as `(chunk_id, page_id, symbol_name)`: the full scan the index replaces.
+fn scan_chunks(read: &dyn KvRead) -> Result<Vec<(u64, u64, Option<String>)>> {
+    let mut out = Vec::new();
+    let mut failure = None;
+    scan_prefix(read, &[keys::CHUNK], false, &mut |_, v| {
+        match serde_json::from_slice::<ChunkLite>(v) {
+            Ok(c) => out.push((c.id, c.page_id, c.symbol_name().map(str::to_string))),
+            Err(e) => failure = Some(StoreError::from(e)),
+        }
+        failure.is_none()
+    })?;
+    failure.map_or(Ok(out), Err)
+}
+
+/// Marks a new brain's (empty) chunk index as complete; `Store::open_kv` calls it when it seeds.
+pub(crate) fn seed_chunk_index(tx: &mut dyn KvWrite) -> Result<()> {
+    tx.put(&chunk_index_built_key(), &[])
+}
+
+/// Indexes every chunk of a brain written before the chunk index existed, once: `Store::open_kv`
+/// calls it on every open, and it does nothing when the index is marked complete.
+pub(crate) fn build_chunk_index(kv: &dyn crate::kv::Kv) -> Result<()> {
+    if kv.snapshot()?.get(&chunk_index_built_key())?.is_some() {
+        return Ok(());
+    }
+    let mut tx = kv.begin_write()?;
+    // Another handle may have built it between the read and this write.
+    if tx.get(&chunk_index_built_key())?.is_none() {
+        for (id, page_id, symbol) in scan_chunks(&*tx)? {
+            put_chunk_index(&mut *tx, id, page_id, symbol.as_deref())?;
+        }
+        seed_chunk_index(&mut *tx)?;
+        tx.commit()?;
+    }
+    Ok(())
 }
 
 /// `currentCodeEdgeFilter`: an end chunk counts when its page is live (not soft-deleted, no
@@ -367,19 +517,17 @@ impl Chunks {
 /// text projection (sealed at the current revision, or the pre-activation index).
 struct Endpoints<'a> {
     read: &'a dyn KvRead,
-    chunks: Chunks,
     pages: HashMap<u64, bool>,
     sources: HashMap<String, bool>,
 }
 
 impl<'a> Endpoints<'a> {
-    fn new(read: &'a dyn KvRead) -> Result<Self> {
-        Ok(Endpoints {
+    fn new(read: &'a dyn KvRead) -> Self {
+        Endpoints {
             read,
-            chunks: Chunks::load(read)?,
             pages: HashMap::new(),
             sources: HashMap::new(),
-        })
+        }
     }
 
     fn page_passes(&mut self, page: &PageRecord) -> Result<bool> {
@@ -405,7 +553,7 @@ impl<'a> Endpoints<'a> {
     }
 
     fn chunk_passes(&mut self, chunk_id: u64) -> Result<bool> {
-        let Some(page_id) = self.chunks.page_of(chunk_id) else {
+        let Some((page_id, _)) = chunk_entry(self.read, chunk_id)? else {
             return Ok(false);
         };
         if let Some(ok) = self.pages.get(&page_id) {
@@ -571,7 +719,6 @@ impl Store {
         }
         let now = self.env.now_micros();
         self.write(|tx| {
-            let chunks = Chunks::load(&*tx)?;
             let mut inserted = 0u64;
             for table in [Table::Chunk, Table::Symbol] {
                 let mut added: Vec<EdgeRecord> = Vec::new();
@@ -624,7 +771,7 @@ impl Store {
                 }
                 for edge in &added {
                     let name = table.name();
-                    if chunks.page_of(edge.from_chunk_id).is_none() {
+                    if !chunk_exists(&*tx, edge.from_chunk_id)? {
                         return Err(fk_failed(name, &format!("{name}_from_chunk_id_fkey")));
                     }
                     if let Some(source) = &edge.source_id
@@ -633,7 +780,7 @@ impl Store {
                         return Err(fk_failed(name, &format!("{name}_source_id_fkey")));
                     }
                     if let Some(to) = edge.to_chunk_id
-                        && chunks.page_of(to).is_none()
+                        && !chunk_exists(&*tx, to)?
                     {
                         return Err(fk_failed(name, &format!("{name}_to_chunk_id_fkey")));
                     }
@@ -687,7 +834,7 @@ impl Store {
             }
             None => edges_under(&*read, &by_symbol_prefix(BY_TO_SYMBOL, &lookup.name))?,
         };
-        let mut endpoints = Endpoints::new(&*read)?;
+        let mut endpoints = Endpoints::new(&*read);
         finish(candidates, lookup, limit, &mut endpoints)
     }
 
@@ -699,7 +846,7 @@ impl Store {
         let by_chunk = chunk_id(&lookup.chunk_id, OP, "chunkId")?;
         let limit = limit(lookup.limit)?;
         let read = self.read()?;
-        let mut endpoints = Endpoints::new(&*read)?;
+        let mut endpoints = Endpoints::new(&*read);
         let leaving = |chunks: &HashSet<u64>| -> Result<Vec<EdgeRecord>> {
             let mut rows = Vec::new();
             let mut ordered: Vec<u64> = chunks.iter().copied().collect();
@@ -723,7 +870,7 @@ impl Store {
         if !found.is_empty() || !lookup.bare_fallback {
             return Ok(found);
         }
-        let named = endpoints.chunks.named(&lookup.name);
+        let named = chunks_named(&*read, &lookup.name)?;
         let rows = leaving(&named)?;
         finish(rows, lookup, limit, &mut endpoints)
     }
@@ -790,6 +937,7 @@ mod tests {
     use super::*;
     use crate::chunks::{ChunkInput, UpsertChunksOptions};
     use crate::pages::{PageInput, PutPageOptions, ReadScope};
+    use std::collections::BTreeMap;
 
     fn seed(store: &Store, slug: &str, symbols: &[&str]) -> Vec<u64> {
         let input = PageInput {
@@ -857,15 +1005,262 @@ mod tests {
             .len()
     }
 
+    /// The edge keys (rows and their index entries), not the chunk index.
     fn key_count(store: &Store) -> usize {
         let read = store.read().unwrap();
         let mut n = 0;
-        scan_prefix(&*read, &[keys::CODE_EDGE], false, &mut |_, _| {
-            n += 1;
+        scan_prefix(&*read, &[keys::CODE_EDGE], false, &mut |k, _| {
+            n += usize::from((ROW..=BY_FROM_SYMBOL).contains(&k[1]));
             true
         })
         .unwrap();
         n
+    }
+
+    /// The chunk index as read from its keys: `(by id, by name, built marker)`.
+    #[allow(clippy::type_complexity)]
+    fn chunk_index(
+        read: &dyn KvRead,
+    ) -> (
+        BTreeMap<u64, (u64, Option<String>)>,
+        BTreeSet<(String, u64)>,
+        bool,
+    ) {
+        let mut by_id = BTreeMap::new();
+        scan_prefix(read, &[keys::CODE_EDGE, CHUNK_BY_ID], false, &mut |k, v| {
+            let id = u64::from_be_bytes(k[2..].try_into().unwrap());
+            by_id.insert(id, decode_chunk_entry(v).unwrap());
+            true
+        })
+        .unwrap();
+        let mut by_name = BTreeSet::new();
+        scan_prefix(
+            read,
+            &[keys::CODE_EDGE, CHUNK_BY_NAME],
+            false,
+            &mut |k, _| {
+                let (name, id) = k[2..].split_at(k.len() - 2 - 9);
+                assert_eq!(id[0], 0);
+                let id = u64::from_be_bytes(id[1..].try_into().unwrap());
+                by_name.insert((String::from_utf8(name.to_vec()).unwrap(), id));
+                true
+            },
+        )
+        .unwrap();
+        let built = read.get(&chunk_index_built_key()).unwrap().is_some();
+        (by_id, by_name, built)
+    }
+
+    /// The index equals what a full scan of the chunk records gives, and is marked complete.
+    fn assert_index_matches_scan(store: &Store, step: &str) {
+        let read = store.read().unwrap();
+        let (by_id, by_name, built) = chunk_index(&*read);
+        let scanned = scan_chunks(&*read).unwrap();
+        let want_id: BTreeMap<u64, (u64, Option<String>)> = scanned
+            .iter()
+            .map(|(id, page, symbol)| (*id, (*page, symbol.clone())))
+            .collect();
+        let want_name: BTreeSet<(String, u64)> = scanned
+            .iter()
+            .filter_map(|(id, _, symbol)| symbol.clone().map(|s| (s, *id)))
+            .collect();
+        assert!(built, "{step}: the index is marked complete");
+        assert_eq!(by_id, want_id, "{step}: chunk index by id");
+        assert_eq!(by_name, want_name, "{step}: chunk index by name");
+    }
+
+    fn page_of(store: &Store, source: &str, slug: &str) -> PageRecord {
+        crate::pages::read_page(&*store.read().unwrap(), source, slug)
+            .unwrap()
+            .unwrap()
+    }
+
+    fn upsert(store: &Store, slug: &str, symbols: &[(u32, &str)], seal: bool) {
+        let chunks: Vec<ChunkInput> = symbols
+            .iter()
+            .map(|(i, s)| {
+                let mut rest = Map::new();
+                rest.insert("symbol_name".into(), json!(s));
+                ChunkInput {
+                    chunk_index: *i,
+                    chunk_text: format!("fn {s}() {{}}"),
+                    rest,
+                    ..ChunkInput::default()
+                }
+            })
+            .collect();
+        store
+            .upsert_chunks(
+                slug,
+                &chunks,
+                &UpsertChunksOptions {
+                    seal,
+                    ..UpsertChunksOptions::default()
+                },
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn the_chunk_index_matches_a_full_scan_after_every_kind_of_write_and_delete() {
+        let store = crate::test_support::store();
+        assert_index_matches_scan(&store, "new brain");
+        let a = seed(&store, "a", &["run", "main", "shared"]);
+        let b = seed(&store, "b", &["helper", "shared"]);
+        seed(&store, "c", &["solo"]);
+        store
+            .add_code_edges(&[
+                edge(a[0], Some(b[0]), "a.run", "b.helper"),
+                edge(b[1], None, "b.shared", "ext"),
+            ])
+            .unwrap();
+        assert_index_matches_scan(&store, "seed");
+
+        // A merge upsert renames a kept chunk id and adds one; a re-seal drops index 2.
+        upsert(&store, "a", &[(1, "main_renamed"), (3, "added")], false);
+        assert_index_matches_scan(&store, "merge upsert");
+        upsert(&store, "a", &[(0, "run"), (1, "main_renamed")], true);
+        assert_index_matches_scan(&store, "re-seal");
+        assert!(
+            chunks_named(&*store.read().unwrap(), "main")
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            chunks_named(&*store.read().unwrap(), "main_renamed").unwrap(),
+            HashSet::from([a[1]])
+        );
+
+        // Segment chunks: an append, then a delete by occurrence.
+        let page_c = page_of(&store, "default", "c").id;
+        let mut rest = Map::new();
+        rest.insert("symbol_name".into(), json!("seg_sym"));
+        let segment = crate::chunks::SegmentChunkInput {
+            chunk: ChunkInput {
+                chunk_text: "segment".into(),
+                rest,
+                ..ChunkInput::default()
+            },
+            occurrence_id: 7,
+            local_ordinal: 0,
+            raw_byte_start: 0,
+            raw_byte_end: 7,
+        };
+        store
+            .write(|tx| crate::chunks::append_segment_chunks(tx, page_c, 1, &[segment]))
+            .unwrap();
+        assert_index_matches_scan(&store, "segment append");
+        store
+            .write(|tx| {
+                crate::chunks::delete_occurrence_chunks(tx, page_c, &BTreeSet::from([7]), None)
+            })
+            .unwrap();
+        assert_index_matches_scan(&store, "segment delete");
+
+        // deleteCodeEdgesForChunks removes edges only; the chunks and their index stay.
+        store
+            .delete_code_edges_for_chunks(&[json!(a[0]), json!(b[1])])
+            .unwrap();
+        assert_index_matches_scan(&store, "deleteCodeEdgesForChunks");
+        assert_eq!(key_count(&store), 0);
+
+        // A chunk delete (every chunk of a page).
+        store.delete_chunks("c", None).unwrap();
+        assert_index_matches_scan(&store, "chunk delete");
+
+        // A hard page delete.
+        store.delete_page("b", None).unwrap();
+        assert_index_matches_scan(&store, "page delete");
+        assert_eq!(
+            chunks_named(&*store.read().unwrap(), "shared").unwrap(),
+            HashSet::new()
+        );
+
+        // A source delete as core will run it: each page of the source, then the source hook.
+        store
+            .upsert_source(&crate::sources::SourceInput {
+                id: "gone".into(),
+                name: None,
+                local_path: None,
+                last_sync_at: None,
+                config: None,
+            })
+            .unwrap();
+        let input = PageInput {
+            page_type: "code".into(),
+            title: "d".into(),
+            compiled_truth: "body".into(),
+            ..PageInput::default()
+        };
+        let in_gone = PutPageOptions {
+            source_id: Some("gone".into()),
+            ..PutPageOptions::default()
+        };
+        store.put_page("d", &input, &in_gone).unwrap();
+        store
+            .upsert_chunks(
+                "d",
+                &[ChunkInput {
+                    chunk_index: 0,
+                    chunk_text: "fn d() {}".into(),
+                    rest: Map::from_iter([("symbol_name".into(), json!("shared"))]),
+                    ..ChunkInput::default()
+                }],
+                &UpsertChunksOptions {
+                    source_id: Some("gone".into()),
+                    seal: true,
+                    ..UpsertChunksOptions::default()
+                },
+            )
+            .unwrap();
+        assert_index_matches_scan(&store, "page in a second source");
+        let page_d = page_of(&store, "gone", "d");
+        store
+            .write(|tx| {
+                crate::pages::remove_page(tx, &page_d)?;
+                crate::cascade::remove_source_rows(tx, "gone")
+            })
+            .unwrap();
+        assert_index_matches_scan(&store, "source delete");
+        assert_eq!(
+            chunks_named(&*store.read().unwrap(), "shared").unwrap(),
+            HashSet::new()
+        );
+    }
+
+    #[test]
+    fn a_brain_without_the_chunk_index_is_indexed_when_it_is_opened() {
+        let kv = crate::test_support::mem_kv();
+        let store = crate::test_support::open(&kv);
+        seed(&store, "a", &["run", "main"]);
+        seed(&store, "b", &["helper"]);
+        // Drop the index and its marker, as a brain written before the index has none.
+        store
+            .write(|tx| {
+                let mut gone = Vec::new();
+                for tag in [CHUNK_BY_ID, CHUNK_BY_NAME, CHUNK_INDEX_BUILT] {
+                    scan_prefix(&*tx, &[keys::CODE_EDGE, tag], false, &mut |k, _| {
+                        gone.push(k.to_vec());
+                        true
+                    })?;
+                }
+                for k in gone {
+                    tx.delete(&k)?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        let (by_id, _, built) = chunk_index(&*store.read().unwrap());
+        assert!(by_id.is_empty() && !built);
+        drop(store);
+        let store = crate::test_support::open(&kv);
+        assert_index_matches_scan(&store, "reopen");
+        assert_eq!(
+            chunks_named(&*store.read().unwrap(), "helper")
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]
