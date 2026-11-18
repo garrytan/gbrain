@@ -93,7 +93,7 @@ generatedPagesIn	search_reads	yes	2	no	yes	yes	serves
 livePageIdsAt	search_reads	yes	2	no	yes	yes	serves
 pagesLinkingTo	search_reads	yes	2	no	yes	yes	serves
 upsertChunks	chunks	yes	19	yes	yes	yes	serves
-sealChunks	chunks	yes	12	no	yes	yes	serves
+sealChunks	chunks	yes	13	no	yes	yes	serves
 getChunks	chunks	yes	21	yes	yes	yes	serves
 getChunkPage	chunks	yes	9	no	yes	yes	serves
 getChunkWindows	chunks	yes	9	no	yes	yes	serves
