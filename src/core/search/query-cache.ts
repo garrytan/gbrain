@@ -37,6 +37,7 @@ export function semanticResultCacheAvailable(): boolean { return false; }
 import type { BrainEngine } from '../engine.ts';
 import type { SearchResult, HybridSearchMeta } from '../types.ts';
 import { buildPageGenerationsSnapshot, CACHE_GATE_WHERE_CLAUSE } from './query-cache-gate.ts';
+import { readConfigRows } from '../config-values.ts';
 
 /** Default cosine similarity threshold for cache hits. */
 export const DEFAULT_SIMILARITY_THRESHOLD = 0.92;
@@ -491,10 +492,7 @@ export async function loadCacheConfig(engine: BrainEngine): Promise<QueryCacheCo
     ttlSeconds: DEFAULT_TTL_SECONDS,
   };
   try {
-    const rows = await engine.executeRaw<{ key: string; value: string }>(
-      `SELECT key, value FROM config WHERE key = ANY($1)`,
-      [keys],
-    );
+    const rows = await readConfigRows(engine, keys);
     for (const row of rows) {
       if (row.key === 'search.cache.enabled') {
         config.enabled = row.value === '1' || row.value.toLowerCase() === 'true';

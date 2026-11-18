@@ -8,6 +8,7 @@ import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { operations, type OperationContext } from '../src/core/operations.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
+import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
 import { ALIAS_DERIVATION_VERSION, MENTION_EXTRACTOR_VERSION } from '../src/core/mentions/pass.ts';
 
 let engine: PGLiteEngine;
@@ -159,6 +160,21 @@ describe('rank_entities counting', () => {
     const res = await rank(local());
     expect(res.coverage.state).toBe('behind');
     expect(res.note).toContain('counts cover only pages whose links are extracted');
+  });
+
+  test('an engine that refuses the coverage read refuses the ranking; a plain read error stays a degraded answer', async () => {
+    await seedBase();
+    // Only the coverage reads use executeRaw here; the ranking itself runs through the typed members.
+    const refusing = (err: Error) => new Proxy(engine, {
+      get: (target, key) => key === 'executeRaw' ? async () => { throw err; } : Reflect.get(target, key, target),
+    });
+    const refusal = capabilityMissing('raw_sql', 'executeRaw');
+    for (const ctx of [ctxOf({ engine: refusing(refusal) as any }), ctxOf({ engine: refusing(refusal) as any, remote: true, transport: 'stdio', auth: { allowedSources: ['source-a'] } as any })]) {
+      const err = await rank(ctx).then(() => null, (e: unknown) => e as { code?: string });
+      expect(err?.code).toBe('engine_capability_missing');
+    }
+    const res = await rank(ctxOf({ engine: refusing(new Error('connection reset')) as any }));
+    expect(res.coverage).toEqual({ state: 'unread', reason: 'read_failed' } as any);
   });
 });
 

@@ -33,6 +33,7 @@ import { storedTrustTier, TRUST_TIER_RANK, TRUST_TIERS, type TrustTier } from '.
 import { ACTIVATION_TIER_CEILING } from './sql.ts';
 import { opError } from '../ops/contract.ts';
 import { claimPendingSql, TRUST_CLAIM_RESUME_COMMAND } from '../trust/claim-state.ts';
+import { readConfigValue, type ConfigReader } from '../config-values.ts';
 
 export type ScanTable = 'pages' | 'facts' | 'takes' | 'timeline_entries';
 export const SCAN_TABLES: readonly ScanTable[] = ['pages', 'facts', 'takes', 'timeline_entries'];
@@ -74,9 +75,9 @@ async function saveCursor(engine: Pick<BrainEngine, 'executeRaw'>, cursor: Curso
  * the detector version it records): rows above it were assessed by their writers. Only a baseline taken
  * under the current detector bounds the scan; a detector bump rescans all.
  */
-async function readBaseline(engine: Pick<BrainEngine, 'executeRaw'>): Promise<Cursor['until'] | null> {
-  const [row] = await engine.executeRaw<{ value: string }>('SELECT value FROM config WHERE key = $1', [WRITE_GATE_SCAN_BASELINE_KEY]);
-  const parsed = row ? JSON.parse(row.value) as { detector_version?: unknown; until?: unknown } : null;
+async function readBaseline(engine: ConfigReader): Promise<Cursor['until'] | null> {
+  const value = await readConfigValue(engine, WRITE_GATE_SCAN_BASELINE_KEY);
+  const parsed = value !== undefined ? JSON.parse(value) as { detector_version?: unknown; until?: unknown } : null;
   return parsed?.detector_version === WRITE_GATE_DETECTOR_VERSION && parsed.until && typeof parsed.until === 'object'
     ? parsed.until as Cursor['until'] : null;
 }
