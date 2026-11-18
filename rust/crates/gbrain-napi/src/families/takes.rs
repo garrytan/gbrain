@@ -12,6 +12,8 @@ use serde_json::Value;
 use crate::store_binding::{Brain, arg, required};
 use gbrain_store::takes;
 
+mod reads;
+
 #[napi]
 impl Brain {
     /// `addTakesBatch(rows)`: resolves the number of rows given.

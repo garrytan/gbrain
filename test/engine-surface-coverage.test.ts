@@ -62,6 +62,21 @@ const INTERFACE_METHODS: readonly string[] = [
   'listStaleWaitingJobIds', 'countTtlExpiredWaiting', 'readJobStats', 'readQueueFamilyStats', 'hasOverdueWatchdogSuspect',
   'listUnreviewedJobs', 'getFailedJobForRetry', 'countOpenJobsByOwner', 'readJobSourceState', 'lockOAuthClient', 'listJobPage',
   'listJobAttachmentNames', 'insertJobAttachment', 'listJobAttachments', 'getJobAttachment', 'deleteJobAttachment',
+  // Minion queue: health reads (engine-sql/jobs-health.ts)
+  'readQueueHealthSignals', 'listWaitingByQueue', 'readQueueDivergence', 'listQueueWedgeCounts', 'listPrivateQueueHealth',
+  'readWedgeSignals', 'readOldestWaitingAge', 'listStuckActiveJobsByName',
+  // Minion job counts and last-run reads for the status surfaces, lane L5 group B (engine-sql/jobs-status.ts)
+  'readLastAutopilotCycles', 'countJobsByStatus', 'readWaitingQueueDepths', 'readLastCompletedJobAt', 'countTtlCancelledByName',
+  'readWaitingScopeState', 'countRecentCompletedJobs', 'listRecentFailedJobErrors', 'readQueuedPageChars', 'readSourceJobCounts',
+  'readEmbedBackfillBySource',
+  // doctor job checks
+  'listStalledEmbedBackfillSources', 'readGlobalMaintenanceDeaths', 'readLastFailedGlobalMaintenanceJob', 'listFactsAbsorbJobsStillDead', 'readLegacyJobAuthority',
+  'readQueuedSpendRows', 'listBuildSkewStacktraceLines', 'countDeadDreamSubmissionRows', 'listFactsAbsorbJobsByKeyPrefix', 'listDeadFactsAbsorbJobsByKeys',
+  // group D (jobs insight)
+  'readJobInsight',
+  // group D (takes, salience and code-edge reads)
+  'countOffGridTakeWeights', 'countTakes', 'planFactPurgeTakes',
+  'listTakeRowsForPage', 'countMcpResolvedTakes', 'listTakeSupersessionCandidates', 'countZeroWeightWithTakes', 'hasCodeEdgesSymbol',
   // Lifecycle
   'connect', 'disconnect', 'reconnect', 'initSchema', 'transaction', 'transactionDirect', 'registerBeforeDisconnect', 'withReservedConnection',
   // Pages CRUD

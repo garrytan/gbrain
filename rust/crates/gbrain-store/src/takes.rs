@@ -1,7 +1,8 @@
 //! Takes and synthesis evidence: the `takes` and `synthesis_evidence` tables of the PGLite engine.
 //!
 //! Members: addTakesBatch, listTakes, searchTakes, updateTake, supersedeTake, resolveTake,
-//! getScorecard, getCalibrationCurve, addSynthesisEvidence, listActiveTakesForPages.
+//! getScorecard, getCalibrationCurve, addSynthesisEvidence, listActiveTakesForPages, and the
+//! reads of `takes/reads.rs`.
 //!
 //! Keys (every record starts with `keys::TAKE`, `A`; ids and page ids are u64 BE, a `row_num` is
 //! its i32 with the sign bit flipped, BE, so keys sort by row number):
@@ -29,6 +30,10 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+
+mod reads;
+
+pub use reads::{McpResolvedInput, PurgeTakesInput};
 
 const NEXT_TAKE_ID: &str = "next_take_id";
 const TAKE: u8 = 0x01;
