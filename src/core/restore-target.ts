@@ -42,7 +42,7 @@ export async function resolveRestoreTarget(
   source ??= await resolveSourceId(engine, undefined);
   if (source === ALL_SOURCES) throw new RestoreTargetError('--restore-only requires one source; pass --source <id>.');
   if (!repo) {
-    const [owner] = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1', [source]);
+    const owner = await engine.getSource(source);
     repo = owner?.local_path ?? (source === 'default' ? await engine.getConfig('sync.repo_path') : undefined) ?? undefined;
   }
   if (!repo) throw new RestoreTargetError('--restore-only requires --repo <path> or a configured default source with a local_path.');

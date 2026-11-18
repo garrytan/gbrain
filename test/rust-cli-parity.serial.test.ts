@@ -215,8 +215,10 @@ const COMMANDS: string[][] = [
  * serves that member, this case fails and names the new next member, so the record stays current.
  */
 const RECORDED_WRITES: Array<{ args: string[]; member: string }> = [
-  { args: ['put', 'notes/parity-put', '--content', '---\ntype: note\ntitle: Parity put\n---\nBody text.\n', '--json'], member: 'readPersistenceBrainId' },
+  { args: ['put', 'notes/parity-put', '--content', '---\ntype: note\ntitle: Parity put\n---\nBody text.\n', '--json'], member: 'executeRaw' },
 ];
+// `put` passes the brain id and the source resolver, then stops at the raw read of persistence_topology_changes in
+// assertPageRequestIdentity (src/core/persistence/journal.ts).
 
 type State = 'equal' | 'refused' | 'diverged' | 'no-engine';
 interface Row { command: string; state: State; note: string }

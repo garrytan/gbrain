@@ -1,6 +1,7 @@
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import { classifyOntologyFacts } from '../../../core/repair/ontology-facts.ts';
+import { sortSourcesById } from '../../../core/source-rows.ts';
 
 /**
  * #6264: ontology observations the extract_facts fence step moved onto an
@@ -11,7 +12,7 @@ import { classifyOntologyFacts } from '../../../core/repair/ontology-facts.ts';
  */
 export async function ontologyFactsCheck(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {
   try {
-    const sources = sourceIds ?? (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(row => row.id);
+    const sources = sourceIds ?? sortSourcesById(await engine.listAllSources()).map(row => row.id);
     const facts = await classifyOntologyFacts(engine, sources);
     const count = (reason: string) => facts.filter(f => f.class === 'restorable' && f.reason === reason).length;
     const details = { fenced: count('fenced'), retired: count('retired'), excluded: facts.filter(f => f.class === 'excluded').length,

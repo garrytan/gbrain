@@ -35,6 +35,7 @@ import { isConnectorSourceKind } from '../core/persistence/connector-identity.ts
 import { pageSortedRows, topCounts, type ListingPage } from '../core/bounded-listing.ts';
 import { nextListingCommand, parseListingFlags } from '../core/bounded-listing-cli.ts';
 import { withReadMeta } from '../core/read-heartbeat.ts';
+import { sourceConfigText } from '../core/source-rows.ts';
 
 // --- Types ---
 
@@ -65,8 +66,8 @@ export const CONNECTOR_RENDER_TYPES = new Set(['email', 'meeting']);
  * islanded render is expected and is reported apart rather than as an orphan.
  */
 export async function loadConnectorSourceIds(engine: BrainEngine): Promise<Set<string>> {
-  const rows = await engine.executeRaw<{ id: string; kind: string | null }>(`SELECT id, config->>'kind' AS kind FROM sources`);
-  return new Set(rows.filter(r => isConnectorSourceKind(r.kind)).map(r => r.id));
+  const rows = await engine.listAllSources({ includeArchived: true });
+  return new Set(rows.filter(r => isConnectorSourceKind(sourceConfigText(r.config, 'kind'))).map(r => r.id));
 }
 
 // --- Filter logic ---

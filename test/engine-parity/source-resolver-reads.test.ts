@@ -1,14 +1,18 @@
 /**
  * BrainEngine parity — the source-resolution reads (`listLocalPathSources`, `listSourceRoutingRows`,
- * `countDefaultSourceSplit`) that `src/core/source-resolver.ts` makes to pick the source a CLI write lands in.
+ * `countDefaultSourceSplit`, `listAllSources`, `getSource`, `listSourceRecords`) that `src/core/source-resolver.ts`
+ * and the other `sources` readers make to pick a source or list the registered ones.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: every engine arm answers the same rows: sources with a checkout path keep their archived flag; every
  *    source row carries its config, archived flag and whether `default` holds a live page; the default-write guard's
- *    split counts live pages only and counts distinct non-default sources.
+ *    split counts live pages only and counts distinct non-default sources; `listAllSources` hides archived sources
+ *    unless asked, orders `default` first then by id, and its local-path filter also drops the storage manifest;
+ *    `getSource` still finds an archived source; `listSourceRecords` keeps archived sources with their flag.
  *  - Regression: an engine that drops archived sources from tier 4 (a cwd inside an archived checkout then falls
  *    through silently instead of refusing), counts soft-deleted pages (the guard then nags or routes a write to the
- *    wrong source), or counts pages instead of sources in `nonDefaultSources`.
+ *    wrong source), or counts pages instead of sources in `nonDefaultSources`; an engine that lists archived sources
+ *    by default (a removed source comes back in `sources list`, doctor and the resolver's existence checks).
  *  - Why existing coverage misses it: test/source-resolver*.test.ts drive the resolver through fake engines keyed on
  *    SQL text, so they never compare real engines, and the Rust engine has no raw SQL to answer.
  *  - Seam: none. Real engines, typed reads only; sources are made and archived through the harness fixtures.
@@ -75,5 +79,37 @@ describe('engine parity: source-resolution reads', () => {
     const live = await engine.countDefaultSourceSplit();
     expect(live).toEqual({ defaultPages: 1, nonDefaultPages: 2, nonDefaultSources: 1 });
     return { empty, full, live };
+  });
+
+  parityTest('listAllSources hides archived sources unless asked, default first then by id', { methods: ['listAllSources'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'zeta', { keep: 1 }, '/srv/brain/zeta');
+    await createSource(engine, backend, 'alpha');
+    await createSource(engine, backend, 'manifest', { role: 'storage_manifest' }, '/srv/brain/manifest');
+    await createSource(engine, backend, 'gone', {}, '/srv/brain/gone');
+    await archiveSource(engine, backend, 'gone');
+    const view = (rows: Awaited<ReturnType<BrainEngine['listAllSources']>>) =>
+      rows.map((r) => ({ id: r.id, name: r.name, local_path: r.local_path, config: r.config, synced: r.last_sync_at !== null }));
+    const live = view(await engine.listAllSources());
+    const all = view(await engine.listAllSources({ includeArchived: true }));
+    const localOnly = (await engine.listAllSources({ localPathOnly: true })).map((r) => r.id);
+    const localAll = (await engine.listAllSources({ includeArchived: true, localPathOnly: true })).map((r) => r.id);
+    expect(live.map((r) => r.id)).toEqual(['default', 'alpha', 'manifest', 'zeta']);
+    expect(all.map((r) => r.id)).toEqual(['default', 'alpha', 'gone', 'manifest', 'zeta']);
+    expect(localOnly).toEqual(['zeta']);
+    expect(localAll).toEqual(['gone', 'zeta']);
+    expect(live[3]).toEqual({ id: 'zeta', name: 'zeta', local_path: '/srv/brain/zeta', config: { keep: 1 }, synced: false });
+    return { live, all, localOnly, localAll };
+  });
+
+  parityTest('getSource finds an archived source; listSourceRecords keeps it with its archived flag', { methods: ['getSource', 'listSourceRecords'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'gone', { keep: 3 }, '/srv/brain/gone');
+    await archiveSource(engine, backend, 'gone');
+    const gone = await engine.getSource('gone');
+    expect(gone).toMatchObject({ id: 'gone', local_path: '/srv/brain/gone', config: { keep: 3 } });
+    const records = await engine.listSourceRecords();
+    expect(records.map((r) => [r.id, r.archived ?? false])).toEqual([['default', false], ['gone', true]]);
+    const created = records.map((r) => r.created_at instanceof Date && Number.isFinite(r.created_at.getTime()));
+    expect(created).toEqual([true, true]);
+    return { gone: gone && { id: gone.id, local_path: gone.local_path, config: gone.config }, archived: records.map((r) => r.archived ?? false), created };
   });
 });

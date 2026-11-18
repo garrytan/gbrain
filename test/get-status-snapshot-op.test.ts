@@ -24,6 +24,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { operations, operationsByName } from '../src/core/operations.ts';
+import { stubSourceMembers } from './helpers/source-members-stub.ts';
 
 function makeCtx(engine: any): any {
   return {
@@ -67,6 +68,7 @@ describe('get_status_snapshot handler shape (schema_version 2)', () => {
     // zero counts + an empty by_queue list.
     const stubEngine: any = {
       kind: 'pglite',
+      ...stubSourceMembers([]),
       executeRaw: async () => [],
       getConfig: async () => null,
     };
@@ -104,6 +106,7 @@ describe('get_status_snapshot handler shape (schema_version 2)', () => {
     // per-section catch.
     const stubEngine: any = {
       kind: 'pglite',
+      ...stubSourceMembers([]),
       executeRaw: async (sql: string) => {
         if (typeof sql === 'string' && sql.includes('GROUP BY queue')) {
           throw new Error('minion_jobs table melted');

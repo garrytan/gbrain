@@ -11,6 +11,7 @@
 
 import type { AdvisorCollector, AdvisorFinding } from './types.ts';
 import { isMissingSchemaObject } from '../utils.ts';
+import { sortSourcesById } from '../source-rows.ts';
 
 export const collectStalledJobs: AdvisorCollector = {
   id: 'stalled-jobs',
@@ -47,14 +48,9 @@ export const collectStalledJobs: AdvisorCollector = {
 
     // Stale federated sources: synced sources that haven't advanced in a week.
     try {
-      const rows = await ctx.engine.executeRaw<{ id: string }>(
-        `SELECT id
-           FROM sources
-          WHERE last_sync_at IS NOT NULL
-            AND last_sync_at < now() - interval '7 days'
-            AND NOT archived
-          ORDER BY id`,
-      );
+      const staleBefore = Date.now() - 7 * 86400_000;
+      const rows = sortSourcesById(await ctx.engine.listAllSources())
+        .filter(s => s.last_sync_at !== null && s.last_sync_at.getTime() < staleBefore);
       for (const r of rows) {
         findings.push({
           id: `stale_sync:${r.id}`,

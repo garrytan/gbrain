@@ -274,7 +274,7 @@ async function configuredSource(engine: BrainEngine, sourceId?: string): Promise
 async function effectiveSource(engine: BrainEngine, sourceId?: string): Promise<{ sourceId: string; privacy: Privacy }> {
   const configured = await configuredSource(engine, sourceId);
   const privacy = await resolvePrivacy(engine);
-  const [existing] = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id = $1', [configured]);
+  const existing = await engine.getSource(configured);
   return { sourceId: privacy.shared && existing?.local_path ? configured + '-owner' : configured, privacy };
 }
 

@@ -13,7 +13,7 @@ export interface CompanyBrainSourceStatus {
 }
 
 export async function readCompanyBrainSourceStatus(engine: BrainEngine, sourceId: string): Promise<CompanyBrainSourceStatus | null> {
-  const [source] = await engine.executeRaw<{ incarnation: string; config: unknown }>('SELECT incarnation,config FROM sources WHERE id=$1', [sourceId]);
+  const source = await engine.readSourceIncarnation(sourceId);
   if (!source) return null;
   const config = parseSourceConfig(source.config);
   if (!Object.hasOwn(config, 'company_brain')) return null;
