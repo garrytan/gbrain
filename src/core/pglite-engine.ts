@@ -1574,6 +1574,7 @@ export class PGLiteEngine implements BrainEngine {
   readWriteRequest(principalKind: string, principalId: string, requestId: string) { return persistenceJournalImpl.readWriteRequest(unscopedExecutor(this.engineSql, 'persistence: request read ran unscoped through executeRaw'), principalKind, principalId, requestId); }
   readWriteRequestById(id: string, opts?: { signal?: AbortSignal }) { return persistenceJournalImpl.readWriteRequestById(unscopedExecutor(this.engineSql, 'persistence: request read ran unscoped through executeRaw'), id, opts); }
   readWriteRequestProgress(id: string, opts?: { signal?: AbortSignal }) { return persistenceJournalImpl.readWriteRequestProgress(unscopedExecutor(this.engineSql, 'persistence: request progress read ran unscoped through executeRaw'), id, opts); }
+  countOutstandingBySource(principalKind: string, principalId: string) { return persistenceJournalImpl.countOutstandingBySource(unscopedExecutor(this.engineSql, 'persistence: outstanding-by-source read ran unscoped through executeRaw'), principalKind, principalId); }
   lockPersistenceCounters(keys: readonly string[]) { return persistenceJournalImpl.lockPersistenceCounters(this.engineSql, keys); }
   insertWriteRequest(row: persistenceJournalImpl.WriteRequestInsert) { return persistenceJournalImpl.insertWriteRequest(this.engineSql, row); }
   stampWriteClaim(id: string, token: string, leaseMs: number, phaseJson: string) { return persistenceJournalImpl.stampWriteClaim(this.engineSql, id, token, leaseMs, phaseJson); }

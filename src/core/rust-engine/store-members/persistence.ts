@@ -1,7 +1,7 @@
 /**
  * The write-journal members the Rust store answers: the state reads (readManagedModeRows, readLocalWriterRow,
  * insertLocalWriterRow, readJournalLimitRows, readHeldPageRows, readHeldCoverageRows), the request rows the put path
- * reads and writes (readWriteRequest, readWriteRequestById, readWriteRequestProgress, lockPersistenceCounters, insertWriteRequest,
+ * reads and writes (readWriteRequest, readWriteRequestById, readWriteRequestProgress, countOutstandingBySource, lockPersistenceCounters, insertWriteRequest,
  * stampWriteClaim, lockWriteRequest, completeWriteRow), the claim upkeep (renewWriteClaim, expireStaleWriteClaims,
  * hasClaimableWrite), the consumer rows (listHostConsumerRows, probeLiveConsumerRows, renewConsumerRow,
  * deleteConsumerRow, stampWorktreeHeartbeats), the admission reads (readSourceMembership, findTopologyChanges), the lifecycle receipts
@@ -15,7 +15,7 @@
  * rust/docs/store/persistence.md.
  */
 import type { LocalWriterInsert, LocalWriterRow } from '../../engine-sql/persistence-state.ts';
-import type { ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, WriteCompletion, WriteRequestInsert, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
+import type { ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OutstandingBySource, WriteCompletion, WriteRequestInsert, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
 import type { ClaimExpiry, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from '../../engine-sql/persistence-claims.ts';
 import type { LedgerSource } from '../../engine-sql/belief.ts';
 import type { WriteRequest } from '../../persistence/model.ts';
@@ -89,6 +89,10 @@ export const readWriteRequestProgress: StoreMember<[id: string, opts?: { signal?
   return { state: row.state, error_code: row.error_code, error_message: row.error_message, completed_at: row.completed_at, updated_at: row.updated_at,
     blocked_reason: row.blocked_reason, outcome: row.outcome, deferred_refresh_id: row.deferred_refresh_id, deferred_import_from: row.deferred_import_from };
 };
+
+/** The sources holding outstanding requests of one principal, most first; a tie in byte order of the source id, as Postgres sorts `COLLATE "C"`. */
+export const countOutstandingBySource: StoreMember<[principalKind: string, principalId: string], OutstandingBySource[]> = (brain, principalKind, principalId) =>
+  storeCall({ member: 'countOutstandingBySource' }, () => brain.countOutstandingBySource(principalKind, principalId));
 
 /** Request `id`, or null. FOR UPDATE changes nothing in one store write (see the header). */
 export const lockWriteRequest: StoreMember<[id: string], WriteRequest | null> =

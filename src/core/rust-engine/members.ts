@@ -509,6 +509,7 @@ export const RUST_ENGINE_MEMBERS = {
   readWriteRequest: 'persistence_journal',
   readWriteRequestById: 'persistence_journal',
   readWriteRequestProgress: 'persistence_journal',
+  countOutstandingBySource: 'persistence_journal',
   lockPersistenceCounters: 'persistence_journal',
   insertWriteRequest: 'persistence_journal',
   stampWriteClaim: 'persistence_journal',

@@ -18,7 +18,7 @@
  *    sequence, time stamps, the source incarnation) are compared by shape or left out of the returned value.
  */
 import { describe, expect } from 'bun:test';
-import { parityArms } from './harness.ts';
+import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { WriteRequest } from '../../src/core/persistence/model.ts';
@@ -258,6 +258,43 @@ describe('engine parity: write journal', () => {
     expect(afterStop).toEqual([]);
     expect(rowsAfterStop).toEqual([]);
     return { listed, owner, failures, afterStop, rowsAfterStop };
+  });
+
+  parityTest('countOutstandingBySource counts one principal\'s unfinished requests per source, most first and a tie in byte order', {
+    methods: ['countOutstandingBySource', 'insertWriteRequest', 'stampWriteClaim', 'completeWriteRow'],
+  }, async (engine, backend) => {
+    // `a-c` sorts before `ab` in byte order and after it in a linguistic collation, which skips the hyphen.
+    for (const id of ['ab', 'a-c']) await createSource(engine, backend, id);
+    const admit = async (sourceId: string, requestId: string, principalId = PRINCIPAL.id) => {
+      const source = await engine.readSourceMembership(sourceId);
+      const keys = [`principal:local_cli:${principalId}`, 'brain'];
+      await engine.lockPersistenceCounters(keys);
+      return (await engine.insertWriteRequest({ ...insertRow(source!.incarnation, requestId), sourceId, principalId, counterKeys: keys })).id;
+    };
+    const empty = await engine.countOutstandingBySource(PRINCIPAL.kind, PRINCIPAL.id);
+    await admit('ab', 'b0000000-0000-4000-8000-0000000000c1');
+    await admit('default', 'b0000000-0000-4000-8000-0000000000c2');
+    await admit('a-c', 'b0000000-0000-4000-8000-0000000000c3');
+    await admit('default', 'b0000000-0000-4000-8000-0000000000c4');
+    await admit('ab', 'b0000000-0000-4000-8000-0000000000c5', 'other-writer');
+    const finished = await admit('a-c', 'b0000000-0000-4000-8000-0000000000c6');
+    await engine.stampWriteClaim(finished, TOKEN, 60_000, JSON.stringify({ phase: 'parity' }));
+    await engine.completeWriteRow({
+      id: finished, state: 'failed', outcome: null, errorCode: 'parity_error', errorMessage: 'parity', consumerVersion: 'parity',
+      consumerHostId: null, errorDetail: { reason: 'parity' }, resultBytes: 0, counterKeys: KEYS, intentBytes: 100, retainedBytes: 800,
+      terminalReservation: 4096, probePurges: false,
+    });
+    const result = {
+      empty,
+      writer: await engine.countOutstandingBySource(PRINCIPAL.kind, PRINCIPAL.id),
+      other: await engine.countOutstandingBySource(PRINCIPAL.kind, 'other-writer'),
+      otherKind: await engine.countOutstandingBySource('mcp', PRINCIPAL.id),
+    };
+    expect(result.empty).toEqual([]);
+    expect(result.writer).toEqual([{ source_id: 'default', n: 2 }, { source_id: 'a-c', n: 1 }, { source_id: 'ab', n: 1 }]);
+    expect(result.other).toEqual([{ source_id: 'ab', n: 1 }]);
+    expect(result.otherKind).toEqual([]);
+    return result;
   });
 
   parityTest('readSourceMembership returns the incarnation and archive flag, locked or not, and null for an unknown source', { methods: ['readSourceMembership'] }, async (engine) => {

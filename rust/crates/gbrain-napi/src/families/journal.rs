@@ -272,6 +272,19 @@ impl Brain {
         })
     }
 
+    /// `countOutstandingBySource(principalKind, principalId)`: `[{ source_id, n }]`, most first.
+    #[napi]
+    pub fn count_outstanding_by_source<'env>(
+        &self,
+        env: &'env Env,
+        principal_kind: String,
+        principal_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.count_outstanding_by_source(&principal_kind, &principal_id)
+        })
+    }
+
     #[napi]
     pub fn read_source_membership<'env>(
         &self,

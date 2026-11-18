@@ -1030,3 +1030,53 @@ fn the_capacity_forecast_counts_topology_changes_per_writer_and_day() {
     assert_eq!(day["recent_gross"], "8192");
     assert_eq!(day["recent_net"], "8192");
 }
+
+#[test]
+fn outstanding_requests_are_counted_per_source_for_one_principal() {
+    let dir = TempDir::new("persist-outstanding-by-source");
+    let store = open(&dir);
+    store.lock_persistence_counters(&keys()).unwrap();
+    assert!(
+        store
+            .count_outstanding_by_source("local_cli", "parity-writer")
+            .unwrap()
+            .is_empty()
+    );
+    for request in [REQ_1, REQ_2] {
+        store
+            .insert_write_request(&insert_input(&store, request, "notes/a", json!({})))
+            .unwrap();
+    }
+    let done = store
+        .insert_write_request(&insert_input(
+            &store,
+            "b0000000-0000-4000-8000-0000000000b3",
+            "notes/b",
+            json!({}),
+        ))
+        .unwrap();
+    let id = done["id"].as_str().unwrap();
+    store.stamp_write_claim(&stamp(id, 1000.0, None)).unwrap();
+    store
+        .complete_write_row(&completion(id, "committed", 512))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        store
+            .count_outstanding_by_source("local_cli", "parity-writer")
+            .unwrap(),
+        vec![json!({ "source_id": "default", "n": 2 })]
+    );
+    assert!(
+        store
+            .count_outstanding_by_source("local_cli", "other-writer")
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        store
+            .count_outstanding_by_source("mcp_client", "parity-writer")
+            .unwrap()
+            .is_empty()
+    );
+}

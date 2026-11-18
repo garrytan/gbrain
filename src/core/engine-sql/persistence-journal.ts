@@ -165,6 +165,16 @@ export async function readWriteRequestProgress(exec: LegacyUnscopedRead, id: str
   return row ?? null;
 }
 
+/** One source holding outstanding requests of a principal, and how many. */
+export interface OutstandingBySource { source_id: string; n: number }
+/** The sources holding requests of one principal that are queued, deferred, running or recovering: the most first, a tie in byte order of the source id. */
+export const OUTSTANDING_BY_SOURCE_SQL = `SELECT source_id,count(*) AS n FROM persistence_requests
+    WHERE principal_kind=$1 AND principal_id=$2 AND state IN ('queued','deferred','running','recovering') GROUP BY source_id ORDER BY count(*) DESC,source_id COLLATE "C"`;
+export async function countOutstandingBySource(exec: LegacyUnscopedRead, principalKind: string, principalId: string): Promise<OutstandingBySource[]> {
+  const rows = await exec.executeRaw<{ source_id: string; n: number | string }>(OUTSTANDING_BY_SOURCE_SQL, [principalKind, principalId]);
+  return rows.map(row => ({ source_id: row.source_id, n: Number(row.n) }));
+}
+
 /**
  * Creates the missing counter rows and locks all of them in key order. On Postgres both statements are sent before
  * either is awaited (one round trip); a statement sent after the one that failed reports 25P02, so the error

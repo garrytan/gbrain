@@ -262,6 +262,32 @@ fn all_requests(read: &dyn KvRead) -> Result<Vec<RequestRecord>> {
     Ok(out)
 }
 
+/// The states that hold an outstanding slot (`persistence/journal.ts` `outstandingRefusal`).
+const OUTSTANDING_STATES: [&str; 4] = ["queued", "deferred", "running", "recovering"];
+
+pub(crate) fn count_outstanding_by_source_in(
+    read: &dyn KvRead,
+    principal_kind: &str,
+    principal_id: &str,
+) -> Result<Vec<Value>> {
+    let mut by_source: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+    for r in all_requests(read)? {
+        if r.principal_kind == principal_kind
+            && r.principal_id == principal_id
+            && OUTSTANDING_STATES.contains(&r.state.as_str())
+        {
+            *by_source.entry(r.source_id).or_default() += 1;
+        }
+    }
+    let mut rows: Vec<(String, u64)> = by_source.into_iter().collect();
+    // The map is in byte order of the source id; a stable sort by count keeps it within a tie.
+    rows.sort_by(|a, b| b.1.cmp(&a.1));
+    Ok(rows
+        .into_iter()
+        .map(|(source_id, n)| json!({ "source_id": source_id, "n": n }))
+        .collect())
+}
+
 fn request_by_id(read: &dyn KvRead, id: &str) -> Result<Option<RequestRecord>> {
     get_json(read, &keys::request(&uuid_param(id, "id")?))
 }
@@ -1015,6 +1041,17 @@ impl Store {
     /// does not serve; the stamp half is `stamp_write_claim`.
     pub fn select_claimable_write(&self, spec: &ClaimableSpec) -> Result<Option<Value>> {
         select_claimable_write_in(&*self.read()?, &*self.env, spec)
+    }
+
+    /// `countOutstandingBySource(principalKind, principalId)`: `[{ source_id, n }]`, one row per source
+    /// holding requests of the principal that are queued, deferred, running or recovering. The most
+    /// requests come first; a tie is in byte order of the source id (Postgres `COLLATE "C"`).
+    pub fn count_outstanding_by_source(
+        &self,
+        principal_kind: &str,
+        principal_id: &str,
+    ) -> Result<Vec<Value>> {
+        count_outstanding_by_source_in(&*self.read()?, principal_kind, principal_id)
     }
 
     /// `readSourceMembership(sourceId)`: `{ incarnation, archived }` or `None`.

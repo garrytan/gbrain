@@ -31,7 +31,7 @@ import type { ChunkMove } from './page-state/chunk-moves.ts';
 import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence-state.ts';
 import type { DurablePersistenceSettings } from './engine-sql/persistence-declaration.ts';
-import type { ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, WriteCompletion, WriteRequestInsert, WriteRequestProgress } from './engine-sql/persistence-journal.ts';
+import type { ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OutstandingBySource, WriteCompletion, WriteRequestInsert, WriteRequestProgress } from './engine-sql/persistence-journal.ts';
 import type { ClaimExpiry, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from './engine-sql/persistence-claims.ts';
 import type { GatedMirrorRequest } from './engine-sql/persistence-effect-scans.ts';
 import type { CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionWindowRow, ReceiptBudget, SegmentedProjectionFilter } from './engine-sql/persistence-housekeeping.ts';
@@ -3315,6 +3315,8 @@ export interface BrainEngine {
   readWriteRequestById(id: string, opts?: { signal?: AbortSignal }): Promise<WriteRequest | null>;
   /** The progress columns of request `id` (state, error, outcome, deferral), or null; `signal` cancels the read. */
   readWriteRequestProgress(id: string, opts?: { signal?: AbortSignal }): Promise<WriteRequestProgress | null>;
+  /** The sources holding outstanding (queued, deferred, running, recovering) requests of one principal, as `{ source_id, n }`: the most first, a tie in byte order of the source id. */
+  countOutstandingBySource(principalKind: string, principalId: string): Promise<OutstandingBySource[]>;
   /** Creates the missing counter rows and locks them all FOR UPDATE in key order; returns the locked rows. */
   lockPersistenceCounters(keys: readonly string[]): Promise<CounterRow[]>;
   /** Inserts an admitted request and charges its (already locked) counters; returns the stored row. */

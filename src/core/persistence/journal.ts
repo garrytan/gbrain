@@ -123,18 +123,17 @@ export function capacityError(resource: string, outstanding?: { used: number; li
  * holding the most slots. GST-1623: a managed sync job passes `held`, the counter's writes waiting in `deferred` (heldBehindImport). Deferred
  * writes hold slots like queued ones, so they count toward their source's share.
  */
-async function outstandingRefusal(tx: SqlEngine, row: Counter, principal: Principal, sourceId: string, need: number, limit: number,
+async function outstandingRefusal(tx: Pick<BrainEngine, 'countOutstandingBySource'>, row: Counter, principal: Principal, sourceId: string, need: number, limit: number,
   held = 0): Promise<OperationError | null> {
   const used = Number(row.outstanding_count);
   if (used - held + need <= limit) return null;
   if (row.key === 'brain' || principal.kind !== 'local_cli') return capacityError(`${row.key === 'brain' ? 'brain' : 'principal'} outstanding requests`, { used, limit });
-  const holders = await tx.executeRaw<{ source_id: string; n: number | string }>(`SELECT source_id,count(*) AS n FROM persistence_requests
-    WHERE principal_kind=$1 AND principal_id=$2 AND state IN ('queued','deferred','running','recovering') GROUP BY source_id ORDER BY count(*) DESC,source_id`, [principal.kind, principal.id]);
-  const own = Number(holders.find(holder => holder.source_id === sourceId)?.n ?? 0);
+  const holders = await tx.countOutstandingBySource(principal.kind, principal.id);
+  const own = holders.find(holder => holder.source_id === sourceId)?.n ?? 0;
   const sources = holders.length + (own > 0 ? 0 : 1);
   if (sources > 1 && own < Math.floor(limit / sources)) return null;
   const top = holders[0];
-  return capacityError(`principal outstanding requests${top ? ` (source ${top.source_id} holds ${Number(top.n)})` : ''}`, { used, limit });
+  return capacityError(`principal outstanding requests${top ? ` (source ${top.source_id} holds ${top.n})` : ''}`, { used, limit });
 }
 /**
  * GST-1623: the writes counted on `principal`'s counter (the brain's when null) that still wait in `deferred` on source

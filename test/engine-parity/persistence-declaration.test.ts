@@ -17,7 +17,7 @@
  *    the local writer's id, journal ids) are compared by shape or against another member's answer.
  */
 import { describe, expect } from 'bun:test';
-import { parityArms } from './harness.ts';
+import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { OperationContext } from '../../src/core/ops/contract.ts';
@@ -32,13 +32,13 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const PROTOCOL = 'gbrain.persistence_protocol';
 const REQUESTS = ['b0000000-0000-4000-8000-0000000000b1', 'b0000000-0000-4000-8000-0000000000b2'];
 
-/** Admits one put_page request for `slug` through the real admission path, as a CLI put does. */
-async function admitPut(engine: BrainEngine, slug: string, requestId: string) {
-  const source = await engine.readSourceMembership('default');
-  const ctx: OperationContext = { engine, config: { engine: engine.kind }, remote: false, dryRun: false, sourceId: 'default',
+/** Admits one put_page request for `slug` on `sourceId` through the real admission path, as a CLI put does. */
+async function admitPut(engine: BrainEngine, slug: string, requestId: string, sourceId = 'default') {
+  const source = await engine.readSourceMembership(sourceId);
+  const ctx: OperationContext = { engine, config: { engine: engine.kind }, remote: false, dryRun: false, sourceId,
     logger: { info() {}, warn() {}, error() {} } } as OperationContext;
-  const authority = await submissionAuthority(ctx, 'put_page', 'default', source!.incarnation, slug);
-  return admitWrite(engine, { principal: authority.principal, authority, operation: 'put_page', sourceId: 'default',
+  const authority = await submissionAuthority(ctx, 'put_page', sourceId, source!.incarnation, slug);
+  return admitWrite(engine, { principal: authority.principal, authority, operation: 'put_page', sourceId,
     sourceIncarnation: source!.incarnation, slug, requestId, callerIntent: { body: slug }, intent: { body: slug } });
 }
 
@@ -95,5 +95,23 @@ describe('engine parity: persistence declaration', () => {
     };
     for (const key of Object.keys(afterSecond)) expect(afterSecond[key]).toBe(afterFirst[key]! + 1);
     return { first: view(first), second: view(second), stored: view(stored), afterFirst, afterSecond };
+  });
+
+  parityTest('a local writer at its outstanding cap still admits a write for a source under its share, and refuses one naming the fullest source', {
+    methods: ['declarePersistence', 'transaction', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'countOutstandingBySource'],
+    timeout: 60_000,
+  }, async (engine, backend) => {
+    await registerLocalWriter(engine, 'cli');
+    await createSource(engine, backend, 'ab');
+    await engine.setConfig('persistence.limits.principal_outstanding', '2');
+    await admitPut(engine, 'notes/parity-cap-a', REQUESTS[0]!);
+    await admitPut(engine, 'notes/parity-cap-b', REQUESTS[1]!);
+    // The cap is full, but `ab` holds none of the two slots: its share (2 sources, 1 slot each) admits it.
+    const shared = await admitPut(engine, 'notes/parity-cap-c', 'b0000000-0000-4000-8000-0000000000b3', 'ab');
+    const refused = await admitPut(engine, 'notes/parity-cap-d', 'b0000000-0000-4000-8000-0000000000b4').then(
+      () => null, (err: { code?: string; message?: string }) => ({ code: err.code, message: err.message }));
+    expect(shared.state).toBe('queued');
+    expect(refused).toEqual({ code: 'queue_capacity', message: 'Write capacity exhausted: principal outstanding requests (source default holds 2).' });
+    return { shared: { source: shared.source_id, state: shared.state }, refused };
   });
 });
