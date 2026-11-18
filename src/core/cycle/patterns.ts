@@ -907,8 +907,14 @@ export async function groundPatternPages(engine: BrainEngine, maintenance: Maint
     }
   }
   if (!maintenance || !batch.length) return stats;
-  const published = await publishMaintenancePages(engine, maintenance, batch.map(page => ({ slug: page.slug, content: page.content,
-    expectedRevision: page.expectedRevision, ...(page.derived ? { derivation: page.derived.declaration } : {}) })));
+  // A batch larger than the principal's outstanding-request cap can never be admitted, so it goes in chunks within the cap.
+  const { readJournalLimits } = await import('../persistence/limits.ts');
+  const chunk = Math.max(1, Math.min(64, Math.floor((await readJournalLimits(engine)).principalOutstanding / 2)));
+  const published: Awaited<ReturnType<typeof publishMaintenancePages>> = [];
+  for (let at = 0; at < batch.length; at += chunk) {
+    published.push(...await publishMaintenancePages(engine, maintenance, batch.slice(at, at + chunk).map(page => ({ slug: page.slug, content: page.content,
+      expectedRevision: page.expectedRevision, ...(page.derived ? { derivation: page.derived.declaration } : {}) }))));
+  }
   published.forEach((outcome, i) => {
     const page = batch[i]!;
     // A pending or contended publication is held for a later cycle (publicationHold); without `heldSlugs` every error propagates.
