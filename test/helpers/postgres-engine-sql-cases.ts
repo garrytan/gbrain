@@ -49,6 +49,7 @@ const OOS = {
   writeMisc: 'out-of-scope:write-misc (born in engine-sql/write-misc.ts; pinned by test/engine-parity/write-misc.test.ts)',
   journal: 'out-of-scope:persistence-journal (born in engine-sql/persistence-journal.ts, persistence-claims.ts and persistence-housekeeping.ts; pinned by test/engine-parity/persistence.test.ts and test/persistence-journal-statements.test.ts)',
   writeGuards: 'out-of-scope:write-guards (born in engine-sql/write-guards.ts; pinned by test/engine-parity/write-guards.test.ts and test/fold-hook-noop-6712.test.ts)',
+  effectScans: 'out-of-scope:persistence-effect-scans (born in engine-sql/persistence-effect-scans.ts; pinned by test/engine-parity/effect-scans.test.ts)',
   persistenceDeclaration: 'out-of-scope:persistence-declaration (born in engine-sql/persistence-declaration.ts; pinned by test/engine-parity/persistence-declaration.test.ts)',
   pageWriteRows: 'out-of-scope:page-write-rows (born in engine-sql/timeline.ts and takes.ts; pinned by test/engine-parity/timeline.test.ts, takes.test.ts and test/fold-hook-noop-6712.test.ts)',
   trustFence: 'out-of-scope:trust-fence (born in engine-sql/facts.ts and engine-sql/trust-fence.ts; pinned by test/engine-parity/facts.test.ts, test/engine-parity/trust-fence.test.ts and test/fold-hook-noop-6712.test.ts)',
@@ -494,6 +495,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'claimHousekeepingTurn': OOS.journal, 'completeHousekeepingTurn': OOS.journal, 'readReceiptBudget': OOS.journal,
   'listCompactableReceipts': OOS.journal, 'listReservationsAfter': OOS.journal, 'listTrueUpRequests': OOS.journal,
   'readCapacityForecastInputs': OOS.journal, 'listPendingSegmentedProjections': OOS.journal, 'selectProjectionWindowJobs': OOS.journal,
+  'listGatedMirrorRequests': OOS.effectScans,
   'logIngest': OOS.ingest, 'getIngestLog': OOS.ingest,
   'logEvalCandidate': OOS.eval, 'listEvalCandidates': OOS.eval, 'deleteEvalCandidatesBefore': OOS.eval,
   'logEvalCaptureFailure': OOS.eval, 'listEvalCaptureFailures': OOS.eval,
@@ -1266,4 +1268,5 @@ export const EXTRA_READ_CASES: SqlCase[] = [
     (e: any) => e.readCapacityForecastInputs({ light })])),
   ...variants('listPendingSegmentedProjections', [['default', (e) => e.listPendingSegmentedProjections({ limit: 10, reasons: ['segmented_projecting'] })]]),
   ...variants('selectProjectionWindowJobs', [['default', (e) => e.selectProjectionWindowJobs({ after: { source_incarnation: JOURNAL_REQUEST, slug: SLUG }, highWater: null }, true)]]),
+  ...variants('listGatedMirrorRequests', [['default', (e) => e.listGatedMirrorRequests(JOURNAL_REQUEST, 'segmented_mirror_writer_gate', ['segmented_mirror_writer_gate', 'withdrawal_mirror_failed'])]]),
 ];

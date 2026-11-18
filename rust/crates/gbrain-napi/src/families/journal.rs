@@ -336,6 +336,16 @@ impl Brain {
         self.run(env, move |s| s.list_true_up_requests(&ids))
     }
 
+    /// `listGatedMirrorRequests(hostId)`: the requests to requeue; `[]` (no worktree here).
+    #[napi]
+    pub fn list_gated_mirror_requests<'env>(
+        &self,
+        env: &'env Env,
+        host_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_gated_mirror_requests(&host_id))
+    }
+
     #[napi]
     pub fn list_compactable_receipts<'env>(
         &self,

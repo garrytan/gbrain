@@ -2331,6 +2331,17 @@
         ],
         "flagOnScopes": []
       },
+      "listGatedMirrorRequests#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listLinkSources#default": {
         "flagOffLanes": [
           "pool"
@@ -4720,6 +4731,7 @@
         "listFenceRowGroups": "none",
         "listFilesForPage": "none",
         "listFreshExtractionOutcomes": "none",
+        "listGatedMirrorRequests": "none",
         "listGuestSourceIds": "none",
         "listHeldFenceFactRows": "none",
         "listJobAttachmentNames": "none",

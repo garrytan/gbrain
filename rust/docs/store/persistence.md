@@ -103,6 +103,17 @@ The consumer's housekeeping after a write (`persistence-housekeeping.ts`).
 | `brain.listPendingSegmentedProjections(filter)` | the queued jobs of segmented pages that a projector can take now, as `listPendingSegmentedProjections` returns them | `listPendingSegmentedProjections` |
 | `brain.selectProjectionWindowJobs(cursor, retryCooldown)` | the window rows (the recency lane, then the wrapped key-order lane), with `high_water` as Postgres prints a `timestamptz`; the one row of nulls for an empty queue | `selectProjectionWindowJobs` |
 
+## Effect scans
+
+The effect worker's reads before it claims effects (`persistence-effect-scans.ts`). Each one joins
+`persistence_effects` to the worktrees the host owns. This engine keeps no worktree and records no
+effect, so each scan answers no row. The arguments are checked as the Postgres casts check them: a host
+id that is not a uuid refuses with `invalid input syntax for type uuid: "<id>"`.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.listGatedMirrorRequests(hostId)` | `[]`: no withdrawal mirror is parked on a worktree here. The gate and allowed codes change nothing, so they are not sent | `listGatedMirrorRequests` |
+
 ## Projection queue
 
 Every page write updates the queue in the same store transaction, as PGLite's
