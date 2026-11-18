@@ -8,11 +8,13 @@
  *    source row carries its config, archived flag and whether `default` holds a live page; the default-write guard's
  *    split counts live pages only and counts distinct non-default sources; `listAllSources` hides archived sources
  *    unless asked, orders `default` first then by id, and its local-path filter also drops the storage manifest;
- *    `getSource` still finds an archived source; `listSourceRecords` keeps archived sources with their flag.
+ *    `getSource` still finds an archived source; `listSourceRecords` keeps archived sources with their flag; a config
+ *    stored as a JSON string (a historical double-encoded row) reads as no keys, as `config->>'kind'` did.
  *  - Regression: an engine that drops archived sources from tier 4 (a cwd inside an archived checkout then falls
  *    through silently instead of refusing), counts soft-deleted pages (the guard then nags or routes a write to the
  *    wrong source), or counts pages instead of sources in `nonDefaultSources`; an engine that lists archived sources
- *    by default (a removed source comes back in `sources list`, doctor and the resolver's existence checks).
+ *    by default (a removed source comes back in `sources list`, doctor and the resolver's existence checks); a reader
+ *    that parses a JSON-string config (a broken row then counts as a connector source in orphans and connector holds).
  *  - Why existing coverage misses it: test/source-resolver*.test.ts drive the resolver through fake engines keyed on
  *    SQL text, so they never compare real engines, and the Rust engine has no raw SQL to answer.
  *  - Seam: none. Real engines, typed reads only; sources are made and archived through the harness fixtures.
@@ -22,6 +24,8 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import type { PageInput } from '../../src/core/types.ts';
 import { archiveSource, createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { loadConnectorSourceIds } from '../../src/commands/orphans.ts';
+import { sourceConfigText, sourceRecordsRawConfig } from '../../src/core/source-rows.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -111,5 +115,18 @@ describe('engine parity: source-resolution reads', () => {
     const created = records.map((r) => r.created_at instanceof Date && Number.isFinite(r.created_at.getTime()));
     expect(created).toEqual([true, true]);
     return { gone: gone && { id: gone.id, local_path: gone.local_path, config: gone.config }, archived: records.map((r) => r.archived ?? false), created };
+  });
+
+  // The Rust store keeps a source config as a JSON object, so it cannot hold a JSON-string config; its arm writes `{}`,
+  // which reads as no keys too, and both arms must answer the same.
+  parityTest('a config stored as a JSON string reads as no keys, as config->>\'kind\' did', { methods: ['listSourceRecords'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'mail', { kind: 'google' });
+    if (backend === 'rust') await createSource(engine, backend, 'twice', {});
+    else await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ($1, $1, $2::text::jsonb)`, ['twice', JSON.stringify(JSON.stringify({ kind: 'google' }))]);
+    const kinds = (await sourceRecordsRawConfig(engine)).map((r) => [r.id, sourceConfigText(r.config, 'kind')]);
+    expect(kinds).toEqual([['default', null], ['mail', 'google'], ['twice', null]]);
+    const connectors = [...await loadConnectorSourceIds(engine)].sort();
+    expect(connectors).toEqual(['mail']);
+    return { kinds, connectors };
   });
 });

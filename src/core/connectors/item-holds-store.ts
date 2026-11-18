@@ -26,23 +26,23 @@ import { connectorCheckpointKey, connectorIdentity, isConnectorSourceKind, type 
 import { connectorStateKey } from '../persistence/connector-state.ts';
 import { readManagedMode } from '../persistence/managed-mode.ts';
 import { heldItems, type ItemHoldRecord } from './item-holds.ts';
-import { sortSourcesById, sourceConfigText } from '../source-rows.ts';
+import { sortSourcesById, sourceConfigText, sourceRecordsRawConfig } from '../source-rows.ts';
 
 export const HOLD_RETRY_OP = 'connector-hold-retry';
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
 /** An engine that also reads the `sources` rows through their typed members. */
-type SourceExec = Exec & Pick<BrainEngine, 'listAllSources' | 'readSourceIncarnation'>;
+type SourceExec = Exec & Pick<BrainEngine, 'listSourceRecords' | 'readSourceIncarnation'>;
 
 export interface ConnectorSourceRow { id: string; incarnation: string; local_path: string | null; config: Record<string, unknown> }
 
 /** Live connector-kind sources with their incarnation, in id order. */
 async function connectorSourceRows(engine: SourceExec): Promise<ConnectorSourceRow[]> {
   const out: ConnectorSourceRow[] = [];
-  for (const source of sortSourcesById(await engine.listAllSources())) {
+  for (const source of sortSourcesById(await sourceRecordsRawConfig(engine))) {
     if (!isConnectorSourceKind(sourceConfigText(source.config, 'kind'))) continue;
     const row = await engine.readSourceIncarnation(source.id);
-    if (row) out.push({ id: source.id, incarnation: row.incarnation, local_path: source.local_path, config: source.config });
+    if (row) out.push({ id: source.id, incarnation: row.incarnation, local_path: source.local_path, config: source.config as Record<string, unknown> });
   }
   return out;
 }

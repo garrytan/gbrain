@@ -10,7 +10,7 @@ import type { Operation } from './contract.ts';
 import { opError } from './contract.ts';
 import { hostFix, invalidParam } from './op-fix.ts';
 import { sourceScopeOpts } from './context.ts';
-import { sortSourcesById } from '../source-rows.ts';
+import { sortSourcesById, sourceRecordsRawConfig } from '../source-rows.ts';
 import {
   LIST_SKILLS_DESCRIPTION,
   GET_SKILL_DESCRIPTION,
@@ -356,21 +356,21 @@ const get_status_snapshot: Operation = {
     // Pull sources first (handles brains with zero declared sources too).
     let sources: Array<{ id: string; name: string; local_path: string | null; config: Record<string, unknown> }> = [];
     try {
-      const rows = sortSourcesById(await ctx.engine.listAllSources());
+      const rows = sortSourcesById(await sourceRecordsRawConfig(ctx.engine));
       sources = rows.map((r) => ({
         id: r.id,
         name: r.name as string,
         local_path: r.local_path,
-        config: r.config ?? {},
+        config: (r.config ?? {}) as Record<string, unknown>,
       }));
     } catch {
       // Pre-v0.26.5 brains may lack the `archived` column; degrade to all rows.
-      const rows = sortSourcesById(await ctx.engine.listAllSources({ includeArchived: true }));
+      const rows = sortSourcesById(await sourceRecordsRawConfig(ctx.engine, { includeArchived: true }));
       sources = rows.map((r) => ({
         id: r.id,
         name: r.name as string,
         local_path: r.local_path,
-        config: r.config ?? {},
+        config: (r.config ?? {}) as Record<string, unknown>,
       }));
     }
     // Remote callers see only the sources their grant reads (the sources_list / get_health ladder); the trusted local CLI keeps every source.

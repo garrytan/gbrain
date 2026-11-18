@@ -37,6 +37,7 @@ import {
   type LoopType,
   type OpenLoopRow,
 } from '../loops/loops-store.ts';
+import { sourceRecordsRawConfig } from '../source-rows.ts';
 
 const STALE_AFTER_MS = 24 * 3_600_000;
 
@@ -67,9 +68,9 @@ async function googleSourceFreshness(
   scope: { sourceId?: string; sourceIds?: string[] },
 ): Promise<{ sources: GoogleSourceFreshness[]; stale: boolean; staleSources: string[]; failed?: true }> {
   try {
-    const rows = (await ctx.engine.listAllSources()).map((r) => ({
+    const rows = (await sourceRecordsRawConfig(ctx.engine)).map((r) => ({
       id: r.id,
-      last_sync_at: r.last_sync_at === null ? null : new Date(r.last_sync_at).toISOString(),
+      last_sync_at: r.last_sync_at == null ? null : new Date(r.last_sync_at).toISOString(),
       config: r.config as unknown,
     }));
     const sources = rows

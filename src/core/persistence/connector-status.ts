@@ -69,7 +69,7 @@ export async function readConnectorLastError(engine: Pick<BrainEngine, 'executeR
     fix: connectorFailureFix(sourceId, failure) };
 }
 
-export async function readConnectorSourceStatuses(engine: Pick<BrainEngine, 'executeRaw' | 'listAllSources' | 'readSourceIncarnation'>, sourceIds?: string[]): Promise<Map<string, ConnectorSourceStatus>> {
+export async function readConnectorSourceStatuses(engine: Pick<BrainEngine, 'executeRaw' | 'listSourceRecords' | 'readSourceIncarnation'>, sourceIds?: string[]): Promise<Map<string, ConnectorSourceStatus>> {
   const sources = await engine.executeRaw<{ id: string; incarnation: string }>(
     `SELECT id,incarnation::text FROM sources WHERE NOT archived AND config->>'kind' IN (${CONNECTOR_KINDS_SQL}) AND ($1::text[] IS NULL OR id=ANY($1::text[]))`,
     [sourceIds ?? null]);
@@ -162,7 +162,7 @@ export interface GitHoldStatus {
 export const CONVERSION_STATUS_LIMIT = 5;
 
 /** Held files and recent conversions of each listed source that has any (sources with neither are absent). */
-export async function readGitHoldStatuses(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig' | 'listAllSources' | 'readSourceIncarnation'>, sourceIds: string[]): Promise<Map<string, GitHoldStatus>> {
+export async function readGitHoldStatuses(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig' | 'listSourceRecords' | 'readSourceIncarnation'>, sourceIds: string[]): Promise<Map<string, GitHoldStatus>> {
   const out = new Map<string, GitHoldStatus>();
   if (!sourceIds.length) return out;
   const { cap } = await readSyncHoldPolicy(engine);

@@ -56,7 +56,7 @@ import {
 import { formatSyncFreshness, readSyncFreshness, type SourceFreshness } from '../core/persistence/sync-freshness.ts';
 import { pendingProposalSummary } from '../core/persistence/memory-proposals.ts';
 import { withReadMeta } from '../core/read-heartbeat.ts';
-import { sortSourcesById } from '../core/source-rows.ts';
+import { sortSourcesById, sourceRecordsRawConfig } from '../core/source-rows.ts';
 
 const SCHEMA_VERSION = 1 as const;
 
@@ -502,10 +502,10 @@ async function buildLocalReport(
     try {
       report.sync = await withSectionDeadline(
         (async () => {
-          const sources = sortSourcesById(await engine.listAllSources({ includeArchived: true }));
+          const sources = sortSourcesById(await sourceRecordsRawConfig(engine, { includeArchived: true }));
           return buildSyncStatusReport(
             engine,
-            sources.map((s) => ({ id: s.id, name: s.name ?? s.id, local_path: s.local_path, config: s.config ?? {} })),
+            sources.map((s) => ({ id: s.id, name: s.name, local_path: s.local_path, config: (s.config ?? {}) as Record<string, unknown> })),
           );
         })(),
         remaining(),
