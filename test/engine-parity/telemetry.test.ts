@@ -17,10 +17,13 @@
  *    behind the backend switch (as `createSource` does). On the Rust arm the fixture stops on the engine's typed
  *    refusal until the store serves the request log. Clock values are mapped to booleans or day offsets.
  */
-import { describe, expect } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { SearchTelemetryBucket } from '../../src/core/engine-sql/telemetry.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { RUST_ENGINE_MEMBERS } from '../../src/core/rust-engine/members.ts';
+import { servedCapabilities } from '../../src/core/rust-engine/store-capabilities.ts';
+import { STORE_MEMBERS } from '../../src/core/rust-engine/store-members/index.ts';
 import { parityArms, sorted, type ParityBackend } from './harness.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -162,4 +165,28 @@ describe('engine parity: telemetry', () => {
       return { empty: empty.pruned_before, age };
     },
   );
+
+  // The Rust arm reports `telemetry` only once the store serves every member of it; serving some of them must leave the
+  // reported capability list exactly as it was.
+  test('the Rust capability list gains telemetry only when every telemetry member is served', () => {
+    const members = Object.entries(RUST_ENGINE_MEMBERS).filter(([, cls]) => cls === 'telemetry').map(([m]) => m).sort();
+    expect(members).toEqual(['readClientOpUsage', 'readMcpRollupPrunedBefore', 'readSearchStats', 'recordSearchTelemetry']);
+    const served = members.filter((m) => m in STORE_MEMBERS);
+    const reported = servedCapabilities();
+    expect({ allServed: served.length === members.length, reported: reported.has('telemetry') })
+      .toEqual({ allServed: served.length === members.length, reported: served.length === members.length });
+    // Every other capability is reported as it would be with no telemetry member at all.
+    const withoutTelemetry = new Set<string>();
+    const refusing = new Set<string>();
+    for (const [member, cls] of Object.entries(RUST_ENGINE_MEMBERS)) {
+      if (cls === 'implemented' || cls === 'telemetry') continue;
+      withoutTelemetry.add(cls);
+      if (!(member in STORE_MEMBERS)) refusing.add(cls);
+    }
+    const expected = [...withoutTelemetry].filter((c) => !refusing.has(c)).sort();
+    expect([...reported].filter((c) => c !== 'telemetry').map(String).sort()).toEqual(expected);
+    // Today the store serves the search telemetry pair only.
+    expect(served).toEqual(['readSearchStats', 'recordSearchTelemetry']);
+    expect(reported.has('telemetry')).toBe(false);
+  });
 });

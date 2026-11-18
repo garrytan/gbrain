@@ -45,6 +45,7 @@ mod relations;
 mod salience;
 mod stats;
 mod takes;
+mod telemetry;
 mod timeline_queries;
 mod transactions;
 mod vectors;

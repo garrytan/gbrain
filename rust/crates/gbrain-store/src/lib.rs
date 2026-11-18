@@ -53,6 +53,7 @@ pub mod relations;
 pub mod salience;
 pub mod stats;
 pub mod takes;
+pub mod telemetry;
 pub mod timeline_queries;
 pub mod transactions;
 pub mod trust;

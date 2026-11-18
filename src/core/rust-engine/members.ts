@@ -24,12 +24,6 @@ export const RUST_ENGINE_MEMBERS = {
   executeRawDirect: 'raw_sql',
   keywordBoundedRead: 'raw_sql',
   runMigration: 'raw_sql',
-  // Search telemetry and MCP usage (engine-sql/telemetry.ts): they refuse as master's executeRaw did until the Rust store
-  // serves the telemetry tables and the interfaces owner names their capability.
-  recordSearchTelemetry: 'raw_sql',
-  readSearchStats: 'raw_sql',
-  readClientOpUsage: 'raw_sql',
-  readMcpRollupPrunedBefore: 'raw_sql',
   // schema
   initSchema: 'schema',
   // Optional on BrainEngine: only Postgres defines it. The Rust engine leaves it undefined, so a migration serializes
@@ -380,6 +374,12 @@ export const RUST_ENGINE_MEMBERS = {
   deleteEvalCandidatesBefore: 'eval_capture',
   logEvalCaptureFailure: 'eval_capture',
   listEvalCaptureFailures: 'eval_capture',
+  // telemetry (engine-sql/telemetry.ts): the store serves the search telemetry pair; the MCP usage reads refuse until a
+  // typed member writes the MCP request log, so `telemetry` is not reported yet.
+  recordSearchTelemetry: 'telemetry',
+  readSearchStats: 'telemetry',
+  readClientOpUsage: 'telemetry',
+  readMcpRollupPrunedBefore: 'telemetry',
   // ingest_log
   logIngest: 'ingest_log',
   getIngestLog: 'ingest_log',
