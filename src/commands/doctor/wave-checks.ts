@@ -360,6 +360,14 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     run: async (engine, scope) => (await import('./checks/atom-retirements.ts')).atomRetirementsRestorableCheck(engine, scope.sourceIds),
   },
   {
+    id: 'concept_stale_inputs', resolution: 'unsupported', registration: 'wave',
+    hostOnly: 'Derivation edges are read on the brain host.',
+    count: d => Number(d.count ?? 0),
+    impact: 'Some concepts still record a deleted former member atom as an input, so purging that atom would hide the concept',
+    instruction: 'No command rewrites these edges; each concept\'s edges are replaced the next time it is re-synthesized with changed members. Until then, purging those atoms hides the concept and marks it needs_rederive.',
+    run: async (engine, scope) => (await import('./checks/concept-stale-inputs.ts')).conceptStaleInputsCheck(engine, scope.sourceIds),
+  },
+  {
     id: 'atom_fence_rows', resolution: 'repair', registration: 'wave',
     hostOnly: 'Narrowing atoms to private is a host-side, explicit-only repair.',
     count: d => Number(d.count ?? 0),

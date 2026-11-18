@@ -37,7 +37,7 @@ import { assertPhysicalRoot } from './physical-root.ts';
 import { isConnectorSourceKind } from './connector-identity.ts';
 import { MaintenanceWriteWait } from './maintenance-wait.ts';
 import { auditConflictsCommand, FILE_DRIFT_MESSAGE, liveFileDrift } from './drift-conflicts.ts';
-import { lowerToDerivedTier, readDerivationDeclaration, recordTaintEdges, type DerivationDeclaration } from '../trust/taint.ts';
+import { CONCEPT_DERIVATION_CHANNEL, lowerToDerivedTier, readDerivationDeclaration, recordTaintEdges, type DerivationDeclaration } from '../trust/taint.ts';
 import { derivationWriteTrust, raisePageLabelGuard, recordAgentPageLowering, storedPageTier } from '../trust/page-write.ts';
 import { sameInstantTies } from '../facts/claim-ties.ts';
 import type { LabelEdit } from './label-edit.ts';
@@ -675,7 +675,8 @@ export async function prepareMaintenanceMutation(engine: BrainEngine, row: Write
         .map(page => ({ table: 'pages' as const, id: Number(page.id) }));
     if (derived) {
       const lowered = await lowerToDerivedTier(tx, derived.table, [derived.id], trust);
-      if (declaration) await recordTaintEdges(tx, { ...derived, sourceId: row.source_id }, declaration.inputs);
+      if (declaration) await recordTaintEdges(tx, { ...derived, sourceId: row.source_id }, declaration.inputs,
+        { replacePages: derived.table === 'pages' && declaration.origin.channel === CONCEPT_DERIVATION_CHANNEL });
       // GST-2518: a publication whose labels were kept already filed its proposal with them; a second record would withdraw them.
       if (lowered.length && prior?.tier && !outcome.privacy_labels_kept) await recordAgentPageLowering(tx, row, { tier: prior.tier, revision: prior.revision });
     }
