@@ -1161,7 +1161,7 @@ src/core/sync-status-report.ts	execute_raw	3
 src/core/sync-upstream-rewrite.ts	execute_raw	2
 src/core/sync-upstream.ts	execute_raw	2
 src/core/sync.ts	execute_raw	1
-src/core/synopsis-sweep.ts	execute_raw	4
+src/core/synopsis-sweep.ts	execute_raw	5	#9683: one EXISTS probe for trusted page-frontmatter opt-ins; no typed engine method exists yet
 src/core/take-proposals.ts	execute_raw	8
 src/core/takes-horizon.ts	execute_raw	5
 src/core/takes-quality-eval/receipt-write.ts	execute_raw	1
