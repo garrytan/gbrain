@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 public enum SendReply {
     case ok(HTTPResponse)
@@ -138,12 +139,14 @@ public final class SendService {
 
     func serially(_ send: SendRequest, key: String, signer: SendKey, peer: UInt32) -> SendReply {
         let limits: SendLimits
+        let hashKey: [UInt8]
         do {
             var state = try store.load() ?? SendState()
             observeKill(&state)
             guard state.enabled, switchedOn() else { return fail(.sendDisabled) }
             guard state.keys.contains(signer) else { return fail(.unknownSendKey) }
             limits = state.limits
+            hashKey = try recipientKey(&state)
         } catch {
             return fail((error as? Problem) ?? .sendKeysUnreadable)
         }
@@ -169,13 +172,13 @@ public final class SendService {
         } catch {
             return fail(Problem.from(error, dbPath: Config.defaultDBPath))
         }
-        if let limited = rateProblem(send.to, firstContact: firstContact, limits: limits, now: now) { return fail(limited) }
+        if let limited = rateProblem(send.to, firstContact: firstContact, limits: limits, hashKey: hashKey, now: now) { return fail(limited) }
         var pending = AuditRecord(t: SendAudit.stamp(now), kind: "pending", key: key)
         pending.hash = hash
         pending.keyName = signer.name
         pending.peer = IPv4.string(peer)
         pending.to = send.to
-        pending.toHash = Recipient.hash(send.to)
+        pending.toHash = Recipient.hash(send.to, key: hashKey)
         pending.text = send.text
         pending.requestedBy = send.requestedBy
         pending.ownerInstruction = send.ownerInstruction
@@ -219,7 +222,22 @@ public final class SendService {
         return record(.from(delivery), pending: pending)
     }
 
-    func rateProblem(_ recipient: String, firstContact: Bool, limits: SendLimits, now: Date) -> Problem? {
+    func recipientKey(_ state: inout SendState) throws -> [UInt8] {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        if state.recipientHashKey == nil { state = try store.load() ?? state }
+        if state.recipientHashKey != nil {
+            guard let key = state.recipientKey else { throw Problem.sendKeysTampered }
+            return key
+        }
+        var bytes = [UInt8](repeating: 0, count: 32)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else { throw Problem.sendKeysUnreadable }
+        state.recipientHashKey = Base64URL.encode(bytes)
+        try store.save(state)
+        return bytes
+    }
+
+    func rateProblem(_ recipient: String, firstContact: Bool, limits: SendLimits, hashKey: [UInt8], now: Date) -> Problem? {
         let day = audit.attempts(since: now.addingTimeInterval(-86400))
         func check(_ window: TimeInterval, _ cap: Int, _ what: String, _ filter: (AuditRecord) -> Bool) -> Problem? {
             let inWindow = day.filter { ($0.date ?? .distantPast) > now.addingTimeInterval(-window) && filter($0) }
@@ -231,7 +249,7 @@ public final class SendService {
         return check(60, limits.maxPerMinute, "texts a minute") { _ in true }
             ?? check(3600, limits.maxPerHour, "texts an hour") { _ in true }
             ?? check(86400, limits.maxPerDay, "texts a day") { _ in true }
-            ?? check(3600, limits.maxPerRecipientPerHour, "texts an hour to one recipient") { $0.to == recipient || $0.toHash == Recipient.hash(recipient) }
+            ?? check(3600, limits.maxPerRecipientPerHour, "texts an hour to one recipient") { $0.to == recipient || $0.toHash == Recipient.hash(recipient, key: hashKey) }
             ?? (firstContact ? check(86400, limits.maxFirstContactPerDay, "texts a day to people never texted one-to-one before") { $0.firstContact == true } : nil)
     }
 

@@ -145,7 +145,7 @@ What this does not stop: a program running as the owner that builds a look-alike
 
 ### The send log
 
-`~/Library/Application Support/GBrain Helper/send-audit/YYYY-MM.jsonl`, mode 0600, one line per attempt and one per outcome: time, key name, the caller's address, idempotency key, recipient, the exact text, `requested_by`, `owner_instruction`, outcome and the Messages guid or error. No setting turns it off. A new file starts each month; after 90 days a line keeps only its time, outcome, code and a short hash of the recipient. A torn last line is moved to `torn-<time>.jsonl` instead of stopping the helper. `gbrain-apple-helper send-audit show --redacted` prints the redacted form; read that, not the raw file. The log never leaves the Mac.
+`~/Library/Application Support/GBrain Helper/send-audit/YYYY-MM.jsonl`, mode 0600, one line per attempt and one per outcome: time, key name, the caller's address, idempotency key, recipient, the exact text, `requested_by`, `owner_instruction`, outcome and the Messages guid or error. No setting turns it off. A new file starts each month; after 90 days a line keeps only its time, outcome, code and a short hash of the recipient. The hash is keyed with a random secret the helper keeps with the send keys in the keychain, so a phone number can't be recovered from it by trying every number, and the same recipient hashes differently on another Mac. A torn last line is moved to `torn-<time>.jsonl` instead of stopping the helper. `gbrain-apple-helper send-audit show --redacted` prints the redacted form; read that, not the raw file. The log never leaves the Mac.
 
 ### Outside terms
 
