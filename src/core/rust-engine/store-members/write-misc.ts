@@ -1,12 +1,12 @@
 /**
  * The page-write reads and upkeep that belong to no other domain (BrainEngine readSourceState through
- * purgeMemoryProposals; SQL in engine-sql/write-misc.ts), and the folder access read beside the access members
- * (isFolderRestricted; SQL in engine-sql/access-control.ts). The source reads are served by gbrain-store
- * `write_misc`; the rest answer for state the store does not keep. What each member answers and why:
+ * purgeMemoryProposals, and attachSourcePath; SQL in engine-sql/write-misc.ts), and the folder access read beside the
+ * access members (isFolderRestricted; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
+ * gbrain-store `write_misc`; the rest answer for state the store does not keep. What each member answers and why:
  * rust/docs/store/write_misc.md.
  */
 import type {
-  AdmissionSourceRow, SharedSkillPackRoot, SourceStateOptions, SourceStateRow,
+  AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow,
 } from '../../engine-sql/write-misc.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
@@ -35,6 +35,11 @@ export const readAdmissionSource: StoreMember<[sourceId: string], AdmissionSourc
     kind: jsonText(row.config.kind), role: jsonText(row.config.role),
     guest_writers: null, guest_trust_ceiling: null, guest_sources_hidden: false,
   };
+};
+
+/** Attach a working tree to an existing path-less source: path, a passed name and federated flag; else unchanged. */
+export const attachSourcePath: StoreMember<[sourceId: string, localPath: string, opts?: AttachSourcePathOptions], void> = async (brain, sourceId, localPath, opts) => {
+  await storeCall({ member: 'attachSourcePath', sourceId }, () => brain.attachSourcePath(sourceId, localPath, opts?.name ?? null, opts?.federated ?? null));
 };
 
 /**

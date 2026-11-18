@@ -2,7 +2,7 @@
  * The statements a page write ran through `executeRaw` that belong to no other storage domain
  * (docs/research/rust-put-write-path.md): the source-state reads of admission, publication and effect recovery, the
  * shared-skillpack screen, the chronicle retire check, the access-member
- * read of `brainServes` and memory-proposal upkeep. Each function keeps the statement text its call site ran, so PGLite
+ * read of `brainServes`, memory-proposal upkeep and the path attach of `sources add`. Each function keeps the statement text its call site ran, so PGLite
  * and Postgres answer exactly as before; a Rust brain answers from its store
  * (rust/crates/gbrain-store/src/write_misc.rs, rust/docs/store/write_misc.md).
  */
@@ -86,6 +86,27 @@ export async function hasExtractedEvents(exec: LegacyUnscopedRead, sourceId: str
 export async function listActiveAccessMembers(exec: LegacyUnscopedRead): Promise<string[]> {
   const rows = await exec.executeRaw<{ id: string }>('SELECT id FROM access_members WHERE disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id');
   return rows.map(row => row.id);
+}
+
+/** `attachSourcePath` options: a non-null `name` replaces the name; a non-null `federated` sets `config.federated`. */
+export interface AttachSourcePathOptions { name?: string | null; federated?: boolean | null }
+
+/**
+ * Attaches a working tree to an existing source (#3903, `sources add` on a path-less row): sets `local_path`, applies a
+ * passed name and federated flag, and keeps every other column, config key and page. An unknown id changes nothing.
+ * The federated flag merges through jsonb_build_object on a bound boolean, never a stringified ::jsonb value.
+ */
+export async function attachSourcePath(exec: SqlExecutor, sourceId: string, localPath: string, opts: AttachSourcePathOptions = {}): Promise<void> {
+  await exec.executeRaw(
+    `UPDATE sources
+        SET local_path = $2,
+            name = COALESCE($3, name),
+            config = CASE WHEN $4::boolean IS NULL THEN config
+                          ELSE COALESCE(config, '{}'::jsonb)
+                               || jsonb_build_object('federated', $4::boolean) END
+      WHERE id = $1`,
+    [sourceId, localPath, opts.name ?? null, opts.federated ?? null],
+  );
 }
 
 /** Expires every awaiting memory proposal past its expiry with `reason`; returns how many. */

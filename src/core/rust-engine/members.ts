@@ -117,6 +117,7 @@ export const RUST_ENGINE_MEMBERS = {
   updateSourceConfig: 'sources',
   readSourceState: 'sources',
   readAdmissionSource: 'sources',
+  attachSourcePath: 'sources',
   sharedSkillPackTablePresent: 'sources',
   listSharedSkillPackRoots: 'sources',
   // config

@@ -355,6 +355,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'hasExtractedEvents': OOS.writeMisc,
   'listActiveAccessMembers': OOS.writeMisc,
   'expireMemoryProposals': OOS.writeMisc,
+  'attachSourcePath': OOS.writeMisc,
   'listAwaitingMemoryProposals': OOS.writeMisc,
   'purgeMemoryProposals': OOS.writeMisc,
   'writeMiscReads': OOS.helper, 'writeMiscRead': OOS.helper,

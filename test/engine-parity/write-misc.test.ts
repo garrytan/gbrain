@@ -120,6 +120,26 @@ describe('engine parity: write misc', () => {
     return { underRule };
   });
 
+  parityTest('attachSourcePath sets the path, applies a passed name and federated flag, and keeps everything else', { methods: ['attachSourcePath', 'readSourceState', 'getSource'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'work', { kind: 'notes', federated: true });
+    await createSource(engine, backend, 'plain', { kind: 'notes' });
+    await engine.attachSourcePath('work', '/brains/work', { name: 'Work notes', federated: false });
+    await engine.attachSourcePath('plain', '/brains/plain', { name: null, federated: null });
+    await engine.attachSourcePath('no-such-source', '/brains/none', { name: 'x', federated: true });
+    const view = async (id: string) => {
+      const detail = await engine.getSource(id);
+      const state = await engine.readSourceState(id);
+      return detail && state ? { name: detail.name, local_path: state.local_path, config: state.config, archived: state.archived } : null;
+    };
+    const answers = { work: await view('work'), plain: await view('plain'), missing: await view('no-such-source') };
+    expect(answers).toEqual({
+      work: { name: 'Work notes', local_path: '/brains/work', config: { kind: 'notes', federated: false }, archived: false },
+      plain: { name: 'plain', local_path: '/brains/plain', config: { kind: 'notes' }, archived: false },
+      missing: null,
+    });
+    return answers;
+  });
+
   parityTest('expireMemoryProposals expires nothing on a fresh brain', { methods: ['expireMemoryProposals'] }, async (engine) => {
     const expired = await engine.expireMemoryProposals('expired after 7 days');
     expect(expired).toBe(0);
