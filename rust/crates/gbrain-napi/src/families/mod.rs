@@ -10,6 +10,7 @@ mod cli_reads_search_pages;
 mod cli_sources;
 mod config;
 mod graph;
+mod import_members;
 mod journal;
 mod links;
 mod pages;

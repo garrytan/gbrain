@@ -53,6 +53,7 @@ import * as factsTrust from './facts-trust.ts';
 import * as jobs from './jobs.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeGuards from './write-guards.ts';
+import * as importMembers from './import-members.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
 const initSchema: StoreMember<[], void> = async () => undefined;
@@ -80,6 +81,8 @@ export const STORE_MEMBERS = {
   ...persistence,
   // The page write guards a page write runs around the page row (rust/docs/store/write-guards.md).
   ...writeGuards,
+  // The page and chunk statements a page import runs around its chunk write (rust/docs/store/import-members.md).
+  ...importMembers,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;
