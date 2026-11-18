@@ -123,6 +123,7 @@ test/enforced-member-writes-setting.serial.test.ts
 test/enforced-member-writes.serial.test.ts
 test/enforced-member.serial.test.ts
 test/engine-parity/chunks.test.ts
+test/engine-parity/cli-capabilities.test.ts
 test/engine-parity/code-eval-salience.test.ts
 test/engine-parity/config-ingest.test.ts
 test/engine-parity/cycle-locks.test.ts

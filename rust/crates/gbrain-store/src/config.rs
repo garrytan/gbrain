@@ -4,7 +4,15 @@
 use crate::error::{Result, StoreError};
 use crate::kv::{KvRead, scan_prefix};
 use crate::{Store, keys};
-use std::collections::BTreeMap;
+use serde::Serialize;
+use std::collections::{BTreeMap, BTreeSet};
+
+/// One row of `getConfigValues`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ConfigValueRow {
+    pub key: String,
+    pub value: String,
+}
 
 fn config_key(key: &str) -> Result<Vec<u8>> {
     if key.contains('\0') {
@@ -83,5 +91,27 @@ impl Store {
     /// Every config entry. Mirrors `getAllConfig`.
     pub fn get_all_config(&self) -> Result<BTreeMap<String, String>> {
         Ok(scan_config(&*self.read()?, "")?.into_iter().collect())
+    }
+
+    /// `getConfigValues(keys)`: the stored `{key, value}` rows of the named keys, ordered by key,
+    /// each key once; a key with no row (or one that cannot be a key) is left out. Mirrors
+    /// `getConfigValues`.
+    pub fn get_config_values(&self, keys: &[String]) -> Result<Vec<ConfigValueRow>> {
+        let read = self.read()?;
+        let wanted: BTreeSet<&str> = keys
+            .iter()
+            .map(String::as_str)
+            .filter(|k| !k.contains('\0'))
+            .collect();
+        let mut out = Vec::new();
+        for key in wanted {
+            if let Some(value) = read_config(&*read, key)? {
+                out.push(ConfigValueRow {
+                    key: key.to_string(),
+                    value,
+                });
+            }
+        }
+        Ok(out)
     }
 }
