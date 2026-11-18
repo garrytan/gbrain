@@ -14,8 +14,8 @@
 //! ```
 //!
 //! The value is a JSON `WantedRecord`. `M wanted_link_id` is the id counter. A hard page delete
-//! calls `remove_page_rows` (the cascade line is a core-hooks item); until then every read hides a
-//! row whose origin page is gone, and page ids are never reused.
+//! removes the page's records through `cascade::remove_page_rows`, which calls `remove_page_rows`
+//! (Postgres `wanted_links.origin_page_id` is `ON DELETE CASCADE`).
 
 use crate::env::{iso, parse_iso};
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
@@ -220,8 +220,6 @@ fn iso_ms(micros: i64) -> String {
 }
 
 /// Deletes the wanted records of a page that is hard-deleted (`cascade::remove_page_rows`).
-// The cascade line is core-hooks item 16; it is the first caller.
-#[allow(dead_code)]
 pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()> {
     for (key, _) in page_records(&*tx, &page.source_id, page.id)? {
         tx.delete(&key)?;
@@ -756,6 +754,30 @@ mod tests {
         store.replace_wanted_link_rows(gone, "team", &rows).unwrap();
         store.write(|tx| remove_source_rows(tx, "team")).unwrap();
         assert_eq!(raw_rows(&store, "team", gone), 0);
+        assert_eq!(raw_rows(&store, "default", kept), 1);
+    }
+
+    // Red until the link_queries family's remove_source_rows deletes every key under
+    // `q <source> \0`; the core-hooks stub deletes nothing.
+    #[test]
+    fn source_delete_through_the_cascade_removes_wanted_rows_of_that_source_only() {
+        let (_d, store) = open("wl-source-cascade");
+        source(&store, "team");
+        let kept = page(&store, "default", "notes/a");
+        let gone = page(&store, "team", "notes/a");
+        let rows = replacement(json!([row("body", "slug", "missing/x")]), &["body"]);
+        store
+            .replace_wanted_link_rows(kept, "default", &rows)
+            .unwrap();
+        store.replace_wanted_link_rows(gone, "team", &rows).unwrap();
+        store
+            .write(|tx| crate::cascade::remove_source_rows(tx, "team"))
+            .unwrap();
+        assert_eq!(
+            raw_rows(&store, "team", gone),
+            0,
+            "link_queries::remove_source_rows must delete every key under q <source> \\0"
+        );
         assert_eq!(raw_rows(&store, "default", kept), 1);
     }
 

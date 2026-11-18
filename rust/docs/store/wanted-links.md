@@ -43,8 +43,8 @@ q <origin source_id> \0 W <origin page id BE8> <producer> \0 <ref_kind> \0 <targ
 
 The records sit under the link_queries tag `q`. `M wanted_link_id` is the id counter.
 
-- **Source delete.** `link_queries::remove_source_rows` deletes every key under `q <source> \0`, so a source delete removes the records. `wanted_links::remove_source_rows` deletes only this family's records.
-- **Page delete.** `cascade::remove_page_rows` calls `wanted_links::remove_page_rows` (core-hooks item 16). Until that line lands, a hard delete leaves the records on disk, and reads hide them, because page ids are never reused.
+- **Source delete.** `link_queries::remove_source_rows` deletes every key under `q <source> \0`, so `cascade::remove_source_rows` removes the records. `wanted_links::remove_source_rows` deletes only this family's records.
+- **Page delete.** `cascade::remove_page_rows` calls `wanted_links::remove_page_rows`, which deletes the page's records (Postgres `ON DELETE CASCADE`).
 
 ## Accessors for other families
 

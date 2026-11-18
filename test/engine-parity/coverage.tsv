@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 236/236
+# covered: 238/238
 # lifecycle: 9/9
 # pages: 28/28
 # search: 7/7
@@ -33,6 +33,7 @@
 # code_edges: 5/5
 # eval_capture: 5/5
 # salience_enrich: 5/5
+# wanted_links: 2/2
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
 connect	lifecycle	yes	1	yes	yes	yes	serves
 disconnect	lifecycle	yes	1	yes	yes	yes	serves
@@ -43,19 +44,19 @@ transaction	lifecycle	yes	11	no	yes	yes	refuses:transactions
 transactionDirect	lifecycle	yes	1	no	yes	yes	refuses:transactions
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	27	yes	yes	yes	serves
+getPage	pages	yes	28	yes	yes	yes	serves
 readPageSnapshot	pages	yes	7	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	refuses:pages
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	103	yes	yes	yes	serves
+putPage	pages	yes	104	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	refuses:pages
 findDuplicatePages	pages	yes	1	no	yes	yes	refuses:pages
-deletePage	pages	yes	2	yes	yes	yes	serves
+deletePage	pages	yes	3	yes	yes	yes	serves
 deletePages	pages	yes	1	yes	yes	yes	refuses:pages
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	refuses:pages
-softDeletePage	pages	yes	23	yes	yes	yes	serves
+softDeletePage	pages	yes	24	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	refuses:pages
-restorePage	pages	yes	5	yes	yes	yes	serves
+restorePage	pages	yes	6	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	1	no	yes	yes	refuses:pages
 listPages	pages	yes	4	yes	yes	yes	serves
 findPages	pages	yes	1	no	yes	yes	refuses:pages
@@ -270,3 +271,5 @@ setEmotionalWeightBatch	salience_enrich	yes	2	yes	yes	yes	refuses:salience
 getRecentSalience	salience_enrich	yes	1	yes	yes	yes	refuses:salience
 listEnrichCandidates	salience_enrich	yes	1	yes	yes	yes	refuses:health
 findAnomalies	salience_enrich	yes	1	yes	yes	yes	refuses:health
+lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	serves
+replaceWantedLinkRows	wanted_links	yes	4	no	yes	yes	serves
