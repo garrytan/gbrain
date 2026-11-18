@@ -2,6 +2,8 @@
 
 **Who must act:** only an operator whose brain has an owner-only (iMessage) source *and* a non-owner Postgres database login (a scoped writer or reader role). Run `gbrain doctor`; `owner_only_marks_triggers` names each such login and prints the `GRANT` and `CREATE POLICY` statements to run as the table owner. Everyone else has nothing to do: a brain that never held owner-only data behaves as before, with no new grant.
 
+**Known limits, closed by a later release:** other members can still read some owner-only material in three less common setups, all of which behaved the same way before this release (the iMessage setup in the Apple guide is fully covered): a custom owner-only source holding meeting pages with cross-source links on (`link_resolution.cross_source`), whose timeline rows on attendee pages in other sources are checked only by the attendee page; a database login whose row-level security limits it to some sources, which traces derived rows only through rows it can see; and a read that cannot learn the brain's schema version, which checks only for owner-only sources. Removing a very large owner-only source is also slower, because the delete trigger walks lineage once per row.
+
 ### Fixed
 - Removing an iMessage source (`gbrain sources remove`, with or without `--keep-storage`), or deleting one of its pages for good, used to make every page, fact and concept derived from it readable by other members of a shared brain. A delete now records those derived rows first (migration v322, table `owner_only_marks`), and they stay owner-only. Nothing derived is deleted, and the owner still reads all of it.
 - A row many derivations away from an iMessage page is now owner-only too. The earlier check stopped after 8 hops.
