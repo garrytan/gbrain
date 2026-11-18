@@ -300,18 +300,7 @@ export async function planUnfencedFacts(engine: BrainEngine, opts: { sourceId?: 
   const mirrors = new Set(managed ? [] : sources.filter(s => parseSourceConfig(s.config).mirror_read_only === true).map(s => s.id));
   const localPathById = new Map(sources.map(s => [s.id, s.local_path] as const));
   const archived = new Set(sources.filter(s => s.archived).map(s => s.id));
-  const rows = await engine.executeRaw<UnfencedFactRow>(
-    `SELECT id, source_id, entity_slug, fact, kind, visibility, notability,
-            context, valid_from, valid_until, source, confidence,
-            claim_metric, claim_value, claim_unit, claim_period, attributed_to,
-            EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id
-              AND p.slug = f.entity_slug AND p.deleted_at IS NULL) AS page_exists
-       FROM facts f
-      WHERE row_num IS NULL AND expired_at IS NULL AND dimension IS NULL
-        ${opts.sourceId !== undefined ? 'AND source_id = $1' : ''}
-      ORDER BY source_id, entity_slug, id`,
-    opts.sourceId !== undefined ? [opts.sourceId] : [],
-  );
+  const rows = await engine.listUnfencedFactRows({ sourceId: opts.sourceId });
   const outcome: UnfencedFactsOutcome = {
     scanned: rows.length, fenced: 0, skipped_no_entity: 0, skipped_no_local_path: 0, skipped_no_page: 0,
     skipped_archived: 0, skipped_url_clone: 0, skipped_mirror_read_only: 0, pages_touched: 0, failed_pages: [], write_errors: 0, fenced_slugs: [], missing_files: [], unbound_refused: [], unadoptable_rows: [],
@@ -360,10 +349,7 @@ export async function planUnfencedFacts(engine: BrainEngine, opts: { sourceId?: 
  * among them, nor is a row no fence ever held or a conversation-extractor row (its replay owns it).
  */
 export async function heldFenceFactRows(engine: BrainEngine, sourceId: string, slug: string): Promise<ParsedFact[]> {
-  const rows = await engine.executeRaw<FenceRowInput & { id: number; row_num: number; fact: string; entity_slug: string | null }>(`SELECT id, row_num, fact, kind, visibility, notability, context,
-      valid_from, valid_until, source, confidence, claim_metric, claim_value, claim_unit, claim_period, attributed_to, entity_slug FROM facts
-     WHERE source_id=$1 AND source_markdown_slug=$2 AND row_num IS NOT NULL AND expired_at IS NULL
-       AND COALESCE(source,'') NOT LIKE 'cli:extract-conversation-facts%' ORDER BY row_num, id`, [sourceId, slug]);
+  const rows = await engine.listHeldFenceFactRows(sourceId, slug);
   if (!rows.length) return [];
   const { held } = await factsFenceHeld(engine, { sourceId, slug, rows });
   const seen = new Set<number>();

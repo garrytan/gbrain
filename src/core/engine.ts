@@ -2926,6 +2926,20 @@ export interface BrainEngine {
 
   // Facts statements, purge, withdrawal, relink and fence repair (engine-sql/facts-purge.ts). Each runs the statement its caller ran through executeRaw.
 
+  countFactFingerprintLeftovers(sourceId: string, factHash: string, visibility: string, subject: string): Promise<number>;
+  loadPurgeTarget(id: number, sourceId: string): Promise<FactsPurgeSql.PurgeTargetRow | null>;
+  planFactPurgeIds(sourceId: string, visibility: string, factHash: string, subject: string): Promise<Array<{ id: number }>>;
+  listFactsReconcileBacklog(): Promise<FactsPurgeSql.FactsReconcileBacklogRows>;
+  listRelinkCandidateRows(opts: { sourceId: string; afterId: number; since: Date | null; limit: number }): Promise<FactsPurgeSql.RelinkCandidateRow[]>;
+  countRelinkCandidates(sourceId: string): Promise<number>;
+  listSimilarActiveFacts(opts: { sourceId: string; factId: number; remote: boolean; excludePrivate: boolean; minCosine: number; limit: number }): Promise<FactsPurgeSql.SimilarActiveFacts>;
+  findActiveSingleFact(opts: { sourceId: string; entitySlug: string | null; visibility: string; fact: string; attributedTo: string | null; pageSlug: string | null; remoteFloor: boolean }): Promise<FactsPurgeSql.ExactFactRow | null>;
+  listSingleFactMetadata(opts: { sourceId: string; ids: number[]; remoteFloor: boolean }): Promise<FactsPurgeSql.SingleFactMetadataRow[]>;
+  listUnfencedFactRows(opts: { sourceId?: string }): Promise<FactsPurgeSql.UnfencedFactRow[]>;
+  listHeldFenceFactRows(sourceId: string, slug: string): Promise<FactsPurgeSql.HeldFenceFactRow[]>;
+  listWithdrawalSlugs(sourceId: string, visibility: string, factHash: string, subject: string): Promise<Array<{ slug: string }>>;
+  expireFactsByWithdrawal(sourceId: string, visibility: string, fact: string, subject: string): Promise<Array<{ id: number }>>;
+
   // Facts statements, repair classifiers and loop retirement (engine-sql/facts-repair.ts). Each runs the statement its caller ran through executeRaw.
 
   // Facts statements, search relevance and trust reads (engine-sql/facts-trust.ts). Each runs the statement its caller ran through executeRaw.

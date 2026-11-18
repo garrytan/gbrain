@@ -122,7 +122,7 @@ fn half_round(x: f32) -> Option<f32> {
 }
 
 /// Postgres `float4out`: the shortest text naming `x`, in exponent form from `1e+06` up.
-fn float4_out(x: f32) -> String {
+pub(crate) fn float4_out(x: f32) -> String {
     let sci = format!("{x:e}");
     let (mantissa, exp) = sci.split_once('e').unwrap_or((&sci, "0"));
     let exp: i32 = exp.parse().unwrap_or(0);

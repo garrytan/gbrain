@@ -100,6 +100,10 @@ export const FAMILIES: Record<string, readonly string[]> = {
 
   // facts_purge: purge, withdrawal, relink and fence repair
 
+  facts_purge: ['countFactFingerprintLeftovers', 'loadPurgeTarget', 'planFactPurgeIds', 'listFactsReconcileBacklog', 'listRelinkCandidateRows',
+    'countRelinkCandidates', 'listSimilarActiveFacts', 'findActiveSingleFact', 'listSingleFactMetadata', 'listUnfencedFactRows',
+    'listHeldFenceFactRows', 'listWithdrawalSlugs', 'expireFactsByWithdrawal'],
+
   // facts_repair: repair classifiers and loop retirement
 
   // facts_trust: search relevance and trust reads
