@@ -59,5 +59,6 @@ mod takes;
 mod telemetry;
 mod timeline_queries;
 mod transactions;
+mod trust_tier_reads;
 mod vectors;
 mod wanted_links;

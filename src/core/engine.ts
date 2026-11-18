@@ -52,6 +52,9 @@ import type { AdmitJobPolicy, AdmitJobResult, AdmitJobSpec, ClaimJobSpec, JobRow
 import type { JobInsightRows, JobInsightSpec } from './engine-sql/jobs-insight.ts';
 import type { McpResolvedSpec, PurgeTakesSpec } from './engine-sql/takes-reads.ts';
 import type {
+  BeliefHistoryRowQuery, CorePageRow, CorePageRowSpec, TrustScanRow, TrustScanRowSpec, UnscannedTrustSpec, ValidTimePickSpec,
+} from './engine-sql/trust-tier-reads.ts';
+import type {
   CancelJobsSpec, DelayActiveJobSpec, JobAttachmentInsert, JobPageSpec, JobStatsRead, JobTokenCounts, PrivateQueueState, PruneJobsSpec,
   SynthesisCompletion, SynthesisCompletionPrefix, JobSourceState,
   QueueFamilyRow, RetryJobPolicy,
@@ -3725,6 +3728,23 @@ export interface BrainEngine {
   countZeroWeightWithTakes(): Promise<{ zero_weight_with_takes: number; nonzero_weight: number }>;
   /** Whether the source owns an unresolved (symbol-target) code edge. */
   hasCodeEdgesSymbol(sourceId: string): Promise<boolean>;
+  // Group D (trust tier reads): the stamped-tier reads of core memory, the trust scan, belief history, page history and valid time.
+  /** The live `always_load` pages, by source then slug, with the trust columns a delivery read asks for. */
+  listCorePageRows(spec: CorePageRowSpec): Promise<CorePageRow[]>;
+  /** Rows of one scanned table above an id whose stored tier is listed, by id. */
+  listTrustScanRows(spec: TrustScanRowSpec): Promise<TrustScanRow[]>;
+  /** How many rows of one scanned table above an id (and at or below a ceiling) have a listed stored tier. */
+  countUnscannedTrustRows(spec: UnscannedTrustSpec): Promise<number>;
+  /** One page of a source's belief events, with the per-row visibility facts the remote filter reads. */
+  readBeliefHistoryRows(spec: BeliefHistoryRowQuery): Promise<Array<Record<string, unknown>>>;
+  /** The listed page lifetimes that are live and whose page passes the remote read floor. */
+  listVisibleBeliefLifetimes(lifetimes: readonly string[]): Promise<string[]>;
+  /** The stored snapshot tier of each listed page version, by id. */
+  listVersionTrustTiers(ids: readonly number[]): Promise<Array<{ id: number; trust_tier: string | null }>>;
+  /** The type and tier of the write that replaced each listed version (the next snapshot, or the live page), by id. */
+  listVersionReasonWriters(ids: readonly number[]): Promise<Array<{ id: number; type: string | null; tier: string | null }>>;
+  /** The valid-time pick over one page and its retained versions; null when the page is gone. */
+  pickValidTimeEdition(spec: ValidTimePickSpec): Promise<Record<string, unknown> | null>;
 
   // ============================================================
   // v0.20.0 Cathedral II: code edges (Layer 5 populates, Layer 7 consumes)

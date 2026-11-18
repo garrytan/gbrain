@@ -1695,12 +1695,17 @@ and write provenance on content rows, and the trust records.
   - Ignored on purpose, as their SQL does: the raw-files, stats, ontology, timeline and chunk-page reads.
   - Built: `listSingleFactMetadata` (refused only under the remote floor) and `listUnpreviewedTrustFacts` read the
     stamped tier and origin (`facts/trust_reads.rs`), and `listSupersessions` honours a read eligibility.
-  - Not yet built: reads of `trust_tier` through `executeRaw`
-    (core memory, the eligibility scan, belief history, admin, valid time) need typed members. `resolveAliases`
+  - Built: the `executeRaw` reads of `trust_tier` in core memory, the eligibility scan, belief history, page history
+    (`get_versions`) and valid time are typed members (`engine-sql/trust-tier-reads.ts`). The Rust store serves
+    `listCorePageRows`, the pages and facts arms of `listTrustScanRows` and `countUnscannedTrustRows`,
+    `listVersionTrustTiers` and `listVersionReasonWriters` (`trust/tier_reads.rs`); it refuses the takes and
+    timeline scan tables, the belief history members and `pickValidTimeEdition`.
+  - Not yet built: the scan cursor, the claim and `max(id)` reads of the eligibility scan, the valid-time identity
+    and amendment reads, and the admin slug and lifetime reads still go through `executeRaw`. `resolveAliases`
     refuses a floor or `excludePrivate`, and the alias fan-out of search turns that refusal into an empty fan-out;
     a lift needs the trust and privacy checks on both the alias page and its title shadow. The takes members keep
     their refusal.
-  - Pinned by `test/engine-parity/trust-reads.test.ts` on all three engines.
+  - Pinned by `test/engine-parity/trust-reads.test.ts` and `test/engine-parity/trust-tier-reads.test.ts` on all three engines.
 
 ### catalog probes (core)
 

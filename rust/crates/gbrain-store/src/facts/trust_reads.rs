@@ -43,6 +43,12 @@ fn origin_text(row: &FactRecord, key: &str) -> Option<String> {
         .and_then(jsonb_field_text)
 }
 
+/// Every fact row, in id order (`F 0x01 id` keys sort by id): the trust scan's fact rows
+/// (`trust/tier_reads.rs`).
+pub(crate) fn all_fact_rows(read: &dyn crate::kv::KvRead) -> Result<Vec<FactRecord>> {
+    rows_under(read, &[keys::FACT, ROW])
+}
+
 impl Store {
     /// `listSingleFactMetadata`: the fence position, stored trust tier and claim slot of each fact
     /// of `sourceId` whose id is in `ids` (`id = ANY(ids)`: a repeated id answers once, an id no row

@@ -81,8 +81,17 @@ export function storePrivacyPolicy(member: string, excludePrivate: unknown, rend
  */
 export function storePagePolicy(member: string, excludePrivate: unknown): StorePrivacyPolicy | undefined {
   if (!excludePrivate) return undefined;
+  return storePageTextPolicy(member, () => privatePagesFilterForCaller('p'));
+}
+
+/**
+ * The store page policy for a read whose page fragment over `p` is `rendered` in the current context: the caller's
+ * page policy, or the remote read floor (`remoteReadFloorSql('p')`, which with no labelled-only caller is the
+ * no-caller page policy). A fragment that is not the no-caller one refuses.
+ */
+export function storePageTextPolicy(member: string, rendered: () => string): StorePrivacyPolicy {
   const baseline = withoutCallerAccess(() => privatePagesFilterForCaller('p'));
-  if (normalizeConceptInputs(privatePagesFilterForCaller('p')) !== normalizeConceptInputs(baseline)) {
+  if (normalizeConceptInputs(rendered()) !== normalizeConceptInputs(baseline)) {
     refuseMember(member, 'excludePrivate for a caller whose member pages, grants or lineage widen the policy');
   }
   return {

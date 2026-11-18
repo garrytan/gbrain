@@ -160,6 +160,10 @@ export const FAMILIES: Record<string, readonly string[]> = {
   facts_trust: ['listFactsForRelevance', 'countUncomparableFacts', 'matchSavedFacts',
     'readFactForOwnerAction', 'listStandingPreferences', 'listLexicalContestCandidates', 'listRestatedPrivateCopies', 'countDerivedFactTaint'],
 
+  // trust_tier_reads: stamped-tier reads of core memory, the trust scan, belief history, page history and valid time
+  trust_tier_reads: ['listCorePageRows', 'listTrustScanRows', 'countUnscannedTrustRows', 'readBeliefHistoryRows', 'listVisibleBeliefLifetimes',
+    'listVersionTrustTiers', 'listVersionReasonWriters', 'pickValidTimeEdition'],
+
   raw_sql: ['runMigration', 'executeRaw', 'executeRawDirect', 'keywordBoundedRead'],
   code_edges: ['addCodeEdges', 'deleteCodeEdgesForChunks', 'getCallersOf', 'getCalleesOf', 'getEdgesByChunk',
     // group D (code-edge read)
