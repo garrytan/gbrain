@@ -225,7 +225,7 @@ listEvalCandidates	eval_capture	yes	2	no	yes	yes	refuses:eval_capture
 deleteEvalCandidatesBefore	eval_capture	yes	1	no	yes	yes	refuses:eval_capture
 logEvalCaptureFailure	eval_capture	yes	1	no	yes	yes	refuses:eval_capture
 listEvalCaptureFailures	eval_capture	yes	1	no	yes	yes	refuses:eval_capture
-ownerOnlyMarkTriggers	owner_only	yes	2	no	yes	yes	refuses:schema
+ownerOnlyMarkTriggers	owner_only	yes	2	no	yes	yes	refuses:raw_sql
 batchLoadEmotionalInputs	salience_enrich	yes	1	no	yes	yes	refuses:salience
 setEmotionalWeightBatch	salience_enrich	yes	2	yes	yes	yes	refuses:salience
 getRecentSalience	salience_enrich	yes	1	yes	yes	yes	refuses:salience
