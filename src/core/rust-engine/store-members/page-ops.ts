@@ -6,9 +6,9 @@
  * getContentFlagsByPageIds, getUnverifiedExtractionPageIds, getPageTimestamps, getEffectiveDates, revertToVersion.
  * deletePages scrubs the eval candidates' retrieved slugs in the delete's transaction, as PGLite does.
  *
- * Still refused (`engine_capability_missing`): purgeDeletedPages. PGLite holds back pages that a sync identity
- * downgrade or an atom or derived retirement still needs (op_checkpoints and the retirement holds); the store does
- * not keep those holds yet.
+ * Still refused (`engine_capability_missing`): purgeDeletedPages. Its atom and derived retirement holds read the page's
+ * `retired_by` stamp, which the served putPage stores from a local caller, so a purge with no holds would remove a page
+ * PGLite keeps (rust/docs/store/page_ops.md names every hold and its writers).
  *
  * Export only BrainEngine members from this file, each a `StoreMember` named after the member it serves (see tags.ts):
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay

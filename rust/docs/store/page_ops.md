@@ -51,5 +51,16 @@ last_retrieved_at }`.
 
 ## Still refused by the TypeScript engine
 
-- `purgeDeletedPages`: PGLite holds back pages that sync identity, atom retirement or derived
-  retirement still need. The store does not keep those holds yet, so the member refuses.
+- `purgeDeletedPages`: PGLite skips a tombstone that one of four holds keeps. Two of them can
+  never match a Rust store row, and two can, so the member refuses:
+  - Sync identity downgrade (`op_checkpoints`, op `sync-identity-downgrade`): only
+    `executeRaw` writes it (`recordIdentityDowngrades`), and the Rust engine refuses `executeRaw`.
+  - Derived origin park (`op_checkpoints`, op `derived-origin-park`): only `executeRaw` writes it
+    (`parkDerivedOrigin`).
+  - Atom retirement (`pages`: an `atom` stamped `retired_by: managed-reextract`, deleted under 30
+    days ago, still restorable) and derived retirement (`pages`: any `DERIVED_RETIRED_BY` stamp,
+    deleted under `generations.restore_days` ago, read from `config`). The derived writers stamp
+    with `executeRaw`, but the served `putPage` also stores a `retired_by` key from a local
+    caller (only a remote write is refused, `reserved_frontmatter_key`), and the served
+    `softDeletePage`/`softDeletePages` set `deleted_at`. A purge with no holds would remove a
+    page PGLite keeps.
