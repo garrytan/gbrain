@@ -16,11 +16,12 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { resolveSourceId, getDefaultSourcePath, isResolverUserError, SourceTargetError, __testing } from '../src/core/source-resolver.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { withTypedSourceReads } from './helpers/typed-source-reads.ts';
 
 // ── Stub engine ────────────────────────────────────────────
 
 function makeStub(registeredSources: string[], paths: Array<{ id: string; local_path: string }>, defaultKey: string | null): BrainEngine {
-  return {
+  return withTypedSourceReads({
     kind: 'pglite',
     executeRaw: async <T>(sql: string, params?: unknown[]): Promise<T[]> => {
       if (sql.includes('SELECT id FROM sources WHERE id = $1')) {
@@ -37,7 +38,7 @@ function makeStub(registeredSources: string[], paths: Array<{ id: string; local_
       return [];
     },
     getConfig: async (key: string) => (key === 'sources.default' ? defaultKey : null),
-  } as unknown as BrainEngine;
+  } as unknown as BrainEngine);
 }
 
 // ── Priority 1: explicit flag ──────────────────────────────
@@ -184,7 +185,7 @@ describe('getDefaultSourcePath', () => {
     sourcePaths: Record<string, string | null>,
     defaultKey: string | null,
   ): BrainEngine {
-    return {
+    return withTypedSourceReads({
       kind: 'pglite',
       executeRaw: async <T>(sql: string, params?: unknown[]): Promise<T[]> => {
         if (sql.includes('SELECT id FROM sources WHERE id = $1')) {
@@ -208,7 +209,7 @@ describe('getDefaultSourcePath', () => {
         return [];
       },
       getConfig: async (key: string) => (key === 'sources.default' ? defaultKey : null),
-    } as unknown as BrainEngine;
+    } as unknown as BrainEngine);
   }
 
   test('returns local_path of resolved default source', async () => {
@@ -224,20 +225,20 @@ describe('getDefaultSourcePath', () => {
   });
 
   test('throws on DB error (does not silently swallow)', async () => {
-    const engine = {
+    const engine = withTypedSourceReads({
       kind: 'pglite',
       executeRaw: async () => {
         throw new Error('connection refused');
       },
       getConfig: async () => null,
-    } as unknown as BrainEngine;
+    } as unknown as BrainEngine);
     await expect(getDefaultSourcePath(engine, '/random/dir')).rejects.toThrow(/connection refused/);
   });
 
   test('falls back to legacy sync.repo_path config when sources.local_path is null', async () => {
     // Pre-v0.18 brains: 'default' source exists but local_path is NULL; the
     // repo path lives in the global config table under sync.repo_path.
-    const engine = {
+    const engine = withTypedSourceReads({
       kind: 'pglite',
       executeRaw: async <T>(sql: string, params?: unknown[]): Promise<T[]> => {
         if (sql.includes('SELECT id FROM sources WHERE id = $1')) {
@@ -256,7 +257,7 @@ describe('getDefaultSourcePath', () => {
         if (key === 'sync.repo_path') return '/legacy/brain/path';
         return null;
       },
-    } as unknown as BrainEngine;
+    } as unknown as BrainEngine);
     const path = await getDefaultSourcePath(engine, '/random/dir');
     expect(path).toBe('/legacy/brain/path');
   });

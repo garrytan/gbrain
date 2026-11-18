@@ -16,6 +16,7 @@ import type { ChunkMove } from './page-state/chunk-moves.ts';
 import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence-state.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
+import type { ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, MentionDueQuery, SiblingCandidateQuery, SiblingCandidateRow } from './engine-sql/entity-reads.ts';
 export type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions, PageMutationPrecondition, PageWithdrawal } from './page-state/types.ts';
 import type {
   Page, PageInput, PageFilters, GetPageOpts, PageReadScope, PageReadPolicy,
@@ -2846,6 +2847,30 @@ export interface BrainEngine {
    * database role cannot read the folder access tables. A failed read throws; callers that count it as restricted catch.
    */
   isFolderRestricted(sourceId: string, slug: string): Promise<boolean>;
+
+  // Entity and mention reads (engine-sql/entity-reads.ts): the statements the CLI ran through executeRaw.
+  /** The newest mention pass time (ISO, UTC, whole seconds) over every source or one source; null when no pass ran. */
+  readMentionLastPass(sourceId?: string | null): Promise<string | null>;
+  /**
+   * Live pages due for the mention pass (no mention state, or state behind the page's content or `mentionVersion`), in
+   * one source or every source; `aliases` also counts pages of those types whose derived aliases are behind.
+   */
+  countPagesDueForMentions(q: MentionDueQuery): Promise<number>;
+  /**
+   * Live pages of one source of the given types whose lowercased title is `subject` or ends with `: ` and it, by slug,
+   * at most `limit`, with frontmatter `identity` as text. `excludePrivate` and `excludeQuarantined` filter candidates.
+   */
+  readIdentitySiblingCandidates(sourceId: string, q: SiblingCandidateQuery): Promise<SiblingCandidateRow[]>;
+  /** The first of `slugs` holding a live page that is (`retired: true`), is not (`false`) or is either (omitted) a retired page (`retiredPageSql`). */
+  findExactSlug(sourceId: string, slugs: readonly string[], opts?: { retired?: boolean }): Promise<string | null>;
+  /** The link-extraction lag row (`extractionLagStatement`) under a `timeoutMs` bound (default 10 s; PGLite ignores it). */
+  readExtractionLagCounts(q: ExtractionLagQuery): Promise<ExtractionLagCounts | undefined>;
+  /**
+   * Live pages of one source, by slug or updated since a database timestamp, that carry a privacy label gbrain does not
+   * recognize and no visibility key (`ignoredPrivacyLabelSql`), at most `limit` (default 100,000), in no set order.
+   */
+  readIgnoredPrivacyLabelPages(sourceId: string, scope: { slugs: readonly string[] } | { since: string },
+    opts?: { limit?: number; timeoutMs?: number }): Promise<IgnoredLabelPageRow[]>;
 
   // Migration support
   runMigration(version: number, sql: string): Promise<void>;

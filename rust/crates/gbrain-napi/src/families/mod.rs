@@ -3,6 +3,7 @@
 //! so building a family never edits this list.
 
 mod chunks;
+mod cli_entities;
 mod config;
 mod graph;
 mod journal;

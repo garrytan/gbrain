@@ -973,16 +973,10 @@ export async function runImport(
   if (imported > 0) {
     try {
       const sid = sourceId ?? 'default';
-      const rows = await engine.executeRaw<{ total: string | number; untyped: string | number }>(
-        `SELECT
-           COUNT(*)::text AS total,
-           COUNT(*) FILTER (WHERE type IS NULL OR type = '')::text AS untyped
-         FROM pages
-         WHERE source_id = $1 AND deleted_at IS NULL`,
-        [sid],
-      );
-      const total = Number(rows[0]?.total ?? 0);
-      const untyped = Number(rows[0]?.untyped ?? 0);
+      // pages.type is NOT NULL, so the untyped pages are the empty-type bucket.
+      const stats = await engine.getStats({ sourceId: sid });
+      const total = Number(stats.page_count);
+      const untyped = Number(stats.pages_by_type[''] ?? 0);
       if (total > 0 && untyped / total >= 0.1) {
         const pct = ((untyped / total) * 100).toFixed(1);
         console.error(

@@ -150,16 +150,11 @@ export function tallyIgnoredLabels(pages: Iterable<IgnoredPrivacyLabel[]>): { la
  * Only pages that carry a label key are read (the GIN prefilter), at most SCAN_CAP of them; null when there are none or
  * the read fails, so the notice never fails a run.
  */
-export async function ignoredPrivacyLabelRunNotice(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string,
+export async function ignoredPrivacyLabelRunNotice(engine: Pick<BrainEngine, 'executeRaw' | 'readIgnoredPrivacyLabelPages'>, sourceId: string,
   scope: { slugs: readonly string[] } | { since: string }, run: 'import' | 'sync'): Promise<Notice | null> {
   if ('slugs' in scope && !scope.slugs.length) return null;
   try {
-    const rows = await engine.executeRaw<{ type: string | null; frontmatter: Record<string, unknown> | null }>(
-      `SELECT p.type, p.frontmatter FROM pages p
-        WHERE p.source_id = $1 AND ${'slugs' in scope ? 'p.slug = ANY($2::text[])' : 'p.updated_at >= $2::timestamptz'} AND p.deleted_at IS NULL
-          AND NOT (p.frontmatter ? 'readable_by') AND p.folder_rule_ids IS NULL
-          AND ${privacyLabelKeySql('p')} AND ${ignoredPrivacyLabelSql('p')}
-        LIMIT ${SCAN_CAP}`, [sourceId, 'slugs' in scope ? [...new Set(scope.slugs)] : scope.since], { timeoutMs: NOTICE_READ_TIMEOUT_MS });
+    const rows = await engine.readIgnoredPrivacyLabelPages(sourceId, scope);
     const tally = tallyIgnoredLabels(rows.map(row => ignoredPrivacyLabels(row)));
     if (!tally.pages) return null;
     return ignoredPrivacyLabelNotice({ ...tally, repo: await sourceHasRepo(engine, sourceId), sourceId, run });

@@ -38,6 +38,7 @@ import * as vectors from './vectors.ts';
 import * as embeddings from './embeddings.ts';
 import * as transactions from './transactions.ts';
 import * as relations from './relations.ts';
+import * as cliEntities from './cli-entities.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
 const initSchema: StoreMember<[], void> = async () => undefined;
@@ -51,6 +52,7 @@ export const STORE_MEMBERS = {
   ...pageOps, ...extraction, ...aliases, ...pageBody, ...facts, ...ontology, ...takes, ...contradictions, ...dream,
   ...evalCapture, ...codeEdges, ...salience, ...stats, ...rawFiles, ...linkQueries, ...timelineQueries, ...keyword,
   ...chunkQueries, ...vectors, ...embeddings, ...transactions, ...relations,
+  ...cliEntities,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

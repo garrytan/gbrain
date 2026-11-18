@@ -13,6 +13,7 @@ import { execFileSync } from 'child_process';
 import { join } from 'path';
 import { runSources } from '../src/commands/sources.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { withTypedSourceReads } from './helpers/typed-source-reads.ts';
 
 // ── Stub engine that records queries ───────────────────────
 
@@ -44,7 +45,7 @@ function makeStub(rowsByPattern: Record<string, unknown[]> = {}): {
   };
 
   // Minimal BrainEngine stub — only the methods sources.ts touches.
-  const engine = {
+  const engine = withTypedSourceReads({
     kind: 'pglite' as const,
     executeRaw,
     // The strict mode reader is a typed method; it answers from the same fake rows as executeRaw.
@@ -53,7 +54,7 @@ function makeStub(rowsByPattern: Record<string, unknown[]> = {}): {
     transaction: async (fn: (tx: BrainEngine) => Promise<unknown>) => fn(engine),
     // Unused methods throw if called accidentally during these tests.
     getConfig: async () => null,
-  } as unknown as BrainEngine;
+  } as unknown as BrainEngine);
 
   return { engine, calls, configSet };
 }
@@ -233,10 +234,21 @@ describe('sources list', () => {
       'COUNT(*)::int AS n FROM pages': [{ n: 1 }],
     });
 
-    await runSources(engine, ['list']);
+    const asked: unknown[] = [];
+    const getStats = engine.getStats.bind(engine);
+    (engine as { getStats: unknown }).getStats = (opts: unknown) => { asked.push(opts); return getStats(opts as never); };
+    const lines: string[] = [];
+    const logSpy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => { lines.push(a.map(String).join(' ')); });
+    try {
+      await runSources(engine, ['list']);
+    } finally {
+      logSpy.mockRestore();
+    }
 
-    const count = calls.find(c => c.sql.includes('COUNT(*)::int AS n FROM pages'));
-    expect(count?.sql).toContain('deleted_at IS NULL');
+    // The count comes from the typed page count, which counts live pages only, scoped to this one source.
+    expect(asked).toEqual([{ sourceIds: ['default'] }]);
+    expect(calls.some(c => c.sql.includes('ORDER BY (id = \'default\') DESC'))).toBe(true);
+    expect(lines.find(l => l.includes('default'))).toContain('1');
   });
 
   test('distinguishes explicit false / absent key / explicit true in the human-readable label', async () => {

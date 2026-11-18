@@ -23,6 +23,7 @@ import {
   formatSoleNonDefaultNudge,
 } from '../src/core/source-resolver.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { withTypedSourceReads } from './helpers/typed-source-reads.ts';
 
 type StubSource = { id: string; local_path: string | null; archived?: boolean; config?: Record<string, unknown> };
 
@@ -31,7 +32,7 @@ function makeStub(
   globalDefault: string | null = null,
   opts?: { defaultActivePages?: number; pagesProbeThrows?: boolean },
 ) {
-  return {
+  return withTypedSourceReads({
     kind: 'pglite' as const,
     async executeRaw<T>(sql: string, _params?: unknown[]): Promise<T[]> {
       // Query shapes hit in the resolver:
@@ -67,7 +68,7 @@ function makeStub(
     async getConfig(_key: string): Promise<string | null> {
       return globalDefault;
     },
-  } as unknown as Parameters<typeof resolveSourceId>[0];
+  } as unknown as Parameters<typeof resolveSourceId>[0]);
 }
 
 describe('#1434 — sole_non_default tier', () => {

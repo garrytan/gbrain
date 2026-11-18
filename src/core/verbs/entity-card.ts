@@ -592,7 +592,7 @@ async function assembleCard(
   const worldOnly = worldOnlyFacts(remote);
   const visibility = worldOnly ? (['world'] as ('private' | 'world')[]) : undefined;
   // Facts saved about this entity may sit under a sibling page or the bare subject slug (siblings.ts).
-  const factSlugs = await factEntitySlugs(engine, sourceId, pageSlug, { excludePrivate }).catch(() => [pageSlug]);
+  const factSlugs = await factEntitySlugs(engine, sourceId, pageSlug, { excludePrivate, title: row.title }).catch(() => [pageSlug]);
   const inboundPrivacy = (excludePrivate
     ? ` AND ${privatePagesFilterForCaller('f')} AND ${privateLinkOriginFilterForCaller('l')}`
     : '') + ` AND (l.origin_page_id IS NULL OR EXISTS (SELECT 1 FROM pages lo WHERE lo.id = l.origin_page_id AND lo.deleted_at IS NULL${remote ? ' AND lo.source_id = $2' : ''}))`;

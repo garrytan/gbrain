@@ -27,6 +27,7 @@ import { resolveBrainId } from '../src/core/brain-resolver.ts';
 import { HOST_BRAIN_ID } from '../src/core/brain-registry.ts';
 import { autoDetectSkillsDir } from '../src/core/repo-root.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { withTypedSourceReads } from './helpers/typed-source-reads.ts';
 
 // ── helpers ────────────────────────────────────────────────
 
@@ -53,7 +54,7 @@ function fakeStats(opts: { uid: number; mode: number; symlink?: boolean }): Stat
 
 /** Stub engine for resolveSourceId: registers `ids`, no local_paths, no default. */
 function stubEngine(ids: string[]): BrainEngine {
-  return {
+  return withTypedSourceReads({
     kind: 'pglite',
     executeRaw: async <T>(sql: string, params?: unknown[]): Promise<T[]> => {
       if (sql.includes('SELECT id FROM sources WHERE id = $1')) {
@@ -64,7 +65,7 @@ function stubEngine(ids: string[]): BrainEngine {
       return [] as unknown as T[];
     },
     getConfig: async () => null,
-  } as unknown as BrainEngine;
+  } as unknown as BrainEngine);
 }
 
 // ── isTrustedDotfile (synthetic Stats — precise branch coverage) ──

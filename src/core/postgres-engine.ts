@@ -177,6 +177,7 @@ import { searchKeywordCJK as searchKeywordCJKImpl } from './engine-sql/cjk-searc
 import { KeywordTimeoutNegativeCache, keywordRerunPoolIdle } from './postgres-engine/keyword-timeout-cache.ts';
 import * as titlesImpl from './engine-sql/titles.ts';
 import * as keywordPagesImpl from './engine-sql/keyword-pages.ts';
+import * as entityReadsImpl from './engine-sql/entity-reads.ts';
 import type { CjkKeywordCtx } from './search/cjk-keyword-sql.ts';
 import { postgresExecutor, type RunUnsafeOpts } from './engine-sql/dialect-postgres.ts';
 
@@ -1076,6 +1077,13 @@ export class PostgresEngine implements BrainEngine {
   applyTransactionSettings(names: readonly string[], values: readonly string[]) { return transactionSettingsImpl.applyTransactionSettings(this.autocommitSql, names, values); }
   readLedgerSource(sourceId: string, opts?: { batch?: boolean }) { return this.preparationRead(exec => beliefImpl.readLedgerSource(unscopedExecutor(exec, 'belief: ledger source probe ran unscoped through executeRaw'), sourceId, opts), opts?.batch); }
   isFolderRestricted(sourceId: string, slug: string) { return this.preparationRead(exec => accessControlImpl.isFolderRestricted(unscopedExecutor(exec, 'access: folder rule read ran unscoped through executeRaw'), sourceId, slug)); }
+  // Entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts).
+  readMentionLastPass(sourceId?: string | null) { return this.preparationRead(exec => entityReadsImpl.readMentionLastPass(unscopedExecutor(exec, 'entities: mention pass time ran unscoped through executeRaw'), sourceId)); }
+  countPagesDueForMentions(q: entityReadsImpl.MentionDueQuery) { return this.preparationRead(exec => entityReadsImpl.countPagesDueForMentions(unscopedExecutor(exec, 'entities: mention-due count ran unscoped through executeRaw'), q)); }
+  readIdentitySiblingCandidates(sourceId: string, q: entityReadsImpl.SiblingCandidateQuery) { return this.preparationRead(exec => entityReadsImpl.readIdentitySiblingCandidates(unscopedExecutor(exec, 'entities: sibling candidates ran unscoped through executeRaw'), sourceId, q)); }
+  findExactSlug(sourceId: string, slugs: readonly string[], opts?: { retired?: boolean }) { return this.preparationRead(exec => entityReadsImpl.findExactSlug(unscopedExecutor(exec, 'entities: exact slug ran unscoped through executeRaw'), sourceId, slugs, opts)); }
+  readExtractionLagCounts(q: entityReadsImpl.ExtractionLagQuery) { return entityReadsImpl.readExtractionLagCounts(this, q); }
+  readIgnoredPrivacyLabelPages(sourceId: string, scope: { slugs: readonly string[] } | { since: string }, opts?: { limit?: number; timeoutMs?: number }) { return entityReadsImpl.readIgnoredPrivacyLabelPages(this, sourceId, scope, opts); }
   async listSourceLocalPaths(): Promise<string[]> {
     return this.preparationRead(exec => sourcesImpl.listSourceLocalPaths(unscopedExecutor(exec, 'sources: unscoped on master (the filesystem lock read it through executeRaw)')));
   }

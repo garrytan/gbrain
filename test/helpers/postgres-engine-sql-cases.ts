@@ -42,6 +42,7 @@ const OOS = {
   dream: 'out-of-scope:dream-verdicts',
   raw: 'out-of-scope:raw-data',
   stub: 'out-of-scope:no-sql-stub',
+  entityReads: 'out-of-scope:entity-reads (born in engine-sql/entity-reads.ts; pinned by test/engine-parity/entity-reads.test.ts)',
   importGuards: 'out-of-scope:import-guards (born in engine-sql/persistence-state.ts, transaction-settings.ts, belief.ts, access-control.ts; pinned by test/engine-parity/import-path.test.ts)',
   searchReads: 'out-of-scope:search-reads (born in engine-sql/search-reads.ts; pinned by test/engine-parity/search-reads.test.ts)',
   importWrites: 'out-of-scope:import-writes (born in engine-sql/chunks.ts, tags.ts, pages.ts; pinned by test/engine-parity/import-writes.test.ts)',
@@ -186,6 +187,9 @@ export const DOMAIN_OF: Record<string, string> = {
   'readManagedModeRows': OOS.importGuards, 'getSourceStrictness': OOS.importGuards, 'readPersistenceBrainId': OOS.importGuards,
   'readLocalWriterRow': OOS.importGuards, 'insertLocalWriterRow': OOS.importGuards, 'readTransactionSettings': OOS.importGuards,
   'applyTransactionSettings': OOS.importGuards, 'readLedgerSource': OOS.importGuards, 'isFolderRestricted': OOS.importGuards,
+  // entity and mention reads the CLI made through executeRaw
+  'readMentionLastPass': OOS.entityReads, 'countPagesDueForMentions': OOS.entityReads, 'readIdentitySiblingCandidates': OOS.entityReads,
+  'findExactSlug': OOS.entityReads, 'readExtractionLagCounts': OOS.entityReads, 'readIgnoredPrivacyLabelPages': OOS.entityReads,
   'logIngest': OOS.ingest, 'getIngestLog': OOS.ingest,
   'logEvalCandidate': OOS.eval, 'listEvalCandidates': OOS.eval, 'deleteEvalCandidatesBefore': OOS.eval,
   'logEvalCaptureFailure': OOS.eval, 'listEvalCaptureFailures': OOS.eval,
@@ -876,4 +880,23 @@ export const EXTRA_READ_CASES: SqlCase[] = [
     ['batch', (e) => e.readLedgerSource(SRC, { batch: true })],
   ]),
   ...variants('isFolderRestricted', [['default', (e) => e.isFolderRestricted(SRC, SLUG)]]),
+  ...variants('readMentionLastPass', [['default', (e) => e.readMentionLastPass()], ['sourceId', (e) => e.readMentionLastPass(SRC)]]),
+  ...variants('countPagesDueForMentions', [
+    ['default', (e) => e.countPagesDueForMentions({ sourceId: null, mentionVersion: 1 })],
+    ['sourceId+aliases', (e) => e.countPagesDueForMentions({ sourceId: SRC, mentionVersion: 1, aliases: { types: ['person'], version: 1 } })],
+  ]),
+  ...variants('readIdentitySiblingCandidates', [
+    ['default', (e) => e.readIdentitySiblingCandidates(SRC, { types: ['person'], subject: 'alice', limit: 5 })],
+    ['excludePrivate+excludeQuarantined', (e) => e.readIdentitySiblingCandidates(SRC, { types: ['person'], subject: 'alice', limit: 5, excludePrivate: true, excludeQuarantined: true })],
+  ]),
+  ...variants('findExactSlug', [
+    ['default', (e) => e.findExactSlug(SRC, [SLUG], { retired: false })],
+    ['retired', (e) => e.findExactSlug(SRC, [SLUG], { retired: true })],
+    ['any', (e) => e.findExactSlug(SRC, [SLUG, 'other/slug'])],
+  ]),
+  ...variants('readExtractionLagCounts', [['default', (e) => e.readExtractionLagCounts({ sourceId: SRC, versionTs: '2000-01-01T00:00:00Z', attendance: true, held: true })]]),
+  ...variants('readIgnoredPrivacyLabelPages', [
+    ['slugs', (e) => e.readIgnoredPrivacyLabelPages(SRC, { slugs: [SLUG] })],
+    ['since', (e) => e.readIgnoredPrivacyLabelPages(SRC, { since: '2000-01-01T00:00:00Z' }, { limit: 5 })],
+  ]),
 ];

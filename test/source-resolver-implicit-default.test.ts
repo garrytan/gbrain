@@ -17,6 +17,7 @@
 import { describe, test, expect, beforeEach, spyOn } from 'bun:test';
 import { resolveImplicitDefaultSourceId, __testing } from '../src/core/source-resolver.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { withTypedSourceReads } from './helpers/typed-source-reads.ts';
 
 function makeStub(opts: {
   defaultKey: string | null;
@@ -24,7 +25,7 @@ function makeStub(opts: {
   soleNonDefault?: string | null;
   defaultHasPages?: boolean;
 }): BrainEngine {
-  return {
+  return withTypedSourceReads({
     kind: 'pglite',
     executeRaw: async <T>(sql: string, params?: unknown[]): Promise<T[]> => {
       if (sql.includes('SELECT id FROM sources WHERE id = $1')) {
@@ -40,7 +41,7 @@ function makeStub(opts: {
       return [];
     },
     getConfig: async (key: string) => (key === 'sources.default' ? opts.defaultKey : null),
-  } as unknown as BrainEngine;
+  } as unknown as BrainEngine);
 }
 
 beforeEach(() => {

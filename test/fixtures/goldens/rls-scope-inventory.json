@@ -196,6 +196,28 @@
           "*"
         ]
       },
+      "countPagesDueForMentions#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "countPagesDueForMentions#sourceId+aliases": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "countStaleChunks#default": {
         "flagOffLanes": [
           "pool"
@@ -562,6 +584,39 @@
         "flagOnScopes": [
           "src-a"
         ]
+      },
+      "findExactSlug#any": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "findExactSlug#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "findExactSlug#retired": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
       },
       "findOntologyConflicts#default": {
         "flagOffLanes": [
@@ -2722,6 +2777,61 @@
           "*"
         ]
       },
+      "readExtractionLagCounts#default": {
+        "flagOffLanes": [
+          "reserved"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "reserved"
+        ],
+        "flagOnScopes": []
+      },
+      "readIdentitySiblingCandidates#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readIdentitySiblingCandidates#excludePrivate+excludeQuarantined": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readIgnoredPrivacyLabelPages#since": {
+        "flagOffLanes": [
+          "reserved"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "reserved"
+        ],
+        "flagOnScopes": []
+      },
+      "readIgnoredPrivacyLabelPages#slugs": {
+        "flagOffLanes": [
+          "reserved"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "reserved"
+        ],
+        "flagOnScopes": []
+      },
       "readLedgerSource#batch": {
         "flagOffLanes": [
           "pool"
@@ -2767,6 +2877,28 @@
         "flagOnScopes": []
       },
       "readManagedModeRows#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readMentionLastPass#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readMentionLastPass#sourceId": {
         "flagOffLanes": [
           "pool"
         ],
@@ -3853,6 +3985,7 @@
         "countKeywordPages": "direct",
         "countOnboardSignal": "none",
         "countPagesBy": "direct",
+        "countPagesDueForMentions": "none",
         "countStaleChunks": "direct",
         "countStaleFrontmatterKeyPages": "direct",
         "countStalePagesForExtraction": "direct",
@@ -3884,6 +4017,7 @@
         "findCandidateDuplicates": "none",
         "findDuplicatePage": "direct",
         "findDuplicatePages": "direct",
+        "findExactSlug": "none",
         "findOntologyConflicts": "none",
         "findOrphanPages": "none",
         "findPages": "direct",
@@ -3999,10 +4133,14 @@
         "putRawData": "none",
         "readCycleLocks": "none",
         "readEmbeddingStateCounts": "direct",
+        "readExtractionLagCounts": "none",
+        "readIdentitySiblingCandidates": "none",
+        "readIgnoredPrivacyLabelPages": "none",
         "readLedgerSource": "none",
         "readLocalWriterRow": "none",
         "readManagedModeRows": "none",
         "readManifest": "none",
+        "readMentionLastPass": "none",
         "readPageSnapshot": "direct",
         "readPageSnapshotsBatch": "direct",
         "readPersistenceBrainId": "none",

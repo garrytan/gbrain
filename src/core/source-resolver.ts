@@ -372,16 +372,13 @@ async function pickSoleNonDefaultSource(
   // The request's rows carry its answer already.
   const defaultHasPages = request
     ? Promise.resolve(request.some(row => row.default_has_pages))
-    : engine.executeRaw<{ one: number }>(
-      `SELECT 1 AS one FROM pages WHERE source_id = 'default' AND deleted_at IS NULL LIMIT 1`,
-    ).then(found => found.length > 0);
+    // Started in a microtask so a throw becomes a rejection: a failed probe keeps the pre-guard routing below.
+    : Promise.resolve().then(() => engine.getStats({ sourceId: 'default' })).then(stats => Number(stats.page_count) > 0);
   defaultHasPages.catch(() => {});
   let rows: Array<{ id: string; config?: unknown }> = request ? request.filter(row => row.local_path !== null && row.id !== 'default' && row.archived === false && parseSourceConfig(row.config).role !== 'storage_manifest') : [];
   if (!request) {
     try {
-      rows = await engine.executeRaw<{ id: string; config: unknown }>(
-        `SELECT id, config FROM sources WHERE local_path IS NOT NULL AND id != 'default' AND archived = false AND config->>'role' IS DISTINCT FROM 'storage_manifest'`,
-      );
+      rows = (await engine.listAllSources({ localPathOnly: true })).filter(row => row.id !== 'default');
     } catch {
       rows = await engine.executeRaw<{ id: string }>(
         `SELECT id FROM sources WHERE local_path IS NOT NULL AND id != 'default'`,

@@ -276,6 +276,13 @@ export const RUST_ENGINE_MEMBERS = {
   readLedgerSource: 'persistence_journal',
   // access_control
   isFolderRestricted: 'access_control',
+  // pages: entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts)
+  readMentionLastPass: 'pages',
+  countPagesDueForMentions: 'pages',
+  readIdentitySiblingCandidates: 'pages',
+  findExactSlug: 'pages',
+  readExtractionLagCounts: 'pages',
+  readIgnoredPrivacyLabelPages: 'pages',
   // minion_queue (the Rust plan ships cycle locks with the minion queue: docs/designs/RUST_ENGINE.md, "Cycle locks")
   acquireCycleLock: 'minion_queue',
   refreshCycleLock: 'minion_queue',

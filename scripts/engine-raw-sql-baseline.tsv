@@ -186,7 +186,7 @@ src/commands/google.ts	execute_raw	1
 src/commands/graph-query.ts	execute_raw	1
 src/commands/guests.ts	execute_raw	1
 src/commands/import-calls.ts	execute_raw	3	GST-2904 (open before #9641): reads the committed call page's id, frontmatter readers and whether a page_label_guards row exists, locked FOR UPDATE inside the maintenance transaction that raises the guard; no typed engine method exists yet
-src/commands/import.ts	execute_raw	6
+src/commands/import.ts	execute_raw	5
 src/commands/init-embedding-plane.ts	execute_raw	1
 src/commands/init-prefer-postgres.ts	execute_raw	5
 src/commands/init.ts	execute_raw	1
@@ -251,7 +251,7 @@ src/commands/sources-strategy.ts	execute_raw	3
 src/commands/sources-sync-enabled.ts	execute_raw	1
 src/commands/sources-trust.ts	execute_raw	2
 src/commands/sources-writers.ts	execute_raw	1
-src/commands/sources.ts	execute_raw	15
+src/commands/sources.ts	execute_raw	14
 src/commands/status.ts	execute_raw	7
 src/commands/storage.ts	execute_raw	1
 src/commands/sweep.ts	execute_raw	2
@@ -444,7 +444,7 @@ src/core/embedding-state.ts	execute_raw	1
 src/core/enrichment-service.ts	execute_raw	2
 src/core/entities/near-name.ts	execute_raw	1
 src/core/entities/resolve-on-save.ts	execute_raw	1	GBRA-574 F #9674 (opened before this ratchet): the live-page check before keeping an unbacked name tag
-src/core/entities/resolve.ts	execute_raw	13
+src/core/entities/resolve.ts	execute_raw	12
 src/core/entity-identity.ts	execute_raw	6
 src/core/eval-contradictions/cost-prompt.ts	execute_raw	1
 src/core/eval-contradictions/scoped-read.ts	execute_raw	2
@@ -457,7 +457,7 @@ src/core/extract-takes-from-pages.ts	execute_raw	1
 src/core/extract-timeline-from-meetings.ts	execute_raw	5
 src/core/extract/receipt-writer.ts	execute_raw	2
 src/core/extract/rollup-writer.ts	execute_raw	3
-src/core/extraction-lag.ts	execute_raw	2
+src/core/extraction-lag.ts	execute_raw	1
 src/core/extraction-watermark.ts	execute_raw	5
 src/core/facts/absorb-log.ts	execute_raw	1
 src/core/facts/backstop.ts	execute_raw	1
@@ -588,10 +588,10 @@ src/core/mcp-usage.ts	execute_raw	3
 src/core/meetings/meetings-source.ts	execute_raw	3
 src/core/mentions/coverage.ts	execute_raw	4
 src/core/mentions/newer-mentions.ts	execute_raw	1
-src/core/mentions/pass.ts	execute_raw	35
+src/core/mentions/pass.ts	execute_raw	33
 src/core/mentions/referrers.ts	execute_raw	11
-src/core/mentions/siblings.ts	execute_raw	4
-src/core/mentions/stale.ts	execute_raw	2
+src/core/mentions/siblings.ts	execute_raw	1
+src/core/mentions/stale.ts	execute_raw	1
 src/core/migrate.ts	execute_raw	2
 src/core/migration-preludes.ts	execute_raw	12
 src/core/minions/admission.ts	execute_raw	1
@@ -1078,7 +1078,7 @@ src/core/search/fact-relevance.ts	execute_raw	14	came from master #9627 (held pr
 src/core/search/facts-arm.ts	execute_raw	3
 src/core/search/feedback-boost.ts	execute_raw	1
 src/core/search/frontmatter-where.ts	execute_raw	1
-src/core/search/ignored-privacy-labels.ts	execute_raw	3
+src/core/search/ignored-privacy-labels.ts	execute_raw	2
 src/core/search/image-vector-presence.ts	execute_raw	1
 src/core/search/private-visibility.ts	execute_raw	3
 src/core/search/projection-readiness.ts	execute_raw	2
@@ -1122,7 +1122,7 @@ src/core/slack/slack-source.ts	execute_raw	4
 src/core/source-default-search.ts	execute_raw	2
 src/core/source-delete.ts	execute_raw	2
 src/core/source-health.ts	execute_raw	6
-src/core/source-resolver.ts	execute_raw	15
+src/core/source-resolver.ts	execute_raw	13
 src/core/sources-load.ts	execute_raw	4
 src/core/sources-not-readable.ts	execute_raw	1
 src/core/sources-ops.ts	execute_raw	16	#9634, pre-ratchet: +1 is the INSERT that registers a database-only api source row (imessage); no typed engine method exists yet

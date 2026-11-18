@@ -18,6 +18,7 @@ import {
 } from '../src/core/source-resolver.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { withTypedSourceReads } from './helpers/typed-source-reads.ts';
 
 // Stub engine same shape as source-resolver.test.ts
 function makeStub(
@@ -25,7 +26,7 @@ function makeStub(
   paths: Array<{ id: string; local_path: string }>,
   defaultKey: string | null,
 ): BrainEngine {
-  return {
+  return withTypedSourceReads({
     kind: 'pglite',
     executeRaw: async <T>(sql: string, params?: unknown[]): Promise<T[]> => {
       if (sql.includes('SELECT id FROM sources WHERE id = $1')) {
@@ -40,7 +41,7 @@ function makeStub(
       return [];
     },
     getConfig: async (key: string) => (key === 'sources.default' ? defaultKey : null),
-  } as unknown as BrainEngine;
+  } as unknown as BrainEngine);
 }
 
 describe('SOURCE_TIER_NAMES ordering matches resolveSourceId priority', () => {

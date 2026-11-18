@@ -101,6 +101,8 @@ const VETTED_BUILDERS: Record<string, string> = {
   rankingLinkSql: 'src/core/link-ranking-policy.ts: constant non-ranking link-type predicate (code-constant type names) over a caller alias',
   boundedBodyPrefixSql: 'src/core/page-window/bounded-lead.ts: constant bounded body-prefix expression (BOUNDED_PREFIX_BYTES literal) over a caller page alias; no values',
   retiredPageSql: 'src/core/entities/resolve.ts: constant retired-page frontmatter predicate over a caller alias; no values',
+  privacyLabelKeySql: 'src/core/search/ignored-privacy-labels.ts: constant has-a-privacy-label-key predicate (code-constant PRIVACY_LABEL_KEYS) over a caller alias; no values',
+  ignoredPrivacyLabelSql: 'src/core/search/ignored-privacy-labels.ts: constant ignored-privacy-label predicate (code-constant keys and type names) over a caller alias; no values',
   vectorLiteralSql: 'src/core/engine-sql/facts.ts: master\'s inlined vector literal; toPgVectorLiteral output (numbers joined by commas) + a ::vector/::halfvec constant',
   temporalLinkJoinSql: 'src/core/link-validity.ts: constant LEFT JOIN onto link_relationships over a caller alias; scope is one of two literals',
   projectionEligibleSql: 'src/core/eligibility/sql.ts: read-eligibility predicate over a caller alias; splices only closed tier and reason-family vocabularies (no values)',

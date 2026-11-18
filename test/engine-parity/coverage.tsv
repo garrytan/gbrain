@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 236/236
+# covered: 242/242
 # lifecycle: 9/9
 # pages: 28/28
 # search: 7/7
@@ -28,6 +28,7 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 9/9
+# entity_reads: 6/6
 # cycle_locks: 6/6
 # raw_sql: 4/4
 # code_edges: 5/5
@@ -245,6 +246,12 @@ readTransactionSettings	import_guards	yes	1	no	yes	yes	refuses:transactions
 applyTransactionSettings	import_guards	yes	1	no	yes	yes	refuses:transactions
 readLedgerSource	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
 isFolderRestricted	import_guards	yes	1	no	yes	yes	refuses:access_control
+readMentionLastPass	entity_reads	yes	1	no	yes	yes	serves
+countPagesDueForMentions	entity_reads	yes	1	no	yes	yes	serves
+readIdentitySiblingCandidates	entity_reads	yes	2	no	yes	yes	serves
+findExactSlug	entity_reads	yes	1	no	yes	yes	serves
+readExtractionLagCounts	entity_reads	yes	1	no	yes	yes	refuses:pages
+readIgnoredPrivacyLabelPages	entity_reads	yes	1	no	yes	yes	serves
 acquireCycleLock	cycle_locks	yes	8	no	yes	yes	refuses:minion_queue
 refreshCycleLock	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
 releaseCycleLock	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
