@@ -77,6 +77,6 @@ write between them reuse one decoded index. The cache is fed only from committed
 Chunk vectors are written by the chunk writes (`upsertChunks` / `sealChunks` with an `embedding`), take
 vectors by `updateTakeEmbeddings`; both raise the vector generation. The parity test
 (`test/vector-embedding-parity.test.ts`, Rust arm) seeds its fixture through those writes and runs every
-`searchVector` and `hybridSearch` case. On this engine the hybrid search's keyword arm still refuses the
-`embeddingColumn` option hybrid search passes it and fails open, so the hybrid cases with a keyword hit
-expect the vector order alone until the keyword member serves that call.
+`searchVector` case. Its `hybridSearch` case expects every hybrid query to refuse with
+`engine_capability_missing` naming `cosinesByChunkIds`: the pipeline rescores the vector arm's candidates
+with that search-reads member, which the Rust engine does not serve yet.
