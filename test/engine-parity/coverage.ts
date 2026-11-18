@@ -200,6 +200,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'insertDecideSpend', 'dailyDecideSpend', 'listDecideSpendBySlot',
     'insertDecideReceipts', 'pruneDecideReceipts', 'listDecideReceiptStats', 'decideSlotUsage', 'decideConflictNoEntityCounts',
     'listDecideReplayReceipts', 'listDecideResolvedModels', 'listDecideMixedModelDecisions',
+    'insertDecideCalibration', 'storeDecideQualification', 'listDecideCalibrations', 'getDecideCalibration', 'setDecideCalibrationRetired',
   ],
 };
 

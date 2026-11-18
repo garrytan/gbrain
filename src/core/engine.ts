@@ -3945,4 +3945,14 @@ export interface BrainEngine {
   listDecideResolvedModels(sinceHours: number): Promise<DecideStoreSql.DecideResolvedModel[]>;
   /** Per slot, the receipts in the window marked `mixed_model`. */
   listDecideMixedModelDecisions(sinceHours: number): Promise<Array<{ slot: string; n: number }>>;
+  /** Record one calibration, stamped now, and answer its id. */
+  insertDecideCalibration(row: DecideStoreSql.DecideCalibrationInsert): Promise<number>;
+  /** Replace the qualification columns of calibration `id` and stamp `qualified_at`; an unknown id changes nothing. */
+  storeDecideQualification(id: number, q: DecideStoreSql.DecideQualification): Promise<void>;
+  /** The calibrations by slot (byte order), newest first; retired ones only with `includeRetired`. */
+  listDecideCalibrations(opts?: { slot?: string; includeRetired?: boolean }): Promise<DecideStoreSql.DecideCalibration[]>;
+  /** Calibration `id`, or null. */
+  getDecideCalibration(id: number): Promise<DecideStoreSql.DecideCalibration | null>;
+  /** Retire calibration `id` or bring it back; answers whether the row exists. */
+  setDecideCalibrationRetired(id: number, retired: boolean): Promise<boolean>;
 }

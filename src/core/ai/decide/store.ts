@@ -1,7 +1,9 @@
 /**
  * decide storage: receipts, the spend ledger, calibrations and internal state,
- * read and written through `engine.executeRaw` (the search/telemetry.ts and
- * query-cache.ts pattern), so no BrainEngine method and no engine facade grows.
+ * read and written through the BrainEngine decide-store members (SQL once in
+ * engine-sql/decide-store.ts, a record store on the Rust engine), so a brain that
+ * is not SQL serves them too. This file keeps the buffering, the caches and the
+ * share maths; it holds no SQL.
  *
  * Receipts and spend rows are buffered per process and flushed
  * fire-and-forget off the hot path (threshold or 5 s unref'd timer). The
@@ -12,6 +14,7 @@
  */
 import { createHmac, randomBytes } from 'node:crypto';
 import type { BrainEngine } from '../../engine.ts';
+import type { DecideCalibration } from '../../engine-sql/decide-store.ts';
 import { engineKey } from '../../engine-key.ts';
 import { registerBackgroundWorkDrainer, type BackgroundWorkDrainMode } from '../../background-work.ts';
 import { isValidOutcome } from './outcomes.ts';
@@ -271,65 +274,37 @@ export interface CalibrationRow {
 
 export type NewCalibration = Omit<CalibrationRow, 'id' | 'created_at' | 'retired_at' | 'qualified_at' | 'qualification' | 'action_precision_lb' | 'policy_fingerprint'>;
 
-const toNum = (v: unknown): number | null => v === null || v === undefined ? null : Number(v);
-const toTime = (v: unknown): string | null => v === null || v === undefined ? null : v instanceof Date ? v.toISOString() : String(v);
+const isoOrNull = (d: Date | null): string | null => (d === null ? null : d.toISOString());
 
-function normalizeCalibration(r: Record<string, unknown>): CalibrationRow {
+function normalizeCalibration(r: DecideCalibration): CalibrationRow {
   return {
-    ...(r as unknown as CalibrationRow),
-    id: Number(r.id),
-    threshold: Number(r.threshold),
-    min_keep: toNum(r.min_keep),
-    metric_value: toNum(r.metric_value),
-    ece: toNum(r.ece),
-    retest_sd: toNum(r.retest_sd),
-    repack_sd: toNum(r.repack_sd),
-    action_precision_lb: toNum(r.action_precision_lb),
-    n: Number(r.n),
-    calibrate_only: r.calibrate_only === true || r.calibrate_only === 't',
-    created_at: toTime(r.created_at)!,
-    retired_at: toTime(r.retired_at),
-    qualified_at: toTime(r.qualified_at),
+    ...r,
+    slot: r.slot as DecideSlot,
+    created_at: r.created_at.toISOString(),
+    retired_at: isoOrNull(r.retired_at),
+    qualified_at: isoOrNull(r.qualified_at),
   };
 }
 
-export async function insertCalibration(engine: BrainEngine, c: NewCalibration): Promise<number> {
-  const rows = await engine.executeRaw<{ id: number | string }>(
-    `INSERT INTO decide_calibrations (slot, call_site, provider, model_resolved, threshold, min_keep, metric, metric_value, ece,
-       retest_sd, repack_sd, n, dataset_hash, split_hash, calibrate_ids_hash, calibrate_only, pack_shape, notes)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`,
-    [c.slot, c.call_site, c.provider, c.model_resolved, c.threshold, c.min_keep, c.metric, c.metric_value, c.ece,
-      c.retest_sd, c.repack_sd, c.n, c.dataset_hash, c.split_hash, c.calibrate_ids_hash, c.calibrate_only, c.pack_shape, c.notes],
-  );
-  return Number(rows[0]!.id);
+export function insertCalibration(engine: BrainEngine, c: NewCalibration): Promise<number> {
+  return engine.insertDecideCalibration(c);
 }
 
-export async function storeQualification(engine: BrainEngine, id: number, q: { action_precision_lb: number | null; qualification: string; policy_fingerprint: string }): Promise<void> {
-  await engine.executeRaw(
-    'UPDATE decide_calibrations SET action_precision_lb = $2, qualification = $3, policy_fingerprint = $4, qualified_at = now() WHERE id = $1',
-    [id, q.action_precision_lb, q.qualification, q.policy_fingerprint],
-  );
+export function storeQualification(engine: BrainEngine, id: number, q: { action_precision_lb: number | null; qualification: string; policy_fingerprint: string }): Promise<void> {
+  return engine.storeDecideQualification(id, q);
 }
 
 export async function listCalibrations(engine: BrainEngine, filter: { slot?: DecideSlot; includeRetired?: boolean } = {}): Promise<CalibrationRow[]> {
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT * FROM decide_calibrations
-      WHERE ($1::text IS NULL OR slot = $1) AND ($2::boolean OR retired_at IS NULL)
-      ORDER BY slot, created_at DESC, id DESC`,
-    [filter.slot ?? null, filter.includeRetired ?? false],
-  );
-  return rows.map(normalizeCalibration);
+  return (await engine.listDecideCalibrations(filter)).map(normalizeCalibration);
 }
 
 export async function getCalibration(engine: BrainEngine, id: number): Promise<CalibrationRow | null> {
-  const rows = await engine.executeRaw<Record<string, unknown>>('SELECT * FROM decide_calibrations WHERE id = $1', [id]);
-  return rows[0] ? normalizeCalibration(rows[0]) : null;
+  const row = await engine.getDecideCalibration(id);
+  return row ? normalizeCalibration(row) : null;
 }
 
-export async function setCalibrationRetired(engine: BrainEngine, id: number, retired: boolean): Promise<boolean> {
-  const rows = await engine.executeRaw<{ id: number }>(
-    `UPDATE decide_calibrations SET retired_at = ${retired ? 'now()' : 'NULL'} WHERE id = $1 RETURNING id`, [id]);
-  return rows.length > 0;
+export function setCalibrationRetired(engine: BrainEngine, id: number, retired: boolean): Promise<boolean> {
+  return engine.setDecideCalibrationRetired(id, retired);
 }
 
 // ---------------------------------------------------------------------------

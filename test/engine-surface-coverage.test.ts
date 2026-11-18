@@ -145,6 +145,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'insertDecideSpend', 'dailyDecideSpend', 'listDecideSpendBySlot',
   'insertDecideReceipts', 'pruneDecideReceipts', 'listDecideReceiptStats', 'decideSlotUsage', 'decideConflictNoEntityCounts',
   'listDecideReplayReceipts', 'listDecideResolvedModels', 'listDecideMixedModelDecisions',
+  'insertDecideCalibration', 'storeDecideQualification', 'listDecideCalibrations', 'getDecideCalibration', 'setDecideCalibrationRetired',
   // Search
   'searchKeyword', 'countKeywordPages', 'searchKeywordPages', 'searchTitles', 'searchVector', 'getEmbeddingsByChunkIds',
   // Chunks

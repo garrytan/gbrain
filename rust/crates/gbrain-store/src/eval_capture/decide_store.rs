@@ -4,7 +4,9 @@
 //! Members: readDecideState, upsertDecideState, deleteDecideState, ensureDecideState,
 //! insertDecideSpend, dailyDecideSpend, listDecideSpendBySlot; and, in `receipts`, insertDecideReceipts,
 //! pruneDecideReceipts, listDecideReceiptStats, decideSlotUsage, decideConflictNoEntityCounts,
-//! listDecideReplayReceipts, listDecideResolvedModels, listDecideMixedModelDecisions.
+//! listDecideReplayReceipts, listDecideResolvedModels, listDecideMixedModelDecisions; and, in
+//! `calibrations`, insertDecideCalibration, storeDecideQualification, listDecideCalibrations,
+//! getDecideCalibration, setDecideCalibrationRetired.
 //!
 //! Keys (every record starts with `keys::EVAL_CAPTURE`, `Z`; this family owns sub-tags
 //! `0x10..=0x1F`):
@@ -17,21 +19,25 @@
 //! - Counter `M decide_spend_seq`.
 //! - `Z 0x13 <id u64 BE>` and `Z 0x14 <created_at u64 BE><id u64 BE>`, counter `M decide_receipt_id`: the
 //!   receipts and their time index (see `receipts`).
+//! - `Z 0x15 <id u64 BE>`, counter `M decide_calibration_id`: the calibrations (see
+//!   `calibrations`).
 //!
 //! Records are small and read whole. Nothing here has a foreign key, so nothing cascades.
 //! Floats are kept as their bit pattern: JSON text would not give every `f64` back exactly.
 
 use super::{not_null, timestamp};
 use crate::error::{Result, StoreError};
-use crate::kv::{prefix_end, KvRead, KvWrite};
+use crate::kv::{KvRead, KvWrite, prefix_end};
 use crate::links::no_nul;
 use crate::pages::next_id;
-use crate::{keys, put_json, Store};
+use crate::{Store, keys, put_json};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
+mod calibrations;
 mod receipts;
+pub use calibrations::{DecideCalibrationInput, DecideQualificationInput};
 pub use receipts::DecideReceiptInput;
 
 const STATE: u8 = 0x10;

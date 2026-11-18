@@ -335,3 +335,130 @@ export async function listDecideMixedModelDecisions(tx: Raw, sinceHours: number)
   );
   return rows.map((r) => ({ slot: String(r.slot), n: Number(r.n) }));
 }
+
+// ---------------------------------------------------------------- calibrations
+
+/**
+ * One `decide_calibrations` row to insert (store.ts's `NewCalibration` is assignable to it). Every column is bound as
+ * given, so a null in a NOT NULL column refuses the row (`calibrate_only` has a default but is always bound).
+ */
+export interface DecideCalibrationInsert {
+  slot: string;
+  call_site: string;
+  provider: string;
+  model_resolved: string;
+  threshold: number;
+  min_keep?: number | null;
+  metric: string;
+  metric_value?: number | null;
+  ece?: number | null;
+  retest_sd?: number | null;
+  repack_sd?: number | null;
+  n: number;
+  dataset_hash?: string | null;
+  split_hash?: string | null;
+  calibrate_ids_hash?: string | null;
+  calibrate_only: boolean;
+  pack_shape: string;
+  notes?: string | null;
+}
+
+/** One `decide_calibrations` row as the store hands it back: numbers as numbers, timestamps as `Date`s. */
+export interface DecideCalibration {
+  id: number;
+  slot: string;
+  call_site: string;
+  provider: string;
+  model_resolved: string;
+  threshold: number;
+  min_keep: number | null;
+  metric: string;
+  metric_value: number | null;
+  ece: number | null;
+  retest_sd: number | null;
+  repack_sd: number | null;
+  action_precision_lb: number | null;
+  qualification: string | null;
+  qualified_at: Date | null;
+  policy_fingerprint: string | null;
+  n: number;
+  dataset_hash: string | null;
+  split_hash: string | null;
+  calibrate_ids_hash: string | null;
+  calibrate_only: boolean;
+  pack_shape: string;
+  created_at: Date;
+  retired_at: Date | null;
+  notes: string | null;
+}
+
+export interface DecideQualification {
+  action_precision_lb: number | null;
+  qualification: string | null;
+  policy_fingerprint: string | null;
+}
+
+const dateOrNull = (v: unknown): Date | null => (v === null || v === undefined ? null : v instanceof Date ? v : new Date(String(v)));
+const textOrNull = (v: unknown): string | null => (v === null || v === undefined ? null : String(v));
+
+function toDecideCalibration(r: Record<string, unknown>): DecideCalibration {
+  return {
+    id: Number(r.id), slot: String(r.slot), call_site: String(r.call_site), provider: String(r.provider),
+    model_resolved: String(r.model_resolved), threshold: Number(r.threshold), min_keep: numOrNull(r.min_keep),
+    metric: String(r.metric), metric_value: numOrNull(r.metric_value), ece: numOrNull(r.ece),
+    retest_sd: numOrNull(r.retest_sd), repack_sd: numOrNull(r.repack_sd),
+    action_precision_lb: numOrNull(r.action_precision_lb), qualification: textOrNull(r.qualification),
+    qualified_at: dateOrNull(r.qualified_at), policy_fingerprint: textOrNull(r.policy_fingerprint), n: Number(r.n),
+    dataset_hash: textOrNull(r.dataset_hash), split_hash: textOrNull(r.split_hash),
+    calibrate_ids_hash: textOrNull(r.calibrate_ids_hash), calibrate_only: r.calibrate_only === true || r.calibrate_only === 't',
+    pack_shape: String(r.pack_shape), created_at: dateOrNull(r.created_at)!, retired_at: dateOrNull(r.retired_at),
+    notes: textOrNull(r.notes),
+  };
+}
+
+/** Record one calibration, stamped now, and answer its id (ids count up from 1). */
+export async function insertDecideCalibration(tx: Raw, c: DecideCalibrationInsert): Promise<number> {
+  const rows = await tx.executeRaw<{ id: number | string }>(
+    `INSERT INTO decide_calibrations (slot, call_site, provider, model_resolved, threshold, min_keep, metric, metric_value, ece,
+       retest_sd, repack_sd, n, dataset_hash, split_hash, calibrate_ids_hash, calibrate_only, pack_shape, notes)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`,
+    [c.slot, c.call_site, c.provider, c.model_resolved, c.threshold, c.min_keep ?? null, c.metric, c.metric_value ?? null, c.ece ?? null,
+      c.retest_sd ?? null, c.repack_sd ?? null, c.n, c.dataset_hash ?? null, c.split_hash ?? null, c.calibrate_ids_hash ?? null,
+      c.calibrate_only, c.pack_shape, c.notes ?? null],
+  );
+  return Number(rows[0]!.id);
+}
+
+/** Replace the three qualification columns of calibration `id` (null included) and stamp `qualified_at`. An id with no row changes nothing. */
+export async function storeDecideQualification(tx: Raw, id: number, q: DecideQualification): Promise<void> {
+  await tx.executeRaw(
+    'UPDATE decide_calibrations SET action_precision_lb = $2, qualification = $3, policy_fingerprint = $4, qualified_at = now() WHERE id = $1',
+    [id, q.action_precision_lb ?? null, q.qualification ?? null, q.policy_fingerprint ?? null],
+  );
+}
+
+/** The calibrations (retired ones only when asked for), by slot in byte order, then newest first, then highest id first. */
+export async function listDecideCalibrations(tx: Raw, opts: { slot?: string; includeRetired?: boolean } = {}): Promise<DecideCalibration[]> {
+  const rows = await tx.executeRaw<Record<string, unknown>>(
+    `SELECT * FROM decide_calibrations
+      WHERE ($1::text IS NULL OR slot = $1) AND ($2::boolean OR retired_at IS NULL)
+      ORDER BY slot COLLATE "C", created_at DESC, id DESC`,
+    [opts.slot ?? null, opts.includeRetired ?? false],
+  );
+  return rows.map(toDecideCalibration);
+}
+
+/** Calibration `id`, or null when there is none. */
+export async function getDecideCalibration(tx: Raw, id: number): Promise<DecideCalibration | null> {
+  const rows = await tx.executeRaw<Record<string, unknown>>('SELECT * FROM decide_calibrations WHERE id = $1', [id]);
+  return rows[0] ? toDecideCalibration(rows[0]) : null;
+}
+
+/** Retire calibration `id` (stamp `retired_at` now) or bring it back (clear it). Answers whether the row exists. */
+export async function setDecideCalibrationRetired(tx: Raw, id: number, retired: boolean): Promise<boolean> {
+  const rows = await tx.executeRaw<{ id: number | string }>(
+    'UPDATE decide_calibrations SET retired_at = CASE WHEN $2::boolean THEN now() ELSE NULL END WHERE id = $1 RETURNING id',
+    [id, retired],
+  );
+  return rows.length > 0;
+}

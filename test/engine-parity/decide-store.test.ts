@@ -14,13 +14,19 @@
  *    order and a percentile interpolates, REAL columns keep their single-precision value, replay orders by decision
  *    id (byte order), then rank (null last), then insertion, and a prune drops old receipts but keeps spend for at
  *    least 31 days.
+ *    Calibrations: an insert answers a new id and the row reads back with its defaults and single-precision REALs,
+ *    the list orders by slot (byte order), newest first, then id, and filters by slot and retired, a qualification
+ *    replaces its three columns (null included) and stamps `qualified_at`, retire stamps and un-retire clears
+ *    `retired_at` and answers whether the row exists, and a bad row or id refuses with nothing recorded.
  *  - Regression: an engine whose ensure overwrites, whose upsert keeps the first value, or whose delete drops more
  *    than its key hands `gbrain decide` a receipt salt that changes between runs (receipts stop joining) or a
  *    kill-switch that comes back after it was cleared; one that double-counts a retried request id, counts a
  *    non-typesafe provider, or records the good rows of a refused batch shows a wrong daily spend against the budget.
  *    One that counts egress by substring, counts a plain error as a mixed-model decision, replays another slot's
  *    receipts, or prunes spend with the receipts shows wrong slot usage, a wrong mixed-model alert, a replay that
- *    answers for the wrong slot, or a budget that forgets what it spent.
+ *    answers for the wrong slot, or a budget that forgets what it spent. One that lists retired calibrations, lists
+ *    them oldest first, keeps an old qualification when the new one is null, or reports a retire of a missing row
+ *    as done has `gbrain decide` calibrate against a withdrawn profile or show an operator the wrong qualification.
  *  - Why existing coverage misses it: the decide store tests (test/decide/runtime.test.ts, test/decide/core.test.ts) run these statements on PGLite alone; no case
  *    compares engines.
  *  - Seam: none. Real engines, typed methods only (no executeRaw: D18). A write the engine refuses is compared as
@@ -631,6 +637,219 @@ describe('engine parity: decide receipts', () => {
       const far = await engine.decideSlotUsage(1_000_000);
       expect(far).toHaveLength(1);
       return { refused, far };
+    },
+  );
+});
+
+type CalibrationInsert = Parameters<BrainEngine['insertDecideCalibration']>[0];
+type CalibrationRow = Awaited<ReturnType<BrainEngine['listDecideCalibrations']>>[number];
+
+function calibration(over: Partial<CalibrationInsert> = {}): CalibrationInsert {
+  return {
+    slot: 'conflict', call_site: 'sweep', provider: 'typesafe:openai', model_resolved: 'gpt-x', threshold: 0.8, min_keep: null,
+    metric: 'f1', metric_value: 0.9, ece: 0.05, retest_sd: 0.01, repack_sd: 0.02, n: 100, dataset_hash: 'd1', split_hash: 's1',
+    calibrate_ids_hash: 'c1', calibrate_only: true, pack_shape: 'full', notes: null, ...over,
+  };
+}
+
+const badCalibration = (over: Record<string, unknown>) => ({ ...calibration(), ...over }) as unknown as CalibrationInsert;
+
+/**
+ * A row with its timestamps replaced by whether they are dates (the engines' clocks differ) and its id made relative to
+ * `first` (a Postgres sequence keeps counting across cases).
+ */
+function comparable(row: CalibrationRow, first: number) {
+  const stamp = (v: Date | null) => (v === null ? null : v instanceof Date && Math.abs(v.getTime() - Date.now()) < 3_600_000);
+  return { ...row, id: row.id - first, created_at: stamp(row.created_at), qualified_at: stamp(row.qualified_at), retired_at: stamp(row.retired_at) };
+}
+
+describe('engine parity: decide calibrations', () => {
+  parityTest(
+    'every calibration read answers empty or null on an empty table, and a write to an unknown id changes nothing',
+    { methods: ['listDecideCalibrations', 'getDecideCalibration', 'storeDecideQualification', 'setDecideCalibrationRetired'] },
+    async (engine) => {
+      const out = {
+        list: await engine.listDecideCalibrations(),
+        listSlot: await engine.listDecideCalibrations({ slot: 'conflict', includeRetired: true }),
+        get: await engine.getDecideCalibration(1),
+        getZero: await engine.getDecideCalibration(0),
+        getNegative: await engine.getDecideCalibration(-1),
+        retire: await engine.setDecideCalibrationRetired(999999, true),
+        unretire: await engine.setDecideCalibrationRetired(999999, false),
+        retireNegative: await engine.setDecideCalibrationRetired(-5, true),
+        qualified: await threw(() => engine.storeDecideQualification(999999, { action_precision_lb: 0.5, qualification: '{}', policy_fingerprint: 'p' })),
+      };
+      expect(out).toEqual({ list: [], listSlot: [], get: null, getZero: null, getNegative: null, retire: false, unretire: false, retireNegative: false, qualified: false });
+      return out;
+    },
+  );
+
+  parityTest(
+    'insertDecideCalibration answers a new id each time and getDecideCalibration reads the row back with its defaults and single-precision REAL columns',
+    { methods: ['insertDecideCalibration', 'getDecideCalibration', 'listDecideCalibrations'] },
+    async (engine) => {
+      const a = await engine.insertDecideCalibration(calibration({ threshold: 0.1, metric_value: 1 / 3, ece: 16777217, retest_sd: 1e-7, repack_sd: 123456.789 }));
+      const b = await engine.insertDecideCalibration(calibration({ slot: 'triage', min_keep: 3, notes: 'second' }));
+      const c = await engine.insertDecideCalibration(calibration({ calibrate_only: false }));
+      expect([b - a, c - b]).toEqual([1, 1]);
+      const rows = await Promise.all([a, b, c].map((id) => engine.getDecideCalibration(id)));
+      expect(rows.every((r) => r !== null)).toBe(true);
+      expect((await engine.listDecideCalibrations()).map((r) => r.id - a)).toEqual([2, 0, 1]);
+      expect(rows[0]!.threshold).toBe(0.1);
+      expect(rows[0]).toMatchObject({ qualification: null, qualified_at: null, action_precision_lb: null, policy_fingerprint: null, retired_at: null });
+      expect(rows[0]!.created_at).toBeInstanceOf(Date);
+      return { rows: rows.map((r) => comparable(r!, a)), ids: [b - a, c - a] };
+    },
+  );
+
+  parityTest(
+    'listDecideCalibrations orders by slot in byte order, then newest first, then highest id, and filters by slot and by retired',
+    { methods: ['insertDecideCalibration', 'listDecideCalibrations', 'setDecideCalibrationRetired'] },
+    async (engine) => {
+      const ids: Record<string, number> = {};
+      for (const [name, slot] of [['a1', 'alpha'], ['A1', 'Alpha'], ['z1', 'zeta'], ['e1', '\u00e9'], ['x1', ''], ['a2', 'alpha'], ['a3', 'alpha'], ['z2', 'zeta']] as const) {
+        ids[name] = await engine.insertDecideCalibration(calibration({ slot, notes: name }));
+      }
+      const first = ids.a1!;
+      const all = await engine.listDecideCalibrations();
+      const retired = await engine.setDecideCalibrationRetired(ids.a2!, true);
+      const visible = await engine.listDecideCalibrations();
+      const withRetired = await engine.listDecideCalibrations({ includeRetired: true });
+      const alpha = await engine.listDecideCalibrations({ slot: 'alpha' });
+      const alphaRetired = await engine.listDecideCalibrations({ slot: 'alpha', includeRetired: true });
+      const empty = await engine.listDecideCalibrations({ slot: '' });
+      const none = await engine.listDecideCalibrations({ slot: 'nothing' });
+      const notes = (rows: CalibrationRow[]) => rows.map((r) => r.notes);
+      expect(notes(all)).toEqual(['x1', 'A1', 'a3', 'a2', 'a1', 'z2', 'z1', 'e1']);
+      expect(retired).toBe(true);
+      expect(notes(visible)).toEqual(['x1', 'A1', 'a3', 'a1', 'z2', 'z1', 'e1']);
+      expect(notes(withRetired)).toEqual(notes(all));
+      expect(notes(alpha)).toEqual(['a3', 'a1']);
+      expect(notes(alphaRetired)).toEqual(['a3', 'a2', 'a1']);
+      expect(notes(empty)).toEqual(['x1']);
+      expect(none).toEqual([]);
+      return { all: all.map((r) => comparable(r, first)), visible: notes(visible), alpha: notes(alpha), alphaRetired: alphaRetired.map((r) => comparable(r, first)), empty: notes(empty) };
+    },
+  );
+
+  parityTest(
+    'storeDecideQualification replaces the three qualification columns, null included, and stamps qualified_at',
+    { methods: ['insertDecideCalibration', 'storeDecideQualification', 'getDecideCalibration', 'listDecideCalibrations'] },
+    async (engine) => {
+      const id = await engine.insertDecideCalibration(calibration());
+      const other = await engine.insertDecideCalibration(calibration({ slot: 'triage' }));
+      await engine.storeDecideQualification(id, { action_precision_lb: 0.123456789, qualification: '{"pass":true}', policy_fingerprint: 'fp-1' });
+      const one = await engine.getDecideCalibration(id);
+      await engine.storeDecideQualification(id, { action_precision_lb: null, qualification: 'unicode \u00e9 \u{1F600}', policy_fingerprint: 'fp-2' });
+      const two = await engine.getDecideCalibration(id);
+      await engine.storeDecideQualification(id, { action_precision_lb: 1, qualification: null, policy_fingerprint: null });
+      const three = await engine.getDecideCalibration(id);
+      const untouched = await engine.getDecideCalibration(other);
+      expect((await engine.listDecideCalibrations()).map((r) => r.id - id)).toEqual([0, other - id]);
+      expect(one).toMatchObject({ action_precision_lb: 0.12345679, qualification: '{"pass":true}', policy_fingerprint: 'fp-1' });
+      expect(one!.qualified_at).toBeInstanceOf(Date);
+      expect(untouched).toMatchObject({ qualification: null, qualified_at: null });
+      return { one: comparable(one!, id), two: comparable(two!, id), three: comparable(three!, id), untouched: comparable(untouched!, id) };
+    },
+  );
+
+  parityTest(
+    'setDecideCalibrationRetired stamps and clears retired_at, answers whether the row exists, and keeps the other columns',
+    { methods: ['insertDecideCalibration', 'setDecideCalibrationRetired', 'getDecideCalibration', 'listDecideCalibrations'] },
+    async (engine) => {
+      const id = await engine.insertDecideCalibration(calibration());
+      const other = await engine.insertDecideCalibration(calibration({ slot: 'triage' }));
+      await engine.storeDecideQualification(id, { action_precision_lb: 0.5, qualification: 'q', policy_fingerprint: 'p' });
+      const retired = await engine.setDecideCalibrationRetired(id, true);
+      const afterRetire = await engine.getDecideCalibration(id);
+      const hidden = (await engine.listDecideCalibrations()).map((r) => r.id - id);
+      const again = await engine.setDecideCalibrationRetired(id, true);
+      const brought = await engine.setDecideCalibrationRetired(id, false);
+      const afterBack = await engine.getDecideCalibration(id);
+      const shown = (await engine.listDecideCalibrations()).map((r) => r.id - id);
+      const untouched = await engine.getDecideCalibration(other);
+      expect([retired, again, brought]).toEqual([true, true, true]);
+      expect(afterRetire!.retired_at).toBeInstanceOf(Date);
+      expect(afterBack!.retired_at).toBeNull();
+      expect(untouched!.retired_at).toBeNull();
+      return { afterRetire: comparable(afterRetire!, id), hidden, afterBack: comparable(afterBack!, id), shown };
+    },
+  );
+
+  parityTest(
+    'a calibration keeps null columns, unicode text, the smallest and largest ints and negative or zero REALs exactly',
+    { methods: ['insertDecideCalibration', 'getDecideCalibration'] },
+    async (engine) => {
+      const rows = [
+        calibration({ min_keep: null, metric_value: null, ece: null, retest_sd: null, repack_sd: null, dataset_hash: null, split_hash: null, calibrate_ids_hash: null, notes: null }),
+        calibration({ slot: 'slot \u00e9 \u{1F600}', call_site: '', provider: ' ', model_resolved: "it's \"quoted\" \\ back", metric: 'm\n\t', pack_shape: '\u4e2d\u6587', notes: 'note \u00e9' }),
+        calibration({ n: 2147483647, min_keep: -2147483648, threshold: -0.5, metric_value: 0, ece: 3.4e38, retest_sd: -3.4e38, repack_sd: 1e-37 }),
+        calibration({ n: 0, min_keep: 0, threshold: 0 }),
+      ];
+      const ids: number[] = [];
+      for (const row of rows) ids.push(await engine.insertDecideCalibration(row));
+      const read = await Promise.all(ids.map((id) => engine.getDecideCalibration(id)));
+      expect(read[2]).toMatchObject({ n: 2147483647, min_keep: -2147483648, threshold: -0.5 });
+      return read.map((r) => comparable(r!, ids[0]!));
+    },
+  );
+
+  parityTest(
+    'insertDecideCalibration refuses a null in a NOT NULL column, a NUL byte and a number that is not an int or a real, and records nothing',
+    { methods: ['insertDecideCalibration', 'listDecideCalibrations'] },
+    async (engine) => {
+      const refused = {
+        nullSlot: await threw(() => engine.insertDecideCalibration(badCalibration({ slot: null }))),
+        missingSlot: await threw(() => engine.insertDecideCalibration(badCalibration({ slot: undefined }))),
+        nullCallSite: await threw(() => engine.insertDecideCalibration(badCalibration({ call_site: null }))),
+        nullProvider: await threw(() => engine.insertDecideCalibration(badCalibration({ provider: null }))),
+        nullModel: await threw(() => engine.insertDecideCalibration(badCalibration({ model_resolved: null }))),
+        nullThreshold: await threw(() => engine.insertDecideCalibration(badCalibration({ threshold: null }))),
+        nullMetric: await threw(() => engine.insertDecideCalibration(badCalibration({ metric: null }))),
+        nullN: await threw(() => engine.insertDecideCalibration(badCalibration({ n: null }))),
+        nullCalibrateOnly: await threw(() => engine.insertDecideCalibration(badCalibration({ calibrate_only: null }))),
+        missingCalibrateOnly: await threw(() => engine.insertDecideCalibration(badCalibration({ calibrate_only: undefined }))),
+        nullPackShape: await threw(() => engine.insertDecideCalibration(badCalibration({ pack_shape: null }))),
+        nulSlot: await threw(() => engine.insertDecideCalibration(badCalibration({ slot: 'a\u0000b' }))),
+        nulNotes: await threw(() => engine.insertDecideCalibration(badCalibration({ notes: 'a\u0000b' }))),
+        nulHash: await threw(() => engine.insertDecideCalibration(badCalibration({ dataset_hash: 'a\u0000b' }))),
+        fractionalN: await threw(() => engine.insertDecideCalibration(badCalibration({ n: 1.5 }))),
+        hugeN: await threw(() => engine.insertDecideCalibration(badCalibration({ n: 2147483648 }))),
+        hugeMinKeep: await threw(() => engine.insertDecideCalibration(badCalibration({ min_keep: -2147483649 }))),
+        hugeThreshold: await threw(() => engine.insertDecideCalibration(badCalibration({ threshold: 1e39 }))),
+        hugeEce: await threw(() => engine.insertDecideCalibration(badCalibration({ ece: -1e39 }))),
+        underflowSd: await threw(() => engine.insertDecideCalibration(badCalibration({ retest_sd: 1e-50 }))),
+      };
+      const list = await engine.listDecideCalibrations({ includeRetired: true });
+      expect(Object.values(refused).every(Boolean)).toBe(true);
+      expect(list).toEqual([]);
+      return { refused, list };
+    },
+  );
+
+  parityTest(
+    'the calibration members that take an id refuse an id that is not a whole number in the bigint range, and the qualification refuses a NUL byte or a bad REAL',
+    { methods: ['insertDecideCalibration', 'getDecideCalibration', 'storeDecideQualification', 'setDecideCalibrationRetired', 'listDecideCalibrations'] },
+    async (engine) => {
+      const id = await engine.insertDecideCalibration(calibration());
+      const q = { action_precision_lb: 0.5, qualification: 'q', policy_fingerprint: 'p' };
+      const refused = {
+        getFraction: await threw(() => engine.getDecideCalibration(1.5)),
+        getNaN: await threw(() => engine.getDecideCalibration(Number.NaN)),
+        getInfinity: await threw(() => engine.getDecideCalibration(Number.POSITIVE_INFINITY)),
+        getHuge: await threw(() => engine.getDecideCalibration(1e21)),
+        retireFraction: await threw(() => engine.setDecideCalibrationRetired(0.5, true)),
+        retireHuge: await threw(() => engine.setDecideCalibrationRetired(-1e21, false)),
+        qualifyFraction: await threw(() => engine.storeDecideQualification(2.5, q)),
+        qualifyNul: await threw(() => engine.storeDecideQualification(id, { ...q, qualification: 'a\u0000b' })),
+        qualifyNulFingerprint: await threw(() => engine.storeDecideQualification(id, { ...q, policy_fingerprint: 'a\u0000b' })),
+        qualifyHugeReal: await threw(() => engine.storeDecideQualification(id, { ...q, action_precision_lb: 1e39 })),
+        listNul: await threw(() => engine.listDecideCalibrations({ slot: 'a\u0000b' })),
+      };
+      const row = await engine.getDecideCalibration(id);
+      expect(Object.values(refused).every(Boolean)).toBe(true);
+      expect(row).toMatchObject({ qualification: null, qualified_at: null, retired_at: null });
+      return { refused, row: comparable(row!, id) };
     },
   );
 });
