@@ -49,6 +49,7 @@ import type { Notice } from '../agent-output.ts';
 import { readCardIdentity, type CardIdentity } from './entity-card-identity.ts';
 import { factEntitySlugs } from '../mentions/siblings.ts';
 import { boundedBodyPrefixSql, overlaidBoundedRows } from '../page-window/bounded-lead.ts';
+import { rethrowCapabilityMissing } from '../rust-engine/errors.ts';
 
 const EDGE_CAP = 10;
 const OPEN_THREADS_CAP = 3;
@@ -340,7 +341,9 @@ export async function selectEntityCandidates(
     try {
       const aliasMap = await engine.resolveAliases([norm], { sourceId });
       for (const hit of aliasMap.get(norm) ?? []) consider(hit.slug, ARM_ALIAS);
-    } catch {
+    } catch (e) {
+      // An engine that cannot serve the read refuses the lookup; degrading would print "not found".
+      rethrowCapabilityMissing(e);
       /* no page_aliases table — degrade to arm 2 [E3] */
     }
   }
@@ -359,7 +362,8 @@ export async function selectEntityCandidates(
              OR slug LIKE $4 )${privatePredicate}`,
       [sourceId, titleLc, exactSlugs, `%/${slug || trimmed}`],
     );
-  } catch {
+  } catch (e) {
+    rethrowCapabilityMissing(e);
     rows = [];
   }
   const rowBySlug = new Map<string, CardPageRow>();
@@ -380,7 +384,8 @@ export async function selectEntityCandidates(
         [sourceId, missing],
       );
       for (const r of extra) rowBySlug.set(r.slug, r);
-    } catch {
+    } catch (e) {
+      rethrowCapabilityMissing(e);
       /* stale alias rows — drop */
     }
   }
@@ -831,7 +836,8 @@ async function nearMissSuggestions(
       create_safety: r.create_safety ?? 'unknown',
       source_id: r.source_id ?? sourceId,
     }));
-  } catch {
+  } catch (e) {
+    rethrowCapabilityMissing(e);
     return [];
   }
 }
