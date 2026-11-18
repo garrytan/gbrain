@@ -1172,8 +1172,8 @@ export const fileDriftRepair: RepairHandler = {
     for (const action of (details.next_actions ?? []) as string[]) lines.push(`  ${action}`);
     if (typeof details.artifact === 'string') lines.push(`  private artifact (each page's resolved result and exceptions): ${details.artifact}`);
     if (typeof details.protections === 'string') lines.push(`  ${details.protections}`);
-    for (const page of (details.pages ?? []) as Array<{ slug: string; exceptions: DriftException[] }>) {
-      for (const exception of page.exceptions) lines.push(`  kept ${page.slug} ${exception.path}: ${exception.reason}`);
+    for (const page of (details.pages ?? []) as Array<{ slug: string; exceptions?: DriftException[] }>) {
+      for (const exception of page.exceptions ?? []) lines.push(`  kept ${page.slug} ${exception.path}: ${exception.reason}`);
     }
     return lines;
   },
