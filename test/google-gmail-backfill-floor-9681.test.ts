@@ -196,6 +196,36 @@ test('#9681: a fresh cursor save superseded before its writes commit still stamp
   }
 }), 120_000);
 
+test('#9681: a page write carried from an earlier run that fails later keeps the next run\'s cursor behind it', async () => withEnv(env, async () => {
+  for (const engine of engines) {
+    const f = await boundSource(engine, githubConfig);
+    const cfg = parseGitHubSourceConfig(githubConfig, f.dir);
+    const before = await sourceCheckpoint(engine, f.id);
+    await disposePersistenceConsumer(engine);
+    await engine.executeRaw("UPDATE persistence_worktrees SET state='draining' WHERE id=$1::uuid", [f.binding.worktree_id]);
+    const first = (await beginConnectorSync(engine, f.id, 'github', cfg, options))!;
+    await withPausedOwnerBudget(() => first.importMarkdown('notes/carried.md', '---\ntitle: Carried fixture\n---\nWritten by the earlier run.\n'));
+    await first.finish();
+    const [page] = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE source_id=$1 AND slug='notes/carried'", [f.id]);
+    expect(page.state).not.toBe('committed');
+    // The next run never revisits the carried item and saves a cursor while its write is still pending.
+    const second = (await beginConnectorSync(engine, f.id, 'github', cfg, options))!;
+    await withPausedOwnerBudget(() => second.saveState({ cursor: 'past-the-carried-write' }));
+    await disposePersistenceConsumer(engine);
+    installFaultHook(async (point, detail) => {
+      if (point === 'consumer:preparing' && (await slugOf(engine, detail)) === 'notes/carried') throw new OperationError('storage_error', 'Fixture refusal of the carried page write.', 'None.');
+    });
+    try {
+      await engine.executeRaw("UPDATE persistence_worktrees SET state='active' WHERE id=$1::uuid", [f.binding.worktree_id]);
+      expect((await waitForWrite(engine, page, { engine: engine.kind })).state).toBe('failed');
+      await second.finish();
+      for (const row of await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE source_id=$1', [f.id])) await waitForWrite(engine, row, { engine: engine.kind });
+    } finally { installFaultHook(undefined); }
+    expect(await sourceCheckpoint(engine, f.id)).toEqual(before);
+    expect(await engine.executeRaw(`SELECT id FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='connector_v2_checkpoint' AND state='committed'`, [f.id])).toEqual([]);
+  }
+}), 120_000);
+
 test('#9681: a brain stuck with a frozen floor and a retained publication recovers on its next syncs', async () => withEnv(env, async () => {
   for (const engine of engines) {
     // The reporter's shape: an earlier run banked batch one, then was cut off while one of its page publications was

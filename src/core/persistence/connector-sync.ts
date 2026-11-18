@@ -703,7 +703,7 @@ export class ManagedConnectorSync {
     const blocked = this.targeted && this.unreachedCarried().some(entry => entry.itemRef !== CHECKPOINT_SLUG);
     this.lastSaveCommitted = false;
     if (this.failedPending.length || blocked) this.deferred = true;
-    else this.staged.push({ state: structuredClone(state), fresh, ...(newestContentAt ? { newestContentAt } : {}), receipts: [...this.receipts] });
+    else this.staged.push({ state: structuredClone(state), fresh, ...(newestContentAt ? { newestContentAt } : {}), receipts: [...new Set([...this.receipts, ...this.pendingRows.keys()])] });
     await this.publishStaged();
   }
   /** #9681: publishes the newest staged save whose receipts all committed, dropping the older ones it supersedes but keeping their freshness stamp; never waits past the budget. */
