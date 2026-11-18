@@ -250,7 +250,15 @@ Page-visibility opt-outs do not change protected-body filtering: remote page
 and history bodies retain only world Facts and omit every Takes fence. The
 exception is a credential bound to the brain owner speaking for itself:
 `get_page` and `fetch_page` give it the Facts fence as stored, and the Takes
-fence as stored when the credential has no holders list (GST-3058). History
+fence as stored when the credential has no holders list (GST-3058). A
+credential with a holders list gets no Takes fence in `get_page` and reads its
+takes through `takes_list`; its graph hops skip evidence pages that hold
+takes. The owner's own `put_page` takes the Facts fence as written, so it can
+edit or delete a private row; every other remote writer still has the rows it
+cannot read restored. The `get_page` read view (windows, lines, bytes, section,
+grep) is the same text for every caller, the local CLI included; the owner reads
+the private rows of a large or segmented page through `view: 'markdown'` (a
+segmented page only when the credential has no holders list). History
 also checks snapshot visibility while page privacy is enforced. Malformed
 protected sections are omitted; unterminated or interleaved sections discard
 the remaining tail. Restricted salience counts only permitted active takes and

@@ -33,7 +33,8 @@
  * 'full', anything else 'auto'.
  */
 import type { Page } from '../types.ts';
-import { worldOnlyFacts } from '../search/private-visibility.ts';
+import { callerIsOwner, worldOnlyFacts } from '../search/private-visibility.ts';
+import { readHolders } from './context.ts';
 import { dropHeldFenceRows } from '../eligibility/stamp.ts';
 import type { OperationContext, ParamDef } from './contract.ts';
 import { opError, OperationError } from './contract.ts';
@@ -411,8 +412,10 @@ async function segmentedWindows(ctx: OperationContext, input: PartialReadInput, 
   let seg: SegmentedDocument;
   let size: Record<string, unknown>;
   if (req.view === 'markdown') {
-    seg = await segmentedMarkdownDocument(ctx.engine, body, markdownHead(page, tags), audience);
-    size = { ...await markdownDigest(seg, revision, audience), ...stored };
+    // GST-3058: the owner's own credential reading every holder pages the round-trip markdown the local CLI pages.
+    const markdownAudience = audience === 'remote' && callerIsOwner() && readHolders(ctx) === undefined ? 'trusted' : audience;
+    seg = await segmentedMarkdownDocument(ctx.engine, body, markdownHead(page, tags), markdownAudience);
+    size = { ...await markdownDigest(seg, revision, markdownAudience), ...stored };
   } else {
     seg = await segmentedReadDocument(ctx.engine, body);
     size = { total_bytes: seg.total, total_lines: await readViewLines(seg, revision), ...(seg.timelineByte >= 0 ? { timeline_byte_start: seg.timelineByte } : {}),

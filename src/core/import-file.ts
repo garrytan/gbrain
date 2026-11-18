@@ -287,6 +287,8 @@ export async function importFromContent(
     remote?: boolean;
     /** GST-2891: with `remote`, the writer read the page without its held fence rows (worldOnlyFacts), so the merge restores them as stored. */
     restoreHeldRows?: boolean;
+    /** GST-3058: with `remote`, the writer is the brain owner's own write (ownerRewriteOf), which read every hidden fact row, so its fences are taken as written. */
+    ownerReadsHiddenRows?: boolean;
     /**
      * #1699/#6259: gate-owned markers (`quarantine`, `content_flag`, `embed_skip`,
      * `atoms_scan_hash`, `quarantine_override`) are stripped from incoming content
@@ -434,7 +436,7 @@ export async function importFromContent(
     // #6188 (E7): Tier 1 in place before the hidden-row merge and withdrawal preservation; the hash covers the normalized body.
     const fences = await applyImportFences({ engine, sourceId: sourceId ?? 'default', slug, mode: opts.fences ?? 'lenient', screened: opts.fenceScreen, screen, parsed, activePack: opts.activePack, remote: opts.remote === true, existing });
     if (fences.refused) return fences.refused;
-    if (opts.remote === true && existing) await mergeHiddenFactRows(engine, slug, parsed, existing, opts.restoreHeldRows);
+    if (opts.remote === true && existing && opts.ownerReadsHiddenRows !== true) await mergeHiddenFactRows(engine, slug, parsed, existing, opts.restoreHeldRows);
     const { assertPreparedFactWithdrawals, preserveWithdrawnFenceRows } = await import('./facts/withdrawal.ts');
     parsed.compiled_truth = (await preserveWithdrawnFenceRows(engine, sourceId ?? 'default', parsed.compiled_truth, slug)).trim();
     parsed.timeline = (await preserveWithdrawnFenceRows(engine, sourceId ?? 'default', parsed.timeline, slug)).trim();
