@@ -109,6 +109,24 @@ vectors go into a process-wide cache (`keyword/vector_cache.rs`):
   With the cache, the first query takes about 340 ms (it fills the cache) and later queries take 16-22 ms. The cache
   holds about 19 MB for these 4,000 chunks.
 
+## Query size and recursion depth
+
+PostgreSQL walks a tsquery recursively and calls `check_stack_depth()`, so a query of enough operands fails with
+`stack depth limit exceeded` (54001). The port's parser cleanup, `@@` executor, `ts_rank_cd` cover search and the
+facts OR builder recurse the same way, once per item, and the stack of the thread that calls them is not ours to size.
+
+- A query with more than 1,024 items runs those walks on a scoped thread with a 256 MiB stack (address space is reserved,
+  not committed). Smaller queries run in place.
+- A query is refused with `invalid_argument` ("stack depth limit exceeded: a tsquery holds at most 131072 items") when
+  the parser holds more than 131,072 items, counted before stopword cleanup. Repeated stopwords count, because a
+  stopword placeholder carries no lexeme bytes and so never reaches the `MAXSTRPOS` check ("value is too big in
+  tsquery"). The bound is at the parser, so every keyword member (chunk, page, title and facts arms) has it.
+- PGLite 0.5.16 answers a query like `quokka the ` x 20,000 (about 80,000 items) through `@@`, and runs out of its 2 MB
+  stack for the whole `searchKeyword` statement at a few thousand repeats, where it returns an empty result with no
+  error (the limit is not a fixed number: 4,000 repeats failed and 4,500 passed in one run). The Rust engine answers
+  every query up to the bound and throws past it. A test of the thrown error cannot be a parity case, because the
+  expected-divergence rows cover only an answer that differs from PGLite's, never a thrown error.
+
 ## The page filter
 
 `keyword/filters.rs` models `keywordFilters` and the live clause of `buildVisibilityClause`: a page is kept when it is

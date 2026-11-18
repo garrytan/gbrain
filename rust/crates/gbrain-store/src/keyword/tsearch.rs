@@ -38,6 +38,40 @@ const MAXNUMPOS: usize = 256;
 pub(super) const MAXENTRYPOS: u32 = 1 << 14;
 /// `STACKDEPTH` of the tsquery parser's operator stack.
 const STACKDEPTH: usize = 32;
+/// The most items (operands, operators and stopword placeholders) one tsquery holds. PostgreSQL
+/// walks a query recursively under `check_stack_depth()` and raises `stack depth limit exceeded`
+/// (54001) past `max_stack_depth`; PGLite 0.5.16 answers 20,000 repeats of `quokka the ` (about
+/// 80,000 items) and fails at 50,000 repeats. Stopword placeholders carry no lexeme bytes, so the
+/// `MAXSTRPOS` check never bounds them.
+const MAX_QUERY_ITEMS: usize = 1 << 17;
+/// A query of more items than this is walked on a thread with `DEEP_STACK_BYTES` of stack.
+const DEEP_QUERY_ITEMS: usize = 1024;
+/// Stack of the thread that walks a deep query. The address space is reserved, not committed.
+const DEEP_STACK_BYTES: usize = 256 << 20;
+
+/// Run `f`, which recurses once per item of a query of `items` items, on a thread with a stack
+/// deep enough for `MAX_QUERY_ITEMS` frames when the query is large. Small queries run in place.
+pub(super) fn with_query_stack<R: Send>(items: usize, f: impl FnOnce() -> R + Send) -> R {
+    if items <= DEEP_QUERY_ITEMS {
+        return f();
+    }
+    std::thread::scope(|scope| {
+        let handle = std::thread::Builder::new()
+            .stack_size(DEEP_STACK_BYTES)
+            .spawn_scoped(scope, f)
+            .expect("spawn the deep-query thread");
+        match handle.join() {
+            Ok(value) => value,
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
+    })
+}
+
+fn too_deep() -> StoreError {
+    StoreError::invalid(format!(
+        "stack depth limit exceeded: a tsquery holds at most {MAX_QUERY_ITEMS} items"
+    ))
+}
 
 /// `LIMITPOS`.
 fn limitpos(pos: u32) -> u16 {
@@ -435,6 +469,14 @@ impl QueryBuilder {
         Ok(())
     }
 
+    /// The bound on the item count, checked where a query grows by a whole operand's text.
+    fn check_items(&self) -> Result<()> {
+        if self.pushed.len() > MAX_QUERY_ITEMS {
+            return Err(too_deep());
+        }
+        Ok(())
+    }
+
     fn push_stop(&mut self) {
         self.pushed.push(QItem::Stop);
     }
@@ -460,9 +502,11 @@ impl QueryBuilder {
         let mut cntpos = 0u32;
         let mut count = 0usize;
         while count < words.len() {
+            self.check_items()?;
             let wpos = u32::from(words[count].pos);
             if pos > 0 && pos + 1 < wpos {
                 while pos + 1 < wpos {
+                    self.check_items()?;
                     self.push_stop();
                     if cntpos > 0 {
                         self.push_operator(qoperator, 1);
@@ -501,22 +545,26 @@ impl QueryBuilder {
     /// The end of `parse_tsquery`: reverse into prefix order, set left offsets (`findoprnd`) and
     /// drop stopword placeholders (`cleanup_tsquery_stopwords`).
     fn finish(self) -> Result<TsQuery> {
+        self.check_items()?;
         let mut items = self.pushed;
         if items.is_empty() {
             return Ok(TsQuery::default());
         }
         items.reverse();
-        let mut pos = 0usize;
-        let mut needcleanup = false;
-        findoprnd(&mut items, &mut pos, &mut needcleanup)?;
-        if pos != items.len() {
-            return Err(StoreError::invalid("malformed tsquery: extra nodes"));
-        }
-        let query = TsQuery { items };
-        if needcleanup {
-            return Ok(cleanup_stopwords(&query));
-        }
-        Ok(query)
+        let count = items.len();
+        with_query_stack(count, move || {
+            let mut pos = 0usize;
+            let mut needcleanup = false;
+            findoprnd(&mut items, &mut pos, &mut needcleanup)?;
+            if pos != items.len() {
+                return Err(StoreError::invalid("malformed tsquery: extra nodes"));
+            }
+            let query = TsQuery { items };
+            if needcleanup {
+                return Ok(cleanup_stopwords(&query));
+            }
+            Ok(query)
+        })
     }
 }
 
@@ -924,7 +972,7 @@ pub(crate) fn or_of_lexemes(q: &TsQuery) -> Option<TsQuery> {
         return None;
     }
     let mut words = Vec::new();
-    collect(&q.items, 0, &mut words);
+    with_query_stack(q.items.len(), || collect(&q.items, 0, &mut words));
     let mut b = QueryBuilder::new();
     for (i, w) in words.iter().enumerate() {
         b.push_value(w).ok()?;
@@ -1387,7 +1435,7 @@ pub(crate) fn ts_matches(v: &TsVector, q: &TsQuery) -> bool {
     if q.items.is_empty() {
         return false;
     }
-    ts_execute(q, &VectorCheck { v, q })
+    with_query_stack(q.items.len(), || ts_execute(q, &VectorCheck { v, q }))
 }
 
 #[cfg(test)]
@@ -1594,5 +1642,98 @@ mod tests {
             bad.len(),
             bad.join("\n")
         );
+    }
+
+    /// Run `f` on a thread with a 1 MiB stack, smaller than any thread the N-API host runs a
+    /// search on, so a recursion that depends on the query size overflows it.
+    fn on_small_stack<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> R {
+        std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(f)
+            .expect("spawn")
+            .join()
+            .expect("the query code must not panic")
+    }
+
+    #[test]
+    fn a_query_of_many_operands_is_built_matched_and_ranked_without_deep_recursion() {
+        // GBRAIN-REVIEW 4: 'quokka the ' repeated builds a left-deep tree whose depth follows the
+        // operand count, and the recursive cleanup, matcher and ranker overflowed the stack.
+        // PGLite answers 20,000 repeats (about 80,000 items) with the match.
+        let (matched, rank, or_text) = on_small_stack(|| {
+            let text = "quokka the ".repeat(20_000);
+            let q = websearch_to_tsquery(&text).expect("web");
+            let doc = to_tsvector("quokka here").expect("doc");
+            let plain = plainto_tsquery(&text).expect("plain");
+            let phrase = phraseto_tsquery(&text).expect("phrase");
+            (
+                (
+                    ts_matches(&doc, &q),
+                    ts_matches(&doc, &phrase),
+                    q.items.len(),
+                ),
+                super::super::rank::ts_rank_cd(&doc, &q),
+                or_of_lexemes(&plain).map(|o| o.items.len()),
+            )
+        });
+        assert!(matched.0, "the AND of twenty thousand quokkas matches");
+        assert!(!matched.1, "the phrase of them does not");
+        assert!(matched.2 > 20_000);
+        assert!(rank >= 0.0);
+        assert_eq!(or_text, Some(39_999));
+    }
+
+    #[test]
+    fn a_query_at_the_item_bound_fits_the_deep_stack() {
+        // The deepest query the bound admits, in a debug build (the largest frames).
+        let items = on_small_stack(|| {
+            // Grow the query until the next step is refused, then keep the last one admitted.
+            let mut n = 1_000;
+            let mut last = websearch_to_tsquery(&"quokka the ".repeat(n)).expect("web");
+            while let Ok(q) = websearch_to_tsquery(&"quokka the ".repeat(n + 500)) {
+                n += 500;
+                last = q;
+            }
+            assert!(n > 20_000, "the bound admits what PGLite answers: {n}");
+            let q = last;
+            let doc = to_tsvector("quokka here").expect("doc");
+            assert!(ts_matches(&doc, &q));
+            assert!(super::super::rank::ts_rank_cd(&doc, &q) >= 0.0);
+            q.items.len()
+        });
+        assert!(items > 10_000);
+    }
+
+    #[test]
+    fn a_query_past_the_item_bound_is_refused_not_recursed_into() {
+        // Repeated stopwords add placeholder items but no lexeme bytes, so the byte counter
+        // never trips; the item bound does. (plainto/phraseto of a text of only stopwords is the
+        // one-placeholder empty query, so only the websearch parser grows with it.)
+        let refused = |e: Option<StoreError>, len: usize| {
+            let e = e.unwrap_or_else(|| panic!("a query of {len} bytes was not refused"));
+            assert!(
+                e.message.starts_with("stack depth limit exceeded"),
+                "{}",
+                e.message
+            );
+        };
+        let stop = "the ".repeat(400_000);
+        let len = stop.len();
+        refused(
+            on_small_stack(move || websearch_to_tsquery(&stop).err()),
+            len,
+        );
+        let mixed = "quokka the ".repeat(100_000);
+        let len = mixed.len();
+        let errs = on_small_stack(move || {
+            [
+                websearch_to_tsquery(&mixed).err(),
+                plainto_tsquery(&mixed).err(),
+                phraseto_tsquery(&mixed).err(),
+            ]
+        });
+        for e in errs {
+            refused(e, len);
+        }
     }
 }

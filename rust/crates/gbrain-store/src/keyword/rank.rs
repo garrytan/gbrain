@@ -14,7 +14,7 @@
 
 use super::tsearch::{
     CheckCondition, MAXENTRYPOS, PhraseData, QItem, Tern, TsQuery, TsVector, ts_execute, wep_pos,
-    wep_weight,
+    wep_weight, with_query_stack,
 };
 
 /// `default_weights`, indexed by weight code (0 = D .. 3 = A).
@@ -331,6 +331,10 @@ fn cover(doc: &[DocRow], qr: &mut QueryRepr, q: &TsQuery, ext: &mut CoverExt) ->
 
 /// `ts_rank_cd(vector, query)`.
 pub(crate) fn ts_rank_cd(t: &TsVector, q: &TsQuery) -> f32 {
+    with_query_stack(q.items.len(), || ts_rank_cd_walk(t, q))
+}
+
+fn ts_rank_cd_walk(t: &TsVector, q: &TsQuery) -> f32 {
     let invws: [f64; 4] = DEFAULT_WEIGHTS.map(|w| 1.0 / f64::from(w));
     let doc = get_docrep(t, q);
     if doc.is_empty() {
