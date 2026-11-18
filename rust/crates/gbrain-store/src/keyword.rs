@@ -36,6 +36,7 @@
 mod parser;
 mod rank;
 mod stem;
+mod title_fuzzy;
 mod trgm;
 mod tsearch;
 
