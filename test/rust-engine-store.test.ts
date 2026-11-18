@@ -128,6 +128,7 @@ describe('Rust engine on the store', () => {
     // The store does not evaluate the private-page filter of findAnomalies.
     const refused = await code(() => engine.findAnomalies({ since: '2026-01-02', excludePrivate: true }));
     expect(refused).toBe('engine_capability_missing');
+    expect(await code(() => engine.getChunks('notes/a', { notAStoreOption: true } as never))).toBe('engine_capability_missing');
   });
 
   withAddon('a chunk vector of the wrong width is refused, and writes nothing', async () => {
@@ -136,6 +137,15 @@ describe('Rust engine on the store', () => {
     const before = await engine.getChunks('notes/a');
     const chunk = { chunk_index: 0, chunk_text: 'Replaced.', chunk_source: 'compiled_truth', embedding: new Float32Array(4) } as never;
     expect(await code(() => engine.upsertChunks('notes/a', [chunk]))).toBe('invalid_argument');
+    expect(await engine.getChunks('notes/a')).toEqual(before);
+  });
+
+  withAddon('a chunk that carries an image vector refuses chunks, and writes nothing', async () => {
+    const { engine } = await open();
+    await engine.putPage('notes/a', page);
+    const before = await engine.getChunks('notes/a');
+    const chunk = { chunk_index: 0, chunk_text: 'Replaced.', chunk_source: 'compiled_truth', embedding_image: new Float32Array(4) } as never;
+    expect(await code(() => engine.upsertChunks('notes/a', [chunk]))).toBe('engine_capability_missing');
     expect(await engine.getChunks('notes/a')).toEqual(before);
   });
 
