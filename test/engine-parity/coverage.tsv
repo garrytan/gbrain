@@ -77,7 +77,7 @@ findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	6	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	79	yes	yes	yes	serves
+softDeletePage	pages	yes	80	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -317,8 +317,8 @@ rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
 resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
 resolveAliases	sync_aliases	yes	5	no	yes	yes	serves
-setPageAliases	sync_aliases	yes	10	no	yes	yes	serves
-replaceDerivedAliases	sync_aliases	yes	5	no	yes	yes	serves
+setPageAliases	sync_aliases	yes	11	no	yes	yes	serves
+replaceDerivedAliases	sync_aliases	yes	6	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
@@ -429,7 +429,7 @@ getJobAttachment	minion_queue	yes	1	no	yes	yes	serves
 deleteJobAttachment	minion_queue	yes	1	no	yes	yes	serves
 scanExactBatch	cli_reads_ops	yes	4	no	yes	yes	serves
 nextLivePageAfter	cli_reads_ops	yes	1	no	yes	yes	serves
-listExactIdentityCandidates	cli_reads_ops	yes	3	no	yes	yes	serves
+listExactIdentityCandidates	cli_reads_ops	yes	4	no	yes	yes	serves
 rankEntities	cli_reads_ops	yes	3	no	yes	yes	serves
 listExtractionPendingPages	cli_reads_ops	yes	2	no	yes	yes	serves
 listUnattributedFacts	cli_reads_ops	yes	2	no	yes	yes	serves

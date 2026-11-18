@@ -229,6 +229,25 @@ fn page_alias_rows(read: &dyn KvRead, source: &str, slug: &str) -> Result<Vec<(S
     )
 }
 
+/// The slugs of every `page_aliases` row of `alias` in `source`, any origin, in byte order. The
+/// rows outlive their page, so a caller that wants pages joins each slug to the page there.
+pub(crate) fn alias_row_slugs(
+    read: &dyn KvRead,
+    source: &str,
+    alias: &str,
+) -> Result<BTreeSet<String>> {
+    if has_nul(&[source, alias]) {
+        return Ok(BTreeSet::new());
+    }
+    Ok(scan_tails(read, &prefix(PAGE_ALIAS, &[source, alias]))?
+        .into_iter()
+        .filter_map(|(_, parts)| match parts.as_slice() {
+            [slug, _origin] => Some(slug.clone()),
+            _ => None,
+        })
+        .collect())
+}
+
 fn put_page_alias(
     tx: &mut dyn KvWrite,
     source: &str,
