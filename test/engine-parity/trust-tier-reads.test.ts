@@ -151,13 +151,13 @@ describe('engine parity: typed trust tier reads', () => {
         factsUntil: await count('facts', idOf(factIds, 'f one'), idOf(factIds, 'f three')),
       };
       expect(pages.map(r => r.row)).toEqual(['scan/a', 'scan/c', 'scan/d']);
-      expect(pages[0]).toEqual({ row: 'scan/a', source_id: 'default', trust_tier: 'agent_written', write_origin: { channel: 'agent_written' },
+      expect(pages[0] as unknown).toEqual({ row: 'scan/a', source_id: 'default', trust_tier: 'agent_written', write_origin: { channel: 'agent_written' },
         title: 'T scan/a', compiled_truth: 'ct scan/a', timeline: 'tl scan/a', frontmatter: expect.objectContaining({ k: 'scan/a' }) });
       expect(pages[1]).toMatchObject({ row: 'scan/c', trust_tier: 'unknown', write_origin: null });
       expect(pagesAfter.map(r => r.row)).toEqual(['scan/c', 'scan/d']);
       expect(pagesNarrow.map(r => r.row)).toEqual(['scan/a']);
       expect(facts.map(r => r.row)).toEqual(['f one', 'f three', 'f four']);
-      expect(facts[0]).toEqual({ row: 'f one', source_id: 'default', trust_tier: 'agent_written', write_origin: { channel: 'agent_written' },
+      expect(facts[0] as unknown).toEqual({ row: 'f one', source_id: 'default', trust_tier: 'agent_written', write_origin: { channel: 'agent_written' },
         fact: 'f one', context: 'ctx f one', value: null, source: 'cli' });
       expect(factsAfter.map(r => r.row)).toEqual(['f three']);
       expect(none).toEqual([]);
@@ -210,11 +210,11 @@ describe('engine parity: typed trust tier reads', () => {
       const writers = named(await engine.listVersionReasonWriters([...ids, 987_654]));
       const empty = [await engine.listVersionTrustTiers([]), await engine.listVersionReasonWriters([])];
       const live = { a: await tierOf('hist/a'), b: await tierOf('hist/b') };
-      expect(tiers).toEqual(['a1', 'b1', 'a2'].map(v => ({ v, trust_tier: stored.get(v) })));
+      expect(tiers).toEqual(['a1', 'b1', 'a2'].map(v => ({ v, trust_tier: stored.get(v)! })));
       expect(stored.get('a1')).toBe('agent_written');
       expect(stored.get('b1')).toBe('operator_curated');
       expect(writers).toEqual([
-        { v: 'a1', type: 'concept', tier: stored.get('a2') },
+        { v: 'a1', type: 'concept', tier: stored.get('a2')! },
         { v: 'b1', type: 'company', tier: live.b },
         { v: 'a2', type: 'project', tier: live.a },
       ]);
