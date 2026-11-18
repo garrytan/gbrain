@@ -19,7 +19,7 @@ describe('takes fence strict weight cell', () => {
     expect(r.warnings.some(w => w.startsWith('TAKES_TABLE_MALFORMED'))).toBe(true);
   });
   test('upsert does not rewrite 50% as 50.0', () => {
-    const out = upsertTakeRow(mk('50%'), { claim: 'A second take', kind: 'take', holder: 'world', weight: 0.6 });
+    const out = upsertTakeRow(mk('50%'), { claim: 'A second take', kind: 'take', holder: 'world', weight: 0.6, active: true });
     expect(JSON.stringify(out)).not.toContain('50.0');
   });
 });
