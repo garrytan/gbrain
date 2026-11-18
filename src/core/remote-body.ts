@@ -1,5 +1,5 @@
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFenceFor, renderFactsTable } from './facts-fence.ts';
-import { TAKES_FENCE_BEGIN, TAKES_FENCE_END } from './takes-fence.ts';
+import { TAKES_FENCE_BEGIN, TAKES_FENCE_END, parseTakesFence, renderTakesFence } from './takes-fence.ts';
 import { sanitizeText } from './batch-rows.ts';
 import { stripMaterializedMarkers } from './timeline-marker.ts';
 import { protectedRegions, type FencePair } from './fence-scan.ts';
@@ -15,7 +15,7 @@ export const PROTECTED_PAIRS: readonly FencePair[] = [
  * #5567 materialized-timeline marker lines are dropped unless the caller
  * round-trips the body (`keepMaterializedMarkers`).
  */
-export function sanitizeRemoteBody(body: string, opts: { includeWithdrawn?: boolean; keepMaterializedMarkers?: boolean; omitRows?: ReadonlySet<number> } = {}): string {
+export function sanitizeRemoteBody(body: string, opts: { includeWithdrawn?: boolean; keepMaterializedMarkers?: boolean; omitRows?: ReadonlySet<number>; owner?: { takesHolders: readonly string[] | undefined } } = {}): string {
   if (typeof body !== 'string') return '';
   // Parse the same free-text bytes storage accepts. Removing NUL after fence
   // detection could turn an unrecognized marker into a protected stored fence.
@@ -28,10 +28,24 @@ export function sanitizeRemoteBody(body: string, opts: { includeWithdrawn?: bool
   for (const region of regions) {
     output.push(body.slice(cursor, region.start));
     cursor = region.end;
-    if (region.pair === 0) output.push(renderFactsRegion(body.slice(region.start, region.end), opts.includeWithdrawn, opts.omitRows));
+    const text = body.slice(region.start, region.end);
+    if (opts.owner) output.push(region.pair === 0 ? text : ownerTakesRegion(text, opts.owner.takesHolders));
+    else if (region.pair === 0) output.push(renderFactsRegion(text, opts.includeWithdrawn, opts.omitRows));
   }
   output.push(truncatedAt === -1 ? body.slice(cursor) : body.slice(cursor, truncatedAt));
   return output.join('');
+}
+
+/** GST-3058: the brain owner's view of one takes region: as stored, or with only the listed holders' rows rendered; nothing when it cannot be parsed. */
+function ownerTakesRegion(region: string, holders: readonly string[] | undefined): string {
+  if (!holders) return region;
+  try {
+    const parsed = parseTakesFence(region);
+    if (parsed.warnings.length === 0) return renderTakesFence(parsed.takes.filter(t => holders.includes(t.holder)), parsed.reservedRowNums);
+  } catch {
+    // A protected block that cannot be parsed is omitted, never echoed.
+  }
+  return '';
 }
 
 /** What sanitizeRemoteBody puts in place of one protected facts region: its world rows rendered (less `omitRows`), or nothing. */

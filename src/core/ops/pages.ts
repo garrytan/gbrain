@@ -31,7 +31,7 @@ import { sanitizeRemoteBody } from '../remote-body.ts';
 import { getContentFlag } from '../quarantine.ts';
 import { fileHeldField, readHeldPages } from '../persistence/held-reads.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
-import { resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs, isPrivatePageForCaller } from '../search/private-visibility.ts';
+import { callerIsOwner, resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs, isPrivatePageForCaller } from '../search/private-visibility.ts';
 import { heldRowsForCaller } from '../eligibility/fence-overlay.ts';
 import { unquoteAnyTranscriptText } from '../search/transcript-quote.ts';
 import { withIgnoredPrivacyLabelNotice } from '../search/ignored-privacy-labels.ts';
@@ -52,6 +52,7 @@ import {
   federatedSearchScope,
   normalizeSlugPrefix,
   parseSourceIdParam,
+  readHolders,
   readPolicyOpts,
   validatePageSlug, pageNotFoundError,
 } from './context.ts';
@@ -90,10 +91,13 @@ async function dropPrivateSlugs(
  * A private fact fence misplaced there was fully readable by any remote MCP
  * caller. Same stripping rule as compiled_truth: takes fence dropped
  * entirely, facts fence keeps only `world`-visibility rows, less those held from a world-only caller (GST-2891).
+ * GST-3058 (R94): a caller bound to the brain owner speaking for itself keeps the facts fence as stored and the takes
+ * rows of the holders it reads (readHolders), the way the local CLI reads the page.
  */
 async function stripPrivacyFencesForRemoteReader(ctx: OperationContext, page: Page): Promise<Page> {
   const omitRows = await heldRowsForCaller(ctx.engine, ctx.remote, { sourceId: page.source_id, slug: page.slug, compiled_truth: page.compiled_truth, timeline: page.timeline });
-  const opts = { includeWithdrawn: true, keepMaterializedMarkers: true, omitRows }; // #5567: markers round-trip remote edits
+  const owner = callerIsOwner() ? { takesHolders: readHolders(ctx) } : undefined;
+  const opts = { includeWithdrawn: true, keepMaterializedMarkers: true, omitRows, owner }; // #5567: markers round-trip remote edits
   return { ...page, compiled_truth: sanitizeRemoteBody(page.compiled_truth, opts), timeline: sanitizeRemoteBody(page.timeline ?? '', opts) };
 }
 
@@ -209,8 +213,9 @@ const get_page: Operation = {
     // #2200: tags come from the concrete page's source: federated `sourceOpts` has no
     // scalar sourceId, and getTags would fall back to 'default' (the wrong source).
     const tags = snapshot!.tags;
-    // Only explicitly trusted local reads retain protected body sections.
-    // Holder grants and page-visibility opt-outs do not bypass this boundary.
+    // Only explicitly trusted local reads and the brain owner's own credential
+    // retain protected body sections (GST-3058). Holder grants and
+    // page-visibility opt-outs do not bypass this boundary.
     const isUntrustedReader = ctx.remote !== false;
     const visibleBody = isUntrustedReader && page.body_storage !== 'segmented' ? await stripPrivacyFencesForRemoteReader(ctx, page) : page;
     // v0.42 (#1699) agent-warning channel: surface the page's content_flag
@@ -314,7 +319,7 @@ const fetch_page: Operation = {
     if (!readable) throw missing();
     bumpLastRetrievedAt(ctx.engine, [page.id]);
     const tags = snapshot!.tags;
-    // Same boundaries as get_page: untrusted readers never see takes or private facts fences, nor a quarantined body (#6259).
+    // Same boundaries as get_page: untrusted readers other than the owner's own credential (GST-3058) never see takes or private facts fences, nor a quarantined body (#6259).
     const segmented = isSegmentedPage(page);
     const visibleBody = ctx.remote === false || segmented ? page : await stripPrivacyFencesForRemoteReader(ctx, page);
     const quarantined = readQuarantined(ctx, page, p.include_quarantined === true);
