@@ -1,5 +1,5 @@
 //! Jobs slice 2: the reads: the sweeps' candidate lists, the stats, the unreviewed-authority list,
-//! the retry source row and the cursor page.
+//! the retry source row, a delegated client's open-job count and the cursor page.
 
 use super::*;
 use crate::timeline_queries::timestamptz_text;
@@ -335,6 +335,27 @@ impl Store {
         Ok(load(&*self.read()?, id)?
             .filter(|r| r.status == "failed" || r.status == "dead")
             .map(|r| json!({ "name": r.name, "data": jsonb(&r.data) })))
+    }
+
+    /// `countOpenJobsByOwner`: how many `subagent` rows in a non-terminal status carry
+    /// `data->>'__owner_client_id' = client_id` (a delegated client's open slots, across queues).
+    pub fn count_open_jobs_by_owner(&self, client_id: &str) -> Result<usize> {
+        let read = self.read()?;
+        let mut n = 0;
+        for status in NON_TERMINAL {
+            n += rows_with_status(&*read, status)?
+                .iter()
+                .filter(|r| {
+                    r.name == "subagent"
+                        && r.data
+                            .get("__owner_client_id")
+                            .and_then(jsonb_field_text)
+                            .as_deref()
+                            == Some(client_id)
+                })
+                .count();
+        }
+        Ok(n)
     }
 
     /// `listJobPage`: rows newest first (`created_at DESC, id DESC`) after the cursor tuple, each

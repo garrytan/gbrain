@@ -434,6 +434,16 @@ impl Brain {
         })
     }
 
+    /// `countOpenJobsByOwner(clientId)`: a count.
+    #[napi]
+    pub fn count_open_jobs_by_owner<'env>(
+        &self,
+        env: &'env Env,
+        client_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.count_open_jobs_by_owner(&client_id))
+    }
+
     /// `listJobPage({ status, queue, name, ownerClientId, ownerActor, limit, cursor })`: rows with
     /// `created_us`.
     #[napi]

@@ -1342,3 +1342,55 @@ fn attachments_are_unique_per_job_and_filename() {
     assert!(b.get_job_attachment(id2, "a.txt").unwrap().is_some());
     b.insert_job_attachment(id, &input("a.txt", 5)).unwrap();
 }
+
+#[test]
+fn open_jobs_are_counted_per_delegated_owner_across_live_statuses() {
+    let b = brain("s2-owner-count");
+    let owned = |c: Value| json!({ "data": { "__owner_client_id": c } });
+    let waiting = add(&b, "subagent", owned(json!("c1")));
+    let paused = add(&b, "subagent", owned(json!("c1")));
+    b.pause_job(paused).unwrap().unwrap();
+    add(
+        &b,
+        "subagent",
+        json!({ "queue": "other", "data": { "__owner_client_id": "c1" } }),
+    );
+    add(&b, "work", owned(json!("c1")));
+    add(&b, "subagent", owned(json!("c2")));
+    add(&b, "subagent", owned(json!(7)));
+    add(&b, "subagent", owned(Value::Null));
+    assert_eq!(
+        b.count_open_jobs_by_owner("c1").unwrap(),
+        3,
+        "waiting, paused, other queue"
+    );
+    assert_eq!(
+        b.count_open_jobs_by_owner("7").unwrap(),
+        1,
+        "a number owner matches its text"
+    );
+    assert_eq!(
+        b.count_open_jobs_by_owner("null").unwrap(),
+        0,
+        "a null owner never matches"
+    );
+    assert_eq!(b.count_open_jobs_by_owner("nobody").unwrap(), 0);
+
+    let claimed = claim_named(&b, "w:1", "subagent");
+    assert_eq!(
+        claimed["id"].as_i64(),
+        Some(waiting),
+        "the oldest waiting subagent"
+    );
+    assert_eq!(
+        b.count_open_jobs_by_owner("c1").unwrap(),
+        3,
+        "active still holds a slot"
+    );
+    b.complete_job(waiting, "w:1", None).unwrap().unwrap();
+    assert_eq!(
+        b.count_open_jobs_by_owner("c1").unwrap(),
+        2,
+        "a completed row frees its slot"
+    );
+}
