@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 259/259
+# covered: 311/311
 # lifecycle: 9/9
 # pages: 31/31
 # search: 7/7
@@ -30,6 +30,11 @@
 # import_guards: 9/9
 # cycle_locks: 6/6
 # cli_reads_ops: 7/7
+# facts_doctor: 10/10
+# facts_cycle: 11/11
+# facts_purge: 13/13
+# facts_repair: 10/10
+# facts_trust: 8/8
 # raw_sql: 4/4
 # code_edges: 5/5
 # eval_capture: 5/5
@@ -50,13 +55,13 @@ getPage	pages	yes	29	yes	yes	yes	serves
 readPageSnapshot	pages	yes	7	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	129	yes	yes	yes	serves
+putPage	pages	yes	134	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	4	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	36	yes	yes	yes	serves
+softDeletePage	pages	yes	37	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	6	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -158,7 +163,7 @@ getSince	timeline	yes	1	no	yes	yes	serves
 getOnThisDay	timeline	yes	1	no	yes	yes	serves
 getLastSeen	timeline	yes	1	no	yes	yes	serves
 upsertEventProjection	timeline	yes	4	no	yes	yes	serves
-mergeOntologyFact	ontology	yes	5	no	yes	yes	serves
+mergeOntologyFact	ontology	yes	7	no	yes	yes	serves
 getOntology	ontology	yes	3	no	yes	yes	serves
 discoverOntologyDimensions	ontology	yes	1	no	yes	yes	serves
 findOntologyConflicts	ontology	yes	2	no	yes	yes	serves
@@ -190,11 +195,11 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	27	yes	yes	yes	serves
-insertFacts	facts	yes	14	no	yes	yes	serves
+insertFact	facts	yes	31	yes	yes	yes	serves
+insertFacts	facts	yes	20	no	yes	yes	serves
 deleteFactsForPage	facts	yes	2	no	yes	yes	serves
-expireFact	facts	yes	10	no	yes	yes	serves
-listFactsByEntity	facts	yes	13	yes	yes	yes	serves
+expireFact	facts	yes	17	no	yes	yes	serves
+listFactsByEntity	facts	yes	14	yes	yes	yes	serves
 listFactsSince	facts	yes	8	yes	yes	yes	serves
 listFactsKeyset	facts	yes	2	no	yes	yes	serves
 listFactsBySession	facts	yes	3	yes	yes	yes	serves
@@ -264,6 +269,58 @@ rankEntities	cli_reads_ops	yes	1	no	yes	yes	refuses:graph
 listExtractionPendingPages	cli_reads_ops	yes	1	no	yes	yes	refuses:pages
 listUnattributedFacts	cli_reads_ops	yes	2	no	yes	yes	serves
 listWantedPages	cli_reads_ops	yes	5	no	yes	yes	serves
+listConversationFactRows	facts_doctor	yes	1	no	yes	yes	serves
+countRedactedFacts	facts_doctor	yes	1	no	yes	yes	serves
+listOutsideContentFenceCounts	facts_doctor	yes	1	no	yes	yes	serves
+countAtomFacts	facts_doctor	yes	1	no	yes	yes	serves
+listUnpreviewedTrustFacts	facts_doctor	yes	1	no	yes	yes	refuses:facts
+countUnlinkedFactsByOrigin	facts_doctor	yes	2	no	yes	yes	serves
+countUnlinkedFactStats	facts_doctor	yes	2	no	yes	yes	serves
+countFactRelinkOutcomes	facts_doctor	yes	1	no	yes	yes	refuses:facts
+listUnlinkedConversationSlugs	facts_doctor	yes	2	no	yes	yes	serves
+countFactEmbeddingCoverage	facts_doctor	yes	1	no	yes	yes	serves
+listActiveFactsForEntity	facts_cycle	yes	1	no	yes	yes	serves
+listFreshExtractionOutcomes	facts_cycle	yes	1	no	yes	yes	serves
+listFenceRowGroups	facts_cycle	yes	1	no	yes	yes	serves
+readFactSubject	facts_cycle	yes	1	no	yes	yes	serves
+listFactsForPage	facts_cycle	yes	1	no	yes	yes	serves
+countLegacyFactsPending	facts_cycle	yes	1	no	yes	yes	serves
+countUnconsolidatedFactsBySource	facts_cycle	yes	1	no	yes	yes	serves
+findBulkFactDays	facts_cycle	yes	1	no	yes	yes	serves
+maxFenceRowNum	facts_cycle	yes	1	no	yes	yes	serves
+listStoredFenceFactRows	facts_cycle	yes	1	no	yes	yes	serves
+countWorldFacts	facts_cycle	yes	3	no	yes	yes	serves
+countFactFingerprintLeftovers	facts_purge	yes	1	no	yes	yes	serves
+loadPurgeTarget	facts_purge	yes	4	no	yes	yes	serves
+planFactPurgeIds	facts_purge	yes	1	no	yes	yes	serves
+listFactsReconcileBacklog	facts_purge	yes	1	no	yes	yes	refuses:facts
+listRelinkCandidateRows	facts_purge	yes	1	no	yes	yes	serves
+countRelinkCandidates	facts_purge	yes	1	no	yes	yes	serves
+listSimilarActiveFacts	facts_purge	yes	2	no	yes	yes	serves
+findActiveSingleFact	facts_purge	yes	2	no	yes	yes	serves
+listSingleFactMetadata	facts_purge	yes	1	no	yes	yes	refuses:facts
+listUnfencedFactRows	facts_purge	yes	1	no	yes	yes	serves
+listHeldFenceFactRows	facts_purge	yes	1	no	yes	yes	serves
+listWithdrawalSlugs	facts_purge	yes	2	no	yes	yes	serves
+expireFactsByWithdrawal	facts_purge	yes	1	no	yes	yes	serves
+loopFactDrift	facts_repair	yes	1	no	yes	yes	refuses:facts
+closedLoopWithActiveFact	facts_repair	yes	1	no	yes	yes	refuses:facts
+listSessionFactsForClassification	facts_repair	yes	1	no	yes	yes	serves
+listSessionFactTwins	facts_repair	yes	1	no	yes	yes	serves
+listCapturedFactsForClassification	facts_repair	yes	1	no	yes	yes	serves
+countLabelFacts	facts_repair	yes	1	no	yes	yes	refuses:facts
+listExtractorFactsForClassification	facts_repair	yes	1	no	yes	yes	refuses:facts
+countPurgedPageFacts	facts_repair	yes	1	no	yes	yes	refuses:facts
+listUnwithdrawnFacts	facts_repair	yes	1	no	yes	yes	refuses:facts
+listWorldFactsFromPrivateSources	facts_repair	yes	1	no	yes	yes	serves
+listFactsForRelevance	facts_trust	yes	2	no	yes	yes	serves
+countUncomparableFacts	facts_trust	yes	1	no	yes	yes	serves
+matchSavedFacts	facts_trust	yes	1	no	yes	yes	refuses:facts
+readFactForOwnerAction	facts_trust	yes	1	no	yes	yes	refuses:facts
+listStandingPreferences	facts_trust	yes	1	no	yes	yes	refuses:facts
+listLexicalContestCandidates	facts_trust	yes	1	no	yes	yes	refuses:facts
+listRestatedPrivateCopies	facts_trust	yes	1	no	yes	yes	refuses:facts
+countDerivedFactTaint	facts_trust	yes	1	no	yes	yes	refuses:facts
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 executeRaw	raw_sql	yes	2	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql

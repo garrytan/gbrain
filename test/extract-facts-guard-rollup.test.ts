@@ -30,6 +30,9 @@ function mkEngine(legacyCount: number): { calls: CapturedCall[]; engine: BrainEn
       if (sql.includes('FROM persistence_brain')) return [{ enabled: false }]; // #6482: the strict mode reader needs one well-formed unmanaged row.
       return [];
     },
+    // The legacy-pending count and the unfenced-row read moved off executeRaw onto typed members; they answer what the executeRaw stub answered.
+    async countLegacyFactsPending() { return [{ n: String(legacyCount) }]; },
+    async listUnfencedFactRows() { return []; },
     async getAllSlugs() { return []; },
     async getPage() { return null; },
     async deleteFactsForPage() { return { deleted: 0 }; },
