@@ -101,6 +101,11 @@ export async function readSourceChunkerVersion(exec: LegacyUnscopedRead, sourceI
   return row?.chunker_version ?? null;
 }
 
+/** Stamps the chunker version a full sync of the source used; an unknown source changes nothing. */
+export async function setSourceChunkerVersion(exec: SqlExecutor, sourceId: string, version: string): Promise<void> {
+  await exec.executeRaw('UPDATE sources SET chunker_version = $1 WHERE id = $2', [version, sourceId]);
+}
+
 /**
  * Ids of live sources whose last sync is more than seven days old by the database clock (`now()`), by id: the
  * advisor's stale-sync read. Unscoped on master. Throws on a schema without `last_sync_at` or `archived`.

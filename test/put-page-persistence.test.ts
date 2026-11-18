@@ -250,14 +250,13 @@ describe('put_page persistence boundary', () => {
     const before = await snapshot(slug);
     const file = join(root, `${slug}.md`);
     const originalFile = readFileSync(file, 'utf8');
-    const executeRaw = engine.executeRaw;
+    // The source-path write is the typed member bindPageOrigin (engine-sql/write-guards.ts), not executeRaw. A
+    // transaction engine is Object.create(engine), so the override on the instance reaches the write inside it.
+    const bindPageOrigin = engine.bindPageOrigin;
     let rejected = false;
-    engine.executeRaw = function<T>(sql: string, params?: unknown[]): Promise<T[]> {
-      if (/SET source_path ?= ?\$\d/.test(sql)) {
-        rejected = true;
-        throw new Error('fixture source-path write rejected');
-      }
-      return executeRaw.call(this, sql, params) as Promise<T[]>;
+    engine.bindPageOrigin = async function () {
+      rejected = true;
+      throw new Error('fixture source-path write rejected');
     };
     try {
       const result = await put(slug, content('Rejected replacement.', 'replacement'));
@@ -265,7 +264,7 @@ describe('put_page persistence boundary', () => {
       expect(result.response.isError).toBe(true);
       expect(result.payload.error).toBe('storage_error');
     } finally {
-      engine.executeRaw = executeRaw;
+      engine.bindPageOrigin = bindPageOrigin;
     }
     expect(await snapshot(slug)).toEqual(before);
     expect(readFileSync(file, 'utf8')).toBe(originalFile);

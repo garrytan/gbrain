@@ -424,6 +424,9 @@
       "tx": 1
     },
     "setPageEmbeddingSignature#default": {},
+    "setSourceChunkerVersion#default": {
+      "raw": 1
+    },
     "softDeletePage#default": {},
     "softDeletePage#sourceId": {},
     "softDeletePages#default": {},

@@ -3992,6 +3992,17 @@
         ],
         "flagOnScopes": []
       },
+      "setSourceChunkerVersion#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "softDeletePage#default": {
         "flagOffLanes": [
           "pool"
@@ -4626,6 +4637,7 @@
         "getTrustProposal": "none",
         "getUnverifiedExtractionPageIds": "none",
         "getVersions": "none",
+        "getWorktreeBinding": "none",
         "getWriteGateHoldRow": "none",
         "hasClaimableWrite": "none",
         "hasCompanyBrainReceipt": "none",
@@ -4934,6 +4946,7 @@
         "setEmotionalWeightBatch": "none",
         "setPageAliases": "none",
         "setPageEmbeddingSignature": "none",
+        "setSourceChunkerVersion": "none",
         "sharedSkillPackTablePresent": "none",
         "slugsEndingIn": "none",
         "softDeletePage": "none",

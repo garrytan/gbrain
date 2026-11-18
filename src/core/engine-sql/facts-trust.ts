@@ -16,7 +16,7 @@ import { quarantinedProvenanceFilterFragment } from '../quarantine.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { claimPendingSql } from '../trust/claim-state.ts';
 import { escapeLikePattern } from '../cjk.ts';
-import { SAVED_FACT_COLLAPSE_COLUMNS, type CollapseColumns } from '../search/entity-facts.ts';
+import { SAVED_FACT_COLLAPSE_COLUMNS, type CollapseColumns } from '../search/saved-fact-collapse.ts';
 import type { SavedFactMatch } from '../search/saved-facts-match.ts';
 import { renderFragment, sqlFragment, trustedSql, joinFragments, type SqlFragment } from './fragment.ts';
 import type { EngineRawRead } from './cli-reads-ops.ts';

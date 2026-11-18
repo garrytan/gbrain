@@ -51,8 +51,10 @@ describe('search response meta', () => {
     const r = await dispatchToolCall(engine, 'search', { query: 'widget renewal terms' }, { remote: true, transport: 'http', sourceId: 'default' });
     expect(r.isError).toBeFalsy();
     const safeIndexEnd = events.findIndex(e => e.at === 'end' && e.sql.includes('AND p.chunker_version <'));
-    // The saved-fact match's first statement (its existence probe, or the match itself once the probe is gone).
-    const factProbeStart = events.findIndex(e => e.at === 'start' && /^(SELECT|WITH) .*\bFROM facts f(, k)? WHERE f\.source_id = ANY\(\$1::text\[\]\)/.test(e.sql));
+    // The saved-fact match's first statement (its existence probe, or the match itself once the probe is gone). The
+    // placeholder number is not pinned: the engine member (engine-sql/facts-trust.ts matchSavedFacts) numbers its
+    // binds in text order, so the source list is no longer $1.
+    const factProbeStart = events.findIndex(e => e.at === 'start' && /^(SELECT|WITH) .*\bFROM facts f(, k)? WHERE f\.source_id = ANY\(\$\d+::text\[\]\)/.test(e.sql));
     expect(safeIndexEnd).toBeGreaterThan(-1);
     expect(factProbeStart).toBeGreaterThan(-1);
     expect(factProbeStart).toBeLessThan(safeIndexEnd);

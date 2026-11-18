@@ -19,17 +19,25 @@
  * following test/dispatch-response-meta.serial.test.ts).
  */
 
-import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, mock, beforeEach, afterEach, afterAll } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import * as realHybrid from '../src/core/search/hybrid.ts';
+import * as realReadiness from '../src/core/search/projection-readiness.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { encodeDeepResearchId } from '../src/core/deep-research-id.ts';
 import { fenceTranscriptText } from '../src/core/search/transcript-quote.ts';
 
 let nextResults: unknown[] = [{ id: encodeDeepResearchId('default', 'a'), page_id: 1, source_id: 'default', slug: 'a', chunk_text: 'x' }];
+
+// mock.module patches a loaded module's exports in place (the namespace
+// imports above included), and mock.restore() does not undo it. Snapshot the
+// real exports BEFORE mocking so afterAll can put them back; otherwise the
+// mocks leak into every later file in the same bun process.
+const realHybridExports = { ...realHybrid };
+const realReadinessExports = { ...realReadiness };
 
 // Mock BEFORE importing dispatch (operations.ts binds hybridSearchCached at
 // import time; the spread keeps every other export live).
@@ -40,6 +48,11 @@ mock.module('../src/core/search/hybrid.ts', () => ({
 mock.module('../src/core/search/projection-readiness.ts', () => ({
   probeProjectionReadiness: async () => ({ status: 'ready', ready: true }),
 }));
+
+afterAll(() => {
+  mock.module('../src/core/search/hybrid.ts', () => realHybridExports);
+  mock.module('../src/core/search/projection-readiness.ts', () => realReadinessExports);
+});
 
 const { dispatchToolCall, __resetBackupNoticeForTests } = await import('../src/mcp/dispatch.ts');
 const {

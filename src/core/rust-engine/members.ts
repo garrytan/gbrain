@@ -125,6 +125,8 @@ export const RUST_ENGINE_MEMBERS = {
   attachSourcePath: 'sources',
   sharedSkillPackTablePresent: 'sources',
   listSharedSkillPackRoots: 'sources',
+  // The writer-binding read is a persistence table read (persistence_worktrees is persistence_journal's, catalog.ts).
+  getWorktreeBinding: 'persistence_journal',
   // config
   getConfigValues: 'config',
   getConfig: 'config',
@@ -163,8 +165,9 @@ export const RUST_ENGINE_MEMBERS = {
   // chunks
   deleteChunksExcept: 'chunks',
   setChunkerVersion: 'chunks',
-  // The store keeps no per-source chunker stamp (sync preflight's version gate), so this is served as always NULL.
+  // The source record's chunker stamp (sync preflight's version gate).
   readSourceChunkerVersion: 'chunks',
+  setSourceChunkerVersion: 'chunks',
   writeTextProjectionSeal: 'chunks',
   moveChunkIndexes: 'chunks',
   getChunkReuseRows: 'chunks',

@@ -5,7 +5,8 @@ Part of the store contract in [rust/README.md](../../README.md) ("The brain stor
 A fresh brain has the `default` source: `{ id: 'default', name: 'default', local_path: null,
 last_sync_at: null, config: { federated: true } }`. A row is PGLite's `SourceRow` plus
 `incarnation` (a UUID that changes when a source is deleted and created again), with
-`last_sync_at` as an ISO string.
+`last_sync_at` as an ISO string. The record also keeps the source's `chunker_version` stamp, absent
+until the first stamp; the import members read and write it ([import-members.md](import-members.md)).
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
@@ -32,7 +33,6 @@ The source members below behave differently on the Rust engine. Each difference 
   `default`, not archived, role not `storage_manifest`.
 - `listStaleSyncSourceIds` compares `last_sync_at` with the process clock. The SQL engines use
   the database clock (`now()`).
-- `readSourceChunkerVersion` refuses with the typed `chunks` capability refusal.
 - `lockSourceRow` reads the row from `listSourceRecords` and takes no lock. The SQL engines read
   with `FOR UPDATE`; no parity case checks that lock.
 - `readSourceRow` reads from `listSourceRecords`. A caller that needs the incarnation makes one

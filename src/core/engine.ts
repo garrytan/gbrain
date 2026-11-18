@@ -46,7 +46,7 @@ import type { LedgerSource } from './engine-sql/belief.ts';
 import type { ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, MentionDueQuery, SiblingCandidateQuery, SiblingCandidateRow } from './engine-sql/entity-reads.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
 import type {
-  AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow,
+  AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from './engine-sql/write-misc.ts';
 import type { AdmitJobPolicy, AdmitJobResult, AdmitJobSpec, ClaimJobSpec, JobRow, ListJobsFilter } from './engine-sql/jobs.ts';
 import type {
@@ -1320,6 +1320,8 @@ export interface BrainEngine {
   lockSourceRow(sourceId: string): Promise<SourceCheckRow | null>;
   /** The source's stamped chunker version, or null (engine-sql/sources.ts). */
   readSourceChunkerVersion(sourceId: string): Promise<string | null>;
+  /** Stamps the source's chunker version; an unknown source changes nothing (engine-sql/sources.ts). */
+  setSourceChunkerVersion(sourceId: string, version: string): Promise<void>;
   /** Pages of one source, soft-deleted pages only with `includeDeleted`; an unknown source has none (engine-sql/sources.ts). */
   countSourcePages(sourceId: string, opts?: { includeDeleted?: boolean }): Promise<number>;
   /** Inserts one source row (id, name, local_path, config); a taken id or name throws and writes nothing. */
@@ -1348,6 +1350,8 @@ export interface BrainEngine {
   readAdmissionSource(sourceId: string): Promise<AdmissionSourceRow | null>;
   sharedSkillPackTablePresent(): Promise<boolean>;
   listSharedSkillPackRoots(hostId: string): Promise<SharedSkillPackRoot[]>;
+  /** The source's writer binding with host `hostId`'s paths (null host columns for a null or unbound host); null when unbound. */
+  getWorktreeBinding(sourceId: string, hostId: string | null): Promise<WorktreeBinding | null>;
   hasExtractedEvents(sourceId: string, pageId: number): Promise<boolean>;
   listActiveAccessMembers(): Promise<string[]>;
   expireMemoryProposals(reason: string): Promise<number>;

@@ -1,6 +1,6 @@
 /**
  * The import members (BrainEngine getPageSealState, refreshPageOrigin, setChunkerVersion, readSourceChunkerVersion,
- * writeTextProjectionSeal, moveChunkIndexes, getChunkReuseRows): the page and chunk statements a page import runs around
+ * setSourceChunkerVersion, writeTextProjectionSeal, moveChunkIndexes, getChunkReuseRows): the page and chunk statements a page import runs around
  * its chunk write (engine-sql/pages.ts, engine-sql/chunks.ts and engine-sql/sources.ts on the SQL engines).
  * `replaceDerivedAliases` is in aliases.ts with the other page alias rows.
  *
@@ -31,9 +31,14 @@ export const setChunkerVersion: StoreMember<[slug: string, version: number, opts
       brain.setChunkerVersion(slug, String(version), opts?.sourceId ?? null));
   };
 
-/** Always null: the store keeps no per-source chunker stamp, and its only writer is raw SQL the engine refuses. */
+/** The chunker version on the source record, or null before the first stamp and for an unknown source. */
 export const readSourceChunkerVersion: StoreMember<[sourceId: string], string | null> = (brain, sourceId) =>
   storeCall({ member: 'readSourceChunkerVersion', sourceId }, () => brain.readSourceChunkerVersion(sourceId));
+
+/** Stamps the chunker version on the source record; an unknown source changes nothing. */
+export const setSourceChunkerVersion: StoreMember<[sourceId: string, version: string], void> = async (brain, sourceId, version) => {
+  await storeCall({ member: 'setSourceChunkerVersion', sourceId }, () => brain.setSourceChunkerVersion(sourceId, version));
+};
 
 export const writeTextProjectionSeal: StoreMember<[slug: string, opts: { sourceId: string; revision: string; timelineText: string }], void> =
   async (brain, slug, opts) => {

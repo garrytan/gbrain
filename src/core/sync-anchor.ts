@@ -353,10 +353,7 @@ export async function writeChunkerVersion(
 ): Promise<void> {
   return withCompanyBrainSource(engine, sourceId, async engine => {
   if (!sourceId) return;
-  await engine.executeRaw(
-    `UPDATE sources SET chunker_version = $1 WHERE id = $2`,
-    [version, sourceId],
-  );
+  await engine.setSourceChunkerVersion(sourceId, version);
   });
 }
 

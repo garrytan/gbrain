@@ -313,6 +313,7 @@ test/large-pages/projection-claim-ownership.test.ts
 test/large-pages/projection-demotion-race.test.ts
 test/large-pages/projection-lock-hold.test.ts
 test/large-pages/projection-parity.test.ts
+test/large-pages/projection-queue-order.test.ts
 test/large-pages/publication-seal-bounded.test.ts
 test/large-pages/purge-fact-inflight-staging.test.ts
 test/large-pages/purge-fact-segmented-preimage.test.ts

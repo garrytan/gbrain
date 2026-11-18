@@ -106,8 +106,10 @@ export async function readCapacityForecast(engine: Pick<BrainEngine, 'readJourna
   opts: { limits?: JournalLimits; light?: boolean; config?: Promise<CapacityConfig> } = {}): Promise<CapacityForecast> {
   // Every read is independent of the others (the principal walks need only the counters), so they are issued together:
   // one round trip for the lot instead of one each (GBRA-133). engine-sql/persistence-housekeeping.ts holds the statements.
+  // The typed read is called inside an async function: a member that throws on the call (the deadline wrapper refusing a
+  // read past its deadline, an engine without the member) must reject with the others, not orphan the limits read's rejection.
   const [limits, { warnDays, failDays, retentionDays: retention }, inputs] = await Promise.all([
-    opts.limits ?? readJournalLimits(engine), opts.config ?? readCapacityConfig(engine), engine.readCapacityForecastInputs({ light: opts.light })]);
+    opts.limits ?? readJournalLimits(engine), opts.config ?? readCapacityConfig(engine), (async () => engine.readCapacityForecastInputs({ light: opts.light }))()]);
   const { counters, reclaim, tableBytes } = inputs;
   const historyRow = inputs.history;
   const days: Day[] = inputs.days.map(day => toDay({ ...day }));
