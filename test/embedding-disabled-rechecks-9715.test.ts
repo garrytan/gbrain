@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { __setEmbedTransportForTests, configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { makeContextualReindexHandler } from '../src/core/minions/handlers/contextual-reindex-per-chunk.ts';
+import { runReindexMultimodal } from '../src/commands/reindex-multimodal.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
@@ -70,6 +71,25 @@ for (const backend of testBackends()) {
         await engine.setConfig('embedding_disabled', 'true');
         expect(await makeContextualReindexHandler({ engine })(job('notes/queued'))).toMatchObject({ ok: true, chunks_embedded: 0, skip_reason: 'embedding_disabled' });
         expect(sent).toEqual([]);
+      });
+    }, 120_000);
+
+    test('a running multimodal reindex sends no batch after the setting is turned on', async () => {
+      await world(databaseUrl, async engine => {
+        await stalePage(engine, 'notes/many', 40);
+        const calls: number[] = [];
+        const originalFetch = globalThis.fetch;
+        globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+          const inputs = (JSON.parse(String(init?.body ?? '{}')).inputs ?? []) as unknown[];
+          calls.push(inputs.length);
+          if (calls.length === 1) await engine.setConfig('embedding_disabled', 'true');
+          return new Response(JSON.stringify({ data: inputs.map((_, index) => ({ embedding: new Array(1024).fill(0.1), index })), model: 'voyage-multimodal-3' }), { status: 200 });
+        }) as typeof fetch;
+        configureGateway({ ...gateway, embedding_multimodal_model: 'voyage:voyage-multimodal-3', env: { ...gateway.env, VOYAGE_API_KEY: '[redacted]' } } as never);
+        try {
+          await expect(runReindexMultimodal(engine, { yes: true })).rejects.toMatchObject({ name: 'EmbeddingDisabledError' });
+        } finally { globalThis.fetch = originalFetch; configureGateway(gateway); }
+        expect(calls).toEqual([32]);
       });
     }, 120_000);
   });
