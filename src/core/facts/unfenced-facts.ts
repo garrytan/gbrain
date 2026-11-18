@@ -612,6 +612,11 @@ async function fenceManaged(engine: BrainEngine, plan: UnfencedFactsPlan): Promi
  * same page (#6608): the receipt, page version and projection follow, and an `unbound_source` write rechecks at
  * publication that the source is still unbound and the page still has no canonical file.
  */
+async function fenceMaintenanceWriter(engine: BrainEngine, sourceId: string) {
+  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation FROM sources WHERE id=$1', [sourceId]);
+  return submissionAuthority({ engine, remote: false, sourceId } as OperationContext, 'submit_job', sourceId, source!.incarnation, 'maintenance');
+}
+
 async function fenceDatabaseOnlyPage(engine: BrainEngine, sourceId: string, entitySlug: string, reason: NonNullable<WriteAuthority['databaseOnlyReason']> | null,
   group: UnfencedFactRow[], outcome: UnfencedFactsOutcome): Promise<void> {
   try {
@@ -623,8 +628,7 @@ async function fenceDatabaseOnlyPage(engine: BrainEngine, sourceId: string, enti
     if (fence.assignments.length === 0) return;
     assertPersistenceAccepting(engine);
     if (!currentVerifiedLocalWriter()) await registerLocalWriter(engine, 'cli');
-    const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation FROM sources WHERE id=$1', [sourceId]);
-    const writer = await submissionAuthority({ engine, remote: false, sourceId } as OperationContext, 'submit_job', sourceId, source!.incarnation, 'maintenance');
+    const writer = await fenceMaintenanceWriter(engine, sourceId);
     if (reason) writer.databaseOnlyReason = reason;
     await submitFactFenceAdoption(engine, { writer, binding: null }, entitySlug, { content: fence.body, expectedRevision: snapshot.revision,
       assignments: fence.assignments.map(a => ({ id: Number(a.id), row_num: a.row_num })), file: false });
@@ -672,8 +676,7 @@ async function fenceFilePage(engine: BrainEngine, sourceId: string, entitySlug: 
       if (planned.assignments.length === 0) return;
       assertPersistenceAccepting(engine);
       if (!currentVerifiedLocalWriter()) await registerLocalWriter(engine, 'cli');
-      const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation FROM sources WHERE id=$1', [sourceId]);
-      const writer = await submissionAuthority({ engine, remote: false, sourceId } as OperationContext, 'submit_job', sourceId, source!.incarnation, 'maintenance');
+      const writer = await fenceMaintenanceWriter(engine, sourceId);
       await submitFactFenceAdoption(engine, { writer, binding: null }, entitySlug, { content: planned.body, expectedRevision: snapshot.revision,
         assignments: planned.assignments.map(a => ({ id: Number(a.id), row_num: a.row_num })), file: false });
       // The coordinator published the fence into the segmented body; the file agreed with it before, so it only gains the
