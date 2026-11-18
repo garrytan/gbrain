@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 198/198
+# covered: 199/199
 # lifecycle: 9/9
 # pages: 24/24
 # search: 7/7
@@ -29,6 +29,7 @@
 # raw_sql: 4/4
 # code_edges: 5/5
 # eval_capture: 5/5
+# owner_only: 1/1
 # salience_enrich: 5/5
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
 connect	lifecycle	yes	1	yes	yes	yes	serves
@@ -211,7 +212,7 @@ unsetConfig	config	yes	2	no	yes	yes	serves
 listConfigKeys	config	yes	2	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	2	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	3	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 addCodeEdges	code_edges	yes	3	yes	yes	yes	refuses:code_edges
@@ -224,6 +225,7 @@ listEvalCandidates	eval_capture	yes	2	no	yes	yes	refuses:eval_capture
 deleteEvalCandidatesBefore	eval_capture	yes	1	no	yes	yes	refuses:eval_capture
 logEvalCaptureFailure	eval_capture	yes	1	no	yes	yes	refuses:eval_capture
 listEvalCaptureFailures	eval_capture	yes	1	no	yes	yes	refuses:eval_capture
+ownerOnlyMarkTriggers	owner_only	yes	2	no	yes	yes	refuses:schema
 batchLoadEmotionalInputs	salience_enrich	yes	1	no	yes	yes	refuses:salience
 setEmotionalWeightBatch	salience_enrich	yes	2	yes	yes	yes	refuses:salience
 getRecentSalience	salience_enrich	yes	1	yes	yes	yes	refuses:salience

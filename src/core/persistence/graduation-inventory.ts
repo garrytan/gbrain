@@ -131,6 +131,7 @@ export const GRADUATION_INVENTORY: Inventory = {
     carry('op_checkpoint_paths', 'operational', 'Resumable operation checkpoints.'),
     carry('op_checkpoints', 'operational', 'Resumable operation checkpoints.'),
     carry('open_loops', 'user_data', 'Open loops and their status.'),
+    carry('owner_only_marks', 'security', 'Rows derived from a removed owner-only origin (GST-3032); dropping them would reopen those rows to other members.'),
     carry('page_aliases', 'user_data', 'Page aliases.'),
     carry('page_body_manifest', 'user_data', 'Segmented page bodies: which segment texts make each body generation, in order; without it a large page has no body.'),
     carry('page_body_staging_parts', 'operational', 'Raw parts of open upload sessions; without them a client resuming an upload starts over.'),

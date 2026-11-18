@@ -487,6 +487,10 @@
       },
       {
         "category": "ops",
+        "name": "owner_only_marks_triggers"
+      },
+      {
+        "category": "ops",
         "name": "database_encoding"
       },
       {

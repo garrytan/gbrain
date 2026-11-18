@@ -1,0 +1,16 @@
+**Pages and facts made from your iMessage conversations stay owner-only after the conversation is deleted or its source is removed.**
+
+**Who must act:** only an operator whose brain has an owner-only (iMessage) source *and* a non-owner Postgres database login (a scoped writer or reader role). Run `gbrain doctor`; `owner_only_marks_triggers` names each such login and prints the `GRANT` and `CREATE POLICY` statements to run as the table owner. Everyone else has nothing to do: a brain that never held owner-only data behaves as before, with no new grant.
+
+### Fixed
+- Removing an iMessage source (`gbrain sources remove`, with or without `--keep-storage`), or deleting one of its pages for good, used to make every page, fact and concept derived from it readable by other members of a shared brain. A delete now records those derived rows first (migration v322, table `owner_only_marks`), and they stay owner-only. Nothing derived is deleted, and the owner still reads all of it.
+- A row many derivations away from an iMessage page is now owner-only too. The earlier check stopped after 8 hops.
+- A soft-deleted iMessage page, its restore, and its later purge keep the derived rows owner-only at every step.
+- A take or timeline row derived from owner-only data is classified by its own lineage when it is deleted, not only by its page's.
+
+### Changed
+- The first owner-only source sets a one-way flag (a comment on `owner_only_marks`), so owner-only lineage stays guarded after the last owner-only source is removed. Only the owner of `owner_only_marks` can set it.
+- `owner_only_marks` has row-level security on and no policy, like its sibling tables. A login that cannot read every mark reads owner-only lineage closed (derived rows count as owner-only), never open and never an error; on a brain that has held owner-only data its permanent deletes are refused with `owner_only_marks_unwritable`, which names the grant.
+- A database login that cannot read the lineage tables (`derivation_inputs`, `facts`, `links`, `takes`, `timeline_entries`), such as a read-only role, reads every page and fact closed on a brain that has held owner-only data, instead of failing with a permission error.
+- A database login whose reads row-level security limits cannot delete a row it sees as owner-only (`owner_only_lineage_unreadable`); delete it as the table owner or a `BYPASSRLS` login. Its delete of an open row goes through and sets the `('*', 'row_security')` mark, which keeps derived rows owner-only for everyone but the owner while such a login keeps making permanent deletes.
+- New doctor check `owner_only_marks_triggers` names a delete trigger that is missing or disabled, each login that still needs the grant, and the row-security mark, with the fix. See docs/ENGINES.md, "Owner-only delete triggers" and "Privileges on `owner_only_marks`".

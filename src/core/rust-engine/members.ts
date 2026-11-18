@@ -29,6 +29,7 @@ export const RUST_ENGINE_MEMBERS = {
   // Optional on BrainEngine: only Postgres defines it. The Rust engine leaves it undefined, so a migration serializes
   // in-process (schema-migration-lock.ts), as on PGLite, and `schema` can be reported.
   holdSchemaMigrationLock: 'implemented',
+  ownerOnlyMarkTriggers: 'schema',
   // transactions
   transaction: 'transactions',
   transactionDirect: 'transactions',

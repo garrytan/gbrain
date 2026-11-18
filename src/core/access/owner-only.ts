@@ -6,14 +6,18 @@
  * exactly what a page that does not exist gets, whatever the operator relaxed: `--private-pages granted-sources`, the
  * `search.remote_private_pages` hatch, `access.members_read_lineage` and the owner opt-in widen nothing here.
  *
- * The rule follows lineage at read time and stores nothing per page, so it needs no backfill and works the same on a
- * repo-less brain: a page or fact in an owner-only source, a synthesized concept or question with an input page there,
- * and any page or fact whose recorded derivation inputs (`derivation_inputs`, followed transitively) reach a page,
- * fact, take or timeline row there. Atoms, Life Chronicle events and `derived_from` pages resolve their origin in their
- * own source, so the source test covers them. The test is the v320 function gbrain_owner_only_lineage(table, id), behind
- * its zero-argument form (does the brain hold an owner-only source at all?), so a brain without one never calls it.
+ * The rule follows lineage at read time, so it needs no backfill and works the same on a repo-less brain: a page or
+ * fact in an owner-only source, a synthesized concept or question with an input page there, and any page or fact whose
+ * recorded derivation inputs (`derivation_inputs`, followed transitively) reach a page, fact, take or timeline row
+ * there. Atoms, Life Chronicle events and `derived_from` pages resolve their origin in their own source, so the source
+ * test covers them. The test is the v320 function gbrain_owner_only_lineage(table, id), behind its zero-argument form
+ * (may the brain hold an owner-only row at all?), so a brain without one never calls it. GST-3032 (v322): when an origin
+ * goes (its source removed, or the row hard-deleted), a delete trigger marks every row derived from it in
+ * owner_only_marks first, and both forms read the marks, so a derived row stays owner-only after its origin is gone and
+ * the guard stays on after the last owner-only source is removed. Nothing derived is deleted.
  */
 import type { BrainEngine } from '../engine.ts';
+import { schemaVersionSeen } from '../migrate-pending.ts';
 
 /** The `sources.config` flag that makes a source owner-only. */
 export const OWNER_ONLY_FLAG = 'owner_only';
@@ -50,10 +54,20 @@ function safeParse(text: string): unknown {
   try { return JSON.parse(text); } catch { return null; }
 }
 
-/** Does the brain hold an owner-only source? An unreadable answer counts as yes (fail closed). */
+/** The SQL test behind ownerOnlySourcesPresent, for a statement that folds it into other work. */
+export function ownerOnlyPresentSql(engine: object): string {
+  const version = schemaVersionSeen(engine);
+  return version !== undefined && version < OWNER_ONLY_LINEAGE_SINCE ? ANY_OWNER_ONLY_SQL : `${OWNER_ONLY_LINEAGE_FN}()`;
+}
+
+/**
+ * May the brain hold an owner-only row: an owner-only source, or a row derived from a removed one (v322's marks)? Read
+ * through gbrain_owner_only_lineage() unless the engine recorded a schema below v320, where the source test alone
+ * answers (no marks exist there). An unreadable answer counts as yes (fail closed).
+ */
 export async function ownerOnlySourcesPresent(engine: Pick<BrainEngine, 'executeRaw'>): Promise<boolean> {
   try {
-    const [row] = await engine.executeRaw<{ present: boolean }>(`SELECT ${ANY_OWNER_ONLY_SQL} AS present`);
+    const [row] = await engine.executeRaw<{ present: boolean }>(`SELECT ${ownerOnlyPresentSql(engine)} AS present`);
     return row?.present !== false;
   } catch {
     return true;
@@ -90,7 +104,7 @@ export function ownerOnlyForm(schemaVersion: number | undefined): OwnerOnlyForm 
 
 /**
  * The page row `alias` is owner-only: held in an owner-only source, a synthesized concept or question with an input page
- * there, or derived (by its recorded inputs, up to 8 hops) from a row there. `alias` is a code-provided literal.
+ * there, or derived (by its recorded inputs, transitively) from a row there. `alias` is a code-provided literal.
  */
 export function ownerOnlyPageSql(alias: string, form: OwnerOnlyForm): string {
   return form === 'fn' ? `((SELECT ${OWNER_ONLY_LINEAGE_FN}()) AND ${OWNER_ONLY_LINEAGE_FN}('pages', ${alias}.id))` : ANY_OWNER_ONLY_SQL;
