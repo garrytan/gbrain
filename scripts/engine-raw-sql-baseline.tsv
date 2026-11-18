@@ -687,7 +687,6 @@ src/core/persistence/effect-catchup.ts	execute_raw	1
 src/core/persistence/effect-facts.ts	execute_raw	8
 src/core/persistence/effect-journal.ts	execute_raw	24
 src/core/persistence/effect-links.ts	execute_raw	8
-src/core/persistence/effect-recovery-scan.ts	execute_raw	1
 src/core/persistence/effect-recovery.ts	execute_raw	18
 src/core/persistence/effect-retry.ts	execute_raw	14
 src/core/persistence/effect-settle.ts	execute_raw	7
@@ -799,7 +798,6 @@ src/core/persistence/rows-behind.ts	execute_raw	4
 src/core/persistence/schema-admission.ts	execute_raw	1
 src/core/persistence/searchable.ts	execute_raw	2
 src/core/persistence/segmented-apply.ts	execute_raw	9
-src/core/persistence/segmented-mirror-gate.ts	execute_raw	1
 src/core/persistence/semantic-pages.ts	execute_raw	2
 src/core/persistence/skill-activation.ts	execute_raw	12
 src/core/persistence/soak-counters.ts	execute_raw	4
