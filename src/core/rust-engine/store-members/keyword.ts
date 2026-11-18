@@ -1,6 +1,6 @@
 /**
- * Keyword search members of the keyword_search capability and title trigrams. findByTitleFuzzy, searchKeywordChunks,
- * countKeywordPages and searchKeywordPages are served; searchTitles still refuses with `engine_capability_missing`
+ * Keyword search members of the keyword_search capability and title trigrams. findByTitleFuzzy, searchKeyword,
+ * searchKeywordChunks, countKeywordPages and searchKeywordPages are served; searchTitles still refuses with `engine_capability_missing`
  * until this file exports it (docs/designs/RUST_ENGINE_INTERFACES.md).
  *
  * The keyword members resolve every engine default here (the hard-exclude list, the source-boost map, the slug
@@ -16,6 +16,8 @@ import { clampSearchLimit } from '../../engine.ts';
 import { getFtsLanguage } from '../../fts-language.ts';
 import { searchLimitCap } from '../../search/eval-pool-depth.ts';
 import { slugHandles } from '../../search/keyword-handles.ts';
+import { keywordArmRows } from '../../search/keyword-identifier-probe.ts';
+import { RARE_TERM_CHUNK_CAP, rankOrFallbackByRarity, type RareTermPages } from '../../search/keyword-or-rarity.ts';
 import type { KeywordPageWindow } from '../../search/keyword-statement.ts';
 import { resolveBoostMap, resolveHardExcludes } from '../../search/source-boost.ts';
 import { collapseWebsearchDashRuns } from '../../search/sql-ranking.ts';
@@ -55,7 +57,7 @@ const PAGE_FILTERS = ['type', 'types', 'where', 'exclude_slugs'] as const;
 /** Visibility options the store cannot apply (private pages, safe chunks, the trust floor). */
 const VISIBILITY = ['excludePrivate', 'requireSafeChunks', 'minTrust', 'suppressFlagged'] as const;
 
-type Member = 'searchKeywordChunks' | 'countKeywordPages' | 'searchKeywordPages';
+type Member = 'searchKeyword' | 'searchKeywordChunks' | 'countKeywordPages' | 'searchKeywordPages';
 
 /** Checks every option `member` gets, refusing one it cannot answer exactly, and returns the store options. */
 function keywordOptions(member: Member, query: string, opts: (SearchOpts & { timeoutMs?: number }) | undefined): Record<string, unknown> {
@@ -211,3 +213,49 @@ export const searchKeywordPages: StoreMember<[query: string, opts: SearchOpts | 
     const rows: Record<string, unknown>[] = await storeCall({ member: 'searchKeywordPages' }, () => brain.searchKeywordPages(query, options));
     return rows.map(rowToSearchResult);
   };
+
+type Row = Record<string, unknown>;
+
+/**
+ * PGLite's keyword arm (pglite-engine.ts searchKeyword): the strict statement over the dash-collapsed query, then the
+ * retries of keyword-identifier-probe.ts (handle pages, identifier probe, any-word retry ranked by word rarity)
+ * through the same statement. It reads no vector or hybrid knob (`embeddingColumn`, `cjkKeyword`,
+ * `keywordTimeoutCache`, `vectorLegacyGuard`, `hnswIterativeScan`, `onVectorPoolMeta`), so the hybrid arm's options
+ * are served as PGLite serves them.
+ */
+export const searchKeyword: StoreMember<[query: string, opts?: SearchOpts], SearchResult[]> = async (brain, query, opts) => {
+  const options = keywordOptions('searchKeyword', query, opts);
+  const cap = searchLimitCap();
+  const limit = clampSearchLimit(opts?.limit, 20, cap);
+  const offset = wholeCount('searchKeyword', opts?.offset || 0, 'an offset')!;
+  if (opts?.limit && opts.limit > cap) {
+    console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${cap}`);
+  }
+  options.limit = limit;
+  options.innerLimit = Math.min(limit * 3, cap * 3);
+  options.offset = offset;
+  const rankQuery = opts?.rankQuery ? String(opts.rankQuery) : undefined;
+  const call = (match: string, rank: string): Promise<Row[]> =>
+    storeCall({ member: 'searchKeyword' }, () => brain.searchKeywordArm(match, rank, options));
+  const collapsed = collapseWebsearchDashRuns(query);
+  const strict = opts?.orFill ? [] : await call(collapsed, rankQuery ?? collapsed);
+  // PGLite's `run`: the match replaces `$1`; the rank is the caller's rankQuery, else (orFallback) the retry's rank,
+  // else `$1` itself.
+  const run = (match: string, rank: string) => call(match, rankQuery ?? (opts?.orFallback ? rank : match));
+  return keywordArmRows({
+    query, strict, orFallback: opts?.orFallback, orFill: opts?.orFill, limit, offset, toResult: rowToSearchResult,
+    runProbe: run, onIncomplete: opts?.onKeywordIncomplete,
+    runHandles: async handles => {
+      if (query.trim() === '' || handles.length === 0) return [];
+      const { innerLimit: _inner, ...rest } = options;
+      const handleOptions = { ...rest, handles, handlesOnly: true, limit, offset: 0 };
+      const rows: Row[] = await storeCall({ member: 'searchKeyword' }, () => brain.searchKeywordPages(query, handleOptions));
+      return rows.map(rowToSearchResult);
+    },
+    runRelaxed: async orQuery => rankOrFallbackByRarity({
+      query, rows: await run(orQuery, orQuery), limit, offset, runRare: q => run(q, orQuery),
+      readTermPages: async terms => (await storeCall({ member: 'searchKeyword' },
+        () => brain.keywordRareTermPages(terms, RARE_TERM_CHUNK_CAP))) as RareTermPages[],
+    }),
+  });
+};
