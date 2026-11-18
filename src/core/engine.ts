@@ -53,7 +53,7 @@ import type { McpLogPruneBatch, McpLogPruneCutoff, McpOpUsageRow, McpRequestLogR
 import type * as LinkTemporalSql from './engine-sql/link-temporal.ts';
 import type { RelationshipEvidence, RelationshipKey, RelationshipStateWrite } from './link-relationships.ts';
 import type { CoverageRelevance, ProjectionRebuildProgress, ScopedCount } from './search/retrieval-coverage.ts';
-import type { ProjectionReadinessScope } from './search/projection-readiness.ts';
+import type { ProjectionReadinessRow, ProjectionReadinessScope } from './search/projection-readiness.ts';
 import type { VectorBackfillOpts } from './search-vector-backfill.ts';
 export type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions, PageMutationPrecondition, PageWithdrawal } from './page-state/types.ts';
 import type {
@@ -1480,6 +1480,13 @@ export interface BrainEngine {
   countPendingProjectionPages(scope: ProjectionReadinessScope, relevance: CoverageRelevance): Promise<ScopedCount | null>;
   countEmbeddingHeldPages(scope: ProjectionReadinessScope, relevance: CoverageRelevance): Promise<ScopedCount | null>;
   projectionRebuildProgress(scope: ProjectionReadinessScope): Promise<ProjectionRebuildProgress | null>;
+  /**
+   * The readiness probe (search/projection-readiness.ts): the generation its cached answer depends on (null when no
+   * stable generation can be read, so the probe does not cache), and whether the scope has unsealed pages that need
+   * work (`pending`) or only protected pages no repair seals (`by_design`). The second throws when the read fails.
+   */
+  readProjectionReadinessGeneration(): Promise<string | null>;
+  readProjectionReadiness(scope: ProjectionReadinessScope): Promise<ProjectionReadinessRow>;
   /** Code-symbol lookups, code readiness probes, doctor chunk counts, withdrawal's chunk scan, contextual-mode and frozen hits (SQL and contracts in engine-sql/chunk-reads.ts). */
   findCodeDefinitions(symbol: string, opts?: CodeSymbolQuery): Promise<CodeDefinitionRow[]>;
   listSymbolTypesForName(symbol: string, opts?: Omit<CodeSymbolQuery, 'limit'>): Promise<Array<string | null>>;

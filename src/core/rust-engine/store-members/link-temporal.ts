@@ -5,15 +5,17 @@
  * (rust/docs/store/link_temporal.md). The relationship builder stays in TypeScript (link-relationships.ts): it reads
  * the pack's relation semantics, which live in this process.
  *
- * Also here: reindex-search-vector's steps, which are no-ops under the store's one keyword language, and the
- * embedding-held count of retrieval coverage, which is zero because the store keeps no embedding budget. The pending
- * and rebuild coverage counts are not served: the store keeps no projection queue, so they refuse.
+ * Also here: reindex-search-vector's steps, which are no-ops under the store's one keyword language, and retrieval
+ * coverage. The embedding-held count is zero because the store keeps no embedding budget. The pending count, the
+ * rebuild progress and the readiness probe's statement read the store's pages and projection queue
+ * (rust/crates/gbrain-store/src/link_queries/retrieval_coverage.rs). The probe's generation is null: the store has no
+ * page clock, so the probe never caches its answer here.
  *
  * Export only BrainEngine members from this file (index.ts spreads the module into STORE_MEMBERS); helpers stay
  * unexported.
  */
-import type { CoverageRelevance, ScopedCount } from '../../search/retrieval-coverage.ts';
-import type { ProjectionReadinessScope } from '../../search/projection-readiness.ts';
+import type { CoverageRelevance, ProjectionRebuildProgress, ScopedCount } from '../../search/retrieval-coverage.ts';
+import type { ProjectionReadinessRow, ProjectionReadinessScope } from '../../search/projection-readiness.ts';
 import type * as LinkTemporalSql from '../../engine-sql/link-temporal.ts';
 import { DERIVED_TRANSITION_PRODUCERS } from '../../engine-sql/link-temporal.ts';
 import type { RelationshipEvidence, RelationshipKey, RelationshipStateWrite } from '../../link-relationships.ts';
@@ -130,8 +132,64 @@ export const ensureFactsKeywordIndex: StoreMember<[lang: string, notice?: (line:
 };
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Retrieval coverage: the store keeps no embedding budget, so no page is held.
+// Retrieval coverage. The store keeps no embedding budget, so no page is held. The other reads send the scope with the
+// store's private-page policy; a trust floor or flagged-page filter refuses (the store keeps no trust tiers), and
+// `requireSafeChunks` changes nothing because these reads count pages, not chunks.
 // ---------------------------------------------------------------------------------------------------------------------
+
+/** `ProjectionReadinessScope` as the store reads it. */
+function coverageScope(member: string, scope: ProjectionReadinessScope = {}) {
+  if (scope.minTrust !== undefined) refuseMember(member, 'minTrust (the store keeps no trust tiers)');
+  if (scope.suppressFlagged === true) refuseMember(member, 'suppressFlagged (the store keeps no gate flags)');
+  return {
+    sourceId: scope.sourceId ?? null,
+    sourceIds: scope.sourceIds ? [...scope.sourceIds] : null,
+    excludePrivate: storePagePolicy(member, scope.excludePrivate) ?? null,
+    pageKind: scope.pageKind ?? null,
+    types: scope.types ? [...scope.types] : null,
+    excludeSlugPrefixes: [...(scope.excludeSlugPrefixes ?? [])],
+  };
+}
+
+const WORD_PATTERN_HEAD = '(^|[^[:alnum:]])';
+const WORD_PATTERN_TAIL = '([^[:alnum:]]|$)';
+/** The words `coverageRelevance` builds patterns from; none of their characters needs a regex escape. */
+const PATTERN_WORD = /^[\p{L}\p{N}'-]+$/u;
+
+/** The query word of one `coverageRelevance` pattern; any other pattern refuses (the store runs no POSIX regex). */
+function patternWord(member: string, pattern: string): string {
+  const word = pattern.startsWith(WORD_PATTERN_HEAD) && pattern.endsWith(WORD_PATTERN_TAIL)
+    ? pattern.slice(WORD_PATTERN_HEAD.length, pattern.length - WORD_PATTERN_TAIL.length) : '';
+  if (!PATTERN_WORD.test(word)) refuseMember(member, 'a relevance pattern that is not one whole-word match');
+  return word;
+}
+
+export const countPendingProjectionPages: StoreMember<[scope: ProjectionReadinessScope, relevance: CoverageRelevance], ScopedCount | null> =
+  async (brain, scope, relevance) => {
+    const member = 'countPendingProjectionPages';
+    const input = {
+      scope: coverageScope(member, scope),
+      relevance: {
+        all: relevance.all === true, types: [...relevance.types], terms: relevance.patterns.map(p => patternWord(member, p)),
+        pageIds: ids(relevance.pageIds), exactTopPageId: relevance.exactTopPageId == null ? null : Number(relevance.exactTopPageId),
+        imageArm: relevance.imageArm === true,
+      },
+    };
+    return storeCall({ member }, () => brain.countPendingProjectionPages(input));
+  };
+
+export const projectionRebuildProgress: StoreMember<[scope: ProjectionReadinessScope], ProjectionRebuildProgress | null> = async (brain, scope) => {
+  const input = coverageScope('projectionRebuildProgress', scope);
+  return storeCall({ member: 'projectionRebuildProgress' }, () => brain.projectionRebuildProgress(input));
+};
+
+/** The store has no page clock to name a generation by, so the probe reads its statement on every call. */
+export const readProjectionReadinessGeneration: StoreMember<[], string | null> = async () => null;
+
+export const readProjectionReadiness: StoreMember<[scope: ProjectionReadinessScope], ProjectionReadinessRow> = async (brain, scope) => {
+  const input = coverageScope('readProjectionReadiness', scope);
+  return storeCall({ member: 'readProjectionReadiness' }, () => brain.readProjectionReadiness(input));
+};
 
 export const countEmbeddingHeldPages: StoreMember<[scope: ProjectionReadinessScope, relevance: CoverageRelevance], ScopedCount | null> =
   async (_brain: StoreBrain, _scope, relevance) => ({

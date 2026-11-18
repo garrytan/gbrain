@@ -229,6 +229,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'countPendingProjectionPages': OOS.linkTemporal,
   'countEmbeddingHeldPages': OOS.linkTemporal,
   'projectionRebuildProgress': OOS.linkTemporal,
+  'readProjectionReadinessGeneration': OOS.linkTemporal,
+  'readProjectionReadiness': OOS.linkTemporal,
   'linkTemporal': OOS.helper,
   'cosinesByChunkIds': OOS.searchReads,
   'hasSupersedeEdges': OOS.searchReads,

@@ -238,11 +238,12 @@ export const RUST_ENGINE_MEMBERS = {
   replaceSearchVectorTriggerFunction: 'keyword_search',
   backfillSearchVectors: 'keyword_search',
   ensureFactsKeywordIndex: 'keyword_search',
-  // retrieval coverage counts (engine-sql/retrieval-coverage.ts): the store keeps no projection queue, so the pending
-  // and rebuild counts refuse and `health` stays unreported
+  // retrieval coverage counts and the readiness probe (engine-sql/retrieval-coverage.ts)
   countPendingProjectionPages: 'health',
   countEmbeddingHeldPages: 'health',
   projectionRebuildProgress: 'health',
+  readProjectionReadinessGeneration: 'health',
+  readProjectionReadiness: 'health',
   addLink: 'links',
   addLinksBatch: 'links',
   replaceDerivedLinks: 'links',

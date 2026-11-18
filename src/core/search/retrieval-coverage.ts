@@ -24,7 +24,6 @@
  * Postgres); the relevance rules are built here.
  */
 import type { BrainEngine } from '../engine.ts';
-import { pageReadFilter } from './read-policy-sql.ts';
 import type { ProjectionReadinessScope } from './projection-readiness.ts';
 
 /** Counts stop here (one bounded scan per call); a capped count reports `capped`. */
@@ -87,25 +86,6 @@ export function coverageRelevance(
     exactTopPageId: results[0] && (results[0].exact_lookup || results[0].alias_hit === true) && typeof results[0].page_id === 'number' ? results[0].page_id : null,
     imageArm,
   };
-}
-
-/** The readiness probe's scope predicates over `pages p` (sources, visibility, kind, types, excluded prefixes), binding into `params`. */
-export function coverageScopeFilters(scope: ProjectionReadinessScope, params: unknown[]): string[] {
-  const filters = [pageReadFilter('p', scope, params, true)];
-  if (scope.sourceIds?.length === 0) filters.push('FALSE');
-  if (scope.pageKind) {
-    params.push(scope.pageKind);
-    filters.push(`p.page_kind = $${params.length}`);
-  }
-  if (scope.types) {
-    params.push(scope.types);
-    filters.push(`p.type = ANY($${params.length}::text[])`);
-  }
-  for (const prefix of scope.excludeSlugPrefixes ?? []) {
-    params.push(prefix);
-    filters.push(`LEFT(p.slug, LENGTH($${params.length}::text)) <> $${params.length}`);
-  }
-  return filters;
 }
 
 /** The pending pages the readiness probe found (unsealed, needing work) in the same scope. Null when the count fails. */

@@ -9,21 +9,26 @@
  * hand-numbered placeholders), and run on master's raw path (`exec.executeRaw`)
  * unscoped, as before. A caller that swallowed a database error still does;
  * a refused capability is never swallowed (engine-capability-refusal.ts).
+ *
+ * The readiness probe's two statements (search/projection-readiness.ts) run on
+ * the engine's own `executeRaw` (an `EngineRawRead`), so the probe keeps its
+ * JIT-off option; the probe keeps its cache and its hints.
  */
 import { budgetRowAppliesFilter } from '../page-size-policy.ts';
 import { projectionClassSql } from '../page-state/projection-class.ts';
-import { servedTextProjectionFilter } from '../search/safe-chunks.ts';
+import { servedTextProjectionFilter, waitingTextProjectionFilter } from '../search/safe-chunks.ts';
 import {
   COVERAGE_COUNT_CAP, type CoverageRelevance, type ProjectionRebuildProgress, type ScopedCount,
 } from '../search/retrieval-coverage.ts';
-import type { ProjectionReadinessScope } from '../search/projection-readiness.ts';
+import type { ProjectionReadinessRow, ProjectionReadinessScope } from '../search/projection-readiness.ts';
+import type { EngineRawRead } from './cli-reads-ops.ts';
 import type { SqlExecutor } from './executor.ts';
 import { joinFragments, renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 import { readFilter } from './search-reads.ts';
 
 type Exec = Pick<SqlExecutor, 'executeRaw'>;
 
-/** The read scope over `pages p` (coverageScopeFilters in search/retrieval-coverage.ts, as one fragment). */
+/** The read scope over `pages p`: sources, visibility, live pages, kind, types and excluded slug prefixes. */
 function scopeFilter(scope: ProjectionReadinessScope): SqlFragment {
   const filters = [readFilter('p', scope, true)];
   if (scope.sourceIds?.length === 0) filters.push(sqlFragment`FALSE`);
@@ -100,4 +105,51 @@ export async function projectionRebuildProgress(exec: Exec, scope: ProjectionRea
   } catch {
     return null;
   }
+}
+
+/**
+ * The generation the probe's cached answer depends on: the page clock (every page insert, update or delete advances
+ * it), the pages relation file (TRUNCATE replaces it) and the archived flag of every source. Null when a transaction
+ * is in flight (a page write that advanced the clock but has not committed would otherwise be cached as ready under
+ * the clock it moved) or the read fails.
+ */
+export async function readProjectionReadinessGeneration(raw: EngineRawRead): Promise<string | null> {
+  try {
+    const [row] = await raw<{ generation: string | null; quiescent: boolean }>(
+      `SELECT (SELECT last_value FROM page_generation_clock_seq)::text || '/' || pg_relation_filenode('pages')::text || '/'
+          || md5(COALESCE((SELECT string_agg(id || ':' || archived::text, ',' ORDER BY id) FROM sources), '')) AS generation,
+        pg_snapshot_xmin(pg_current_snapshot()) = pg_snapshot_xmax(pg_current_snapshot()) AS quiescent`);
+    return row?.quiescent === true && typeof row.generation === 'string' ? row.generation : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether the scope has unsealed pages that need work (`pending`), and when none, whether it has unsealed pages
+ * protected by design (`by_design`). Throws when the read fails or returns no boolean.
+ */
+export async function readProjectionReadiness(raw: EngineRawRead, scope: ProjectionReadinessScope): Promise<ProjectionReadinessRow> {
+  // One bound statement: unsealed pages that need work, then those unsealed by design (the class fragment doctor counts).
+  // by_design is read only when nothing is pending, and an InitPlan runs only when the CASE reaches it: while pages are
+  // pending its LIMIT 1 finds no protected page to stop at, so evaluating it anyway read every unsealed page (#8000).
+  // The planner has no statistics for a column-to-column comparison, so it believes most pages are unsealed and an
+  // EXISTS chose a sequential scan of pages that expected to stop at once; on a sealed brain it read every page
+  // (~600 ms at 600k pages, on every cold call). Ordering by the partial index's columns under LIMIT 1 makes it the
+  // cheap first row. The index is idx_pages_projection_waiting (v317, #9192): its predicate is this one, so pages v153
+  // left serving their pre-upgrade index are not in it and the probe no longer steps over each of them.
+  // JIT off (#8033): a remote caller's private-visibility subplans lift the estimate past jit_above_cost, and compiling
+  // them cost ~66 of ~67 ms at 20k pages while the probe itself reads one index row.
+  const cls = trustedSql(projectionClassSql('p', 's'));
+  const filters = scopeFilter(scope);
+  const unsealed = (cond: SqlFragment) => sqlFragment`(SELECT true FROM pages p JOIN sources s ON s.id = p.source_id
+        WHERE p.deleted_at IS NULL
+          AND ${trustedSql(waitingTextProjectionFilter('p'))}
+          AND ${filters} AND ${cond}
+        ORDER BY p.source_id, p.page_kind, p.slug LIMIT 1) IS NOT NULL`;
+  const { text, params } = renderFragment(sqlFragment`WITH r AS MATERIALIZED (SELECT ${unsealed(sqlFragment`${cls} NOT IN ('protected','archived')`)} AS pending)
+      SELECT r.pending, CASE WHEN r.pending THEN false ELSE ${unsealed(sqlFragment`${cls} IN ('protected','archived')`)} END AS by_design FROM r`);
+  const [row] = await raw<{ pending: unknown; by_design: unknown }>(text, params, { jitOff: true });
+  if (typeof row?.pending !== 'boolean') throw new Error('Invalid readiness result');
+  return { pending: row.pending, by_design: row.by_design === true };
 }

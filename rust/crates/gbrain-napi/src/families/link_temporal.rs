@@ -199,4 +199,47 @@ impl Brain {
     pub fn count_search_vector_rows<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.count_search_vector_rows())
     }
+
+    /// `countPendingProjectionPages`: `{ scope, relevance }`: `{ total, could_affect, capped,
+    /// top_counted?, could_affect_images }`.
+    #[napi]
+    pub fn count_pending_projection_pages<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::link_queries::PendingCountInput =
+                arg(input, "countPendingProjectionPages input")?;
+            s.count_pending_projection_pages(&input)
+        })
+    }
+
+    /// `projectionRebuildProgress`: a coverage scope: `{ done, total, pages_per_second }` or null.
+    #[napi]
+    pub fn projection_rebuild_progress<'env>(
+        &self,
+        env: &'env Env,
+        scope: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let scope: gbrain_store::link_queries::CoverageScope =
+                arg(scope, "projectionRebuildProgress scope")?;
+            s.projection_rebuild_progress(&scope)
+        })
+    }
+
+    /// `readProjectionReadiness`: a coverage scope: `{ pending, by_design }`.
+    #[napi]
+    pub fn read_projection_readiness<'env>(
+        &self,
+        env: &'env Env,
+        scope: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let scope: gbrain_store::link_queries::CoverageScope =
+                arg(scope, "readProjectionReadiness scope")?;
+            s.read_projection_readiness(&scope)
+        })
+    }
 }

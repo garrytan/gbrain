@@ -322,6 +322,16 @@ to Postgres SQL (for example a `COLLATE "C"`) moves them, so run them with
 every Postgres arm. Regenerate them with `GBRAIN_TEST_UPDATE_GOLDENS=1` and
 commit the changed files.
 
+Two more goldens read a real Postgres database, so they also need
+`DATABASE_URL`:
+
+```bash
+bun test ./test/e2e/schema-catalog-golden.test.ts ./test/e2e/doctor-json-golden.test.ts
+```
+
+Commit first: the doctor golden's `eval_drift` check fails on uncommitted
+retrieval files.
+
 ### Stress gate
 
 `stress-changed-tests` (in `test-status`) runs each touched test file 10x on fresh databases; local twin `bun run test:stress`. Details: [scripts/stress/README.md](../scripts/stress/README.md).

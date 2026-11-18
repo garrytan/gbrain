@@ -61,9 +61,16 @@ let rawCalls: string[] = [];
 // A source listing. Search's own live read policy (the safe-chunk probe runs on
 // every remote result) references `FROM sources read_source`; that is not one.
 const BACKUP_SOURCES_QUERY = /\bfrom\s+sources\b(?!\s+read_source)/i;
+// The backup compute lists sources through the typed `listSourceRecords` member.
+let sourceListings = 0;
+const sourceReads = () => sourceListings + rawCalls.filter((sql) => BACKUP_SOURCES_QUERY.test(sql)).length;
 const engineStub = {
   kind: 'pglite',
   getConfig: async () => null,
+  // Search reads result trust through this typed member; the stub has no pages.
+  readPageTrustRows: async () => [],
+  countEmbeddingHeldPages: async () => null,
+  listSourceRecords: async () => { sourceListings++; return []; },
   executeRaw: async (sql: string) => {
     rawCalls.push(String(sql));
     // countLivePages treats an EMPTY rowset as UNESTABLISHED (null → degraded
@@ -171,6 +178,7 @@ beforeEach(() => {
   __resetBackupNoticeForTests();
   __resetBackupRefreshForTests();
   rawCalls = [];
+  sourceListings = 0;
   nextResults = [Object.freeze({ id: encodeDeepResearchId('default', 'a'), page_id: 1, source_id: 'default', slug: 'a', chunk_text: 'x' })];
 });
 
@@ -309,7 +317,7 @@ describe('stdio-gated refresher (TRUST PIN)', () => {
     // to land before asserting it never did.
     await new Promise((r) => setTimeout(r, 300));
     expect(existsSync(backupStatusPath())).toBe(false);
-    expect(rawCalls.filter((sql) => BACKUP_SOURCES_QUERY.test(sql))).toEqual([]);
+    expect(sourceReads()).toBe(0);
   });
 
   test('transport UNSET is fail-closed: no compute, no sources query', async () => {
@@ -317,7 +325,7 @@ describe('stdio-gated refresher (TRUST PIN)', () => {
     await callSearch({ remote: true, transport: undefined });
     await new Promise((r) => setTimeout(r, 300));
     expect(existsSync(backupStatusPath())).toBe(false);
-    expect(rawCalls.filter((sql) => BACKUP_SOURCES_QUERY.test(sql))).toEqual([]);
+    expect(sourceReads()).toBe(0);
   });
 
   test("transport 'stdio' kicks the in-process refresher: absent cache gets computed + persisted", async () => {
@@ -333,7 +341,7 @@ describe('stdio-gated refresher (TRUST PIN)', () => {
     expect(s!.overall).toBe('ok'); // zero sources, zero pages → nothing at risk
     expect(s!.totals.assets).toBe(0);
     // The refresher DID walk the sources table on the stdio path.
-    expect(rawCalls.some((sql) => BACKUP_SOURCES_QUERY.test(sql))).toBe(true);
+    expect(sourceReads()).toBeGreaterThan(0);
   });
 
   test('attempt floor arms on the fresh-cache no-op path: a deleted cache is NOT recomputed within the hour', async () => {
@@ -342,7 +350,7 @@ describe('stdio-gated refresher (TRUST PIN)', () => {
     saveBackupStatus(okStatus());
     await callSearch({ remote: true, transport: 'stdio' });
     await new Promise((r) => setTimeout(r, 100));
-    expect(rawCalls.filter((sql) => BACKUP_SOURCES_QUERY.test(sql))).toEqual([]);
+    expect(sourceReads()).toBe(0);
 
     // Delete the cache. A second stdio call within the hour is still a no-op
     // — the floor, not the cache, gates the attempt.
@@ -350,13 +358,13 @@ describe('stdio-gated refresher (TRUST PIN)', () => {
     await callSearch({ remote: true, transport: 'stdio' });
     await new Promise((r) => setTimeout(r, 300));
     expect(existsSync(backupStatusPath())).toBe(false);
-    expect(rawCalls.filter((sql) => BACKUP_SOURCES_QUERY.test(sql))).toEqual([]);
+    expect(sourceReads()).toBe(0);
 
     // __resetBackupRefreshForTests clears the floor → the compute runs.
     __resetBackupRefreshForTests();
     await callSearch({ remote: true, transport: 'stdio' });
     const appeared = await waitFor(() => existsSync(backupStatusPath()), 2000);
     expect(appeared).toBe(true);
-    expect(rawCalls.some((sql) => BACKUP_SOURCES_QUERY.test(sql))).toBe(true);
+    expect(sourceReads()).toBeGreaterThan(0);
   });
 });

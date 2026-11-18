@@ -4831,6 +4831,8 @@
         "readPageTrustRows": "none",
         "readPersistenceBrainId": "none",
         "readPrivateQueueState": "none",
+        "readProjectionReadiness": "none",
+        "readProjectionReadinessGeneration": "none",
         "readQueueFamilyStats": "none",
         "readReceiptBudget": "none",
         "readSearchStats": "none",

@@ -38,7 +38,7 @@ mod arm;
 mod chunk_search;
 mod filters;
 mod page_search;
-mod parser;
+pub(crate) mod parser;
 mod rank;
 mod stem;
 mod title_fuzzy;

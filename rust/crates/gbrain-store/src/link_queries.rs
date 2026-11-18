@@ -56,6 +56,11 @@ pub use link_temporal::{
     RecordMetadataRows, RelationshipEvidence, RelationshipKey, SearchVectorCounts, StaleKeysInput,
     StateWrite,
 };
+mod retrieval_coverage;
+pub use retrieval_coverage::{
+    CoverageRelevance, CoverageScope, PendingCount, PendingCountInput, ReadinessRow,
+    RebuildProgress,
+};
 mod site_reads;
 pub use site_reads::{
     EndpointsInput, EntityPagesInput, ForeignEdgesInput, InboundCountInput, InboundCoverageInput,

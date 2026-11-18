@@ -113,6 +113,7 @@ const VETTED_BUILDERS: Record<string, string> = {
   projectionClassSql: 'src/core/page-state/projection-class.ts: constant projection class CASE over caller page/source aliases (module constants only, no values)',
   budgetRowAppliesFilter: 'src/core/page-size-policy.ts: constant applying-budget-row predicate over caller budget/page aliases (module constants only, no values)',
   servedTextProjectionFilter: 'src/core/search/safe-chunks.ts: constant projection predicate over a caller alias, ORed with the constant v153 served-index marker (#9192)',
+  waitingTextProjectionFilter: 'src/core/search/safe-chunks.ts: constant waiting-projection predicate over a caller alias with the constant v153 served-index marker, the v317 index predicate (#9192)',
   chunkVisibleFilter: 'src/core/search/safe-chunks.ts: constant projection + live body generation predicate over caller page/chunk aliases (Wave B)',
   chunkGenerationFilter: 'src/core/search/safe-chunks.ts: constant live body generation predicate over caller page/chunk aliases (Wave B)',
   chunkManifestJoin: 'src/core/search/safe-chunks.ts: constant LEFT JOIN onto the live page_body_manifest row over caller aliases (Wave B)',

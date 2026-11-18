@@ -27,6 +27,8 @@ use std::collections::HashMap;
 
 /// The reason the trigger writes.
 const CANONICAL_CHANGE: &str = "canonical_change";
+/// The reason of the jobs an upgrade's activation queues (no store writer yet).
+const PROTOCOL_ACTIVATION: &str = "protocol_activation";
 /// `SEGMENTED_PROJECTION_CLAIMED`'s and `chunk_replacement_continuing`'s 60 seconds.
 const CLAIM_US: i64 = 60_000_000;
 /// `PROJECTION_RETRY_READY`'s `rebuild_failed` cooldown, 30 seconds.
@@ -130,6 +132,16 @@ fn all_jobs(read: &dyn KvRead) -> Result<Vec<Job>> {
         failure.is_none()
     })?;
     failure.map_or(Ok(out), Err)
+}
+
+/// `min(updated_at)` over the jobs with reason `protocol_activation`: when an upgrade's index rebuild
+/// began, or none when no such job is queued (`projectionRebuildProgress`).
+pub(crate) fn activation_started_us(read: &dyn KvRead) -> Result<Option<i64>> {
+    Ok(all_jobs(read)?
+        .iter()
+        .filter(|job| job.record.reason == PROTOCOL_ACTIVATION)
+        .map(|job| job.record.updated_at_us)
+        .min())
 }
 
 /// True when the queue holds no job: one key read.
@@ -465,6 +477,38 @@ mod tests {
             .iter()
             .map(|r| r["slug"].as_str().unwrap().to_owned())
             .collect()
+    }
+
+    /// `projectionRebuildProgress` reads the start of an activation's rebuild from the queue. No
+    /// store writer queues `protocol_activation` yet, so the test writes the job's reason itself.
+    #[test]
+    fn rebuild_progress_starts_at_the_oldest_activation_job() {
+        use crate::link_queries::CoverageScope;
+        let store = crate::test_support::store();
+        for slug in ["waiting", "sealed"] {
+            put(&store, slug);
+        }
+        store
+            .write(|tx| {
+                let mut page = read_page(&*tx, "default", "sealed")?.unwrap();
+                page.text_projection_revision = Some(page.knowledge_revision.clone());
+                crate::pages::write_page(tx, &page)
+            })
+            .unwrap();
+        let every = CoverageScope::default();
+        assert_eq!(store.projection_rebuild_progress(&every).unwrap(), None);
+        set_job(&store, "waiting", PROTOCOL_ACTIVATION, 10_000_000);
+        let progress = store.projection_rebuild_progress(&every).unwrap().unwrap();
+        assert_eq!((progress.done, progress.total), (1, 2));
+        let rate = progress.pages_per_second.unwrap();
+        assert!(rate > 0.05 && rate <= 0.1, "{rate}");
+        let elsewhere: CoverageScope =
+            serde_json::from_value(json!({ "sourceId": "elsewhere" })).unwrap();
+        let none = store
+            .projection_rebuild_progress(&elsewhere)
+            .unwrap()
+            .unwrap();
+        assert_eq!((none.done, none.total, none.pages_per_second), (0, 0, None));
     }
 
     #[test]

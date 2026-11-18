@@ -4,7 +4,8 @@
  * coverage counts (engine-sql/retrieval-coverage.ts), through the seven sites
  * that ran them as `engine.executeRaw`: link-relationships, link-temporal-apply,
  * link-relationship-notes, doctor edge_validity, mentions/referrers,
- * search/retrieval-coverage and reindex-search-vector.
+ * search/retrieval-coverage and reindex-search-vector. The pending, rebuild
+ * and readiness reads have their own file, retrieval-coverage.test.ts.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: each site returns the same answer on every engine arm (PGLite
@@ -34,7 +35,7 @@ import { applyTemporalEvidence, relationshipKeysForOrigin, removeManualTransitio
 import { loadRelationshipNotes, relationshipNoteKey } from '../../src/core/link-relationship-notes.ts';
 import { edgeValidityStats } from '../../src/commands/doctor/checks/edge-validity.ts';
 import { readPageStatusByRef, readRecordMetadata } from '../../src/core/mentions/referrers.ts';
-import { countEmbeddingHeld, countPendingProjections, countProjectionRebuild, type CoverageRelevance } from '../../src/core/search/retrieval-coverage.ts';
+import { countEmbeddingHeld, type CoverageRelevance } from '../../src/core/search/retrieval-coverage.ts';
 import { runReindexSearchVector } from '../../src/commands/reindex-search-vector.ts';
 import { LINK_EXTRACTION_GENERATION_KEY } from '../../src/core/line-grammar.ts';
 import { resetFtsLanguageCache } from '../../src/core/fts-language.ts';
@@ -301,23 +302,13 @@ describe('engine parity: link temporal state', () => {
 
   parityTest(
     'search/retrieval-coverage: no page is held from embedding, with and without an exact top hit',
-    { methods: ['putPage', 'countEmbeddingHeldPages'] },
+    { methods: ['putPage', 'getPage', 'countEmbeddingHeldPages'] },
     async (engine) => {
       await engine.putPage(ALICE, page('Alice', { type: 'person' }));
+      const alice = await engine.getPage(ALICE);
       const all = await countEmbeddingHeld(engine, {}, RELEVANCE);
-      const top = await countEmbeddingHeld(engine, { excludePrivate: true }, { ...RELEVANCE, exactTopPageId: 1 });
+      const top = await countEmbeddingHeld(engine, { excludePrivate: true }, { ...RELEVANCE, exactTopPageId: alice!.id });
       return { all, top };
-    },
-  );
-
-  parityTest(
-    'search/retrieval-coverage: pending projection and rebuild counts read the same scope',
-    { methods: ['putPage', 'countPendingProjectionPages', 'projectionRebuildProgress'] },
-    async (engine) => {
-      await engine.putPage(ALICE, page('Alice', { type: 'person' }));
-      const pending = await countPendingProjections(engine, {}, RELEVANCE);
-      const rebuild = await countProjectionRebuild(engine, {});
-      return { pending, rebuild };
     },
   );
 

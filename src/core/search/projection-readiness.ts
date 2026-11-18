@@ -1,8 +1,6 @@
 import type { BrainEngine } from '../engine.ts';
 import type { PageReadScope } from '../types.ts';
-import { projectionClassSql } from '../page-state/projection-class.ts';
-import { ACTIVATION_SERVED_REVISION } from './safe-chunks.ts';
-import { coverageScopeFilters } from './retrieval-coverage.ts';
+import { isEngineCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 export interface ProjectionReadinessScope extends PageReadScope {
   pageKind?: string;
@@ -20,6 +18,11 @@ export interface ProjectionReadiness {
   hint?: string;
 }
 
+/** The engine's readiness read (engine-sql/retrieval-coverage.ts): what the probe turns into a status. */
+export interface ProjectionReadinessRow { pending: boolean; by_design: boolean }
+
+type ReadinessEngine = Pick<BrainEngine, 'readProjectionReadinessGeneration' | 'readProjectionReadiness'>;
+
 export const PROJECTION_READINESS_CACHE_ENV = 'GBRAIN_PROJECTION_READINESS_CACHE';
 const MAX_ENTRIES_PER_ENGINE = 256;
 let readinessCache = new WeakMap<object, Map<string, { generation: string; value: ProjectionReadiness }>>();
@@ -35,37 +38,21 @@ function scopeKey(scope: ProjectionReadinessScope): string {
 }
 
 /**
- * The database-visible generation the probe's answer depends on: the page
- * clock (every page insert, update or delete advances it), the pages relation
- * file (TRUNCATE replaces it) and the archived flag of every source. Null
- * when a transaction is in flight: a page write that already advanced the
- * clock but has not committed would otherwise be cached as ready under the
- * clock it moved.
- */
-async function readinessGeneration(engine: Pick<BrainEngine, 'executeRaw'>): Promise<string | null> {
-  try {
-    const [row] = await engine.executeRaw<{ generation: string | null; quiescent: boolean }>(
-      `SELECT (SELECT last_value FROM page_generation_clock_seq)::text || '/' || pg_relation_filenode('pages')::text || '/'
-          || md5(COALESCE((SELECT string_agg(id || ':' || archived::text, ',' ORDER BY id) FROM sources), '')) AS generation,
-        pg_snapshot_xmin(pg_current_snapshot()) = pg_snapshot_xmax(pg_current_snapshot()) AS quiescent`);
-    return row?.quiescent === true && typeof row.generation === 'string' ? row.generation : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
  * Whether the current text projections cover the visible scope. A repeat
  * call for the same scope reuses the last answer while the generation it was
- * computed under still holds; `GBRAIN_PROJECTION_READINESS_CACHE=0` always
- * probes. An `unknown` answer (the probe failed) is never reused.
+ * computed under still holds (`readProjectionReadinessGeneration`: the page
+ * clock, the pages relation file and the sources' archived flags; null, so
+ * never cached, while a transaction is in flight or on an engine without
+ * one); `GBRAIN_PROJECTION_READINESS_CACHE=0` always probes. An `unknown`
+ * answer (the probe failed) is never reused. A refused engine capability is
+ * not a failed probe: it throws (engine-capability-refusal.ts).
  */
 export async function probeProjectionReadiness(
-  engine: Pick<BrainEngine, 'executeRaw'>,
+  engine: ReadinessEngine,
   scope: ProjectionReadinessScope = {},
 ): Promise<ProjectionReadiness> {
   if (process.env[PROJECTION_READINESS_CACHE_ENV] === '0') return probeUncached(engine, scope);
-  const generation = await readinessGeneration(engine);
+  const generation = await engine.readProjectionReadinessGeneration();
   if (generation === null) return probeUncached(engine, scope);
   const key = scopeKey(scope);
   let entries = readinessCache.get(engine);
@@ -79,49 +66,23 @@ export async function probeProjectionReadiness(
   return value;
 }
 
-async function probeUncached(
-  engine: Pick<BrainEngine, 'executeRaw'>,
-  scope: ProjectionReadinessScope,
-): Promise<ProjectionReadiness> {
-  const params: unknown[] = [];
-  const filters = coverageScopeFilters(scope, params);
+async function probeUncached(engine: ReadinessEngine, scope: ProjectionReadinessScope): Promise<ProjectionReadiness> {
+  let row: ProjectionReadinessRow;
   try {
-    // One bound statement: unsealed pages that need work, then those unsealed by design (the class fragment doctor counts).
-    // by_design is read only when nothing is pending, and an InitPlan runs only when the CASE reaches it: while pages are
-    // pending its LIMIT 1 finds no protected page to stop at, so evaluating it anyway read every unsealed page (#8000).
-    // The planner has no statistics for a column-to-column comparison, so it believes most pages are unsealed and an
-    // EXISTS chose a sequential scan of pages that expected to stop at once; on a sealed brain it read every page
-    // (~600 ms at 600k pages, on every cold call). Ordering by the partial index's columns under LIMIT 1 makes it the
-    // cheap first row. The index is idx_pages_projection_waiting (v317, #9192): its predicate is this one, so pages v153
-    // left serving their pre-upgrade index are not in it and the probe no longer steps over each of them.
-    // JIT off (#8033): a remote caller's private-visibility subplans lift the estimate past jit_above_cost, and compiling
-    // them cost ~66 of ~67 ms at 20k pages while the probe itself reads one index row.
-    const unsealed = (cond: string) => `(SELECT true FROM pages p JOIN sources s ON s.id = p.source_id
-        WHERE p.deleted_at IS NULL
-          AND p.text_projection_revision IS DISTINCT FROM p.knowledge_revision
-          AND p.text_projection_revision IS DISTINCT FROM '${ACTIVATION_SERVED_REVISION}'::uuid
-          AND ${filters.join(' AND ')} AND ${cond}
-        ORDER BY p.source_id, p.page_kind, p.slug LIMIT 1) IS NOT NULL`;
-    const cls = projectionClassSql('p', 's');
-    const rows = await engine.executeRaw<{ pending: boolean; by_design: boolean }>(
-      `WITH r AS MATERIALIZED (SELECT ${unsealed(`${cls} NOT IN ('protected','archived')`)} AS pending)
-      SELECT r.pending, CASE WHEN r.pending THEN false ELSE ${unsealed(`${cls} IN ('protected','archived')`)} END AS by_design FROM r`,
-      params,
-      { jitOff: true },
-    );
-    if (typeof rows[0]?.pending !== 'boolean') throw new Error('Invalid readiness result');
-    if (rows[0].pending) {
-      return {
-        status: 'projection_pending', ready: false,
-        hint: 'Current text projections are pending in the visible scope; results may be incomplete. Run `gbrain doctor` locally to inspect recovery. This read does not repair or embed content.',
-      };
-    }
-    return { status: rows[0].by_design ? 'by_design' : 'ready', ready: true };
-  } catch {
+    row = await engine.readProjectionReadiness(scope);
+    if (typeof row?.pending !== 'boolean') throw new Error('Invalid readiness result');
+  } catch (err) {
+    if (isEngineCapabilityRefusal(err)) throw err;
     return {
       status: 'unknown', ready: false,
       hint: 'Projection readiness could not be checked; do not treat these results as proof of a complete index. Run `gbrain doctor` locally to diagnose.',
     };
   }
+  if (row.pending) {
+    return {
+      status: 'projection_pending', ready: false,
+      hint: 'Current text projections are pending in the visible scope; results may be incomplete. Run `gbrain doctor` locally to inspect recovery. This read does not repair or embed content.',
+    };
+  }
+  return { status: row.by_design ? 'by_design' : 'ready', ready: true };
 }
-

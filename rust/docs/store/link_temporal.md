@@ -25,6 +25,9 @@ writes the rows the builder returns.
 | `brain.edgeValidityCounts({ sourceIds, staleLimit })` | `{ byStatus, stale, proposals }` | `edgeValidityCounts` |
 | `brain.listPageStatusByRef(...)` / `brain.listRecordMetadataRows(...)` | the frontmatter `status` of each ref / the status and supersession links of referring pages | `listPageStatusByRef` / `listRecordMetadataRows` |
 | `brain.countSearchVectorRows()` | `{ pages, chunks }`: every page (deleted ones too) and every chunk | `countSearchVectorRows` |
+| `brain.countPendingProjectionPages({ scope, relevance })` | `{ total, could_affect, capped, top_counted?, could_affect_images }`: the live pages in scope whose text projection waits and needs work, at most 1000 | `countPendingProjectionPages` |
+| `brain.projectionRebuildProgress(scope)` | `{ done, total, pages_per_second }` while `protocol_activation` jobs are queued, else null | `projectionRebuildProgress` |
+| `brain.readProjectionReadiness(scope)` | `{ pending, by_design }`: whether a waiting page in scope needs work, and when none does, whether protected images wait | `readProjectionReadiness` |
 
 ## Rules
 
@@ -48,10 +51,20 @@ writes the rows the builder returns.
 | `doctor/checks/edge-validity.ts` | edgeValidityCounts | equal |
 | `mentions/referrers.ts` | listPageStatusByRef, listRecordMetadataRows | equal |
 | `search/retrieval-coverage.ts` | countEmbeddingHeldPages | equal (always 0: the store keeps no embedding budget rows) |
-| `search/retrieval-coverage.ts` | countPendingProjectionPages, projectionRebuildProgress | typed refusal (`health`) |
+| `search/retrieval-coverage.ts` | countPendingProjectionPages, projectionRebuildProgress | equal |
+| `search/projection-readiness.ts` | readProjectionReadinessGeneration, readProjectionReadiness | equal statuses (the generation is null: see Known differences) |
 | `commands/reindex-search-vector.ts` | countSearchVectorRows, replaceSearchVectorTriggerFunction, backfillSearchVectors, ensureFactsKeywordIndex | equal JSON (a no-op under `english`) |
 
-Pinned by `test/engine-parity/link-temporal.test.ts` on every arm.
+Pinned by `test/engine-parity/link-temporal.test.ts` and `test/engine-parity/retrieval-coverage.test.ts` on every arm.
+
+## Retrieval coverage
+
+The scope of the three coverage reads is `scopeFilter` (`src/core/engine-sql/retrieval-coverage.ts`): the source filter,
+the private-page policy (`excludePrivate`, as `storePagePolicy` sends it), live pages only (not soft-deleted, not
+quarantined, source present and not archived), the page kind, the types and the excluded slug prefixes. A page waits
+when its text projection is neither its knowledge revision nor the pre-activation marker. It needs work unless it is an
+image whose body holds a protected fence (`by_design`). The pending count matches a query word as a whole token of
+`lower(title || ' ' || slug)`: the TypeScript member turns each `coverageRelevance` pattern back into its word.
 
 ## The keyword index rebuild is a no-op
 
@@ -69,8 +82,18 @@ language is refused with `engine_capability_missing` (`keyword_search`) at the f
   `staleLinkRelationshipKeys` sweep finds them. They become one transaction when the transactions core item lands
   (`docs/designs/RUST_ENGINE_INTERFACES.md`, link_temporal).
 - The stale-relationship sweep itself refuses on Rust (it runs in `maintenanceTransaction`).
-- `countPendingProjectionPages` and `projectionRebuildProgress` refuse. Search reaches them only after
-  `probeProjectionReadiness`, which reads through `executeRaw` and so also refuses or reports unknown on Rust.
+- `readProjectionReadinessGeneration` is null: the store has no page clock, so `probeProjectionReadiness` reads its
+  statement on every call and never caches an answer on Rust.
+- `projectionRebuildProgress` is null unless `protocol_activation` jobs are queued, and no store writer queues them yet
+  (an upgrade's activation runs only on the SQL engines), so on a store it is null in practice.
+- A coverage read with `minTrust` or `suppressFlagged` in its scope refuses (`health`): the store keeps no trust tiers.
+  `requireSafeChunks` changes nothing, because these reads count pages, not chunks.
+- A relevance pattern that is not the `(^|[^[:alnum:]])<word>([^[:alnum:]]|$)` shape `coverageRelevance` builds refuses
+  (`health`): the store runs no POSIX regex.
+- When the pending count reaches its cap of 1000, the store counts the first 1000 pages in source and slug order. The SQL
+  engines' `LIMIT` takes 1000 rows in no fixed order, so `could_affect` of a capped count can differ.
+- The store does not tell an image page that a seal fixes (`sealable`) from one a re-import fixes (`reimport`): both
+  count as `could_affect_images`, as on the SQL engines.
 - `gbrain reindex-search-vector` for a language other than `english` refuses (`keyword_search`): see "The keyword
   index rebuild is a no-op".
 - The store has no `graph_generation_seq`: a relationship write does not bump a graph generation.
