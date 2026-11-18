@@ -75,4 +75,14 @@ impl Brain {
             s.get_edges_by_chunk(&options)
         })
     }
+
+    /// `hasCodeEdgesSymbol(sourceId)`: resolves whether the source owns an unresolved edge.
+    #[napi]
+    pub fn has_code_edges_symbol<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.has_code_edges_symbol(&source_id))
+    }
 }
