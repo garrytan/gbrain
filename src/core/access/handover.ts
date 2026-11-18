@@ -12,7 +12,7 @@
  * \`source\` (personal sources bound to the leaver) and \`memory\` (the leaver's member page; listed, never changed).
  * Defaults: kept and folder go to the owner, everything else stays as it is; opening a group (\`everyone\`) is never a
  * default. Preview first: the preview saves its items under a hash (op_checkpoints, command member-handover); the apply
- * replays exactly those items, rechecking each, and records them on an access_handovers row (v325) so a stopped apply
+ * replays exactly those items, rechecking each, and records them on an access_handovers row (v326) so a stopped apply
  * resumes with the same command, \`--status\` reports the Git publication and \`--undo\` restores each item's readers once
  * the leaver is enabled again. Works with no repository: labels then write the database, rules use the database store.
  */

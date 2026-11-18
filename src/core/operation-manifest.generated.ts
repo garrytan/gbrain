@@ -5526,7 +5526,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "name": "request_tools",
     "idempotent": false,
     "outputRedaction": "no_stored_text",
-    "description": "More tools and params: no arguments lists your catalog; {tools: [names]} returns full schemas, every optional param included; {surface} widens it (per client or stdio session).",
+    "description": "More tools and params: no arguments lists your catalog; {tools: [names]} returns schemas with every param you may pass; {surface} widens it (per client or stdio session).",
     "area": "discovery",
     "agentCallable": true,
     "params": {

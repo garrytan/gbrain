@@ -55,6 +55,7 @@ import { PERSISTENCE_IPC_MAX_BYTES } from './ipc.ts';
 import { prepareFactsBackstop, type FactsBackstopStatus } from './effect-facts.ts';
 import { CONNECTOR_FACTS_PAGE_LIMIT } from '../connectors/api-source.ts';
 import type { GoogleSourceConfig } from '../google/types.ts';
+import { isTrustTier, minTrust } from '../trust/tier.ts';
 
 interface ConnectorLease { handle: DbLockHandle; signal: AbortSignal; }
 type ConnectorIntentKind = 'connector_v2_import' | 'connector_v2_delete' | 'connector_v2_checkpoint' | 'connector_v2_google_receipts';
@@ -1302,8 +1303,10 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
     writeGate: { tier, origin: { channel: `connector:${p.connector}`, connector: String(p.connector), source_uri: p.sourcePath }, requestId: row.id },
     prepareFrontmatter: page => {
       if (snapshot?.page.frontmatter.visibility === 'private') page.frontmatter.visibility = 'private';
-      // #8052: keep the marker `gbrain repair provenance` stamped, only when it names the tier this import assigns.
-      if (snapshot?.page.frontmatter.trust_tier === tier) page.frontmatter.trust_tier = tier;
+      // #9676: every import renders the marker (#8052 carried an existing one only), as the least trusted of the stored marker
+      // and this import's tier, so the file and the stored tier agree from the first write and a marker never raises the page.
+      const stored = snapshot?.page.frontmatter.trust_tier;
+      page.frontmatter.trust_tier = isTrustTier(stored) ? minTrust(tier, stored) : tier;
     },
     prepare: async value => { prepared = value; return value.result; } });
   if (!prepared || prepared.slug !== row.slug) throw connectorPublicationRefusal('revision_conflict', result.error ?? 'A different page owns this connector content.', row,

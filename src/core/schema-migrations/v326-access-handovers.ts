@@ -10,8 +10,8 @@ import type { Migration } from './types.ts';
 // where git exists the label and rule writers commit first and the row only records outcomes. member_id has no foreign
 // key on purpose: a removed member's handover row stays readable. Writes no data; nothing changes on upgrade. No
 // schema.sql mirror, like v299.
-export const v325: Migration = {
-  version: 325,
+export const v326: Migration = {
+  version: 326,
   name: 'access_handovers',
   idempotent: true,
   sql: `

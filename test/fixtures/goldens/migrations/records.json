@@ -5298,10 +5298,10 @@
       {
         "handler": "absent",
         "idempotent": true,
-        "name": "access_handovers",
+        "name": "entity_identity_reviews",
         "sql": {
-          "length": 936,
-          "sha256": "6fabcd3509232e6cadf252a3b5797f72a3835f71b5cb7a68db8389b1deb52fe8"
+          "length": 914,
+          "sha256": "a2e6230cbf67352383307889e2b18aefd1f6a98396c98ec769c04d605d05dc1c"
         },
         "sqlFor": "absent",
         "transaction": "absent",

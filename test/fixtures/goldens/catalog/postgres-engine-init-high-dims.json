@@ -122,6 +122,9 @@
       "entity_identities.entity_identities_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE",
       "entity_identities.entity_identities_page_uniq": "u UNIQUE (source_id, page_id)",
       "entity_identities.entity_identities_pkey": "p PRIMARY KEY (id)",
+      "entity_identity_reviews.entity_identity_reviews_origin_check": "c CHECK ((origin = ANY (ARRAY['database'::text, 'git'::text])))",
+      "entity_identity_reviews.entity_identity_reviews_pkey": "p PRIMARY KEY (decision_id)",
+      "entity_identity_reviews.entity_identity_reviews_verdict_check": "c CHECK ((verdict = ANY (ARRAY['same'::text, 'different'::text])))",
       "eval_candidates.eval_candidates_detail_check": "c CHECK (((detail IS NULL) OR (detail = ANY (ARRAY['low'::text, 'medium'::text, 'high'::text]))))",
       "eval_candidates.eval_candidates_detail_resolved_check": "c CHECK (((detail_resolved IS NULL) OR (detail_resolved = ANY (ARRAY['low'::text, 'medium'::text, 'high'::text]))))",
       "eval_candidates.eval_candidates_pkey": "p PRIMARY KEY (id)",
@@ -852,6 +855,9 @@
       "entity_identities": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
+      "entity_identity_reviews": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "eval_candidates": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -1386,6 +1392,8 @@
       "entity_identities_entity_idx": "CREATE INDEX entity_identities_entity_idx ON public.entity_identities USING btree (entity_id)",
       "entity_identities_page_uniq": "CREATE UNIQUE INDEX entity_identities_page_uniq ON public.entity_identities USING btree (source_id, page_id)",
       "entity_identities_pkey": "CREATE UNIQUE INDEX entity_identities_pkey ON public.entity_identities USING btree (id)",
+      "entity_identity_reviews_entity_idx": "CREATE INDEX entity_identity_reviews_entity_idx ON public.entity_identity_reviews USING btree (entity_id) WHERE (entity_id IS NOT NULL)",
+      "entity_identity_reviews_pkey": "CREATE UNIQUE INDEX entity_identity_reviews_pkey ON public.entity_identity_reviews USING btree (decision_id)",
       "eval_candidates_pkey": "CREATE UNIQUE INDEX eval_candidates_pkey ON public.eval_candidates USING btree (id)",
       "eval_capture_failures_pkey": "CREATE UNIQUE INDEX eval_capture_failures_pkey ON public.eval_capture_failures USING btree (id)",
       "eval_contradictions_cache_expires_idx": "CREATE INDEX eval_contradictions_cache_expires_idx ON public.eval_contradictions_cache USING btree (expires_at)",
@@ -2659,6 +2667,23 @@
           "6 established_by text/text NOT NULL DEFAULT 'manual'::text",
           "7 established_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
           "8 canonical boolean/bool NOT NULL DEFAULT false"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "entity_identity_reviews": {
+        "columns": [
+          "1 decision_id text/text NOT NULL",
+          "2 verdict text/text NOT NULL",
+          "3 members jsonb/jsonb NOT NULL",
+          "4 group_id text/text NULL",
+          "5 entity_id text/text NULL",
+          "6 canonical_source_id text/text NULL",
+          "7 canonical_slug text/text NULL",
+          "8 decided_by text/text NOT NULL",
+          "9 decided_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "10 origin text/text NOT NULL",
+          "11 home_source_id text/text NULL",
+          "12 git_blob text/text NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
