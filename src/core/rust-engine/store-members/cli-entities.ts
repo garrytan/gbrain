@@ -2,8 +2,7 @@
  * Entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts), answered from the store.
  *
  * The store keeps no mention-pass state: no pass time, and every live page is due, as on a PGLite brain where the pass
- * never ran. `readExtractionLagCounts` is not served (the extraction family is not built), so it refuses with
- * `engine_capability_missing`. `excludePrivate` applies the page policy (private-provenance.ts `storePagePolicy`), and
+ * never ran. `readExtractionLagCounts` is served by the extraction members (extraction.ts). `excludePrivate` applies the page policy (private-provenance.ts `storePagePolicy`), and
  * refuses for a caller whose members, grants or lineage change it.
  */
 import type { IgnoredLabelPageRow, MentionDueQuery, SiblingCandidateQuery, SiblingCandidateRow } from '../../engine-sql/entity-reads.ts';

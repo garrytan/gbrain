@@ -2,8 +2,8 @@
 //! `links_attendance_blocked_at` columns of the PGLite `pages` table, and the sweep of
 //! parser-reserved frontmatter keys.
 //!
-//! Members: countStalePagesForExtraction, listStalePagesForExtraction, markPagesExtractedBatch,
-//! markPagesAttendanceBlocked, countStaleFrontmatterKeyPages, listStaleFrontmatterKeyPages,
+//! Members: countStalePagesForExtraction, listStalePagesForExtraction, readExtractionLagCounts,
+//! markPagesExtractedBatch, markPagesAttendanceBlocked, countStaleFrontmatterKeyPages, listStaleFrontmatterKeyPages,
 //! stripStaleFrontmatterKeys.
 //!
 //! Keys: `e page_id` (`keys::EXTRACTION`, then the page id as 8 big-endian bytes) holds the
@@ -83,6 +83,34 @@ pub struct StaleOptions {
     pub batch_size: Option<i64>,
     /// `listStalePagesForExtraction` only: rows with a larger page id.
     pub after_page_id: Option<i64>,
+}
+
+/// The options of `readExtractionLagCounts` (`extractionLagStatement`).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ExtractionLagOptions {
+    pub source_id: Option<String>,
+    /// ISO timestamp of the extractor version; a stamp older than it is stale.
+    pub version_ts: Option<String>,
+    /// Count attendance-blocked pages apart and leave them out of `stale` (false: the shape
+    /// before the marker column, where nothing is blocked).
+    pub attendance: bool,
+    /// Count held pages apart and leave them out of `stale`; no page is ever held here.
+    pub held: bool,
+    /// `false` keeps guest-source pages in `stale` (the shape before the guest-notes migration);
+    /// absent or `true` leaves them out.
+    pub guests: Option<bool>,
+    /// Changes nothing: no wanted link exists here.
+    pub wanted_producers: Option<Vec<String>>,
+}
+
+/// The row `readExtractionLagCounts` resolves.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct ExtractionLagCounts {
+    pub total: u64,
+    pub stale: u64,
+    pub attendance_blocked: u64,
+    pub held: u64,
 }
 
 /// One ref of `markPagesExtractedBatch`.
@@ -174,18 +202,45 @@ fn guest_sources(read: &dyn KvRead, pages: &[PageRecord]) -> Result<BTreeSet<Str
     Ok(guests)
 }
 
-/// The pages `stalePagesWhere(opts)` selects, in page id order.
-fn stale_pages(read: &dyn KvRead, options: &StaleOptions) -> Result<Vec<PageRecord>> {
-    let version = match options.version_ts.as_deref().filter(|v| !v.is_empty()) {
-        Some(text) => Some(timestamp(text, "versionTs")?),
-        None => None,
-    };
-    let source = options.source_id.as_deref().filter(|s| !s.is_empty());
-    let mut pages: Vec<PageRecord> = all_pages(read)?
+/// The live pages `stalePagesWhere` starts from: not deleted, not quarantined, in `source` when given.
+fn live_pages(read: &dyn KvRead, source: Option<&str>) -> Result<Vec<PageRecord>> {
+    Ok(all_pages(read)?
         .into_iter()
         .filter(|p| p.deleted_at_us.is_none() && !p.frontmatter.contains_key(QUARANTINE_KEY))
         .filter(|p| source.is_none_or(|s| p.source_id == s))
-        .collect();
+        .collect())
+}
+
+/// `versionTs` as microseconds; absent or empty is no version clause.
+fn version_us(version_ts: Option<&str>) -> Result<Option<i64>> {
+    match version_ts.filter(|v| !v.is_empty()) {
+        Some(text) => Ok(Some(timestamp(text, "versionTs")?)),
+        None => Ok(None),
+    }
+}
+
+/// `None` when the page is fresh; else `Some(blocked)`: whether its attendance marker is at its
+/// current knowledge revision.
+fn stale_state(read: &dyn KvRead, page: &PageRecord, version: Option<i64>) -> Result<Option<bool>> {
+    let record = read_record(read, page.id)?;
+    let stale = match record.links_extracted_at_us {
+        None => true,
+        Some(stamp) => version.is_some_and(|v| stamp < v) || page.updated_at_us > stamp,
+    };
+    if !stale {
+        return Ok(None);
+    }
+    Ok(Some(
+        record.links_attendance_blocked_revision.as_deref()
+            == Some(page.knowledge_revision.to_ascii_lowercase().as_str()),
+    ))
+}
+
+/// The pages `stalePagesWhere(opts)` selects, in page id order.
+fn stale_pages(read: &dyn KvRead, options: &StaleOptions) -> Result<Vec<PageRecord>> {
+    let version = version_us(options.version_ts.as_deref())?;
+    let source = options.source_id.as_deref().filter(|s| !s.is_empty());
+    let mut pages = live_pages(read, source)?;
     if options.held.as_deref() == Some("only") {
         return Ok(Vec::new());
     }
@@ -193,16 +248,9 @@ fn stale_pages(read: &dyn KvRead, options: &StaleOptions) -> Result<Vec<PageReco
     pages.retain(|p| !guests.contains(&p.source_id));
     let mut out = Vec::new();
     for page in pages {
-        let record = read_record(read, page.id)?;
-        let stale = match record.links_extracted_at_us {
-            None => true,
-            Some(stamp) => version.is_some_and(|v| stamp < v) || page.updated_at_us > stamp,
-        };
-        if !stale {
+        let Some(blocked) = stale_state(read, &page, version)? else {
             continue;
-        }
-        let blocked = record.links_attendance_blocked_revision.as_deref()
-            == Some(page.knowledge_revision.to_ascii_lowercase().as_str());
+        };
         let keep = match options.attendance.as_deref() {
             Some("exclude") => !blocked,
             Some("blocked") => blocked,
@@ -240,6 +288,38 @@ impl Store {
     pub fn count_stale_pages_for_extraction(&self, options: &StaleOptions) -> Result<u64> {
         let read = self.read()?;
         Ok(stale_pages(&*read, options)?.len() as u64)
+    }
+
+    /// `readExtractionLagCounts(q)`: in one snapshot, the live non-quarantined pages of the source
+    /// (`total`, guest sources included), the stale ones extraction can clear (`stale`: without
+    /// attendance-blocked pages when `attendance`), the stale attendance-blocked ones
+    /// (`attendance_blocked`, 0 without `attendance`) and the held ones (`held`: always 0, no page
+    /// is held here).
+    pub fn read_extraction_lag_counts(
+        &self,
+        options: &ExtractionLagOptions,
+    ) -> Result<ExtractionLagCounts> {
+        let version = version_us(options.version_ts.as_deref())?;
+        let read = self.read()?;
+        let read = &*read;
+        let pages = live_pages(read, options.source_id.as_deref().filter(|s| !s.is_empty()))?;
+        let guests = if options.guests == Some(false) {
+            BTreeSet::new()
+        } else {
+            guest_sources(read, &pages)?
+        };
+        let mut counts = ExtractionLagCounts {
+            total: pages.len() as u64,
+            ..ExtractionLagCounts::default()
+        };
+        for page in pages.iter().filter(|p| !guests.contains(&p.source_id)) {
+            match stale_state(read, page, version)? {
+                Some(true) if options.attendance => counts.attendance_blocked += 1,
+                Some(_) => counts.stale += 1,
+                None => {}
+            }
+        }
+        Ok(counts)
     }
 
     /// `listStalePagesForExtraction(opts)`: the same pages, `id > afterPageId`, by id, at most

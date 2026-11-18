@@ -303,3 +303,50 @@ fn the_reserved_key_sweep_changes_the_revision_but_not_updated_at() {
     assert_eq!(after["text_projection_revision"], Value::Null);
     assert_eq!(store.strip_stale_frontmatter_keys(&strip).unwrap(), 0);
 }
+
+fn lag(store: &Store, value: Value) -> Result<ExtractionLagCounts> {
+    store.read_extraction_lag_counts(&serde_json::from_value(value).unwrap())
+}
+
+#[test]
+fn the_lag_counts_keep_guests_live_but_not_stale_and_refuse_a_bad_version() {
+    let dir = TempDir::new("extraction-lag");
+    let store = open(&dir);
+    source(&store, "guest-text", json!({"guest": "true"}));
+    put(&store, "notes/stale");
+    let blocked = put(&store, "notes/blocked");
+    put_in(&store, "notes/q", json!({"quarantine": true}), None);
+    put_in(&store, "notes/g", json!({}), Some("guest-text"));
+    block(
+        &store,
+        json!([{"slug": "notes/blocked", "source_id": "default", "revision": blocked["knowledge_revision"]}]),
+    )
+    .unwrap();
+    let counts = |total, stale, attendance_blocked| ExtractionLagCounts {
+        total,
+        stale,
+        attendance_blocked,
+        held: 0,
+    };
+    let version = json!({"versionTs": FRESH, "attendance": true, "held": true});
+    assert_eq!(lag(&store, version.clone()).unwrap(), counts(3, 1, 1));
+    assert_eq!(
+        lag(&store, json!({"versionTs": FRESH, "guests": false})).unwrap(),
+        counts(3, 3, 0)
+    );
+    // A guest source counts its own live pages, none of them stale.
+    assert_eq!(
+        lag(
+            &store,
+            json!({"sourceId": "guest-text", "attendance": true})
+        )
+        .unwrap(),
+        counts(1, 0, 0)
+    );
+    // The counts survive a reopen; the store keeps no lag state of its own.
+    drop(store);
+    let store = open(&dir);
+    assert_eq!(lag(&store, version).unwrap(), counts(3, 1, 1));
+    let err = lag(&store, json!({"versionTs": "not a time"})).unwrap_err();
+    assert_eq!(err.code, INVALID_ARGUMENT);
+}
