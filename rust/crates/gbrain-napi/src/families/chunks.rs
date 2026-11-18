@@ -1,4 +1,4 @@
-//! Chunks of a page, without vectors.
+//! Chunks of a page.
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
 //! Each method decodes its arguments, runs one `Store` call on the pool through `Brain::run`,
@@ -31,7 +31,7 @@ impl Brain {
         })
     }
 
-    /// `getChunks(slug, { sourceId?, sourceIds?, includeDeleted? }?)`: `Chunk[]` without vectors.
+    /// `getChunks(slug, { sourceId?, sourceIds?, includeEmbedding?, includeUnsealed? }?)`: `Chunk[]`.
     #[napi]
     pub fn get_chunks<'env>(
         &self,
@@ -40,7 +40,7 @@ impl Brain {
         options: Option<Value>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.get_chunks(&slug, &arg(options, "getChunks options")?)
+            s.get_chunks_with(&slug, &arg(options, "getChunks options")?)
         })
     }
 
