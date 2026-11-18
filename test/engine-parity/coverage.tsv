@@ -76,7 +76,7 @@ refreshPageOrigin	pages	yes	1	no	yes	yes	refuses:pages
 searchKeyword	search	yes	11	yes	yes	yes	serves
 countKeywordPages	search	yes	2	no	yes	yes	serves
 searchKeywordPages	search	yes	2	no	yes	yes	serves
-searchTitles	search	yes	5	yes	yes	yes	serves
+searchTitles	search	yes	6	yes	yes	yes	serves
 searchVector	search	yes	2	yes	yes	yes	serves
 getEmbeddingsByChunkIds	search	yes	1	no	yes	yes	serves
 searchKeywordChunks	search	yes	2	yes	yes	yes	serves
