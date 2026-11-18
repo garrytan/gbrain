@@ -180,11 +180,12 @@ Errors from the addon are real `Error` objects with a `code`:
 | `invalid_argument` | A malformed argument. |
 | `invalid_slug` | The slug failed `validateSlug`. |
 | `source_not_found` | A page write named a source that does not exist. |
-| `page_not_found` | `addTag`, `createVersion`, `addLink` or `addTimelineEntry` named a page that does not exist. |
+| `page_not_found` | `addTag`, `addPageTagsById`, `createVersion`, `addLink` or `addTimelineEntry` named a page that does not exist. |
 | `constraint_violation` | A write breaks a table constraint PGLite enforces: a `linkSource` outside its CHECK, or a `deletePage` whose origin clear collides with another link. |
 | `revision_conflict` | `expectedRevision` does not match the page. |
 | `revision_required` | The page exists and the caller sent `force: false` without `expectedRevision`. |
 | `empty_overwrite` | A blank body would replace a page that has content. |
+| `origin_claimed` | A page write or `restorePage` would make a second live page of a source recording one `source_path`. The message is JSON (`source_id`, `source_path`, `holders`, `slug`); the binding maps it to `page_identity_changed`. |
 | `source_changed` | `sourceIncarnation` is not the source's current incarnation. |
 | `idempotency_conflict` | A request id was used for different content. |
 | `admission_refused` | The principal or the brain has too many unfinished writes. |

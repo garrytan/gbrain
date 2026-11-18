@@ -6,6 +6,7 @@ mod common;
 use common::{TempDir, open};
 use gbrain_store::Store;
 use gbrain_store::cli_reads::entities::{MentionDueQuery, SiblingCandidateQuery};
+use gbrain_store::facts::PrivacyPolicy;
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::sources::SourceInput;
 use serde_json::{Value, json};
@@ -149,6 +150,7 @@ fn sibling_candidates_match_the_title_or_its_suffix_by_slug() {
                     subject: "ada".into(),
                     limit,
                     exclude_quarantined,
+                    exclude_private: None,
                 },
             )
             .unwrap()
@@ -164,6 +166,54 @@ fn sibling_candidates_match_the_title_or_its_suffix_by_slug() {
     assert_eq!(rows[2].identity, None);
     assert_eq!(read(10, true).len(), 2);
     assert_eq!(read(1, false).len(), 1);
+}
+
+#[test]
+fn sibling_candidates_skip_private_pages_under_the_policy() {
+    let dir = TempDir::new("cli-siblings-private");
+    let store = seeded(&dir);
+    let page = |fm: Value| json!({"type": "person", "title": "Ada", "compiled_truth": "body", "frontmatter": fm});
+    put(
+        &store,
+        "default",
+        "people/ada-private",
+        page(json!({"visibility": "private"})),
+    );
+    put(
+        &store,
+        "default",
+        "people/ada-restricted",
+        page(json!({"access": "restricted"})),
+    );
+    let read = |exclude_private: Option<PrivacyPolicy>| -> Vec<String> {
+        store
+            .read_identity_sibling_candidates(
+                "default",
+                &SiblingCandidateQuery {
+                    types: vec!["person".into()],
+                    subject: "ada".into(),
+                    limit: 10,
+                    exclude_quarantined: false,
+                    exclude_private,
+                },
+            )
+            .unwrap()
+            .into_iter()
+            .map(|r| r.slug)
+            .collect()
+    };
+    assert_eq!(read(None).len(), 5);
+    let honored = read(Some(PrivacyPolicy {
+        honor_aliases: true,
+        entity_privacy: true,
+    }));
+    assert_eq!(honored, ["people/ada", "people/ada-2", "people/ada-q"]);
+    let visibility_only = read(Some(PrivacyPolicy {
+        honor_aliases: false,
+        entity_privacy: true,
+    }));
+    assert!(visibility_only.contains(&"people/ada-restricted".to_string()));
+    assert!(!visibility_only.contains(&"people/ada-private".to_string()));
 }
 
 #[test]

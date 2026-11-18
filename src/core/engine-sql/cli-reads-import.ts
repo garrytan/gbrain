@@ -1,0 +1,144 @@
+/**
+ * The reads the CLI import and extract paths ran through `executeRaw` before they had typed members
+ * (docs/research/rust-cli-executeraw-map.md, "Source lists and source rows", "Guest-source checks", "Extract reads").
+ * Each function keeps the statement text its call site ran, so PGLite and Postgres answer exactly as before; a Rust
+ * brain answers from its store (rust/crates/gbrain-store/src/cli_reads/import.rs).
+ */
+import type {
+  GuestSourceLookupRow, LinkPageMetadataRow, PageAtRevisionRef, PageTrustLookup, PageTrustRow,
+  SourceIncarnationRow, SourceRecordRow, StoredTimelineRow,
+} from '../engine.ts';
+import { GUEST_SOURCES_HIDDEN_SQL, guestSourceSql } from '../guests/note.ts';
+import { activationSuppressedSql } from '../eligibility/sql.ts';
+import { isMissingSchemaObject } from '../utils.ts';
+import type { LegacyUnscopedRead } from './brands.ts';
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
+
+/** Driver-tolerant 42703 detector (the copy sources-load.ts keeps for its single-row read). */
+function isUndefinedColumnError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as { code?: string; message?: string };
+  if (e.code === '42703') return true;
+  return typeof e.message === 'string' && /column .* does not exist/i.test(e.message);
+}
+
+/**
+ * Every source, `default` first, then by id, with the columns `loadAllSources` reads. A brain whose schema lacks
+ * `archived` or `newest_content_at` (pre-v0.26.5, pre-v109) is read again with the historical minimal columns.
+ */
+export async function listSourceRecords(exec: LegacyUnscopedRead): Promise<SourceRecordRow[]> {
+  try {
+    return await exec.executeRaw<SourceRecordRow>(
+      `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at, archived, newest_content_at
+         FROM sources
+       ORDER BY (id = 'default') DESC, id`,
+    );
+  } catch (err) {
+    if (!isUndefinedColumnError(err)) throw err;
+    return exec.executeRaw<SourceRecordRow>(
+      `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at
+         FROM sources
+       ORDER BY (id = 'default') DESC, id`,
+    );
+  }
+}
+
+/** One source's config and incarnation, or null for an unknown id (the company-brain profile read). */
+export async function readSourceIncarnation(exec: LegacyUnscopedRead, sourceId: string): Promise<SourceIncarnationRow | null> {
+  const [row] = await exec.executeRaw<SourceIncarnationRow>('SELECT config,incarnation FROM sources WHERE id=$1', [sourceId]);
+  return row ?? null;
+}
+
+/** Whether the source's current incarnation has a company-brain ingestion receipt. */
+export async function hasCompanyBrainReceipt(exec: LegacyUnscopedRead, sourceId: string): Promise<boolean> {
+  const rows = await exec.executeRaw(`SELECT r.id FROM source_ingestion_receipts r JOIN sources s ON s.id=r.source_id AND s.incarnation=r.source_incarnation
+      WHERE r.source_id=$1 AND r.profile='company-brain' LIMIT 1`, [sourceId]);
+  return rows.length > 0;
+}
+
+/**
+ * The guest_sources row of `sourceId` (null fields when it has none) and whether row-level security hides
+ * guest_sources from the role. A schema behind the guest-notes migration throws the missing-table error.
+ */
+export async function readGuestSourceRow(exec: LegacyUnscopedRead, sourceId: string): Promise<GuestSourceLookupRow> {
+  const { text, params } = renderFragment(sqlFragment`SELECT ${trustedSql(GUEST_SOURCES_HIDDEN_SQL)} AS hidden, g.source_id, g.writers, g.trust_ceiling
+    FROM (SELECT 1) AS one LEFT JOIN guest_sources g ON g.source_id = ${sourceId}`);
+  const [row] = await exec.executeRaw<GuestSourceLookupRow>(text, params);
+  return row ?? { hidden: false, source_id: null, writers: null, trust_ceiling: null };
+}
+
+/** The guest sources among `sourceIds` (guestSourceSql), in no particular order. */
+export async function listGuestSourceIds(exec: LegacyUnscopedRead, sourceIds: readonly string[]): Promise<string[]> {
+  if (sourceIds.length === 0) return [];
+  const { text, params } = renderFragment(sqlFragment`SELECT s.id FROM sources s WHERE s.id = ANY(${[...new Set(sourceIds)]}::text[])
+    AND ${trustedSql(guestSourceSql('s.config', 's.id'))}`);
+  const rows = await exec.executeRaw<{ id: string }>(text, params);
+  return rows.map(row => row.id);
+}
+
+/** Whether any source is a guest source (guestSourceSql), read as `read_source` like search's read policy. */
+export async function hasGuestSource(exec: LegacyUnscopedRead): Promise<boolean> {
+  const [row] = await exec.executeRaw<{ present: boolean }>(`SELECT EXISTS (SELECT 1 FROM sources read_source WHERE ${guestSourceSql('read_source.config', 'read_source.id')}) AS present`);
+  return row?.present !== false;
+}
+
+/** The guest flag of a brain whose schema is behind the guest-notes migration: the config record alone (guests/marker.ts withGuestSourceSql). */
+const CONFIG_GUEST_SQL = "COALESCE(s.config->>'guest' = 'true', false)";
+
+const trustColumns = (tableGuest: boolean) => sqlFragment`pages.id, pages.source_id, pages.slug, trust_tier, write_origin, ${trustedSql(activationSuppressedSql('pages', 'pages'))} AS flagged,
+  ${trustedSql(tableGuest ? guestSourceSql('s.config', 'pages.source_id') : CONFIG_GUEST_SQL)} AS guest FROM pages LEFT JOIN sources s ON s.id = pages.source_id`;
+
+/**
+ * The trust rows of pages by id and by (source_id, slug): `byId` marks the rows found by id. A brain whose schema is
+ * behind the guest-notes migration reads the guest flag from the config alone, as withGuestSourceSql does.
+ */
+export async function readPageTrustRows(exec: LegacyUnscopedRead, lookup: PageTrustLookup): Promise<PageTrustRow[]> {
+  const ids = lookup.ids ?? [];
+  const keys = lookup.keys ?? [];
+  const read = async (tableGuest: boolean): Promise<PageTrustRow[]> => {
+    const found: PageTrustRow[] = [];
+    if (ids.length) {
+      const { text, params } = renderFragment(sqlFragment`SELECT ${trustColumns(tableGuest)} WHERE pages.id = ANY(${[...ids]}::int[])`);
+      for (const row of await exec.executeRaw<Omit<PageTrustRow, 'byId'>>(text, params)) found.push({ ...row, byId: true });
+    }
+    if (keys.length) {
+      const { text, params } = renderFragment(sqlFragment`SELECT ${trustColumns(tableGuest)}
+          WHERE ${trustedSql(lookup.includeDeleted ? '' : 'pages.deleted_at IS NULL AND ')}(pages.source_id, pages.slug) IN (SELECT * FROM unnest(${keys.map(k => k.source_id)}::text[], ${keys.map(k => k.slug)}::text[]))`);
+      for (const row of await exec.executeRaw<Omit<PageTrustRow, 'byId'>>(text, params)) found.push({ ...row, byId: false });
+    }
+    return found;
+  };
+  try { return await read(true); } catch (e) {
+    if (!isMissingSchemaObject(e, 'table', 'guest_sources')) throw e;
+    return read(false);
+  }
+}
+
+/** The database clock as a UTC ISO string with microseconds, independent of the session's DateStyle. */
+export async function readDatabaseClock(exec: LegacyUnscopedRead): Promise<string> {
+  const [row] = await exec.executeRaw<{ at: string }>(
+    `SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at`);
+  return row!.at;
+}
+
+/** Every live page (of one source when given) with its aliases and knowledge revision, by source then slug. */
+export async function listLinkPageMetadata(exec: LegacyUnscopedRead, sourceId?: string): Promise<LinkPageMetadataRow[]> {
+  return exec.executeRaw<LinkPageMetadataRow>(`SELECT slug, source_id, type, title, frontmatter->'aliases' AS aliases, knowledge_revision FROM pages
+    WHERE deleted_at IS NULL${sourceId ? ' AND source_id=$1' : ''} ORDER BY source_id, slug`, sourceId ? [sourceId] : []);
+}
+
+/** Every stored non-event timeline row of one page, the date as `YYYY-MM-DD`, in no particular order. */
+export async function listStoredTimelineRows(exec: LegacyUnscopedRead, sourceId: string, slug: string): Promise<StoredTimelineRow[]> {
+  return exec.executeRaw<StoredTimelineRow>(
+    `SELECT t.id, to_char(t.date, 'YYYY-MM-DD') AS date, t.source, t.summary, t.detail FROM timeline_entries t
+      JOIN pages p ON p.id = t.page_id
+      WHERE p.source_id = $1 AND p.slug = $2 AND t.event_page_id IS NULL`, [sourceId, slug]);
+}
+
+/** The live pages among `refs` that are still at the knowledge revision each names, in no particular order. */
+export async function filterPagesAtRevision(exec: LegacyUnscopedRead, refs: readonly PageAtRevisionRef[]): Promise<Array<{ slug: string; source_id: string }>> {
+  if (refs.length === 0) return [];
+  return exec.executeRaw<{ slug: string; source_id: string }>(`SELECT p.slug,p.source_id FROM pages p
+      JOIN unnest($1::text[],$2::text[],$3::text[]) AS t(source_id,slug,revision) ON p.source_id=t.source_id AND p.slug=t.slug
+      WHERE p.knowledge_revision::text=t.revision AND p.deleted_at IS NULL`, [refs.map(r => r.source_id), refs.map(r => r.slug), refs.map(r => r.revision)]);
+}

@@ -1,4 +1,4 @@
-//! Chunks of a page, without vectors.
+//! Chunks of a page.
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
 //! Each method decodes its arguments, runs one `Store` call on the pool through `Brain::run`,
@@ -13,9 +13,11 @@ use crate::store_binding::{Brain, arg, required};
 
 #[napi]
 impl Brain {
-    /// `upsertChunks(slug, chunks, { sourceId?, expectedRevision?, seal? }?)`: writes the
-    /// page's chunks as PGLite's `upsertChunks` does (a repeated chunk keeps the metadata it had;
-    /// the page is not sealed). With `seal` the chunks replace the old ones and are sealed.
+    /// `upsertChunks(slug, chunks, { sourceId?, expectedRevision?, seal?, searchTimeline? }?)`:
+    /// writes the page's chunks as PGLite's `upsertChunks` does (a repeated chunk keeps the
+    /// metadata it had; the page is not sealed). With `seal` the chunks replace the old ones and
+    /// are sealed, and `searchTimeline` (the sanitized timeline) is kept for the page's keyword
+    /// vector.
     #[napi]
     pub fn upsert_chunks<'env>(
         &self,
@@ -31,7 +33,7 @@ impl Brain {
         })
     }
 
-    /// `getChunks(slug, { sourceId?, sourceIds?, includeDeleted? }?)`: `Chunk[]` without vectors.
+    /// `getChunks(slug, { sourceId?, sourceIds?, includeEmbedding?, includeUnsealed? }?)`: `Chunk[]`.
     #[napi]
     pub fn get_chunks<'env>(
         &self,
@@ -40,7 +42,7 @@ impl Brain {
         options: Option<Value>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.get_chunks(&slug, &arg(options, "getChunks options")?)
+            s.get_chunks_with(&slug, &arg(options, "getChunks options")?)
         })
     }
 

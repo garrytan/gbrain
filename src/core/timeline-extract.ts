@@ -300,11 +300,8 @@ export async function segmentedTimelineText(engine: Pick<BrainEngine, 'executeRa
 /** A page's stored non-event timeline row as reconciliation reads it (`date` is `YYYY-MM-DD`). */
 export type StoredTimelineTuple = TimelineTuple & { id: number; detail: string | null };
 
-function storedTimelineRows(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string): Promise<StoredTimelineTuple[]> {
-  return engine.executeRaw<StoredTimelineTuple>(
-    `SELECT t.id, to_char(t.date, 'YYYY-MM-DD') AS date, t.source, t.summary, t.detail FROM timeline_entries t
-      JOIN pages p ON p.id = t.page_id
-      WHERE p.source_id = $1 AND p.slug = $2 AND t.event_page_id IS NULL`, [sourceId, slug]);
+function storedTimelineRows(engine: Pick<BrainEngine, 'listStoredTimelineRows'>, sourceId: string, slug: string): Promise<StoredTimelineTuple[]> {
+  return engine.listStoredTimelineRows(sourceId, slug);
 }
 
 const STORED_ROWS_PAGE = 5_000;
@@ -375,7 +372,7 @@ export const versionTimelineScan = (): VersionTimelineScan => ({ done: false, pr
  * row locked and only while the page is still at that revision; a page that moved deletes nothing and returns no rows.
  */
 export async function retractRemovedTimelineEntries(
-  engine: Pick<BrainEngine, 'executeRaw' | 'readManifest' | 'readSegmentTexts'>,
+  engine: Pick<BrainEngine, 'executeRaw' | 'readManifest' | 'readSegmentTexts' | 'listStoredTimelineRows'>,
   slug: string,
   sourceId: string,
   current: string | TimelineTextKeys,

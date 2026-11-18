@@ -23,6 +23,7 @@ import { embeddingProviderIsFree } from '../../../core/embed-consent.ts';
 import { providerDeclineRecord } from '../../../core/setup/local-receipts.ts';
 import { providerConsentFix } from './provider-consent.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { answersFromCatalog, catalogSkipCheck } from '../../../core/rust-engine/store-members/catalog.ts';
 
 /** The opt-in live probe: one ~9-token embedding request, so `paid` + `egress` (runs verbatim once approved). */
 export function embeddingProbeFix(model: string, free = false): Action {
@@ -308,6 +309,7 @@ async function runEmbeddingColumnRegistry(ctx: DoctorContext): Promise<Check[]> 
   //     one format_type query, one pg_indexes query, one coverage-per-active
   //     column query.
   progress.heartbeat('embedding_column_registry');
+  if (answersFromCatalog(engine)) return [catalogSkipCheck('embedding_column_registry', 'no_column_types')];
   try {
     const { getEmbeddingColumnRegistry, resolveEmbeddingColumn, quoteIdentifier } =
       await import('../../../core/search/embedding-column.ts');

@@ -1,4 +1,11 @@
-//! Reads the CLI made through `executeRaw` on PGLite (docs/research/rust-cli-executeraw-map.md),
-//! one module per group of call sites. Every module is listed once, here.
+//! Typed reads that CLI paths ran through `executeRaw` (docs/research/rust-cli-executeraw-map.md).
+//! Each file mirrors one CLI path or TypeScript domain of `src/core/engine-sql/` and answers the
+//! same rows the PGLite and Postgres engines answer, so each lane edits only its own file.
 
 pub mod entities;
+pub mod import;
+mod pg_case;
+mod pg_text;
+pub mod reads;
+pub mod search_reads_pages;
+pub mod sources;

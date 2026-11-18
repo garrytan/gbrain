@@ -82,13 +82,13 @@ function recognized(key: string): string {
  * Does this source keep pages in a git checkout (its own path, canonical git, or the default source's sync.repo_path)?
  * A repo-less source answers false and its notice leaves out the git sentence. An unreadable answer counts as true.
  */
-export async function sourceHasRepo(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<boolean> {
+export async function sourceHasRepo(engine: Pick<BrainEngine, 'getSource' | 'getConfig'>, sourceId: string): Promise<boolean> {
   try {
-    const [row] = await engine.executeRaw<{ repo: boolean }>(
-      `SELECT (COALESCE(s.local_path, '') <> '' OR s.config->>'canonical' = 'git'
-          OR (s.id = 'default' AND EXISTS (SELECT 1 FROM config c WHERE c.key = 'sync.repo_path' AND COALESCE(c.value, '') <> ''))) AS repo
-        FROM sources s WHERE s.id = $1`, [sourceId], { timeoutMs: NOTICE_READ_TIMEOUT_MS });
-    return row ? row.repo === true : false;
+    const source = await engine.getSource(sourceId);
+    if (!source) return false;
+    const config = typeof source.config === 'string' ? JSON.parse(source.config) as Record<string, unknown> : source.config;
+    if ((source.local_path ?? '') !== '' || config?.canonical === 'git') return true;
+    return sourceId === 'default' && ((await engine.getConfig('sync.repo_path')) ?? '') !== '';
   } catch {
     return true;
   }
@@ -150,7 +150,7 @@ export function tallyIgnoredLabels(pages: Iterable<IgnoredPrivacyLabel[]>): { la
  * Only pages that carry a label key are read (the GIN prefilter), at most SCAN_CAP of them; null when there are none or
  * the read fails, so the notice never fails a run.
  */
-export async function ignoredPrivacyLabelRunNotice(engine: Pick<BrainEngine, 'executeRaw' | 'readIgnoredPrivacyLabelPages'>, sourceId: string,
+export async function ignoredPrivacyLabelRunNotice(engine: Pick<BrainEngine, 'getSource' | 'getConfig' | 'readIgnoredPrivacyLabelPages'>, sourceId: string,
   scope: { slugs: readonly string[] } | { since: string }, run: 'import' | 'sync'): Promise<Notice | null> {
   if ('slugs' in scope && !scope.slugs.length) return null;
   try {

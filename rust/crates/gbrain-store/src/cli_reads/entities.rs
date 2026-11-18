@@ -7,6 +7,7 @@
 use crate::Store;
 use crate::env::parse_iso;
 use crate::error::{Result, StoreError};
+use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::pages::{PageRecord, all_pages};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -34,6 +35,9 @@ pub struct SiblingCandidateQuery {
     pub limit: u64,
     #[serde(default)]
     pub exclude_quarantined: bool,
+    /// `excludePrivate`: the page policy (`facts/privacy.rs` `page_hidden`); null reads every page.
+    #[serde(default)]
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 /// One sibling candidate: `identity` is the frontmatter value as `->>` reads it.
@@ -83,7 +87,8 @@ impl Store {
 
     /// `readIdentitySiblingCandidates(sourceId, q)`: live pages of the source whose type is one of
     /// `types` and whose lowercased title is `subject` or ends in `": " + subject`, by slug, at most
-    /// `limit`. `exclude_quarantined` leaves out pages whose frontmatter has a `quarantine` key.
+    /// `limit`. `exclude_quarantined` leaves out pages whose frontmatter has a `quarantine` key, and
+    /// `exclude_private` the pages the page policy hides.
     pub fn read_identity_sibling_candidates(
         &self,
         source_id: &str,
@@ -91,22 +96,29 @@ impl Store {
     ) -> Result<Vec<SiblingCandidateRow>> {
         let read = self.read()?;
         let suffix = format!(": {}", q.subject);
-        let mut rows: Vec<SiblingCandidateRow> = all_pages(&*read)?
-            .into_iter()
-            .filter(|p| p.source_id == source_id && p.deleted_at_us.is_none())
-            .filter(|p| q.types.contains(&p.page_type))
-            .filter(|p| !q.exclude_quarantined || !p.frontmatter.contains_key(QUARANTINE_KEY))
-            .filter(|p| {
-                let title = p.title.to_lowercase();
-                title == q.subject || title.ends_with(&suffix)
-            })
-            .map(|p| SiblingCandidateRow {
+        let mut rows = Vec::new();
+        for p in all_pages(&*read)? {
+            let title = p.title.to_lowercase();
+            if p.source_id != source_id
+                || p.deleted_at_us.is_some()
+                || !q.types.contains(&p.page_type)
+                || (q.exclude_quarantined && p.frontmatter.contains_key(QUARANTINE_KEY))
+                || !(title == q.subject || title.ends_with(&suffix))
+            {
+                continue;
+            }
+            if let Some(policy) = &q.exclude_private
+                && page_hidden(&*read, &p, policy)?
+            {
+                continue;
+            }
+            rows.push(SiblingCandidateRow {
                 identity: p.frontmatter.get("identity").and_then(arrow_text),
                 slug: p.slug,
                 title: p.title,
                 page_type: p.page_type,
-            })
-            .collect();
+            });
+        }
         rows.sort_by(|a, b| a.slug.cmp(&b.slug));
         rows.truncate(usize::try_from(q.limit).unwrap_or(usize::MAX));
         Ok(rows)

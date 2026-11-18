@@ -92,12 +92,10 @@ export async function schemaBehindGuests(exec: Pick<BrainEngine, 'executeRaw'>, 
  * The guest_sources row of `sourceId`, or null when it is not a guest source. One statement; refuses
  * (guestSourcesUnreadable) when row-level security hides guest_sources from the role instead of answering null.
  */
-export async function lookupGuestSource(exec: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<GuestSource | null> {
-  const [row] = await exec.executeRaw<GuestSource & { hidden: boolean }>(
-    `SELECT ${GUEST_SOURCES_HIDDEN_SQL} AS hidden, g.source_id, g.writers, g.trust_ceiling FROM (SELECT 1) AS one LEFT JOIN guest_sources g ON g.source_id = $1`, [sourceId])
-    .catch(e => schemaBehindGuests(exec, e));
-  if (row?.hidden) throw guestSourcesUnreadable(sourceId);
-  return row?.source_id ? { source_id: row.source_id, writers: row.writers, trust_ceiling: row.trust_ceiling } : null;
+export async function lookupGuestSource(exec: Pick<BrainEngine, 'executeRaw' | 'readGuestSourceRow'>, sourceId: string): Promise<GuestSource | null> {
+  const row = await exec.readGuestSourceRow(sourceId).catch(e => schemaBehindGuests(exec, e));
+  if (row.hidden) throw guestSourcesUnreadable(sourceId);
+  return row.source_id ? { source_id: row.source_id, writers: row.writers!, trust_ceiling: row.trust_ceiling! } : null;
 }
 
 export function sourceWriterRestricted(sourceId: string): OperationError {
@@ -162,7 +160,7 @@ export function admitGuestOperation(guest: GuestSource, input: { principal: Prin
 }
 
 /** Refuses any write other than a page through admitGuestOperation (remember, links, import) on a guest source. */
-export async function refuseGuestSourceWrite(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, principalOf: () => Promise<Principal>, operation: string): Promise<void> {
+export async function refuseGuestSourceWrite(engine: Pick<BrainEngine, 'executeRaw' | 'readGuestSourceRow'>, sourceId: string, principalOf: () => Promise<Principal>, operation: string): Promise<void> {
   const guest = await lookupGuestSource(engine, sourceId);
   if (!guest) return;
   if (isListedWriter(guest, await principalOf())) throw guestPageImmutable(`${operation} on a guest source`);

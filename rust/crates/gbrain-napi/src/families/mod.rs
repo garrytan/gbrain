@@ -4,6 +4,10 @@
 
 mod chunks;
 mod cli_entities;
+mod cli_reads_import;
+mod cli_reads_ops;
+mod cli_reads_search_pages;
+mod cli_sources;
 mod config;
 mod graph;
 mod journal;
@@ -38,3 +42,4 @@ mod takes;
 mod timeline_queries;
 mod transactions;
 mod vectors;
+mod wanted_links;

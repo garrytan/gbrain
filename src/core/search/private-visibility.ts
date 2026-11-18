@@ -33,6 +33,7 @@ import { holdingSlugSql } from '../facts-fence.ts';
 import { NAME_KEY_PAGE_DIRS } from '../entities/basename-dirs.ts';
 import { atomMovedOriginPrivateSql, atomOriginSlugsSql } from '../persistence/atom-origin.ts';
 import { ownerOnlyFactSql, ownerOnlyForm, ownerOnlyPageSql, ownerOnlySourcesPresent } from '../access/owner-only.ts';
+import { readConfigRows, type ConfigReader } from '../config-values.ts';
 
 export const REMOTE_PRIVATE_PAGES_KEY = 'search.remote_private_pages';
 
@@ -1244,8 +1245,8 @@ export async function schemaVersionNow(engine: Pick<BrainEngine, 'executeRaw'>):
 }
 
 /** GST-363: whom the brain serves, read on its own (the requester-scope gate's re-read after an unreadable policy read). Throws when unreadable. */
-export async function readServesPolicy(engine: Pick<BrainEngine, 'executeRaw'>): Promise<ServesPolicy> {
-  const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key = ANY($1::text[])', [[SERVES_KEY, SERVES_DERIVED_KEY, SERVES_SINCE_KEY, REQUESTER_SCOPE_ENFORCE_KEY]]);
+export async function readServesPolicy(engine: ConfigReader): Promise<ServesPolicy> {
+  const rows = await readConfigRows(engine, [SERVES_KEY, SERVES_DERIVED_KEY, SERVES_SINCE_KEY, REQUESTER_SCOPE_ENFORCE_KEY]);
   return servesPolicyFrom(Object.fromEntries(rows.map(r => [r.key, r.value])));
 }
 

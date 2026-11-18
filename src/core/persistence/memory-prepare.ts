@@ -28,6 +28,11 @@ import { attestedShareRefused, MEMBER_PAGE_PREFIX, memberPageFrontmatter, member
 import { claimColumns, storedClaim } from '../facts/typed-claim.ts';
 import { parseStoredActor } from '../access/actor-model.ts';
 import { withoutBody } from '../page-body/page-shape.ts';
+import { readConfigRows } from '../config-values.ts';
+
+const EMBEDDING_CONFIG_KEYS = ['embedding_dimensions', 'embedding_model'] as const;
+/** The embedding config rows as compared before and under lock: each key and value, in key order. */
+const embeddingConfigText = (rows: Array<{ key: string; value: string }>) => JSON.stringify(rows.map(row => [row.key, row.value]));
 
 function conflict(row: WriteRequest): never {
   throw opError('revision_conflict', 'The memory changed during semantic preparation.',
@@ -99,8 +104,10 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const excludePrivate = await resolveExcludePrivatePages(engine, row.authority.remote === true);
   await assertFactNotWithdrawn(engine, row.source_id, input, { excludePrivate, remote: row.authority.remote === true });
   signal?.throwIfAborted();
+  // The first read is a typed keyed read (its rows ordered by key, as this statement orders them); the re-check under
+  // lock keeps the statement, for its FOR SHARE.
   const embeddingConfigSql = "SELECT key,value FROM config WHERE key IN ('embedding_model','embedding_dimensions') ORDER BY key";
-  const observedEmbeddingConfig = JSON.stringify(await engine.executeRaw(embeddingConfigSql));
+  const observedEmbeddingConfig = embeddingConfigText(await readConfigRows(engine, EMBEDDING_CONFIG_KEYS));
   const { embedding, embedding_model, degraded } = await prepareFactEmbedding(input.fact, signal, await factEmbeddingDisabled(engine, config), clock?.deadlineAt);
   signal?.throwIfAborted();
   // #5836: an inferred link dedups exact text only, so it never supersedes or drops a similar fact.
@@ -143,7 +150,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const widening = restatedOld ? { from: restatedOld.visibility, to: 'world' } : heldFor ? { from: 'private', to: 'world' } : null;
   const validate = async (tx: BrainEngine) => {
     await assertFactNotWithdrawn(tx, row.source_id, input, { excludePrivate, remote: row.authority.remote === true });
-    if (embedding && JSON.stringify(await tx.executeRaw(`${embeddingConfigSql} FOR SHARE`)) !== observedEmbeddingConfig) conflict(row);
+    if (embedding && embeddingConfigText(await tx.executeRaw<{ key: string; value: string }>(`${embeddingConfigSql} FOR SHARE`)) !== observedEmbeddingConfig) conflict(row);
     const current = await decide(tx, true);
     if (candidateState(current) !== candidateState(decision)) conflict(row);
     if ((await lexical(tx))?.id !== lexicalOld?.id) conflict(row);

@@ -4,6 +4,7 @@
  */
 
 import { validDate } from '../valid-time.ts';
+import { guardSegmentedBody } from '../page-body/page-shape.ts';
 
 type Row = Record<string, unknown>;
 
@@ -26,14 +27,31 @@ export function withIsoDates<T extends object>(row: T): T {
   return out as T;
 }
 
-const PAGE_DATES = ['created_at', 'updated_at', 'deleted_at', 'effective_date', 'ingested_at'] as const;
+/** Every date column of `Page`, including `salience_touched_at`, which a family adds through the store's page-columns hook. */
+const PAGE_DATES = ['created_at', 'updated_at', 'deleted_at', 'effective_date', 'ingested_at', 'salience_touched_at'] as const;
 
-/** What PGLite's page rows carry that the store has no field for: always these values. */
+/**
+ * What PGLite's page rows carry that the page record has no field for. A family that owns one of these columns adds it
+ * through the store's page-columns hook (`page_columns.rs`); the store's value then replaces the default here, so no
+ * family edits this list.
+ */
 const PAGE_ROW_DEFAULTS = { contextual_retrieval_mode: null, emotional_weight: 0, salience_touched_at: null, withheld_source_path: null } as const;
 
 function pageDates(page: Row): Row {
   const { page_kind: _kind, ...rest } = page;
   return withDates(rest, PAGE_DATES);
+}
+
+/**
+ * Nullable page fields (shared item 12, `PageText` in `rust/crates/gbrain-store/src/pages.rs`). The store sends a
+ * segmented shell page's `compiled_truth` and `timeline` as null, the only page PGLite's `pages_body_storage_chk` lets
+ * hold NULL there. PGLite's `rowToPage` reads them as `''` behind getters that throw `page_body_segmented`; this does
+ * the same, last, because spreading a guarded page would run the getters. `content_hash` stays null, as PGLite's row
+ * has it.
+ */
+function guardNullBody(page: Row): Row {
+  if (page.compiled_truth !== null && page.timeline !== null) return page;
+  return guardSegmentedBody({ ...page, compiled_truth: '', timeline: '' }, 'rowToPage');
 }
 
 /**
@@ -48,12 +66,12 @@ export function toPutPage<T extends object>(page: T): T {
 /** The page `getPage` and `readPageSnapshot` return: PGLite's row has the defaulted columns and no `updated_at_iso`. */
 export function toGetPage<T extends object>(page: T): T {
   const { updated_at_iso: _iso, ...rest } = pageDates(page as Row);
-  return { ...PAGE_ROW_DEFAULTS, ...rest } as T;
+  return guardNullBody({ ...PAGE_ROW_DEFAULTS, ...rest }) as T;
 }
 
 /** A row of `listPages`: the table's columns plus `updated_at_iso`. */
 export function toListPage<T extends object>(page: T): T {
-  return { ...PAGE_ROW_DEFAULTS, ...pageDates(page as Row) } as T;
+  return guardNullBody({ ...PAGE_ROW_DEFAULTS, ...pageDates(page as Row) }) as T;
 }
 
 /** The nullable columns of a chunk row, which PGLite returns as null when a chunk has no value. */
@@ -62,10 +80,14 @@ const CHUNK_DEFAULTS = {
   doc_comment: null, symbol_name_qualified: null, projected_byte_start: null, projected_byte_end: null, token_count: null,
 } as const;
 
-/** A chunk as PGLite's `getChunks` returns it: every nullable column present, and no vector (the store keeps none). */
+/**
+ * A chunk as PGLite's `getChunks` returns it: every nullable column present, `embedded_at` a Date, and the vector a
+ * Float32Array when the read asked for it (null otherwise).
+ */
 export function toChunk<T extends object>(chunk: T): T {
-  const { has_embedding: _has, ...rest } = chunk as Row;
-  return { embedding: null, ...CHUNK_DEFAULTS, ...rest, embedded_at: null, embedding_is_null: true } as T;
+  const row = { embedding: null, ...CHUNK_DEFAULTS, ...withDates(chunk, ['embedded_at']) } as Row;
+  row.embedding = Array.isArray(row.embedding) ? new Float32Array(row.embedding as number[]) : null;
+  return row as T;
 }
 
 /** The provenance columns PGLite's timeline rows carry and the store does not keep. */

@@ -2,9 +2,10 @@
  * BrainEngine parity — the entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: the mention pass time, the mention-due count, identity sibling candidates, the exact-slug lookup that
- *    splits live from retired pages, the extraction lag counts and the pages carrying an ignored privacy label return
- *    the same observable result on every engine arm.
+ *  - Contract: the mention pass time, the mention-due count, identity sibling candidates (also under the private-page
+ *    filter), the exact-slug lookup that splits live from retired pages, the extraction lag counts, the pages carrying
+ *    an ignored privacy label and whether that notice names a git checkout return the same observable result on every
+ *    engine arm.
  *  - Regression: an engine that counts deleted pages as due, matches a title that only contains the subject, reads a
  *    blank `merged_into` as retired, or returns a page with `readable_by` as an ignored label changes what extract,
  *    the entity resolver and the import notice report.
@@ -15,6 +16,7 @@
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import { ignoredPrivacyLabelRunNotice, sourceHasRepo } from '../../src/core/search/ignored-privacy-labels.ts';
 import { createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
@@ -83,8 +85,17 @@ describe('engine parity: entity and mention reads', () => {
   parityTest('readIdentitySiblingCandidates with excludePrivate applies the private-page filter',
     { methods: ['readIdentitySiblingCandidates'] }, async (engine, backend) => {
       await seed(engine, backend);
-      const rows = await engine.readIdentitySiblingCandidates('default', { types: ['person'], subject: 'alice', limit: 10, excludePrivate: true });
-      return rows.map(r => r.slug);
+      const person = (frontmatter: Record<string, unknown>) =>
+        ({ type: 'person', title: 'Alice', compiled_truth: 'Alice body.', frontmatter }) as Parameters<BrainEngine['putPage']>[1];
+      await engine.putPage('people/alice-private', person({ visibility: 'private' }), { sourceId: 'default' });
+      await engine.putPage('people/alice-readers', person({ readable_by: ['alice-example'] }), { sourceId: 'default' });
+      await engine.putPage('people/alice-restricted', person({ access: 'restricted' }), { sourceId: 'default' });
+      const read = (excludePrivate: boolean) =>
+        engine.readIdentitySiblingCandidates('default', { types: ['person'], subject: 'alice', limit: 10, excludePrivate }).then(rows => rows.map(r => r.slug));
+      const result = { open: await read(false), kept: await read(true) };
+      expect(result.kept).toEqual(['people/alice-example', 'people/alice-founder', 'people/alice-q']);
+      expect(result.open).toEqual([...result.kept.slice(0, 2), 'people/alice-private', 'people/alice-q', 'people/alice-readers', 'people/alice-restricted']);
+      return result;
     });
 
   parityTest('findExactSlug splits live pages from retired ones; deleted and missing pages are null',
@@ -124,6 +135,25 @@ describe('engine parity: entity and mention reads', () => {
       expect(bySlug).toEqual([{ type: 'note', frontmatter: { access: 'team-only' } }]);
       expect(since.length).toBe(2);
       return { bySlug, since, future, limited };
+    });
+
+  parityTest('the ignored-label notice says whether the source keeps a git checkout',
+    { methods: ['readIgnoredPrivacyLabelPages', 'getSource', 'getConfig'] }, async (engine, backend) => {
+      await seed(engine, backend);
+      await createSource(engine, backend, 'checkout', {}, '/var/tmp/parity-checkout');
+      await createSource(engine, backend, 'canonical', { canonical: 'git' });
+      await createSource(engine, backend, 'plain', { canonical: 'db' });
+      const repo = async () => Object.fromEntries(await Promise.all(['default', 'checkout', 'canonical', 'plain', 'missing']
+        .map(async id => [id, await sourceHasRepo(engine, id)] as const)));
+      const notice = () => ignoredPrivacyLabelRunNotice(engine, 'default', { slugs: ['notes/label'] }, 'import').then(n => n?.user_message);
+      const before = { repo: await repo(), notice: await notice() };
+      await engine.setConfig('sync.repo_path', '/var/tmp/parity-repo');
+      const after = { repo: await repo(), notice: await notice() };
+      expect(before.repo).toEqual({ default: false, checkout: true, canonical: true, plain: false, missing: false });
+      expect(after.repo.default).toBe(true);
+      expect(before.notice).not.toContain('git');
+      expect(after.notice).toContain('pushed to git');
+      return { before, after };
     });
 
   parityTest('readExtractionLagCounts returns one row of counts for the source',

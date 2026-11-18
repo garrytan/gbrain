@@ -25,8 +25,6 @@ src/commands/doctor/checks/calibration.ts	checkLinkResolutionOpportunity	sql	LEA
 src/commands/doctor/checks/content-quality.ts	runContentSanity	sql	META	
 src/commands/doctor/checks/data-integrity.ts	runMarkdownBody	sql	META	
 src/commands/doctor/checks/derived-visibility.ts	derivedVisibilityCheck	sql	NONE	not the page body: p.* in a CTE, only metadata columns read
-src/commands/doctor/checks/graph-health.ts	runGraphCoverage	field	NONE	not the page body: timeline count alias
-src/commands/doctor/checks/graph-health.ts	runGraphCoverage	sql	NONE	not the page body: timeline coverage count alias
 src/commands/enrich.ts	enrichOneLocked	call:serializeMarkdown	SEGW	
 src/commands/enrich.ts	enrichOneLocked	field	SEGW	
 src/commands/export.ts	runExport	sql	STREAM	
@@ -631,6 +629,8 @@ src/core/repair/visibility.ts	planAliases	sql	META
 src/core/repair/visibility.ts	planEvents	sql	META	
 src/core/repair/visibility.ts	planLineage	sql	META	
 src/core/repair/visibility.ts	visibilityWrite	call:serializePageToMarkdown	SEGW	
+src/core/rust-engine/store-members/chunks.ts	sealChunks	field	STREAM	mirrors sealPageTextProjection (text-seal.ts): sends sanitizeRemoteBody(timeline) with the seal for the page keyword vector; a segmented page (null timeline from the Rust store) sends none
+src/core/rust-engine/store-members/page-ops.ts	toDomainBankRow	field	INLINE	copies the domain-bank body the Rust store returned; the store keeps every body inline
 src/core/rust-engine/store-members/pages.ts	putPage	call:putPage	INLINE	forwards the caller's page to the Rust store, which keeps every body inline; it reads no stored body
 src/core/schema-migrations/v091-pages-generation-trigger-and-bookmark.ts	v091	sql	NONE	not the page body: historical generation trigger
 src/core/schema-migrations/v123-configurable-fts-language.ts	v123	sql	NONE	not the page body: historical
@@ -717,3 +717,4 @@ src/commands/doctor/checks/atom-body-recheck.ts	unchangedBodyAtoms	field	INLINE	
 src/commands/doctor/checks/atom-body-recheck.ts	unchangedBodyAtoms	sql	INLINE	doctor atom_provenance_drift re-check (#6825): the group query joins only inline pages, and a page read back segmented is skipped (isSegmentedPage), keeping its drift verdict; compares a page_versions edition with the live body
 src/core/guests/promote.ts	promoteGuestNote	call:serializeMarkdown	INLINE	assertInlineBody refuses a guest note stored in segments (page_body_segmented) before its body is copied into the owner page
 src/core/guests/promote.ts	promoteGuestNote	field	INLINE	assertInlineBody before the body is read
+src/core/rust-engine/store-codec.ts	guardNullBody	field	META	reads only whether the Rust store sent compiled_truth/timeline as null (a segmented shell, PGLite pages_body_storage_chk), never the body text; a null body becomes the guarded segmented page of rowToPage

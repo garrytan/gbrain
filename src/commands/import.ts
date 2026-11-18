@@ -49,7 +49,7 @@ import { acceptedPendingReceipt } from '../core/persistence/accepted-pending.ts'
 import { estimateCostFromChars, lookupEmbeddingPrice } from '../core/embedding-pricing.ts';
 import { getEmbeddingModel } from '../core/ai/gateway.ts';
 import { managedRootMarkerFor } from '../core/persistence/root-registry.ts';
-import { readManagedMode } from '../core/persistence/ownership.ts';
+import { readManagedModeTyped } from '../core/persistence/ownership.ts';
 import { readPageBodyPolicy } from '../core/page-body/limits.ts';
 import { importSourceRefusal } from './import-source-refusal.ts';
 
@@ -518,7 +518,7 @@ export async function runImport(
   }
   if (args.includes('--calls')) return (await import('./import-calls.ts')).runCallImport(engine, dir, args, { sourceId, json: jsonOutput });
 
-  const managedImport = await readManagedMode(engine);
+  const managedImport = await readManagedModeTyped(engine);
   if (managedImport && dir !== resolve(dirArg)) throw symlinkedRootAbort(dirArg, dir);
   const preAdmission = managedImport && !opts.managedBookmark && !currentCompanyBrainSync(sourceId) ? await managedImportWriteThroughRefusal(engine, sourceId ?? 'default') : null;
   if (preAdmission) {

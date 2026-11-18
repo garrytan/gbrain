@@ -3,11 +3,13 @@
  *
  * The store keeps no mention-pass state: no pass time, and every live page is due, as on a PGLite brain where the pass
  * never ran. `readExtractionLagCounts` is not served (the extraction family is not built), so it refuses with
- * `engine_capability_missing`. A private-page filter refuses too: the store has no private-page predicate.
+ * `engine_capability_missing`. `excludePrivate` applies the page policy (private-provenance.ts `storePagePolicy`), and
+ * refuses for a caller whose members, grants or lineage change it.
  */
 import type { IgnoredLabelPageRow, MentionDueQuery, SiblingCandidateQuery, SiblingCandidateRow } from '../../engine-sql/entity-reads.ts';
 import { ignoredPrivacyLabels, SCAN_CAP } from '../../search/ignored-privacy-labels.ts';
 import { storeCall, takeOptions, type StoreMember } from './common.ts';
+import { storePagePolicy } from './private-provenance.ts';
 
 export const readMentionLastPass: StoreMember<[sourceId?: string | null], string | null> = (brain, sourceId) =>
   storeCall({ member: 'readMentionLastPass', sourceId: sourceId ?? undefined }, () => brain.readMentionLastPass(sourceId ?? null));
@@ -19,9 +21,11 @@ export const countPagesDueForMentions: StoreMember<[q: MentionDueQuery], number>
 };
 
 export const readIdentitySiblingCandidates: StoreMember<[sourceId: string, q: SiblingCandidateQuery], SiblingCandidateRow[]> = (brain, sourceId, q) => {
-  const opts = takeOptions('readIdentitySiblingCandidates', q, ['types', 'subject', 'limit', 'excludeQuarantined']);
+  const opts = takeOptions('readIdentitySiblingCandidates', q, ['types', 'subject', 'limit', 'excludeQuarantined', 'excludePrivate']);
+  const excludePrivate = storePagePolicy('readIdentitySiblingCandidates', opts.excludePrivate);
   return storeCall({ member: 'readIdentitySiblingCandidates', sourceId }, () => brain.readIdentitySiblingCandidates(sourceId, {
-    types: [...q.types], subject: q.subject, limit: Math.max(0, Math.floor(q.limit)), excludeQuarantined: opts.excludeQuarantined === true }));
+    types: [...q.types], subject: q.subject, limit: Math.max(0, Math.floor(q.limit)), excludeQuarantined: opts.excludeQuarantined === true,
+    excludePrivate: excludePrivate ?? null }));
 };
 
 export const findExactSlug: StoreMember<[sourceId: string, slugs: readonly string[], opts?: { retired?: boolean }], string | null> = (brain, sourceId, slugs, opts) =>

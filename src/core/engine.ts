@@ -1,4 +1,8 @@
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
+import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
+import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
+import type { RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
+import type { ExtractionPendingRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
 import type { EngineCapabilities } from './engine-capabilities.ts';
 import type { GetVersionsOpts, PageVersionRows } from './page-state/version-types.ts';
 import type { PageSnapshotBatch } from './page-snapshot-batch.ts';
@@ -17,6 +21,8 @@ import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence-state.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type { ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, MentionDueQuery, SiblingCandidateQuery, SiblingCandidateRow } from './engine-sql/entity-reads.ts';
+import type { DefaultSourceSplit, LocalPathSourceRow, SourceRoutingRow } from './engine-sql/sources.ts';
+import type { JunkEntityHubRow, LinkEndpointPage, LivePageSummary, TitledPage } from './engine-sql/link-reads.ts';
 export type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions, PageMutationPrecondition, PageWithdrawal } from './page-state/types.ts';
 import type {
   Page, PageInput, PageFilters, GetPageOpts, PageReadScope, PageReadPolicy,
@@ -86,6 +92,28 @@ export interface SourceDetailRow {
   /** Per-source mount-frontmatter trust gate. */
   trust_frontmatter_overrides?: boolean;
 }
+
+/** One `sources` row as `listSourceRecords` returns it; `archived` and `newest_content_at` are absent on a schema that lacks them. */
+export interface SourceRecordRow {
+  id: string; name: string; local_path: string | null; last_commit: string | null; last_sync_at: Date | null;
+  /** Postgres returns an object; PGLite may return JSON text. */
+  config: Record<string, unknown> | string;
+  created_at: Date; archived?: boolean; newest_content_at?: Date | null;
+}
+/** A source's config and incarnation (`readSourceIncarnation`). */
+export interface SourceIncarnationRow { config: unknown; incarnation: string }
+/** `readGuestSourceRow`: the source's guest_sources row (null fields without one) and whether row-level security hides guest_sources. */
+export interface GuestSourceLookupRow { hidden: boolean; source_id: string | null; writers: string[] | null; trust_ceiling: string | null }
+/** `readPageTrustRows` input: page ids, and (source_id, slug) keys read live unless `includeDeleted`. */
+export interface PageTrustLookup { ids?: readonly number[]; keys?: ReadonlyArray<{ source_id: string; slug: string }>; includeDeleted?: boolean }
+/** One page's trust fields; `byId` marks a row found by id, `flagged` an activation-suppressed page, `guest` a page in a guest source. */
+export interface PageTrustRow { id: number; source_id: string; slug: string; trust_tier: string; write_origin: unknown; flagged: boolean; guest: boolean; byId: boolean }
+/** A live page with its frontmatter aliases and knowledge revision (`listLinkPageMetadata`). */
+export interface LinkPageMetadataRow { slug: string; source_id: string; type: string; title: string; aliases?: unknown; knowledge_revision: string }
+/** One stored non-event timeline row (`listStoredTimelineRows`); `date` is `YYYY-MM-DD`. */
+export interface StoredTimelineRow { id: number; date: string; source: string; summary: string; detail: string | null }
+/** A page and the knowledge revision `filterPagesAtRevision` checks it is still at. */
+export interface PageAtRevisionRef { source_id: string; slug: string; revision: string }
 
 /**
  * One `gbrain_cycle_locks` row as `readCycleLocks` returns it: the lease the lock id names. Timestamps are the
@@ -207,6 +235,23 @@ export interface TransactionOptions {
 }
 
 /** Input row for addLinksBatch. Optional fields default to '' (matches NOT NULL DDL). */
+/** One wanted row as replaceWantedLinkRows writes it (wanted-links-store.ts `WantedLinkInput`). */
+export interface WantedLinkRowInput {
+  producer: 'body' | 'frontmatter';
+  ref_kind: 'slug' | 'name';
+  target_source_id: string;
+  target_ref: string;
+  link_type: string;
+  context: string;
+}
+
+/** What replaceWantedLinkRows replaces: the rows of `producers`, with `readAt` stamped on every bare-name row. */
+export interface WantedLinkRowsReplacement {
+  rows: readonly WantedLinkRowInput[];
+  producers: readonly ('body' | 'frontmatter')[];
+  readAt?: string;
+}
+
 export interface LinkBatchInput {
   from_slug: string;
   to_slug: string;
@@ -878,7 +923,7 @@ export function clampSearchLimit(limit: number | undefined, defaultLimit = 20, c
 
 export interface BrainEngine {
   /** Discriminator: lets migrations and other consumers branch on engine kind without instanceof + dynamic imports. */
-  readonly kind: 'postgres' | 'pglite';
+  readonly kind: 'postgres' | 'pglite' | 'rust';
   readonly capabilities: EngineCapabilities; // what this engine can do, by name (engine-capabilities.ts); ask it instead of branching on kind
 
   // Lifecycle
@@ -1223,6 +1268,33 @@ export interface BrainEngine {
    */
   listSourceLocalPaths(): Promise<string[]>;
 
+  /** Source resolution reads (SQL and contracts in engine-sql/sources.ts): sources with a local path and `archived`; every source row with `default`'s emptiness flag; the default-write guard's page split. */
+  listLocalPathSources(): Promise<LocalPathSourceRow[]>;
+  listSourceRoutingRows(): Promise<SourceRoutingRow[]>;
+  countDefaultSourceSplit(): Promise<DefaultSourceSplit>;
+  /** Every source with the columns `loadAllSources` reads, `default` first then by id; a schema without `archived`/`newest_content_at` omits them. */
+  listSourceRecords(): Promise<SourceRecordRow[]>;
+  /** A source's config and incarnation, or null for an unknown id. */
+  readSourceIncarnation(sourceId: string): Promise<SourceIncarnationRow | null>;
+  /** Whether the source's current incarnation has a company-brain ingestion receipt. */
+  hasCompanyBrainReceipt(sourceId: string): Promise<boolean>;
+  /** The source's guest_sources row and whether row-level security hides guest_sources; throws the missing-table error on an old schema. */
+  readGuestSourceRow(sourceId: string): Promise<GuestSourceLookupRow>;
+  /** The guest sources (config `guest: true` or a guest_sources row) among `sourceIds`, in no particular order. */
+  listGuestSourceIds(sourceIds: readonly string[]): Promise<string[]>;
+  /** Whether any source is a guest source. */
+  hasGuestSource(): Promise<boolean>;
+  /** Trust tier, write origin, activation flag and guest flag of pages by id and by (source_id, slug). */
+  readPageTrustRows(lookup: PageTrustLookup): Promise<PageTrustRow[]>;
+  /** The database clock as a UTC ISO string with microseconds (`YYYY-MM-DDTHH:MM:SS.ffffffZ`). */
+  readDatabaseClock(): Promise<string>;
+  /** Every live page (of one source when given) with aliases and knowledge revision, by source then slug. */
+  listLinkPageMetadata(sourceId?: string): Promise<LinkPageMetadataRow[]>;
+  /** A page's stored non-event timeline rows, in no particular order. */
+  listStoredTimelineRows(sourceId: string, slug: string): Promise<StoredTimelineRow[]>;
+  /** The live pages among `refs` still at the knowledge revision each names, in no particular order. */
+  filterPagesAtRevision(refs: readonly PageAtRevisionRef[]): Promise<Array<{ slug: string; source_id: string }>>;
+
   /**
    * v0.37.0 — prefix-stratified page sampling for `gbrain brainstorm` / `gbrain lsd`
    * domain-bank module. Takes a caller-supplied prefix list (cached at the domain-bank
@@ -1316,6 +1388,17 @@ export interface BrainEngine {
   pagesLinkingTo(fromIds: number[], toIds: number[]): Promise<number[]>;
   /** One brain-wide MCP onboarding count (SQL in engine-sql/health.ts). */
   countOnboardSignal(signal: OnboardSignal, entityTypes: EntityTypeFilter, opts?: { signal?: AbortSignal }): Promise<number>;
+  /** Graph counts and endpoint reads of doctor, orphans, graph-query, the entity card, link preparation and search (SQL and contracts in engine-sql/link-reads.ts). */
+  inboundLinkCoverage(opts?: { sourceIds?: string[] }): Promise<{ livePages: number; linkedPages: number }>;
+  listJunkEntityHubs(opts: { edgeThreshold: number; maxChunks: number; limit: number }): Promise<JunkEntityHubRow[]>;
+  countEntityPages(filter: EntityTypeFilter, opts?: { sourceId?: string; excludeQuarantined?: boolean }): Promise<number>;
+  entityGraphCoverage(filter: EntityTypeFilter): Promise<{ entities: number; connected: number; withTimeline: number } | null>;
+  countForeignEdges(slug: string, sourceId: string, direction: 'in' | 'out' | 'both'): Promise<number>;
+  listLivePageSummaries(scope?: PageReadScope): Promise<LivePageSummary[]>;
+  countInboundLinks(slug: string, sourceId: string, opts: { excludePrivate: boolean; originSameSource: boolean }): Promise<number>;
+  listLinkEndpointPages(sourceId: string, slugs: string[], crossSourceSlugs: string[]): Promise<LinkEndpointPage[]>;
+  listPagesTitledIn(queryLower: string, scope: PageReadScope): Promise<TitledPage[]>;
+  wordLexemes(words: string[]): Promise<Map<string, string[]>>;
 
   // Chunks
   /**
@@ -1625,6 +1708,17 @@ export interface BrainEngine {
   replaceDerivedLinks(origin: DerivedLinkOrigin, links: LinkBatchInput[], opts?: DerivedLinkReplacementOptions): Promise<{ created: number; removed: number }>;
   /** replaceDerivedLinks for many origins in one transaction; any failure rolls back every origin (derived-links.ts). */
   replaceDerivedLinksBatch(items: readonly DerivedLinkBatchItem[]): Promise<Array<{ created: number; removed: number }>>;
+  /**
+   * The registered ids among `sourceIds`, by id, read `FOR SHARE` so none disappears before the caller's page-guard
+   * lock (wanted-links-store.ts possibleWantedRows).
+   */
+  lockRegisteredSourceIds(sourceIds: readonly string[]): Promise<string[]>;
+  /**
+   * Replace one origin page's wanted rows (wanted-links.ts) for `replacement.producers`: rows of those producers that
+   * `replacement.rows` does not name are deleted, then each row is written. Returns the rows written. The caller
+   * filters and locks the rows first (wanted-links-store.ts replaceWantedLinks).
+   */
+  replaceWantedLinkRows(origin: { pageId: number; sourceId: string }, replacement: WantedLinkRowsReplacement): Promise<number>;
   /**
    * Remove links from `from` to `to`. If linkType is provided, only that specific
    * (from, to, type) row is removed. If omitted, ALL link types between the pair
@@ -2813,6 +2907,26 @@ export interface BrainEngine {
    * Callers decide what a malformed answer means; the direct-write guard refuses it (persistence/managed-mode.ts).
    */
   readManagedModeRows(): Promise<Array<{ enabled: unknown }>>;
+
+  // Read-command statements (engine-sql/cli-reads-ops.ts). Each runs the statement its op ran through executeRaw.
+  /**
+   * One exact-phrase scan batch: the next `batchPages` in-scope pages after `afterPageId`, in id order, with their
+   * matches or the reason their text could not be read. Null when the phrase has no searchable word. Postgres runs it
+   * with JIT off under a `timeoutMs` statement deadline; a timeout throws the statement-timeout error.
+   */
+  scanExactBatch(opts: ExactScanOpts, afterPageId: number, batchPages: number, timeoutMs: number): Promise<ExactBatchRow[] | null>;
+  /** The first live page after `afterPageId` in id order, in any source, or null. */
+  nextLivePageAfter(afterPageId: number): Promise<{ id: number; slug: string; source_id: string } | null>;
+  /** whois candidates by title, slug basename, alias and email (engine-sql/exact-identity.ts), at most `opts.limit`. */
+  listExactIdentityCandidates(opts: ExactIdentityStatementOpts): Promise<ExactIdentityRow[]>;
+  /** rank_entities rows (engine-sql/graph-rank.ts); Postgres bounds the statement by `timeoutMs`, and a timeout throws the statement-timeout error. */
+  rankEntities(opts: RankEntitiesStatementOpts, timeoutMs: number): Promise<RankEntityRow[]>;
+  /** Unverified auto-extracted pages visible in scope (`sourceIds` wins over `sourceId`), newest first. */
+  listExtractionPendingPages(opts: { sourceIds?: string[]; sourceId?: string; limit: number; offset: number }): Promise<ExtractionPendingRow[]>;
+  /** Active facts with no entity in `sourceIds`, newest id first; `worldOnly` keeps world facts, `excludePrivateProvenance` drops private-provenance facts. */
+  listUnattributedFacts(opts: { sourceIds: string[]; worldOnly: boolean; excludePrivateProvenance: boolean; limit: number; offset: number }): Promise<UnattributedFactRow[]>;
+  /** Missing link targets in scope, most-referenced first, with their total; `excludePrivate` drops private origins and private bare-name matches. */
+  listWantedPages(opts: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; limit: number; offset: number }): Promise<{ total: number; rows: WantedPageRow[] }>;
 
   /** True when the source's `config.canonical` is `git` (a git-canonical source); false for anything else, including an unknown id. */
   getSourceStrictness(sourceId: string): Promise<boolean>;

@@ -80,9 +80,14 @@ function gitRootOf(path: string): string | null {
 async function originScopeOf(tx: Exec, sourceId: string): Promise<SyncOriginScope | undefined> {
   const [source] = await tx.executeRaw<{ local_path: string | null; mode: string | null }>(
     "SELECT local_path, config->>'slug_root_mode' AS mode FROM sources WHERE id=$1", [sourceId]);
-  if (!source?.local_path || source.mode !== 'source-root' || !existsSync(source.local_path)) return undefined;
-  const gitRoot = gitRootOf(source.local_path);
-  return gitRoot ? syncOriginScope({ sourceId, root: source.local_path, gitRoot, slugMode: 'source-root' }) : undefined;
+  return sourceOriginScope(sourceId, source?.local_path ?? null, source?.mode ?? null);
+}
+
+/** `originScopeOf` from a source's `local_path` and `config.slug_root_mode`, for a caller that already has the source row. */
+export function sourceOriginScope(sourceId: string, localPath: string | null, slugRootMode: unknown): SyncOriginScope | undefined {
+  if (!localPath || slugRootMode !== 'source-root' || !existsSync(localPath)) return undefined;
+  const gitRoot = gitRootOf(localPath);
+  return gitRoot ? syncOriginScope({ sourceId, root: localPath, gitRoot, slugMode: 'source-root' }) : undefined;
 }
 
 const originKey = (path: string) => process.platform === 'win32' ? path.replaceAll('\\', '/').toLowerCase() : path;
