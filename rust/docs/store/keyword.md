@@ -57,9 +57,16 @@ The policy carries a third setting, `ownerOnly`, read from the same no-caller te
 brain at schema v320 or above, which is how the store reports itself) hides a page held in an owner-only source
 (`sources.config` with `owner_only` true, or kind `imessage`) and a concept or question with a `concept-provenance`
 input page in one; `closed` (a call outside an engine scope, or a brain below v320) hides every page while the brain
-holds an owner-only source. A text that holds neither form refuses. `entityPrivacy: false` does not drop it. The store
-keeps no `derivation_inputs` or `owner_only_marks`, so a page that only those tables tie to an owner-only row, and a page
-derived from a source that was removed, are not hidden by it.
+holds an owner-only source. A text that holds neither form refuses. `entityPrivacy: false` does not drop it. Under `lineage`
+a page named in `owner_only_marks` is hidden too, and under either form a mark keeps the guard on after the last
+owner-only source is gone. `remove_page` writes the marks the SQL delete trigger writes (v322): when the page being
+deleted is itself owner-only lineage (strict form), it marks that page and each concept or question that names it as a
+`concept-provenance` `synthesized_from` input, so a derivative stays hidden after its owner-only input is deleted for
+good, even when the source is later flipped off. The marks live under `M owner_only_mark/pages/<page id>`. Removing
+only the provenance link, or turning the owner-only flag off with nothing deleted, records no mark, as in SQL. The
+store keeps no `derivation_inputs`, so a page that only that table ties to an owner-only row is not hidden by it. The
+engine serves no source delete, `deletePages` or `purgeDeletedPages` yet (they refuse with `engine_capability_missing`),
+so `deletePage` is the one path that deletes an owner-only page here.
 
 The safe-chunks rule drops a page whose recorded `chunker_version` is below the safe fence chunker (4). A page with no
 recorded version was chunked by this store's chunker, which seals, so it is kept (as `chunk_queries.md` reads it).

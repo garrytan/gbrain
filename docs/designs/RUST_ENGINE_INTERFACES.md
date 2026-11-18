@@ -95,7 +95,7 @@ Keys are byte strings compared byte by byte. The first byte is the tag.
 
 | Tag | Records | Owner |
 |---|---|---|
-| `M` | meta: format record, id counters (`M next_<name>`), chunk stats, per-page segment chunk views (`M chunk_segment_view/<page id>`), per-page search timelines (`M page_search_timeline/<page id>`) | core |
+| `M` | meta: format record, id counters (`M next_<name>`), chunk stats, per-page segment chunk views (`M chunk_segment_view/<page id>`), per-page search timelines (`M page_search_timeline/<page id>`), owner-only marks (`M owner_only_mark/pages/<page id>`) | core |
 | `C` | config | core |
 | `S` | sources | core |
 | `P` / `I` | page by `(source, slug)` / page id to page key | core (pages) |
