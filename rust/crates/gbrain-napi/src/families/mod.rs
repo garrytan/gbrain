@@ -11,6 +11,7 @@ mod cli_sources;
 mod config;
 mod fact_relink;
 mod fact_relink_writes;
+mod field_usage;
 mod graph;
 mod import_members;
 mod journal;

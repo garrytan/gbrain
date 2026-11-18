@@ -91,6 +91,7 @@ pub const TELEMETRY_FEEDBACK: u8 = 0x07; // retrieval_feedback
 pub const TELEMETRY_RETRIEVAL_WEIGHT: u8 = 0x08; // retrieval_weights
 pub const TELEMETRY_BUDGET_LEDGER: u8 = 0x09; // budget_ledger
 pub const TELEMETRY_BUDGET_RESERVATION: u8 = 0x0A; // budget_reservations
+pub const TELEMETRY_CHAT_USAGE: u8 = 0x0B; // chat_usage_log
 /// Family `jobs`, the `dream_synthesis_completions` archive (`jobs/synthesis_completions.rs`).
 pub const DREAM_SYNTHESIS_COMPLETION: u8 = b'f';
 
