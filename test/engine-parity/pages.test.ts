@@ -251,6 +251,32 @@ describe('engine parity: pages', () => {
     return { result, outside };
   });
 
+  parityTest('lockPageKeys refuses a missing source and a recreated one, and holds a key whose source matches',
+    { methods: ['lockPageKeys', 'transaction', 'readSourceIncarnation'] }, async (engine) => {
+      await seed(engine, [['people/alice-example', ALICE]]);
+      const incarnation = (await engine.readSourceIncarnation('default'))!.incarnation;
+      const attempt = async (keys: Array<{ sourceId: string; slug: string; incarnation?: string }>) => {
+        try {
+          await engine.transaction(async (tx) => { await tx.lockPageKeys(keys); });
+          return 'ok';
+        } catch (error) {
+          const e = error as Error & { sourceId?: string };
+          return { name: e.name, message: e.message, ...(e.sourceId !== undefined ? { sourceId: e.sourceId } : {}) };
+        }
+      };
+      // One unhinted key, two unhinted keys, then hinted keys with the stale and the current incarnation.
+      const missing = await attempt([{ sourceId: 'no-such-source', slug: 'people/alice-example' }]);
+      const missingOfTwo = await attempt([{ sourceId: 'default', slug: 'people/alice-example' }, { sourceId: 'no-such-source', slug: 'notes/a' }]);
+      const stale = '00000000-0000-4000-8000-000000000000';
+      const recreated = await attempt([{ sourceId: 'default', slug: 'people/alice-example', incarnation: stale }]);
+      const matching = await attempt([{ sourceId: 'default', slug: 'people/alice-example', incarnation }, { sourceId: 'default', slug: 'people/absent', incarnation }]);
+      expect(missing).toEqual({ name: 'PageSourceMissingError', message: 'Page source does not exist: no-such-source', sourceId: 'no-such-source' });
+      expect(missingOfTwo).toEqual(missing);
+      expect(recreated).toMatchObject({ name: 'Error', message: 'Page source was recreated: default' });
+      expect(matching).toBe('ok');
+      return { missing, missingOfTwo, recreated, matching };
+    });
+
   parityTest(
     'findDuplicatePage(s) match by content hash or frontmatter id, never the page itself',
     { methods: ['findDuplicatePage', 'findDuplicatePages'] },

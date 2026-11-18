@@ -5,12 +5,14 @@
 mod common;
 
 use common::TempDir;
+use gbrain_store::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT};
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::redb_kv::RedbKv;
 use gbrain_store::sources::SourceInput;
 use gbrain_store::timeline::{AddTimelineOptions, TimelineInput};
 use gbrain_store::timeline_queries::{
     ChronicleOptions, EventProjectionInput, LastSeenOptions, OnThisDayOptions,
+    TimelineDetailRefresh, TimelineRowRemoval,
 };
 use gbrain_store::{Kv, OpenOptions, Store, SystemEnv, keys};
 use serde_json::{Value, json};
@@ -538,4 +540,235 @@ fn deleting_the_event_page_removes_its_projections_and_a_deleted_depth_page_free
     let fresh = entries(&brain, "life/diary/b");
     assert_eq!(fresh.len(), 1);
     assert_eq!(fresh[0]["summary"], "again");
+}
+
+fn rows_of(brain: &Brain, slug: &str) -> Vec<(u64, String, String)> {
+    entries(brain, slug)
+        .iter()
+        .map(|e| {
+            (
+                e["id"].as_u64().unwrap(),
+                e["date"].as_str().unwrap().to_string(),
+                e["summary"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect()
+}
+
+fn id_of(brain: &Brain, slug: &str, summary: &str) -> u64 {
+    rows_of(brain, slug)
+        .into_iter()
+        .find(|r| r.2 == summary)
+        .unwrap()
+        .0
+}
+
+fn removals(rows: Value) -> Vec<TimelineRowRemoval> {
+    serde_json::from_value(rows).unwrap()
+}
+
+fn refreshes(rows: Value) -> Vec<TimelineDetailRefresh> {
+    serde_json::from_value(rows).unwrap()
+}
+
+#[test]
+fn remove_timeline_rows_deletes_only_rows_that_still_match_and_frees_the_dedup_slot() {
+    let mut b = Brain::new("tq-remove");
+    let page = b.page("people/prune", "default", json!({}));
+    let other = b.page("people/prune-other", "default", json!({}));
+    let event = b.event(
+        "life/events/2026-07-01-001",
+        "default",
+        "2026-07-01T09:00:00Z",
+        json!({"kind": "meeting"}),
+    );
+    b.project(page, event, "2026-07-01", "Event row");
+    b.entry("people/prune", "2026-01-02", "drop me");
+    b.entry("people/prune", "2026-02-03", "edited since");
+    b.entry("people/prune", "2026-03-04", "kept");
+    b.entry("people/prune-other", "2026-01-02", "other page");
+    let row = |slug: &str, summary: &str, date: &str, removed: bool| json!({"id": id_of(&b, slug, summary), "date": date, "source": "diary", "summary": summary, "detail": "", "removed": removed});
+    let event_row = json!({"id": id_of(&b, "people/prune", "Event row"), "date": "2026-07-01",
+        "source": "life-chronicle:event:x", "summary": "Event row", "detail": "", "removed": true});
+    let mut stale = row("people/prune", "edited since", "2026-02-03", true);
+    stale["detail"] = json!("older text");
+    let mut null_source = row("people/prune", "kept", "2026-03-04", true);
+    null_source["source"] = Value::Null;
+    let out = b
+        .store
+        .remove_timeline_rows(
+            page as i64,
+            &removals(json!([
+                row("people/prune", "drop me", "2026/01/02", true),
+                stale,
+                null_source,
+                event_row,
+                row("people/prune-other", "other page", "2026-01-02", true),
+                {"id": 987_654, "date": "2026-01-02", "source": "diary", "summary": "never", "detail": "", "removed": true},
+            ])),
+        )
+        .unwrap();
+    assert_eq!(out, json!([{"date": "2026-01-02", "removed": true}]));
+    let left: Vec<String> = rows_of(&b, "people/prune")
+        .into_iter()
+        .map(|r| r.2)
+        .collect();
+    assert_eq!(left, ["Event row", "kept", "edited since"]);
+    assert_eq!(rows_of(&b, "people/prune-other").len(), 1);
+
+    // The dedup slot is free again, and a row named twice goes (and is returned) once.
+    b.entry("people/prune", "2026-01-02", "drop me");
+    let kept = row("people/prune", "kept", "2026-03-04", false);
+    let out = b
+        .store
+        .remove_timeline_rows(page as i64, &removals(json!([kept.clone(), kept])))
+        .unwrap();
+    assert_eq!(out, json!([{"date": "2026-03-04", "removed": false}]));
+    // Another page's id, no rows and a negative page id delete nothing.
+    let drop_me = row("people/prune", "drop me", "2026-01-02", true);
+    assert_eq!(
+        b.store
+            .remove_timeline_rows(other as i64, &removals(json!([drop_me.clone()])))
+            .unwrap(),
+        json!([])
+    );
+    assert_eq!(
+        b.store.remove_timeline_rows(page as i64, &[]).unwrap(),
+        json!([])
+    );
+    assert_eq!(
+        b.store
+            .remove_timeline_rows(-1, &removals(json!([drop_me])))
+            .unwrap(),
+        json!([])
+    );
+    assert_eq!(rows_of(&b, "people/prune").len(), 3);
+}
+
+#[test]
+fn remove_timeline_rows_reports_in_the_order_given_and_refuses_a_bad_date_before_any_delete() {
+    let b = Brain::new("tq-remove-order");
+    let page = b.page("people/prune-dates", "default", json!({}));
+    for (date, summary) in [
+        ("2026-09-03", "c"),
+        ("2026-09-01", "a"),
+        ("2026-09-02", "b"),
+    ] {
+        b.entry("people/prune-dates", date, summary);
+    }
+    let row = |summary: &str, date: &str, removed: bool| json!({"id": id_of(&b, "people/prune-dates", summary), "date": date, "source": "diary", "summary": summary, "detail": "", "removed": removed});
+    let err = b
+        .store
+        .remove_timeline_rows(
+            page as i64,
+            &removals(json!([
+                row("a", "2026-09-01", true),
+                row("b", "not a date", true)
+            ])),
+        )
+        .unwrap_err();
+    assert_eq!(err.code, INVALID_ARGUMENT);
+    assert_eq!(rows_of(&b, "people/prune-dates").len(), 3);
+    let out = b
+        .store
+        .remove_timeline_rows(
+            page as i64,
+            &removals(json!([
+                row("b", "2026/09/02", false),
+                row("c", "2026-09-03", true),
+                row("a", "2026-09-01", true)
+            ])),
+        )
+        .unwrap();
+    assert_eq!(
+        out,
+        json!([
+            {"date": "2026-09-02", "removed": false},
+            {"date": "2026-09-03", "removed": true},
+            {"date": "2026-09-01", "removed": true},
+        ])
+    );
+    assert!(rows_of(&b, "people/prune-dates").is_empty());
+}
+
+#[test]
+fn update_timeline_details_rewrites_a_detail_only_while_it_is_the_preimage() {
+    let mut b = Brain::new("tq-refresh");
+    let page = b.page("people/refresh", "default", json!({}));
+    let other = b.page("people/refresh-other", "default", json!({}));
+    let event = b.event(
+        "life/events/2026-07-02-001",
+        "default",
+        "2026-07-02T09:00:00Z",
+        json!({"kind": "meeting"}),
+    );
+    b.project(page, event, "2026-07-02", "Event row");
+    for (slug, summary) in [
+        ("people/refresh", "refresh me"),
+        ("people/refresh", "edited since"),
+        ("people/refresh-other", "other page"),
+    ] {
+        let input: TimelineInput = serde_json::from_value(
+            json!({"date": "2026-02-03", "source": "diary", "summary": summary, "detail": "before"}),
+        )
+        .unwrap();
+        b.store
+            .add_timeline_entry(slug, &input, &AddTimelineOptions::default())
+            .unwrap();
+    }
+    let details = |slug: &str| -> Vec<(String, String)> {
+        entries(&b, slug)
+            .iter()
+            .map(|e| {
+                (
+                    e["summary"].as_str().unwrap().into(),
+                    e["detail"].as_str().unwrap().into(),
+                )
+            })
+            .collect()
+    };
+    let before = rows_of(&b, "people/refresh");
+    b.store
+        .update_timeline_details(
+            page as i64,
+            &refreshes(json!([
+                {"id": id_of(&b, "people/refresh", "refresh me"), "detail": "before", "next": "after"},
+                {"id": id_of(&b, "people/refresh", "refresh me"), "detail": "before", "next": "second"},
+                {"id": id_of(&b, "people/refresh", "edited since"), "detail": "earlier", "next": "never"},
+                {"id": id_of(&b, "people/refresh", "Event row"), "detail": "", "next": "moved"},
+                {"id": id_of(&b, "people/refresh-other", "other page"), "detail": "before", "next": "moved"},
+                {"id": 987_654, "detail": "before", "next": "moved"},
+                {"id": id_of(&b, "people/refresh", "edited since"), "detail": null, "next": "null preimage"},
+            ])),
+        )
+        .unwrap();
+    let own = details("people/refresh");
+    assert!(own.contains(&("refresh me".into(), "after".into())));
+    assert!(own.contains(&("edited since".into(), "before".into())));
+    assert!(own.contains(&("Event row".into(), String::new())));
+    assert_eq!(
+        details("people/refresh-other"),
+        [("other page".into(), "before".into())]
+    );
+    // The entry keeps its id and date, and an empty list writes nothing.
+    assert_eq!(rows_of(&b, "people/refresh"), before);
+    b.store.update_timeline_details(page as i64, &[]).unwrap();
+    b.store.update_timeline_details(other as i64, &refreshes(json!([
+        {"id": id_of(&b, "people/refresh", "refresh me"), "detail": "after", "next": "wrong page"},
+    ]))).unwrap();
+    assert!(details("people/refresh").contains(&("refresh me".into(), "after".into())));
+
+    // A null `next` on a matching row is the not-null violation, and nothing is written.
+    let err = b
+        .store
+        .update_timeline_details(
+            page as i64,
+            &refreshes(json!([
+                {"id": id_of(&b, "people/refresh", "refresh me"), "detail": "after", "next": "applied first"},
+                {"id": id_of(&b, "people/refresh", "edited since"), "detail": "before", "next": null},
+            ])),
+        )
+        .unwrap_err();
+    assert_eq!(err.code, CONSTRAINT_VIOLATION);
+    assert!(details("people/refresh").contains(&("refresh me".into(), "after".into())));
 }

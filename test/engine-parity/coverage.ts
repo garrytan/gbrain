@@ -73,14 +73,14 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'getUnverifiedExtractionPageIds', 'getPageTimestamps', 'getEffectiveDates', 'getSalienceScores', 'findOrphanPages'],
   tags: ['addTag', 'removeTag', 'getTags', 'pruneFrontmatterTags', 'addPageTagsById'],
   timeline: ['addTimelineEntry', 'addTimelineEntriesBatch', 'getTimeline', 'getTimelineForDate', 'getSince', 'getOnThisDay',
-    'getLastSeen', 'upsertEventProjection', 'sampleEffectiveDates', 'sampleEffectiveDateSources', 'readMaxTimelineEntryId',
-    'listStoredTimelineRowsOrdered', 'deleteTimelineRows', 'storedTimelineRowsByPageIds', 'countSegmentedTimelinePages',
-    'countTimelineCommentMarkupRows', 'listTimelineOrphanPages'],
+    'getLastSeen', 'upsertEventProjection', 'removeTimelineRows', 'updateTimelineDetails', 'sampleEffectiveDates',
+    'sampleEffectiveDateSources', 'readMaxTimelineEntryId', 'listStoredTimelineRowsOrdered', 'deleteTimelineRows',
+    'storedTimelineRowsByPageIds', 'countSegmentedTimelinePages', 'countTimelineCommentMarkupRows', 'listTimelineOrphanPages'],
   ontology: ['mergeOntologyFact', 'getOntology', 'discoverOntologyDimensions', 'findOntologyConflicts'],
   raw_files: ['putRawData', 'getRawData', 'upsertFile', 'getFile', 'listFilesForPage'],
   takes: ['addTakesBatch', 'updateTakeEmbeddings', 'listTakes', 'searchTakes', 'searchTakesVector', 'getTakeEmbeddings',
     'countStaleTakes', 'listStaleTakes', 'updateTake', 'supersedeTake', 'resolveTake', 'getScorecard', 'getCalibrationCurve',
-    'addSynthesisEvidence', 'listActiveTakesForPages',
+    'addSynthesisEvidence', 'listActiveTakesForPages', 'matchTakeRows', 'deleteTakeRows',
     // group D (takes reads)
     'countOffGridTakeWeights', 'countTakes', 'planFactPurgeTakes', 'listTakeRowsForPage', 'countMcpResolvedTakes',
     'listTakeSupersessionCandidates'],
@@ -89,7 +89,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'sweepContradictionCache'],
   facts: ['insertFact', 'insertFacts', 'deleteFactsForPage', 'expireFact', 'listFactsByEntity', 'listFactsSince', 'listFactsKeyset',
     'listFactsBySession', 'listSupersessions', 'countUnconsolidatedFacts', 'findCandidateDuplicates', 'consolidateFact',
-    'findTrajectory', 'getFactsHealth'],
+    'findTrajectory', 'getFactsHealth', 'listFenceRetireCandidates'],
   segmented_body: ['allocateBodyOccurrenceIds', 'stageSegmentTexts', 'readSegmentTexts', 'stageManifestRows', 'readManifest',
     'stageSegmentChunks', 'createSegmentedPageShell', 'flipBodyGeneration', 'sealSegmentedPage', 'openBodyStaging', 'setBodyStagingState', 'sweepSegments',
     'readSegmentDerivations', 'upsertSegmentDerivations', 'retireSegmentDerivations'],
@@ -184,6 +184,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
   alias_fanout_reads: ['findPagesByTitles', 'resolveCaseSensitiveAliases', 'readPageTitle', 'readPageAliasRows'],
   write_guards: ['readPageOrigin', 'listOriginClaims', 'bindPageOrigin', 'stampPageIngest', 'sealImportedPage', 'readLivePageBody',
     'hasSegmentStorage'],
+  trust_fence: ['listFenceFactRows'],
+  connect_gate: ['hasPersistenceTable', 'listManagedRootBindings', 'readGraduationGateRow', 'listRetiredDeactivations'],
 };
 
 /** Callable members of `interface BrainEngine`, in declaration order (`kind` excluded). */

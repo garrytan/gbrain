@@ -122,4 +122,34 @@ impl Brain {
             s.add_synthesis_evidence(&rows)
         })
     }
+
+    /// `matchTakeRows(pageId, rows, limit)`: resolves the row numbers of the page's takes that
+    /// differ from the fence row of the same number, ascending.
+    #[napi]
+    pub fn match_take_rows<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        rows: Value,
+        limit: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let rows: Vec<takes::FenceRowInput> = required(rows, "matchTakeRows rows")?;
+            s.match_take_rows(page_id as i64, &rows, &limit)
+        })
+    }
+
+    /// `deleteTakeRows(pageId, rowNums)`: resolves null.
+    #[napi]
+    pub fn delete_take_rows<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        row_nums: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let row_nums: Vec<Value> = required(row_nums, "deleteTakeRows rowNums")?;
+            s.delete_take_rows(page_id as i64, &row_nums)
+        })
+    }
 }

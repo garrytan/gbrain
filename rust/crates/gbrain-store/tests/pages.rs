@@ -790,3 +790,49 @@ fn pages_survive_a_reopen_and_ids_keep_counting() {
     assert_eq!(put(&store, "b", "x")["id"], 2);
     assert_eq!(store.create_version("b", None).unwrap()["id"], 2);
 }
+
+#[test]
+fn put_page_writes_the_contextual_retrieval_stamp_it_is_given_and_none_keeps_the_stored_one() {
+    let dir = TempDir::new("pages-cr-stamp");
+    let store = open(&dir);
+    let mode = |store: &Store| {
+        let snapshot = store
+            .read_page_snapshot("notes/cr", &ReadScope::default())
+            .unwrap()
+            .unwrap();
+        snapshot["page"]["contextual_retrieval_mode"].clone()
+    };
+    let stamp =
+        |m: &str| opts(json!({"contextualRetrieval": {"mode": m, "corpusGeneration": "gen-1"}}));
+    store
+        .put_page("notes/cr", &input("CR", "One."), &stamp("title"))
+        .unwrap();
+    assert_eq!(mode(&store), json!("title"));
+    store
+        .put_page("notes/cr", &input("CR", "Two."), &PutPageOptions::default())
+        .unwrap();
+    assert_eq!(mode(&store), json!("title"));
+    store
+        .put_page("notes/cr", &input("CR", "Three."), &stamp("none"))
+        .unwrap();
+    assert_eq!(mode(&store), json!("title"));
+    store
+        .put_page(
+            "notes/cr",
+            &input("CR", "Four."),
+            &stamp("per_chunk_synopsis"),
+        )
+        .unwrap();
+    assert_eq!(mode(&store), json!("per_chunk_synopsis"));
+    // A stamp Postgres could not store refuses the whole write: neither the body nor the mode changes.
+    let err = store
+        .put_page("notes/cr", &input("CR", "Five."), &stamp("ti\0tle"))
+        .unwrap_err();
+    assert_eq!(code(err), INVALID_ARGUMENT);
+    assert_eq!(mode(&store), json!("per_chunk_synopsis"));
+    let body = store
+        .read_page_snapshot("notes/cr", &ReadScope::default())
+        .unwrap()
+        .unwrap();
+    assert_eq!(body["page"]["compiled_truth"], json!("Four."));
+}

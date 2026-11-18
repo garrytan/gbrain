@@ -33,6 +33,8 @@ embedding staleness check owned by core).
 | `brain.getScorecard(options)` | the raw scorecard row (`total_bets`, `resolved`, `correct`, `incorrect`, `partial`, `unresolvable_count`, `brier`); `domain_prefix` is a LIKE prefix (`\` escapes; a trailing `\` is `invalid_argument`) | `getScorecard` |
 | `brain.getCalibrationCurve(options)` | `{ bucket_lo, bucket_hi, n, observed, predicted }[]` of resolved binary takes, by bucket; `bucket_size` outside `(0, 1]` is `invalid_argument` (the member sends 0.1 then) | `getCalibrationCurve` |
 | `brain.addSynthesisEvidence(rows)` | number of new rows (an existing key is skipped). `int4` checks for every row first, then `NOT NULL` per row, then the two foreign keys over the inserted rows | `addSynthesisEvidence` |
+| `brain.matchTakeRows(pageId, rows, limit)` | the row numbers of the page's takes whose claim, kind or holder differs from the fence row of the same number (`IS DISTINCT FROM`: a null fence field differs), ascending, at most `limit` (null is no limit, negative is `invalid_argument`). A take that two fence rows of its number both differ from is listed twice, as the join lists it | `matchTakeRows` |
+| `brain.deleteTakeRows(pageId, rowNums)` | null. Deletes the page's takes at those row numbers with the evidence rows that cite them and their vectors; a null entry or a number with no take deletes nothing, an empty list writes nothing | `deleteTakeRows` |
 
 Read eligibility: `projectionEligibleSql('takes', ...)` always hides takes of soft-deleted pages, of pages
 whose frontmatter has a `quarantine` key (any value), and rows in `needs_rederive`. Only a raw-SQL purge

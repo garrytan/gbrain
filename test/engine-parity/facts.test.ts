@@ -1183,6 +1183,62 @@ describe('engine parity: facts', () => {
       return (await engine.purgeDeletedPages(0)).slugs;
     }),
   );
+
+  parityTest(
+    'listFenceRetireCandidates lists the fence rows the incoming fence does not hold, by row number, with their before-state',
+    { methods: ['insertFacts', 'expireFact', 'listFenceRetireCandidates'] },
+    async (engine) => {
+      const slug = 'people/fence-example';
+      const entity = 'people/fence-example';
+      const extractor = 'cli:extract-conversation-facts:session-1';
+      const mk = (n: number | undefined, fact: string, extra: Record<string, unknown> = {}) => ({
+        row_num: n, source_markdown_slug: slug, fact, entity_slug: entity, source: 'fence', kind: 'fact' as const, visibility: 'world' as const,
+        valid_from: at(`2026-02-0${n ?? 9}T01:02:03.250Z`), ...extra,
+      });
+      // Inserted out of row order, so the order of the answer is the SQL's and not the insert order.
+      const rows = [
+        mk(6, 'Zeta struck', { expired_at: at('2026-03-01T04:05:06.500Z'), valid_until: at('2026-03-01T04:05:06.500Z') }),
+        mk(5, 'Epsilon extracted', { source: extractor }),
+        mk(4, 'Delta extracted', { source: extractor }),
+        mk(3, 'Gamma private', { visibility: 'private', kind: 'event' as const }),
+        mk(2, 'Beta', { attributed_to: 'user' }),
+        mk(1, 'Alpha'),
+        mk(8, 'Eta kept', { source: '' }),
+        mk(undefined, 'Legacy without a row number'),
+        { ...mk(1, 'Alpha elsewhere'), source_markdown_slug: 'people/other-fence' },
+      ];
+      const { ids } = await engine.insertFacts(rows as never, { source_id: SRC });
+      expect(ids).toHaveLength(rows.length);
+      const name = namer(ids.map((id, i) => ({ id, fact: rows[i].fact })));
+      // Beta is superseded by Eta and struck at a fixed time, so the before-state carries the link and a lifecycle time.
+      expect(await engine.expireFact(ids[4]!, { supersededBy: ids[6]!, at: at('2026-04-05T06:07:08.125Z') })).toBe(true);
+      const incoming = JSON.stringify([
+        { row_num: 1, fact: 'Alpha', visibility: 'world' },
+        { row_num: 2, fact: 'Beta changed', visibility: 'world' },
+        { row_num: 3, fact: 'Gamma private', visibility: 'world' },
+        { row_num: 5, fact: 'Epsilon reworded', visibility: 'world' },
+        { row_num: 7, fact: 'Theta new', visibility: 'world' },
+      ]);
+      const named = (list: Awaited<ReturnType<BrainEngine['listFenceRetireCandidates']>>) =>
+        list.map((p) => ({ ...p, id: name(p.id), superseded_by: name(p.superseded_by) }));
+      const answer = named(await engine.listFenceRetireCandidates({ sourceId: SRC, slug, incoming }));
+      expect(answer.map((p) => [p.row_num, p.fact])).toEqual([
+        [2, 'Beta'], [3, 'Gamma private'], [5, 'Epsilon extracted'], [6, 'Zeta struck'], [8, 'Eta kept'],
+      ]);
+      // A fence that states every numbered row as stored leaves nothing to retire.
+      const same = JSON.stringify(rows.slice(0, 8).filter((r) => r.row_num !== undefined)
+        .map((r) => ({ row_num: r.row_num, fact: r.fact, visibility: r.visibility })));
+      const unchanged = await engine.listFenceRetireCandidates({ sourceId: SRC, slug, incoming: same });
+      const empty = await engine.listFenceRetireCandidates({ sourceId: SRC, slug, incoming: '[]' });
+      const otherSource = await engine.listFenceRetireCandidates({ sourceId: 'parity-missing', slug, incoming });
+      const otherSlug = await engine.listFenceRetireCandidates({ sourceId: SRC, slug: 'people/nobody', incoming });
+      expect(unchanged).toEqual([]);
+      expect(empty.map((p) => p.row_num)).toEqual([1, 2, 3, 6, 8]);
+      expect(otherSource).toEqual([]);
+      expect(otherSlug).toEqual([]);
+      return { answer, empty: named(empty), unchanged, otherSource, otherSlug };
+    },
+  );
 });
 
 // A purge drops the page aliases of a purged slug, the slug aliases that resolve to it and the rename rows that end at it
