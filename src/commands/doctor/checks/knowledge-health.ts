@@ -370,19 +370,7 @@ async function runFactsExtraction(ctx: DoctorContext): Promise<Check[]> {
  */
 async function factsAbsorbJobsStillDead(engine: ReturnType<typeof connectedEngine>) {
   try {
-    const rows = await engine.executeRaw<{ id: number; slug: string | null; source_id: string; status: string; total: string | number }>(
-      `SELECT j.id, j.data->>'slug' AS slug, COALESCE(j.data->>'sourceId', 'default') AS source_id, j.status, COUNT(*) OVER () AS total
-         FROM minion_jobs j
-        WHERE j.name = 'facts-absorb' AND j.status IN ('dead', 'failed')
-          AND COALESCE(j.finished_at, j.updated_at) >= now() - INTERVAL '24 hours'
-          AND NOT EXISTS (
-            SELECT 1 FROM minion_jobs k
-             WHERE k.name = 'facts-absorb' AND k.status = 'completed' AND k.id > j.id
-               AND k.data->>'slug' = j.data->>'slug' AND COALESCE(k.data->>'sourceId', 'default') = COALESCE(j.data->>'sourceId', 'default'))
-        ORDER BY j.id DESC
-        LIMIT 5`,
-    );
-    return { total: Number(rows[0]?.total ?? 0), jobs: rows.map(({ total: _total, ...job }) => ({ ...job, id: Number(job.id) })) };
+    return await engine.listFactsAbsorbJobsStillDead({ hours: 24, limit: 5 });
   } catch (err) {
     if (isMissingSchemaObject(err, 'table', 'minion_jobs')) return { total: 0, jobs: [] };
     throw err;
@@ -566,17 +554,7 @@ async function runSalience(ctx: DoctorContext): Promise<Check[]> {
   // brain-average emotional_weight as an informational signal.
   progress.heartbeat('salience_health');
   try {
-    const result = await engine.executeRaw<{ kind: string; n: string }>(
-      `SELECT 'zero_weight_with_takes' AS kind, COUNT(DISTINCT p.id)::text AS n
-         FROM pages p
-         JOIN takes t ON t.page_id = p.id AND t.active = TRUE
-        WHERE COALESCE(p.emotional_weight, 0) = 0
-       UNION ALL
-       SELECT 'nonzero_weight', COUNT(*)::text FROM pages WHERE COALESCE(emotional_weight, 0) > 0`,
-    );
-    const counts = new Map(result.map(r => [r.kind, Number(r.n)]));
-    const zeroWithTakes = counts.get('zero_weight_with_takes') ?? 0;
-    const nonzero = counts.get('nonzero_weight') ?? 0;
+    const { zero_weight_with_takes: zeroWithTakes, nonzero_weight: nonzero } = await engine.countZeroWeightWithTakes();
     if (zeroWithTakes > 0) {
       checks.push({
         name: 'salience_health',

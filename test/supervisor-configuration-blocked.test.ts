@@ -13,6 +13,7 @@ import { autopilotLockPath } from '../src/core/autopilot-paths.ts';
 import { killProcessGroup } from '../src/core/minions/job-isolation.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { withQueueMembers } from './helpers/queue-engine-members.ts';
 
 async function isolated(fn: (root: string) => Promise<void>): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), 'gbrain-blocked-owner-'));
@@ -583,10 +584,10 @@ ${kind === 'supervisor'
     const state = new OwnerProcessingState('supervisor', 'fixture');
     let rejectHealth!: (error: Error) => void;
     let reconnects = 0;
-    const engine = {
+    const engine = withQueueMembers({
       executeRaw: () => new Promise((_r, reject) => { rejectHealth = reject; }),
       reconnect: async () => { reconnects++; },
-    } as unknown as BrainEngine;
+    }) as unknown as BrainEngine;
     const supervisor = new MinionSupervisor(engine, { cliPath: process.execPath, pidFile: join(root, 'owner.pid') });
     Object.assign(supervisor, { processingState: state, consecutiveHealthFailures: 2 });
     writeWorkerProcessingStatus({ state: 'ready' }, state.prepareChild());

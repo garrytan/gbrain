@@ -4,10 +4,9 @@
  * #14: `minion_jobs` may be ABSENT on older/partial brains, and very old
  * brains lack `sources`, `sources.last_sync_at` or `sources.archived`: exactly those missing
  * objects yield no finding. Any other read failure is rethrown so runAdvisor
- * reports `collector_failed:stalled-jobs` instead of a clean check. Engine-agnostic
- * SQL via executeRaw (works on Postgres + PGLite); timestamps compared with
- * `now()` which both engines provide. No PG-only constructs. The stale-sync read
- * is the typed `listStaleSyncSourceIds` member (database clock on PGLite and Postgres).
+ * reports `collector_failed:stalled-jobs` instead of a clean check. Both reads are
+ * typed engine members: `listStuckActiveJobsByName` (the queue-health reads) and
+ * `listStaleSyncSourceIds` (database clock on PGLite and Postgres).
  */
 
 import type { AdvisorCollector, AdvisorFinding } from './types.ts';
@@ -20,14 +19,7 @@ export const collectStalledJobs: AdvisorCollector = {
 
     // Stuck active jobs: lock lapsed or stalled-counter climbing.
     try {
-      const rows = await ctx.engine.executeRaw<{ name: string; n: number }>(
-        `SELECT name, count(*)::int AS n
-           FROM minion_jobs
-          WHERE status = 'active'
-            AND (lock_until < now() OR stalled_counter >= 2)
-          GROUP BY name
-          ORDER BY n DESC`,
-      );
+      const rows = await ctx.engine.listStuckActiveJobsByName();
       for (const r of rows) {
         findings.push({
           id: `stalled_job:${r.name}`,

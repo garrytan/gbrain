@@ -98,32 +98,10 @@ async function loadResets(engine: BrainEngine): Promise<Record<string, string>> 
  */
 export async function countDeadDreamSubmissions(engine: BrainEngine): Promise<DeadDreamSubmissions[]> {
   const resets = await loadResets(engine);
-  const dead = await engine.executeRaw<DeadDreamSubmissions>(
-    `WITH ended AS (
-       SELECT regexp_replace(COALESCE(idempotency_key, data->>'__released_idempotency_key'), ':c[0-9]+of[0-9]+$', '') AS base_key,
-              COALESCE(data->>'source_id', 'default') AS source_id, status, queue, finished_at
-         FROM minion_jobs
-        WHERE name = 'subagent' AND finished_at > now() - interval '24 hours'
-          AND (status = 'dead' OR (status = 'cancelled' AND tokens_input + tokens_output > 0))
-     ), counted AS (
-       SELECT base_key, queue, finished_at, base_key AS content_key FROM ended
-        WHERE status = 'dead' AND left(base_key, ${DREAM_BREAKER_KEY_PREFIXES[0].length}) = $1
-       UNION ALL
-       SELECT $4::text || source_id, queue, finished_at, NULL FROM ended
-        WHERE left(base_key, ${DREAM_BREAKER_KEY_PREFIXES[1].length}) = $2
-       UNION ALL
-       SELECT $5::text || source_id || ':' || substring(base_key from ':filename:([^:]*):[^:]*$'), queue, finished_at, base_key FROM ended
-        WHERE status = 'dead' AND left(base_key, ${DREAM_BREAKER_KEY_PREFIXES[0].length}) = $1 AND base_key ~ ':filename:[^:]*:[^:]*$'
-     )
-     SELECT base_key, COUNT(DISTINCT queue)::int AS dead_submissions, MAX(finished_at)::text AS last_dead_at
-       FROM counted
-      WHERE finished_at > COALESCE(($3::text::jsonb ->> base_key)::timestamptz, '-infinity'::timestamptz)
-      GROUP BY base_key
-     -- A per-transcript count is its own row only once its deaths span two content keys; one key already counts itself.
-     HAVING left(base_key, length($5::text)) <> $5::text OR COUNT(DISTINCT content_key) > 1
-      ORDER BY dead_submissions DESC, base_key`,
-    [DREAM_BREAKER_KEY_PREFIXES[0], DREAM_BREAKER_KEY_PREFIXES[1], JSON.stringify(resets), DREAM_PATTERNS_SOURCE_KEY_PREFIX, DREAM_SYNTH_FILE_KEY_PREFIX],
-  );
+  const dead = await engine.countDeadDreamSubmissionRows({
+    keyPrefixes: DREAM_BREAKER_KEY_PREFIXES, patternsSourcePrefix: DREAM_PATTERNS_SOURCE_KEY_PREFIX, synthFilePrefix: DREAM_SYNTH_FILE_KEY_PREFIX,
+    resets, windowHours: 24,
+  });
   const cutoff = Date.now() - 24 * 3_600_000;
   for (const [baseKey, times] of Object.entries(await loadContained(engine))) {
     const after = Math.max(cutoff, Date.parse(resets[baseKey] ?? '') || -Infinity);

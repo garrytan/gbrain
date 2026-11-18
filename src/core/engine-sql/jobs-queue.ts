@@ -734,6 +734,13 @@ export async function listUnreviewedJobs(tx: Raw): Promise<Array<{ id: number; s
       ORDER BY id`);
 }
 
+/** The same live jobs with their status and whether the authority is SQL NULL (not JSONB null), by id: the legacy_job_authority check's population. */
+export async function listUnreviewedJobAuthorities(tx: Raw): Promise<Array<{ id: number | string; status: string; submission_authority: unknown; legacy_authority_is_null: boolean }>> {
+  return tx.executeRaw<{ id: number | string; status: string; submission_authority: unknown; legacy_authority_is_null: boolean }>(
+    `SELECT id, status, submission_authority, submission_authority IS NULL AS legacy_authority_is_null
+       FROM minion_jobs WHERE ${UNREVIEWED_LIVE_JOBS_WHERE} ORDER BY id`);
+}
+
 /** The name and data of a failed or dead job, or null. */
 export async function getFailedJobForRetry(tx: Raw, id: number): Promise<{ name: string; data: Record<string, unknown> } | null> {
   const [row] = await tx.executeRaw<{ name: string; data: Record<string, unknown> }>(

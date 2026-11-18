@@ -2,7 +2,7 @@
 //! `pages.salience_touched_at` columns of the PGLite engine, and the reads that rank pages by them.
 //!
 //! Members: batchLoadEmotionalInputs, setEmotionalWeightBatch, getRecentSalience,
-//! getSalienceScores.
+//! getSalienceScores, countZeroWeightWithTakes (`salience/health.rs`).
 //!
 //! Keys (every record starts with `keys::SALIENCE`, `s`):
 //! - `s <page id u64 BE>` -> `SalienceRecord` (JSON): the page's weight and the time it last
@@ -20,16 +20,18 @@
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
 use crate::facts::{PrivacyPolicy, page_hidden};
-use crate::kv::{KvRead, KvWrite};
+use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::page_columns::PageColumns;
 use crate::pages::{PageRecord, all_pages, read_page};
 use crate::sources::read_source;
-use crate::takes::{TakeRecord, page_takes, real, real_out};
+use crate::takes::{TakeRecord, all_takes, page_takes, real, real_out};
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap, HashSet};
+
+mod health;
 
 /// What is stored for a page whose weight was ever set.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
