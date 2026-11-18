@@ -10,7 +10,8 @@
  *    with `stack depth limit exceeded` (rust/crates/gbrain-store/src/keyword/tsearch.rs unit tests cover the refusal and
  *    a 1 MiB caller stack). PGLite 0.5.16 runs out of its 2 MB stack somewhere past 3,500 repeats and then answers an empty
  *    result with no error (4,000 repeats failed and 4,500 passed in one run, so its limit is not a fixed number); no Rust
- *    answer can match that, so the parity case stays at 3,000 repeats.
+ *    answer can match that. On macOS arm64 the same empty result already shows at 3,000 repeats (the darwin-arm64 addon smoke job),
+ *    so the parity case uses 1,000 repeats (2,000 operands), well under both limits seen so far.
  *  - Why existing coverage misses it: the search tests run queries of a few words.
  *  - Seam: none (typed methods only).
  */
@@ -37,11 +38,11 @@ async function seed(engine: BrainEngine): Promise<void> {
 
 describe('a keyword query of thousands of operands', () => {
   parityTest(
-    'searchKeyword and searchKeywordPages match the chunk a 3,000-repeat query names',
+    'searchKeyword and searchKeywordPages match the chunk a 1,000-repeat query names',
     { methods: ['searchKeyword', 'searchKeywordPages'] },
     async (engine) => {
       await seed(engine);
-      const query = 'quokka the '.repeat(3000);
+      const query = 'quokka the '.repeat(1000);
       const chunks = await engine.searchKeyword(query, { limit: 10 });
       const pages = await engine.searchKeywordPages(query, undefined, { limit: 10 });
       const out = { chunks: chunks.map((r) => r.slug), pages: pages.map((r) => r.slug) };
