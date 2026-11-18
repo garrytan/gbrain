@@ -9,7 +9,8 @@
  *    with countStalePagesForExtraction and scores as `engine-sql/health.ts` does;
  *  - findAnomalies computes the window bounds (an invalid `since` throws the same RangeError), zero-fills the store's
  *    per-day counts over the same days and runs `computeAnomaliesFromBuckets`.
- * The store keeps no chunk vectors, so every chunk counts as not embedded (rust/docs/store/stats.md).
+ * The store counts a chunk as embedded when it has a stored vector, and reads the salience weight. getStats and getHealth
+ * refuse a brain whose config selects another embedding column, as the embedding members do (rust/docs/store/stats.md).
  */
 import type {
   AnomaliesOpts, AnomalyResult, BrainHealth, BrainStats, EnrichCandidate, EnrichCandidatesOpts, IngestLogEntry, IngestLogInput,
@@ -22,7 +23,7 @@ import { resolveEntityTypes } from '../../schema-pack/entity-types.ts';
 import { loadTimelineGradedPredicate } from '../../timeline-grading.ts';
 import { withDates } from '../store-codec.ts';
 import type { StoreBrain } from '../store.ts';
-import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { refuseMember, requireTextColumn, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { getConfig, listConfigKeys } from './config.ts';
 import { countStalePagesForExtraction } from './extraction.ts';
 import { listAllSources } from './sources.ts';
@@ -43,8 +44,9 @@ function readScope(o: Record<string, unknown>): string[] | null {
   return o.sourceId ? [o.sourceId as string] : null;
 }
 
-export const getStats: StoreMember<[opts?: ScopeOpts], BrainStats> = (brain, opts) => {
+export const getStats: StoreMember<[opts?: ScopeOpts], BrainStats> = async (brain, opts) => {
   const scope = statsScope('getStats', opts);
+  await requireTextColumn(brain, 'getStats');
   return storeCall({ member: 'getStats' }, () => brain.getStats({ scope }));
 };
 
@@ -88,6 +90,7 @@ interface StoreHealth {
 
 export const getHealth: StoreMember<[opts?: ScopeOpts], BrainHealth> = async (brain, opts) => {
   const scope = statsScope('getHealth', opts);
+  await requireTextColumn(brain, 'getHealth');
   const deps = { getConfig: (key: string) => getConfig(brain, key) };
   const [orphanOverrides, isTimelineGraded, entityTypes] = await Promise.all([
     loadOrphanPolicyOverrides(deps),
