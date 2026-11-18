@@ -1,5 +1,6 @@
 //! Jobs slice 2: the reads: the sweeps' candidate lists, the stats, the unreviewed-authority list,
-//! the retry source row, a delegated client's open-job count and the cursor page.
+//! the retry source row, a delegated client's open-job count, an agent job's source state and the
+//! cursor page.
 
 use super::*;
 use crate::timeline_queries::timestamptz_text;
@@ -356,6 +357,15 @@ impl Store {
                 .count();
         }
         Ok(n)
+    }
+
+    /// `readJobSourceState(sourceId)`: `{ archived, created_at }` of the source an agent job was
+    /// accepted against, or `None` when no source has that id. The job authority check compares
+    /// `created_at` with the stamp the job froze, so a source deleted and created again denies the job.
+    pub fn read_job_source_state(&self, source_id: &str) -> Result<Option<Value>> {
+        let read = self.read()?;
+        Ok(crate::sources::read_source(&*read, source_id)?
+            .map(|s| json!({ "archived": s.archived, "created_at": iso(s.created_at_us) })))
     }
 
     /// `listJobPage`: rows newest first (`created_at DESC, id DESC`) after the cursor tuple, each

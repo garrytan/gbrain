@@ -4532,6 +4532,7 @@
         "readIdentitySiblingCandidates": "none",
         "readIgnoredPrivacyLabelPages": "none",
         "readJobInbox": "none",
+        "readJobSourceState": "none",
         "readJobStats": "none",
         "readJournalLimitRows": "none",
         "readLedgerSource": "none",
