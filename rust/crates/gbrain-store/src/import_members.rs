@@ -81,7 +81,7 @@ pub struct ChunkReuseRow {
 }
 
 /// Postgres's text-to-`smallint` cast of the bound parameter (`String(version)` in JavaScript).
-fn smallint(text: &str) -> Result<i16> {
+pub(crate) fn smallint(text: &str) -> Result<i16> {
     let body = text.trim();
     let digits = body.strip_prefix(['-', '+']).unwrap_or(body);
     if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {

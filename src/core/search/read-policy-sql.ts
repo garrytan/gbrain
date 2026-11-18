@@ -9,6 +9,23 @@ export function hasReadPolicy(scope?: PageReadPolicy): boolean {
     || scope?.minTrust || scope?.suppressFlagged);
 }
 
+const READ_POLICY_KEYS = ['sourceId', 'sourceIds', 'excludePrivate', 'requireSafeChunks', 'minTrust', 'suppressFlagged', 'takesHoldersAllowList'] as const satisfies ReadonlyArray<keyof PageReadPolicy>;
+/** Fails to compile when PageReadPolicy gains a key READ_POLICY_KEYS does not list. */
+const READ_POLICY_KEYS_COMPLETE: Exclude<keyof PageReadPolicy, (typeof READ_POLICY_KEYS)[number]> extends never ? true : never = true;
+void READ_POLICY_KEYS_COMPLETE;
+
+/**
+ * Only the page read policy of a wider options object, or undefined when it restricts nothing.
+ * Pass this, never the wider object: an engine that refuses option keys it does not model
+ * would refuse the whole read.
+ */
+export function readPolicyOf(opts?: PageReadPolicy): PageReadPolicy | undefined {
+  if (!opts || !hasReadPolicy(opts)) return undefined;
+  const policy: Record<string, unknown> = {};
+  for (const key of READ_POLICY_KEYS) if (opts[key] !== undefined) policy[key] = opts[key];
+  return policy as PageReadPolicy;
+}
+
 /** Callers supply fixed SQL aliases; all policy values are bound parameters. */
 export function pageReadFilter(
   alias: string,

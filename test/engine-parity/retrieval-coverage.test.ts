@@ -9,7 +9,8 @@
  *    count, its could-affect and image counts, the exact top hit's
  *    `top_counted`, the rebuild progress and the readiness status are the same
  *    for the same pages and the same read scope: sources, privacy, kind, types,
- *    excluded slug prefixes, soft-deleted, quarantined and archived pages. A
+ *    excluded slug prefixes, the trust floor, the flagged-page filter,
+ *    soft-deleted, quarantined and archived pages. A
  *    count that reaches the cap refuses on Rust, and the probe's cached
  *    answer lasts until the next write on every arm.
  *  - Regression: an engine whose count drifts tells a search caller that a
@@ -274,11 +275,45 @@ describe('engine parity: retrieval coverage', () => {
   );
 
   parityTest(
-    'search/retrieval-coverage: a trust floor in the scope is read on the SQL engines',
-    { methods: ['putPage', 'countPendingProjectionPages'] },
+    'search/retrieval-coverage: a trust floor and the flagged-page filter narrow the pending count, the rebuild and the probe',
+    { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'upsertPageWriteGateReceipt', 'countPendingProjectionPages', 'projectionRebuildProgress', 'readProjectionReadiness'] },
     async (engine) => {
-      await engine.putPage('notes/a', page('A'));
-      return countPendingProjections(engine, { minTrust: 'agent_written' }, ALL);
+      const declared = (tier: string, slug: string) => engine.transaction(async (tx) => {
+        await tx.applyTransactionSettings(['gbrain.write_trust_tier', 'gbrain.write_origin'], [tier, JSON.stringify({ channel: tier })]);
+        await tx.putPage(slug, page(slug));
+      });
+      const flag = (slug: string, families: string[]) => engine.upsertPageWriteGateReceipt('default', slug, {
+        content_hash: 'h1', tier: 'agent_written', detector_version: 1, verdict: 'flag', reason_families: families,
+        reasons: families, detector_error: false, request_id: null,
+      });
+      await declared('operator_curated', 'notes/curated');
+      await declared('tool_observed', 'notes/observed');
+      await declared('agent_written', 'notes/agent');
+      await declared('agent_written', 'notes/agent-flagged');
+      await flag('notes/agent-flagged', ['override']);
+      await declared('agent_written', 'notes/agent-other-flag');
+      await flag('notes/agent-other-flag', ['other']);
+      await engine.putPage('notes/unknown-flagged', page('Unknown flagged'));
+      await flag('notes/unknown-flagged', ['credential']);
+      await declared('external_untrusted', 'notes/outside');
+      const scopes: Record<string, ProjectionReadinessScope> = {
+        none: {}, emptyFloor: { minTrust: '' as never }, curated: { minTrust: 'operator_curated' }, observed: { minTrust: 'tool_observed' },
+        agent: { minTrust: 'agent_written' }, unknown: { minTrust: 'unknown' }, any: { minTrust: 'external_untrusted' },
+        confirmedOnly: { minTrust: 'user_confirmed' }, suppressed: { suppressFlagged: true },
+        agentSuppressed: { minTrust: 'agent_written', suppressFlagged: true },
+      };
+      const counts: Record<string, unknown> = {};
+      const rebuild: Record<string, unknown> = {};
+      const probes: Record<string, unknown> = {};
+      for (const [name, scope] of Object.entries(scopes)) {
+        counts[name] = await countPendingProjections(engine, scope, ALL);
+        rebuild[name] = await countProjectionRebuild(engine, scope);
+        __resetProjectionReadinessCacheForTests();
+        probes[name] = await withEnv({ [PROJECTION_READINESS_CACHE_ENV]: '0' }, () => probe(engine, scope));
+      }
+      expect((counts.agentSuppressed as { total: number }).total).toBe(4);
+      expect((counts.confirmedOnly as { total: number }).total).toBe(0);
+      return { counts, rebuild, probes };
     },
   );
 });
