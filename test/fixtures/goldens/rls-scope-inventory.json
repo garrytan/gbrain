@@ -3849,6 +3849,7 @@
         "runUnsafe": "none",
         "runVectorAttempt": "direct",
         "sealChunks": "none",
+        "sealSegmentedPage": "none",
         "searchKeyword": "direct",
         "searchKeywordChunks": "direct",
         "searchKeywordPages": "direct",

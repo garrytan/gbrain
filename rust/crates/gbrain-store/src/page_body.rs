@@ -35,7 +35,7 @@
 //! `page_body:<json>`; `store-members/page-body.ts` rebuilds the PGLite error from the JSON.
 
 use crate::env::{is_uuid, parse_iso};
-use crate::error::{CONSTRAINT_VIOLATION, INVALID_STATE};
+use crate::error::{CONSTRAINT_VIOLATION, INVALID_STATE, REVISION_CONFLICT};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::page_columns::PageColumns;
 use crate::pages::{
@@ -59,6 +59,8 @@ const STAGING_BY_PAGE: u8 = 0x08;
 /// from the same sequence `putPage` does.
 const NEXT_PAGE_ID: &str = "next_page_id";
 const NEXT_OCCURRENCE_ID: &str = "next_body_occurrence_id";
+/// `SEGMENTED_CHUNKER_VERSION` (src/core/page-body/segment-chunks.ts): the current segmented chunker.
+const SEGMENTED_CHUNKER_VERSION: i16 = 5;
 const NIL_STAGING: [u8; 16] = [0; 16];
 
 const LIVE_STAGING_STATES: [&str; 3] = ["open", "sealed", "prepared"];
@@ -625,8 +627,6 @@ fn read_body_state(read: &dyn KvRead, page_id: u64) -> Result<Option<BodyState>>
 /// page, a shell no flip has published, or a missing page (PGLite's NULL column). A page with a
 /// NULL timeline (a segmented page) takes it for its keyword vector, as PGLite's
 /// `update_page_search_vector` does with `coalesce(timeline, timeline_lead, '')`.
-// The keyword family (`searchTitles`) is the first caller.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn timeline_lead(read: &dyn KvRead, page_id: u64) -> Result<Option<String>> {
     Ok(read_body_state(read, page_id)?.and_then(|state| state.timeline_lead))
 }
@@ -1390,6 +1390,73 @@ impl Store {
             // Not stale, so the generation is at or above the page's, which is at least 0.
             let at = u64::try_from(generation).unwrap_or(0);
             crate::chunks::append_segment_chunks(tx, page.id, at, chunks)
+        })
+    }
+
+    /// The stored timeline lead of page `page_id` (`""` when none was published) with the page's
+    /// `knowledge_revision`, or `None` for a missing page. Not a member: `sealSegmentedPage`'s
+    /// TypeScript side reads it, sanitizes the lead, and passes the revision back to
+    /// [`Store::seal_segmented_page`].
+    pub fn read_segmented_seal_lead(&self, page_id: i64) -> Result<Option<(String, String)>> {
+        let read = self.read()?;
+        let Some(page) = page_u64(page_id)
+            .map(|id| read_page_by_id(&*read, id))
+            .transpose()?
+            .flatten()
+        else {
+            return Ok(None);
+        };
+        let lead = timeline_lead(&*read, page.id)?.unwrap_or_default();
+        Ok(Some((lead, page.knowledge_revision)))
+    }
+
+    /// `sealSegmentedPage(pageId, opts)`: seals the page's text projection at its current revision
+    /// (its chunks become visible) and records `timeline`, the lead TypeScript sanitized, as the
+    /// timeline text of its keyword vector (`pages::record_search_timeline`). The chunker stamp
+    /// keeps an older segmented chunker (at or above `SAFE_FENCE_CHUNKER_VERSION`, below
+    /// `SEGMENTED_CHUNKER_VERSION`) while any segment chunk from before the page's body generation
+    /// is still stored, and is `SEGMENTED_CHUNKER_VERSION` otherwise; an inline chunk never counts,
+    /// as PGLite's NULL `body_generation` does not. A missing page is a no-op. Refuses with
+    /// `revision_conflict` when `expected_revision` is given and the page moved past it since the
+    /// lead was read.
+    pub fn seal_segmented_page(
+        &self,
+        page_id: i64,
+        timeline: &str,
+        expected_revision: Option<&str>,
+    ) -> Result<()> {
+        self.write(|tx| {
+            let Some(mut page) = page_u64(page_id)
+                .map(|id| read_page_by_id(&*tx, id))
+                .transpose()?
+                .flatten()
+            else {
+                return Ok(());
+            };
+            if expected_revision.is_some_and(|r| !r.eq_ignore_ascii_case(&page.knowledge_revision)) {
+                return Err(StoreError::new(
+                    REVISION_CONFLICT,
+                    "The page changed after its timeline lead was read. Read it again before sealing.",
+                ));
+            }
+            let mut state = read_body_state(&*tx, page.id)?;
+            let generation = state.as_ref().map_or(0, |s| s.body_generation);
+            let stamped = page.chunker_version.unwrap_or(0);
+            let older = (SAFE_FENCE_CHUNKER_VERSION..i64::from(SEGMENTED_CHUNKER_VERSION))
+                .contains(&i64::from(stamped))
+                && crate::chunks::count_chunks_matching(&*tx, page.id, &|c| {
+                    c.segment
+                        .is_some_and(|place| i64::try_from(place.body_generation).is_ok_and(|g| g < generation))
+                })? > 0;
+            let version = if older { stamped } else { SEGMENTED_CHUNKER_VERSION };
+            page.chunker_version = Some(version);
+            page.text_projection_revision = Some(page.knowledge_revision.clone());
+            write_page(tx, &page)?;
+            if let Some(state) = state.as_mut() {
+                state.chunker_version = Some(i64::from(version));
+                put_json(tx, &body_key(page.id), state)?;
+            }
+            crate::pages::record_search_timeline(tx, page.id, &page.knowledge_revision, timeline)
         })
     }
 
@@ -2461,6 +2528,110 @@ mod segment_chunk_tests {
             .refresh_page_body("notes/r", "default", "body", "tl", "h2")
             .unwrap();
         assert_eq!(kept_timeline(&store, id), None);
+    }
+
+    fn sealed_texts(store: &Store) -> Vec<String> {
+        let mut texts: Vec<String> = store
+            .get_chunks("notes/a", &crate::pages::ReadScope::default())
+            .unwrap()
+            .into_iter()
+            .map(|c| c["chunk_text"].as_str().unwrap().to_owned())
+            .collect();
+        texts.sort();
+        texts
+    }
+
+    fn stamp(store: &Store, id: i64) -> Option<i16> {
+        read_page_by_id(&*store.read().unwrap(), id as u64)
+            .unwrap()
+            .unwrap()
+            .chunker_version
+    }
+
+    #[test]
+    fn a_seal_shows_the_chunks_and_records_the_lead_at_the_revision() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        store
+            .stage_segment_chunks(id, 1, &[chunk(1, 0, "one"), chunk(2, 0, "two")])
+            .unwrap();
+        assert!(sealed_texts(&store).is_empty());
+        // The fixture flip publishes an empty lead.
+        let (lead, revision) = store.read_segmented_seal_lead(id).unwrap().unwrap();
+        assert_eq!(lead, "");
+        store
+            .seal_segmented_page(id, "lead\0 text", Some(&revision))
+            .unwrap();
+        assert_eq!(sealed_texts(&store), ["one", "two"]);
+        let kept = kept_timeline(&store, id).unwrap();
+        assert_eq!(
+            (kept.revision.as_str(), kept.timeline.as_str()),
+            (revision.as_str(), "lead text")
+        );
+        assert_eq!(stamp(&store, id), Some(SEGMENTED_CHUNKER_VERSION));
+    }
+
+    #[test]
+    fn a_seal_keeps_an_older_chunker_only_while_older_segment_chunks_remain() {
+        // Stamped 4 (an older segmented chunker; a flip stores at most 3, so the test sets it), with
+        // occurrence 1's generation-1 chunk still stored after the flip to generation 2: the seal keeps 4.
+        let store = crate::test_support::store();
+        let id = published(&store);
+        store
+            .stage_segment_chunks(id, 1, &[chunk(1, 0, "one"), chunk(2, 0, "two")])
+            .unwrap();
+        store.seal_segmented_page(id, "", None).unwrap();
+        second_generation(&store, id);
+        store
+            .flip_body_generation(&flip(
+                id,
+                1,
+                STAGING_2,
+                9,
+                json!({"closeOccurrences": [2], "retireChunkOccurrences": [2]}),
+            ))
+            .unwrap();
+        store
+            .write(|tx| {
+                let mut page = read_page_by_id(&*tx, id as u64)?.unwrap();
+                page.chunker_version = Some(4);
+                write_page(tx, &page)
+            })
+            .unwrap();
+        store.seal_segmented_page(id, "", None).unwrap();
+        assert_eq!(stamp(&store, id), Some(4));
+        assert_eq!(sealed_texts(&store), ["TWO!", "one"]);
+        // Once no chunk predates the generation, the next seal stamps the current chunker.
+        store
+            .write(|tx| {
+                crate::chunks::delete_chunks_matching(tx, id as u64, &|c| {
+                    c.segment.is_some_and(|place| place.body_generation < 2)
+                })
+                .map(|_| ())
+            })
+            .unwrap();
+        store.seal_segmented_page(id, "", None).unwrap();
+        assert_eq!(stamp(&store, id), Some(SEGMENTED_CHUNKER_VERSION));
+    }
+
+    #[test]
+    fn a_seal_of_a_missing_page_is_a_no_op_and_a_moved_revision_refuses() {
+        let store = crate::test_support::store();
+        assert!(
+            store
+                .read_segmented_seal_lead(987_654_321)
+                .unwrap()
+                .is_none()
+        );
+        store.seal_segmented_page(987_654_321, "x", None).unwrap();
+        store.seal_segmented_page(0, "x", None).unwrap();
+        let id = published(&store);
+        let err = store
+            .seal_segmented_page(id, "x", Some("00000000-0000-4000-8000-000000000000"))
+            .unwrap_err();
+        assert_eq!(err.code, REVISION_CONFLICT);
+        assert_eq!(kept_timeline(&store, id), None);
+        assert!(sealed_texts(&store).is_empty());
     }
 
     #[test]

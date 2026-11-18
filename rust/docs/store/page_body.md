@@ -30,6 +30,8 @@ ISO strings. Derivation `createdAt` and `updatedAt` are `YYYY-MM-DDTHH:MM:SS.fff
 | `brain.readSegmentDerivations(pageId, { kind?, occurrenceIds? }?)` | derivation rows by kind, then occurrence; `[]` for an empty `occurrenceIds` | `readSegmentDerivations` |
 | `brain.upsertSegmentDerivations(rows)` | `null`. A row with the same `(page, kind, occurrence)` is replaced and keeps its `createdAt` | `upsertSegmentDerivations` |
 | `brain.retireSegmentDerivations(pageId, liveOccurrenceIds, { kind? }?)` | the number of rows deleted whose occurrence is not live | `retireSegmentDerivations` |
+| `brain.readSegmentedSealLead(pageId)` | `{ lead, revision }`: the page's stored `timeline_lead` (`""` when none) and `knowledge_revision`, or `null` for a missing page. Not a member: `sealSegmentedPage` reads it | (`sealSegmentedPage`'s page read) |
+| `brain.sealSegmentedPage(pageId, timeline, expectedRevision?)` | `null`. See "The seal" | `sealSegmentedPage` |
 | `brain.refreshPageBody(slug, sourceId, compiledTruth, timeline, contentHash)` | `null`. Sets the body, timeline, hash and `updated_at` of a live inline page; a missing or soft-deleted page is left alone. A new revision only when the body or timeline changed. No re-chunk and no version. A live page's sealed search timeline goes, also when nothing changed, since PGLite's `UPDATE … SET timeline` fires the search vector trigger | `refreshPageBody` |
 
 ## Keys under tag `b`
@@ -119,6 +121,24 @@ carries a vector (`engine_capability_missing`: vectors are not stored) and refus
 `opts.embeddingColumn` (PGLite takes the default model label from it). Deleting a page for good
 also deletes the chunks family's segment view of the page (`chunks::forget_segment_view`).
 
+## The seal
+
+`sealSegmentedPage(pageId, opts?)` makes a flipped segmented page's chunks and search text visible at
+its current revision, as engine-sql/page-body.ts does. The TypeScript member reads the stored lead and
+revision (`readSegmentedSealLead`), takes `opts.timelineLead` in place of the lead when given,
+sanitizes it with `sanitizeRemoteBody`, and calls `seal_segmented_page`. In one store write it:
+
+1. Does nothing for a missing page.
+2. Refuses `revision_conflict` when the page's `knowledge_revision` is no longer the one read.
+3. Keeps the page's chunker stamp when it is `SAFE_FENCE_CHUNKER_VERSION` (4) or newer but below
+   `SEGMENTED_CHUNKER_VERSION` (5) and a segment chunk of an older body generation is still stored;
+   otherwise stamps 5. It sets `text_projection_revision` to the page's revision, so `getChunks`
+   shows the published segment chunks.
+4. Records the text as the page's sealed search timeline (`pages::record_search_timeline`).
+
+PGLite overlays the page's withdrawals and global purges on the stored lead first. The store keeps no
+withdrawal ledger or purge markers, so here that overlay is the identity.
+
 ## Refusals
 
 Writes refuse `constraint_violation` where a PGLite table refuses: a missing source, page, staging or
@@ -152,7 +172,7 @@ The TypeScript engine refuses these with `engine_capability_missing`:
   `upsertChunks`, the member it was written for, not `stageSegmentChunks`. The refusal code is the
   same.
 - A flip unseals the page's text projection on both engines, so `getChunks` answers `[]` for a
-  segmented page after a flip until a text-projection seal exists. This is parity. The Rust engine
-  cannot seal a segmented page yet: only `upsertChunks` seals, and it replaces the segment chunks.
+  segmented page after a flip until a text-projection seal exists (`sealSegmentedPage`). This is
+  parity.
 - `upsertSegmentDerivations` never refuses `derivation_purge_pending`: the store has no fact-purge
   sweep to hold rows.

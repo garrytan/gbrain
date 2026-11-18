@@ -1,5 +1,5 @@
-//! Segmented page bodies: segment texts, manifests, stagings, the generation flip, derivations and
-//! `refreshPageBody`, each a thin call over `gbrain_store::page_body`.
+//! Segmented page bodies: segment texts, manifests, stagings, the generation flip, the seal,
+//! derivations and `refreshPageBody`, each a thin call over `gbrain_store::page_body`.
 //!
 //! Bytes cross as lowercase hex and dates as ISO strings; `store-members/page-body.ts` converts
 //! them to and from `Uint8Array` and `Date`. Not bound (the TypeScript engine refuses it):
@@ -133,6 +133,41 @@ impl Brain {
                 required(page_id, "stageSegmentChunks pageId")?,
                 required(generation, "stageSegmentChunks generation")?,
                 &chunks,
+            )
+        })
+    }
+
+    /// Not a member: `{ lead, revision }` of page `pageId` for `sealSegmentedPage` (the stored
+    /// timeline lead, `""` when none, and the page's knowledge revision), or `null` for a missing page.
+    #[napi]
+    pub fn read_segmented_seal_lead<'env>(
+        &self,
+        env: &'env Env,
+        page_id: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let lead =
+                s.read_segmented_seal_lead(required(page_id, "readSegmentedSealLead pageId")?)?;
+            Ok(lead
+                .map(|(lead, revision)| serde_json::json!({ "lead": lead, "revision": revision })))
+        })
+    }
+
+    /// `sealSegmentedPage(pageId, timeline, expectedRevision?)`: resolves `null`. `timeline` is the
+    /// lead TypeScript sanitized; a moved `expectedRevision` refuses `revision_conflict`.
+    #[napi]
+    pub fn seal_segmented_page<'env>(
+        &self,
+        env: &'env Env,
+        page_id: Value,
+        timeline: String,
+        expected_revision: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.seal_segmented_page(
+                required(page_id, "sealSegmentedPage pageId")?,
+                &timeline,
+                expected_revision.as_deref(),
             )
         })
     }
