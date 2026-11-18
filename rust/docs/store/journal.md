@@ -48,6 +48,16 @@ Each returns what PGLite returns for a brain with the same contents.
 | `readJournalLimitRows()` | the config keys that start with `persistence.limits.`, the page-body keys, then `{ key: null, value: null }` | The store keeps no segmented pages, so the largest one has no size. |
 | `readHeldPageRows(pageIds)`, `readHeldCoverageRows(sourceIds)` | `[]` | The store holds no files from a sync, so nothing is held. |
 
+`src/core/rust-engine/store-members/connect-gate.ts` answers the connect gate's persistence reads the same way
+(SQL for PGLite and Postgres in `src/core/engine-sql/connect-gate.ts`):
+
+| Member | Answer | Why |
+| --- | --- | --- |
+| `hasPersistenceTable(table)` | `true` | The store keeps the persistence state of one unmanaged brain, so every table a gate probes is there and empty. |
+| `listManagedRootBindings(hostId, opts?)` | each source with a local path (archived ones too), with null `worktree_id` and `topology_generation` | No host binds a managed worktree; the source rows are the second half of PGLite's UNION. |
+| `readGraduationGateRow(opts?)` | `null` | No graduation targets or leaves this engine, so there is no custody row and no run setting to compare. |
+| `listRetiredDeactivations()` | `[]` | A brain here is never managed, so no writer deactivation committed. |
+
 The other journal members (`readWriteRequest`, `readWriteRequestById`, `lockPersistenceCounters`,
 `insertWriteRequest`, `stampWriteClaim`, `lockWriteRequest`, `completeWriteRow`) run inside
 `transaction`. This engine does not serve `transaction` yet, so they refuse with

@@ -53,6 +53,8 @@ import * as factsTrust from './facts-trust.ts';
 import * as jobs from './jobs.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeGuards from './write-guards.ts';
+import * as trustFence from './trust-fence.ts';
+import * as connectGate from './connect-gate.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
 const initSchema: StoreMember<[], void> = async () => undefined;
@@ -79,7 +81,9 @@ export const STORE_MEMBERS = {
   ...persistenceIdentity,
   ...persistence,
   // The page write guards a page write runs around the page row (rust/docs/store/write-guards.md).
-  ...writeGuards,
+  ...writeGuards, ...trustFence,
+  // The connect gate's persistence reads, answered from the unmanaged brain the store keeps (rust/docs/store/journal.md).
+  ...connectGate,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

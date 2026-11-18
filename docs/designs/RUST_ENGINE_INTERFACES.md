@@ -499,6 +499,11 @@ store keeps the same rule in `pages.rs`.
   `sealImportedPage`, `readLivePageBody`; SQL in `engine-sql/write-guards.ts`). The store answers them in
   `write_guards.rs`, and `bindPageOrigin` runs the same origin check as `putPage`. See
   [`rust/docs/store/write-guards.md`](../../rust/docs/store/write-guards.md).
+- **Fence reads.** The fence projection's retire read and the fence guard's trust read are typed engine members
+  (`listFenceRetireCandidates`, capability `facts`, SQL in `engine-sql/facts.ts`; `listFenceFactRows`, capability
+  `facts`, SQL in `engine-sql/trust-fence.ts`). The store answers them in `facts/fence.rs` in the default write
+  context (no writer tier, nothing opened), so `listFenceFactRows` is empty until the Rust write context supplies the
+  writer's tier and the opened ids. See [`rust/docs/store/facts.md`](../../rust/docs/store/facts.md).
 - **Parity case:** `pages.test.ts`: putPage records source_path and refuses a second live page of the same file.
 
 #### Nullable page fields (`PageText` in `pages.rs`)
@@ -803,6 +808,12 @@ Segmented page bodies: segment texts, manifests, staging and derivations.
 - **Estimate:** about 7 to 8 days: texts and manifest 1 to 2, flip and staging 3, sweep 2, derivations 1.
 - **Notes:** Segment bodies are bytes; sha256 and bodies cross the binding as hex or `Buffer`. `flipBodyGeneration` and `sweepSegments` are each one store write.
 - **Segment storage probe:** `hasSegmentStorage` (capability `page_body`, in `write_guards.rs`) is true when any segment text (`b 0x01`) or body staging (`b 0x03`) exists. The journal reads it before it looks for segmented pages.
+- **Page write rows.** The fence projection's timeline and takes statements are typed engine members:
+  `removeTimelineRows` and `updateTimelineDetails` (SQL in `engine-sql/timeline.ts`; the store answers them in
+  `timeline_queries.rs` through the core helpers `remove_entry` and `recompute_latest`) and `matchTakeRows` and
+  `deleteTakeRows` (SQL in `engine-sql/takes.ts`; answered in `takes.rs`). See
+  [`timeline_queries.md`](../../rust/docs/store/timeline_queries.md) and [`takes.md`](../../rust/docs/store/takes.md).
+- **Connect gate reads:** `hasPersistenceTable`, `listManagedRootBindings`, `readGraduationGateRow` and `listRetiredDeactivations` (capability `persistence_journal`, SQL in `engine-sql/connect-gate.ts`) are answered in TypeScript from the one unmanaged brain the store keeps; they replace the raw-SQL capability checks the graduation and deactivation gates used. See [`rust/docs/store/journal.md`](../../rust/docs/store/journal.md).
 - **Parity cases (5, in `segmented-body.test.ts`, `sync-aliases.test.ts`):**
   - `segmented-body.test.ts`: a segmented page publishes generation 1 from staged texts and manifest rows
   - `segmented-body.test.ts`: a replace flips to generation 2, closes retired rows and refuses a stale generation
@@ -872,14 +883,14 @@ Takes and synthesis evidence.
 
 - **Files:** `gbrain-store/src/takes.rs`, `gbrain-napi/src/families/takes.rs`, `store-members/takes.ts`.
 - **Tag:** `A` (`TAKE`). Cascade on page delete: yes.
-- **Members (10), capability:** `takes` (10).
-- **Store and binding:** `addTakesBatch` (`add_takes_batch`), `listTakes` (`list_takes`), `searchTakes` (`search_takes`), `updateTake` (`update_take`), `supersedeTake` (`supersede_take`), `resolveTake` (`resolve_take`), `getScorecard` (`get_scorecard`), `getCalibrationCurve` (`get_calibration_curve`), `addSynthesisEvidence` (`add_synthesis_evidence`), `listActiveTakesForPages` (`list_active_takes_for_pages`).
+- **Members (12), capability:** `takes` (12).
+- **Store and binding:** `addTakesBatch` (`add_takes_batch`), `listTakes` (`list_takes`), `searchTakes` (`search_takes`), `updateTake` (`update_take`), `supersedeTake` (`supersede_take`), `resolveTake` (`resolve_take`), `getScorecard` (`get_scorecard`), `getCalibrationCurve` (`get_calibration_curve`), `addSynthesisEvidence` (`add_synthesis_evidence`), `listActiveTakesForPages` (`list_active_takes_for_pages`), `matchTakeRows` (`match_take_rows`), `deleteTakeRows` (`delete_take_rows`).
 - **Postgres tables:** `takes` (unique `(page_id, row_num)`), `synthesis_evidence`, read of `take_grade_cache` for `ungradedFirst`.
 - **Keys:** `A 0x01 <take id>` row; `A 0x02 <page id> <row_num u32>` to the take id (unique); `A 0x03 <synthesis page id> <take page id> <row_num>` evidence; `A 0x04 <take page id> <row_num> <synthesis page id>` reverse evidence. `M next_take_id`. `remove_page_rows` deletes the page's takes and every evidence row that names it.
 - **Depends on:** Core page helpers for slug and visibility joins. Vector search over takes and take embeddings belong to core (vectors, embeddings); the `takes` capability is reported only after those land.
 - **Estimate:** about 4 days.
 - **Notes:** `weight` is REAL: clamp and round as `buildTakeRows` does, then store as `f32`. `since_date` is text compared after padding, not a date. `searchTakes` is a trigram `word_similarity` score: share the keyword family's trigram code once it exists, or build `pg_trgm` scoring in this family and let keyword call it.
-- **Parity cases (19, in `code-eval-salience.test.ts`, `facts.test.ts`, `links.test.ts`, `takes.test.ts`):**
+- **Parity cases (21, in `code-eval-salience.test.ts`, `facts.test.ts`, `links.test.ts`, `takes.test.ts`):**
   - `code-eval-salience.test.ts`: batchLoadEmotionalInputs returns tags and active takes per page; slug filter narrows
   - `code-eval-salience.test.ts`: setEmotionalWeightBatch counts changed rows only, is source-keyed, and feeds getRecentSalience ordering
   - `facts.test.ts`: listFactsByEntity filters by kind, visibility, session, grep (wildcards literal) and consolidation
@@ -899,6 +910,8 @@ Takes and synthesis evidence.
   - `takes.test.ts`: listActiveTakesForPages groups active takes per page in row order, filters by allow-list, and keys empty pages
   - `takes.test.ts`: searchTakes ranks active takes by trigram similarity and applies holder allow-list, source and limit
   - `takes.test.ts`: take embeddings: write, read back, vector search, and staleness accounting
+  - `takes.test.ts`: matchTakeRows lists the stored takes a fence row would collide with, null-safe, ascending, limited, for one page only
+  - `takes.test.ts`: deleteTakeRows deletes the page takes at the listed row numbers with their evidence, and an empty list deletes nothing
 
 ### contradictions
 
@@ -1072,14 +1085,17 @@ Timeline reads by date and event projections.
 
 - **Files:** `gbrain-store/src/timeline_queries.rs`, `gbrain-napi/src/families/timeline_queries.rs`, `store-members/timeline-queries.ts`.
 - **Tag:** `u` (`TIMELINE_QUERIES`). Cascade on page delete: no.
-- **Members (5), capability:** `timeline` (5).
-- **Store and binding:** `getTimelineForDate` (`get_timeline_for_date`), `getSince` (`get_since`), `getOnThisDay` (`get_on_this_day`), `getLastSeen` (`get_last_seen`), `upsertEventProjection` (`upsert_event_projection`).
+- **Members (7), capability:** `timeline` (7).
+- **Store and binding:** `getTimelineForDate` (`get_timeline_for_date`), `getSince` (`get_since`), `getOnThisDay` (`get_on_this_day`), `getLastSeen` (`get_last_seen`), `upsertEventProjection` (`upsert_event_projection`), `removeTimelineRows` (`remove_timeline_rows`), `updateTimelineDetails` (`update_timeline_details`).
 - **Postgres tables:** `timeline_entries`, `pages.effective_date`.
 - **Keys:** Reads and writes core timeline rows (`E`, `D`, `G`) only through the timeline entry helpers ("Core hooks"). `u <date> 0x00 <entry id>` date index if a read needs one, kept by a core hook in `timeline.rs`; event projections indexed under `u 0x01 <event_page_id be8> <date>`.
 - **Depends on:** The timeline entry helpers and the `remove_event_projections` stub (both built; fill in the stub). Ask core for a date index hook if a scan is too slow.
 - **Estimate:** about 1 to 2 days.
 - **Notes:** Dates are `YYYY-MM-DD` text. `getOnThisDay` matches month and day across years.
-- **Parity cases (5, in `timeline.test.ts`):**
+- **Parity cases (8, in `timeline.test.ts`):**
+  - `timeline.test.ts`: removeTimelineRows deletes only the rows that still match field for field, never an event projection or another page, and reports each deleted date
+  - `timeline.test.ts`: removeTimelineRows reads dates as dates and keeps the page order of the deleted rows
+  - `timeline.test.ts`: updateTimelineDetails rewrites a detail only while the stored one is still the preimage, on the page own rows
   - `timeline.test.ts`: upsertEventProjection updates in place on the same (event, date) and refuses missing pages
   - `timeline.test.ts`: getTimelineForDate returns one day or its ISO week, ordered by event effective_date
   - `timeline.test.ts`: getSince filters by lower-bound date and event kind
@@ -1692,7 +1708,7 @@ brain; then the first persistence slice (about 4 days, core) comes first.
 | Page-columns hook (`page_columns.rs`): family values that `getPage` returns (`emotional_weight`, `contextual_retrieval_mode`, segmented-body fields, `trust_tier`) | built | salience, aliases, page_body, trust; extraction listed, likely unused |
 | `pages::rename_page` helper | built | aliases (`updateSlug`) |
 | Chunk-delete hook (`cascade::remove_chunk_rows`) | built | code_edges; vectors and embeddings listed |
-| Timeline entry helpers (`next_entry_id`, `read_entry`, `put_entry`) | built | timeline_queries (`upsertEventProjection`) |
+| Timeline entry helpers (`next_entry_id`, `read_entry`, `put_entry`, `remove_entry`, `recompute_latest`) | built | timeline_queries (`upsertEventProjection`, `removeTimelineRows`, `updateTimelineDetails`) |
 | Event projection delete (`timeline_queries::remove_event_projections`, called by `remove_page`) | built; the family fills in the body | timeline_queries |
 | Page index hook (`page_index::reindex_page`, called by `write_page` and `remove_page`) | built; the family fills in the body | keyword (`R` title trigrams), page_ops |
 | Page projection hook (`page_projection::queue_page_projection`, called by `write_page` and `remove_page`) | built; the family fills in the body | persistence (`page_projection_jobs`) |

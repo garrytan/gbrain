@@ -20,6 +20,7 @@ typed claims. Each member gives the answer PGLite gives today, odd behavior incl
 | `findTrajectory` | Typed claims and events of an entity, oldest first, world rows only for remote callers. A point carries its `embedding` only when its `embedding_model` is the `embedding_model` config value and its `embedded_text_hash` is `md5(fact)`; otherwise null. |
 | `listUnattributedFacts` | The review-list read of `src/core/review-lists.ts`: active rows with no `entity_slug` in any of `sourceIds` (duplicates read once), less rows whose page or entity page is soft-deleted, `worldOnly` keeping `visibility = 'world'`, newest id first, then `offset` and `limit`. Each row is `id, fact, kind, visibility, source_id, created_at, source`, `created_at` in the `timestamptz::text` form (`2026-06-18 09:00:00.5+00`). `excludePrivate` applies the private-provenance policy below, as `src/core/review-lists.ts:30` does. The `BrainEngine` member `listUnattributedFacts` (`src/core/rust-engine/store-members/facts.ts`) calls it in place of the SQL of `src/core/engine-sql/cli-reads-ops.ts`; its `excludePrivateProvenance` becomes this policy. |
 | `pageCollapseFacts` | The collapse-stage read of hybrid search (`facts/collapse.rs`, SQL in `src/core/engine-sql/search-reads.ts`): one `{ id, target, body_chars, body, lead }` row per page row whose id is in `ids`, soft-deleted pages and every source included, by id (the SQL has no `ORDER BY`); a missing id has no row. `target` is the first of `redirect_to`, `redirect` and `merged_into` that is a non-empty string after trimming spaces, then `superseded_by` when the lower-cased `status` holds the word `alias`, `redirect` or `redirected`. `BODY` is the first 65,536 code points of `compiled_truth`, spaces trimmed; `body_chars` is its length in code points, `body` its md5 hex for an id in `bodyIds` with at least 200 code points, `lead` its first 4,000 code points for an id in `bodyIds`. The TypeScript member refuses an id that is not a 32-bit integer, as the SQL casts both lists to `int[]`. It reads pages, not facts; it sits here because its `BrainEngine` capability class is `facts`. |
+| `listFenceRetireCandidates`, `listFenceFactRows` | The fence guard's two reads of a page's fence rows (`facts/fence.rs`): the rows a publication would retire, and the live rows the writer may not supersede. See "The fence guard's reads". |
 | `migrateFactsToCanonical` | Moves a phantom page's active rows onto the canonical slug, `row_num` offset past the canonical page's largest. The ontology duplicates the move would make are dropped first, in its own write, as PGLite runs the two statements outside one transaction. |
 
 Rows go out with dates as microsecond ISO text, `embedding` as a number list (or null),
@@ -269,6 +270,38 @@ provenance page hides the row; then the entity, session, `since` (on `valid_from
 - `listFactsForRelevance` serves the pool reads only. Its caller `collectFactCandidates` still makes
   other reads on the way (the word stems, the facts embedding column, the named-entity anchor and the
   nearest-vector arm); on Rust each of those is served or refused by the family that owns it.
+
+## The fence guard's reads (`facts/fence.rs`)
+
+Two reads of one page's fact rows, for the page publication path (`engine-sql/facts.ts`
+`listFenceRetireCandidates`, `engine-sql/trust-fence.ts` `listFenceFactRows`). Both read the page's
+rows through the by-page index, keep the rows at a fence position (`row_num` set), and compare each
+with the incoming fence: a JSON array of `{ row_num, fact, visibility }` cells. A cell field that is
+absent or null equals nothing, as SQL `=` does. A document that is not an array of objects, or a
+`row_num` that is not an integer, refuses with `invalid_argument` (PGLite's `jsonb_to_recordset`
+raises).
+
+- `list_fence_retire_candidates`: the before-state (`FACT_PREIMAGE_SQL`'s keys, the times as the
+  `jsonb` text `2026-06-18T09:00:00.5+00:00`) of each row the incoming fence does not hold at the
+  same number, fact and visibility, in row number then id order, expired rows included. A
+  conversation-extractor row (`source` starting `cli:extract-conversation-facts`) is a candidate
+  only when a cell claims its number. A private row that `open-facts` opens in place is not.
+- `list_fence_fact_rows`: the live (`expired_at` null) rows under the same filters that are more
+  trusted than the writer (`above`), held narrower by a widening proposal, or opened (`opened`):
+  `{ id, row_num, fact, visibility, trust_tier, above, opened }`, by row number.
+
+What PGLite reads from the transaction, the store takes as a `FenceContext`: the writer's tier
+(`gbrain.write_trust_tier`, undeclared reads as `unknown`, a name that is no tier ranks 0) and the
+opened ids (`gbrain.write_open_facts`). The napi members pass the default context, because the Rust
+engine has no transaction settings yet. Two further gaps make `list_fence_fact_rows` answer only what
+the default context can reach:
+
+- A stored row has no tier column and reads as `unknown`. Under the default context the writer is
+  `unknown` too, so nothing is above it, nothing is opened, and the list is empty.
+- There is no `trust_proposals` table, so no row is ever held.
+
+When the interfaces session lands the Rust write context, both napi members take the writer's tier
+and the opened ids from it, and `FenceContext` is the place to wire them.
 
 ## Not modeled
 
