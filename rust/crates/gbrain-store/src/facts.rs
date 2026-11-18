@@ -35,11 +35,11 @@
 
 mod collapse;
 mod embedding;
-#[allow(dead_code)]
 mod privacy;
 
 pub use privacy::PrivacyPolicy;
 pub(crate) use privacy::page_hidden;
+use privacy::hidden_by_private_provenance;
 
 use crate::chunks::embedding_dimensions;
 use crate::config::read_config;
@@ -862,6 +862,8 @@ pub struct FactQuery {
     pub since: Option<String>,
     pub event_time: bool,
     pub after: Option<KeysetAfter>,
+    /// `excludePrivate`: the private-provenance policy (`facts/privacy.rs`).
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -871,12 +873,14 @@ pub struct SupersessionQuery {
     pub since: Option<String>,
     pub limit: f64,
     pub visibility: Option<Vec<String>>,
+    /// `excludePrivate`: the private-provenance policy (`facts/privacy.rs`).
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 /// The `listUnattributedFacts` read of src/core/review-lists.ts. The caller passes the page size
-/// it asks the database for (the review list asks for one row more than it shows) and decides
-/// the world-only rule; a private-provenance policy is not modeled, so a caller that needs one
-/// refuses before it reads.
+/// it asks the database for (the review list asks for one row more than it shows), decides the
+/// world-only rule, and passes the private-provenance policy when
+/// `resolveExcludePrivatePages(engine, ctx.remote)` asks for it.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct UnattributedQuery {
@@ -885,6 +889,8 @@ pub struct UnattributedQuery {
     pub world_only: bool,
     pub limit: f64,
     pub offset: f64,
+    /// `privateProvenanceFilterUnderPolicy('facts')` (`facts/privacy.rs`).
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -918,6 +924,8 @@ pub struct TrajectoryQuery {
     pub since: Option<String>,
     pub until: Option<String>,
     pub limit: f64,
+    /// `excludePrivate`: the private-provenance policy (`facts/privacy.rs`).
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 fn time_arg(op: &str, what: &str, text: &str) -> Result<i64> {
@@ -1106,6 +1114,18 @@ pub(crate) fn hidden_by_deleted_page(read: &dyn KvRead, row: &FactRecord) -> Res
     Ok(false)
 }
 
+/// `privateProvenanceFilterUnderPolicy('facts')`, when the read passes `excludePrivate`.
+pub(crate) fn hidden_by_policy(
+    read: &dyn KvRead,
+    row: &FactRecord,
+    policy: &Option<PrivacyPolicy>,
+) -> Result<bool> {
+    match policy {
+        Some(policy) => hidden_by_private_provenance(read, row, policy),
+        None => Ok(false),
+    }
+}
+
 /// `quarantinedProjectionHiddenSql('facts')`: the row's live page carries a `quarantine` key.
 fn hidden_by_quarantine(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
     let Some(slug) = &row.source_markdown_slug else {
@@ -1152,7 +1172,8 @@ impl FactQuery {
                 return Ok(false);
             }
         }
-        Ok(!hidden_by_deleted_page(read, row)?)
+        Ok(!hidden_by_deleted_page(read, row)?
+            && !hidden_by_policy(read, row, &self.exclude_private)?)
     }
 
     fn check(&self, op: &str) -> Result<()> {
@@ -1394,6 +1415,7 @@ impl Store {
                 || since.is_some_and(|s| ended.is_none_or(|e| e < s))
                 || !listed(&q.visibility, &row.visibility)
                 || hidden_by_deleted_page(&*read, &row)?
+                || hidden_by_policy(&*read, &row, &q.exclude_private)?
             {
                 continue;
             }
@@ -1587,6 +1609,7 @@ impl Store {
                     || until.is_some_and(|u| row.valid_from_us > u)
                     || hidden_by_deleted_page(&*read, &row)?
                     || hidden_by_quarantine(&*read, &row)?
+                    || hidden_by_policy(&*read, &row, &q.exclude_private)?
                 {
                     continue;
                 }
@@ -1668,6 +1691,7 @@ impl Store {
                     && row.active(now)
                     && (!q.world_only || row.visibility == "world")
                     && !hidden_by_deleted_page(&*read, &row)?
+                    && !hidden_by_policy(&*read, &row, &q.exclude_private)?
                 {
                     rows.push(row);
                 }

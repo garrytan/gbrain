@@ -4,9 +4,9 @@
  * findCandidateDuplicates, consolidateFact, findTrajectory, getFactsHealth, migrateFactsToCanonical, pageCollapseFacts).
  *
  * Each member applies the defaults and clamps of src/core/engine-sql/facts.ts, then makes one store call. What the
- * store cannot answer exactly refuses with `engine_capability_missing`: a read eligibility policy, `excludePrivate`, the
- * keyword arm in an FTS language other than `english`, a visibility list that
- * the member-page or grant rules widen, and inputs whose PGLite outcome the store cannot reproduce (a non-finite
+ * store cannot answer exactly refuses with `engine_capability_missing`: a read eligibility policy, `excludePrivate` for a
+ * caller other than the one the store's policy models (private-provenance.ts), the keyword arm in an FTS language other
+ * than `english`, a visibility list that the member-page or grant rules widen, and inputs whose PGLite outcome the store cannot reproduce (a non-finite
  * `claim_value`, `row_num` or `superseded_by_row`, a fractional offset, a keyset time in another text form).
  *
  * A vector travels as the literal PGLite inlines (`'[a,b,...]'`); the store casts it to the column's `halfvec` and
@@ -19,6 +19,8 @@ import { factVisibilitySql } from '../../access/member-facts.ts';
 import { ensureWellFormed } from '../../text-safe.ts';
 import { getFtsLanguage } from '../../fts-language.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { storePrivacyPolicy } from './private-provenance.ts';
+import { privateProvenanceFilterUnderPolicy } from '../../search/private-visibility.ts';
 import { withDates } from '../store-codec.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
@@ -37,7 +39,11 @@ const vectorLiteral = (v: Float32Array | number[]): string => '[' + Array.from(v
 
 /** The options every list read declares; each member reads its own subset and ignores the rest, as PGLite does. */
 const LIST_OPTIONS = ['activeOnly', 'unconsolidatedOnly', 'limit', 'offset', 'kinds', 'visibility', 'grep', 'sessionId',
-  'eventTime', 'excludeAuditRows', 'fingerprint'] as const;
+  'eventTime', 'excludeAuditRows', 'fingerprint', 'excludePrivate'] as const;
+
+/** `privacyClause` (engine-sql/facts.ts): the policy as the store reads it, or undefined without `excludePrivate`. */
+const factPolicy = (member: string, excludePrivate: unknown) =>
+  storePrivacyPolicy(member, excludePrivate, () => privateProvenanceFilterUnderPolicy('facts'));
 const RECALL_OPTIONS = [...LIST_OPTIONS, 'entitySlug', 'sourceMarkdownSlug'] as const;
 
 /** A string the SQL path binds inside a JSONB document: a lone surrogate becomes U+FFFD. */
@@ -80,6 +86,7 @@ function listQuery(member: string, sourceId: string, opts: FactListOpts | Recall
     grep: grepPattern(o.grep),
     fingerprint: o.fingerprint === true,
     limit: clampSearchLimit(o.limit, 50, MAX_SEARCH_LIMIT),
+    excludePrivate: factPolicy(member, o.excludePrivate),
     ...(recall ? {
       entitySlug: o.entitySlug ?? undefined,
       sourceMarkdownSlug: o.sourceMarkdownSlug ?? undefined,
@@ -197,10 +204,11 @@ export const listFactsBySession: Member<'listFactsBySession'> = async (brain, so
 };
 
 export const listSupersessions: Member<'listSupersessions'> = async (brain, sourceId, opts) => {
-  const o = takeOptions('listSupersessions', opts, ['since', 'limit', 'visibility']) as NonNullable<typeof opts>;
+  const o = takeOptions('listSupersessions', opts, ['since', 'limit', 'visibility', 'excludePrivate']) as NonNullable<typeof opts>;
   const rows: Row[] = await storeCall({ member: 'listSupersessions' }, () => brain.listSupersessions({
     sourceId, since: o.since ? o.since.toISOString() : undefined, limit: clampSearchLimit(o.limit, 50, MAX_SEARCH_LIMIT),
     visibility: visibilityFilter('listSupersessions', o.visibility),
+    excludePrivate: factPolicy('listSupersessions', o.excludePrivate),
   }));
   return facts(rows);
 };
@@ -230,7 +238,7 @@ export const consolidateFact: Member<'consolidateFact'> = async (brain, id, take
 
 export const findTrajectory: Member<'findTrajectory'> = async (brain, opts) => {
   const o = takeOptions('findTrajectory', opts,
-    ['entitySlug', 'sourceId', 'sourceIds', 'remote', 'metric', 'kind', 'since', 'until', 'limit']) as unknown as typeof opts;
+    ['entitySlug', 'sourceId', 'sourceIds', 'remote', 'metric', 'kind', 'since', 'until', 'limit', 'excludePrivate']) as unknown as typeof opts;
   const worldOnly = opts.remote !== false;
   if (worldOnly && factVisibilitySql('facts', ['world']) !== "facts.visibility IN ('world')") {
     refuseMember('findTrajectory', 'visibility widened by member pages or grants');
@@ -240,6 +248,7 @@ export const findTrajectory: Member<'findTrajectory'> = async (brain, opts) => {
     sourceIds, entitySlug: o.entitySlug, worldOnly, metric: o.metric ?? undefined, kind: o.kind ?? 'all',
     since: o.since ? new Date(o.since).toISOString() : undefined, until: o.until ? new Date(o.until).toISOString() : undefined,
     limit: clampSearchLimit(o.limit, 100, 500),
+    excludePrivate: factPolicy('findTrajectory', o.excludePrivate),
   }));
   return rows.map((row) => withDates(withVector(row), ['valid_from', 'valid_until']) as unknown as TrajectoryPoint);
 };

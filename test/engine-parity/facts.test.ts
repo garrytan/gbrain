@@ -71,6 +71,67 @@ async function remember(
   return ids;
 }
 
+
+/**
+ * The private-provenance fixture: one page per rule of `privateProvenanceFilterUnderPolicy('facts')`
+ * (src/core/search/private-visibility.ts), and one fence row per page, each named after its page, so a read under
+ * `excludePrivate` names which rules hid which rows. Rows `entity:*` judge the entity page and the holding page.
+ */
+const PRIVACY_ENTITY = 'people/subject-example';
+const PRIVACY_PAGES: Array<[string, string, Record<string, unknown>]> = [
+  ['notes/open', 'note', {}],
+  ['notes/private', 'note', { visibility: 'private' }],
+  ['notes/readers', 'note', { readable_by: ['alice-example'] }],
+  ['notes/access-alias', 'note', { access: '\u00a0Restricted\u3000' }],
+  ['notes/access-plain', 'note', { access: 'team' }],
+  ['notes/alias-with-visibility', 'note', { confidentiality: 'secret', visibility: 'world' }],
+  ['notes/pinned', 'note', { pinned_question: true, visibility: 'world' }],
+  ['atoms/no-visibility', 'atom', {}],
+  ['atoms/origin-private', 'atom', { visibility: 'world', source_slug: 'notes/private' }],
+  ['atoms/origin-readers', 'atom', { visibility: 'world', source_slug: 'notes/readers' }],
+  ['atoms/origin-open', 'atom', { visibility: 'world', source_slug: 'notes/open' }],
+  ['concepts/private-input', 'concept', { visibility: 'world', synthesized_by: 'dream' }],
+  ['concepts/readers-input', 'concept', { visibility: 'world', synthesized_by: 'dream' }],
+  ['concepts/open-input', 'concept', { visibility: 'world', synthesized_by: 'dream' }],
+  ['concepts/plain', 'concept', {}],
+  ['notes/lineage-md', 'note', { derived_from: 'notes/private.md' }],
+  ['notes/lineage-readers', 'note', { derived_from: ['notes/open', 'notes/readers'] }],
+  ['notes/lineage-open', 'note', { derived_from: ['notes/open.md', 'notes/none'] }],
+  ['events/chronicle-missing', 'event', { captured_via: 'life-chronicle:test', event: { depth: 'meetings/none' } }],
+  ['events/chronicle-private', 'event', { captured_via: 'life-chronicle:test', event: { depth: 'notes/private' } }],
+  ['events/chronicle-open', 'event', { captured_via: 'life-chronicle:test', event: { depth: 'notes/open' } }],
+  ['events/plain', 'event', { event: { depth: 'meetings/none' } }],
+  ['people/private-entity', 'person', { visibility: 'private' }],
+  ['people/readers-entity', 'person', { readable_by: ['alice-example'] }],
+  ['team/memory/unattributed', 'note', { visibility: 'private' }],
+];
+
+async function privacyFixture(engine: BrainEngine) {
+  for (const [slug, type, frontmatter] of PRIVACY_PAGES) {
+    await engine.putPage(slug, { type: type as never, title: slug, compiled_truth: `About ${slug}.`, timeline: '', frontmatter });
+  }
+  await engine.addLink('concepts/private-input', 'atoms/no-visibility', '', 'synthesized_from', 'concept-provenance');
+  await engine.addLink('concepts/readers-input', 'notes/readers', '', 'synthesized_from', 'concept-provenance');
+  await engine.addLink('concepts/open-input', 'notes/open', '', 'synthesized_from', 'concept-provenance');
+  await engine.addLink('concepts/open-input', 'notes/private', '', 'mentions', 'manual');
+  const pageRows = [...PRIVACY_PAGES.map(([slug]) => slug), 'notes/no-page'].map((slug, i) => ({
+    fact: `page:${slug}`, entity_slug: PRIVACY_ENTITY, source_markdown_slug: slug, row_num: i + 1,
+  }));
+  const entityRows = [
+    { fact: 'entity:private', entity_slug: 'people/private-entity', source_markdown_slug: 'notes/open', row_num: 101 },
+    { fact: 'entity:readers', entity_slug: 'people/readers-entity', source_markdown_slug: 'notes/open', row_num: 102 },
+    { fact: 'entity:open', entity_slug: 'notes/open', source_markdown_slug: 'notes/open', row_num: 103 },
+    { fact: 'entity:held-private', entity_slug: 'people/no-page', source_markdown_slug: 'team/memory/unattributed', row_num: 104 },
+    { fact: 'entity:unheld', entity_slug: null, source_markdown_slug: 'team/memory/unattributed', row_num: 105 },
+  ];
+  const rows = [...pageRows, ...entityRows].map((r) => ({
+    ...r, kind: 'fact' as const, visibility: 'world' as const, source: 'fence', source_session: 'sess-privacy',
+    valid_from: at('2026-03-01T00:00:00Z'), claim_metric: 'arr', claim_value: r.row_num,
+    dimension: `dim-${r.row_num}`, value: r.fact,
+  }));
+  await engine.insertFacts(rows as never, { source_id: SRC });
+}
+
 describe('engine parity: facts', () => {
   parityTest(
     'insertFact stores defaults and every supplied field; listFactsByEntity reads it back',
@@ -1006,6 +1067,54 @@ describe('engine parity: facts', () => {
         { text: 'ARR 4m', head: null, dims: null },
       ]);
       return points;
+    },
+  );
+
+  parityTest(
+    'excludePrivate hides facts whose provenance, entity or holding page the private-provenance policy hides',
+    { methods: ['putPage', 'addLink', 'insertFacts', 'listFactsByEntity', 'listFactsSince', 'listFactsBySession'] },
+    async (engine) => {
+      await privacyFixture(engine);
+      const since = at('2020-01-01T00:00:00Z');
+      const all = sorted(texts(await engine.listFactsSince(SRC, since, { limit: 500 })));
+      const kept = sorted(texts(await engine.listFactsSince(SRC, since, { limit: 500, excludePrivate: true })));
+      const byEntity = sorted(texts(await engine.listFactsByEntity(SRC, PRIVACY_ENTITY, { limit: 500, excludePrivate: true })));
+      const bySession = sorted(texts(await engine.listFactsBySession(SRC, 'sess-privacy', { limit: 500, excludePrivate: true })));
+      const off = sorted(texts(await engine.listFactsByEntity(SRC, PRIVACY_ENTITY, { limit: 500, excludePrivate: false })));
+      expect(all).toHaveLength(31);
+      expect(kept).toEqual(sorted([
+        'page:notes/open', 'page:notes/access-plain', 'page:notes/alias-with-visibility', 'page:atoms/origin-open',
+        'page:concepts/open-input', 'page:concepts/plain', 'page:notes/lineage-open', 'page:events/chronicle-open',
+        'page:events/plain', 'page:notes/no-page', 'entity:open',
+      ]));
+      expect(byEntity).toEqual(kept.filter((t) => t.startsWith('page:')));
+      expect(bySession).toEqual(kept);
+      return { all, kept, byEntity, bySession, off };
+    },
+  );
+
+  parityTest(
+    'listSupersessions and findTrajectory apply the private-provenance policy under excludePrivate',
+    { methods: ['putPage', 'addLink', 'insertFacts', 'listSupersessions', 'findTrajectory'] },
+    async (engine) => {
+      await privacyFixture(engine);
+      await engine.insertFacts([
+        { fact: 'old:private', entity_slug: PRIVACY_ENTITY, source_markdown_slug: 'notes/private', row_num: 201, superseded_by_row: 202, kind: 'fact', source: 'fence' },
+        { fact: 'new:private', entity_slug: PRIVACY_ENTITY, source_markdown_slug: 'notes/private', row_num: 202, kind: 'fact', source: 'fence' },
+        { fact: 'old:open', entity_slug: PRIVACY_ENTITY, source_markdown_slug: 'notes/open', row_num: 203, superseded_by_row: 204, kind: 'fact', source: 'fence' },
+        { fact: 'new:open', entity_slug: PRIVACY_ENTITY, source_markdown_slug: 'notes/open', row_num: 204, kind: 'fact', source: 'fence' },
+      ] as never, { source_id: SRC });
+      const supersessions = sorted(texts(await engine.listSupersessions(SRC)));
+      const supersessionsKept = sorted(texts(await engine.listSupersessions(SRC, { excludePrivate: true })));
+      const points = async (excludePrivate: boolean) =>
+        sorted((await engine.findTrajectory({ entitySlug: PRIVACY_ENTITY, remote: false, excludePrivate })).map((p) => p.text));
+      const trajectory = await points(false);
+      const trajectoryKept = await points(true);
+      expect(supersessionsKept).toEqual(['old:open']);
+      expect(trajectoryKept.length).toBeLessThan(trajectory.length);
+      expect(trajectoryKept).toContain('page:notes/open');
+      expect(trajectoryKept).not.toContain('page:notes/private');
+      return { supersessions, supersessionsKept, trajectory, trajectoryKept };
     },
   );
 });
