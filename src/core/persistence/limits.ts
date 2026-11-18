@@ -100,7 +100,7 @@ const forecastRates = new WeakMap<object, { at: number; brain: string | null; re
  * GST-2107: `readCapacityForecast` records each scope's 7-day mean rates here, per engine, for `oneYearCapacity`; `brain`
  * (the brain's first request) keeps a reused engine on a different brain from reading them.
  */
-export function recordForecastRates(engine:SqlEngine,brain:string|null,retention:number,rates:Array<{scope:string;resource:CapacityResource;perDay:number;netPerDay:number}>):void {
+export function recordForecastRates(engine:object,brain:string|null,retention:number,rates:Array<{scope:string;resource:CapacityResource;perDay:number;netPerDay:number}>):void {
   forecastRates.set(engineKey(engine),{at:Date.now(),brain,retention,rates:new Map(rates.map(r=>[`${r.scope}|${r.resource}`,{perDay:r.perDay,netPerDay:r.netPerDay}]))});
 }
 
@@ -128,7 +128,9 @@ export async function oneYearCapacity(engine:SqlEngine,scope:string,setting:'Lif
       avg(${COMPACTED_RECEIPT_BYTES_SQL('recent', 'e')})::float8 AS net FROM recent LEFT JOIN e ON e.request_id=recent.id`,
   principal ? [principal[1],principal[2]] : []);
   const perDay=sample!.admissions/Math.max(1/24,(sample!.age_seconds ?? 0)/86_400);
-  const retention=await readReceiptRetentionDays(engine).catch(()=>DEFAULT_RECEIPT_RETENTION_DAYS);
+  // Admission refusals call this under the counter locks inside their transaction, on its SqlEngine, so the setting is read there.
+  const retention=await engine.executeRaw<{value:string}>('SELECT value FROM config WHERE key=$1',[RECEIPT_RETENTION_KEY])
+    .then(([row])=>row ? parseJournalConfigValue(RECEIPT_RETENTION_KEY,row.value) : DEFAULT_RECEIPT_RETENTION_DAYS).catch(()=>DEFAULT_RECEIPT_RETENTION_DAYS);
   const measured=(value:number|null|undefined,fallback:number)=>Number.isFinite(Number(value)) && Number(value)>0 ? Number(value) : fallback;
   return resource==='lifetime_ids' ? recommendedLimit(resource,used,limit,{perDay},retention)
     : recommendedLimit(resource,used,limit,{perDay:perDay*measured(sample!.gross,RECEIPT_RESERVATION_FLOOR),netPerDay:perDay*measured(sample!.net,RETAINED_RECEIPT_BYTES)},retention);

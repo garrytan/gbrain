@@ -54,6 +54,7 @@ import * as factsPurge from './facts-purge.ts';
 import * as factsRepair from './facts-repair.ts';
 import * as factsTrust from './facts-trust.ts';
 import * as jobs from './jobs.ts';
+import * as housekeeping from './housekeeping.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeMisc from './write-misc.ts';
 import * as telemetry from './telemetry.ts';
@@ -85,7 +86,7 @@ export const STORE_MEMBERS = {
   ...persistenceIdentity,
   // Search telemetry (rust/docs/store/telemetry.md).
   ...telemetry,
-  ...persistence,
+  ...persistence, ...housekeeping,
   ...writeMisc,
   // The page write guards a page write runs around the page row (rust/docs/store/write-guards.md).
   ...writeGuards,
