@@ -753,7 +753,7 @@ export async function previewProjectionDrain(engine: Pick<BrainEngine, 'executeR
     FROM page_projection_jobs j ${projectionJobProbes({ media: true })}
     ORDER BY CASE WHEN p.page_kind NOT IN ('markdown','code') THEN 1
       WHEN EXISTS (SELECT 1 FROM pages q WHERE q.source_id=s.id AND q.slug=j.slug AND q.text_projection_revision='${ACTIVATION_SERVED_REVISION}'::uuid) THEN 2
-      ELSE 0 END,j.updated_at,j.source_incarnation,j.slug LIMIT $1`, [Math.max(1, limit)]);
+      ELSE 0 END,j.updated_at,j.source_incarnation,j.slug COLLATE "C" LIMIT $1`, [Math.max(1, limit)]);
   return { ...backlog, rows };
 }
 
@@ -783,7 +783,7 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
   const after = opts.window ? undefined : opts.walk?.after;
   if (after) {
     params.push(after.updated_at, after.source_incarnation, after.slug);
-    filters.push(`(j.updated_at,j.source_incarnation,j.slug)>($${params.length - 2}::text::timestamptz,$${params.length - 1}::uuid,$${params.length})`);
+    filters.push(`(j.updated_at,j.source_incarnation,j.slug COLLATE "C")>($${params.length - 2}::text::timestamptz,$${params.length - 1}::uuid,$${params.length} COLLATE "C")`);
   }
   const outer: string[] = [];
   if (opts.pages) outer.push(`s.id=$${params.push(opts.pages.sourceId)}`);
@@ -796,9 +796,9 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
   const jobs = selected ? selected.jobs.slice(0, Number(params[0])) : await engine.executeRaw<QueuedJob>(`SELECT s.id AS source_id,j.source_incarnation,j.slug,j.revision,p.page_kind,j.updated_at::text AS updated_at
     FROM (SELECT source_incarnation,slug,revision,updated_at FROM page_projection_jobs j
       ${filters.length ? `WHERE ${filters.join(' AND ')}` : ''}
-      ORDER BY updated_at,source_incarnation,slug OFFSET 0) j
+      ORDER BY updated_at,source_incarnation,slug COLLATE "C" OFFSET 0) j
     ${PROJECTION_JOB_PROBES} ${sourceFilter}
-    ORDER BY j.updated_at,j.source_incarnation,j.slug LIMIT $1`, params);
+    ORDER BY j.updated_at,j.source_incarnation,j.slug COLLATE "C" LIMIT $1`, params);
   let rebuilt = 0;
   let superseded = 0;
   let attempted = 0;

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { LATEST_VERSION, runMigrations } from '../src/core/migrate.ts';
+import { LATEST_VERSION, MIGRATIONS, runMigrations } from '../src/core/migrate.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { initializeLocalPersistence, submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { submissionAuthority } from '../src/core/persistence/authority.ts';
@@ -97,7 +97,7 @@ test('fresh and upgraded engines agree on the database-only pending index', asyn
       } finally { abort.abort(); release.resolve(); await holding; await interrupted; }
     }
     await engine.setConfig('version', '164');
-    expect(await runMigrations(engine)).toEqual({ applied: LATEST_VERSION - 164, current: LATEST_VERSION });
+    expect(await runMigrations(engine)).toEqual({ applied: MIGRATIONS.filter(m => m.version > 164).length, current: LATEST_VERSION });
     const [upgraded] = await engine.executeRaw<{ indexdef: string }>(
       "SELECT indexdef FROM pg_indexes WHERE indexname='persistence_requests_database_pending'");
     expect(upgraded.indexdef).toBe(fresh.indexdef);

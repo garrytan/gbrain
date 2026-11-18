@@ -487,6 +487,27 @@ describe('engine parity: write-journal housekeeping', () => {
     return answers;
   });
 
+  parityTest('the window read walks the queue in byte order of slug from any cursor, whatever the server locale', {
+    methods: ['putPage', 'readSourceMembership', 'selectProjectionWindowJobs'],
+  }, async (engine) => {
+    // Slugs are lower case. en_US.utf8 ignores the punctuation of 'a-b' and 'a_b' (so 'a1' sorts before them); byte order is a, a-b, a1, a_b, ab.
+    const bytes = ['notes/a', 'notes/a-b', 'notes/a1', 'notes/a_b', 'notes/ab'];
+    for (const slug of ['notes/ab', 'notes/a_b', 'notes/a1', 'notes/a', 'notes/a-b']) {
+      await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `${slug} body` });
+    }
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    const window = async (afterSlug: string) => (await engine.selectProjectionWindowJobs({ after: { source_incarnation: incarnation, slug: afterSlug }, highWater: null }, false))
+      .filter(r => r.lane === 'window').sort((x, y) => Number(x.ord) - Number(y.ord)).map(r => r.slug);
+    // From each slug the window lists the later slugs in byte order, then wraps to the start: no job skipped or repeated.
+    const walks: Record<string, Array<string | null>> = {};
+    for (const slug of bytes) walks[slug] = await window(slug);
+    walks[''] = await window('');
+    const expected: Record<string, string[]> = { '': bytes };
+    for (const [i, slug] of bytes.entries()) expected[slug] = [...bytes.slice(i + 1), ...bytes.slice(0, i + 1)];
+    expect(walks).toEqual(expected);
+    return walks;
+  });
+
   parityTest('the projection queue reads find no pending job on a brain whose pages are projected', {
     methods: ['listPendingSegmentedProjections', 'selectProjectionWindowJobs'],
   }, async (engine) => {

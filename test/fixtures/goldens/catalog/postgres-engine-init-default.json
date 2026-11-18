@@ -1470,6 +1470,7 @@
       "idx_oauth_grant_audit_client": "CREATE INDEX idx_oauth_grant_audit_client ON public.oauth_grant_audit USING btree (client_id, created_at)",
       "idx_oauth_tokens_client": "CREATE INDEX idx_oauth_tokens_client ON public.oauth_tokens USING btree (client_id)",
       "idx_oauth_tokens_expiry": "CREATE INDEX idx_oauth_tokens_expiry ON public.oauth_tokens USING btree (expires_at)",
+      "idx_page_projection_jobs_slug_c": "CREATE INDEX idx_page_projection_jobs_slug_c ON public.page_projection_jobs USING btree (source_incarnation, slug COLLATE \"C\")",
       "idx_pages_frontmatter": "CREATE INDEX idx_pages_frontmatter ON public.pages USING gin (frontmatter)",
       "idx_pages_projection_pending": "CREATE INDEX idx_pages_projection_pending ON public.pages USING btree (source_id, page_kind, slug) WHERE ((deleted_at IS NULL) AND (text_projection_revision IS DISTINCT FROM knowledge_revision))",
       "idx_pages_projection_waiting": "CREATE INDEX idx_pages_projection_waiting ON public.pages USING btree (source_id, page_kind, slug) WHERE ((deleted_at IS NULL) AND (text_projection_revision IS DISTINCT FROM knowledge_revision) AND (text_projection_revision IS DISTINCT FROM '00000000-0000-0000-0000-000000000153'::uuid))",
