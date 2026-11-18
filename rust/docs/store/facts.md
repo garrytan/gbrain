@@ -23,9 +23,11 @@ typed claims. Each member gives the answer PGLite gives today, odd behavior incl
 | `listFenceRetireCandidates`, `listFenceFactRows` | The fence guard's two reads of a page's fence rows (`facts/fence.rs`): the rows a publication would retire, and the live rows the writer may not supersede. See "The fence guard's reads". |
 | `migrateFactsToCanonical` | Moves a phantom page's active rows onto the canonical slug, `row_num` offset past the canonical page's largest. The ontology duplicates the move would make are dropped first, in its own write, as PGLite runs the two statements outside one transaction. |
 
-Rows go out with dates as microsecond ISO text, `embedding` as a number list (or null),
-`trust_tier` `unknown` and
-`write_origin` null. `fact_fingerprint` follows `gbrain_fact_fingerprint` (lowercase, fold the
+Rows go out with dates as microsecond ISO text, `embedding` as a number list (or null), and the
+stored `trust_tier` and `write_origin`. Every write of a fact row (insert, update, supersede, rename,
+purge) stamps them through `trust::stamp` from the store's write trust context
+([trust.md](trust.md#the-tier-stamp-truststamp), [write_trust.md](write_trust.md)), as PGLite's
+`gbrain_stamp_trust_tier` trigger does; a record written before the field existed reads `unknown`. `fact_fingerprint` follows `gbrain_fact_fingerprint` (lowercase, fold the
 fingerprint punctuation, collapse spaces, sha256 hex).
 
 ## Private-provenance policy (`facts/privacy.rs`)
@@ -213,7 +215,7 @@ table the store does not hold and refuse with `engine_capability_missing` (they 
 | `listCapturedFactsForClassification` | The same lane facts with their fingerprint and `legit_twin` (another non-expired fact of the source with the same visibility, entity and fingerprint outside the lanes). By (source, id). | Served |
 | `listWorldFactsFromPrivateSources` | Active `world` facts held in, or extracted from, a page that is private by `visibility`, a privacy alias or `readable_by`, with `readable`. By id. | Served |
 | `loopFactDrift` | Closed loops whose commitment fact is still active. | Refused: needs `open_loops` |
-| `closedLoopWithActiveFact` | One closed loop whose commitment fact is still active. | Refused: needs `open_loops` |
+| `closedLoopWithActiveFact` | One closed loop whose commitment fact is still active. | Served from `facts/loops.rs`: a `done` or `dropped` loop whose fact exists with no `expired_at` |
 | `countLabelFacts` | The bounded count of evidenced label facts. | Refused: needs `open_loops` and `fact_withdrawals` (it also matches a regular expression with `~*` over page text) |
 | `listExtractorFactsForClassification` | Expired fenceless extractor facts with page, withdrawal, duplicate, fence and receipt evidence. | Refused: needs `persistence_requests` and `fact_withdrawals` |
 | `countPurgedPageFacts` | The bounded count of facts of a purged page, by class. | Refused: needs `page_purges`, `fact_withdrawals` and `open_loops` |
@@ -273,6 +275,34 @@ provenance page hides the row; then the entity, session, `since` (on `valid_from
   other reads on the way (the word stems, the facts embedding column, the named-entity anchor and the
   nearest-vector arm); on Rust each of those is served or refused by the family that owns it.
 
+## Open loops (`facts/loops.rs`)
+
+The `open_loops` table, for the three members loops-store.ts calls through the engine and the
+`loops_close` retry read `closedLoopWithActiveFact`. The other loop statements (thread auto-close,
+the staleness pass, mutes and the other loop-fact reads) still run through `executeRaw`, so they
+refuse on this engine.
+
+| Member | What it does |
+|---|---|
+| `upsertOpenLoop` | Inserts a loop, or updates the row with the same `(source_id, dedup_key)`. The update runs only when the row is open, the new activity is newer, or `closed_by` is `mute_recheck`; and only when `closed_by` is not `muted` or the counterparty email changed. It keeps `thread_id` and `detector`, keeps the old slug, email, page, due time and fact id when the new one is NULL, and keeps the old counterparty source when the new slug is NULL. An open row keeps its earlier `opened_at`; a reopened row takes the new one. Returns `{ id, created, applied }`. |
+| `listOpenLoops` | The rows that pass the source list, status, type, counterparty (slug in the counterparty source, or email) and id filters, by `last_activity_at` descending, then id descending, at most the clamped limit. |
+| `closeOpenLoop` | Closes an open row (in the named source when one is given) with a status, `closed_by` and now. NULL when no open row matches. |
+| `closedLoopWithActiveFact` | `{ id, status, fact_id }` of a `done` or `dropped` row (in the named source when one is given) whose fact exists with no `expired_at`; NULL otherwise, also for a row with no fact. |
+
+- Every upsert takes an id from the counter, also one that lands on an existing row, as `nextval`
+  does before `ON CONFLICT`. A refused upsert (a CHECK value, an unknown source) rolls back and takes
+  none, where Postgres keeps the gap. No member exposes the gap.
+- `loop_type`, `detector` and the close `status` refuse with `constraint_violation` when the table's
+  CHECK list does not hold them. The close status is checked only when a row matches, as the
+  `UPDATE` checks only the rows it writes.
+- `confidence` is the `real` column: it is kept as `f32` and read back as its shortest text.
+- `evidence` is kept in jsonb key order.
+- Times: the store reads `YYYY-MM-DDTHH:MM:SS[.ffffff]Z`. The member rewrites an ISO time with an
+  offset and at most 3 fractional digits through `Date#toISOString`. It sends any other spelling (a
+  bare date, a time with no zone) as written, and the store refuses it with `invalid_argument`, where
+  Postgres would read it in the session time zone.
+- Deleting a source removes its loops (`ON DELETE CASCADE`).
+
 ## The fence guard's reads (`facts/fence.rs`)
 
 Two reads of one page's fact rows, for the page publication path (`engine-sql/facts.ts`
@@ -295,42 +325,13 @@ raises).
 What PGLite reads from the transaction, the store takes as a `FenceContext`: the writer's tier
 (`gbrain.write_trust_tier`, undeclared reads as `unknown`, a name that is no tier ranks 0) and the
 opened ids (`gbrain.write_open_facts`). Both napi members take it from the store's write trust context
-(`Store::fence_context`, [write_trust.md](write_trust.md)), which the engine's transaction sets. Two
-further gaps limit what `list_fence_fact_rows` answers:
-
-- A stored row has no tier column and reads as `unknown`. Only a writer below `unknown`
-  (`external_untrusted`) sees rows above it; a row an `operator_curated` write stored is not above an
-  `agent_written` writer, where PGLite lists it (`test/rust-expected-divergence/trust_fence.tsv`).
-- There is no `trust_proposals` table, so no row is ever held.
-
-## Open loops (`facts/loops.rs`)
-
-The `open_loops` table, for the three members loops-store.ts calls through the engine. The other loop
-statements (thread auto-close, the staleness pass, mutes and the loop-fact reads) still run through
-`executeRaw`, so they refuse on this engine.
-
-| Member | What it does |
-|---|---|
-| `upsertOpenLoop` | Inserts a loop, or updates the row with the same `(source_id, dedup_key)`. The update runs only when the row is open, the new activity is newer, or `closed_by` is `mute_recheck`; and only when `closed_by` is not `muted` or the counterparty email changed. It keeps `thread_id` and `detector`, keeps the old slug, email, page, due time and fact id when the new one is NULL, and keeps the old counterparty source when the new slug is NULL. An open row keeps its earlier `opened_at`; a reopened row takes the new one. Returns `{ id, created, applied }`. |
-| `listOpenLoops` | The rows that pass the source list, status, type, counterparty (slug in the counterparty source, or email) and id filters, by `last_activity_at` descending, then id descending, at most the clamped limit. |
-| `closeOpenLoop` | Closes an open row (in the named source when one is given) with a status, `closed_by` and now. NULL when no open row matches. |
-
-- Every upsert takes an id from the counter, also one that lands on an existing row, as `nextval`
-  does before `ON CONFLICT`. A refused upsert (a CHECK value, an unknown source) rolls back and takes
-  none, where Postgres keeps the gap. No member exposes the gap.
-- `loop_type`, `detector` and the close `status` refuse with `constraint_violation` when the table's
-  CHECK list does not hold them. The close status is checked only when a row matches, as the
-  `UPDATE` checks only the rows it writes.
-- `confidence` is the `real` column: it is kept as `f32` and read back as its shortest text.
-- `evidence` is kept in jsonb key order.
-- Times: the store reads `YYYY-MM-DDTHH:MM:SS[.ffffff]Z`. The member rewrites an ISO time with an
-  offset and at most 3 fractional digits through `Date#toISOString`. It sends any other spelling (a
-  bare date, a time with no zone) as written, and the store refuses it with `invalid_argument`, where
-  Postgres would read it in the session time zone.
-- Deleting a source removes its loops (`ON DELETE CASCADE`).
+(`Store::fence_context`, [write_trust.md](write_trust.md)), which the engine's transaction sets.
+`above` compares the row's stored tier with the writer's. A row is held when it is not `world`, a
+cell at its number with its fact asks for `world`, and a `confirm` or `supersede_fact` proposal
+names it as the related fact, is `pending`, `rejected` or `undone`, and has a `visibility` key in its
+before state (`trust::proposals::held_narrower`, [trust.md](trust.md#trust-proposals-trustproposals)).
 
 ## Not modeled
 
-The withdrawal ledger and the insert/update guards that read it, the write-attribution and
-trust-tier triggers. Inputs whose PGLite outcome the store cannot
+The withdrawal ledger and the insert/update guards that read it, and the write-attribution trigger. Inputs whose PGLite outcome the store cannot
 reproduce refuse in the member with `engine_capability_missing`.

@@ -67,6 +67,40 @@ hold `gbrain_fact_fingerprint_v1(claim)`, and every read matches both. Deleting 
 | `hasFactWithdrawalForSubject` | `has_fact_withdrawal_for_subject`: a scan of the source | `SELECT 1 … subject=$2 LIMIT 1` |
 | `listFactWithdrawalKeys` | `list_fact_withdrawal_keys`: sorted by visibility, fact_hash and subject in byte order, then cut to `limit` | `ORDER BY visibility, fact_hash, subject LIMIT $2` |
 
+## Trust proposals (`trust::proposals`)
+
+The `trust_proposals` queue (src/core/trust/schema.ts): the decisions a guard files for the owner (a contested
+supersession, a forget, a lowered page, a widening confirm). Keys:
+
+- `t 0x06 id` → proposal record.
+- `t 0x07 action\0target_table\0target_id\0related_table\0related_id` → the pending proposal's id (the partial
+  unique index `trust_proposals_pending_unique`; ids in decimal, an absent related row as `''` and `0`, as its
+  `COALESCE`). Only a `pending` proposal has this key.
+- `t 0x08 table\0` + row id (8 bytes, big-endian) + proposal id (8 bytes) → empty: the proposals naming a row as
+  target or related.
+
+Ids come from `pages::next_id("trust_proposals")`. Deleting a source removes its proposals (`ON DELETE CASCADE`,
+through `cascade::remove_source_rows`).
+
+| Member | Store method | PGLite statement |
+| --- | --- | --- |
+| `insertTrustProposal` | `insert_trust_proposal`: takes an id first, then returns the pending proposal of the same key with `created: false`, so a refused insert uses up an id as BIGSERIAL does | `INSERT … ON CONFLICT DO NOTHING RETURNING id`, then `SELECT id … status = 'pending'` |
+| `getTrustProposal` | `get_trust_proposal`: a point read (the `FOR UPDATE` lock is the store's one writer) | `SELECT * … WHERE id = $1` |
+| `listTrustProposals` | `list_trust_proposals`: filters on status (`all`), source, action and `since`; sorted by `created_at` then id, cut to the limit | `… ORDER BY created_at, id LIMIT $5` |
+| `pendingTrustProposalsFor` | `pending_trust_proposals_for`: the pending proposals naming the row, by id | `… WHERE status = 'pending' AND (target … OR related …) ORDER BY id` |
+| `updatePendingTrustProposalAfter` | `update_pending_trust_proposal_after`: a pending proposal only | `UPDATE … WHERE id = $1 AND status = 'pending'` |
+| `transitionTrustProposal` | `transition_trust_proposal`: compare-and-set on status; sets `decided_at` for `accepted`, `rejected` and `undone`; keeps the pending key current | `UPDATE … WHERE id = $1 AND status = $2 RETURNING id` |
+
+Rust guesses and gaps (1x parity):
+
+- `proposer_principal_kind`, `proposer_principal_id` and `write_request_id` read NULL. PGLite fills them from the
+  transaction's `gbrain.write_principal_kind`, `gbrain.write_principal_id` and `gbrain.write_request` settings, which
+  the store's write trust context does not carry yet.
+- A move back to `pending` that another pending proposal already holds refuses with `constraint_violation`, where
+  Postgres raises a unique violation; a status, action or table the CHECK constraints refuse refuses with
+  `invalid_argument`. A source that does not exist refuses as the foreign key does.
+- The guest-source rules are not modelled (there is no `guest_sources` table).
+
 Not built (they still run through `executeRaw`, which the Rust engine refuses): the reads that also read `fact_purges`
 (`isFactWithdrawn`, the ambiguous-fence check, the export snapshot), the reads that join `facts` (the effect-target
 request, the single-fact prepare, the repair and review lanes), the meta-hook watermark, and the `facts` insert guard
