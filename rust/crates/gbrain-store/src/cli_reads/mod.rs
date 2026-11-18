@@ -3,4 +3,5 @@
 //! same rows the PGLite and Postgres engines answer, so each lane edits only its own file.
 
 pub mod import;
+pub mod search_reads_pages;
 pub mod sources;

@@ -180,6 +180,104 @@ describe('engine parity: search reads', () => {
   );
 
   parityTest(
+    'slugsEndingIn: case-sensitive literal suffix after a slash, whole-slug match, exact source, restored pages',
+    { methods: ['putPage', 'softDeletePage', 'restorePage', 'slugsEndingIn'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      for (const slug of ['notes/widget', 'archive/notes/widget', 'notes/a-b', 'notes/back', 'notes/idget-not']) await put(engine, slug);
+      await engine.softDeletePage('notes/back');
+      const whileDeleted = await engine.slugsEndingIn('default', 'back');
+      await engine.restorePage('notes/back');
+      const out = {
+        twoExact: sorted(await engine.slugsEndingIn('default', 'widget')),
+        withSlash: sorted(await engine.slugsEndingIn('default', 'notes/widget')),
+        noSlash: await engine.slugsEndingIn('default', 'idget'),
+        upper: await engine.slugsEndingIn('default', 'WIDGET'),
+        percent: await engine.slugsEndingIn('default', 'a%b'),
+        underscore: await engine.slugsEndingIn('default', 'a_b'),
+        backslash: await engine.slugsEndingIn('default', 'a\\b'),
+        empty: await engine.slugsEndingIn('default', ''),
+        whileDeleted,
+        restored: await engine.slugsEndingIn('default', 'back'),
+        sourcePrefix: await engine.slugsEndingIn('oth', 'widget'),
+        unknownSource: await engine.slugsEndingIn('nowhere', 'widget'),
+      };
+      expect(out.twoExact).toEqual(['archive/notes/widget', 'notes/widget']);
+      expect(out.withSlash).toEqual(['archive/notes/widget', 'notes/widget']);
+      expect(out.restored).toEqual(['notes/back']);
+      return out;
+    },
+  );
+
+  parityTest(
+    'generatedPagesIn: soft-deleted and other-source pages count, a JSON true or the text "true" at the top level only',
+    { methods: ['putPage', 'softDeletePage', 'generatedPagesIn'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      const pages = [
+        await put(engine, 'notes/dream-bool', { frontmatter: { dream_generated: true, topic: 'a' }, compiled_truth: 'bool body' }),
+        await put(engine, 'notes/dream-text', { frontmatter: { dream_generated: 'true' } }),
+        await put(engine, 'notes/dream-false', { frontmatter: { dream_generated: false } }),
+        await put(engine, 'notes/dream-upper', { frontmatter: { dream_generated: 'TRUE' } }),
+        await put(engine, 'notes/dream-one', { frontmatter: { dream_generated: 1 } }),
+        await put(engine, 'notes/dream-nested', { frontmatter: { meta: { dream_generated: true } } }),
+        await put(engine, 'notes/receipt-gone', { type: 'extract_receipt' }),
+        await put(engine, 'notes/dream-gone', { frontmatter: { dream_generated: true } }),
+        await put(engine, 'notes/dream-other', { frontmatter: { dream_generated: true } }, { sourceId: 'other' }),
+        await put(engine, 'notes/human'),
+      ];
+      await engine.softDeletePage('notes/receipt-gone');
+      await engine.softDeletePage('notes/dream-gone');
+      const name = slugsOf(pages);
+      const ids = pages.map(p => Number(p.id));
+      const view = (rows: Array<{ id: number; frontmatter: Record<string, unknown> | null; compiled_truth: string | null }>) =>
+        sorted(rows.map(r => ({ slug: name([r.id])[0], frontmatter: r.frontmatter, compiled_truth: r.compiled_truth })), r => r.slug!);
+      const all = view(await engine.generatedPagesIn([...ids, ...ids, 2147483647, 0, -1]));
+      const one = view(await engine.generatedPagesIn([ids[1]!]));
+      const none = await engine.generatedPagesIn([ids[9]!]);
+      const empty = await engine.generatedPagesIn([]);
+      const refused: Record<string, boolean> = {};
+      for (const [label, bad] of [['above int4', 2147483648], ['below int4', -2147483649], ['fraction', 1.5]] as const) {
+        refused[label] = await engine.generatedPagesIn([ids[0]!, bad]).then(() => false, () => true);
+      }
+      expect(all.map(r => r.slug)).toEqual(['notes/dream-bool', 'notes/dream-gone', 'notes/dream-other', 'notes/dream-text', 'notes/receipt-gone']);
+      expect(all.length).toBe(5);
+      return { all, one, none, empty, refused };
+    },
+  );
+
+  parityTest(
+    'livePageIdsAt: one id per live page however often its ref repeats, source and slug together, restored pages',
+    { methods: ['putPage', 'softDeletePage', 'restorePage', 'livePageIdsAt'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      const pages = [
+        await put(engine, 'notes/a'), await put(engine, 'notes/b'), await put(engine, 'notes/gone'), await put(engine, 'notes/back'),
+        await put(engine, 'notes/a', {}, { sourceId: 'other' }), await put(engine, 'notes/only-other', {}, { sourceId: 'other' }),
+      ];
+      const key = new Map(pages.map(p => [Number(p.id), `${p.source_id}:${p.slug}`]));
+      const name = (ids: number[]) => ({ count: ids.length, pages: sorted(ids.map(id => key.get(Number(id)) ?? `unknown:${id}`)) });
+      await engine.softDeletePage('notes/gone');
+      await engine.softDeletePage('notes/back');
+      const ref = (source_id: string, slug: string) => ({ source_id, slug });
+      const whileDeleted = name(await engine.livePageIdsAt([ref('default', 'notes/back')]));
+      await engine.restorePage('notes/back');
+      const out = {
+        repeated: name(await engine.livePageIdsAt([ref('default', 'notes/a'), ref('default', 'notes/a'), ref('other', 'notes/a'), ref('default', 'notes/a')])),
+        crossed: name(await engine.livePageIdsAt([ref('default', 'notes/only-other'), ref('other', 'notes/b'), ref('missing', 'notes/a')])),
+        deleted: name(await engine.livePageIdsAt([ref('default', 'notes/gone'), ref('default', 'notes/b')])),
+        whileDeleted,
+        restored: name(await engine.livePageIdsAt([ref('default', 'notes/back')])),
+        empty: await engine.livePageIdsAt([]),
+      };
+      expect(out.repeated).toEqual({ count: 2, pages: ['default:notes/a', 'other:notes/a'] });
+      expect(out.crossed.count).toBe(0);
+      expect(out.restored.count).toBe(1);
+      return out;
+    },
+  );
+
+  parityTest(
     'cosinesByChunkIds: text-space cosine per visible embedded chunk; unembedded and deleted chunks are absent',
     { methods: ['putPage', 'sealChunks', 'getChunks', 'softDeletePage', 'cosinesByChunkIds'] },
     async (engine) => {
