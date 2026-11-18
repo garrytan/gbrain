@@ -76,7 +76,7 @@ export function checkSendText(text: string): string | null {
 
 /** The helper's recipient form: an E.164 phone number or a lower-cased email address; null when neither. */
 export function normalizeRecipient(raw: string): string | null {
-  const value = raw.trim();
+  const value = raw.replace(/^[ \t]+|[ \t]+$/g, '');
   if (value.includes('@')) {
     const lower = value.toLowerCase();
     const parts = lower.split('@');

@@ -44,6 +44,9 @@ describe('send-sign', () => {
     expect(checkSendText('a'.repeat(2001))).not.toBeNull();
     expect(checkSendText('👋🏽'.repeat(1000))).toBeNull();
     expect(checkSendText('👋🏽'.repeat(1001))).not.toBeNull();
+    expect(checkSendText('a\u0301'.repeat(2000))).toBeNull();
+    expect(checkSendText('a\u0301'.repeat(2000) + 'a')).not.toBeNull();
+    expect(checkSendText('a\u0301\u0301'.repeat(1500))).not.toBeNull();
   });
 
   test('normalises recipients the way the helper does', () => {
@@ -53,5 +56,21 @@ describe('send-sign', () => {
     expect(normalizeRecipient('+0123456789')).toBeNull();
     expect(normalizeRecipient('a@b')).toBeNull();
     expect(normalizeRecipient('a"b@example.invalid')).toBeNull();
+    expect(normalizeRecipient('\t+15550100 ')).toBe('+15550100');
+    expect(normalizeRecipient('+15550100\n')).toBeNull();
+    expect(normalizeRecipient('test@example.invalid\n')).toBeNull();
+    expect(normalizeRecipient('+155501')).toBeNull();
+    expect(normalizeRecipient('+1555010')).toBe('+1555010');
+    expect(normalizeRecipient('+155501001001234')).toBe('+155501001001234');
+    expect(normalizeRecipient('+1555010010012345')).toBeNull();
+    expect(normalizeRecipient('a@b@example.invalid')).toBeNull();
+    expect(normalizeRecipient('a@.example.invalid')).toBeNull();
+    expect(normalizeRecipient('a@example.invalid.')).toBeNull();
+    expect(normalizeRecipient('a'.repeat(250) + '@b.io')).toBeNull();
+  });
+
+  test('refuses a seed of the wrong length', () => {
+    expect(() => sendKeyPairFromSeed(Buffer.alloc(31))).toThrow();
+    expect(() => sendKeyPairFromSeed(Buffer.alloc(33))).toThrow();
   });
 });

@@ -69,6 +69,7 @@ public final class SendService {
     }
 
     public func start() {
+        if var state = try? store.load() { observeKill(&state) }
         queue.sync {
             let now = clock.now()
             audit.applyRetention(now: now)
@@ -84,14 +85,25 @@ public final class SendService {
         .problem(problem.sideEffects == nil ? problem.with() : problem)
     }
 
+    func observeKill(_ state: inout SendState) {
+        guard state.enabled, !switchedOn() else { return }
+        state.enabled = false
+        do {
+            try store.save(state)
+        } catch {
+            Log.line("send: could not record that the config switch turned sending off")
+        }
+    }
+
     public func handle(_ request: HTTPRequest, peer: UInt32) -> SendReply {
         let now = clock.now()
-        let state: SendState
+        var state: SendState
         do {
             state = try store.load() ?? SendState()
         } catch {
             return fail((error as? Problem) ?? .sendKeysUnreadable)
         }
+        observeKill(&state)
         guard state.enabled, switchedOn() else { return fail(.sendDisabled) }
         let idempotencyKey = request.headers["idempotency-key"] ?? ""
         guard SendSignature.validIdempotencyKey(idempotencyKey) else { return fail(.idempotencyKeyRequired) }
@@ -116,10 +128,19 @@ public final class SendService {
             inflight.remove(idempotencyKey)
             lock.unlock()
         }
-        return queue.sync { serially(send, key: idempotencyKey, keyName: key.name, peer: peer, limits: state.limits) }
+        return queue.sync { serially(send, key: idempotencyKey, keyName: key.name, peer: peer) }
     }
 
-    func serially(_ send: SendRequest, key: String, keyName: String, peer: UInt32, limits: SendLimits) -> SendReply {
+    func serially(_ send: SendRequest, key: String, keyName: String, peer: UInt32) -> SendReply {
+        let limits: SendLimits
+        do {
+            let state = try store.load() ?? SendState()
+            guard state.enabled, switchedOn() else { return fail(.sendDisabled) }
+            guard state.keys.contains(where: { $0.name == keyName }) else { return fail(.unknownSendKey) }
+            limits = state.limits
+        } catch {
+            return fail((error as? Problem) ?? .sendKeysUnreadable)
+        }
         var now = clock.now()
         if let last = lastRetention, now.timeIntervalSince(last) > 86400 {
             audit.applyRetention(now: now)
@@ -127,7 +148,11 @@ public final class SendService {
         }
         let hash = send.canonicalHash
         if let entry = audit.replayable(key, now: now) {
-            guard entry.pending.hash == hash else { return fail(.idempotencyConflict) }
+            guard entry.pending.hash == hash else {
+                let first = entry.outcome?.outcome
+                let effects = first == Outcome.sent ? SideEffects.sent : first == Outcome.failedAfterSubmit ? SideEffects.none : SideEffects.possible
+                return fail(Problem.idempotencyConflict.with(sideEffects: effects))
+            }
             return respond(resolve(key: key, entry: entry), key: key, replayed: true)
         }
         let firstContact: Bool
@@ -177,9 +202,10 @@ public final class SendService {
             return record(.unknownOutcome(error: Int64(number)), pending: pending)
         }
         let deadline = clock.now().addingTimeInterval(confirmWindow)
+        let claimed = claimedGuids(except: key)
         var delivery = Delivery.pending
         while true {
-            delivery = (try? ledger.delivery(after: highWater, to: send.to, text: send.text, guid: guid)) ?? .pending
+            delivery = (try? ledger.delivery(after: highWater, to: send.to, text: send.text, guid: guid, sentBy: nil, skipping: claimed)) ?? .pending
             now = clock.now()
             guard delivery == .pending, now < deadline else { break }
             clock.sleep(pollInterval)
@@ -279,13 +305,18 @@ public final class SendService {
         if let outcome = entry.outcome, outcome.outcome != Outcome.unknown { return Final.from(outcome) }
         let pending = entry.pending
         guard let to = pending.to, let text = pending.text, let highWater = pending.highWater,
-              let delivery = try? ledger.delivery(after: highWater, to: to, text: text, guid: nil), delivery != .pending else {
+              let delivery = try? ledger.delivery(after: highWater, to: to, text: text, guid: nil, sentBy: pending.date?.addingTimeInterval(confirmWindow + 60),
+                                                  skipping: claimedGuids(except: key)), delivery != .pending else {
             if entry.outcome == nil { write(outcomeRecord(.unknownOutcome(error: nil), pending: pending)) }
             return entry.outcome.map(Final.from) ?? .unknownOutcome(error: nil)
         }
         let final = Final.from(delivery)
         write(outcomeRecord(final, pending: pending))
         return final
+    }
+
+    func claimedGuids(except key: String) -> Set<String> {
+        Set(audit.entries.compactMap { $0.key == key ? nil : $0.value.outcome?.guid }.filter { !$0.isEmpty })
     }
 
     func respond(_ final: Final, key: String, replayed: Bool) -> SendReply {
@@ -307,6 +338,7 @@ public final class SendService {
         }
         do {
             var state = try store.load() ?? SendState()
+            observeKill(&state)
             var automation: String?
             var banners: Bool?
             switch action {

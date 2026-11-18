@@ -153,9 +153,14 @@ public final class SendAudit {
     }
 
     public func append(_ record: AuditRecord, now: Date) throws {
-        apply(record)
         unwritten.append(record)
-        try flush(now: now)
+        do {
+            try flush(now: now)
+        } catch {
+            if record.kind == "pending" { unwritten.removeLast() } else { apply(record) }
+            throw error
+        }
+        apply(record)
     }
 
     public func flush(now: Date) throws {

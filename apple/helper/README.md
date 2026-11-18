@@ -68,7 +68,7 @@ Two optional blocks turn on sending:
 }
 ```
 
-`listen.tailnet.allowed_peers` lists the Tailscale IPv4 addresses that may send; `host` is optional and defaults to this Mac's Tailscale address. `send.enabled` is the kill switch: the helper reads it on every send, so `false` stops the next send with no restart. It can only stop sending; turning sending on also needs the owner's Touch ID (below).
+`listen.tailnet.allowed_peers` lists the Tailscale IPv4 addresses that may send; `host` is optional and defaults to this Mac's Tailscale address. `send.enabled` is the kill switch: the helper reads it on every send, so `false` stops the next send with no restart. It can only stop sending: once the helper sees it off, turning sending on again needs the owner's Touch ID (below), and a send already waiting in line is refused too.
 
 ## Commands
 
@@ -131,7 +131,7 @@ One send runs at a time. The helper checks the idempotency key and the limits, w
 | `failed_after_submit` | 502 | `none` | Messages took it and reported an error; nothing was delivered | the same key replays this answer |
 | any other problem | 4xx, 5xx | `none` | refused before anything reached Messages | per its `retryable`; the same key may be retried |
 
-Every answer carries `outcome`, `code`, `retryable`, `side_effects` and `replayed`. A retry with the same key and the same message (compared after normalising the recipient and the text) returns the first answer with `replayed: true` for 7 days and never sends again. A pending send the helper died during is checked against the Messages database when it starts.
+Every answer carries `outcome`, `code`, `retryable`, `side_effects` and `replayed`. A retry with the same key and the same body (all four fields, compared after normalising the recipient and the text) returns the first answer with `replayed: true` for 7 days and never sends again. A pending send the helper died during is checked against the Messages database when it starts.
 
 ### Limits
 
@@ -225,7 +225,7 @@ A send had no valid `Idempotency-Key` header. Nothing was sent.
 
 ### idempotency_conflict
 
-The key was used for a different message in the last 7 days. Nothing was sent.
+The key was used for a different body in the last 7 days. This message was not sent; `side_effects` says what happened to the first message under that key, so `sent` or `possible` means don't resend it under a new key.
 
 ### send_in_progress
 

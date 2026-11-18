@@ -49,7 +49,7 @@ public struct SendRequest: Equatable {
 
 public enum Recipient {
     public static func normalize(_ raw: String) -> String? {
-        let value = raw.trimmingCharacters(in: .whitespaces)
+        let value = raw.trimmingCharacters(in: CharacterSet(charactersIn: " \t"))
         if value.contains("@") {
             let lower = value.lowercased()
             let parts = lower.split(separator: "@", omittingEmptySubsequences: false)

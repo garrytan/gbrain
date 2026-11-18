@@ -8,7 +8,7 @@ public enum Delivery: Equatable {
 
 public protocol DeliveryLedger {
     func highWater() throws -> Int64
-    func delivery(after highWater: Int64, to recipient: String, text: String, guid: String?) throws -> Delivery
+    func delivery(after highWater: Int64, to recipient: String, text: String, guid: String?, sentBy: Date?, skipping: Set<String>) throws -> Delivery
     func hasOneToOneHistory(with recipient: String) throws -> Bool
 }
 
@@ -31,18 +31,19 @@ public final class ChatDeliveryLedger: DeliveryLedger {
         return value
     }
 
-    public func delivery(after highWater: Int64, to recipient: String, text: String, guid: String?) throws -> Delivery {
+    public func delivery(after highWater: Int64, to recipient: String, text: String, guid: String?, sentBy: Date?, skipping: Set<String>) throws -> Delivery {
         let db = try open()
         let body = db.has("message", "attributedBody") ? "m.attributedBody" : "NULL"
         let sent = db.has("message", "is_sent") ? "m.is_sent" : "0"
         let error = db.has("message", "error") ? "m.error" : "0"
         let sql = "SELECT m.ROWID, m.guid, m.text, \(body), \(sent), \(error), h.id FROM message m LEFT JOIN handle h ON h.ROWID = m.handle_id "
-            + "WHERE m.ROWID > ? AND m.is_from_me = 1 ORDER BY m.ROWID LIMIT 500"
+            + "WHERE m.ROWID > ? AND m.is_from_me = 1 AND \(AppleTime.normalizedSQL("m.date")) <= ? ORDER BY m.ROWID LIMIT 500"
         let wanted = text.precomposedStringWithCanonicalMapping
         var result = Delivery.pending
-        try db.query(sql, [.int(highWater)]) { row in
+        try db.query(sql, [.int(highWater), .int(sentBy.map(AppleTime.raw(from:)) ?? .max)]) { row in
             guard result == .pending else { return }
             let rowGuid = row.text(1) ?? ""
+            guard !skipping.contains(rowGuid) else { return }
             if let guid, !guid.isEmpty {
                 guard rowGuid == guid else { return }
             } else {

@@ -22,7 +22,7 @@ extension Problem {
     public static let idempotencyKeyRequired = Problem(code: "idempotency_key_required", status: 400, title: "Idempotency-Key required",
                                                       detail: "A send needs an Idempotency-Key header of 8 to 128 characters from A-Z, a-z, 0-9, dot, underscore and hyphen.")
     public static let idempotencyConflict = Problem(code: "idempotency_conflict", status: 409, title: "Idempotency-Key reused",
-                                                   detail: "This Idempotency-Key was already used for a different message in the last 7 days. Nothing was sent.")
+                                                   detail: "This Idempotency-Key was already used for a different message in the last 7 days. This message was not sent; side_effects says what happened to the first one.")
     public static let sendInProgress = Problem(code: "send_in_progress", status: 409, title: "Send in progress",
                                               detail: "A send with this Idempotency-Key is still running. Retry with the same key.",
                                               retryable: true, retryAfter: 5)

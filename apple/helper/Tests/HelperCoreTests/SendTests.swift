@@ -59,14 +59,16 @@ final class FakeLedger: DeliveryLedger {
     var history = Set<String>()
     var failing = false
     var lookups: [Int64] = []
+    var bounds: [Date?] = []
 
     func highWater() throws -> Int64 {
         if failing { throw DBError.noAccess }
         return mark
     }
 
-    func delivery(after highWater: Int64, to recipient: String, text: String, guid: String?) throws -> Delivery {
+    func delivery(after highWater: Int64, to recipient: String, text: String, guid: String?, sentBy: Date?, skipping: Set<String>) throws -> Delivery {
         lookups.append(highWater)
+        bounds.append(sentBy)
         return result
     }
 
@@ -219,6 +221,13 @@ final class Harness {
         #expect((try? SendRequest.checkText(String(repeating: "👋🏽", count: 1001))) == nil)
     }
 
+    @Test func normalisesRecipientsLikeTheSigner() {
+        #expect(Recipient.normalize("\t+15550100 ") == "+15550100")
+        #expect(Recipient.normalize("+15550100\n") == nil)
+        #expect(Recipient.normalize("test@example.invalid\n") == nil)
+        #expect(Recipient.normalize(" Test@Example.Invalid ") == "test@example.invalid")
+    }
+
     @Test func hashesACanonicalForm() throws {
         let a = try SendRequest.parse(Array(#"{"to":"+1 (555) 010-0100","text":"cafe\u0301","requested_by":"owner","owner_instruction":"x"}"#.utf8))
         let b = try SendRequest.parse(Array("{ \"owner_instruction\" : \"x\", \"requested_by\":\"owner\", \"text\":\"café\", \"to\":\"+15550100100\" }".utf8))
@@ -242,6 +251,7 @@ final class Harness {
         #expect(h.messages.count == 1)
         let changed = h.send(h.request(h.body(text: "Something else")))
         #expect(changed.json["code"] as? String == "idempotency_conflict")
+        #expect(changed.json["side_effects"] as? String == "sent")
         #expect(h.messages.count == 1)
         #expect(h.banner.posts.count == 1)
     }
@@ -276,6 +286,41 @@ final class Harness {
         #expect(second.status == 409)
         #expect(second.json["code"] as? String == "send_in_progress")
         #expect(h.send(h.request(h.body())).json["replayed"] as? Bool == true)
+    }
+
+    @Test func queuedSendsStopWhenSendingIsTurnedOff() {
+        let h = Harness()
+        h.messages.gate = DispatchSemaphore(value: 0)
+        let group = DispatchGroup()
+        var first = 0
+        var second: (status: Int, json: [String: Any]) = (0, [:])
+        let one = h.request(h.body())
+        let two = h.request(h.body(text: "Second"), key: "owner-msg-0002")
+        group.enter()
+        DispatchQueue.global().async {
+            first = h.send(one).status
+            group.leave()
+        }
+        let deadline = Date().addingTimeInterval(10)
+        while h.messages.count == 0 && Date() < deadline { Thread.sleep(forTimeInterval: 0.01) }
+        group.enter()
+        DispatchQueue.global().async {
+            second = h.send(two)
+            group.leave()
+        }
+        func queued() -> Bool {
+            h.service.lock.lock()
+            defer { h.service.lock.unlock() }
+            return h.service.inflight.contains("owner-msg-0002")
+        }
+        while !queued() && Date() < deadline { Thread.sleep(forTimeInterval: 0.01) }
+        h.switchedOn = false
+        h.messages.gate?.signal()
+        h.messages.gate?.signal()
+        group.wait()
+        #expect(first == 200)
+        #expect(second.json["code"] as? String == "send_disabled")
+        #expect(h.messages.count == 1)
     }
 
     @Test func parallelSendsCannotPassTheLimit() {
@@ -416,6 +461,17 @@ final class Harness {
         #expect(h.messages.count == 0)
     }
 
+    @Test func retryAfterTheLogFailedSendsOnce() throws {
+        let h = Harness()
+        FileManager.default.createFile(atPath: h.directory, contents: Data())
+        #expect(h.send(h.request(h.body())).json["code"] as? String == "audit_unavailable")
+        try FileManager.default.removeItem(atPath: h.directory)
+        let retry = h.send(h.request(h.body()))
+        #expect(retry.status == 200)
+        #expect(retry.json["replayed"] as? Bool == false)
+        #expect(h.messages.count == 1)
+    }
+
     @Test func refusesWithoutFullDiskAccess() {
         let h = Harness()
         h.ledger.failing = true
@@ -448,6 +504,7 @@ final class Harness {
         try h.audit.append(pending, now: h.clock.now)
         h.service.start()
         #expect(h.auditLines().last?.outcome == "sent")
+        #expect(h.ledger.bounds == [h.clock.now.addingTimeInterval(90)])
         let replay = h.send(h.request(h.body()))
         #expect(replay.json["replayed"] as? Bool == true)
         #expect(replay.json["outcome"] as? String == "sent")
@@ -513,6 +570,24 @@ final class Harness {
         #expect(admin(h, ["action": "off"]).1["send"] as? String == "off")
         #expect(h.presence.reasons.count == 5)
         #expect(admin(h, ["action": "add_key", "name": "bad", "public_key": "abc"]).1["code"] as? String == "bad_param")
+    }
+
+    @Test func turningSendingBackOnAfterTheConfigSwitchNeedsTheOwner() {
+        let h = Harness()
+        h.switchedOn = false
+        #expect(h.send(h.request(h.body())).json["code"] as? String == "send_disabled")
+        #expect(h.store.state?.enabled == false)
+        h.switchedOn = true
+        h.presence.answer = .unavailable
+        #expect(admin(h, ["action": "setup"]).1["code"] as? String == "owner_presence_unavailable")
+        #expect(h.send(h.request(h.body())).json["code"] as? String == "send_disabled")
+        h.presence.answer = .confirmed
+        #expect(admin(h, ["action": "setup"]).1["send"] as? String == "on")
+        #expect(h.send(h.request(h.body())).status == 200)
+        let down = Harness()
+        down.switchedOn = false
+        down.service.start()
+        #expect(down.store.state?.enabled == false)
     }
 }
 
@@ -593,16 +668,22 @@ final class Harness {
         let ledger = ChatDeliveryLedger(dbPath: fixture.path)
         let mark = try ledger.highWater()
         #expect(mark == 12)
-        #expect(try ledger.delivery(after: mark, to: "+15550100", text: "reply", guid: nil) == .pending)
+        #expect(try ledger.delivery(after: mark, to: "+15550100", text: "reply", guid: nil, sentBy: nil, skipping: []) == .pending)
         fixture.message(13, chat: 1, text: "reply", date: minutes(20), fromMe: true, handle: 1)
-        #expect(try ledger.delivery(after: mark, to: "+15550100", text: "reply", guid: nil) == .pending)
+        #expect(try ledger.delivery(after: mark, to: "+15550100", text: "reply", guid: nil, sentBy: nil, skipping: []) == .pending)
         fixture.exec("UPDATE message SET is_sent = 1 WHERE ROWID = 13")
-        #expect(try ledger.delivery(after: mark, to: "+15550100", text: "reply", guid: nil) == .sent(guid: "GUID-13", rowid: 13))
-        #expect(try ledger.delivery(after: mark, to: "+15550111", text: "reply", guid: nil) == .pending)
+        #expect(try ledger.delivery(after: mark, to: "+15550100", text: "reply", guid: nil, sentBy: nil, skipping: []) == .sent(guid: "GUID-13", rowid: 13))
+        #expect(try ledger.delivery(after: mark, to: "+15550111", text: "reply", guid: nil, sentBy: nil, skipping: []) == .pending)
         fixture.message(14, chat: 1, text: "second", date: minutes(21), fromMe: true, handle: 1)
         fixture.exec("UPDATE message SET error = 22 WHERE ROWID = 14")
-        #expect(try ledger.delivery(after: mark, to: "+15550100", text: "second", guid: nil) == .failed(error: 22, guid: "GUID-14", rowid: 14))
-        #expect(try ledger.delivery(after: mark, to: "+15550100", text: "anything", guid: "GUID-14") == .failed(error: 22, guid: "GUID-14", rowid: 14))
+        #expect(try ledger.delivery(after: mark, to: "+15550100", text: "second", guid: nil, sentBy: nil, skipping: []) == .failed(error: 22, guid: "GUID-14", rowid: 14))
+        #expect(try ledger.delivery(after: mark, to: "+15550100", text: "anything", guid: "GUID-14", sentBy: nil, skipping: []) == .failed(error: 22, guid: "GUID-14", rowid: 14))
+        fixture.message(15, chat: 1, text: "reply", date: minutes(90), fromMe: true, handle: 1)
+        fixture.exec("UPDATE message SET is_sent = 1 WHERE ROWID = 15")
+        let soon = AppleTime.date(fromRaw: minutes(30))
+        #expect(try ledger.delivery(after: mark, to: "+15550100", text: "reply", guid: nil, sentBy: soon, skipping: []) == .sent(guid: "GUID-13", rowid: 13))
+        #expect(try ledger.delivery(after: mark, to: "+15550100", text: "reply", guid: nil, sentBy: soon, skipping: ["GUID-13"]) == .pending)
+        #expect(try ledger.delivery(after: mark, to: "+15550100", text: "reply", guid: nil, sentBy: nil, skipping: ["GUID-13"]) == .sent(guid: "GUID-15", rowid: 15))
     }
 
     @Test func knowsWhoWasTextedOneToOne() throws {

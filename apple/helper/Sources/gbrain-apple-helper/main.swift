@@ -115,6 +115,9 @@ case "token":
 case "send-setup":
     var config = lockedConfig()
     let off = arguments.contains("--off")
+    if !off, config.send?.enabled != true, AdminClient.post(port: UInt16(config.port), fields: ["action": "off"], timeout: 10)?.0 != 200 {
+        fail("GBrain Helper isn't answering on 127.0.0.1:\(config.port). Start it, then run send-setup again.", code: 69)
+    }
     config.send = SendSetting(enabled: !off)
     save(config)
     if off {
