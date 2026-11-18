@@ -1116,6 +1116,12 @@ Timeline reads by date and event projections.
 - **Depends on:** The timeline entry helpers and the `remove_event_projections` stub (both built; fill in the stub). Ask core for a date index hook if a scan is too slow.
 - **Estimate:** about 1 to 2 days.
 - **Notes:** Dates are `YYYY-MM-DD` text. `getOnThisDay` matches month and day across years.
+- **Follow-up (timeline-member-dedupe):** `removeTimelineRows` (`engine-sql/timeline.ts`) and `deleteTimelineRows`
+  (`engine-sql/timeline-reads.ts`) do the same work: delete a page's timeline rows that still match field for field,
+  and report each date. The canonical projection (`persistence/canonical-projections.ts`) calls `removeTimelineRows`
+  on the persistence branch and `deleteTimelineRows` on the CLI members branch. Both members stay, each with its own
+  Rust store member, until a later change moves every caller to one of them and retires the other on all three
+  engines and the Rust store.
 - **Parity cases (8, in `timeline.test.ts`):**
   - `timeline.test.ts`: removeTimelineRows deletes only the rows that still match field for field, never an event projection or another page, and reports each deleted date
   - `timeline.test.ts`: removeTimelineRows reads dates as dates and keeps the page order of the deleted rows
