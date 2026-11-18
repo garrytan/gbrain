@@ -150,6 +150,7 @@ test/engine-parity/takes.test.ts
 test/engine-parity/timeline.test.ts
 test/engine-parity/versions-raw.test.ts
 test/engine-parity/wanted-links.test.ts
+test/engine-parity/write-guards.test.ts
 test/engine-sql-facts-keyset.test.ts
 test/eval-log-tables-parity.test.ts
 test/extract-all-stamp-intersection.serial.test.ts

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 269/269
+# covered: 276/276
 # lifecycle: 9/9
 # pages: 31/31
 # search: 7/7
@@ -37,6 +37,7 @@
 # salience_enrich: 5/5
 # cli_reads_import: 11/11
 # wanted_links: 2/2
+# write_guards: 7/7
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
 connect	lifecycle	yes	1	yes	yes	yes	serves
 disconnect	lifecycle	yes	1	yes	yes	yes	serves
@@ -47,17 +48,17 @@ transaction	lifecycle	yes	12	no	yes	yes	refuses:transactions
 transactionDirect	lifecycle	yes	1	no	yes	yes	refuses:transactions
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	29	yes	yes	yes	serves
-readPageSnapshot	pages	yes	7	no	yes	yes	serves
+getPage	pages	yes	35	yes	yes	yes	serves
+readPageSnapshot	pages	yes	8	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	135	yes	yes	yes	serves
+putPage	pages	yes	142	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	4	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	42	yes	yes	yes	serves
+softDeletePage	pages	yes	46	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	8	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -307,3 +308,10 @@ listStoredTimelineRows	cli_reads_import	yes	1	no	yes	yes	serves
 filterPagesAtRevision	cli_reads_import	yes	1	no	yes	yes	serves
 lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	serves
 replaceWantedLinkRows	wanted_links	yes	6	no	yes	yes	serves
+hasSegmentStorage	write_guards	yes	1	no	yes	yes	serves
+readPageOrigin	write_guards	yes	1	no	yes	yes	serves
+listOriginClaims	write_guards	yes	1	no	yes	yes	serves
+bindPageOrigin	write_guards	yes	1	no	yes	yes	serves
+stampPageIngest	write_guards	yes	1	no	yes	yes	serves
+sealImportedPage	write_guards	yes	1	no	yes	yes	serves
+readLivePageBody	write_guards	yes	1	no	yes	yes	serves

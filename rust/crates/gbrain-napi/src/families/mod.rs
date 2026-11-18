@@ -17,6 +17,7 @@ mod sources;
 mod tags;
 mod timeline;
 mod versions;
+mod write_guards;
 
 // Planned families: no methods yet (docs/designs/RUST_ENGINE_INTERFACES.md).
 mod aliases;
