@@ -42,6 +42,7 @@
 import { createHash } from 'crypto';
 import * as fs from 'node:fs';
 import { embedBatch } from './embedding.ts';
+import { embeddingSendBlocked } from './embedding-disabled.ts';
 import { resolveContextualRetrievalMode } from './contextual-retrieval-resolver.ts';
 import {
   buildContextualPrefix,
@@ -238,7 +239,7 @@ export type ReembedPageResult =
     }
   | {
       kind: 'skipped';
-      reason: 'mode_none' | 'no_chunks' | 'page_missing' | 'soft_deleted' | 'budget_limited' | 'purge_sweep_pending' | 'page_body_segmented';
+      reason: 'mode_none' | 'no_chunks' | 'page_missing' | 'soft_deleted' | 'budget_limited' | 'purge_sweep_pending' | 'page_body_segmented' | 'embedding_disabled';
     }
   | {
       kind: 'page_fallback';
@@ -312,6 +313,8 @@ export interface ReembedPageArgs {
 export async function reembedPageWithContextualRetrieval(
   args: ReembedPageArgs,
 ): Promise<ReembedPageResult> {
+  // #9715: a job queued before the owner turned embedding off sends nothing when it runs.
+  if (await embeddingSendBlocked(args.engine)) return { kind: 'skipped', reason: 'embedding_disabled' };
   // ── Load page + source + chunks ────────────────────────────────────
   const initial = await args.engine.getPage(args.pageSlug, { sourceId: args.sourceId });
   if (!initial) {
