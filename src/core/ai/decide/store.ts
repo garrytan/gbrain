@@ -204,21 +204,16 @@ export function __resetDecideStoreForTests(): void {
 // (get/list/snapshot/MCP/export) can print it.
 // ---------------------------------------------------------------------------
 
-export async function getDecideState(engine: BrainEngine, key: string): Promise<string | null> {
-  const rows = await engine.executeRaw<{ value: string }>('SELECT value FROM decide_state WHERE key = $1', [key]);
-  return rows[0]?.value ?? null;
+export function getDecideState(engine: BrainEngine, key: string): Promise<string | null> {
+  return engine.readDecideState(key);
 }
 
-export async function setDecideState(engine: BrainEngine, key: string, value: string): Promise<void> {
-  await engine.executeRaw(
-    `INSERT INTO decide_state (key, value, updated_at) VALUES ($1, $2, now())
-     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
-    [key, value],
-  );
+export function setDecideState(engine: BrainEngine, key: string, value: string): Promise<void> {
+  return engine.upsertDecideState(key, value);
 }
 
-export async function deleteDecideState(engine: BrainEngine, key: string): Promise<void> {
-  await engine.executeRaw('DELETE FROM decide_state WHERE key = $1', [key]);
+export function deleteDecideState(engine: BrainEngine, key: string): Promise<void> {
+  return engine.deleteDecideState(key);
 }
 
 const SALT_KEY = 'receipt_hmac_salt';
@@ -229,8 +224,7 @@ export function receiptSalt(engine: BrainEngine): Promise<string> {
   let cached = saltCache.get(engine);
   if (!cached) {
     cached = (async () => {
-      await engine.executeRaw('INSERT INTO decide_state (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING', [SALT_KEY, randomBytes(32).toString('hex')]);
-      const value = await getDecideState(engine, SALT_KEY);
+      const value = await engine.ensureDecideState(SALT_KEY, randomBytes(32).toString('hex'));
       if (!value) throw new Error('decide: receipt salt unavailable');
       return value;
     })();

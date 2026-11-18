@@ -45,6 +45,7 @@ mod aliases;
 mod chunk_queries;
 mod code_edges;
 mod contradictions;
+mod decide_store;
 mod dream;
 mod embedding_catalog;
 mod embedding_install;

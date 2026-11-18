@@ -95,6 +95,8 @@ import * as writeContext from './write-context.ts';
 import { initSchema } from './init-schema.ts';
 import * as accessGrants from './access-grants.ts';
 import * as accessMembers from './access-members.ts';
+import * as decideStore from './decide-store.ts';
+
 
 export const STORE_MEMBERS = {
   initSchema,
@@ -162,6 +164,8 @@ export const STORE_MEMBERS = {
   ...accessMembers,
   // The readable file list file_list runs (rust/docs/store/raw_files.md).
   ...filesOps,
+  // Group A: the decide store (rust/docs/store/decide-store.md).
+  ...decideStore,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

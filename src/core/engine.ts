@@ -4857,4 +4857,13 @@ export interface BrainEngine {
   claimWakeForgets(spec: { leaseSeconds: number; limit: number }): Promise<JobsWake.WakeForgetClaim[]>;
   /** Settle a leased forget; false when its lease no longer matches. */
   settleWakeForget(settle: JobsWake.WakeForgetSettle): Promise<boolean>;
+  // Group A (decide store): `decide_state`, `decide_spend`, `decision_receipts`, `decide_calibrations` (engine-sql/decide-store.ts).
+  /** The value kept under a decide state key, or null. */
+  readDecideState(key: string): Promise<string | null>;
+  /** Keep a value under a decide state key, replacing an earlier one. */
+  upsertDecideState(key: string, value: string): Promise<void>;
+  /** Forget a decide state key (absent is fine). */
+  deleteDecideState(key: string): Promise<void>;
+  /** Keep the value only when the key is empty, then answer the stored value (null if it cannot be read back). */
+  ensureDecideState(key: string, value: string): Promise<string | null>;
 }

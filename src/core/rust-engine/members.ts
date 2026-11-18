@@ -1035,6 +1035,11 @@ export const RUST_ENGINE_MEMBERS = {
   readPageVersionEdition: 'page_versions',
   readCursorEdition: 'page_versions',
   pageAwaitsRederive: 'pages',
+  // Group A (decide store): the eval_capture capability, the family the Z key tag belongs to
+  readDecideState: 'eval_capture',
+  upsertDecideState: 'eval_capture',
+  deleteDecideState: 'eval_capture',
+  ensureDecideState: 'eval_capture',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;

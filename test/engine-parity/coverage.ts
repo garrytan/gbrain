@@ -270,6 +270,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'claimWakeWatch', 'settleWakeWatch', 'queueWakeForget', 'claimWakeForgets', 'settleWakeForget', 'forgetWakeMember',
     'forgetWakeCredential',
   ],
+  // decide_store: the decide state, spend, receipt and calibration tables (engine-sql/decide-store.ts)
+  decide_store: ['readDecideState', 'upsertDecideState', 'deleteDecideState', 'ensureDecideState'],
 };
 
 /** Callable members of `interface BrainEngine`, in declaration order (`kind` excluded). */

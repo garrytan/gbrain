@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 930/936
+# covered: 934/940
 # lifecycle: 9/9
 # pages: 46/46
 # search: 7/7
@@ -75,6 +75,7 @@
 # trust_proposals: 7/7
 # connect_gate: 4/4
 # jobs_wake: 21/21
+# decide_store: 4/4
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
 connect	lifecycle	yes	1	yes	yes	yes	serves
 disconnect	lifecycle	yes	1	yes	yes	yes	serves
@@ -1012,3 +1013,7 @@ forgetWakeMember	jobs_wake	yes	1	no	yes	yes	serves
 forgetWakeCredential	jobs_wake	yes	4	no	yes	yes	serves
 claimWakeForgets	jobs_wake	yes	6	no	yes	yes	serves
 settleWakeForget	jobs_wake	yes	2	no	yes	yes	serves
+readDecideState	decide_store	yes	4	no	yes	yes	serves
+upsertDecideState	decide_store	yes	4	no	yes	yes	serves
+deleteDecideState	decide_store	yes	2	no	yes	yes	serves
+ensureDecideState	decide_store	yes	2	no	yes	yes	serves
