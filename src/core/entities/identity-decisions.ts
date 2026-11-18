@@ -22,7 +22,7 @@
 import { createHash } from 'node:crypto';
 import { isOwnerOnlySourceConfig } from '../access/owner-only.ts';
 import { DEFAULT_SOURCE_ID } from '../sync-failure-ledger.ts';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import { dump, JSON_SCHEMA } from 'js-yaml';
 import { loadBoundedYaml } from '../data-frontmatter.ts';
@@ -36,6 +36,7 @@ import { gitChildEnv } from '../git-env.ts';
 import { HARDENED_GIT_ARGS, NO_LAZY_FETCH_ENV } from '../hardened-git.ts';
 import { parseSourceConfig } from '../sources-load.ts';
 import { spawnSync } from '../spawn.ts';
+import { readPolicyFragment } from '../search/private-visibility.ts';
 
 export const IDENTITY_DIR = '.gbrain/identity';
 const DECISION_ID = /^[0-9a-f]{16}$/;
@@ -171,11 +172,19 @@ function commitDecisionFiles(root: string, decisions: Array<DecisionInput & { de
     process.env[COMMIT_LOCK_ENV] = lock.lockPath;
     const before = new Map<string, string | null>();
     try {
+      for (const rel of ['.gbrain', IDENTITY_DIR, ...files.map(f => f.path)]) {
+        const st = lstatSync(join(root, rel), { throwIfNoEntry: false });
+        if (st && !(rel.endsWith('.md') ? st.isFile() : st.isDirectory())) {
+          throw opError('commit_paths_invalid', `gbrain dedupe: ${rel} in ${root} is a symlink or not a regular ${rel.endsWith('.md') ? 'file' : 'folder'}, so no decision file is written through it; nothing was written.`,
+            'Replace it with a regular file or folder in the checkout, then run the command again.');
+        }
+      }
       mkdirSync(join(root, IDENTITY_DIR), { recursive: true });
       for (const f of files) {
         const abs = join(root, f.path);
         before.set(abs, existsSync(abs) ? readFileSync(abs, 'utf8') : null);
-        writeFileSync(abs, f.text);
+        const fd = openSync(abs, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW, 0o644);
+        try { writeSync(fd, f.text); } finally { closeSync(fd); }
       }
       try {
         const r = commitAndPush({ repo: root, cwd: root, paths: [...before.keys()], message });
@@ -224,12 +233,30 @@ function storeMismatch(rows: IdentityDecision[]): OperationError {
       why: 'Shows where the source lives and whether this host has its checkout; changes nothing.' } });
 }
 
-/** Ids of the owner-only sources (owner_only, or a kind that always is): nothing from them may reach a repository. */
-async function ownerOnlySourceIds(engine: BrainEngine): Promise<Set<string>> {
-  return new Set((await engine.listAllSources()).filter(s => isOwnerOnlySourceConfig(s.config)).map(s => s.id));
-}
+export interface UnpublishableMember { member: IdentityMemberRef; reason: 'owner_only_source' | 'restricted_page'; why: string }
 
-const touchesOwnerOnly = (d: { members: IdentityMemberRef[] }, ownerOnly: Set<string>) => d.members.some(m => ownerOnly.has(m.source_id));
+/**
+ * For each decision, the first member whose source and slug must stay out of the home source's repository, or null: a page
+ * in an owner-only source (archived ones included), in a source that no longer exists, or a page outside the home source
+ * that not every reader of it may read (readable_by, a folder rule or a private label). One check for record, reconcile,
+ * drift and the bulk confirm list.
+ */
+export async function unpublishableMembers(engine: BrainEngine, homeSourceId: string, decisions: ReadonlyArray<{ members: IdentityMemberRef[] }>): Promise<Array<UnpublishableMember | null>> {
+  const sources = new Map((await engine.listAllSources({ includeArchived: true })).map(s => [s.id, s]));
+  const outside = decisions.flatMap(d => d.members).filter(m => m.source_id !== homeSourceId && sources.has(m.source_id));
+  const restricted = new Set(outside.length ? (await engine.executeRaw<{ source_id: string; slug: string }>(
+    `SELECT p.source_id, p.slug FROM pages p JOIN unnest($1::text[], $2::text[]) AS t(source_id, slug) ON p.source_id = t.source_id AND p.slug = t.slug
+      WHERE NOT ${readPolicyFragment('p', [], true)}`, [outside.map(m => m.source_id), outside.map(m => m.slug)])).map(r => `${r.source_id}:${r.slug}`) : []);
+  return decisions.map(d => {
+    for (const member of d.members) {
+      const source = sources.get(member.source_id);
+      if (!source) return { member, reason: 'owner_only_source', why: 'a page in a source that no longer exists' };
+      if (isOwnerOnlySourceConfig(source.config)) return { member, reason: 'owner_only_source', why: 'a page in an owner-only source' };
+    }
+    const member = d.members.find(m => m.source_id !== homeSourceId && restricted.has(`${m.source_id}:${m.slug}`));
+    return member ? { member, reason: 'restricted_page', why: 'a page outside the default source that not every reader of it may read' } : null;
+  });
+}
 
 export interface RecordResult { store: 'git' | 'database'; home: IdentityHome | null; receipt?: DecisionCommitReceipt; projection?: ProjectionResult; applied?: ApplyIdentityDecisionsResult }
 
@@ -244,26 +271,27 @@ export async function recordDecisions(engine: BrainEngine, decisions: DecisionIn
     const applied = await engine.applyIdentityDecisions({ upsert: full.map(d => ({ ...d, decision_id: decisionId(d.members), origin: 'database', home_source_id: null, git_blob: null })) });
     return { store: 'database', home: null, applied };
   }
-  const ownerOnly = await ownerOnlySourceIds(engine);
-  const exposed = full.find(d => touchesOwnerOnly(d, ownerOnly));
-  if (exposed) {
-    const member = exposed.members.find(m => ownerOnly.has(m.source_id))!;
+  const blocked = await unpublishableMembers(engine, home.sourceId, full);
+  const at = blocked.findIndex(b => b !== null);
+  if (at >= 0) {
+    const { member, reason, why } = blocked[at]!, exposed = full[at]!;
     throw opError('dedupe_group_not_confirmable',
-      `gbrain dedupe: ${exposed.group_id ?? decisionId(exposed.members)} has ${member.source_id}:${member.slug}, a page in an owner-only source; this brain keeps duplicate decisions in the default source's repository, where that page's source and slug would be readable by anyone who reads the repository, so nothing was written.`,
-      'Leave groups with a page in an owner-only source undecided on a brain whose default source has a repository.',
-      { reason: 'owner_only_source', fix: { argv: ['gbrain', 'dedupe', 'confirm'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Prints the confirm list with a hint line per entry; changes nothing.' } });
+      `gbrain dedupe: ${exposed.group_id ?? decisionId(exposed.members)} has ${member.source_id}:${member.slug}, ${why}; this brain keeps duplicate decisions in the default source's repository, where that page's source and slug would be readable by anyone who reads the repository, so nothing was written.`,
+      'Leave such a group undecided on a brain whose default source has a repository.',
+      { reason, fix: { argv: ['gbrain', 'dedupe', 'confirm'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Prints the confirm list with a hint line per entry; changes nothing.' } });
   }
   const receipt = commitDecisionFiles(home.root, full, message);
   const projection = await projectIdentityDecisions(engine, home);
   return { store: 'git', home, receipt, projection };
 }
 
-export interface ReconcileResult { store: 'git' | 'database'; written: number; receipt?: DecisionCommitReceipt; projection?: ProjectionResult; applied?: ApplyIdentityDecisionsResult; pending: PendingIdentityMember[] }
+export interface ReconcileResult { store: 'git' | 'database'; written: number; git_kept?: string[]; receipt?: DecisionCommitReceipt; projection?: ProjectionResult; applied?: ApplyIdentityDecisionsResult; pending: PendingIdentityMember[] }
 
 /**
  * gbrain dedupe reconcile: on a brain with a home repository, writes every decision the database holds alone into git
  * (a database brain that gained a repository) and re-projects the committed files; everywhere, retries the members a
- * "same" decision could not link yet.
+ * "same" decision could not link yet. Git wins: a decision already committed is never rewritten from its row; the
+ * projection gives the row the file's verdict, and git_kept names the decisions whose row disagreed.
  */
 export async function reconcileDecisions(engine: BrainEngine): Promise<ReconcileResult> {
   const read = await engine.listIdentityDecisions();
@@ -273,11 +301,25 @@ export async function reconcileDecisions(engine: BrainEngine): Promise<Reconcile
     const applied = await engine.applyIdentityDecisions({});
     return { store: 'database', written: 0, applied, pending: (await engine.listIdentityDecisions()).pending };
   }
-  const ownerOnly = await ownerOnlySourceIds(engine);
-  const dbOnly = read.decisions.filter(d => d.origin === 'database' && !touchesOwnerOnly(d, ownerOnly));
+  const { dbOnly, committed } = await databaseOnly(engine, home, read.decisions);
+  const gitKept: string[] = [];
+  for (const d of read.decisions) {
+    const file = d.origin === 'database' ? committed.get(d.decision_id) : undefined;
+    if (!file) continue;
+    const parsed = parseDecisionFile(await git(home.root, ['cat-file', 'blob', file.blob]), file.id);
+    if (!parsed || parsed.verdict !== d.verdict || parsed.entity_id !== d.entity_id) gitKept.push(d.decision_id);
+  }
   const receipt = dbOnly.length ? commitDecisionFiles(home.root, dbOnly, `dedupe: record ${dbOnly.length} duplicate decision(s) kept only in the database`) : undefined;
   const projection = await projectIdentityDecisions(engine, home);
-  return { store: 'git', written: dbOnly.length, ...(receipt ? { receipt } : {}), projection, pending: (await engine.listIdentityDecisions()).pending };
+  return { store: 'git', written: dbOnly.length, git_kept: gitKept, ...(receipt ? { receipt } : {}), projection, pending: (await engine.listIdentityDecisions()).pending };
+}
+
+/** The database-origin decisions reconcile may write into git: no committed file for them yet, and every member publishable. */
+async function databaseOnly(engine: BrainEngine, home: IdentityHome, decisions: IdentityDecision[]) {
+  const committed = new Map((await committedDecisionFiles(home.root)).map(f => [f.id, f]));
+  const rows = decisions.filter(d => d.origin === 'database' && !committed.has(d.decision_id));
+  const blocked = await unpublishableMembers(engine, home.sourceId, rows);
+  return { dbOnly: rows.filter((_, i) => blocked[i] === null), committed };
 }
 
 /** Sync's hook: re-project the home source's decisions after it syncs, and retry pending members after any sync. Never throws. */
@@ -315,12 +357,12 @@ export async function identityDrift(engine: BrainEngine, read?: IdentityDecision
   const gitRows = r.decisions.filter(d => d.origin === 'git');
   if (!home) return { home: null, store_mismatch: gitRows.length > 0, database_only: 0, unsynced_files: 0, rows_without_file: 0, pending: r.pending };
   const files = await committedDecisionFiles(home.root);
-  const ownerOnly = await ownerOnlySourceIds(engine);
+  const { dbOnly } = await databaseOnly(engine, home, r.decisions);
   const rows = new Map(gitRows.filter(d => d.home_source_id === home.sourceId).map(d => [d.decision_id, d.git_blob]));
   const fileIds = new Set(files.map(f => f.id));
   return {
     home: home.sourceId, store_mismatch: false,
-    database_only: r.decisions.filter(d => d.origin === 'database' && !touchesOwnerOnly(d, ownerOnly)).length,
+    database_only: dbOnly.length,
     unsynced_files: files.filter(f => rows.get(f.id) !== f.blob).length,
     rows_without_file: [...rows.keys()].filter(id => !fileIds.has(id)).length,
     pending: r.pending,

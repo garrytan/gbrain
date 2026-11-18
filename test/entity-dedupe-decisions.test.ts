@@ -20,7 +20,7 @@
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -277,6 +277,19 @@ describe('without a repository', () => {
     expect((await preview()).filter(g => g.members.some(m => m.slug === 'people/alice-example'))).toEqual([]);
   });
 
+  test('--join refuses when the joined identity would hold two pages recorded as different people', async () => {
+    await seed();
+    await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('source-c', 'source-c') ON CONFLICT DO NOTHING");
+    await page('people/ae-sample', 'Ae Sample', {}, 'source-c');
+    await linkEntityIdentity(engine, { entityId: 'alice-by-hand', slug: 'people/alice-example', sourceId: 'default', canonical: true });
+    await linkEntityIdentity(engine, { entityId: 'alice-by-hand', slug: 'people/ae-sample', sourceId: 'source-c', canonical: false });
+    const apart = [{ source_id: 'source-b', slug: 'people/alice-example' }, { source_id: 'source-c', slug: 'people/ae-sample' }];
+    await engine.applyIdentityDecisions({ upsert: [{ decision_id: decisionId(apart), verdict: 'different', members: apart, group_id: null, entity_id: null, canonical: null,
+      decided_by: 'owner', origin: 'database', home_source_id: null, git_blob: null }] } as never);
+    await expect(cli(['confirm', await groupOf('people/alice-example'), '--join', 'alice-by-hand'])).rejects.toMatchObject({ code: 'dedupe_group_not_confirmable', reason: 'rejected_pair' });
+    expect((await rows()).identities.map(r => [r.source_id, r.established_by])).toEqual([['default', 'manual'], ['source-c', 'manual']]);
+  });
+
   test('a brain with no repository records a group with a page in an owner-only source in the database', async () => {
     await seed();
     await engine.executeRaw("UPDATE sources SET config = $1::jsonb WHERE id = 'source-b'", ['{"owner_only": true}']);
@@ -442,6 +455,61 @@ describe('with a repository', () => {
     await expect(cli(['reject', bob])).rejects.toMatchObject({ code: 'dedupe_group_not_confirmable', reason: 'owner_only_source' });
     expect(await rows()).toEqual({ decisions: [], identities: [] });
     expect(existsSync(join(root, IDENTITY_DIR))).toBe(false);
+  });
+
+  test('reconcile and doctor leave out a decision whose owner-only source is archived or whose source was removed', async () => {
+    const dbRow = (members: Array<{ source_id: string; slug: string }>) => ({ decision_id: decisionId(members), verdict: 'different', members, group_id: null, entity_id: null,
+      canonical: null, decided_by: 'owner', origin: 'database', home_source_id: null, git_blob: null });
+    await engine.applyIdentityDecisions({ upsert: [
+      dbRow([{ source_id: 'default', slug: 'people/bob-sample' }, { source_id: 'source-b', slug: 'people/bob-sample' }]),
+      dbRow([{ source_id: 'default', slug: 'people/dan-sample' }, { source_id: 'source-gone', slug: 'people/dan-sample' }]),
+    ] } as never);
+    await engine.executeRaw("UPDATE sources SET config = $1::jsonb, archived = true WHERE id = 'source-b'", ['{"owner_only": true}']);
+    expect((await doctor()).message).not.toContain('in the database but not in git');
+    expect((await cliJson(['reconcile'])).written).toBe(0);
+    expect(existsSync(join(root, IDENTITY_DIR))).toBe(false);
+  });
+
+  test('a page outside the default source that not every reader may read keeps its group out of the repository', async () => {
+    await page('people/alice-example', 'Alice Example', { linkedin: 'linkedin.com/in/alice-example', readable_by: ['alice-example'] }, 'source-b');
+    await expect(cli(['confirm', await groupOf('people/alice-example')])).rejects.toMatchObject({ code: 'dedupe_group_not_confirmable', reason: 'restricted_page' });
+    expect(existsSync(join(root, IDENTITY_DIR))).toBe(false);
+  });
+
+  test('a symlink where a decision file goes is refused and the file it points to is untouched', async () => {
+    const alice = await groupOf('people/alice-example');
+    const id = decisionId([{ source_id: 'default', slug: 'people/alice-example' }, { source_id: 'source-b', slug: 'people/alice-example' }]);
+    const outside = join(mkdtempSync(join(tmpdir(), 'dedupe-outside-')), 'keep.txt');
+    writeFileSync(outside, 'keep\n');
+    mkdirSync(join(root, IDENTITY_DIR), { recursive: true });
+    symlinkSync(outside, join(root, IDENTITY_DIR, `${id}.md`));
+    await expect(cli(['confirm', alice])).rejects.toMatchObject({ code: 'commit_paths_invalid' });
+    expect(readFileSync(outside, 'utf8')).toBe('keep\n');
+    expect((await rows()).decisions).toEqual([]);
+  });
+
+  test('reconcile never rewrites a committed decision from the database: git wins and the disagreement is reported', async () => {
+    const members = [{ source_id: 'default', slug: 'people/dan-sample' }, { source_id: 'source-b', slug: 'people/dan-sample' }];
+    const id = decisionId(members);
+    mkdirSync(join(root, IDENTITY_DIR), { recursive: true });
+    writeFileSync(join(root, IDENTITY_DIR, `${id}.md`), ['---', 'verdict: different', 'members:', ...members.flatMap(m => [`  - source_id: ${m.source_id}`, `    slug: ${m.slug}`]),
+      'decided_by: owner', "decided_at: '2026-11-17T00:00:00.000Z'", '---', ''].join('\n'));
+    git(root, 'add', '-A');
+    git(root, 'commit', '-qm', 'decision');
+    const file = committed(id);
+    await engine.applyIdentityDecisions({ upsert: [{ decision_id: id, verdict: 'same', members, group_id: null, entity_id: 'dan-joined', canonical: members[0],
+      decided_by: 'owner', origin: 'database', home_source_id: null, git_blob: null }] } as never);
+    const r = await cliJson(['reconcile']);
+    expect({ written: r.written, git_kept: r.git_kept }).toEqual({ written: 0, git_kept: [id] });
+    expect(committed(id)).toBe(file);
+    expect((await rows()).decisions.map(d => [d.decision_id, d.verdict, d.origin])).toEqual([[id, 'different', 'git']]);
+  });
+
+  test('a clean group with a page in an owner-only source is left out of the bulk confirm list, so it cannot wedge it', async () => {
+    await engine.executeRaw("UPDATE sources SET config = $1::jsonb WHERE id = 'source-b'", ['{"owner_only": true}']);
+    const list = await cliJson(['confirm', '--clean']);
+    expect(list.groups).toEqual([]);
+    expect(await cli(['confirm', '--clean', '--expect', list.preview_hash])).toContain('Nothing to confirm.');
   });
 
   test('a host that does not see the checkout refuses instead of writing a decision only the database holds', async () => {
