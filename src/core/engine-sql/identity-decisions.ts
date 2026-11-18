@@ -173,3 +173,45 @@ export async function applyIdentityDecisions(exec: SqlExecutor, input: ApplyIden
        AND NOT EXISTS (SELECT 1 FROM entity_identities x WHERE x.entity_id = c.entity_id AND x.canonical)`);
   return { upserted: input.upsert?.length ?? 0, removed, linked, unlinked };
 }
+
+export interface AutoLinkRow { entity_id: string; source_id: string; page_id: number; slug: string; canonical: boolean }
+export interface AutoLinkCandidate { id: number; source_id: string; slug: string; frontmatter: Record<string, unknown> | null; entity_id: string | null; established_by: string | null }
+export interface AutoLinkState { candidates: AutoLinkCandidate[]; auto: AutoLinkRow[] }
+export type AutoLinkWrite = Omit<AutoLinkRow, 'slug'>;
+
+/** The live pages of the given members with the identity row each sits in, and every 'dedupe:auto' row (automatic company links). */
+export async function readAutoLinkState(exec: LegacyUnscopedRead, members: ReadonlyArray<IdentityMemberRef>): Promise<AutoLinkState> {
+  const candidates = members.length ? (await exec.run<AutoLinkCandidate>(sqlFragment`
+    SELECT p.id, p.source_id, p.slug, p.frontmatter, ei.entity_id, ei.established_by
+      FROM pages p
+      JOIN unnest(${members.map(m => m.source_id)}::text[], ${members.map(m => m.slug)}::text[]) AS t(source_id, slug) ON p.source_id = t.source_id AND p.slug = t.slug
+      LEFT JOIN entity_identities ei ON ei.source_id = p.source_id AND ei.page_id = p.id
+     WHERE p.deleted_at IS NULL
+     ORDER BY p.source_id, p.slug`)).rows : [];
+  const { rows: auto } = await exec.run<AutoLinkRow>(sqlFragment`
+    SELECT ei.entity_id, ei.source_id, ei.page_id, p.slug, ei.canonical
+      FROM entity_identities ei JOIN pages p ON p.id = ei.page_id AND p.source_id = ei.source_id
+     WHERE ei.established_by = 'dedupe:auto'
+     ORDER BY ei.entity_id, ei.source_id, p.slug`);
+  return {
+    candidates: candidates.map(c => ({ ...c, id: Number(c.id), frontmatter: (typeof c.frontmatter === 'string' ? JSON.parse(c.frontmatter) : c.frontmatter) as Record<string, unknown> | null })),
+    auto: auto.map(r => ({ ...r, page_id: Number(r.page_id), canonical: r.canonical === true })),
+  };
+}
+
+/**
+ * Replaces every 'dedupe:auto' row with `rows`, under the identity-decisions advisory lock; the engine runs it in one
+ * transaction. A row whose page is gone or already sits in an identity group is skipped.
+ */
+export async function replaceAutoLinks(exec: SqlExecutor, rows: ReadonlyArray<AutoLinkWrite>): Promise<void> {
+  if (exec.capabilities.transactionAdvisoryLocks) await exec.run(sqlFragment`SELECT pg_advisory_xact_lock(hashtextextended('gbrain:identity-decisions', 0))`);
+  await exec.run(sqlFragment`DELETE FROM entity_identities WHERE established_by = 'dedupe:auto'`);
+  if (!rows.length) return;
+  await exec.run(sqlFragment`
+    INSERT INTO entity_identities (entity_id, source_id, page_id, confidence, established_by, canonical)
+    SELECT t.entity_id, t.source_id, t.page_id, 1.0, 'dedupe:auto', t.canonical
+      FROM unnest(${rows.map(r => r.entity_id)}::text[], ${rows.map(r => r.source_id)}::text[], ${rows.map(r => r.page_id)}::int[],
+                  ${rows.map(r => (r.canonical ? 'true' : 'false'))}::text[]::boolean[]) AS t(entity_id, source_id, page_id, canonical)
+      JOIN pages p ON p.id = t.page_id AND p.source_id = t.source_id AND p.deleted_at IS NULL
+    ON CONFLICT (source_id, page_id) DO NOTHING`);
+}

@@ -70,6 +70,8 @@ export const RUST_ENGINE_MEMBERS = {
   listIdentityDecisions: 'pages',
   listRestrictedIdentityMembers: 'pages',
   applyIdentityDecisions: 'pages',
+  readAutoLinkState: 'pages',
+  replaceAutoLinks: 'pages',
   listPrefixSampledPages: 'pages',
   listCorpusSample: 'pages',
   getPageTimestamps: 'pages',

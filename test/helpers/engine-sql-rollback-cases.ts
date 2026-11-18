@@ -54,6 +54,20 @@ export const ROLLBACK_CASES: RollbackCase[] = [
     },
   },
   {
+    domain: 'identity-decisions-auto-links',
+    async seed(engine) {
+      await seedPage(engine);
+    },
+    async write(tx) {
+      const [page] = (await tx.readAutoLinkState([{ source_id: 'default', slug: SLUG }])).candidates;
+      await tx.replaceAutoLinks([{ entity_id: 'dedupe/00000000000000ab', source_id: 'default', page_id: page!.id, canonical: true }]);
+      expect((await tx.readAutoLinkState([])).auto.length).toBe(1);
+    },
+    async observe(engine) {
+      return (await engine.readAutoLinkState([])).auto.length;
+    },
+  },
+  {
     domain: 'salience',
     async seed(engine) {
       await seedPage(engine);

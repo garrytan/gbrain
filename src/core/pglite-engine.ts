@@ -1424,6 +1424,14 @@ export class PGLiteEngine implements BrainEngine {
     return this.transaction(tx => identityDecisionsImpl.applyIdentityDecisions((tx as PGLiteEngine).engineSql, input));
   }
 
+  async readAutoLinkState(members: ReadonlyArray<identityDecisionsImpl.IdentityMemberRef>): Promise<identityDecisionsImpl.AutoLinkState> {
+    return identityDecisionsImpl.readAutoLinkState(unscopedExecutor(this.engineSql, 'identity decisions: brain-wide, trusted local only'), members);
+  }
+
+  async replaceAutoLinks(rows: ReadonlyArray<identityDecisionsImpl.AutoLinkWrite>): Promise<void> {
+    await this.transaction(tx => identityDecisionsImpl.replaceAutoLinks((tx as PGLiteEngine).engineSql, rows));
+  }
+
   // Sources SQL lives once in ./engine-sql/sources.ts (refactor wave 1, W1-extended).
   async listAllSources(opts?: { includeArchived?: boolean; localPathOnly?: boolean }): Promise<SourceRow[]> {
     return sourcesImpl.listAllSources(unscopedExecutor(this.engineSql, 'sources: unscoped on master (EO4 inventory)'), opts);

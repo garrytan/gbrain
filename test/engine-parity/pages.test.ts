@@ -443,4 +443,25 @@ describe('engine parity: pages', () => {
       return { applied, decisions: read.decisions.map(d => ({ ...d, decided_at: d.decided_at.slice(0, 10) })), pending: read.pending, removed };
     },
   );
+  parityTest(
+    'readAutoLinkState / replaceAutoLinks: candidates with their identity rows, automatic rows replaced whole, a page in a group kept',
+    { methods: ['putPage', 'readAutoLinkState', 'replaceAutoLinks'] },
+    async (engine) => {
+      await seed(engine, [['companies/acme-example', { type: 'company', title: 'Acme Example', compiled_truth: 'Acme.', frontmatter: { github: 'acme-example' } }],
+        ['companies/beta-example', { type: 'company', title: 'Beta Example', compiled_truth: 'Beta.', frontmatter: {} }]]);
+      const ref = (slug: string) => ({ source_id: 'default', slug });
+      const before = await engine.readAutoLinkState([ref('companies/acme-example'), ref('companies/beta-example'), ref('companies/gone-example')]);
+      expect(before.candidates.map(c => [c.slug, c.frontmatter?.github ?? null, c.entity_id])).toEqual([['companies/acme-example', 'acme-example', null], ['companies/beta-example', null, null]]);
+      expect(before.auto).toEqual([]);
+      const [acme, beta] = before.candidates;
+      await engine.replaceAutoLinks([{ entity_id: 'dedupe/a', source_id: 'default', page_id: acme!.id, canonical: true }, { entity_id: 'dedupe/a', source_id: 'default', page_id: beta!.id, canonical: false }]);
+      const linked = await engine.readAutoLinkState([ref('companies/acme-example')]);
+      expect(linked.candidates.map(c => [c.entity_id, c.established_by])).toEqual([['dedupe/a', 'dedupe:auto']]);
+      expect(linked.auto.map(r => [r.entity_id, r.slug, r.canonical])).toEqual([['dedupe/a', 'companies/acme-example', true], ['dedupe/a', 'companies/beta-example', false]]);
+      await engine.replaceAutoLinks([{ entity_id: 'dedupe/b', source_id: 'default', page_id: beta!.id, canonical: true }]);
+      const replaced = await engine.readAutoLinkState([]);
+      expect(replaced.auto.map(r => [r.entity_id, r.slug, r.canonical])).toEqual([['dedupe/b', 'companies/beta-example', true]]);
+      return { candidates: before.candidates.map(c => ({ ...c, id: 0 })), linked: linked.auto.map(r => ({ ...r, page_id: 0 })), replaced: replaced.auto.map(r => ({ ...r, page_id: 0 })) };
+    },
+  );
 });
