@@ -35,7 +35,7 @@ src/commands/doctor/checks/access-lineage.ts	execute_raw	2
 src/commands/doctor/checks/atom-body-recheck.ts	execute_raw	3
 src/commands/doctor/checks/atom-retirements.ts	execute_raw	2
 src/commands/doctor/checks/attest-read-access.ts	execute_raw	1
-src/commands/doctor/checks/calibration.ts	execute_raw	10
+src/commands/doctor/checks/calibration.ts	execute_raw	8
 src/commands/doctor/checks/connectors.ts	execute_raw	1
 src/commands/doctor/checks/consolidation-cycle.ts	execute_raw	2
 src/commands/doctor/checks/content-quality.ts	execute_raw	8
@@ -159,7 +159,6 @@ src/commands/init.ts	sql_template	2
 src/commands/integrity.ts	execute_raw	1
 src/commands/jobs-watch.ts	execute_raw	2
 src/commands/jobs/smoke.ts	execute_raw	2
-src/commands/jobs/stats.ts	execute_raw	1
 src/commands/jobs/work.ts	execute_raw	1
 src/commands/loops.ts	execute_raw	1
 src/commands/mcp-provision.ts	sql_template	4
@@ -539,9 +538,8 @@ src/core/mentions/siblings.ts	execute_raw	1
 src/core/migrate.ts	execute_raw	2
 src/core/migration-preludes.ts	execute_raw	12
 src/core/minions/authorize-legacy.ts	execute_raw	7
-src/core/minions/budget-meter.ts	sql_template	14
+src/core/minions/budget-meter.ts	sql_template	7
 src/core/minions/db-probe.ts	execute_raw	2
-src/core/minions/delegated-spend.ts	execute_raw	1
 src/core/minions/handlers/autopilot-cycle.ts	execute_raw	1
 src/core/minions/handlers/contextual-reindex-per-chunk.ts	execute_raw	1
 src/core/minions/handlers/embed-backfill.ts	execute_raw	2
@@ -554,12 +552,10 @@ src/core/minions/handlers/sync-job-drain.ts	execute_raw	1
 src/core/minions/handlers/sync.ts	execute_raw	3
 src/core/minions/idempotency-coalesce.ts	execute_raw	1
 src/core/minions/job-context.ts	execute_raw	2
-src/core/minions/job-insight.ts	execute_raw	1
-src/core/minions/lease-pressure-audit.ts	execute_raw	3
 src/core/minions/legacy-cancel.ts	execute_raw	4
 src/core/minions/legacy-selection.ts	execute_raw	2
 src/core/minions/rate-leases.ts	execute_raw	6
-src/core/minions/spend-authorization.ts	execute_raw	5
+src/core/minions/spend-authorization.ts	execute_raw	3
 src/core/minions/submission-authority.ts	execute_raw	4
 src/core/minions/sync-queue-wake.ts	execute_raw	2
 src/core/minions/terminal-events.ts	execute_raw	1
