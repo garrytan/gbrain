@@ -27,6 +27,7 @@ ISO strings. Derivation `createdAt` and `updatedAt` are `YYYY-MM-DDTHH:MM:SS.fff
 | `brain.flipBodyGeneration(input)` | `{ retiredChunks, retireDeferred }` | `flipBodyGeneration` |
 | `brain.openBodyStaging(input)` | `null`; the staging starts `open` | `openBodyStaging` |
 | `brain.setBodyStagingState(id, state, { commitRequestId? }?)` | `null` | `setBodyStagingState` |
+| `brain.sweepSegments({ sourceId?, pageId?, graceMs?, expireStagings?, now? }?)` | `{ retiredChunksDeleted, manifestRowsDeleted, textsDeleted, stagingsExpired }`; `now` as an ISO string. See "The sweep" | `sweepSegments` |
 | `brain.readSegmentDerivations(pageId, { kind?, occurrenceIds? }?)` | derivation rows by kind, then occurrence; `[]` for an empty `occurrenceIds` | `readSegmentDerivations` |
 | `brain.upsertSegmentDerivations(rows)` | `null`. A row with the same `(page, kind, occurrence)` is replaced and keeps its `createdAt` | `upsertSegmentDerivations` |
 | `brain.retireSegmentDerivations(pageId, liveOccurrenceIds, { kind? }?)` | the number of rows deleted whose occurrence is not live | `retireSegmentDerivations` |
@@ -139,6 +140,41 @@ sanitizes it with `sanitizeRemoteBody`, and calls `seal_segmented_page`. In one 
 PGLite overlays the page's withdrawals and global purges on the stored lead first. The store keeps no
 withdrawal ledger or purge markers, so here that overlay is the identity.
 
+## The sweep
+
+`sweepSegments` is PGLite's garbage collection, step for step, in one store write. Its roots are a
+segmented page's live generation, every body generation a version snapshot references, and the rows
+of live stagings. A staging is live in a live state (`open`, `sealed`, `prepared`) or while an
+outstanding persistence request names it in `intent.body_ref.staging_id`, whatever its state. The
+store reads the version generations through `pages::version_generations` and the request-held
+stagings through `journal::request_held_staging_ids`, which reads no request while the brain's
+outstanding-request counter is 0. `now` defaults to the store clock; `graceMs` to
+`SEGMENT_TEXT_GC_GRACE_MS` (one hour).
+
+1. With `expireStagings`: a live staging in scope (its page and source) that is past its hard
+   deadline, or past its idle deadline (an upload only while `open`), and that no request holds
+   becomes `expired`. Then terminal stagings (`committed`, `aborted`, `expired`) in scope that are
+   not live and unchanged for `BODY_STAGING_HARD_MS` (one day) are deleted, with their client key and
+   recorded texts. Their manifest rows stay for step 4.
+2. A page's chunks staged above its body generation go, unless a live staging stages a row of that
+   occurrence.
+3. Its chunks at or below that generation go when only dead stagings' rows name their occurrence (a
+   late batch of a write that lost the flip).
+4. Staged manifest rows of dead stagings go.
+5. Published rows outside the live generation (all of them on an inline page) go unless a version
+   snapshot's generation falls in their `[gen_from, gen_to)`.
+6. Segment texts created before `now - graceMs` go when no manifest row of any page names them, no
+   live staging of their source was created at or before them, and no live staging recorded them. A
+   `pageId` sweep considers only the texts its own deletes in steps 4 and 5 released (none when it
+   released none); a `sourceId` sweep, that source's texts; a global one, all.
+
+`retiredChunksDeleted` counts steps 2 and 3, `manifestRowsDeleted` steps 4 and 5.
+
+A version snapshot of a segmented page references the page's live generation instead of copying the
+body, as PGLite's `insertSegmentedVersion` does: it records `body_storage: 'segmented'`, the
+generation and `body_bytes`, its `compiled_truth` and `timeline` are `null`, and the version JSON
+carries those columns and the page's `content_hash` only on such a snapshot.
+
 ## Refusals
 
 Writes refuse `constraint_violation` where a PGLite table refuses: a missing source, page, staging or
@@ -158,8 +194,6 @@ foreign key to the texts has no cascade).
 
 The TypeScript engine refuses these with `engine_capability_missing`:
 
-- `sweepSegments`: its roots include page versions by body generation and the journal's staging
-  references, which this family cannot read yet.
 - A segmented page inside `transaction`: the store has no transactions yet, so the parity cases that
   stage inside one stop on that refusal.
 
@@ -176,3 +210,10 @@ The TypeScript engine refuses these with `engine_capability_missing`:
   parity.
 - `upsertSegmentDerivations` never refuses `derivation_purge_pending`: the store has no fact-purge
   sweep to hold rows.
+- The sweep has no upload parts to delete and no upload byte reservations to release when it expires
+  an upload staging: the store keeps neither.
+- A segmented version snapshot does not prune older segmented snapshots
+  (`versions.segmented_max_per_page`, `versions.segmented_max_pinned_bytes` in PGLite's
+  `pruneSegmentedVersions`), so a Rust brain can pin more generations than PGLite keeps.
+- PGLite's text delete skips a text another writer has locked (`FOR UPDATE SKIP LOCKED`); the store
+  serializes writes, so no text is ever skipped for that reason.

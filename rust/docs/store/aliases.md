@@ -13,7 +13,7 @@ parts of a key are joined with a `0x00` byte.
 | `k 0x01 source \0 alias_slug` | `{ canonical_slug, notes? }` (JSON) | one `slug_aliases` row, unique on `(source_id, alias_slug)` |
 | `k 0x05 source \0 canonical_slug \0 alias_slug` | empty | index: the aliases a rename repoints |
 | `k 0x02 source \0 alias_norm \0 slug \0 origin` | empty | one `page_aliases` row, unique on `(source_id, alias_norm, slug, origin)` |
-| `k 0x03 source \0 slug \0 alias_norm \0 origin` | empty | index: the alias rows of one page |
+| `k 0x03 source \0 slug \0 alias_norm \0 origin` | empty for a `frontmatter` row; `{ c, t? }` (JSON: `case_sensitive`, `alias_text`) for a `declared` or `subject` row | index: the alias rows of one page, and the columns of a derived row the key does not hold |
 | `k 0x04 page_id` | `{ mode, corpus_generation? }` (JSON) | `pages.contextual_retrieval_mode`, `pages.corpus_generation`; no record is both `NULL` |
 | `k 0x06 source \0 old_slug \0 new_slug` | empty | one `slug_rename_history` row, unique on `(source_id, old_slug, new_slug)` (migration v285); `created_at` is not kept |
 
@@ -49,6 +49,7 @@ serve source delete yet, so nothing calls it today.
 | `brain.resolveAliases(aliasNorms, { sourceId?, sourceIds? }?)` | `[aliasNorm, [{ slug, source_id }]]` pairs in alias byte order, pages by source then slug, for aliases that name a live page (not soft deleted, not quarantined, source not archived) in the scope. Within one source only the best origin answers (frontmatter, then declared, then subject), and a derived alias yields to another live page whose lower-cased title is the alias. The TypeScript member builds the `Map` | `resolveAliases` |
 | `brain.aliasCanonicalRefs({ refs, source_ids, live, exclude_private })` | `[{ source_id, canonical_slug }]` for each distinct ref that is the canonical slug of a `slug_aliases` row (one `k 0x05` prefix scan per ref) and whose page row exists, in byte order by source then slug (the SQL has no `ORDER BY`). With `live` (the TypeScript member sets it when a policy was passed, as `pageReadFilter('p', policy, !!policy)` does) the page must be live: not soft deleted, not quarantined, its source present and not archived; without it a soft-deleted page still answers. `source_ids` keeps the named sources. `exclude_private` applies the page policy of `facts/privacy.rs` (`page_hidden`). The TypeScript member reads `sourceIds`, else `sourceId`, and `excludePrivate` through `storePagePolicy`; it refuses `minTrust` and `suppressFlagged` with `engine_capability_missing` (the store keeps no trust tiers) and ignores the other search options the SQL does not read | `aliasCanonicalRefs` |
 | `brain.setPageAliases(slug, sourceId, aliasNorms)` | nothing. Replaces the page's `frontmatter` rows with the non-empty, distinct names; rows of other origins stay. The page need not exist; the source must when there is a row to insert (`source_not_found`) | `setPageAliases` |
+| `brain.replaceDerivedAliases(slug, sourceId, aliases)` | nothing. Deletes the page's `declared` and `subject` rows, then inserts `aliases` (`[{ alias_norm, origin, case_sensitive, alias_text }]`) in order; a row whose `(alias_norm, origin)` the page already holds is skipped (`ON CONFLICT DO NOTHING`), so the first of two equal rows wins and a `frontmatter` row keeps its own columns. An origin other than `frontmatter`, `declared` or `subject` is `constraint_violation` with Postgres's check-constraint text; a missing source is `source_not_found` when there is a row to insert. A refusal writes nothing | `replaceDerivedAliases` |
 | `brain.updatePageContextualRetrievalState(slug, sourceId, mode, corpusGeneration)` | nothing. Stamps the live page at `(sourceId, slug)` and sets its `updated_at`; a missing or soft-deleted page is left alone. The knowledge revision does not move | `updatePageContextualRetrievalState` |
 
 A rename first does what PGLite's `recordRenameAlias` does to `slug_rename_history`
@@ -67,12 +68,13 @@ and 8.
 
 Where this engine differs from PGLite:
 
-- The store keeps no `alias_text` and no `case_sensitive` flag, so case-sensitive alias reads are always
-  empty and `replaceDerivedAliases` stays unserved until alias storage exists (known gap; see
-  [alias_fanout_reads.md](alias_fanout_reads.md)).
-- Only `setPageAliases` writes page aliases, so every row has origin `frontmatter`. The `declared`
-  and `subject` rows of the mention pass have no typed writer here; `resolveAliases` still ranks
-  origins, so a later writer needs no reader change.
+- `setPageAliases` writes the `frontmatter` rows and `replaceDerivedAliases` the `declared` and
+  `subject` rows of the mention pass. A rename carries a derived row's `{ c, t }` value to the new
+  slug. `alias_text` and `case_sensitive` are kept but no store read returns them yet: no served
+  member reads them.
+- PGLite outside a transaction keeps the DELETE of `replaceDerivedAliases` when its INSERT fails;
+  the store writes nothing on a refusal. The mention pass runs it inside a transaction, where both
+  roll back.
 - A rename calls core's `cascade::rename_slug_rows` for the records other families key by slug
   (PGLite `moveSlugBindings` steps 1-6: fact withdrawals, `facts.entity_slug`,
   `facts.source_markdown_slug`). The facts entry is a stub until the facts family fills it, so fact

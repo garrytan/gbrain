@@ -16,6 +16,7 @@ import { join } from 'node:path';
 import { runImport, ImportAbortError } from '../src/commands/import.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { stubSourceMembers } from './helpers/source-members-stub.ts';
+import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
 
 // The abort sites fire before any WRITE; the preamble runs a couple of
 // read-only lookups (sources, config), so the stub answers those with
@@ -27,6 +28,10 @@ const engineStub = {
   getConfig: async () => null,
   // The typed managed-mode read (import.ts) answers through this stub's own executeRaw, so `answering` overrides reach it.
   readManagedModeRows(this: { executeRaw: (sql: string) => Promise<unknown[]> }) { return this.executeRaw('SELECT enabled FROM persistence_brain'); },
+  // The guest-source gate (guests/admission.ts lookupGuestSource) reads one row: visible, and no guest_sources entry.
+  readGuestSourceRow: async () => ({ hidden: false, source_id: null, writers: null, trust_ceiling: null }),
+  // The company-brain profile read (company-brain/profile.ts): no receipt, so not a company brain.
+  hasCompanyBrainReceipt: async () => false,
 } as unknown as BrainEngine;
 
 // The CLI dispatch (src/cli/commands/import.ts) exits on any ImportAbortError
@@ -139,6 +144,24 @@ for (const c of directoryCases) {
     }
   });
 }
+
+test('lock admission on an engine that lacks a member keeps the typed refusal, so --json names the member', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'import-abort-')));
+  try {
+    mkdirSync(join(root, 'notes'));
+    writeFileSync(join(root, 'notes', 'alpha-example.md'), '# Alpha example\n');
+    const refusal = capabilityMissing('minion_queue', 'acquireCycleLock');
+    const engine = ({ ...answering('no SQL statement matches this', []),
+      listSourceLocalPaths: async () => { throw refusal; } }) as unknown as BrainEngine;
+    const stderr = spyOn(console, 'error').mockImplementation(() => {});
+    let thrown: unknown;
+    try { await runImport(engine, ['--no-embed', join(root, 'notes')]); } catch (e) { thrown = e; } finally { stderr.mockRestore(); }
+    expect(thrown).toBe(refusal);
+    expect(thrown).not.toBeInstanceOf(ImportAbortError);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('the calling process survives the abort (the actual Tier-1 bug)', async () => {
   // Trivially true if we got here after the aborts above, but assert it

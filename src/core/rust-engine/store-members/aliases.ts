@@ -1,6 +1,6 @@
 /**
  * Slug renames, slug aliases, page aliases and contextual retrieval state (BrainEngine updateSlug,
- * resolveSlugWithAlias, resolveSlugWithAliasDetailed, resolveAliases, setPageAliases,
+ * resolveSlugWithAlias, resolveSlugWithAliasDetailed, resolveAliases, setPageAliases, replaceDerivedAliases,
  * updatePageContextualRetrievalState, aliasCanonicalRefs).
  *
  * aliasCanonicalRefs reads its policy as `pageReadFilter('p', policy, !!policy)` does: the source clause, the live test
@@ -10,6 +10,7 @@
  * rename moves fact bindings only once the facts family fills its rename hook, and the `none` contextual retrieval
  * tier keeps no vectors to reset (rust/docs/store/aliases.md).
  */
+import type { DerivedAliasRow } from '../../engine-sql/pages.ts';
 import type { PageReadPolicy, PageReadScope } from '../../types.ts';
 import { validateSlug, warnOncePerProcess } from '../../utils.ts';
 import type { StoreBrain } from '../store.ts';
@@ -67,6 +68,17 @@ export const setPageAliases: StoreMember<[slug: string, sourceId: string, aliasN
   async (brain, slug, sourceId, aliasNorms, opts) => {
     takeOptions('setPageAliases', opts, [], ['inline']);
     await storeCall({ member: 'setPageAliases', slug, sourceId }, () => brain.setPageAliases(slug, sourceId, aliasNorms));
+  };
+
+/**
+ * Replaces the page's declared and subject alias rows; the first row of an alias and origin wins and a frontmatter row
+ * the page holds keeps its own columns. A refusal writes nothing (PGLite outside a transaction keeps its DELETE).
+ */
+export const replaceDerivedAliases: StoreMember<[slug: string, sourceId: string, aliases: readonly DerivedAliasRow[]], void> =
+  async (brain, slug, sourceId, aliases) => {
+    await storeCall({ member: 'replaceDerivedAliases', slug, sourceId }, () => brain.replaceDerivedAliases(slug, sourceId, aliases.map(a => ({
+      alias_norm: a.alias_norm, origin: a.origin, case_sensitive: a.case_sensitive, alias_text: a.alias_text,
+    }))));
   };
 
 export const updatePageContextualRetrievalState: StoreMember<[slug: string, sourceId: string, mode: string, corpusGeneration: string | null], void> =

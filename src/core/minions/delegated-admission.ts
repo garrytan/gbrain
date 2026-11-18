@@ -20,15 +20,13 @@ export function prepareDelegatedReplay(name: string, original: Record<string, un
 
 /** Terminal -> waiting consumes a client slot just like a fresh submission. */
 export async function admitDelegatedRetry(tx: BrainEngine, id: number): Promise<boolean> {
-  const rows = await tx.executeRaw<{ name: string; data: Record<string, unknown> }>(
-    "SELECT name,data FROM minion_jobs WHERE id=$1 AND status IN ('failed','dead')", [id]);
-  if (!rows.length) return false;
-  const { clientId } = prepareDelegatedReplay(rows[0].name, rows[0].data);
+  const prior = await tx.getFailedJobForRetry(id);
+  if (!prior) return false;
+  const { clientId } = prepareDelegatedReplay(prior.name, prior.data);
   if (!clientId) return true;
-  const limit = await lockDelegatedSubmission(tx, clientId, rows[0].name, rows[0].data, id);
+  const limit = await lockDelegatedSubmission(tx, clientId, prior.name, prior.data, id);
   // Another retry may have won while this transaction waited for the client.
-  const current = await tx.executeRaw("SELECT id FROM minion_jobs WHERE id=$1 AND status IN ('failed','dead')", [id]);
-  if (!current.length) return false;
+  if (!await tx.getFailedJobForRetry(id)) return false;
   await checkDelegatedCapacity(tx, clientId, limit);
   return true;
 }
@@ -37,7 +35,7 @@ export async function admitDelegatedRetry(tx: BrainEngine, id: number): Promise<
 export async function lockDelegatedSubmission(tx: BrainEngine, clientId: string | undefined, name: string, data?: Record<string, unknown>, jobId?: number): Promise<number | null> {
   if (!clientId) return null;
   if (name !== 'subagent' || data?.__owner_client_id !== clientId) throw new Error('invalid delegated submission owner');
-  await tx.executeRaw('SELECT client_id FROM oauth_clients WHERE client_id = $1 FOR UPDATE', [clientId]);
+  await tx.lockOAuthClient(clientId);
   const submitted = snapshotFromJob(data);
   if (!submitted) throw new DelegationDeniedError(['snapshot_missing']);
   return (await effectiveDelegation(tx, submitted, jobId)).maxConcurrent;
@@ -46,10 +44,7 @@ export async function lockDelegatedSubmission(tx: BrainEngine, clientId: string 
 /** Across every queue and nonterminal state; coalesced existing work adds no slot. */
 export async function checkDelegatedCapacity(tx: BrainEngine, clientId: string | undefined, limit: number | null): Promise<void> {
   if (limit === null) return;
-  const counts = await tx.executeRaw<{ n: number }>(
-    `SELECT count(*)::int AS n FROM minion_jobs
-     WHERE name = 'subagent' AND status IN ('waiting','active','delayed','waiting-children','paused')
-       AND data->>'__owner_client_id' = $1`, [clientId],
-  );
-  if (Number(counts[0]?.n ?? 0) >= limit) throw new QueueQuotaExceededError('subagent', Number(counts[0]?.n ?? 0), limit);
+  // An unowned admission has no rows to count (the old `data->>'__owner_client_id' = NULL` matched none).
+  const n = clientId ? await tx.countOpenJobsByOwner(clientId) : 0;
+  if (n >= limit) throw new QueueQuotaExceededError('subagent', n, limit);
 }

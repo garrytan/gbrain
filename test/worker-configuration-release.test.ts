@@ -6,6 +6,7 @@ import { LocalConfigurationError } from '../src/core/minions/configuration-error
 import type { BrainEngine } from '../src/core/engine.ts';
 import { ChildWorkerShutdownError } from '../src/core/minions/child-job-runner.ts';
 import { assertWorkerDbReadiness } from '../src/core/minions/db-probe.ts';
+import { withQueueMembers } from './helpers/queue-engine-members.ts';
 
 let engine: PGLiteEngine;
 let queue: MinionQueue;
@@ -72,12 +73,12 @@ describe('configuration release ownership and accounting', () => {
   test('cancelled SQL and late responses remain explicitly unconfirmed', async () => {
     const response = deferred<Array<{ id: number }>>();
     let seenSignal: AbortSignal | undefined;
-    const isolated = new MinionQueue({
+    const isolated = new MinionQueue(withQueueMembers({
       executeRaw: (_sql: string, _params: unknown[], opts: { signal: AbortSignal }) => {
         seenSignal = opts.signal;
         return response.promise;
       },
-    } as unknown as BrainEngine);
+    }) as unknown as BrainEngine);
     const controller = new AbortController();
     const release = isolated.releaseConfigurationJob(1, 'token', controller.signal);
     controller.abort();
@@ -88,7 +89,7 @@ describe('configuration release ownership and accounting', () => {
   });
 
   test('database loss reports fallback rather than protected release', async () => {
-    const isolated = new MinionQueue({ executeRaw: async () => { throw new Error('fixture unavailable'); } } as unknown as BrainEngine);
+    const isolated = new MinionQueue(withQueueMembers({ executeRaw: async () => { throw new Error('fixture unavailable'); } }) as unknown as BrainEngine);
     expect(await isolated.releaseConfigurationJob(1, 'token', new AbortController().signal)).toBe('unconfirmed');
   });
 });
@@ -101,7 +102,7 @@ describe('worker configuration admission and actual execution', () => {
     const schemaReady = deferred<void>();
     const events: string[] = [];
     let probes = 0;
-    const engine = {
+    const engine = withQueueMembers({
       kind: 'postgres',
       executeRaw: async (sql: string) => {
         if (sql.trim() === 'SELECT 1') {
@@ -111,7 +112,7 @@ describe('worker configuration admission and actual execution', () => {
         } else { events.push('authority'); }
         return [];
       },
-    } as unknown as BrainEngine;
+    }) as unknown as BrainEngine;
     await assertWorkerDbReadiness(engine);
     const worker = new MinionWorker(engine, { pollInterval: 1, healthCheckInterval: 0 });
     (worker as unknown as { queue: unknown }).queue = {
@@ -136,10 +137,10 @@ describe('worker configuration admission and actual execution', () => {
 
   test('failed ready publication aborts startup before timers and claims', async () => {
     const statements: string[] = [];
-    const engine = {
+    const engine = withQueueMembers({
       kind: 'postgres',
       executeRaw: async (sql: string) => { statements.push(sql); return []; },
-    } as unknown as BrainEngine;
+    }) as unknown as BrainEngine;
     const worker = new MinionWorker(engine, { pollInterval: 1, healthCheckInterval: 1, stalledInterval: 1 });
     const events: string[] = [];
     (worker as unknown as { queue: unknown }).queue = {
@@ -160,10 +161,10 @@ describe('worker configuration admission and actual execution', () => {
   test('Postgres startup faults block before schema recovery, claims, and timers', async () => {
     const error = fault();
     const statements: string[] = [];
-    const worker = new MinionWorker({
+    const worker = new MinionWorker(withQueueMembers({
       kind: 'postgres',
       executeRaw: async (sql: string) => { statements.push(sql); throw error; },
-    } as unknown as BrainEngine, { healthCheckInterval: 1, stalledInterval: 1 });
+    }) as unknown as BrainEngine, { healthCheckInterval: 1, stalledInterval: 1 });
     worker.register('fixture', async () => { throw new Error('handler must not run'); });
     await worker.start();
     await new Promise(resolve => setTimeout(resolve, 10));
@@ -175,7 +176,7 @@ describe('worker configuration admission and actual execution', () => {
     const ready = deferred<void>();
     const entered = deferred<void>();
     const statements: string[] = [];
-    const worker = new MinionWorker({
+    const worker = new MinionWorker(withQueueMembers({
       kind: 'postgres',
       executeRaw: async (sql: string) => {
         statements.push(sql);
@@ -183,7 +184,7 @@ describe('worker configuration admission and actual execution', () => {
         await ready.promise;
         return [];
       },
-    } as unknown as BrainEngine, { healthCheckInterval: 1, stalledInterval: 1 });
+    }) as unknown as BrainEngine, { healthCheckInterval: 1, stalledInterval: 1 });
     worker.register('fixture', async () => {});
     const run = worker.start();
     await entered.promise;
@@ -198,7 +199,7 @@ describe('worker configuration admission and actual execution', () => {
   test('transient startup failure retries readiness before admitting work', async () => {
     const events: string[] = [];
     let probes = 0;
-    const worker = new MinionWorker({
+    const worker = new MinionWorker(withQueueMembers({
       kind: 'postgres',
       executeRaw: async (sql: string) => {
         if (sql.trim() === 'SELECT 1') {
@@ -207,7 +208,7 @@ describe('worker configuration admission and actual execution', () => {
         }
         return [];
       },
-    } as unknown as BrainEngine, { pollInterval: 1, healthCheckInterval: 0 });
+    }) as unknown as BrainEngine, { pollInterval: 1, healthCheckInterval: 0 });
     (worker as unknown as { queue: unknown }).queue = {
       ensureSchema: async () => { events.push('schema'); },
       promoteDelayed: async () => { events.push('promote'); },

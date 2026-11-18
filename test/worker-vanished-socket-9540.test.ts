@@ -12,6 +12,7 @@ import postgres from '#postgres';
 import { MinionWorker } from '../src/core/minions/worker.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { isRetryableConnError, isVanishedSocketError } from '../src/core/retry-matcher.ts';
+import { withQueueMembers } from './helpers/queue-engine-members.ts';
 
 const socketDir = mkdtempSync(join(tmpdir(), 'gbrain-no-pg-'));
 afterAll(() => rmSync(socketDir, { recursive: true, force: true }));
@@ -39,7 +40,7 @@ test('a connect to a vanished Unix socket is recognised; a missing file is not, 
 test('the worker reconnects and keeps polling when a claim finds the socket gone', async () => {
   const error = await vanishedSocketError();
   const events: string[] = [];
-  const engine = {
+  const engine = withQueueMembers({
     kind: 'postgres',
     executeRaw: async (sql: string) => {
       if (sql.trim() === 'SELECT 1') return [];
@@ -47,7 +48,7 @@ test('the worker reconnects and keeps polling when a claim finds the socket gone
       throw new Error('Unexpected SQL in worker socket fixture');
     },
     reconnect: async () => { events.push('reconnect'); },
-  } as unknown as BrainEngine;
+  }) as unknown as BrainEngine;
   const worker = new MinionWorker(engine, { pollInterval: 1, stalledInterval: 60_000, healthCheckInterval: 0 });
   worker.register('noop', async () => ({}));
   let claims = 0;

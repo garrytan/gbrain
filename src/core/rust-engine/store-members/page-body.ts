@@ -5,10 +5,8 @@
  *
  * Served: allocateBodyOccurrenceIds, stageSegmentTexts, readSegmentTexts, stageManifestRows, readManifest,
  * stageSegmentChunks, createSegmentedPageShell, flipBodyGeneration, sealSegmentedPage, openBodyStaging, setBodyStagingState,
- * readSegmentDerivations, upsertSegmentDerivations, retireSegmentDerivations, refreshPageBody. stageSegmentChunks
- * refuses a chunk that carries a vector (vectors are not stored), as upsertChunks does.
- *
- * Refused with `engine_capability_missing` (not exported): sweepSegments (needs page_versions and journal roots).
+ * sweepSegments, readSegmentDerivations, upsertSegmentDerivations, retireSegmentDerivations, refreshPageBody.
+ * stageSegmentChunks refuses a chunk that carries a vector (vectors are not stored), as upsertChunks does.
  *
  * The flip and the staging members refuse as PGLite does: the store reports the refusal as an `invalid_state` error
  * whose message is `page_body:<json>`, and `bodyError` rebuilds the error PGLite's engine throws from that JSON.
@@ -18,7 +16,7 @@
  * unexported.
  */
 import type { BodyFlipInput, BodyFlipResult, BodyRegion, BodyStagingInput, BodyStagingState, ManifestRow, ManifestRowInput,
-  SegmentChunkInput, SegmentedPageMeta, SegmentTextInput } from '../../page-body/types.ts';
+  SegmentChunkInput, SegmentedPageMeta, SegmentSweepOptions, SegmentSweepResult, SegmentTextInput } from '../../page-body/types.ts';
 import type { SegmentDerivationInput, SegmentDerivationKind, SegmentDerivationRow } from '../../page-body/derivations.ts';
 import { bodyGenerationIncompleteError, bodyStagingGoneError } from '../../engine-sql/page-body.ts';
 import { opError } from '../../ops/contract.ts';
@@ -203,6 +201,12 @@ export const setBodyStagingState: StoreMember<[id: string, state: BodyStagingSta
     const o = takeOptions('setBodyStagingState', opts, ['commitRequestId']);
     await bodyCall('setBodyStagingState', () => brain.setBodyStagingState(id, state, o));
   };
+
+export const sweepSegments: StoreMember<[opts?: SegmentSweepOptions], SegmentSweepResult> = async (brain, opts) => {
+  const o = takeOptions('sweepSegments', opts, ['sourceId', 'pageId', 'graceMs', 'expireStagings', 'now']);
+  if (o.now instanceof Date) o.now = o.now.toISOString();
+  return storeCall({ member: 'sweepSegments' }, () => brain.sweepSegments(o));
+};
 
 export const readSegmentDerivations: StoreMember<[pageId: number, opts?: { kind?: SegmentDerivationKind; occurrenceIds?: readonly number[] }], SegmentDerivationRow[]> =
   async (brain, pageId, opts) => {

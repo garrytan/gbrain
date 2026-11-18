@@ -23,11 +23,11 @@
 import type { BrainEngine } from '../engine.ts';
 import type { Action, Notice } from '../agent-output.ts';
 import { ALL_SOURCES } from '../source-id.ts';
-import { outOfAttemptsHold, GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP, contentRepairArgv, fenceAutoRepairFor, gitHoldDocs, gitHoldFix, holdRepairSteps, type GitHoldCode, type GitHoldReason, type GitHoldRecord, type HoldRepairRoute } from './sync-holds.ts';
+import { outOfAttemptsHold, GIT_HOLD_OP, contentRepairArgv, fenceAutoRepairFor, gitHoldDocs, gitHoldFix, holdRepairSteps, type GitHoldCode, type GitHoldReason, type GitHoldRecord, type HoldRepairRoute } from './sync-holds.ts';
 import { fenceHoldLocation, fenceHoldRelay, type FenceAutoRepair, type FenceHoldLocation } from '../fence-repair/hold-fix.ts';
 import { COVERAGE_COUNT_CAP, type CoverageRelevance } from '../search/retrieval-coverage.ts';
 
-type Exec = Pick<BrainEngine, 'executeRaw'>;
+type Exec = Pick<BrainEngine, 'executeRaw' | 'readHeldPageRows' | 'readHeldCoverageRows'>;
 
 /** `fenceAuto`: whether the maintenance run repairs fence holds, read only when some returned hold is one. */
 export interface HeldPage { record: GitHoldRecord; revision: string | null; fenceAuto?: FenceAutoRepair }
@@ -78,12 +78,7 @@ export function readHeldPages(engine: Exec, pageIds: number[], request?: object)
   const ids = [...new Set(pageIds.filter(id => Number.isInteger(id)))].sort((a, b) => a - b);
   if (!ids.length) return Promise.resolve(new Map());
   return cached(request, `pages:${ids.join(',')}`, async () => {
-    const rows = await engine.executeRaw<{ record: GitHoldRecord; revision: string | null }>(`SELECT h.completed_keys->0 AS record, p.knowledge_revision::text AS revision
-      FROM op_checkpoints h
-      JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
-      LEFT JOIN pages p ON p.id=(h.completed_keys->0->>'page_id')::int
-      WHERE h.op=$1 AND (h.completed_keys->0->>'page_id')=ANY($2::text[])
-      ORDER BY h.fingerprint`, [GIT_HOLD_OP, ids.map(String)]);
+    const rows = await engine.readHeldPageRows<GitHoldRecord>(ids.map(String));
     const out = new Map<number, HeldPage>();
     const fenceAuto = await fenceAutoRepairFor(engine, rows.map(row => row.record));
     for (const row of rows) {
@@ -99,15 +94,7 @@ export function readHeldCoverage(engine: Exec, scope: { sourceId?: string; sourc
   const ids = scope.sourceIds ?? (scope.sourceId !== undefined && scope.sourceId !== ALL_SOURCES ? [scope.sourceId] : null);
   if (ids && !ids.length) return Promise.resolve([]);
   return cached(request, `coverage:${ids ? [...ids].sort().join(',') : '*'}`, async () => {
-    const rows = await engine.executeRaw<{ source_id: string; count: number | string; stale: number | string; fences: number | string; concurrent: number | string; stalled: number | string; dirty: number | string; drift: number | string }>(`SELECT s.id AS source_id,
-        COALESCE((h.completed_keys->0->>'count')::int,0) AS count, COALESCE((h.completed_keys->0->>'stale')::int,0) AS stale,
-        COALESCE((h.completed_keys->0->>'fences')::int,0) AS fences, COALESCE((h.completed_keys->0->>'concurrent')::int,0) AS concurrent,
-        COALESCE((h.completed_keys->0->>'stalled')::int,0) AS stalled, COALESCE((h.completed_keys->0->>'dirty')::int,0) AS dirty,
-        COALESCE((h.completed_keys->0->>'drift')::int,0) AS drift
-      FROM op_checkpoints h JOIN sources s ON h.fingerprint=s.id||':'||s.incarnation::text
-      WHERE h.op=$1 AND s.archived IS NOT TRUE AND ($2::text[] IS NULL OR s.id=ANY($2::text[]))
-        AND COALESCE((h.completed_keys->0->>'count')::int,0)>0
-      ORDER BY s.id`, [GIT_HOLD_SUMMARY_OP, ids]);
+    const rows = await engine.readHeldCoverageRows(ids);
     return rows.map(row => {
       const count = Number(row.count), stale = Math.min(Number(row.stale), count), fences = Math.min(Number(row.fences), count);
       const concurrent = Math.min(Number(row.concurrent), count - fences);

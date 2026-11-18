@@ -41,7 +41,7 @@ export async function guardEffectSource(tx: BrainEngine, effect: PersistenceEffe
       `This host is not the active canonical owner of source ${effect.source_id}'s worktree, so its ${effect.kind} effect waits for the owner; the committed write is unaffected. Inspect the owner; the effect runs there.`,
       { fix: effectStatusFix(effect) });
   }
-  const [source] = await tx.executeRaw<{ incarnation: string; archived: boolean }>('SELECT incarnation,archived FROM sources WHERE id=$1 FOR SHARE', [effect.source_id]);
+  const source = await tx.readSourceState(effect.source_id, { lock: 'share' });
   if (!source || source.archived || source.incarnation !== effect.source_incarnation) throw opError('source_changed', 'The effect source was archived or replaced.',
     `Source ${effect.source_id} was archived, removed or re-created after this ${effect.kind} effect was recorded, so it no longer applies and nothing was done for it. Inspect the source before acting on its old effects.`,
     { fix: effectStatusFix(effect) });

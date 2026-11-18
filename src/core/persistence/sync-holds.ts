@@ -59,8 +59,8 @@ export { CARRIED_SAMPLE, carriedHolds, heldDriftPreviewArgv, mirrorDatabaseOnlyH
 import { HOLD_ATTEMPTS_NEEDS_HUMAN, HOLD_ESCALATE_MS } from './sync-fault-class.ts';
 import { retiredSyncSetting, type RetiredSyncKeyName } from '../sync-config-keys.ts';
 
-export const GIT_HOLD_OP = 'sync-hold';
-export const GIT_HOLD_SUMMARY_OP = 'sync-hold-summary';
+import { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP } from '../engine-sql/persistence-journal.ts';
+export { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP };
 export const GIT_HOLD_RETRY_OP = 'sync-hold-retry';
 export const SYNC_IMPORT_PROVENANCE_OP = 'sync-import-provenance';
 /** One row per source incarnation: the blocked requests recent managed syncs converted in place. */

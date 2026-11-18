@@ -12,6 +12,7 @@ import { deriveWedgeSignal } from '../src/core/minions/queue.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { withQueueMembers } from './helpers/queue-engine-members.ts';
 
 let engine: PGLiteEngine;
 
@@ -60,12 +61,12 @@ describe('get_job_stats op', () => {
   });
 
   test('missing minions schema → actionable unavailable, not a raw relation error', async () => {
-    const bare = {
+    const bare = withQueueMembers({
       executeRaw: async (sql: string) => {
         if (sql.includes('minion_jobs')) throw new Error('relation "minion_jobs" does not exist');
         return [];
       },
-    } as unknown as BrainEngine;
+    }) as unknown as BrainEngine;
     const res = await dispatchToolCall(bare, 'get_job_stats', {}, { ...STDIO });
     expect(res.isError).toBe(true);
     const body = parsed(res);

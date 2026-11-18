@@ -5,11 +5,12 @@
 //!
 //! Members served: allocateBodyOccurrenceIds, stageSegmentTexts, readSegmentTexts,
 //! stageManifestRows, readManifest, stageSegmentChunks, createSegmentedPageShell,
-//! flipBodyGeneration, openBodyStaging, setBodyStagingState, readSegmentDerivations,
+//! flipBodyGeneration, openBodyStaging, setBodyStagingState, sweepSegments, readSegmentDerivations,
 //! upsertSegmentDerivations, retireSegmentDerivations, refreshPageBody. Segment chunk rows go
 //! through the chunks family's segment-chunk helper (`chunks::append_segment_chunks` and friends).
-//! Not served (the TypeScript engine refuses it with `engine_capability_missing`): sweepSegments
-//! (its roots are version and journal rows this family cannot read).
+//! The sweep reads its other roots through narrow helpers: the generations version snapshots
+//! reference (`pages::version_generations`) and the stagings outstanding requests name
+//! (`journal::request_held_staging_ids`).
 //!
 //! Keys. Every record starts with `keys::PAGE_BODY` (`b`) and one kind byte. Page ids are
 //! big-endian u64; occurrence ids and generations are signed and stored sign-flipped big-endian
@@ -64,6 +65,7 @@ const SEGMENTED_CHUNKER_VERSION: i16 = 5;
 const NIL_STAGING: [u8; 16] = [0; 16];
 
 const LIVE_STAGING_STATES: [&str; 3] = ["open", "sealed", "prepared"];
+const TERMINAL_STAGING_STATES: [&str; 3] = ["committed", "aborted", "expired"];
 const STAGING_STATES: [&str; 6] = [
     "open",
     "sealed",
@@ -106,6 +108,11 @@ const DERIVATION_STATES: [&str; 4] = ["done", "partial", "failed", "skipped"];
 const MAX_SEGMENT_BYTES: usize = 1_048_576;
 /// `BODY_STAGING_IDLE_MS` (`src/core/page-body/limits.ts`) in microseconds.
 const BODY_STAGING_IDLE_US: i64 = 60 * 60 * 1_000_000;
+/// `BODY_STAGING_HARD_MS` in microseconds: a sweep deletes a terminal staging this long after its
+/// last change.
+const BODY_STAGING_HARD_US: i64 = 24 * 60 * 60 * 1_000_000;
+/// `SEGMENT_TEXT_GC_GRACE_MS` (`src/core/page-body/limits.ts`): the default text grace window.
+const SEGMENT_TEXT_GC_GRACE_MS: i64 = 60 * 60 * 1000;
 /// `SAFE_FENCE_CHUNKER_VERSION` (`src/core/search/safe-chunks.ts`): a segmented write stores at
 /// most one below it.
 const SAFE_FENCE_CHUNKER_VERSION: i64 = 4;
@@ -378,6 +385,27 @@ pub struct DerivationReadOptions {
 #[serde(default, rename_all = "camelCase")]
 pub struct DerivationRetireOptions {
     pub kind: Option<String>,
+}
+
+/// `SegmentSweepOptions`; `now` as an ISO string.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct SegmentSweepOptions {
+    pub source_id: Option<String>,
+    pub page_id: Option<i64>,
+    pub grace_ms: Option<i64>,
+    pub expire_stagings: Option<bool>,
+    pub now: Option<String>,
+}
+
+/// `SegmentSweepResult`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SegmentSweepResult {
+    pub retired_chunks_deleted: u64,
+    pub manifest_rows_deleted: u64,
+    pub texts_deleted: u64,
+    pub stagings_expired: u64,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -814,6 +842,98 @@ pub(crate) fn page_columns(
         columns.set("body_bytes", json!(state.body_bytes));
     }
     Ok(())
+}
+
+/// The live body generation and `body_bytes` of a segmented page, which its version snapshot
+/// references (`insertSegmentedVersion`); `None` for an inline page or a missing one.
+pub(crate) fn segmented_reference(
+    read: &dyn KvRead,
+    page_id: u64,
+) -> Result<Option<(i64, Option<i64>)>> {
+    Ok(read_body_state(read, page_id)?
+        .filter(|state| state.body_storage == "segmented")
+        .map(|state| (state.body_generation, state.body_bytes)))
+}
+
+/// PGLite's `liveStagingIds`: stagings in a live state, plus the stagings an outstanding request
+/// names (`held`, whatever their state).
+fn live_staging_ids(read: &dyn KvRead, held: &HashSet<String>) -> Result<HashSet<String>> {
+    let mut live = held.clone();
+    for (_, staging) in collect::<StagingRecord>(read, &kind_key(STAGING))? {
+        if LIVE_STAGING_STATES.contains(&staging.state.as_str()) {
+            live.insert(staging.id);
+        }
+    }
+    Ok(live)
+}
+
+fn staged_by(row: &ManifestRow, live: &HashSet<String>) -> Option<bool> {
+    row.staging_id.as_ref().map(|id| live.contains(id))
+}
+
+/// Step 6 of `sweep_segments`: deletes the texts created before `before` in `source` (every
+/// source when `None`; only the shas in `released` when given) that no manifest row names, that
+/// no live staging of their source predates, and that no live staging recorded.
+fn sweep_texts(
+    tx: &mut dyn KvWrite,
+    live: &HashSet<String>,
+    before: i64,
+    source: Option<&str>,
+    released: Option<&HashSet<String>>,
+) -> Result<u64> {
+    let mut named: HashSet<(String, String)> = HashSet::new();
+    for (_, row) in collect::<ManifestRow>(&*tx, &kind_key(MANIFEST))? {
+        named.insert((row.source_id, row.sha256));
+    }
+    // The oldest live staging of each source, and the texts live stagings recorded.
+    let mut oldest_live: HashMap<String, i64> = HashMap::new();
+    let mut recorded: HashSet<(String, String)> = HashSet::new();
+    for (_, staging) in collect::<StagingRecord>(&*tx, &kind_key(STAGING))? {
+        if !live.contains(&staging.id) {
+            continue;
+        }
+        let oldest = oldest_live
+            .entry(staging.source_id.clone())
+            .or_insert(staging.created_at_us);
+        *oldest = (*oldest).min(staging.created_at_us);
+        let prefix = staging_text_prefix(&staging.id);
+        for (key, text_source) in collect::<String>(&*tx, &prefix)? {
+            recorded.insert((text_source, to_hex(&key[prefix.len()..])));
+        }
+    }
+    let mut prefix = kind_key(TEXT);
+    if let Some(source) = source {
+        prefix.extend_from_slice(source.as_bytes());
+        prefix.push(0);
+    }
+    let mut gone = Vec::new();
+    for (key, text) in collect::<TextRecord>(&*tx, &prefix)? {
+        let tail = &key[2..];
+        let Some(split) = tail.len().checked_sub(33).filter(|at| tail[*at] == 0) else {
+            continue;
+        };
+        let text_source = String::from_utf8_lossy(&tail[..split]).into_owned();
+        let sha = to_hex(&tail[split + 1..]);
+        if source.is_some_and(|src| src != text_source) {
+            continue;
+        }
+        if text.created_at_us >= before
+            || released.is_some_and(|set| !set.contains(&sha))
+            || oldest_live
+                .get(&text_source)
+                .is_some_and(|oldest| *oldest <= text.created_at_us)
+        {
+            continue;
+        }
+        let id = (text_source, sha);
+        if !named.contains(&id) && !recorded.contains(&id) {
+            gone.push(key);
+        }
+    }
+    for key in &gone {
+        tx.delete(key)?;
+    }
+    Ok(gone.len() as u64)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1627,6 +1747,157 @@ impl Store {
                 "staging_id": id,
                 "state": record.map(|r| r.state),
             })))
+        })
+    }
+
+    /// `sweepSegments({ sourceId?, pageId?, graceMs?, expireStagings?, now? })`: PGLite's garbage
+    /// collection (spec 3.5), step for step in one write. Roots: a segmented page's live
+    /// generation, every generation a version snapshot references, and the rows of live stagings
+    /// (`live_staging_ids`: a live state or named by an outstanding request).
+    ///
+    /// 1. With `expireStagings`: live stagings in scope past a deadline that no request holds
+    ///    become `expired`, and terminal stagings in scope unchanged for `BODY_STAGING_HARD_MS`
+    ///    are deleted (with their client key and recorded texts).
+    /// 2. Chunks staged above a page's generation go, unless a live staging stages that occurrence.
+    /// 3. Chunks at or below it go when only dead stagings' rows name their occurrence.
+    /// 4. Staged manifest rows of dead stagings go.
+    /// 5. Published rows outside the live generation and every version's generation go.
+    /// 6. Texts older than the grace window go when no manifest row names them, no live staging of
+    ///    their source is as old, and no live staging recorded them. A `pageId` sweep considers only
+    ///    the texts its own manifest deletes released.
+    pub fn sweep_segments(&self, options: &SegmentSweepOptions) -> Result<SegmentSweepResult> {
+        let now = match options.now.as_deref() {
+            Some(text) => parse_time(text, "sweepSegments now")?,
+            None => self.env.now_micros(),
+        };
+        let grace_us = options
+            .grace_ms
+            .unwrap_or(SEGMENT_TEXT_GC_GRACE_MS)
+            .saturating_mul(1000);
+        let source = options.source_id.as_deref();
+        let page_scope = options.page_id;
+        self.write(|tx| {
+            let held = crate::journal::request_held_staging_ids(&*tx)?;
+            let mut result = SegmentSweepResult::default();
+            let in_scope = |staging: &StagingRecord| {
+                page_scope.is_none_or(|id| {
+                    staging.page_id.and_then(|p| i64::try_from(p).ok()) == Some(id)
+                }) && source.is_none_or(|src| staging.source_id == src)
+            };
+            if options.expire_stagings == Some(true) {
+                for (_, mut staging) in collect::<StagingRecord>(&*tx, &kind_key(STAGING))? {
+                    let due = staging.hard_expires_at_us <= now
+                        || (staging.idle_expires_at_us <= now
+                            && (staging.kind != "upload" || staging.state == "open"));
+                    if LIVE_STAGING_STATES.contains(&staging.state.as_str())
+                        && in_scope(&staging)
+                        && due
+                        && !held.contains(&staging.id)
+                    {
+                        staging.state = "expired".to_string();
+                        staging.updated_at_us = now;
+                        put_json(tx, &staging_key(&staging.id), &staging)?;
+                        result.stagings_expired += 1;
+                    }
+                }
+                let live = live_staging_ids(&*tx, &held)?;
+                for (_, staging) in collect::<StagingRecord>(&*tx, &kind_key(STAGING))? {
+                    if TERMINAL_STAGING_STATES.contains(&staging.state.as_str())
+                        && staging.updated_at_us <= now.saturating_sub(BODY_STAGING_HARD_US)
+                        && in_scope(&staging)
+                        && !live.contains(&staging.id)
+                    {
+                        delete_staging(tx, &staging)?;
+                    }
+                }
+            }
+            let live = live_staging_ids(&*tx, &held)?;
+            let pages: Vec<PageRecord> = match page_scope {
+                Some(id) => match page_u64(id) {
+                    Some(id) => read_page_by_id(&*tx, id)?.into_iter().collect(),
+                    None => Vec::new(),
+                },
+                None => crate::pages::all_pages(&*tx)?,
+            };
+            let mut released: HashSet<String> = HashSet::new();
+            for page in pages
+                .iter()
+                .filter(|page| source.is_none_or(|src| page.source_id == src))
+            {
+                let state = read_body_state(&*tx, page.id)?;
+                let generation = state.as_ref().map_or(0, |s| s.body_generation);
+                let segmented = is_segmented(state.as_ref());
+                let rows = manifest_rows(&*tx, page.id)?;
+                // Occurrences a live staging stages, and those a published or live row names.
+                let live_staged: HashSet<i64> = rows
+                    .iter()
+                    .filter(|(_, r)| staged_by(r, &live) == Some(true))
+                    .map(|(_, r)| r.occurrence_id)
+                    .collect();
+                let kept: HashSet<i64> = rows
+                    .iter()
+                    .filter(|(_, r)| staged_by(r, &live) != Some(false))
+                    .map(|(_, r)| r.occurrence_id)
+                    .collect();
+                let dead: HashSet<i64> = rows
+                    .iter()
+                    .filter(|(_, r)| staged_by(r, &live) == Some(false))
+                    .map(|(_, r)| r.occurrence_id)
+                    .collect();
+                let above = |place: &crate::chunks::SegmentPlace| {
+                    i128::from(place.body_generation) > i128::from(generation)
+                };
+                let occurrence =
+                    |place: &crate::chunks::SegmentPlace| i64::try_from(place.occurrence_id).ok();
+                let gone = crate::chunks::delete_chunks_matching(tx, page.id, &|c| {
+                    c.segment.as_ref().is_some_and(|place| {
+                        let occ = occurrence(place);
+                        if above(place) {
+                            occ.is_none_or(|o| !live_staged.contains(&o))
+                        } else {
+                            occ.is_some_and(|o| dead.contains(&o) && !kept.contains(&o))
+                        }
+                    })
+                })?;
+                result.retired_chunks_deleted += gone.len() as u64;
+                let versions = crate::pages::version_generations(&*tx, page.id)?;
+                for (key, row) in &rows {
+                    let drop = match staged_by(row, &live) {
+                        Some(live) => !live,
+                        None => {
+                            !(segmented && in_generation(row, generation))
+                                && !versions.iter().any(|v| {
+                                    *v >= row.gen_from && row.gen_to.is_none_or(|to| *v < to)
+                                })
+                        }
+                    };
+                    if drop {
+                        tx.delete(key)?;
+                        result.manifest_rows_deleted += 1;
+                        if page_scope.is_some() {
+                            released.insert(row.sha256.clone());
+                        }
+                    }
+                }
+            }
+            if page_scope.is_some() && released.is_empty() {
+                return Ok(result);
+            }
+            let page_source = match page_scope {
+                Some(_) => pages.first().map(|p| p.source_id.clone()),
+                None => None,
+            };
+            if page_scope.is_some() && page_source.is_none() {
+                return Ok(result);
+            }
+            result.texts_deleted = sweep_texts(
+                tx,
+                &live,
+                now.saturating_sub(grace_us),
+                page_source.as_deref().or(source),
+                page_scope.is_some().then_some(&released),
+            )?;
+            Ok(result)
         })
     }
 
@@ -2728,5 +2999,254 @@ mod segment_chunk_tests {
         assert!(store.read().unwrap().get(&view).unwrap().is_some());
         store.delete_page("notes/a", None).unwrap();
         assert!(store.read().unwrap().get(&view).unwrap().is_none());
+    }
+
+    const LATER: &str = "2100-01-01T00:00:00Z";
+
+    fn sweep(store: &Store, options: Value) -> SegmentSweepResult {
+        store
+            .sweep_segments(&serde_json::from_value(options).unwrap())
+            .unwrap()
+    }
+
+    fn swept(chunks: u64, rows: u64, texts: u64, expired: u64) -> SegmentSweepResult {
+        SegmentSweepResult {
+            retired_chunks_deleted: chunks,
+            manifest_rows_deleted: rows,
+            texts_deleted: texts,
+            stagings_expired: expired,
+        }
+    }
+
+    fn settle(store: &Store, ids: &[&str]) {
+        for id in ids {
+            store
+                .set_body_staging_state(id, "committed", &StagingStateOptions::default())
+                .unwrap();
+        }
+    }
+
+    fn texts(store: &Store, bodies: &[&str]) -> usize {
+        let shas: Vec<String> = bodies.iter().map(|b| sha(b)).collect();
+        store.read_segment_texts("default", &shas).unwrap().len()
+    }
+
+    fn manifest_len(store: &Store, id: i64) -> usize {
+        manifest_rows(&*store.read().unwrap(), id as u64)
+            .unwrap()
+            .len()
+    }
+
+    /// Generation 2 closes occurrence 2 ("two\n") and publishes occurrence 3 ("TWO!\n").
+    fn flipped(store: &Store, id: i64) {
+        second_generation(store, id);
+        store
+            .flip_body_generation(&flip(id, 1, STAGING_2, 9, json!({"closeOccurrences": [2]})))
+            .unwrap();
+        settle(store, &[STAGING, STAGING_2]);
+    }
+
+    #[test]
+    fn a_sweep_drops_a_closed_generation_and_its_released_text() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        flipped(&store, id);
+        assert_eq!(manifest_len(&store, id), 3);
+        // Inside the grace window the row goes and the text stays.
+        assert_eq!(sweep(&store, json!({})), swept(0, 1, 0, 0));
+        assert_eq!(texts(&store, &["two\n"]), 1);
+        // Later the text goes too: no row names it, no live staging is older.
+        assert_eq!(sweep(&store, json!({"now": LATER})), swept(0, 0, 1, 0));
+        assert_eq!(texts(&store, &["one\n", "two\n", "TWO!\n"]), 2);
+        assert_eq!(visible(&store, id), vec!["TWO!"]);
+        assert_eq!(sweep(&store, json!({"now": LATER})), swept(0, 0, 0, 0));
+    }
+
+    #[test]
+    fn a_version_snapshot_keeps_the_generation_it_references() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        let created = store.create_version("notes/a", Some("default")).unwrap();
+        assert_eq!(created["body_storage"], "segmented");
+        assert_eq!(created["body_generation"], 1);
+        assert_eq!(created["body_bytes"], 8);
+        assert_eq!(created["compiled_truth"], Value::Null);
+        assert_eq!(created["timeline"], Value::Null);
+        flipped(&store, id);
+        assert_eq!(sweep(&store, json!({"now": LATER})), swept(0, 0, 0, 0));
+        assert_eq!(manifest_len(&store, id), 3);
+        assert_eq!(texts(&store, &["two\n"]), 1);
+        let versions = store
+            .get_versions("notes/a", &crate::pages::VersionsOptions::default())
+            .unwrap();
+        assert_eq!(versions.len(), 1);
+        assert_eq!(versions[0]["body_generation"], 1);
+        // An inline page's snapshot carries no segmented columns.
+        store
+            .put_page(
+                "notes/inline",
+                &crate::pages::PageInput {
+                    page_type: "note".into(),
+                    title: "Inline".into(),
+                    compiled_truth: "body".into(),
+                    ..crate::pages::PageInput::default()
+                },
+                &crate::pages::PutPageOptions::default(),
+            )
+            .unwrap();
+        let inline = store
+            .create_version("notes/inline", Some("default"))
+            .unwrap();
+        assert!(inline.get("body_storage").is_none() && inline.get("body_generation").is_none());
+        assert_eq!(inline["compiled_truth"], "body");
+    }
+
+    #[test]
+    fn a_request_held_staging_is_not_expired_and_keeps_its_staged_rows() {
+        let run = |held: bool| {
+            let store = crate::test_support::store();
+            let id = published(&store);
+            second_generation(&store, id);
+            if held {
+                let admission: crate::journal::WriteAdmission = serde_json::from_value(json!({
+                    "principal": {"kind": "local_cli", "id": "cli"}, "operation": "put_page",
+                    "sourceId": "default", "slug": "notes/a",
+                    "requestId": "66666666-6666-4666-8666-666666666666",
+                    "callerIntent": {"slug": "notes/a"},
+                    "intent": {"body_ref": {"staging_id": STAGING_2}},
+                }))
+                .unwrap();
+                store.admit_write(&admission, None).unwrap();
+            }
+            let result = sweep(&store, json!({"expireStagings": true, "now": LATER}));
+            (result, manifest_len(&store, id))
+        };
+        // Held: only the fixture's first staging expires; the staged row and the staged chunk of
+        // occurrence 3 stay, the chunk of occurrence 9 (no row) goes.
+        assert_eq!(run(true), (swept(1, 0, 0, 1), 3));
+        // Not held: both expire, and the staged row, both staged chunks and the staged text go.
+        assert_eq!(run(false), (swept(2, 1, 1, 2), 2));
+    }
+
+    #[test]
+    fn a_terminal_staging_is_deleted_a_day_after_its_last_change() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        store
+            .set_body_staging_state(STAGING, "aborted", &StagingStateOptions::default())
+            .unwrap();
+        let present = |store: &Store| {
+            store
+                .read()
+                .unwrap()
+                .get(&staging_key(STAGING))
+                .unwrap()
+                .is_some()
+        };
+        assert_eq!(
+            sweep(&store, json!({"expireStagings": true})),
+            swept(0, 0, 0, 0)
+        );
+        assert!(present(&store));
+        // Another page's scope, or another source's, leaves it.
+        assert_eq!(
+            sweep(
+                &store,
+                json!({"expireStagings": true, "now": LATER, "pageId": id + 1})
+            ),
+            swept(0, 0, 0, 0)
+        );
+        sweep(
+            &store,
+            json!({"expireStagings": true, "now": LATER, "sourceId": "other"}),
+        );
+        assert!(present(&store));
+        sweep(
+            &store,
+            json!({"expireStagings": true, "now": LATER, "pageId": id}),
+        );
+        assert!(!present(&store));
+        assert_eq!(count(&store, &staging_text_prefix(STAGING)), 0);
+    }
+
+    fn count(store: &Store, prefix: &[u8]) -> usize {
+        let mut n = 0;
+        scan_prefix(&*store.read().unwrap(), prefix, false, &mut |_, _| {
+            n += 1;
+            true
+        })
+        .unwrap();
+        n
+    }
+
+    #[test]
+    fn chunks_only_a_dead_staging_names_go_at_or_below_the_live_generation() {
+        let run = |abort: bool| {
+            let store = crate::test_support::store();
+            let id = published(&store);
+            settle(&store, &[STAGING]);
+            store
+                .open_body_staging(&staging(
+                    STAGING_2,
+                    id,
+                    "55555555-5555-4555-8555-555555555555",
+                ))
+                .unwrap();
+            store
+                .stage_segment_texts("default", &[text("late\n")], &StageTextsOptions::default())
+                .unwrap();
+            store
+                .stage_manifest_rows(&[row(id, 7, 2, 2, 8, "late\n", STAGING_2)])
+                .unwrap();
+            // A late batch at the live generation (the flip went to another write first).
+            store
+                .write(|tx| {
+                    crate::chunks::append_segment_chunks(tx, id as u64, 1, &[chunk(7, 0, "late")])
+                        .map(|_| ())
+                })
+                .unwrap();
+            if abort {
+                store
+                    .set_body_staging_state(STAGING_2, "aborted", &StagingStateOptions::default())
+                    .unwrap();
+            }
+            sweep(&store, json!({"pageId": id}))
+        };
+        assert_eq!(run(false), swept(0, 0, 0, 0));
+        assert_eq!(run(true), swept(1, 1, 0, 0));
+    }
+
+    #[test]
+    fn a_page_scoped_sweep_considers_only_the_texts_its_rows_released() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        settle(&store, &[STAGING]);
+        // A live staging opened before the text: the text may be the one it is about to name.
+        store
+            .open_body_staging(&staging(
+                STAGING_2,
+                id,
+                "55555555-5555-4555-8555-555555555555",
+            ))
+            .unwrap();
+        store
+            .stage_segment_texts("default", &[text("loose\n")], &StageTextsOptions::default())
+            .unwrap();
+        assert_eq!(
+            sweep(&store, json!({"pageId": id, "now": LATER})),
+            swept(0, 0, 0, 0)
+        );
+        assert_eq!(
+            sweep(&store, json!({"sourceId": "other", "now": LATER})),
+            swept(0, 0, 0, 0)
+        );
+        assert_eq!(texts(&store, &["loose\n"]), 1);
+        assert_eq!(sweep(&store, json!({"now": LATER})), swept(0, 0, 0, 0));
+        settle(&store, &[STAGING_2]);
+        assert_eq!(
+            sweep(&store, json!({"sourceId": "default", "now": LATER})),
+            swept(0, 0, 1, 0)
+        );
+        assert_eq!(texts(&store, &["loose\n", "one\n", "two\n"]), 2);
     }
 }

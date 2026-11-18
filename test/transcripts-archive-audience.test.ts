@@ -119,7 +119,7 @@ describe('archive and the brain audience (pglite, remote=true)', () => {
   test('a run whose audience lookup failed writes no day page and ends archive_audience_unproven', async () => {
     const failing = new Proxy(engine, { get(target, prop) {
       const value = Reflect.get(target, prop, target);
-      // The client usage read is the engine's typed readClientOpUsage member.
+      // The usage read is the engine's typed telemetry member (SQL in engine-sql/telemetry.ts).
       if (prop === 'readClientOpUsage') return () => Promise.reject(new Error('synthetic usage read failure'));
       return typeof value === 'function' ? value.bind(target) : value;
     } }) as unknown as BrainEngine;
