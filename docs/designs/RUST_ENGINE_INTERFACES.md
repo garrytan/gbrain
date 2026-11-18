@@ -649,11 +649,9 @@ unless the PGLite query uses `lower()` on non-ASCII text in a parity case.
 
 A float score (cosine similarity, salience, rank) matches PGLite within an absolute tolerance of `1e-6`. Ties break the
 way the PGLite `ORDER BY` breaks them, usually by id. Postgres `REAL` columns (`emotional_weight`, take `weight`)
-are rounded to `f32` before arithmetic, then computed in `f64`. The store's keyword ranking is a plain BM25 today;
-the one keyword case that differs because of it is the row in `test/rust-expected-divergence/search.tsv`. The
-`ts_rank` compatibility ranker (design D5), which the keyword family writes in `keyword.rs` over the core `T`
-postings, is the parity baseline it builds toward; every other
-keyword, title and trigram case must match exactly.
+are rounded to `f32` before arithmetic, then computed in `f64`. The store's keyword ranking is the `ts_rank` and `ts_rank_cd` compatibility
+ranker (design D5, `keyword/rank.rs`); it has no expected difference (`search.tsv` is empty), so every keyword, title
+and trigram case must match exactly.
 
 ### Expected differences
 
@@ -1083,17 +1081,17 @@ Timeline reads by date and event projections.
 
 ### keyword
 
-Keyword search members the keyword_search capability still refuses, and title trigrams.
+Keyword search members of the keyword_search capability (all served), and title trigrams.
 
 - **Files:** `gbrain-store/src/keyword.rs`, `gbrain-napi/src/families/keyword.rs`, `store-members/keyword.ts`.
 - **Tag:** `R` (`TRIGRAM`). Cascade on page delete: no.
-- **Members (5), capability:** `keyword_search` (5).
-- **Store and binding:** `countKeywordPages` (`count_keyword_pages`), `searchKeywordPages` (`search_keyword_pages`), `searchTitles` (`search_titles`), `searchKeywordChunks` (`search_keyword_chunks`), `findByTitleFuzzy` (`find_by_title_fuzzy`).
+- **Members (6), capability:** `keyword_search` (6).
+- **Store and binding:** `searchKeyword` (`search_keyword`; the hybrid arm is in `keyword/arm.rs`), `countKeywordPages` (`count_keyword_pages`), `searchKeywordPages` (`search_keyword_pages`), `searchTitles` (`search_titles`), `searchKeywordChunks` (`search_keyword_chunks`), `findByTitleFuzzy` (`find_by_title_fuzzy`).
 - **Postgres tables:** `content_chunks.search_vector`, `pages.search_vector`, title trigrams.
-- **Keys:** Postings stay core (`T`). `R <source> 0x00 <trigram> 0x00 <page id>` title trigram postings, kept by the core page index hook (`page_index::reindex_page`; the stub is in `keyword.rs`).
-- **Depends on:** Core search postings (`T`). The family writes the `ts_rank` compatibility ranker (design D5) in `keyword.rs` over those postings; the facts keyword arm reuses it. Ports `pg_trgm` similarity for `findByTitleFuzzy` and `searchTitles`; the takes family reuses it.
+- **Keys:** None written yet; every member scans the live pages and rebuilds vectors from text (`rust/docs/store/keyword.md`, "Keys"). The family owns the `R` tag (`TRIGRAM`).
+- **Depends on:** The family writes the `ts_rank` and `ts_rank_cd` compatibility rankers (design D5) in `keyword/rank.rs` over vectors built from the row text; the core `T` postings are not used; the facts keyword arm reuses the rankers. Ports `pg_trgm` similarity for `findByTitleFuzzy` and `searchTitles`; the takes family reuses it.
 - **Estimate:** about 5 days: 3 for the members, about 2 for the `ts_rank` ranker (a judgment; the ranker came to this family after the first estimate).
-- **Notes:** Every keyword case except the one in `search.tsv` must match PGLite exactly, order and score within `1e-6`.
+- **Notes:** Every keyword case must match PGLite exactly, order and score within `1e-6`; `search.tsv` is empty.
 - **Parity cases (4, in `links.test.ts`, `search.test.ts`):**
   - `links.test.ts`: findByTitleFuzzy returns the best title match above the threshold, honoring prefix and source
   - `search.test.ts`: countKeywordPages and searchKeywordPages page through strict keyword matches
@@ -1102,7 +1100,7 @@ Keyword search members the keyword_search capability still refuses, and title tr
 
 ### chunk_queries
 
-Chunk reads the chunks capability still refuses.
+Chunk reads of the chunks capability (served; the capability stays unreported while other chunk members refuse).
 
 - **Files:** `gbrain-store/src/chunk_queries.rs`, `gbrain-napi/src/families/chunk_queries.rs`, `store-members/chunk-queries.ts`.
 - **Tag:** `c` (`CHUNK_QUERIES`). Cascade on page delete: no.

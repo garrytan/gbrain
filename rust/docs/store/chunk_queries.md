@@ -56,7 +56,7 @@ its source is not archived and its frontmatter has no `quarantine` key. Unauthor
 
 Each authorized page yields one page row: `prio` is the lowest priority any request gave it, `max_chunk_index` is the
 highest index over all its chunks of the live body (any chunk source), `sealed` is `COALESCE(chunker_version, 0) >= 4`
-(`SAFE_FENCE_CHUNKER_VERSION`, with a store page that records no version counted as sealed) and `segmented` is true
+(`SAFE_FENCE_CHUNKER_VERSION`; a page that records no version is not sealed, as in SQL) and `segmented` is true
 for a page with NULL body columns. A segmented page's row carries NULL `compiled_truth` and `timeline`. Chunk rows
 come from the authorized pages that are sealed: a chunk of the live body (above) whose `chunk_source` is in `chunkSources`,
 whose modality is `text` and whose index is inside some request's inclusive range for that page. They are ordered by

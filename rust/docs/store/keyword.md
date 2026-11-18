@@ -136,7 +136,9 @@ facts OR builder recurse the same way, once per item, and the stack of the threa
   stack for the whole `searchKeyword` statement at a few thousand repeats, where it returns an empty result with no
   error (the limit is not a fixed number: 4,000 repeats failed and 4,500 passed in one run). The Rust engine answers
   every query up to the bound and throws past it. A test of the thrown error cannot be a parity case, because the
-  expected-divergence rows cover only an answer that differs from PGLite's, never a thrown error.
+  expected-divergence rows cover only an answer that differs from PGLite's, never a thrown error. The parity case
+  (`test/engine-parity/search-deep-query.test.ts`) uses 1,000 repeats (2,000 operands), under both limits: on macOS arm64
+  PGLite already returns the empty result at 3,000 repeats.
 
 ## A chunk whose vector does not fit
 

@@ -9,7 +9,9 @@
  *
  * PRIVACY: the export holds the full text of your pages and chunks. It is private data. Never commit it, share it,
  * attach it to an issue or upload it. Only aggregate numbers from a benchmark run may be published. Files are written
- * 0600 (directory 0700), and the script refuses an output directory inside a git working tree.
+ * 0600 (directory 0700), and the script refuses an output directory inside a git working tree, or one it cannot rule
+ * out: only git's own not-a-repository answer (exit 128, in the C locale) counts as outside. `--allow-in-repo` skips
+ * that check. A segmented (over 1 MiB) page is skipped and counted.
  *
  * The brain is only read. Nothing calls an embedding or chat provider: the vectors are the ones already stored.
  * Queries are sampled from stored chunk vectors, so (unlike the dbpedia corpus) they are IN the corpus: their
