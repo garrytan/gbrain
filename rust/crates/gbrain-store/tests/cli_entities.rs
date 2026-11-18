@@ -206,11 +206,13 @@ fn sibling_candidates_skip_private_pages_under_the_policy() {
     let honored = read(Some(PrivacyPolicy {
         honor_aliases: true,
         entity_privacy: true,
+        ..Default::default()
     }));
     assert_eq!(honored, ["people/ada", "people/ada-2", "people/ada-q"]);
     let visibility_only = read(Some(PrivacyPolicy {
         honor_aliases: false,
         entity_privacy: true,
+        ..Default::default()
     }));
     assert!(visibility_only.contains(&"people/ada-restricted".to_string()));
     assert!(!visibility_only.contains(&"people/ada-private".to_string()));

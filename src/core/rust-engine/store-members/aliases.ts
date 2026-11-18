@@ -7,7 +7,8 @@
  * and `excludePrivate` through the page policy (private-provenance.ts `storePagePolicy`), and `minTrust` and
  * `suppressFlagged` over the page's stamped trust tier and its write-gate receipts. resolveAliases reads its scope as
  * `readAliases` does: the same policy on the page an alias names and on the page whose title shadows a derived alias.
- * Both refuse `excludePrivate` for a caller whose member pages, grants or lineage widen the page policy. A
+ * resolveAliases also serves a caller whose record holds only a reader identity and a private-readable grant, which
+ * the store reads from the policy; both refuse `excludePrivate` for any other caller whose policy differs. A
  * rename moves fact bindings only once the facts family fills its rename hook, and the `none` contextual retrieval
  * tier keeps no vectors to reset (rust/docs/store/aliases.md).
  */
@@ -64,7 +65,7 @@ export const resolveSlugWithAlias: StoreMember<[slug: string, sourceOrSources: s
 export const resolveAliases: StoreMember<[aliasNorms: string[], opts?: PageReadScope], Map<string, AliasRef[]>> = async (brain, aliasNorms, opts) => {
   const o = takeOptions('resolveAliases', opts, ['sourceId', 'sourceIds', 'excludePrivate', 'minTrust', 'suppressFlagged'], ['requireSafeChunks']);
   if (aliasNorms.length === 0) return new Map();
-  const excludePrivate = storePagePolicy('resolveAliases', o.excludePrivate);
+  const excludePrivate = storePagePolicy('resolveAliases', o.excludePrivate, { callerReaders: true });
   const scope = {
     sourceId: o.sourceId, sourceIds: o.sourceIds,
     excludePrivate: excludePrivate ?? null, minTrust: o.minTrust || null, suppressFlagged: o.suppressFlagged === true,

@@ -11,14 +11,21 @@
  * A page read under `excludePrivate` (pageReadFilter, src/core/search/read-policy-sql.ts) adds the page policy
  * `privatePagesFilterForCaller('p')` instead, which the entity gate of the fact policy applies to its entity page;
  * `storePagePolicy` refuses the same way and sends the same flags (`entityPrivacy` is then the privacy part of `p`).
+ * A page family that opts in with `callerReaders` also serves a caller whose record holds only a reader identity
+ * (its member id and groups) and a private-readable grant: the member renders the page policy for a fresh record of
+ * just those two, and when the caller's text equals it, the store reads the identity and the granted sources from
+ * the policy (`readers_allowed` and `orPrivateReadableSource` in privacy.rs). Folder rules, pending coverage,
+ * audiences, lineage, owner-only sources, labelled-only grants and relaxed reads still refuse.
  *
  * The concept-input test is rendered either inline or as a call of `gbrain_concept_inputs_private` (migration v311),
  * by the schema version the context carries. The two forms are the same test, so the comparison reads both as one.
  */
 import {
+  currentCallerAccess,
   privacyAliasSql,
   privatePagesFilterForCaller,
   privateSnapshotFilterFragment,
+  withCallerAccess,
   withoutCallerAccess,
   privateProvenanceFilterUnderPolicy,
 } from '../../search/private-visibility.ts';
@@ -28,6 +35,10 @@ import { refuseMember } from './common.ts';
 export interface StorePrivacyPolicy {
   honorAliases: boolean;
   entityPrivacy: boolean;
+  /** The caller's reader principals; empty for the no-caller policy. */
+  identity?: string[];
+  /** The sources whose private pages the caller reads; empty for the no-caller policy. */
+  privateReadableSources?: string[];
 }
 
 /** The page aliases the policies judge: the fact policy's two, and `p` of a page read. */
@@ -79,14 +90,29 @@ export function storePrivacyPolicy(member: string, excludePrivate: unknown, rend
  * The store policy for a page read (`pageReadFilter`'s `excludePrivate`), or undefined when the read does not ask for
  * it. The read's page alias is `p`; a caller whose `privatePagesFilterForCaller('p')` is not the no-caller one refuses.
  */
-export function storePagePolicy(member: string, excludePrivate: unknown): StorePrivacyPolicy | undefined {
+export function storePagePolicy(
+  member: string,
+  excludePrivate: unknown,
+  opts: { callerReaders?: boolean } = {},
+): StorePrivacyPolicy | undefined {
   if (!excludePrivate) return undefined;
+  const rendered = normalizeConceptInputs(privatePagesFilterForCaller('p'));
   const baseline = withoutCallerAccess(() => privatePagesFilterForCaller('p'));
-  if (normalizeConceptInputs(privatePagesFilterForCaller('p')) !== normalizeConceptInputs(baseline)) {
-    refuseMember(member, 'excludePrivate for a caller whose member pages, grants or lineage widen the policy');
+  if (rendered === normalizeConceptInputs(baseline)) return pagePolicyFlags(baseline);
+  if (opts.callerReaders) {
+    const access = currentCallerAccess();
+    const readers = { identity: [...access.identity], privateReadableSources: [...access.privateReadableSources] };
+    const canonical = withoutCallerAccess(() =>
+      withCallerAccess({ ...readers, hidePrivate: true }, () => privatePagesFilterForCaller('p')));
+    if (rendered === normalizeConceptInputs(canonical)) return { ...pagePolicyFlags(canonical), ...readers };
   }
+  refuseMember(member, 'excludePrivate for a caller whose member pages, grants or lineage widen the policy');
+}
+
+/** The process-setting flags of a rendered page policy. */
+function pagePolicyFlags(sql: string): StorePrivacyPolicy {
   return {
-    honorAliases: baseline.includes(privacyAliasSql('p')),
-    entityPrivacy: baseline.includes(privateSnapshotFilterFragment('p')),
+    honorAliases: sql.includes(privacyAliasSql('p')),
+    entityPrivacy: sql.includes(privateSnapshotFilterFragment('p')),
   };
 }
