@@ -302,6 +302,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listAllSources': 'sources', 'listSourceLocalPaths': 'sources', 'updateSourceConfig': 'sources',
   'listLocalPathSources': 'sources', 'listSourceRoutingRows': 'sources', 'countDefaultSourceSplit': 'sources', 'getSource': 'sources',
   'listStaleSyncSourceIds': 'sources', 'readSourceRow': 'sources', 'lockSourceRow': 'sources', 'readSourceChunkerVersion': 'sources',
+  'setSourceChunkerVersion': 'sources',
   'countSourcePages': 'sources', 'insertSource': 'sources',
   // files
   'upsertFile': 'files', 'getFile': 'files', 'listFilesForPage': 'files',
@@ -754,6 +755,7 @@ export const SQL_CASES: SqlCase[] = [
   ...variants('readSourceRow', [['default', (e) => e.readSourceRow(SRC)]]),
   ...variants('lockSourceRow', [['default', (e) => e.lockSourceRow(SRC)]]),
   ...variants('readSourceChunkerVersion', [['default', (e) => e.readSourceChunkerVersion(SRC)]]),
+  ...variants('setSourceChunkerVersion', [['default', (e) => e.setSourceChunkerVersion(SRC, '7')]]),
   ...variants('countSourcePages', [['default', (e) => e.countSourcePages(SRC)], ['includeDeleted', (e) => e.countSourcePages(SRC, { includeDeleted: true })]]),
   ...variants('insertSource', [['default', (e) => e.insertSource({ id: SRC, name: SRC, local_path: '/srv/brain/src', config: { federated: true } })]]),
 

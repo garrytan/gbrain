@@ -3761,6 +3761,17 @@
         ],
         "flagOnScopes": []
       },
+      "setSourceChunkerVersion#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "softDeletePage#default": {
         "flagOffLanes": [
           "pool"
@@ -4218,6 +4229,7 @@
         "applyForwardReferenceBootstrap": "none",
         "applyTransactionSettings": "none",
         "assertCycleLease": "none",
+        "attachSourcePath": "none",
         "autocommitSql": "none",
         "batchLoadEmotionalInputs": "none",
         "batchRetry": "none",
@@ -4623,6 +4635,7 @@
         "setEmotionalWeightBatch": "none",
         "setPageAliases": "none",
         "setPageEmbeddingSignature": "none",
+        "setSourceChunkerVersion": "none",
         "sharedSkillPackTablePresent": "none",
         "slugsEndingIn": "none",
         "softDeletePage": "none",

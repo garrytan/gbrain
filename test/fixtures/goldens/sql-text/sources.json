@@ -150,6 +150,19 @@
           }
         ]
       },
+      "setSourceChunkerVersion": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "UPDATE sources SET chunker_version = $1 WHERE id = $2",
+            "textSha256": "564e65e8d6f1eab4c97436ff85cf453db7f6617f89ed9713a0a6cde8640c494c"
+          }
+        ]
+      },
       "updateSourceConfig": {
         "default": [
           {

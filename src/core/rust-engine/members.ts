@@ -158,8 +158,9 @@ export const RUST_ENGINE_MEMBERS = {
   // chunks
   deleteChunksExcept: 'chunks',
   setChunkerVersion: 'chunks',
-  // The store keeps no per-source chunker stamp (sync preflight's version gate), so this is served as always NULL.
+  // The source record's chunker stamp (sync preflight's version gate).
   readSourceChunkerVersion: 'chunks',
+  setSourceChunkerVersion: 'chunks',
   writeTextProjectionSeal: 'chunks',
   moveChunkIndexes: 'chunks',
   getChunkReuseRows: 'chunks',
