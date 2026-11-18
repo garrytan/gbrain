@@ -21,6 +21,7 @@ import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence-state.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, SourceRoutingRow } from './engine-sql/sources.ts';
+import type { AdmitJobPolicy, AdmitJobResult, AdmitJobSpec, ClaimJobSpec, JobRow, ListJobsFilter } from './engine-sql/jobs.ts';
 export type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions, PageMutationPrecondition, PageWithdrawal } from './page-state/types.ts';
 import type {
   Page, PageInput, PageFilters, GetPageOpts, PageReadScope, PageReadPolicy,
@@ -3062,6 +3063,55 @@ export interface BrainEngine {
     acquisitionToken: string;
     maxAgeSeconds: number;
   }): Promise<{ deleted: boolean; lastRefreshedAt: Date | null }>;
+
+  /**
+   * The lease fence: true when `lockId` is still held under `acquisitionToken` and unexpired. Inside a transaction it
+   * holds the row `FOR KEY SHARE` until commit, so the holder's renewal passes and a takeover or delete waits.
+   */
+  assertCycleLease(lockId: string, acquisitionToken: string): Promise<boolean>;
+
+  // ============================================================
+  // Minion jobs (engine-sql/jobs.ts). Rows are raw `minion_jobs` rows; the queue maps them with `rowToMinionJob`.
+  // ============================================================
+  /**
+   * Submit one job in one transaction: idempotency key, parameter coalesce, delegated capacity, name quota,
+   * backpressure caps and parent checks, then the insert and the parent flip to `waiting-children`. Returns the new
+   * row, or an existing one with `coalesced` (and the audit of a cap or parameter coalesce).
+   */
+  admitJob(spec: AdmitJobSpec, policy: AdmitJobPolicy): Promise<AdmitJobResult>;
+
+  /** One job row by id, or null. */
+  getJob(id: number): Promise<JobRow | null>;
+
+  /** Job rows matching every given filter, newest first (default 50 from offset 0). */
+  listJobs(filter?: ListJobsFilter): Promise<JobRow[]>;
+
+  /**
+   * Claim the next waiting job of `names` in `queue` by priority then age (two workers never get one row), stamping
+   * the lease, resolved timeout and lease, the attempt and the spend fence. On Postgres it runs on the direct pool.
+   */
+  claimNextJob(spec: ClaimJobSpec): Promise<JobRow | null>;
+
+  /** Extend the lease of an active job this token still holds; false when the claim moved on. Direct pool on Postgres. */
+  renewJobLease(id: number, lockToken: string, lockDurationMs: number, opts?: { signal?: AbortSignal }): Promise<boolean>;
+
+  /**
+   * Complete an active job this token holds, rolling its tokens and `child_done` up to its parent and waking a parent
+   * whose children are all finished. Returns the completed row (before a `remove_on_complete` delete), or null.
+   */
+  completeJob(id: number, lockToken: string, result?: Record<string, unknown>): Promise<JobRow | null>;
+
+  /**
+   * Fail an active job this token holds (`delayed` retry, `failed` or `dead`), applying `on_child_fail` to its parent
+   * on a terminal failure. Returns the row (before a `remove_on_fail` delete), or null when the token is stale.
+   */
+  failJob(id: number, lockToken: string, errorText: string, newStatus: 'delayed' | 'failed' | 'dead', backoffMs?: number, result?: Record<string, unknown>): Promise<JobRow | null>;
+
+  /**
+   * The stall sweep: active jobs whose lease expired more than `graceMs` ago requeue (a dead multi-claim worker's
+   * co-runners marked, no stall counted) or go `dead` at `max_stalled`, notifying and waking their parents.
+   */
+  reclaimStalledJobs(graceMs: number): Promise<{ requeued: JobRow[]; dead: JobRow[] }>;
 
   // ============================================================
   // v0.20.0 Cathedral II: code edges (Layer 5 populates, Layer 7 consumes)
