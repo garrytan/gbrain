@@ -14,8 +14,8 @@ import type { Migration } from './types.ts';
 // less. No schema.sql mirror: like private_pages (v280), both columns exist
 // only through migrations, so fresh installs and upgrades end with the same
 // column order.
-export const v320: Migration = {
-  version: 320,
+export const v322: Migration = {
+  version: 322,
   name: 'token_read_shared',
   idempotent: true,
   sql: `

@@ -196,6 +196,9 @@ test('#7679: a live refresh is never stolen: owner recovery, a plain refresh and
           for (const id of [f.alpha, f.beta]) await performManagedSync(f.engine, { sourceId: id, noPull: true, noEmbed: true });
           expect(await f.lastCommit(f.alpha)).toBe(target);
           expect(await resumeWorktreeRefreshes(f.engine)).toBe(0);
+          // #9649: a row older than the sync budget is still its live holder's: the reclaim takes only a refresh whose lock is free.
+          await f.engine.executeRaw(`UPDATE persistence_worktree_refreshes SET updated_at=now()-interval '1 hour' WHERE id=$1::uuid`, [held.id]);
+          expect(await resumeWorktreeRefreshes(f.engine)).toBe(0);
           const refused = await refusedWith(refreshWorktree(f.engine, f.alpha), 'refresh_in_progress');
           expect(refused.message).toContain(`pid ${process.pid}`);
           await refusedWith(refreshWorktree(f.engine, f.alpha, { resume: true }), 'refresh_in_progress');
@@ -286,3 +289,24 @@ test('#7679: a plain refresh that cannot read the checkout HEAD leaves an orphan
     expect(await f.lastCommit(f.alpha)).toBe(target);
   });
 }, 300_000);
+
+test('#9649: owner recovery reclaims an orphaned syncing refresh that made no progress for the refresh sync budget, so writes to its sources are admitted again', async () => {
+  for (const item of cases) await withKilledRefresh(item, async ({ f, target, old, orphan }) => {
+    // A fresh orphan whose members lag is still left to the next refresh (the #7679 contract above), and a write names it with its age.
+    expect(await resumeWorktreeRefreshes(f.engine)).toBe(0);
+    const refused = await refusedWith(f.put(f.beta, 'notes/while-stuck', page('While stuck', 'refused')), 'worktree_refreshing');
+    expect(refused.message).toContain(`refresh ${orphan.id}`);
+    expect(refused.message).toMatch(/syncing, running \d+ s/);
+    // No progress on the row for longer than the refresh sync budget, set on the database clock: no wall-clock wait.
+    await f.engine.executeRaw(`UPDATE persistence_worktree_refreshes SET updated_at=now()-interval '1 hour' WHERE id=$1::uuid`, [orphan.id]);
+    expect(await resumeWorktreeRefreshes(f.engine)).toBe(1);
+    const [row] = await f.refreshRows() as Row[];
+    expect(row).toMatchObject({ id: orphan.id, state: 'completed', outcome: { completed_by: 'owner_reclaim', sync_deferred: [f.alpha, f.beta] } });
+    // The checkout stays at the target and the members stay where they were: their next sync imports it, as after a deferred member (#8072).
+    expect(f.head()).toBe(target);
+    expect(await f.lastCommit(f.alpha)).toBe(old);
+    expect((await f.put(f.beta, 'notes/after-reclaim', page('After reclaim', 'admitted'))).state ?? 'committed').toBe('committed');
+    expect(await writerRefreshes(f, f.beta)).toEqual([]);
+  });
+}, 300_000);
+

@@ -1,0 +1,7 @@
+**A managed source on a large brain finishes its sync again, and a refresh left behind by a killed process stops blocking writes after a few minutes.**
+
+### Fixed
+- A sync pass whose source had no recorded watermark could never stamp its checkpoint on a large Postgres brain: the stamp counted fence normalizations over the whole request history inside a transaction bounded at 5 s, was cancelled every time, and so never wrote the watermark that would have ended the scan. The count is now read before the stamp, in small fixed ranges, and the stamp only reads what committed after that, so its 5 s transaction no longer reads the whole history. Raising GBRAIN_STATEMENT_TIMEOUT was never a workaround and is not needed now. Reported by @zm112211mz in #9646; first fix proposed by @Masashi-Ono0611 in #9647.
+- A `gbrain sources refresh` killed while syncing its sources left its row in `syncing`, and every write to those sources was refused with `worktree_refreshing` until someone ran `gbrain sources refresh` again. The owner now completes such a refresh once its process is gone and the row has not moved for one refresh sync budget (`sources.refresh_sync_budget_ms`, 5 minutes by default), the same way a refresh whose budget runs out completes; lagging sources catch up on their next sync. A refresh whose process is still running is never touched. Reported by @zm112211mz in #9649.
+
+<!-- behavior-change: orphaned_refresh_reclaim_9649 -->

@@ -50,7 +50,7 @@ import { readFix } from './ops/op-fix.ts';
 // don't ship their own — see resolveFilingRules().
 import filingRulesDoc from '../../skills/_brain-filing-rules.json';
 import { GIT_PATHSPEC_ENV_VARS, gitChildEnv } from './git-env.ts';
-import { commitAndPush, commitPathsLocked, readIntegrateConflict, SOURCE_ROOT_CONFIG } from './git/commit-push.ts';
+import { commitAndPush, commitPathsLocked, readCredentialRefusal, readIntegrateConflict, SOURCE_ROOT_CONFIG } from './git/commit-push.ts';
 import { relativeEscapesRoot } from './path-confine.ts';
 
 export { execFileBounded, type BoundedExecOptions } from './bounded-child-exec.ts';
@@ -784,6 +784,12 @@ export function getLastPushOutcome(branch: string, repo?: string): PushLogOutcom
   if (conflict && conflict.branch === branch) {
     return { status: 'needs_attention', at: conflict.at,
       detail: `unresolved integrate_conflict on ${branch} (${conflict.paths.join(', ')}): run gbrain git commit-push --push-only --expect-remote ${String(conflict.remote).slice(0, 12)} --resolve <path>=ours|theirs` };
+  }
+  const refused = repo ? readCredentialRefusal(repo) : null;
+  if (refused) {
+    const answered = refused.helpers.find(h => h.answered);
+    return { status: 'needs_attention', at: refused.at,
+      detail: `push_credential_refused since ${refused.since}: ${refused.url} refused the credential git used (${refused.kind === 'not_found' ? 'repository not found, HTTP 404' : 'HTTP 403'}${answered ? `, from ${answered.helper} (${answered.scope ?? 'scope unknown'})${refused.username ? ` for ${refused.username}` : ''}` : ''}); fix the credential, then run gbrain git commit-push --push-only` };
   }
   const log = pushLogPath();
   if (!existsSync(log)) return { status: 'unknown', detail: 'no push attempts logged yet' };

@@ -553,6 +553,7 @@
   "test/repair-file-drift-held-6712.test.ts": 11404,
   "test/repair-file-drift-held-window-gbra133.test.ts": 30603,
   "test/repair-file-drift-provenance-gbra133.test.ts": 7919,
+  "test/repair-file-drift-whole-class.test.ts": 50780,
   "test/repair-frontmatter-keys-sweep-6454.test.ts": 10019,
   "test/repair-frontmatter.test.ts": 26839,
   "test/repair-ghost-database-ahead-gbra133.test.ts": 9540,

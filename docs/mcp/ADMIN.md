@@ -260,7 +260,9 @@ read back only by that member, written remotely by no one else); an attested cal
 `share: true` or `visibility: "world"` is refused (`attested_share_refused`), while a credential
 bound to a member may pass `share: true` to save on the subject's page for everyone who reads
 the source (refused with `share_target_restricted` on a page whose facts are kept private;
-only the brain host withdraws a shared fact); the reply names the `page` and `visibility`. `delta` cursors, write receipts
+a share about another member is held private until the brain owner confirms it with
+`gbrain trust confirm tp<N>`; only the brain host, or the member a shared fact is about,
+withdraws a shared fact); the reply names the `page` and `visibility`. `delta` cursors, write receipts
 (`get_write_request`, `list_write_requests`, `cancel_write_request`) and agent
 jobs (`submit_agent`, `get_agent_job`) belong to the person they were made for.
 QM's memory pair, `memory_recall` and `memory_write`, reads and saves that
