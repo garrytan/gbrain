@@ -44,6 +44,7 @@ mod privacy;
 pub mod purge;
 pub mod repair;
 pub mod trust;
+pub mod trust_reads;
 
 pub use fence::{FenceContext, FenceTarget};
 pub use privacy::PrivacyPolicy;

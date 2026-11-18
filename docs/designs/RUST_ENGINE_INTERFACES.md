@@ -1693,13 +1693,13 @@ and write provenance on content rows, and the trust records.
   - No caller, still refused: `currentCodeChunksExist` and the code symbol members (the context read policy sends
     no floor), `findOrphanPages` and `listLinkSources`.
   - Ignored on purpose, as their SQL does: the raw-files, stats, ontology, timeline and chunk-page reads.
-  - Not yet built: `listSingleFactMetadata` (a write-path read under the remote floor) and
-    `listUnpreviewedTrustFacts` (the doctor check) have no store read. Reads of `trust_tier` through `executeRaw`
+  - Built: `listSingleFactMetadata` (refused only under the remote floor) and `listUnpreviewedTrustFacts` read the
+    stamped tier and origin (`facts/trust_reads.rs`), and `listSupersessions` honours a read eligibility.
+  - Not yet built: reads of `trust_tier` through `executeRaw`
     (core memory, the eligibility scan, belief history, admin, valid time) need typed members. `resolveAliases`
     refuses a floor or `excludePrivate`, and the alias fan-out of search turns that refusal into an empty fan-out;
-    a lift needs the trust and privacy checks on both the alias page and its title shadow. The fact read
-    eligibility refusal (`listSupersessions` and its family) has production callers and is a follow-up. The takes
-    members keep their refusal.
+    a lift needs the trust and privacy checks on both the alias page and its title shadow. The takes members keep
+    their refusal.
   - Pinned by `test/engine-parity/trust-reads.test.ts` on all three engines.
 
 ### catalog probes (core)

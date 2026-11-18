@@ -65,7 +65,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	36	no	yes	yes	serves
+transaction	lifecycle	yes	38	no	yes	yes	serves
 transactionDirect	lifecycle	yes	1	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -73,7 +73,7 @@ getPage	pages	yes	63	yes	yes	yes	serves
 readPageSnapshot	pages	yes	16	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	246	yes	yes	yes	serves
+putPage	pages	yes	248	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	6	yes	yes	yes	serves
@@ -283,10 +283,10 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	35	yes	yes	yes	serves
-insertFacts	facts	yes	28	no	yes	yes	serves
+insertFact	facts	yes	36	yes	yes	yes	serves
+insertFacts	facts	yes	30	no	yes	yes	serves
 deleteFactsForPage	facts	yes	2	no	yes	yes	serves
-expireFact	facts	yes	19	no	yes	yes	serves
+expireFact	facts	yes	20	no	yes	yes	serves
 listFactsByEntity	facts	yes	14	yes	yes	yes	serves
 listFactsSince	facts	yes	8	yes	yes	yes	serves
 listFactsKeyset	facts	yes	2	no	yes	yes	serves
@@ -343,7 +343,7 @@ readPersistenceBrainId	import_guards	yes	2	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	1	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	1	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	8	no	yes	yes	serves
-applyTransactionSettings	import_guards	yes	18	no	yes	yes	serves
+applyTransactionSettings	import_guards	yes	20	no	yes	yes	serves
 readLedgerSource	import_guards	yes	8	no	yes	yes	serves
 isFolderRestricted	import_guards	yes	3	no	yes	yes	serves
 declarePersistence	persistence_journal	yes	3	no	yes	yes	serves
@@ -478,7 +478,7 @@ listConversationFactRows	facts_doctor	yes	1	no	yes	yes	serves
 countRedactedFacts	facts_doctor	yes	1	no	yes	yes	serves
 listOutsideContentFenceCounts	facts_doctor	yes	1	no	yes	yes	serves
 countAtomFacts	facts_doctor	yes	1	no	yes	yes	serves
-listUnpreviewedTrustFacts	facts_doctor	yes	1	no	yes	yes	refuses:facts
+listUnpreviewedTrustFacts	facts_doctor	yes	2	no	yes	yes	serves
 countUnlinkedFactsByOrigin	facts_doctor	yes	2	no	yes	yes	serves
 countUnlinkedFactStats	facts_doctor	yes	2	no	yes	yes	serves
 countFactRelinkOutcomes	facts_doctor	yes	1	no	yes	yes	refuses:facts
@@ -503,7 +503,7 @@ listRelinkCandidateRows	facts_purge	yes	1	no	yes	yes	serves
 countRelinkCandidates	facts_purge	yes	1	no	yes	yes	serves
 listSimilarActiveFacts	facts_purge	yes	2	no	yes	yes	serves
 findActiveSingleFact	facts_purge	yes	3	no	yes	yes	serves
-listSingleFactMetadata	facts_purge	yes	1	no	yes	yes	refuses:facts
+listSingleFactMetadata	facts_purge	yes	2	no	yes	yes	serves
 listUnfencedFactRows	facts_purge	yes	1	no	yes	yes	serves
 listHeldFenceFactRows	facts_purge	yes	1	no	yes	yes	serves
 listWithdrawalSlugs	facts_purge	yes	2	no	yes	yes	serves
@@ -558,10 +558,10 @@ upsertPageWriteGateReceipt	trust	yes	9	no	yes	yes	serves
 deleteStalePageWriteGateReceipts	trust	yes	1	no	yes	yes	serves
 listWriteGateReceiptsFor	trust	yes	3	no	yes	yes	serves
 deleteStaleWriteGateReceipts	trust	yes	1	no	yes	yes	serves
-upsertWriteGateHold	trust	yes	2	no	yes	yes	serves
+upsertWriteGateHold	trust	yes	3	no	yes	yes	serves
 listWriteGateHoldRows	trust	yes	1	no	yes	yes	serves
 getWriteGateHoldRow	trust	yes	1	no	yes	yes	serves
-decideWriteGateHold	trust	yes	2	no	yes	yes	serves
+decideWriteGateHold	trust	yes	3	no	yes	yes	serves
 upsertOpenLoop	open_loops	yes	5	no	yes	yes	serves
 closeOpenLoop	open_loops	yes	5	no	yes	yes	serves
 listOpenLoops	open_loops	yes	3	no	yes	yes	serves
