@@ -1288,6 +1288,67 @@ pub(crate) fn snapshot_in(
     Ok(row)
 }
 
+// ---------------------------------------------------------------------------------------------
+// Search timeline: the timeline text of the page keyword vector.
+//
+// PGLite's page `search_vector` is the title (weight A) plus
+// `left(sanitizeRemoteBody(timeline), 65536)` (weight C), set when the page's chunks are sealed
+// (`sealPageTextProjection`). The sanitizer is TypeScript only, so `sealChunks` sends its output
+// with the seal (`UpsertChunksOptions::search_timeline`) and the store keeps it here, under
+// `M page_search_timeline/<page id>`, with the `knowledge_revision` it was sealed at.
+//
+// - `search_timeline` reads it. The text describes the page's current text when its `revision`
+//   equals the page's `text_projection_revision` (the seal that wrote it is the current seal).
+// - A seal without the text (the store's own `putPage` index path) writes nothing, so the record
+//   keeps the older revision.
+// - A hard page delete removes it (`remove_page`).
+
+const SEARCH_TIMELINE: &str = "page_search_timeline";
+
+/// Characters of the sanitized timeline the page keyword vector reads (`PAGE_TIMELINE_FTS_MAX_CHARS`).
+pub(crate) const SEARCH_TIMELINE_MAX_CHARS: usize = 65_536;
+
+/// The timeline text of a page's keyword vector, as the last seal that sent it left it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SearchTimeline {
+    /// The page's `knowledge_revision` at that seal.
+    pub revision: String,
+    /// `sanitizeRemoteBody(timeline)`, NUL removed, cut to `SEARCH_TIMELINE_MAX_CHARS` characters.
+    pub timeline: String,
+}
+
+fn search_timeline_key(page_id: u64) -> Vec<u8> {
+    keys::meta(&format!("{SEARCH_TIMELINE}/{page_id}"))
+}
+
+/// The search timeline of page `page_id`, or `None` when no seal sent one.
+// The keyword family (`searchTitles`) is the first caller.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn search_timeline(read: &dyn KvRead, page_id: u64) -> Result<Option<SearchTimeline>> {
+    get_json(read, &search_timeline_key(page_id))
+}
+
+/// Records `timeline` (already sanitized by TypeScript) as the search timeline of page `page_id`
+/// at `revision`. Removes NUL (Postgres text holds none) and keeps the first
+/// `SEARCH_TIMELINE_MAX_CHARS` characters, as `left(…, 65536)` does.
+pub(crate) fn record_search_timeline(
+    tx: &mut dyn KvWrite,
+    page_id: u64,
+    revision: &str,
+    timeline: &str,
+) -> Result<()> {
+    let timeline: String = timeline
+        .chars()
+        .filter(|c| *c != '\0')
+        .take(SEARCH_TIMELINE_MAX_CHARS)
+        .collect();
+    let record = SearchTimeline {
+        revision: revision.to_owned(),
+        timeline,
+    };
+    put_json(tx, &search_timeline_key(page_id), &record)
+}
+
 /// Deletes a page and everything that hangs off it.
 pub(crate) fn remove_page(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()> {
     let mut doomed = Vec::new();
@@ -1299,6 +1360,7 @@ pub(crate) fn remove_page(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()>
         tx.delete(&key)?;
     }
     clear_chunks(tx, page.id)?;
+    tx.delete(&search_timeline_key(page.id))?;
     crate::links::remove_page_links(tx, page.id)?;
     crate::timeline::remove_page_timeline(tx, page.id)?;
     crate::timeline_queries::remove_event_projections(tx, page.id)?;
@@ -1714,5 +1776,76 @@ mod tests {
         assert_eq!(origin_keys(&store).len(), 1);
         let refused = put_at(&store, "b", Some("notes/a.md"), None).unwrap_err();
         assert_eq!(holders(&refused)["holders"], json!(["z"]));
+    }
+
+    fn seal(store: &Store, slug: &str, search_timeline: Option<&str>) {
+        let options = crate::chunks::UpsertChunksOptions {
+            seal: true,
+            search_timeline: search_timeline.map(str::to_owned),
+            ..crate::chunks::UpsertChunksOptions::default()
+        };
+        store.upsert_chunks(slug, &[], &options).unwrap();
+    }
+
+    fn stored_timeline(store: &Store, page_id: u64) -> Option<SearchTimeline> {
+        search_timeline(&*store.read().unwrap(), page_id).unwrap()
+    }
+
+    #[test]
+    fn a_seal_keeps_the_search_timeline_at_the_sealed_revision() {
+        let store = crate::test_support::store();
+        let page = put(&store, "a");
+        assert_eq!(stored_timeline(&store, page.id), None);
+
+        // NUL goes; the cut counts characters, not bytes.
+        let long = format!("é\0{}", "x".repeat(SEARCH_TIMELINE_MAX_CHARS));
+        seal(&store, "a", Some(&long));
+        let sealed = read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "a")
+            .unwrap()
+            .unwrap();
+        let kept = stored_timeline(&store, page.id).unwrap();
+        assert_eq!(kept.revision, page.knowledge_revision);
+        assert_eq!(
+            sealed.text_projection_revision.as_deref(),
+            Some(kept.revision.as_str())
+        );
+        assert_eq!(kept.timeline.chars().count(), SEARCH_TIMELINE_MAX_CHARS);
+        assert!(kept.timeline.starts_with("éx"));
+
+        // A write that does not seal, or a seal that sends no text, keeps the record.
+        let unsealed = crate::chunks::UpsertChunksOptions {
+            search_timeline: Some("ignored".into()),
+            ..crate::chunks::UpsertChunksOptions::default()
+        };
+        store.upsert_chunks("a", &[], &unsealed).unwrap();
+        seal(&store, "a", None);
+        assert_eq!(stored_timeline(&store, page.id), Some(kept.clone()));
+
+        // A new revision sealed by the store alone leaves the record at the older revision.
+        let input = PageInput {
+            page_type: "note".into(),
+            title: "a".into(),
+            compiled_truth: "new body".into(),
+            ..PageInput::default()
+        };
+        store
+            .put_page("a", &input, &PutPageOptions::default())
+            .unwrap();
+        let moved = read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "a")
+            .unwrap()
+            .unwrap();
+        assert_ne!(
+            moved.text_projection_revision.as_deref(),
+            Some(kept.revision.as_str())
+        );
+        assert_eq!(stored_timeline(&store, page.id), Some(kept));
+
+        seal(&store, "a", Some("2026-01-01 event"));
+        let resealed = stored_timeline(&store, page.id).unwrap();
+        assert_eq!(resealed.revision, moved.knowledge_revision);
+        assert_eq!(resealed.timeline, "2026-01-01 event");
+
+        store.delete_page("a", None).unwrap();
+        assert_eq!(stored_timeline(&store, page.id), None);
     }
 }
