@@ -49,8 +49,5 @@ rollback, and a savepoint rollback sets the six back to what they were when the 
   - a setting name outside the six (the engine routes no other name here);
   - lists of different lengths.
   TypeScript sets none of these.
-- Rust fact rows store no `trust_tier` yet, so every row reads `unknown` and the writer's tier decides only whether
-  `unknown` rows are above it (a writer below `unknown`, `external_untrusted`, sees every row above it). A row an
-  `operator_curated` write stored is not above an `agent_written` writer on Rust, where PGLite keeps it and files a
-  proposal. Parity: `test/rust-expected-divergence/trust_fence.tsv`.
-- There is no `trust_proposals` table, so no fence row is ever held.
+- The context carries no principal or write request, so a trust proposal the store files reads
+  `proposer_principal_kind`, `proposer_principal_id` and `write_request_id` NULL ([trust.md](trust.md#trust-proposals-trustproposals)).

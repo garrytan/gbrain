@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 512/512
+# covered: 518/518
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -56,6 +56,7 @@
 # alias_fanout_reads: 4/4
 # write_guards: 7/7
 # trust_fence: 1/1
+# trust_proposals: 6/6
 # connect_gate: 4/4
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
 connect	lifecycle	yes	1	yes	yes	yes	serves
@@ -274,10 +275,10 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	31	yes	yes	yes	serves
-insertFacts	facts	yes	24	no	yes	yes	serves
+insertFact	facts	yes	32	yes	yes	yes	serves
+insertFacts	facts	yes	27	no	yes	yes	serves
 deleteFactsForPage	facts	yes	2	no	yes	yes	serves
-expireFact	facts	yes	18	no	yes	yes	serves
+expireFact	facts	yes	19	no	yes	yes	serves
 listFactsByEntity	facts	yes	14	yes	yes	yes	serves
 listFactsSince	facts	yes	8	yes	yes	yes	serves
 listFactsKeyset	facts	yes	2	no	yes	yes	serves
@@ -469,7 +470,7 @@ listHeldFenceFactRows	facts_purge	yes	1	no	yes	yes	serves
 listWithdrawalSlugs	facts_purge	yes	2	no	yes	yes	serves
 expireFactsByWithdrawal	facts_purge	yes	1	no	yes	yes	serves
 loopFactDrift	facts_repair	yes	1	no	yes	yes	refuses:facts
-closedLoopWithActiveFact	facts_repair	yes	1	no	yes	yes	refuses:facts
+closedLoopWithActiveFact	facts_repair	yes	2	no	yes	yes	serves
 listSessionFactsForClassification	facts_repair	yes	1	no	yes	yes	serves
 listSessionFactTwins	facts_repair	yes	1	no	yes	yes	serves
 listCapturedFactsForClassification	facts_repair	yes	1	no	yes	yes	serves
@@ -520,8 +521,8 @@ upsertWriteGateHold	trust	yes	2	no	yes	yes	serves
 listWriteGateHoldRows	trust	yes	1	no	yes	yes	serves
 getWriteGateHoldRow	trust	yes	1	no	yes	yes	serves
 decideWriteGateHold	trust	yes	2	no	yes	yes	serves
-upsertOpenLoop	open_loops	yes	4	no	yes	yes	serves
-closeOpenLoop	open_loops	yes	4	no	yes	yes	serves
+upsertOpenLoop	open_loops	yes	5	no	yes	yes	serves
+closeOpenLoop	open_loops	yes	5	no	yes	yes	serves
 listOpenLoops	open_loops	yes	3	no	yes	yes	serves
 listSourceRecords	cli_reads_import	yes	3	no	yes	yes	serves
 readSourceIncarnation	cli_reads_import	yes	3	no	yes	yes	serves
@@ -565,7 +566,13 @@ bindPageOrigin	write_guards	yes	1	no	yes	yes	serves
 stampPageIngest	write_guards	yes	1	no	yes	yes	serves
 sealImportedPage	write_guards	yes	1	no	yes	yes	serves
 readLivePageBody	write_guards	yes	1	no	yes	yes	serves
-listFenceFactRows	trust_fence	yes	3	no	yes	yes	serves
+listFenceFactRows	trust_fence	yes	4	no	yes	yes	serves
+insertTrustProposal	trust_proposals	yes	4	no	yes	yes	serves
+getTrustProposal	trust_proposals	yes	2	no	yes	yes	serves
+listTrustProposals	trust_proposals	yes	2	no	yes	yes	serves
+pendingTrustProposalsFor	trust_proposals	yes	2	no	yes	yes	serves
+updatePendingTrustProposalAfter	trust_proposals	yes	1	no	yes	yes	serves
+transitionTrustProposal	trust_proposals	yes	1	no	yes	yes	serves
 hasPersistenceTable	connect_gate	yes	3	no	yes	yes	serves
 listManagedRootBindings	connect_gate	yes	1	no	yes	yes	serves
 readGraduationGateRow	connect_gate	yes	2	no	yes	yes	serves

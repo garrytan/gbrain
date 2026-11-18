@@ -64,6 +64,7 @@ import * as trustFence from './trust-fence.ts';
 import * as connectGate from './connect-gate.ts';
 import * as telemetry from './telemetry.ts';
 import * as importMembers from './import-members.ts';
+import * as trustProposals from './trust-proposals.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
 const initSchema: StoreMember<[], void> = async () => undefined;
@@ -97,11 +98,11 @@ export const STORE_MEMBERS = {
   ...persistence, ...housekeeping,
   ...writeMisc,
   // The page write guards a page write runs around the page row (rust/docs/store/write-guards.md).
-  ...writeGuards, ...trustFence,
-  // The connect gate's persistence reads, answered from the unmanaged brain the store keeps (rust/docs/store/journal.md).
-  ...connectGate,
+  ...writeGuards, ...trustFence, ...trustProposals,
   // The page and chunk statements a page import runs around its chunk write (rust/docs/store/import-members.md).
   ...importMembers,
+  // The connect gate's persistence reads, answered from the unmanaged brain the store keeps (rust/docs/store/journal.md).
+  ...connectGate,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

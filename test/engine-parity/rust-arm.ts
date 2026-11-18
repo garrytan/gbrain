@@ -110,20 +110,6 @@ export const DIVERGENCE_NORMALIZERS: Record<string, (value: unknown) => unknown>
     }
     return value;
   },
-  // Rust fact rows store no trust tier yet (every row reads `unknown`), so the store cannot tell which fence rows sit
-  // above the writer. Set aside the rows a fence read lists only for being above the writer (`above` and not
-  // `opened`), and the stored tier and `above` flag of the rows left; the opened rows must still match.
-  'fence-rows-above-writer': (value) => {
-    const normalise = DIVERGENCE_NORMALIZERS['fence-rows-above-writer']!;
-    if (Array.isArray(value)) {
-      return value.filter((item) => !(item !== null && typeof item === 'object' && (item as { above?: unknown }).above === true
-        && (item as { opened?: unknown }).opened !== true)).map(normalise);
-    }
-    if (value !== null && typeof value === 'object') {
-      return Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'trust_tier' && key !== 'above').map(([key, item]) => [key, normalise(item)]));
-    }
-    return value;
-  },
 };
 
 const DIVERGENCE_DIR = join(import.meta.dir, '..', 'rust-expected-divergence');
