@@ -39,7 +39,7 @@ use crate::error::{CONSTRAINT_VIOLATION, INVALID_STATE};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::page_columns::PageColumns;
 use crate::pages::{
-    PageRecord, clean, next_id, read_page, read_page_by_id, validate_slug, write_page,
+    PageRecord, PageText, clean, next_id, read_page, read_page_by_id, validate_slug, write_page,
 };
 use crate::{Result, Store, StoreError, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
@@ -659,6 +659,19 @@ fn meta_chunker_version(meta: &SegmentedPageMeta) -> Option<i64> {
         .map(|v| v.min(SAFE_FENCE_CHUNKER_VERSION - 1))
 }
 
+/// The page row's `chunker_version`, a SMALLINT column: Postgres refuses a value outside 16 bits.
+fn smallint_chunker_version(meta: &SegmentedPageMeta) -> Result<Option<i16>> {
+    meta_chunker_version(meta)
+        .map(|v| {
+            i16::try_from(v).map_err(|_| {
+                StoreError::invalid(format!(
+                    "chunker_version: value {v} is out of range for type smallint"
+                ))
+            })
+        })
+        .transpose()
+}
+
 fn meta_type(meta: &SegmentedPageMeta) -> Result<String> {
     meta.page_type.clone().ok_or_else(|| {
         violation(
@@ -1091,10 +1104,12 @@ impl Store {
                 page_type: page_type.clone(),
                 page_kind: meta_page_kind(meta),
                 title: clean(&meta.title),
-                compiled_truth: String::new(),
-                timeline: String::new(),
+                // A shell holds no inline body and no hash until a flip publishes one, as in PGLite.
+                compiled_truth: PageText::null(),
+                timeline: PageText::null(),
                 frontmatter: meta.frontmatter.clone().unwrap_or_default(),
-                content_hash: String::new(),
+                content_hash: None,
+                chunker_version: Some(smallint_chunker_version(meta)?.unwrap_or(0)),
                 source_path: meta.source_path.clone(),
                 knowledge_revision: self.env.new_uuid(),
                 text_projection_revision: None,
@@ -1248,9 +1263,10 @@ impl Store {
             page.page_kind = meta_page_kind(meta);
             page.title = clean(&meta.title);
             page.frontmatter = meta.frontmatter.clone().unwrap_or_default();
-            page.compiled_truth = String::new();
-            page.timeline = String::new();
-            page.content_hash = body.content_hash.clone();
+            page.compiled_truth = PageText::null();
+            page.timeline = PageText::null();
+            page.content_hash = Some(body.content_hash.clone());
+            page.chunker_version = smallint_chunker_version(meta)?.or(page.chunker_version);
             page.updated_at_us = now;
             page.deleted_at_us = None;
             page.effective_date_us = effective_date.or(page.effective_date_us);
@@ -1728,9 +1744,9 @@ impl Store {
                 page.knowledge_revision = self.env.new_uuid();
                 page.text_projection_revision = None;
             }
-            page.compiled_truth = compiled_truth.to_string();
-            page.timeline = timeline.to_string();
-            page.content_hash = content_hash.to_string();
+            page.compiled_truth = compiled_truth.into();
+            page.timeline = timeline.into();
+            page.content_hash = Some(content_hash.to_string());
             page.updated_at_us = now;
             write_page(tx, &page)
         })
@@ -2222,6 +2238,34 @@ mod segment_chunk_tests {
             .flip_body_generation(&flip(id, 0, STAGING, 8, json!({})))
             .unwrap();
         id
+    }
+
+    #[test]
+    fn a_shell_holds_a_null_body_and_hash_until_a_flip_publishes_the_hash() {
+        let store = crate::test_support::store();
+        let id = store
+            .create_segmented_page_shell(
+                "notes/shell",
+                &serde_json::from_value(json!({"type": "note", "title": "Shell"})).unwrap(),
+                &ShellOptions {
+                    source_id: Some("default".into()),
+                },
+            )
+            .unwrap()["id"]
+            .as_i64()
+            .unwrap();
+        let shell = read_page_by_id(&*store.read().unwrap(), id as u64)
+            .unwrap()
+            .unwrap();
+        assert!(shell.compiled_truth.is_null() && shell.timeline.is_null());
+        assert_eq!(shell.content_hash, None);
+        assert_eq!(shell.chunker_version, Some(0));
+        let id = published(&store);
+        let page = read_page_by_id(&*store.read().unwrap(), id as u64)
+            .unwrap()
+            .unwrap();
+        assert!(page.compiled_truth.is_null() && page.timeline.is_null());
+        assert_eq!(page.content_hash.as_deref(), Some("h"));
     }
 
     /// Generation 2 staged: occurrence 3 replaces occurrence 2 at byte 4, with a chunk for

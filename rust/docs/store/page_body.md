@@ -48,7 +48,13 @@ Page ids are 8-byte big-endian. Signed numbers (occurrence ids, generations) are
 | `0x07` staging text | `staging id, sha256` | source id |
 | `0x08` page stagings | `page, staging id` | empty |
 
-The page row itself stays in the pages family. The `page_columns` hook adds `body_storage:
+The page row itself stays in the pages family. A segmented page's row holds a NULL `compiled_truth`
+and `timeline` (`PageText::null()`), as PGLite's `pages_body_storage_chk` requires. A shell holds a
+NULL `content_hash` until a flip publishes the body's hash, and the row's `chunker_version` takes the
+meta's value (0 for a shell without one; a flip keeps the stored value when the meta has none). The
+TypeScript codec gives a NULL body PGLite's page shape, whose `compiled_truth` and `timeline`
+getters throw `page_body_segmented`. `putPage` over a segmented page refuses, as in PGLite (pages
+family, shared item 11). The `page_columns` hook adds `body_storage:
 'segmented'` and `body_bytes` to a segmented page, so `getPage` shows them as PGLite's `rowToPage`
 does; an inline page has neither.
 
@@ -138,12 +144,5 @@ The TypeScript engine refuses these with `engine_capability_missing`:
 - A flip unseals the page's text projection on both engines, so `getChunks` answers `[]` for a
   segmented page after a flip until a text-projection seal exists. This is parity. The Rust engine
   cannot seal a segmented page yet: only `upsertChunks` seals, and it replaces the segment chunks.
-- The shell's `content_hash`, `compiled_truth` and `timeline` are `''` in the page record, where
-  PGLite stores `NULL`. `getPage` hides the body fields on both engines; `content_hash` reads `''`
-  on Rust and `null` on PGLite for a shell that was never flipped.
-- PGLite's `Page` of a segmented body refuses a read of `compiled_truth` or `timeline`; the Rust
-  engine's `Page` returns `''`.
-- `putPage` over a segmented page refuses on PGLite (a CHECK on `body_storage`); the store writes the
-  inline body and leaves the segmented body state behind.
 - `upsertSegmentDerivations` never refuses `derivation_purge_pending`: the store has no fact-purge
   sweep to hold rows.

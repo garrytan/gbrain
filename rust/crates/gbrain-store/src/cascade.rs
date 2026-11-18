@@ -13,6 +13,10 @@
 //!   calls it; when core serves it, core removes each page of the source with
 //!   `pages::remove_page` first (the page and chunk hooks fire for those), then calls this list,
 //!   then deletes the source record, all in one write transaction.
+//! - `rename_slug_rows`: a page rename (`updateSlug`), for records keyed by `(source, slug)` rather
+//!   than by page id (PGLite `moveSlugBindings`, `page-state/rename-alias.ts`). The rename caller
+//!   calls it in the rename transaction after `pages::rename_page`, only when the slug changed;
+//!   core does not call it itself.
 
 use crate::Result;
 use crate::kv::KvWrite;
@@ -56,6 +60,18 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
     crate::page_body::remove_source_rows(tx, source_id)?;
     crate::takes::remove_source_rows(tx, source_id)?;
     crate::extraction::remove_source_rows(tx, source_id)?;
+    Ok(())
+}
+
+// The aliases family's `updateSlug` is the first caller.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn rename_slug_rows(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    old_slug: &str,
+    new_slug: &str,
+) -> Result<()> {
+    crate::facts::rename_slug_rows(tx, source_id, old_slug, new_slug)?;
     Ok(())
 }
 
@@ -163,5 +179,33 @@ pub(crate) mod tests {
             .write(|tx| super::remove_source_rows(tx, "default"))
             .unwrap();
         assert_eq!(store.count_pages(None).unwrap(), 1);
+    }
+
+    #[test]
+    fn the_rename_list_runs_and_moves_nothing_while_every_hook_is_empty() {
+        let store = crate::test_support::store();
+        let input = PageInput {
+            page_type: "note".into(),
+            title: "A".into(),
+            compiled_truth: "body".into(),
+            ..PageInput::default()
+        };
+        store
+            .put_page("a", &input, &PutPageOptions::default())
+            .unwrap();
+        store
+            .write(|tx| super::rename_slug_rows(tx, "default", "a", "b"))
+            .unwrap();
+        let read = store.read().unwrap();
+        assert!(
+            crate::pages::read_page(&*read, "default", "a")
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            crate::pages::read_page(&*read, "default", "b")
+                .unwrap()
+                .is_none()
+        );
     }
 }

@@ -4,6 +4,7 @@
  */
 
 import { validDate } from '../valid-time.ts';
+import { guardSegmentedBody } from '../page-body/page-shape.ts';
 
 type Row = Record<string, unknown>;
 
@@ -42,6 +43,18 @@ function pageDates(page: Row): Row {
 }
 
 /**
+ * Nullable page fields (shared item 12, `PageText` in `rust/crates/gbrain-store/src/pages.rs`). The store sends a
+ * segmented shell page's `compiled_truth` and `timeline` as null, the only page PGLite's `pages_body_storage_chk` lets
+ * hold NULL there. PGLite's `rowToPage` reads them as `''` behind getters that throw `page_body_segmented`; this does
+ * the same, last, because spreading a guarded page would run the getters. `content_hash` stays null, as PGLite's row
+ * has it.
+ */
+function guardNullBody(page: Row): Row {
+  if (page.compiled_truth !== null && page.timeline !== null) return page;
+  return guardSegmentedBody({ ...page, compiled_truth: '', timeline: '' }, 'rowToPage');
+}
+
+/**
  * The page `putPage` returns. PGLite's `RETURNING` list names neither `source_path`, `deleted_at` nor `updated_at_iso`,
  * and its `emotional_weight` key is present and undefined.
  */
@@ -53,12 +66,12 @@ export function toPutPage<T extends object>(page: T): T {
 /** The page `getPage` and `readPageSnapshot` return: PGLite's row has the defaulted columns and no `updated_at_iso`. */
 export function toGetPage<T extends object>(page: T): T {
   const { updated_at_iso: _iso, ...rest } = pageDates(page as Row);
-  return { ...PAGE_ROW_DEFAULTS, ...rest } as T;
+  return guardNullBody({ ...PAGE_ROW_DEFAULTS, ...rest }) as T;
 }
 
 /** A row of `listPages`: the table's columns plus `updated_at_iso`. */
 export function toListPage<T extends object>(page: T): T {
-  return { ...PAGE_ROW_DEFAULTS, ...pageDates(page as Row) } as T;
+  return guardNullBody({ ...PAGE_ROW_DEFAULTS, ...pageDates(page as Row) }) as T;
 }
 
 /** The nullable columns of a chunk row, which PGLite returns as null when a chunk has no value. */
