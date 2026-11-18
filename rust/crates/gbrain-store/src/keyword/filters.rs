@@ -17,7 +17,7 @@ use super::vector_cache::{VectorKind, cached};
 use crate::chunks::ChunkRecord;
 use crate::env::iso;
 use crate::error::{Result, StoreError};
-use crate::facts::{PrivacyPolicy, page_hidden};
+use crate::facts::{OwnerOnlySources, PrivacyPolicy, page_hidden};
 use crate::kv::KvRead;
 use crate::pages::PageRecord;
 use crate::sources::read_source;
@@ -132,6 +132,8 @@ pub(super) struct PageFilter<'a> {
     after: Option<Bound>,
     before: Option<Bound>,
     live_sources: HashMap<String, bool>,
+    /// The owner-only sources, read on the first page `exclude_private` judges.
+    owner_only: Option<OwnerOnlySources>,
 }
 
 impl<'a> PageFilter<'a> {
@@ -141,6 +143,7 @@ impl<'a> PageFilter<'a> {
             after: Bound::parse(options.after_date.as_ref(), "afterDate")?,
             before: Bound::parse(options.before_date.as_ref(), "beforeDate")?,
             live_sources: HashMap::new(),
+            owner_only: None,
         })
     }
 
@@ -164,10 +167,15 @@ impl<'a> PageFilter<'a> {
         {
             return Ok(false);
         }
-        if let Some(policy) = &o.exclude_private
-            && page_hidden(read, page, policy)?
-        {
-            return Ok(false);
+        if let Some(policy) = &o.exclude_private {
+            if self.owner_only.is_none() {
+                self.owner_only = Some(OwnerOnlySources::read(read)?);
+            }
+            if let Some(owner_only) = &self.owner_only
+                && page_hidden(read, page, policy, owner_only)?
+            {
+                return Ok(false);
+            }
         }
         if o.page_type.as_ref().is_some_and(|t| *t != page.page_type)
             || o.types

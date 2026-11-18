@@ -309,7 +309,7 @@ mod tests {
         let mut every = all.map(String::from).to_vec();
         every.sort();
         assert_eq!(sorted(top(json!({ "limit": 5.0 }))), every);
-        let policy = json!({ "honorAliases": true, "entityPrivacy": true });
+        let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage" });
         assert_eq!(
             sorted(top(json!({ "limit": 5.0, "excludePrivate": policy }))),
             ["notes/a-open", "notes/o-public"]
@@ -324,13 +324,15 @@ mod tests {
             1
         );
         // Without the alias keys only `visibility` (and a derived page's default) hides a page.
-        let visibility_only = json!({ "honorAliases": false, "entityPrivacy": true });
+        let visibility_only =
+            json!({ "honorAliases": false, "entityPrivacy": true, "ownerOnly": "lineage" });
         assert_eq!(
             sorted(top(json!({ "excludePrivate": visibility_only }))),
             ["notes/a-open", "notes/n-access", "notes/o-public"]
         );
         // With the privacy part relaxed only the member-access part applies: nothing here is hidden.
-        let relaxed = json!({ "honorAliases": true, "entityPrivacy": false });
+        let relaxed =
+            json!({ "honorAliases": true, "entityPrivacy": false, "ownerOnly": "lineage" });
         assert_eq!(sorted(top(json!({ "excludePrivate": relaxed }))), every);
         // `null` (excludePrivate off) hides nothing, and the policy composes with the other filters.
         assert_eq!(sorted(top(json!({ "excludePrivate": null }))), every);
@@ -338,6 +340,95 @@ mod tests {
         assert_eq!(
             top(json!({ "excludePrivate": policy, "excludeSlugs": ["notes/a-open"] })),
             ["notes/o-public"]
+        );
+    }
+
+    /// The owner-only part of the page policy: a page of an owner-only source is hidden, and under the lineage form so is a
+    /// concept synthesized from one; under the closed form every page is hidden while the brain holds an owner-only source.
+    /// It is part of the member-access test, so a relaxed privacy part does not drop it.
+    #[test]
+    fn exclude_private_hides_owner_only_pages_and_what_is_derived_from_them() {
+        let store = crate::test_support::store();
+        let source = |id: &str, config: Value| {
+            let input: crate::sources::SourceInput =
+                serde_json::from_value(json!({ "id": id, "config": config })).unwrap();
+            store.upsert_source(&input).unwrap();
+        };
+        source("vault", json!({ "owner_only": true }));
+        source("chats", json!({ "kind": "imessage" }));
+        source("flagged-off", json!({ "owner_only": false }));
+        let put_in = |source_id: &str, slug: &str, page_type: &str, frontmatter: Value| {
+            let input: crate::pages::PageInput = serde_json::from_value(json!({
+                "type": page_type, "title": slug, "compiled_truth": "heron heron", "timeline": "",
+                "frontmatter": frontmatter,
+            }))
+            .unwrap();
+            let options = crate::pages::PutPageOptions {
+                source_id: Some(source_id.to_string()),
+                ..Default::default()
+            };
+            store.put_page(slug, &input, &options).unwrap();
+        };
+        put_in("default", "notes/open", "note", json!({}));
+        put_in("flagged-off", "notes/flagged-off", "note", json!({}));
+        put_in("vault", "notes/vault", "note", json!({}));
+        put_in("chats", "notes/chat", "note", json!({}));
+        let derived = json!({ "synthesized_by": "dream", "visibility": "world" });
+        put_in("default", "concepts/from-vault", "concept", derived.clone());
+        put_in("default", "concepts/from-open", "concept", derived);
+        let link = |from: &str, to: &str, to_source: &str| {
+            let options = crate::links::AddLinkOptions {
+                link_type: Some("synthesized_from".into()),
+                link_source: Some("concept-provenance".into()),
+                to_source_id: Some(to_source.into()),
+                ..Default::default()
+            };
+            store.add_link(from, to, &options).unwrap();
+        };
+        link("concepts/from-vault", "notes/vault", "vault");
+        link("concepts/from-open", "notes/open", "default");
+        let top = |form: &str| -> Vec<String> {
+            let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": form });
+            let mut found = slugs(
+                &store
+                    .search_keyword_arm(
+                        "heron",
+                        "heron",
+                        &opts(json!({ "limit": 20.0, "excludePrivate": policy })),
+                    )
+                    .unwrap(),
+            );
+            found.sort();
+            found
+        };
+        assert_eq!(
+            top("lineage"),
+            ["concepts/from-open", "notes/flagged-off", "notes/open"]
+        );
+        assert!(top("closed").is_empty());
+        // The part belongs to the member-access test: a relaxed privacy part keeps it.
+        let relaxed =
+            json!({ "honorAliases": true, "entityPrivacy": false, "ownerOnly": "lineage" });
+        let mut found = slugs(
+            &store
+                .search_keyword_arm(
+                    "heron",
+                    "heron",
+                    &opts(json!({ "limit": 20.0, "excludePrivate": relaxed })),
+                )
+                .unwrap(),
+        );
+        found.sort();
+        assert_eq!(
+            found,
+            ["concepts/from-open", "notes/flagged-off", "notes/open"]
+        );
+        // A policy that names no owner-only form is refused: the store does not guess one.
+        assert!(
+            serde_json::from_value::<KeywordOptions>(
+                json!({ "excludePrivate": { "honorAliases": true, "entityPrivacy": true } })
+            )
+            .is_err()
         );
     }
 

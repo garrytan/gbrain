@@ -56,11 +56,20 @@ statement matches titles only (every row is a `title` match, as `title-statement
 only match is its timeline is not returned, and a page limit and the page count read only visible pages. A hybrid
 search with `excludePrivate` therefore reaches its title arm without a refusal.
 
+The policy carries a third setting, `ownerOnly`, read from the same no-caller text: the owner-only rule of
+`accessAllowedSql` (`src/core/access/owner-only.ts`), which hides a page from every caller but the owner. `lineage` (a
+brain at schema v320 or above, which is how the store reports itself) hides a page held in an owner-only source
+(`sources.config` with `owner_only` true, or kind `imessage`) and a concept or question with a `concept-provenance`
+input page in one; `closed` (a call outside an engine scope, or a brain below v320) hides every page while the brain
+holds an owner-only source. A text that holds neither form refuses. `entityPrivacy: false` does not drop it. The store
+keeps no `derivation_inputs` or `owner_only_marks`, so a page that only those tables tie to an owner-only row, and a page
+derived from a source that was removed, are not hidden by it.
+
 The safe-chunks rule drops a page whose recorded `chunker_version` is below the safe fence chunker (4). A page with no
 recorded version was chunked by this store's chunker, which seals, so it is kept (as `chunk_queries.md` reads it).
 
-This store keeps no slug aliases or rename history (the aliases family is not served), so the origin checks of the
-policy read those lookups as empty. When the aliases family lands, `facts/privacy.rs` reads them as PGLite does.
+The origin checks of the policy follow slug aliases and rename history as PGLite does (`facts/privacy.rs` reads them
+through `aliases.rs`), so an origin that a rename moved still reaches its page.
 `keywordRareTermPages` takes no options; PGLite's rare-term statement applies no privacy filter, so neither does the store.
 
 `searchKeywordChunks` also refuses `type`, a non-empty `types`, a non-empty `where` and a non-empty `exclude_slugs`:

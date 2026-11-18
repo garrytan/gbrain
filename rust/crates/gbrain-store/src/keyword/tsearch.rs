@@ -2,6 +2,7 @@
 //! `english` configuration: `to_tsvector`, `setweight`, `tsvector || tsvector`, `plainto_tsquery`,
 //! `phraseto_tsquery`, `websearch_to_tsquery`, `@@` and the text output of both types. The ranker
 //! (`ts_rank`, `ts_rank_cd`) is in `rank.rs` and reads the same types.
+//! Derived from PostgreSQL 18.6; licence and notice: third-party/postgresql/NOTICE.md
 //!
 //! The C sources are `tsearch/to_tsany.c`, `tsearch/ts_parse.c`, `utils/adt/tsvector_op.c`,
 //! `utils/adt/tsquery.c`, `utils/adt/tsquery_cleanup.c` and `utils/adt/tsvector_parser.c`. Each

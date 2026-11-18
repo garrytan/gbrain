@@ -18,8 +18,8 @@ mod embedding;
 #[allow(dead_code)]
 mod privacy;
 
-pub use privacy::PrivacyPolicy;
-pub(crate) use privacy::page_hidden;
+pub use privacy::{OwnerOnly, PrivacyPolicy};
+pub(crate) use privacy::{OwnerOnlySources, page_hidden};
 
 use serde::{Deserialize, Serialize};
 

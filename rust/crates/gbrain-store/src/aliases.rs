@@ -41,7 +41,7 @@
 //! (`facts/privacy.rs`) reads both through [`read_slug_alias`] and [`renamed_to`].
 
 use crate::error::{INVALID_ARGUMENT, Result, StoreError};
-use crate::facts::{PrivacyPolicy, page_hidden};
+use crate::facts::{OwnerOnlySources, PrivacyPolicy, page_hidden};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::page_columns::PageColumns;
 use crate::pages::{
@@ -543,7 +543,7 @@ impl Store {
                         continue;
                     };
                     if let Some(policy) = &scope.exclude_private
-                        && page_hidden(&*read, &page, policy)?
+                        && page_hidden(&*read, &page, policy, &OwnerOnlySources::none())?
                     {
                         continue;
                     }
@@ -629,7 +629,7 @@ impl Store {
                 continue;
             }
             if let Some(policy) = &query.exclude_private
-                && page_hidden(&*read, &page, policy)?
+                && page_hidden(&*read, &page, policy, &OwnerOnlySources::none())?
             {
                 continue;
             }
@@ -753,7 +753,7 @@ fn live_titles(
         };
         if !gone
             && !match exclude_private {
-                Some(policy) => page_hidden(read, &page, policy)?,
+                Some(policy) => page_hidden(read, &page, policy, &OwnerOnlySources::none())?,
                 None => false,
             }
         {

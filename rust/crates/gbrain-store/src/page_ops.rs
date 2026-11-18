@@ -11,7 +11,7 @@
 use crate::Store;
 use crate::env::iso;
 use crate::error::Result;
-use crate::facts::{PrivacyPolicy, page_hidden};
+use crate::facts::{OwnerOnlySources, PrivacyPolicy, page_hidden};
 use crate::kv::KvRead;
 use crate::pages::{PageRecord, all_pages, read_page};
 use crate::sources::{SourceRecord, all_sources};
@@ -105,7 +105,7 @@ fn passes_read_scope(
         return Ok(false);
     }
     if let Some(policy) = &scope.exclude_private
-        && page_hidden(read, page, policy)?
+        && page_hidden(read, page, policy, &OwnerOnlySources::none())?
     {
         return Ok(false);
     }

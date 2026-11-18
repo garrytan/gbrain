@@ -32,7 +32,7 @@
 use crate::Store;
 use crate::chunks::read_chunks;
 use crate::error::{INVALID_STATE, REVISION_CONFLICT, Result, StoreError};
-use crate::facts::{PrivacyPolicy, page_hidden};
+use crate::facts::{OwnerOnlySources, PrivacyPolicy, page_hidden};
 use crate::keys;
 use crate::kv::{KvRead, KvWrite, collect_prefix, scan_prefix};
 use crate::links::{LinkBatchInput, LinkRecord, delete_link, in_links, out_links, put_link};
@@ -268,7 +268,7 @@ impl<'a> Pages<'a> {
             return Ok(false);
         }
         if let Some(policy) = &scope.exclude_private
-            && page_hidden(self.read, page, policy)?
+            && page_hidden(self.read, page, policy, &OwnerOnlySources::none())?
         {
             return Ok(false);
         }

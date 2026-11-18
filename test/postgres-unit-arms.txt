@@ -136,6 +136,7 @@ test/engine-parity/links.test.ts
 test/engine-parity/owner-only-marks.test.ts
 test/engine-parity/pages.test.ts
 test/engine-parity/raw-sql.test.ts
+test/engine-parity/search-privacy.test.ts
 test/engine-parity/search-reads.test.ts
 test/engine-parity/search.test.ts
 test/engine-parity/segmented-body.test.ts

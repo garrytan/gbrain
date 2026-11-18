@@ -19,7 +19,7 @@
 
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
-use crate::facts::{PrivacyPolicy, page_hidden};
+use crate::facts::{OwnerOnlySources, PrivacyPolicy, page_hidden};
 use crate::kv::{KvRead, KvWrite};
 use crate::links::no_nul;
 use crate::page_columns::PageColumns;
@@ -392,7 +392,7 @@ impl Store {
                 continue;
             }
             if let Some(policy) = &input.exclude_private
-                && page_hidden(&*read, &page, policy)?
+                && page_hidden(&*read, &page, policy, &OwnerOnlySources::none())?
             {
                 continue;
             }

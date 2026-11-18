@@ -1,6 +1,7 @@
 //! Port of PostgreSQL's text-search rankers (`utils/adt/tsrank.c`, PG 18): `ts_rank(vector,
 //! query)` (`calc_rank`, normalization 0) and `ts_rank_cd(vector, query)` (`calc_rank_cd`,
 //! normalization 0), both with the default weights `{D 0.1, C 0.2, B 0.4, A 1.0}`.
+//! Derived from PostgreSQL 18.6; licence and notice: third-party/postgresql/NOTICE.md
 //!
 //! Every intermediate keeps the C type: `float` (f32) where the C code holds a `float`, `double`
 //! (f64) where it computes in `double`. The final value is a `float4`, so the callers get the f32

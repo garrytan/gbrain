@@ -28,7 +28,7 @@ use crate::embeddings::{
     StoredVector, scan_chunk_vectors, scan_take_vectors, text_hash, vector_generation,
 };
 use crate::error::{Result, StoreError};
-use crate::facts::{PrivacyPolicy, page_hidden};
+use crate::facts::{OwnerOnlySources, PrivacyPolicy, page_hidden};
 use crate::kv::{KvRead, KvWrite};
 use crate::pages::{PageRecord, read_page_by_id};
 use crate::sources::read_source;
@@ -403,7 +403,7 @@ fn page_passes(
         return Ok(false);
     }
     if let Some(policy) = &options.exclude_private
-        && page_hidden(read, page, policy)?
+        && page_hidden(read, page, policy, &OwnerOnlySources::none())?
     {
         return Ok(false);
     }
