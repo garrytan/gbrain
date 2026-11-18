@@ -274,7 +274,10 @@ rows a world-only read strips (private rows, held rows, takes) is marked
 page, so a page with one such row is marked whole. Held rows inside read-view
 windows and in a segmented page's markdown view are not marked, as before this
 PR. The local CLI's `--room` marks
-pages the same way. History
+pages the same way. The mark is judged with the caller's own fact grant, so a
+caller with a private-facts grant gets the same mark as before this PR for held
+rows it can read (GST-3066). Owner tokens minted with `gbrain auth create` store
+`['world']`, so they read world takes unless the list is changed. History
 also checks snapshot visibility while page privacy is enforced. Malformed
 protected sections are omitted; unterminated or interleaved sections discard
 the remaining tail. Restricted salience counts only permitted active takes and
