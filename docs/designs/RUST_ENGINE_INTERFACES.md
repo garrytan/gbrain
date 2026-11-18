@@ -95,7 +95,7 @@ Keys are byte strings compared byte by byte. The first byte is the tag.
 
 | Tag | Records | Owner |
 |---|---|---|
-| `M` | meta: format record, id counters (`M next_<name>`), chunk stats, per-page segment chunk views (`M chunk_segment_view/<page id>`) | core |
+| `M` | meta: format record, id counters (`M next_<name>`), chunk stats, per-page segment chunk views (`M chunk_segment_view/<page id>`), per-page search timelines (`M page_search_timeline/<page id>`) | core |
 | `C` | config | core |
 | `S` | sources | core |
 | `P` / `I` | page by `(source, slug)` / page id to page key | core (pages) |
@@ -152,6 +152,7 @@ Reserved tags:
 | stats | `n` | `INGEST_LOG` | no |
 | raw_files | `r` | `RAW_FILES` | yes |
 | link_queries | `q` | `LINK_QUERIES` | no |
+| wanted_links | `q`, sub-tag `W` (shared with link_queries) | `LINK_QUERIES` | yes |
 | timeline_queries | `u` | `TIMELINE_QUERIES` | no |
 | keyword | `R` | `TRIGRAM` | no |
 | chunk_queries | `c` | `CHUNK_QUERIES` | no |
@@ -159,6 +160,17 @@ Reserved tags:
 | embeddings (core) | `B` | `EMBEDDING_STATE` | yes |
 | transactions (core) | `w` | `LOCK_QUEUE` | no |
 | relations (core) | `v` | `RELATION_CATALOG` | no |
+
+The `q` tag is shared. link_queries and wanted_links both key records as `q <source id> 0x00 ...`; the byte after
+`0x00` is `W` for a wanted_links record (`q <origin source id> 0x00 W <origin page id BE8> ...`), and link_queries
+uses any other byte. `keys::LINK_QUERIES` stays the one constant for both; neither family adds a tag.
+
+code_edges keeps a chunk index under its own tag `H`, after its row sub-tags `0x01` to `0x06`, because the chunk
+store keys chunks by page and index, not by id:
+
+- `H 0x07 <chunk id BE8>` -> the page id, then `0` for no `symbol_name` or `1` and the name's bytes: every chunk by id.
+- `H 0x08 <symbol_name> 0x00 <chunk id BE8>` -> empty: the chunks by `symbol_name`.
+- `H 0x09` -> empty: set once the index covers every chunk.
 
 ### Page delete cascade
 
@@ -181,10 +193,14 @@ file that names every family that needs the hook. Each listed family already has
 file, with an empty body. A family fills in only its own body, and never changes a signature or a list. A family
 that is not on a list and needs the hook asks core for a one-line addition to the list.
 
+A family that needs a call from a chunk write (`chunks::write_chunk`) or a build once per brain open (`Store::open`
+and `seed`) asks Ember first. Those calls run on every chunk write and every open, for every family. After the yes,
+the family adds the call in its own commit, apart from its family code, so the core change can be reviewed alone.
+
 All hooks are empty today, so they change no answer: every served member reads and writes exactly as before. The
-last three parts of this section are not hooks. They are core page behavior: the page origin rule lets `putPage`
-store `source_path`, the nullable page fields let a page record hold a segmented shell, and the segmented guard keeps
-`putPage` off such a page.
+last four parts of this section are not hooks. They are core page behavior: the page origin rule lets `putPage`
+store `source_path`, the nullable page fields let a page record hold a segmented shell, the segmented guard keeps
+`putPage` off such a page, and the search timeline keeps the timeline text of the page keyword vector.
 
 #### Page columns (`page_columns.rs`)
 
@@ -347,11 +363,15 @@ family's records keyed by source, not by page; records under a page go through t
   `pages::remove_page` (so the page and chunk hooks fire), then calls this list, then deletes the source record.
 - **Owners** (the Postgres tables that cascade on `sources.id`): facts (`facts`, `fact_withdrawals`), aliases
   (`slug_aliases`, `page_aliases`), code_edges (`code_edges_chunk`, `code_edges_symbol`), link_queries
-  (`wanted_links`), raw_files (`files`), page_body (`page_segment_texts`, `page_body_stagings` and the other segment
+  (its own `q` records and the wanted_links family's `wanted_links` records, `q <source> 0x00 W ...`), raw_files (`files`), page_body (`page_segment_texts`, `page_body_stagings` and the other segment
   tables), takes (`take_proposals`, `take_nudge_log`), extraction (`extract_atoms_page_state`).
 - **Not on the list:** eval_capture (`eval_candidates.source_ids` is a text array with no foreign key) and stats
   (`ingest_log` has no foreign key). A family that is not listed and keys records by source asks core for one line.
-- The stubs in `facts.rs` and `link_queries.rs` use full paths (`crate::kv::KvWrite`, `crate::Result`), so they need no
+- **Shared `q` prefix.** `link_queries::remove_source_rows` deletes everything under `q <source> 0x00`, so it owns the
+  source-delete cascade for both link_queries and wanted_links. It must not narrow that prefix (for example to the
+  link_queries sub-keys only), or a source delete leaves the source's wanted links behind. wanted_links has no
+  `remove_source_rows` of its own.
+- The stubs in `facts.rs`, `link_queries.rs` and `wanted_links.rs` use full paths (`crate::kv::KvWrite`, `crate::Result`), so they need no
   import line in a file that has none yet.
 
 #### Rename slug rows (`cascade::rename_slug_rows`)
@@ -512,6 +532,40 @@ others. Each family below must give the PGLite answer for a segmented shell page
 These readers already match PGLite and need no change: page_ops `find_duplicate_in` (a shell has no hash, so it never
 matches), the prior byte sum in `read_page_snapshots_batch` (a shell adds 0), page_body `refresh_page_body` (it
 refuses as above), and core `auto_chunks` (`putPage` never reaches a shell now).
+
+#### Search timeline (`pages::search_timeline`)
+
+```rust
+pub(crate) struct SearchTimeline { pub revision: String, pub timeline: String }
+pub(crate) fn search_timeline(read: &dyn KvRead, page_id: u64) -> Result<Option<SearchTimeline>>;
+pub(crate) fn record_search_timeline(tx: &mut dyn KvWrite, page_id: u64, revision: &str, timeline: &str) -> Result<()>;
+pub(crate) fn forget_search_timeline(tx: &mut dyn KvWrite, page_id: u64) -> Result<()>;
+pub(crate) const SEARCH_TIMELINE_MAX_CHARS: usize = 65_536;
+```
+
+PGLite's page keyword vector is the title (weight A) plus `left(sanitizeRemoteBody(timeline), 65536)` (weight C),
+set when the page's chunks are sealed (`sealPageTextProjection`). The sanitizer stays in TypeScript, so the seal
+carries its output to the store.
+
+- **Input.** TypeScript `sealChunks` sends `searchTimeline: sanitizeRemoteBody(timeline)` in the `upsertChunks`
+  options (`UpsertChunksOptions::search_timeline`) next to `seal: true`. A segmented page (NULL timeline) sends none.
+  A write without `seal` ignores it.
+- **Record.** The store keeps `{ revision, timeline }` under `M page_search_timeline/<page id>`, in the seal's
+  transaction: the page's `knowledge_revision` at the seal, and the text with NUL removed and cut to
+  `SEARCH_TIMELINE_MAX_CHARS` characters (Postgres `left` counts characters).
+- **Read.** The keyword family (`searchTitles`) reads it with `search_timeline`. The text describes the page's
+  current text when `revision` equals the page's `text_projection_revision`. `None` means no seal sent the text since
+  the last write that set the title or timeline.
+- **Forget.** `pub(crate) fn forget_search_timeline(tx: &mut dyn KvWrite, page_id: u64) -> Result<()>` deletes it.
+  PGLite's `trg_pages_search_vector` (`BEFORE INSERT OR UPDATE OF title, timeline`) puts the trigger form back on
+  every write whose `SET` list names either column, also with an unchanged value. `put_page_in` calls it on every
+  `putPage`; `write_page` calls it when the title or timeline changed. The page_body family calls it from
+  `refresh_page_body` and the body generation flip. `rust/docs/store/pages.md` ("Search timeline") lists each PGLite
+  statement.
+- **Delete.** `remove_page` deletes it on a hard delete. A soft delete keeps it.
+- **Other writers.** A family that seals a page by another path and has the sanitized text from TypeScript calls
+  `record_search_timeline` in the same transaction, and a family whose PGLite SQL sets the title or timeline calls
+  `forget_search_timeline`; no family touches the key directly.
 
 ### Write transactions and the journal
 
@@ -930,7 +984,7 @@ Raw source data and files attached to pages.
 - **Members (5), capability:** `raw_data` (2), `files` (3).
 - **Store and binding:** `putRawData` (`put_raw_data`), `getRawData` (`get_raw_data`), `upsertFile` (`upsert_file`), `getFile` (`get_file`), `listFilesForPage` (`list_files_for_page`).
 - **Postgres tables:** `raw_data` (page CASCADE), `files` (`page_id` SET NULL, `page_slug` text).
-- **Keys:** `r 0x01 <page id> 0x00 <source name>` raw data; `r 0x02 <source> 0x00 <storage path>` file; `r 0x03 <page id> 0x00 <file id>` page index. `remove_page_rows` deletes raw data and clears `page_id` on files (it keeps the file rows).
+- **Keys:** `r 0x01 <page id> 0x00 <source name>` raw data; `r 0x02 <storage path>` file; `r 0x03 <page id> 0x00 <file id>` page index. `remove_page_rows` deletes raw data and clears `page_id` on files (it keeps the file rows).
 - **Depends on:** Core page helpers.
 - **Estimate:** about 1 day.
 - **Notes:** `raw_data.data` is JSONB: Postgres stores object keys sorted by length then bytes; reproduce that key order on output.
@@ -949,7 +1003,7 @@ Link and graph members the links and graph capabilities still refuse.
 - **Members (10), capability:** `links` (6), `graph` (4).
 - **Store and binding:** `replaceDerivedLinks` (`replace_derived_links`), `replaceDerivedLinksBatch` (`replace_derived_links_batch`), `removeLinksByPagesAndSource` (`remove_links_by_pages_and_source`), `listLinkSources` (`list_link_sources`), `getBacklinkCounts` (`get_backlink_counts`), `rewriteLinks` (`rewrite_links`), `relationalFanout` (`relational_fanout`), `relationalChainHop` (`relational_chain_hop`), `getAdjacencyBoosts` (`get_adjacency_boosts`), `findOrphanPages` (`find_orphan_pages`).
 - **Postgres tables:** `links` (through `links.rs`), `pages`.
-- **Keys:** No new rows for most members; `q` is for derived-link bookkeeping if `replaceDerivedLinks` needs it (`q <source> 0x00 <origin page id> ...`). Link rows themselves are written only through the `links.rs` helpers.
+- **Keys:** No new rows for most members; `q` is for derived-link bookkeeping if `replaceDerivedLinks` needs it (`q <source> 0x00 <origin page id> ...`). The byte `W` after `q <source> 0x00` belongs to wanted_links; link_queries keys never start with it there. `remove_source_rows` deletes the whole `q <source> 0x00` prefix, wanted links included, and must not narrow it. Link rows themselves are written only through the `links.rs` helpers.
 - **Depends on:** Core link helpers. Ask core for any write helper the derived-link replace needs. `rewriteLinks` follows the page id and is a no-op on links (one case also needs aliases).
 - **Estimate:** about 3 days.
 - **Notes:** `getLinks`/`getBacklinks` with a source list constrain both ends; a scalar source constrains only the from side. `relationalFanout` and `relationalChainHop` must keep the PGLite depth and order.
@@ -964,6 +1018,20 @@ Link and graph members the links and graph capabilities still refuse.
   - `links.test.ts`: getAdjacencyBoosts aggregates in-set linkers only
   - `links.test.ts`: findOrphanPages: islanded default vs inbound mode, with source scope
   - `sync-aliases.test.ts`: rewriteLinks after updateSlug is a no-op: links follow the page id, not the slug
+
+### wanted_links
+
+The `wanted_links` table reads and writes that `listWantedPages` needs: authored links whose target page does not
+exist (`src/core/wanted-links-store.ts`). TypeScript reaches the table through `executeRaw` today, which the Rust
+engine refuses.
+
+- **Files:** `gbrain-store/src/wanted_links.rs` (stub, with an empty `remove_page_rows`).
+- **Tag:** `q` (`LINK_QUERIES`), sub-tag `W`, shared with link_queries. Cascade on page delete: yes
+  (`wanted_links.origin_page_id` is `ON DELETE CASCADE`).
+- **Keys:** `q <origin source id> 0x00 W <origin page id BE8> ...`. `wanted_links.rs` defines the bytes after `W`.
+- **Source delete:** no hook of its own. `link_queries::remove_source_rows` deletes the whole `q <source> 0x00`
+  prefix, these records included.
+- **Postgres tables:** `wanted_links`.
 
 ### timeline_queries
 
@@ -1038,6 +1106,13 @@ Chunk vectors and vector search.
 - **Depends on:** The coming vector store work (HNSW or exact scan choice, design phase 2).
 - **Estimate:** core.
 - **Notes:** Cosine score is `1 - distance`, within `1e-6` of pgvector.
+- **Store field:** `Store` holds one `pub(crate) vectors: crate::vectors::VectorCache`, made with `Default` in
+  `open_kv`, so a search passes `Some(&self.vectors)` to `load_index` and reuses the decoded vectors across reads.
+  Core defines `VectorCache` as an empty struct at the end of `vectors.rs`. Git merges it into the family's file with
+  no conflict and keeps both definitions, so the build fails (`E0428`): after the merge, delete core's empty struct
+  and keep the family's. The cache must be fed from committed snapshots only, so a store bound to an open transaction
+  gets its own cache and never shares the brain's: the transactions family's `bound_to` adds
+  `vectors: vectors::VectorCache::default()` (without it the build fails with `E0063`).
 - **Parity cases (3, in `search.test.ts`, `takes.test.ts`):**
   - `search.test.ts`: searchVector ranks by cosine similarity and applies filters and paging
   - `search.test.ts`: searchVector: a dense page cannot starve the page-grain result
@@ -1163,9 +1238,9 @@ member lands. Within a group, build in the order shown.
 | 6. Graph and search reads | timeline_queries, chunk_queries, link_queries, keyword | yes | about 11 days | keyword writes the `ts_rank` compatibility ranker itself; two chunk cases need embeddings |
 
 Groups 1 and 2 share the `pages` capability: `pages` is reported only when page_ops, extraction and aliases are all
-done. Groups 6 and 2 are the longest (about 11 and 10 days) and set the critical path. If time runs short, the candidates to leave refused for
-Dec 1 are `purgeDeletedPages`, `sweepSegments` and `getHealth`; each is a single member that refuses cleanly, so the
-rest of its family still ships.
+done. Groups 6 and 2 are the longest (about 11 and 10 days) and set the critical path. If time runs short, the candidate to leave refused for
+Dec 1 is `sweepSegments`; it is a single member that refuses cleanly, so the rest of its family still ships.
+`purgeDeletedPages` and `getHealth` are served.
 
 The estimates are judgments from the size of the PGLite code each member reproduces, not measurements.
 
@@ -1191,3 +1266,8 @@ The estimates are judgments from the size of the PGLite code each member reprodu
 | Nullable page fields (`PageText`, `content_hash: Option`, `chunker_version: Option<i16>`; codec `guardNullBody`) | built | page_body (shell and flip writes) |
 | Segmented guard (`putPage` refuses a segmented page with PGLite's CHECK message) | built | page_body; chunk_queries, extraction and page_ops match PGLite for a NULL body (see "Segmented guard") |
 | Rename slug list (`cascade::rename_slug_rows`) | built; the aliases family calls it from `updateSlug` | facts (fills in its body), aliases (caller) |
+| Search timeline (`pages::search_timeline`: the sanitized timeline `sealChunks` sends, kept per page at the sealed revision; `forget_search_timeline` on every write that sets the title or timeline) | built | keyword (`searchTitles`); page_body calls `forget_search_timeline` |
+| Vector cache store field (`Store::vectors`, a `VectorCache` made in `open_kv`) | built | vectors (`load_index`) |
+| Wanted links stub (`wanted_links.rs`: sub-tag `W` under `q`, an empty `remove_page_rows` on the page-delete list) | built; the family fills in the body | wanted_links (`listWantedPages`) |
+| Chunk-write hook (`chunks::write_chunk` calls `code_edges::put_chunk_index(tx, id, page_id, symbol_name)` for every chunk record it writes) | built on code_edges' branch (`rust-lane-code-edges-index`, in its own commit); arrives with that merge | code_edges (chunk index `H 0x07`, `H 0x08`) |
+| Open-time index build (`Store::open` calls `code_edges::build_chunk_index(&*kv)`, which indexes a brain written before the index once; `seed` calls `code_edges::seed_chunk_index(tx)`, which marks a new brain's empty index complete) | built on code_edges' branch (`rust-lane-code-edges-index`, in its own commit); arrives with that merge | code_edges (`H 0x09`) |

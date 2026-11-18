@@ -52,6 +52,7 @@ pub mod takes;
 pub mod timeline_queries;
 pub mod transactions;
 pub mod vectors;
+pub mod wanted_links;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -105,6 +106,10 @@ pub struct StoreInfo {
 pub struct Store {
     pub(crate) kv: Arc<dyn Kv>,
     pub(crate) env: Arc<dyn Env>,
+    /// Decoded vectors, kept across reads (`vectors.rs`). It is fed from committed snapshots
+    /// only.
+    #[allow(dead_code)] // the vector search family reads it
+    pub(crate) vectors: vectors::VectorCache,
     info: StoreInfo,
 }
 
@@ -188,6 +193,7 @@ impl Store {
         Ok(Store {
             kv,
             env,
+            vectors: vectors::VectorCache::default(),
             info: StoreInfo {
                 brain_id: stored.brain_id,
                 format_version: stored.format_version,
