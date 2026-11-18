@@ -116,6 +116,43 @@ export async function readSourceMembership(exec: SqlExecutor, sourceId: string, 
   return row ?? null;
 }
 
+/** A `persistence_topology_changes` row: one source lifecycle change (remove, purge, clone, deactivate) of a local writer. */
+export interface TopologyChange {
+  id:string; principal_id:string; request_id:string; digest:string; operation:string; source_id:string;
+  source_incarnation:string|null; worktree_ids:string[]; state:'recovering'|'committed'|'failed';
+  recovery:Record<string,unknown>|null; recovery_bytes:number; intent_bytes:number; terminal_bytes:number; outcome:Record<string,unknown>|null;
+}
+
+/** The columns `insertTopologyChange` writes; the omitted byte columns take the table defaults' values (0). */
+export interface TopologyChangeInsert {
+  principalId: string; requestId: string; digest: string; operation: string; sourceId: string;
+  sourceIncarnation: string | null; worktreeIds: string[]; state: TopologyChange['state'];
+  recovery?: Record<string, unknown> | null; recoveryBytes?: number; intentBytes?: number; terminalBytes: number;
+  outcome: Record<string, unknown> | null;
+}
+
+/** The lifecycle receipt row of (principal, request id) (topology-receipts.ts priorTopologyChange). */
+export const TOPOLOGY_CHANGE_SQL = 'SELECT * FROM persistence_topology_changes WHERE principal_id=$1::uuid AND request_id=$2::uuid';
+
+/** The lifecycle receipt insert (topology-receipts.ts recordTopologyChange and admitTopologyRetire). */
+export const INSERT_TOPOLOGY_CHANGE_SQL = `INSERT INTO persistence_topology_changes
+    (principal_id,request_id,digest,operation,source_id,source_incarnation,worktree_ids,state,recovery,recovery_bytes,terminal_bytes,outcome,intent_bytes)
+    VALUES($1::uuid,$2::uuid,$3,$4,$5,$6::uuid,$7::uuid[],$8,$9::text::jsonb,$10,$11,$12::text::jsonb,$13) RETURNING *`;
+
+/** The topology change local writer `principalId` recorded under `requestId`, or null. */
+export async function readTopologyChange(exec: LegacyUnscopedRead, principalId: string, requestId: string): Promise<TopologyChange | null> {
+  const [row] = await exec.executeRaw<TopologyChange>(TOPOLOGY_CHANGE_SQL, [principalId, requestId]);
+  return row ?? null;
+}
+
+/** Records one topology change and returns the stored row; (principal, request id) is unique, so a reused id refuses. */
+export async function insertTopologyChange(exec: SqlExecutor, row: TopologyChangeInsert): Promise<TopologyChange> {
+  const [inserted] = await exec.executeRaw<TopologyChange>(INSERT_TOPOLOGY_CHANGE_SQL, [row.principalId, row.requestId, row.digest, row.operation,
+    row.sourceId, row.sourceIncarnation, row.worktreeIds, row.state, row.recovery ? JSON.stringify(row.recovery) : null, row.recoveryBytes ?? 0,
+    row.terminalBytes, row.outcome ? JSON.stringify(row.outcome) : null, row.intentBytes ?? 0]);
+  return inserted!;
+}
+
 /** The first of `requestIds` a topology change of local writer `principalId` already used (a lifecycle id), as `[{ request_id }]`, or []. */
 export function findTopologyChanges(exec: LegacyUnscopedRead, principalId: string, requestIds: string[]): Promise<Array<{ request_id: string }>> {
   return exec.executeRaw<{ request_id: string }>('SELECT request_id FROM persistence_topology_changes WHERE principal_id=$1::uuid AND request_id=ANY($2::uuid[]) LIMIT 1',

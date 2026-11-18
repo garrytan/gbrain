@@ -133,6 +133,39 @@
         ],
         "flagOnScopes": []
       },
+      "claimHousekeepingTurn#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "claimHousekeepingTurn#direct": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "completeHousekeepingTurn#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "completeWriteRow#default": {
         "flagOffLanes": [
           "tx"
@@ -1847,6 +1880,17 @@
         ],
         "flagOnScopes": []
       },
+      "insertTopologyChange#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "insertWriteRequest#default": {
         "flagOffLanes": [
           "tx"
@@ -1990,6 +2034,17 @@
         "flagOnScopes": [
           "*"
         ]
+      },
+      "listCompactableReceipts#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
       },
       "listCorpusSample#default": {
         "flagOffLanes": [
@@ -2407,6 +2462,17 @@
           "*"
         ]
       },
+      "listPendingSegmentedProjections#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listPrefixSampledPages#default": {
         "flagOffLanes": [
           "pool"
@@ -2432,6 +2498,17 @@
         "flagOnScopes": [
           "src-a,src-b"
         ]
+      },
+      "listReservationsAfter#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
       },
       "listSourceLocalPaths#default": {
         "flagOffLanes": [
@@ -2644,6 +2721,17 @@
         ],
         "flagOnScopes": []
       },
+      "listTrueUpRequests#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "loadContradictionsTrend#default": {
         "flagOffLanes": [
           "pool"
@@ -2822,6 +2910,28 @@
         "flagOnScopes": [
           "default"
         ]
+      },
+      "readCapacityForecastInputs#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readCapacityForecastInputs#light": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
       },
       "readEmbeddingStateCounts#full": {
         "flagOffLanes": [
@@ -3014,6 +3124,17 @@
         ],
         "flagOnScopes": []
       },
+      "readReceiptBudget#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readSourceMembership#default": {
         "flagOffLanes": [
           "pool"
@@ -3033,6 +3154,17 @@
         "flagOn": "unscoped",
         "flagOnLanes": [
           "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "readTopologyChange#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
         ],
         "flagOnScopes": []
       },
@@ -3589,6 +3721,17 @@
           "src-a"
         ]
       },
+      "selectProjectionWindowJobs#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "setEmotionalWeightBatch#default": {
         "flagOffLanes": [
           "pool"
@@ -4097,7 +4240,9 @@
         "autocommitSql": "none",
         "batchLoadEmotionalInputs": "none",
         "batchRetry": "none",
+        "claimHousekeepingTurn": "none",
         "cliReads": "none",
+        "completeHousekeepingTurn": "none",
         "completeWriteRow": "none",
         "connRetry": "none",
         "connect": "none",
@@ -4207,6 +4352,7 @@
         "insertFact": "none",
         "insertFacts": "none",
         "insertLocalWriterRow": "none",
+        "insertTopologyChange": "none",
         "insertWriteRequest": "none",
         "invalidateContentDriftEmbeddings": "none",
         "invalidateStaleSignatureEmbeddings": "none",
@@ -4218,6 +4364,7 @@
         "listAllPageRefs": "none",
         "listAllSources": "none",
         "listChunklessPagesWithContent": "direct",
+        "listCompactableReceipts": "none",
         "listConfigKeys": "none",
         "listCorpusSample": "direct",
         "listEmbeddingStateRows": "direct",
@@ -4236,7 +4383,9 @@
         "listLinkSources": "direct",
         "listLocalPathSources": "none",
         "listPages": "direct",
+        "listPendingSegmentedProjections": "none",
         "listPrefixSampledPages": "direct",
+        "listReservationsAfter": "none",
         "listSourceLocalPaths": "none",
         "listSourceRecords": "none",
         "listSourceRoutingRows": "none",
@@ -4247,6 +4396,7 @@
         "listStoredTimelineRows": "none",
         "listSupersessions": "none",
         "listTakes": "none",
+        "listTrueUpRequests": "none",
         "listUnattributedFacts": "none",
         "listWantedPages": "none",
         "livePageIdsAt": "none",
@@ -4276,6 +4426,7 @@
         "putPage": "none",
         "putRawData": "none",
         "rankEntities": "none",
+        "readCapacityForecastInputs": "none",
         "readCycleLocks": "none",
         "readDatabaseClock": "none",
         "readEmbeddingStateCounts": "direct",
@@ -4291,10 +4442,12 @@
         "readPageSnapshotsBatch": "direct",
         "readPageTrustRows": "none",
         "readPersistenceBrainId": "none",
+        "readReceiptBudget": "none",
         "readSegmentDerivations": "none",
         "readSegmentTexts": "none",
         "readSourceIncarnation": "none",
         "readSourceMembership": "none",
+        "readTopologyChange": "none",
         "readTransaction": "none",
         "readTransactionSettings": "none",
         "readWriteRequest": "none",
@@ -4340,6 +4493,7 @@
         "searchTakesVector": "none",
         "searchTitles": "direct",
         "searchVector": "direct",
+        "selectProjectionWindowJobs": "none",
         "setBodyStagingState": "none",
         "setChunkerVersion": "none",
         "setConfig": "none",

@@ -74,9 +74,7 @@ const EARLY_SQL = (r: string) => `((${r}.state IN ('committed','cancelled') AND 
  */
 export async function housekeepReceipts(engine: BrainEngine): Promise<ReceiptCompactionResult> {
   const result: ReceiptCompactionResult = { compacted: 0, freed_bytes: 0, skipped_by_reason: {} };
-  const [target, [state]] = await Promise.all([readReceiptTargetBytes(engine), engine.executeRaw<{ retention: string | null; used: string | null; cutoff: string }>(
-    `SELECT (SELECT value FROM config WHERE key=$1) AS retention,(SELECT terminal_bytes::text FROM persistence_counters WHERE key='brain') AS used,
-      to_char((now()-($2::double precision*interval '1 day')) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cutoff`, [RECEIPT_RETENTION_KEY, HOUSEKEEPING_FLOOR_DAYS])]);
+  const [target, state] = await Promise.all([readReceiptTargetBytes(engine), engine.readReceiptBudget(RECEIPT_RETENTION_KEY, HOUSEKEEPING_FLOOR_DAYS)]);
   if (!state || state.retention !== null || target === 0 || Number(state.used ?? 0) <= target) return result;
   if (await readCompactableReceiptBytes(engine) <= target) return result;
   const states = ['committed', 'cancelled', 'failed', 'conflict'];

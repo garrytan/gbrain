@@ -25,7 +25,7 @@ import type { Notice } from '../agent-output.ts';
 import type { BrainEngine } from '../engine.ts';
 import { principalKey, type Principal, type SqlEngine } from './model.ts';
 /** An engine that reads the journal limits (the snapshot's forecast does). */
-type JournalEngine = SqlEngine & Pick<BrainEngine, 'readJournalLimitRows'>;
+type JournalEngine = SqlEngine & Pick<BrainEngine, 'readJournalLimitRows' | 'readCapacityForecastInputs' | 'getConfigValues'>;
 import { BACKGROUND_PRODUCERS } from './admission-origin.ts';
 import { readCapacityConfig, readCapacityForecast } from './capacity-forecast.ts';
 import { CAPACITY_VERIFY } from './capacity-verify.ts';

@@ -44,6 +44,7 @@ import * as cliReadsOps from './cli-reads-ops.ts';
 import * as cliReadsSearchPages from './cli-reads-search-pages.ts';
 import * as wantedLinks from './wanted-links.ts';
 import * as persistence from './persistence.ts';
+import * as housekeeping from './housekeeping.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
@@ -64,7 +65,7 @@ export const STORE_MEMBERS = {
   ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages,
   // The persistence brain identity the store already keeps (rust/docs/store/journal.md).
   ...persistenceIdentity,
-  ...persistence,
+  ...persistence, ...housekeeping,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

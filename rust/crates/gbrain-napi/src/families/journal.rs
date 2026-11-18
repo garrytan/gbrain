@@ -280,4 +280,121 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.read_source_membership(&source_id))
     }
+
+    /// `claimHousekeepingTurn(claim)`: true when this host now holds the turn.
+    #[napi]
+    pub fn claim_housekeeping_turn<'env>(
+        &self,
+        env: &'env Env,
+        claim: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.claim_housekeeping_turn(&required(claim, "claimHousekeepingTurn claim")?)
+        })
+    }
+
+    #[napi]
+    pub fn complete_housekeeping_turn<'env>(
+        &self,
+        env: &'env Env,
+        turn: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.complete_housekeeping_turn(&required(turn, "completeHousekeepingTurn turn")?)
+        })
+    }
+
+    /// `readReceiptBudget(retentionKey, floorDays)`: `{ retention, used, cutoff }`.
+    #[napi]
+    pub fn read_receipt_budget<'env>(
+        &self,
+        env: &'env Env,
+        retention_key: String,
+        floor_days: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_receipt_budget(&retention_key, floor_days)
+        })
+    }
+
+    #[napi]
+    pub fn list_reservations_after<'env>(
+        &self,
+        env: &'env Env,
+        after: String,
+        limit: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_reservations_after(&after, limit))
+    }
+
+    #[napi]
+    pub fn list_true_up_requests<'env>(
+        &self,
+        env: &'env Env,
+        ids: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_true_up_requests(&ids))
+    }
+
+    #[napi]
+    pub fn list_compactable_receipts<'env>(
+        &self,
+        env: &'env Env,
+        retention_days: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_compactable_receipts(retention_days))
+    }
+
+    #[napi]
+    pub fn read_capacity_forecast_inputs<'env>(
+        &self,
+        env: &'env Env,
+        light: bool,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_capacity_forecast_inputs(light))
+    }
+
+    /// True when every live page's text projection is sealed, so the projection queue is empty.
+    #[napi]
+    pub fn projection_queue_empty<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.projection_queue_empty())
+    }
+
+    /// `insertTopologyChange(input)`: the stored row.
+    #[napi]
+    pub fn insert_topology_change<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.insert_topology_change(&required(input, "insertTopologyChange input")?)
+        })
+    }
+
+    /// `readTopologyChange(principalId, requestId)`: the row, or null.
+    #[napi]
+    pub fn read_topology_change<'env>(
+        &self,
+        env: &'env Env,
+        principal_id: String,
+        request_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_topology_change(&principal_id, &request_id)
+        })
+    }
+
+    /// `findTopologyChanges(principalId, requestIds)`: `[{ request_id }]` or [].
+    #[napi]
+    pub fn find_topology_changes<'env>(
+        &self,
+        env: &'env Env,
+        principal_id: String,
+        request_ids: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.find_topology_changes(&principal_id, &request_ids)
+        })
+    }
 }

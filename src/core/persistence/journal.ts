@@ -9,7 +9,6 @@ import type { Action } from '../agent-output.ts';
 import { digest, jsonBytes, requireUuid } from './digest.ts';
 import { authorizeWrite } from './authority.ts';
 import { journalLimitKey, oneYearCapacity, readJournalLimits, readReceiptRetentionDays } from './limits.ts';
-import { UNRESOLVED_CALLER_REFUSAL_SQL } from './terminal-classify.ts';
 import { outstandingCapacityDetail, retryWriteAdmission, waitOutRefreshFence } from './admission-retry.ts';
 import { PreadmitBrainChanged } from './preadmit-cache.ts';
 import { pipelined } from '../page-state/transactions.ts';
@@ -246,11 +245,9 @@ export async function getWriteRequest(engine: Pick<BrainEngine, 'readWriteReques
   return engine.readWriteRequest(principal.kind, principal.id, requireUuid(requestId));
 }
 /** Resolve other operation domains before repeating target/provider preparation. */
-export async function assertPageRequestIdentity(engine: SqlEngine, principal: Principal, requestId: string): Promise<void> {
+export async function assertPageRequestIdentity(engine: Pick<BrainEngine, 'readTopologyChange'>, principal: Principal, requestId: string): Promise<void> {
   if (principal.kind !== 'local_cli') return;
-  const [topology] = await engine.executeRaw('SELECT id FROM persistence_topology_changes WHERE principal_id=$1::uuid AND request_id=$2::uuid',
-    [principal.id, requireUuid(requestId)]);
-  if (topology) throw lifecycleIdConflict(requestId);
+  if (await engine.readTopologyChange(principal.id, requireUuid(requestId))) throw lifecycleIdConflict(requestId);
 }
 export async function getWriteRequestById(engine: Pick<BrainEngine, 'readWriteRequestById'>, id: string, signal?: AbortSignal): Promise<WriteRequest | null> {
   return engine.readWriteRequestById(id, { signal });
@@ -1203,14 +1200,7 @@ export async function compactWriteReceiptsDetailed(engine: BrainEngine, retentio
   if (!Number.isFinite(retentionDays) || retentionDays < 0) throw new TypeError('Invalid receipt retention.');
   // Receipts with unfinished effects stay retained; filtering them before the
   // LIMIT keeps a backlog of parked effects from starving later receipts.
-  const rows = await engine.executeRaw<WriteRequest>(`SELECT * FROM persistence_requests r
-    WHERE state IN ('committed','conflict','failed','cancelled') AND recovery IS NULL AND NOT compacted
-    AND completed_at < now()-($1::double precision*interval '1 day')
-    AND NOT EXISTS (SELECT 1 FROM persistence_effects e WHERE e.request_id=r.id AND e.state<>'committed')
-    AND NOT COALESCE(${UNRESOLVED_CALLER_REFUSAL_SQL('r')}, false)
-    ${OPEN_SYNC_CURSOR_EXCLUSION('r')}
-    ${NEWEST_SYNC_RECEIPT_EXCLUSION('r')}
-    ORDER BY sequence LIMIT 100`, [retentionDays]);
+  const rows = await engine.listCompactableReceipts<WriteRequest>(retentionDays);
   const result: ReceiptCompactionResult = { compacted: 0, freed_bytes: 0, skipped_by_reason: {} };
   for (const row of rows) {
     const done = await compactReceipt(engine, row).catch(error => {

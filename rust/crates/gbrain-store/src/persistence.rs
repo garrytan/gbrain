@@ -43,11 +43,17 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+mod housekeeping;
+mod topology;
+pub use housekeeping::{HousekeepingClaim, HousekeepingTurn};
+pub use topology::TopologyChangeInsert;
+
 /// The byte after `keys::PERSISTENCE` of a counter row.
 const COUNTER: u8 = 0x01;
 /// The byte after `keys::PERSISTENCE` of a housekeeping checkpoint row.
-#[allow(dead_code)] // the housekeeping rows land next
 pub(crate) const HOUSEKEEPING: u8 = 0x02;
+/// The byte after `keys::PERSISTENCE` of a topology change row (persistence/topology.rs).
+const TOPOLOGY: u8 = 0x03;
 
 /// `persistence_requests.state` CHECK (with `deferred`, added by a later migration).
 const REQUEST_STATES: &[&str] = &[
@@ -323,7 +329,6 @@ fn distinct_keys(keys: &[String]) -> Vec<String> {
 }
 
 /// Every counter row, in key order.
-#[allow(dead_code)] // the capacity forecast reads it; it lands with the housekeeping rows
 pub(crate) fn all_counters(read: &dyn KvRead) -> Result<Vec<(String, CounterRecord)>> {
     let mut out = Vec::new();
     let mut bad = false;

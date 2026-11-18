@@ -3,7 +3,8 @@
  * insertLocalWriterRow, readJournalLimitRows, readHeldPageRows, readHeldCoverageRows), the request rows the put path
  * reads and writes (readWriteRequest, readWriteRequestById, lockPersistenceCounters, insertWriteRequest,
  * stampWriteClaim, lockWriteRequest, completeWriteRow), the claim upkeep (renewWriteClaim, expireStaleWriteClaims,
- * hasClaimableWrite), the admission reads (readSourceMembership, findTopologyChanges) and readLedgerSource.
+ * hasClaimableWrite), the admission reads (readSourceMembership, findTopologyChanges), the lifecycle receipts
+ * (readTopologyChange, insertTopologyChange) and readLedgerSource.
  *
  * Each store call is one store write transaction, so the row locks PGLite takes (FOR SHARE, FOR UPDATE, the counter
  * lock) change nothing here: no other write can run between the read and the write that follows it. The callers that
@@ -14,11 +15,11 @@
  */
 import type { LocalWriterInsert, LocalWriterRow } from '../../engine-sql/persistence-state.ts';
 import type { ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, WriteCompletion, WriteRequestInsert } from '../../engine-sql/persistence-journal.ts';
-import type { ClaimExpiry, ClaimRenewal, SourceMembership } from '../../engine-sql/persistence-claims.ts';
+import type { ClaimExpiry, ClaimRenewal, SourceMembership, TopologyChange, TopologyChangeInsert } from '../../engine-sql/persistence-claims.ts';
 import type { LedgerSource } from '../../engine-sql/belief.ts';
 import type { WriteRequest } from '../../persistence/model.ts';
 import { PAGE_BODY_CONFIG_KEYS } from '../../page-body/limits.ts';
-import { withDates } from '../store-codec.ts';
+import { requestRow, topologyRow } from '../store-codec.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 /** The store keeps no managed brains: a brain on this engine is always unmanaged, one singleton row. */
@@ -68,13 +69,6 @@ export const readHeldPageRows: StoreMember<[pageIds: string[]], Array<{ record: 
 /** No hold rows exist on this engine (see readHeldPageRows), so no source has held coverage. */
 export const readHeldCoverageRows: StoreMember<[sourceIds: string[] | null], HeldCoverageRow[]> = async () => [];
 
-/** The request columns PGLite returns as a Date (timestamptz). */
-const REQUEST_DATES = ['claim_expires_at', 'created_at', 'updated_at', 'completed_at', 'published_at', 'next_attempt_at'];
-
-/** A stored request row as PGLite returns it: the timestamps as Dates, every other column as stored. */
-function requestRow<R extends WriteRequest>(row: unknown): R | null {
-  return row === null || row === undefined ? null : withDates(row as R, REQUEST_DATES);
-}
 
 /** The request a principal admitted under `requestId`, or null. */
 export const readWriteRequest: StoreMember<[principalKind: string, principalId: string, requestId: string], WriteRequest | null> =
@@ -126,8 +120,17 @@ export const hasClaimableWrite: StoreMember<[hostId: string, excludeRoots: strin
 export const readSourceMembership: StoreMember<[sourceId: string, opts?: { lock?: boolean }], SourceMembership | null> = (brain, sourceId) =>
   storeCall({ member: 'readSourceMembership' }, () => brain.readSourceMembership(sourceId));
 
-/** Topology changes are recorded only for worktrees, which this engine never has: no request id was used by one. */
-export const findTopologyChanges: StoreMember<[principalId: string, requestIds: string[]], Array<{ request_id: string }>> = async () => [];
+/** The first of `requestIds` a lifecycle change of local writer `principalId` used, as `[{ request_id }]`, or []. */
+export const findTopologyChanges: StoreMember<[principalId: string, requestIds: string[]], Array<{ request_id: string }>> = (brain, principalId, requestIds) =>
+  storeCall({ member: 'findTopologyChanges' }, () => brain.findTopologyChanges(principalId, [...requestIds]));
+
+/** The lifecycle receipt of (principal, request id), or null; its two timestamps as Dates, as PGLite returns them. */
+export const readTopologyChange: StoreMember<[principalId: string, requestId: string], TopologyChange | null> = async (brain, principalId, requestId) =>
+  topologyRow(await storeCall({ member: 'readTopologyChange' }, () => brain.readTopologyChange(principalId, requestId)));
+
+/** Records a lifecycle receipt; a reused (principal, request id) refuses with the unique violation PGLite gives. */
+export const insertTopologyChange: StoreMember<[row: TopologyChangeInsert], TopologyChange> = async (brain, row) =>
+  topologyRow(await storeCall({ member: 'insertTopologyChange' }, () => brain.insertTopologyChange(row)))!;
 
 /**
  * The belief ledger's view of a source. Belief events and fact, take and page purges are written only through

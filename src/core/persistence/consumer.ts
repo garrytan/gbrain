@@ -345,7 +345,8 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     if (interval === 0) return true;
     if (Date.now() - this.housekeepingAskedAt < interval) return false;
     this.housekeepingAskedAt = Date.now();
-    const claimed = await this.phase('housekeeping_turn', signal => claimHousekeepingTurn(this.statements, this.hostId, interval, signal)).catch(() => null);
+    const claimed = await this.phase('housekeeping_turn', signal => claimHousekeepingTurn(this.engine, this.hostId, interval, signal,
+      consumerConnectionRoute(this.engine).lane === 'direct')).catch(() => null);
     this.turnClaimed ||= claimed === true;
     this.housekeepingTurn = claimed !== false;
     return this.housekeepingTurn;
@@ -359,7 +360,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     this.turnClaimed = false;
     const upkeep = [this.maintenanceWorker, this.projectionWorker, this.topologyWorker];
     this.turnDone = Promise.allSettled(upkeep).then(async () => {
-      if (!this.stopping) await completeHousekeepingTurn(this.statements, this.hostId);
+      if (!this.stopping) await completeHousekeepingTurn(this.engine, this.hostId, consumerConnectionRoute(this.engine).lane === 'direct');
     }).catch(error => this.report(error));
   }
   /**

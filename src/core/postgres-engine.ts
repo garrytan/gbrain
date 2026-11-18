@@ -158,6 +158,8 @@ import * as cliReadsImpl from './engine-sql/cli-reads-import.ts';
 import * as persistenceStateImpl from './engine-sql/persistence-state.ts';
 import * as persistenceJournalImpl from './engine-sql/persistence-journal.ts';
 import * as persistenceClaimsImpl from './engine-sql/persistence-claims.ts';
+import * as housekeepingImpl from './engine-sql/persistence-housekeeping.ts';
+import type { ProjectionScanCursor } from './page-state/projection-window.ts';
 import * as cliReadsOpsImpl from './engine-sql/cli-reads-ops.ts';
 import type { ExactScanOpts } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts } from './engine-sql/exact-identity.ts';
@@ -1103,10 +1105,22 @@ export class PostgresEngine implements BrainEngine {
   completeWriteRow(completion: persistenceJournalImpl.WriteCompletion) { return persistenceJournalImpl.completeWriteRow(this.autocommitSql, completion); }
   readSourceMembership(sourceId: string, opts?: { lock?: boolean }) { return this.preparationRead(exec => persistenceClaimsImpl.readSourceMembership(exec, sourceId, opts), opts?.lock); }
   findTopologyChanges(principalId: string, requestIds: string[]) { return persistenceClaimsImpl.findTopologyChanges(unscopedExecutor(this.engineSql, 'persistence: topology probe ran unscoped through the transaction executeRaw'), principalId, requestIds); }
+  readTopologyChange(principalId: string, requestId: string) { return persistenceClaimsImpl.readTopologyChange(unscopedExecutor(this.engineSql, 'persistence: topology receipt read ran unscoped through the transaction executeRaw'), principalId, requestId); }
+  insertTopologyChange(row: persistenceClaimsImpl.TopologyChangeInsert) { return persistenceClaimsImpl.insertTopologyChange(this.autocommitSql, row); }
   // The renewal ran on executeRawDirect (consumer.ts); the expiry on the consumer's statement engine, direct while its route is.
   renewWriteClaim(renewal: persistenceClaimsImpl.ClaimRenewal, opts?: { signal?: AbortSignal }) { return persistenceClaimsImpl.renewWriteClaim(this.directRawSql, renewal, opts); }
   expireStaleWriteClaims(expiry: persistenceClaimsImpl.ClaimExpiry, opts?: { signal?: AbortSignal; direct?: boolean }) { return persistenceClaimsImpl.expireStaleWriteClaims(opts?.direct ? this.directRawSql : this.autocommitSql, expiry, { signal: opts?.signal }); }
   hasClaimableWrite(hostId: string, excludeRoots: string[], opts?: { priority?: boolean | null; signal?: AbortSignal }) { return persistenceClaimsImpl.hasClaimableWrite(unscopedExecutor(this.autocommitSql, 'persistence: claim check ran unscoped through executeRaw'), hostId, excludeRoots, opts); }
+  // The turn ran on the consumer's statement engine: direct while its route is (consumer-lane.ts).
+  claimHousekeepingTurn(claim: housekeepingImpl.HousekeepingTurnClaim, opts?: { signal?: AbortSignal; direct?: boolean }) { return housekeepingImpl.claimHousekeepingTurn(opts?.direct ? this.directRawSql : this.autocommitSql, claim, { signal: opts?.signal }); }
+  completeHousekeepingTurn(turn: { op: string; hostId: string }, opts?: { direct?: boolean }) { return housekeepingImpl.completeHousekeepingTurn(opts?.direct ? this.directRawSql : this.autocommitSql, turn); }
+  readReceiptBudget(retentionKey: string, floorDays: number) { return this.preparationRead(exec => housekeepingImpl.readReceiptBudget(unscopedExecutor(exec, 'persistence: receipt budget read ran unscoped through executeRaw'), retentionKey, floorDays)); }
+  listCompactableReceipts<R = Record<string, unknown>>(retentionDays: number) { return this.preparationRead(exec => housekeepingImpl.listCompactableReceipts<R>(unscopedExecutor(exec, 'persistence: compaction listing ran unscoped through executeRaw'), retentionDays)); }
+  listReservationsAfter(after: string, limit: number) { return this.preparationRead(exec => housekeepingImpl.listReservationsAfter(unscopedExecutor(exec, 'persistence: reservation sweep read ran unscoped through executeRaw'), after, limit)); }
+  listTrueUpRequests<R = Record<string, unknown>>(ids: readonly string[]) { return this.preparationRead(exec => housekeepingImpl.listTrueUpRequests<R>(unscopedExecutor(exec, 'persistence: true-up read ran unscoped through executeRaw'), ids)); }
+  readCapacityForecastInputs(opts?: { light?: boolean }) { return this.preparationRead(exec => housekeepingImpl.readCapacityForecastInputs(unscopedExecutor(exec, 'persistence: capacity forecast read ran unscoped through executeRaw'), opts)); }
+  listPendingSegmentedProjections(filter: housekeepingImpl.SegmentedProjectionFilter) { return this.preparationRead(exec => housekeepingImpl.listPendingSegmentedProjections(unscopedExecutor(exec, 'projections: segmented queue read ran unscoped through executeRaw'), filter)); }
+  selectProjectionWindowJobs(cursor: Pick<ProjectionScanCursor, 'after' | 'highWater'>, retryCooldown: boolean) { return this.preparationRead(exec => housekeepingImpl.selectProjectionWindowJobs(unscopedExecutor(exec, 'projections: resident window read ran unscoped through executeRaw'), cursor, retryCooldown)); }
   readTransactionSettings(names: readonly string[]) { return transactionSettingsImpl.readTransactionSettings(unscopedExecutor(this.engineSql, 'transaction settings: read ran through the transaction executeRaw'), names); }
   applyTransactionSettings(names: readonly string[], values: readonly string[]) { return transactionSettingsImpl.applyTransactionSettings(this.autocommitSql, names, values); }
   readLedgerSource(sourceId: string, opts?: { batch?: boolean }) { return this.preparationRead(exec => beliefImpl.readLedgerSource(unscopedExecutor(exec, 'belief: ledger source probe ran unscoped through executeRaw'), sourceId, opts), opts?.batch); }

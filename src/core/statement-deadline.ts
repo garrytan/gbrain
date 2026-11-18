@@ -86,9 +86,9 @@ function refuse(scope: StatementDeadline): never {
   throw new StatementDeadlineError(Date.now() - scope.startedAt);
 }
 
-/** The write-journal reads (engine-sql/persistence-journal.ts, persistence-claims.ts) that replaced statements this wrapper bounded through executeRaw. */
+/** The write-journal reads (engine-sql/persistence-journal.ts, persistence-claims.ts, persistence-housekeeping.ts, config.ts) that replaced statements this wrapper bounded through executeRaw. */
 const JOURNAL_TYPED_READS: ReadonlySet<string> = new Set(['readJournalLimitRows', 'readWriteRequest', 'readWriteRequestById', 'readHeldPageRows', 'readHeldCoverageRows',
-  'readSourceMembership']);
+  'readSourceMembership', 'getConfigValues', 'readReceiptBudget', 'readCapacityForecastInputs']);
 
 type RawCall = (sql: string, params?: unknown[], opts?: Record<string, unknown> & { signal?: AbortSignal; timeoutMs?: number }) => Promise<unknown[]>;
 

@@ -164,6 +164,8 @@ import * as cliReadsImpl from './engine-sql/cli-reads-import.ts';
 import * as persistenceStateImpl from './engine-sql/persistence-state.ts';
 import * as persistenceJournalImpl from './engine-sql/persistence-journal.ts';
 import * as persistenceClaimsImpl from './engine-sql/persistence-claims.ts';
+import * as housekeepingImpl from './engine-sql/persistence-housekeeping.ts';
+import type { ProjectionScanCursor } from './page-state/projection-window.ts';
 import * as cliReadsOpsImpl from './engine-sql/cli-reads-ops.ts';
 import type { ExactScanOpts } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts } from './engine-sql/exact-identity.ts';
@@ -1452,9 +1454,20 @@ export class PGLiteEngine implements BrainEngine {
   completeWriteRow(completion: persistenceJournalImpl.WriteCompletion) { return persistenceJournalImpl.completeWriteRow(this.engineSql, completion); }
   readSourceMembership(sourceId: string, opts?: { lock?: boolean }) { return persistenceClaimsImpl.readSourceMembership(this.engineSql, sourceId, opts); }
   findTopologyChanges(principalId: string, requestIds: string[]) { return persistenceClaimsImpl.findTopologyChanges(unscopedExecutor(this.engineSql, 'persistence: topology probe ran unscoped through executeRaw'), principalId, requestIds); }
+  readTopologyChange(principalId: string, requestId: string) { return persistenceClaimsImpl.readTopologyChange(unscopedExecutor(this.engineSql, 'persistence: topology receipt read ran unscoped through executeRaw'), principalId, requestId); }
+  insertTopologyChange(row: persistenceClaimsImpl.TopologyChangeInsert) { return persistenceClaimsImpl.insertTopologyChange(this.engineSql, row); }
   renewWriteClaim(renewal: persistenceClaimsImpl.ClaimRenewal, opts?: { signal?: AbortSignal }) { return persistenceClaimsImpl.renewWriteClaim(this.engineSql, renewal, opts); }
   expireStaleWriteClaims(expiry: persistenceClaimsImpl.ClaimExpiry, opts?: { signal?: AbortSignal; direct?: boolean }) { return persistenceClaimsImpl.expireStaleWriteClaims(this.engineSql, expiry, { signal: opts?.signal }); }
   hasClaimableWrite(hostId: string, excludeRoots: string[], opts?: { priority?: boolean | null; signal?: AbortSignal }) { return persistenceClaimsImpl.hasClaimableWrite(unscopedExecutor(this.engineSql, 'persistence: claim check ran unscoped through executeRaw'), hostId, excludeRoots, opts); }
+  claimHousekeepingTurn(claim: housekeepingImpl.HousekeepingTurnClaim, opts?: { signal?: AbortSignal; direct?: boolean }) { return housekeepingImpl.claimHousekeepingTurn(this.engineSql, claim, { signal: opts?.signal }); }
+  completeHousekeepingTurn(turn: { op: string; hostId: string }, _opts?: { direct?: boolean }) { return housekeepingImpl.completeHousekeepingTurn(this.engineSql, turn); }
+  readReceiptBudget(retentionKey: string, floorDays: number) { return housekeepingImpl.readReceiptBudget(unscopedExecutor(this.engineSql, 'persistence: receipt budget read ran unscoped through executeRaw'), retentionKey, floorDays); }
+  listCompactableReceipts<R = Record<string, unknown>>(retentionDays: number) { return housekeepingImpl.listCompactableReceipts<R>(unscopedExecutor(this.engineSql, 'persistence: compaction listing ran unscoped through executeRaw'), retentionDays); }
+  listReservationsAfter(after: string, limit: number) { return housekeepingImpl.listReservationsAfter(unscopedExecutor(this.engineSql, 'persistence: reservation sweep read ran unscoped through executeRaw'), after, limit); }
+  listTrueUpRequests<R = Record<string, unknown>>(ids: readonly string[]) { return housekeepingImpl.listTrueUpRequests<R>(unscopedExecutor(this.engineSql, 'persistence: true-up read ran unscoped through executeRaw'), ids); }
+  readCapacityForecastInputs(opts?: { light?: boolean }) { return housekeepingImpl.readCapacityForecastInputs(unscopedExecutor(this.engineSql, 'persistence: capacity forecast read ran unscoped through executeRaw'), opts); }
+  listPendingSegmentedProjections(filter: housekeepingImpl.SegmentedProjectionFilter) { return housekeepingImpl.listPendingSegmentedProjections(unscopedExecutor(this.engineSql, 'projections: segmented queue read ran unscoped through executeRaw'), filter); }
+  selectProjectionWindowJobs(cursor: Pick<ProjectionScanCursor, 'after' | 'highWater'>, retryCooldown: boolean) { return housekeepingImpl.selectProjectionWindowJobs(unscopedExecutor(this.engineSql, 'projections: resident window read ran unscoped through executeRaw'), cursor, retryCooldown); }
   readTransactionSettings(names: readonly string[]) { return transactionSettingsImpl.readTransactionSettings(unscopedExecutor(this.engineSql, 'transaction settings: read ran through the transaction executeRaw'), names); }
   applyTransactionSettings(names: readonly string[], values: readonly string[]) { return transactionSettingsImpl.applyTransactionSettings(this.engineSql, names, values); }
   readLedgerSource(sourceId: string, opts?: { batch?: boolean }) { return beliefImpl.readLedgerSource(unscopedExecutor(this.engineSql, 'belief: ledger source probe ran unscoped through executeRaw'), sourceId, opts); }

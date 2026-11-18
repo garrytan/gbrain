@@ -7,7 +7,8 @@ use gbrain_store::Store;
 use gbrain_store::error::*;
 use gbrain_store::journal::Principal;
 use gbrain_store::persistence::{
-    ClaimStamp, ClaimableSpec, ExpireClaims, WriteCompletion, WriteRequestInsert,
+    ClaimStamp, ClaimableSpec, ExpireClaims, HousekeepingClaim, HousekeepingTurn,
+    TopologyChangeInsert, WriteCompletion, WriteRequestInsert,
 };
 use serde_json::{Value, json};
 
@@ -532,4 +533,344 @@ fn source_membership_is_the_incarnation_and_archive_flag() {
     let membership = store.read_source_membership("default").unwrap().unwrap();
     assert_eq!(membership["archived"], false);
     assert_eq!(store.read_source_membership("nope").unwrap(), None);
+}
+
+fn turn_claim(host: &str, interval_ms: i64, lease_ms: i64) -> HousekeepingClaim {
+    serde_json::from_value(json!({
+        "op": "persistence.housekeeping",
+        "hostId": host,
+        "intervalMs": interval_ms,
+        "leaseMs": lease_ms,
+        "consumerKinds": ["serve", "sync"],
+        "consumerLiveMs": 30000,
+    }))
+    .unwrap()
+}
+
+fn committed(store: &Store, request: &str, slug: &str) -> Value {
+    store.lock_persistence_counters(&keys()).unwrap();
+    let row = store
+        .insert_write_request(&insert_input(store, request, slug, json!({})))
+        .unwrap();
+    let id = row["id"].as_str().unwrap().to_string();
+    store.stamp_write_claim(&stamp(&id, 1000.0, None)).unwrap();
+    store
+        .complete_write_row(&completion(&id, "committed", 512))
+        .unwrap()
+        .unwrap()
+}
+
+#[test]
+fn the_housekeeping_turn_is_leased_then_waits_out_its_interval() {
+    let dir = TempDir::new("persist-turn");
+    let store = open(&dir);
+    assert!(
+        store
+            .claim_housekeeping_turn(&turn_claim(HOST, 60_000, 60_000))
+            .unwrap()
+    );
+    // Leased: a second claim waits out the lease.
+    assert!(
+        !store
+            .claim_housekeeping_turn(&turn_claim(HOST, 60_000, 60_000))
+            .unwrap()
+    );
+    // Another host has its own turn.
+    let other = "d0000000-0000-4000-8000-0000000000d2";
+    assert!(
+        store
+            .claim_housekeeping_turn(&turn_claim(other, 60_000, 60_000))
+            .unwrap()
+    );
+    let turn = HousekeepingTurn {
+        op: "persistence.housekeeping".into(),
+        host_id: HOST.into(),
+    };
+    store.complete_housekeeping_turn(&turn).unwrap();
+    // Done: the interval applies, not the lease.
+    assert!(
+        !store
+            .claim_housekeeping_turn(&turn_claim(HOST, 60_000, 0))
+            .unwrap()
+    );
+    assert!(
+        store
+            .claim_housekeeping_turn(&turn_claim(HOST, 0, 60_000))
+            .unwrap()
+    );
+    // A lapsed lease is taken over.
+    assert!(
+        store
+            .claim_housekeeping_turn(&turn_claim(HOST, 60_000, 0))
+            .unwrap()
+    );
+    // Completing a turn nobody holds changes nothing.
+    store
+        .complete_housekeeping_turn(&HousekeepingTurn {
+            op: "persistence.housekeeping".into(),
+            host_id: "d0000000-0000-4000-8000-0000000000d3".into(),
+        })
+        .unwrap();
+    assert!(
+        store
+            .claim_housekeeping_turn(&turn_claim("not-a-uuid", 0, 0))
+            .is_err()
+    );
+}
+
+#[test]
+fn the_receipt_budget_reads_retention_used_bytes_and_the_cutoff() {
+    let dir = TempDir::new("persist-budget");
+    let store = open(&dir);
+    let empty = store
+        .read_receipt_budget("persistence.receipt_retention_days", 1.0)
+        .unwrap();
+    assert_eq!(empty["retention"], Value::Null);
+    assert_eq!(empty["used"], Value::Null);
+    assert!(empty["cutoff"].as_str().unwrap().ends_with('Z'));
+    committed(&store, REQ_1, "notes/a");
+    store
+        .set_config("persistence.receipt_retention_days", "3")
+        .unwrap();
+    let budget = store
+        .read_receipt_budget("persistence.receipt_retention_days", 1.0)
+        .unwrap();
+    assert_eq!(budget["retention"], "3");
+    assert_eq!(budget["used"], "512");
+}
+
+#[test]
+fn the_reservation_window_walks_the_sequence_past_a_cursor() {
+    let dir = TempDir::new("persist-window");
+    let store = open(&dir);
+    let first = committed(&store, REQ_1, "notes/a");
+    committed(&store, REQ_2, "notes/b");
+    let all = store.list_reservations_after("0", 10).unwrap();
+    assert_eq!(all.len(), 2);
+    assert_eq!(all[0]["id"], first["id"]);
+    assert_eq!(all[0]["compacted"], false);
+    let seq = all[0]["sequence"].as_str().unwrap().to_string();
+    let rest = store.list_reservations_after(&seq, 10).unwrap();
+    assert_eq!(rest.len(), 1);
+    assert_eq!(rest[0]["id"], all[1]["id"]);
+    assert_eq!(store.list_reservations_after("0", 1).unwrap().len(), 1);
+    assert!(store.list_reservations_after("x", 1).is_err());
+    assert!(store.list_reservations_after("0", -1).is_err());
+}
+
+#[test]
+fn true_up_candidates_are_terminal_requests_with_no_effect_bytes() {
+    let dir = TempDir::new("persist-trueup");
+    let store = open(&dir);
+    let done = committed(&store, REQ_1, "notes/a");
+    let queued = store
+        .insert_write_request(&insert_input(&store, REQ_2, "notes/b", json!({})))
+        .unwrap();
+    let ids = vec![
+        done["id"].as_str().unwrap().to_string(),
+        queued["id"].as_str().unwrap().to_string(),
+    ];
+    let rows = store.list_true_up_requests(&ids).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["id"], done["id"]);
+    assert_eq!(rows[0]["effect_bytes"], "0");
+    assert_eq!(rows[0]["unfinished"], false);
+    assert_eq!(rows[0]["compacted"], false);
+    assert_eq!(rows[0]["principal_id"], "parity-writer");
+}
+
+#[test]
+fn compactable_receipts_are_terminal_receipts_past_the_retention() {
+    let dir = TempDir::new("persist-compactable");
+    let store = open(&dir);
+    let done = committed(&store, REQ_1, "notes/a");
+    store
+        .insert_write_request(&insert_input(&store, REQ_2, "notes/b", json!({})))
+        .unwrap();
+    assert!(store.list_compactable_receipts(7.0).unwrap().is_empty());
+    let rows = store.list_compactable_receipts(0.0).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["id"], done["id"]);
+    assert_eq!(rows[0]["state"], "committed");
+}
+
+#[test]
+fn the_capacity_inputs_bucket_the_window_by_principal_and_day() {
+    let dir = TempDir::new("persist-capacity");
+    let store = open(&dir);
+    let done = committed(&store, REQ_1, "notes/a");
+    let inputs = store.read_capacity_forecast_inputs(false).unwrap();
+    let counters = inputs["counters"].as_array().unwrap();
+    assert_eq!(counters[0]["key"], "brain");
+    assert_eq!(counters[0]["lifetime_ids"], "1");
+    assert_eq!(counters[1]["key"], PRINCIPAL_KEY);
+    let days = inputs["days"].as_array().unwrap();
+    assert_eq!(days.len(), 1);
+    assert_eq!(days[0]["scope"], PRINCIPAL_KEY);
+    assert_eq!(days[0]["ids"], "1");
+    assert_eq!(days[0]["gross"], "512");
+    assert_eq!(days[0]["recent_ids"], "1");
+    assert_eq!(inputs["history"]["first_id"], done["id"]);
+    assert_eq!(inputs["reclaim"].as_array().unwrap().len(), 1);
+    assert_eq!(inputs["reclaim"][0]["scope"], PRINCIPAL_KEY);
+    assert_eq!(inputs["tableBytes"], Value::Null);
+    let light = store.read_capacity_forecast_inputs(true).unwrap();
+    assert!(light["reclaim"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn an_empty_brain_has_an_empty_projection_queue() {
+    let dir = TempDir::new("persist-projq");
+    let store = open(&dir);
+    assert!(store.projection_queue_empty().unwrap());
+}
+
+const WRITER: &str = "e0000000-0000-4000-8000-0000000000e1";
+const OTHER_WRITER: &str = "e0000000-0000-4000-8000-0000000000e2";
+
+fn topology(principal: &str, request: &str) -> TopologyChangeInsert {
+    TopologyChangeInsert {
+        principal_id: principal.into(),
+        request_id: request.into(),
+        digest: "sha256:lifecycle".into(),
+        operation: "remove".into(),
+        source_id: "default".into(),
+        source_incarnation: None,
+        worktree_ids: Vec::new(),
+        state: "recovering".into(),
+        recovery: None,
+        recovery_bytes: 0,
+        intent_bytes: 0,
+        terminal_bytes: 4096,
+        outcome: Some(json!({ "operation": "remove", "source_id": "default" })),
+    }
+}
+
+#[test]
+fn a_topology_change_is_stored_with_every_column_and_read_back() {
+    let dir = TempDir::new("persist-topology");
+    let store = open(&dir);
+    assert!(store.read_topology_change(WRITER, REQ_1).unwrap().is_none());
+    let mut input = topology(WRITER, REQ_1);
+    input.source_incarnation = Some(incarnation(&store));
+    input.recovery = Some(json!({ "step": 1 }));
+    input.recovery_bytes = 12;
+    input.intent_bytes = 34;
+    let row = store.insert_topology_change(&input).unwrap();
+    assert_eq!(row["principal_id"], WRITER);
+    assert_eq!(row["request_id"], REQ_1);
+    assert_eq!(row["state"], "recovering");
+    assert_eq!(row["worktree_ids"], json!([]));
+    assert_eq!(row["recovery"], json!({ "step": 1 }));
+    assert_eq!(row["recovery_bytes"], 12);
+    assert_eq!(row["intent_bytes"], 34);
+    assert_eq!(row["terminal_bytes"], 4096);
+    assert_eq!(row["outcome"]["operation"], "remove");
+    assert_eq!(row["created_at"], row["updated_at"]);
+    assert_eq!(row["id"].as_str().unwrap().len(), 36);
+    let read = store.read_topology_change(WRITER, REQ_1).unwrap().unwrap();
+    assert_eq!(read, row);
+    // The row belongs to (principal, request id): another writer's id is another row.
+    assert!(
+        store
+            .read_topology_change(OTHER_WRITER, REQ_1)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn a_topology_change_refuses_what_the_table_constraints_refuse() {
+    let dir = TempDir::new("persist-topology-refuse");
+    let store = open(&dir);
+    store
+        .insert_topology_change(&topology(WRITER, REQ_1))
+        .unwrap();
+    let duplicate = store
+        .insert_topology_change(&topology(WRITER, REQ_1))
+        .unwrap_err();
+    assert_eq!(duplicate.code, CONSTRAINT_VIOLATION);
+    let mut state = topology(WRITER, REQ_2);
+    state.state = "queued".into();
+    assert_eq!(
+        store.insert_topology_change(&state).unwrap_err().code,
+        CONSTRAINT_VIOLATION
+    );
+    let mut negative = topology(WRITER, REQ_2);
+    negative.terminal_bytes = -1;
+    assert_eq!(
+        store.insert_topology_change(&negative).unwrap_err().code,
+        CONSTRAINT_VIOLATION
+    );
+    let mut not_uuid = topology(WRITER, REQ_2);
+    not_uuid.request_id = "not-a-uuid".into();
+    assert!(store.insert_topology_change(&not_uuid).is_err());
+    // Nothing of a refused insert stays.
+    assert!(store.read_topology_change(WRITER, REQ_2).unwrap().is_none());
+    // The same request id under another writer is a different row.
+    store
+        .insert_topology_change(&topology(OTHER_WRITER, REQ_1))
+        .unwrap();
+}
+
+#[test]
+fn the_topology_probe_finds_a_used_lifecycle_id_of_the_writer_only() {
+    let dir = TempDir::new("persist-topology-find");
+    let store = open(&dir);
+    let ids = vec![REQ_1.to_string(), REQ_2.to_string()];
+    assert!(
+        store
+            .find_topology_changes(WRITER, &ids)
+            .unwrap()
+            .is_empty()
+    );
+    store
+        .insert_topology_change(&topology(WRITER, REQ_2))
+        .unwrap();
+    assert_eq!(
+        store.find_topology_changes(WRITER, &ids).unwrap(),
+        vec![json!({ "request_id": REQ_2 })]
+    );
+    assert!(
+        store
+            .find_topology_changes(OTHER_WRITER, &ids)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        store
+            .find_topology_changes(WRITER, &[REQ_1.to_string()])
+            .unwrap()
+            .is_empty()
+    );
+    assert!(store.find_topology_changes(WRITER, &[]).unwrap().is_empty());
+}
+
+#[test]
+fn the_capacity_forecast_counts_topology_changes_per_writer_and_day() {
+    let dir = TempDir::new("persist-topology-capacity");
+    let store = open(&dir);
+    store
+        .insert_topology_change(&topology(WRITER, REQ_1))
+        .unwrap();
+    store
+        .insert_topology_change(&topology(WRITER, REQ_2))
+        .unwrap();
+    let inputs = store.read_capacity_forecast_inputs(true).unwrap();
+    let scope = format!("principal:local_cli:{WRITER}");
+    let days: Vec<_> = inputs["days"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|d| d["scope"] == scope.as_str())
+        .collect();
+    assert_eq!(days.len(), 1);
+    let day = days[0];
+    assert_eq!(day["day"].as_str().unwrap().len(), 10);
+    assert_eq!(day["ids"], "2");
+    assert_eq!(day["gross"], "8192");
+    assert_eq!(day["net"], "8192");
+    assert_eq!(day["recent_ids"], "2");
+    assert_eq!(day["recent_gross"], "8192");
+    assert_eq!(day["recent_net"], "8192");
 }
