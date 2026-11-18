@@ -23,8 +23,9 @@ export async function listClientRows(engine: BrainEngine): Promise<ClientRow[]> 
     isMissingSchemaObject(e, 'column', ['private_facts', 'private_pages', 'allowed_operations', 'deleted_at', 'surface', 'surface_set_by', 'source_id', 'federated_read']);
   try {
     return await engine.executeRaw<ClientRow>(
-      `SELECT client_id, client_name, scope, surface, surface_set_by, source_id, federated_read, allowed_operations, deleted_at, private_pages, private_facts
-         FROM oauth_clients ORDER BY client_name, client_id`,
+      `SELECT client_id, client_name, scope, surface, surface_set_by, source_id, federated_read, allowed_operations, deleted_at, private_pages, private_facts,
+              COALESCE((to_jsonb(c)->>'read_shared_revision')::int = c.grant_revision, false) AS read_shared
+         FROM oauth_clients c ORDER BY client_name, client_id`,
     );
   } catch (e) {
     // Brain predates the private-facts column: it reads as none.

@@ -886,8 +886,8 @@
               "string",
               "string"
             ],
-            "sql": "UPDATE pages SET text_projection_revision=knowledge_revision, search_vector=setweight(to_tsvector('english',gbrain_fts_input(COALESCE(title,''))),'A') || setweight(to_tsvector('english',gbrain_fts_input(left($1::text,65536))),'C') WHERE source_id=$2 AND slug=$3 AND knowledge_revision=$4::uuid",
-            "textSha256": "807734544a900996576755062b917d5952531fea05b94cc68cfc73675c03ed7e"
+            "sql": "UPDATE pages SET text_projection_revision=knowledge_revision, search_vector=setweight(to_tsvector('english',gbrain_fts_input(COALESCE(title,''))),'A') || setweight(to_tsvector('english',gbrain_fts_input(left(v.seal_input::text,65536))),'C') FROM (SELECT $1::text AS seal_input) v WHERE pages.source_id=$2 AND pages.slug=$3 AND pages.knowledge_revision=$4::uuid",
+            "textSha256": "0868d7a61c494b02bef28d8c54ef7648884f77e80cf82e5627a863848d6ddd6d"
           },
           {
             "lane": "tx",
@@ -982,8 +982,8 @@
               "string",
               "string"
             ],
-            "sql": "UPDATE pages SET text_projection_revision=knowledge_revision, search_vector=setweight(to_tsvector('english',gbrain_fts_input(COALESCE(title,''))),'A') || setweight(to_tsvector('english',gbrain_fts_input(left($1::text,65536))),'C') WHERE source_id=$2 AND slug=$3 AND knowledge_revision=$4::uuid",
-            "textSha256": "807734544a900996576755062b917d5952531fea05b94cc68cfc73675c03ed7e"
+            "sql": "UPDATE pages SET text_projection_revision=knowledge_revision, search_vector=setweight(to_tsvector('english',gbrain_fts_input(COALESCE(title,''))),'A') || setweight(to_tsvector('english',gbrain_fts_input(left(v.seal_input::text,65536))),'C') FROM (SELECT $1::text AS seal_input) v WHERE pages.source_id=$2 AND pages.slug=$3 AND pages.knowledge_revision=$4::uuid",
+            "textSha256": "0868d7a61c494b02bef28d8c54ef7648884f77e80cf82e5627a863848d6ddd6d"
           },
           {
             "lane": "tx",

@@ -86,7 +86,11 @@ describe('gate plan', () => {
     const head = commit(root, Object.fromEntries(files.map(f => [f, "test('n', () => {});\n"])));
     const unit = new Map(files.map(f => [f, 100_000] as [string, number]));
     const result = planGate(root, { event: 'pull_request', baseSha: base, headSha: head }, { ...weights(), unit });
-    expect(result).toMatchObject({ error: expect.stringContaining("GitHub's 256-job matrix limit") });
+    const { error, why } = result as { error: string; why?: string };
+    expect(error).toContain("GitHub's 256-job matrix limit");
+    expect(error).toContain('Next: split the PR so each part plans 256 shards or fewer');
+    expect(error).not.toContain('stress_files');
+    expect(why).toContain('would let the rest land untested');
   });
 
   test('a missing merge base fails the plan with the fetch next step', () => {

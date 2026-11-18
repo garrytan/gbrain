@@ -45,6 +45,7 @@ import {
 import { ipcSocketPathEntry } from './checks/local-ipc.ts';
 import { functionSearchPathEntry } from './checks/function-search-path.ts';
 import { guardLedgerChecksEntry } from './checks/guard-ledger-checks.ts';
+import { ownerOnlyMarksTriggersEntry } from './checks/owner-only-marks-triggers.ts';
 import { postgresTlsEntry } from './checks/postgres-tls.ts';
 import { databaseEncodingEntry } from './checks/database-encoding.ts';
 import { schemaFunctionBodiesEntry } from './checks/schema-function-bodies.ts';
@@ -127,7 +128,7 @@ import { factAdmissionFloorsEntry } from './checks/fact-admission-floors.ts';
 import { unlinkedFactsEntry } from './checks/unlinked-facts.ts';
 import { edgeValidityEntry } from './checks/edge-validity.ts';
 import { coreMemoryEntry } from './checks/core-memory.ts';
-import { personTitleDuplicatesEntry } from './checks/entity-duplicates.ts';
+import { entityDuplicatesEntry, personTitleDuplicatesEntry } from './checks/entity-duplicates.ts';
 import { plannerStatsEntry } from './checks/planner-stats.ts';
 import { revisionBackfillEntry } from './checks/revision-backfill.ts';
 import { beliefLedgerEntry } from './checks/belief-ledger.ts';
@@ -270,6 +271,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   postgresTlsEntry,
   functionSearchPathEntry,
   guardLedgerChecksEntry,
+  ownerOnlyMarksTriggersEntry,
   databaseEncodingEntry,
   schemaVersionEntry,
   schemaFunctionBodiesEntry,
@@ -370,6 +372,8 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   managedSyncConvergenceEntry,
   // #7160: title-prefixed person pages next to the unprefixed page (read-only, preview-first).
   personTitleDuplicatesEntry,
+  // plan autoplan-20261117192252 PR 1: likely duplicate person and company pages by key, name and slug shape (read-only).
+  entityDuplicatesEntry,
   // GST-1601: the one-sided local edits adopted in the last 24 h per source (informational, always ok).
   localEditAdoptionsEntry,
   // GBRA-221: live fence rows on imported pages whose body is outside-authored text (review only).

@@ -65,7 +65,8 @@ connection check, a delegating client's `submit_agent` `queue`, `model` and
 `allowed_slug_prefixes`, `list_pages` paging with `offset`). An agent job (`submit_agent`)
 records the surface of the connection that submitted it, and its tool calls are refused
 the same way; a job queued before the surface was recorded keeps the full surface until
-it finishes. `request_tools {tools}` describes only the parameters the caller's surface
+it finishes. A queued or running job keeps the surface it was submitted under even if the
+operator later narrows the client; cancelling the job or withdrawing the grant stops it. `request_tools {tools}` describes only the parameters the caller's surface
 may pass. Structured fixes never name a parameter the caller's
 surface refuses (`page_not_found` offers a search instead of `include_deleted`);
 plain-text suggestions may still name one.

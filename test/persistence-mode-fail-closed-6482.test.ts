@@ -27,8 +27,11 @@ const MALFORMED: ReadonlyArray<readonly [string, readonly unknown[]]> = [
   ['numeric enabled', [{ enabled: 1 }]], ['duplicated', [{ enabled: false }, { enabled: true }]],
 ];
 
-function fake(rows: readonly unknown[] | Error, seen: string[] = []): SqlEngine {
-  return { executeRaw: async (sql: string) => { seen.push(sql); if (rows instanceof Error) throw rows; return rows as unknown[]; } } as unknown as SqlEngine;
+type FakeEngine = SqlEngine & Pick<BrainEngine, 'readManagedModeRows' | 'getSourceStrictness'>;
+function fake(rows: readonly unknown[] | Error, seen: string[] = []): FakeEngine {
+  const read = async (sql: string) => { seen.push(sql); if (rows instanceof Error) throw rows; return rows as unknown[]; };
+  // The typed reads the import guard uses answer the same rows (and the same error) the raw statement does.
+  return { executeRaw: read, readManagedModeRows: () => read('SELECT enabled FROM persistence_brain WHERE singleton=1'), getSourceStrictness: async () => false } as unknown as FakeEngine;
 }
 
 describe('readManagedMode', () => {

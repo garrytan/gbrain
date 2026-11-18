@@ -285,6 +285,25 @@ who may read it, before any member's bot connects:
   later makes the pages already written there readable by every credential
   without a source grant, since they carry no `readable_by`.
 
+  To let a member's key read every shared source without listing each one,
+  and without re-granting it when a source is shared later, give it a write
+  source and turn on the read-shared switch:
+
+  ```bash
+  gbrain auth create bot-alice-example --member alice-example --sources private-alice-example --read-shared on
+  gbrain auth rescope --token bot-alice-example --read-shared on
+  gbrain auth register-client client-alice-example --grant-types client_credentials --scopes read --source private-alice-example --member alice-example --read-shared on
+  ```
+
+  It reads its listed sources plus `default` and every federated source,
+  never a guest source or (unless it is the brain owner's key) another
+  member's own source, and it still writes
+  only to its write source. Private pages and private facts stay closed in a
+  source the key reaches only through the switch. A token needs a source
+  list (`read_shared_needs_source`): a token with no `--sources` already reads
+  every shared source. To narrow a switched key to no source, turn the switch
+  off in the same command (`--sources none --read-shared off`).
+
   A credential bound to a member (`--member`) whose write source is `default`
   (a token with no `--sources` or with `--sources default`, or an OAuth client
   left at its registration default) or a federated source writes where every
