@@ -165,6 +165,33 @@ Rules of the four served members:
 
 ## Group 5: search relevance and trust reads (`facts/trust.rs`)
 
+| Member | Site | Served | Notes |
+|---|---|---|---|
+| `listFactsForRelevance` | `search/fact-relevance.ts` | keyword and entity arms | The pool predicate and `similarity` are below. `entity_ended` refuses (it reads `fact_withdrawals` and `gbrain_fact_fingerprint`). |
+| `countUncomparableFacts` | `search/fact-relevance.ts` | yes | Per source, the most first, then by source id. |
+| `matchSavedFacts` | `search/saved-facts-match.ts` | refused | Reads `trust_tier` (`trustRankSql`). |
+| `readFactForOwnerAction` | `trust/owner-actions.ts` | refused | `trust_tier` is hashed into the owner binding. |
+| `listStandingPreferences` | `trust/review.ts` | refused | Reads `trust_tier`, `write_gate_receipts` and the `sources` claim state. |
+| `listLexicalContestCandidates` | `trust/supersede-handlers.ts` | refused | Filters on the trust-tier rank. |
+| `listRestatedPrivateCopies` | `trust/supersede-handlers.ts` | refused | Filters on the trust-tier rank. |
+| `countDerivedFactTaint` | `trust/taint.ts` | refused | Reads `write_origin` and `trust_tier`. |
+
+The pool predicate (`poolWhere`), clause by clause: the source list; unless `includeExpired`, `expired_at`
+and `superseded_by` NULL and `valid_until` NULL or in the future; no audit checkpoint source; the row's
+provenance page carries no `quarantine` key (a soft-deleted page still counts, as the SQL does not read
+`deleted_at`); `worldOnly`; the private-provenance policy under `excludePrivate`; a soft-deleted entity or
+provenance page hides the row; then the entity, session, `since` (on `valid_from`) and `grep` filters.
+
+- A `minTrust` floor or `suppressFlagged` refuses in the member: the store keeps no `trust_tier` or
+  write-gate receipt. The `needs_rederive` anti-join is not modelled, so no row is hidden by it (the
+  takes family does the same).
+- `similarity` is `1 - cosine distance` for a row whose vector has the query's model and length and whose
+  `embedded_text_hash` is `md5(fact)`, else NULL. Distances are `f32` sums as `facts/embedding.rs`
+  computes them, so values equal PGLite's to about 1e-6, not bit for bit. A `vector`-typed (not
+  `halfvec`) column and a non-`english` FTS language refuse in the member.
+- `countUncomparableFacts` keeps SQL's three-valued logic: with an undeclared column width a row counts
+  only when a conjunct of the comparable test is false, so a vector with a NULL model is not counted.
+
 ## Not modeled
 
 The withdrawal ledger and the insert/update guards that read it, the write-attribution and

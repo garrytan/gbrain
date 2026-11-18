@@ -1109,6 +1109,15 @@ export class PostgresEngine implements BrainEngine {
   listWorldFactsFromPrivateSources(sourceIds: string[], ids: number[] | null) { return factsRepairImpl.listWorldFactsFromPrivateSources(this.executeRaw.bind(this), sourceIds, ids); }
 
   // Facts statements, search relevance and trust reads (engine-sql/facts-trust.ts), through executeRaw as before.
+  private get rawTransaction(): factsTrustImpl.EngineRawTransaction { return fn => this.transaction(tx => fn(tx.executeRaw.bind(tx))); }
+  listFactsForRelevance(q: factsTrustImpl.FactRelevanceQuery) { return factsTrustImpl.listFactsForRelevance(this.executeRaw.bind(this), this.rawTransaction, q); }
+  countUncomparableFacts(q: factsTrustImpl.UncomparableFactsQuery) { return factsTrustImpl.countUncomparableFacts(this.executeRaw.bind(this), this.rawTransaction, q); }
+  matchSavedFacts(q: factsTrustImpl.SavedFactsMatchQuery) { return factsTrustImpl.matchSavedFacts(this.executeRaw.bind(this), q); }
+  readFactForOwnerAction(id: number) { return factsTrustImpl.readFactForOwnerAction(this.executeRaw.bind(this), id); }
+  listStandingPreferences(opts: { sourceId?: string; since?: Date }) { return factsTrustImpl.listStandingPreferences(this.executeRaw.bind(this), opts); }
+  listLexicalContestCandidates(opts: Parameters<typeof factsTrustImpl.listLexicalContestCandidates>[1]) { return factsTrustImpl.listLexicalContestCandidates(this.executeRaw.bind(this), opts); }
+  listRestatedPrivateCopies(opts: Parameters<typeof factsTrustImpl.listRestatedPrivateCopies>[1]) { return factsTrustImpl.listRestatedPrivateCopies(this.executeRaw.bind(this), opts); }
+  countDerivedFactTaint() { return factsTrustImpl.countDerivedFactTaint(this.executeRaw.bind(this)); }
 
 
   getSourceStrictness(sourceId: string) { return this.preparationRead(exec => persistenceStateImpl.getSourceStrictness(unscopedExecutor(exec, 'persistence: strict-source read ran unscoped through executeRaw'), sourceId)); }
