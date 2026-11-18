@@ -43,7 +43,7 @@ export interface SynopsisTierConfig {
   kill_switch: boolean;
   /** Sources whose own contextual_retrieval_mode is per_chunk_synopsis. */
   synopsis_sources: string[];
-  /** True when any page can resolve to the synopsis tier (page frontmatter overrides aside). */
+  /** True when any page can resolve to the synopsis tier (global tier, a source row, or a trusted page frontmatter override). */
   configured: boolean;
 }
 
@@ -53,11 +53,19 @@ export async function readSynopsisTierConfig(engine: BrainEngine): Promise<Synop
     `SELECT id FROM sources WHERE contextual_retrieval_mode = 'per_chunk_synopsis' AND NOT archived ORDER BY id`);
   const synopsisSources = rows.map(r => r.id);
   const killSwitch = knobs.contextual_retrieval_disabled === true;
+  const global = knobs.contextual_retrieval === 'per_chunk_synopsis' || synopsisSources.length > 0;
+  // A trusted frontmatter override opts a page in on its own (same trust rule as eligiblePagesSql).
+  const tagged = killSwitch || global ? false : (await engine.executeRaw<{ found: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM pages p LEFT JOIN sources s ON s.id = p.source_id
+        WHERE p.deleted_at IS NULL AND p.page_kind = 'markdown' AND NOT COALESCE(s.archived, false)
+          AND p.frontmatter->>'contextual_retrieval' = 'per_chunk_synopsis'
+          AND (p.source_id = 'default' OR COALESCE(s.trust_frontmatter_overrides, false))) AS found`))[0]?.found === true;
   return {
     global_tier: knobs.contextual_retrieval,
     kill_switch: killSwitch,
     synopsis_sources: synopsisSources,
-    configured: !killSwitch && (knobs.contextual_retrieval === 'per_chunk_synopsis' || synopsisSources.length > 0),
+    configured: !killSwitch && (global || tagged),
   };
 }
 
