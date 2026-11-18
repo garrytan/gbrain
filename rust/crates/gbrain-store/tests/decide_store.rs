@@ -4,14 +4,16 @@
 mod common;
 
 use common::TempDir;
-use gbrain_store::env::{iso, Env};
+use gbrain_store::env::{Env, iso};
 use gbrain_store::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT};
-use gbrain_store::eval_capture::decide_store::{DecideReceiptInput, DecideSpendInput};
+use gbrain_store::eval_capture::decide_store::{
+    DecideCalibrationInput, DecideQualificationInput, DecideReceiptInput, DecideSpendInput,
+};
 use gbrain_store::redb_kv::RedbKv;
 use gbrain_store::{OpenOptions, Store};
-use serde_json::{json, Value};
-use std::sync::atomic::{AtomicI64, Ordering};
+use serde_json::{Value, json};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 
 /// A clock the test moves by hand; every reading advances it one microsecond so stamps differ.
 struct Clock(AtomicI64);
@@ -1013,9 +1015,11 @@ fn receipt_windows_must_be_whole_and_inside_the_timestamp_range() {
         ),
         (
             "stats inf",
-            json!(store
-                .list_decide_receipt_stats(None, f64::INFINITY)
-                .is_err()),
+            json!(
+                store
+                    .list_decide_receipt_stats(None, f64::INFINITY)
+                    .is_err()
+            ),
         ),
         (
             "stats huge",
@@ -1131,4 +1135,468 @@ fn a_receipt_stamped_exactly_at_the_window_start_is_inside_it() {
     assert_eq!(store.prune_decide_receipts(7.0).unwrap(), 0);
     clock.0.store(stamp + 7 * DAY + 1, Ordering::SeqCst);
     assert_eq!(store.prune_decide_receipts(7.0).unwrap(), 1);
+}
+
+fn calibration(slot: &str) -> DecideCalibrationInput {
+    DecideCalibrationInput {
+        slot: Some(slot.into()),
+        call_site: Some("sweep".into()),
+        provider: Some("typesafe:openai".into()),
+        model_resolved: Some("gpt-x".into()),
+        threshold: Some(json!(0.8)),
+        metric: Some("f1".into()),
+        metric_value: Some(json!(0.9)),
+        ece: Some(json!(0.05)),
+        n: Some(json!(100)),
+        calibrate_only: Some(true),
+        pack_shape: Some("full".into()),
+        ..DecideCalibrationInput::default()
+    }
+}
+
+fn with_note(mut c: DecideCalibrationInput, note: &str) -> DecideCalibrationInput {
+    c.notes = Some(note.into());
+    c
+}
+
+fn qualification(
+    lb: Value,
+    text: Option<&str>,
+    fingerprint: Option<&str>,
+) -> DecideQualificationInput {
+    DecideQualificationInput {
+        action_precision_lb: Some(lb),
+        qualification: text.map(Into::into),
+        policy_fingerprint: fingerprint.map(Into::into),
+    }
+}
+
+fn notes(v: &Value) -> Vec<String> {
+    v.as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["notes"].as_str().unwrap_or("").to_string())
+        .collect()
+}
+
+#[test]
+fn calibrations_count_ids_from_one_and_read_back_with_their_defaults() {
+    let dir = TempDir::new("decide-store");
+    let (store, clock) = open(&dir);
+    let stamp = clock.0.load(Ordering::SeqCst);
+    let mut first = calibration("conflict");
+    first.threshold = Some(json!(0.1));
+    first.metric_value = Some(json!(1.0 / 3.0));
+    first.ece = Some(json!(16777217));
+    first.min_keep = Some(json!(3));
+    first.calibrate_only = Some(false);
+    assert_eq!(store.insert_decide_calibration(&first).unwrap(), 1);
+    assert_eq!(
+        store
+            .insert_decide_calibration(&calibration("triage"))
+            .unwrap(),
+        2
+    );
+    let row = store.get_decide_calibration(1.0).unwrap();
+    // `0.1` as `real` prints as `0.1`; a third is cut to single precision.
+    assert_eq!(row["threshold"], json!(0.1));
+    assert_eq!(row["metric_value"], json!(0.33333334));
+    assert_eq!(row["ece"], json!(16777216.0));
+    assert_eq!(row["min_keep"], json!(3));
+    assert_eq!(row["calibrate_only"], json!(false));
+    assert_eq!(row["n"], json!(100));
+    // Defaults: stamped by the clock, nothing qualified or retired.
+    assert_eq!(row["created_at"], json!(iso(stamp)));
+    for column in [
+        "qualification",
+        "qualified_at",
+        "retired_at",
+        "action_precision_lb",
+        "policy_fingerprint",
+        "notes",
+        "dataset_hash",
+    ] {
+        assert_eq!(row[column], Value::Null, "{column}");
+    }
+    assert_eq!(row["id"], json!(1));
+    assert_eq!(store.get_decide_calibration(2.0).unwrap()["slot"], "triage");
+}
+
+#[test]
+fn calibrations_list_by_slot_in_byte_order_then_newest_first_and_hide_retired() {
+    let dir = TempDir::new("decide-store");
+    let (store, _) = open(&dir);
+    for (slot, note) in [
+        ("alpha", "a1"),
+        ("Alpha", "A1"),
+        ("zeta", "z1"),
+        ("\u{e9}", "e1"),
+        ("", "x1"),
+        ("alpha", "a2"),
+        ("alpha", "a3"),
+    ] {
+        store
+            .insert_decide_calibration(&with_note(calibration(slot), note))
+            .unwrap();
+    }
+    let all = |slot: Option<&str>, retired: bool| {
+        notes(&store.list_decide_calibrations(slot, retired).unwrap())
+    };
+    assert_eq!(all(None, false), ["x1", "A1", "a3", "a2", "a1", "z1", "e1"]);
+    assert!(store.set_decide_calibration_retired(6.0, true).unwrap());
+    assert_eq!(all(None, false), ["x1", "A1", "a3", "a1", "z1", "e1"]);
+    assert_eq!(all(None, true), ["x1", "A1", "a3", "a2", "a1", "z1", "e1"]);
+    assert_eq!(all(Some("alpha"), false), ["a3", "a1"]);
+    assert_eq!(all(Some("alpha"), true), ["a3", "a2", "a1"]);
+    assert_eq!(all(Some(""), false), ["x1"]);
+    assert!(all(Some("nothing"), true).is_empty());
+}
+
+#[test]
+fn a_qualification_replaces_three_columns_and_stamps_the_time() {
+    let dir = TempDir::new("decide-store");
+    let (store, clock) = open(&dir);
+    store
+        .insert_decide_calibration(&calibration("conflict"))
+        .unwrap();
+    store
+        .insert_decide_calibration(&calibration("triage"))
+        .unwrap();
+    let stamp = clock.0.load(Ordering::SeqCst);
+    store
+        .store_decide_qualification(
+            1.0,
+            &qualification(json!(0.123456789), Some("{\"pass\":true}"), Some("fp-1")),
+        )
+        .unwrap();
+    let one = store.get_decide_calibration(1.0).unwrap();
+    assert_eq!(one["action_precision_lb"], json!(0.12345679));
+    assert_eq!(one["qualification"], "{\"pass\":true}");
+    assert_eq!(one["policy_fingerprint"], "fp-1");
+    assert_eq!(one["qualified_at"], json!(iso(stamp)));
+    // A second call replaces all three, null included, and restamps.
+    store
+        .store_decide_qualification(1.0, &qualification(Value::Null, None, Some("fp-2")))
+        .unwrap();
+    let two = store.get_decide_calibration(1.0).unwrap();
+    assert_eq!(two["action_precision_lb"], Value::Null);
+    assert_eq!(two["qualification"], Value::Null);
+    assert_eq!(two["policy_fingerprint"], "fp-2");
+    assert_eq!(two["qualified_at"], json!(iso(stamp + 1)));
+    // The other row, and an id with no row, are untouched and not an error.
+    store
+        .store_decide_qualification(99.0, &qualification(json!(1), Some("q"), Some("p")))
+        .unwrap();
+    assert_eq!(
+        store.get_decide_calibration(2.0).unwrap()["qualified_at"],
+        Value::Null
+    );
+    assert_eq!(store.get_decide_calibration(99.0).unwrap(), Value::Null);
+}
+
+#[test]
+fn retiring_stamps_and_clears_retired_at_and_says_whether_the_row_exists() {
+    let dir = TempDir::new("decide-store");
+    let (store, clock) = open(&dir);
+    store
+        .insert_decide_calibration(&calibration("conflict"))
+        .unwrap();
+    store
+        .store_decide_qualification(1.0, &qualification(json!(0.5), Some("q"), Some("p")))
+        .unwrap();
+    let stamp = clock.0.load(Ordering::SeqCst);
+    assert!(store.set_decide_calibration_retired(1.0, true).unwrap());
+    let retired = store.get_decide_calibration(1.0).unwrap();
+    assert_eq!(retired["retired_at"], json!(iso(stamp)));
+    // Every other column is kept.
+    assert_eq!(retired["qualification"], "q");
+    assert_eq!(retired["threshold"], json!(0.8));
+    // Retiring again restamps; bringing it back clears the stamp.
+    assert!(store.set_decide_calibration_retired(1.0, true).unwrap());
+    assert_eq!(
+        store.get_decide_calibration(1.0).unwrap()["retired_at"],
+        json!(iso(stamp + 1))
+    );
+    assert!(store.set_decide_calibration_retired(1.0, false).unwrap());
+    assert_eq!(
+        store.get_decide_calibration(1.0).unwrap()["retired_at"],
+        Value::Null
+    );
+    // An id with no row (or a negative one) answers false and creates nothing.
+    for id in [0.0, 2.0, -1.0, 9007199254740991.0] {
+        assert!(
+            !store.set_decide_calibration_retired(id, true).unwrap(),
+            "{id}"
+        );
+        assert_eq!(store.get_decide_calibration(id).unwrap(), Value::Null);
+    }
+    assert_eq!(
+        store
+            .list_decide_calibrations(None, true)
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn calibrations_keep_nulls_unicode_and_extreme_numbers_exactly() {
+    let dir = TempDir::new("decide-store");
+    let (store, _) = open(&dir);
+    let mut text = calibration("slot \u{e9} \u{1F600}");
+    text.call_site = Some(String::new());
+    text.model_resolved = Some("it's \"quoted\" \\ back".into());
+    text.pack_shape = Some("\u{4e2d}\u{6587}".into());
+    let mut extreme = calibration("conflict");
+    extreme.n = Some(json!(2147483647));
+    extreme.min_keep = Some(json!(-2147483648));
+    extreme.threshold = Some(json!(-0.5));
+    extreme.ece = Some(json!(3.4e38));
+    extreme.retest_sd = Some(json!(-3.4e38));
+    extreme.repack_sd = Some(json!(1e-37));
+    let mut zero = calibration("conflict");
+    zero.n = Some(json!(0));
+    zero.threshold = Some(json!(0));
+    for row in [&text, &extreme, &zero] {
+        store.insert_decide_calibration(row).unwrap();
+    }
+    let a = store.get_decide_calibration(1.0).unwrap();
+    assert_eq!(a["slot"], "slot \u{e9} \u{1F600}");
+    assert_eq!(a["call_site"], "");
+    assert_eq!(a["model_resolved"], "it's \"quoted\" \\ back");
+    assert_eq!(a["pack_shape"], "\u{4e2d}\u{6587}");
+    let b = store.get_decide_calibration(2.0).unwrap();
+    assert_eq!(b["n"], json!(2147483647));
+    assert_eq!(b["min_keep"], json!(-2147483648));
+    assert_eq!(b["threshold"], json!(-0.5));
+    assert_eq!(b["ece"], json!(3.4e38));
+    assert_eq!(b["retest_sd"], json!(-3.4e38));
+    assert_eq!(b["repack_sd"], json!(1e-37));
+    let c = store.get_decide_calibration(3.0).unwrap();
+    assert_eq!(
+        (c["n"].clone(), c["threshold"].clone()),
+        (json!(0), json!(0.0))
+    );
+}
+
+#[test]
+fn calibrations_refuse_a_bad_row_and_record_nothing() {
+    let dir = TempDir::new("decide-store");
+    let (store, _) = open(&dir);
+    let missing: Vec<(&str, DecideCalibrationInput)> = vec![
+        (
+            "slot",
+            DecideCalibrationInput {
+                slot: None,
+                ..calibration("x")
+            },
+        ),
+        (
+            "call_site",
+            DecideCalibrationInput {
+                call_site: None,
+                ..calibration("x")
+            },
+        ),
+        (
+            "provider",
+            DecideCalibrationInput {
+                provider: None,
+                ..calibration("x")
+            },
+        ),
+        (
+            "model_resolved",
+            DecideCalibrationInput {
+                model_resolved: None,
+                ..calibration("x")
+            },
+        ),
+        (
+            "threshold",
+            DecideCalibrationInput {
+                threshold: None,
+                ..calibration("x")
+            },
+        ),
+        (
+            "threshold",
+            DecideCalibrationInput {
+                threshold: Some(Value::Null),
+                ..calibration("x")
+            },
+        ),
+        (
+            "metric",
+            DecideCalibrationInput {
+                metric: None,
+                ..calibration("x")
+            },
+        ),
+        (
+            "n",
+            DecideCalibrationInput {
+                n: None,
+                ..calibration("x")
+            },
+        ),
+        (
+            "calibrate_only",
+            DecideCalibrationInput {
+                calibrate_only: None,
+                ..calibration("x")
+            },
+        ),
+        (
+            "pack_shape",
+            DecideCalibrationInput {
+                pack_shape: None,
+                ..calibration("x")
+            },
+        ),
+    ];
+    for (column, row) in &missing {
+        let err = store.insert_decide_calibration(row).unwrap_err();
+        assert_eq!(err.code, CONSTRAINT_VIOLATION, "{column}");
+        assert!(err.message.contains(column), "{column}: {}", err.message);
+    }
+    let invalid: Vec<(&str, DecideCalibrationInput)> = vec![
+        ("nul slot", calibration("a\0b")),
+        ("nul notes", with_note(calibration("x"), "a\0b")),
+        (
+            "nul hash",
+            DecideCalibrationInput {
+                dataset_hash: Some("a\0b".into()),
+                ..calibration("x")
+            },
+        ),
+        (
+            "fractional n",
+            DecideCalibrationInput {
+                n: Some(json!(1.5)),
+                ..calibration("x")
+            },
+        ),
+        (
+            "huge n",
+            DecideCalibrationInput {
+                n: Some(json!(2147483648_i64)),
+                ..calibration("x")
+            },
+        ),
+        (
+            "string n",
+            DecideCalibrationInput {
+                n: Some(json!("5")),
+                ..calibration("x")
+            },
+        ),
+        (
+            "huge min_keep",
+            DecideCalibrationInput {
+                min_keep: Some(json!(-2147483649_i64)),
+                ..calibration("x")
+            },
+        ),
+        (
+            "huge threshold",
+            DecideCalibrationInput {
+                threshold: Some(json!(1e39)),
+                ..calibration("x")
+            },
+        ),
+        (
+            "huge ece",
+            DecideCalibrationInput {
+                ece: Some(json!(-1e39)),
+                ..calibration("x")
+            },
+        ),
+        (
+            "underflow sd",
+            DecideCalibrationInput {
+                retest_sd: Some(json!(1e-50)),
+                ..calibration("x")
+            },
+        ),
+    ];
+    for (what, row) in &invalid {
+        let err = store.insert_decide_calibration(row).unwrap_err();
+        assert_eq!(err.code, INVALID_ARGUMENT, "{what}");
+    }
+    assert_eq!(
+        store.list_decide_calibrations(None, true).unwrap(),
+        json!([])
+    );
+    // Unlike a Postgres sequence, a refused row does not use up an id.
+    assert_eq!(
+        store.insert_decide_calibration(&calibration("x")).unwrap(),
+        1
+    );
+}
+
+#[test]
+fn calibration_ids_must_be_whole_numbers_in_the_bigint_range() {
+    let dir = TempDir::new("decide-store");
+    let (store, _) = open(&dir);
+    store.insert_decide_calibration(&calibration("x")).unwrap();
+    let q = qualification(json!(0.5), Some("q"), Some("p"));
+    let too_far = 9223372036854775808.0_f64;
+    for bad in [1.5, f64::NAN, f64::INFINITY, 1e21, -1e21, too_far] {
+        assert!(store.get_decide_calibration(bad).is_err(), "get {bad}");
+        assert!(
+            store.set_decide_calibration_retired(bad, true).is_err(),
+            "retire {bad}"
+        );
+        assert!(
+            store.store_decide_qualification(bad, &q).is_err(),
+            "qualify {bad}"
+        );
+    }
+    let nul = qualification(json!(0.5), Some("a\0b"), Some("p"));
+    assert!(store.store_decide_qualification(1.0, &nul).is_err());
+    let nul = qualification(json!(0.5), Some("q"), Some("a\0b"));
+    assert!(store.store_decide_qualification(1.0, &nul).is_err());
+    assert!(
+        store
+            .store_decide_qualification(1.0, &qualification(json!(1e39), Some("q"), Some("p")))
+            .is_err()
+    );
+    assert!(store.list_decide_calibrations(Some("a\0b"), false).is_err());
+    let row = store.get_decide_calibration(1.0).unwrap();
+    assert_eq!(row["qualified_at"], Value::Null);
+    assert_eq!(row["retired_at"], Value::Null);
+}
+
+#[test]
+fn calibrations_survive_a_reopen_and_ids_keep_counting() {
+    let dir = TempDir::new("decide-store");
+    {
+        let (store, _) = open(&dir);
+        store
+            .insert_decide_calibration(&with_note(calibration("x"), "one"))
+            .unwrap();
+        store
+            .store_decide_qualification(1.0, &qualification(json!(0.5), Some("q"), Some("p")))
+            .unwrap();
+        assert!(store.set_decide_calibration_retired(1.0, true).unwrap());
+    }
+    let (store, clock) = open(&dir);
+    // The reopened clock starts over; move it past the first row's stamp.
+    clock.0.store(T0 + 1000, Ordering::SeqCst);
+    assert_eq!(
+        store
+            .insert_decide_calibration(&with_note(calibration("x"), "two"))
+            .unwrap(),
+        2
+    );
+    let row = store.get_decide_calibration(1.0).unwrap();
+    assert_eq!(row["qualification"], "q");
+    assert_ne!(row["retired_at"], Value::Null);
+    assert_eq!(
+        notes(&store.list_decide_calibrations(None, true).unwrap()),
+        ["two", "one"]
+    );
 }

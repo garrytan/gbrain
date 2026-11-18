@@ -1051,6 +1051,11 @@ export const RUST_ENGINE_MEMBERS = {
   listDecideReplayReceipts: 'eval_capture',
   listDecideResolvedModels: 'eval_capture',
   listDecideMixedModelDecisions: 'eval_capture',
+  insertDecideCalibration: 'eval_capture',
+  storeDecideQualification: 'eval_capture',
+  listDecideCalibrations: 'eval_capture',
+  getDecideCalibration: 'eval_capture',
+  setDecideCalibrationRetired: 'eval_capture',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;

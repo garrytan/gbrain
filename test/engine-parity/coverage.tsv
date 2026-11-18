@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 937/943
+# covered: 950/956
 # lifecycle: 9/9
 # pages: 46/46
 # search: 7/7
@@ -75,8 +75,7 @@
 # trust_proposals: 7/7
 # connect_gate: 4/4
 # jobs_wake: 21/21
-# decide_store: 7/7
-# decide_store: 15/15
+# decide_store: 20/20
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
 connect	lifecycle	yes	1	yes	yes	yes	serves
 disconnect	lifecycle	yes	1	yes	yes	yes	serves
@@ -1029,3 +1028,8 @@ decideConflictNoEntityCounts	decide_store	yes	3	no	yes	yes	serves
 listDecideReplayReceipts	decide_store	yes	5	no	yes	yes	serves
 listDecideResolvedModels	decide_store	yes	3	no	yes	yes	serves
 listDecideMixedModelDecisions	decide_store	yes	3	no	yes	yes	serves
+insertDecideCalibration	decide_store	yes	7	no	yes	yes	serves
+storeDecideQualification	decide_store	yes	3	no	yes	yes	serves
+listDecideCalibrations	decide_store	yes	7	no	yes	yes	serves
+getDecideCalibration	decide_store	yes	6	no	yes	yes	serves
+setDecideCalibrationRetired	decide_store	yes	4	no	yes	yes	serves

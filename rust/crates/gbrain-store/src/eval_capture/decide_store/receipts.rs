@@ -14,12 +14,12 @@
 use super::{int4, prune_spend_before};
 use crate::error::{Result, StoreError};
 use crate::eval_capture::not_null;
-use crate::kv::{prefix_end, KvRead};
+use crate::kv::{KvRead, prefix_end};
 use crate::links::no_nul;
 use crate::pages::next_id;
-use crate::{keys, put_json, Store};
+use crate::{Store, keys, put_json};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashSet};
 
 const RECEIPT: u8 = 0x13;
@@ -96,7 +96,7 @@ struct ReceiptRecord {
 }
 
 /// A `REAL` value as Postgres prints it, which is what a caller reads.
-fn real_value(bits: u32) -> f64 {
+pub(super) fn real_value(bits: u32) -> f64 {
     f32::from_bits(bits)
         .to_string()
         .parse::<f64>()
@@ -111,7 +111,7 @@ fn real_widened(bits: u32) -> f64 {
 /// A `REAL` column: the `f32` Postgres makes of the number's text. Null is the caller's to
 /// judge; a string, or a number `real` cannot hold (too large, or so small it rounds to zero),
 /// is `invalid_argument`.
-fn real4(value: &Option<Value>, member: &str, column: &str) -> Result<Option<u32>> {
+pub(super) fn real4(value: &Option<Value>, member: &str, column: &str) -> Result<Option<u32>> {
     let refused =
         || StoreError::invalid(format!("{member}: {column} is out of range for type real"));
     match value {
@@ -130,7 +130,7 @@ fn real4(value: &Option<Value>, member: &str, column: &str) -> Result<Option<u32
     }
 }
 
-fn opt_int4(value: &Option<Value>, member: &str, column: &str) -> Result<Option<i32>> {
+pub(super) fn opt_int4(value: &Option<Value>, member: &str, column: &str) -> Result<Option<i32>> {
     match value {
         None => Ok(None),
         Some(v) => int4(v, member, column),

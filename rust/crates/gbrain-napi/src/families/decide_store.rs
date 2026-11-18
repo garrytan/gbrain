@@ -3,12 +3,12 @@
 //! Each method decodes its arguments, runs one `Store` call on the pool through `Brain::run`, and
 //! resolves plain JSON. Timestamps travel as ISO strings both ways; the shell makes them `Date`s.
 
-use napi::bindgen_prelude::Object;
 use napi::Env;
+use napi::bindgen_prelude::Object;
 use napi_derive::napi;
 use serde_json::Value;
 
-use crate::store_binding::{required, Brain};
+use crate::store_binding::{Brain, required};
 
 #[napi]
 impl Brain {
@@ -177,5 +177,69 @@ impl Brain {
         self.run(env, move |s| {
             s.list_decide_mixed_model_decisions(since_hours)
         })
+    }
+
+    /// `insertDecideCalibration(row)`: resolves the new id. A column left out is a null.
+    #[napi]
+    pub fn insert_decide_calibration<'env>(
+        &self,
+        env: &'env Env,
+        row: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let row: gbrain_store::eval_capture::decide_store::DecideCalibrationInput =
+                required(row, "insertDecideCalibration row")?;
+            s.insert_decide_calibration(&row)
+        })
+    }
+
+    /// `storeDecideQualification(id, q)`: resolves null, also for an id with no row.
+    #[napi]
+    pub fn store_decide_qualification<'env>(
+        &self,
+        env: &'env Env,
+        id: f64,
+        q: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let q: gbrain_store::eval_capture::decide_store::DecideQualificationInput =
+                required(q, "storeDecideQualification q")?;
+            s.store_decide_qualification(id, &q)
+        })
+    }
+
+    /// `listDecideCalibrations(slot, includeRetired)`: `slot` is null for every slot; the
+    /// timestamps are ISO strings.
+    #[napi]
+    pub fn list_decide_calibrations<'env>(
+        &self,
+        env: &'env Env,
+        slot: Option<String>,
+        include_retired: bool,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_decide_calibrations(slot.as_deref(), include_retired)
+        })
+    }
+
+    /// `getDecideCalibration(id)`: resolves the row or null.
+    #[napi]
+    pub fn get_decide_calibration<'env>(
+        &self,
+        env: &'env Env,
+        id: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.get_decide_calibration(id))
+    }
+
+    /// `setDecideCalibrationRetired(id, retired)`: resolves whether the row exists.
+    #[napi]
+    pub fn set_decide_calibration_retired<'env>(
+        &self,
+        env: &'env Env,
+        id: f64,
+        retired: bool,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.set_decide_calibration_retired(id, retired))
     }
 }

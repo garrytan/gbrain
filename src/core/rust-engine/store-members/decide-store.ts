@@ -4,7 +4,7 @@
  * PGLite returns them.
  */
 import {
-  receiptRowValues, spendRowValues, type DecideReceiptInsert, type DecideReceiptStat, type DecideReplayReceipt,
+  receiptRowValues, type DecideCalibration, type DecideCalibrationInsert, type DecideQualification, spendRowValues, type DecideReceiptInsert, type DecideReceiptStat, type DecideReplayReceipt,
   type DecideResolvedModel, type DecideSlotUsageRow, type DecideSpendInsert, type DecideSpendSlotTotals,
 } from '../../engine-sql/decide-store.ts';
 import { storeCall, type StoreMember } from './common.ts';
@@ -69,3 +69,38 @@ export const listDecideResolvedModels: StoreMember<[sinceHours: number], DecideR
 
 export const listDecideMixedModelDecisions: StoreMember<[sinceHours: number], Array<{ slot: string; n: number }>> = (brain, sinceHours) =>
   storeCall({ member: 'listDecideMixedModelDecisions' }, () => brain.listDecideMixedModelDecisions(sinceHours));
+
+// ---------------------------------------------------------------- calibrations
+
+/** The row crosses as given (a column left out is a null the store refuses, as the SQL does); the id comes back a number. */
+export const insertDecideCalibration: StoreMember<[row: DecideCalibrationInsert], number> = async (brain, row) =>
+  Number(await storeCall({ member: 'insertDecideCalibration' }, () => brain.insertDecideCalibration(row)));
+
+export const storeDecideQualification: StoreMember<[id: number, q: DecideQualification], void> = async (brain, id, q) => {
+  await storeCall({ member: 'storeDecideQualification' }, () => brain.storeDecideQualification(id, q));
+};
+
+type CalibrationOnTheWire = Omit<DecideCalibration, 'created_at' | 'qualified_at' | 'retired_at'> & {
+  created_at: string; qualified_at: string | null; retired_at: string | null;
+};
+
+const calibrationFromWire = (r: CalibrationOnTheWire): DecideCalibration => ({
+  ...r,
+  created_at: new Date(r.created_at),
+  qualified_at: r.qualified_at === null ? null : new Date(r.qualified_at),
+  retired_at: r.retired_at === null ? null : new Date(r.retired_at),
+});
+
+export const listDecideCalibrations: StoreMember<[opts?: { slot?: string; includeRetired?: boolean }], DecideCalibration[]> = async (brain, opts) => {
+  const rows = (await storeCall({ member: 'listDecideCalibrations' }, () =>
+    brain.listDecideCalibrations(opts?.slot ?? null, opts?.includeRetired ?? false))) as CalibrationOnTheWire[];
+  return rows.map(calibrationFromWire);
+};
+
+export const getDecideCalibration: StoreMember<[id: number], DecideCalibration | null> = async (brain, id) => {
+  const row = (await storeCall({ member: 'getDecideCalibration' }, () => brain.getDecideCalibration(id))) as CalibrationOnTheWire | null;
+  return row === null ? null : calibrationFromWire(row);
+};
+
+export const setDecideCalibrationRetired: StoreMember<[id: number, retired: boolean], boolean> = (brain, id, retired) =>
+  storeCall({ member: 'setDecideCalibrationRetired' }, () => brain.setDecideCalibrationRetired(id, retired));
