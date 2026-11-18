@@ -80,10 +80,14 @@ const CHUNK_DEFAULTS = {
   doc_comment: null, symbol_name_qualified: null, projected_byte_start: null, projected_byte_end: null, token_count: null,
 } as const;
 
-/** A chunk as PGLite's `getChunks` returns it: every nullable column present, and no vector (the store keeps none). */
+/**
+ * A chunk as PGLite's `getChunks` returns it: every nullable column present, `embedded_at` a Date, and the vector a
+ * Float32Array when the read asked for it (null otherwise).
+ */
 export function toChunk<T extends object>(chunk: T): T {
-  const { has_embedding: _has, ...rest } = chunk as Row;
-  return { embedding: null, ...CHUNK_DEFAULTS, ...rest, embedded_at: null, embedding_is_null: true } as T;
+  const row = { embedding: null, ...CHUNK_DEFAULTS, ...withDates(chunk, ['embedded_at']) } as Row;
+  row.embedding = Array.isArray(row.embedding) ? new Float32Array(row.embedding as number[]) : null;
+  return row as T;
 }
 
 /** The provenance columns PGLite's timeline rows carry and the store does not keep. */
