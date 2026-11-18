@@ -490,6 +490,7 @@ fn delete_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
         tx.delete(&key)?;
     }
     tx.delete(&row_key(take.page_id, take.row_num))?;
+    crate::embeddings::remove_take_vector(tx, take.id)?;
     tx.delete(&take_key(take.id))
 }
 
