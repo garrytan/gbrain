@@ -58,7 +58,7 @@ impl Store {
         }
         // BTreeMap order is byte order; a stable sort by count keeps it for ties.
         let mut types: Vec<(String, Vec<PageRecord>)> = by_type.into_iter().collect();
-        types.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+        types.sort_by_key(|a| std::cmp::Reverse(a.1.len()));
         types.truncate(max_types);
         let out: Vec<Value> = types
             .into_iter()
