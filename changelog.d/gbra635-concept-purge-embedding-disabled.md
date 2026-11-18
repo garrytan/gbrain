@@ -1,7 +1,7 @@
 ---
 important: security
 ---
-**`embedding_disabled` now stops the routes that still sent text to the embedding provider.**
+**`embedding_disabled` now stops most of the routes that still sent text to the embedding provider; two (a contextual reindex queued before the setting was turned on, and a `reindex-multimodal` run already in progress) are closed by #9754 in a later release.**
 
 <!-- behavior-change: embedding_disabled_every_route_9715 -->
 
