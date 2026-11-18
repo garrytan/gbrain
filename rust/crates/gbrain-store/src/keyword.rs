@@ -1,9 +1,10 @@
-//! Keyword search members the keyword_search capability still refuses, and title trigrams. The
-//! members are not built yet: each still refuses with `engine_capability_missing` in the
-//! TypeScript engine.
+//! Keyword search members of the keyword_search capability, and title trigrams.
 //!
-//! Members: countKeywordPages, searchKeywordPages, searchTitles, searchKeywordChunks,
-//! findByTitleFuzzy.
+//! Served: findByTitleFuzzy (`keyword/title_fuzzy.rs`), searchKeywordChunks (`keyword/chunk_search.rs`),
+//! countKeywordPages and searchKeywordPages (`keyword/page_search.rs`), with the page and chunk
+//! filters they share in `keyword/filters.rs`. Not built: searchTitles, which still refuses with
+//! `engine_capability_missing` in the TypeScript engine. rust/docs/store/keyword.md lists what
+//! each member reads, refuses and leaves as a follow-up.
 //!
 //! Built: the pg_trgm scorer (`keyword/trgm.rs`), for findByTitleFuzzy here and for other
 //! families (searchTakes). Its signatures and thresholds are stable:
@@ -30,12 +31,17 @@
 //!
 //! See docs/designs/RUST_ENGINE_INTERFACES.md.
 
+mod chunk_search;
+mod filters;
+mod page_search;
 mod parser;
 mod rank;
 mod stem;
 mod title_fuzzy;
 mod trgm;
 mod tsearch;
+
+pub use filters::{AfterKey, DateBound, KeywordOptions};
 
 #[allow(unused_imports)]
 pub(crate) use rank::{ts_rank, ts_rank_cd};
