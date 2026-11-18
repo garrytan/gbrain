@@ -487,6 +487,24 @@ export function ownerWidened(): boolean {
 }
 
 /**
+ * GST-3064: whether a full-body read by this caller (reading these take holders, readHolders(ctx)) shows the Facts fence
+ * as stored, private and held rows included: to the owner's widened read (ownerWidened) on an inline page, and on a
+ * segmented page only when it reads every holder (that page's markdown view is paged from the stored body only then).
+ */
+export function storedFactsShown(holders: readonly string[] | undefined, segmented: boolean): boolean {
+  return ownerWidened() && (!segmented || holders === undefined);
+}
+
+/**
+ * GST-3064: sanitizeRemoteBody's `owner` option for an inline body this caller reads (storedFactsShown), keeping takes
+ * only for a caller that reads every holder. get_page, fetch, get_page as_of and known_as_of all read through it, so
+ * every body that returns a revision shows the owner the same rows.
+ */
+export function ownerFenceView(holders: readonly string[] | undefined): { keepTakes: boolean } | undefined {
+  return storedFactsShown(holders, false) ? { keepTakes: holders === undefined } : undefined;
+}
+
+/**
  * GST-2089: whether a fact read stays world-only (visibility = 'world'). Only the trusted local CLI (remote strictly
  * false) and the brain owner (CallerAccess.owner, the page rule) read private facts; provenance, source grants and
  * member access still apply to both. Fact arms decide their visibility list here and nowhere else.

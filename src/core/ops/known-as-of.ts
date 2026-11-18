@@ -7,13 +7,13 @@
 import type { OperationContext, ParamDef } from './contract.ts';
 import { opError } from './contract.ts';
 import { opTransport, readFix } from './op-fix.ts';
-import { assertExplicitSourceLive, federatedSearchScope, pageNotFoundError, parseSourceIdParam } from './context.ts';
+import { assertExplicitSourceLive, federatedSearchScope, pageNotFoundError, parseSourceIdParam, readHolders } from './context.ts';
 import { inlineBodyBytes } from './get-page-body.ts';
 import { historyQuarantine, pageTrustForRead, type QuarantinedView } from './get-page-projection.ts';
 import { parseKnownAsOf, readPageAtTime, remoteMayRead, type PageAtTime, type PageInterval } from '../belief/page-at-time.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { heldRowsForCaller } from '../eligibility/fence-overlay.ts';
-import { remoteReadFloorSql } from '../search/private-visibility.ts';
+import { ownerFenceView, remoteReadFloorSql } from '../search/private-visibility.ts';
 import { unifiedDiff } from '../skillpack/diff-text.ts';
 import { fenceTranscriptText, quotesStored } from '../search/transcript-quote.ts';
 
@@ -105,7 +105,7 @@ async function intervalView(ctx: OperationContext, sourceId: string, i: GatedInt
     return { ...meta, body_ref: { total_bytes: bytes } };
   }
   const omitRows = await heldRowsForCaller(ctx.engine, ctx.remote, { ...(i.live ?? { sourceId, slug: i.slug }), compiled_truth: i.page.compiled_truth ?? '', timeline: i.page.timeline });
-  const clean = (s: string | null) => s == null ? null : ctx.remote === false ? s : sanitizeRemoteBody(s, { includeWithdrawn: true, keepMaterializedMarkers: true, omitRows });
+  const clean = (s: string | null) => s == null ? null : ctx.remote === false ? s : sanitizeRemoteBody(s, { includeWithdrawn: true, keepMaterializedMarkers: true, omitRows, owner: ownerFenceView(readHolders(ctx)) });
   // #8042: a third-party page as recorded reaches an untrusted reader quoted, as get_page's current body does.
   const quote = quotesInterval(ctx, i);
   const fence = (s: string | null) => s && quote ? fenceTranscriptText(s, i.slug) : s;
@@ -160,8 +160,8 @@ export async function getVersionsKnownAsOf(ctx: OperationContext, p: Record<stri
     const text = (x: GatedInterval | undefined) => x?.page && x.body !== 'segmented' && !x.quarantined?.body_omitted ? `${x.page.compiled_truth ?? ''}${x.page.timeline ? `\n${x.page.timeline}` : ''}` : null;
     const [a, b] = [prev ? text(prev) : '', text(i)];
     const held = (x: GatedInterval | undefined, t: string) => x ? heldRowsForCaller(ctx.engine, ctx.remote, { ...(x.live ?? { sourceId, slug: x.slug }), compiled_truth: t }) : undefined;
-    const diff = a == null || b == null ? null : unifiedDiff(ctx.remote === false ? a : sanitizeRemoteBody(a, { omitRows: await held(prev, a) }),
-      ctx.remote === false ? b : sanitizeRemoteBody(b, { omitRows: await held(i, b) }),
+    const diff = a == null || b == null ? null : unifiedDiff(ctx.remote === false ? a : sanitizeRemoteBody(a, { omitRows: await held(prev, a), owner: ownerFenceView(readHolders(ctx)) }),
+      ctx.remote === false ? b : sanitizeRemoteBody(b, { omitRows: await held(i, b), owner: ownerFenceView(readHolders(ctx)) }),
       { oldPath: prev ? `${slug}@${prev.event.recorded_at}` : '/dev/null', newPath: `${slug}@${i.event.recorded_at}` });
     const quote = diff !== null && (quotesInterval(ctx, i) || (prev !== undefined && quotesInterval(ctx, prev)));
     view.diff = quote ? fenceTranscriptText(diff, i.slug) : diff;
