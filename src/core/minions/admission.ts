@@ -312,12 +312,7 @@ export async function countTtlExpiredWaiting(
   const by_name: Record<string, number> = {};
   let total = 0;
   for (const [name, hours] of ttlNames) {
-    const rows = await engine.executeRaw<{ count: string }>(
-      `SELECT count(*)::text AS count FROM minion_jobs
-        WHERE name = $1 AND status = 'waiting' AND updated_at < now() - ($2 * interval '1 hour')`,
-      [name, hours],
-    );
-    const n = parseInt(rows[0]?.count ?? '0', 10);
+    const n = await engine.countTtlExpiredWaiting(name, hours);
     by_name[name] = n;
     total += n;
   }
