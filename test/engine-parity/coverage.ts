@@ -160,8 +160,10 @@ export const FAMILIES: Record<string, readonly string[]> = {
   // telemetry: search telemetry and MCP usage (engine-sql/telemetry.ts)
   telemetry: [
     'recordSearchTelemetry', 'readSearchStats', 'readClientOpUsage', 'readMcpRollupPrunedBefore', 'logMcpRequest',
-    'readMcpLogPruneCutoff', 'pruneMcpRequestLogBatch',
+    'readMcpLogPruneCutoff', 'pruneMcpRequestLogBatch', 'readMcpLifetimeUsage',
   ],
+  // alias_fanout_reads: search's alias fan-out reads (engine-sql/alias-fanout-reads.ts)
+  alias_fanout_reads: ['findPagesByTitles', 'resolveCaseSensitiveAliases', 'readPageTitle', 'readPageAliasRows'],
   write_guards: ['readPageOrigin', 'listOriginClaims', 'bindPageOrigin', 'stampPageIngest', 'sealImportedPage', 'readLivePageBody',
     'hasSegmentStorage'],
 };

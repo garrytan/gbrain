@@ -58,6 +58,7 @@ import * as housekeeping from './housekeeping.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeMisc from './write-misc.ts';
 import * as telemetry from './telemetry.ts';
+import * as aliasFanoutReads from './alias-fanout-reads.ts';
 import * as writeGuards from './write-guards.ts';
 import * as importMembers from './import-members.ts';
 
@@ -86,6 +87,8 @@ export const STORE_MEMBERS = {
   ...persistenceIdentity,
   // Search telemetry (rust/docs/store/telemetry.md).
   ...telemetry,
+  // Alias fan-out reads (rust/docs/store/alias_fanout_reads.md).
+  ...aliasFanoutReads,
   ...persistence, ...housekeeping,
   ...writeMisc,
   // The page write guards a page write runs around the page row (rust/docs/store/write-guards.md).

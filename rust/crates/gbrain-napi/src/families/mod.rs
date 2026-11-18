@@ -24,6 +24,7 @@ mod write_guards;
 mod write_misc;
 
 // Planned families: no methods yet (docs/designs/RUST_ENGINE_INTERFACES.md).
+mod alias_fanout_reads;
 mod aliases;
 mod chunk_queries;
 mod code_edges;
