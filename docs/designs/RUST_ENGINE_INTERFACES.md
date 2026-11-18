@@ -165,6 +165,13 @@ The `q` tag is shared. link_queries and wanted_links both key records as `q <sou
 `0x00` is `W` for a wanted_links record (`q <origin source id> 0x00 W <origin page id BE8> ...`), and link_queries
 uses any other byte. `keys::LINK_QUERIES` stays the one constant for both; neither family adds a tag.
 
+code_edges keeps a chunk index under its own tag `H`, after its row sub-tags `0x01` to `0x06`, because the chunk
+store keys chunks by page and index, not by id:
+
+- `H 0x07 <chunk id BE8>` -> the page id, then `0` for no `symbol_name` or `1` and the name's bytes: every chunk by id.
+- `H 0x08 <symbol_name> 0x00 <chunk id BE8>` -> empty: the chunks by `symbol_name`.
+- `H 0x09` -> empty: set once the index covers every chunk.
+
 ### Page delete cascade
 
 `pages::remove_page` deletes a page's versions, chunks and postings (the chunk-delete hook below fires for those
@@ -185,6 +192,10 @@ Core calls each hook below from its own write or read path, in the same transact
 file that names every family that needs the hook. Each listed family already has the hook function in its own
 file, with an empty body. A family fills in only its own body, and never changes a signature or a list. A family
 that is not on a list and needs the hook asks core for a one-line addition to the list.
+
+A family that needs a call from a chunk write (`chunks::write_chunk`) or a build once per brain open (`Store::open`
+and `seed`) asks Ember first. Those calls run on every chunk write and every open, for every family. After the yes,
+the family adds the call in its own commit, apart from its family code, so the core change can be reviewed alone.
 
 All hooks are empty today, so they change no answer: every served member reads and writes exactly as before. The
 last four parts of this section are not hooks. They are core page behavior: the page origin rule lets `putPage`
@@ -1258,3 +1269,5 @@ The estimates are judgments from the size of the PGLite code each member reprodu
 | Search timeline (`pages::search_timeline`: the sanitized timeline `sealChunks` sends, kept per page at the sealed revision; `forget_search_timeline` on every write that sets the title or timeline) | built | keyword (`searchTitles`); page_body calls `forget_search_timeline` |
 | Vector cache store field (`Store::vectors`, a `VectorCache` made in `open_kv`) | built | vectors (`load_index`) |
 | Wanted links stub (`wanted_links.rs`: sub-tag `W` under `q`, an empty `remove_page_rows` on the page-delete list) | built; the family fills in the body | wanted_links (`listWantedPages`) |
+| Chunk-write hook (`chunks::write_chunk` calls `code_edges::put_chunk_index(tx, id, page_id, symbol_name)` for every chunk record it writes) | built on code_edges' branch (`rust-lane-code-edges-index`, in its own commit); arrives with that merge | code_edges (chunk index `H 0x07`, `H 0x08`) |
+| Open-time index build (`Store::open` calls `code_edges::build_chunk_index(&*kv)`, which indexes a brain written before the index once; `seed` calls `code_edges::seed_chunk_index(tx)`, which marks a new brain's empty index complete) | built on code_edges' branch (`rust-lane-code-edges-index`, in its own commit); arrives with that merge | code_edges (`H 0x09`) |
