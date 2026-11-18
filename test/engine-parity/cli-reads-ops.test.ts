@@ -326,11 +326,16 @@ describe('engine parity: read-command statements', () => {
     await loose('a fact in another source', {}, 'other');
     const read = async (opts: { sourceIds: string[]; excludePrivateProvenance: boolean }) => {
       const rows = await engine.listUnattributedFacts({ worldOnly: false, limit: 10, offset: 0, ...opts });
+      // The id is a number on PGLite and Rust and a bigint on Postgres, and a Postgres sequence keeps counting across
+      // brain resets. So the case checks each id is a whole number as text and compares it relative to the smallest id
+      // in the result (ids 6/6/1 and 10/10/5 both become 5/5/0).
+      const ids = rows.map(({ id }) => String(id));
+      for (const id of ids) expect(id).toMatch(/^\d+$/);
+      const base = ids.reduce((min, id) => (BigInt(id) < min ? BigInt(id) : min), ids.length ? BigInt(ids[0]) : 0n);
       return rows.map(({ id, created_at, ...r }) => {
-        // PGLite returns created_at as timestamptz::text (`2026-01-02 03:04:05.678+00`). The id is a number on PGLite and
-        // Rust and a bigint on Postgres, so the case compares its text.
+        // PGLite returns created_at as timestamptz::text (`2026-01-02 03:04:05.678+00`).
         expect(created_at).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d{1,6})?\+00$/);
-        return { ...r, id: String(id) };
+        return { ...r, id: Number(BigInt(String(id)) - base) };
       });
     };
     const all = await read({ sourceIds: ['default'], excludePrivateProvenance: false });
