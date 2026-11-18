@@ -31,16 +31,16 @@ async function runOwnerOnlyMarksTriggers(ctx: DoctorContext): Promise<Check[]> {
     }
     const named = state.missing.map(m => `${m.table} (owner ${m.owner})`).join(', ');
     const closed = state.closed ? ' Until they exist owner-only lineage reads closed: every derived row and synthesized concept counts as owner-only.' : '';
-    const risk = `${state.missing.length} owner-only delete trigger(s) are missing (${named}), so removing an owner-only source or deleting one of its rows would leave the rows derived from it unmarked.${closed}`;
+    const risk = `${state.missing.length} owner-only delete trigger(s) are missing or disabled (${named}), so removing an owner-only source or deleting one of its rows would leave the rows derived from it unmarked.${closed}`;
     const details = { missing: state.missing.map(m => m.table), owners: state.missing.map(m => m.owner), closed: state.closed, docs: DOCS };
     if (state.missing.every(m => m.owned)) {
-      checks.push({ name: 'owner_only_marks_triggers', status: 'fail', message: `${risk} Fix: run gbrain apply-migrations --yes --no-autopilot-install; every migration run creates the triggers on tables its role owns.`,
-        fix: agentFix(['gbrain', 'apply-migrations', '--yes', '--no-autopilot-install'], 'Every migration run creates the owner-only delete triggers on tables its role owns.', 'owner_only_marks_triggers', { requires_exclusive: true, docs: DOCS }),
+      checks.push({ name: 'owner_only_marks_triggers', status: 'fail', message: `${risk} Fix: run gbrain apply-migrations --force-schema; every migration run creates the triggers on tables its role owns.`,
+        fix: agentFix(['gbrain', 'apply-migrations', '--force-schema'], 'Every migration run creates the owner-only delete triggers on tables its role owns.', 'owner_only_marks_triggers', { requires_exclusive: true, docs: DOCS }),
         details });
       return checks;
     }
     const sql = state.missing.map(m => `ALTER TABLE public.${m.table} OWNER TO ${state.role};`);
-    checks.push({ name: 'owner_only_marks_triggers', status: 'fail', message: `${risk} CREATE TRIGGER needs the table's owner. Fix: connected as ${[...new Set(state.missing.map(m => m.owner))].join(' or ')}, run gbrain apply-migrations --yes --no-autopilot-install, or run ${sql.join(' ')} and then gbrain apply-migrations --yes --no-autopilot-install as this role. See ${DOCS}.`,
+    checks.push({ name: 'owner_only_marks_triggers', status: 'fail', message: `${risk} CREATE TRIGGER needs the table's owner. Fix: connected as ${[...new Set(state.missing.map(m => m.owner))].join(' or ')}, run gbrain apply-migrations --force-schema, or run ${sql.join(' ')} and then gbrain apply-migrations --force-schema as this role. See ${DOCS}.`,
       fix_unavailable_reason: 'no_safe_automatic_fix', details: { ...details, sql } });
   } catch (e) {
     checks.push(checkError('owner_only_marks_triggers', 'check the owner-only delete triggers', e));

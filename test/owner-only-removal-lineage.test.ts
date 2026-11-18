@@ -238,10 +238,10 @@ for (const kind of testBackends()) {
       await engine.executeRaw('DROP TRIGGER gbrain_owner_only_row_deleted_trg ON timeline_entries');
       const missing = await doctor();
       expect({ status: missing.status, names: missing.message.includes('timeline_entries (owner '), argv: (missing.fix as { argv?: string[] } | undefined)?.argv })
-        .toEqual({ status: 'fail', names: true, argv: ['gbrain', 'apply-migrations', '--yes', '--no-autopilot-install'] });
+        .toEqual({ status: 'fail', names: true, argv: ['gbrain', 'apply-migrations', '--force-schema'] });
+      // The gap may have let a delete through unmarked, so the run that re-creates the trigger reads lineage closed.
       await runMigrations(engine);
-      expect(await engine.ownerOnlyMarkTriggers()).toMatchObject({ missing: [], closed: false });
-      await engine.executeRaw(`INSERT INTO owner_only_marks (row_table, row_id) VALUES ('*', 'unguarded')`);
+      expect(await engine.ownerOnlyMarkTriggers()).toMatchObject({ missing: [], closed: true });
       try {
         const closed = await doctor();
         expect({ status: closed.status, closed: closed.message.includes('still reads closed') }).toEqual({ status: 'warn', closed: true });
@@ -249,6 +249,72 @@ for (const kind of testBackends()) {
         await engine.executeRaw(`DELETE FROM owner_only_marks WHERE row_table = '*'`);
       }
       expect((await doctor()).status).toBe('ok');
+    }, 120_000);
+
+    test('a disabled delete trigger counts as missing and closes lineage, and ensure re-creates it enabled', async () => {
+      await engine.executeRaw('ALTER TABLE facts DISABLE TRIGGER gbrain_owner_only_row_deleted_trg');
+      try {
+        expect((await engine.ownerOnlyMarkTriggers()).missing.map(m => m.table)).toEqual(['facts']);
+        expect(await engine.ownerOnlyMarkTriggers({ ensure: true })).toMatchObject({ missing: [], closed: true });
+      } finally {
+        await engine.executeRaw(`DELETE FROM owner_only_marks WHERE row_table = '*'`);
+      }
+    }, 120_000);
+
+    test('a derivation recorded after its owner-only origin is gone reads as owner-only', async () => {
+      await origin('messages-late', 'late');
+      const chat = await id('imessage/chat/2026-06-14', 'messages-late');
+      expect(await deleteSourceRow(engine, 'messages-late')).toBe(true);
+      const [late] = await engine.executeRaw<{ id: number }>(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source)
+        VALUES ($1, 'notes/open', 'written after the origin went', 'fact', 'world', 'fixture') RETURNING id`, [OPEN_SRC]);
+      await engine.executeRaw(`INSERT INTO derivation_inputs (derived_table, derived_id, input_table, input_id, source_id) VALUES ('facts', $1, 'pages', $2, $3)`,
+        [String(late!.id), chat, OPEN_SRC]);
+      expect((await engine.executeRaw<{ v: boolean }>(`SELECT gbrain_owner_only_lineage('facts', $1::bigint) AS v`, [late!.id]))[0]!.v).toBe(true);
+    }, 240_000);
+
+    test('the closed mode never writes a permanent mark: an open derived row deleted while it is on marks nothing', async () => {
+      const page = async (slug: string) => {
+        await importFromContent(engine, slug, pageText(slug, 'gap'), { sourceId: OPEN_SRC, noEmbed: true });
+        return id(slug, OPEN_SRC);
+      };
+      const [a, b, c] = [await page('notes/gap-a'), await page('notes/gap-b'), await page('notes/gap-c')];
+      await engine.executeRaw(`INSERT INTO derivation_inputs (derived_table, derived_id, input_table, input_id, source_id) VALUES
+        ('pages', $2, 'pages', $1, $4), ('pages', $3, 'pages', $2, $4)`, [a, b, c, OPEN_SRC]);
+      await engine.executeRaw(`INSERT INTO owner_only_marks (row_table, row_id) VALUES ('*', 'unguarded')`);
+      try {
+        await engine.deletePage('notes/gap-b', { sourceId: OPEN_SRC });
+        expect(await engine.executeRaw(`SELECT row_id FROM owner_only_marks WHERE row_table = 'pages' AND row_id IN ($1, $2)`, [String(b), String(c)])).toEqual([]);
+      } finally {
+        await engine.executeRaw(`DELETE FROM owner_only_marks WHERE row_table = '*'`);
+      }
+    }, 240_000);
+
+    test.if(kind === 'postgres')('a role whose reads row-level security limits cannot hard-delete an owner-only origin', async () => {
+      await origin('messages-rls', 'rls');
+      const chat = await id('imessage/chat/2026-06-14', 'messages-rls');
+      const role = `gbrain_scoped_${randomUUID().replace(/-/g, '').slice(0, 10)}`;
+      const admin = (await engine.executeRaw<{ u: string }>('SELECT current_user AS u'))[0]!.u;
+      const wasOn = (await engine.executeRaw<{ on: boolean }>(`SELECT relrowsecurity AS on FROM pg_class WHERE oid = 'pages'::regclass`))[0]!.on;
+      await engine.executeRaw(`CREATE ROLE ${role} LOGIN PASSWORD 'scoped-example'`);
+      for (const grant of ['ALL ON SCHEMA public', 'ALL ON ALL TABLES IN SCHEMA public', 'ALL ON ALL SEQUENCES IN SCHEMA public', 'EXECUTE ON ALL FUNCTIONS IN SCHEMA public']) {
+        await engine.executeRaw(`GRANT ${grant} TO ${role}`);
+      }
+      await engine.executeRaw('ALTER TABLE pages ENABLE ROW LEVEL SECURITY');
+      await engine.executeRaw(`CREATE POLICY gst3032_probe ON pages TO ${role} USING (true)`);
+      const url = new URL(databaseUrl); url.username = role; url.password = 'scoped-example';
+      const asRole = new PostgresEngine();
+      await asRole.connect({ database_url: url.toString(), poolSize: 1 });
+      try {
+        await expect(asRole.executeRaw('DELETE FROM pages WHERE id = $1', [chat])).rejects.toThrow(/owner_only_lineage_unreadable/);
+        expect((await engine.executeRaw('SELECT 1 FROM pages WHERE id = $1', [chat])).length).toBe(1);
+      } finally {
+        await asRole.disconnect();
+        await engine.executeRaw('DROP POLICY gst3032_probe ON pages');
+        if (!wasOn) await engine.executeRaw('ALTER TABLE pages DISABLE ROW LEVEL SECURITY');
+        await engine.executeRaw(`REASSIGN OWNED BY ${role} TO ${admin}`);
+        await engine.executeRaw(`DROP OWNED BY ${role}`);
+        await engine.executeRaw(`DROP ROLE ${role}`);
+      }
     }, 120_000);
 
     test.if(kind === 'postgres')('a trigger on a table another role owns is named with its owner fix by the migration step and doctor, and lineage reads closed', async () => {

@@ -442,17 +442,21 @@ policies above it creates segmented pages and sees only its sources' rows
 **Owner-only delete triggers.** Rows derived from an owner-only source (an `imessage` source, or
 one with `owner_only: true`) stay owner-only after their origin is gone. Since migration v322
 (GST-3032) a `BEFORE DELETE` trigger on `sources`, `pages`, `facts`, `takes` and
-`timeline_entries` records every row derived from a row it deletes in `owner_only_marks`, and
-reads treat a marked row as owner-only. Nothing derived is deleted. `CREATE TRIGGER` needs the
-table's owner: a table another role owns gets no trigger, the migration run and
-`gbrain doctor` (`owner_only_marks_triggers`) name it with `ALTER TABLE ... OWNER TO`, and the
-next migration run by its owner creates it. While a trigger is missing on a brain that holds an
-owner-only source or a mark, owner-only lineage reads closed: every row with a recorded
-derivation input and every synthesized concept or question counts as owner-only, and it stays
-closed after the triggers exist (a delete in the gap left no marks) until the owner deletes the
-`('*', 'unguarded')` row by hand. A role that does not own the tables needs
-`GRANT SELECT, INSERT ON owner_only_marks`; the migration's policies let every granted role read
-and add marks, and none remove them.
+`timeline_entries` records the deleted row and every row derived from it in `owner_only_marks`,
+and reads treat a marked row, or one derived from a marked row, as owner-only. Nothing derived
+is deleted. A role whose reads row-level security limits could miss derived rows, so its delete
+of an owner-only origin is refused with `owner_only_lineage_unreadable`; delete it as the role
+that owns the tables. `CREATE TRIGGER` needs the table's owner: a table another role owns gets
+no trigger, the migration run and `gbrain doctor` (`owner_only_marks_triggers`) name it with
+`ALTER TABLE ... OWNER TO`, and `gbrain apply-migrations --force-schema` run by its owner
+creates it. While a trigger is missing or disabled on a brain that holds an owner-only source or
+a mark, owner-only lineage reads closed: every row with a recorded derivation input and every
+synthesized concept or question counts as owner-only. It stays closed after the triggers are
+back (a delete in the gap left no marks) until the owner, having checked what was deleted in
+the gap, deletes the `('*', 'unguarded')` row by hand; the closed mode itself never adds a mark.
+A role that does not own the tables needs `GRANT SELECT, INSERT ON owner_only_marks` before it
+deletes anything once the brain has held an owner-only source; the migration's policies let
+every granted role read and add marks, and none remove them.
 
 <a id="purge-and-withdrawal-guards"></a>
 **Purge and withdrawal guards.** The guards that refuse purged content and keep withdrawn

@@ -1279,11 +1279,11 @@ export interface BrainEngine {
    */
   sealChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; expectedRevision?: string }): Promise<void>;
   /**
-   * GST-3032: the owner-only delete triggers (migration v322) that are missing, with each table's owner. With `ensure`,
-   * first creates each one on a table the current role owns and, while one stays missing on a brain holding an
-   * owner-only source or a mark, sets the unguarded mark that reads owner-only lineage closed (SQL in engine-sql/owner-only-marks.ts).
+   * GST-3032: the owner-only delete triggers (migration v322) that are missing or disabled, with each table's owner. With
+   * `ensure`, on a brain holding an owner-only source or a mark, sets the unguarded mark that reads owner-only lineage
+   * closed (a gap; not while `installing`), then re-creates each one on a table the current role owns (SQL in engine-sql/owner-only-marks.ts).
    */
-  ownerOnlyMarkTriggers(opts?: { ensure?: boolean }): Promise<OwnerOnlyTriggerState>;
+  ownerOnlyMarkTriggers(opts?: { ensure?: boolean; installing?: boolean }): Promise<OwnerOnlyTriggerState>;
   /**
    * Read every chunk for a page. Scope precedence mirrors getPage (#2555):
    * a federated grant (`sourceIds[]`) wins over scalar `sourceId`; with

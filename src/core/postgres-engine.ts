@@ -1728,7 +1728,7 @@ export class PostgresEngine implements BrainEngine {
     await this.transaction(tx => { const e = tx as PostgresEngine; return chunksImpl.sealChunks(e.engineSql, e, slug, chunks, opts); });
   }
 
-  async ownerOnlyMarkTriggers(opts?: { ensure?: boolean }): Promise<OwnerOnlyTriggerState> {
+  async ownerOnlyMarkTriggers(opts?: { ensure?: boolean; installing?: boolean }): Promise<OwnerOnlyTriggerState> {
     return ownerOnlyMarksImpl.ownerOnlyMarkTriggers(this.engineSql, opts);
   }
 

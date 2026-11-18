@@ -11,7 +11,9 @@ import { ownerOnlyTriggersLeftLine } from '../access/owner-only-marks.ts';
 // rows at the moment their origin goes: a BEFORE DELETE trigger on sources (an owner-only source, before its rows cascade)
 // and on pages, facts, takes and timeline_entries (a row that is owner-only, or whose page is) walks derivation_inputs
 // down from the deleted rows to the end of the chain, and the synthesized concepts and questions that name a deleted
-// page, and marks each one. Nothing derived is deleted or rewritten; a mark only ever narrows who reads a row.
+// page, and marks each one, the deleted rows included (so a derivation recorded later against one reads owner-only).
+// Nothing derived is deleted or rewritten; a mark only ever narrows who reads a row. A role whose reads row-level security
+// limits could miss derived rows, so its delete of an owner-only origin is refused (owner_only_lineage_unreadable).
 // gbrain_owner_only_lineage(table, id) now answers true for a marked row and for a row whose recorded inputs reach one or
 // reach a row in an owner-only source, at any depth (v320 stopped at 8 hops, so a row nine derivations away read as
 // open); both walks are cycle-safe because UNION keeps each (table, id) once. gbrain_owner_only_lineage() answers true
@@ -21,7 +23,9 @@ import { ownerOnlyTriggersLeftLine } from '../access/owner-only-marks.ts';
 // another role owns is named on stderr and by doctor (owner_only_marks_triggers) with its owner fix, never an abort.
 // While a trigger is missing on a brain that holds an owner-only source or a mark, the unguarded mark ('*', 'unguarded')
 // closes owner-only lineage: every row with a recorded derivation input and every synthesized concept or question counts
-// as owner-only. It stays until the owner clears it, because a delete in the gap left no marks. The kinds and the flag
+// as owner-only. A trigger found missing after v322 installed it (dropped or disabled later) sets it too, before it is
+// re-created. It stays until the owner clears it, because a delete in the gap left no marks; the triggers decide marks
+// with gbrain_owner_only_lineage_strict, which ignores it, so the closed mode never writes a permanent mark. The kinds and the flag
 // repeat OWNER_ONLY_KINDS and OWNER_ONLY_FLAG (the owner-only tests keep them equal). A brain that never held an
 // owner-only source pays one guard read per deleted row and stores nothing. No schema.sql mirror, like v320: the table
 // and the functions exist only through migrations.
@@ -51,7 +55,7 @@ DO $rls$ BEGIN
     CREATE POLICY owner_only_marks_add ON owner_only_marks FOR INSERT WITH CHECK (true);
   END IF;
 END $rls$;
-CREATE OR REPLACE FUNCTION ${OWNER_ONLY_LINEAGE_FN}(p_table TEXT, p_id BIGINT) RETURNS boolean
+CREATE OR REPLACE FUNCTION gbrain_owner_only_lineage_strict(p_table TEXT, p_id BIGINT) RETURNS boolean
   LANGUAGE plpgsql STABLE PARALLEL SAFE COST 1 SET search_path = pg_catalog, public, pg_temp AS $fn$
 DECLARE
   owner_only TEXT[];
@@ -60,11 +64,6 @@ BEGIN
     RETURN false;
   END IF;
   IF EXISTS (SELECT 1 FROM owner_only_marks m WHERE m.row_table = p_table AND m.row_id = p_id::text) THEN
-    RETURN true;
-  END IF;
-  IF EXISTS (SELECT 1 FROM owner_only_marks m WHERE m.row_table = '*') AND (
-      EXISTS (SELECT 1 FROM derivation_inputs d WHERE d.derived_table = p_table AND d.derived_id = p_id::text)
-      OR (p_table = 'pages' AND EXISTS (SELECT 1 FROM pages p WHERE p.id = p_id AND p.type IN ('concept', 'question')))) THEN
     RETURN true;
   END IF;
   SELECT coalesce(array_agg(s.id), '{}') INTO owner_only FROM sources s WHERE ${OWNER_ONLY_SOURCE.replace(/config/g, 's.config')};
@@ -92,6 +91,20 @@ BEGIN
       OR (up.t = 'timeline_entries' AND EXISTS (SELECT 1 FROM timeline_entries te JOIN pages tep ON tep.id = te.page_id WHERE te.id = up.id::bigint AND tep.source_id = ANY(owner_only))))));
 END
 $fn$;
+CREATE OR REPLACE FUNCTION ${OWNER_ONLY_LINEAGE_FN}(p_table TEXT, p_id BIGINT) RETURNS boolean
+  LANGUAGE plpgsql STABLE PARALLEL SAFE COST 1 SET search_path = pg_catalog, public, pg_temp AS $fn$
+BEGIN
+  IF p_id IS NULL THEN
+    RETURN false;
+  END IF;
+  IF EXISTS (SELECT 1 FROM owner_only_marks m WHERE m.row_table = '*') AND (
+      EXISTS (SELECT 1 FROM derivation_inputs d WHERE d.derived_table = p_table AND d.derived_id = p_id::text)
+      OR (p_table = 'pages' AND EXISTS (SELECT 1 FROM pages p WHERE p.id = p_id AND p.type IN ('concept', 'question')))) THEN
+    RETURN true;
+  END IF;
+  RETURN gbrain_owner_only_lineage_strict(p_table, p_id);
+END
+$fn$;
 CREATE OR REPLACE FUNCTION ${OWNER_ONLY_LINEAGE_FN}() RETURNS boolean
   LANGUAGE sql STABLE PARALLEL SAFE SET search_path = pg_catalog, public, pg_temp AS $fn$
   SELECT EXISTS (SELECT 1 FROM sources s WHERE ${OWNER_ONLY_SOURCE.replace(/config/g, 's.config')}) OR EXISTS (SELECT 1 FROM owner_only_marks)
@@ -101,6 +114,11 @@ CREATE OR REPLACE FUNCTION gbrain_owner_only_mark_derived(p_table TEXT, p_ids BI
 BEGIN
   IF p_ids IS NULL OR cardinality(p_ids) = 0 THEN
     RETURN;
+  END IF;
+  IF pg_catalog.row_security_active('derivation_inputs') OR pg_catalog.row_security_active('links') OR pg_catalog.row_security_active('pages')
+      OR pg_catalog.row_security_active('takes') OR pg_catalog.row_security_active('timeline_entries') THEN
+    RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'owner_only_lineage_unreadable: deleting an owner-only origin needs a database role that reads every derivation row, and row-level security limits this role''s reads',
+      HINT = 'Delete it as the role that owns the gbrain tables (or one with BYPASSRLS); see docs/ENGINES.md#owner-only-delete-triggers.';
   END IF;
   WITH RECURSIVE seed(t, id) AS (
       SELECT p_table, x::text FROM unnest(p_ids) x
@@ -114,7 +132,7 @@ BEGIN
       WHERE p_table = 'pages' AND l.to_page_id = ANY(p_ids) AND p.type IN ('concept', 'question')
         AND l.link_source = 'concept-provenance' AND l.link_type = 'synthesized_from')
   INSERT INTO owner_only_marks (row_table, row_id)
-  SELECT t, id FROM down UNION SELECT t, id FROM concepts
+  SELECT t, id FROM seed UNION SELECT t, id FROM down UNION SELECT t, id FROM concepts
   ON CONFLICT DO NOTHING;
 END
 $fn$;
@@ -134,11 +152,16 @@ BEGIN
   IF NOT ${OWNER_ONLY_LINEAGE_FN}() THEN
     RETURN OLD;
   END IF;
+  IF pg_catalog.row_security_active('sources') OR pg_catalog.row_security_active('facts') OR pg_catalog.row_security_active('derivation_inputs') OR pg_catalog.row_security_active('links') OR pg_catalog.row_security_active('pages')
+      OR pg_catalog.row_security_active('takes') OR pg_catalog.row_security_active('timeline_entries') THEN
+    RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'owner_only_lineage_unreadable: deleting an owner-only origin needs a database role that reads every derivation row, and row-level security limits this role''s reads',
+      HINT = 'Delete it as the role that owns the gbrain tables (or one with BYPASSRLS); see docs/ENGINES.md#owner-only-delete-triggers.';
+  END IF;
   IF TG_TABLE_NAME IN ('pages', 'facts') THEN
-    IF ${OWNER_ONLY_LINEAGE_FN}(TG_TABLE_NAME, OLD.id) THEN
+    IF gbrain_owner_only_lineage_strict(TG_TABLE_NAME, OLD.id) THEN
       PERFORM gbrain_owner_only_mark_derived(TG_TABLE_NAME, ARRAY[OLD.id]);
     END IF;
-  ELSIF ${OWNER_ONLY_LINEAGE_FN}('pages', OLD.page_id) THEN
+  ELSIF gbrain_owner_only_lineage_strict('pages', OLD.page_id) THEN
     PERFORM gbrain_owner_only_mark_derived(TG_TABLE_NAME, ARRAY[OLD.id]);
   END IF;
   RETURN OLD;
@@ -146,7 +169,7 @@ END
 $fn$;
 `,
   handler: async engine => {
-    const left = await engine.ownerOnlyMarkTriggers({ ensure: true });
+    const left = await engine.ownerOnlyMarkTriggers({ ensure: true, installing: true });
     if (left.missing.length) process.stderr.write(ownerOnlyTriggersLeftLine(left));
   },
 };
