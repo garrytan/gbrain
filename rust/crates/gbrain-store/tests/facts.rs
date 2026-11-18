@@ -501,3 +501,109 @@ fn keyword_duplicates_rank_shared_terms_then_newest() {
     assert!(find("the and of").unwrap().is_empty());
     assert_eq!(find("Berlin\0").unwrap_err().code, INVALID_ARGUMENT);
 }
+
+/// A vector literal 1536 wide: `head` in the first slots, zero elsewhere.
+fn literal(head: &[f64]) -> String {
+    let mut v = vec!["0".to_string(); 1536];
+    for (slot, x) in v.iter_mut().zip(head) {
+        *slot = x.to_string();
+    }
+    format!("[{}]", v.join(","))
+}
+
+fn head(row: &Value, n: usize) -> Vec<f64> {
+    row["embedding"].as_array().unwrap()[..n]
+        .iter()
+        .map(|x| x.as_f64().unwrap())
+        .collect()
+}
+
+#[test]
+fn a_fact_vector_is_stored_as_halfvec_with_its_model_and_text_hash() {
+    let b = brain("facts-vector");
+    insert(
+        &b,
+        json!({ "fact": "ok", "source": "s", "entity_slug": "people/ok",
+            "embedding": literal(&[0.1, 1.0 / 3.0, 0.7]), "embedding_model": "m1" }),
+    );
+    insert(
+        &b,
+        json!({ "fact": "x", "source": "s", "entity_slug": "people/ok",
+            "embedding": literal(&[0.5]) }),
+    );
+    let rows = by_entity(&b, "people/ok", json!({}));
+    let ok = rows.iter().find(|r| r["fact"] == "ok").unwrap();
+    assert_eq!(head(ok, 3), [0.0999755859375, 0.333251953125, 0.7001953125]);
+    assert_eq!(ok["embedding"].as_array().unwrap().len(), 1536);
+    assert_eq!(ok["embedding_model"], "m1");
+    assert_eq!(ok["embedded_text_hash"], "444bcb3a3fcf8389296c49467f27e1d6");
+    assert!(ok["embedded_at"].is_string());
+    // A vector with no model is kept, with no model and no hash, as PGLite keeps it.
+    let x = rows.iter().find(|r| r["fact"] == "x").unwrap();
+    assert_eq!(x["embedding_model"], Value::Null);
+    assert_eq!(x["embedded_text_hash"], Value::Null);
+    assert!(x["embedded_at"].is_string());
+
+    let refused = |embedding: &str| {
+        b.insert_fact(&args::<InsertFactArgs>(json!({ "sourceId": "default",
+            "input": { "fact": "bad", "source": "s", "embedding": embedding, "embedding_model": "m1" } })))
+            .unwrap_err()
+            .message
+    };
+    assert_eq!(refused("[1,2,3]"), "expected 1536 dimensions, not 3");
+    assert_eq!(
+        refused(&literal(&[70000.0])),
+        "\"70000\" is out of range for type halfvec"
+    );
+    assert_eq!(refused("[]"), "vector must have at least 1 dimension");
+}
+
+#[test]
+fn the_cosine_arm_ranks_comparable_vectors_by_halfvec_distance() {
+    let b = brain("facts-cosine");
+    for (fact, head, model) in [
+        ("far", vec![0.1, 1.0 / 3.0, 0.7], Some("m1")),
+        ("near", vec![0.3, 0.25, 0.05], Some("m1")),
+        ("other-model", vec![0.3, 0.2, 0.1], Some("m2")),
+        ("no-model", vec![0.3, 0.2, 0.1], None),
+    ] {
+        let mut input = json!({ "fact": fact, "source": "s", "entity_slug": "people/c",
+            "embedding": literal(&head) });
+        if let Some(model) = model {
+            input["embedding_model"] = json!(model);
+        }
+        insert(&b, input);
+        b.clock.advance(10);
+    }
+    let find = |model: &str, keyword: bool| {
+        b.find_candidate_duplicates(&args::<DuplicateQuery>(json!({ "sourceId": "default",
+            "entitySlug": "people/c", "k": 5, "keyword": keyword, "factText": "near far",
+            "embedding": literal(&[0.3, 0.2, 0.1]), "embeddingModel": model })))
+            .unwrap()
+    };
+    assert_eq!(facts(&find("m1", false)), ["near", "far"]);
+    assert_eq!(facts(&find("m2", false)), ["other-model"]);
+    assert!(find("", false).is_empty());
+    // The keyword arm keeps only the comparable rows.
+    assert_eq!(facts(&find("m1", true)).len(), 2);
+}
+
+#[test]
+fn a_trajectory_point_carries_its_vector_only_from_the_brain_model() {
+    let b = brain("facts-trajectory-vector");
+    b.set_config("embedding_model", "m").unwrap();
+    for (fact, model) in [("ARR 1", "m"), ("ARR 2", "other")] {
+        insert(
+            &b,
+            json!({ "fact": fact, "source": "s", "entity_slug": "companies/t", "claim_metric": "arr",
+                "claim_value": 1, "embedding": literal(&[0.1]), "embedding_model": model }),
+        );
+        b.clock.advance(10);
+    }
+    let points = b
+        .find_trajectory(&args::<TrajectoryQuery>(json!({ "sourceIds": ["default"],
+            "entitySlug": "companies/t", "worldOnly": false, "kind": "all", "limit": 10 })))
+        .unwrap();
+    assert_eq!(head(&points[0], 1), [0.0999755859375]);
+    assert_eq!(points[1]["embedding"], Value::Null);
+}
