@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 623/623
+# covered: 624/624
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -46,7 +46,7 @@
 # facts_purge: 13/13
 # facts_repair: 10/10
 # facts_trust: 8/8
-# trust_tier_reads: 8/8
+# trust_tier_reads: 9/9
 # raw_sql: 4/4
 # code_edges: 9/9
 # eval_capture: 5/5
@@ -74,17 +74,17 @@ transaction	lifecycle	yes	41	no	yes	yes	serves
 transactionDirect	lifecycle	yes	2	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	67	yes	yes	yes	serves
+getPage	pages	yes	70	yes	yes	yes	serves
 readPageSnapshot	pages	yes	17	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	283	yes	yes	yes	serves
+putPage	pages	yes	287	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	89	yes	yes	yes	serves
+softDeletePage	pages	yes	90	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -318,7 +318,7 @@ sweepSegments	segmented_body	yes	3	no	yes	yes	serves
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
-createVersion	versions	yes	8	no	yes	yes	serves
+createVersion	versions	yes	11	no	yes	yes	serves
 getVersions	versions	yes	5	no	yes	yes	serves
 revertToVersion	versions	yes	2	no	yes	yes	serves
 countOnboardSignal	stats_ingest	yes	2	no	yes	yes	serves
@@ -565,11 +565,12 @@ countDerivedFactTaint	facts_trust	yes	1	no	yes	yes	refuses:facts
 listCorePageRows	trust_tier_reads	yes	1	no	yes	yes	serves
 listTrustScanRows	trust_tier_reads	yes	2	no	yes	yes	serves
 countUnscannedTrustRows	trust_tier_reads	yes	2	no	yes	yes	serves
-readBeliefHistoryRows	trust_tier_reads	yes	1	no	yes	yes	refuses:belief_ledger
-listVisibleBeliefLifetimes	trust_tier_reads	yes	1	no	yes	yes	refuses:belief_ledger
+readBeliefHistoryRows	trust_tier_reads	yes	1	no	yes	yes	serves
+listVisibleBeliefLifetimes	trust_tier_reads	yes	1	no	yes	yes	serves
 listVersionTrustTiers	trust_tier_reads	yes	1	no	yes	yes	serves
 listVersionReasonWriters	trust_tier_reads	yes	1	no	yes	yes	serves
-pickValidTimeEdition	trust_tier_reads	yes	1	no	yes	yes	refuses:page_versions
+listValidTimeIdentities	trust_tier_reads	yes	1	no	yes	yes	serves
+pickValidTimeEdition	trust_tier_reads	yes	4	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 executeRaw	raw_sql	yes	2	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql

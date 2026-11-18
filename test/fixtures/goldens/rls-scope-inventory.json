@@ -4926,6 +4926,7 @@
         "listUnpreviewedTrustFacts": "none",
         "listUnreviewedJobs": "none",
         "listUnwithdrawnFacts": "none",
+        "listValidTimeIdentities": "none",
         "listVersionReasonWriters": "none",
         "listVersionTrustTiers": "none",
         "listVisibleBeliefLifetimes": "none",

@@ -1,7 +1,9 @@
 //! Typed reads of stamped trust tiers: `listCorePageRows`, `listTrustScanRows`,
-//! `countUnscannedTrustRows`, `listVersionTrustTiers` and `listVersionReasonWriters`.
+//! `countUnscannedTrustRows`, `listVersionTrustTiers`, `listVersionReasonWriters`, and the valid-time
+//! reads `listValidTimeIdentities` and `pickValidTimeEdition`.
 //!
-//! One `#[napi] impl Brain` block; each method runs one `gbrain_store::trust::tier_reads` call on
+//! One `#[napi] impl Brain` block; each method runs one `gbrain_store::trust::tier_reads` (or
+//! `trust::valid_time`) call on
 //! the pool through `Brain::run` and resolves plain JSON. The TypeScript members
 //! (src/core/rust-engine/store-members/trust-tier-reads.ts) refuse what the store cannot answer.
 
@@ -12,6 +14,7 @@ use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
 use gbrain_store::trust::tier_reads::{CorePageRowQuery, TrustScanQuery, VersionIdsQuery};
+use gbrain_store::trust::valid_time::{ValidTimeIdentityQuery, ValidTimePickQuery};
 
 #[napi]
 impl Brain {
@@ -77,6 +80,32 @@ impl Brain {
         self.run(env, move |s| {
             let a: VersionIdsQuery = required(args, "listVersionReasonWriters args")?;
             s.list_version_reason_writers(&a)
+        })
+    }
+
+    /// `listValidTimeIdentities(spec)`: resolves the live pages with a slug a valid-time read may follow.
+    #[napi]
+    pub fn list_valid_time_identities<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: ValidTimeIdentityQuery = required(spec, "listValidTimeIdentities spec")?;
+            s.list_valid_time_identities(&a)
+        })
+    }
+
+    /// `pickValidTimeEdition(spec)`: resolves `{ row, history_unpruned }` for one page.
+    #[napi]
+    pub fn pick_valid_time_edition<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: ValidTimePickQuery = required(spec, "pickValidTimeEdition spec")?;
+            s.pick_valid_time_edition(&a)
         })
     }
 }
