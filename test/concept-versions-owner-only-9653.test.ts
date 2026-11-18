@@ -81,4 +81,18 @@ for (const kind of testBackends()) describe(`#9653 owner-only lineage of archive
     expect(await read('bob-writer', 'revert_version', { slug: CONCEPT, version_id: Number(v1.id), dry_run: true })).toMatch(/not_found|not in the history/);
     expect(await read('owner-writer', 'revert_version', { slug: CONCEPT, version_id: Number(v1.id), dry_run: true })).toMatch(/dry_run/);
   }, 240_000);
+
+  test('a revert carries the version\'s inputs back, so the restored narrative stays owner-only', async () => {
+    const v1 = (await engine.getVersions(CONCEPT, { sourceId: OPEN })).find(v => String(v.compiled_truth).includes('canaryv1'))!;
+    const revision = (await engine.readPageSnapshot(CONCEPT, { sourceId: OPEN }))!.revision;
+    await read('owner-writer', 'revert_version', { slug: CONCEPT, version_id: Number(v1.id), expected_revision: revision });
+    expect((await engine.getPage(CONCEPT, { sourceId: OPEN }))?.compiled_truth).toContain('canaryv1');
+    expect(await lineage()).toBe(true);
+    expect((await read('bob', 'get_page', { slug: CONCEPT })).includes('canaryv1')).toBe(false);
+    await importFromContent(engine, CONCEPT, text('Harbor', 'Narrative v3 canaryv3 from atoms one to two.', 'concept'), { sourceId: OPEN, noEmbed: true });
+    await replaceConceptInputs(engine, OPEN, CONCEPT, ['atoms/harbor-1', 'atoms/harbor-2']);
+    expect(await lineage()).toBe(false);
+    await engine.revertToVersion(CONCEPT, Number(v1.id), { sourceId: OPEN });
+    expect(await lineage()).toBe(true);
+  }, 240_000);
 });

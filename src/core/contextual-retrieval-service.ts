@@ -313,9 +313,33 @@ export interface ReembedPageArgs {
 export async function reembedPageWithContextualRetrieval(
   args: ReembedPageArgs,
 ): Promise<ReembedPageResult> {
-  // #9715: a job queued before the owner turned embedding off sends nothing when it runs; an unreadable setting retries.
-  if (await embeddingSendBlocked(args.engine)) return await embeddingsDisabled(args.engine) ? { kind: 'skipped', reason: 'embedding_disabled' }
-    : { kind: 'transient_error', cause: 'db', detail: 'The embedding_disabled setting could not be read, so nothing was sent; the job retries.' };
+  try {
+    await assertEmbeddingSendAllowed(args.engine);
+    return await reembedPage(args);
+  } catch (err) {
+    if (err instanceof EmbeddingSendBlocked) return err.result;
+    throw err;
+  }
+}
+
+/** #9715: thrown before any provider send once embedding is off (skipped) or its setting cannot be read (retried). */
+class EmbeddingSendBlocked extends Error {
+  constructor(readonly result: ReembedPageResult) { super('embedding send blocked'); }
+}
+
+/** A job queued, or a page already in flight, when the owner turned embedding off sends nothing more. */
+async function assertEmbeddingSendAllowed(engine: BrainEngine): Promise<void> {
+  if (!await embeddingSendBlocked(engine)) return;
+  throw new EmbeddingSendBlocked(await embeddingsDisabled(engine) ? { kind: 'skipped', reason: 'embedding_disabled' }
+    : { kind: 'transient_error', cause: 'db', detail: 'The embedding_disabled setting could not be read, so nothing was sent; the job retries.' });
+}
+
+async function sendEmbeddings(engine: BrainEngine, texts: string[], abortSignal: AbortSignal | undefined): Promise<Float32Array[]> {
+  await assertEmbeddingSendAllowed(engine);
+  return embedBatch(texts, { abortSignal });
+}
+
+async function reembedPage(args: ReembedPageArgs): Promise<ReembedPageResult> {
   // ── Load page + source + chunks ────────────────────────────────────
   const initial = await args.engine.getPage(args.pageSlug, { sourceId: args.sourceId });
   if (!initial) {
@@ -578,7 +602,7 @@ async function reembedSegmentedPage(args: ReembedPageArgs, initial: Page): Promi
         const tier: EmbeddingTier = Array.isArray(synopsized) ? 'per_chunk_synopsis' : 'title';
         const inputTexts = Array.isArray(synopsized) ? synopsized : todo.map(c => wrapChunkForEmbedding(c.chunk_text, titlePrefix, c.chunk_source));
         try {
-          return { kind: 'built' as const, tier, fallback: Array.isArray(synopsized) ? null : synopsized.cause, vectors: await embedBatch(inputTexts, { abortSignal: args.abortSignal }) };
+          return { kind: 'built' as const, tier, fallback: Array.isArray(synopsized) ? null : synopsized.cause, vectors: await sendEmbeddings(args.engine, inputTexts, args.abortSignal) };
         } catch (err) {
           return classifyEmbedError(err, err instanceof Error ? err.message : String(err));
         }
@@ -680,7 +704,7 @@ async function tryBuildPhase1(opts: {
     );
 
     try {
-      const embeddings = await embedBatch(wrappedTexts, { abortSignal: args.abortSignal });
+      const embeddings = await sendEmbeddings(args.engine, wrappedTexts, args.abortSignal);
       return {
         kind: 'success',
         embeddedChunks: chunks.map((c, i) => ({
@@ -705,7 +729,7 @@ async function tryBuildPhase1(opts: {
 
   // All chunks synthesized successfully. Single batch embed (D27 P2-2).
   try {
-    const embeddings = await embedBatch(wrappedTexts, { abortSignal: args.abortSignal });
+    const embeddings = await sendEmbeddings(args.engine, wrappedTexts, args.abortSignal);
     return {
       kind: 'success',
       embeddedChunks: chunks.map((c, i) => ({
@@ -930,6 +954,7 @@ function sameProjection(prepared: ProjectionSnapshot, current: ProjectionSnapsho
 }
 
 function classifyEmbedError(err: unknown, detail: string): Phase1Transient | Phase1Permanent {
+  if (err instanceof EmbeddingSendBlocked) throw err;
   const e = err as { status?: number; code?: string; name?: string };
   if (e.status === 401 || e.status === 403) {
     return { kind: 'permanent', cause: 'embed', detail };

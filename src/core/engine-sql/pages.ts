@@ -1059,12 +1059,14 @@ const PAGE_VERSION_SEGMENTED_COLUMNS = trustedSql('pv.body_storage, pv.body_gene
  * pruned (`successor_pruned`: its visibility can no longer be checked, so the reason is withheld). The successor is
  * read over every snapshot of the page, never only the rows the reader may see. Shared by get_versions and get_page as_of.
  * GBRA-286: a successor snapshot that names readers the caller does not meet (GBRA-218 readable_by) withholds it too.
+ * #9653: so does a successor version the reader may not see (versionReadableSql: purge-marked, or owner-only lineage).
  */
 export function replacedBecauseSql(pv: string, excludePrivate: boolean): string {
-  if (!excludePrivate) return `${pv}.change_reason`;
+  const next = (readable: string) => `COALESCE((SELECT ${readable} FROM page_versions rb_next
+      WHERE rb_next.page_id = ${pv}.page_id AND rb_next.id > ${pv}.id ORDER BY rb_next.id LIMIT 1), true)`;
+  if (!excludePrivate) return `CASE WHEN ${next(versionReadableSql('rb_next', false))} THEN ${pv}.change_reason END`;
   return `CASE WHEN ${pv}.change_reason IS NULL OR COALESCE(${pv}.successor_pruned, false) THEN NULL
-    WHEN COALESCE((SELECT ${privateSnapshotFilterFragment('rb_next')} AND ${callerReadersAllowedSql('rb_next', 'snapshot')} FROM page_versions rb_next
-      WHERE rb_next.page_id = ${pv}.page_id AND rb_next.id > ${pv}.id ORDER BY rb_next.id LIMIT 1), true) THEN ${pv}.change_reason END`;
+    WHEN ${next(`${privateSnapshotFilterFragment('rb_next')} AND ${callerReadersAllowedSql('rb_next', 'snapshot')} AND ${versionReadableSql('rb_next', true)}`)} THEN ${pv}.change_reason END`;
 }
 
 /** GBRA-217: each version's parsed valid time (the shared normaliser), so a timeline reads in one get_versions call. */
@@ -1119,6 +1121,14 @@ export async function revertToVersion(
         AND (p.body_storage = 'segmented' OR pv.body_storage = 'segmented')
     `);
     if (segmented.length > 0) throw segmentedRevertRefusal(slug, versionId);
+    // #9653: the version's input edges come back with its content, so purge and owner-only lineage reach the live page.
+    await exec.run(sqlFragment`
+      INSERT INTO derivation_inputs(derived_table,derived_id,input_table,input_id,source_id)
+      SELECT 'pages', p.id::text, d.input_table, d.input_id, d.source_id
+      FROM pages p JOIN page_versions pv ON pv.page_id = p.id JOIN derivation_inputs d ON d.derived_table = 'page_versions' AND d.derived_id = pv.id::text
+      WHERE p.slug = ${slug} ${scope} AND pv.id = ${versionId} AND ${trustedSql(versionReadableSql('pv', false))}
+      ON CONFLICT DO NOTHING
+    `);
     // v0.31.8 (D12): two-branch. With opts.sourceId, scope BOTH the page lookup
     // AND the version reference. Without it, multi-source brains can revert
     // the wrong same-slug page.

@@ -602,6 +602,7 @@ test/publish-redact-unpushed-gst2988.test.ts
 test/purge-context-facts-8859.test.ts
 test/purge-expires-page-facts.test.ts
 test/purge-fact.test.ts
+test/purge-followups-9653.test.ts
 test/purge-global-marker.test.ts
 test/purge-missing-cache-6911.test.ts
 test/purge-name-stores-9068.test.ts

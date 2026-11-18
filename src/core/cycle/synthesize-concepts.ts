@@ -398,7 +398,7 @@ export async function runPhaseSynthesizeConcepts(
         && stripFenceSections(existing!.compiled_truth).trim() === deterministicNarrative(group).trim())) {
       skippedUnchanged.push(conceptSlug);
       // #9653: nor the input record an older version left naming former members.
-      if (!opts.dryRun) await writer.refreshInputs({ concept: group.conceptSlug, conceptSlug, atomSlugs: group.atomSlugs });
+      if (!opts.dryRun) await writer.refreshInputs({ concept: group.conceptSlug, conceptSlug, atomSlugs: group.atomSlugs, revision: existingSnapshot!.revision });
       // #7548: the cache skips the model, not the member provenance an unchanged concept may have lost.
       if (!opts.dryRun && !await conceptProvenanceCovers(engine, src, conceptSlug, group.atomSlugs)) {
         await writer.restoreProvenance({ concept: group.conceptSlug, conceptSlug, atomSlugs: group.atomSlugs, revision: existingSnapshot!.revision });

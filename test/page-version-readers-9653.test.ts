@@ -10,7 +10,7 @@ import { join, relative } from 'node:path';
 
 /** Readers that return a version's content or restore it into a live row: each applies versionReadableSql. */
 const FILTERED: Record<string, { reads: number; what: string }> = {
-  'src/core/engine-sql/pages.ts': { reads: 5, what: 'get_versions list and the engine revert' },
+  'src/core/engine-sql/pages.ts': { reads: 6, what: 'get_versions list and the engine revert' },
   'src/core/ops/valid-time-read.ts': { reads: 3, what: 'get_page as_of: a purge-marked edition reads as missing' },
   'src/core/belief/page-at-time.ts': { reads: 2, what: 'get_page / get_versions known_as_of bodies, and the remote read check' },
   'src/core/persistence/page-prepare.ts': { reads: 1, what: 'revert_version' },
@@ -34,7 +34,7 @@ const INTERNAL: Record<string, { reads: number; why: string }> = {
   'src/core/belief/purge.ts': { reads: 2, why: 'purge scrubs versions' },
   'src/core/cycle/synthesize-verify-epochs.ts': { reads: 1, why: 'verification epochs, no body returned' },
   'src/core/engine-sql/page-body.ts': { reads: 1, why: 'segment garbage collection' },
-  'src/core/facts/derivation-inputs.ts': { reads: 3, why: 'moves dropped inputs onto versions and marks hidden ones' },
+  'src/core/facts/derivation-inputs.ts': { reads: 4, why: 'moves dropped inputs onto versions, back onto a reverted page, and marks hidden ones' },
   'src/core/facts/fence-fact-append.ts': { reads: 1, why: 'count' },
   'src/core/facts/file-body-guard.ts': { reads: 1, why: 'compares a file with history; returns a verdict' },
   'src/core/facts/purge-reasons.ts': { reads: 1, why: 'purge redacts change reasons' },
@@ -66,6 +66,29 @@ const INTERNAL: Record<string, { reads: number; why: string }> = {
   'src/core/trust/provenance-drift.ts': { reads: 1, why: 'writer metadata' },
 };
 
+/**
+ * Every FILTERED reader that copies a version's content into a live row, and how that version's input edges follow it
+ * (carryVersionInputs, or the engine revert's own INSERT), so purge and owner-only lineage reach the restored page.
+ * A FILTERED reader missing here must be read-only.
+ */
+const COPIES: Record<string, { carries: RegExp; how: string }> = {
+  'src/core/engine-sql/pages.ts': { carries: /INSERT INTO derivation_inputs[\s\S]*'page_versions'/, how: 'revertToVersion inserts the version\'s edges' },
+  'src/core/persistence/page-prepare.ts': { carries: /revert_version'\) await carryVersionInputs\(/, how: 'revert_version publication; atoms-restore and the overwritten-edit repair publish through it' },
+  'src/core/trust/page-handlers.ts': { carries: /carryVersionInputs\(/, how: 'owner revert and the intent revert' },
+  'src/core/repair/lost-fence-rows.ts': { carries: /carryVersionInputs\(/, how: 'each version a restored row came from' },
+  'src/core/repair/accepted-takes.ts': { carries: /carryVersionInputs\(/, how: 'the version the take came from' },
+};
+const VIA_REVERT = ['src/core/repair/overwritten-edits.ts', 'src/core/repair/atoms-restore.ts'];
+const READ_ONLY = ['src/core/ops/valid-time-read.ts', 'src/core/belief/page-at-time.ts', 'src/core/context/proactive-brief.ts', 'src/core/persistence/overwritten-edits.ts'];
+
+/*
+ * Paths that put a page's earlier or other content onto a live page without reading page_versions keep the page id,
+ * so its edges (keyed by page id) follow: restore_page clears deleted_at on the same row, a rename (updateSlug) changes
+ * the slug of the same row, and a re-import upserts ON CONFLICT (source_id, slug) into the same row. No page merge or
+ * join operation exists. Only replacePages deletes a page's edges, after moving them onto the page's versions; the
+ * second test fails when any other file deletes edges.
+ */
+
 const ROOT = join(import.meta.dir, '..');
 const SKIP = /\/schema-migrations\/|generated\.ts$/;
 
@@ -86,4 +109,12 @@ test('every read of page_versions is listed, and every listed reader applies ver
   const listed = { ...FILTERED, ...INTERNAL };
   expect(Object.entries(listed).filter(([file, entry]) => reads.get(file) !== entry.reads).map(([file]) => file)).toEqual([]);
   expect(Object.keys(FILTERED).filter(file => !/\bversionReadableSql\(/.test(readFileSync(join(ROOT, file), 'utf8')))).toEqual([]);
+});
+
+test('every reader that copies a version into a live row carries its input edges', () => {
+  expect(Object.keys(FILTERED).filter(file => !(file in COPIES) && !VIA_REVERT.includes(file) && !READ_ONLY.includes(file))).toEqual([]);
+  expect(Object.entries(COPIES).filter(([file, entry]) => !entry.carries.test(readFileSync(join(ROOT, file), 'utf8'))).map(([file]) => file)).toEqual([]);
+  expect(VIA_REVERT.filter(file => !/revert_version/.test(readFileSync(join(ROOT, file), 'utf8')))).toEqual([]);
+  const deletes = sourceFiles(join(ROOT, 'src')).filter(path => /DELETE FROM derivation_inputs/.test(readFileSync(path, 'utf8'))).map(path => relative(ROOT, path));
+  expect(deletes).toEqual(['src/core/facts/derivation-inputs.ts']);
 });

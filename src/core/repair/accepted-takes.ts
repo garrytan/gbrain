@@ -44,6 +44,7 @@ import { setRowTier } from '../trust/page-handlers.ts';
 import { compareTrust, storedTrustTier, type TrustTier } from '../trust/tier.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairScope } from './core.ts';
 import { versionReadableSql } from '../search/private-visibility.ts';
+import { carryVersionInputs } from '../facts/derivation-inputs.ts';
 
 const DOCS = 'docs/guides/repair.md#accepted-takes';
 const COMMAND = 'gbrain repair accepted-takes';
@@ -162,6 +163,7 @@ async function restoreTake(engine: BrainEngine, ctx: Parameters<RepairHandler['a
   const rows = [...live.takes, take.row].sort((a, b) => a.rowNum - b.rowNum);
   const { beginIdx, endIdx } = locateOutsideCode(live.content, TAKES_FENCE_BEGIN, TAKES_FENCE_END);
   const content = live.content.slice(0, beginIdx) + renderTakesFence(rows, live.reserved.filter(n => n !== take.row_num)) + live.content.slice(endIdx + TAKES_FENCE_END.length);
+  await carryVersionInputs(engine, take.version_id);
   await submitPageMutation(ctx, { operation: 'put_page', params: { slug: take.slug, source_id: take.source_id, content, expected_revision: live.revision,
     request_id: await repairRequestId(ctx, 'accepted-takes', entry, live.revision) } });
   const [restored] = await engine.executeRaw<{ id: number; trust_tier: string }>('SELECT id::int AS id, trust_tier FROM takes WHERE page_id = $1 AND row_num = $2',

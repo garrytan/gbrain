@@ -20,12 +20,12 @@ import { isDbOnly, loadStorageConfig } from '../storage-config.ts';
 import { publishMaintenancePages, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import { withCoordinatedWrite } from '../persistence/context.ts';
 import { keepsCanonicalFile } from '../persistence/git-declared.ts';
-import { maintenanceAttribution } from '../persistence/attribution.ts';
+import { maintenanceAttribution, maintenanceTransaction } from '../persistence/attribution.ts';
 import { acquirePageLock } from '../page-lock.ts';
 import { derivedFileTarget, writeDerivedPageThrough } from './derived-write-through.ts';
 import { fileDatabaseDriftToken, replaceableFile } from '../facts/file-body-guard.ts';
 import { pageInputIds } from '../facts/derivation-inputs.ts';
-import { CONCEPT_DERIVATION_CHANNEL, declareDerivation, deriveTrust, lowerDerivedPage, lowerDerivedPageIn } from '../trust/taint.ts';
+import { CONCEPT_DERIVATION_CHANNEL, declareDerivation, deriveTrust, lowerDerivedPageIn } from '../trust/taint.ts';
 
 /** #5575 I2: the narrative carries the tier of the member atoms its prompt was built from (capped at agent_written). */
 const conceptDerivation = (engine: BrainEngine, sourceId: string, members: readonly string[]) =>
@@ -38,7 +38,7 @@ const conceptDerivation = (engine: BrainEngine, sourceId: string, members: reado
  * `managed` runs the write as a coordinated write, as the provenance links are.
  */
 export async function replaceConceptInputs(engine: BrainEngine, sourceId: string, slug: string, members: readonly string[],
-  opts: { managed?: boolean; onlyIfStale?: boolean } = {}): Promise<boolean> {
+  opts: { managed?: boolean; onlyIfStale?: boolean; expectedRevision?: string } = {}): Promise<boolean> {
   const derivation = await conceptDerivation(engine, sourceId, members);
   if (opts.onlyIfStale) {
     const page = await engine.getPage(slug, { sourceId });
@@ -47,14 +47,18 @@ export async function replaceConceptInputs(engine: BrainEngine, sourceId: string
     const current = new Set(derivation.inputs.filter(input => input.table === 'pages').map(input => String(input.id)));
     if (recorded.length === current.size && recorded.every(id => current.has(id))) return false;
   }
-  if (!opts.managed) {
-    await lowerDerivedPage(engine, derivation, sourceId, slug, { replacePages: true });
+  const write = async (tx: BrainEngine): Promise<boolean> => {
+    if (opts.expectedRevision !== undefined) {
+      const [current] = await tx.executeRaw<{ revision: string }>(
+        'SELECT knowledge_revision::text AS revision FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL FOR SHARE', [sourceId, slug]);
+      if (!current || current.revision !== opts.expectedRevision) return false;
+    }
+    await lowerDerivedPageIn(tx, derivation, sourceId, slug, { replacePages: true });
     return true;
-  }
+  };
+  if (!opts.managed) return maintenanceTransaction(engine, write, derivation.trust);
   const attribution = await maintenanceAttribution(engine);
-  await engine.transaction(tx => withCoordinatedWrite(tx, [sourceId],
-    () => lowerDerivedPageIn(tx, derivation, sourceId, slug, { replacePages: true }), { ...attribution, trust: derivation.trust }));
-  return true;
+  return engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], () => write(tx), { ...attribution, trust: derivation.trust }));
 }
 
 /** Error code for a concept held because republication could lose canonical material. */

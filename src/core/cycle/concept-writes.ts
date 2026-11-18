@@ -162,9 +162,9 @@ export function conceptWriter(deps: ConceptWriterDeps) {
     /** #7548: an unchanged concept whose edges no longer reach every member banks them again, with no publication. */
     restoreProvenance: bankLinks,
     /** #9653: an unchanged concept whose input record names atoms outside its current members gets that record replaced, with no publication. */
-    async refreshInputs(write: Pick<ConceptWrite, 'concept' | 'conceptSlug' | 'atomSlugs'>): Promise<boolean> {
+    async refreshInputs(write: Pick<ConceptWrite, 'concept' | 'conceptSlug' | 'atomSlugs'> & { revision: string }): Promise<boolean> {
       try {
-        return await replaceConceptInputs(engine, src, write.conceptSlug, write.atomSlugs, { managed: !!maintenance, onlyIfStale: true });
+        return await replaceConceptInputs(engine, src, write.conceptSlug, write.atomSlugs, { managed: !!maintenance, onlyIfStale: true, expectedRevision: write.revision });
       } catch (err) {
         deps.linkWarnings.push({ concept: write.concept, warning: `input record refresh failed: ${err instanceof Error ? err.message : String(err)}` });
         return false;

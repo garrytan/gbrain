@@ -62,6 +62,7 @@ import { propagateTierLowering } from './propagation.ts';
 import { beliefStreamSlugs, lockedBeliefBatch } from '../belief/writers.ts';
 import { markBeliefCommits } from '../belief/append.ts';
 import { versionReadableSql } from '../search/private-visibility.ts';
+import { carryVersionInputs } from '../facts/derivation-inputs.ts';
 
 /** The journaled operation that publishes an owner page action on a managed brain. */
 export const TRUST_OWNER_PAGE_OPERATION = 'trust_owner_page';
@@ -333,6 +334,7 @@ export async function revertPageToVersion(engine: BrainEngine, input: PageAction
   const version = await readPageVersion(engine, state.pageId, input.versionId);
   if (!version) throw opError('not_found', `Version ${input.versionId} is not in the history of ${ref}.`, `List the page's versions with gbrain history ${input.slug} and pass one of their ids to --version.`);
   const tier = versionTier(version);
+  await carryVersionInputs(engine, input.versionId);
   await publishOwnerPage(engine, input, { mode: 'revert', expected_revision: input.expectedRevision, version_id: input.versionId, via: input.confirmation.via, proposal: input.proposal },
     versionMarkdown(state.snapshot, version), tier);
   return { status: 'reverted', ref, tier, prior_tier: state.tier, version_id: input.versionId };
@@ -492,6 +494,7 @@ export async function prepareTrustOwnerPageMutation(engine: BrainEngine, row: Wr
   if (intent.mode === 'revert') {
     const version = Number.isSafeInteger(intent.version_id) ? await readPageVersion(engine, state.pageId, intent.version_id!) : null;
     if (!version) throw opError('not_found', `Version ${String(intent.version_id)} is not in the history of ${ref}.`, `List versions with gbrain history ${row.slug}.`);
+    await carryVersionInputs(engine, Number(version.id));
     content = versionMarkdown(state.snapshot, version);
     tags = version.tags ?? undefined;
     tier = versionTier(version);

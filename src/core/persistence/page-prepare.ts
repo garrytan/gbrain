@@ -113,6 +113,7 @@ import { skipsGuestNote } from '../guests/derived.ts';
 import { NOT_A_GUEST_WRITE, prepareGuestWrite, type GuestWrite } from '../guests/publication.ts';
 import { clearOwedPurges } from './derived-origin-hold.ts';
 import { versionReadableSql } from '../search/private-visibility.ts';
+import { carryVersionInputs } from '../facts/derivation-inputs.ts';
 
 
 const ownerStatusFix = (sourceId: string): Action => readFix(`Shows source ${sourceId}'s canonical owner with its pending, failed and recovering requests, read-only.`,
@@ -1311,6 +1312,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
       // GST-2518: a write that only widened labels publishes nothing once they are kept; its request still reaches the owner.
       lowered = await recordAgentPageLowering(tx, row, { tier: labelGuard.tier ?? storedTier!, revision: snapshot.revision, pageTier: storedTier }, undefined, heldLabels);
     }
+    if (!noop && row.operation === 'revert_version') await carryVersionInputs(tx, Number(p.version_id));
     const coreUsage = core?.usage();
     const gate = noop ? undefined : gateField(ready.result.gate, `p:${row.source_id}/${row.slug}`, null);
     // #6722: a large or embed_skip page says what this write left its embedding in.

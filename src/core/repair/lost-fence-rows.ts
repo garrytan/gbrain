@@ -42,6 +42,7 @@ import { setRowTier } from '../trust/page-handlers.ts';
 import { compareTrust, isTrustTier, storedTrustTier, type TrustTier } from '../trust/tier.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairScope } from './core.ts';
 import { versionReadableSql } from '../search/private-visibility.ts';
+import { carryVersionInputs } from '../facts/derivation-inputs.ts';
 
 const DOCS = 'docs/guides/repair.md#lost-fence-rows';
 const COMMAND = 'gbrain repair lost-fence-rows';
@@ -259,6 +260,7 @@ export const lostFenceRowsRepair: RepairHandler = {
     if (!now || now.revision !== page.revision || stableJson(now.rows) !== stableJson(page.rows)) return changed('the page or its lost rows changed since the preview');
     const planned = await plannedPage(ctx.engine, page);
     if (typeof planned === 'string') return changed(planned);
+    for (const versionId of new Set(page.rows.map(row => row.version_id))) await carryVersionInputs(ctx.engine, versionId);
     try {
       await submitPageMutation(ctx, { operation: 'put_page', params: { slug: page.slug, source_id: page.source_id, content: planned.content, expected_revision: page.revision,
         request_id: await repairRequestId(ctx, 'lost-fence-rows', entry, page.revision) } });

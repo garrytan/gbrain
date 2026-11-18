@@ -75,6 +75,24 @@ for (const backend of testBackends()) {
       });
     }, 120_000);
 
+    test('a contextual reindex already past its first check sends nothing once the setting is turned on', async () => {
+      await world(databaseUrl, async engine => {
+        await stalePage(engine, 'notes/inflight');
+        await engine.setConfig('search.contextual_retrieval', 'title');
+        const original = engine.getPage.bind(engine);
+        let reads = 0;
+        engine.getPage = (async (...args: Parameters<BrainEngine['getPage']>) => {
+          if (++reads === 2) await engine.setConfig('embedding_disabled', 'true');
+          return original(...args);
+        }) as BrainEngine['getPage'];
+        try {
+          expect(await makeContextualReindexHandler({ engine })(job('notes/inflight'))).toMatchObject({ ok: true, chunks_embedded: 0, skip_reason: 'embedding_disabled' });
+        } finally { engine.getPage = original; }
+        expect(reads).toBeGreaterThanOrEqual(2);
+        expect(sent).toEqual([]);
+      });
+    }, 120_000);
+
     test('a contextual reindex that cannot read the setting sends nothing and retries', async () => {
       await world(databaseUrl, async engine => {
         await stalePage(engine, 'notes/queued');
