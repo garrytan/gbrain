@@ -117,7 +117,8 @@ impl PartialEq<String> for PageText {
 /// Nullable columns (shared item 12): `compiled_truth` and `timeline` are [`PageText`], NULL exactly on a segmented
 /// shell page. `content_hash` is `None` on a segmented shell page until its body is published, as PGLite's
 /// `createSegmentedPageShell` leaves it; `put_page` always sets it. `chunker_version` is `None` when the store has not
-/// recorded one: `put_page` keeps the stored value and sets none on a new page, and it is not part of `to_page`
+/// recorded one (the safe-chunks fence reads that as unsafe, as SQL reads NULL): `put_page` keeps the stored value and
+/// sets none on a new page, chunk writes stamp it (4 on seal, -1 when they change chunks), and it is not part of `to_page`
 /// (PGLite's `rowToPage` leaves it out). Each new field reads as NULL from a record written before it existed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct PageRecord {

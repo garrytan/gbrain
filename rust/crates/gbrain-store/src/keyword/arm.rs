@@ -432,10 +432,10 @@ mod tests {
         );
     }
 
-    /// `requiresSafeChunks`: a page whose recorded chunker version is below the safe fence chunker is hidden; a page
-    /// with no recorded version (this store's own chunker) and a page at the safe version are kept.
+    /// `requiresSafeChunks` (`chunker_version >= 4`): a page whose recorded chunker version is below the safe fence
+    /// chunker, or that records none (the comparison is NULL), is hidden; only a page at the safe version is kept.
     #[test]
-    fn require_safe_chunks_drops_only_a_page_recorded_below_the_safe_chunker() {
+    fn require_safe_chunks_keeps_only_a_page_recorded_at_the_safe_chunker() {
         let store = crate::test_support::store();
         put(&store, "notes/none", "heron");
         put(&store, "notes/three", "heron");
@@ -466,10 +466,7 @@ mod tests {
             v
         };
         assert_eq!(top(json!({})), ["notes/four", "notes/none", "notes/three"]);
-        assert_eq!(
-            top(json!({ "requireSafeChunks": true })),
-            ["notes/four", "notes/none"]
-        );
+        assert_eq!(top(json!({ "requireSafeChunks": true })), ["notes/four"]);
         assert_eq!(
             top(json!({ "requireSafeChunks": false })),
             ["notes/four", "notes/none", "notes/three"]

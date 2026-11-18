@@ -19,7 +19,10 @@
 //! served-projection filter makes. See rust/docs/store/chunk_queries.md.
 
 use crate::Store;
-use crate::chunks::{ChunkRecord, SegmentView, read_chunks, read_segment_view, visible_chunks};
+use crate::chunks::{
+    ChunkRecord, SAFE_FENCE_CHUNKER_VERSION, SegmentView, read_chunks, read_segment_view,
+    visible_chunks,
+};
 use crate::error::Result;
 use crate::kv::KvRead;
 use crate::pages::{PageRecord, all_pages, find_in_scope, read_page_by_id};
@@ -34,9 +37,6 @@ const DEFAULT_CHUNKLESS_BATCH: u64 = 50;
 const QUARANTINE_KEY: &str = "quarantine";
 /// The frontmatter key that marks a page whose chunks get no vectors.
 const EMBED_SKIP_KEY: &str = "embed_skip";
-/// `SAFE_FENCE_CHUNKER_VERSION` (`src/core/search/safe-chunks.ts`): a page chunked at this version
-/// or later has sealed chunks.
-const SAFE_FENCE_CHUNKER_VERSION: i16 = 4;
 
 /// True for a segmented shell page: its body columns are NULL.
 fn segmented(page: &PageRecord) -> bool {
@@ -272,13 +272,9 @@ impl Store {
             {
                 continue;
             }
-            // `sealed`: `COALESCE(chunker_version, 0) >= SAFE_FENCE_CHUNKER_VERSION`. A store page
-            // with no recorded version was chunked by this store's chunker, which seals; a segmented
-            // shell records the version PGLite caps below the safe one. Only a sealed page gives
-            // chunk rows.
-            let page_sealed = page
-                .chunker_version
-                .is_none_or(|v| v >= SAFE_FENCE_CHUNKER_VERSION);
+            // `sealed`: `COALESCE(chunker_version, 0) >= SAFE_FENCE_CHUNKER_VERSION`: a page that records no version is
+            // not sealed. Only a sealed page gives chunk rows.
+            let page_sealed = page.chunker_version.unwrap_or(0) >= SAFE_FENCE_CHUNKER_VERSION;
             // `chunkGenerationFilter`: only the live body's chunks answer, and bound the page's max index.
             let view = read_segment_view(&*read, page.id)?;
             let chunks: Vec<ChunkRecord> = read_chunks(&*read, page.id)?

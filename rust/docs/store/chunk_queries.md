@@ -82,9 +82,10 @@ given, at most `batchSize` rows (default 50). A negative or fractional `batchSiz
 
 ## Known differences
 
-- A store page that records no `chunker_version` reads `sealed: true`. A Postgres page whose current projection
-  predates the protected-body fence reads `sealed: false` there. The store has no such pages: it was created after
-  the fence.
+- `sealed` is `COALESCE(chunker_version, 0) >= 4`, as in SQL: a page with no recorded version reads `sealed: false`.
+  `sealChunks` (and a put that chunks the page) stamps version 4, even for an empty chunk list; an `upsertChunks`
+  that changes a chunk (text, source or modality, a given metadata value, or an added or dropped index) stamps -1,
+  and one that repeats the stored chunks leaves the stamp, as `chunkWriteInvalidations` does.
 - The activation sentinel revision (`ACTIVATION_SERVED_REVISION`) of the served-projection filter does not exist in
   the store.
 

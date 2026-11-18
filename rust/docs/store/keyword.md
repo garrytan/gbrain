@@ -68,8 +68,9 @@ store keeps no `derivation_inputs`, so a page that only that table ties to an ow
 engine serves no source delete, `deletePages` or `purgeDeletedPages` yet (they refuse with `engine_capability_missing`),
 so `deletePage` is the one path that deletes an owner-only page here.
 
-The safe-chunks rule drops a page whose recorded `chunker_version` is below the safe fence chunker (4). A page with no
-recorded version was chunked by this store's chunker, which seals, so it is kept (as `chunk_queries.md` reads it).
+The safe-chunks rule keeps a page only when its recorded `chunker_version` is at least the safe fence chunker (4), as
+SQL's `chunker_version >= 4`: a page with no recorded version is dropped too (the comparison is NULL). The store stamps
+4 when `sealChunks` or a put seals a page's chunks and -1 when a later `upsertChunks` changes them (`chunk_queries.md`).
 
 This store keeps no slug aliases or rename history (the aliases family is not served), so the origin checks of the
 policy read those lookups as empty. When the aliases family lands, `facts/privacy.rs` reads them as PGLite does.
