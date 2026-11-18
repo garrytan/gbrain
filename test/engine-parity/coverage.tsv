@@ -6,9 +6,9 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 199/199
+# covered: 200/200
 # lifecycle: 9/9
-# pages: 24/24
+# pages: 25/25
 # search: 7/7
 # chunks: 17/17
 # extraction: 7/7
@@ -45,13 +45,13 @@ getPage	pages	yes	30	yes	yes	yes	serves
 readPageSnapshot	pages	yes	6	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	refuses:pages
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	90	yes	yes	yes	serves
+putPage	pages	yes	91	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	refuses:pages
 findDuplicatePages	pages	yes	1	no	yes	yes	refuses:pages
 deletePage	pages	yes	3	yes	yes	yes	serves
 deletePages	pages	yes	1	yes	yes	yes	refuses:pages
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	refuses:pages
-softDeletePage	pages	yes	17	yes	yes	yes	serves
+softDeletePage	pages	yes	18	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	refuses:pages
 restorePage	pages	yes	6	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	1	no	yes	yes	refuses:pages
@@ -60,6 +60,7 @@ findPages	pages	yes	1	no	yes	yes	refuses:pages
 countPagesBy	pages	yes	1	no	yes	yes	refuses:pages
 resolveSlugs	pages	yes	2	no	yes	yes	serves
 getAllSlugs	pages	yes	4	no	yes	yes	refuses:pages
+listEntityKeyRows	pages	yes	1	no	yes	yes	refuses:pages
 listAllPageRefs	pages	yes	1	yes	yes	yes	refuses:pages
 listAllSources	pages	yes	2	no	yes	yes	serves
 updateSourceConfig	pages	yes	1	no	yes	yes	serves

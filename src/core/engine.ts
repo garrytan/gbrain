@@ -3,6 +3,7 @@ import type { EngineCapabilities } from './engine-capabilities.ts';
 import type { OwnerOnlyTriggerState } from './access/owner-only-marks.ts';
 import type { GetVersionsOpts, PageVersionRows } from './page-state/version-types.ts';
 import type { PageSnapshotBatch } from './page-snapshot-batch.ts';
+import type { EntityKeyRow, EntityKeyRowsOpts } from './engine-sql/entity-keys.ts';
 import type { LinkReadScope } from './link-validity.ts';
 import type { ChunkWindowRequest, ChunkWindowOpts, ChunkWindowPage } from './search/chunk-windows.ts';
 import type { KeywordPageWindow } from './search/keyword-statement.ts';
@@ -1111,6 +1112,9 @@ export interface BrainEngine {
    * slugs across every source (pre-v0.31.8 behavior).
    */
   getAllSlugs(opts?: { sourceId?: string }): Promise<Set<string>>;
+
+  /** Duplicate finder: live, unretired pages of these types in unarchived sources with only the named frontmatter keys, keyset-paged by (source_id, slug) (SQL in engine-sql/entity-keys.ts). */
+  listEntityKeyRows(opts: EntityKeyRowsOpts): Promise<EntityKeyRow[]>;
 
   /**
    * v0.32.8: cross-source page enumeration. Returns one row per (slug,

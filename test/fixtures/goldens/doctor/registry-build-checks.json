@@ -1223,6 +1223,10 @@
       },
       {
         "category": "brain",
+        "name": "entity_duplicates"
+      },
+      {
+        "category": "brain",
         "name": "local_edit_adoptions"
       },
       {

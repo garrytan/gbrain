@@ -67,12 +67,23 @@ function parseRescopeGrantFlags(args: string[]): RescopeGrantArgs {
         result.expectedRevision = Number(value);
         break;
       case '--private-pages': result.patch.privatePages = parsePrivatePagesFlag(value); break;
+      case '--read-shared': result.patch.readShared = parseReadSharedFlag(value); break;
       case '--private-facts': result.patch.privateFacts = parsePrivateFactsFlag(value); break;
       default: throw new GrantError('invalid_grant', `Unknown flag: ${flag}`);
     }
   }
   assertProfileKept(result, '--allowed-operations all');
   return result;
+}
+
+/**
+ * GST-2898: `--read-shared on|off`, also read every shared source, now and later. A required value, so the rescope
+ * parser (which takes the next argument for every non-boolean flag) never misreads what follows.
+ */
+export function parseReadSharedFlag(value: string): boolean {
+  if (value === 'on') return true;
+  if (value === 'off') return false;
+  throw new GrantError('invalid_grant', '--read-shared must be on or off');
 }
 
 /** `--private-pages granted-sources|none` (GBRA-156). */

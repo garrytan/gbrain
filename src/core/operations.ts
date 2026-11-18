@@ -134,6 +134,7 @@ import { trustOperations } from './ops/trust.ts';
 import { wakeshiftOperations } from './ops/wakeshift.ts';
 import { findPagesOperations } from './ops/find-pages.ts';
 import { storageManifestOperations } from './ops/storage-manifest.ts';
+import { secretsOperations } from './ops/secrets.ts';
 
 // parseTtlParam moved to ops/facts.ts with the facts cluster; the `remember`
 // verb (verbs.ts) loads it from THIS module at runtime — re-exported so every
@@ -183,7 +184,7 @@ export const operations: Operation[] = [
   // Usage accounting (get_usage, #4218) — ops/usage.ts
   ...usageOperations,
   // Files (file_list, file_upload, file_url) — ops/files.ts
-  ...filesOperations, ...storageManifestOperations,
+  ...filesOperations, ...storageManifestOperations, ...secretsOperations,
   // Jobs (Minions: submit_job, get_job, list_jobs, cancel_job, retry_job,
   // get_job_progress, pause_job, resume_job, replay_job, send_job_message)
   // + v0.38 Slice 3 agent lane (submit_agent, get_agent_job) — ops/jobs.ts; Wakeshift watches (watch_job, watch_write_request, watch_cron, list_watches, unwatch, accept_wakeshift_terms) — ops/wakeshift.ts

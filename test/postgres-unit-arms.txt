@@ -138,6 +138,7 @@ test/engine-parity/takes.test.ts
 test/engine-parity/timeline.test.ts
 test/engine-parity/versions-raw.test.ts
 test/engine-sql-facts-keyset.test.ts
+test/entity-duplicates-finder.test.ts
 test/extract-all-stamp-intersection.serial.test.ts
 test/extract-atoms-concurrent-run-7923.test.ts
 test/extract-atoms-input-truncated-6503.test.ts
@@ -581,6 +582,7 @@ test/privacy-label-ignored.test.ts
 test/projection-rebuild-progress-9192.test.ts
 test/provenance-drift-7891.test.ts
 test/provenance-stamps-7873.test.ts
+test/publish-redact-unpushed-gst2988.test.ts
 test/purge-context-facts-8859.test.ts
 test/purge-expires-page-facts.test.ts
 test/purge-fact.test.ts
@@ -677,6 +679,7 @@ test/search-vector-scope-parity.test.ts
 test/search/page-rank-cut.test.ts
 test/search/rerank-gate-hybrid.test.ts
 test/search/rerank-gate-telemetry.test.ts
+test/secret-store.test.ts
 test/segmented-untiled-hold-gst1209.test.ts
 test/serve-head-watcher-managed.serial.test.ts
 test/serve-http-access.test.ts
