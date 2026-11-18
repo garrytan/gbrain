@@ -92,7 +92,7 @@ public final class SendService {
         defer { stateLock.unlock() }
         do {
             state = try store.load() ?? state
-            guard state.enabled else { return }
+            guard state.enabled, !switchedOn() else { return }
             state.enabled = false
             try store.save(state)
         } catch {
@@ -139,7 +139,8 @@ public final class SendService {
     func serially(_ send: SendRequest, key: String, signer: SendKey, peer: UInt32) -> SendReply {
         let limits: SendLimits
         do {
-            let state = try store.load() ?? SendState()
+            var state = try store.load() ?? SendState()
+            observeKill(&state)
             guard state.enabled, switchedOn() else { return fail(.sendDisabled) }
             guard state.keys.contains(signer) else { return fail(.unknownSendKey) }
             limits = state.limits

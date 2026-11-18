@@ -290,7 +290,7 @@ final class Harness {
         #expect(h.send(h.request(h.body())).json["replayed"] as? Bool == true)
     }
 
-    func queuedSecondSend(_ change: (Harness) -> Void) -> (first: Int, second: [String: Any], sent: Int) {
+    func queuedSecondSend(_ change: (Harness) -> Void) -> (first: Int, second: [String: Any], sent: Int, enabled: Bool?) {
         let h = Harness()
         h.messages.gate = DispatchSemaphore(value: 0)
         let group = DispatchGroup()
@@ -320,7 +320,7 @@ final class Harness {
         h.messages.gate?.signal()
         h.messages.gate?.signal()
         group.wait()
-        return (first, second.json, h.messages.count)
+        return (first, second.json, h.messages.count, h.store.state?.enabled)
     }
 
     @Test func queuedSendsStopWhenSendingIsTurnedOff() {
@@ -328,6 +328,7 @@ final class Harness {
         #expect(off.first == 200)
         #expect(off.second["code"] as? String == "send_disabled")
         #expect(off.sent == 1)
+        #expect(off.enabled == false)
         let other = Base64URL.encode(Array(Curve25519.Signing.PrivateKey().publicKey.rawRepresentation))
         let replaced = queuedSecondSend { $0.store.state?.keys = [SendKey(name: "box", publicKey: other)] }
         #expect(replaced.second["code"] as? String == "unknown_send_key")
