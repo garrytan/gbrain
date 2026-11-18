@@ -536,10 +536,10 @@ export async function runImport(
         return runImport(engine, args, opts);
       }, { signal });
     } catch (error) {
-      // Root discovery is part of admission. Preserve the CLI/library's typed
-      // preflight error contract without changing errors from an import in flight.
+      // Root discovery is part of admission. Preserve the typed preflight error contract without changing errors from an
+      // import in flight. An engine that lacks an admission member keeps its own typed refusal, so --json names it.
       if (entered || signal?.aborted) throw error;
-      throw lockAdmissionAbort(dirArg, dir, error);
+      throw error instanceof OperationError && error.code === 'engine_capability_missing' ? error : lockAdmissionAbort(dirArg, dir, error);
     }
   }
 

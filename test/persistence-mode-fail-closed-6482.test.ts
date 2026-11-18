@@ -107,6 +107,23 @@ describe('connector entry paths on an impossible read', () => {
   afterAll(async () => { await engine.disconnect(); });
   beforeEach(async () => { await resetPgliteState(engine); });
 
+  test('a Rust brain answers the singleton a fresh SQL brain stores, through its brain id and no SQL', async () => {
+    const sql = await readPersistenceBrain(engine);
+    const statements: string[] = [];
+    const rust = { kind: 'rust', readPersistenceBrainId: async () => 'rust-brain-id',
+      readManagedModeRows: async () => [{ enabled: false }],
+      executeRaw: async (text: string) => { statements.push(text); throw new Error('a Rust brain has no SQL'); } } as unknown as SqlEngine;
+    const expected = { ...sql, brain_id: 'rust-brain-id' };
+    expect(await readPersistenceBrain(rust)).toEqual(expected);
+    expect(await readPersistenceBrain(rust, { lock: 'share' })).toEqual(expected);
+    expect(await inspectPersistenceBrain(rust)).toEqual({ row: expected, problem: null });
+    expect(await readManagedMode(rust)).toBe(false);
+    expect(statements).toEqual([]);
+    // Without a brain id the singleton is missing, and the strict reader refuses as it does on a SQL brain.
+    const blank = { ...rust, readPersistenceBrainId: async () => null } as unknown as SqlEngine;
+    await expect(readPersistenceBrain(blank)).rejects.toMatchObject({ code: 'storage_error' });
+  });
+
   /** The real engine, except that the mode read answers `rows`; every statement after the mode read is recorded. */
   function misreading(rows: readonly unknown[]) {
     const after: string[] = [];
