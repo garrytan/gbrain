@@ -178,6 +178,31 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
       });
     }, 120_000);
 
+    test('a restore binds each occurrence to the page that holds its slug, never to whatever page has the backed-up page id, so a later purge removes it', async () => {
+      await brain(async b => {
+        const bucket = mkdtempSync(join(tmpdir(), 'gbrain-ss-rebuild-bucket-'));
+        try {
+          const storage = await createStorage({ backend: 'local', bucket: 'b', localPath: bucket });
+          const slug = `notes/rebuilt-${randomUUID().slice(0, 6)}`, unrelated = `notes/unrelated-${randomUUID().slice(0, 6)}`;
+          await b.engine.putPage(slug, { type: 'note', title: 'Rebuilt', compiled_truth: 'Rebuilt.', timeline: '', frontmatter: {} }, { sourceId: b.sourceId });
+          const pageId = async (s: string) => (await b.engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id = $1 AND slug = $2', [b.sourceId, s]))[0]!.id;
+          const oldId = await pageId(slug);
+          const id = (await seal(b.engine, { sourceId: b.sourceId, rule: 'github_token', value: value(`rebuilt${randomUUID().slice(0, 6)}`) })).id;
+          await recordOccurrence(b.engine, { entryId: id, sourceId: b.sourceId, pageId: oldId, slug, field: 'compiled_truth', origin: 'repair' });
+          const out = await backupStore(b.engine, storage);
+          await b.engine.deletePages([slug], { sourceId: b.sourceId });
+          await b.engine.putPage(unrelated, { type: 'note', title: 'Unrelated', compiled_truth: 'Unrelated.', timeline: '', frontmatter: {} }, { sourceId: b.sourceId });
+          await b.engine.executeRaw('UPDATE pages SET id = $3 WHERE source_id = $1 AND slug = $2', [b.sourceId, unrelated, oldId]);
+          await b.engine.putPage(slug, { type: 'note', title: 'Rebuilt', compiled_truth: 'Rebuilt.', timeline: '', frontmatter: {} }, { sourceId: b.sourceId });
+          expect(await restoreBackup(b.engine, storage, out.object)).toMatchObject({ skipped_no_page: 0 });
+          const [occ] = await b.engine.executeRaw<{ page_id: number | null }>('SELECT page_id FROM secret_store_occurrence WHERE entry_id = $1', [id]);
+          expect(occ!.page_id).toBe(await pageId(slug));
+          await b.engine.deletePages([slug], { sourceId: b.sourceId });
+          expect((await b.engine.executeRaw('SELECT 1 FROM secret_store WHERE id = $1', [id])).length).toBe(0);
+        } finally { rmSync(bucket, { recursive: true, force: true }); }
+      });
+    }, 120_000);
+
     test('doctor counts sealed originals no page or commit references', async () => {
       await brain(async b => {
         const ctx = { engine: b.engine, remote: true, progress: { heartbeat() {} } } as unknown as DoctorContext;

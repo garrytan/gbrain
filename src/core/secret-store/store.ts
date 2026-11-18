@@ -218,7 +218,9 @@ export async function allOccurrenceRows(engine: BrainEngine): Promise<BackupOccu
  * every occurrence was on pages this brain does not hold is not written (`skipped_no_page`): the page was purged, or is
  * not synced yet, and a restore cannot tell which, so it never brings back an original a page purge removed. Sync the
  * pages, then run the same restore again; it adds what it skipped. An
- * occurrence's page_id is kept only when that page still exists; entries of a source this brain no longer has are skipped.
+ * occurrence's page_id is the id of the page that holds its slug in the source now, never the backed-up number (a
+ * rebuilt brain numbers its pages in another order, and the purge cascade trusts page_id); entries of a source this
+ * brain no longer has are skipped.
  */
 export async function insertBackupRows(engine: BrainEngine, entries: BackupEntryRow[], occurrences: BackupOccurrenceRow[]): Promise<{ entries: number; occurrences: number; skipped_no_page: number }> {
   let written = 0, occ = 0, skippedNoPage = 0;
@@ -242,9 +244,9 @@ export async function insertBackupRows(engine: BrainEngine, entries: BackupEntry
       written++;
       for (const o of own) {
         occ += (await tx.executeRaw(`INSERT INTO secret_store_occurrence (entry_id,source_id,page_id,slug,field,origin,commit_sha,path,line,pre_field_sha256,created_by,created_at)
-          SELECT $1,$2,(SELECT id FROM pages WHERE id=$3),$4,$5,$6,$7,$8,$9,$10,$11,$12::timestamptz
-          WHERE $7::text IS NOT NULL OR $4::text IS NULL OR EXISTS (SELECT 1 FROM pages p WHERE p.source_id=$2 AND p.slug=$4) RETURNING 1`,
-        [o.entry_id, o.source_id, o.page_id, o.slug, o.field, o.origin, o.commit_sha, o.path, o.line, o.pre_field_sha256, o.created_by, o.created_at])).length;
+          SELECT $1,$2,(SELECT id FROM pages WHERE source_id=$2 AND slug=$3),$3,$4,$5,$6,$7,$8,$9,$10,$11::timestamptz
+          WHERE $6::text IS NOT NULL OR $3::text IS NULL OR EXISTS (SELECT 1 FROM pages p WHERE p.source_id=$2 AND p.slug=$3) RETURNING 1`,
+        [o.entry_id, o.source_id, o.slug, o.field, o.origin, o.commit_sha, o.path, o.line, o.pre_field_sha256, o.created_by, o.created_at])).length;
       }
     }
   });
