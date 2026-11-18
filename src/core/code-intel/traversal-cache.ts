@@ -24,6 +24,7 @@
  * justify it; see `OPTS.useSnapshotIsolation`.
  */
 import type { BrainEngine } from '../engine.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 export interface CacheKey {
   symbol_qualified: string;
@@ -98,9 +99,12 @@ export async function getCachedTraversal<T>(
     return {
       response: row.response_json as T,
       computed_at: row.computed_at,
-      cluster_generation: row.cluster_generation,
+      // A bigint column: Postgres returns a BigInt, PGLite a number.
+      cluster_generation: Number(row.cluster_generation),
     };
-  } catch {
+  } catch (err) {
+    // An engine without raw SQL (the Rust engine) refuses loudly: a silent miss would hide that the cache never runs.
+    rethrowCapabilityRefusal(err);
     // Cache table missing on a pre-v59 brain — fall through as miss.
     return null;
   }
@@ -142,6 +146,8 @@ export async function putCachedTraversal<T>(
       ],
     );
   } catch (err) {
+    // An engine without raw SQL (the Rust engine) refuses loudly, as the read does.
+    rethrowCapabilityRefusal(err);
     // Cache writes are best-effort. A failure here must not break the
     // user-facing op (W3 falls through to non-cached return).
     process.stderr.write(`[traversal-cache] put failed: ${(err as Error).message}\n`);
