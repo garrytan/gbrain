@@ -33,6 +33,11 @@
 //!
 //! A scan callback must not call the store: the merged scan holds the transaction's state lock
 //! while it runs.
+//!
+//! Time: a bound store reads one time for the whole transaction, the time it began
+//! ([`TransactionClock`]), as PGLite's `now()` returns the transaction's start time. Two rows written
+//! in one transaction carry the same `created_at`. Fresh identifiers still come from the brain's
+//! own source.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
@@ -40,11 +45,38 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
 
+use crate::env::Env;
 use crate::error::{
     INVALID_STATE, Result, SOURCE_CHANGED, SOURCE_NOT_FOUND, STORE_CLOSED, StoreError,
 };
 use crate::kv::{Kv, KvRead, KvWrite};
 use crate::{Store, keys, sources};
+
+/// The clock of a bound store: the transaction's start time for every read of the time, and the
+/// brain's own identifiers.
+pub(crate) struct TransactionClock {
+    started_us: i64,
+    inner: Arc<dyn Env>,
+}
+
+impl TransactionClock {
+    pub(crate) fn starting_now(inner: Arc<dyn Env>) -> Self {
+        TransactionClock {
+            started_us: inner.now_micros(),
+            inner,
+        }
+    }
+}
+
+impl Env for TransactionClock {
+    fn now_micros(&self) -> i64 {
+        self.started_us
+    }
+
+    fn new_uuid(&self) -> String {
+        self.inner.new_uuid()
+    }
+}
 
 /// Overlay writes: `None` is a delete.
 type Writes = BTreeMap<Vec<u8>, Option<Vec<u8>>>;
@@ -701,6 +733,18 @@ mod tests {
             .write(|tx| crate::pages::next_id(tx, "next_probe_id"))
             .unwrap();
         assert_eq!(after, 5);
+    }
+
+    #[test]
+    fn a_transaction_reads_one_time_its_start_while_the_brain_clock_moves_on() {
+        let s = store();
+        let t = s.begin_transaction(false).unwrap();
+        let started = t.env.now_micros();
+        std::thread::sleep(std::time::Duration::from_millis(3));
+        assert_eq!(t.env.now_micros(), started);
+        assert!(s.env.now_micros() > started);
+        assert_ne!(t.env.new_uuid(), t.env.new_uuid());
+        t.rollback_transaction().unwrap();
     }
 
     #[test]

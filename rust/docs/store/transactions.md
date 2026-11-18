@@ -40,7 +40,10 @@ becomes visible to the brain in one commit, or not at all.
 9. **Disconnect.** `disconnect()` waits up to 5 seconds for an open transaction to end. After that
    it rolls the transaction back and closes it. The pending `transaction` call rejects with
    `engine_closed`, and every later call on the `tx` handle gets `engine_closed`.
-10. **Error codes** are the existing ones: `invalid_state`, `store_closed` (mapped to
+10. **One time per transaction.** Every row a transaction writes reads the time the transaction
+    began, as PGLite's `now()` does, so two facts inserted in one transaction share `created_at`.
+    The time moves on again for the next transaction.
+11. **Error codes** are the existing ones: `invalid_state`, `store_closed` (mapped to
     `engine_closed`), `source_not_found`, `source_changed`, `internal_error`, `cancelled`.
 
 An `AbortSignal` in `opts` is honoured before the transaction starts and while it waits at the

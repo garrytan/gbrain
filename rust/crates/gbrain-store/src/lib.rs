@@ -215,7 +215,10 @@ impl Store {
     pub(crate) fn bound_to(&self, tx: Arc<transactions::Transaction>) -> Store {
         Store {
             kv: self.kv.clone(),
-            env: self.env.clone(),
+            // One time for the whole transaction, as PGLite's now() (`transactions.rs`, "Time").
+            env: Arc::new(transactions::TransactionClock::starting_now(
+                self.env.clone(),
+            )),
             // The cache holds committed snapshots only; a transaction reads its own uncommitted
             // writes, so its store starts with an empty cache of its own.
             vectors: vectors::VectorCache::default(),
