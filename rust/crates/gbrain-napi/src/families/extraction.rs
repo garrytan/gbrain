@@ -1,11 +1,116 @@
-//! Extraction state of pages. No methods yet.
+//! Extraction state of pages: the link-extraction watermark, the attendance marker and the sweep
+//! of parser-reserved frontmatter keys.
 //!
-//! Store methods for: countStalePagesForExtraction, listStalePagesForExtraction,
-//! markPagesExtractedBatch, markPagesAttendanceBlocked, countStaleFrontmatterKeyPages,
-//! listStaleFrontmatterKeyPages, stripStaleFrontmatterKeys.
-//!
-//! Add them here as one `#[napi] impl Brain { ... }` block, each method a thin `self.run(env, move
-//! |s| s.<method>(...))` over the `gbrain_store::extraction` module (see `pages.rs` in this
-//! directory for the pattern).
-//!
-//! Open to build now; see docs/designs/RUST_ENGINE_INTERFACES.md.
+//! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
+//! Each method decodes its arguments, runs one `Store` call on the pool through `Brain::run`,
+//! and resolves plain JSON (rust/README.md, "The brain store").
+
+use napi::Env;
+use napi::bindgen_prelude::Object;
+use napi_derive::napi;
+use serde_json::Value;
+
+use crate::store_binding::{Brain, arg, required};
+
+#[napi]
+impl Brain {
+    /// `countStalePagesForExtraction({ sourceId?, versionTs?, attendance?, held?,
+    /// wantedProducers? }?)`: resolves the number of stale pages.
+    #[napi]
+    pub fn count_stale_pages_for_extraction<'env>(
+        &self,
+        env: &'env Env,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.count_stale_pages_for_extraction(&arg(
+                options,
+                "countStalePagesForExtraction options",
+            )?)
+        })
+    }
+
+    /// `listStalePagesForExtraction({ batchSize, afterPageId?, sourceId?, versionTs?, held?,
+    /// wantedProducers? })`: `StalePageRow`s by id, `updated_at` as an ISO string.
+    #[napi]
+    pub fn list_stale_pages_for_extraction<'env>(
+        &self,
+        env: &'env Env,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_stale_pages_for_extraction(&arg(options, "listStalePagesForExtraction options")?)
+        })
+    }
+
+    /// `markPagesExtractedBatch(refs, defaultExtractedAt)`: resolves the number of pages stamped.
+    #[napi]
+    pub fn mark_pages_extracted_batch<'env>(
+        &self,
+        env: &'env Env,
+        refs: Value,
+        default_extracted_at: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let refs: Vec<gbrain_store::extraction::ExtractedRef> =
+                required(refs, "markPagesExtractedBatch refs")?;
+            s.mark_pages_extracted_batch(&refs, &default_extracted_at)
+        })
+    }
+
+    /// `markPagesAttendanceBlocked(refs)`: resolves the number of pages marked.
+    #[napi]
+    pub fn mark_pages_attendance_blocked<'env>(
+        &self,
+        env: &'env Env,
+        refs: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let refs: Vec<gbrain_store::extraction::AttendanceRef> =
+                required(refs, "markPagesAttendanceBlocked refs")?;
+            s.mark_pages_attendance_blocked(&refs)
+        })
+    }
+
+    /// `countStaleFrontmatterKeyPages({ sourceIds })`: `{ source_id, n }[]` by source id.
+    #[napi]
+    pub fn count_stale_frontmatter_key_pages<'env>(
+        &self,
+        env: &'env Env,
+        options: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.count_stale_frontmatter_key_pages(&required(
+                options,
+                "countStaleFrontmatterKeyPages options",
+            )?)
+        })
+    }
+
+    /// `listStaleFrontmatterKeyPages({ sourceId, afterId, limit })`: `{ id, slug, keys }[]` by id.
+    #[napi]
+    pub fn list_stale_frontmatter_key_pages<'env>(
+        &self,
+        env: &'env Env,
+        options: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_stale_frontmatter_key_pages(&required(
+                options,
+                "listStaleFrontmatterKeyPages options",
+            )?)
+        })
+    }
+
+    /// `stripStaleFrontmatterKeys({ sourceId, ids })`: resolves the number of pages changed.
+    #[napi]
+    pub fn strip_stale_frontmatter_keys<'env>(
+        &self,
+        env: &'env Env,
+        options: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.strip_stale_frontmatter_keys(&required(options, "stripStaleFrontmatterKeys options")?)
+        })
+    }
+}
