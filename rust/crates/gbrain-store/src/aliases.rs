@@ -1,37 +1,707 @@
-//! Slug renames and page aliases. Nothing is built yet: every member below still refuses with
-//! `engine_capability_missing` in the TypeScript engine.
+//! Slug renames, slug aliases, page aliases and the contextual retrieval state of pages: the
+//! PGLite `slug_aliases` and `page_aliases` tables and the `pages.contextual_retrieval_mode` /
+//! `pages.corpus_generation` columns.
 //!
 //! Members: updateSlug, resolveSlugWithAlias, resolveSlugWithAliasDetailed, resolveAliases,
 //! setPageAliases, updatePageContextualRetrievalState.
 //!
-//! Keys: every record of this family starts with `keys::ALIAS` (`k`). The bytes after the tag are
-//! this file's to define; document them here.
+//! Keys (every record starts with `keys::ALIAS`, `k`; text parts are joined with `0x00`):
 //!
-//! Open to build now; see docs/designs/RUST_ENGINE_INTERFACES.md.
+//! - `k 0x01 source \0 alias_slug` holds a [`SlugAliasRecord`]: one `slug_aliases` row, unique on
+//!   `(source_id, alias_slug)` as in PGLite.
+//! - `k 0x05 source \0 canonical_slug \0 alias_slug` is empty: the index a rename reads to repoint
+//!   every alias of the old slug at the new one.
+//! - `k 0x02 source \0 alias_norm \0 slug \0 origin` is empty: one `page_aliases` row, unique on
+//!   `(source_id, alias_norm, slug, origin)` as in PGLite.
+//! - `k 0x03 source \0 slug \0 alias_norm \0 origin` is empty: the same row seen from its page, for
+//!   `setPageAliases` and the rename move.
+//! - `k 0x04 page_id` (8 big-endian bytes) holds the page's [`CrState`].
+//!
+//! Text that holds a NUL byte cannot be part of a key: a write refuses it with
+//! `invalid_argument` (Postgres refuses NUL in `text` too) and a read finds nothing.
+//!
+//! The alias rows hang off `(source, slug)`, not the page id: neither PGLite table has a foreign
+//! key to `pages`, so its rows outlive a hard delete of the page and answer again for a page
+//! created later at the same slug. [`remove_page_rows`] therefore removes only the contextual
+//! retrieval state, which is a column of the page row. Both tables cascade from `sources`:
+//! [`remove_source_rows`] removes every row of a deleted source.
+//!
+//! Only `setPageAliases` writes page aliases here, so every row has origin `frontmatter`; the
+//! `declared` and `subject` rows of the mention pass have no typed writer. `resolveAliases` still
+//! applies PGLite's precedence (frontmatter, then declared, then subject, and a derived alias
+//! yields to another page's exact title), so a later writer needs no reader change. Only
+//! `updateSlug` writes slug aliases. `slug_rename_history` has no typed reader and is not kept.
 
-use crate::Result;
-use crate::kv::{KvRead, KvWrite};
+use crate::error::{INVALID_ARGUMENT, Result, StoreError};
+use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::page_columns::PageColumns;
-use crate::pages::PageRecord;
+use crate::pages::{
+    PageRecord, all_pages, read_page, rename_page, scope_sources, snapshot_in, validate_slug,
+    write_page,
+};
+use crate::sources::{read_source, require_source};
+use crate::{Store, get_json, keys, put_json};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::{BTreeMap, BTreeSet};
 
-/// Deletes this family's records of a page that is deleted for good (`cascade::remove_page_rows`).
-/// Nothing to delete yet.
-pub(crate) fn remove_page_rows(_tx: &mut dyn KvWrite, _page: &PageRecord) -> Result<()> {
+const SLUG_ALIAS: u8 = 0x01;
+const PAGE_ALIAS: u8 = 0x02;
+const PAGE_ALIAS_BY_SLUG: u8 = 0x03;
+const CR_STATE: u8 = 0x04;
+const SLUG_ALIAS_BY_CANONICAL: u8 = 0x05;
+
+/// The origin `setPageAliases` writes and replaces (the column default).
+const FRONTMATTER: &str = "frontmatter";
+/// The frontmatter key that hides a page (`QUARANTINE_KEY`).
+const QUARANTINE_KEY: &str = "quarantine";
+const DEFAULT_SOURCE: &str = "default";
+
+/// One `slug_aliases` row: `alias_slug` (the key) resolves to `canonical_slug`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct SlugAliasRecord {
+    pub canonical_slug: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+}
+
+/// A page's contextual retrieval state. No record is both columns NULL.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct CrState {
+    pub mode: String,
+    /// Written as PGLite writes it; no typed read returns it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corpus_generation: Option<String>,
+}
+
+/// The scope of `resolveAliases` (`PageReadScope`): a non-empty `sourceIds` wins, then a
+/// non-empty `sourceId`, else every source.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct AliasScope {
+    pub source_id: Option<String>,
+    pub source_ids: Option<Vec<String>>,
+}
+
+/// One page an alias resolves to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AliasRef {
+    pub slug: String,
+    pub source_id: String,
+}
+
+/// The answer of `resolveSlugWithAliasDetailed`, plus how many sources held the alias: the
+/// TypeScript member warns once per process when more than one did, as PGLite does.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SlugAliasMatch {
+    pub canonical_slug: String,
+    pub source_id: String,
+    pub matches: usize,
+}
+
+fn key(sub: u8, parts: &[&str]) -> Vec<u8> {
+    let mut key = vec![keys::ALIAS, sub];
+    for (i, part) in parts.iter().enumerate() {
+        if i > 0 {
+            key.push(0);
+        }
+        key.extend_from_slice(part.as_bytes());
+    }
+    key
+}
+
+/// `key(sub, parts)` followed by the separator, so a scan does not match a longer last part.
+fn prefix(sub: u8, parts: &[&str]) -> Vec<u8> {
+    let mut key = key(sub, parts);
+    key.push(0);
+    key
+}
+
+fn cr_key(page_id: u64) -> Vec<u8> {
+    let mut key = vec![keys::ALIAS, CR_STATE];
+    key.extend_from_slice(&page_id.to_be_bytes());
+    key
+}
+
+fn has_nul(parts: &[&str]) -> bool {
+    parts.iter().any(|p| p.contains('\0'))
+}
+
+/// Refuses text a key cannot hold, before anything is written.
+fn refuse_nul(member: &str, parts: &[&str]) -> Result<()> {
+    if has_nul(parts) {
+        return Err(StoreError::new(
+            INVALID_ARGUMENT,
+            format!("{member}: invalid byte sequence for encoding \"UTF8\": 0x00"),
+        ));
+    }
     Ok(())
 }
 
-/// Adds this family's `getPage` columns to a page (`page_columns::add_page_columns`). Adds none
-/// yet: `contextual_retrieval_mode` reads as its `PAGE_ROW_DEFAULTS` value (`store-codec.ts`).
-pub(crate) fn page_columns(
-    _read: &dyn KvRead,
-    _page: &PageRecord,
-    _columns: &mut PageColumns,
+/// The text parts after `prefix` in `key`, split on the separator.
+fn tail(key: &[u8], prefix_len: usize) -> Vec<String> {
+    key[prefix_len..]
+        .split(|b| *b == 0)
+        .map(|p| String::from_utf8_lossy(p).into_owned())
+        .collect()
+}
+
+/// Every key under `prefix`, with the text parts after it.
+fn scan_tails(read: &dyn KvRead, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<String>)>> {
+    let mut out = Vec::new();
+    scan_prefix(read, prefix, false, &mut |k, _| {
+        out.push((k.to_vec(), tail(k, prefix.len())));
+        true
+    })?;
+    Ok(out)
+}
+
+/// The `(alias_norm, origin)` rows of the page at `(source, slug)`.
+fn page_alias_rows(read: &dyn KvRead, source: &str, slug: &str) -> Result<Vec<(String, String)>> {
+    Ok(
+        scan_tails(read, &prefix(PAGE_ALIAS_BY_SLUG, &[source, slug]))?
+            .into_iter()
+            .filter_map(|(_, parts)| match parts.as_slice() {
+                [alias, origin] => Some((alias.clone(), origin.clone())),
+                _ => None,
+            })
+            .collect(),
+    )
+}
+
+fn put_page_alias(
+    tx: &mut dyn KvWrite,
+    source: &str,
+    alias: &str,
+    slug: &str,
+    origin: &str,
 ) -> Result<()> {
+    tx.put(&key(PAGE_ALIAS, &[source, alias, slug, origin]), &[])?;
+    tx.put(
+        &key(PAGE_ALIAS_BY_SLUG, &[source, slug, alias, origin]),
+        &[],
+    )
+}
+
+fn delete_page_alias(
+    tx: &mut dyn KvWrite,
+    source: &str,
+    alias: &str,
+    slug: &str,
+    origin: &str,
+) -> Result<()> {
+    tx.delete(&key(PAGE_ALIAS, &[source, alias, slug, origin]))?;
+    tx.delete(&key(PAGE_ALIAS_BY_SLUG, &[source, slug, alias, origin]))
+}
+
+fn read_slug_alias(
+    read: &dyn KvRead,
+    source: &str,
+    alias: &str,
+) -> Result<Option<SlugAliasRecord>> {
+    if has_nul(&[source, alias]) {
+        return Ok(None);
+    }
+    get_json(read, &key(SLUG_ALIAS, &[source, alias]))
+}
+
+fn put_slug_alias(
+    tx: &mut dyn KvWrite,
+    source: &str,
+    alias: &str,
+    record: &SlugAliasRecord,
+) -> Result<()> {
+    if let Some(old) = read_slug_alias(&*tx, source, alias)? {
+        tx.delete(&key(
+            SLUG_ALIAS_BY_CANONICAL,
+            &[source, &old.canonical_slug, alias],
+        ))?;
+    }
+    put_json(tx, &key(SLUG_ALIAS, &[source, alias]), record)?;
+    tx.put(
+        &key(
+            SLUG_ALIAS_BY_CANONICAL,
+            &[source, &record.canonical_slug, alias],
+        ),
+        &[],
+    )
+}
+
+fn delete_slug_alias(tx: &mut dyn KvWrite, source: &str, alias: &str) -> Result<()> {
+    if let Some(old) = read_slug_alias(&*tx, source, alias)? {
+        tx.delete(&key(
+            SLUG_ALIAS_BY_CANONICAL,
+            &[source, &old.canonical_slug, alias],
+        ))?;
+        tx.delete(&key(SLUG_ALIAS, &[source, alias]))?;
+    }
     Ok(())
 }
 
-/// Deletes this family's records keyed by a source that is deleted (`cascade::remove_source_rows`).
-/// Nothing to delete yet.
-pub(crate) fn remove_source_rows(_tx: &mut dyn KvWrite, _source_id: &str) -> Result<()> {
+/// `recordRenameAlias(source, old, new)` on `slug_aliases`: drops the alias spelled like the new
+/// slug (a page owns that slug now), repoints every alias of the old slug at the new one, then
+/// upserts `old -> new` with notes `rename` (an existing row keeps its notes, as `ON CONFLICT DO
+/// UPDATE SET canonical_slug` does).
+fn record_rename_alias(tx: &mut dyn KvWrite, source: &str, old: &str, new: &str) -> Result<()> {
+    if old == new {
+        return Ok(());
+    }
+    delete_slug_alias(tx, source, new)?;
+    for (_, parts) in scan_tails(&*tx, &prefix(SLUG_ALIAS_BY_CANONICAL, &[source, old]))? {
+        let [alias] = parts.as_slice() else {
+            continue;
+        };
+        if let Some(mut record) = read_slug_alias(&*tx, source, alias)? {
+            record.canonical_slug = new.to_string();
+            put_slug_alias(tx, source, alias, &record)?;
+        }
+    }
+    let record = match read_slug_alias(&*tx, source, old)? {
+        Some(existing) => SlugAliasRecord {
+            canonical_slug: new.to_string(),
+            notes: existing.notes,
+        },
+        None => SlugAliasRecord {
+            canonical_slug: new.to_string(),
+            notes: Some("rename".to_string()),
+        },
+    };
+    put_slug_alias(tx, source, old, &record)
+}
+
+/// The `page_aliases` part of `moveSlugBindings(source, old, new)`: rows of the new slug that
+/// repeat an old-slug row (same alias and origin) yield, then every old-slug row moves to the new
+/// slug.
+fn move_page_aliases(tx: &mut dyn KvWrite, source: &str, old: &str, new: &str) -> Result<()> {
+    if old == new {
+        return Ok(());
+    }
+    for (alias, origin) in page_alias_rows(&*tx, source, old)? {
+        delete_page_alias(tx, source, &alias, old, &origin)?;
+        put_page_alias(tx, source, &alias, new, &origin)?;
+    }
     Ok(())
+}
+
+fn read_cr(read: &dyn KvRead, page_id: u64) -> Result<Option<CrState>> {
+    get_json(read, &cr_key(page_id))
+}
+
+/// Deletes this family's records of a page that is deleted for good (`cascade::remove_page_rows`):
+/// its contextual retrieval state. Its alias rows stay, as PGLite's do (module docs).
+pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()> {
+    tx.delete(&cr_key(page.id))
+}
+
+/// Deletes this family's records of a source that is deleted (`cascade::remove_source_rows`), as
+/// Postgres's `ON DELETE CASCADE` on `slug_aliases` and `page_aliases` does: every slug alias and
+/// page alias of the source, and the contextual retrieval state of any page still in it (core
+/// removes the source's pages first, which already drops theirs through [`remove_page_rows`]).
+pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
+    if has_nul(&[source_id]) {
+        return Ok(());
+    }
+    for sub in [
+        SLUG_ALIAS,
+        SLUG_ALIAS_BY_CANONICAL,
+        PAGE_ALIAS,
+        PAGE_ALIAS_BY_SLUG,
+    ] {
+        for (key, _) in scan_tails(&*tx, &prefix(sub, &[source_id]))? {
+            tx.delete(&key)?;
+        }
+    }
+    for page in all_pages(&*tx)? {
+        if page.source_id == source_id {
+            tx.delete(&cr_key(page.id))?;
+        }
+    }
+    Ok(())
+}
+
+/// Adds this family's `getPage` columns to a page (`page_columns::add_page_columns`):
+/// `contextual_retrieval_mode` when the page has a state. A page with none reads as its
+/// `PAGE_ROW_DEFAULTS` value, `null` (`store-codec.ts`).
+pub(crate) fn page_columns(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    columns: &mut PageColumns,
+) -> Result<()> {
+    if let Some(state) = read_cr(read, page.id)? {
+        columns.set("contextual_retrieval_mode", Value::String(state.mode));
+    }
+    Ok(())
+}
+
+/// The rank of an origin in `readAliases`: frontmatter answers before declared, declared before
+/// subject.
+fn origin_rank(origin: &str) -> u8 {
+    match origin {
+        "subject" => 2,
+        "declared" => 1,
+        _ => 0,
+    }
+}
+
+/// `pageReadFilter(..., live = true)` without a privacy or trust filter: not soft deleted, not
+/// quarantined, and its source is not archived.
+fn live_page(read: &dyn KvRead, source: &str, slug: &str) -> Result<Option<PageRecord>> {
+    let Some(page) = read_page(read, source, slug)? else {
+        return Ok(None);
+    };
+    if page.deleted_at_us.is_some() || page.frontmatter.contains_key(QUARANTINE_KEY) {
+        return Ok(None);
+    }
+    let archived = read_source(read, source)?.is_none_or(|s| s.archived);
+    Ok((!archived).then_some(page))
+}
+
+impl Store {
+    /// `setPageAliases(slug, sourceId, aliasNorms)`: replaces the page's `frontmatter` alias rows
+    /// with the non-empty, distinct `aliasNorms`. Derived rows stay. The page need not exist; the
+    /// source must when there is a row to insert (`source_not_found`, the foreign key).
+    pub fn set_page_aliases(
+        &self,
+        slug: &str,
+        source_id: &str,
+        alias_norms: &[String],
+    ) -> Result<()> {
+        let mut uniq: Vec<&str> = Vec::new();
+        for alias in alias_norms.iter().map(String::as_str) {
+            if !alias.is_empty() && !uniq.contains(&alias) {
+                uniq.push(alias);
+            }
+        }
+        refuse_nul("setPageAliases", &[slug, source_id])?;
+        refuse_nul("setPageAliases", &uniq)?;
+        self.write(|tx| {
+            if !uniq.is_empty() {
+                require_source(&*tx, source_id)?;
+            }
+            for (alias, origin) in page_alias_rows(&*tx, source_id, slug)? {
+                if origin == FRONTMATTER {
+                    delete_page_alias(tx, source_id, &alias, slug, &origin)?;
+                }
+            }
+            for alias in &uniq {
+                put_page_alias(tx, source_id, alias, slug, FRONTMATTER)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// `resolveAliases(aliasNorms, scope)`: each alias that names a live page in the scope, with
+    /// the pages it names, aliases in byte order and pages by source then slug. Within a source
+    /// only the best origin answers, and a derived alias yields to another live page whose
+    /// lower-cased title is the alias.
+    pub fn resolve_aliases(
+        &self,
+        alias_norms: &[String],
+        scope: &AliasScope,
+    ) -> Result<Vec<(String, Vec<AliasRef>)>> {
+        if alias_norms.is_empty() {
+            return Ok(Vec::new());
+        }
+        let read = self.read()?;
+        let sources: BTreeSet<String> = scope_sources(&*read, &scope.source_id, &scope.source_ids)?
+            .into_iter()
+            .collect();
+        let aliases: BTreeSet<&str> = alias_norms
+            .iter()
+            .map(String::as_str)
+            .filter(|a| !a.contains('\0'))
+            .collect();
+        // Titles of live pages per source, read only when a derived row needs them.
+        let mut titles: Option<BTreeMap<String, Vec<(String, String)>>> = None;
+        let mut out = Vec::new();
+        for alias in aliases {
+            let mut refs: Vec<AliasRef> = Vec::new();
+            for source in &sources {
+                if source.contains('\0') {
+                    continue;
+                }
+                // (rank, slug), live pages only.
+                let mut rows: Vec<(u8, String)> = Vec::new();
+                for (_, parts) in scan_tails(&*read, &prefix(PAGE_ALIAS, &[source, alias]))? {
+                    let [slug, origin] = parts.as_slice() else {
+                        continue;
+                    };
+                    if live_page(&*read, source, slug)?.is_none() {
+                        continue;
+                    }
+                    let rank = origin_rank(origin);
+                    if rank > 0 {
+                        let titles = match &mut titles {
+                            Some(t) => t,
+                            None => titles.insert(live_titles(&*read)?),
+                        };
+                        let shadowed = titles.get(source).is_some_and(|pages| {
+                            pages.iter().any(|(s, title)| title == alias && s != slug)
+                        });
+                        if shadowed {
+                            continue;
+                        }
+                    }
+                    rows.push((rank, slug.clone()));
+                }
+                let Some(best) = rows.iter().map(|(rank, _)| *rank).min() else {
+                    continue;
+                };
+                let slugs: BTreeSet<String> = rows
+                    .into_iter()
+                    .filter(|(rank, _)| *rank == best)
+                    .map(|(_, slug)| slug)
+                    .collect();
+                refs.extend(slugs.into_iter().map(|slug| AliasRef {
+                    slug,
+                    source_id: source.clone(),
+                }));
+            }
+            if !refs.is_empty() {
+                out.push((alias.to_string(), refs));
+            }
+        }
+        Ok(out)
+    }
+
+    /// `resolveSlugWithAliasDetailed(slug, sources)`: the `slug_aliases` row of `slug` in the first
+    /// source, in the given order, that has one; `None` when none does or `sources` is empty.
+    pub fn resolve_slug_with_alias_detailed(
+        &self,
+        slug: &str,
+        sources: &[String],
+    ) -> Result<Option<SlugAliasMatch>> {
+        let read = self.read()?;
+        let mut seen: BTreeSet<&str> = BTreeSet::new();
+        let mut found: Vec<(&str, SlugAliasRecord)> = Vec::new();
+        for source in sources {
+            if !seen.insert(source.as_str()) {
+                continue;
+            }
+            if let Some(record) = read_slug_alias(&*read, source, slug)? {
+                found.push((source.as_str(), record));
+            }
+        }
+        let matches = found.len();
+        Ok(found
+            .into_iter()
+            .next()
+            .map(|(source, record)| SlugAliasMatch {
+                canonical_slug: record.canonical_slug,
+                source_id: source.to_string(),
+                matches,
+            }))
+    }
+
+    /// `updatePageContextualRetrievalState(slug, sourceId, mode, corpusGeneration)`: stamps the
+    /// live page at `(sourceId, slug)` and sets its `updated_at`; anything else is left alone. The
+    /// knowledge revision does not move (neither column is in the revision trigger's list). The
+    /// `none` tier's reset of `embedding_signature` and chunk vectors is a no-op here: this store
+    /// keeps neither.
+    pub fn update_page_contextual_retrieval_state(
+        &self,
+        slug: &str,
+        source_id: &str,
+        mode: &str,
+        corpus_generation: Option<&str>,
+    ) -> Result<()> {
+        refuse_nul(
+            "updatePageContextualRetrievalState",
+            &[slug, source_id, mode, corpus_generation.unwrap_or("")],
+        )?;
+        self.write(|tx| {
+            let Some(mut page) =
+                read_page(&*tx, source_id, slug)?.filter(|p| p.deleted_at_us.is_none())
+            else {
+                return Ok(());
+            };
+            let state = CrState {
+                mode: mode.to_string(),
+                corpus_generation: corpus_generation.map(str::to_string),
+            };
+            put_json(tx, &cr_key(page.id), &state)?;
+            page.updated_at_us = self.env.now_micros();
+            write_page(tx, &page)
+        })
+    }
+
+    /// `updateSlug(oldSlug, newSlug, { sourceId })`: moves the page at `(sourceId ?? 'default',
+    /// oldSlug)`, soft-deleted or not, to `newSlug`, and returns the number of pages moved (0 when
+    /// there is none). The page is versioned as it stood first, then moved by
+    /// `pages::rename_page`; a real move records `old -> new` in the slug aliases, moves the records
+    /// other families key by slug (`cascade::rename_slug_rows`) and moves the page's alias rows. `invalid_slug` for a bad new slug, `constraint_violation` when the new
+    /// slug is taken; either keeps nothing.
+    pub fn update_slug(
+        &self,
+        old_slug: &str,
+        new_slug: &str,
+        source_id: Option<&str>,
+    ) -> Result<u64> {
+        let new_slug = validate_slug(new_slug)?;
+        let source = source_id.unwrap_or(DEFAULT_SOURCE);
+        self.write(|tx| {
+            let Some(page) = read_page(&*tx, source, old_slug)? else {
+                return Ok(0);
+            };
+            snapshot_in(tx, &*self.env, &page)?;
+            let moved = rename_page(tx, &*self.env, &page, &new_slug)?;
+            if moved.slug != page.slug {
+                record_rename_alias(tx, source, &page.slug, &moved.slug)?;
+                // `moveSlugBindings`: the other families' records keyed by slug (steps 1-6), then
+                // this family's page aliases (steps 7-8).
+                crate::cascade::rename_slug_rows(tx, source, &page.slug, &moved.slug)?;
+                move_page_aliases(tx, source, &page.slug, &moved.slug)?;
+            }
+            Ok(1)
+        })
+    }
+}
+
+/// `(slug, lower(title))` of every live page, per source.
+fn live_titles(read: &dyn KvRead) -> Result<BTreeMap<String, Vec<(String, String)>>> {
+    let mut out: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+    let mut archived: BTreeMap<String, bool> = BTreeMap::new();
+    for page in all_pages(read)? {
+        if page.deleted_at_us.is_some() || page.frontmatter.contains_key(QUARANTINE_KEY) {
+            continue;
+        }
+        let gone = match archived.get(&page.source_id) {
+            Some(gone) => *gone,
+            None => {
+                let gone = read_source(read, &page.source_id)?.is_none_or(|s| s.archived);
+                archived.insert(page.source_id.clone(), gone);
+                gone
+            }
+        };
+        if !gone {
+            out.entry(page.source_id.clone())
+                .or_default()
+                .push((page.slug.clone(), page.title.to_lowercase()));
+        }
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn keys_keep_each_part_apart() {
+        assert_eq!(key(PAGE_ALIAS, &["s", "a", "p", "o"]), b"k\x02s\0a\0p\0o");
+        assert_eq!(prefix(PAGE_ALIAS_BY_SLUG, &["s", "p"]), b"k\x03s\0p\0");
+        assert_eq!(cr_key(1), b"k\x04\0\0\0\0\0\0\0\x01");
+        assert_eq!(
+            tail(b"k\x03s\0p\0al\0frontmatter", 6),
+            ["al", "frontmatter"]
+        );
+    }
+
+    /// Every key of this family, as `(sub tag, rest)`, in key order.
+    fn family_keys(store: &Store) -> Vec<Vec<u8>> {
+        let read = store.read().unwrap();
+        let mut out = Vec::new();
+        scan_prefix(&*read, &[keys::ALIAS], false, &mut |k, _| {
+            out.push(k.to_vec());
+            true
+        })
+        .unwrap();
+        out
+    }
+
+    #[test]
+    fn a_source_delete_removes_every_record_of_that_source_only() {
+        use crate::pages::{PageInput, PutPageOptions};
+        use crate::sources::SourceInput;
+        let store = crate::test_support::store();
+        // `other` is a prefix of `other2`: the scan must stop at the separator.
+        for id in ["other", "other2"] {
+            let input: SourceInput =
+                serde_json::from_value(json!({ "id": id, "name": id, "config": {} })).unwrap();
+            store.upsert_source(&input).unwrap();
+        }
+        let input = PageInput {
+            page_type: "note".into(),
+            title: "A".into(),
+            compiled_truth: "body".into(),
+            ..PageInput::default()
+        };
+        let fill = |source: &str| {
+            let options: PutPageOptions =
+                serde_json::from_value(json!({ "sourceId": source })).unwrap();
+            store.put_page("a", &input, &options).unwrap();
+            store
+                .set_page_aliases("a", source, &["ay".to_string()])
+                .unwrap();
+            store
+                .update_page_contextual_retrieval_state("a", source, "title", None)
+                .unwrap();
+            assert_eq!(store.update_slug("a", "b", Some(source)).unwrap(), 1);
+        };
+        fill("default");
+        let kept = family_keys(&store);
+        assert_eq!(kept.len(), 5);
+        fill("other2");
+        let both = family_keys(&store);
+        fill("other");
+        assert_eq!(family_keys(&store).len(), 15);
+        store.write(|tx| remove_source_rows(tx, "other")).unwrap();
+        assert_eq!(family_keys(&store), both);
+        store
+            .write(|tx| {
+                remove_source_rows(tx, "other2")?;
+                remove_source_rows(tx, "nowhere")?;
+                remove_source_rows(tx, "a\0b")
+            })
+            .unwrap();
+        assert_eq!(family_keys(&store), kept);
+    }
+
+    #[test]
+    fn a_rename_keeps_a_row_the_new_slug_already_had_once() {
+        let store = crate::test_support::store();
+        let aliases = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        store
+            .set_page_aliases("a", "default", &aliases(&["ay", "shared"]))
+            .unwrap();
+        store
+            .set_page_aliases("b", "default", &aliases(&["shared", "bee"]))
+            .unwrap();
+        let input = crate::pages::PageInput {
+            page_type: "note".into(),
+            title: "A".into(),
+            compiled_truth: "body".into(),
+            ..crate::pages::PageInput::default()
+        };
+        store
+            .put_page("a", &input, &crate::pages::PutPageOptions::default())
+            .unwrap();
+        assert_eq!(store.update_slug("a", "b", None).unwrap(), 1);
+        let read = store.read().unwrap();
+        assert!(page_alias_rows(&*read, "default", "a").unwrap().is_empty());
+        let mut rows = page_alias_rows(&*read, "default", "b").unwrap();
+        rows.sort();
+        let expected: Vec<(String, String)> = ["ay", "bee", "shared"]
+            .iter()
+            .map(|a| (a.to_string(), FRONTMATTER.to_string()))
+            .collect();
+        assert_eq!(rows, expected);
+        // Both key spaces hold each row once: 3 rows, 2 keys each.
+        let mut count = 0;
+        for sub in [PAGE_ALIAS, PAGE_ALIAS_BY_SLUG] {
+            scan_prefix(&*read, &[keys::ALIAS, sub], false, &mut |_, _| {
+                count += 1;
+                true
+            })
+            .unwrap();
+        }
+        assert_eq!(count, 6);
+    }
+
+    #[test]
+    fn origins_rank_frontmatter_first() {
+        assert!(origin_rank(FRONTMATTER) < origin_rank("declared"));
+        assert!(origin_rank("declared") < origin_rank("subject"));
+    }
 }
