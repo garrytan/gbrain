@@ -30,7 +30,6 @@ import type { Operation } from './operations.ts';
 import { WRITE_RECEIPT_SCHEMA, WRITE_REQUEST_PARAM, AGENT_CONTENT_PARAMS, CONTENT_ORIGIN_PARAM } from './persistence/params.ts';
 import { WRITE_ERROR_CODES } from './persistence/types.ts';
 import { isStrictIsoDateTime } from './utils.ts';
-import { readHolders } from './ops/context.ts';
 
 /** Frozen protocol version for the MEMORY_VERBS v1 verb set. Single source of truth. */
 export const MEMORY_VERBS_VERSION = 1;
@@ -367,7 +366,7 @@ const synthesize: Operation = {
   verb: true,
   annotations: { title: 'synthesize (slow, costly — LLM-backed)', readOnlyHint: true },
   handler: async (ctx, p) => {
-    const [{ verbError }, { sourceScopeOpts }] = await Promise.all([import('./ops/contract.ts'), import('./ops/context.ts')]);
+    const [{ verbError }, { sourceScopeOpts, readHolders }] = await Promise.all([import('./ops/contract.ts'), import('./ops/context.ts')]);
     const question = typeof p.question === 'string' ? p.question.trim() : '';
     if (!question) {
       throw verbError(
