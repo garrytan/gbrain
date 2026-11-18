@@ -58,6 +58,16 @@ Each returns what PGLite returns for a brain with the same contents.
 | `readGraduationGateRow(opts?)` | `null` | No graduation targets or leaves this engine, so there is no custody row and no run setting to compare. |
 | `listRetiredDeactivations()` | `[]` | A brain here is never managed, so no writer deactivation committed. |
 
+Caller-visible change (4e0f4976c4): before these members, the graduation connect gate (`readGraduationConnectRow`,
+`assertGraduationConnectAllowed`) and the retired-marker cleanup (`cleanupRetiredManagedMarkers`) skipped their reads
+on any engine that does not report the `raw_sql` capability (`lacksRawSql`), and read that as "no custody row" and
+"nothing to clean up". The skips are gone. An engine that refuses `readGraduationGateRow` or `hasPersistenceTable`
+with `engine_capability_missing` now refuses the connect, or the cleanup, with that refusal instead of carrying on as
+if no row existed. Only a missing table (`42P01`, a brain before the migration) still reads as no row. The Rust
+engine serves both members, so its connect is unchanged. An engine or test fake that does not report `raw_sql` and
+does not serve these members now stops at connect. Refusing is the safer answer: a guessed "no row" could admit a
+connect during a graduation.
+
 The other journal members (`readWriteRequest`, `readWriteRequestById`, `lockPersistenceCounters`,
 `insertWriteRequest`, `stampWriteClaim`, `lockWriteRequest`, `completeWriteRow`) run inside
 `transaction`. This engine does not serve `transaction` yet, so they refuse with
