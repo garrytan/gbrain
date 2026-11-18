@@ -12,6 +12,7 @@ records. Timestamps cross the binding as ISO strings; the TypeScript members
 
 The queue health reads (the doctor's queue checks, the advisor's stalled jobs and the submit-time probe) are in [jobs-health.md](jobs-health.md).
 The status reads (counts, last runs, windows) are in [jobs-status.md](jobs-status.md).
+The Wakeshift report-back tables (watches, crons, cron runs, terms, forgets) are in [jobs-wake.md](jobs-wake.md).
 
 Keys, under the family tag `keys::JOBS` (`m`):
 
