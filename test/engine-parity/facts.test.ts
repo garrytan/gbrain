@@ -1117,4 +1117,66 @@ describe('engine parity: facts', () => {
       return { supersessions, supersessionsKept, trajectory, trajectoryKept };
     },
   );
+
+  parityTest(
+    'excludePrivate follows the rename history to a private origin after a later rename drops the alias (#8920)',
+    { methods: ['putPage', 'updateSlug', 'insertFacts', 'listFactsSince'] },
+    async (engine) => {
+      await putRenamePages(engine, [
+        ['notes/origin', 'note', { visibility: 'private' }],
+        ['notes/stand-in', 'note', {}],
+        ['atoms/moved-origin', 'atom', { visibility: 'world', source_slug: 'notes/origin' }],
+        ['atoms/open-origin', 'atom', { visibility: 'world', source_slug: 'notes/stand-in' }],
+      ]);
+      expect(await engine.updateSlug('notes/origin', 'notes/moved')).toBe(1);
+      // A world page renamed onto the old slug drops the alias notes/origin -> notes/moved; only the
+      // rename history still says the atom's origin moved to the private page.
+      expect(await engine.updateSlug('notes/stand-in', 'notes/origin')).toBe(1);
+      return renameFacts(engine, ['atoms/moved-origin', 'atoms/open-origin'], ['page:atoms/open-origin']);
+    },
+  );
+
+  parityTest(
+    'excludePrivate follows a slug alias from a renamed page to its restricted page',
+    { methods: ['putPage', 'updateSlug', 'insertFacts', 'listFactsSince'] },
+    async (engine) => {
+      await putRenamePages(engine, [
+        ['notes/b-old', 'note', { readable_by: ['alice-example'] }],
+        ['notes/c-old', 'note', {}],
+        ['atoms/aliased-origin', 'atom', { visibility: 'world', source_slug: 'notes/b-old' }],
+        ['notes/aliased-lineage', 'note', { derived_from: 'notes/b-old' }],
+        ['events/aliased-chronicle', 'event', { captured_via: 'life-chronicle:test', event: { depth: 'notes/b-old' } }],
+        ['atoms/open-alias', 'atom', { visibility: 'world', source_slug: 'notes/c-old' }],
+      ]);
+      expect(await engine.updateSlug('notes/b-old', 'notes/b-new')).toBe(1);
+      expect(await engine.updateSlug('notes/c-old', 'notes/c-new')).toBe(1);
+      // A new open page at the old slug: the alias, not the page now there, names the restricted page.
+      await putRenamePages(engine, [['notes/b-old', 'note', {}]]);
+      return renameFacts(
+        engine,
+        ['atoms/aliased-origin', 'notes/aliased-lineage', 'events/aliased-chronicle', 'atoms/open-alias', 'notes/b-old'],
+        ['page:atoms/open-alias', 'page:notes/b-old'],
+      );
+    },
+  );
 });
+
+async function putRenamePages(engine: BrainEngine, pages: Array<[string, string, Record<string, unknown>]>) {
+  for (const [slug, type, frontmatter] of pages) {
+    await engine.putPage(slug, { type: type as never, title: slug, compiled_truth: `About ${slug}.`, timeline: '', frontmatter });
+  }
+}
+
+/** One fence row per holding page, then the rows `excludePrivate` keeps, which must be `expectKept`. */
+async function renameFacts(engine: BrainEngine, holders: string[], expectKept: string[]) {
+  await engine.insertFacts(holders.map((slug, i) => ({
+    fact: `page:${slug}`, entity_slug: PRIVACY_ENTITY, source_markdown_slug: slug, row_num: i + 1, kind: 'fact',
+    visibility: 'world', source: 'fence', valid_from: at('2026-03-01T00:00:00Z'),
+  })) as never, { source_id: SRC });
+  const since = at('2020-01-01T00:00:00Z');
+  const all = sorted(texts(await engine.listFactsSince(SRC, since, { limit: 500 })));
+  const kept = sorted(texts(await engine.listFactsSince(SRC, since, { limit: 500, excludePrivate: true })));
+  expect(all).toEqual(sorted(holders.map((slug) => `page:${slug}`)));
+  expect(kept).toEqual(sorted(expectKept));
+  return { all, kept };
+}

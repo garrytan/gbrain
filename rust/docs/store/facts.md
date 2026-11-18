@@ -55,10 +55,13 @@ now equals its no-caller rendering (`withoutCallerAccess`, 443), the concept-inp
 compared as one token. A caller whose member pages, grants or lineage design widen the text is
 refused with `engine_capability_missing` (`src/core/rust-engine/store-members/private-provenance.ts`).
 
-Gap: the store has no `slug_aliases` or `slug_rename_history` rows to read, so the alias and
-rename lookups of the origin, chronicle and lineage rules find nothing. A brain with an alias
-or a rename to a restricted page would keep a row PGLite hides; the merge must route these
-lookups through the page-state lane's aliases.
+Aliases and renames: each origin slug of the origin rule (atom `source_slug`, concept input
+`source_slug` under the input's source, chronicle `event.depth`, each `derived_from` slug) also
+names the slug its `slug_aliases` row resolves to and every slug its `slug_rename_history` rows
+moved it to (`gbrain_access_origin_restricted`, v305). The atom-origin probe adds the `rename`
+alias (`atomOriginSlugsSql`, 24) and the rename history (`atomMovedOriginPrivateSql`, 34, #8920)
+of `src/core/persistence/atom-origin.ts`. Both come from `aliases.rs` (`read_slug_alias`,
+`renamed_to`), which `updateSlug` fills as `rename-alias.ts` does.
 
 ## Vectors (`facts/embedding.rs`)
 
