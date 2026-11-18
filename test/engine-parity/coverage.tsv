@@ -52,13 +52,13 @@ getPage	pages	yes	29	yes	yes	yes	serves
 readPageSnapshot	pages	yes	7	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	146	yes	yes	yes	serves
+putPage	pages	yes	147	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	4	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	49	yes	yes	yes	serves
+softDeletePage	pages	yes	50	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	8	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -129,8 +129,8 @@ getChunkReuseRows	chunks	yes	1	no	yes	yes	refuses:chunks
 getChunksWithEmbeddings	chunks	yes	1	no	yes	yes	serves
 countStalePagesForExtraction	extraction	yes	4	yes	yes	yes	serves
 listStalePagesForExtraction	extraction	yes	3	yes	yes	yes	serves
-markPagesExtractedBatch	extraction	yes	4	yes	yes	yes	serves
-markPagesAttendanceBlocked	extraction	yes	1	no	yes	yes	serves
+markPagesExtractedBatch	extraction	yes	5	yes	yes	yes	serves
+markPagesAttendanceBlocked	extraction	yes	2	no	yes	yes	serves
 countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
@@ -267,7 +267,7 @@ readMentionLastPass	entity_reads	yes	1	no	yes	yes	serves
 countPagesDueForMentions	entity_reads	yes	1	no	yes	yes	serves
 readIdentitySiblingCandidates	entity_reads	yes	2	no	yes	yes	serves
 findExactSlug	entity_reads	yes	1	no	yes	yes	serves
-readExtractionLagCounts	entity_reads	yes	1	no	yes	yes	refuses:pages
+readExtractionLagCounts	entity_reads	yes	2	no	yes	yes	serves
 readIgnoredPrivacyLabelPages	entity_reads	yes	2	no	yes	yes	serves
 acquireCycleLock	cycle_locks	yes	8	no	yes	yes	refuses:minion_queue
 refreshCycleLock	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue

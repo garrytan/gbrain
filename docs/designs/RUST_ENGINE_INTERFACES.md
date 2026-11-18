@@ -722,17 +722,18 @@ Extraction state of pages.
 
 - **Files:** `gbrain-store/src/extraction.rs`, `gbrain-napi/src/families/extraction.rs`, `store-members/extraction.ts`.
 - **Tag:** `e` (`EXTRACTION`). Cascade on page delete: yes.
-- **Members (7), capability:** `pages` (7).
-- **Store and binding:** `countStalePagesForExtraction` (`count_stale_pages_for_extraction`), `listStalePagesForExtraction` (`list_stale_pages_for_extraction`), `markPagesExtractedBatch` (`mark_pages_extracted_batch`), `markPagesAttendanceBlocked` (`mark_pages_attendance_blocked`), `countStaleFrontmatterKeyPages` (`count_stale_frontmatter_key_pages`), `listStaleFrontmatterKeyPages` (`list_stale_frontmatter_key_pages`), `stripStaleFrontmatterKeys` (`strip_stale_frontmatter_keys`).
+- **Members (8), capability:** `pages` (8).
+- **Store and binding:** `countStalePagesForExtraction` (`count_stale_pages_for_extraction`), `listStalePagesForExtraction` (`list_stale_pages_for_extraction`), `readExtractionLagCounts` (`read_extraction_lag_counts`, the `links_extraction_lag` doctor row), `markPagesExtractedBatch` (`mark_pages_extracted_batch`), `markPagesAttendanceBlocked` (`mark_pages_attendance_blocked`), `countStaleFrontmatterKeyPages` (`count_stale_frontmatter_key_pages`), `listStaleFrontmatterKeyPages` (`list_stale_frontmatter_key_pages`), `stripStaleFrontmatterKeys` (`strip_stale_frontmatter_keys`).
 - **Postgres tables:** `pages.links_extracted_at`, `pages.timeline_extracted_at`, attendance-blocked state, `page_extraction_state`; frontmatter key rewrites go through core `write_page`.
 - **Keys:** `e <page id>` holds one record with the extraction stamps and the attendance-blocked flag for that page. Removed by `remove_page_rows`.
 - **Depends on:** Core page helpers. `stripStaleFrontmatterKeys` changes a page body: it writes through `write_page` and the version rules core uses. `getStats`/`getHealth` (stats family) read these stamps.
 - **Estimate:** about 4 to 5 days.
 - **Notes:** A page is stale for extraction when its body changed after the stamp: compare `updated_at_us` (or the body revision) with the stamp, as the PGLite query does. Same capability (`pages`) as page_ops and aliases.
-- **Parity cases (5, in `extraction.test.ts`):**
+- **Parity cases (6, in `extraction.test.ts`):**
   - `extraction.test.ts`: countStalePagesForExtraction: NULL stamp, older-than-version and edited-since-stamp are stale; deleted and quarantined are not
   - `extraction.test.ts`: listStalePagesForExtraction pages by id keyset, scopes by source and carries the page content
   - `extraction.test.ts`: markPagesExtractedBatch returns the rows stamped: wrong-source and unknown refs match nothing, empty input is 0
+  - `extraction.test.ts`: readExtractionLagCounts counts live, actionable-stale, attendance-blocked and held pages in each statement shape
   - `extraction.test.ts`: markPagesAttendanceBlocked marks a page at its revision; attendance narrows the stale set and an edit releases it
   - `extraction.test.ts`: countStaleFrontmatterKeyPages, listStaleFrontmatterKeyPages and stripStaleFrontmatterKeys sweep parser-reserved keys per source
 
