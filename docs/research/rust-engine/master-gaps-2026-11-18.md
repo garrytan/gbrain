@@ -1,0 +1,111 @@
+# Rust engine fixes that master also needs (2026-11-18)
+
+The Rust engine branches fixed six defects while they made CI green. Each entry below says whether
+master has the same code, with file and line. Master was read at `4fb16138a0` with
+`git show origin/master:<path>`. The Rust branch refs are on `rust-engine/ci-red` and
+`rust-engine/sequence-order`.
+
+This is research, not a promise about current behavior. No change to master was made.
+
+## Summary
+
+| Defect | Rust branch fix | Same code on master | Effect on master |
+|---|---|---|---|
+| Journal reservations sorted by the text form of `sequence` | `39d3911c88` | Yes: `src/core/persistence/receipt-true-up.ts:83-84` | Same bug. The reservation sweep can skip rows past sequence 9, 99, 999 and so on. |
+| Fence trend prefix sorted by the text form of `sequence` | `d231ce57d4` | Yes: `src/core/persistence/sync-prepare.ts:626` and `:646` | Same bug. Trend sample paths and the open-import list come out of order past a power of ten. |
+| Projection window `ord` read as a BigInt on Postgres | `abf4d9aada` | Same SQL: `src/core/page-state/projection-window.ts:83` | No wrong value reaches a caller today. The only reader converts with `Number()`. |
+| Projection queue walked in the server's text order on Postgres | `0044e342e9` | Yes: `src/core/page-state/projections.ts:763`, `:793`, `:806`, `:808`; `src/core/page-state/projection-window.ts:79-85`; `src/core/page-state/image-seal.ts:80`, `:81`, `:85` | Same bug on a Postgres server whose collation is not C (for example en_US.utf8). The drain, its preview, the resident window and the image seal visit jobs in a different order than PGLite. |
+| Duplicate take-supersession row in the canonical writer census | `f3906b8497` | Yes: `docs/architecture/canonical-writers.tsv:272` (stale) and `:274` | The stale row describes code that is gone. No test rejects a duplicate row on master. |
+| Partial-clone holds on git 2.43 | none | Same code: `src/core/persistence/sync-blobs.ts:55-62` | Two tests fail on git 2.43. They pass on CI's git 2.56. |
+
+## Journal reservations (39d3911c88)
+
+`RESERVATIONS_AFTER_SQL` selects `sequence::text AS sequence` and ended with `ORDER BY sequence`. In
+an `ORDER BY`, a bare output-column name wins over the table column, so the rows sort as text:
+`10`, `11`, `9`. `sweepCompactedReservations` keeps the window's last row as its cursor, so the
+sweep can jump over rows and never return their reserved bytes.
+
+Master has the same statement inline in `src/core/persistence/receipt-true-up.ts:83-84`:
+
+```sql
+SELECT id,sequence::text AS sequence,compacted
+    FROM persistence_requests WHERE sequence>$1::bigint ORDER BY sequence LIMIT $2
+```
+
+The fix is `ORDER BY persistence_requests.sequence`. The Rust branch case in
+`test/persistence-receipt-true-up.test.ts` (sequences 9, 10, 11) fails on the old statement.
+
+## Fence trend prefix (d231ce57d4)
+
+`fenceTrendRows` and the open-import read in `readFenceTrendPrefix` select
+`sequence::text AS sequence` and ended with `ORDER BY sequence`. `addFencesNormalized` keeps the
+first five paths in row order as `sample_paths`, and `FenceTrendPrefix.open` keeps row order. Both
+came out as 10, 11, 9. PGLite shows it too: text `'10'` sorts before `'9'` in every collation.
+
+Master has both lines: `src/core/persistence/sync-prepare.ts:626` and `:646`. The new test
+`test/sync-fence-trend-sequence-order.test.ts` uses a real database on PGLite and Postgres. It fails
+on both engines before the fix, and each of its two assertions fails alone when its read is
+reverted.
+
+## Projection window `ord` (abf4d9aada)
+
+`row_number()` returns `int8`. The Postgres engine parses `int8` as a JS BigInt
+(`types: { bigint: postgres.BigInt }`, master `src/core/connection-manager.ts:268` and
+`src/core/db.ts:531`). On the Rust branch, `readProjectionWindow` in
+`src/core/engine-sql/persistence-housekeeping.ts` returns rows typed `ord: number` without a
+conversion, so the Postgres parity case saw a BigInt. The fix casts in SQL:
+`(row_number() OVER (...))::int AS ord`.
+
+Master has the same SQL in `src/core/page-state/projection-window.ts:83`. Its only reader,
+`src/core/page-state/projections.ts:673` and `:694`, wraps `ord` in `Number()`, so no BigInt
+reaches a caller on master. The cast is worth porting when that window moves behind a typed
+contract.
+
+## Projection queue order (0044e342e9)
+
+The projection queue's keyset comparison `(source_incarnation, slug) > (...)` and its `ORDER BY` used
+the server's default collation for `slug`. On a Postgres database with a language collation
+(en_US.utf8), `notes/a1`, `notes/a-b`, `notes/a_b` and `notes/ab` sort in a different order than
+in byte order. PGLite and the Rust engine (`job_order` in
+`rust/crates/gbrain-store/src/persistence/projection_queue.rs` compares `slug.as_bytes()`) use byte
+order. The fix pins `COLLATE "C"` on the comparison and the `ORDER BY` together, in the drain and
+its preview, the resident window (both copies) and the image-seal walk. Postgres refuses a
+collated column in a `UNION ALL`'s own `ORDER BY`, so the window now orders in an outer select.
+
+Master has the same code at `src/core/page-state/projections.ts:763`, `:793`, `:806` and `:808`,
+`src/core/page-state/projection-window.ts:79-85` and `src/core/page-state/image-seal.ts:80`, `:81`
+and `:85`. Master has no `projectionWindowFragment`, so the engine-sql copy has nothing to fix there.
+
+Cost: the only index on `page_projection_jobs` is its primary key `(source_incarnation, slug)`
+with the default collation. On an en_US database the pinned window read cannot use it. On 300,000
+queue rows the read went from an index scan (0.18 ms) to a full scan and sort (20 ms). An index on
+`(source_incarnation, slug COLLATE "C")` restores the index scan (0.13 ms). A C-collated database
+(`datcollate` C) is not measured here.
+
+## Take-supersession census row (f3906b8497)
+
+Master's `docs/architecture/canonical-writers.tsv` lists `src/core/repair/take-supersession.ts`
+twice. Line 272 says the reprojection runs "inside withCoordinatedWrite under the page key"; line
+274 names the `managed_maintenance_take_reproject` request. Master's
+`src/core/repair/take-supersession.ts` has no `withCoordinatedWrite` call, so line 272 is stale.
+
+The Rust branch deletes the stale row and adds the case "each file has exactly one row in
+canonical-writers.tsv" to `test/canonical-writer-inventory.test.ts`. Master has no such case, so a
+duplicate row passes there.
+
+## Partial-clone holds on git 2.43 (no fix)
+
+On git 2.43.0, `git cat-file --batch` exits 128 when it meets a missing blob in a partial clone,
+instead of printing `<oid> missing`. `readBlobBytes` (`src/core/persistence/sync-blobs.ts:55`, the
+call at `:62`) does not catch the exit, so the file is held `page_write_failed`, not
+`git_object_missing`. Master has the same code at the same lines.
+
+Two PGLite cases in `test/sync-partial-clone-2331.test.ts` fail on git 2.43.0:
+
+- line 158: "a blobless clone without a checkout fetches nothing and holds every committed file
+  git_object_missing"
+- line 191: "a treeless clone without a checkout stops the run naming the partial clone, fetches
+  nothing, and syncs once the user fetches the trees"
+
+Both pass on CI's git 2.56.0 (master run 44277593744, job 134709792876). Nothing was changed. A
+user with an older git and a partial clone sees the less specific hold code.
