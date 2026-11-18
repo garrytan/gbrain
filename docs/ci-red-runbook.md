@@ -103,8 +103,8 @@ and uploads the `ci-manifest` artifact: a versioned JSON file
 (`gbrain-ci-manifest/v1`) bound to the workflow, event, SHA, run id and run
 attempt. It lists every failing test identity (lane, file, test, arm) and, per
 file, how many tests executed, failed and were skipped. It is `complete` only
-when every lane's receipts are valid (no killed shard, truncated report, older
-attempt, or lane that executed nothing without a declared skip row).
+when every lane's receipts are valid (no killed shard, truncated report, receipt
+from a later attempt than the manifest's own, or lane that executed nothing without a declared skip row).
 
 nightly-watch also reads the failing jobs' annotations. A manifest or annotation
 that cannot be read, or a manifest from another SHA or attempt, is incomplete
