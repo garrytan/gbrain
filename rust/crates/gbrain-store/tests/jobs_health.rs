@@ -5,8 +5,8 @@
 mod memory_env;
 
 use gbrain_store::jobs::{AdmitSpec, ClaimSpec, DivergenceSpec, HealthSpec};
-use memory_env::{brain, Brain};
-use serde_json::{json, Value};
+use memory_env::{Brain, brain};
+use serde_json::{Value, json};
 
 const SEC: i64 = 1_000_000;
 const HOUR: i64 = 3_600 * SEC;

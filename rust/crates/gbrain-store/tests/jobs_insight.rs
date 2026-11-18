@@ -4,8 +4,8 @@
 mod memory_env;
 
 use gbrain_store::jobs::{AdmitSpec, ClaimSpec, InsightSpec, LockAcquire, TokenDelta};
-use memory_env::{brain, Brain};
-use serde_json::{json, Value};
+use memory_env::{Brain, brain};
+use serde_json::{Value, json};
 
 const SEC: i64 = 1_000_000;
 const BEACON: &str = "gbrain-drain-lease";

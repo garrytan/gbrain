@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 437/437
+# covered: 467/467
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -19,7 +19,7 @@
 # timeline: 17/17
 # ontology: 4/4
 # raw_files: 5/5
-# takes: 15/15
+# takes: 21/21
 # dream: 3/3
 # contradictions: 5/5
 # facts: 14/14
@@ -33,7 +33,8 @@
 # entity_reads: 6/6
 # cycle_locks: 7/7
 # minion_jobs: 8/8
-# minion_queue: 51/51
+# minion_queue: 62/62
+# minion_status: 11/11
 # cli_reads_ops: 7/7
 # facts_doctor: 10/10
 # facts_cycle: 11/11
@@ -41,9 +42,9 @@
 # facts_repair: 10/10
 # facts_trust: 8/8
 # raw_sql: 4/4
-# code_edges: 5/5
+# code_edges: 6/6
 # eval_capture: 5/5
-# salience_enrich: 5/5
+# salience_enrich: 6/6
 # cli_reads_import: 11/11
 # wanted_links: 2/2
 # telemetry: 4/4
@@ -62,13 +63,13 @@ getPage	pages	yes	48	yes	yes	yes	serves
 readPageSnapshot	pages	yes	9	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	181	yes	yes	yes	serves
+putPage	pages	yes	189	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	5	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	65	yes	yes	yes	serves
+softDeletePage	pages	yes	68	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	8	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -134,9 +135,9 @@ listWithdrawalChunks	chunks	yes	1	no	yes	yes	serves
 deleteChunksForPages	chunks	yes	1	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	1	no	yes	yes	serves
-upsertChunks	chunks	yes	20	yes	yes	yes	serves
+upsertChunks	chunks	yes	21	yes	yes	yes	serves
 sealChunks	chunks	yes	18	no	yes	yes	serves
-getChunks	chunks	yes	23	yes	yes	yes	serves
+getChunks	chunks	yes	24	yes	yes	yes	serves
 getChunkPage	chunks	yes	3	no	yes	yes	serves
 getChunkWindows	chunks	yes	1	no	yes	yes	serves
 countStaleChunks	chunks	yes	5	no	yes	yes	serves
@@ -217,7 +218,7 @@ getRawData	raw_files	yes	2	yes	yes	yes	serves
 upsertFile	raw_files	yes	2	no	yes	yes	serves
 getFile	raw_files	yes	2	no	yes	yes	serves
 listFilesForPage	raw_files	yes	1	no	yes	yes	serves
-addTakesBatch	takes	yes	20	yes	yes	yes	serves
+addTakesBatch	takes	yes	26	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	1	no	yes	yes	serves
 listTakes	takes	yes	11	no	yes	yes	serves
 searchTakes	takes	yes	1	no	yes	yes	serves
@@ -227,11 +228,17 @@ countStaleTakes	takes	yes	1	no	yes	yes	serves
 listStaleTakes	takes	yes	1	no	yes	yes	serves
 updateTake	takes	yes	1	no	yes	yes	serves
 supersedeTake	takes	yes	1	no	yes	yes	serves
-resolveTake	takes	yes	5	no	yes	yes	serves
+resolveTake	takes	yes	6	no	yes	yes	serves
 getScorecard	takes	yes	1	no	yes	yes	serves
 getCalibrationCurve	takes	yes	1	no	yes	yes	serves
 addSynthesisEvidence	takes	yes	1	no	yes	yes	serves
 listActiveTakesForPages	takes	yes	2	no	yes	yes	serves
+countOffGridTakeWeights	takes	yes	1	no	yes	yes	serves
+countTakes	takes	yes	1	no	yes	yes	serves
+planFactPurgeTakes	takes	yes	1	no	yes	yes	serves
+listTakeRowsForPage	takes	yes	1	no	yes	yes	serves
+countMcpResolvedTakes	takes	yes	1	no	yes	yes	serves
+listTakeSupersessionCandidates	takes	yes	1	no	yes	yes	serves
 getDreamVerdict	dream	yes	1	yes	yes	yes	serves
 putDreamVerdict	dream	yes	1	yes	yes	yes	serves
 sweepDreamVerdicts	dream	yes	1	no	yes	yes	serves
@@ -240,7 +247,7 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	31	yes	yes	yes	serves
+insertFact	facts	yes	32	yes	yes	yes	serves
 insertFacts	facts	yes	20	no	yes	yes	serves
 deleteFactsForPage	facts	yes	2	no	yes	yes	serves
 expireFact	facts	yes	17	no	yes	yes	serves
@@ -251,7 +258,7 @@ listFactsBySession	facts	yes	3	yes	yes	yes	serves
 listSupersessions	facts	yes	5	yes	yes	yes	serves
 countUnconsolidatedFacts	facts	yes	2	yes	yes	yes	serves
 findCandidateDuplicates	facts	yes	6	yes	yes	yes	serves
-consolidateFact	facts	yes	3	no	yes	yes	serves
+consolidateFact	facts	yes	4	no	yes	yes	serves
 findTrajectory	facts	yes	3	yes	yes	yes	serves
 getFactsHealth	facts	yes	2	yes	yes	yes	serves
 allocateBodyOccurrenceIds	segmented_body	yes	2	no	yes	yes	serves
@@ -318,20 +325,20 @@ readIdentitySiblingCandidates	entity_reads	yes	2	no	yes	yes	serves
 findExactSlug	entity_reads	yes	1	no	yes	yes	serves
 readExtractionLagCounts	entity_reads	yes	2	no	yes	yes	serves
 readIgnoredPrivacyLabelPages	entity_reads	yes	2	no	yes	yes	serves
-acquireCycleLock	cycle_locks	yes	10	no	yes	yes	serves
+acquireCycleLock	cycle_locks	yes	11	no	yes	yes	serves
 refreshCycleLock	cycle_locks	yes	1	no	yes	yes	serves
 releaseCycleLock	cycle_locks	yes	1	no	yes	yes	serves
 readCycleLocks	cycle_locks	yes	8	no	yes	yes	serves
 deleteCycleLock	cycle_locks	yes	1	no	yes	yes	serves
 deleteCycleLockIfStale	cycle_locks	yes	1	no	yes	yes	serves
 assertCycleLease	cycle_locks	yes	1	no	yes	yes	serves
-admitJob	minion_jobs	yes	56	no	yes	yes	serves
-getJob	minion_jobs	yes	29	no	yes	yes	serves
+admitJob	minion_jobs	yes	78	no	yes	yes	serves
+getJob	minion_jobs	yes	34	no	yes	yes	serves
 listJobs	minion_jobs	yes	1	no	yes	yes	serves
-claimNextJob	minion_jobs	yes	47	no	yes	yes	serves
+claimNextJob	minion_jobs	yes	69	no	yes	yes	serves
 renewJobLease	minion_jobs	yes	1	no	yes	yes	serves
-completeJob	minion_jobs	yes	22	no	yes	yes	serves
-failJob	minion_jobs	yes	18	no	yes	yes	serves
+completeJob	minion_jobs	yes	38	no	yes	yes	serves
+failJob	minion_jobs	yes	33	no	yes	yes	serves
 reclaimStalledJobs	minion_jobs	yes	2	no	yes	yes	serves
 deleteTerminalJob	minion_queue	yes	1	no	yes	yes	serves
 pauseJob	minion_queue	yes	8	no	yes	yes	serves
@@ -340,13 +347,13 @@ failParentJob	minion_queue	yes	3	no	yes	yes	serves
 resolveParentJob	minion_queue	yes	1	no	yes	yes	serves
 resolveStrandedParents	minion_queue	yes	1	no	yes	yes	serves
 detachChildJob	minion_queue	yes	1	no	yes	yes	serves
-updateJobProgress	minion_queue	yes	1	no	yes	yes	serves
-addJobTokens	minion_queue	yes	1	no	yes	yes	serves
+updateJobProgress	minion_queue	yes	2	no	yes	yes	serves
+addJobTokens	minion_queue	yes	3	no	yes	yes	serves
 delayActiveJob	minion_queue	yes	1	no	yes	yes	serves
 releaseWatchdogClaim	minion_queue	yes	1	no	yes	yes	serves
 markJobWatchdogSuspect	minion_queue	yes	2	no	yes	yes	serves
-promoteDelayedJobs	minion_queue	yes	2	no	yes	yes	serves
-cancelJobs	minion_queue	yes	7	no	yes	yes	serves
+promoteDelayedJobs	minion_queue	yes	3	no	yes	yes	serves
+cancelJobs	minion_queue	yes	13	no	yes	yes	serves
 killTimedOutJobs	minion_queue	yes	1	no	yes	yes	serves
 killWallClockJobs	minion_queue	yes	1	no	yes	yes	serves
 pruneJobs	minion_queue	yes	2	no	yes	yes	serves
@@ -384,6 +391,28 @@ listPrivateQueueHealth	minion_queue	yes	1	no	yes	yes	serves
 readWedgeSignals	minion_queue	yes	1	no	yes	yes	serves
 readOldestWaitingAge	minion_queue	yes	1	no	yes	yes	serves
 listStuckActiveJobsByName	minion_queue	yes	1	no	yes	yes	serves
+listStalledEmbedBackfillSources	minion_queue	yes	1	no	yes	yes	serves
+readGlobalMaintenanceDeaths	minion_queue	yes	1	no	yes	yes	serves
+readLastFailedGlobalMaintenanceJob	minion_queue	yes	1	no	yes	yes	serves
+listFactsAbsorbJobsStillDead	minion_queue	yes	1	no	yes	yes	serves
+readLegacyJobAuthority	minion_queue	yes	1	no	yes	yes	serves
+readQueuedSpendRows	minion_queue	yes	1	no	yes	yes	serves
+listBuildSkewStacktraceLines	minion_queue	yes	1	no	yes	yes	serves
+countDeadDreamSubmissionRows	minion_queue	yes	1	no	yes	yes	serves
+listFactsAbsorbJobsByKeyPrefix	minion_queue	yes	1	no	yes	yes	serves
+listDeadFactsAbsorbJobsByKeys	minion_queue	yes	1	no	yes	yes	serves
+readJobInsight	minion_queue	yes	2	no	yes	yes	serves
+readLastAutopilotCycles	minion_status	yes	1	no	yes	yes	serves
+countJobsByStatus	minion_status	yes	1	no	yes	yes	serves
+readWaitingQueueDepths	minion_status	yes	1	no	yes	yes	serves
+readLastCompletedJobAt	minion_status	yes	1	no	yes	yes	serves
+countTtlCancelledByName	minion_status	yes	1	no	yes	yes	serves
+readWaitingScopeState	minion_status	yes	1	no	yes	yes	serves
+countRecentCompletedJobs	minion_status	yes	1	no	yes	yes	serves
+listRecentFailedJobErrors	minion_status	yes	1	no	yes	yes	serves
+readQueuedPageChars	minion_status	yes	1	no	yes	yes	serves
+readSourceJobCounts	minion_status	yes	1	no	yes	yes	serves
+readEmbedBackfillBySource	minion_status	yes	1	no	yes	yes	serves
 scanExactBatch	cli_reads_ops	yes	4	no	yes	yes	serves
 nextLivePageAfter	cli_reads_ops	yes	1	no	yes	yes	serves
 listExactIdentityCandidates	cli_reads_ops	yes	3	no	yes	yes	serves
@@ -413,7 +442,7 @@ maxFenceRowNum	facts_cycle	yes	1	no	yes	yes	serves
 listStoredFenceFactRows	facts_cycle	yes	1	no	yes	yes	serves
 countWorldFacts	facts_cycle	yes	3	no	yes	yes	serves
 countFactFingerprintLeftovers	facts_purge	yes	1	no	yes	yes	serves
-loadPurgeTarget	facts_purge	yes	4	no	yes	yes	serves
+loadPurgeTarget	facts_purge	yes	5	no	yes	yes	serves
 planFactPurgeIds	facts_purge	yes	1	no	yes	yes	serves
 listFactsReconcileBacklog	facts_purge	yes	1	no	yes	yes	refuses:facts
 listRelinkCandidateRows	facts_purge	yes	1	no	yes	yes	serves
@@ -447,7 +476,8 @@ runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 executeRaw	raw_sql	yes	2	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-addCodeEdges	code_edges	yes	3	yes	yes	yes	serves
+hasCodeEdgesSymbol	code_edges	yes	1	no	yes	yes	serves
+addCodeEdges	code_edges	yes	4	yes	yes	yes	serves
 deleteCodeEdgesForChunks	code_edges	yes	1	no	yes	yes	serves
 getCallersOf	code_edges	yes	3	no	yes	yes	serves
 getCalleesOf	code_edges	yes	2	yes	yes	yes	serves
@@ -457,8 +487,9 @@ listEvalCandidates	eval_capture	yes	2	no	yes	yes	serves
 deleteEvalCandidatesBefore	eval_capture	yes	1	no	yes	yes	serves
 logEvalCaptureFailure	eval_capture	yes	1	no	yes	yes	serves
 listEvalCaptureFailures	eval_capture	yes	1	no	yes	yes	serves
+countZeroWeightWithTakes	salience_enrich	yes	1	no	yes	yes	serves
 batchLoadEmotionalInputs	salience_enrich	yes	1	no	yes	yes	serves
-setEmotionalWeightBatch	salience_enrich	yes	5	yes	yes	yes	serves
+setEmotionalWeightBatch	salience_enrich	yes	6	yes	yes	yes	serves
 getRecentSalience	salience_enrich	yes	2	yes	yes	yes	serves
 listEnrichCandidates	salience_enrich	yes	3	yes	yes	yes	serves
 findAnomalies	salience_enrich	yes	3	yes	yes	yes	serves

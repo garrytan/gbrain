@@ -1,12 +1,12 @@
 //! Jobs: the queue health reads (rust/docs/store/jobs-health.md). Same shape as `ops.rs`.
 
 use gbrain_store::jobs::{DivergenceSpec, HealthSpec};
-use napi::bindgen_prelude::Object;
 use napi::Env;
+use napi::bindgen_prelude::Object;
 use napi_derive::napi;
 use serde_json::Value;
 
-use crate::store_binding::{required, Brain};
+use crate::store_binding::{Brain, required};
 
 #[napi]
 impl Brain {

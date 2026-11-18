@@ -8,8 +8,8 @@ mod memory_env;
 use gbrain_store::error::INVALID_ARGUMENT;
 use gbrain_store::jobs::{AdmitSpec, ClaimSpec, StatusFilter};
 use gbrain_store::pages::{PageInput, PutPageOptions};
-use memory_env::{brain, Brain};
-use serde_json::{json, Value};
+use memory_env::{Brain, brain};
+use serde_json::{Value, json};
 
 const SEC: i64 = 1_000_000;
 const HOUR: i64 = 3_600 * SEC;
@@ -138,10 +138,11 @@ fn equal_finish_times_go_to_the_larger_id() {
 #[test]
 fn counts_by_status_filter_and_an_empty_status_list() {
     let b = brain("st-counts");
-    assert!(b
-        .count_jobs_by_status(&StatusFilter::default())
-        .unwrap()
-        .is_empty());
+    assert!(
+        b.count_jobs_by_status(&StatusFilter::default())
+            .unwrap()
+            .is_empty()
+    );
     finished(&b, "work", "w:1");
     add(&b, "work", json!({}));
     add(&b, "work", json!({ "queue": "late" }));
@@ -479,10 +480,12 @@ fn embed_backfill_by_source_reports_only_the_requested_sources() {
         (out[0]["queued"].as_i64(), out[0]["active"].as_i64()),
         (Some(1), Some(0))
     );
-    assert!(out[0]["last_completed_at"]
-        .as_str()
-        .unwrap()
-        .starts_with("2027-01-15T09:"));
+    assert!(
+        out[0]["last_completed_at"]
+            .as_str()
+            .unwrap()
+            .starts_with("2027-01-15T09:")
+    );
     assert_eq!(out[1]["source_id"], "s2");
     assert_eq!(out[1]["last_completed_at"], Value::Null);
     assert!(b.read_embed_backfill_by_source(&[]).unwrap().is_empty());

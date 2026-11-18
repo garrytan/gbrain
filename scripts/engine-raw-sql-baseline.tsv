@@ -73,7 +73,7 @@ src/commands/doctor/checks/graph-embedding.ts	execute_raw	2
 src/commands/doctor/checks/guest-source.ts	execute_raw	4
 src/commands/doctor/checks/image-embedding-coverage.ts	execute_raw	1
 src/commands/doctor/checks/keyword-plan.ts	execute_raw	3
-src/commands/doctor/checks/knowledge-health.ts	execute_raw	4
+src/commands/doctor/checks/knowledge-health.ts	execute_raw	3
 src/commands/doctor/checks/landing-gaps.ts	execute_raw	1
 src/commands/doctor/checks/legacy-token-grants.ts	execute_raw	1
 src/commands/doctor/checks/local-audits.ts	execute_raw	1

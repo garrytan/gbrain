@@ -178,11 +178,7 @@ impl Store {
                     .filter(|b| b.lock_token.as_deref() == Some(l.acquisition_token.as_str()))
                     .map(Some)
                     .collect();
-                if m.is_empty() {
-                    vec![None]
-                } else {
-                    m
-                }
+                if m.is_empty() { vec![None] } else { m }
             };
             for b in mine {
                 let beacon = b.and_then(|b| b.data.get("drain_lease_beacon")).cloned();

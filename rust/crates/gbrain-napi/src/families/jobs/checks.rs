@@ -4,12 +4,12 @@
 use gbrain_store::jobs::{
     BuildSkewSpec, DeadDreamSpec, DeathsSpec, KeyPrefixSpec, QueuedSpendSpec, StillDeadSpec,
 };
-use napi::bindgen_prelude::Object;
 use napi::Env;
+use napi::bindgen_prelude::Object;
 use napi_derive::napi;
 use serde_json::Value;
 
-use crate::store_binding::{required, Brain};
+use crate::store_binding::{Brain, required};
 
 #[napi]
 impl Brain {

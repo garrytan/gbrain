@@ -41,9 +41,11 @@ import type {
 import type {
   PrivateQueueHealthRow, QueueDivergence, QueueDivergenceSpec, QueueHealthSignals, QueueHealthSpec, QueueWedgeRow, QueueWedgeSignals, WaitingByQueueRow,
 } from './engine-sql/jobs-health.ts';
+import type {
   EmbedBackfillState, FailedJobError, JobStatusCount, JobStatusFilter, LastAutopilotCycles, QueueDepth, SourceJobCounts, TtlCancelledCount,
   WaitingScopeState,
 } from './engine-sql/jobs-status.ts';
+import type {
   DeadDreamSubmissionSpec, FactsAbsorbJobRow, FactsAbsorbStillDead, GlobalMaintenanceDeaths, LastFailedGlobalMaintenanceJob,
   LegacyJobAuthorityRead, QueuedSpendRows,
 } from './engine-sql/jobs-checks.ts';

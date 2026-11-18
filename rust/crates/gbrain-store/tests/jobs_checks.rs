@@ -8,8 +8,8 @@ use gbrain_store::jobs::{
     AdmitSpec, BuildSkewSpec, ClaimSpec, DeadDreamSpec, DeathsSpec, KeyPrefixSpec, QueuedSpendSpec,
     StillDeadSpec,
 };
-use memory_env::{brain, Brain};
-use serde_json::{json, Value};
+use memory_env::{Brain, brain};
+use serde_json::{Value, json};
 
 const MARK: &str = "watchdog_suspect";
 const HOUR: i64 = 3_600_000_000;
@@ -366,14 +366,16 @@ fn build_skew_lines_follow_the_window_and_the_scan_limit() {
     let rows = b.list_build_skew_stacktrace_lines(&spec(24.0, 10)).unwrap();
     assert_eq!(ids(&Value::Array(rows.clone()), "id"), vec![failed]);
     b.clock.advance(25 * HOUR);
-    assert!(b
-        .list_build_skew_stacktrace_lines(&spec(24.0, 10))
-        .unwrap()
-        .is_empty());
-    assert!(b
-        .list_build_skew_stacktrace_lines(&spec(48.0, 0))
-        .unwrap()
-        .is_empty());
+    assert!(
+        b.list_build_skew_stacktrace_lines(&spec(24.0, 10))
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        b.list_build_skew_stacktrace_lines(&spec(48.0, 0))
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(
         b.list_build_skew_stacktrace_lines(&spec(48.0, 1))
             .unwrap()
