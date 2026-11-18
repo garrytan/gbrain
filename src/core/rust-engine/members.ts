@@ -634,6 +634,10 @@ export const RUST_ENGINE_MEMBERS = {
   listTakeSupersessionCandidates: 'takes',
   countZeroWeightWithTakes: 'salience',
   hasCodeEdgesSymbol: 'code_edges',
+  // jobs-tables group D
+  getCodeTraversalCache: 'code_edges',
+  putCodeTraversalCache: 'code_edges',
+  clearCodeTraversalCache: 'code_edges',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;

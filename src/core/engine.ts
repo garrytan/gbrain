@@ -35,6 +35,7 @@ import type { ProjectionScanCursor } from './page-state/projection-window.ts';
 import type { WriteRequest } from './persistence/model.ts';
 import type { TimelineDetailRefresh, TimelineRowRemoval } from './engine-sql/timeline.ts';
 import type { TakeFenceRow } from './engine-sql/takes.ts';
+import type { CodeTraversalCacheClear, CodeTraversalCacheKey, CodeTraversalCacheRow } from './engine-sql/code-traversal-cache.ts';
 import type { FactPreimage, FenceProjectionTarget } from './engine-sql/facts.ts';
 import type { FenceFactRow, FenceRowsTarget } from './engine-sql/trust-fence.ts';
 import type { TrustTable } from './trust/schema.ts';
@@ -3768,6 +3769,13 @@ export interface BrainEngine {
     chunkId: number,
     opts?: { direction?: 'in' | 'out' | 'both'; edgeType?: string; limit?: number },
   ): Promise<CodeEdgeResult[]>;
+  // jobs-tables group D: the code_traversal_cache table.
+  /** The memoised traversal at the key and generation, or null (code_blast and code_flow). */
+  getCodeTraversalCache(key: CodeTraversalCacheKey): Promise<CodeTraversalCacheRow | null>;
+  /** Upsert a memoised traversal on (symbol, depth, source); the response is stored as JSON. */
+  putCodeTraversalCache(key: CodeTraversalCacheKey, response: unknown, maxChunkUpdatedAt: string, xminMax: number): Promise<void>;
+  /** Delete one source's cached traversals, or all of them; returns the number deleted. */
+  clearCodeTraversalCache(opts: CodeTraversalCacheClear): Promise<number>;
 
   /**
    * Chunk-grain keyword search. Ranks by content_chunks.search_vector

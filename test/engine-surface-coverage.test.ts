@@ -199,6 +199,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'readSourceState', 'readAdmissionSource', 'sharedSkillPackTablePresent', 'listSharedSkillPackRoots', 'getWorktreeBinding', 'hasExtractedEvents', 'listActiveAccessMembers', 'expireMemoryProposals', 'listAwaitingMemoryProposals', 'purgeMemoryProposals', 'attachSourcePath',
   // Code edges
   'addCodeEdges', 'deleteCodeEdgesForChunks', 'getCallersOf', 'getCalleesOf', 'getEdgesByChunk',
+  'getCodeTraversalCache', 'putCodeTraversalCache', 'clearCodeTraversalCache',
   'searchKeywordChunks',
   // Eval capture
   'logEvalCandidate', 'listEvalCandidates', 'deleteEvalCandidatesBefore', 'logEvalCaptureFailure',

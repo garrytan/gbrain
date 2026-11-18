@@ -21,6 +21,7 @@
 import { describe, expect } from 'bun:test';
 import type { BrainEngine, Take, TakeBatchInput, TakeHit } from '../../src/core/engine.ts';
 import { basisEmbedding, createSource, parityArms, pick, sorted } from './harness.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -868,6 +869,72 @@ describe('engine parity: takes reads (group D)', () => {
       };
       expect(out).toEqual({ everything: 3, defaultSource: 2, otherSource: 1, bothSources: 3, noSuchSource: 0, emptySources: 0, garry: 2, garryAndAlice: 3, emptyHolders: 0, defaultGarry: 1 });
       return out;
+    },
+  );
+
+  /** Pages that differ by privacy state, each with one resolved `mcp:` take; the soft-deleted ones keep their rows. */
+  async function mcpPrivacyFixture(engine: BrainEngine, backend: Parameters<typeof createSource>[1]) {
+    await createSource(engine, backend, 'mcp-priv-other');
+    const put = async (slug: string, frontmatter: Record<string, unknown>, sourceId?: string) =>
+      engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `Page ${slug}.`, timeline: '', frontmatter }, sourceId ? { sourceId } : undefined);
+    const pages = {
+      open: await put('notes/mcp-open', {}),
+      private: await put('notes/mcp-private', { visibility: 'private' }),
+      readers: await put('notes/mcp-readers', { readable_by: ['alice-example'] }),
+      alias: await put('notes/mcp-alias', { access: 'restricted' }),
+      gone: await put('notes/mcp-gone', {}),
+      otherOpen: await put('notes/mcp-other-open', {}, 'mcp-priv-other'),
+      otherPrivate: await put('notes/mcp-other-private', { visibility: 'private' }, 'mcp-priv-other'),
+    };
+    await engine.softDeletePage('notes/mcp-gone');
+    const done = { quality: 'correct' as const, outcome: true };
+    let n = 0;
+    for (const p of Object.values(pages)) {
+      n += 1;
+      await engine.addTakesBatch([take(p.id, 1, `resolved ${n}`, { holder: n % 2 ? 'garry' : 'alice' }), take(p.id, 2, `open ${n}`)]);
+      await engine.resolveTake(p.id, 1, { ...done, resolvedBy: `mcp:client-${n}` });
+    }
+    return pages;
+  }
+
+  parityTest(
+    'countMcpResolvedTakes under excludePrivate drops the takes of pages the page policy hides, in every source and holder scope',
+    { methods: ['putPage', 'softDeletePage', 'addTakesBatch', 'resolveTake', 'countMcpResolvedTakes'] },
+    async (engine, backend) => {
+      await mcpPrivacyFixture(engine, backend);
+      const count = (sourceIds: string[] | null, holders: string[] | null, excludePrivate: boolean) =>
+        engine.countMcpResolvedTakes({ sourceIds, holders, excludePrivate });
+      const out = {
+        everythingOpen: await count(null, null, false),
+        everythingHidden: await count(null, null, true),
+        defaultOpen: await count(['default'], null, false),
+        defaultHidden: await count(['default'], null, true),
+        otherOpen: await count(['mcp-priv-other'], null, false),
+        otherHidden: await count(['mcp-priv-other'], null, true),
+        garryHidden: await count(null, ['garry'], true),
+        aliceHidden: await count(null, ['alice'], true),
+        noSourceHidden: await count([], null, true),
+        noHolderHidden: await count(null, [], true),
+      };
+      // open, private, readers, alias, gone (default) and open, private (other): the live policy hides private, readers, alias, other-private.
+      expect(out).toEqual({
+        everythingOpen: 7, everythingHidden: 3, defaultOpen: 5, defaultHidden: 2, otherOpen: 2, otherHidden: 1,
+        garryHidden: 2, aliceHidden: 1, noSourceHidden: 0, noHolderHidden: 0,
+      });
+      return out;
+    },
+  );
+
+  parityTest(
+    'countMcpResolvedTakes under excludePrivate for a caller with a reader identity: SQL arms apply the caller policy, the Rust store refuses',
+    { methods: ['putPage', 'softDeletePage', 'addTakesBatch', 'resolveTake', 'countMcpResolvedTakes'] },
+    async (engine, backend) => {
+      await mcpPrivacyFixture(engine, backend);
+      const asReader = await withCallerAccess({ identity: ['alice-example'], hidePrivate: true },
+        () => engine.countMcpResolvedTakes({ sourceIds: null, holders: null, excludePrivate: true }));
+      const open = await engine.countMcpResolvedTakes({ sourceIds: null, holders: null, excludePrivate: false });
+      expect(asReader).toBeLessThan(open);
+      return { asReader, open };
     },
   );
 
