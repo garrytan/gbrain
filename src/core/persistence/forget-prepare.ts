@@ -34,6 +34,7 @@ import type { CompanionPage, PageMutationFile, PreparedMutation } from './coordi
 import type { WriteAuthority, WriteRequest } from './model.ts';
 import { isHoldingSlug } from '../facts-fence.ts';
 import { prepareFenceRowRetirement } from '../facts/fence-fact-append.ts';
+import { withTrustKeep } from './context.ts';
 
 interface ForgetTarget { id: number; entity_slug: string | null; trust_tier?: string | null }
 
@@ -202,8 +203,9 @@ export async function prepareForgetMutation(engine: BrainEngine, row: WriteReque
       pages = (await recordFactWithdrawal(tx, id, sourceId, worldOnly, ownPage
         ? { requestId: row.id, semanticReview: false, memberPage: ownPage, publication }
         : { requestId: row.id, semanticReview: p.semantic_review !== false, excludePrivate, publication })).pages.map(page => page.slug);
-      if (reason) await tx.executeRaw(`UPDATE facts SET context=concat_ws(' | ',NULLIF(context,''),$3::text)
-        WHERE id=$1 AND source_id=$2`, [id, sourceId, `forgotten: ${reason}`]);
+      // The reason annotates the strike and authors nothing: the fact keeps its stored trust tier.
+      if (reason) await withTrustKeep(tx, ['facts'], () => tx.executeRaw(`UPDATE facts SET context=concat_ws(' | ',NULLIF(context,''),$3::text)
+        WHERE id=$1 AND source_id=$2`, [id, sourceId, `forgotten: ${reason}`]));
       return row.operation === 'forget'
         ? { id: rawId, expired: fact.expired_at === null, reason, protocol_version: 1 }
         : { id, expired: true, path: 'legacy_db', reason: reason ?? 'forgotten' };
