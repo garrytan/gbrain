@@ -51,7 +51,7 @@ export const getChunkPage: StoreMember<[slug: string, opts: PageReadScope & { fr
     if (named.length > 1) refuseMember('getChunkPage', 'a read over several sources');
     const options = {
       sourceId: named[0]!, fromIndex, limit,
-      excludePrivate: storePagePolicy('getChunkPage', excludePrivate) ?? null,
+      excludePrivate: storePagePolicy('getChunkPage', excludePrivate, { callerReaders: true }) ?? null,
       requireSafeChunks: requiresSafeChunks(opts),
     };
     const page: ChunkPage = await storeCall({ member: 'getChunkPage', slug }, () => brain.getChunkPage(slug, options));
@@ -74,7 +74,7 @@ export const getChunkWindows: StoreMember<[requests: ChunkWindowRequest[], opts:
     const rows: Record<string, unknown>[] =
       await storeCall({ member: 'getChunkWindows' }, () => brain.getChunkWindows(wire, {
         ...options, maxRows,
-        excludePrivate: storePagePolicy('getChunkWindows', opts.excludePrivate) ?? null,
+        excludePrivate: storePagePolicy('getChunkWindows', opts.excludePrivate, { callerReaders: true }) ?? null,
         requireSafeChunks: requiresSafeChunks(opts),
       }));
     return mapChunkWindowRows(rows, maxRows);
