@@ -75,7 +75,7 @@ pub(super) fn actor_matches(row: &JobRecord, actor: &[String; 4]) -> bool {
 }
 
 /// `submission_authority IS DISTINCT FROM '{"version":1,"kind":"application"}'::jsonb`.
-fn is_unreviewed(authority: &Option<Value>) -> bool {
+pub(super) fn is_unreviewed(authority: &Option<Value>) -> bool {
     let Some(Value::Object(m)) = authority else {
         return true;
     };

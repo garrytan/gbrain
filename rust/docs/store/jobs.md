@@ -2,6 +2,8 @@
 
 Part of the store contract in [rust/README.md](../../README.md) ("The brain store"): the rules there apply to every method here.
 
+The doctor's job checks (ten typed reads over the same rows) are in [jobs-checks.md](jobs-checks.md).
+
 The `minion_jobs` lifecycle the queue (`src/core/minions/queue.ts`) reaches through typed engine members,
 the `minion_inbox` and `minion_attachments` rows, and the `gbrain_cycle_locks` leases. The SQL engines run the
 statements in `src/core/engine-sql/jobs.ts` and `cycle-locks.ts`; this store runs the same rules on its own
