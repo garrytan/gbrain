@@ -13,16 +13,17 @@
  *    or whose usage read counts denied, errored, anonymous or out-of-window requests gives a different search report,
  *    advisor finding, client usage table or doctor coverage note.
  *  - Why existing coverage misses it: the caller tests run these statements on PGLite only and never compare arms.
- *  - Seam: the request log and its tally have no typed writer, so the fixtures below seed them with harness-only SQL
- *    behind the backend switch (as `createSource` does). On the Rust arm the fixture stops on the engine's typed
- *    refusal until the store serves the request log. Clock values are mapped to booleans or day offsets.
+ *  - Seam: the first fixtures below seed the request log and its tally with harness-only SQL behind the backend
+ *    switch (as `createSource` does); the Rust arm, which runs no SQL, seeds them through the typed writers
+ *    (logMcpRequest with a back-dated `created_at`, then one prune batch for a tally row). Clock values are mapped to
+ *    booleans or day offsets.
  */
 import { describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { SearchTelemetryBucket } from '../../src/core/engine-sql/telemetry.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { RUST_ENGINE_MEMBERS } from '../../src/core/rust-engine/members.ts';
-import { servedCapabilities } from '../../src/core/rust-engine/store-capabilities.ts';
+import { CAPABILITY_REQUIRES, servedCapabilities } from '../../src/core/rust-engine/store-capabilities.ts';
 import { STORE_MEMBERS } from '../../src/core/rust-engine/store-members/index.ts';
 import { parityArms, sorted, type ParityBackend } from './harness.ts';
 
@@ -41,10 +42,15 @@ function isoDay(offsetDays: number): string {
   return new Date(Date.now() + offsetDays * DAY_MS).toISOString().slice(0, 10);
 }
 
-/** Fixture: one request log row `ageDays` old. Harness-only SQL; the Rust arm stops on the raw SQL refusal. */
+/** Fixture: one request log row `ageDays` old. Harness-only SQL; the Rust arm writes it through logMcpRequest. */
 async function seedRequest(engine: BrainEngine, backend: ParityBackend, row: { token: string | null; op: string; status: string; ageDays: number }) {
   switch (backend) {
     case 'rust':
+      await engine.logMcpRequest({
+        token_name: row.token, agent_name: 'agent-fork', operation: row.op, latency_ms: 5, status: row.status,
+        created_at: new Date(Date.now() - row.ageDays * DAY_MS),
+      });
+      return;
     case 'pglite':
     case 'postgres':
       await engine.executeRaw(
@@ -56,10 +62,16 @@ async function seedRequest(engine: BrainEngine, backend: ParityBackend, row: { t
   }
 }
 
-/** Fixture: one request log tally row whose pruned window ends `ageDays` ago. Harness-only SQL, as above. */
+/**
+ * Fixture: one request log tally row whose pruned window ends `ageDays` ago. Harness-only SQL, as above; the Rust arm
+ * logs one request `ageDays` old and prunes everything older than a day into the tally.
+ */
 async function seedRollup(engine: BrainEngine, backend: ParityBackend, token: string, ageDays: number) {
   switch (backend) {
     case 'rust':
+      await seedRequest(engine, backend, { token, op: 'search', status: 'success', ageDays });
+      await engine.pruneMcpRequestLogBatch(new Date(Date.now() - DAY_MS).toISOString(), [], 100);
+      return;
     case 'pglite':
     case 'postgres':
       await engine.executeRaw(
@@ -170,7 +182,10 @@ describe('engine parity: telemetry', () => {
   // reported capability list exactly as it was.
   test('the Rust capability list gains telemetry only when every telemetry member is served', () => {
     const members = Object.entries(RUST_ENGINE_MEMBERS).filter(([, cls]) => cls === 'telemetry').map(([m]) => m).sort();
-    expect(members).toEqual(['readClientOpUsage', 'readMcpRollupPrunedBefore', 'readSearchStats', 'recordSearchTelemetry']);
+    expect(members).toEqual([
+      'logMcpRequest', 'pruneMcpRequestLogBatch', 'readClientOpUsage', 'readMcpLogPruneCutoff', 'readMcpRollupPrunedBefore',
+      'readSearchStats', 'recordSearchTelemetry',
+    ]);
     const served = members.filter((m) => m in STORE_MEMBERS);
     const reported = servedCapabilities();
     expect({ allServed: served.length === members.length, reported: reported.has('telemetry') })
@@ -183,11 +198,16 @@ describe('engine parity: telemetry', () => {
       withoutTelemetry.add(cls);
       if (!(member in STORE_MEMBERS)) refusing.add(cls);
     }
-    const expected = [...withoutTelemetry].filter((c) => !refusing.has(c)).sort();
+    const servedWithout = new Set([...withoutTelemetry].filter((c) => !refusing.has(c)));
+    // A capability that needs another one (CAPABILITY_REQUIRES) is withheld until that one is served.
+    for (const [cap, needs] of Object.entries(CAPABILITY_REQUIRES)) {
+      if (needs!.some((need) => !servedWithout.has(need))) servedWithout.delete(cap);
+    }
+    const expected = [...servedWithout].sort();
     expect([...reported].filter((c) => c !== 'telemetry').map(String).sort()).toEqual(expected);
-    // Today the store serves the search telemetry pair only.
-    expect(served).toEqual(['readSearchStats', 'recordSearchTelemetry']);
-    expect(reported.has('telemetry')).toBe(false);
+    // The store serves every telemetry member, so the Rust arm reports the capability.
+    expect(served).toEqual(members);
+    expect(reported.has('telemetry')).toBe(true);
   });
 
   parityTest(
@@ -259,5 +279,92 @@ describe('engine parity: telemetry', () => {
       return result;
     },
   );
-});
 
+  parityTest(
+    'logMcpRequest appends rows and pruneMcpRequestLogBatch moves the oldest past the cutoff into the tally, keeping audit rows',
+    { methods: ['logMcpRequest', 'readMcpLogPruneCutoff', 'pruneMcpRequestLogBatch', 'readClientOpUsage', 'readMcpRollupPrunedBefore'] },
+    async (engine) => {
+      const log = (token: string | null, operation: string, ageDays: number, extra: { params?: unknown; status?: string } = {}) =>
+        engine.logMcpRequest({
+          token_name: token, agent_name: 'agent-fork', operation, latency_ms: 7, status: extra.status ?? 'success',
+          error_message: null, params: extra.params ?? null, created_at: new Date(Date.now() - ageDays * DAY_MS),
+        });
+      // Logged out of time order, so a prune that takes rows in insert order picks other rows.
+      await log('token-a', 'search', 35, { params: { query: 'q', nested: { n: 1 } } });
+      await log('token-b', 'get_page', 31);
+      await log('token-a', 'surface_change', 50, { params: { via: 'cli' } });
+      await log(null, 'search', 33);
+      await log('token-a', 'search', 40);
+      await log('token-b', 'get_page', 1);
+      await engine.logMcpRequest({ token_name: 'token-c', agent_name: null, operation: 'tools/list', latency_ms: null, status: 'success' });
+      const probe = await engine.readMcpLogPruneCutoff(30);
+      expect(probe.rollup_present).toBe(true);
+      expect(probe.cutoff).toBeInstanceOf(Date);
+      const cutoff = (probe.cutoff as Date).toISOString();
+      const keep = ['surface_change'];
+      const age = (v: unknown) => (v === null ? null : dayOffset(v, new Date()));
+      const first = await engine.pruneMcpRequestLogBatch(cutoff, keep, 2);
+      const second = await engine.pruneMcpRequestLogBatch(cutoff, keep, 100);
+      const third = await engine.pruneMcpRequestLogBatch(cutoff, keep, 100);
+      const pruned = await engine.readMcpRollupPrunedBefore();
+      const usage = sorted(await engine.readClientOpUsage(365), r => `${r.token_name}/${r.operation}`)
+        .map(r => ({ token_name: r.token_name, operation: r.operation, n: r.n, age: age(r.last_seen) }));
+      const result = {
+        cutoffAge: age(probe.cutoff),
+        batches: [first, second, third].map(b => ({ deleted: b.deleted, newest: age(b.newest) })),
+        prunedBefore: dayOffset(pruned.pruned_before, pruned.now),
+        usage,
+      };
+      expect(result).toEqual({
+        cutoffAge: 30,
+        batches: [{ deleted: 2, newest: 35 }, { deleted: 2, newest: 31 }, { deleted: 0, newest: null }],
+        prunedBefore: 31,
+        usage: [
+          { token_name: 'token-a', operation: 'surface_change', n: 1, age: 50 },
+          { token_name: 'token-b', operation: 'get_page', n: 1, age: 1 },
+          { token_name: 'token-c', operation: 'tools/list', n: 1, age: 0 },
+        ],
+      });
+      return result;
+    },
+  );
+
+  parityTest(
+    'logMcpRequest refuses a null operation or status and pruneMcpRequestLogBatch takes nothing past an empty window',
+    { methods: ['logMcpRequest', 'pruneMcpRequestLogBatch', 'readClientOpUsage', 'readMcpRollupPrunedBefore'] },
+    async (engine) => {
+      const refusal = async (row: Parameters<BrainEngine['logMcpRequest']>[0]) => {
+        try {
+          await engine.logMcpRequest(row);
+          return null;
+        } catch (e) {
+          return /column "(\w+)" of relation "(\w+)"/.exec((e as Error).message)?.slice(1) ?? (e as Error).message;
+        }
+      };
+      const nul = null as unknown as string;
+      const base = { token_name: 'token-a', agent_name: null, latency_ms: 1 };
+      const result = {
+        operation: await refusal({ ...base, operation: nul, status: 'success' }),
+        status: await refusal({ ...base, operation: 'search', status: nul }),
+        // Nothing is older than a cutoff 400 days back; an operation on the keep list is never taken.
+        none: await engine.pruneMcpRequestLogBatch(new Date(Date.now() - 400 * DAY_MS).toISOString(), [], 100),
+        kept: null as unknown,
+        usage: [] as unknown[],
+        prunedBefore: null as unknown,
+      };
+      await engine.logMcpRequest({ ...base, operation: 'search', status: 'success', created_at: new Date(Date.now() - 5 * DAY_MS) });
+      result.kept = await engine.pruneMcpRequestLogBatch(new Date().toISOString(), ['search'], 100);
+      result.usage = (await engine.readClientOpUsage(30)).map(r => ({ token_name: r.token_name, operation: r.operation, n: r.n }));
+      result.prunedBefore = (await engine.readMcpRollupPrunedBefore()).pruned_before;
+      expect(result).toEqual({
+        operation: ['operation', 'mcp_request_log'],
+        status: ['status', 'mcp_request_log'],
+        none: { deleted: 0, newest: null },
+        kept: { deleted: 0, newest: null },
+        usage: [{ token_name: 'token-a', operation: 'search', n: 1 }],
+        prunedBefore: null,
+      });
+      return result;
+    },
+  );
+});

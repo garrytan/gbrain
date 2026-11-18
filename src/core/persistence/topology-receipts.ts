@@ -1,4 +1,5 @@
 import type { BrainEngine } from '../engine.ts';
+import type { TopologyChange } from '../engine-sql/persistence-claims.ts';
 import { opError } from '../ops/contract.ts';
 import { digest, jsonBytes } from './digest.ts';
 import { lockCounters, quotaExhausted } from './journal.ts';
@@ -6,16 +7,12 @@ import { journalLimitKey, oneYearCapacity, readJournalLimits } from './limits.ts
 import { principalKey } from './model.ts';
 import { receiptReservation, retainedReceiptBytes } from './receipt-bytes.ts';
 
-export interface TopologyChange {
-  id:string; principal_id:string; request_id:string; digest:string; operation:string; source_id:string;
-  source_incarnation:string|null; worktree_ids:string[]; state:'recovering'|'committed'|'failed';
-  recovery:Record<string,unknown>|null; recovery_bytes:number; intent_bytes:number; terminal_bytes:number; outcome:Record<string,unknown>|null;
-}
+export type { TopologyChange } from '../engine-sql/persistence-claims.ts';
 export async function priorTopologyChange(engine:BrainEngine,principal:string,requestId:string,intent:unknown):Promise<TopologyChange|null> {
   const page=await engine.executeRaw("SELECT id FROM persistence_requests WHERE principal_kind='local_cli' AND principal_id=$1 AND request_id=$2::uuid",[principal,requestId]);
   if(page.length) throw opError('idempotency_conflict','This request_id belongs to a page mutation.',
     `Request ${requestId} already names a page write, so this lifecycle change was not accepted. Submit it with a new request id, or omit the id so gbrain generates one.`);
-  const [prior]=await engine.executeRaw<TopologyChange>('SELECT * FROM persistence_topology_changes WHERE principal_id=$1::uuid AND request_id=$2::uuid',[principal,requestId]);
+  const prior=await engine.readTopologyChange(principal,requestId);
   if(prior && prior.digest!==digest(intent)) throw opError('idempotency_conflict','This lifecycle request_id was accepted with different arguments.',
     `Request ${requestId} was accepted for a ${prior.operation} of source ${prior.source_id} with other arguments. Reuse it only to resubmit that identical command; give a different change a new request id.`);
   return prior??null;
@@ -49,11 +46,9 @@ export async function recordTopologyChange(tx:BrainEngine, input:{principal:stri
       throw opError('queue_capacity','The lifecycle recovery exceeds available brain/worktree capacity.',
         `Recovery records already use the ${journalLimitKey(brain?'brainRecoveryBytes':'worktreeRecoveryBytes')} budget, so the ${input.operation} of source ${input.sourceId} was not accepted. Let recovery settle first; raising the cap is the user's call and recovery records are never removed.`, { fix: { argv: ['gbrain', 'sources', 'writer', 'status', '--source', input.sourceId, '--json'], consent: [], actor: 'agent', why: 'Shows the pending lifecycle and recovery work that holds this capacity.', requires_exclusive: false } });
   }
-  const [row]=await tx.executeRaw<TopologyChange>(`INSERT INTO persistence_topology_changes
-    (principal_id,request_id,digest,operation,source_id,source_incarnation,worktree_ids,state,recovery,recovery_bytes,terminal_bytes,outcome,intent_bytes)
-    VALUES($1::uuid,$2::uuid,$3,$4,$5,$6::uuid,$7::uuid[],$8,$9::text::jsonb,$10,$11,$12::text::jsonb,$13) RETURNING *`,
-  [input.principal,input.requestId,digest(input.intent),input.operation,input.sourceId,input.incarnation,input.worktrees,recovery?'recovering':'committed',
-    recovery?JSON.stringify(recovery):null,recoveryBytes,terminalBytes,JSON.stringify(outcome),intentBytes]);
+  const row=await tx.insertTopologyChange({principalId:input.principal,requestId:input.requestId,digest:digest(input.intent),operation:input.operation,
+    sourceId:input.sourceId,sourceIncarnation:input.incarnation,worktreeIds:input.worktrees,state:recovery?'recovering':'committed',
+    recovery,recoveryBytes,terminalBytes,outcome,intentBytes});
   for(const counter of counters){
     if(!counter.key.startsWith('worktree:')) await tx.executeRaw('UPDATE persistence_counters SET lifetime_ids=lifetime_ids+1,terminal_bytes=terminal_bytes+$2 WHERE key=$1',[counter.key,terminalBytes]);
     if(recovery && !counter.key.startsWith('worktree:')) await tx.executeRaw('UPDATE persistence_counters SET outstanding_count=outstanding_count+1,intent_bytes=intent_bytes+$2 WHERE key=$1',[counter.key,intentBytes]);
@@ -90,11 +85,9 @@ export async function admitTopologyRetire(tx:BrainEngine,input:{principal:string
   const reservation=receiptReservation({});
   const counters=await lockCounters(tx,['brain',principalKey({kind:'local_cli',id:input.principal})]);
   for(const counter of counters) await assertQuota(tx,counter,limits,reservation,input);
-  await tx.executeRaw(`INSERT INTO persistence_topology_changes
-    (principal_id,request_id,digest,operation,source_id,source_incarnation,worktree_ids,state,terminal_bytes,outcome)
-    VALUES($1::uuid,$2::uuid,$3,$4,$5,$6::uuid,$7::uuid[],'recovering',$8,$9::text::jsonb)`,
-  [input.principal,input.requestId,digest(input.intent),input.operation,input.sourceId,input.incarnation,input.worktrees,reservation,
-    JSON.stringify({operation:input.operation,source_id:input.sourceId,source_incarnation:input.incarnation,...(input.expiredOnly?{expired_only:true}:{})})]);
+  await tx.insertTopologyChange({principalId:input.principal,requestId:input.requestId,digest:digest(input.intent),operation:input.operation,
+    sourceId:input.sourceId,sourceIncarnation:input.incarnation,worktreeIds:input.worktrees,state:'recovering',terminalBytes:reservation,
+    outcome:{operation:input.operation,source_id:input.sourceId,source_incarnation:input.incarnation,...(input.expiredOnly?{expired_only:true}:{})}});
   for(const counter of counters) await tx.executeRaw('UPDATE persistence_counters SET lifetime_ids=lifetime_ids+1,terminal_bytes=terminal_bytes+$2 WHERE key=$1',[counter.key,reservation]);
 }
 /** Settles a retire admission and trues its reserved receipt bytes up to the outcome it keeps; null when already settled. */
