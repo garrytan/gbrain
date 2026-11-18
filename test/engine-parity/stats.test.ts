@@ -122,9 +122,17 @@ describe('engine parity: stats without vectors', () => {
       await createSource(engine, backend, 'log-b');
       await engine.logIngest({ source_type: 'markdown', source_ref: 'a.md', pages_updated: { b: [1, 2], a: 'x' } as never, summary: 'one' });
       await engine.logIngest({ source_id: 'log-b', source_type: 'git', source_ref: 'repo@1', pages_updated: [], summary: 'two' });
-      const missingType = await outcome(() => engine.logIngest({ source_ref: 'b.md', pages_updated: [], summary: 's' } as never));
-      const missingPages = await outcome(() => engine.logIngest({ source_type: 'x', source_ref: 'b.md', summary: 's' } as never));
-      const missingSummary = await outcome(() => engine.logIngest({ source_type: 'x', source_ref: 'b.md', pages_updated: [] } as never));
+      // Each missing column must be refused and leave no row. The refusal text differs by driver (PGLite
+      // names the NOT NULL column, postgres.js only the undefined parameter), so it is not compared.
+      const refusedLeavingNoRow = async (entry: unknown) => {
+        const before = (await engine.getIngestLog()).length;
+        const refused = await engine.logIngest(entry as never).then(() => false, () => true);
+        return { refused, saved: (await engine.getIngestLog()).length - before };
+      };
+      const missingType = await refusedLeavingNoRow({ source_ref: 'b.md', pages_updated: [], summary: 's' });
+      const missingPages = await refusedLeavingNoRow({ source_type: 'x', source_ref: 'b.md', summary: 's' });
+      const missingSummary = await refusedLeavingNoRow({ source_type: 'x', source_ref: 'b.md', pages_updated: [] });
+      for (const o of [missingType, missingPages, missingSummary]) expect(o).toEqual({ refused: true, saved: 0 });
       const all = await engine.getIngestLog();
       const one = await engine.getIngestLog({ limit: 1 });
       const zero = await engine.getIngestLog({ limit: 0 });
@@ -135,7 +143,7 @@ describe('engine parity: stats without vectors', () => {
       expect(all).toHaveLength(2);
       expect(all.every((e) => e.created_at instanceof Date)).toBe(true);
       return {
-        missingType: /source_type/.test(missingType), missingPages: /pages_updated/.test(missingPages), missingSummary: /summary/.test(missingSummary),
+        missingType, missingPages, missingSummary,
         all: view(all), one: one.length, zero: zero.length, scoped: view(scoped), unscoped: unscoped.length,
       };
     },
