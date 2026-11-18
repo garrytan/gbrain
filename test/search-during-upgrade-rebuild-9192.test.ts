@@ -12,6 +12,7 @@ import { PAGE_PROJECTION_ACTIVATION_SQL } from '../src/core/page-state/projectio
 import { projectionBacklog, rebuildPendingPageProjections } from '../src/core/page-state/projections.ts';
 import { textRebuildDuration } from '../src/core/page-state/rebuild-estimate.ts';
 import { probeProjectionReadiness } from '../src/core/search/projection-readiness.ts';
+import { readinessOver } from './helpers/readiness-engine.ts';
 import { withCallerAccess, __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { ACTIVATION_SERVED_REVISION, currentTextProjectionFilter, servedTextProjectionFilter } from '../src/core/search/safe-chunks.ts';
 import { v153 } from '../src/core/schema-migrations/v153-verified-text-projection-activation.ts';
@@ -213,7 +214,7 @@ for (const backend of testBackends()) {
 
     test('the readiness probe reads the index of pages waiting for a rebuild, which leaves out pages served from their old index (v317)', () => activated(async engine => {
       const captured: Array<{ sql: string; params?: unknown[] }> = [];
-      const recording = { executeRaw: (sql: string, params?: unknown[]) => { captured.push({ sql, params }); return engine.executeRaw(sql, params); } } as unknown as BrainEngine;
+      const recording = readinessOver((sql: string, params?: unknown[]) => { captured.push({ sql, params }); return engine.executeRaw(sql, params); });
       expect((await withEnv({ GBRAIN_PROJECTION_READINESS_CACHE: '0' }, () => probeProjectionReadiness(recording))).status).toBe('ready');
       const probe = captured.find(call => call.sql.includes('IS DISTINCT FROM'));
       expect(probe).toBeDefined();

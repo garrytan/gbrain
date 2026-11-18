@@ -56,6 +56,11 @@ import type { CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuer
 import type { EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRow, PageTimelineRow, SegmentedTimelinePages, TimelineOrphanPage, TimelineRowDeletion } from './engine-sql/timeline-reads.ts';
 import type { CaseSensitiveAliasRow, PageAliasRow, TitleHitRow } from './engine-sql/alias-fanout-reads.ts';
 import type { McpLifetimeUsageRow, McpLogPruneBatch, McpLogPruneCutoff, McpOpUsageRow, McpRequestLogRow, McpRollupPrunedBefore, SearchTelemetryBucket, SearchTelemetryRow } from './engine-sql/telemetry.ts';
+import type * as LinkTemporalSql from './engine-sql/link-temporal.ts';
+import type { RelationshipEvidence, RelationshipKey, RelationshipStateWrite } from './link-relationships.ts';
+import type { CoverageRelevance, ProjectionRebuildProgress, ScopedCount } from './search/retrieval-coverage.ts';
+import type { ProjectionReadinessRow, ProjectionReadinessScope } from './search/projection-readiness.ts';
+import type { VectorBackfillOpts } from './search-vector-backfill.ts';
 export type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions, PageMutationPrecondition, PageWithdrawal } from './page-state/types.ts';
 import type {
   Page, PageInput, PageFilters, GetPageOpts, PageReadScope, PageReadPolicy,
@@ -1458,6 +1463,36 @@ export interface BrainEngine {
   listLinkEndpointPages(sourceId: string, slugs: string[], crossSourceSlugs: string[]): Promise<LinkEndpointPage[]>;
   listPagesTitledIn(queryLower: string, scope: PageReadScope): Promise<TitledPage[]>;
   wordLexemes(words: string[]): Promise<Map<string, string[]>>;
+  /** Link temporal state: relationship evidence and state rows, temporal link rows, manual transitions and their reads (SQL and contracts in engine-sql/link-temporal.ts). */
+  readLinkRelationshipEvidence(keys: readonly RelationshipKey[]): Promise<RelationshipEvidence>;
+  /** Upsert and remove relationship state rows; returns how many rows changed. */
+  writeLinkRelationshipState(write: RelationshipStateWrite): Promise<number>;
+  linkRelationshipKeysForPages(pageIds: readonly number[]): Promise<RelationshipKey[]>;
+  staleLinkRelationshipKeys(limit: number): Promise<RelationshipKey[]>;
+  linkRelationshipKeysForOrigin(pageId: number): Promise<RelationshipKey[]>;
+  applyLinkTemporalRows(input: LinkTemporalSql.LinkTemporalRows): Promise<LinkTemporalSql.LinkTemporalApplied>;
+  writeManualLinkTransitions(rel: LinkTemporalSql.ManualLinkRelationship, rows: ReadonlyArray<{ kind: 'start' | 'end'; occurred_on: string }>): Promise<{ inserted: number; key: RelationshipKey | null }>;
+  removeManualLinkTransitions(rel: { from: string; to: string; linkType?: string; sourceId: string; databaseOnly?: boolean }): Promise<RelationshipKey[]>;
+  listRelationshipNoteRows(subjects: ReadonlyArray<{ slug: string; source_id: string }>, opts: { excludePrivate: boolean }): Promise<LinkTemporalSql.RelationshipNoteRow[]>;
+  edgeValidityCounts(opts: { sourceIds?: readonly string[]; staleLimit: number }): Promise<LinkTemporalSql.EdgeValidityCounts | null>;
+  listPageStatusByRef(refs: ReadonlyArray<{ source_id: string; slug: string }>, scope: { excludePrivate: boolean; includeQuarantined?: boolean }): Promise<Array<{ source_id: string; slug: string; status: unknown }>>;
+  listRecordMetadataRows(pageIds: readonly number[], scope: { referrerSources: readonly string[]; excludePrivate: boolean; includeQuarantined?: boolean }): Promise<LinkTemporalSql.RecordMetadataRows>;
+  /** reindex-search-vector's steps (SQL in engine-sql/search-vector.ts and search-vector-backfill.ts). */
+  countSearchVectorRows(): Promise<{ pages: number; chunks: number }>;
+  replaceSearchVectorTriggerFunction(target: 'pages' | 'chunks', lang: string): Promise<void>;
+  backfillSearchVectors(target: 'pages' | 'chunks', opts: Pick<VectorBackfillOpts, 'lang' | 'checkpoint' | 'tick'>): Promise<number>;
+  ensureFactsKeywordIndex(lang: string, notice?: (line: string) => void): Promise<'present' | 'swapped'>;
+  /** Retrieval coverage counts in a read scope; null when a count fails (SQL in engine-sql/retrieval-coverage.ts). */
+  countPendingProjectionPages(scope: ProjectionReadinessScope, relevance: CoverageRelevance): Promise<ScopedCount | null>;
+  countEmbeddingHeldPages(scope: ProjectionReadinessScope, relevance: CoverageRelevance): Promise<ScopedCount | null>;
+  projectionRebuildProgress(scope: ProjectionReadinessScope): Promise<ProjectionRebuildProgress | null>;
+  /**
+   * The readiness probe (search/projection-readiness.ts): the generation its cached answer depends on (null when no
+   * stable generation can be read, so the probe does not cache), and whether the scope has unsealed pages that need
+   * work (`pending`) or only protected pages no repair seals (`by_design`). The second throws when the read fails.
+   */
+  readProjectionReadinessGeneration(): Promise<string | null>;
+  readProjectionReadiness(scope: ProjectionReadinessScope): Promise<ProjectionReadinessRow>;
   /** Code-symbol lookups, code readiness probes, doctor chunk counts, withdrawal's chunk scan, contextual-mode and frozen hits (SQL and contracts in engine-sql/chunk-reads.ts). */
   findCodeDefinitions(symbol: string, opts?: CodeSymbolQuery): Promise<CodeDefinitionRow[]>;
   listSymbolTypesForName(symbol: string, opts?: Omit<CodeSymbolQuery, 'limit'>): Promise<Array<string | null>>;

@@ -4,6 +4,7 @@ import { __resetProjectionReadinessCacheForTests, probeProjectionReadiness } fro
 import { withEnv } from './helpers/with-env.ts';
 import { checkProjectionReadiness } from '../src/commands/doctor/checks/projection-readiness.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { readinessOver } from './helpers/readiness-engine.ts';
 
 let engine: PGLiteEngine;
 
@@ -98,7 +99,7 @@ describe('canonical projection readiness', () => {
 
   test('probe errors and malformed results are unknown, without exposing error text', async () => {
     for (const executeRaw of [async () => { throw new Error('hidden-source database error'); }, async () => []]) {
-      const result = await probeProjectionReadiness({ executeRaw } as any);
+      const result = await probeProjectionReadiness(readinessOver(executeRaw));
       expect(result.status).toBe('unknown');
       expect(result.ready).toBe(false);
       expect(JSON.stringify(result)).not.toContain('hidden-source');
@@ -107,12 +108,10 @@ describe('canonical projection readiness', () => {
 
   test('diagnostics issue one bound EXISTS and never mutate or repair', async () => {
     const calls: { sql: string; params: unknown[] }[] = [];
-    const result = await probeProjectionReadiness({
-      executeRaw: async (sql: string, params: unknown[]) => {
-        calls.push({ sql, params });
-        return [{ pending: true }];
-      },
-    } as any, { sourceId: "source-'quote", excludePrivate: true });
+    const result = await probeProjectionReadiness(readinessOver(async (sql: string, params?: unknown[]) => {
+      calls.push({ sql, params: params ?? [] });
+      return [{ pending: true }];
+    }), { sourceId: "source-'quote", excludePrivate: true });
     expect(result.status).toBe('projection_pending');
     // Besides the probe, at most the cache's read-only generation read runs.
     const probes = calls.filter(call => call.sql.includes('ORDER BY p.source_id, p.page_kind, p.slug LIMIT 1'));
@@ -121,7 +120,8 @@ describe('canonical projection readiness', () => {
     expect(probes[0].sql).toContain('IS DISTINCT FROM');
     for (const call of calls) expect(call.sql).not.toMatch(/COUNT\(|UPDATE |INSERT |DELETE /);
     expect(probes[0].sql).not.toContain("source-'quote");
-    expect(probes[0].params).toEqual(["source-'quote"]);
+    // The source id is bound, once for each half (pending, by_design).
+    expect(probes[0].params).toEqual(["source-'quote", "source-'quote"]);
   });
 
   test('doctor distinguishes ready, pending and unknown without returning identifiers', async () => {
@@ -132,7 +132,7 @@ describe('canonical projection readiness', () => {
     expect(pending.details).toEqual({ readiness: 'projection_pending', ready: false, pending: 1, failed: 0, sealable: 0, sealable_with_visual: 0,
       reimport: 0, ocr_required: 0, protected: 0, archived: 0, oldest_age_seconds: expect.any(Number), as_of: expect.any(String) });
     expect(JSON.stringify(pending)).not.toContain('source-a');
-    const unknown = await checkProjectionReadiness({ executeRaw: async () => { throw new Error('private connection'); } } as any);
+    const unknown = await checkProjectionReadiness(readinessOver(async () => { throw new Error('private connection'); }) as any);
     expect(unknown.status).toBe('warn');
     expect(unknown.details).toEqual({ readiness: 'unknown', ready: false });
     expect(JSON.stringify(unknown)).not.toContain('private connection');
@@ -147,11 +147,11 @@ describe('canonical projection readiness', () => {
 describe('projection readiness cache', () => {
   const counted = () => {
     let probes = 0;
-    const wrapped = { executeRaw: async (sql: string, params?: unknown[]) => {
+    const wrapped = readinessOver(async (sql: string, params?: unknown[]) => {
       if (sql.includes('ORDER BY p.source_id, p.page_kind, p.slug LIMIT 1')) probes++;
       return engine.executeRaw(sql, params);
-    } };
-    return { engine: wrapped as unknown as PGLiteEngine, probes: () => probes };
+    });
+    return { engine: wrapped, probes: () => probes };
   };
   beforeEach(() => { __resetProjectionReadinessCacheForTests(); });
 
@@ -203,10 +203,10 @@ describe('projection readiness cache', () => {
 
   test('an unknown answer is never reused, and GBRAIN_PROJECTION_READINESS_CACHE=0 always probes', async () => {
     let fail = true;
-    const flaky = { executeRaw: async (sql: string, params?: unknown[]) => {
+    const flaky = readinessOver(async (sql: string, params?: unknown[]) => {
       if (sql.includes('ORDER BY p.source_id, p.page_kind, p.slug LIMIT 1') && fail) throw new Error('transient');
       return engine.executeRaw(sql, params);
-    } } as unknown as PGLiteEngine;
+    });
     expect((await probeProjectionReadiness(flaky)).status).toBe('unknown');
     fail = false;
     expect((await probeProjectionReadiness(flaky)).status).toBe('ready');
@@ -220,11 +220,11 @@ describe('projection readiness cache', () => {
 
   test('nothing is cached while a transaction is in flight', async () => {
     let probes = 0;
-    const busy = { executeRaw: async (sql: string, params?: unknown[]) => {
+    const busy = readinessOver(async (sql: string, params?: unknown[]) => {
       if (sql.includes('ORDER BY p.source_id, p.page_kind, p.slug LIMIT 1')) probes++;
       const rows = await engine.executeRaw<Record<string, unknown>>(sql, params);
       return sql.includes('pg_current_snapshot') ? rows.map(row => ({ ...row, quiescent: false })) : rows;
-    } } as unknown as PGLiteEngine;
+    });
     await probeProjectionReadiness(busy);
     await probeProjectionReadiness(busy);
     expect(probes).toBe(2);
@@ -236,8 +236,8 @@ describe('a pending brain skips the by_design half (#8000)', () => {
     await engine.executeRaw(`INSERT INTO pages (source_id,slug,title,type,page_kind,compiled_truth,chunker_version,frontmatter)
       SELECT 'source-a', 'pending-' || i, 'Pending', 'concept', 'markdown', 'body', 999, '{}'::jsonb FROM generate_series(1, 300) AS i`);
     const captured: Array<{ sql: string; params?: unknown[] }> = [];
-    const recording = { executeRaw: (sql: string, params?: unknown[]) => { captured.push({ sql, params }); return engine.executeRaw(sql, params); } };
-    const result = await withEnv({ GBRAIN_PROJECTION_READINESS_CACHE: '0' }, () => probeProjectionReadiness(recording as never, { sourceId: 'source-a' }));
+    const recording = readinessOver((sql: string, params?: unknown[]) => { captured.push({ sql, params }); return engine.executeRaw(sql, params); });
+    const result = await withEnv({ GBRAIN_PROJECTION_READINESS_CACHE: '0' }, () => probeProjectionReadiness(recording, { sourceId: 'source-a' }));
     expect(result.status).toBe('projection_pending');
     const probe = captured.find(call => call.sql.includes('IS DISTINCT FROM'))!;
     const plan = (await engine.executeRaw<Record<string, string>>(`EXPLAIN (ANALYZE, COSTS OFF) ${probe.sql}`, probe.params)).map(row => Object.values(row)[0]);

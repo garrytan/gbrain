@@ -21,12 +21,13 @@ const PLAIN: Record<string, string> = {
   'src/core/belief/purge.ts registerVersionCarriers privatePagesFilterFragment': 'maintenance: classifies the purged versions',
   'src/core/belief/state.ts readBeliefState privatePagesFilterFragment': 'the ledger and purge read the stored world visibility, not a caller view',
   'src/core/cycle/synthesize-concepts.ts runPhaseSynthesizeConcepts privatePagesFilterFragment': 'dream cycle: marks a concept private when an input is',
+  'src/core/engine-sql/link-temporal.ts readLinkRelationshipEvidence privatePagesFilterFragment': 'write-side: records whether a link origin is public',
   'src/core/facts/held-fact-move.ts planHeldMoves privatePagesFilterFragment': 'write-side: whether the target page is world',
-  'src/core/link-relationships.ts refreshRelationships privatePagesFilterFragment': 'write-side: records whether a link origin is public',
   'src/core/ops/valid-time-read.ts resolveIdentity privatePagesFilterFragment': 'the world flag of the page; the read itself is gated by privatePagesFilterForCaller',
   'src/core/persistence/change-reason.ts pageWorldVisible privatePagesFilterFragment': 'write-side: whether a change reason may be published',
   'src/core/persistence/origin-twins.ts readOriginClaimants privatePagesFilterFragment': 'maintenance: classifies twin pages as private',
   'src/core/persistence/rows-behind.ts scanRowsBehind privatePagesFilterFragment': 'maintenance: lineage privacy of rows behind the projection',
+  'src/core/rust-engine/store-members/link-temporal.ts originPolicy privatePagesFilterFragment': 'write-side: the Rust store records whether a link origin is public under the same policy',
 };
 
 const DECL = /^(?:export )?(?:async )?function\*?\s+(\w+)|^(?:export )?(?:const|let)\s+(\w+)\s*[=:]/;
