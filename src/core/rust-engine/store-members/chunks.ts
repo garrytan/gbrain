@@ -11,7 +11,7 @@ import { isRevisionRejection, mapStoreError } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
 import { namedSourceIds, refuseMember, storeCall, takeOptions, throwIfAborted, type StoreMember } from './common.ts';
 
-type UpsertOpts = { sourceId?: string; expectedRevision?: string; deferSeal?: true; signal?: AbortSignal; auditSite?: unknown };
+type UpsertOpts = { sourceId?: string; expectedRevision?: string; sealChunkerVersion?: number; pageId?: number; deferSeal?: true; signal?: AbortSignal; auditSite?: unknown };
 
 /** Sends the chunks to the store and maps a revision rejection. `seal` is PGLite's `sealChunks` (replace and seal). */
 async function writeChunks(brain: StoreBrain, slug: string, chunks: ChunkInput[], options: Record<string, unknown>, member: string): Promise<void> {
@@ -30,8 +30,10 @@ async function writeChunks(brain: StoreBrain, slug: string, chunks: ChunkInput[]
 }
 
 export const upsertChunks: StoreMember<[slug: string, chunks: ChunkInput[], opts?: UpsertOpts], void> = async (brain, slug, chunks, opts) => {
-  // `deferSeal` only matters to a write that seals, which `upsertChunks` does not do; it changes nothing here.
-  const options = takeOptions('upsertChunks', opts, ['sourceId', 'expectedRevision'], ['signal', 'auditSite', 'deferSeal']);
+  // `sealChunkerVersion` goes as the text PGLite binds (`String(version)`), which the store casts to a smallint as
+  // Postgres does. `pageId` and `deferSeal` only matter to a write with `sealChunkerVersion`; the store ignores them otherwise.
+  const options = takeOptions('upsertChunks', opts, ['sourceId', 'expectedRevision', 'sealChunkerVersion', 'pageId', 'deferSeal'], ['signal', 'auditSite']);
+  if (options.sealChunkerVersion !== undefined) options.sealChunkerVersion = String(options.sealChunkerVersion);
   throwIfAborted(opts?.signal);
   await writeChunks(brain, slug, chunks, options, 'upsertChunks');
 };

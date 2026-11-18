@@ -28,6 +28,8 @@ import { embeddingsDisabled } from '../../../core/embedding-disabled.ts';
 import { quoteIdentifier, resolveActiveEmbeddingColumnFromEngine } from '../../../core/search/embedding-column.ts';
 import { agentFix, checkError, doctorVerify, infoCheck, keylessEnablementFix } from '../check-fix.ts';
 import { readMigrationTimeout } from '../../../core/migration-timeout.ts';
+import { capabilityRefusal } from '../budget.ts';
+import type { OperationError } from '../../../core/ops/contract.ts';
 import { answersFromCatalog, catalogSkipCheck } from '../../../core/rust-engine/store-members/catalog.ts';
 import { migrationTimeoutAdvice } from '../../../core/migration-timeout-advice.ts';
 import type { MissingTable, MissingTablesReport } from '../../../core/schema-missing-tables.ts';
@@ -432,7 +434,9 @@ async function readBacklogAge(engine: BrainEngine): Promise<BacklogAge | null> {
           AND NOT jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'embed_skip')`);
     if (!row || row.age_s === null || Number(row.unaged) > 0) return null;
     return { oldest_pending_age_s: Math.max(0, Math.round(Number(row.age_s))), backfilled: row.backfilled === true };
-  } catch {
+  } catch (e) {
+    // A refused read is not an unstamped backlog: the caller reports the refusal.
+    if (capabilityRefusal(e)) throw e;
     return null;
   }
 }
@@ -474,7 +478,10 @@ async function runEmbeddings(ctx: DoctorContext): Promise<Check[]> {
       // Config read is best-effort; the coverage numbers stand alone.
     }
     const backlog = health.missing_embeddings;
-    const age = backlog > 0 ? await readBacklogAge(engine) : null;
+    let ageRefusal: OperationError | null = null;
+    const age = backlog > 0
+      ? await readBacklogAge(engine).catch((e: unknown) => { ageRefusal = capabilityRefusal(e); if (!ageRefusal) throw e; return null; })
+      : null;
     const ageDetails = {
       backlog,
       oldest_pending_age_s: age?.oldest_pending_age_s ?? null,
@@ -503,6 +510,15 @@ async function runEmbeddings(ctx: DoctorContext): Promise<Check[]> {
       ? ` Oldest pending chunk has waited ${formatWait(age.oldest_pending_age_s)}${age.backfilled ? ' (backfilled from its creation time)' : ''}; a large backlog warns after ${formatWait(EMBEDDING_BACKLOG_MAX_AGE_S)}.`
       : '';
     const summary = health.embed_coverage > 0 ? `${pct}% coverage, ${backlog} missing` : 'No embeddings yet';
+    const refused = ageRefusal as OperationError | null;
+    if (refused) {
+      // The engine refused the age read, so whether the backlog is stale is unknown: warn with the refusal.
+      checks.push({ name: 'embeddings', status: 'warn',
+        message: `${summary}${carveOut}. Backlog: ${backlog} chunk(s) without embeddings. Backlog age unknown: ${refused.message} ${fixText}`,
+        details: { ...details, health: 'unknown', reason: 'engine_capability_missing', capability: refused.reason ?? null },
+        fix: embedBackfillFix({ backlog, verifyCheck: 'embeddings' }) });
+      return checks;
+    }
     checks.push({ name: 'embeddings', status: stale ? 'warn' : 'ok',
       message: `${summary}${carveOut}. Backlog: ${backlog} chunk(s) without embeddings.${waited} ${fixText}`,
       details, fix: embedBackfillFix({ backlog, verifyCheck: 'embeddings' }) });

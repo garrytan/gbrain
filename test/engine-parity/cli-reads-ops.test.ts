@@ -176,6 +176,38 @@ describe('engine parity: read-command statements', () => {
     };
   });
 
+  parityTest('listExactIdentityCandidates finds a person by a page alias row inside the named sources, live pages only', { methods: ['listExactIdentityCandidates', 'setPageAliases', 'replaceDerivedAliases', 'softDeletePage'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    await engine.putPage('people/alice-example', note('Alice Example', 'a person', {}, 'person'));
+    await engine.putPage('people/gone-example', note('Gone Example', 'a person', {}, 'person'));
+    await engine.putPage('notes/alice-note', note('Alice Note', 'a note'));
+    await engine.putPage('people/other-alice', note('Other Alice', 'a person', {}, 'person'), { sourceId: 'other' });
+    await engine.setPageAliases('people/alice-example', 'default', ['alice', 'ae']);
+    await engine.replaceDerivedAliases('people/gone-example', 'default', [{ alias_norm: 'alice', origin: 'declared', case_sensitive: false, alias_text: 'Alice' }]);
+    await engine.setPageAliases('notes/alice-note', 'default', ['alice']);
+    await engine.setPageAliases('people/other-alice', 'other', ['alice']);
+    await engine.setPageAliases('people/nobody-example', 'default', ['alice']);
+    await engine.softDeletePage('people/gone-example');
+    const read = (aliasKeys: string[], sourceIds = ['default']) => engine.listExactIdentityCandidates({
+      probes: { titleKeys: [], titleRaw: '', basenames: [], aliasKeys, emails: [] },
+      sourceIds, types: { types: ['person'], per_source: [] }, limit: 10,
+    });
+    const byAlias = await read(['alice']);
+    expect(byAlias.map(r => r.slug)).toEqual(['people/alice-example']);
+    return {
+      byAlias,
+      bothSources: await read(['alice'], ['default', 'other']),
+      secondKey: await read(['nope', 'ae']),
+      missing: await read(['nope']),
+      // Postgres refuses a NUL byte in any text parameter; the store refuses it the same way.
+      nul: await read(['al\u0000ice']).then(() => 'read', (e: Error) => e.message.slice(e.message.indexOf('invalid byte sequence'))),
+      nulTitle: await engine.listExactIdentityCandidates({
+        probes: { titleKeys: [], titleRaw: 'Al\u0000ice', basenames: [], aliasKeys: [], emails: [] },
+        sourceIds: ['default'], types: { types: ['person'], per_source: [] }, limit: 10,
+      }).then(() => 'read', (e: Error) => e.message.slice(e.message.indexOf('invalid byte sequence'))),
+    };
+  });
+
   parityTest('listExactIdentityCandidates for a remote caller with excludePrivate leaves out private pages', { methods: ['listExactIdentityCandidates'] }, async (engine) => {
     await engine.putPage('people/erin-example', note('Erin', 'p', { visibility: 'private' }, 'person'));
     // The store keeps no private visibility: on the Rust arm this call is its typed refusal.

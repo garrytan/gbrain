@@ -23,6 +23,7 @@ import { safeChunksFilter } from '../../../core/search/safe-chunks.ts';
 import type { Check } from '../../doctor.ts';
 import { checkError, doctorVerify, withSkippedSegmented } from '../check-fix.ts';
 import { boundUnknownDetails } from '../bounded-unknown.ts';
+import { capabilityRefusal, capabilityUnknownCheck } from '../budget.ts';
 import { pricingSetArgv } from '../../../core/budget/no-pricing.ts';
 
 // --- v0.36.1.0 calibration doctor checks (T12) ---
@@ -353,6 +354,9 @@ export async function checkLinkResolutionOpportunity(
       ...(sampleDetails ? { details: sampleDetails } : {}),
     });
   } catch (e) {
+    // A refused read leaves the opportunity unknown: warn with the refusal, never an ok skip.
+    const refusal = capabilityRefusal(e);
+    if (refusal) return capabilityUnknownCheck(name, refusal);
     return {
       name,
       status: 'ok',
