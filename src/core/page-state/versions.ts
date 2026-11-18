@@ -79,7 +79,8 @@ async function insertSegmentedVersion(tx: BrainEngine, snapshot: PageSnapshot, r
   [page.id, JSON.stringify(page.frontmatter), revision, page.title, page.type, JSON.stringify(tags), page.deleted_at != null, page.source_path ?? null, reason]);
   if (!row) throw new Error(`createVersion failed: page id ${page.id} is no longer segmented`);
   if ((await pruneSegmentedVersions(tx, page.id)) > 0) await tx.sweepSegments({ pageId: page.id });
-  return { ...row, snapshot_at: new Date(row.snapshot_at) };
+  // bigint columns: Postgres answers them as BigInt; numbers, as getVersions answers them.
+  return { ...row, body_generation: Number(row.body_generation), body_bytes: Number(row.body_bytes), snapshot_at: new Date(row.snapshot_at) };
 }
 
 /**
