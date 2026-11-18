@@ -66,7 +66,8 @@ describe('engine parity: read-command statements', () => {
     const sealed = (slug: string, texts: string[], extra: { type?: string; frontmatter?: Record<string, unknown>; sourceId?: string } = {}) =>
       seedPage(engine, { slug, input: note(slug, texts.join(' '), extra.frontmatter ?? {}, extra.type ?? 'note'), chunks: texts.map((t, i) => chunk(i, t)) },
         extra.sourceId ? { sourceId: extra.sourceId } : undefined);
-    await sealed('notes/runs', ['the \t\n  needle in a whitespace run', 'the\u0085needle after a next-line']);
+    // No U+0085 input: whether it is [[:space:]] depends on the Postgres locale (ICU yes, libc C.UTF-8 / en_US.utf8 no).
+    await sealed('notes/runs', ['the \t\n  needle in a whitespace run']);
     await sealed('notes/nbsp', ['the\u00a0needle behind a no-break space']);
     await sealed('notes/many', ['needle one', 'two', 'needle three', 'NEEDLE four', 'needle five']);
     await sealed('notes/long', [`${'a'.repeat(200)} needle ${'b'.repeat(40)} needle ${'c'.repeat(200)}`]);
@@ -326,9 +327,10 @@ describe('engine parity: read-command statements', () => {
     const read = async (opts: { sourceIds: string[]; excludePrivateProvenance: boolean }) => {
       const rows = await engine.listUnattributedFacts({ worldOnly: false, limit: 10, offset: 0, ...opts });
       return rows.map(({ id, created_at, ...r }) => {
-        // PGLite returns created_at as timestamptz::text (`2026-01-02 03:04:05.678+00`) and id as a number.
+        // PGLite returns created_at as timestamptz::text (`2026-01-02 03:04:05.678+00`). The id is a number on PGLite and
+        // Rust and a bigint on Postgres, so the case compares its text.
         expect(created_at).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d{1,6})?\+00$/);
-        return { ...r, idType: typeof id };
+        return { ...r, id: String(id) };
       });
     };
     const all = await read({ sourceIds: ['default'], excludePrivateProvenance: false });
