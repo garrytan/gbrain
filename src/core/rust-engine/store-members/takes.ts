@@ -263,3 +263,6 @@ export const matchTakeRows: StoreMember<[pageId: number, rows: TakeFenceRow[], l
 export const deleteTakeRows: StoreMember<[pageId: number, rowNums: number[]], void> = async (brain, pageId, rowNums) => {
   await storeCall({ member: 'deleteTakeRows' }, () => brain.deleteTakeRows(pageId, rowNums));
 };
+
+// The count and list reads of takes, salience and code edges (engine-sql/takes-reads.ts).
+export * from './takes-reads.ts';

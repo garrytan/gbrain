@@ -1549,6 +1549,10 @@ The Minion job queue, cycle locks, spend and rate leases, and wake subscriptions
     fence. Refresh and release match the id, holder pid and acquisition token. The fence check (`fenceLockRow`, `FOR
     KEY SHARE`) becomes `assertLease(token)`, called inside the writing member's own write, so a lease that expired
     refuses the write that depends on it.
+  - Queue health reads. Eight members (`readQueueHealthSignals`, `listWaitingByQueue`, `readQueueDivergence`,
+    `listQueueWedgeCounts`, `listPrivateQueueHealth`, `readWedgeSignals`, `readOldestWaitingAge`,
+    `listStuckActiveJobsByName`) serve the doctor's queue checks, the advisor's stalled jobs and the submit-time
+    probe (`src/core/engine-sql/jobs-health.ts`, `rust/docs/store/jobs-health.md`). `parity: test/engine-parity/jobs-health.test.ts`.
   - Wake. The `minion_job_notify` trigger's `pg_notify` has no store equivalent: a Rust worker uses the short poll,
     which `sync-queue-wake.ts` already chooses when LISTEN is not available.
 - **Depends on:** the transactions family (`w`) for the members a caller runs inside its own transaction.
