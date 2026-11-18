@@ -8,13 +8,15 @@
 //! `honor_aliases` (`visibility.honor_aliases`) and `entity_privacy` (false when an operator
 //! relaxed remote privacy, which drops the privacy part of the entity-page gate only).
 //!
-//! The store keeps no access rules, pending coverage, slug aliases or rename history, so the
-//! parts of the SQL that read those tables take their empty-table values: a page names readers
-//! only through a `readable_by` key, no folder rule covers a page, and an origin slug is the
-//! slug its page declares.
+//! The store keeps no access rules or pending coverage, so the parts of the SQL that read those
+//! tables take their empty-table values: a page names readers only through a `readable_by` key
+//! and no folder rule covers a page. Slug aliases and rename history come from `aliases.rs`
+//! ([`read_slug_alias`], [`renamed_to`]), so an origin a rename moved is followed as PGLite
+//! follows it.
 
 use super::FactRecord;
 use crate::Result;
+use crate::aliases::{read_slug_alias, renamed_to};
 use crate::kv::KvRead;
 use crate::links::out_links;
 use crate::pages::{PageRecord, read_page, read_page_by_id};
@@ -157,6 +159,31 @@ fn any_page_where(
     Ok(false)
 }
 
+/// The slugs an origin reference names in `source_id` (`gbrain_access_origin_restricted`): the
+/// slug, the slug its `slug_aliases` row resolves to (any notes), and every slug
+/// `slug_rename_history` moved it to.
+fn origin_slugs(read: &dyn KvRead, source_id: &str, slug: &str) -> Result<Vec<String>> {
+    let mut slugs = vec![slug.to_string()];
+    if let Some(alias) = read_slug_alias(read, source_id, slug)? {
+        slugs.push(alias.canonical_slug);
+    }
+    slugs.extend(renamed_to(read, source_id, slug)?);
+    Ok(slugs)
+}
+
+/// Any page an origin reference names in `source_id` ([`origin_slugs`]) that passes `test`.
+fn origin_where(
+    read: &dyn KvRead,
+    source_id: &str,
+    slug: Option<&str>,
+    test: impl Fn(&PageRecord) -> bool,
+) -> Result<bool> {
+    let Some(slug) = slug else {
+        return Ok(false);
+    };
+    any_page_where(read, source_id, &origin_slugs(read, source_id, slug)?, test)
+}
+
 /// A page that names readers: `frontmatter ? 'readable_by'` (no folder rule or pending coverage).
 fn names_readers(page: &PageRecord) -> bool {
     page.frontmatter.contains_key("readable_by")
@@ -185,7 +212,7 @@ fn origin_restricted(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
     let fm = &page.frontmatter;
     let source = page.source_id.as_str();
     let restricted = if page.page_type == "atom" {
-        page_where(
+        origin_where(
             read,
             source,
             text(fm, "source_slug").as_deref(),
@@ -198,7 +225,7 @@ fn origin_restricted(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
         for input in concept_inputs(read, page)? {
             let origin = text(&input.frontmatter, "source_slug");
             if names_readers(&input)
-                || page_where(read, &input.source_id, origin.as_deref(), names_readers)?
+                || origin_where(read, &input.source_id, origin.as_deref(), names_readers)?
             {
                 any = true;
                 break;
@@ -206,7 +233,7 @@ fn origin_restricted(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
         }
         any
     } else if page.page_type == "event" && life_chronicle(page) {
-        page_where(
+        origin_where(
             read,
             source,
             chronicle_depth(page).as_deref(),
@@ -218,10 +245,12 @@ fn origin_restricted(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
     if restricted {
         return Ok(true);
     }
-    match declared_slugs(fm) {
-        Some(slugs) => any_page_where(read, source, &slugs, names_readers),
-        None => Ok(false),
+    for slug in declared_slugs(fm).unwrap_or_default() {
+        if origin_where(read, source, Some(&slug), names_readers)? {
+            return Ok(true);
+        }
     }
+    Ok(false)
 }
 
 /// `frontmatter ->> 'captured_via' LIKE 'life-chronicle:%'`.
@@ -312,15 +341,22 @@ fn derived_origin_private(
     Ok(false)
 }
 
-/// The atom-origin probe: the page at `source_slug` is explicitly private (its rename alias and
-/// rename history name no other page here).
+/// The atom-origin probe (`src/core/persistence/atom-origin.ts`): a page explicitly private at
+/// `source_slug`, at the slug its `rename` alias resolves to (`atomOriginSlugsSql`), or at a slug
+/// `slug_rename_history` moved it to (`atomMovedOriginPrivateSql`, #8920).
 fn atom_origin_private(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
-    page_where(
-        read,
-        &page.source_id,
-        text(&page.frontmatter, "source_slug").as_deref(),
-        explicitly_private,
-    )
+    let source = page.source_id.as_str();
+    let Some(slug) = text(&page.frontmatter, "source_slug") else {
+        return Ok(false);
+    };
+    let mut slugs = vec![slug.clone()];
+    if let Some(alias) = read_slug_alias(read, source, &slug)?
+        && alias.notes.as_deref() == Some("rename")
+    {
+        slugs.push(alias.canonical_slug);
+    }
+    slugs.extend(renamed_to(read, source, &slug)?);
+    any_page_where(read, source, &slugs, explicitly_private)
 }
 
 /// `declaredLineagePrivateSql`: a page named in `derived_from` is explicitly private.
