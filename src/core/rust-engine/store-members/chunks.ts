@@ -6,6 +6,7 @@
 import type { Chunk, ChunkInput } from '../../types.ts';
 import { prepareChunks } from '../chunk-input.ts';
 import { toChunk } from '../store-codec.ts';
+import { sanitizeRemoteBody } from '../../remote-body.ts';
 import { isRevisionRejection, mapStoreError } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
 import { namedSourceIds, refuseMember, storeCall, takeOptions, throwIfAborted, type StoreMember } from './common.ts';
@@ -38,14 +39,17 @@ export const upsertChunks: StoreMember<[slug: string, chunks: ChunkInput[], opts
 /**
  * Replaces a page's chunks and seals them to its current revision (PGLite's sealChunks). A missing or deleted page
  * throws PGLite's `Page not found`; the write itself carries the revision it read, so a page that changes in between
- * rejects as a revision conflict.
+ * rejects as a revision conflict. The seal also sends `sanitizeRemoteBody(timeline)`, the timeline text of the page
+ * keyword vector (PGLite's `sealPageTextProjection`); a segmented page (NULL timeline) sends none.
  */
 export const sealChunks: StoreMember<[slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; expectedRevision?: string }], void> =
   async (brain, slug, chunks, opts) => {
     const sourceId = opts?.sourceId ?? 'default';
-    const current: { page: { deleted_at: unknown }; revision: string } | null = await storeCall({ member: 'sealChunks', slug }, () => brain.readPageSnapshot(slug, { sourceId, includeDeleted: true }));
+    const current: { page: { deleted_at: unknown; timeline: string | null }; revision: string } | null = await storeCall({ member: 'sealChunks', slug }, () => brain.readPageSnapshot(slug, { sourceId, includeDeleted: true }));
     if (!current || current.page.deleted_at) throw new Error(`Page not found: ${slug} (source=${sourceId})`);
-    await writeChunks(brain, slug, chunks, { sourceId, expectedRevision: opts?.expectedRevision ?? current.revision, seal: true }, 'sealChunks');
+    const timeline = current.page.timeline;
+    const searchTimeline = typeof timeline === 'string' ? sanitizeRemoteBody(timeline) : undefined;
+    await writeChunks(brain, slug, chunks, { sourceId, expectedRevision: opts?.expectedRevision ?? current.revision, seal: true, searchTimeline }, 'sealChunks');
   };
 
 export const getChunks: StoreMember<[slug: string, opts?: { sourceId?: string; sourceIds?: string[]; includeEmbedding?: boolean; includeUnsealed?: boolean }], Chunk[]> =

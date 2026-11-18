@@ -13,9 +13,11 @@ use crate::store_binding::{Brain, arg, required};
 
 #[napi]
 impl Brain {
-    /// `upsertChunks(slug, chunks, { sourceId?, expectedRevision?, seal? }?)`: writes the
-    /// page's chunks as PGLite's `upsertChunks` does (a repeated chunk keeps the metadata it had;
-    /// the page is not sealed). With `seal` the chunks replace the old ones and are sealed.
+    /// `upsertChunks(slug, chunks, { sourceId?, expectedRevision?, seal?, searchTimeline? }?)`:
+    /// writes the page's chunks as PGLite's `upsertChunks` does (a repeated chunk keeps the
+    /// metadata it had; the page is not sealed). With `seal` the chunks replace the old ones and
+    /// are sealed, and `searchTimeline` (the sanitized timeline) is kept for the page's keyword
+    /// vector.
     #[napi]
     pub fn upsert_chunks<'env>(
         &self,

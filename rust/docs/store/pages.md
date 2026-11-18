@@ -72,3 +72,19 @@ PGLite lets four `pages` columns hold NULL, and the page record holds NULL in th
 - A version snapshot copies the page's NULLs.
 - Format: records written before these fields were nullable hold strings and read unchanged; a record without
   `chunker_version` reads it as NULL, and `chunker_version` is written only when set. `FORMAT_VERSION` stays 1.
+
+## Search timeline
+
+PGLite's page keyword vector (`search_vector`) is the title (weight A) plus the first 65,536 characters of
+`sanitizeRemoteBody(timeline)` (weight C). It is set when the page's chunks are sealed (`sealPageTextProjection`).
+The sanitizer runs in TypeScript only, so `sealChunks` sends its output with the seal (`searchTimeline` in the
+`upsertChunks` options) and the store keeps it with the page under `M page_search_timeline/<page id>`.
+
+- **Record.** `SearchTimeline { revision, timeline }`: the page's `knowledge_revision` at the seal, and the text with
+  NUL removed, cut to 65,536 characters (`SEARCH_TIMELINE_MAX_CHARS`).
+- **Read.** `pages::search_timeline(read, page_id)` returns the record, or `None` when no seal sent one. The text
+  describes the page's current text when `revision` equals the page's `text_projection_revision`.
+- **Written by** a seal that carries `searchTimeline` (TypeScript `sealChunks`). A segmented page has a NULL timeline
+  and sends none. A write that does not seal ignores it, and a seal without it (the store's own indexing `putPage`)
+  leaves the record as it was, at its older revision.
+- **Deleted** with the page on a hard delete (`remove_page`).
