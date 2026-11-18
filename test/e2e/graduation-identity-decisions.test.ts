@@ -21,7 +21,7 @@ const alice = [{ source_id: 'default', slug: 'people/alice-example-grad' }, { so
 const bob = [{ source_id: 'default', slug: 'people/bob-sample-grad' }, { source_id: 'source-g', slug: 'people/bob-sample-grad' }];
 
 async function rank(engine: BrainEngine): Promise<Array<[string, string, number]>> {
-  const ctx = { engine, config: {} as never, logger: { info() {}, warn() {}, error() {} } as never, dryRun: false, remote: false } as OperationContext;
+  const ctx = { engine, config: {} as never, logger: { info() {}, warn() {}, error() {} } as never, dryRun: false, remote: false } as unknown as OperationContext;
   const r = await operations.find(o => o.name === 'rank_entities')!.handler(ctx, { types: ['person'] }) as { entities: Array<{ slug: string; source_id: string; inbound: number }> };
   return r.entities.filter(e => e.slug === 'people/alice-example-grad').map(e => [e.source_id, e.slug, e.inbound]);
 }
