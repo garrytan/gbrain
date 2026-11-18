@@ -1727,8 +1727,8 @@ member lands. Within a group, build in the order shown.
 | 6. Graph and search reads | timeline_queries, chunk_queries, link_queries, keyword | yes | about 11 days | keyword writes the `ts_rank` compatibility ranker itself; two chunk cases need embeddings |
 
 Groups 1 and 2 share the `pages` capability: `pages` is reported only when page_ops, extraction and aliases are all
-done. Groups 6 and 2 are the longest (about 11 and 10 days) and set the critical path. If time runs short, the candidate to leave refused for
-Dec 1 is `sweepSegments`; it is a single member that refuses cleanly, so the rest of its family still ships.
+done. Groups 6 and 2 are the longest (about 11 and 10 days) and set the critical path. `sweepSegments` is served: it reads the version and journal
+roots through narrow helpers of those families (rust/docs/store/page_body.md, "The sweep").
 `purgeDeletedPages` and `getHealth` are served.
 
 The estimates are judgments from the size of the PGLite code each member reproduces, not measurements.
