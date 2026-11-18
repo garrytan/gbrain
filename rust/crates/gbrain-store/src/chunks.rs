@@ -293,6 +293,8 @@ fn write_chunk(
     view_generation: u64,
     stats: &mut ChunkStats,
 ) -> Result<()> {
+    // `chunk_search_vector_trigger` builds the vector before the row is stored and its error aborts the statement.
+    crate::keyword::check_chunk_vector(record)?;
     put_json(tx, &keys::chunk(record.page_id, record.chunk_index), record)?;
     if record.visible_at(view_generation) {
         put_postings(tx, record)?;

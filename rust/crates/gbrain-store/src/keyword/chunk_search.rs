@@ -15,7 +15,7 @@
 //! factor is a `double precision`, so the score is the f32 rank widened and then multiplied.
 
 use super::filters::{
-    KeywordOptions, PageFilter, chunk_vector, result_row, row_count, source_factor,
+    KeywordOptions, PageFilter, readable_chunk_vector, result_row, row_count, source_factor,
 };
 use super::rank::ts_rank;
 use super::tsearch::{ts_matches, websearch_to_tsquery};
@@ -61,7 +61,9 @@ impl Store {
                 if !chunk.visible_at(generation) || !filter.keeps_chunk(&chunk) {
                     continue;
                 }
-                let vector = chunk_vector(&chunk)?;
+                let Some(vector) = readable_chunk_vector(&chunk) else {
+                    continue;
+                };
                 if !ts_matches(&vector, &q) {
                     continue;
                 }

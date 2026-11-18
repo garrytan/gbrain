@@ -128,6 +128,19 @@ facts OR builder recurse the same way, once per item, and the stack of the threa
   every query up to the bound and throws past it. A test of the thrown error cannot be a parity case, because the
   expected-divergence rows cover only an answer that differs from PGLite's, never a thrown error.
 
+## A chunk whose vector does not fit
+
+`content_chunks`' `chunk_search_vector_trigger` builds the weighted vector (doc comment and qualified symbol name at A,
+text at B) before the row is stored, and `to_tsvector` / `||` raise "string is too long for tsvector (N bytes, max
+1048575 bytes)" (54000) past the cap. The error aborts the whole `upsertChunks` / `sealChunks` statement. The store
+builds the same vector in `chunks::write_chunk` (`keyword::check_chunk_vector`, which also warms the vector cache)
+and refuses the write with the same message, in the same transaction, so no chunk of the batch is stored.
+
+A store written before that check may hold such a chunk, which SQL can never hold. Every member that reads chunk
+vectors (`searchKeyword` arms, chunk-grain and page-grain search, the page count and the rare-term arm) treats it as
+matching nothing (`filters::readable_chunk_vector`) rather than failing the search that passes over it. There is no
+SQL behavior to compare that read with, so it is covered by Rust unit tests only.
+
 ## The page filter
 
 `keyword/filters.rs` models `keywordFilters` and the live clause of `buildVisibilityClause`: a page is kept when it is

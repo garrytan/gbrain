@@ -29,7 +29,7 @@ use std::collections::BTreeSet;
 use serde_json::{Value, json};
 
 use super::filters::{
-    KeywordOptions, PageFilter, chunk_vector, result_row, row_count, served, source_factor,
+    KeywordOptions, PageFilter, readable_chunk_vector, result_row, row_count, served, source_factor,
 };
 use super::rank::ts_rank;
 use super::tsearch::{phraseto_tsquery, ts_matches, websearch_to_tsquery};
@@ -90,7 +90,9 @@ impl Store {
                 {
                     continue;
                 }
-                let vector = chunk_vector(&chunk)?;
+                let Some(vector) = readable_chunk_vector(&chunk) else {
+                    continue;
+                };
                 if !ts_matches(&vector, &matcher) {
                     continue;
                 }
@@ -156,7 +158,9 @@ impl Store {
                 if !chunk.visible_at(generation) || chunk.modality != "text" {
                     continue;
                 }
-                let vector = chunk_vector(&chunk)?;
+                let Some(vector) = readable_chunk_vector(&chunk) else {
+                    continue;
+                };
                 for (i, q) in queries.iter().enumerate() {
                     if q.items.is_empty() || counts[i] > cap || !ts_matches(&vector, q) {
                         continue;
@@ -470,6 +474,91 @@ mod tests {
         assert_eq!(
             top(json!({ "requireSafeChunks": false })),
             ["notes/four", "notes/none", "notes/three"]
+        );
+    }
+
+    /// Distinct tokens whose tsvector is past the 1,048,575-byte cap.
+    fn oversized_text() -> String {
+        (0..200_000)
+            .map(|i| format!("token{i:x}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// A chunk stored with a vector too big for a tsvector (written before `write_chunk` checked it) matches nothing and
+    /// fails no search: every member that builds chunk vectors skips it and answers from the other chunks.
+    #[test]
+    fn a_stored_chunk_that_cannot_be_vectored_is_skipped_by_every_search() {
+        let store = crate::test_support::store();
+        put(&store, "notes/ok", "heron wades");
+        put(&store, "notes/bad", "heron stalks");
+        store
+            .write(|tx| {
+                let page =
+                    crate::pages::read_page(&*tx, crate::sources::DEFAULT_SOURCE, "notes/bad")?
+                        .unwrap();
+                for mut chunk in crate::chunks::read_chunks(&*tx, page.id)? {
+                    chunk.chunk_text = format!("heron {}", oversized_text());
+                    crate::put_json(tx, &crate::keys::chunk(page.id, chunk.chunk_index), &chunk)?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        let o = opts(json!({ "limit": 20.0 }));
+        assert_eq!(
+            slugs(&store.search_keyword_arm("heron", "heron", &o).unwrap()),
+            ["notes/ok"]
+        );
+        assert_eq!(
+            slugs(&store.search_keyword_chunks("heron", &o).unwrap()),
+            ["notes/ok"]
+        );
+        assert_eq!(
+            slugs(&store.search_keyword_pages("heron", &o).unwrap()),
+            ["notes/ok"]
+        );
+        assert_eq!(store.count_keyword_pages("heron", &o).unwrap(), 1);
+        let rare = store
+            .keyword_rare_term_pages(&["heron".to_string()], 10.0)
+            .unwrap();
+        assert_eq!(rare.len(), 1);
+    }
+
+    /// `chunk_search_vector_trigger` raises in the write: a chunk that cannot be vectored is refused with the SQL text and
+    /// nothing of the batch is stored.
+    #[test]
+    fn a_chunk_that_cannot_be_vectored_is_refused_at_write() {
+        let store = crate::test_support::store();
+        put(&store, "notes/ok", "heron wades");
+        let before = store.count_chunks().unwrap();
+        let big = || crate::chunks::ChunkInput {
+            chunk_index: 1,
+            chunk_text: oversized_text(),
+            ..crate::chunks::ChunkInput::default()
+        };
+        let err = store
+            .upsert_chunks(
+                "notes/ok",
+                &[
+                    crate::chunks::ChunkInput {
+                        chunk_text: "heron edited".into(),
+                        ..crate::chunks::ChunkInput::default()
+                    },
+                    big(),
+                ],
+                &crate::chunks::UpsertChunksOptions::default(),
+            )
+            .unwrap_err();
+        assert!(
+            err.message.starts_with("string is too long for tsvector ("),
+            "{}",
+            err.message
+        );
+        assert_eq!(store.count_chunks().unwrap(), before);
+        let o = opts(json!({ "limit": 20.0 }));
+        assert_eq!(
+            slugs(&store.search_keyword_arm("heron", "heron", &o).unwrap()),
+            ["notes/ok"]
         );
     }
 }

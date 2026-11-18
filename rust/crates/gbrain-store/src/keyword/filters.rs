@@ -297,6 +297,14 @@ pub(super) fn chunk_vector(chunk: &ChunkRecord) -> Result<Arc<TsVector>> {
     })
 }
 
+/// The chunk's vector as a search reads it, or `None` for a chunk whose vector cannot be built (a text past the
+/// tsvector size cap). SQL never stores such a chunk (its trigger raises in the write, and `check_chunk_vector` raises
+/// the same here), but a store written before that check may hold one. It matches nothing; it must not fail the searches
+/// that pass over it.
+pub(super) fn readable_chunk_vector(chunk: &ChunkRecord) -> Option<Arc<TsVector>> {
+    chunk_vector(chunk).ok()
+}
+
 /// `[[:space:]]` in a Postgres regular expression.
 fn is_space(c: char) -> bool {
     matches!(c, ' ' | '\t' | '\n' | '\x0B' | '\x0C' | '\r')
