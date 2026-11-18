@@ -52,7 +52,7 @@ export async function listFilesForPage(exec: LegacyUnscopedRead, pageId: number)
       SELECT id, source_id, page_slug, page_id, filename, storage_path, mime_type, size_bytes, content_hash, metadata, created_at
       FROM files
       WHERE page_id = ${pageId}
-      ORDER BY created_at ASC
+      ORDER BY created_at ASC, id ASC
     `);
     return rows.map(row => fileRow(row));
   }

@@ -3,14 +3,15 @@
 # legacy_e2e = called by the Postgres-gated test/e2e/engine-parity*.test.ts suite (informational).
 # pglite/postgres/rust = what each arm must do: yes (runs, compared), same (Rust must match once its arm exists),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 200/200
+# covered: 238/238
 # lifecycle: 9/9
-# pages: 25/25
+# pages: 29/29
 # search: 7/7
-# chunks: 17/17
+# search_reads: 9/9
+# chunks: 22/22
 # extraction: 7/7
 # links: 23/23
-# tags: 3/3
+# tags: 5/5
 # timeline: 8/8
 # ontology: 4/4
 # raw_files: 5/5
@@ -20,9 +21,11 @@
 # facts: 14/14
 # segmented_body: 14/14
 # versions: 3/3
-# stats_ingest: 4/4
-# sync_aliases: 9/9
-# config: 5/5
+# stats_ingest: 5/5
+# sync_aliases: 10/10
+# config: 6/6
+# import_guards: 9/9
+# cycle_locks: 6/6
 # raw_sql: 4/4
 # code_edges: 5/5
 # eval_capture: 5/5
@@ -34,21 +37,21 @@ disconnect	lifecycle	yes	1	yes	yes	yes	same
 reconnect	lifecycle	yes	1	no	yes	yes	same
 initSchema	lifecycle	yes	2	yes	yes	yes	same
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	n/a:postgres-only
-transaction	lifecycle	yes	8	no	yes	yes	same
+transaction	lifecycle	yes	11	no	yes	yes	same
 transactionDirect	lifecycle	yes	1	no	yes	yes	same
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	same
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	24	yes	yes	yes	same
-readPageSnapshot	pages	yes	6	no	yes	yes	same
+getPage	pages	yes	27	yes	yes	yes	same
+readPageSnapshot	pages	yes	7	no	yes	yes	same
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	same
 lockPageKeys	pages	yes	1	no	yes	yes	same
-putPage	pages	yes	89	yes	yes	yes	same
+putPage	pages	yes	104	yes	yes	yes	same
 findDuplicatePage	pages	yes	1	no	yes	yes	same
 findDuplicatePages	pages	yes	1	no	yes	yes	same
 deletePage	pages	yes	2	yes	yes	yes	same
 deletePages	pages	yes	1	yes	yes	yes	same
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	same
-softDeletePage	pages	yes	17	yes	yes	yes	same
+softDeletePage	pages	yes	24	yes	yes	yes	same
 softDeletePages	pages	yes	1	yes	yes	yes	same
 restorePage	pages	yes	5	yes	yes	yes	same
 purgeDeletedPages	pages	yes	1	no	yes	yes	same
@@ -61,18 +64,31 @@ listEntityKeyRows	pages	yes	1	no	yes	yes	same
 listAllPageRefs	pages	yes	1	yes	yes	yes	same
 listAllSources	pages	yes	2	no	yes	yes	same
 updateSourceConfig	pages	yes	1	no	yes	yes	same
+getSource	pages	yes	1	no	yes	yes	same
+listSourceLocalPaths	pages	yes	1	no	yes	yes	same
 listPrefixSampledPages	pages	yes	1	no	yes	yes	same
 listCorpusSample	pages	yes	1	no	yes	yes	same
+getPageSealState	pages	yes	1	no	yes	yes	same
+refreshPageOrigin	pages	yes	1	no	yes	yes	same
 searchKeyword	search	yes	8	yes	yes	yes	same
 countKeywordPages	search	yes	1	no	yes	yes	same
 searchKeywordPages	search	yes	1	no	yes	yes	same
-searchTitles	search	yes	1	yes	yes	yes	same
+searchTitles	search	yes	2	yes	yes	yes	same
 searchVector	search	yes	2	yes	yes	yes	same
 getEmbeddingsByChunkIds	search	yes	1	no	yes	yes	same
 searchKeywordChunks	search	yes	1	yes	yes	yes	same
-upsertChunks	chunks	yes	11	yes	yes	yes	same
-sealChunks	chunks	yes	2	no	yes	yes	same
-getChunks	chunks	yes	14	yes	yes	yes	same
+cosinesByChunkIds	search_reads	yes	1	no	yes	yes	same
+hasSupersedeEdges	search_reads	yes	1	no	yes	yes	same
+supersedingPageSlugs	search_reads	yes	1	no	yes	yes	same
+aliasCanonicalRefs	search_reads	yes	1	no	yes	yes	same
+pageCollapseFacts	search_reads	yes	1	no	yes	yes	same
+slugsEndingIn	search_reads	yes	1	no	yes	yes	same
+generatedPagesIn	search_reads	yes	1	no	yes	yes	same
+livePageIdsAt	search_reads	yes	1	no	yes	yes	same
+pagesLinkingTo	search_reads	yes	1	no	yes	yes	same
+upsertChunks	chunks	yes	13	yes	yes	yes	same
+sealChunks	chunks	yes	6	no	yes	yes	same
+getChunks	chunks	yes	18	yes	yes	yes	same
 getChunkPage	chunks	yes	3	no	yes	yes	same
 getChunkWindows	chunks	yes	1	no	yes	yes	same
 countStaleChunks	chunks	yes	5	no	yes	yes	same
@@ -86,6 +102,11 @@ listChunklessPagesWithContent	chunks	yes	1	yes	yes	yes	same
 readEmbeddingStateCounts	chunks	yes	1	no	yes	yes	same
 listEmbeddingStateRows	chunks	yes	1	no	yes	yes	same
 deleteChunks	chunks	yes	2	no	yes	yes	same
+deleteChunksExcept	chunks	yes	1	no	yes	yes	same
+setChunkerVersion	chunks	yes	1	no	yes	yes	same
+writeTextProjectionSeal	chunks	yes	1	no	yes	yes	same
+moveChunkIndexes	chunks	yes	1	no	yes	yes	same
+getChunkReuseRows	chunks	yes	1	no	yes	yes	same
 getChunksWithEmbeddings	chunks	yes	1	no	yes	yes	same
 countStalePagesForExtraction	extraction	yes	4	yes	yes	yes	same
 listStalePagesForExtraction	extraction	yes	3	yes	yes	yes	same
@@ -94,7 +115,7 @@ markPagesAttendanceBlocked	extraction	yes	1	no	yes	yes	same
 countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	same
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	same
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	same
-addLink	links	yes	17	yes	yes	yes	same
+addLink	links	yes	20	yes	yes	yes	same
 addLinksBatch	links	yes	1	yes	yes	yes	same
 replaceDerivedLinks	links	yes	1	no	yes	yes	same
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	same
@@ -119,8 +140,10 @@ getSalienceScores	links	yes	1	yes	yes	yes	same
 findOrphanPages	links	yes	1	yes	yes	yes	same
 addTag	tags	yes	5	yes	yes	yes	same
 removeTag	tags	yes	1	no	yes	yes	same
-getTags	tags	yes	1	yes	yes	yes	same
-addTimelineEntry	timeline	yes	5	yes	yes	yes	same
+pruneFrontmatterTags	tags	yes	1	no	yes	yes	same
+addPageTagsById	tags	yes	1	no	yes	yes	same
+getTags	tags	yes	2	yes	yes	yes	same
+addTimelineEntry	timeline	yes	6	yes	yes	yes	same
 addTimelineEntriesBatch	timeline	yes	1	no	yes	yes	same
 getTimeline	timeline	yes	3	yes	yes	yes	same
 getTimelineForDate	timeline	yes	2	no	yes	yes	same
@@ -137,7 +160,7 @@ getRawData	raw_files	yes	2	yes	yes	yes	same
 upsertFile	raw_files	yes	2	no	yes	yes	same
 getFile	raw_files	yes	2	no	yes	yes	same
 listFilesForPage	raw_files	yes	1	no	yes	yes	same
-addTakesBatch	takes	yes	19	yes	yes	yes	same
+addTakesBatch	takes	yes	20	yes	yes	yes	same
 updateTakeEmbeddings	takes	yes	1	no	yes	yes	same
 listTakes	takes	yes	11	no	yes	yes	same
 searchTakes	takes	yes	1	no	yes	yes	same
@@ -191,24 +214,42 @@ retireSegmentDerivations	segmented_body	yes	1	no	yes	yes	same
 createVersion	versions	yes	4	no	yes	yes	same
 getVersions	versions	yes	3	no	yes	yes	same
 revertToVersion	versions	yes	2	no	yes	yes	same
+countOnboardSignal	stats_ingest	yes	1	no	yes	yes	same
 getStats	stats_ingest	yes	2	yes	yes	yes	same
 getHealth	stats_ingest	yes	2	yes	yes	yes	same
 logIngest	stats_ingest	yes	1	no	yes	yes	same
 getIngestLog	stats_ingest	yes	1	no	yes	yes	same
-updateSlug	sync_aliases	yes	4	no	yes	yes	same
+updateSlug	sync_aliases	yes	5	no	yes	yes	same
 rewriteLinks	sync_aliases	yes	1	no	yes	yes	same
 resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	same
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	same
-resolveAliases	sync_aliases	yes	1	no	yes	yes	same
-setPageAliases	sync_aliases	yes	1	no	yes	yes	same
+resolveAliases	sync_aliases	yes	2	no	yes	yes	same
+setPageAliases	sync_aliases	yes	2	no	yes	yes	same
+replaceDerivedAliases	sync_aliases	yes	1	no	yes	yes	same
 refreshPageBody	sync_aliases	yes	1	no	yes	yes	same
 updatePageContextualRetrievalState	sync_aliases	yes	1	no	yes	yes	same
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	same
 getConfig	config	yes	4	no	yes	yes	same
-setConfig	config	yes	7	no	yes	yes	same
+setConfig	config	yes	8	no	yes	yes	same
 unsetConfig	config	yes	2	no	yes	yes	same
 listConfigKeys	config	yes	2	no	yes	yes	same
 getAllConfig	config	yes	1	no	yes	yes	same
+getConfigValues	config	yes	1	no	yes	yes	same
+readManagedModeRows	import_guards	yes	1	no	yes	yes	same
+getSourceStrictness	import_guards	yes	1	no	yes	yes	same
+readPersistenceBrainId	import_guards	yes	1	no	yes	yes	same
+readLocalWriterRow	import_guards	yes	1	no	yes	yes	same
+insertLocalWriterRow	import_guards	yes	1	no	yes	yes	same
+readTransactionSettings	import_guards	yes	1	no	yes	yes	same
+applyTransactionSettings	import_guards	yes	1	no	yes	yes	same
+readLedgerSource	import_guards	yes	1	no	yes	yes	same
+isFolderRestricted	import_guards	yes	1	no	yes	yes	same
+acquireCycleLock	cycle_locks	yes	8	no	yes	yes	same
+refreshCycleLock	cycle_locks	yes	1	no	yes	yes	same
+releaseCycleLock	cycle_locks	yes	1	no	yes	yes	same
+readCycleLocks	cycle_locks	yes	8	no	yes	yes	same
+deleteCycleLock	cycle_locks	yes	1	no	yes	yes	same
+deleteCycleLockIfStale	cycle_locks	yes	1	no	yes	yes	same
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 executeRaw	raw_sql	yes	3	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql

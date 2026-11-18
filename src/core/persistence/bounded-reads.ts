@@ -66,6 +66,10 @@ export function isConnectionEnd(error: unknown): error is { code: string } {
   return code === 'CONNECTION_DESTROYED' || code === 'CONNECTION_CLOSED';
 }
 
+function isAbortError(error: unknown): boolean {
+  return (error as { name?: unknown } | null)?.name === 'AbortError';
+}
+
 /** Whether `error` is the server ending a statement at a timeout (ours, or a shorter session one). */
 export function isStatementTimeout(error: unknown): error is { code: string } {
   const code = (error as { code?: unknown } | null)?.code;
@@ -86,6 +90,15 @@ export function sharedReadFailure(error: unknown): unknown {
 export function isSharedReadFailure(error: unknown): boolean {
   return typeof error === 'object' && error !== null && (error as { [SHARED_READ]?: true })[SHARED_READ] === true;
 }
+
+/**
+ * Typed engine reads that replaced a preparer's `executeRaw` statement (Track 2). Master bounded those statements
+ * through the `executeRaw` hook above; the Postgres engine now ends each of these at the clock's deadline when it runs
+ * under `withReadDeadline` (postgres-engine.ts `preparationRead`), so every preparer view wraps them, with or without
+ * `engineReads`. The label stands in for the statement text on the claim stamp's `last_sql`.
+ */
+export const TYPED_PREPARATION_READS: ReadonlySet<string> = new Set(['getSource', 'getConfigValues', 'readManagedModeRows', 'getSourceStrictness',
+  'readPersistenceBrainId', 'readLocalWriterRow', 'readLedgerSource', 'isFolderRestricted', 'listSourceLocalPaths', 'getChunkReuseRows', 'getPageSealState']);
 
 /** The engine a preparer reads through: raw statements bounded by the clock's remaining budget, everything else untouched. */
 export function boundedReads(engine: BrainEngine, clock: ClaimPhaseClock | undefined, opts: { engineReads?: boolean } = {}): BrainEngine {
@@ -113,10 +126,15 @@ export function boundedReads(engine: BrainEngine, clock: ClaimPhaseClock | undef
     };
     const value = Reflect.get(target, key, target);
     if (typeof value !== 'function') return value;
-    if (!opts.engineReads) return value.bind(target);
+    const typedRead = typeof key === 'string' && TYPED_PREPARATION_READS.has(key);
+    if (!opts.engineReads && !typedRead) return value.bind(target);
     return (...args: unknown[]) => {
-      const result = withReadDeadline(deadlineAt, () => value.apply(target, args));
+      if (typedRead) recordClaimSql(clock, `SELECT FROM ${String(key)}`);
+      // A typed read also takes the clock's signal, as master's raw statement did (#8155); a shared memo read drops it.
+      const result = withReadDeadline(deadlineAt, () => value.apply(target, args), typedRead ? clock!.signal : undefined);
       return result instanceof Promise ? result.catch(error => {
+        // The clock's abort ended the read and discarded its connection: the error is the abort reason the consumer knows.
+        if (typedRead && clock!.signal?.aborted && !isSharedReadFailure(error) && (isAbortError(error) || isConnectionEnd(error))) throw clock!.signal.reason;
         const refused = error instanceof ReadDeadlineError;
         if (!refused && (!isStatementTimeout(error) || isSharedReadFailure(error) || Date.now() < deadlineAt)) throw error;
         if (clock!.signal?.aborted) throw clock!.signal.reason;

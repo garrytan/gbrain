@@ -16,7 +16,8 @@
  */
 import { expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
-import { boundedReads, isStatementTimeout, PreparationDeadlineError } from '../src/core/persistence/bounded-reads.ts';
+import { boundedReads, isStatementTimeout, PreparationDeadlineError, TYPED_PREPARATION_READS } from '../src/core/persistence/bounded-reads.ts';
+import { readDeadline } from '../src/core/read-deadline.ts';
 import { startClaimPhase, enterClaimStep } from '../src/core/persistence/claim-phase.ts';
 import { preparationAbortReason } from '../src/core/persistence/coordinator.ts';
 import { preparationReads } from '../src/core/persistence/group-publish.ts';
@@ -109,4 +110,22 @@ test('a group\'s shared read answers a bounded read once, with the member\'s bou
   await boundedReads(shared, a).executeRaw('SELECT id FROM pages WHERE source_id=$1', ['default']);
   expect(calls[1]!.opts!.timeoutMs).toBeGreaterThan(0);
   expect(calls[1]!.opts!.signal).toBe(a.signal);
+});
+
+test('a typed preparation read runs under the clock\'s deadline in every preparer view and names itself on the claim stamp; other members stay the engine\'s', async () => {
+  const seen: Array<{ key: string; deadline: number | undefined }> = [];
+  const engine = { kind: 'postgres', executeRaw: async () => [],
+    getPageSealState: async () => { seen.push({ key: 'getPageSealState', deadline: readDeadline() }); return null; },
+    getConfig: async () => { seen.push({ key: 'getConfig', deadline: readDeadline() }); return null; } } as unknown as BrainEngine;
+  for (const opts of [{}, { engineReads: true }]) {
+    seen.length = 0;
+    const clock = startClaimPhase(Date.now(), undefined, 10_000);
+    const reads = boundedReads(engine, clock, opts);
+    expect(TYPED_PREPARATION_READS.has('getPageSealState')).toBe(true);
+    await reads.getPageSealState(7);
+    await reads.getConfig('k');
+    expect(seen[0]).toEqual({ key: 'getPageSealState', deadline: clock.deadlineAt });
+    expect(seen[1]).toEqual({ key: 'getConfig', deadline: 'engineReads' in opts ? clock.deadlineAt : undefined });
+    expect(clock.lastSql?.label).toBe('SELECT getPageSealState');
+  }
 });

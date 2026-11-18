@@ -21,7 +21,9 @@ import type { PageKey, PageSnapshot, PageSnapshotOptions } from '../page-state/t
 import { assertPageRevision } from '../page-state/types.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { EmbeddingState, EmbeddingStateCounts, EmbeddingStateRow } from '../embedding-state.ts';
-import type { Chunk, ChunkInput, ChunklessPageRow, ResolvedColumn, StaleChunkRow } from '../types.ts';
+import type { Chunk, ChunkInput, ChunklessPageRow, ChunkReuseRow, ResolvedColumn, StaleChunkRow } from '../types.ts';
+import type { ChunkMove } from '../page-state/chunk-moves.ts';
+import { pageSearchVectorSql } from '../fts-language.ts';
 import { rowToChunk, validateSlug } from '../utils.ts';
 import { createHash } from 'node:crypto';
 import { jsonRowBatches, sanitizeText } from '../batch-rows.ts';
@@ -1047,7 +1049,7 @@ export async function listEmbeddingStateRows(exec: ScopedRead, column: string,
 }
 
 /** The transaction engine's own steps `sealChunks` runs (its page guard, chunk delete and sealing chunk insert). */
-export interface ChunkSealSteps extends ChunkPageGuards, Pick<BrainEngine, 'executeRaw'> {
+export interface ChunkSealSteps extends ChunkPageGuards, Pick<BrainEngine, 'writeTextProjectionSeal'> {
   deleteChunks(slug: string, opts: { sourceId: string }): Promise<void>;
   upsertChunks(slug: string, chunks: ChunkInput[], opts: { sourceId: string; sealChunkerVersion: number }): Promise<void>;
 }
@@ -1093,6 +1095,59 @@ export async function deleteChunks(exec: SqlExecutor, slug: string, opts?: { sou
       WHERE id = (SELECT page_id FROM gone LIMIT 1) AND text_projection_revision IS NOT NULL
     `);
   }
+
+/**
+ * Delete a page's chunks except the rows in `keepIds` (the import's reused vectors). Unlike `deleteChunks` this does
+ * NOT clear `text_projection_revision`: the import reseals the page right after (`writeTextProjectionSeal`). An empty
+ * `keepIds` deletes every chunk of the page. Same statement the import ran raw (`import-file.ts`).
+ */
+export async function deleteChunksExcept(exec: SqlExecutor, slug: string, keepIds: readonly number[], opts?: { sourceId?: string }): Promise<void> {
+  await exec.executeRaw(`DELETE FROM content_chunks WHERE page_id = (SELECT id FROM pages WHERE slug = $1 AND source_id = $2)
+        AND NOT (id = ANY($3::int[]))`, [slug, opts?.sourceId ?? 'default', [...keepIds]]);
+}
+
+/** Stamp `pages.chunker_version` on one page (a page with no chunks counts as sealed once stamped). */
+export async function setChunkerVersion(exec: SqlExecutor, slug: string, version: number, opts?: { sourceId?: string }): Promise<void> {
+  await exec.executeRaw('UPDATE pages SET chunker_version = $1 WHERE source_id = $2 AND slug = $3', [version, opts?.sourceId ?? 'default', slug]);
+}
+
+/**
+ * Seal a page's text projection at `revision` and rebuild its `search_vector` from its title and `timelineText` (the
+ * sanitized timeline text the caller indexes). Writes nothing when the page's `knowledge_revision` has moved on.
+ */
+export async function writeTextProjectionSeal(exec: SqlExecutor, slug: string, opts: { sourceId: string; revision: string; timelineText: string }): Promise<void> {
+  // The timeline text is bound once (v.seal_input) so the shared vector expression splices as constant text.
+  await exec.run(sqlFragment`UPDATE pages SET text_projection_revision=knowledge_revision,
+    search_vector=${trustedSql(pageSearchVectorSql('title', 'v.seal_input'))}
+    FROM (SELECT ${opts.timelineText}::text AS seal_input) v
+    WHERE pages.source_id=${opts.sourceId} AND pages.slug=${slug} AND pages.knowledge_revision=${opts.revision}::uuid`);
+}
+
+/** One UPDATE per wave: a landed row takes its new index and chunk span, a parked (negative target) row keeps its own span. */
+export async function moveChunkIndexes(exec: SqlExecutor, pageId: number, waves: readonly (readonly ChunkMove[])[]): Promise<void> {
+  for (const wave of waves) {
+    await exec.executeRaw(`UPDATE content_chunks c SET chunk_index = m.target,
+        projected_byte_start = CASE WHEN m.target < 0 THEN c.projected_byte_start ELSE m.byte_start END,
+        projected_byte_end = CASE WHEN m.target < 0 THEN c.projected_byte_end ELSE m.byte_end END
+      FROM unnest($2::int[], $3::int[], $4::bigint[], $5::bigint[]) AS m(id, target, byte_start, byte_end)
+      WHERE c.page_id = $1 AND c.id = m.id`,
+    [pageId, wave.map(move => move.id), wave.map(move => move.to),
+      wave.map(move => move.projected_byte_start ?? null), wave.map(move => move.projected_byte_end ?? null)]);
+  }
+}
+
+/** The stored chunks of one page, unordered, with the flags the import's vector-reuse gate reads (read unscoped on the pool on master). */
+export async function getChunkReuseRows(exec: LegacyUnscopedRead, slug: string, opts?: { sourceId?: string }): Promise<ChunkReuseRow[]> {
+  const rows = await exec.executeRaw<ChunkReuseRow>(
+    `SELECT c.chunk_index, c.embedding_input_hash, p.contextual_retrieval_mode,
+        c.embedding_image IS NULL AND c.embedding_multimodal IS NULL AND c.embedded_text_hash = md5(c.chunk_text) AS text_only,
+        c.embedding IS NULL AND c.embedding_image IS NULL AND c.embedding_multimodal IS NULL
+          AND c.embedding_input_hash IS NULL AND c.embedded_text_hash IS NULL AS unembedded
+      FROM content_chunks c JOIN pages p ON p.id = c.page_id
+      WHERE p.source_id = $1 AND p.slug = $2`, [opts?.sourceId ?? 'default', slug]);
+  // `text_only` is SQL NULL when no text hash is recorded; the typed row says false.
+  return rows.map(row => ({ ...row, text_only: row.text_only === true, unembedded: row.unembedded === true }));
+}
 
 /**
  * Decodes pgvector's binary send format (`vector_send`): int16 dimensions,
