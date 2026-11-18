@@ -1244,3 +1244,6 @@ src/core/setup/pi-skill-extension.ts	spawn_import	1	GBRA-435 Pi skill-resolver e
 src/core/setup/cursor-skill-pins.ts	fs_import	1	GBRA-435 Cursor pinned skills: setup writes the project's pinned-skills rule, its git exclude line and the project record under GBRAIN_HOME (no brain or engine is opened); stays
 src/core/setup/cursor-skill-pins.ts	process_env	1	GBRA-435 Cursor pinned skills: HOME locates the user-level skill directories Cursor loads; stays
 src/core/setup/cursor-skill-pins.ts	spawn_import	1	GBRA-435 Cursor pinned skills: setup runs git rev-parse to find the repository's info/exclude; stays
+src/core/entities/identity-decisions.ts	fs_import	1	W7: filesystem boundary moves to the local app (decision files under .gbrain/identity/, same door as access/policy-git.ts)
+src/core/entities/identity-decisions.ts	process_env	4	W7: the commit-lock marker (COMMIT_LOCK_ENV) exported to commitAndPush while the lock is held, as in access/policy-git.ts; it moves with the filesystem boundary
+src/core/entities/identity-decisions.ts	spawn_import	1	W7: process-wide effects move to src/cli (git show of the committed decision file)

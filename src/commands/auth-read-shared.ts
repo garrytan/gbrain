@@ -42,7 +42,8 @@ export async function clientReadsChange(engine: BrainEngine, clientId: string, b
 
 /**
  * GST-2898: the read set a rescope leaves, the shared set with the switch on, and the sources a narrowing stops
- * reading (it applies: narrowing is safe) with the flag that keeps every shared source.
+ * reading (it applies: narrowing is safe), with the flag that keeps every shared source only while the switch stayed off
+ * and the key still reads a source (never after `--read-shared off` or `--sources none`, which refuses the switch).
  */
 export function readsChangeLines(reads: RescopeTokenResult['reads'], before: boolean, after: boolean, target: string): string[] {
   const lines: string[] = [];
@@ -55,7 +56,7 @@ export function readsChangeLines(reads: RescopeTokenResult['reads'], before: boo
     lines.push(`  Reads: ${reads.before.join(', ') || 'nothing'} -> ${reads.after.join(', ') || 'nothing'}`);
   }
   if (reads.stops_reading.length) {
-    lines.push(`  This key stops reading: ${reads.stops_reading.join(', ')}.${after ? '' : ` Add --read-shared on to keep reading every shared source (gbrain auth rescope ${target} --read-shared on).`}`);
+    lines.push(`  This key stops reading: ${reads.stops_reading.join(', ')}.${after || before || !reads.after.length ? '' : ` Add --read-shared on to keep reading every shared source (gbrain auth rescope ${target} --read-shared on).`}`);
   }
   return lines;
 }

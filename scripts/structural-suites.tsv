@@ -275,6 +275,7 @@ test/openclaw-plugin-manifest.test.ts	bundled-skill reference closure (nothing b
 test/openclaw-plugin-manifest.test.ts	plugin membership curation (skills = plugin ∪ exclusions, disjoint)	9	readFileSync
 test/openclaw-plugin-manifest.test.ts	root OpenClaw plugin manifest	2	readFileSync
 test/openclaw-route.test.ts	OpenClaw route	4	readFileSync
+test/owner-widening-census-gst3058.test.ts	(file-level)	1	exec-scan
 test/paid-lanes-switch-5903.test.ts	#5903 e2e-status accepts a skipped tier2 only under GBRAIN_PAID_LANES=0	9	readFileSync
 test/persistence-git-subdir-origin.test.ts	(file-level)	6	readFileSync
 test/persistence-request-indexes.test.ts	(file-level)	4	readFileSync
@@ -373,7 +374,7 @@ test/scripts/pregate-remote-gate.test.ts	pregate-remote-gate.sh --list	4	readFil
 test/scripts/pregate-remote-gate.test.ts	reuse of GitHub full runs on the identical tree	9	readFileSync
 test/scripts/pregate-remote-gate.test.ts	ship_lanes_from (/ship lanes carried from CI, docs/ci-event-parity.md#ship-lanes)	3	readFileSync
 test/scripts/promote-stable.test.ts	promote-stable.yml	2	readFileSync
-test/scripts/regen-all.test.ts	regen:all	7	readFileSync
+test/scripts/regen-all.test.ts	regen:all	8	readFileSync
 test/scripts/release-restamp.test.ts	release-restamp --stamp-only	2	readFileSync
 test/scripts/release-restamp.test.ts	release:restamp end to end	16	readFileSync
 test/scripts/release-restamp.test.ts	release:unstamp and merge: direct	7	readFileSync
