@@ -75,7 +75,7 @@ import { assertPrivateRequestKept, privateRequestGuarded, readPrivateRequest } f
 import { isAutoLinkEnabled } from '../link-extraction.ts';
 import { prepareAutomaticLinks } from './links-preparation.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
-import { preparePageAdvisories, remoteLinkHint, pageNoopAdvisories, timelineRowsRemovedAdvisory } from './page-advisories.ts';
+import { preparePageAdvisories, privateRowsKeptAdvisory, remoteLinkHint, pageNoopAdvisories, timelineRowsRemovedAdvisory } from './page-advisories.ts';
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
 import { colonSlugWindowsRefusal, isWindowsColonTarget, nativeFileTarget } from './native-file-target.ts';
 import { isSourceDbOnlySlug } from './source-storage.ts';
@@ -1315,7 +1315,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     // #6722: a large or embed_skip page says what this write left its embedding in.
     const sizeState = noop ? {} : await sizeStateField(tx, row.source_id, row.slug, ready.parsedPage);
     return { ...advisories, ...(autoLinks ? {auto_links:autoLinks} : {}), ...(coreUsage ? { core: coreUsage } : {}),
-      ...(removedTimeline ? { timeline_rows_removed: timelineRowsRemovedAdvisory(row, removedTimeline) } : {}),
+      ...(removedTimeline ? { timeline_rows_removed: timelineRowsRemovedAdvisory(row, removedTimeline) } : {}), ...(ownerRewrite && ready.result.privateRowsKept ? { private_rows_kept: privateRowsKeptAdvisory(row, ready.result.privateRowsKept) } : {}),
       status: noop ? 'skipped' : row.operation === 'restore_page' ? 'restored' : row.operation === 'revert_version' ? 'reverted' : 'created_or_updated',
       slug: row.slug, source_id: row.source_id, chunks: ready.result.chunks, noop, ...(projectionPending ? { projection: 'pending' } : {}),
       // Wave B: whether search sees a segmented write at commit; a pending one is re-read whenever its receipt is served (searchable.ts).
