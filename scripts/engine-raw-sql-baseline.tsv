@@ -1016,7 +1016,6 @@ src/core/schema-pack/sync.ts	execute_raw	3
 src/core/schema-pack/unify-types-handler.ts	execute_raw	1
 src/core/schema-verify.ts	execute_raw	2
 src/core/search-vector-backfill.ts	execute_raw	3
-src/core/search/alias-fanout.ts	execute_raw	4
 src/core/search/dedup.ts	execute_raw	1
 src/core/search/entity-anchor.ts	execute_raw	4
 src/core/search/entity-facts.ts	execute_raw	1

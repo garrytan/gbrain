@@ -99,24 +99,18 @@ export async function resolveQueryEntities(engine: BrainEngine, query: string, s
   }
   const norms = [...new Set(grams.map(g => g.norm))];
   const sources = scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? 'default'];
-  const { privatePagesFilterForCaller } = await import('./private-visibility.ts');
   // The alias, title and case-sensitive reads depend on nothing but the n-grams (the title read also on the
   // linkable types, which the request's config snapshot answers), so they run at once: on a pooled Postgres
   // one round trip of wall time instead of three in series (#6721). A policy or pack failure still throws.
   const titleRead = (async () => {
     const policy = await readMentionPolicy(engine);
     const types = [...new Set((await Promise.all(sources.map(async s => linkableTypesFor(await loadSourcePack(engine, s), policy)))).flat())];
-    return engine.executeRaw<{ slug: string; source_id: string; t: string }>(
-      `SELECT slug, source_id, lower(title) AS t FROM pages
-        WHERE lower(title) = ANY($1::text[]) AND source_id = ANY($2::text[]) AND type = ANY($3::text[]) AND deleted_at IS NULL
-        ${scope.excludePrivate ? `AND ${privatePagesFilterForCaller('pages')}` : ''}`, [norms, sources, types]).catch(() => []);
+    return engine.findPagesByTitles(norms, sources, types, { excludePrivate: scope.excludePrivate }).catch(() => []);
   })();
   const [aliasHits, titleRows, caseRows] = await Promise.all([
     engine.resolveAliases(norms, scope).catch(() => new Map<string, Array<{ slug: string; source_id: string }>>()),
     titleRead,
-    engine.executeRaw<{ slug: string; alias_norm: string; alias_text: string | null }>(
-      `SELECT slug, alias_norm, alias_text FROM page_aliases WHERE alias_norm = ANY($1::text[]) AND case_sensitive AND source_id = ANY($2::text[])`,
-      [norms, sources]).catch(() => []),
+    engine.resolveCaseSensitiveAliases(norms, sources).catch(() => []),
   ]);
   const covered = new Set<number>();
   for (const g of grams) {
@@ -143,8 +137,7 @@ export async function resolveQueryEntities(engine: BrainEngine, query: string, s
 }
 
 async function titleOf(engine: BrainEngine, ref: { slug: string; source_id: string }): Promise<string | null> {
-  const [row] = await engine.executeRaw<{ title: string | null }>('SELECT title FROM pages WHERE source_id = $1 AND slug = $2', [ref.source_id, ref.slug]).catch(() => []);
-  return row?.title ?? null;
+  return engine.readPageTitle(ref.source_id, ref.slug).catch(() => null);
 }
 
 /** The names to fan out over: every alias of `pages` and their identity siblings, ordered by origin then length. */
@@ -157,9 +150,7 @@ async function namesOf(engine: BrainEngine, pages: Array<{ slug: string; source_
     for (const s of sib.pages) all.set(`${p.source_id}\0${s.slug}`, { slug: s.slug, source_id: p.source_id, title: s.title });
   }
   const refs = [...all.values()];
-  const rows = await engine.executeRaw<{ slug: string; source_id: string; alias_norm: string; alias_text: string | null; origin: string | null }>(
-    `SELECT slug, source_id, alias_norm, alias_text, origin FROM page_aliases
-      WHERE source_id = ANY($1::text[]) AND slug = ANY($2::text[])`, [[...new Set(refs.map(r => r.source_id))], refs.map(r => r.slug)]).catch(() => []);
+  const rows = await engine.readPageAliasRows([...new Set(refs.map(r => r.source_id))], refs.map(r => r.slug)).catch(() => []);
   const names = new Map<string, { alias: string; page: string; origin: string; rank: number }>();
   const add = (alias: string, page: string, origin: string) => {
     const norm = normalizeAlias(alias);

@@ -84,6 +84,11 @@ export const RUST_ENGINE_MEMBERS = {
   resolveAliases: 'pages',
   setPageAliases: 'pages',
   updatePageContextualRetrievalState: 'pages',
+  // alias fan-out reads (engine-sql/alias-fanout-reads.ts; rust/docs/store/alias_fanout_reads.md)
+  findPagesByTitles: 'pages',
+  resolveCaseSensitiveAliases: 'pages',
+  readPageTitle: 'pages',
+  readPageAliasRows: 'pages',
   readPageTrustRows: 'pages',
   listLinkPageMetadata: 'pages',
   filterPagesAtRevision: 'pages',

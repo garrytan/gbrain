@@ -52,6 +52,7 @@ import * as factsTrust from './facts-trust.ts';
 import * as jobs from './jobs.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 import * as telemetry from './telemetry.ts';
+import * as aliasFanoutReads from './alias-fanout-reads.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
 const initSchema: StoreMember<[], void> = async () => undefined;
@@ -78,6 +79,8 @@ export const STORE_MEMBERS = {
   ...persistenceIdentity,
   // Search telemetry (rust/docs/store/telemetry.md).
   ...telemetry,
+  // Alias fan-out reads (rust/docs/store/alias_fanout_reads.md).
+  ...aliasFanoutReads,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;
