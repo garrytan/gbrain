@@ -260,6 +260,16 @@ at read time from the source and works the same on a repo-less brain. Only a del
 source or one of its rows goes, a trigger records the rows derived from it in `owner_only_marks`, so they stay
 owner-only ([owner-only delete triggers](../ENGINES.md#owner-only-delete-triggers)).
 
+### Keys that read every shared source (`--read-shared on`)
+
+A member's key with a write source of its own reads only the sources its grant lists, unless the read-shared switch is
+on (`gbrain auth rescope --token <name> --read-shared on`, `--client <id>` for an OAuth client). Then it also reads
+`default` and every federated source, now and later, never a guest source or another member's own source, and it
+still writes only to its write source. The switch widens which sources the key reaches, not what it reads inside them:
+`visibility: private` pages and private facts stay closed in every source it reaches only through the switch
+(`--private-pages granted-sources` and `--private-facts granted-sources` open only sources the grant lists by id), and
+`readable_by` and folder rules apply as before. `gbrain access check --token <name>` lists what the key reads now.
+
 ### Audience members (`gbrain access member kind`)
 
 A member can stand for a group chat or a shared assistant rather than a person. `gbrain access member kind <id>
