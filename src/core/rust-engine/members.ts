@@ -643,6 +643,14 @@ export const RUST_ENGINE_MEMBERS = {
   insertDecideSpend: 'eval_capture',
   dailyDecideSpend: 'eval_capture',
   listDecideSpendBySlot: 'eval_capture',
+  insertDecideReceipts: 'eval_capture',
+  pruneDecideReceipts: 'eval_capture',
+  listDecideReceiptStats: 'eval_capture',
+  decideSlotUsage: 'eval_capture',
+  decideConflictNoEntityCounts: 'eval_capture',
+  listDecideReplayReceipts: 'eval_capture',
+  listDecideResolvedModels: 'eval_capture',
+  listDecideMixedModelDecisions: 'eval_capture',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;

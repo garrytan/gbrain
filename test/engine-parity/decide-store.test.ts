@@ -9,10 +9,18 @@
  *    delete forgets one key only, and a null value or a NUL byte is refused. Spend: a request id keeps its first
  *    row, `dailyDecideSpend` adds typesafe spend from `since` on (and the remote part), costs add in insertion
  *    order, slots list in byte order, and a bad row refuses its whole batch.
+ *    Receipts: every read is windowed by whole hours (a fraction or a window before the first timestamp is refused),
+ *    stats group by slot, mode, outcome and reason in byte order with the reason null last, a mean adds in insertion
+ *    order and a percentile interpolates, REAL columns keep their single-precision value, replay orders by decision
+ *    id (byte order), then rank (null last), then insertion, and a prune drops old receipts but keeps spend for at
+ *    least 31 days.
  *  - Regression: an engine whose ensure overwrites, whose upsert keeps the first value, or whose delete drops more
  *    than its key hands `gbrain decide` a receipt salt that changes between runs (receipts stop joining) or a
  *    kill-switch that comes back after it was cleared; one that double-counts a retried request id, counts a
  *    non-typesafe provider, or records the good rows of a refused batch shows a wrong daily spend against the budget.
+ *    One that counts egress by substring, counts a plain error as a mixed-model decision, replays another slot's
+ *    receipts, or prunes spend with the receipts shows wrong slot usage, a wrong mixed-model alert, a replay that
+ *    answers for the wrong slot, or a budget that forgets what it spent.
  *  - Why existing coverage misses it: the decide store tests (test/decide/runtime.test.ts, test/decide/core.test.ts) run these statements on PGLite alone; no case
  *    compares engines.
  *  - Seam: none. Real engines, typed methods only (no executeRaw: D18). A write the engine refuses is compared as
@@ -280,6 +288,349 @@ describe('engine parity: decide spend', () => {
       const refused = await threw(() => engine.dailyDecideSpend(new Date(Number.NaN)));
       expect(refused).toBe(true);
       return { refused };
+    },
+  );
+});
+
+type Receipt = Parameters<BrainEngine['insertDecideReceipts']>[0][number];
+
+/** A receipt row with every required column set; a case overrides what it is about. */
+function receipt(decisionId: string, over: Partial<Receipt> = {}): Receipt {
+  return { decision_id: decisionId, slot: 'conflict', mode: 'live', provider: 'typesafe:openai', outcome: 'kept', call_site: 'sweep', lane: 'sweep', ...over };
+}
+
+/** Batches written this far apart get different timestamps even on an engine whose clock ticks in milliseconds. */
+const apart = () => new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+const badReceipt = (over: Record<string, unknown>) => ({ ...receipt('bad'), ...over }) as unknown as Receipt;
+
+describe('engine parity: decide receipts', () => {
+  parityTest(
+    'every receipt read answers an empty list or zero on an empty table, and an empty insert or prune does nothing',
+    { methods: ['insertDecideReceipts', 'pruneDecideReceipts', 'listDecideReceiptStats', 'decideSlotUsage', 'decideConflictNoEntityCounts', 'listDecideReplayReceipts', 'listDecideResolvedModels', 'listDecideMixedModelDecisions'] },
+    async (engine) => {
+      await engine.insertDecideReceipts([]);
+      const out = {
+        pruned: await engine.pruneDecideReceipts(7),
+        stats: await engine.listDecideReceiptStats({ sinceHours: 24 }),
+        slotStats: await engine.listDecideReceiptStats({ slot: 'conflict', sinceHours: 24 }),
+        usage: await engine.decideSlotUsage(24),
+        conflict: await engine.decideConflictNoEntityCounts(24),
+        replay: await engine.listDecideReplayReceipts('conflict', 24),
+        models: await engine.listDecideResolvedModels(24),
+        mixed: await engine.listDecideMixedModelDecisions(24),
+      };
+      expect(out).toEqual({ pruned: 0, stats: [], slotStats: [], usage: [], conflict: { receipts: 0, skipped: 0 }, replay: [], models: [], mixed: [] });
+      return out;
+    },
+  );
+
+  parityTest(
+    'listDecideReceiptStats groups by slot, mode, outcome and error reason in byte order (a null reason last) and aggregates the non-null values',
+    { methods: ['insertDecideReceipts', 'listDecideReceiptStats'] },
+    async (engine) => {
+      await engine.insertDecideReceipts([
+        receipt('d1', { answer_value: 0.5, latency_ms: 10, input_tokens: 100 }),
+        receipt('d2', { answer_value: 0.25, latency_ms: 20, input_tokens: 200 }),
+        receipt('d3', { answer_value: null, latency_ms: 30, input_tokens: null }),
+        receipt('d4', { answer_value: 0.125, latency_ms: 40, input_tokens: 400 }),
+        receipt('d5', { latency_ms: null, outcome: 'error', error_reason: 'timeout', input_tokens: 7 }),
+        receipt('d6', { outcome: 'error', error_reason: 'bad_json', latency_ms: 5 }),
+        receipt('d7', { outcome: 'error', error_reason: 'bad_json', latency_ms: 6 }),
+        receipt('d8', { outcome: 'error', error_reason: null, latency_ms: 1 }),
+        receipt('d9', { slot: 'Triage', mode: 'shadow', latency_ms: 3 }),
+        receipt('d10', { slot: 'triage', mode: 'live', latency_ms: 4 }),
+        receipt('d11', { slot: 'conflict', mode: 'Live', latency_ms: 2 }),
+        receipt('d12', { answer_value: 0.1, confidence: 0.9, latency_ms: 1000, outcome: 'pass', input_tokens: 0 }),
+        receipt('d13', { answer_value: 0.2, latency_ms: 1000, outcome: 'pass', input_tokens: 0 }),
+        receipt('d14', { answer_value: 0.30000001, latency_ms: 1001, outcome: 'pass' }),
+      ]);
+      const all = await engine.listDecideReceiptStats({ sinceHours: 1 });
+      const conflictOnly = await engine.listDecideReceiptStats({ slot: 'conflict', sinceHours: 1 });
+      const nothing = await engine.listDecideReceiptStats({ sinceHours: 0 });
+      const otherSlot = await engine.listDecideReceiptStats({ slot: 'nope', sinceHours: 1 });
+      expect(all[0]).toMatchObject({ slot: 'Triage' });
+      expect(nothing).toEqual([]);
+      expect(otherSlot).toEqual([]);
+      expect(conflictOnly.every((r) => r.slot === 'conflict')).toBe(true);
+      const kept = all.find((r) => r.slot === 'conflict' && r.mode === 'live' && r.outcome === 'kept' && r.error_reason === null);
+      expect(kept).toMatchObject({ n: 4, avg_value: (0.5 + 0.25 + 0.125) / 3, p50_latency: 25, input_tokens: 700 });
+      return { all, conflictOnly };
+    },
+  );
+
+  parityTest(
+    'listDecideReceiptStats interpolates percentiles over one, two and many latencies, and answers null when every latency is null',
+    { methods: ['insertDecideReceipts', 'listDecideReceiptStats'] },
+    async (engine) => {
+      const rows: Receipt[] = [receipt('one-a', { slot: 'a-one', latency_ms: 7 })];
+      rows.push(receipt('two-a', { slot: 'b-two', latency_ms: 0 }), receipt('two-b', { slot: 'b-two', latency_ms: 3 }));
+      for (const [i, ms] of [1, 2, 3, 4, 5, 6, 7, 8, 9, 100].entries()) rows.push(receipt(`many-${i}`, { slot: 'c-many', latency_ms: ms }));
+      rows.push(receipt('null-a', { slot: 'd-null', latency_ms: null }), receipt('null-b', { slot: 'd-null', latency_ms: null, answer_value: null }));
+      rows.push(receipt('neg', { slot: 'e-neg', latency_ms: -10 }), receipt('neg2', { slot: 'e-neg', latency_ms: 2147483647 }));
+      await engine.insertDecideReceipts(rows);
+      const stats = await engine.listDecideReceiptStats({ sinceHours: 1 });
+      expect(stats.map((r) => r.slot)).toEqual(['a-one', 'b-two', 'c-many', 'd-null', 'e-neg']);
+      expect(stats[0]).toMatchObject({ p50_latency: 7, p95_latency: 7 });
+      expect(stats[1]).toMatchObject({ p50_latency: 1.5 });
+      expect(stats[3]).toMatchObject({ n: 2, avg_value: null, p50_latency: null, p95_latency: null });
+      return stats;
+    },
+  );
+
+  parityTest(
+    'receipt REAL columns keep the single-precision value Postgres would, in the replay read and in the mean',
+    { methods: ['insertDecideReceipts', 'listDecideReplayReceipts', 'listDecideReceiptStats'] },
+    async (engine) => {
+      const values = [0.1, 1 / 3, 16777217, 1e-7, 3.4e38, 0, -0.5, 123456.789];
+      await engine.insertDecideReceipts(values.map((v, i) => receipt(`real-${i}`, { answer_value: v, outcome: 'pass' })));
+      const replay = await engine.listDecideReplayReceipts('conflict', 1);
+      const stats = await engine.listDecideReceiptStats({ sinceHours: 1 });
+      expect(replay).toHaveLength(values.length);
+      expect(replay.find((r) => r.decision_id === 'real-0')?.answer_value).toBe(0.1);
+      return { replay, stats };
+    },
+  );
+
+  parityTest(
+    'receipt means add the values in insertion order, so a sum that depends on order comes out the same',
+    { methods: ['insertDecideReceipts', 'listDecideReceiptStats'] },
+    async (engine) => {
+      // Single-precision values that cancel only when added in this order: -1e30 + 1e30 + 1 is 1, 1e30 + 1 + -1e30 is 0.
+      await engine.insertDecideReceipts([-1e30, 1e30, 1].map((v, i) => receipt(`ord-${i}`, { answer_value: v, outcome: 'pass' })));
+      const stats = await engine.listDecideReceiptStats({ sinceHours: 1 });
+      expect(stats).toHaveLength(1);
+      return stats;
+    },
+  );
+
+  parityTest(
+    'decideSlotUsage counts distinct decisions, rows, tokens, errors, skips and egress refusals per slot in byte order',
+    { methods: ['insertDecideReceipts', 'decideSlotUsage'] },
+    async (engine) => {
+      await engine.insertDecideReceipts([
+        receipt('u1', { input_tokens: 10 }),
+        receipt('u1', { input_tokens: 20, rank: 1 }),
+        receipt('u2', { outcome: 'error', error_reason: 'timeout', input_tokens: null }),
+        receipt('u3', { outcome: 'skipped', error_reason: 'no_entity' }),
+        receipt('u4', { outcome: 'skipped', error_reason: 'egress_denied' }),
+        receipt('u5', { outcome: 'error', error_reason: 'egress' }),
+        receipt('u6', { outcome: 'skipped', error_reason: 'denied_source' }),
+        receipt('u7', { outcome: 'skipped', error_reason: 'missing_provenance' }),
+        receipt('u8', { outcome: 'skipped', error_reason: 'EGRESS_upper' }),
+        receipt('u9', { outcome: 'skipped', error_reason: 'not_egress' }),
+        receipt('u10', { outcome: 'skipped', error_reason: 'denied_source_2' }),
+        receipt('u11', { outcome: 'skipped', error_reason: null }),
+        receipt('v1', { slot: 'Alpha', input_tokens: 5 }),
+        receipt('v2', { slot: 'alpha', input_tokens: 6 }),
+        receipt('w1', { slot: 'zeta', outcome: 'error', error_reason: 'egress_x', input_tokens: 0 }),
+      ]);
+      const usage = await engine.decideSlotUsage(1);
+      const none = await engine.decideSlotUsage(0);
+      expect(usage.map((r) => r.slot)).toEqual(['Alpha', 'alpha', 'conflict', 'zeta']);
+      expect(usage[2]).toEqual({ slot: 'conflict', decisions: 11, rows: 12, input_tokens: 30, errors: 2, skipped: 8, egress: 4 });
+      expect(none).toEqual([]);
+      return usage;
+    },
+  );
+
+  parityTest(
+    'decideConflictNoEntityCounts counts only conflict receipts and only no_entity skips, and the window cuts everything off at zero hours',
+    { methods: ['insertDecideReceipts', 'decideConflictNoEntityCounts'] },
+    async (engine) => {
+      await engine.insertDecideReceipts([
+        receipt('c1', { outcome: 'skipped', error_reason: 'no_entity' }),
+        receipt('c2', { outcome: 'skipped', error_reason: 'no_entity' }),
+        receipt('c3', { outcome: 'skipped', error_reason: 'other' }),
+        receipt('c4', { outcome: 'error', error_reason: 'no_entity' }),
+        receipt('c5'),
+        receipt('t1', { slot: 'triage', outcome: 'skipped', error_reason: 'no_entity' }),
+      ]);
+      const counts = await engine.decideConflictNoEntityCounts(1);
+      const none = await engine.decideConflictNoEntityCounts(0);
+      expect(counts).toEqual({ receipts: 5, skipped: 2 });
+      expect(none).toEqual({ receipts: 0, skipped: 0 });
+      return { counts, none };
+    },
+  );
+
+  parityTest(
+    'listDecideReplayReceipts keeps the replay outcomes of one slot, ordered by decision id in byte order, then rank (null last), then insertion',
+    { methods: ['insertDecideReceipts', 'listDecideReplayReceipts'] },
+    async (engine) => {
+      await engine.insertDecideReceipts([
+        receipt('b', { rank: 2, answer_value: 0.5, protected: true, min_keep: 3 }),
+        receipt('b', { rank: 1, answer_value: 0.25, outcome: 'pruned' }),
+        receipt('b', { rank: null, answer_value: 0.75, outcome: 'margin_hold' }),
+        receipt('B', { rank: 1, outcome: 'pass' }),
+        receipt('a', { rank: 5, outcome: 'reject' }),
+        receipt('a', { rank: 5, answer_value: 0.125, outcome: 'quarantine' }),
+        receipt('a', { rank: 5, answer_value: 0.0625, outcome: 'insufficient_context' }),
+        receipt('a', { rank: 0, outcome: 'skipped' }),
+        receipt('a', { rank: -1, outcome: 'error', error_reason: 'timeout' }),
+        receipt('a', { rank: 9, outcome: 'Kept' }),
+        receipt('z', { slot: 'triage', rank: 1 }),
+        receipt('\u00e9', { rank: 1 }),
+        receipt('', { rank: 1 }),
+      ]);
+      const replay = await engine.listDecideReplayReceipts('conflict', 1);
+      const triage = await engine.listDecideReplayReceipts('triage', 1);
+      const none = await engine.listDecideReplayReceipts('conflict', 0);
+      expect(replay.map((r) => r.decision_id)).toEqual(['', 'B', 'a', 'a', 'a', 'b', 'b', 'b', '\u00e9']);
+      expect(replay.filter((r) => r.decision_id === 'b').map((r) => r.rank)).toEqual([1, 2, null]);
+      expect(triage).toHaveLength(1);
+      expect(none).toEqual([]);
+      return { replay, triage };
+    },
+  );
+
+  parityTest(
+    'listDecideResolvedModels and listDecideMixedModelDecisions group the window per slot, skip rows without a model, and list the newest group first',
+    { methods: ['insertDecideReceipts', 'listDecideResolvedModels', 'listDecideMixedModelDecisions'] },
+    async (engine) => {
+      await engine.insertDecideReceipts([
+        receipt('m1', { model_resolved: 'gpt-b', error_reason: 'mixed_model' }),
+        receipt('m2', { model_resolved: 'gpt-a' }),
+        receipt('m3', { model_resolved: null, error_reason: 'mixed_model' }),
+        receipt('m4', { slot: 'Alpha', model_resolved: 'gpt-a' }),
+        receipt('m8', { outcome: 'error', error_reason: 'timeout' }),
+      ]);
+      await apart();
+      await engine.insertDecideReceipts([
+        receipt('m5', { slot: 'triage', provider: 'typesafe:anthropic', model_resolved: 'claude-x', error_reason: 'mixed_model' }),
+        receipt('m6', { model_resolved: 'gpt-b' }),
+      ]);
+      await apart();
+      await engine.insertDecideReceipts([receipt('m7', { slot: 'triage', provider: 'typesafe:anthropic', model_resolved: 'claude-y', error_reason: 'mixed_model' })]);
+      const models = await engine.listDecideResolvedModels(1);
+      const mixed = await engine.listDecideMixedModelDecisions(1);
+      const noneModels = await engine.listDecideResolvedModels(0);
+      const noneMixed = await engine.listDecideMixedModelDecisions(0);
+      expect(models.every((r) => r.last_at instanceof Date && Math.abs(r.last_at.getTime() - Date.now()) < 3_600_000)).toBe(true);
+      expect(noneModels).toEqual([]);
+      expect(noneMixed).toEqual([]);
+      expect(mixed).toEqual([{ slot: 'conflict', n: 2 }, { slot: 'triage', n: 2 }]);
+      // The timestamps differ between engines; compare the order and the counts only.
+      return { order: models.map((r) => [r.slot, r.provider, r.model_resolved, r.n]), mixed };
+    },
+  );
+
+  parityTest(
+    'pruneDecideReceipts deletes receipts older than the window and answers how many; spend is kept for at least 31 days',
+    { methods: ['insertDecideReceipts', 'insertDecideSpend', 'pruneDecideReceipts', 'decideSlotUsage', 'dailyDecideSpend'] },
+    async (engine) => {
+      await engine.insertDecideReceipts([receipt('p1'), receipt('p2'), receipt('p3', { slot: 'triage' })]);
+      await engine.insertDecideSpend([spend('keep-me', { cost_usd: 0.5 })]);
+      const sevenDays = await engine.pruneDecideReceipts(7);
+      const afterSeven = await engine.decideSlotUsage(1);
+      const zeroDays = await engine.pruneDecideReceipts(0);
+      const afterZero = await engine.decideSlotUsage(1);
+      const again = await engine.pruneDecideReceipts(0);
+      const spendKept = await engine.dailyDecideSpend(new Date(0));
+      expect(sevenDays).toBe(0);
+      expect(afterSeven).toHaveLength(2);
+      expect(zeroDays).toBe(3);
+      expect(afterZero).toEqual([]);
+      expect(again).toBe(0);
+      expect(spendKept).toEqual({ total: 0.5, remote: 0 });
+      return { sevenDays, zeroDays, again, spendKept };
+    },
+  );
+
+  parityTest(
+    'receipts keep null columns, unicode text and extreme integers exactly',
+    { methods: ['insertDecideReceipts', 'listDecideReplayReceipts', 'decideSlotUsage'] },
+    async (engine) => {
+      await engine.insertDecideReceipts([
+        receipt('caf\u00e9-\u2603', { slot: 'caf\u00e9', source_id: null, model_alias: null, answer_choice: 'line\none', run_meta: '{"a":1}', rank: 2147483647, min_keep: -2147483648, k_used: 0, latency_ms: 0, input_tokens: 2147483647, remote: true, protected: true, outcome: 'pass' }),
+        receipt('x', { slot: 'caf\u00e9', input_tokens: 0, outcome: 'pass', rank: 1 }),
+      ]);
+      const replay = await engine.listDecideReplayReceipts('caf\u00e9', 1);
+      const usage = await engine.decideSlotUsage(1);
+      expect(replay).toHaveLength(2);
+      return { replay, usage };
+    },
+  );
+
+  parityTest(
+    'a token total past int4 is refused by the read that sums it, as Postgres refuses the cast',
+    { methods: ['insertDecideReceipts', 'decideSlotUsage', 'listDecideReceiptStats'] },
+    async (engine) => {
+      await engine.insertDecideReceipts([receipt('big1', { input_tokens: 2147483647 }), receipt('big2', { input_tokens: 2147483647 })]);
+      const usage = await threw(() => engine.decideSlotUsage(1));
+      const stats = await threw(() => engine.listDecideReceiptStats({ sinceHours: 1 }));
+      expect(usage && stats).toBe(true);
+      return { usage, stats };
+    },
+  );
+
+  parityTest(
+    'insertDecideReceipts refuses a null in a NOT NULL column, a NUL byte, a number that is not an int or a real, and records none of the batch',
+    { methods: ['insertDecideReceipts', 'decideSlotUsage'] },
+    async (engine) => {
+      await engine.insertDecideReceipts([receipt('kept')]);
+      const refused = {
+        nullDecision: await threw(() => engine.insertDecideReceipts([receipt('x1'), badReceipt({ decision_id: null })])),
+        missingDecision: await threw(() => engine.insertDecideReceipts([badReceipt({ decision_id: undefined })])),
+        nullSlot: await threw(() => engine.insertDecideReceipts([badReceipt({ slot: null })])),
+        nullMode: await threw(() => engine.insertDecideReceipts([badReceipt({ mode: null })])),
+        nullProvider: await threw(() => engine.insertDecideReceipts([badReceipt({ provider: null })])),
+        nullOutcome: await threw(() => engine.insertDecideReceipts([badReceipt({ outcome: null })])),
+        nullCallSite: await threw(() => engine.insertDecideReceipts([badReceipt({ call_site: null })])),
+        nullLane: await threw(() => engine.insertDecideReceipts([badReceipt({ lane: null })])),
+        nullProtected: await threw(() => engine.insertDecideReceipts([badReceipt({ protected: null })])),
+        nullRemote: await threw(() => engine.insertDecideReceipts([badReceipt({ remote: null })])),
+        nulByte: await threw(() => engine.insertDecideReceipts([badReceipt({ error_reason: 'a\u0000b' })])),
+        nulDecision: await threw(() => engine.insertDecideReceipts([badReceipt({ decision_id: 'a\u0000b' })])),
+        nulRunMeta: await threw(() => engine.insertDecideReceipts([badReceipt({ run_meta: 'a\u0000b' })])),
+        fractionalLatency: await threw(() => engine.insertDecideReceipts([badReceipt({ latency_ms: 1.5 })])),
+        hugeTokens: await threw(() => engine.insertDecideReceipts([badReceipt({ input_tokens: 2147483648 })])),
+        hugeRank: await threw(() => engine.insertDecideReceipts([badReceipt({ rank: -2147483649 })])),
+        fractionalMinKeep: await threw(() => engine.insertDecideReceipts([badReceipt({ min_keep: 0.5 })])),
+        fractionalK: await threw(() => engine.insertDecideReceipts([badReceipt({ k_used: 2.5 })])),
+        hugeReal: await threw(() => engine.insertDecideReceipts([badReceipt({ answer_value: 1e39 })])),
+        hugeConfidence: await threw(() => engine.insertDecideReceipts([badReceipt({ confidence: -1e39 })])),
+        underflowThreshold: await threw(() => engine.insertDecideReceipts([badReceipt({ threshold: 1e-50 })])),
+      };
+      const usage = await engine.decideSlotUsage(1);
+      expect(Object.values(refused).every(Boolean)).toBe(true);
+      expect(usage).toEqual([{ slot: 'conflict', decisions: 1, rows: 1, input_tokens: 0, errors: 0, skipped: 0, egress: 0 }]);
+      return { refused, usage };
+    },
+  );
+
+  parityTest(
+    'the receipt reads and the prune refuse a window that is not a whole number of hours or days, or reaches before the first timestamp',
+    { methods: ['insertDecideReceipts', 'pruneDecideReceipts', 'listDecideReceiptStats', 'decideSlotUsage', 'decideConflictNoEntityCounts', 'listDecideReplayReceipts', 'listDecideResolvedModels', 'listDecideMixedModelDecisions'] },
+    async (engine) => {
+      await engine.insertDecideReceipts([receipt('w1', { model_resolved: 'gpt-x' })]);
+      const refused = {
+        statsFraction: await threw(() => engine.listDecideReceiptStats({ sinceHours: 1.5 })),
+        statsNaN: await threw(() => engine.listDecideReceiptStats({ sinceHours: Number.NaN })),
+        statsInfinity: await threw(() => engine.listDecideReceiptStats({ sinceHours: Number.POSITIVE_INFINITY })),
+        statsHuge: await threw(() => engine.listDecideReceiptStats({ sinceHours: 2147483647 })),
+        statsTooBigForInt: await threw(() => engine.listDecideReceiptStats({ sinceHours: 2147483648 })),
+        usageFraction: await threw(() => engine.decideSlotUsage(0.5)),
+        usageHuge: await threw(() => engine.decideSlotUsage(2147483647)),
+        conflictFraction: await threw(() => engine.decideConflictNoEntityCounts(24.5)),
+        conflictHuge: await threw(() => engine.decideConflictNoEntityCounts(2147483647)),
+        replayFraction: await threw(() => engine.listDecideReplayReceipts('conflict', 0.1)),
+        replayHuge: await threw(() => engine.listDecideReplayReceipts('conflict', 2147483647)),
+        modelsFraction: await threw(() => engine.listDecideResolvedModels(1.1)),
+        modelsHuge: await threw(() => engine.listDecideResolvedModels(2147483647)),
+        mixedFraction: await threw(() => engine.listDecideMixedModelDecisions(2.2)),
+        mixedHuge: await threw(() => engine.listDecideMixedModelDecisions(2147483647)),
+        pruneFraction: await threw(() => engine.pruneDecideReceipts(7.5)),
+        pruneNaN: await threw(() => engine.pruneDecideReceipts(Number.NaN)),
+        pruneHuge: await threw(() => engine.pruneDecideReceipts(2147483647)),
+        statsNulByte: await threw(() => engine.listDecideReceiptStats({ slot: 'a\u0000b', sinceHours: 1 })),
+        replayNulByte: await threw(() => engine.listDecideReplayReceipts('a\u0000b', 1)),
+      };
+      expect(Object.values(refused).every(Boolean)).toBe(true);
+      // A far but valid window still works, and the refused prune deleted nothing.
+      const far = await engine.decideSlotUsage(1_000_000);
+      expect(far).toHaveLength(1);
+      return { refused, far };
     },
   );
 });

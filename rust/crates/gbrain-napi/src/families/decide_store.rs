@@ -84,4 +84,98 @@ impl Brain {
     pub fn list_decide_spend_by_slot<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.list_decide_spend_by_slot())
     }
+
+    /// `insertDecideReceipts(rows)`: resolves null. A refused row records none of its batch.
+    #[napi]
+    pub fn insert_decide_receipts<'env>(
+        &self,
+        env: &'env Env,
+        rows: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let rows: Vec<gbrain_store::eval_capture::decide_store::DecideReceiptInput> =
+                required(rows, "insertDecideReceipts rows")?;
+            s.insert_decide_receipts(&rows)
+        })
+    }
+
+    /// `pruneDecideReceipts(retentionDays)`: resolves the number of receipts deleted.
+    #[napi]
+    pub fn prune_decide_receipts<'env>(
+        &self,
+        env: &'env Env,
+        retention_days: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.prune_decide_receipts(retention_days))
+    }
+
+    /// `listDecideReceiptStats(slot, sinceHours)`: `slot` is null for every slot.
+    #[napi]
+    pub fn list_decide_receipt_stats<'env>(
+        &self,
+        env: &'env Env,
+        slot: Option<String>,
+        since_hours: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_decide_receipt_stats(slot.as_deref(), since_hours)
+        })
+    }
+
+    /// `decideSlotUsage(sinceHours)`.
+    #[napi]
+    pub fn decide_slot_usage<'env>(
+        &self,
+        env: &'env Env,
+        since_hours: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.decide_slot_usage(since_hours))
+    }
+
+    /// `decideConflictNoEntityCounts(sinceHours)`: resolves `{ receipts, skipped }`.
+    #[napi]
+    pub fn decide_conflict_no_entity_counts<'env>(
+        &self,
+        env: &'env Env,
+        since_hours: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.decide_conflict_no_entity_counts(since_hours)
+        })
+    }
+
+    /// `listDecideReplayReceipts(slot, sinceHours)`.
+    #[napi]
+    pub fn list_decide_replay_receipts<'env>(
+        &self,
+        env: &'env Env,
+        slot: String,
+        since_hours: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_decide_replay_receipts(&slot, since_hours)
+        })
+    }
+
+    /// `listDecideResolvedModels(sinceHours)`: `last_at` is an ISO string.
+    #[napi]
+    pub fn list_decide_resolved_models<'env>(
+        &self,
+        env: &'env Env,
+        since_hours: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_decide_resolved_models(since_hours))
+    }
+
+    /// `listDecideMixedModelDecisions(sinceHours)`.
+    #[napi]
+    pub fn list_decide_mixed_model_decisions<'env>(
+        &self,
+        env: &'env Env,
+        since_hours: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_decide_mixed_model_decisions(since_hours)
+        })
+    }
 }
