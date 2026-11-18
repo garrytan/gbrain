@@ -1,0 +1,69 @@
+/**
+ * Alias fan-out reads: the exact-title lookup and case-sensitive alias read of `resolveQueryEntities`, and the page
+ * title and alias rows `namesOf` reads (search/alias-fanout.ts), which ran through `engine.executeRaw`, once for both
+ * engines.
+ *
+ * Every statement here ran on master from alias-fanout.ts. They keep master's predicates and run on master's raw path
+ * (`exec.executeRaw`) unscoped, as before; each value is a bound parameter (`sqlFragment`). Three reads gain an
+ * `ORDER BY` where master left the order to the plan, each in byte order (`COLLATE "C"`) so every engine sorts alike:
+ * `findPagesByTitles` (source, then slug), `resolveCaseSensitiveAliases` (source, slug, alias) and `readPageAliasRows`
+ * (source, slug, alias, origin). The caller takes the first title hit as the group's lead and keeps the first alias row
+ * of equal rank, so a fixed order fixes an answer master left to the plan; no other caller reads these rows. The
+ * caller keeps master's fail-open `.catch(() => [])`: any failure, a refused capability included, reads as no rows,
+ * as a refused raw read did before.
+ */
+import type { LegacyUnscopedRead } from './brands.ts';
+import { sqlFragment, trustedSql } from './fragment.ts';
+import { rows } from './search-reads.ts';
+import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
+
+/** A live page whose lower-cased title is one of the asked titles: `t` is `lower(title)`. */
+export interface TitleHitRow { slug: string; source_id: string; t: string }
+
+/** A case-sensitive `page_aliases` row: the alias matches only as written (`alias_text`). */
+export interface CaseSensitiveAliasRow { slug: string; alias_norm: string; alias_text: string | null }
+
+/** One `page_aliases` row of a fan-out page. */
+export interface PageAliasRow { slug: string; source_id: string; alias_norm: string; alias_text: string | null; origin: string | null }
+
+/**
+ * Live pages of `sourceIds` with a type in `types` whose `lower(title)` is in `titleNorms`, by source then slug;
+ * `excludePrivate` adds the caller's page policy (`privatePagesFilterForCaller`). Quarantined pages and archived
+ * sources are not filtered, as on master.
+ */
+export async function findPagesByTitles(
+  exec: LegacyUnscopedRead,
+  titleNorms: readonly string[],
+  sourceIds: readonly string[],
+  types: readonly string[],
+  opts?: { excludePrivate?: boolean },
+): Promise<TitleHitRow[]> {
+  if (!titleNorms.length || !sourceIds.length || !types.length) return [];
+  const privacy = opts?.excludePrivate ? sqlFragment` AND ${trustedSql(privatePagesFilterForCaller('pages'))}` : sqlFragment``;
+  return rows<TitleHitRow>(exec, sqlFragment`SELECT slug, source_id, lower(title) AS t FROM pages
+    WHERE lower(title) = ANY(${[...titleNorms]}::text[]) AND source_id = ANY(${[...sourceIds]}::text[])
+      AND type = ANY(${[...types]}::text[]) AND deleted_at IS NULL${privacy}
+    ORDER BY source_id COLLATE "C", slug COLLATE "C"`);
+}
+
+/** The case-sensitive alias rows of `aliasNorms` in `sourceIds`, by source, slug, then alias. */
+export async function resolveCaseSensitiveAliases(exec: LegacyUnscopedRead, aliasNorms: readonly string[], sourceIds: readonly string[]): Promise<CaseSensitiveAliasRow[]> {
+  if (!aliasNorms.length || !sourceIds.length) return [];
+  return rows<CaseSensitiveAliasRow>(exec, sqlFragment`SELECT slug, alias_norm, alias_text FROM page_aliases
+    WHERE alias_norm = ANY(${[...aliasNorms]}::text[]) AND case_sensitive AND source_id = ANY(${[...sourceIds]}::text[])
+    ORDER BY source_id COLLATE "C", slug COLLATE "C", alias_norm COLLATE "C"`);
+}
+
+/** The title of the page at `(sourceId, slug)`, soft-deleted pages included (master's read); null with no page. */
+export async function readPageTitle(exec: LegacyUnscopedRead, sourceId: string, slug: string): Promise<string | null> {
+  const [row] = await rows<{ title: string | null }>(exec, sqlFragment`SELECT title FROM pages WHERE source_id = ${sourceId} AND slug = ${slug}`);
+  return row?.title ?? null;
+}
+
+/** Every `page_aliases` row whose source is in `sourceIds` and slug in `slugs`, by source, slug, alias, then origin. */
+export async function readPageAliasRows(exec: LegacyUnscopedRead, sourceIds: readonly string[], slugs: readonly string[]): Promise<PageAliasRow[]> {
+  if (!sourceIds.length || !slugs.length) return [];
+  return rows<PageAliasRow>(exec, sqlFragment`SELECT slug, source_id, alias_norm, alias_text, origin FROM page_aliases
+    WHERE source_id = ANY(${[...sourceIds]}::text[]) AND slug = ANY(${[...slugs]}::text[])
+    ORDER BY source_id COLLATE "C", slug COLLATE "C", alias_norm COLLATE "C", origin COLLATE "C"`);
+}

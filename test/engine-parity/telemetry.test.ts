@@ -183,8 +183,8 @@ describe('engine parity: telemetry', () => {
   test('the Rust capability list gains telemetry only when every telemetry member is served', () => {
     const members = Object.entries(RUST_ENGINE_MEMBERS).filter(([, cls]) => cls === 'telemetry').map(([m]) => m).sort();
     expect(members).toEqual([
-      'logMcpRequest', 'pruneMcpRequestLogBatch', 'readClientOpUsage', 'readMcpLogPruneCutoff', 'readMcpRollupPrunedBefore',
-      'readSearchStats', 'recordSearchTelemetry',
+      'logMcpRequest', 'pruneMcpRequestLogBatch', 'readClientOpUsage', 'readMcpLifetimeUsage', 'readMcpLogPruneCutoff',
+      'readMcpRollupPrunedBefore', 'readSearchStats', 'recordSearchTelemetry',
     ]);
     const served = members.filter((m) => m in STORE_MEMBERS);
     const reported = servedCapabilities();
@@ -363,6 +363,55 @@ describe('engine parity: telemetry', () => {
         kept: { deleted: 0, newest: null },
         usage: [{ token_name: 'token-a', operation: 'search', n: 1 }],
         prunedBefore: null,
+      });
+      return result;
+    },
+  );
+
+  parityTest(
+    'readMcpLifetimeUsage counts kept requests plus the pruned tally per asked token, in token byte order',
+    { methods: ['logMcpRequest', 'pruneMcpRequestLogBatch', 'readMcpLifetimeUsage'] },
+    async (engine) => {
+      const log = (token: string | null, operation: string, ageDays: number, status = 'success') =>
+        engine.logMcpRequest({
+          token_name: token, agent_name: null, operation, latency_ms: 3, status,
+          created_at: new Date(Date.now() - ageDays * DAY_MS),
+        });
+      // Every status and operation counts, as the dashboard's total_requests does.
+      await log('token-a', 'query', 40);
+      await log('token-a', 'search', 35, 'error');
+      await log('token-a', 'tools/list', 2, 'denied_after_list');
+      await log('token-b', 'get_page', 50);
+      await log(null, 'tools/list', 45, 'auth_failed');
+      await log('Zed', 'query', 3);
+      await log('token-c', 'query', 1);
+      // Never asked: neither its kept row nor, after the prune, its tally row may show.
+      await log('token-d', 'query', 60);
+      // The legacy HTTP transport's row: no agent, no time, no params.
+      await engine.logMcpRequest({ token_name: null, agent_name: null, operation: 'tools/list', latency_ms: 4, status: 'auth_failed' });
+      // A null and a repeated name match nothing extra; 'unknown' was never logged; '' is the null-token tally key.
+      const ask = ['token-b', 'token-a', null as unknown as string, 'unknown', 'Zed', '', 'token-a'];
+      const shape = async () => (await engine.readMcpLifetimeUsage(ask)).map(r => ({
+        token_name: r.token_name, requests: r.requests, age: r.last_used_at === null ? null : dayOffset(r.last_used_at, new Date()),
+      }));
+      const before = await shape();
+      const pruned = await engine.pruneMcpRequestLogBatch(new Date(Date.now() - 30 * DAY_MS).toISOString(), [], 100);
+      const result = { before, prunedRows: pruned.deleted, after: await shape(), empty: await engine.readMcpLifetimeUsage([]) };
+      expect(result).toEqual({
+        before: [
+          { token_name: 'Zed', requests: 1, age: 3 },
+          { token_name: 'token-a', requests: 3, age: 2 },
+          { token_name: 'token-b', requests: 1, age: 50 },
+        ],
+        prunedRows: 5,
+        // token-b now lives only in the tally; the pruned null-token row counts under ''.
+        after: [
+          { token_name: '', requests: 1, age: 45 },
+          { token_name: 'Zed', requests: 1, age: 3 },
+          { token_name: 'token-a', requests: 3, age: 2 },
+          { token_name: 'token-b', requests: 1, age: 50 },
+        ],
+        empty: [],
       });
       return result;
     },

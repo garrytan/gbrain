@@ -105,7 +105,9 @@ const INTERFACE_METHODS: readonly string[] = [
   'listTimelineOrphanPages',
   // Search telemetry and MCP usage (engine-sql/telemetry.ts; covered by test/engine-parity/telemetry.test.ts)
   'recordSearchTelemetry', 'readSearchStats', 'readClientOpUsage', 'readMcpRollupPrunedBefore',
-  'logMcpRequest', 'readMcpLogPruneCutoff', 'pruneMcpRequestLogBatch',
+  'logMcpRequest', 'readMcpLogPruneCutoff', 'pruneMcpRequestLogBatch', 'readMcpLifetimeUsage',
+  // Alias fan-out reads (engine-sql/alias-fanout-reads.ts; covered by test/engine-parity/alias-fanout-reads.test.ts)
+  'findPagesByTitles', 'resolveCaseSensitiveAliases', 'readPageTitle', 'readPageAliasRows',
   // Import writes (engine-sql/chunks.ts, tags.ts, pages.ts)
   'deleteChunksExcept', 'setChunkerVersion', 'writeTextProjectionSeal', 'moveChunkIndexes', 'getChunkReuseRows', 'pruneFrontmatterTags',
   'addPageTagsById', 'replaceDerivedAliases', 'getPageSealState', 'refreshPageOrigin',
@@ -227,6 +229,8 @@ const ENGINE_INTERNAL_HELPERS: readonly string[] = [
   'timelineRead',
   // Search telemetry and MCP usage reads: the unscoped engine-sql executor they run through.
   'telemetryRead',
+  // Alias fan-out reads: the unscoped engine-sql executor they run through.
+  'aliasFanoutRead',
   // CLI reads: the executors the CLI read members run through (PGLite rawRead wraps executeRaw; cliReads is the unscoped engine-sql executor).
   'rawRead',
   'cliReads',
