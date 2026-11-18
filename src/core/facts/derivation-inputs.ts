@@ -28,18 +28,14 @@ function refKey(ref: DerivationRef): { table: string; id: string } {
 /**
  * Record every input of one derived row. Idempotent; call it inside the
  * transaction that writes `row`. `sourceId` scopes the edges for cleanup when
- * a source is purged. `replacePages` (#9653) is for a deriver that rewrites the
- * whole row from these inputs (a concept narrative): the row's page edges not
- * named now are dropped, so a purge of a former input no longer reaches it.
+ * a source is purged.
  */
 export async function recordDerivationInputs(tx: BrainEngine, row: DerivationRef & { sourceId?: string | null },
-  inputs: readonly DerivationRef[], opts: { replacePages?: boolean } = {}): Promise<void> {
+  inputs: readonly DerivationRef[]): Promise<void> {
   if (!inputs.length) return;
   const derived = refKey(row);
   if (inputs.length > DERIVATION_EDGE_LIMIT) throw new RangeError(`A derivation records at most ${DERIVATION_EDGE_LIMIT} inputs.`);
   const edges = inputs.map(refKey);
-  if (opts.replacePages) await tx.executeRaw(`DELETE FROM derivation_inputs WHERE derived_table=$1 AND derived_id=$2 AND input_table='pages'
-    AND NOT (input_id = ANY($3::text[]))`, [derived.table, derived.id, edges.filter(e => e.table === 'pages').map(e => e.id)]);
   await tx.executeRaw(`INSERT INTO derivation_inputs(derived_table,derived_id,input_table,input_id,source_id)
     SELECT $1,$2,e.input_table,e.input_id,$3 FROM jsonb_to_recordset($4::text::jsonb) AS e(input_table text,input_id text)
     ON CONFLICT DO NOTHING`, [derived.table, derived.id, row.sourceId ?? null, JSON.stringify(edges.map(e => ({ input_table: e.table, input_id: e.id })))]);

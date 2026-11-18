@@ -1970,17 +1970,6 @@
         {
           "category": "brain",
           "details": {
-            "count": 0,
-            "edges": 0
-          },
-          "elapsed_ms": "<volatile>",
-          "message": "No live concept holds an input edge to a deleted page that is no longer one of its members.",
-          "name": "concept_stale_inputs",
-          "status": "ok"
-        },
-        {
-          "category": "brain",
-          "details": {
             "by_source": [],
             "count": 0,
             "docs": "docs/guides/repair.md#atom-fence-rows",

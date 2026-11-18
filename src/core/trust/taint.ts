@@ -110,13 +110,10 @@ export async function deriveTrust(engine: Sql, refs: readonly TaintRef[], input:
  * vanished keep their recorded reference.
  */
 export async function recordTaintEdges(tx: BrainEngine, derived: { table: TaintTable; id: number; sourceId?: string | null },
-  inputs: readonly Pick<TaintInput, 'table' | 'id'>[], opts: { replacePages?: boolean } = {}): Promise<void> {
+  inputs: readonly Pick<TaintInput, 'table' | 'id'>[]): Promise<void> {
   if (!inputs.length) return;
-  await recordDerivationInputs(tx, derived, inputs.map(({ table, id }): DerivationRef => ({ table, id })), opts);
+  await recordDerivationInputs(tx, derived, inputs.map(({ table, id }): DerivationRef => ({ table, id })));
 }
-
-/** #9653: a concept narrative is rewritten whole from its current member atoms, so each publication replaces its page edges. */
-export const CONCEPT_DERIVATION_CHANNEL = 'derive:concepts';
 
 /**
  * Lowers rows to a derivation's tier, never raising. A derived write that
@@ -170,16 +167,16 @@ export async function derivedMaintenanceTransaction<T>(engine: BrainEngine, deri
  * taint and records its edges, in one attributed transaction.
  */
 export async function lowerDerivedPage(engine: BrainEngine, derivation: { trust: WriteTrust; inputs: readonly TaintInput[] },
-  sourceId: string, slug: string, opts: { replacePages?: boolean } = {}): Promise<void> {
-  await maintenanceTransaction(engine, tx => lowerDerivedPageIn(tx, derivation, sourceId, slug, opts), derivation.trust);
+  sourceId: string, slug: string): Promise<void> {
+  await maintenanceTransaction(engine, tx => lowerDerivedPageIn(tx, derivation, sourceId, slug), derivation.trust);
 }
 
 /** lowerDerivedPage inside a caller's transaction (a managed brain's coordinated write). */
 export async function lowerDerivedPageIn(tx: BrainEngine, derivation: { trust: WriteTrust; inputs: readonly TaintInput[] },
-  sourceId: string, slug: string, opts: { replacePages?: boolean } = {}): Promise<void> {
+  sourceId: string, slug: string): Promise<void> {
   for (const row of await tx.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, slug])) {
     await lowerToDerivedTier(tx, 'pages', [Number(row.id)], derivation.trust);
-    await recordTaintEdges(tx, { table: 'pages', id: Number(row.id), sourceId }, derivation.inputs, opts);
+    await recordTaintEdges(tx, { table: 'pages', id: Number(row.id), sourceId }, derivation.inputs);
   }
 }
 
