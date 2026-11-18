@@ -308,8 +308,8 @@ federated caller's source grant.
 one only when you confirm it (`gbrain dedupe confirm <group-id>`; `gbrain
 dedupe reject <group-id>` records "different people"). Those rows carry
 `established_by: dedupe:confirm`; the decision behind them lives in
-`.gbrain/identity/<decision-id>.md` in the brain's repository (or in the
-`entity_identity_reviews` table on a brain with no repository), so a
+`.gbrain/identity/<decision-id>.md` in the default source's repository (or
+in the `entity_identity_reviews` table when it has none), so a
 rebuilt database keeps it. `rank_entities` and enrichment tiering count a
 confirmed group once; hand-made groups count as before.
 
