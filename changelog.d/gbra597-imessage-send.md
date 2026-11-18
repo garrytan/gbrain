@@ -1,4 +1,4 @@
-**GBrain Helper on a Mac can now send a one-to-one iMessage for your agent, from a machine on your tailnet, with the owner's Touch ID needed to turn it on.**
+**GBrain Helper on a Mac can now send a one-to-one iMessage for the owner's agent; upgrading gbrain installs nothing on the Mac, and sending stays off until the owner turns it on at the Mac with Touch ID.**
 
 ### Added
 - `POST /v1/imessage/send` on the helper's tailnet listener sends one iMessage to one phone number or email address. Each request is signed with an Ed25519 send key, carries an `Idempotency-Key`, and only addresses listed in `listen.tailnet.allowed_peers` may call it. The answer says `sent`, `unknown` (Messages took it but didn't confirm in time) or a refusal, with `retryable` and `side_effects`, so an agent knows whether a retry could send twice. A retry with the same key never sends again.
