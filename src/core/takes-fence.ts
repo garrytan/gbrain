@@ -257,6 +257,22 @@ function parseSinceCell(raw: string): { since?: string; until?: string } {
  * Slice the body between the fence markers and parse the table.
  * Returns empty takes + empty warnings when no fence is present.
  */
+const WEIGHT_NUMBER_RE = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$/;
+const WEIGHT_PERCENT_RE = /^([+-]?(?:\d+(?:\.\d+)?|\.\d+))\s*%$/;
+
+/** Strict weight cell: plain number, or `N%` read as N/100. Else undefined. */
+function parseWeightCell(raw: string): number | undefined {
+  const t = raw.trim();
+  let n: number;
+  if (WEIGHT_NUMBER_RE.test(t)) n = Number(t);
+  else {
+    const m = WEIGHT_PERCENT_RE.exec(t);
+    if (!m) return undefined;
+    n = Number(m[1]) / 100;
+  }
+  return Number.isFinite(n) ? n : undefined;
+}
+
 export function parseTakesFence(body: string): ParseResult {
   const { beginIdx, endIdx } = locateOutsideCode(body, TAKES_FENCE_BEGIN, TAKES_FENCE_END);
   const warnings: string[] = [];
@@ -361,8 +377,8 @@ export function parseTakesFence(body: string): ParseResult {
       // Fall through — row is still parsed and stored.
     }
 
-    const weight = parseFloat(weightRaw);
-    if (!Number.isFinite(weight)) {
+    const weight = parseWeightCell(weightRaw);
+    if (weight === undefined) {
       warnings.push(`TAKES_TABLE_MALFORMED: non-numeric weight "${weightRaw}"`);
       continue;
     }
