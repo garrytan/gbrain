@@ -153,6 +153,8 @@ const PageTypeSchema = z.object({
    * declare it stay valid. Consumers MUST handle undefined via `?? []`.
    */
   subtypes: z.array(SubtypeMatchSchema).optional(),
+  /** Frontmatter fields that hold one identity per entity (an account or registry id); the duplicate finder treats a shared value as a key and a different value as a veto (core/entities/duplicates.ts). */
+  identity_keys: z.array(z.string().min(1)).optional(),
 }).strict();
 
 const FrontmatterLinkSchema = z.object({

@@ -218,6 +218,15 @@ adds the `company` source (`--shape company`), setup labels the people first and
 gives their new keys `company`; `company` itself stays out of default search.
 Setup leaves the stdio server unbound: stdio sessions read only pages no rule
 restricts, and the harness's instructions keep the one-person scoping lines.
+The one exception is a company brain (`--shape company` or `both`): there setup
+ties the Claude Code or Codex entry it installs to the brain owner
+(`serve --stdio-member <owner>`), so your own assistant reads every page and every
+imported call, and calls can be kept to the people on them
+([calls not scoped](repair.md#calls-not-scoped)). It never ties an entry that
+already names a member, one a plugin serves, or one on a host running OpenClaw or
+Hermes; `--no-stdio-member` leaves the entry unbound. With `--transcripts`, setup
+prints one line per imported call with its readers, and each name it could not
+match with the `gbrain repair visibility` command that adds a reader.
 For a Claude Code or Codex install only one person uses, bind that harness alone:
 `gbrain setup claude-code --stdio-member <member>` (or `codex`) writes
 `serve --stdio-member <member>` into that harness's MCP entry, so its sessions read
@@ -225,7 +234,7 @@ as that member, including pages only that member may read. Other harnesses on th
 machine, and other machines that open the same brain (PGLite or Postgres), are
 unchanged. The member must be enabled (or one of `--members` in the same run).
 Re-runs, `gbrain post-upgrade` and doctor fixes keep the entry's member and never
-add one; `--no-stdio-member` removes it, also on a brain that serves several
+add one outside that company case; `--no-stdio-member` removes it, also on a brain that serves several
 people. Setup refuses `--stdio-member` where OpenClaw or Hermes is installed,
 because those harnesses serve several people, and `gbrain serve` refuses to start
 with the flag there too: a bot that answers several people runs

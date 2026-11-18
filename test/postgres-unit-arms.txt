@@ -128,6 +128,7 @@ test/engine-parity/extraction.test.ts
 test/engine-parity/facts.test.ts
 test/engine-parity/lifecycle.test.ts
 test/engine-parity/links.test.ts
+test/engine-parity/owner-only-marks.test.ts
 test/engine-parity/pages.test.ts
 test/engine-parity/raw-sql.test.ts
 test/engine-parity/search.test.ts
@@ -137,6 +138,7 @@ test/engine-parity/takes.test.ts
 test/engine-parity/timeline.test.ts
 test/engine-parity/versions-raw.test.ts
 test/engine-sql-facts-keyset.test.ts
+test/entity-duplicates-finder.test.ts
 test/extract-all-stamp-intersection.serial.test.ts
 test/extract-atoms-concurrent-run-7923.test.ts
 test/extract-atoms-input-truncated-6503.test.ts

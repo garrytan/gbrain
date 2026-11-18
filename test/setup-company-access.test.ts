@@ -255,8 +255,9 @@ describe('A: gbrain setup --shape company --transcripts gives the members the ca
     const dir = join(b.root, 'calls');
     mkdirSync(dir);
     writeFileSync(join(dir, '2026-03-04 acme-example renewal.txt'), 'Alice: harbor ledger notes callcanary, we agreed to move acme-example to annual billing.\n');
-    const r = await setup(b, ['claude-code', '--serves', 'several', '--members', ROSTER.join(','), '--owner', 'owner-example', '--shape', 'company', '--transcripts', dir, '--json']);
+    const r = await setup(b, ['claude-code', '--serves', 'several', '--members', ROSTER.join(','), '--owner', 'owner-example', '--shape', 'company', '--no-stdio-member', '--transcripts', dir, '--json']);
     expect(r.exitCode).toBe(0);
+    expect(r.doc.brain_layout.transcripts.not_scoped).toMatchObject({ reason: 'stdio_unbound' });
     expect(r.doc.serves.regrant.keys.map((k: any) => [k.member, k.adds])).toEqual([['alice-example', ['company']], ['bob-example', ['company']]]);
     expect(r.doc.brain_layout.transcripts.readers.detail).toMatch(/^every member key gbrain setup minted, and other keys only when their grant names source company/);
     expect(r.doc.brain_layout.transcripts.readers.detail).not.toContain('everyone who can read source company');
@@ -437,8 +438,9 @@ describe('C: gbrain setup --shape company --labelled-only gives labelled-only me
     const dir = join(b.root, 'calls');
     mkdirSync(dir);
     writeFileSync(join(dir, '2026-03-04 acme-example renewal.txt'), 'Alice: harbor ledger notes callcanary, we agreed to move acme-example to annual billing.\n');
-    const r = await setup(b, ['claude-code', '--serves', 'several', '--members', ROSTER.join(','), '--owner', 'owner-example', '--shape', 'company', '--transcripts', dir, '--labelled-only', '--json']);
+    const r = await setup(b, ['claude-code', '--serves', 'several', '--members', ROSTER.join(','), '--owner', 'owner-example', '--shape', 'company', '--no-stdio-member', '--transcripts', dir, '--labelled-only', '--json']);
     expect(r.exitCode).toBe(0);
+    expect(r.doc.brain_layout.transcripts.not_scoped).toMatchObject({ reason: 'stdio_unbound' });
     expect(r.doc.serves.regrant.company_rule).toMatchObject({ prefix: 'company/', action: 'add', readers: ['member:alice-example', 'member:bob-example', 'member:owner-example'] });
     expect(r.doc.brain_layout.transcripts.readers).toMatchObject({ members: ['alice-example', 'bob-example', 'owner-example'], serves: 'several' });
     expect(r.doc.brain_layout.transcripts.readers.detail).toMatch(/^alice-example, bob-example, owner-example only \(the company\/ rule on source company names them/);
