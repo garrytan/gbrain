@@ -1,8 +1,9 @@
 /**
  * Search telemetry and MCP usage statements: the search telemetry flush and window read (`search/telemetry.ts`),
  * the per-client MCP usage read with its pruned-window probe (`mcp-usage.ts`), the MCP request log insert (the
- * request, surface, access-admin, webhook and memory setting audit rows) and the request log retention prune
- * (`mcp-request-log-retention.ts`), which ran through `engine.executeRaw`, once for both engines.
+ * request, surface, access-admin, webhook, memory setting audit and legacy HTTP transport rows), the request log
+ * retention prune and the lifetime usage read (`mcp-request-log-retention.ts`), which ran through
+ * `engine.executeRaw`, once for both engines.
  *
  * Every statement here ran on master from the caller named on its function. They keep master's text and run on
  * master's raw path (`exec.executeRaw`) unscoped, as before: these tables carry no source and no read policy. Each value
@@ -63,6 +64,9 @@ export interface McpLogPruneCutoff { rollup_present: boolean; cutoff: unknown }
 
 /** One retention batch: the rows it deleted and the newest `created_at` among them (null when none). */
 export interface McpLogPruneBatch { deleted: number; newest: unknown }
+
+/** One token's lifetime request count (kept log rows plus the pruned tally) and its newest request time. */
+export interface McpLifetimeUsageRow { token_name: string; requests: number; last_used_at: unknown }
 
 const RECORD_SEARCH_TELEMETRY_SQL = `INSERT INTO search_telemetry
                  (date, mode, intent, count, sum_results, sum_tokens, sum_budget_dropped, cache_hit, cache_miss,
@@ -205,4 +209,31 @@ export async function pruneMcpRequestLogBatch(
 ): Promise<McpLogPruneBatch> {
   const [row] = await exec.executeRaw<{ deleted: number; newest: unknown }>(PRUNE_BATCH_SQL, [cutoff, [...keepOperations], limit]);
   return { deleted: Number(row?.deleted ?? 0), newest: row?.newest ?? null };
+}
+
+// Two whole static statements (no composed text, so the $1 stays a plain placeholder): the kept rows plus the tally,
+// and the kept rows alone for a brain that predates the tally table.
+const LIFETIME_WITH_ROLLUP_SQL = `SELECT token_name, sum(n)::bigint AS requests, max(newest) AS last_used_at FROM (
+    SELECT token_name, count(*)::bigint AS n, max(created_at) AS newest
+      FROM mcp_request_log WHERE token_name = ANY($1::text[]) GROUP BY token_name
+    UNION ALL
+    SELECT token_name, requests, last_used_at FROM mcp_request_log_rollup WHERE token_name = ANY($1::text[])
+  ) u GROUP BY token_name ORDER BY token_name COLLATE "C"`;
+const LIFETIME_KEPT_ONLY_SQL = `SELECT token_name, count(*)::bigint AS requests, max(created_at) AS last_used_at
+    FROM mcp_request_log WHERE token_name = ANY($1::text[]) GROUP BY token_name ORDER BY token_name COLLATE "C"`;
+
+/**
+ * Lifetime requests and last use per asked token (`lifetimeUsage`, the `gbrain auth` and admin dashboard totals): the
+ * rows still in the request log, every status and operation, plus the pruned tally. A brain without the tally table
+ * (before its migration) never pruned, so the log alone answers. A null token row never matches; the tally keeps
+ * those under `''`, which matches only when `''` is asked. Rows come in token byte order (master's statement had no
+ * order; its only caller keys the rows). `requests` is a number on every driver.
+ */
+export async function readMcpLifetimeUsage(exec: LegacyUnscopedRead, tokenNames: readonly string[]): Promise<McpLifetimeUsageRow[]> {
+  const [probe] = await exec.executeRaw<{ present: boolean }>("SELECT to_regclass('mcp_request_log_rollup') IS NOT NULL AS present");
+  const rows = await exec.executeRaw<{ token_name: string; requests: number | string; last_used_at: unknown }>(
+    probe?.present === true ? LIFETIME_WITH_ROLLUP_SQL : LIFETIME_KEPT_ONLY_SQL,
+    [[...tokenNames]],
+  );
+  return rows.map((r) => ({ token_name: r.token_name, requests: Number(r.requests), last_used_at: r.last_used_at ?? null }));
 }

@@ -193,6 +193,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'logMcpRequest': OOS.telemetry,
   'readMcpLogPruneCutoff': OOS.telemetry,
   'pruneMcpRequestLogBatch': OOS.telemetry,
+  'readMcpLifetimeUsage': OOS.telemetry,
   'aliasFanoutRead': OOS.helper,
   'findPagesByTitles': OOS.aliasFanoutReads,
   'resolveCaseSensitiveAliases': OOS.aliasFanoutReads,

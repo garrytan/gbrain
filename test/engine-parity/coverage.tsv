@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 374/374
+# covered: 375/375
 # lifecycle: 9/9
 # pages: 34/34
 # search: 7/7
@@ -44,7 +44,7 @@
 # salience_enrich: 5/5
 # cli_reads_import: 11/11
 # wanted_links: 2/2
-# telemetry: 7/7
+# telemetry: 8/8
 # alias_fanout_reads: 4/4
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
 connect	lifecycle	yes	1	yes	yes	yes	serves
@@ -414,9 +414,10 @@ recordSearchTelemetry	telemetry	yes	3	no	yes	yes	serves
 readSearchStats	telemetry	yes	3	no	yes	yes	serves
 readClientOpUsage	telemetry	yes	3	no	yes	yes	serves
 readMcpRollupPrunedBefore	telemetry	yes	3	no	yes	yes	serves
-logMcpRequest	telemetry	yes	2	no	yes	yes	serves
+logMcpRequest	telemetry	yes	3	no	yes	yes	serves
 readMcpLogPruneCutoff	telemetry	yes	1	no	yes	yes	serves
-pruneMcpRequestLogBatch	telemetry	yes	2	no	yes	yes	serves
+pruneMcpRequestLogBatch	telemetry	yes	3	no	yes	yes	serves
+readMcpLifetimeUsage	telemetry	yes	1	no	yes	yes	serves
 findPagesByTitles	alias_fanout_reads	yes	3	no	yes	yes	serves
 resolveCaseSensitiveAliases	alias_fanout_reads	yes	2	no	yes	yes	serves
 readPageTitle	alias_fanout_reads	yes	1	no	yes	yes	serves

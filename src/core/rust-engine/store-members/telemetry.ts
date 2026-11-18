@@ -1,11 +1,11 @@
 /**
  * Telemetry members (BrainEngine recordSearchTelemetry, readSearchStats, logMcpRequest, readMcpLogPruneCutoff,
- * pruneMcpRequestLogBatch, readClientOpUsage, readMcpRollupPrunedBefore). The store keeps the `search_telemetry`
+ * pruneMcpRequestLogBatch, readClientOpUsage, readMcpRollupPrunedBefore, readMcpLifetimeUsage). The store keeps the `search_telemetry`
  * rows, the MCP request log and its tally (rust/docs/store/telemetry.md). The store answers a timestamp as ISO text;
  * these members turn it into a Date, as PGLite's driver reads a `timestamptz`.
  */
 import type {
-  McpLogPruneBatch, McpLogPruneCutoff, McpOpUsageRow, McpRequestLogRow, McpRollupPrunedBefore, SearchTelemetryBucket,
+  McpLifetimeUsageRow, McpLogPruneBatch, McpLogPruneCutoff, McpOpUsageRow, McpRequestLogRow, McpRollupPrunedBefore, SearchTelemetryBucket,
   SearchTelemetryRow,
 } from '../../engine-sql/telemetry.ts';
 import { storeCall, type StoreMember } from './common.ts';
@@ -53,4 +53,11 @@ export const readClientOpUsage: StoreMember<[days: number], McpOpUsageRow[]> = a
 export const readMcpRollupPrunedBefore: StoreMember<[], McpRollupPrunedBefore> = async (brain) => {
   const row: StoreRow = await storeCall({ member: 'readMcpRollupPrunedBefore' }, () => brain.readMcpRollupPrunedBefore());
   return { pruned_before: toDate(row.pruned_before), now: toDate(row.now) };
+};
+
+/** Kept requests plus the pruned tally per asked token, in token byte order; `last_used_at` is a Date. */
+export const readMcpLifetimeUsage: StoreMember<[tokenNames: readonly string[]], McpLifetimeUsageRow[]> = async (brain, tokenNames) => {
+  const rows: StoreRow[] = await storeCall({ member: 'readMcpLifetimeUsage' },
+    () => brain.readMcpLifetimeUsage(tokenNames === null || tokenNames === undefined ? null : [...tokenNames]));
+  return rows.map((r) => ({ token_name: String(r.token_name), requests: Number(r.requests), last_used_at: toDate(r.last_used_at) }));
 };

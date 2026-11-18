@@ -385,6 +385,7 @@ export const RUST_ENGINE_MEMBERS = {
   readSearchStats: 'telemetry',
   readClientOpUsage: 'telemetry',
   readMcpRollupPrunedBefore: 'telemetry',
+  readMcpLifetimeUsage: 'telemetry',
   logMcpRequest: 'telemetry',
   readMcpLogPruneCutoff: 'telemetry',
   pruneMcpRequestLogBatch: 'telemetry',
