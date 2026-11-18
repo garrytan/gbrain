@@ -375,6 +375,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readAdmissionSource': OOS.writeMisc,
   'sharedSkillPackTablePresent': OOS.writeMisc,
   'listSharedSkillPackRoots': OOS.writeMisc,
+  'getWorktreeBinding': OOS.writeMisc,
   'hasExtractedEvents': OOS.writeMisc,
   'listActiveAccessMembers': OOS.writeMisc,
   'expireMemoryProposals': OOS.writeMisc,

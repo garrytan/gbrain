@@ -4389,6 +4389,7 @@
         "getTimelineForDate": "none",
         "getUnverifiedExtractionPageIds": "none",
         "getVersions": "none",
+        "getWorktreeBinding": "none",
         "getWriteGateHoldRow": "none",
         "hasCompanyBrainReceipt": "none",
         "hasCoveringFactWithdrawal": "none",
