@@ -2047,4 +2047,36 @@ mod tests {
         store.delete_page("a", None).unwrap();
         assert_eq!(stored_timeline(&store, page.id), None);
     }
+
+    #[test]
+    fn tag_claims_and_prunes_keep_the_search_timeline() {
+        // PGLite's search vector trigger fires only on a title or timeline write, so neither a
+        // tag row nor a claim-only `tag_source` update replaces the sealed vector.
+        let store = crate::test_support::store();
+        let page = put(&store, "a");
+        seal(&store, "a", Some("2026-01-01 event"));
+        let sealed = stored_timeline(&store, page.id).unwrap();
+        store.add_tag_claimed("a", "fm", None, true).unwrap();
+        assert_eq!(stored_timeline(&store, page.id), Some(sealed.clone()));
+        let revision = read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "a")
+            .unwrap()
+            .unwrap()
+            .knowledge_revision;
+        // A claim-only change: `fm` moves from frontmatter to added.
+        store.add_tag("a", "fm", None).unwrap();
+        let after = read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "a")
+            .unwrap()
+            .unwrap();
+        assert_eq!(after.knowledge_revision, revision);
+        assert_eq!(
+            after.tag_sources.get("fm").map(String::as_str),
+            Some("added")
+        );
+        assert_eq!(stored_timeline(&store, page.id), Some(sealed.clone()));
+        store
+            .add_page_tags_by_id(page.id, &["gone".to_string()], true)
+            .unwrap();
+        store.prune_frontmatter_tags("a", &[], None).unwrap();
+        assert_eq!(stored_timeline(&store, page.id), Some(sealed));
+    }
 }
