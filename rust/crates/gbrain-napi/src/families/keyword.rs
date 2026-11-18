@@ -1,8 +1,8 @@
 //! Keyword search members and title trigrams.
 //!
 //! Store methods for: findByTitleFuzzy, searchKeyword (`searchKeywordArm` and
-//! `keywordRareTermPages`), searchKeywordChunks, countKeywordPages and searchKeywordPages. Still
-//! to come: searchTitles.
+//! `keywordRareTermPages`), searchKeywordChunks, countKeywordPages, searchKeywordPages and
+//! searchTitles (`searchTitlesAttempts`).
 //!
 //! One `#[napi] impl Brain` block per family file; each method decodes its arguments, runs one
 //! `Store` call on the pool through `Brain::run`, and resolves plain JSON.
@@ -110,5 +110,29 @@ impl Brain {
         cap: f64,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.keyword_rare_term_pages(&terms, cap))
+    }
+
+    /// `searchTitlesAttempts(attempts, exactKey, candidatesCap, options?)`: the title arm's
+    /// statements over one read, per attempt `{ rows, cut }`. The TypeScript member runs the
+    /// strict attempt and the OR fallback of `engine-sql/titles.ts` through it.
+    #[napi]
+    pub fn search_titles_attempts<'env>(
+        &self,
+        env: &'env Env,
+        attempts: Value,
+        exact_key: String,
+        candidates_cap: f64,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let attempts: Vec<gbrain_store::keyword::TitleAttempt> =
+                arg(Some(attempts), "searchTitlesAttempts attempts")?;
+            s.search_titles_attempts(
+                &attempts,
+                &exact_key,
+                candidates_cap,
+                &arg(options, "searchTitlesAttempts options")?,
+            )
+        })
     }
 }

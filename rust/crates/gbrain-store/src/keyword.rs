@@ -3,9 +3,11 @@
 //! Served: findByTitleFuzzy (`keyword/title_fuzzy.rs`), searchKeyword (`keyword/arm.rs`: the
 //! arm's statement and the rare-word read its OR retry ranks with), searchKeywordChunks
 //! (`keyword/chunk_search.rs`), countKeywordPages and searchKeywordPages (`keyword/page_search.rs`),
-//! with the page and chunk filters they share in `keyword/filters.rs`. Not built: searchTitles, which still refuses with
-//! `engine_capability_missing` in the TypeScript engine. rust/docs/store/keyword.md lists what
-//! each member reads, refuses and leaves as a follow-up.
+//! and searchTitles (`keyword/titles.rs`: the title arm's statements, over page vectors rebuilt
+//! from the page, its timeline entries and the sealed search timeline), with the page and chunk
+//! filters they share in `keyword/filters.rs`. searchTitles refuses until the sealed search
+//! timeline (core-hooks item 13) merges. rust/docs/store/keyword.md lists what each member reads,
+//! refuses and leaves as a follow-up.
 //!
 //! This family also writes the `ts_rank` compatibility ranker (design D5) over the core keyword
 //! postings (`keys::POSTING`, `T`); the facts keyword arm reuses it.
@@ -43,10 +45,12 @@ mod parser;
 mod rank;
 mod stem;
 mod title_fuzzy;
+mod titles;
 mod trgm;
 mod tsearch;
 
 pub use filters::{AfterKey, DateBound, KeywordOptions};
+pub use titles::{TitleAttempt, TitleAttemptKind};
 
 #[allow(unused_imports)]
 pub(crate) use rank::{ts_rank, ts_rank_cd};
