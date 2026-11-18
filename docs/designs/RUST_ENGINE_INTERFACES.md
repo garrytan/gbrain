@@ -148,6 +148,7 @@ Reserved tags:
 | dream | `Y` | `DREAM_VERDICT` | no |
 | eval_capture | `Z` | `EVAL_CAPTURE` | no |
 | code_edges | `H` | `CODE_EDGE` | yes |
+| code_edges (`code_traversal_cache`) | `g` | `CODE_TRAVERSAL_CACHE` | no |
 | salience | `s` | `SALIENCE` | yes |
 | stats | `n` | `INGEST_LOG` | no |
 | raw_files | `r` | `RAW_FILES` | yes |
@@ -999,7 +1000,8 @@ Code call edges between chunks and symbols.
 - **Tag:** `H` (`CODE_EDGE`). Cascade on page delete: yes.
 - **Members (5), capability:** `code_edges` (5).
 - **Store and binding:** `addCodeEdges` (`add_code_edges`), `deleteCodeEdgesForChunks` (`delete_code_edges_for_chunks`), `getCallersOf` (`get_callers_of`), `getCalleesOf` (`get_callees_of`), `getEdgesByChunk` (`get_edges_by_chunk`).
-- **Postgres tables:** `code_edges_chunk`, `code_edges_symbol`.
+- **Traversal cache (group D):** `getCodeTraversalCache` (`get_code_traversal_cache`), `putCodeTraversalCache` (`put_code_traversal_cache`), `clearCodeTraversalCache` (`clear_code_traversal_cache`), in `gbrain-store/src/code_edges/traversal_cache.rs` and `store-members/code-traversal-cache.ts`, under tag `g` (`CODE_TRAVERSAL_CACHE`, no cascade: the table has no foreign key). See `rust/docs/store/code-traversal-cache.md`.
+- **Postgres tables:** `code_edges_chunk`, `code_edges_symbol`, `code_traversal_cache`.
 - **Keys:** `H 0x01 <edge id>` row; `H 0x02 <from chunk id> <edge id>`; `H 0x03 <to chunk id> <edge id>`; `H 0x04 <source> 0x00 <to symbol> 0x00 <edge id>`.
 - **Depends on:** Core chunk ids. Postgres deletes edges when their chunk is deleted. Fill in this family's `remove_chunk_rows` hook (built; "Core hooks"): it gets the ids of every chunk that is gone, on a chunk replace, `deleteChunks` and a hard page delete.
 - **Estimate:** about 1 to 2 days.
@@ -1294,7 +1296,7 @@ the same rows into one member, so the member counts here are smaller than the si
 
 These four sections are design only. No file, tag, constant or list entry below exists yet. The tags are proposed:
 core adds them to the reserved block in `keys.rs` and to the reserved tag table above in one reviewed change, and
-until then no family writes under them. The free lowercase bytes today are `g h i x y z` (`d`, `m` and `t` are now reserved above, `a` is telemetry and `f` is the dream synthesis completion archive).
+until then no family writes under them. The free lowercase bytes today are `h i x y z` (`g` is the code traversal cache) (`d`, `m` and `t` are now reserved above, `a` is telemetry and `f` is the dream synthesis completion archive).
 
 | Family | Proposed tag | Proposed constant | Cascade on page delete | Owner |
 |---|---|---|---|---|

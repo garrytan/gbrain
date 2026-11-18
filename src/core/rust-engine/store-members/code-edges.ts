@@ -99,3 +99,6 @@ export const getEdgesByChunk: StoreMember<
   const rows = (await storeCall({ member: 'getEdgesByChunk' }, () => brain.getEdgesByChunk(sent))) as Row[];
   return rows.map(rowToCodeEdge);
 };
+
+// jobs-tables group D: the code_traversal_cache members.
+export * from './code-traversal-cache.ts';

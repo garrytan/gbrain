@@ -155,6 +155,28 @@
         ],
         "flagOnScopes": []
       },
+      "clearCodeTraversalCache#allSources": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "clearCodeTraversalCache#sourceId": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "completeHousekeepingTurn#default": {
         "flagOffLanes": [
           "pool"
@@ -1202,6 +1224,17 @@
         "flagOnScopes": []
       },
       "getChunksWithEmbeddings#sourceId+includeUnsealed": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "getCodeTraversalCache#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -2974,6 +3007,17 @@
         ],
         "flagOnScopes": []
       },
+      "putCodeTraversalCache#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "putContradictionCacheEntry#default": {
         "flagOffLanes": [
           "pool"
@@ -4472,6 +4516,7 @@
         "chunkRead": "none",
         "claimHousekeepingTurn": "none",
         "claimNextJob": "none",
+        "clearCodeTraversalCache": "none",
         "cliReads": "none",
         "closeOpenLoop": "none",
         "closedLoopWithActiveFact": "none",
@@ -4606,6 +4651,7 @@
         "getChunkWindows": "direct",
         "getChunks": "direct",
         "getChunksWithEmbeddings": "none",
+        "getCodeTraversalCache": "none",
         "getConfig": "none",
         "getConfigValues": "none",
         "getContentFlagsByPageIds": "none",
@@ -4838,6 +4884,7 @@
         "pruneMcpRequestLogBatch": "none",
         "purgeDeletedPages": "none",
         "purgeMemoryProposals": "none",
+        "putCodeTraversalCache": "none",
         "putContradictionCacheEntry": "none",
         "putDreamVerdict": "none",
         "putPage": "none",

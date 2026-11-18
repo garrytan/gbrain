@@ -451,6 +451,7 @@ export const DOMAIN_OF: Record<string, string> = {
   // code-edges
   'addCodeEdges': 'code-edges', 'deleteCodeEdgesForChunks': 'code-edges', 'getCallersOf': 'code-edges',
   'getCalleesOf': 'code-edges', 'getEdgesByChunk': 'code-edges',
+  'getCodeTraversalCache': 'code-edges', 'putCodeTraversalCache': 'code-edges', 'clearCodeTraversalCache': 'code-edges',
   // cjk-search: the CJK branch of the two keyword methods (cases tagged #cjk)
   'searchKeyword': 'cjk-search', 'searchKeywordChunks': 'cjk-search',
 
@@ -1143,6 +1144,18 @@ export const SQL_CASES: SqlCase[] = [
     ['default', (e) => e.getEdgesByChunk(1)],
     ['in+edgeType', (e) => e.getEdgesByChunk(1, { direction: 'in', edgeType: 'calls' })],
     ['out', (e) => e.getEdgesByChunk(1, { direction: 'out' })],
+  ]),
+  ...variants('getCodeTraversalCache', [
+    ['default', (e) => e.getCodeTraversalCache({ symbol_qualified: 'A.f', depth: 2, source_id: SRC, cluster_generation: 3 })],
+  ]),
+  ...variants('putCodeTraversalCache', [
+    ['default', (e) => e.putCodeTraversalCache(
+      { symbol_qualified: 'A.f', depth: 2, source_id: SRC, cluster_generation: 3 }, { nodes: ['A.f'] }, '2026-01-02T00:00:00.000Z', 7,
+    )],
+  ]),
+  ...variants('clearCodeTraversalCache', [
+    ['sourceId', (e) => e.clearCodeTraversalCache({ sourceId: SRC })],
+    ['allSources', (e) => e.clearCodeTraversalCache({ allSources: true })],
   ]),
 
   // ── cjk-search (CJK branch only) ──
