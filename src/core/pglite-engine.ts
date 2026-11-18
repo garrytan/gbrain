@@ -1909,6 +1909,20 @@ export class PGLiteEngine implements BrainEngine {
 
     const params: unknown[] = [collapseWebsearchDashRuns(query), limit, offset];
     let extraFilter = '';
+    // Postgres parity: the page filters (single type, multi-type, frontmatter where, exact-slug excludes).
+    if (opts?.type) {
+      params.push(opts.type);
+      extraFilter += ` AND p.type = $${params.length}`;
+    }
+    if (opts?.types && opts.types.length > 0) {
+      params.push(opts.types);
+      extraFilter += ` AND p.type = ANY($${params.length}::text[])`;
+    }
+    extraFilter += frontmatterWhereSql('p', opts?.where, json => `$${params.push(json)}`);
+    if (opts?.exclude_slugs?.length) {
+      params.push(opts.exclude_slugs);
+      extraFilter += ` AND p.slug != ALL($${params.length}::text[])`;
+    }
     if (opts?.language) {
       params.push(opts.language);
       extraFilter += ` AND cc.language = $${params.length}`;

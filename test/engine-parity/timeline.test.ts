@@ -104,6 +104,66 @@ describe('engine parity: timeline entries', () => {
   );
 
   parityTest(
+    'getTimeline under excludePrivate drops every row of a hidden page and each projection of a hidden event page',
+    { methods: ['getTimeline', 'addTimelineEntry', 'upsertEventProjection', 'putPage', 'softDeletePage'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'alt');
+      const page = (slug: string, frontmatter: Record<string, unknown>, opts?: { sourceId?: string }) =>
+        engine.putPage(slug, { type: 'person', title: slug, compiled_truth: `${slug} body`, timeline: '', frontmatter }, opts);
+      await page('people/alice-example', {});
+      await page('people/alice-example', { visibility: 'private' }, { sourceId: 'alt' });
+      await page('people/private-example', { visibility: 'private' });
+      await page('people/readers-example', { readable_by: ['alice-example'] });
+      await page('people/alias-example', { access: 'Restricted' });
+      const event = (slug: string, frontmatter: Record<string, unknown>) =>
+        engine.putPage(slug, {
+          type: 'event', title: slug, compiled_truth: `${slug} body`, timeline: '',
+          frontmatter: { ...frontmatter, event: { kind: 'meeting', who: ['people/alice-example'] } },
+          effective_date: new Date('2026-06-18T09:00:00Z'), effective_date_source: 'event_date',
+        });
+      await event('life/events/open', {});
+      await event('life/events/private', { visibility: 'private' });
+      await event('life/events/readers', { readable_by: ['alice-example'] });
+      await event('life/events/alias', { access: 'Restricted' });
+      await event('life/events/open-deleted', {});
+      await event('life/events/private-deleted', { visibility: 'private' });
+      for (const [eventSlug, summary] of [
+        ['life/events/open', 'open event'], ['life/events/private', 'private event'], ['life/events/readers', 'event with readers'],
+        ['life/events/alias', 'restricted event'], ['life/events/open-deleted', 'open event, deleted later'],
+        ['life/events/private-deleted', 'private event, deleted later'],
+      ] as const) {
+        await engine.upsertEventProjection({ depthSlug: 'people/alice-example', eventSlug, date: '2026-06-18', summary });
+      }
+      await engine.softDeletePage('life/events/open-deleted');
+      await engine.softDeletePage('life/events/private-deleted');
+      await engine.addTimelineEntry('people/alice-example', { date: '2026-06-17', summary: 'plain' });
+      await engine.addTimelineEntry('people/alice-example', { date: '2026-06-16', summary: 'alt plain' }, { sourceId: 'alt' });
+      for (const slug of ['people/private-example', 'people/readers-example', 'people/alias-example']) {
+        await engine.addTimelineEntry(slug, { date: '2026-06-15', summary: `${slug} plain` });
+      }
+      const summaries = async (slug: string, opts?: Parameters<BrainEngine['getTimeline']>[1]) =>
+        (await engine.getTimeline(slug, opts)).map((e) => `${new Date(e.date).toISOString().slice(0, 10)} ${e.summary}`);
+      const all = await summaries('people/alice-example');
+      const kept = await summaries('people/alice-example', { excludePrivate: true });
+      const keptDefault = await summaries('people/alice-example', { sourceId: 'default', excludePrivate: true });
+      const keptAlt = await summaries('people/alice-example', { sourceIds: ['alt'], excludePrivate: true });
+      const keptLimited = await summaries('people/alice-example', { limit: 2, excludePrivate: true });
+      const keptWindow = await summaries('people/alice-example', { after: '2026-06-17', before: '2026-06-18', excludePrivate: true });
+      const hidden: Record<string, string[]> = {};
+      for (const slug of ['people/private-example', 'people/readers-example', 'people/alias-example']) {
+        hidden[slug] = await summaries(slug, { excludePrivate: true });
+      }
+      expect(all.length).toBe(8);
+      // The event test reads the event page by id whatever its deleted state, as the SQL EXISTS does.
+      expect(kept).toEqual(['2026-06-18 open event, deleted later', '2026-06-18 open event', '2026-06-17 plain']);
+      expect(keptDefault).toEqual(kept);
+      expect(keptAlt).toEqual([]);
+      expect(Object.values(hidden)).toEqual([[], [], []]);
+      return { all, kept, keptDefault, keptAlt, keptLimited, keptWindow, hidden };
+    },
+  );
+
+  parityTest(
     'addTimelineEntriesBatch counts inserted rows, drops missing pages and replays as no-ops',
     { methods: ['addTimelineEntriesBatch', 'getTimeline', 'putPage'] },
     async (engine, backend) => {
@@ -338,6 +398,108 @@ describe('engine parity: chronicle reads and event projection', () => {
       expect(never.last_date).toBeNull();
       expect(never.days_ago).toBeNull();
       return { viaEvent, viaOwn, beforeLatest, never, otherSource };
+    },
+  );
+});
+
+describe('engine parity: excludePrivate on the chronicle reads', () => {
+  /**
+   * Depth pages and event pages for each rule of the page policy (`privatePagesFilterForCaller`), in `default`, and a
+   * private depth page in `alt`. Under `excludePrivate` a row drops when its depth page is hidden, or when it projects
+   * an event page that is hidden (`privateTimelineEventFilterForCaller`).
+   */
+  async function seedPrivacy(engine: BrainEngine, backend: Parameters<typeof createSource>[1]) {
+    await createSource(engine, backend, 'alt');
+    const depth = (slug: string, frontmatter: Record<string, unknown>, opts?: { sourceId?: string }) =>
+      engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `${slug} body`, timeline: '', frontmatter }, opts);
+    await depth('life/diary/open', {});
+    await depth('life/diary/private', { visibility: 'private' });
+    await depth('life/diary/readers', { readable_by: ['alice-example'] });
+    await depth('life/diary/alias', { access: 'Restricted' });
+    await depth('life/diary/alt-private', { visibility: 'private' }, { sourceId: 'alt' });
+    await depth('life/diary/alt-open', {}, { sourceId: 'alt' });
+    const event = (slug: string, effective: string, frontmatter: Record<string, unknown>, opts?: { sourceId?: string }) =>
+      engine.putPage(slug, {
+        type: 'event', title: slug, compiled_truth: `${slug} body`, timeline: '', frontmatter,
+        effective_date: new Date(effective), effective_date_source: 'event_date',
+      }, opts);
+    const who = (kind: string, names: string[]) => ({ kind, who: names });
+    await event('life/events/open-1', '2026-06-18T09:00:00Z', { event: who('meeting', ['people/alice-example']) });
+    await event('life/events/private-1', '2026-06-19T09:00:00Z', { visibility: 'private', event: who('meeting', ['people/alice-example']) });
+    await event('life/events/readers-1', '2026-06-18T11:00:00Z', { readable_by: ['alice-example'], event: who('commitment', ['people/charlie-example']) });
+    await event('life/events/origin-private', '2026-06-18T12:00:00Z', {
+      visibility: 'world', captured_via: 'life-chronicle:test', event: { kind: 'meeting', depth: 'life/diary/private', who: ['people/charlie-example'] },
+    });
+    await event('life/events/open-2', '2026-06-18T13:00:00Z', { event: who('meeting', ['people/charlie-example']) });
+    await event('life/events/open-3', '2026-06-18T14:00:00Z', { event: who('commitment', ['people/charlie-example']) });
+    await event('life/events/alt-1', '2026-06-18T15:00:00Z', { event: who('meeting', ['people/alice-example']) }, { sourceId: 'alt' });
+    const project = (depthSlug: string, eventSlug: string, date: string, summary: string, sourceId?: string) =>
+      engine.upsertEventProjection({ depthSlug, eventSlug, date, summary, ...(sourceId ? { sourceId } : {}) });
+    await project('life/diary/open', 'life/events/open-1', '2026-06-18', 'open depth, open event');
+    await project('life/diary/open', 'life/events/private-1', '2026-06-19', 'open depth, private event');
+    await project('life/diary/open', 'life/events/readers-1', '2026-06-18', 'open depth, event with readers');
+    await project('life/diary/open', 'life/events/origin-private', '2026-06-18', 'open depth, event from a private origin');
+    await project('life/diary/private', 'life/events/open-2', '2026-06-18', 'private depth, open event');
+    await project('life/diary/readers', 'life/events/open-3', '2026-06-18', 'depth with readers, open event');
+    await project('life/diary/alt-private', 'life/events/alt-1', '2026-06-18', 'alt private depth', 'alt');
+    for (const [slug, date, summary, sourceId] of [
+      ['life/diary/open', '2026-06-18', 'open plain', undefined], ['life/diary/alias', '2026-06-18', 'alias plain', undefined],
+      ['life/diary/open', '2025-06-18', 'open last year', undefined], ['life/diary/private', '2025-06-18', 'private last year', undefined],
+      ['life/diary/alt-open', '2026-06-18', 'alt open plain', 'alt'], ['life/diary/alt-private', '2025-06-18', 'alt private last year', 'alt'],
+    ] as const) {
+      await engine.addTimelineEntry(slug, { date, source: 'diary', summary }, sourceId ? { sourceId } : undefined);
+    }
+    await engine.putPage('people/hidden-person', { type: 'person', title: 'Hidden', compiled_truth: 'Hidden.', timeline: '', frontmatter: { visibility: 'private' } });
+    await engine.addTimelineEntry('people/hidden-person', { date: '2026-06-17', source: 'diary', summary: 'hidden own entry' });
+  }
+
+  const summaries = (rows: Pick<ChronicleTimelineRow, 'date' | 'summary'>[]) => rows.map((r) => `${r.date} ${r.summary}`);
+
+  parityTest(
+    'getTimelineForDate, getSince and getOnThisDay drop rows whose depth page or event page excludePrivate hides',
+    { methods: ['putPage', 'upsertEventProjection', 'addTimelineEntry', 'getTimelineForDate', 'getSince', 'getOnThisDay'] },
+    async (engine, backend) => {
+      await seedPrivacy(engine, backend);
+      const day = chronicle(await engine.getTimelineForDate('2026-06-18'));
+      const dayKept = chronicle(await engine.getTimelineForDate('2026-06-18', { excludePrivate: true }));
+      const weekKept = chronicle(await engine.getTimelineForDate('2026-06-18', { week: true, excludePrivate: true }));
+      const dayScoped = chronicle(await engine.getTimelineForDate('2026-06-18', { sourceId: 'default', excludePrivate: true }));
+      const dayAlt = chronicle(await engine.getTimelineForDate('2026-06-18', { sourceIds: ['alt'], excludePrivate: true }));
+      const dayLimited = chronicle(await engine.getTimelineForDate('2026-06-18', { limit: 1, excludePrivate: true }));
+      const since = chronicle(await engine.getSince('2026-06-18'));
+      const sinceKept = chronicle(await engine.getSince('2026-06-18', { excludePrivate: true }));
+      const sinceMeetings = chronicle(await engine.getSince('2026-06-18', { kind: 'meeting', excludePrivate: true }));
+      const onThisDay = chronicle(await engine.getOnThisDay({ date: '2026-06-18' }));
+      const onThisDayKept = chronicle(await engine.getOnThisDay({ date: '2026-06-18', excludePrivate: true }));
+      const onThisDayAlt = chronicle(await engine.getOnThisDay({ date: '2026-06-18', sourceId: 'alt', excludePrivate: true }));
+      expect(summaries(dayKept)).toEqual(['2026-06-18 open plain', '2026-06-18 alt open plain', '2026-06-18 open depth, open event']);
+      expect(summaries(day).length).toBe(9);
+      expect(summaries(sinceKept)).toEqual(summaries(dayKept));
+      expect(summaries(onThisDayKept)).toEqual(['2025-06-18 open last year']);
+      expect(onThisDayAlt).toEqual([]);
+      return { day, dayKept, weekKept, dayScoped, dayAlt, dayLimited, since, sinceKept, sinceMeetings, onThisDay, onThisDayKept, onThisDayAlt };
+    },
+  );
+
+  parityTest(
+    'getLastSeen skips sightings whose depth page or event page excludePrivate hides',
+    { methods: ['putPage', 'upsertEventProjection', 'addTimelineEntry', 'getLastSeen'] },
+    async (engine, backend) => {
+      await seedPrivacy(engine, backend);
+      const asof = '2026-06-25';
+      const alice = await engine.getLastSeen('people/alice-example', { asof });
+      const aliceKept = await engine.getLastSeen('people/alice-example', { asof, excludePrivate: true });
+      const aliceDefault = await engine.getLastSeen('people/alice-example', { asof, sourceId: 'default', excludePrivate: true });
+      const aliceAlt = await engine.getLastSeen('people/alice-example', { asof, sourceIds: ['alt'], excludePrivate: true });
+      const charlie = await engine.getLastSeen('people/charlie-example', { asof });
+      const charlieKept = await engine.getLastSeen('people/charlie-example', { asof, excludePrivate: true });
+      const hidden = await engine.getLastSeen('people/hidden-person', { asof });
+      const hiddenKept = await engine.getLastSeen('people/hidden-person', { asof, excludePrivate: true });
+      expect(alice.last_event_slug).toBe('life/events/private-1');
+      expect(aliceKept).toEqual({ entity_slug: 'people/alice-example', last_date: '2026-06-18', last_event_slug: 'life/events/open-1', days_ago: 7 });
+      expect(charlieKept.last_date).toBeNull();
+      expect(hiddenKept.last_date).toBeNull();
+      return { alice, aliceKept, aliceDefault, aliceAlt, charlie, charlieKept, hidden, hiddenKept };
     },
   );
 });

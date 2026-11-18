@@ -39,8 +39,11 @@ Code: `rust/crates/gbrain-store/src/link_queries.rs`, the napi methods in
 
 ### Refusals (`engine_capability_missing`)
 
-- Read policy the store does not record: `minTrust`, `suppressFlagged` and the temporal read option (`temporal`).
-  `requireSafeChunks` and `takesHoldersAllowList` are accepted where `pageReadFilter`
+- The temporal read option (`temporal`). `minTrust` and `suppressFlagged` are served wherever `pageReadFilter` reads
+  them (`getBacklinkCounts`, `getAdjacencyBoosts`, `supersedingPageSlugs`, `relationalFanout`, `relationalChainHop`,
+  `listLivePageSummaries`, `listPagesTitledIn`): `GraphScope` applies `trust::TrustPolicy` to the page's stamped tier
+  and its write-gate receipts. `findOrphanPages` and `listLinkSources` still refuse them: their SQL does not read
+  them through `pageReadFilter`, and no caller passes them. `requireSafeChunks` and `takesHoldersAllowList` are accepted where `pageReadFilter`
   does not read them: they only turn the live filter on in `relationalFanout`, and they are ignored by
   `getBacklinkCounts`, `getAdjacencyBoosts` and `relationalChainHop`, as in the SQL engines.
 - A page id that is not a 32-bit integer (`getBacklinkCounts`, `getAdjacencyBoosts`, `relationalChainHop`): Postgres

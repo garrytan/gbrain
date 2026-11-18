@@ -2,10 +2,11 @@
 //! `gbrain doctor` ran through `executeRaw`, as `BrainEngine` members of the facts capability class.
 //! Each function below answers one statement; the clause-by-clause reading is in its comment.
 //!
-//! What the store does not hold, and so refuses in the TypeScript members: the `write_gate_holds`
-//! table and the `trust_tier` and `write_origin` columns (`listUnpreviewedTrustFacts`), and the
-//! `fact_relink_attempts` table (`countFactRelinkOutcomes`, and the `hasAttempts` form of the three
-//! unlinked-fact reads, whose tried / paid memos read it). The unlinked-fact reads here are the
+//! What the TypeScript members refuse: `listUnpreviewedTrustFacts`, which has no store read yet
+//! (the store keeps the write-gate holds and the `trust_tier` and `write_origin` columns it reads),
+//! and every read of the `fact_relink_attempts` table, which the store does not hold
+//! (`countFactRelinkOutcomes`, and the `hasAttempts` form of the three unlinked-fact reads, whose
+//! tried / paid memos read it). The unlinked-fact reads here are the
 //! `hasAttempts: false` form: a brain with no attempts table, where both memos are `false`.
 //!
 //! Shared rules: `now()` is the store clock; text sorts in byte order; an array parameter is a set

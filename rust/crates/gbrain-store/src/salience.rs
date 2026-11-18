@@ -26,6 +26,7 @@ use crate::page_columns::PageColumns;
 use crate::pages::{PageRecord, all_pages, read_page};
 use crate::sources::read_source;
 use crate::takes::{TakeRecord, all_takes, page_takes, real, real_out};
+use crate::trust::{TrustPolicy, TrustTier};
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -171,6 +172,12 @@ pub struct SalienceScoresInput {
     /// `excludePrivate`: the page policy (`facts/privacy.rs` `page_hidden`); null reads every page.
     #[serde(default)]
     pub exclude_private: Option<PrivacyPolicy>,
+    /// `minTrust`: `pageEligibleSql`'s trust floor over the page's stored tier; null sets none.
+    #[serde(default)]
+    pub min_trust: Option<String>,
+    /// `suppressFlagged`: drop a page `activationSuppressedSql` flags (`trust::TrustPolicy`).
+    #[serde(default)]
+    pub suppress_flagged: bool,
 }
 
 /// Whether the read's `excludePrivate` policy hides `page`.
@@ -392,6 +399,7 @@ impl Store {
     pub fn get_salience_scores(&self, input: &SalienceScoresInput) -> Result<Vec<Value>> {
         let restricted = input.holders.is_some();
         let read = self.read()?;
+        let trust = TrustPolicy::parse(input.min_trust.as_deref(), input.suppress_flagged)?;
         let mut live = Live {
             read: &*read,
             archived: HashMap::new(),
@@ -406,6 +414,12 @@ impl Store {
                 || !listed(&input.source_ids, &page.source_id)
                 || (input.live && !live.passes(&page)?)
                 || private_hidden(&*read, &page, &input.exclude_private)?
+                || !trust.admits(
+                    &*read,
+                    "pages",
+                    page.id,
+                    TrustTier::stored(page.trust_tier.as_deref()),
+                )?
             {
                 continue;
             }

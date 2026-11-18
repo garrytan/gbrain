@@ -308,7 +308,7 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     // A row of another speaker is no match; the row of no speaker still is.
     const other = await find('people/a', 'assistant', null);
     expect(other).toBe('on-page');
-    return { found, other, row: { fact: row.fact, attributed_to: row.attributed_to, kind: row.kind, visibility: row.visibility, confidence: row.confidence, embedding_model: row.embedding_model, created: row.created_at instanceof Date, row_num: row.row_num } };
+    return { found, other, row: { fact: row.fact, attributed_to: row.attributed_to, kind: row.kind, visibility: row.visibility, confidence: row.confidence, embedding_model: row.embedding_model, created: row.created_at instanceof Date, row_num: row.row_num, trust_tier: row.trust_tier, write_origin: row.write_origin } };
   });
 
   parityTest('findActiveSingleFact under the remote provenance floor drops facts on private pages', { methods: ['findActiveSingleFact'] }, async (engine) => {
