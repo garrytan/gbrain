@@ -42,7 +42,7 @@ const TABLES = Object.keys(TRIGGERS) as OwnerOnlyTriggerTable[];
 /**
  * The logins that read `sources` but cannot both read and add every owner_only_marks row (no grant, or row-level security
  * without a permissive policy for them that reads and adds every row, USING (true) and WITH CHECK (true), or with a
- * restrictive policy that applies to them; v324): on a brain that has held owner-only data they read owner-only lineage
+ * restrictive policy that applies to them; v325): on a brain that has held owner-only data they read owner-only lineage
  * closed and their permanent deletes are refused. Superusers, BYPASSRLS logins and the table's owner (without FORCE)
  * need nothing.
  */
@@ -66,7 +66,7 @@ const DENIED_LOGINS_SQL = `
 /**
  * The logins that read `sources` but not every row of one of the owner-only lineage tables (no SELECT grant, or row-level
  * security without a permissive USING (true) policy for them, or with a restrictive one): on a brain that has held
- * owner-only data they read owner-only lineage closed (v324). Superusers, BYPASSRLS logins and each table's owner (without
+ * owner-only data they read owner-only lineage closed (v325). Superusers, BYPASSRLS logins and each table's owner (without
  * FORCE) read it all.
  */
 const CLOSED_LOGINS_SQL = `

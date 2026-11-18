@@ -210,7 +210,7 @@ describeE2E('owner_only_marks for a non-owner login, upgraded from v321 (Postgre
     const chat = await pageId('imessage/chat/2026-06-14', CHATS);
     const [fromChat, plain, fromPlain] = [await pageId('notes/from-chat'), await pageId('notes/plain'), await pageId('notes/from-plain')];
     // The writer's pages and sources policies read by app.scopes (the maintainer recipe), so its reads of the lineage are
-    // not complete: every derived row reads closed for it (v324), while the owner reads the exact lineage.
+    // not complete: every derived row reads closed for it (v325), while the owner reads the exact lineage.
     expect(await readMode(writer)).toBe('closed');
     expect(await openTo(writer, [chat, fromChat, plain, fromPlain])).toEqual([plain]);
     expect(await openTo(admin, [chat, fromChat, plain, fromPlain])).toEqual([plain, fromPlain]);
