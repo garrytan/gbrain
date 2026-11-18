@@ -28,7 +28,8 @@ async function turnsOf(work: () => Promise<unknown>): Promise<Array<{ call: stri
   await new Promise<void>(resolve => setTimeout(resolve, 5));
   const seen: Array<{ call: string; turn: number }> = [];
   const target = engine as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
-  const originals = Object.fromEntries(['executeRaw', 'getConfig', 'setConfig'].map(name => [name, target[name]!]));
+  // The compaction pass's receipt listing is the typed listCompactableReceipts (engine-sql/persistence-housekeeping.ts).
+  const originals = Object.fromEntries(['executeRaw', 'getConfig', 'setConfig', 'listCompactableReceipts'].map(name => [name, target[name]!]));
   for (const [name, original] of Object.entries(originals)) {
     target[name] = function (this: BrainEngine, ...args: unknown[]) {
       seen.push({ call: name === 'executeRaw' ? String(args[0]).trim().split(/\s+/).slice(0, 2).join(' ') : `${name} ${String(args[0])}`, turn });
@@ -51,7 +52,7 @@ test('the queue VACUUM runs in a later event-loop turn than the size check that 
 
 test('the compaction pass, the reservation sweep and the pass record each run in their own event-loop turn', async () => {
   const calls = await turnsOf(() => runCompactionPass(engine, { hostId: '00000000-0000-0000-0000-000000000001' }));
-  const compact = calls.find(c => c.call === 'SELECT *')!;
+  const compact = calls.find(c => c.call.startsWith('listCompactableReceipts '))!;
   const sweep = calls.find(c => c.call === `getConfig ${COMPACTED_SWEEP_KEY}`)!;
   const record = calls.find(c => c.call === `setConfig ${LAST_COMPACTION_KEY}`)!;
   expect([compact, sweep, record].every(Boolean)).toBe(true);

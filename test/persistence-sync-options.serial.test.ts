@@ -656,7 +656,7 @@ for (const boundary of ['pass-pin-commit', 'pass-classify', 'foreground', 'freez
       const gate = new Promise<void>(resolve => { resume = resolve; });
       let exited!: () => void;
       const contextExited = new Promise<void>(resolve => { exited = resolve; });
-      const execute = engine.executeRaw, transaction = engine.transaction, insertRequest = engine.insertWriteRequest, interval = globalThis.setInterval;
+      const execute = engine.executeRaw, transaction = engine.transaction, insertRequest = engine.insertWriteRequest, readRequest = engine.readWriteRequest, interval = globalThis.setInterval;
       const timer = interrupted === 'lease-loss' ? spyOn(globalThis, 'setInterval').mockImplementation(((fn: (...args: any[]) => void, ms?: number, ...args: any[]) =>
         interval(fn, ms === 300_000 ? 10 : ms, ...args)) as unknown as typeof interval) : undefined;
       let pending!: Promise<Awaited<ReturnType<typeof performSync>>>;
@@ -692,6 +692,12 @@ for (const boundary of ['pass-pin-commit', 'pass-classify', 'foreground', 'freez
           if (boundary === 'admission-commit' && !observed) await pause(this);
           return stored;
         } as BrainEngine['insertWriteRequest'];
+        // The request lookup is the typed readWriteRequest member; Postgres runs it on its own pool, not through executeRaw.
+        engine.readWriteRequest = async function (this: BrainEngine, ...args: Parameters<BrainEngine['readWriteRequest']>) {
+          const found = await readRequest.apply(this, args);
+          if (boundary === 'request-lookup' && this === engine && !observed) await pause(this);
+          return found;
+        } as BrainEngine['readWriteRequest'];
         pending = interrupted === 'job-abort'
           ? withSubmissionAuthority(APPLICATION_AUTHORITY, () => performSync(engine, f.opts), abort.signal)
           : performSync(engine, { ...f.opts, ...(interrupted === 'caller-abort' ? {} : { signal: abort.signal }) });
@@ -736,7 +742,7 @@ for (const boundary of ['pass-pin-commit', 'pass-classify', 'foreground', 'freez
         resume(); timer?.mockRestore();
         await outer.catch(() => {}); await pending?.catch(() => {});
         await disposePersistenceConsumer(engine);
-        engine.executeRaw = execute; engine.transaction = transaction; engine.insertWriteRequest = insertRequest;
+        engine.executeRaw = execute; engine.transaction = transaction; engine.insertWriteRequest = insertRequest; engine.readWriteRequest = readRequest;
         if (leasedKey) await engine.executeRaw('DELETE FROM gbrain_cycle_locks WHERE id=$1', [leasedKey]);
         rmSync(parent, { recursive: true, force: true });
       }

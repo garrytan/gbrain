@@ -26,12 +26,17 @@ import type { SqlEngine } from '../src/core/persistence/model.ts';
 const REMOTE = { remote_url: 'https://example.invalid/acme-example.git' };
 
 function stub(singleton: readonly unknown[], claimed = false, fail = false): SqlEngine {
-  return { executeRaw: async (sql: string) => {
-    if (fail) throw new Error('synthetic metadata unavailable');
-    if (sql.includes('FROM persistence_brain')) return singleton;
-    if (sql.includes('FROM persistence_source_bindings')) return claimed ? [{ source_id: 'example' }] : [];
-    throw new Error(`unexpected query: ${sql}`);
-  } } as unknown as SqlEngine;
+  return {
+    executeRaw: async (sql: string) => {
+      if (fail) throw new Error('synthetic metadata unavailable');
+      if (sql.includes('FROM persistence_brain')) return singleton;
+      throw new Error(`unexpected query: ${sql}`);
+    },
+    getWorktreeBinding: async () => {
+      if (fail) throw new Error('synthetic metadata unavailable');
+      return claimed ? { source_id: 'example' } : null;
+    },
+  } as unknown as SqlEngine;
 }
 
 describe('automaticSyncPull', () => {

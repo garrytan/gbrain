@@ -131,18 +131,20 @@ function stubEngine(opts: {
 } = {}): BrainEngine {
   return {
     kind: opts.kind ?? 'pglite',
-    executeRaw: async (sql: string, params: unknown[] = []) => {
+    executeRaw: async (sql: string) => {
       opts.onCall?.();
       if (sql.includes('FROM persistence_brain')) return [{ enabled: opts.managed === true }];
-      if (sql.includes('FROM persistence_source_bindings')) {
-        return (opts.bound ?? []).includes(String(params[0])) ? [{ source_id: params[0], worktree_id: 'wt-example' }] : [];
-      }
       if (sql.includes('FROM pages')) return [{ n: opts.pages ?? 0 }];
       if (sql.includes('FROM sources')) return opts.sources ?? [];
       return [];
     },
     // loadAllSources reads the sources table through the typed member; it counts as one call, as the raw read did.
     listSourceRecords: async () => { opts.onCall?.(); return opts.sources ?? []; },
+    // The writer-binding read is a typed member too: one call, a row only for a bound source.
+    getWorktreeBinding: async (sourceId: string) => {
+      opts.onCall?.();
+      return (opts.bound ?? []).includes(sourceId) ? { source_id: sourceId, worktree_id: 'wt-example' } : null;
+    },
   } as unknown as BrainEngine;
 }
 

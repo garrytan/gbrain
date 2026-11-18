@@ -38,11 +38,22 @@ const missingColumn = (column: string, relation = 'pages') =>
 const missingBareColumn = (column: string) => Object.assign(new Error(`column "${column}" does not exist`), { code: '42703' });
 const missingTable = (table: string) => Object.assign(new Error(`relation "${table}" does not exist`), { code: '42P01' });
 
-/** The real engine, except every SQL read (executeRaw, the raw PGLite handle, the stale-page counter, the salience count) throws `error`. */
+/**
+ * The typed engine members the checks above read through instead of executeRaw. A typed member bound to the real
+ * engine reads through its own SQL handle, not the proxy's executeRaw, so each one must throw too.
+ */
+const TYPED_SQL_READS = new Set<PropertyKey>([
+  'countStalePagesForExtraction', 'readCycleLocks',
+  'readExtractionLagCounts', // links_extraction_lag (src/core/extraction-lag.ts)
+  'sampleEffectiveDates', 'sampleEffectiveDateSources', // effective_date_health
+  'countZeroWeightWithTakes', // the salience count
+]);
+
+/** The real engine, except every SQL read (executeRaw, the raw PGLite handle, the typed reads above) throws `error`. */
 function failingEngine(error: Error): BrainEngine {
   return new Proxy(real, {
     get(target, prop, receiver) {
-      if (prop === 'executeRaw' || prop === 'countStalePagesForExtraction' || prop === 'readCycleLocks' || prop === 'countZeroWeightWithTakes') return async () => { throw error; };
+      if (prop === 'executeRaw' || TYPED_SQL_READS.has(prop)) return async () => { throw error; };
       if (prop === 'db') return { query: async () => { throw error; } };
       const value = Reflect.get(target, prop, receiver);
       return typeof value === 'function' ? value.bind(target) : value;

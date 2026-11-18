@@ -1,12 +1,12 @@
 /**
  * The page-write reads and upkeep that belong to no other domain (BrainEngine readSourceState through
- * purgeMemoryProposals, and attachSourcePath; SQL in engine-sql/write-misc.ts), and the folder access read beside the
+ * purgeMemoryProposals, attachSourcePath and getWorktreeBinding; SQL in engine-sql/write-misc.ts), and the folder access read beside the
  * access members (isFolderRestricted; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
  * gbrain-store `write_misc`; the rest answer for state the store does not keep. What each member answers and why:
  * rust/docs/store/write_misc.md.
  */
 import type {
-  AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow,
+  AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from '../../engine-sql/write-misc.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
@@ -50,6 +50,12 @@ export const sharedSkillPackTablePresent: StoreMember<[], boolean> = async () =>
 
 /** The store keeps no shared skillpacks (see sharedSkillPackTablePresent), so no pack has roots. */
 export const listSharedSkillPackRoots: StoreMember<[hostId: string], SharedSkillPackRoot[]> = async () => [];
+
+/**
+ * The store keeps no writer bindings: a brain on this engine is never managed (readManagedModeRows), and the binding
+ * writers (claimWorktree's raw SQL) refuse on it, so no source is bound on any host.
+ */
+export const getWorktreeBinding: StoreMember<[sourceId: string, hostId: string | null], WorktreeBinding | null> = async () => null;
 
 /** The store keeps no chronicle extraction state, so no page has events. */
 export const hasExtractedEvents: StoreMember<[sourceId: string, pageId: number], boolean> = async () => false;

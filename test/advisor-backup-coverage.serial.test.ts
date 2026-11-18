@@ -104,26 +104,30 @@ interface SourceFixture {
   local_path: string;
 }
 
-/** Minimal engine stub: sources + pages queries via executeRaw. */
+/** Minimal engine stub: the sources listing (typed member) + the pages count (executeRaw). */
 function makeEngine(opts: { sources?: SourceFixture[]; pageCount?: number } = {}) {
   const calls: string[] = [];
+  const sources = () => (opts.sources ?? []).map((s) => ({
+    id: s.id,
+    name: s.id,
+    local_path: s.local_path,
+    last_commit: null,
+    last_sync_at: null,
+    config: {},
+    created_at: new Date('2026-01-01T00:00:00Z'),
+    archived: false,
+    newest_content_at: null,
+  }));
   const engine = {
     kind: 'pglite',
+    // loadAllSources reads the typed member; the page count still runs executeRaw.
+    listSourceRecords: async () => {
+      calls.push('listSourceRecords');
+      return sources();
+    },
     executeRaw: async (sql: string) => {
       calls.push(sql);
-      if (/from\s+sources/i.test(sql)) {
-        return (opts.sources ?? []).map((s) => ({
-          id: s.id,
-          name: s.id,
-          local_path: s.local_path,
-          last_commit: null,
-          last_sync_at: null,
-          config: {},
-          created_at: new Date('2026-01-01T00:00:00Z'),
-          archived: false,
-          newest_content_at: null,
-        }));
-      }
+      if (/from\s+sources/i.test(sql)) return sources();
       if (/from\s+pages/i.test(sql)) return [{ n: opts.pageCount ?? 0 }];
       return [];
     },

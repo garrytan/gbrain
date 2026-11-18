@@ -19,6 +19,8 @@ const OPEN_WITHOUT_DEFERRED = /'queued', ?'running', ?'recovering'/g;
 /** Files whose open-state lists leave `deferred` out on purpose, with how many such lists each holds. */
 const DECIDED: Record<string, { count: number; why: string }> = {
   'src/commands/book-mirror.ts': { count: 1, why: 'receipt state (a deferred row reads as queued)' },
+  'src/core/engine-sql/persistence-claims.ts': { count: 2, why: 'the claimable-row test written out from journal.ts claimableWriteSql (test/persistence-journal-statements.test.ts pins the copy): its two EARLIER_HEAD lists, with the written-out EARLIER_DEFERRED probe and RELEASED_DEFERRED beside them' },
+  'src/core/engine-sql/persistence-housekeeping.ts': { count: 2, why: 'the compaction listing writes out terminal-classify.ts supersessionSql (test/persistence-journal-statements.test.ts pins the copy): the same two lists and the same decision' },
   'src/core/cycle/synthesize-postprocess.ts': { count: 1, why: 'cycle producer, never deferred' },
   'src/core/facts/absorb-log.ts': { count: 1, why: 'facts producer, never deferred' },
   'src/core/generations/managed-retire.ts': { count: 1, why: 'maintenance producer, never deferred' },

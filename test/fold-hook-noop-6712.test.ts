@@ -30,6 +30,9 @@
  * origin bind and the import seal are composed fragments, so their placeholders are numbered in order.
  * The write-misc engine reads (engine-sql/write-misc.ts `readSourceState`) rewrite the source reads of authorization and
  * the mirror check one-for-one into one source-state statement; same statements, same order.
+ * The write journal's typed reads (persistence/authority.ts) rewrite the publication authorization's two locking reads
+ * one-for-one: the source membership read is readSourceMembership's statement (incarnation and archived only) and the
+ * local writer read is readLocalWriterRow's; same statements, same order.
  * CAPTURE_FOLD_NOOP=1 rewrites the fixture for the engine under test (only ever from the pre-hook commit).
  */
 import { describe, expect, test } from 'bun:test';
