@@ -136,7 +136,8 @@ export async function readLegacyJobAuthority(tx: Raw): Promise<LegacyJobAuthorit
 /**
  * Queued jobs by name and spend basis, and the spend-authorized rows that waited longer than `waitMs`. A queued row's
  * basis is its spend record's `kind`, else `legacy_default` when its name has an entry in `legacyPrefixes` and its
- * idempotency key starts with one of that entry's prefixes (the claim stamps those), else `unrecorded`.
+ * idempotency key is `LIKE` one of that entry's prefixes followed by `%` (the claim stamps those), else `unrecorded`.
+ * A prefix is a LIKE pattern, as it was when doctor built this read inline: `_` and `%` in it are wildcards.
  */
 export interface QueuedSpendRows {
   by_basis: Array<{ name: string; basis: string | null; n: number }>;
@@ -151,7 +152,7 @@ export async function readQueuedSpendRows(tx: Raw, spec: { legacyPrefixes: Reado
                    WHEN EXISTS (SELECT 1 FROM jsonb_each($1::text::jsonb) AS p(job_name, prefixes),
                                        jsonb_array_elements_text(p.prefixes) AS pre(prefix)
                                  WHERE p.job_name = j.name AND j.idempotency_key IS NOT NULL
-                                   AND left(j.idempotency_key, length(pre.prefix)) = pre.prefix)
+                                   AND j.idempotency_key LIKE pre.prefix || '%')
                    THEN 'legacy_default' ELSE 'unrecorded' END AS basis
          FROM minion_jobs j WHERE j.status IN ('waiting', 'delayed', 'paused', 'waiting-children')) b
       GROUP BY name, basis
@@ -163,9 +164,9 @@ export async function readQueuedSpendRows(tx: Raw, spec: { legacyPrefixes: Reado
 }
 
 /**
- * The stacktrace lines starting with `prefix` of the newest `scanJobs` jobs (by id) whose stacktrace is an array and
- * that were updated inside `windowHours`: newest job first, each job's lines in order. The prefix matches literally
- * (the build-skew prefix holds `_`, a LIKE wildcard).
+ * The stacktrace lines `LIKE prefix || '%'` of the newest `scanJobs` jobs (by id) whose stacktrace is an array and
+ * that were updated inside `windowHours`: newest job first, each job's lines in order. `prefix` is a LIKE pattern, as
+ * in the original doctor read, so its `_` matches any one character (follow-up doctor-prefix-literal).
  */
 export async function listBuildSkewStacktraceLines(tx: Raw, spec: { prefix: string; windowHours: number; scanJobs: number }): Promise<Array<{ id: number; line: string }>> {
   const rows = await tx.executeRaw<{ id: number | string; line: string }>(
@@ -174,8 +175,8 @@ export async function listBuildSkewStacktraceLines(tx: Raw, spec: { prefix: stri
         WHERE jsonb_typeof(stacktrace) = 'array' AND updated_at > now() - ($2::double precision * interval '1 hour')
         ORDER BY id DESC LIMIT $3) j
      CROSS JOIN LATERAL jsonb_array_elements_text(j.stacktrace) WITH ORDINALITY AS e(line, ord)
-     WHERE left(e.line, length($1::text)) = $1::text
-     ORDER BY j.id DESC, e.ord`, [spec.prefix, spec.windowHours, spec.scanJobs]);
+     WHERE e.line LIKE $1
+     ORDER BY j.id DESC, e.ord`, [`${spec.prefix}%`, spec.windowHours, spec.scanJobs]);
   return rows.map(r => ({ id: Number(r.id), line: r.line }));
 }
 
@@ -240,16 +241,16 @@ type RawFactsAbsorbJob = Omit<FactsAbsorbJobRow, 'id'> & { id: number | string }
 const factsAbsorbRow = (r: RawFactsAbsorbJob): FactsAbsorbJobRow => ({ ...r, id: Number(r.id) });
 
 /**
- * The facts-absorb jobs whose idempotency key starts with `prefix` that are dead or whose key is in `keys` (the set
+ * The facts-absorb jobs whose idempotency key is `LIKE prefix || '%'` (a LIKE pattern, as in the original read) that are dead or whose key is in `keys` (the set
  * the dead-write retry already tracks), by id.
  */
 export async function listFactsAbsorbJobsByKeyPrefix(tx: Raw, spec: { prefix: string; keys: readonly string[] }): Promise<FactsAbsorbJobRow[]> {
   const rows = await tx.executeRaw<RawFactsAbsorbJob>(
     `SELECT id, idempotency_key, status, error_text, data->>'slug' AS slug, COALESCE(data->>'sourceId', 'default') AS source_id, finished_at
        FROM minion_jobs
-      WHERE name = 'facts-absorb' AND left(idempotency_key, length($1::text)) = $1::text
+      WHERE name = 'facts-absorb' AND idempotency_key LIKE $1
         AND (status = 'dead' OR idempotency_key = ANY($2::text[]))
-      ORDER BY id`, [spec.prefix, spec.keys]);
+      ORDER BY id`, [`${spec.prefix}%`, spec.keys]);
   return rows.map(factsAbsorbRow);
 }
 

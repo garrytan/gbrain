@@ -3582,11 +3582,11 @@ export interface BrainEngine {
   readLegacyJobAuthority(): Promise<LegacyJobAuthorityRead>;
   /** Queued jobs by name and spend basis, and the spend-authorized rows waiting longer than `waitMs` (the `legacy_job_authority` spend census). */
   readQueuedSpendRows(spec: { legacyPrefixes: Readonly<Record<string, readonly string[]>>; waitMs: number }): Promise<QueuedSpendRows>;
-  /** The stacktrace lines starting with `prefix` of the newest `scanJobs` recently updated jobs (the `runtime_build_skew` check). */
+  /** The stacktrace lines `LIKE prefix || '%'` (a LIKE pattern: `_` is a wildcard) of the newest `scanJobs` recently updated jobs (the `runtime_build_skew` check). */
   listBuildSkewStacktraceLines(spec: { prefix: string; windowHours: number; scanJobs: number }): Promise<Array<{ id: number; line: string }>>;
   /** Dead dream submissions per base key inside the window, resets applied (the dream breaker's counting rule). */
   countDeadDreamSubmissionRows(spec: DeadDreamSubmissionSpec): Promise<Array<{ base_key: string; dead_submissions: number; last_dead_at: string }>>;
-  /** Facts-absorb jobs whose key starts with `prefix` that are dead or whose key is in `keys` (the dead-write retry's reconcile). */
+  /** Facts-absorb jobs whose key is `LIKE prefix || '%'` (a LIKE pattern) that are dead or whose key is in `keys` (the dead-write retry's reconcile). */
   listFactsAbsorbJobsByKeyPrefix(spec: { prefix: string; keys: readonly string[] }): Promise<FactsAbsorbJobRow[]>;
   /** The dead facts-absorb jobs with a key in `keys` (the dead-write retry's operator controls). */
   listDeadFactsAbsorbJobsByKeys(keys: readonly string[]): Promise<FactsAbsorbJobRow[]>;

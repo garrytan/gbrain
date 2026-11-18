@@ -43,7 +43,7 @@ fn round_seconds(micros: i64) -> i64 {
 }
 
 /// One token of a LIKE pattern.
-enum Like {
+pub(super) enum Like {
     /// `%`: any run of characters, empty included.
     Any,
     /// `_`: exactly one character.
@@ -53,7 +53,7 @@ enum Like {
 
 /// A LIKE pattern as Postgres reads it with its default escape: `\` makes the next character
 /// literal, and a pattern that ends in a lone `\` is an error.
-fn like_tokens(pattern: &str) -> Result<Vec<Like>> {
+pub(super) fn like_tokens(pattern: &str) -> Result<Vec<Like>> {
     let mut out = Vec::new();
     let mut chars = pattern.chars();
     while let Some(c) = chars.next() {
@@ -75,7 +75,7 @@ fn like_tokens(pattern: &str) -> Result<Vec<Like>> {
 }
 
 /// `text LIKE pattern`, case sensitive, anchored at both ends, matching by character.
-fn like_matches(text: &str, pattern: &[Like]) -> bool {
+pub(super) fn like_matches(text: &str, pattern: &[Like]) -> bool {
     let text: Vec<char> = text.chars().collect();
     let (mut t, mut p) = (0, 0);
     // Where the last `%` was seen in the pattern, and the text position it has consumed up to.

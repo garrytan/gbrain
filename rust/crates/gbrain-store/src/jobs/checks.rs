@@ -5,6 +5,7 @@
 //! (rust/docs/store/jobs-checks.md). Each matches `src/core/engine-sql/jobs-checks.ts`.
 
 use super::reads::{hours_us, is_unreviewed, live_rows};
+use super::status::{Like, like_matches, like_tokens};
 use super::*;
 use crate::env::parse_iso;
 use crate::timeline_queries::timestamptz_text;
@@ -347,6 +348,18 @@ impl Store {
     /// rows older than `wait_ms`.
     pub fn read_queued_spend_rows(&self, spec: &QueuedSpendSpec) -> Result<Value> {
         let read = self.read()?;
+        // Each prefix is a LIKE pattern followed by `%`, as the SQL reads it: `_` matches any one character.
+        let legacy_patterns: BTreeMap<&str, Vec<Vec<Like>>> = spec
+            .legacy_prefixes
+            .iter()
+            .map(|(name, prefixes)| {
+                let patterns = prefixes
+                    .iter()
+                    .map(|p| like_tokens(&format!("{p}%")))
+                    .collect::<Result<Vec<_>>>()?;
+                Ok((name.as_str(), patterns))
+            })
+            .collect::<Result<_>>()?;
         let mut counts: BTreeMap<(String, bool, Option<String>), usize> = BTreeMap::new();
         for status in ["waiting", "delayed", "paused", "waiting-children"] {
             for row in rows_with_status(&*read, status)? {
@@ -354,9 +367,11 @@ impl Store {
                     Some(spend) => spend.get("kind").and_then(jsonb_field_text),
                     None => {
                         let legacy = row.idempotency_key.as_ref().is_some_and(|key| {
-                            spec.legacy_prefixes.get(&row.name).is_some_and(|prefixes| {
-                                prefixes.iter().any(|p| key.starts_with(p.as_str()))
-                            })
+                            legacy_patterns
+                                .get(row.name.as_str())
+                                .is_some_and(|patterns| {
+                                    patterns.iter().any(|p| like_matches(key, p))
+                                })
                         });
                         Some(
                             if legacy {
@@ -388,9 +403,10 @@ impl Store {
         Ok(json!({ "by_basis": by_basis, "waiting_ids": waiting }))
     }
 
-    /// `listBuildSkewStacktraceLines`: the stacktrace lines starting with `prefix` of the newest
+    /// `listBuildSkewStacktraceLines`: the stacktrace lines `LIKE prefix || '%'` of the newest
     /// `scan_jobs` array-stacktrace jobs updated inside the window, newest job first.
     pub fn list_build_skew_stacktrace_lines(&self, spec: &BuildSkewSpec) -> Result<Vec<Value>> {
+        let pattern = like_tokens(&format!("{}%", spec.prefix))?;
         let read = self.read()?;
         let cutoff = self.env.now_micros() - hours_us(spec.window_hours);
         let mut rows: Vec<JobRecord> = all_rows(&*read)?
@@ -403,7 +419,7 @@ impl Store {
         for row in &rows {
             if let Some(Value::Array(lines)) = &row.stacktrace {
                 for line in lines.iter().filter_map(jsonb_field_text) {
-                    if line.starts_with(spec.prefix.as_str()) {
+                    if like_matches(&line, &pattern) {
                         out.push(json!({ "id": row.id, "line": line }));
                     }
                 }
@@ -494,17 +510,17 @@ impl Store {
             .collect())
     }
 
-    /// `listFactsAbsorbJobsByKeyPrefix`: `facts-absorb` rows whose key starts with `prefix` and that
+    /// `listFactsAbsorbJobsByKeyPrefix`: `facts-absorb` rows whose key is `LIKE prefix || '%'` and that
     /// are dead or whose key is in `keys`, by id.
     pub fn list_facts_absorb_jobs_by_key_prefix(&self, spec: &KeyPrefixSpec) -> Result<Vec<Value>> {
+        let pattern = like_tokens(&format!("{}%", spec.prefix))?;
         let read = self.read()?;
         let mut rows: Vec<JobRecord> = all_rows(&*read)?
             .into_iter()
             .filter(|r| {
                 r.name == "facts-absorb"
                     && r.idempotency_key.as_ref().is_some_and(|k| {
-                        k.starts_with(spec.prefix.as_str())
-                            && (r.status == "dead" || spec.keys.contains(k))
+                        like_matches(k, &pattern) && (r.status == "dead" || spec.keys.contains(k))
                     })
             })
             .collect();

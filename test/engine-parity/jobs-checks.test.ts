@@ -12,7 +12,7 @@
  *    rule, the exact-count rule), the `since` cut of the last failed job and its whole-set count, the supersede rule of
  *    a still-dead facts-absorb job (same slug and source, a larger id, completed), the claim gate's population, the
  *    spend basis of a queued row (a recorded kind, a legacy prefix of the right name, or unrecorded) and its byte order,
- *    the literal build-skew prefix, the breaker's three counting branches with their resets and window, or the retry's
+ *    the build-skew LIKE prefix (`_` is a wildcard, as in the original doctor read), the breaker's three counting branches with their resets and window, or the retry's
  *    key prefix and key set. Each of these decides what an operator is told or whether a paid job loop is stopped.
  *  - Why existing coverage misses it: test/doctor*.test.ts and test/dream-breaker*.test.ts run these checks on PGLite
  *    only, and a Rust engine has no raw SQL, so nothing compared the engines on one scenario.
@@ -310,7 +310,7 @@ describe('jobs checks parity', () => {
       };
     });
 
-  parityTest('listBuildSkewStacktraceLines returns the stacktrace lines with a literal prefix of the newest jobs in the window, newest job first and each job in order',
+  parityTest('listBuildSkewStacktraceLines returns the stacktrace lines LIKE the prefix of the newest jobs in the window, newest job first and each job in order',
     { methods: ['admitJob', 'claimNextJob', 'failJob', 'promoteDelayedJobs', 'listBuildSkewStacktraceLines'] }, async (engine) => {
       const line = (v: string) => `job_build_skew: job child v${v} ran under worker pid 41 v1.0.0`;
       // A job whose stacktrace holds three lines (two failures that retry, then a death), one matching line each way.
@@ -328,7 +328,7 @@ describe('jobs checks parity', () => {
       }
       const first = await failing('skew-a', [line('1.0.1'), 'something else', line('1.0.2')]);
       await failing('skew-b', ['job_build_skew: job child v2.0.0 refused to run under worker pid 7 v2.0.1']);
-      await failing('skew-c', ['jobXbuildXskew: not the prefix', 'not job_build_skew: either']); // `_` is no wildcard here
+      await failing('skew-c', ['jobXbuildXskew: not the prefix', 'not job_build_skew: either']); // `_` is a LIKE wildcard: the first line matches
       await failing('skew-d', [line('3.0.0')]);
       await add(engine, 'skew-live'); // a job with an empty stacktrace
       const view = (rows: Array<{ id: number; line: string }>) => rows.map(r => ({ id: r.id - first, line: r.line }));
