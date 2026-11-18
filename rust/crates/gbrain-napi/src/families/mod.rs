@@ -3,6 +3,7 @@
 //! so building a family never edits this list.
 
 mod chunks;
+mod cli_reads_import;
 mod config;
 mod graph;
 mod journal;

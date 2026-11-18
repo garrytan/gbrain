@@ -96,6 +96,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
   eval_capture: ['logEvalCandidate', 'listEvalCandidates', 'deleteEvalCandidatesBefore', 'logEvalCaptureFailure',
     'listEvalCaptureFailures'],
   salience_enrich: ['batchLoadEmotionalInputs', 'setEmotionalWeightBatch', 'getRecentSalience', 'listEnrichCandidates', 'findAnomalies'],
+  cli_reads_import: ['listSourceRecords', 'readSourceIncarnation', 'hasCompanyBrainReceipt', 'readGuestSourceRow', 'listGuestSourceIds',
+    'hasGuestSource', 'readPageTrustRows', 'readDatabaseClock', 'listLinkPageMetadata', 'listStoredTimelineRows', 'filterPagesAtRevision'],
 };
 
 /** Callable members of `interface BrainEngine`, in declaration order (`kind` excluded). */
