@@ -562,6 +562,39 @@ describe('engine parity: backlink and page signal reads', () => {
   );
 
   parityTest(
+    'getContentFlagsByPageIds, getUnverifiedExtractionPageIds and getEffectiveDates under excludePrivate apply a caller\'s reader identity and private-readable grant',
+    { methods: ['getContentFlagsByPageIds', 'getUnverifiedExtractionPageIds', 'getEffectiveDates', 'putPage'] },
+    async (engine) => {
+      const ids = new Map<string, number>();
+      const marks = { content_flag: { reason: 'markup_heavy', detail: 'tags' }, provenance: 'auto-extracted', status: 'unverified' };
+      for (const [slug, frontmatter] of [
+        ['pv/open', {}], ['pv/private', { visibility: 'private' }], ['pv/readers', { readable_by: ['alice-example'] }],
+        ['pv/team', { readable_by: 'group:team-a' }], ['pv/bob-only', { readable_by: ['bob-example'] }],
+        ['pv/pinned', { visibility: 'private', pinned_question: true }],
+      ] as const) {
+        ids.set(slug, (await engine.putPage(slug, page(slug, {
+          frontmatter: { ...frontmatter, ...marks }, effective_date: new Date('2024-03-05T00:00:00Z'), effective_date_source: 'date',
+        }))).id);
+      }
+      const all = [...ids.values()];
+      const refs = [...ids.keys()].map((slug) => ({ slug, source_id: 'default' }));
+      const read = (access: Parameters<typeof withCallerAccess>[0]) => withCallerAccess(access, async () => ({
+        flags: bySlug(ids, await engine.getContentFlagsByPageIds(all, { excludePrivate: true })).map(([slug]) => slug),
+        unverified: bySlug(ids, await engine.getUnverifiedExtractionPageIds(all, { excludePrivate: true })).map(([slug]) => slug),
+        dates: sorted([...(await engine.getEffectiveDates(refs, { excludePrivate: true })).keys()]),
+      }));
+      const member = await read({ identity: ['member:alice-example', 'group:team-a'], hidePrivate: true });
+      const granted = await read({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true });
+      const stranger = await read({ identity: ['member:carol-example'], hidePrivate: true });
+      expect(stranger.flags).toEqual(['pv/open']);
+      expect(sorted(member.flags)).toEqual(['pv/open', 'pv/readers', 'pv/team']);
+      expect(sorted(granted.unverified)).toEqual(['pv/open', 'pv/private', 'pv/readers']);
+      expect(member.dates).toEqual(['default::pv/open', 'default::pv/readers', 'default::pv/team']);
+      return { member, granted, stranger };
+    },
+  );
+
+  parityTest(
     'getPageTimestamps and getEffectiveDates return dates only for existing live pages',
     { methods: ['getPageTimestamps', 'getEffectiveDates', 'putPage', 'softDeletePage'] },
     async (engine) => {
