@@ -54,3 +54,9 @@ that source (`ON DELETE CASCADE` on `source_id`).
   symbol names (the chunk store has no index by chunk id). Cost is O(chunks) per callers/callees read.
 - The member refuses (`engine_capability_missing`) a limit that is not a whole number and a non-finite chunk id,
   which Postgres rejects as a bind error.
+
+## Follow-up notes
+
+- `code-edges-chunk-id-index`: the store keeps no index from a chunk id to its page and `symbol_name`, so the live
+  filter and the bare fallback of `getCallersOf` / `getCalleesOf` scan every chunk once per call (O(chunks)). A core
+  index keyed by chunk id would make these reads O(rows read). Correctness does not need it; it is deferred to core.
