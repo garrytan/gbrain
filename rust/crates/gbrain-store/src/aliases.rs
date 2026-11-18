@@ -85,12 +85,15 @@ pub(crate) struct CrState {
 }
 
 /// The scope of `resolveAliases` (`PageReadScope`): a non-empty `sourceIds` wins, then a
-/// non-empty `sourceId`, else every source.
+/// non-empty `sourceId`, else every source. `exclude_private` (`excludePrivate` of the scope) is
+/// the page policy of `facts/privacy.rs` (`page_hidden`), which `pageReadFilter` adds to both the
+/// page an alias names and the page whose title shadows a derived alias.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AliasScope {
     pub source_id: Option<String>,
     pub source_ids: Option<Vec<String>>,
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 /// One page an alias resolves to.
@@ -502,7 +505,8 @@ impl Store {
     /// `resolveAliases(aliasNorms, scope)`: each alias that names a live page in the scope, with
     /// the pages it names, aliases in byte order and pages by source then slug. Within a source
     /// only the best origin answers, and a derived alias yields to another live page whose
-    /// lower-cased title is the alias.
+    /// lower-cased title is the alias. Under `exclude_private` a page the policy hides neither
+    /// answers nor shadows a derived alias with its title.
     pub fn resolve_aliases(
         &self,
         alias_norms: &[String],
@@ -535,14 +539,21 @@ impl Store {
                     let [slug, origin] = parts.as_slice() else {
                         continue;
                     };
-                    if live_page(&*read, source, slug)?.is_none() {
+                    let Some(page) = live_page(&*read, source, slug)? else {
+                        continue;
+                    };
+                    if let Some(policy) = &scope.exclude_private
+                        && page_hidden(&*read, &page, policy)?
+                    {
                         continue;
                     }
                     let rank = origin_rank(origin);
                     if rank > 0 {
                         let titles = match &mut titles {
                             Some(t) => t,
-                            None => titles.insert(live_titles(&*read)?),
+                            None => {
+                                titles.insert(live_titles(&*read, scope.exclude_private.as_ref())?)
+                            }
                         };
                         let shadowed = titles.get(source).is_some_and(|pages| {
                             pages.iter().any(|(s, title)| title == alias && s != slug)
@@ -720,8 +731,12 @@ impl Store {
     }
 }
 
-/// `(slug, lower(title))` of every live page, per source.
-fn live_titles(read: &dyn KvRead) -> Result<BTreeMap<String, Vec<(String, String)>>> {
+/// `(slug, lower(title))` of every live page, per source; under a policy only the pages it does not
+/// hide (the `titleFilter` of `readAliases`).
+fn live_titles(
+    read: &dyn KvRead,
+    exclude_private: Option<&PrivacyPolicy>,
+) -> Result<BTreeMap<String, Vec<(String, String)>>> {
     let mut out: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
     let mut archived: BTreeMap<String, bool> = BTreeMap::new();
     for page in all_pages(read)? {
@@ -736,7 +751,12 @@ fn live_titles(read: &dyn KvRead) -> Result<BTreeMap<String, Vec<(String, String
                 gone
             }
         };
-        if !gone {
+        if !gone
+            && !match exclude_private {
+                Some(policy) => page_hidden(read, &page, policy)?,
+                None => false,
+            }
+        {
             out.entry(page.source_id.clone())
                 .or_default()
                 .push((page.slug.clone(), page.title.to_lowercase()));
@@ -819,6 +839,57 @@ mod tests {
             })
             .unwrap();
         assert_eq!(family_keys(&store), kept);
+    }
+
+    /// A derived alias yields to a live page titled with it; under a privacy policy a page the policy
+    /// hides is not one (the `titleFilter` of `readAliases`). The typed API has no writer for derived rows.
+    #[test]
+    fn a_private_title_shadows_a_derived_alias_only_without_the_policy() {
+        use crate::pages::{PageInput, PutPageOptions};
+        let store = crate::test_support::store();
+        let put = |slug: &str, title: &str, frontmatter: serde_json::Value| {
+            let input: PageInput = serde_json::from_value(json!({
+                "type": "note", "title": title, "compiled_truth": "body", "frontmatter": frontmatter,
+            }))
+            .unwrap();
+            store
+                .put_page(slug, &input, &PutPageOptions::default())
+                .unwrap();
+        };
+        put("companies/acme", "Acme Co", json!({}));
+        put(
+            "notes/acme-title",
+            "Acme",
+            json!({ "visibility": "private" }),
+        );
+        put("companies/beta", "Beta Co", json!({}));
+        put("notes/beta-title", "Beta", json!({}));
+        store
+            .write(|tx| {
+                put_page_alias(tx, "default", "acme", "companies/acme", "declared")?;
+                put_page_alias(tx, "default", "beta", "companies/beta", "declared")
+            })
+            .unwrap();
+        let names = ["acme".to_string(), "beta".to_string()];
+        let answer = |scope: serde_json::Value| {
+            let scope: AliasScope = serde_json::from_value(scope).unwrap();
+            store
+                .resolve_aliases(&names, &scope)
+                .unwrap()
+                .into_iter()
+                .map(|(alias, refs)| (alias, refs.into_iter().map(|r| r.slug).collect::<Vec<_>>()))
+                .collect::<Vec<_>>()
+        };
+        assert!(answer(json!({})).is_empty());
+        assert_eq!(
+            answer(json!({ "excludePrivate": { "honorAliases": true, "entityPrivacy": true } })),
+            vec![("acme".to_string(), vec!["companies/acme".to_string()])]
+        );
+        // With the privacy part of the policy off, nothing is hidden by `visibility`, so the title shadows again.
+        assert!(
+            answer(json!({ "excludePrivate": { "honorAliases": true, "entityPrivacy": false } }))
+                .is_empty()
+        );
     }
 
     #[test]

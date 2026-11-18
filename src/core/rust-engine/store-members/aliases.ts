@@ -5,10 +5,10 @@
  *
  * aliasCanonicalRefs reads its policy as `pageReadFilter('p', policy, !!policy)` does: the source clause, the live test
  * and `excludePrivate` through the page policy (private-provenance.ts `storePagePolicy`); a trust floor or flag
- * suppression refuses, as the store keeps no trust tiers. Elsewhere a privacy, trust or flag filter refuses with
- * `engine_capability_missing`. A
- * rename moves fact bindings only once the facts family fills its rename hook, and the `none` contextual retrieval
- * tier keeps no vectors to reset (rust/docs/store/aliases.md).
+ * suppression refuses, as the store keeps no trust tiers. resolveAliases reads `excludePrivate` the same way. Elsewhere
+ * a privacy, trust or flag filter refuses with `engine_capability_missing`. A rename moves fact bindings only once the
+ * facts family fills its rename hook, and the `none` contextual retrieval tier keeps no vectors to reset
+ * (rust/docs/store/aliases.md).
  */
 import type { PageReadPolicy, PageReadScope } from '../../types.ts';
 import { validateSlug, warnOncePerProcess } from '../../utils.ts';
@@ -55,11 +55,18 @@ export const resolveSlugWithAliasDetailed: StoreMember<
 export const resolveSlugWithAlias: StoreMember<[slug: string, sourceOrSources: string | readonly string[], opts?: { excludePrivate?: boolean }], string> =
   async (brain, slug, sourceOrSources, opts) => (await detailed(brain, 'resolveSlugWithAlias', slug, sourceOrSources, opts))?.canonical_slug ?? slug;
 
+/** The keys of the alias hop's option bag (alias-hop.ts `IdentityTierOpts` and its hop switches) that are not page policy. */
+const ALIAS_HOP_KEYS = ['excludeSlugs', 'excludeSlugPrefixes', 'tokenHop', 'qualified'] as const;
+
 export const resolveAliases: StoreMember<[aliasNorms: string[], opts?: PageReadScope], Map<string, AliasRef[]>> = async (brain, aliasNorms, opts) => {
-  const o = takeOptions('resolveAliases', opts, ['sourceId', 'sourceIds'], ['requireSafeChunks']);
+  // The alias hop hands over its whole identity-tier bag; PGLite's read looks only at the scope keys in it, so the
+  // slug excludes and the hop switches are ignored here as there (the hop applies them to its own rows).
+  const o = takeOptions('resolveAliases', opts, ['sourceId', 'sourceIds'], ['requireSafeChunks', 'excludePrivate', ...ALIAS_HOP_KEYS]);
   if (aliasNorms.length === 0) return new Map();
+  // `excludePrivate` is the page policy `readAliases` adds for the page an alias names and for a title that shadows one.
+  const excludePrivate = storePagePolicy('resolveAliases', opts?.excludePrivate);
   const rows: Array<[string, AliasRef[]]> = await storeCall({ member: 'resolveAliases', sourceId: o.sourceId as string | undefined }, () =>
-    brain.resolveAliases(aliasNorms, o));
+    brain.resolveAliases(aliasNorms, excludePrivate ? { ...o, excludePrivate } : o));
   return new Map(rows);
 };
 

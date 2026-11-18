@@ -48,7 +48,7 @@ getPage	pages	yes	33	yes	yes	yes	serves
 readPageSnapshot	pages	yes	7	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	refuses:pages
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	121	yes	yes	yes	serves
+putPage	pages	yes	123	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	refuses:pages
 findDuplicatePages	pages	yes	1	no	yes	yes	refuses:pages
 deletePage	pages	yes	4	yes	yes	yes	serves
@@ -227,9 +227,9 @@ updateSlug	sync_aliases	yes	6	no	yes	yes	serves
 rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
 resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
-resolveAliases	sync_aliases	yes	2	no	yes	yes	serves
-setPageAliases	sync_aliases	yes	2	no	yes	yes	serves
-replaceDerivedAliases	sync_aliases	yes	1	no	yes	yes	refuses:pages
+resolveAliases	sync_aliases	yes	4	no	yes	yes	serves
+setPageAliases	sync_aliases	yes	3	no	yes	yes	serves
+replaceDerivedAliases	sync_aliases	yes	2	no	yes	yes	refuses:pages
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	1	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	refuses:facts

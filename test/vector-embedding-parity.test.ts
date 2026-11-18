@@ -110,6 +110,24 @@ const HYBRID_PLAIN = [
   'zorbit 0.8393',
   'e-person 0.5536',
 ];
+/**
+ * A query that names the zorbit entity, run under hybrid's default scope (excludePrivate resolves to true): the entity
+ * page is found through its alias, so the generated page that links to it is demoted and the entity page is boosted.
+ */
+const HYBRID_NAMED = [
+  'zorbit 1.3600 backlink_count=1',
+  'a-exact 0.5471',
+  'd-multi 0.5430',
+  'z-after 0.5150 alias_resolved_boost=1.05',
+  'n-timeline 0.5078',
+  't-auto 0.4866 status="unverified" unverified=true',
+  'u-dated 0.4828',
+  't-flagged 0.4792 content_flag={"reason":"spam","detail":"x"}',
+  'r-target 0.4649 collapsed=[{"slug":"r-stub","source_id":"default","reason":"redirect"}] status="verified"',
+  's-new 0.4715',
+  'z-gen 0.2471 provenance="generated" generated_demotion=0.5',
+  'e-person 0.1913',
+];
 const STAGES_WITHOUT_DATED = [
   'a-exact 1.3000 recency_boost=1.3',
   'd-multi 1.3000 recency_boost=1.3',
@@ -544,17 +562,21 @@ for (const kind of arms) {
         expect(await outcome(() => engine.getContentFlagsByPageIds(ids, { excludePrivate: true } as never))).toMatchObject({ refused: 'engine_capability_missing' });
       }
       // The generated-page demotion reads the entity the query names, the live page at it and the pages linking to it.
-      const demotion = async () => outcome(async () => {
+      const demotion = async (scope: { excludePrivate?: boolean }) => outcome(async () => {
         const rowsIn = await vectorRows();
-        await applyGeneratedDemotion(engine, rowsIn, 'Zorbit', { excludePrivate: false });
+        await applyGeneratedDemotion(engine, rowsIn, 'Zorbit', scope);
         return show(rowsIn.filter((r) => r.provenance || r.generated_demotion));
       });
       const cases = {
         plain: await hybrid('nonlexicalsaffronquery'),
+        named: await hybrid('Zorbit'),
         stages: await every(),
         markers: await markers(),
         bag: await bag(),
-        demotion: await demotion(),
+        demotion: await demotion({ excludePrivate: false }),
+        // hybridSearch passes no excludePrivate unless the caller set it, and the demotion then resolves the entity under excludePrivate: true.
+        demotionDefault: await demotion({}),
+        demotionPrivate: await demotion({ excludePrivate: true }),
       };
       __setEmbedTransportForTests(null);
       resetGateway();
@@ -564,6 +586,7 @@ for (const kind of arms) {
       expect(dated).toMatch(/^u-dated 0\.\d{4} recency_boost=1\.0\d*$/);
       expect({ ok: (cases.stages as { ok: string[] }).ok.filter((r) => r !== dated) }).toEqual({ ok: STAGES_WITHOUT_DATED });
       expect(cases.plain).toEqual({ ok: HYBRID_PLAIN });
+      expect(cases.named).toEqual({ ok: HYBRID_NAMED });
       expect(cases.markers).toEqual({ ok: MARKERS });
       expect(cases.bag).toEqual({
         ok: {
@@ -572,6 +595,8 @@ for (const kind of arms) {
         },
       });
       expect(cases.demotion).toEqual({ ok: DEMOTION });
+      expect(cases.demotionDefault).toEqual({ ok: DEMOTION });
+      expect(cases.demotionPrivate).toEqual({ ok: DEMOTION });
       record(kind, 'hybrid-stages', cases);
       // Leave the shared fixture as the later cases expect it (the Rust arm runs none of the cases that count chunks).
       if (!rust) await raw(`DELETE FROM pages WHERE slug IN ('s-old', 's-new', 'r-target', 'r-stub', 't-auto', 't-flagged', 'u-dated', 'zorbit', 'z-gen', 'z-after')`);
