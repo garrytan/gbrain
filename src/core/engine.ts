@@ -16,6 +16,7 @@ import type { ChunkMove } from './page-state/chunk-moves.ts';
 import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence-state.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
+import type { DefaultSourceSplit, LocalPathSourceRow, SourceRoutingRow } from './engine-sql/sources.ts';
 export type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions, PageMutationPrecondition, PageWithdrawal } from './page-state/types.ts';
 import type {
   Page, PageInput, PageFilters, GetPageOpts, PageReadScope, PageReadPolicy,
@@ -1221,6 +1222,11 @@ export interface BrainEngine {
    * (`withSourceFilesystemLock`) canonicalizes each to pick the outermost worktree root an import locks.
    */
   listSourceLocalPaths(): Promise<string[]>;
+
+  /** Source resolution reads (SQL and contracts in engine-sql/sources.ts): sources with a local path and `archived`; every source row with `default`'s emptiness flag; the default-write guard's page split. */
+  listLocalPathSources(): Promise<LocalPathSourceRow[]>;
+  listSourceRoutingRows(): Promise<SourceRoutingRow[]>;
+  countDefaultSourceSplit(): Promise<DefaultSourceSplit>;
 
   /**
    * v0.37.0 — prefix-stratified page sampling for `gbrain brainstorm` / `gbrain lsd`

@@ -18,6 +18,7 @@ import { syncDispatchRow } from './sync-dispatch-read.ts';
 import { join, dirname, isAbsolute, resolve } from 'path';
 import type { BrainEngine } from './engine.ts';
 import { requestSnapshotRead } from './config-snapshot.ts';
+import { rethrowCapabilityRefusal } from './engine-capability-refusal.ts';
 import type { ExplicitReadBinding } from './ops/contract.ts';
 import { isSourceFederated, parseSourceConfig } from './sources-load.ts';
 import { SOURCE_ID_RE, isValidSourceId, ALL_SOURCES } from './source-id.ts';
@@ -335,10 +336,9 @@ async function listRegisteredLocalPathSources(
   const request = pending && await pending;
   if (request) return request.filter(row => row.local_path !== null).map(({ id, local_path, archived }) => ({ id, local_path: local_path!, archived }));
   try {
-    return await engine.executeRaw<{ id: string; local_path: string; archived?: boolean }>(
-      `SELECT id, local_path, archived FROM sources WHERE local_path IS NOT NULL`,
-    );
-  } catch {
+    return await engine.listLocalPathSources();
+  } catch (err) {
+    rethrowCapabilityRefusal(err);
     return engine.executeRaw<{ id: string; local_path: string }>(
       `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL`,
     );
@@ -355,9 +355,11 @@ async function listRegisteredLocalPathSources(
 function requestSourceRows(
   engine: BrainEngine,
 ): Promise<Array<{ id: string; local_path: string | null; archived: boolean; config: unknown; default_has_pages: boolean }> | null> | undefined {
-  return requestSnapshotRead(engine, 'sources', () => engine.executeRaw<{ id: string; local_path: string | null; archived: boolean; config: unknown; default_has_pages: boolean }>(
-    `SELECT id, local_path, archived, config, EXISTS (SELECT 1 FROM pages WHERE source_id = 'default' AND deleted_at IS NULL) AS default_has_pages FROM sources ORDER BY id`,
-  ).catch(() => null));
+  // A capability refusal is not an old brain: it propagates instead of turning into a silent live-read fallback.
+  return requestSnapshotRead(engine, 'sources', () => engine.listSourceRoutingRows().catch((err: unknown) => {
+    rethrowCapabilityRefusal(err);
+    return null;
+  }));
 }
 
 async function pickSoleNonDefaultSource(
@@ -529,28 +531,12 @@ export async function assessDefaultWriteGuard(
     nonDefaultSources: 0,
   };
   try {
-    const rows = await engine.executeRaw<{
-      default_pages: number | string | bigint | null;
-      non_default_pages: number | string | bigint | null;
-      non_default_sources: number | string | bigint | null;
-    }>(
-      // deleted_at IS NULL (review fix): soft-deleted pages skewed the
-      // distribution both directions — a graveyard outside 'default' could
-      // fire the guard on a live default-dominant brain, and a graveyard in
-      // 'default' could mask a live non-default-dominant one. Every sibling
-      // predicate in this module filters live rows; so does this.
-      `SELECT
-         COALESCE(SUM(CASE WHEN source_id = 'default' THEN 1 ELSE 0 END), 0) AS default_pages,
-         COALESCE(SUM(CASE WHEN source_id <> 'default' THEN 1 ELSE 0 END), 0) AS non_default_pages,
-         COUNT(DISTINCT source_id) FILTER (WHERE source_id <> 'default') AS non_default_sources
-       FROM pages
-       WHERE deleted_at IS NULL`,
-    );
-    const r = rows[0];
-    if (!r) return empty;
-    const defaultPages = Number(r.default_pages) || 0;
-    const nonDefaultPages = Number(r.non_default_pages) || 0;
-    const nonDefaultSources = Number(r.non_default_sources) || 0;
+    // Live pages only (review fix): soft-deleted pages skewed the
+    // distribution both directions — a graveyard outside 'default' could
+    // fire the guard on a live default-dominant brain, and a graveyard in
+    // 'default' could mask a live non-default-dominant one. Every sibling
+    // predicate in this module filters live rows; so does this.
+    const { defaultPages, nonDefaultPages, nonDefaultSources } = await engine.countDefaultSourceSplit();
     // Strict `>` keeps a default-dominant (fresh / legacy) brain un-guarded:
     // with nonDefaultPages 0, the condition is false and 'default' stays valid.
     const shouldGuard = nonDefaultSources >= 1 && nonDefaultPages > defaultPages;

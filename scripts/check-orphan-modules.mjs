@@ -99,6 +99,7 @@ const PERMITTED_TEST_ONLY = [
   { path: 'src/core/rust-engine/store-members/embeddings.ts', reason: 'held: the Rust engine store wiring (plan PRs 10-12); reached through src/core/rust-engine.ts once the addon release PR wires openRustEngine into engine construction with the rust config value' },
   { path: 'src/core/rust-engine/store-members/transactions.ts', reason: 'held: the Rust engine store wiring (plan PRs 10-12); reached through src/core/rust-engine.ts once the addon release PR wires openRustEngine into engine construction with the rust config value' },
   { path: 'src/core/rust-engine/store-members/relations.ts', reason: 'held: the Rust engine store wiring (plan PRs 10-12); reached through src/core/rust-engine.ts once the addon release PR wires openRustEngine into engine construction with the rust config value' },
+  { path: 'src/core/rust-engine/store-members/cli-sources.ts', reason: 'held: the Rust engine store wiring (plan PRs 10-12); reached through src/core/rust-engine.ts once the addon release PR wires openRustEngine into engine construction with the rust config value' },
   { path: 'src/eval/longmemeval/diagnostics.ts', reason: 'script-reachable' },
   { path: 'src/eval/longmemeval/evidence-brief.ts', reason: 'held: eval-only wave 1 brief builder (10x memory advantage plan A3), loaded by path from gbrain-evals eval/runner/pilot; product wiring is plan item A8, conditional on the A5 pilot' },
   { path: 'src/eval/longmemeval/evidence-packet.ts', reason: 'script-reachable' },

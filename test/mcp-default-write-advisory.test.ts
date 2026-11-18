@@ -18,12 +18,13 @@
 import { describe, test, expect } from 'bun:test';
 import { createDefaultWriteAdvisory } from '../src/mcp/server.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { withSourceResolutionReads } from './helpers/source-resolution-reads.ts';
 
 type Dist = { defaultPages: number; nonDefaultPages: number; nonDefaultSources: number };
 
 function makeCountingStub(dist: Dist): { engine: BrainEngine; count: () => number } {
   let aggregateRuns = 0;
-  const engine = {
+  const engine = withSourceResolutionReads({
     kind: 'pglite' as const,
     async executeRaw<T>(sql: string): Promise<T[]> {
       if (sql.includes('FROM pages')) {
@@ -36,7 +37,7 @@ function makeCountingStub(dist: Dist): { engine: BrainEngine; count: () => numbe
       }
       return [];
     },
-  } as unknown as BrainEngine;
+  }) as unknown as BrainEngine;
   return { engine, count: () => aggregateRuns };
 }
 
@@ -94,7 +95,7 @@ describe('createDefaultWriteAdvisory (stdio lane, #4583 review fix)', () => {
     // the life of the process.
     let aggregateRuns = 0;
     let healthy = false;
-    const engine = {
+    const engine = withSourceResolutionReads({
       kind: 'pglite' as const,
       async executeRaw<T>(sql: string): Promise<T[]> {
         if (sql.includes('FROM pages')) {
@@ -108,7 +109,7 @@ describe('createDefaultWriteAdvisory (stdio lane, #4583 review fix)', () => {
         }
         return [];
       },
-    } as unknown as BrainEngine;
+    }) as unknown as BrainEngine;
     const lines: string[] = [];
     const advise = createDefaultWriteAdvisory(engine, { enabled: true, write: (l) => lines.push(l) });
     await expect(advise('seed_default', true)).resolves.toBeUndefined();

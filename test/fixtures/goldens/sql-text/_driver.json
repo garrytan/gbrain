@@ -4895,6 +4895,19 @@
       }
     },
     "sources": {
+      "countDefaultSourceSplit": {
+        "default": [
+          {
+            "paramCount": 0,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": true
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "getSource": {
         "default": [
           {
@@ -4921,6 +4934,19 @@
           }
         ]
       },
+      "listLocalPathSources": {
+        "default": [
+          {
+            "paramCount": 0,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": true
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "listSourceLocalPaths": {
         "default": [
           {
@@ -4929,6 +4955,19 @@
               "cancelFence": false,
               "prepare": true,
               "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "listSourceRoutingRows": {
+        "default": [
+          {
+            "paramCount": 0,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": true
             },
             "via": "unsafe"
           }
