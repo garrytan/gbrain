@@ -611,4 +611,55 @@ describe('engine parity: search', () => {
       return out;
     },
   );
+
+  parityTest(
+    'searchKeywordChunks applies the page filters type, types, where and exclude_slugs, as Postgres does',
+    { methods: ['searchKeywordChunks'] },
+    async (engine) => {
+      await seedPage(engine, {
+        slug: 'notes/pulsar-a',
+        input: { type: 'note', title: 'Pulsar A', compiled_truth: 'x', timeline: '', frontmatter: { status: 'active' } },
+        chunks: [chunk(0, 'pulsar timing pulsar'), chunk(1, 'a pulsar glitch')],
+      });
+      await seedPage(engine, {
+        slug: 'notes/pulsar-b',
+        input: { type: 'note', title: 'Pulsar B', compiled_truth: 'x', timeline: '', frontmatter: { status: ['draft'] } },
+        chunks: [chunk(0, 'pulsar wind nebula')],
+      });
+      await seedPage(engine, {
+        slug: 'concepts/pulsar',
+        input: { type: 'concept', title: 'Pulsar', compiled_truth: 'x', timeline: '', frontmatter: { status: 'active' } },
+        chunks: [chunk(0, 'pulsar pulsar pulsar')],
+      });
+      await seedPage(engine, {
+        slug: 'people/pulsar-fan',
+        input: { type: 'person', title: 'Pulsar fan', compiled_truth: 'x', timeline: '' },
+        chunks: [chunk(0, 'likes every pulsar')],
+      });
+      const view = (rows: SearchResult[]) => rows.map((r) => `${r.slug}#${r.chunk_index}`);
+      const q = 'pulsar';
+      const run = (opts: Parameters<BrainEngine['searchKeywordChunks']>[1]) => engine.searchKeywordChunks(q, { limit: 20, ...opts }).then(view);
+      const out = {
+        all: sorted(await run({})),
+        type: sorted(await run({ type: 'note' })),
+        types: sorted(await run({ types: ['concept', 'person'] })),
+        typeAndTypes: sorted(await run({ type: 'note', types: ['concept'] })),
+        where: sorted(await run({ where: { status: ['active'] } })),
+        whereArray: sorted(await run({ where: { status: ['draft'] } })),
+        excluded: sorted(await run({ exclude_slugs: ['notes/pulsar-a', 'people/pulsar-fan'] })),
+        combined: sorted(await run({ types: ['note', 'concept'], where: { status: ['active'] }, exclude_slugs: ['concepts/pulsar'] })),
+        emptyLists: sorted(await run({ types: [], exclude_slugs: [], where: {} })),
+      };
+      expect(out.all).toEqual(['concepts/pulsar#0', 'notes/pulsar-a#0', 'notes/pulsar-a#1', 'notes/pulsar-b#0', 'people/pulsar-fan#0']);
+      expect(out.type).toEqual(['notes/pulsar-a#0', 'notes/pulsar-a#1', 'notes/pulsar-b#0']);
+      expect(out.types).toEqual(['concepts/pulsar#0', 'people/pulsar-fan#0']);
+      expect(out.typeAndTypes).toEqual([]);
+      expect(out.where).toEqual(['concepts/pulsar#0', 'notes/pulsar-a#0', 'notes/pulsar-a#1']);
+      expect(out.whereArray).toEqual(['notes/pulsar-b#0']);
+      expect(out.excluded).toEqual(['concepts/pulsar#0', 'notes/pulsar-b#0']);
+      expect(out.combined).toEqual(['notes/pulsar-a#0', 'notes/pulsar-a#1']);
+      expect(out.emptyLists).toEqual(out.all);
+      return out;
+    },
+  );
 });

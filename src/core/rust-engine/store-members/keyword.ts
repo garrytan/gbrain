@@ -17,6 +17,7 @@ import { rankByRarity } from '../../engine-sql/titles.ts';
 import { normalizeAlias } from '../../search/alias-normalize.ts';
 import { getFtsLanguage } from '../../fts-language.ts';
 import { searchLimitCap } from '../../search/eval-pool-depth.ts';
+import { requiresSafeChunks } from '../../search/safe-chunks.ts';
 import { slugHandles } from '../../search/keyword-handles.ts';
 import { holdsIdentifiers, identifierTokens, keywordArmRows } from '../../search/keyword-identifier-probe.ts';
 import {
@@ -32,6 +33,7 @@ import { titleWholeVectorCandidates } from '../../search/title-statement.ts';
 import type { SearchOpts, SearchResult } from '../../types.ts';
 import { rowToSearchResult } from '../../utils.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { storePagePolicy } from './private-provenance.ts';
 
 type FuzzyHit = { slug: string; similarity: number } | null;
 
@@ -60,9 +62,13 @@ const SHARED = new Set([
   'detail', 'language', 'symbolKind', 'afterDate', 'afterDateInclusive', 'beforeDate', 'beforeDateInclusive', 'sourceId',
   'sourceIds', 'exclude_slug_prefixes', 'include_slug_prefixes', 'source_boosts',
 ]);
-/** The page filters `searchKeywordChunks` does not apply on PGLite but Postgres does (follow-up pglite-keyword-chunks-page-filters). */
+/** The page filters every keyword statement applies: single type, multi-type, frontmatter `where`, exact-slug excludes. */
 const PAGE_FILTERS = ['type', 'types', 'where', 'exclude_slugs'] as const;
-/** Visibility options the store cannot apply (private pages, safe chunks, the trust floor). */
+/**
+ * Visibility options the store applies (`buildVisibilityClause`): the page privacy policy (storePagePolicy), the
+ * chunker-version fence of a safe-chunk read (`requiresSafeChunks`, which an `excludePrivate` read asks for unless it
+ * says otherwise), the trust floor and the flagged-page filter (`pageEligibleSql`) on the page's stamped trust tier.
+ */
 const VISIBILITY = ['excludePrivate', 'requireSafeChunks', 'minTrust', 'suppressFlagged'] as const;
 
 type Member = 'searchKeyword' | 'searchKeywordChunks' | 'countKeywordPages' | 'searchKeywordPages' | 'searchTitles';
@@ -77,19 +83,9 @@ function keywordOptions(member: Member, query: string, opts: (SearchOpts & { tim
   for (const [key, value] of Object.entries(o)) {
     if (value === undefined || value === false || NOT_READ.has(key) || SHARED.has(key)) continue;
     if (key === 'limit' || key === 'offset') continue;
+    if ((VISIBILITY as readonly string[]).includes(key)) continue;
     if (key === 'timeoutMs' && member === 'countKeywordPages') continue;
-    if (pageGrain && (key === 'keywordPhrase' || (PAGE_FILTERS as readonly string[]).includes(key))) continue;
-    if (!pageGrain && (PAGE_FILTERS as readonly string[]).includes(key)) {
-      // PGLite ignores these on searchKeywordChunks and Postgres applies them: refuse rather than pick one.
-      const empty = value === null || value === '' || (Array.isArray(value) && value.length === 0)
-        || (key === 'where' && typeof value === 'object' && Object.keys(value as object).length === 0);
-      if (empty) continue;
-      refuseMember(member, `option ${key} (follow-up pglite-keyword-chunks-page-filters)`);
-    }
-    if ((VISIBILITY as readonly string[]).includes(key)) {
-      if (!value) continue;
-      refuseMember(member, `option ${key}`);
-    }
+    if ((PAGE_FILTERS as readonly string[]).includes(key) || (pageGrain && key === 'keywordPhrase')) continue;
     refuseMember(member, `option ${key}`);
   }
 
@@ -104,13 +100,16 @@ function keywordOptions(member: Member, query: string, opts: (SearchOpts & { tim
   else if (o.sourceId) out.sources = [String(o.sourceId)];
   out.hardExcludes = resolveHardExcludes(o.exclude_slug_prefixes as string[] | undefined, o.include_slug_prefixes as string[] | undefined);
   out.boosts = boostPairs((o.source_boosts as Record<string, number> | undefined) ?? resolveBoostMap(), o.detail);
-  if (pageGrain) {
-    if (o.type) out.type = String(o.type);
-    if ((o.types as string[] | undefined)?.length) out.types = (o.types as string[]).map(String);
-    if (o.where) out.where = whereFields(member, o.where);
-    if ((o.exclude_slugs as string[] | undefined)?.length) out.excludeSlugs = (o.exclude_slugs as string[]).map(String);
-    if (o.keywordPhrase === true) out.phrase = true;
-  }
+  if (o.type) out.type = String(o.type);
+  if ((o.types as string[] | undefined)?.length) out.types = (o.types as string[]).map(String);
+  if (o.where) out.where = whereFields(member, o.where);
+  if ((o.exclude_slugs as string[] | undefined)?.length) out.excludeSlugs = (o.exclude_slugs as string[]).map(String);
+  if (pageGrain && o.keywordPhrase === true) out.phrase = true;
+  const policy = storePagePolicy(member, o.excludePrivate);
+  if (policy) out.excludePrivate = policy;
+  if (requiresSafeChunks(opts)) out.requireSafeChunks = true;
+  if (o.minTrust) out.minTrust = String(o.minTrust);
+  if (o.suppressFlagged) out.suppressFlagged = true;
   return out;
 }
 
@@ -290,7 +289,8 @@ type TitleAttempt = { text: string; kind: TitleKind; limit: number; offset: numb
  * engine-sql/titles.ts `searchTitles`: the strict attempt over the whole vector (completed by the title-only attempt
  * when more pages match than `titleWholeVectorCandidates()`), then the any-word retry with per-word rarity and the
  * identifier lead. Each store call runs its attempts over one read, as each scoped read of the SQL engines does.
- * `requireSafeChunks` and `excludePrivate` refuse (keywordOptions), so the arm is never the safe-chunks one.
+ * A safe-chunk read (`requiresSafeChunks`) is title-only throughout, as `buildSearchTitlesStatement` makes it: every
+ * attempt matches and ranks the title lexemes and none is capped, so each one runs as the `title` kind.
  */
 export const searchTitles: StoreMember<[query: string, opts?: SearchOpts], SearchResult[]> = async (brain, query, opts) => {
   // Chunk-grain code filters have no page-grain meaning: the SQL engines answer nothing.
@@ -306,9 +306,10 @@ export const searchTitles: StoreMember<[query: string, opts?: SearchOpts], Searc
   const exactKey = normalizeAlias(query);
   // The given-name variants are ORed into every attempt; the OR retry rebinds only the first text.
   const variants = titleNameVariants(query);
+  const titleOnly = options.requireSafeChunks === true;
   const run = async (attempts: TitleAttempt[]): Promise<{ rows: Row[]; cut: boolean }[]> =>
     storeCall({ member: 'searchTitles' }, () => brain.searchTitlesAttempts(
-      attempts.map(a => ({ texts: [a.text, ...variants], kind: a.kind, limit: a.limit, offset: a.offset })),
+      attempts.map(a => ({ texts: [a.text, ...variants], kind: titleOnly ? 'title' : a.kind, limit: a.limit, offset: a.offset })),
       exactKey, titleWholeVectorCandidates(), options,
     ));
 
