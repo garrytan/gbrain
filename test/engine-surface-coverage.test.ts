@@ -179,6 +179,8 @@ const INTERFACE_METHODS: readonly string[] = [
   // Trust: the write gate's receipts and holds (engine-sql/trust-write-gate.ts)
   'upsertWriteGateReceipt', 'upsertPageWriteGateReceipt', 'deleteStalePageWriteGateReceipts', 'listWriteGateReceiptsFor',
   'deleteStaleWriteGateReceipts', 'upsertWriteGateHold', 'listWriteGateHoldRows', 'getWriteGateHoldRow', 'decideWriteGateHold',
+  // Open loops (engine-sql/open-loops.ts)
+  'upsertOpenLoop', 'listOpenLoops', 'closeOpenLoop',
 ];
 
 /**

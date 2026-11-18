@@ -141,6 +141,8 @@ import { loadKeywordStatementTimeout } from './postgres-engine/keyword-statement
 import { applyPostgresForwardReferenceBootstrap } from './engine-sql/bootstrap.ts';
 import * as factsImpl from './engine-sql/facts.ts';
 import * as trustWithdrawalsImpl from './engine-sql/trust-withdrawals.ts';
+import * as openLoopsImpl from './engine-sql/open-loops.ts';
+import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
 import * as trustWriteGateImpl from './engine-sql/trust-write-gate.ts';
 import * as takesImpl from './engine-sql/takes.ts';
 import * as codeEdgesImpl from './engine-sql/code-edges.ts';
@@ -3550,6 +3552,10 @@ export class PostgresEngine implements BrainEngine {
   moveFactWithdrawalSubject(sourceId: string, oldSlug: string, newSlug: string) { return trustWithdrawalsImpl.moveFactWithdrawalSubject(this.engineSql, sourceId, oldSlug, newSlug); }
   hasFactWithdrawalForSubject(sourceId: string, subject: string) { return trustWithdrawalsImpl.hasFactWithdrawalForSubject(unscopedExecutor(this.engineSql, 'trust: the withdrawal ledger read ran through executeRaw unscoped'), sourceId, subject); }
   listFactWithdrawalKeys(sourceId: string, limit: number) { return trustWithdrawalsImpl.listFactWithdrawalKeys(unscopedExecutor(this.engineSql, 'trust: the withdrawal ledger read ran through executeRaw unscoped'), sourceId, limit); }
+  // Open loops (engine-sql/open-loops.ts), through the raw path as before.
+  upsertOpenLoop(loop: OpenLoopUpsertInput) { return openLoopsImpl.upsertOpenLoop(this.engineSql, loop); }
+  closeOpenLoop(sourceId: string | null, id: number, status: Exclude<OpenLoopStatus, 'open'>, closedBy: string) { return openLoopsImpl.closeOpenLoop(this.engineSql, sourceId, id, status, closedBy); }
+  listOpenLoops(opts?: OpenLoopListOpts) { return openLoopsImpl.listOpenLoops(unscopedExecutor(this.engineSql, 'open loops: the list read ran through executeRaw unscoped'), opts); }
   upsertWriteGateReceipt(input: trustWriteGateImpl.WriteGateReceiptInput) { return trustWriteGateImpl.upsertWriteGateReceipt(this.engineSql, input); }
   upsertPageWriteGateReceipt(sourceId: string, slug: string, receipt: trustWriteGateImpl.WriteGateReceiptFields) { return trustWriteGateImpl.upsertPageWriteGateReceipt(this.engineSql, sourceId, slug, receipt); }
   deleteStalePageWriteGateReceipts(sourceId: string, slug: string, contentHash: string | null) { return trustWriteGateImpl.deleteStalePageWriteGateReceipts(this.engineSql, sourceId, slug, contentHash); }

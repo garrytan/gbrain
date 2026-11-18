@@ -32,6 +32,7 @@ mod extraction;
 mod facts;
 mod facts_cycle;
 mod facts_doctor;
+mod facts_loops;
 mod facts_purge;
 mod facts_repair;
 mod facts_trust;

@@ -417,6 +417,10 @@ export const RUST_ENGINE_MEMBERS = {
   listWriteGateHoldRows: 'facts',
   getWriteGateHoldRow: 'facts',
   decideWriteGateHold: 'facts',
+  // open loops (engine-sql/open-loops.ts)
+  upsertOpenLoop: 'facts',
+  listOpenLoops: 'facts',
+  closeOpenLoop: 'facts',
   // persistence_journal
   readManagedModeRows: 'persistence_journal',
   readPersistenceBrainId: 'persistence_journal',

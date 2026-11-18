@@ -1,5 +1,7 @@
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type * as TrustWithdrawalsSql from './engine-sql/trust-withdrawals.ts';
+import type * as OpenLoopsSql from './engine-sql/open-loops.ts';
+import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
 import type * as TrustWriteGateSql from './engine-sql/trust-write-gate.ts';
 import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
@@ -3553,6 +3555,15 @@ export interface BrainEngine {
   hasFactWithdrawalForSubject(sourceId: string, subject: string): Promise<boolean>;
   /** The source's withdrawal keys by visibility, fingerprint and subject, at most `limit`. */
   listFactWithdrawalKeys(sourceId: string, limit: number): Promise<TrustWithdrawalsSql.WithdrawalKeyRow[]>;
+
+  // Open loops (engine-sql/open-loops.ts). Each runs the statement loops-store.ts ran through executeRaw and returns
+  // the raw rows; loops-store.ts normalizes them.
+  /** Inserts a loop, or updates the row with its source and dedup key when that row is open, the new activity is newer, or an unmute queued it, and a mute does not hold it for the same counterparty email. `applied` is false when the guard kept the existing row. */
+  upsertOpenLoop(loop: OpenLoopUpsertInput): Promise<OpenLoopsSql.OpenLoopUpsertResult>;
+  /** Closes the open loop `id` (in `sourceId` when not null) as `status`, by `closedBy`, now; the closed row, or null when no open loop matches. */
+  closeOpenLoop(sourceId: string | null, id: number, status: Exclude<OpenLoopStatus, 'open'>, closedBy: string): Promise<OpenLoopsSql.OpenLoopDbRow | null>;
+  /** The loops that pass every filter, newest activity first, then id descending, at most `limit` (1 to 1000, 200 by default). */
+  listOpenLoops(opts?: OpenLoopListOpts): Promise<OpenLoopsSql.OpenLoopDbRow[]>;
 
   // Trust: the write gate's receipts and holds (engine-sql/trust-write-gate.ts). Writers call these inside their
   // publication transaction, so a rolled-back write leaves no receipt or hold.
