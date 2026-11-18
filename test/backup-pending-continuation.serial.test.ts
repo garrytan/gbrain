@@ -24,8 +24,12 @@ async function repository(name: string) {
   git(tmp, 'init', '--bare', '-b', 'main', remote); git(root, 'remote', 'add', 'origin', remote); git(root, 'push', '-u', 'origin', 'main');
   return root;
 }
-const engine = (roots: string[]) => ({ kind: 'pglite', executeRaw: async (sql: string) => sql.includes('FROM pages') ? [{ n: 1 }]
-  : roots.map((root, i) => ({ id: `fixture-${i}`, name: 'fixture', local_path: root, archived: false, config: {} })) }) as unknown as BrainEngine;
+const engine = (roots: string[]) => {
+  const sources = () => roots.map((root, i) => ({ id: `fixture-${i}`, name: 'fixture', local_path: root, archived: false, config: {} }));
+  // loadAllSources reads the typed member; the page count still runs executeRaw.
+  return { kind: 'pglite', listSourceRecords: async () => sources(),
+    executeRaw: async (sql: string) => sql.includes('FROM pages') ? [{ n: 1 }] : sources() } as unknown as BrainEngine;
+};
 function spyLsRemote() {
   const run = childProcess.execFile; const commands: string[][] = [];
   const probe = spyOn(childProcess, 'execFile').mockImplementation(((file: string, args: string[], o: unknown, cb: unknown) => { if (args.includes('ls-remote')) commands.push(args); return (run as Function)(file, args, o, cb); }) as typeof childProcess.execFile);

@@ -49,10 +49,12 @@ async function repository(name = 'source') {
   return { root, remote };
 }
 function engine(roots: string[]): BrainEngine {
+  const sources = () => roots.map((root, i) => ({ id: `fixture-${i}`, name: 'fixture', local_path: root, archived: false, config: {} }));
   return {
     kind: 'pglite',
-    executeRaw: async (sql: string) => sql.includes('FROM pages') ? [{ n: 1 }]
-      : roots.map((root, i) => ({ id: `fixture-${i}`, name: 'fixture', local_path: root, archived: false, config: {} })),
+    // loadAllSources reads the typed member; the page count still runs executeRaw.
+    listSourceRecords: async () => sources(),
+    executeRaw: async (sql: string) => sql.includes('FROM pages') ? [{ n: 1 }] : sources(),
   } as unknown as BrainEngine;
 }
 
@@ -138,7 +140,8 @@ test('failed refresh cannot silently reuse verified cache as a fresh success', a
   const { root } = await repository();
   await getBackupStatus(engine([root]), { ...verified, forceRefresh: true });
   const before = readFileSync(join(tmp, 'status.json'), 'utf8');
-  const down = { kind: 'pglite', executeRaw: async () => { throw new Error('offline'); } } as unknown as BrainEngine;
+  const offline = async () => { throw new Error('offline'); };
+  const down = { kind: 'pglite', listSourceRecords: offline, executeRaw: offline } as unknown as BrainEngine;
   const result = await getBackupStatus(down, { ...verified, forceRefresh: true });
   expect(result.degraded).toBe(true);
   expect(result.overall).toBe('warn');
