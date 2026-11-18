@@ -23,6 +23,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import type { ChronicleTimelineRow, OntologyConflict } from '../../src/core/types.ts';
 import { createSource, parityArms, pick, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -500,6 +501,34 @@ describe('engine parity: excludePrivate on the chronicle reads', () => {
       expect(charlieKept.last_date).toBeNull();
       expect(hiddenKept.last_date).toBeNull();
       return { alice, aliceKept, aliceDefault, aliceAlt, charlie, charlieKept, hidden, hiddenKept };
+    },
+  );
+
+  parityTest(
+    'the chronicle reads under excludePrivate apply a caller\'s reader identity and private-readable grant',
+    { methods: ['putPage', 'upsertEventProjection', 'addTimelineEntry', 'getTimelineForDate', 'getSince', 'getOnThisDay', 'getLastSeen'] },
+    async (engine, backend) => {
+      await seedPrivacy(engine, backend);
+      const read = (access: Parameters<typeof withCallerAccess>[0]) => withCallerAccess(access, async () => ({
+        day: summaries(await engine.getTimelineForDate('2026-06-18', { excludePrivate: true })),
+        week: summaries(await engine.getTimelineForDate('2026-06-18', { week: true, excludePrivate: true })),
+        since: summaries(await engine.getSince('2026-06-18', { excludePrivate: true })),
+        onThisDay: summaries(await engine.getOnThisDay({ date: '2026-06-18', excludePrivate: true })),
+        charlie: await engine.getLastSeen('people/charlie-example', { asof: '2026-06-25', excludePrivate: true }),
+        hidden: await engine.getLastSeen('people/hidden-person', { asof: '2026-06-25', excludePrivate: true }),
+      }));
+      const member = await read({ identity: ['member:alice-example', 'group:team-a'], hidePrivate: true });
+      const granted = await read({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true });
+      const stranger = await read({ identity: ['member:bob-example'], hidePrivate: true });
+      expect(stranger.day).toEqual(['2026-06-18 open plain', '2026-06-18 alt open plain', '2026-06-18 open depth, open event']);
+      expect(member.day).toContain('2026-06-18 depth with readers, open event');
+      expect(member.day).toContain('2026-06-18 open depth, event with readers');
+      expect(member.day).not.toContain('2026-06-18 private depth, open event');
+      expect(granted.day).toContain('2026-06-18 private depth, open event');
+      expect(granted.onThisDay).toContain('2025-06-18 private last year');
+      expect(granted.onThisDay).not.toContain('2025-06-18 alt private last year');
+      expect(granted.hidden.last_date).not.toBeNull();
+      return { member, granted, stranger };
     },
   );
 });
