@@ -20,7 +20,9 @@
  * The brain identity and the writer registration are also read through typed
  * engine methods (`readPersistenceBrainId`, an unlocked `readLocalWriterRow`);
  * the cache answers those the same way as their SQL text. A locked read always
- * goes to the database.
+ * goes to the database. A replay of a committed request_id never reaches the
+ * locked recheck, so submitPageMutation prepares it once more without the cache
+ * before it returns the stored receipt.
  */
 import type { BrainEngine } from '../engine.ts';
 import type { LocalWriterRow } from '../engine-sql/persistence-state.ts';
