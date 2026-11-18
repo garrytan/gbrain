@@ -162,7 +162,7 @@ export async function listSingleFactMetadata(raw: EngineRawRead, opts: { sourceI
   return raw<SingleFactMetadataRow>(text, params);
 }
 
-/** planUnfencedFacts: the active unfenced rows (no fence row, no ontology dimension) of one source or every source, with whether the entity has a live page. */
+/** planUnfencedFacts: the active unfenced rows (no fence row, no ontology dimension) of one source or every source, with whether the entity has a live page, in byte order of source and entity (COLLATE "C", whatever the server locale), then id. */
 export async function listUnfencedFactRows(raw: EngineRawRead, opts: { sourceId?: string }): Promise<UnfencedFactRow[]> {
   const { text, params } = renderFragment(sqlFragment`SELECT id, source_id, entity_slug, fact, kind, visibility, notability,
             context, valid_from, valid_until, source, confidence,

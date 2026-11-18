@@ -17,7 +17,6 @@
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { OpenLoopUpsert } from '../../src/core/loops/loops-store.ts';
-import type { OpenLoopUpsertResult } from '../../src/core/engine-sql/open-loops.ts';
 import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
@@ -30,19 +29,28 @@ const T3 = '2026-03-09T10:00:00.000Z';
 const NOW_FIELDS = new Set(['closed_at', 'created_at', 'updated_at']);
 
 /**
- * Loop ids relative to the case's first insert. The Postgres arm's reset keeps sequences counting (harness.ts
- * resetPostgres), so a case names a loop as `id(n)`, the n-th id its own inserts took, and reads ids back as
- * `rel(id)`; on a fresh sequence both are the identity.
+ * Loop ids counted from the case's first loop (1, 2, ...). The Postgres arm empties its tables between
+ * cases without a sequence restart, so its raw ids go on from the case before; PGLite and Rust start at 1.
  */
-type Ids = { id: (n: number) => number; rel: (v: unknown) => number | null; first: OpenLoopUpsertResult };
-async function firstLoop(engine: BrainEngine, loop: OpenLoopUpsert): Promise<Ids> {
-  const first = await engine.upsertOpenLoop(loop);
+function loopIds(first: { id: number }) {
   const base = Number(first.id) - 1;
-  return { id: (n) => n + base, rel: (v) => (v === null || v === undefined ? null : Number(v) - base), first: { ...first, id: 1 } };
+  return {
+    /** The raw id of the case's n-th id. */
+    at: (n: number) => base + n,
+    /** A raw id as the case's n. */
+    rel: (id: unknown) => (id === null || id === undefined ? id : Number(id) - base),
+  };
 }
 
-/** A row with the fields `now()` fills mapped to whether they are set, the other times as ISO text, ids relative. */
-function observe(row: Record<string, unknown> | null, ids: Ids): Record<string, unknown> | null {
+type LoopIds = ReturnType<typeof loopIds>;
+
+/** An upsert result with its id counted from the case's first loop. */
+function result(ids: LoopIds, r: { id: number; created: boolean; applied: boolean }) {
+  return { ...r, id: ids.rel(r.id) };
+}
+
+/** A row with the fields `now()` fills mapped to whether they are set, the other times as ISO text, and the id counted from the case's first loop. */
+function observe(ids: LoopIds, row: Record<string, unknown> | null): Record<string, unknown> | null {
   if (!row) return null;
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(row)) {
@@ -55,11 +63,6 @@ function observe(row: Record<string, unknown> | null, ids: Ids): Record<string, 
   return out;
 }
 
-/** An upsert result with its id relative. */
-function result(r: OpenLoopUpsertResult, ids: Ids) {
-  return { ...r, id: ids.rel(r.id) };
-}
-
 function loop(over: Partial<OpenLoopUpsert> = {}): OpenLoopUpsert {
   return {
     sourceId: 'default', dedupKey: 'thread:a', loopType: 'unanswered_inbound', counterpartyEmail: 'a@example.com',
@@ -68,8 +71,8 @@ function loop(over: Partial<OpenLoopUpsert> = {}): OpenLoopUpsert {
   };
 }
 
-async function listAll(engine: BrainEngine, ids: Ids, opts: Parameters<BrainEngine['listOpenLoops']>[0] = {}) {
-  return (await engine.listOpenLoops(opts)).map(r => observe(r, ids));
+async function listAll(engine: BrainEngine, ids: LoopIds, opts: Parameters<BrainEngine['listOpenLoops']>[0] = {}) {
+  return (await engine.listOpenLoops(opts)).map(row => observe(ids, row));
 }
 
 describe('engine parity: open loops', () => {
@@ -77,20 +80,21 @@ describe('engine parity: open loops', () => {
     'upsertOpenLoop inserts, keeps a closed loop on equal activity, reopens on newer activity, and takes ids on every call',
     { methods: ['upsertOpenLoop', 'closeOpenLoop', 'listOpenLoops'] },
     async (engine) => {
-      const ids = await firstLoop(engine, loop({ counterpartySlug: 'people/alice-example', pageSlug: 'emails/a', factId: 7, dueAt: '2026-03-20T12:00:00+02:00', confidence: 0.3 }));
-      const results: unknown[] = [ids.first];
+      const first = await engine.upsertOpenLoop(loop({ counterpartySlug: 'people/alice-example', pageSlug: 'emails/a', factId: 7, dueAt: '2026-03-20T12:00:00+02:00', confidence: 0.3 }));
+      const ids = loopIds(first);
+      const results = [first];
       // Open row: opened_at keeps the earlier time, slug/page/due/fact keep the old value when the new one is null.
-      results.push(result(await engine.upsertOpenLoop(loop({ summary: 'second', openedAt: T2, lastActivityAt: T1, threadId: 't-other', detector: 'manual', loopType: 'commitment_owed_by_me' })), ids));
+      results.push(await engine.upsertOpenLoop(loop({ summary: 'second', openedAt: T2, lastActivityAt: T1, threadId: 't-other', detector: 'manual', loopType: 'commitment_owed_by_me' })));
       const afterOpenUpdate = await listAll(engine, ids);
-      const closed = observe(await engine.closeOpenLoop('default', ids.id(1), 'done', 'manual'), ids);
+      const closed = observe(ids, await engine.closeOpenLoop('default', ids.at(1), 'done', 'manual'));
       // Equal activity on a closed row: the guard keeps it closed.
-      results.push(result(await engine.upsertOpenLoop(loop({ summary: 'third' })), ids));
+      results.push(await engine.upsertOpenLoop(loop({ summary: 'third' })));
       const afterGuard = await listAll(engine, ids);
       // Newer activity reopens it and takes the incoming opened_at; a slug resets the counterparty source.
-      results.push(result(await engine.upsertOpenLoop(loop({ summary: 'fourth', openedAt: T3, lastActivityAt: T2, counterpartySlug: 'people/bob-example', counterpartySourceId: 'default', evidence: [{ quote: 'q', page_slug: 'p', message_id: 'm2' }] })), ids));
-      results.push(result(await engine.upsertOpenLoop(loop({ dedupKey: 'thread:b', counterpartyEmail: null, threadId: null, lastActivityAt: T1, openedAt: null })), ids));
+      results.push(await engine.upsertOpenLoop(loop({ summary: 'fourth', openedAt: T3, lastActivityAt: T2, counterpartySlug: 'people/bob-example', counterpartySourceId: 'default', evidence: [{ quote: 'q', page_slug: 'p', message_id: 'm2' }] })));
+      results.push(await engine.upsertOpenLoop(loop({ dedupKey: 'thread:b', counterpartyEmail: null, threadId: null, lastActivityAt: T1, openedAt: null })));
       const afterReopen = await listAll(engine, ids);
-      return { results, afterOpenUpdate, closed, afterGuard, afterReopen: afterReopen.map(r => r && { ...r, opened_at: r.dedup_key === 'thread:b' ? 'now' : r.opened_at }) };
+      return { results: results.map(r => result(ids, r)), afterOpenUpdate, closed, afterGuard, afterReopen: afterReopen.map(r => r && { ...r, opened_at: r.dedup_key === 'thread:b' ? 'now' : r.opened_at }) };
     },
   );
 
@@ -98,13 +102,13 @@ describe('engine parity: open loops', () => {
     'a mute holds a loop for the same counterparty email, an email change or a re-check mark lets it reopen',
     { methods: ['upsertOpenLoop', 'closeOpenLoop', 'listOpenLoops'] },
     async (engine) => {
-      const ids = await firstLoop(engine, loop());
-      await engine.closeOpenLoop(null, ids.id(1), 'dropped', 'muted');
-      const sameEmail = result(await engine.upsertOpenLoop(loop({ lastActivityAt: T2 })), ids);
-      const otherEmail = result(await engine.upsertOpenLoop(loop({ lastActivityAt: T2, counterpartyEmail: 'b@example.com' })), ids);
+      const ids = loopIds(await engine.upsertOpenLoop(loop()));
+      await engine.closeOpenLoop(null, ids.at(1), 'dropped', 'muted');
+      const sameEmail = result(ids, await engine.upsertOpenLoop(loop({ lastActivityAt: T2 })));
+      const otherEmail = result(ids, await engine.upsertOpenLoop(loop({ lastActivityAt: T2, counterpartyEmail: 'b@example.com' })));
       await engine.upsertOpenLoop(loop({ dedupKey: 'thread:r' }));
-      const rechecked = observe(await engine.closeOpenLoop('default', ids.id(4), 'stale', 'mute_recheck'), ids);
-      const recheck = result(await engine.upsertOpenLoop(loop({ dedupKey: 'thread:r' })), ids);
+      const rechecked = observe(ids, await engine.closeOpenLoop('default', ids.at(4), 'stale', 'mute_recheck'));
+      const recheck = result(ids, await engine.upsertOpenLoop(loop({ dedupKey: 'thread:r' })));
       return { sameEmail, otherEmail, rechecked, recheck, rows: await listAll(engine, ids) };
     },
   );
@@ -114,12 +118,12 @@ describe('engine parity: open loops', () => {
     { methods: ['upsertOpenLoop', 'closeOpenLoop', 'listOpenLoops'] },
     async (engine, backend) => {
       await createSource(engine, backend, 'work');
-      const loopIds = await firstLoop(engine, loop({ dedupKey: 'k1', counterpartySlug: 'people/alice-example', lastActivityAt: T2 }));
+      const loopId = loopIds(await engine.upsertOpenLoop(loop({ dedupKey: 'k1', counterpartySlug: 'people/alice-example', lastActivityAt: T2 })));
       await engine.upsertOpenLoop(loop({ dedupKey: 'k2', counterpartySlug: 'people/alice-example', counterpartySourceId: 'work', lastActivityAt: T2 }));
       await engine.upsertOpenLoop(loop({ dedupKey: 'k3', sourceId: 'work', counterpartyEmail: 'people/alice-example', loopType: 'decision_pending', lastActivityAt: T1 }));
       await engine.upsertOpenLoop(loop({ dedupKey: 'k4', sourceId: 'work', counterpartySlug: 'people/alice-example', lastActivityAt: T3 }));
-      await engine.closeOpenLoop(null, loopIds.id(2), 'done', 'manual');
-      const ids = async (opts: Parameters<BrainEngine['listOpenLoops']>[0]) => (await engine.listOpenLoops(opts)).map(r => loopIds.rel(r.id));
+      await engine.closeOpenLoop(null, loopId.at(2), 'done', 'manual');
+      const ids = async (opts: Parameters<BrainEngine['listOpenLoops']>[0]) => (await engine.listOpenLoops(opts)).map(r => loopId.rel(r.id));
       return {
         all: await ids({}),
         emptyList: await ids({ sourceIds: [] }),
@@ -132,8 +136,8 @@ describe('engine parity: open loops', () => {
         counterparty: await ids({ counterparty: 'people/alice-example' }),
         counterpartyInWork: await ids({ counterparty: 'people/alice-example', counterpartySourceId: 'work' }),
         counterpartyInDefault: await ids({ counterparty: 'people/alice-example', counterpartySourceId: 'default' }),
-        byId: await ids({ loopId: loopIds.id(3) }),
-        byIdOutOfScope: await ids({ loopId: loopIds.id(3), sourceIds: ['default'] }),
+        byId: await ids({ loopId: loopId.at(3) }),
+        byIdOutOfScope: await ids({ loopId: loopId.at(3), sourceIds: ['default'] }),
         limitZero: await ids({ limit: 0 }),
         limitTwo: await ids({ limit: 2 }),
       };
@@ -145,15 +149,15 @@ describe('engine parity: open loops', () => {
     { methods: ['upsertOpenLoop', 'closeOpenLoop'] },
     async (engine, backend) => {
       await createSource(engine, backend, 'work');
-      const ids = await firstLoop(engine, loop());
+      const ids = loopIds(await engine.upsertOpenLoop(loop()));
       const refused = async (run: () => Promise<unknown>) => { try { await run(); return false; } catch { return true; } };
       return {
-        otherSource: await engine.closeOpenLoop('work', ids.id(1), 'done', 'x'),
-        missing: await engine.closeOpenLoop(null, ids.id(99), 'done', 'x'),
-        badStatusNoRow: await refused(() => engine.closeOpenLoop(null, ids.id(99), 'bogus' as 'done', 'x')),
-        badStatus: await refused(() => engine.closeOpenLoop(null, ids.id(1), 'bogus' as 'done', 'x')),
-        closed: observe(await engine.closeOpenLoop(null, ids.id(1), 'dropped', 'x'), ids),
-        again: await engine.closeOpenLoop(null, ids.id(1), 'done', 'x'),
+        otherSource: await engine.closeOpenLoop('work', ids.at(1), 'done', 'x'),
+        missing: await engine.closeOpenLoop(null, ids.at(99), 'done', 'x'),
+        badStatusNoRow: await refused(() => engine.closeOpenLoop(null, ids.at(99), 'bogus' as 'done', 'x')),
+        badStatus: await refused(() => engine.closeOpenLoop(null, ids.at(1), 'bogus' as 'done', 'x')),
+        closed: observe(ids, await engine.closeOpenLoop(null, ids.at(1), 'dropped', 'x')),
+        again: await engine.closeOpenLoop(null, ids.at(1), 'done', 'x'),
         badType: await refused(() => engine.upsertOpenLoop(loop({ dedupKey: 'z', loopType: 'nope' as 'decision_pending' }))),
         badDetector: await refused(() => engine.upsertOpenLoop(loop({ dedupKey: 'z', detector: 'nope' as 'manual' }))),
         unknownSource: await refused(() => engine.upsertOpenLoop(loop({ dedupKey: 'z', sourceId: 'missing' }))),

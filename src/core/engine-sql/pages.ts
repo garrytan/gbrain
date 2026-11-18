@@ -995,9 +995,9 @@ export async function findByTitleFuzzy(
     //
     // Tie-breaker: sort by slug after similarity so re-runs return the
     // same winner when multiple pages score equally (prevents churn
-    // in put_page auto-link reconciliation). Byte order (COLLATE "C"), as
-    // PGLite and the Rust store compare: under a linguistic collation such
-    // as en_US.utf8 punctuation is ignored, so `fz/alt` sorts before `fz/a-tie`.
+    // in put_page auto-link reconciliation). The slug sorts in byte order
+    // (COLLATE "C") so every engine and every server locale picks the same
+    // winner; a locale collation ignores '-' and picks another page.
     //
     // `sourceId` + `deleted_at IS NULL` mirror the filters `tryFuzzyMatch`
     // in `src/core/entities/resolve.ts` got via #1436 (v0.41.13.0). Without
