@@ -85,6 +85,7 @@ import { commitFactFenceFile, gitPathState } from './fence-write.ts';
 import { isOwnedClone } from '../url-clone.ts';
 import { parseSourceConfig } from '../sources-load.ts';
 import { isSourceDbOnlySlug } from '../persistence/source-storage.ts';
+import { sourceConfigText } from '../source-rows.ts';
 
 export interface UnfencedFactRow {
   id: string;
@@ -271,8 +272,8 @@ async function databaseOnlyPlacement(engine: BrainEngine, sourceId: string, slug
   const [page] = await engine.executeRaw<{ source_path: string | null; source_uri: string | null }>(
     'SELECT source_path, source_uri FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, slug]);
   if (!page || page.source_path?.trim() || page.source_uri?.trim()) return { kind: 'missing' };
-  const [source] = await engine.executeRaw<{ local_path: string | null; kind: string | null }>(
-    "SELECT local_path, config->>'kind' AS kind FROM sources WHERE id=$1", [sourceId]);
+  const row = await engine.readSourceRow(sourceId);
+  const source = row ? { local_path: row.local_path, kind: sourceConfigText(row.config, 'kind') } : undefined;
   try {
     const target = await resolveFactWriteTarget(engine, sourceId, source!, { fileBacked: false, remote: false });
     return target.kind === 'publish' && !target.binding ? { kind: 'fence', reason: target.databaseOnlyReason ?? 'no_repo_configured' } : { kind: 'missing' };
@@ -619,7 +620,7 @@ async function fenceDatabaseOnlyPage(engine: BrainEngine, sourceId: string, enti
     if (fence.assignments.length === 0) return;
     assertPersistenceAccepting(engine);
     if (!currentVerifiedLocalWriter()) await registerLocalWriter(engine, 'cli');
-    const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation FROM sources WHERE id=$1', [sourceId]);
+    const source = await engine.readSourceIncarnation(sourceId);
     const writer = await submissionAuthority({ engine, remote: false, sourceId } as OperationContext, 'submit_job', sourceId, source!.incarnation, 'maintenance');
     if (reason) writer.databaseOnlyReason = reason;
     await submitFactFenceAdoption(engine, { writer, binding: null }, entitySlug, { content: fence.body, expectedRevision: snapshot.revision,

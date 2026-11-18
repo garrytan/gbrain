@@ -135,11 +135,7 @@ export async function ownsSourceSyncAnchor(
     return await ownsGlobalSyncAnchor(engine, sourceId, dir);
   }
   try {
-    const rows = await engine.executeRaw<{ local_path: string | null }>(
-      `SELECT local_path FROM sources WHERE id = $1`,
-      [sourceId],
-    );
-    const configured = rows[0]?.local_path ?? null;
+    const configured = (await engine.readSourceRow(sourceId))?.local_path ?? null;
     if (configured === null) return { owns: true, configured: null };
     if (!isHostAbsolutePath(configured)) return { owns: false, configured };
     return { owns: sameRepoDir(configured, dir), configured };
@@ -212,11 +208,7 @@ export async function sourceCommitAnchorAllowed(
       else relativeGlobal = globalPath;
     }
     if (configured === null) {
-      const rows = await engine.executeRaw<{ local_path: string | null }>(
-        `SELECT local_path FROM sources WHERE id = $1`,
-        [sourceId],
-      );
-      configured = rows[0]?.local_path ?? relativeGlobal;
+      configured = (await engine.readSourceRow(sourceId))?.local_path ?? relativeGlobal;
     }
     if (configured === null) return { owns: true, configured: null };
     if (!isHostAbsolutePath(configured)) return { owns: false, configured };
@@ -351,11 +343,7 @@ export async function readChunkerVersion(
   sourceId: string | undefined,
 ): Promise<string | null> {
   if (!sourceId) return null;
-  const rows = await engine.executeRaw<{ chunker_version: string | null }>(
-    `SELECT chunker_version FROM sources WHERE id = $1`,
-    [sourceId],
-  );
-  return rows[0]?.chunker_version ?? null;
+  return engine.readSourceChunkerVersion(sourceId);
 }
 
 export async function writeChunkerVersion(

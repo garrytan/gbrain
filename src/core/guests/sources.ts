@@ -84,10 +84,10 @@ export async function initGuestSource(engine: BrainEngine, sourceId: string, wri
   const managed = await managedPersistenceEnabled(engine);
   if (managed && !(await planGuestSource(engine, sourceId, [])).exists) await addSource(engine, { id: sourceId, federated: true });
   return engine.transaction(async tx => {
-    const [source] = await tx.executeRaw<{ id: string; guest: boolean }>(`SELECT s.id, (COALESCE(s.config->>'guest' = 'true', false)
-      OR EXISTS (SELECT 1 FROM guest_sources g WHERE g.source_id = s.id)) AS guest FROM sources s WHERE s.id = $1 FOR UPDATE OF s`, [sourceId]);
+    // Lock the row first, then ask whether either guest record marks it (guestSourceSql through listGuestSourceIds).
+    const source = await tx.lockSourceRow(sourceId);
     if (!source) await addSource(tx, { id: sourceId, federated: true });
-    else if (!source.guest) {
+    else if ((await tx.listGuestSourceIds([sourceId])).length === 0) {
       const [held] = await tx.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE source_id = $1', [sourceId]);
       if (Number(held?.n ?? 0) > 0) throw new GuestSourceHoldsPages(sourceId, Number(held!.n));
     }

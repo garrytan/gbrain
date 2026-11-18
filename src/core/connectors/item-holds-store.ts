@@ -36,10 +36,11 @@ type SourceExec = Exec & Pick<BrainEngine, 'listSourceRecords' | 'readSourceInca
 
 export interface ConnectorSourceRow { id: string; incarnation: string; local_path: string | null; config: Record<string, unknown> }
 
-/** Live connector-kind sources with their incarnation, in id order. */
-async function connectorSourceRows(engine: SourceExec): Promise<ConnectorSourceRow[]> {
+/** Live connector-kind sources with their incarnation, in id order; only the named ones when `sourceIds` is given. */
+export async function connectorSourceRows(engine: SourceExec, sourceIds?: readonly string[]): Promise<ConnectorSourceRow[]> {
   const out: ConnectorSourceRow[] = [];
   for (const source of sortSourcesById(await sourceRecordsRawConfig(engine))) {
+    if (sourceIds && !sourceIds.includes(source.id)) continue;
     if (!isConnectorSourceKind(sourceConfigText(source.config, 'kind'))) continue;
     const row = await engine.readSourceIncarnation(source.id);
     if (row) out.push({ id: source.id, incarnation: row.incarnation, local_path: source.local_path, config: source.config as Record<string, unknown> });

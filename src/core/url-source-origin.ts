@@ -213,7 +213,7 @@ export async function recordSourceOrigin(engine: BrainEngine, ids: string[], opt
   for (const id of [...new Set(ids)]) {
     const lockDown: { state: 'none' | 'written' | 'done' } = { state: 'none' };
     try {
-      const [row] = await engine.executeRaw<SourceRowLike>('SELECT id, local_path, config, archived FROM sources WHERE id=$1', [id]);
+      const row = (await engine.readSourceRow(id)) ?? undefined;
       const early = check(row, id, opts.origin);
       const relock = remote && early?.status === 'already_recorded' && originState(row!) === 'remote' && existsSync(row!.local_path!) && lockDownGaps(row!.local_path!).length > 0;
       if (early && !relock) { results.push(early); continue; }
@@ -226,7 +226,7 @@ export async function recordSourceOrigin(engine: BrainEngine, ids: string[], opt
         continue;
       }
       const write = async (tx: BrainEngine): Promise<RecordOriginResult> => {
-        const [locked] = await tx.executeRaw<SourceRowLike>('SELECT id, local_path, config, archived FROM sources WHERE id=$1 FOR UPDATE', [id]);
+        const locked = (await tx.lockSourceRow(id)) ?? undefined;
         const config = locked ? parseSourceConfig(locked.config) : {};
         const again = check(locked, id, opts.origin);
         if ((again && !(relock && again.status === 'already_recorded')) || (!again && relock) || locked!.local_path !== row!.local_path || config.remote_url !== parseSourceConfig(row!.config).remote_url)
