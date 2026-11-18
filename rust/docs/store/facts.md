@@ -55,10 +55,25 @@ their own page (`page_hidden`; see [salience.md](salience.md#private-pages-exclu
 | Derived origin: an atom whose `source_slug` page is explicitly private; a derived page with an input whose `visibility` (atom default private) is not world, or whose input origin is explicitly private; a `life-chronicle` event whose `event.depth` is missing, has no page, or names a private page (fail closed). | `derivedOriginPrivateSql`, 733 (the `gbrain_concept_inputs_private` form from `CONCEPT_INPUTS_PRIVATE_SINCE` = 311, `src/core/schema-migrations/v311-concept-inputs-private.ts:23`); `chronicleOriginNotVisibleSql`, 759 |
 | Declared lineage: any `derived_from` slug (string or array, `.md` stripped, nulls skipped) whose page is explicitly private. | `declaredLineagePrivateSql`, 687 |
 
-The member sends `{ honorAliases, entityPrivacy }` only when the policy text PGLite would render
+The member sends `{ honorAliases, entityPrivacy }` when the policy text PGLite would render
 now equals its no-caller rendering (`withoutCallerAccess`, 443), the concept-input branch
-compared as one token. A caller whose member pages, grants or lineage design widen the text is
-refused with `engine_capability_missing` (`src/core/rust-engine/store-members/private-provenance.ts`).
+compared as one token. The store knows two fact forms: `privateProvenanceFilterUnderPolicy` (the
+fact lists, the relevance pool and `listSimilarActiveFacts`) and `privateFactFilterForCaller` (what
+`privateFactFilterForReader` renders for a caller that is not the owner: `countWorldFacts` and the
+ontology reads). With no caller the two are the same policy in a different order.
+
+Every fact family opts in with `callerReaders`: a caller whose text equals the rendering for a
+record of only its reader identity and private-readable grant is served, and the member sends
+`identity` and `privateReadableSources`. The entity gate (`page_hidden` on the entity page) reads
+both. The provenance gate reads neither, with one exception in the first form: its member-page CASE
+judges the caller's own member page (`memory/members/<member>`, the actor's member or the first
+`member:` principal) with the identity. The member then sends that slug as `memberPage`, and
+`hidden_by_private_provenance` reads the identity on that page only (`provenance_identity`). The
+second form has no CASE and sends no `memberPage`. Any other caller (folder rules, audiences,
+lineage, labelled-only members) is refused with
+`engine_capability_missing` (`src/core/rust-engine/store-members/private-provenance.ts`). The store
+has no keyed-slug entity rule (an `entity_slug` with no `/`, judged at a name-key page directory by
+`privateEntityFilterForCaller`).
 
 A page read under `excludePrivate` sends the page policy (`storePagePolicy`). A page family that opts in with
 `callerReaders` also sends the caller's reader identity and private-readable grant, when the caller's text equals
@@ -66,7 +81,7 @@ the rendering for a record of only those two fields. `page_hidden` then lets a p
 the identity's principals pass the member-access part (`access_readers`, the twin of `gbrain_access_readers` in
 migration v282: trimmed of edge spaces and ASCII lower-cased, a bare id read as `member:<id>`, a malformed value read
 as `!nobody`), and a page of a granted source that is not a pinned question pass the privacy part
-(`orPrivateReadableSource`). The fact policy sends an empty identity and no granted source.
+(`orPrivateReadableSource`). The fact policy sends them as described above.
 
 Aliases and renames: each origin slug of the origin rule (atom `source_slug`, concept input
 `source_slug` under the input's source, chronicle `event.depth`, each `derived_from` slug) also
@@ -194,7 +209,7 @@ Each member is one store call (a scan of the fact rows, no SQL). The TypeScript 
 | `findBulkFactDays` | the bulk days of unarchived sources under a `rule`, with top sources and self-dated claims | served; refused when a count threshold is not an integer or the share is not finite |
 | `maxFenceRowNum` | the largest `row_num` of a page coordinate, 0 for none | served |
 | `listStoredFenceFactRows` | the numbered rows of a page coordinate, oldest id first | served |
-| `countWorldFacts` | the entity card's unexpired fact count under its visibility and privacy | served; a trust floor (`eligibility.floor`) and `suppressFlagged` apply `trust::TrustPolicy` to the fact's stamped tier and its write-gate receipts; refused for `excludePrivate` when the caller's rendering is not the store's policy. Deleted and quarantined pages are always hidden, and `needs_rederive` is treated as empty, as in `takes.rs` |
+| `countWorldFacts` | the entity card's unexpired fact count under its visibility and privacy | served; a trust floor (`eligibility.floor`) and `suppressFlagged` apply `trust::TrustPolicy` to the fact's stamped tier and its write-gate receipts; `excludePrivate` serves a caller with a reader identity and a private-readable grant (`callerReaders`) and refuses any other caller whose rendering is not the store's policy. Deleted and quarantined pages are always hidden, and `needs_rederive` is treated as empty, as in `takes.rs` |
 
 ## Group 5: purge, withdrawal, relink and fence repair (`facts/purge.rs`)
 
@@ -211,7 +226,7 @@ plan row or leftover. An unbacked entity is an entity slug with no `/` and no li
 | `planFactPurgeIds` | `[{ id }]` of one visibility with the fingerprint, in id order: the subject's rows (all with `*`) and every unbacked-entity row. |
 | `listRelinkCandidateRows` | Active rows of the source with no entity and no fence key (`row_num`, `source_markdown_slug`) after `afterId`, from `since` when set, in id order, at most `limit`. |
 | `countRelinkCandidates` | Active no-entity rows of the source that hold a fence key. |
-| `listSimilarActiveFacts` | `{ anchor, rows }`: the anchor's `has_embedding` and entity (null for an unknown id), then, when it has a vector, the other active rows of its entity and visibility with the same `embedding_model` and cosine at least `minCosine`, nearest first then by id, at most `limit`. `remote` keeps world rows. `excludePrivate` takes the store's privacy policy and refuses a caller whose policy widens it. A NaN similarity goes out as the string `NaN`; vectors of different lengths are `invalid_argument`. |
+| `listSimilarActiveFacts` | `{ anchor, rows }`: the anchor's `has_embedding` and entity (null for an unknown id), then, when it has a vector, the other active rows of its entity and visibility with the same `embedding_model` and cosine at least `minCosine`, nearest first then by id, at most `limit`. `remote` keeps world rows. `excludePrivate` takes the store's privacy policy, serves a caller with a reader identity and a private-readable grant (`callerReaders`, with the member-page CASE) and refuses any other caller whose policy widens it. A NaN similarity goes out as the string `NaN`; vectors of different lengths are `invalid_argument`. |
 | `findActiveSingleFact` | The lowest-id active row with the same entity (null matches null), visibility, fingerprint and speaker slot (a null speaker on either side matches) on `pageSlug`, or, with a null `pageSlug`, on no owned memory page; an empty `pageSlug` matches nothing. The row has every column of `SELECT *`. Refuses with `remoteFloor`. |
 | `listUnfencedFactRows` | Active rows with no fence key and no `dimension`, of one source or all, by source, entity (bytewise, no entity last) and id, with `page_exists` (a live page of the entity). |
 | `listHeldFenceFactRows` | A page's active fence rows by `row_num` then id, less rows whose `source` starts with `cli:extract-conversation-facts`. |

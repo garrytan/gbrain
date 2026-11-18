@@ -4,10 +4,12 @@
  * PGLite renders the policy as SQL for the caller in context (src/core/search/private-visibility.ts). The store
  * implements the rendering with no caller record (the empty identity, no satisfied folder rule, no lineage read), less
  * its two process settings, which travel as flags. A member renders its own PGLite fragment in the current context and
- * serves the read only when that text equals the no-caller text. A fact family that opts in with `callerReaders` also
+ * serves the read only when that text equals the no-caller text of one of two forms: privateProvenanceFilterUnderPolicy
+ * and privateFactFilterForCaller (what privateFactFilterForReader renders for a non-owner; with no caller it is the
+ * same policy in another order). A fact family that opts in with `callerReaders` also
  * serves a fresh record of only a reader identity and a private-readable grant: the entity gate judges by both, and the
  * provenance page by the identity only on the caller's own member page (`memberPage`, the member-page case of
- * privateProvenanceFilterUnderPolicy). Any other caller (a folder rule, an audience, a lineage or owner read, a
+ * privateProvenanceFilterUnderPolicy; the other form has none). Any other caller (a folder rule, an audience, a lineage or owner read, a
  * labelled-only grant, a relaxed remote read) refuses with `engine_capability_missing`.
  *
  * A page read under `excludePrivate` (pageReadFilter, src/core/search/read-policy-sql.ts) adds the page policy
