@@ -40,7 +40,7 @@ test/engine-parity/private-page-reads.test.ts	4	0
 test/engine-parity/raw-sql.test.ts	0	4
 test/engine-parity/retrieval-coverage.test.ts	10	1
 test/engine-parity/search-reads.test.ts	12	2
-test/engine-parity/search.test.ts	15	2
+test/engine-parity/search.test.ts	16	2
 test/engine-parity/segmented-body.test.ts	15	0
 test/engine-parity/source-resolver-reads.test.ts	11	0
 test/engine-parity/stats-vectors.test.ts	2	0
@@ -49,7 +49,7 @@ test/engine-parity/sync-aliases.test.ts	9	0
 test/engine-parity/takes.test.ts	22	1
 test/engine-parity/telemetry.test.ts	8	0
 test/engine-parity/timeline-reads.test.ts	4	0
-test/engine-parity/timeline.test.ts	16	1
+test/engine-parity/timeline.test.ts	18	1
 test/engine-parity/transaction-settings.test.ts	5	1
 test/engine-parity/traversal-cache.test.ts	0	2
 test/engine-parity/trust-fence.test.ts	4	0

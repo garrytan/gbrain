@@ -772,3 +772,117 @@ fn update_timeline_details_rewrites_a_detail_only_while_it_is_the_preimage() {
     assert_eq!(err.code, CONSTRAINT_VIOLATION);
     assert!(details("people/refresh").contains(&("refresh me".into(), "after".into())));
 }
+
+/// `excludePrivate` with the policy PGLite renders for no caller record.
+fn policy() -> Value {
+    json!({"honorAliases": true, "entityPrivacy": true})
+}
+
+#[test]
+fn exclude_private_drops_rows_whose_depth_or_event_page_the_policy_hides() {
+    let mut b = Brain::new("tq-private");
+    b.source("alt");
+    let open = b.page("life/diary/open", "default", json!({}));
+    let private = b.page(
+        "life/diary/private",
+        "default",
+        json!({"frontmatter": {"visibility": "private"}}),
+    );
+    let alias = b.page(
+        "life/diary/alias",
+        "default",
+        json!({"frontmatter": {"access": "restricted"}}),
+    );
+    let e_open = b.event(
+        "life/events/open",
+        "default",
+        "2026-07-01T08:00:00Z",
+        json!({"kind": "call", "who": ["people/alice-example"]}),
+    );
+    let e_readers = b.page(
+        "life/events/readers",
+        "default",
+        json!({"type": "event", "frontmatter": {"readable_by": ["alice-example"],
+               "event": {"kind": "call", "who": ["people/alice-example"]}}}),
+    );
+    // An event page in another source: the read scoped to `default` nulls out its fields, but the
+    // privacy test still judges it by id.
+    let e_foreign = b.page(
+        "life/events/foreign-private",
+        "alt",
+        json!({"type": "event", "frontmatter": {"visibility": "private", "event": {"kind": "call"}}}),
+    );
+    b.project(open, e_open, "2026-07-01", "open depth, open event");
+    b.project(
+        open,
+        e_readers,
+        "2026-07-01",
+        "open depth, event with readers",
+    );
+    b.project(
+        open,
+        e_foreign,
+        "2026-07-01",
+        "open depth, foreign private event",
+    );
+    b.project(private, e_open, "2026-07-02", "private depth, open event");
+    b.entry("life/diary/alias", "2026-07-01", "alias depth plain");
+    b.entry("life/diary/open", "2025-07-01", "open last year");
+    b.entry("life/diary/private", "2025-07-01", "private last year");
+    let _ = alias;
+
+    let day = |opts: Value| {
+        b.store
+            .get_timeline_for_date("2026-07-01", &chronicle(opts))
+            .unwrap()
+    };
+    assert_eq!(day(json!({})).len(), 4);
+    assert_eq!(
+        field(&day(json!({"excludePrivate": policy()})), "summary"),
+        vec![json!("open depth, open event")]
+    );
+    let scoped = day(json!({"sourceId": "default"}));
+    assert_eq!(scoped.len(), 4);
+    assert_eq!(
+        field(
+            &day(json!({"sourceId": "default", "excludePrivate": policy()})),
+            "summary"
+        ),
+        vec![json!("open depth, open event")]
+    );
+    // The policy without the privacy part judges readers only: the readers event still hides. The
+    // foreign event has no effective date, so it orders at midnight.
+    let readers_only = json!({"honorAliases": true, "entityPrivacy": false});
+    assert_eq!(
+        field(&day(json!({"excludePrivate": readers_only})), "summary"),
+        vec![
+            json!("alias depth plain"),
+            json!("open depth, foreign private event"),
+            json!("open depth, open event"),
+        ]
+    );
+    let since: ChronicleOptions = chronicle(json!({"excludePrivate": policy()}));
+    assert_eq!(
+        field(&b.store.get_since("2026-07-01", &since).unwrap(), "summary"),
+        vec![json!("open depth, open event")]
+    );
+    let on_this_day: OnThisDayOptions =
+        serde_json::from_value(json!({"date": "2026-07-01", "excludePrivate": policy()})).unwrap();
+    assert_eq!(
+        field(&b.store.get_on_this_day(&on_this_day).unwrap(), "summary"),
+        vec![json!("open last year")]
+    );
+    let seen = |opts: Value| {
+        let options: LastSeenOptions = serde_json::from_value(opts).unwrap();
+        b.store
+            .get_last_seen("people/alice-example", &options)
+            .unwrap()
+    };
+    assert_eq!(
+        seen(json!({"asof": "2026-07-05"}))["last_date"],
+        json!("2026-07-02")
+    );
+    let kept = seen(json!({"asof": "2026-07-05", "excludePrivate": policy()}));
+    assert_eq!(kept["last_date"], json!("2026-07-01"));
+    assert_eq!(kept["last_event_slug"], json!("life/events/open"));
+}
