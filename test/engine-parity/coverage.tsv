@@ -6,12 +6,15 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 481/481
+# covered: 502/502
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
 # search_reads: 9/9
 # link_reads: 10/10
+# link_temporal: 12/12
+# search_vector: 4/4
+# retrieval_coverage: 5/5
 # chunks: 36/36
 # extraction: 7/7
 # links: 23/23
@@ -62,17 +65,17 @@ transaction	lifecycle	yes	12	no	yes	yes	refuses:transactions
 transactionDirect	lifecycle	yes	1	no	yes	yes	refuses:transactions
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	49	yes	yes	yes	serves
-readPageSnapshot	pages	yes	10	no	yes	yes	serves
+getPage	pages	yes	52	yes	yes	yes	serves
+readPageSnapshot	pages	yes	16	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	192	yes	yes	yes	serves
+putPage	pages	yes	213	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	6	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	71	yes	yes	yes	serves
+softDeletePage	pages	yes	78	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -124,6 +127,27 @@ countInboundLinks	link_reads	yes	1	no	yes	yes	serves
 listLinkEndpointPages	link_reads	yes	1	no	yes	yes	serves
 listPagesTitledIn	link_reads	yes	1	no	yes	yes	serves
 wordLexemes	link_reads	yes	1	no	yes	yes	serves
+readLinkRelationshipEvidence	link_temporal	yes	2	no	yes	yes	serves
+writeLinkRelationshipState	link_temporal	yes	2	no	yes	yes	serves
+linkRelationshipKeysForPages	link_temporal	yes	1	no	yes	yes	serves
+staleLinkRelationshipKeys	link_temporal	yes	2	no	yes	yes	serves
+linkRelationshipKeysForOrigin	link_temporal	yes	2	no	yes	yes	serves
+applyLinkTemporalRows	link_temporal	yes	1	no	yes	yes	serves
+writeManualLinkTransitions	link_temporal	yes	1	no	yes	yes	serves
+removeManualLinkTransitions	link_temporal	yes	1	no	yes	yes	serves
+listRelationshipNoteRows	link_temporal	yes	7	no	yes	yes	serves
+edgeValidityCounts	link_temporal	yes	1	no	yes	yes	serves
+listPageStatusByRef	link_temporal	yes	1	no	yes	yes	serves
+listRecordMetadataRows	link_temporal	yes	1	no	yes	yes	serves
+countSearchVectorRows	search_vector	yes	1	no	yes	yes	serves
+replaceSearchVectorTriggerFunction	search_vector	yes	1	no	yes	yes	serves
+backfillSearchVectors	search_vector	yes	1	no	yes	yes	serves
+ensureFactsKeywordIndex	search_vector	yes	1	no	yes	yes	serves
+countPendingProjectionPages	retrieval_coverage	yes	6	no	yes	yes	serves
+countEmbeddingHeldPages	retrieval_coverage	yes	1	no	yes	yes	serves
+projectionRebuildProgress	retrieval_coverage	yes	1	no	yes	yes	serves
+readProjectionReadinessGeneration	retrieval_coverage	yes	1	no	yes	yes	serves
+readProjectionReadiness	retrieval_coverage	yes	2	no	yes	yes	serves
 readSourceChunkerVersion	chunks	yes	2	no	yes	yes	serves
 findCodeDefinitions	chunks	yes	1	no	yes	yes	serves
 listSymbolTypesForName	chunks	yes	1	no	yes	yes	serves
@@ -139,7 +163,7 @@ deleteChunksForPages	chunks	yes	1	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	1	no	yes	yes	serves
 upsertChunks	chunks	yes	20	yes	yes	yes	serves
-sealChunks	chunks	yes	19	no	yes	yes	serves
+sealChunks	chunks	yes	27	no	yes	yes	serves
 getChunks	chunks	yes	23	yes	yes	yes	serves
 getChunkPage	chunks	yes	3	no	yes	yes	serves
 getChunkWindows	chunks	yes	1	no	yes	yes	serves
@@ -167,13 +191,13 @@ markPagesAttendanceBlocked	extraction	yes	2	no	yes	yes	serves
 countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
-addLink	links	yes	40	yes	yes	yes	serves
-addLinksBatch	links	yes	6	yes	yes	yes	serves
-replaceDerivedLinks	links	yes	1	no	yes	yes	serves
+addLink	links	yes	43	yes	yes	yes	serves
+addLinksBatch	links	yes	7	yes	yes	yes	serves
+replaceDerivedLinks	links	yes	7	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
-removeLink	links	yes	1	no	yes	yes	serves
+removeLink	links	yes	2	no	yes	yes	serves
 removeLinksByPagesAndSource	links	yes	1	yes	yes	yes	serves
-getLinks	links	yes	9	yes	yes	yes	serves
+getLinks	links	yes	10	yes	yes	yes	serves
 getBacklinks	links	yes	3	yes	yes	yes	serves
 listLinkSources	links	yes	1	yes	yes	yes	serves
 findByTitleFuzzy	links	yes	2	no	yes	yes	serves
@@ -291,9 +315,9 @@ replaceDerivedAliases	sync_aliases	yes	5	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
-getConfig	config	yes	5	no	yes	yes	serves
-setConfig	config	yes	14	no	yes	yes	serves
-unsetConfig	config	yes	2	no	yes	yes	serves
+getConfig	config	yes	7	no	yes	yes	serves
+setConfig	config	yes	17	no	yes	yes	serves
+unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
 getConfigValues	config	yes	3	no	yes	yes	serves
@@ -402,7 +426,7 @@ listExactIdentityCandidates	cli_reads_ops	yes	3	no	yes	yes	serves
 rankEntities	cli_reads_ops	yes	3	no	yes	yes	serves
 listExtractionPendingPages	cli_reads_ops	yes	2	no	yes	yes	serves
 listUnattributedFacts	cli_reads_ops	yes	2	no	yes	yes	serves
-listWantedPages	cli_reads_ops	yes	5	no	yes	yes	serves
+listWantedPages	cli_reads_ops	yes	6	no	yes	yes	serves
 listConversationFactRows	facts_doctor	yes	1	no	yes	yes	serves
 countRedactedFacts	facts_doctor	yes	1	no	yes	yes	serves
 listOutsideContentFenceCounts	facts_doctor	yes	1	no	yes	yes	serves

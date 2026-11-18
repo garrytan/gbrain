@@ -113,7 +113,8 @@ write transaction is kept for the rest of it, as Postgres `now()` is. The trigge
 jobs on this engine. The other `reason` values (`segmented_projecting`, `rebuild_failed`,
 `chunk_replacement_continuing`) are written only by raw SQL, which this engine refuses, so every job
 here has reason `canonical_change`; the reads still apply every reason filter. A store written before
-the queue existed has no job for a page it left unsealed.
+the queue existed has no job for a page it left unsealed, and nothing backfills one: no released Rust
+brain predates the queue, so no such store exists outside development.
 
 ## TypeScript members with no stored state
 

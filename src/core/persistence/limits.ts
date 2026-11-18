@@ -20,8 +20,8 @@ export const RECEIPT_TARGET_KEY = 'persistence.housekeeping.receipt_target_bytes
 export const DEFAULT_RECEIPT_TARGET_BYTES = 8 * 1024 ** 3;
 export const HOUSEKEEPING_FLOOR_DAYS = 7;
 export async function readReceiptTargetBytes(engine:Pick<BrainEngine,'getConfigValues'>):Promise<number> {
-  const [row]=await engine.getConfigValues([RECEIPT_TARGET_KEY]);
-  return row ? parseJournalConfigValue(RECEIPT_TARGET_KEY,row.value) : DEFAULT_RECEIPT_TARGET_BYTES;
+  const value=await readConfigValue(engine,RECEIPT_TARGET_KEY);
+  return value!==undefined ? parseJournalConfigValue(RECEIPT_TARGET_KEY,value) : DEFAULT_RECEIPT_TARGET_BYTES;
 }
 /**
  * The reserved bytes the receipt target counts: terminal receipts not yet compacted that no recovery holds (the rows of the
@@ -81,8 +81,8 @@ export async function readJournalLimits(engine:Pick<BrainEngine,'readJournalLimi
   return limits;
 }
 export async function readReceiptRetentionDays(engine:Pick<BrainEngine,'getConfigValues'>):Promise<number> {
-  const [row]=await engine.getConfigValues([RECEIPT_RETENTION_KEY]);
-  return row ? parseJournalConfigValue(RECEIPT_RETENTION_KEY,row.value) : DEFAULT_RECEIPT_RETENTION_DAYS;
+  const value=await readConfigValue(engine,RECEIPT_RETENTION_KEY);
+  return value!==undefined ? parseJournalConfigValue(RECEIPT_RETENTION_KEY,value) : DEFAULT_RECEIPT_RETENTION_DAYS;
 }
 export type CapacityResource = 'lifetime_ids' | 'terminal_bytes';
 /** The cap that covers one more year: ids at the id rate; bytes at the net rate plus the retention window held at the gross rate. */

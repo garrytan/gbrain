@@ -39,12 +39,10 @@ Code: `rust/crates/gbrain-store/src/link_queries.rs`, the napi methods in
 
 ### Refusals (`engine_capability_missing`)
 
-- Read policy the store does not record: `minTrust`, `suppressFlagged` and any temporal option (`temporal`, `wanted`,
-  `lineGrammar`, `temporalBody`). `requireSafeChunks` and `takesHoldersAllowList` are accepted where `pageReadFilter`
+- Read policy the store does not record: `minTrust`, `suppressFlagged` and the temporal read option (`temporal`).
+  `requireSafeChunks` and `takesHoldersAllowList` are accepted where `pageReadFilter`
   does not read them: they only turn the live filter on in `relationalFanout`, and they are ignored by
   `getBacklinkCounts`, `getAdjacencyBoosts` and `relationalChainHop`, as in the SQL engines.
-- A derived-link origin with a caller-read `snapshot`. `semanticsPrimed` is ignored: the store has no relation
-  semantics to prime.
 - A page id that is not a 32-bit integer (`getBacklinkCounts`, `getAdjacencyBoosts`, `relationalChainHop`): Postgres
   casts the ids into `int[]`. A non-safe-integer id in `getAdjacencyBoosts` throws the same `TypeError` the SQL engines
   throw, before any option is read.
@@ -151,9 +149,9 @@ alone unless the statement also applies `pageReadFilter(.., live)`.
 
 ## Known differences
 
-- Link temporal state is not modelled: `primeRelationSemantics`, the belief point, `applyTemporalEvidence` and
-  `effectiveRanges` have no store counterpart, so every temporal option refuses (follow-up
-  `link-temporal-state-not-modeled`).
+- Link temporal state is served by the link_temporal family ([link_temporal.md](link_temporal.md)): a derived-link
+  publication takes `snapshot`, `lineGrammar`, `wanted` and `temporalBody`, then runs the temporal and wanted steps as
+  separate store calls after the link write (not one transaction). `semanticsPrimed` is ignored.
 - `lockPageKeys` is not needed: the store's write transaction is serial.
 - `PageSourceMissingError` and the `REVISION_BACKFILL_PENDING` path do not occur: every store page has a source and a
   revision.
