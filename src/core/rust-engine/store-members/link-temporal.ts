@@ -14,7 +14,7 @@
  * Export only BrainEngine members from this file (index.ts spreads the module into STORE_MEMBERS); helpers stay
  * unexported.
  */
-import type { CoverageRelevance, ProjectionRebuildProgress, ScopedCount } from '../../search/retrieval-coverage.ts';
+import { COVERAGE_COUNT_CAP, type CoverageRelevance, type ProjectionRebuildProgress, type ScopedCount } from '../../search/retrieval-coverage.ts';
 import type { ProjectionReadinessRow, ProjectionReadinessScope } from '../../search/projection-readiness.ts';
 import type * as LinkTemporalSql from '../../engine-sql/link-temporal.ts';
 import { DERIVED_TRANSITION_PRODUCERS } from '../../engine-sql/link-temporal.ts';
@@ -175,7 +175,11 @@ export const countPendingProjectionPages: StoreMember<[scope: ProjectionReadines
         imageArm: relevance.imageArm === true,
       },
     };
-    return storeCall({ member }, () => brain.countPendingProjectionPages(input));
+    const count = await storeCall({ member }, () => brain.countPendingProjectionPages(input)) as ScopedCount | null;
+    // A count that reaches the cap reads an unordered subset on the SQL engines (their scan order, which PGLite and
+    // Postgres do not share), so no store walk order gives the same could-affect: the capped form refuses.
+    if (count?.capped === true) refuseMember(member, `a count that reaches the ${COVERAGE_COUNT_CAP}-page cap (its could-affect depends on the SQL scan order)`);
+    return count;
   };
 
 export const projectionRebuildProgress: StoreMember<[scope: ProjectionReadinessScope], ProjectionRebuildProgress | null> = async (brain, scope) => {
@@ -183,8 +187,9 @@ export const projectionRebuildProgress: StoreMember<[scope: ProjectionReadinessS
   return storeCall({ member: 'projectionRebuildProgress' }, () => brain.projectionRebuildProgress(input));
 };
 
-/** The store has no page clock to name a generation by, so the probe reads its statement on every call. */
-export const readProjectionReadinessGeneration: StoreMember<[], string | null> = async () => null;
+/** The brain and its commit sequence: every commit advances it, so the probe's cached answer lasts until the next write. */
+export const readProjectionReadinessGeneration: StoreMember<[], string | null> = async (brain) =>
+  storeCall({ member: 'readProjectionReadinessGeneration' }, () => brain.readProjectionReadinessGeneration());
 
 export const readProjectionReadiness: StoreMember<[scope: ProjectionReadinessScope], ProjectionReadinessRow> = async (brain, scope) => {
   const input = coverageScope('readProjectionReadiness', scope);
