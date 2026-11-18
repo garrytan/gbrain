@@ -29,6 +29,7 @@
  * and each caller picks its policy.
  */
 import type { BrainEngine } from '../engine.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import type { TrustTier } from '../trust/tier.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
 import { CONVERSATION_SLOT_SQL } from '../chronicle/ontology.ts';
@@ -163,14 +164,13 @@ export type WordStems = Map<string, string[]>;
 async function wordStems(engine: BrainEngine, words: string[]): Promise<WordStems | null> {
   if (!words.length) return new Map();
   try {
-    const rows = await engine.executeRaw<{ w: string; lexemes: string[] | string | null }>(
-      `SELECT w, tsvector_to_array(to_tsvector('${getFtsLanguage()}'::regconfig, w)) AS lexemes FROM unnest($1::text[]) AS w`, [words]);
-    return new Map(rows.map(r => {
-      const all = Array.isArray(r.lexemes) ? r.lexemes : typeof r.lexemes === 'string' ? r.lexemes.replace(/^\{|\}$/g, '').split(',').filter(Boolean) : [];
-      const whole = all.filter(l => l.length > 1 || l === r.w);
-      return [r.w, whole.length ? whole : all];
+    const lexemes = await engine.wordLexemes(words);
+    return new Map([...lexemes].map(([w, all]) => {
+      const whole = all.filter(l => l.length > 1 || l === w);
+      return [w, whole.length ? whole : all];
     }));
-  } catch {
+  } catch (err) {
+    rethrowCapabilityRefusal(err);
     return null;
   }
 }
