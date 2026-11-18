@@ -21,13 +21,19 @@ import type { AuthInfo, ParamDef } from '../src/core/ops/contract.ts';
 import { dispatchToolCall, dispatchRenderContext } from '../src/mcp/dispatch.ts';
 import * as surfaces from '../src/mcp/surface.ts';
 import { allowedOpNames, filterOpsForSurface, type McpSurface } from '../src/mcp/surface.ts';
+import { PARAM_NOT_ON_SURFACE_CODE } from '../src/mcp/hidden-tool-hint.ts';
+import { CODES } from '../src/core/error-registry.ts';
+import { SUBMIT_AGENT_DEFAULT_MAX_TURNS } from '../src/core/ops/jobs.ts';
+import { importFromContent } from '../src/core/import-file.ts';
 import { renderAction } from '../src/core/agent-output.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 
-const CODE = 'param_not_on_surface';
+const CODE = PARAM_NOT_ON_SURFACE_CODE;
 const GONE = { slug: 'notes/gone-example', canary: 'canarytombstonealpha' };
 const LIVE = { slug: 'notes/live-example', canary: 'canarylivebeta' };
+const PRIV = { slug: 'notes/private-example', canary: 'canaryprivategamma' };
+const QUAR = { slug: 'notes/quarantined-example', canary: 'canaryquarantinedelta' };
 const CALLABLE: Readonly<Record<string, Readonly<Record<string, string>>>> =
   (surfaces as unknown as { STARTER_CALLABLE_PARAMS?: Record<string, Record<string, string>> }).STARTER_CALLABLE_PARAMS ?? {};
 
@@ -59,9 +65,12 @@ for (const kind of testBackends()) {
       if (kind === 'postgres') ({ engine, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!));
       else { engine = new PGLiteEngine(); await engine.connect({ engine: 'pglite' } as never); await engine.initSchema(); close = () => engine.disconnect(); }
       for (const p of [GONE, LIVE]) {
-        await engine.putPage(p.slug, { type: 'note' as never, title: p.slug, compiled_truth: `Notes ${p.canary}.`, timeline: '', frontmatter: {} });
+        await engine.putPage(p.slug, { type: 'note' as never, title: p.slug, compiled_truth: `Notes ${p.canary}.`, timeline: '', frontmatter: { status: 'active' } });
       }
       expect(await engine.softDeletePage(GONE.slug)).not.toBeNull();
+      await importFromContent(engine, PRIV.slug, `---\nstatus: active\nvisibility: private\n---\n# Private\nNotes ${PRIV.canary}.`, { sourceId: 'default', noEmbed: true });
+      await importFromContent(engine, QUAR.slug, `---\nstatus: active\n---\n# Held\nNotes ${QUAR.canary}.`, { sourceId: 'default', noEmbed: true });
+      await engine.executeRaw(`UPDATE pages SET frontmatter = frontmatter || '{"quarantine": {"reason": "junk_pattern"}}'::jsonb WHERE source_id = 'default' AND slug = $1`, [QUAR.slug]);
     }, 120_000);
 
     afterAll(async () => { await close?.(); }, 60_000);
@@ -110,6 +119,52 @@ for (const kind of testBackends()) {
       for (const opts of [stdio('full'), { remote: false, sourceId: 'default' } as Opts]) {
         expect(all(await dispatchToolCall(engine, 'get_page', { slug: GONE.slug, include_deleted: true }, opts))).toContain(GONE.canary);
         expect(all(await dispatchToolCall(engine, 'list_pages', { include_deleted: true }, opts))).toContain(GONE.slug);
+      }
+    });
+
+    // Condition from review: slug_prefix and where stay callable on starter, so pin that they only filter what the plain
+    // starter listing already shows. A quarantined page is listed by slug and title to every caller as before (#6259 holds
+    // back its body, not its listing), so the filters add nothing there either; no listing carries a body.
+    test('list_pages slug_prefix and where never return a soft-deleted or private page to a starter client, nor more than the plain list', async () => {
+      const slugs = async (args: Record<string, unknown>) => {
+        const res = await dispatchToolCall(engine, 'list_pages', args, stdio('starter'));
+        expect(res.isError).toBeFalsy();
+        for (const canary of [GONE.canary, PRIV.canary, QUAR.canary]) expect(all(res)).not.toContain(canary);
+        return (JSON.parse(res.content[0]!.text) as Array<{ slug: string }>).map(row => row.slug).sort();
+      };
+      const plain = await slugs({});
+      expect(plain).toContain(LIVE.slug);
+      for (const args of [{ slug_prefix: 'notes/' }, { slug_prefix: GONE.slug }, { slug_prefix: PRIV.slug }, { slug_prefix: QUAR.slug },
+        { where: { status: 'active' } }, { where: { visibility: 'private' } }, { where: { quarantine: 'junk_pattern' } },
+        { slug_prefix: 'notes/', where: { status: 'active' } }]) {
+        const got = await slugs(args);
+        expect({ args, extra: got.filter(slug => !plain.includes(slug)) }).toEqual({ args, extra: [] });
+        expect({ args, deleted: got.includes(GONE.slug), priv: got.includes(PRIV.slug) }).toEqual({ args, deleted: false, priv: false });
+      }
+      expect(await slugs({ slug_prefix: 'notes/' })).toContain(LIVE.slug);
+      expect(await slugs({ where: { status: 'active' } })).toContain(LIVE.slug);
+      expect(all(await dispatchToolCall(engine, 'list_pages', { slug_prefix: 'notes/' }, { remote: false, sourceId: 'default' } as Opts))).toContain(PRIV.slug);
+    });
+
+    test('submit_agent max_turns on starter may only lower the turns a call without it gets', async () => {
+      expect(SUBMIT_AGENT_DEFAULT_MAX_TURNS).toBe(20);
+      const call = (max_turns: number, surface: McpSurface) =>
+        dispatchToolCall(engine, 'submit_agent', { prompt: 'Summarize this week.', max_turns }, stdio(surface)).then(envelope);
+      for (const max_turns of [SUBMIT_AGENT_DEFAULT_MAX_TURNS + 1, 100]) {
+        const env = await call(max_turns, 'starter');
+        expect(env.code).toBe(CODE);
+        expect(String(env.message)).toContain(`max_turns above ${SUBMIT_AGENT_DEFAULT_MAX_TURNS}`);
+        expect(env.fix?.mcp).toEqual({ tool: 'request_tools', arguments: { surface: 'full' } });
+      }
+      for (const max_turns of [1, SUBMIT_AGENT_DEFAULT_MAX_TURNS]) expect((await call(max_turns, 'starter')).code).not.toBe(CODE);
+      expect((await call(100, 'full')).code).not.toBe(CODE);
+    });
+
+    test('param_not_on_surface is one registered code, and a call to a hidden tool still gets unknown_tool', async () => {
+      expect(CODE in CODES).toBe(true);
+      expect(operations.some(op => op.name === 'get_versions') && !allowedOpNames(operations, 'starter').has('get_versions')).toBe(true);
+      for (const opts of [stdio('starter'), pinnedHttp('starter')]) {
+        expect(envelope(await dispatchToolCall(engine, 'get_versions', { slug: LIVE.slug }, opts)).code).toBe('unknown_tool');
       }
     });
 

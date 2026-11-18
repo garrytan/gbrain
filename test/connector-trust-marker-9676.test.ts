@@ -17,6 +17,8 @@ import { parseGoogleSourceConfig, runGoogleSync } from '../src/core/google/googl
 import { scanProvenanceDrift } from '../src/core/trust/provenance-drift.ts';
 import { contact, createConnectorFixture, googleConfig, json, options, withGoogleAccount } from './helpers/connector-fixture.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import type { AuthInfo } from '../src/core/ops/contract.ts';
 
 const { engines, env, source, boundSource, setup, teardown } = createConnectorFixture();
 beforeAll(setup, 120_000);
@@ -83,5 +85,35 @@ test('a stored marker never raises the page: a higher one is lowered to the tier
     await s.setMarker('agent_written');
     await s.resync();
     expect(await s.read()).toMatchObject({ trust_tier: 'external_untrusted', marker: 'external_untrusted' });
+  }
+}), 180_000);
+
+// Condition from review: the changed render is the connector publisher's own prepareFrontmatter (connector_v2_* intents
+// only, local connector writers only). put_page and every other page write stamps through page-prepare's own hook, so
+// an owner's local write and a full-surface member's write keep the tier they had before #9676.
+test('an owner local put_page and a full-surface member put_page keep their own tier, never the connector one', async () => withEnv(env, async () => {
+  for (const engine of engines) {
+    await connectorSource(engine);
+    await engine.executeRaw("INSERT INTO access_members (id) VALUES ('alice-example') ON CONFLICT DO NOTHING");
+    await engine.executeRaw(`INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris, grant_types, scope, token_endpoint_auth_method,
+      client_id_issued_at, source_id, federated_read, member_id) VALUES ('member-client-example', 'x', 'member-client-example', '{}', '{client_credentials}', 'read write',
+      'client_secret_post', 0, 'default', '{default}', 'alice-example') ON CONFLICT DO NOTHING`);
+    const auth = { token: 't', clientId: 'member-client-example', principal: { kind: 'oauth_client', id: 'member-client-example' },
+      scopes: ['read', 'write'], member: { id: 'alice-example', groups: [] } } as unknown as AuthInfo;
+    const writers = {
+      owner: { remote: false, sourceId: 'default' },
+      member: { remote: true, transport: 'http', surface: 'full', auth, sourceId: 'default' },
+    } as const;
+    const tiers: Record<string, unknown> = {};
+    for (const [who, opts] of Object.entries(writers)) {
+      const slug = `notes/${who}-write-example`;
+      const res = await dispatchToolCall(engine, 'put_page', { slug, content: `---\ntype: note\ntitle: ${who}\n---\n# ${who}\nA note the ${who} wrote.` }, opts as never);
+      expect({ who, error: res.isError === true ? res.content.map(c => c.text).join('') : null }).toEqual({ who, error: null });
+      const [row] = await engine.executeRaw<{ trust_tier: string; marker: string | null }>(
+        "SELECT trust_tier, frontmatter->>'trust_tier' AS marker FROM pages WHERE source_id='default' AND slug=$1 AND deleted_at IS NULL", [slug]);
+      tiers[who] = row;
+    }
+    const own = { trust_tier: 'agent_written', marker: 'agent_written' };
+    expect(tiers).toEqual({ owner: own, member: own });
   }
 }), 180_000);

@@ -40,6 +40,7 @@ import { VERB_NAMES } from '../core/verbs.ts';
 import { opError } from '../core/ops/contract.ts';
 import { BRAIN_TOOL_ALLOWLIST } from '../core/minions/tools/brain-tool-allowlist.ts';
 import { flagValues } from '../core/direct-pool-profile.ts';
+import { SUBMIT_AGENT_DEFAULT_MAX_TURNS } from '../core/ops/jobs.ts';
 
 export type McpSurface = 'verbs' | 'starter' | 'full';
 
@@ -291,7 +292,7 @@ export const STARTER_CALLABLE_PARAMS: Readonly<Record<string, Readonly<Record<st
   list_pages: { source_ids: NARROW, slug_prefix: LIST_FILTER, where: LIST_FILTER },
   search: { fields: FULL_ROWS },
   query: { fields: FULL_ROWS },
-  submit_agent: { max_turns: 'Caps the job\'s turns (at most 100) under the same grant; gbrain\'s connection check passes max_turns: 1.' },
+  submit_agent: { max_turns: 'May only lower the job\'s turns below the default a call without it gets (STARTER_PARAM_CEILINGS); gbrain\'s connection check passes max_turns: 1.' },
   entity: { source_id: THIN_SOURCE, prefer_source_id: THIN_SOURCE },
   context_pack: { source_id: THIN_SOURCE, prefer_source_id: THIN_SOURCE },
   list_skills: { schema_version: SKILL, cursor: SKILL, source_id: SKILL },
@@ -307,6 +308,17 @@ export function paramCallable(op: OperationMeta, param: string, surface: McpSurf
   if (surface === 'full' || !(param in op.params)) return true;
   const listed = filterOpsForSurface([op], surface)[0];
   return !listed || param in listed.params || STARTER_CALLABLE_PARAMS[op.name]?.[param] !== undefined;
+}
+
+/** #9669: the highest value a narrower surface may pass for a reviewed hidden parameter that only lowers a default. */
+export const STARTER_PARAM_CEILINGS: Readonly<Record<string, Readonly<Record<string, number>>>> = {
+  submit_agent: { max_turns: SUBMIT_AGENT_DEFAULT_MAX_TURNS },
+};
+
+/** The ceiling a surface puts on a parameter it hides, or undefined when it puts none. */
+export function paramCeiling(op: OperationMeta, param: string, surface: McpSurface): number | undefined {
+  if (surface === 'full' || filterOpsForSurface([op], surface)[0]?.params[param] !== undefined) return undefined;
+  return STARTER_PARAM_CEILINGS[op.name]?.[param];
 }
 
 /** The fail-closed allow-set handed to dispatchToolCall. */
