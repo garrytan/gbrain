@@ -155,7 +155,10 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'hasExtractedEvents', 'listActiveAccessMembers', 'expireMemoryProposals', 'listAwaitingMemoryProposals', 'purgeMemoryProposals',
     'attachSourcePath'],
   // telemetry: search telemetry and MCP usage (engine-sql/telemetry.ts)
-  telemetry: ['recordSearchTelemetry', 'readSearchStats', 'readClientOpUsage', 'readMcpRollupPrunedBefore'],
+  telemetry: [
+    'recordSearchTelemetry', 'readSearchStats', 'readClientOpUsage', 'readMcpRollupPrunedBefore', 'logMcpRequest',
+    'readMcpLogPruneCutoff', 'pruneMcpRequestLogBatch',
+  ],
   write_guards: ['readPageOrigin', 'listOriginClaims', 'bindPageOrigin', 'stampPageIngest', 'sealImportedPage', 'readLivePageBody',
     'hasSegmentStorage'],
 };

@@ -4,7 +4,6 @@ import { OperationError } from '../core/ops/contract.ts';
 import { addMember, bindCredential, disableMember, enableMember, listMembers, setMemberEmail, type BindingPatch } from '../core/access/members.ts';
 import { ATTEST_SYSTEMS, linkMember, linkMemberByEmail, listMemberLinks, parseAttestOps, unlinkMember } from '../core/access/actor.ts';
 import { operationsByName } from '../core/operations.ts';
-import { executeRawJsonb } from '../core/sql-query.ts';
 
 /**
  * GST-1094 gap 4: owner administration of the people a trusted system serves, over the running server: the attest
@@ -161,8 +160,10 @@ async function answer(res: Response, mutation: boolean, run: () => Promise<Recor
 /** One audit row per applied change, in the request log like a surface change; fail-open, as there. */
 async function audit(engine: BrainEngine, action: string, detail: Record<string, unknown>): Promise<void> {
   try {
-    await executeRawJsonb(engine, `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params) VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
-      ['admin-api', 'admin-api', 'access_admin', 0, 'success'], [{ actor: 'admin-api', action, ...detail }]);
+    await engine.logMcpRequest({
+      token_name: 'admin-api', agent_name: 'admin-api', operation: 'access_admin', latency_ms: 0, status: 'success',
+      params: { actor: 'admin-api', action, ...detail },
+    });
   } catch (err) {
     process.stderr.write(`[access-admin] failed to write the ${action} audit row: ${err instanceof Error ? err.message : String(err)}\n`);
   }

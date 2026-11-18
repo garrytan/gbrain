@@ -1,19 +1,29 @@
-//! Search telemetry: the `search_telemetry` table of the PGLite engine, written by the search
-//! telemetry flush (`src/core/search/telemetry.ts`) and read by `gbrain search stats` and the search
-//! tune advisor.
+//! Telemetry: the `search_telemetry`, `mcp_request_log` and `mcp_request_log_rollup` tables of the
+//! PGLite engine. The search telemetry flush (`src/core/search/telemetry.ts`) writes the first, read
+//! by `gbrain search stats` and the search tune advisor. The MCP server, webhooks, surface audit,
+//! access admin and memory settings append to the request log; the retention prune
+//! (`src/core/mcp-request-log-retention.ts`) moves old rows into the per-token tally; `gbrain auth`
+//! usage and doctor read both.
 //!
-//! Members: recordSearchTelemetry, readSearchStats (`src/core/engine-sql/telemetry.ts`).
+//! Members: recordSearchTelemetry, readSearchStats, logMcpRequest, readMcpLogPruneCutoff,
+//! pruneMcpRequestLogBatch, readClientOpUsage, readMcpRollupPrunedBefore
+//! (`src/core/engine-sql/telemetry.ts`).
 //!
 //! Keys (every record starts with `keys::TELEMETRY`, `a`, then the table's sub-tag):
 //! - `a 0x01 <date> 0x00 <mode> 0x00 <intent>` -> `SearchRecord` (JSON). The text parts are the
 //!   table's primary key `(date, mode, intent)`; none may hold a NUL byte, so the key is unique.
+//! - `a 0x02 <created_at BE8, sign bit flipped> <id BE8>` -> `LogRecord` (JSON). Key order is
+//!   `created_at` order (the `idx_mcp_log_time_agent` order the prune takes), ties by id. The id
+//!   comes from the `next_mcp_request_id` counter, as `SERIAL` does.
+//! - `a 0x03 <token_name>` -> `RollupRecord` (JSON). The tally keys a NULL token as `''`, as the
+//!   prune's `COALESCE(token_name, '')` does.
 //!
-//! The other sub-tags of `a` (MCP request log, its tally, retrieval feedback, budget ledger) have
-//! no records yet: those tables are not served (rust/docs/store/telemetry.md).
+//! The other sub-tags of `a` (retrieval feedback, budget ledger) have no records yet: those tables
+//! are not served (rust/docs/store/telemetry.md).
 //!
-//! The table carries no source and no page: page and source deletes never touch it.
+//! No table carries a source or a page: page and source deletes never touch them.
 
-use crate::env::iso;
+use crate::env::{iso, parse_iso};
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
 use crate::kv::{KvRead, scan_prefix};
 use crate::links::no_nul;
@@ -25,6 +35,19 @@ use std::collections::BTreeMap;
 const TABLE: &str = "search_telemetry";
 const OP_RECORD: &str = "recordSearchTelemetry";
 const OP_READ: &str = "readSearchStats";
+const LOG_TABLE: &str = "mcp_request_log";
+const OP_LOG: &str = "logMcpRequest";
+const OP_CUTOFF: &str = "readMcpLogPruneCutoff";
+const OP_PRUNE: &str = "pruneMcpRequestLogBatch";
+const OP_USAGE: &str = "readClientOpUsage";
+const LOG_ID_COUNTER: &str = "next_mcp_request_id";
+const DAY_US: i128 = 86_400_000_000;
+/// The `timestamptz` range in Unix microseconds: 4714-11-24 BC 00:00:00 UTC up to (not including)
+/// 294277-01-01 UTC, Postgres's `MIN_TIMESTAMP` and `END_TIMESTAMP` moved from the 2000 epoch.
+const TIMESTAMP_MIN_US: i128 = -212_760_172_800_000_000;
+const TIMESTAMP_END_US: i128 = 9_224_318_016_000_000_000;
+/// The statuses `readClientOpUsage` counts as a successful request.
+const SUCCESS_STATUSES: [&str; 3] = ["success", "success_with_warnings", "accepted_pending"];
 
 /// The integer counters, in column order (the order Postgres checks them).
 const COUNTERS: [&str; 10] = [
@@ -103,10 +126,14 @@ impl SearchTelemetryBucket {
 }
 
 fn not_null(column: &str) -> StoreError {
+    not_null_in(TABLE, column)
+}
+
+fn not_null_in(table: &str, column: &str) -> StoreError {
     StoreError::new(
         CONSTRAINT_VIOLATION,
         format!(
-            "null value in column \"{column}\" of relation \"{TABLE}\" violates not-null constraint"
+            "null value in column \"{column}\" of relation \"{table}\" violates not-null constraint"
         ),
     )
 }
@@ -117,17 +144,17 @@ fn integer_out_of_range(op: &str) -> StoreError {
 
 /// A number bound to an `INTEGER` parameter, as Postgres reads its text form: a whole number in
 /// the `int4` range, or refused.
-fn int4_param(column: &str, value: f64) -> Result<i32> {
+fn int4_param(op: &str, column: &str, value: f64) -> Result<i32> {
     if !value.is_finite() || value.fract() != 0.0 {
         return Err(StoreError::new(
             INVALID_ARGUMENT,
-            format!("{OP_RECORD}: invalid input syntax for type integer: \"{value}\" ({column})"),
+            format!("{op}: invalid input syntax for type integer: \"{value}\" ({column})"),
         ));
     }
     if value < f64::from(i32::MIN) || value > f64::from(i32::MAX) {
         return Err(StoreError::new(
             INVALID_ARGUMENT,
-            format!("{OP_RECORD}: value \"{value}\" is out of range for type integer ({column})"),
+            format!("{op}: value \"{value}\" is out of range for type integer ({column})"),
         ));
     }
     // Whole and in range, so the cast is exact.
@@ -160,6 +187,127 @@ pub(crate) fn pg_timestamptz_text(micros: i64) -> String {
     }
     text.push_str("+00");
     text
+}
+
+fn log_prefix() -> [u8; 2] {
+    [keys::TELEMETRY, keys::TELEMETRY_MCP_REQUEST]
+}
+
+/// `a 0x02 <created_us, sign bit flipped, BE8> <id BE8>`: byte order is `created_at` order.
+fn log_key(created_us: i64, id: u64) -> Vec<u8> {
+    let mut key = log_prefix().to_vec();
+    key.extend_from_slice(&((created_us as u64) ^ (1 << 63)).to_be_bytes());
+    key.extend_from_slice(&id.to_be_bytes());
+    key
+}
+
+fn rollup_prefix() -> [u8; 2] {
+    [keys::TELEMETRY, keys::TELEMETRY_MCP_ROLLUP]
+}
+
+fn rollup_key(token_name: &str) -> Vec<u8> {
+    let mut key = vec![keys::TELEMETRY];
+    key.extend(keys::text(keys::TELEMETRY_MCP_ROLLUP, &[token_name]));
+    key
+}
+
+/// One `mcp_request_log` row.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct LogRecord {
+    pub id: u64,
+    pub token_name: Option<String>,
+    pub agent_name: Option<String>,
+    pub operation: String,
+    pub latency_ms: Option<i32>,
+    pub status: String,
+    pub error_message: Option<String>,
+    pub params: Option<Value>,
+    pub created_us: i64,
+}
+
+/// One `mcp_request_log_rollup` row: the tally of the pruned requests of one token (`''` for none).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct RollupRecord {
+    pub token_name: String,
+    pub requests: i64,
+    pub last_used_us: Option<i64>,
+    pub pruned_through_us: Option<i64>,
+}
+
+/// One row of `logMcpRequest`. Every field is optional here so a missing one fails as Postgres
+/// fails it. `created_at` is ISO text; absent, the row takes the store clock (`now()`).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct McpRequestLogInput {
+    pub token_name: Option<String>,
+    pub agent_name: Option<String>,
+    pub operation: Option<String>,
+    pub latency_ms: Option<f64>,
+    pub status: Option<String>,
+    pub error_message: Option<String>,
+    pub params: Option<Value>,
+    pub created_at: Option<String>,
+}
+
+/// Whether a JSON value holds a NUL character, which `jsonb` refuses.
+fn json_has_nul(value: &Value) -> bool {
+    match value {
+        Value::String(text) => text.contains('\0'),
+        Value::Array(items) => items.iter().any(json_has_nul),
+        Value::Object(map) => map.iter().any(|(k, v)| k.contains('\0') || json_has_nul(v)),
+        _ => false,
+    }
+}
+
+/// `now() - (days::int * interval '1 day')`: the days are read as an `int4` parameter and the
+/// result must stay in the `timestamptz` range. A null day count gives a null cutoff.
+fn days_before(op: &str, now: i64, days: Option<f64>) -> Result<Option<i64>> {
+    let Some(days) = days else {
+        return Ok(None);
+    };
+    let days = int4_param(op, "days", days)?;
+    let cutoff = i128::from(now) - i128::from(days) * DAY_US;
+    if !(TIMESTAMP_MIN_US..TIMESTAMP_END_US).contains(&cutoff) {
+        return Err(StoreError::new(
+            INVALID_ARGUMENT,
+            format!("{op}: timestamp out of range"),
+        ));
+    }
+    // The store keeps microseconds in an i64, which ends a few decades before Postgres's range.
+    i64::try_from(cutoff)
+        .map(Some)
+        .map_err(|_| StoreError::new(INVALID_ARGUMENT, format!("{op}: timestamp out of range")))
+}
+
+fn parse_timestamp(op: &str, text: &str) -> Result<i64> {
+    parse_iso(text).ok_or_else(|| {
+        StoreError::new(
+            INVALID_ARGUMENT,
+            format!("{op}: invalid input syntax for type timestamp with time zone: \"{text}\""),
+        )
+    })
+}
+
+fn read_log(read: &dyn KvRead) -> Result<Vec<(Vec<u8>, LogRecord)>> {
+    let mut raw = Vec::new();
+    scan_prefix(read, &log_prefix(), false, &mut |k, v| {
+        raw.push((k.to_vec(), v.to_vec()));
+        true
+    })?;
+    raw.into_iter()
+        .map(|(k, v)| Ok((k, serde_json::from_slice(&v)?)))
+        .collect()
+}
+
+fn read_rollups(read: &dyn KvRead) -> Result<Vec<RollupRecord>> {
+    let mut raw = Vec::new();
+    scan_prefix(read, &rollup_prefix(), false, &mut |_, v| {
+        raw.push(v.to_vec());
+        true
+    })?;
+    raw.iter()
+        .map(|v| serde_json::from_slice(v).map_err(StoreError::from))
+        .collect()
 }
 
 fn read_search(read: &dyn KvRead) -> Result<Vec<SearchRecord>> {
@@ -195,7 +343,7 @@ impl Store {
         let mut counters: Vec<(&str, Option<i32>)> = Vec::with_capacity(COUNTERS.len());
         for column in COUNTERS {
             let value = match bucket.counter(column) {
-                Some(v) => Some(int4_param(column, v)?),
+                Some(v) => Some(int4_param(OP_RECORD, column, v)?),
                 None => None,
             };
             counters.push((column, value));
@@ -303,6 +451,208 @@ impl Store {
     }
 }
 
+impl Store {
+    /// `logMcpRequest(row)`: appends one request log row with the next id. As in Postgres, the
+    /// parameters are read first (a latency that is not a whole `int4`, a `created_at` that is not
+    /// ISO text, or a NUL in text or `params` refuses with `invalid_argument`), then a null
+    /// `operation` or `status` refuses with `constraint_violation`. `created_at` absent is now.
+    pub fn log_mcp_request(&self, input: &McpRequestLogInput) -> Result<()> {
+        let mut texts: Vec<(&str, &str)> = Vec::new();
+        for (name, value) in [
+            ("token_name", &input.token_name),
+            ("agent_name", &input.agent_name),
+            ("operation", &input.operation),
+            ("status", &input.status),
+            ("error_message", &input.error_message),
+        ] {
+            if let Some(text) = value.as_deref() {
+                texts.push((name, text));
+            }
+        }
+        no_nul(OP_LOG, &texts)?;
+        let latency_ms = match input.latency_ms {
+            Some(v) => Some(int4_param(OP_LOG, "latency_ms", v)?),
+            None => None,
+        };
+        let created_us = match input.created_at.as_deref() {
+            Some(text) => parse_timestamp(OP_LOG, text)?,
+            None => self.env.now_micros(),
+        };
+        let params = input.params.clone().filter(|v| !v.is_null());
+        if params.as_ref().is_some_and(json_has_nul) {
+            return Err(StoreError::new(
+                INVALID_ARGUMENT,
+                format!("{OP_LOG}: unsupported Unicode escape sequence (params)"),
+            ));
+        }
+        let operation = input
+            .operation
+            .clone()
+            .ok_or_else(|| not_null_in(LOG_TABLE, "operation"))?;
+        let status = input
+            .status
+            .clone()
+            .ok_or_else(|| not_null_in(LOG_TABLE, "status"))?;
+        self.write(|tx| {
+            let id = crate::pages::next_id(tx, LOG_ID_COUNTER)?;
+            let record = LogRecord {
+                id,
+                token_name: input.token_name.clone(),
+                agent_name: input.agent_name.clone(),
+                operation,
+                latency_ms,
+                status,
+                error_message: input.error_message.clone(),
+                params,
+                created_us,
+            };
+            put_json(tx, &log_key(created_us, id), &record)
+        })
+    }
+
+    /// `readMcpLogPruneCutoff(days)`: the tally always exists in the store, and the cutoff is
+    /// `now - days` as ISO text (null for a null day count).
+    pub fn read_mcp_log_prune_cutoff(&self, days: Option<f64>) -> Result<Value> {
+        let cutoff = days_before(OP_CUTOFF, self.env.now_micros(), days)?;
+        Ok(json!({ "rollup_present": true, "cutoff": cutoff.map(iso) }))
+    }
+
+    /// `pruneMcpRequestLogBatch(cutoff, keepOperations, limit)`: deletes the oldest `limit` rows
+    /// created before `cutoff` whose operation is not in `keepOperations` (key order: `created_at`,
+    /// ties by id) and adds them to the per-token tally (requests, the newest `last_used_at` and
+    /// `pruned_through`; a NULL token counts under `''`), in one write. Nothing qualifies for a null
+    /// cutoff, a null list or a list holding a null (`<> ALL` is then never true); a null limit
+    /// takes every row. A negative or fractional limit refuses with `invalid_argument`.
+    pub fn prune_mcp_request_log_batch(
+        &self,
+        cutoff: Option<&str>,
+        keep: Option<&[Option<String>]>,
+        limit: Option<f64>,
+    ) -> Result<Value> {
+        let cutoff = match cutoff {
+            Some(text) => Some(parse_timestamp(OP_PRUNE, text)?),
+            None => None,
+        };
+        let limit = match limit {
+            None => None,
+            Some(v) if !v.is_finite() || v.fract() != 0.0 => {
+                return Err(StoreError::new(
+                    INVALID_ARGUMENT,
+                    format!("{OP_PRUNE}: invalid input syntax for type bigint: \"{v}\""),
+                ));
+            }
+            Some(v) if v < 0.0 => {
+                return Err(StoreError::new(
+                    INVALID_ARGUMENT,
+                    format!("{OP_PRUNE}: LIMIT must not be negative"),
+                ));
+            }
+            // Whole and non-negative; a count past usize::MAX saturates, which takes every row.
+            Some(v) => Some(v as usize),
+        };
+        let (Some(cutoff), Some(keep)) = (cutoff, keep) else {
+            return Ok(json!({ "deleted": 0, "newest": null }));
+        };
+        if keep.iter().any(Option::is_none) {
+            return Ok(json!({ "deleted": 0, "newest": null }));
+        }
+        let keep: Vec<&str> = keep.iter().flatten().map(String::as_str).collect();
+        self.write(|tx| {
+            let mut victims: Vec<(Vec<u8>, LogRecord)> = Vec::new();
+            for (key, row) in read_log(&*tx)? {
+                if limit.is_some_and(|n| victims.len() >= n) || row.created_us >= cutoff {
+                    break;
+                }
+                if !keep.contains(&row.operation.as_str()) {
+                    victims.push((key, row));
+                }
+            }
+            let mut tally: BTreeMap<String, (i64, i64)> = BTreeMap::new();
+            let mut newest: Option<i64> = None;
+            for (key, row) in &victims {
+                tx.delete(key)?;
+                let entry = tally
+                    .entry(row.token_name.clone().unwrap_or_default())
+                    .or_insert((0, row.created_us));
+                entry.0 += 1;
+                entry.1 = entry.1.max(row.created_us);
+                newest = Some(newest.map_or(row.created_us, |n| n.max(row.created_us)));
+            }
+            for (token_name, (n, last)) in tally {
+                let key = rollup_key(&token_name);
+                let record = match get_json::<RollupRecord>(&*tx, &key)? {
+                    Some(mut row) => {
+                        row.requests = row.requests.checked_add(n).ok_or_else(|| {
+                            StoreError::new(
+                                INVALID_ARGUMENT,
+                                format!("{OP_PRUNE}: bigint out of range"),
+                            )
+                        })?;
+                        // GREATEST skips a NULL.
+                        row.last_used_us = Some(row.last_used_us.map_or(last, |v| v.max(last)));
+                        row.pruned_through_us =
+                            Some(row.pruned_through_us.map_or(last, |v| v.max(last)));
+                        row
+                    }
+                    None => RollupRecord {
+                        token_name,
+                        requests: n,
+                        last_used_us: Some(last),
+                        pruned_through_us: Some(last),
+                    },
+                };
+                put_json(tx, &key, &record)?;
+            }
+            Ok(json!({ "deleted": victims.len(), "newest": newest.map(iso) }))
+        })
+    }
+
+    /// `readClientOpUsage(days)`: per `(token_name, operation)`, the count and newest `created_at`
+    /// (ISO text) of the requests created after `now - days` with a token and a successful status.
+    /// A null day count matches nothing. Rows come in `(token, operation)` byte order; PGLite gives
+    /// no set order and every caller keys the rows.
+    pub fn read_client_op_usage(&self, days: Option<f64>) -> Result<Vec<Value>> {
+        let Some(cutoff) = days_before(OP_USAGE, self.env.now_micros(), days)? else {
+            return Ok(Vec::new());
+        };
+        let read = self.read()?;
+        let mut groups: BTreeMap<(String, String), (i64, i64)> = BTreeMap::new();
+        for (_, row) in read_log(&*read)? {
+            let Some(token) = row.token_name else {
+                continue;
+            };
+            if row.created_us <= cutoff || !SUCCESS_STATUSES.contains(&row.status.as_str()) {
+                continue;
+            }
+            let entry = groups
+                .entry((token, row.operation))
+                .or_insert((0, row.created_us));
+            entry.0 += 1;
+            entry.1 = entry.1.max(row.created_us);
+        }
+        let mut out = Vec::with_capacity(groups.len());
+        for ((token_name, operation), (n, last)) in groups {
+            let n = i32::try_from(n).map_err(|_| integer_out_of_range(OP_USAGE))?;
+            out.push(json!({
+                "token_name": token_name, "operation": operation, "n": n, "last_seen": iso(last),
+            }));
+        }
+        Ok(out)
+    }
+
+    /// `readMcpRollupPrunedBefore()`: the newest `pruned_through` of the tally (null when nothing
+    /// was pruned) and the store clock, as ISO text.
+    pub fn read_mcp_rollup_pruned_before(&self) -> Result<Value> {
+        let now = self.env.now_micros();
+        let read = self.read()?;
+        let newest = read_rollups(&*read)?
+            .iter()
+            .filter_map(|r| r.pruned_through_us)
+            .max();
+        Ok(json!({ "pruned_before": newest.map(iso), "now": iso(now) }))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -385,6 +735,155 @@ mod tests {
         assert_eq!(
             s.read_search_stats(Some("2026-01-03")).unwrap()[0]["count"],
             json!(i32::MAX)
+        );
+    }
+
+    fn request(token: Option<&str>, op: &str, status: &str, age_days: f64) -> McpRequestLogInput {
+        use crate::env::Env;
+        let now = crate::env::SystemEnv.now_micros();
+        McpRequestLogInput {
+            token_name: token.map(str::to_string),
+            agent_name: Some("agent-fork".to_string()),
+            operation: Some(op.to_string()),
+            latency_ms: Some(5.0),
+            status: Some(status.to_string()),
+            created_at: Some(iso(now - (age_days * 86_400e6) as i64)),
+            ..McpRequestLogInput::default()
+        }
+    }
+
+    #[test]
+    fn counts_successful_requests_per_token_and_operation_inside_the_window() {
+        let s = store();
+        assert!(s.read_client_op_usage(Some(30.0)).unwrap().is_empty());
+        for (token, op, status, age) in [
+            (Some("token-a"), "search", "success", 1.0),
+            (Some("token-a"), "search", "success_with_warnings", 2.0),
+            (Some("token-a"), "put_page", "accepted_pending", 3.0),
+            (Some("token-a"), "put_page", "denied", 1.0),
+            (Some("token-b"), "get_page", "success", 40.0),
+            (None, "search", "success", 1.0),
+        ] {
+            s.log_mcp_request(&request(token, op, status, age)).unwrap();
+        }
+        let rows = s.read_client_op_usage(Some(30.0)).unwrap();
+        let shape: Vec<(String, String, i64)> = rows
+            .iter()
+            .map(|r| {
+                (
+                    r["token_name"].as_str().unwrap().to_string(),
+                    r["operation"].as_str().unwrap().to_string(),
+                    r["n"].as_i64().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            shape,
+            vec![
+                ("token-a".into(), "put_page".into(), 1),
+                ("token-a".into(), "search".into(), 2)
+            ]
+        );
+        assert_eq!(s.read_client_op_usage(Some(365.0)).unwrap().len(), 3);
+        assert!(s.read_client_op_usage(None).unwrap().is_empty());
+        assert_eq!(
+            s.read_client_op_usage(Some(1.5)).unwrap_err().code,
+            INVALID_ARGUMENT
+        );
+    }
+
+    #[test]
+    fn log_refuses_as_postgres_does_and_writes_nothing() {
+        let s = store();
+        let mut missing = request(Some("t"), "search", "success", 0.0);
+        missing.status = None;
+        let err = s.log_mcp_request(&missing).unwrap_err();
+        assert_eq!(err.code, CONSTRAINT_VIOLATION);
+        assert!(
+            err.message
+                .contains("\"status\" of relation \"mcp_request_log\"")
+        );
+        let mut bad_time = request(Some("t"), "search", "success", 0.0);
+        bad_time.created_at = Some("yesterday".into());
+        assert_eq!(
+            s.log_mcp_request(&bad_time).unwrap_err().code,
+            INVALID_ARGUMENT
+        );
+        let mut bad_latency = request(Some("t"), "search", "success", 0.0);
+        bad_latency.latency_ms = Some(2.5);
+        assert_eq!(
+            s.log_mcp_request(&bad_latency).unwrap_err().code,
+            INVALID_ARGUMENT
+        );
+        let mut nul = request(Some("t"), "search", "success", 0.0);
+        nul.params = Some(json!({ "q": "a\u{0}b" }));
+        assert_eq!(s.log_mcp_request(&nul).unwrap_err().code, INVALID_ARGUMENT);
+        assert!(read_log(&*s.read().unwrap()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn prune_moves_the_oldest_rows_into_the_tally_and_keeps_audit_rows() {
+        let s = store();
+        assert_eq!(
+            s.read_mcp_rollup_pruned_before().unwrap()["pruned_before"],
+            Value::Null
+        );
+        for (token, op, age) in [
+            (Some("token-a"), "search", 40.0),
+            (Some("token-a"), "search", 35.0),
+            (None, "search", 33.0),
+            (Some("token-a"), "surface_change", 50.0),
+            (Some("token-b"), "get_page", 31.0),
+            (Some("token-b"), "get_page", 1.0),
+        ] {
+            s.log_mcp_request(&request(token, op, "success", age))
+                .unwrap();
+        }
+        let cutoff = s.read_mcp_log_prune_cutoff(Some(30.0)).unwrap();
+        assert_eq!(cutoff["rollup_present"], json!(true));
+        let cutoff = cutoff["cutoff"].as_str().unwrap().to_string();
+        let keep = vec![Some("surface_change".to_string())];
+        let first = s
+            .prune_mcp_request_log_batch(Some(&cutoff), Some(&keep), Some(2.0))
+            .unwrap();
+        assert_eq!(first["deleted"], json!(2));
+        let second = s
+            .prune_mcp_request_log_batch(Some(&cutoff), Some(&keep), None)
+            .unwrap();
+        assert_eq!(second["deleted"], json!(2));
+        let newest = parse_iso(second["newest"].as_str().unwrap()).unwrap();
+        let empty = s
+            .prune_mcp_request_log_batch(Some(&cutoff), Some(&keep), None)
+            .unwrap();
+        assert_eq!(empty, json!({ "deleted": 0, "newest": null }));
+        let rollups = read_rollups(&*s.read().unwrap()).unwrap();
+        let tally: Vec<(&str, i64)> = rollups
+            .iter()
+            .map(|r| (r.token_name.as_str(), r.requests))
+            .collect();
+        assert_eq!(tally, vec![("", 1), ("token-a", 2), ("token-b", 1)]);
+        let pruned = s.read_mcp_rollup_pruned_before().unwrap();
+        assert_eq!(
+            parse_iso(pruned["pruned_before"].as_str().unwrap()).unwrap(),
+            newest
+        );
+        let left: Vec<String> = read_log(&*s.read().unwrap())
+            .unwrap()
+            .into_iter()
+            .map(|(_, r)| r.operation)
+            .collect();
+        assert_eq!(left, vec!["surface_change", "get_page"]);
+        let none: Vec<Option<String>> = vec![None];
+        assert_eq!(
+            s.prune_mcp_request_log_batch(Some("2999-01-01T00:00:00Z"), Some(&none), None)
+                .unwrap()["deleted"],
+            json!(0)
+        );
+        assert_eq!(
+            s.prune_mcp_request_log_batch(Some(&cutoff), Some(&keep), Some(-1.0))
+                .unwrap_err()
+                .code,
+            INVALID_ARGUMENT
         );
     }
 

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 456/456
+# covered: 459/459
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -49,7 +49,7 @@
 # cli_reads_import: 11/11
 # wanted_links: 2/2
 # write_misc: 10/10
-# telemetry: 4/4
+# telemetry: 7/7
 # write_guards: 7/7
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
 connect	lifecycle	yes	1	yes	yes	yes	serves
@@ -499,8 +499,11 @@ purgeMemoryProposals	write_misc	yes	1	no	yes	yes	serves
 attachSourcePath	write_misc	yes	1	no	yes	yes	serves
 recordSearchTelemetry	telemetry	yes	3	no	yes	yes	serves
 readSearchStats	telemetry	yes	3	no	yes	yes	serves
-readClientOpUsage	telemetry	yes	1	no	yes	yes	refuses:telemetry
-readMcpRollupPrunedBefore	telemetry	yes	1	no	yes	yes	refuses:telemetry
+readClientOpUsage	telemetry	yes	3	no	yes	yes	serves
+readMcpRollupPrunedBefore	telemetry	yes	3	no	yes	yes	serves
+logMcpRequest	telemetry	yes	2	no	yes	yes	serves
+readMcpLogPruneCutoff	telemetry	yes	1	no	yes	yes	serves
+pruneMcpRequestLogBatch	telemetry	yes	2	no	yes	yes	serves
 hasSegmentStorage	write_guards	yes	1	no	yes	yes	serves
 readPageOrigin	write_guards	yes	1	no	yes	yes	serves
 listOriginClaims	write_guards	yes	1	no	yes	yes	serves

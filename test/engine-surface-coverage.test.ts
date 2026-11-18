@@ -105,6 +105,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'listTimelineOrphanPages',
   // Search telemetry and MCP usage (engine-sql/telemetry.ts; covered by test/engine-parity/telemetry.test.ts)
   'recordSearchTelemetry', 'readSearchStats', 'readClientOpUsage', 'readMcpRollupPrunedBefore',
+  'logMcpRequest', 'readMcpLogPruneCutoff', 'pruneMcpRequestLogBatch',
   // Import writes (engine-sql/chunks.ts, tags.ts, pages.ts)
   'deleteChunksExcept', 'setChunkerVersion', 'writeTextProjectionSeal', 'moveChunkIndexes', 'getChunkReuseRows', 'pruneFrontmatterTags',
   'addPageTagsById', 'replaceDerivedAliases', 'getPageSealState', 'refreshPageOrigin',
