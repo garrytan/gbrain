@@ -17,12 +17,12 @@
 import type { BrainEngine } from './engine.ts';
 import { executeRawJsonb } from './sql-query.ts';
 import { sanitizeForJsonb } from './batch-rows.ts';
-import { refreshRelationships, type RelationshipKey } from './link-relationships.ts';
+import { refreshRelationships, type RelationshipKey, type RelationshipStateStore } from './link-relationships.ts';
 import { loadActivePackForLocalEngine } from './schema-pack/best-effort.ts';
 import { LINKS_FENCE_ORIGIN_FIELD, readPageLinksFence, type LinksFenceRow } from './links-fence.ts';
 import { identityIndexHasSource } from './schema-migrations/v302-link-transitions-source.ts';
 
-type Tx = Pick<BrainEngine, 'executeRaw'>;
+type Tx = Pick<BrainEngine, 'executeRaw'> & RelationshipStateStore;
 
 /**
  * The rows a page's fence projects, or null when the page has no readable fence (absent or malformed: nothing is

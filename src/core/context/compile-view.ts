@@ -100,8 +100,10 @@ export const COMPILED_CONTEXT_ENVELOPE =
 export interface CompileViewEngine {
   listPages(filters?: PageFilters): Promise<Page[]>;
   getPage(slug: string, opts?: GetPageOpts): Promise<Page | null>;
-  /** Relationship notes (temporal typed edges); absent → entries render without them. */
+  /** A segmented page's stored lead; absent → entries render without relationship notes. */
   executeRaw?<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<R[]>;
+  /** Relationship notes (temporal typed edges); absent → entries render without them. */
+  listRelationshipNoteRows?: BrainEngine['listRelationshipNoteRows'];
   /** A segmented page's excerpt: its stored lead under the withdrawal overlay; absent → such a page renders without one. */
   readPageSnapshotsBatch?: BrainEngine['readPageSnapshotsBatch'];
 }
@@ -353,8 +355,9 @@ export async function compileView(input: CompileViewInput): Promise<CompileViewR
   const entries: RenderedEntry[] = [];
   const scanDrops: CompileViewScanDrop[] = [];
   const raw = input.engine.executeRaw?.bind(input.engine);
-  const notes = !raw ? new Map<string, string>() : await loadRelationshipNotes(
-    { executeRaw: raw },
+  const noteRows = input.engine.listRelationshipNoteRows?.bind(input.engine);
+  const notes = !raw || !noteRows ? new Map<string, string>() : await loadRelationshipNotes(
+    { listRelationshipNoteRows: noteRows },
     await Promise.all(scored.map(async ({ c }) => ({ slug: c.page.slug, source_id: input.sourceId, summary: await pageLeadSource({ executeRaw: raw }, c.page) ?? '' }))),
     { excludePrivate: true },
   ).catch(() => new Map<string, string>());
