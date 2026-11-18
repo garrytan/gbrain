@@ -40,8 +40,8 @@ Every keyword member except `findByTitleFuzzy` refuses:
   non-integer `after.page_id`: Postgres rejects them as a `bigint`;
 - any option the member does not know.
 
-`searchKeywordChunks` also refuses `type`, a non-empty `types`, a non-empty `where` and a non-empty `exclude_slugs`:
-Postgres applies them and PGLite ignores them (follow-up `pglite-keyword-chunks-page-filters`).
+`searchKeywordChunks` applies `type`, `types`, `where` and `exclude_slugs` like the page members, as both SQL
+engines do.
 
 Ignored, as in the SQL statements: the vector, reranking, recency and reporting options (`onVectorPoolMeta`,
 `cjkKeyword`, `embeddingColumn`, `recencyBoost`, `tokenBudget`, `reranker`, `relationalRetrieval` and the rest of
@@ -142,9 +142,6 @@ The page vector is not stored; `keyword/titles.rs` rebuilds the one PGLite last 
   `sealSegmentedPage`), so a sealed segmented page is searchable by its title and lead.
 
 
-- `searchKeywordChunks` page filters: Postgres applies `type`, `types`, `where` and `exclude_slugs`; PGLite drops
-  them. The store applies them, but the member refuses them until the engines agree (follow-up
-  `pglite-keyword-chunks-page-filters`). No production code calls `searchKeywordChunks`.
 - `stale` on `searchKeywordChunks`, `searchKeyword` and `searchTitles` follows PGLite: true when the newest timeline
   entry is newer than `updated_at`. Postgres always returns `stale: false`. This is the SQL engines' shared dialect
   rule (`staleProbe`), not a follow-up.
@@ -168,8 +165,5 @@ The page vector is not stored; `keyword/titles.rs` rebuilds the one PGLite last 
   and the first query after a start, or after the text outgrows the 64 MiB cache, rebuilds every vector. Add a stored
   positional lexeme index when the scan or a cold cache becomes the bottleneck for the brains the store serves.
 - `keyword-cjk`: serve CJK queries (the SQL engines' bigram path).
-- `pglite-keyword-chunks-page-filters`: PGLite's `searchKeywordChunks` drops `type`, `types`, `where` and
-  `exclude_slugs`, which Postgres applies; no production caller. A PGLite behavior change, so it waits until after
-  1x parity. Then the member serves the four filters with a parity case.
 - `fuzzy-title-unscoped-deleted`: the SQL unscoped arm returns soft-deleted pages.
 - Serve the refused privacy and trust options once the store records them.

@@ -43,3 +43,8 @@ the request log rows would never reach the store. Until those writers are typed,
   webhook and MCP request audit rows, the memory writeback setting audit) and the retention prune, then
   serve the two MCP usage reads under sub-tags `0x02` and `0x03`. Done when all four `telemetry` members
   are served and `test/engine-parity/telemetry.test.ts` reports `telemetry` on the Rust arm.
+
+## Known gaps
+
+- `readMcpLifetimeUsage` sorts by `token_name COLLATE "C"`; no test tells that from the database default, because
+  both test databases sort in byte order (PGLite `C`, the local Postgres `C.UTF-8`).
