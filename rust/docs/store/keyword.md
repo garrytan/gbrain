@@ -29,8 +29,7 @@ Every keyword member except `findByTitleFuzzy` refuses:
 
 - a CJK query (`hasCJK`): the SQL engines take a separate CJK path (follow-up `keyword-cjk`);
 - a text search configuration other than `english` (`getFtsLanguage()`);
-- truthy `excludePrivate`, `requireSafeChunks`, `minTrust` or `suppressFlagged`: the store does not record privacy,
-  chunk safety, trust tiers or flags;
+- truthy `minTrust` or `suppressFlagged`: the store keeps no page trust tier and no page write-gate flag;
 - a date bound (`afterDate`, `beforeDate`) that is not an ISO date or date-time
   (`YYYY-M-D[( |T)H:MM[:SS[.ffffff]][Z|±HH[:MM]]]`), that is outside the calendar, or that has more than six fraction
   digits. Postgres reads more shapes (`Jan 5 2026`); those refuse rather than guess;
@@ -42,6 +41,20 @@ Every keyword member except `findByTitleFuzzy` refuses:
 
 `searchKeywordChunks` also refuses `type`, a non-empty `types`, a non-empty `where` and a non-empty `exclude_slugs`:
 Postgres applies them and PGLite ignores them (follow-up `pglite-keyword-chunks-page-filters`).
+
+### Visibility
+
+`excludePrivate` and `requireSafeChunks` are served by every keyword member except `findByTitleFuzzy`, as
+`buildVisibilityClause` (`src/core/search/sql-ranking.ts`) adds them, before any rank, limit or count:
+
+- `excludePrivate`: the TS member sends the store page policy (`storePagePolicy`), and the page filter drops a page
+  `facts/privacy.rs` `page_hidden` hides (`privatePagesFilterForCaller('p')`). A caller whose member pages, grants or
+  lineage widen the policy refuses.
+- `requireSafeChunks`, which an `excludePrivate` read asks for unless it says otherwise (`requiresSafeChunks`): the
+  page filter drops a page whose `chunker_version` is short of `SAFE_FENCE_CHUNKER_VERSION` or not recorded
+  (`safeChunksFilter('p')`).
+- A safe-chunk `searchTitles` runs every attempt as the `title` kind, as `buildSearchTitlesStatement` makes the
+  statement title-only and uncapped: no attempt matches a page on its timeline and none is cut.
 
 Ignored, as in the SQL statements: the vector, reranking, recency and reporting options (`onVectorPoolMeta`,
 `cjkKeyword`, `embeddingColumn`, `recencyBoost`, `tokenBudget`, `reranker`, `relationalRetrieval` and the rest of

@@ -14,9 +14,11 @@ use serde_json::{Map, Value, json};
 
 use super::tsearch::{TsVector, Weight, concat, fts_input, setweight, to_tsvector};
 use super::vector_cache::{VectorKind, cached};
+use crate::chunk_queries::SAFE_FENCE_CHUNKER_VERSION;
 use crate::chunks::ChunkRecord;
 use crate::env::iso;
 use crate::error::{Result, StoreError};
+use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::kv::KvRead;
 use crate::pages::PageRecord;
 use crate::sources::read_source;
@@ -92,6 +94,12 @@ pub struct KeywordOptions {
     pub handles_only: bool,
     /// `searchKeyword`: the per-page candidates kept before the window (`LIMIT $2`, 3x the limit).
     pub inner_limit: Option<f64>,
+    /// `excludePrivate`: the store page policy (`storePagePolicy`) that `privatePagesFilterForCaller(p)`
+    /// renders, applied by `facts/privacy.rs` `page_hidden`; `null` when the read does not ask for it.
+    pub exclude_private: Option<PrivacyPolicy>,
+    /// `requiresSafeChunks(opts)`: only pages past the chunker-version fence (`safeChunksFilter(p)`).
+    /// An `excludePrivate` read asks for it unless it says otherwise.
+    pub require_safe_chunks: bool,
 }
 
 /// A parsed date bound.
@@ -114,6 +122,13 @@ impl Bound {
             })
             .transpose()
     }
+}
+
+/// `safeChunksFilter(p)`: `chunker_version >= SAFE_FENCE_CHUNKER_VERSION`. A page that records no
+/// version fails it, as NULL fails the SQL comparison.
+fn safe_chunks(page: &PageRecord) -> bool {
+    page.chunker_version
+        .is_some_and(|v| v >= SAFE_FENCE_CHUNKER_VERSION)
 }
 
 /// The page-level predicates, with the source table read once per source.
@@ -139,6 +154,7 @@ impl<'a> PageFilter<'a> {
         let o = self.options;
         if page.deleted_at_us.is_some()
             || !served(page)
+            || (o.require_safe_chunks && !safe_chunks(page))
             || HIDING_FRONTMATTER_KEYS
                 .iter()
                 .any(|key| page.frontmatter.contains_key(*key))
@@ -188,7 +204,13 @@ impl<'a> PageFilter<'a> {
                 live
             }
         };
-        Ok(live)
+        if !live {
+            return Ok(false);
+        }
+        match &o.exclude_private {
+            Some(policy) => Ok(!page_hidden(read, page, policy)?),
+            None => Ok(true),
+        }
     }
 
     /// The chunk predicates: `detail` low, `language`, `symbolKind`.

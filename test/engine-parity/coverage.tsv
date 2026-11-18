@@ -72,7 +72,7 @@ getPage	pages	yes	57	yes	yes	yes	serves
 readPageSnapshot	pages	yes	16	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	221	yes	yes	yes	serves
+putPage	pages	yes	224	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	6	yes	yes	yes	serves
@@ -104,13 +104,13 @@ listPrefixSampledPages	pages	yes	1	no	yes	yes	serves
 listCorpusSample	pages	yes	1	no	yes	yes	serves
 getPageSealState	pages	yes	4	no	yes	yes	serves
 refreshPageOrigin	pages	yes	2	no	yes	yes	serves
-searchKeyword	search	yes	10	yes	yes	yes	serves
-countKeywordPages	search	yes	2	no	yes	yes	serves
-searchKeywordPages	search	yes	2	no	yes	yes	serves
-searchTitles	search	yes	5	yes	yes	yes	serves
+searchKeyword	search	yes	11	yes	yes	yes	serves
+countKeywordPages	search	yes	3	no	yes	yes	serves
+searchKeywordPages	search	yes	3	no	yes	yes	serves
+searchTitles	search	yes	6	yes	yes	yes	serves
 searchVector	search	yes	2	yes	yes	yes	refuses:vector_search
 getEmbeddingsByChunkIds	search	yes	1	no	yes	yes	serves
-searchKeywordChunks	search	yes	2	yes	yes	yes	serves
+searchKeywordChunks	search	yes	3	yes	yes	yes	serves
 cosinesByChunkIds	search_reads	yes	1	no	yes	yes	refuses:vector_search
 hasSupersedeEdges	search_reads	yes	1	no	yes	yes	serves
 supersedingPageSlugs	search_reads	yes	3	no	yes	yes	serves
@@ -167,7 +167,7 @@ deleteChunksForPages	chunks	yes	1	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	1	no	yes	yes	serves
 upsertChunks	chunks	yes	20	yes	yes	yes	serves
-sealChunks	chunks	yes	27	no	yes	yes	serves
+sealChunks	chunks	yes	30	no	yes	yes	serves
 getChunks	chunks	yes	23	yes	yes	yes	serves
 getChunkPage	chunks	yes	3	no	yes	yes	serves
 getChunkWindows	chunks	yes	1	no	yes	yes	serves
@@ -183,7 +183,7 @@ readEmbeddingStateCounts	chunks	yes	1	no	yes	yes	serves
 listEmbeddingStateRows	chunks	yes	1	no	yes	yes	serves
 deleteChunks	chunks	yes	3	no	yes	yes	serves
 deleteChunksExcept	chunks	yes	2	no	yes	yes	serves
-setChunkerVersion	chunks	yes	4	no	yes	yes	serves
+setChunkerVersion	chunks	yes	7	no	yes	yes	serves
 writeTextProjectionSeal	chunks	yes	2	no	yes	yes	serves
 moveChunkIndexes	chunks	yes	2	no	yes	yes	serves
 getChunkReuseRows	chunks	yes	2	no	yes	yes	serves
