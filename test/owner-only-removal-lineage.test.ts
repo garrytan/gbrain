@@ -375,4 +375,17 @@ describe('the owner-only guard after the last owner-only source is gone', () => 
     expect(await ownerOnlySourcesPresent(engine)).toBe(true);
     expect((await engine.executeRaw<{ c: string }>(`SELECT obj_description('owner_only_marks'::regclass, 'pg_class') AS c`))[0]!.c).toBe(OWNER_ONLY_HELD);
   });
+
+  test('marks copied in without the flag (a data-only restore): doctor names it, the next migration run sets it, and a marked row reads owner-only', async () => {
+    const lineage = async () => (await engine.executeRaw<{ v: boolean }>(`SELECT gbrain_owner_only_lineage() AND gbrain_owner_only_lineage('pages', 1) AS v`))[0]!.v;
+    expect(await lineage()).toBe(true);
+    await engine.executeRaw('COMMENT ON TABLE owner_only_marks IS NULL');
+    expect(await lineage()).toBe(false);
+    const [check] = await ownerOnlyMarksTriggersEntry.run({ engine, progress: { heartbeat() {} } } as never) as Check[];
+    expect({ status: check!.status, unflagged: (check!.details as { unflagged?: boolean }).unflagged, fix: check!.fix?.argv }).toEqual({
+      status: 'fail', unflagged: true, fix: ['gbrain', 'apply-migrations', '--force-schema'] });
+    await runMigrations(engine);
+    expect(await lineage()).toBe(true);
+    expect(((await ownerOnlyMarksTriggersEntry.run({ engine, progress: { heartbeat() {} } } as never) as Check[])[0]!).status).toBe('ok');
+  });
 });

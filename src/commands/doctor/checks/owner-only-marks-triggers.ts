@@ -35,6 +35,12 @@ async function runOwnerOnlyMarksTriggers(ctx: DoctorContext): Promise<Check[]> {
       `CREATE POLICY ${l.addPolicy} ON public.owner_only_marks FOR INSERT TO ${l.login} WITH CHECK (true);`,
     ]);
     const denied = grants.length ? ` This brain has held owner-only data, and ${state.deniedLogins.length} database login(s) that read sources cannot read and add owner_only_marks (${state.deniedLogins.map(l => l.login).join(', ')}): they read owner-only lineage closed (every derived row and synthesized concept counts as owner-only) and their permanent deletes are refused (owner_only_marks_unwritable). Fix, as the table owner: ${grants.join(' ')}` : '';
+    if (state.unflagged) {
+      checks.push({ name: 'owner_only_marks_triggers', status: 'fail', message: `owner_only_marks holds marks but the held flag (a comment on the table) is unset, as after engine graduation or a data-only restore, so the owner-only guard does not read them and rows derived from a removed owner-only source may read as open to other members. Fix: run gbrain apply-migrations --force-schema as the owner of owner_only_marks; every migration run sets the flag. See ${DOCS}.`,
+        fix: agentFix(['gbrain', 'apply-migrations', '--force-schema'], 'Every migration run sets the held flag when marks exist without it.', 'owner_only_marks_triggers', { requires_exclusive: true, docs: DOCS }),
+        details: { unflagged: true, closed: state.closed, docs: DOCS } });
+      return checks;
+    }
     if (state.missing.length === 0 && grants.length) {
       checks.push({ name: 'owner_only_marks_triggers', status: 'fail', message: `${denied.trimStart()}${rowSecurity} See ${DOCS}.`,
         fix: { argv: ['psql', '-c', grants.join(' ')], consent: [], actor: 'host_admin', requires_exclusive: false, docs: DOCS,

@@ -27,6 +27,8 @@ export interface OwnerOnlyTriggerState {
   rowSecurity: boolean;
   /** The brain has held owner-only data (v322's flag on owner_only_marks), so the guard stays on for good. */
   held: boolean;
+  /** Marks exist but the held flag is unset (copied in by graduation or a data-only restore): the guard does not read them. */
+  unflagged: boolean;
   /** Logins that read `sources` but cannot read and add marks, quoted, with the quoted names of the policies doctor prints; empty unless `held`. */
   deniedLogins: Array<{ login: string; readPolicy: string; addPolicy: string }>;
 }

@@ -65,14 +65,27 @@ async function readState(exec: SqlExecutor): Promise<OwnerOnlyTriggerState> {
      WHERE NOT EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid = c.oid AND t.tgname = g.trg AND NOT t.tgisinternal
                          AND t.tgenabled <> 'D' AND t.tgfoid = to_regprocedure('public.' || g.fn || '()'))
      ORDER BY g.tbl`);
-  const { rows: [state] } = await exec.query<{ role: string; closed: boolean; row_security: boolean; held: boolean }>(
+  const { rows: [state] } = await exec.query<{ role: string; closed: boolean; row_security: boolean; held: boolean; unflagged: boolean }>(
     `SELECT quote_ident(current_user) AS role, EXISTS (SELECT 1 FROM owner_only_marks m WHERE m.row_table = '*' AND m.row_id = 'unguarded') AS closed,
             EXISTS (SELECT 1 FROM owner_only_marks m WHERE m.row_table = '*' AND m.row_id = 'row_security') AS row_security,
-            gbrain_owner_only_held() AS held`);
+            gbrain_owner_only_held() AS held,
+            NOT gbrain_owner_only_held() AND EXISTS (SELECT 1 FROM owner_only_marks) AS unflagged`);
   const logins = state!.held ? (await exec.query<{ login: string; read_policy: string; add_policy: string }>(DENIED_LOGINS_SQL)).rows
     .map(r => ({ login: r.login, readPolicy: r.read_policy, addPolicy: r.add_policy })) : [];
   return { missing: rows.map(r => ({ table: r.tbl, owner: r.owner, owned: r.owned })), role: state!.role, closed: state!.closed, rowSecurity: state!.row_security,
-    held: state!.held, deniedLogins: logins };
+    held: state!.held, unflagged: state!.unflagged, deniedLogins: logins };
+}
+
+/**
+ * Marks copied in without a trigger (engine graduation, a data-only restore) arrive without the held flag, a catalog
+ * comment no data copy carries: set it, so the guard reads them. Only the owner of owner_only_marks can; another role
+ * leaves it to doctor (owner_only_marks_triggers names the state).
+ */
+async function holdCopiedMarks(exec: SqlExecutor): Promise<void> {
+  const { rows: [state] } = await exec.query<{ unflagged: boolean; owns: boolean }>(
+    `SELECT NOT gbrain_owner_only_held() AND EXISTS (SELECT 1 FROM owner_only_marks) AS unflagged,
+            pg_has_role(current_user, (SELECT relowner FROM pg_class WHERE oid = 'public.owner_only_marks'::regclass), 'USAGE') AS owns`);
+  if (state!.unflagged && state!.owns) await exec.query('SELECT gbrain_owner_only_hold()');
 }
 
 /**
@@ -81,6 +94,7 @@ async function readState(exec: SqlExecutor): Promise<OwnerOnlyTriggerState> {
  * first creation, which is no gap).
  */
 export async function ownerOnlyMarkTriggers(exec: SqlExecutor, opts?: { ensure?: boolean; installing?: boolean }): Promise<OwnerOnlyTriggerState> {
+  if (opts?.ensure) await holdCopiedMarks(exec);
   const before = await readState(exec);
   if (!opts?.ensure || before.missing.length === 0) return before;
   const closeIfPresent = async () => {
