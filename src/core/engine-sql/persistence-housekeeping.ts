@@ -133,7 +133,7 @@ export function listTrueUpRequests<R = Record<string, unknown>>(exec: LegacyUnsc
 export const CAPACITY_WINDOW_DAYS = 7;
 export const CAPACITY_WALK_STEP = 1000;
 
-export const CAPACITY_COUNTERS_SQL = "SELECT key,lifetime_ids::text,terminal_bytes::text FROM persistence_counters WHERE key='brain' OR key LIKE 'principal:%' ORDER BY key";
+export const CAPACITY_COUNTERS_SQL = "SELECT key,lifetime_ids::text,terminal_bytes::text FROM persistence_counters WHERE key='brain' OR key LIKE 'principal:%' ORDER BY key COLLATE \"C\"";
 
 /** One principal's window by UTC day (`COMPACTED_RECEIPT_BYTES_SQL('w','e')` written out): $1 kind, $2 id, $3 window days, $4 walk step. */
 export const CAPACITY_PRINCIPAL_DAYS_SQL = `WITH RECURSIVE walk(lo,oldest,n) AS (
@@ -249,7 +249,7 @@ export async function listPendingSegmentedProjections(exec: LegacyUnscopedRead, 
   const { rows } = await exec.run<PendingSegmentedProjection>(sqlFragment`SELECT s.id AS source_id,
       j.source_incarnation::text AS source_incarnation, j.slug, j.revision::text AS revision
     FROM page_projection_jobs j ${trustedSql(SEGMENTED_JOB_PROBES_SQL)}
-    WHERE ${joinFragments(filters, ' AND ')} ORDER BY j.updated_at, j.slug LIMIT ${Math.max(1, filter.limit)}`);
+    WHERE ${joinFragments(filters, ' AND ')} ORDER BY j.updated_at, j.slug COLLATE "C" LIMIT ${Math.max(1, filter.limit)}`);
   return rows;
 }
 
