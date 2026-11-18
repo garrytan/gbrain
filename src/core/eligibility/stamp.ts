@@ -13,7 +13,7 @@ import { chunkFenceMarker, FENCE_TRUST_ORIGIN, fenceTrustMarker, heldRowSql, low
 import { decodeFenceCell, isSeparatorRow, parseRowCells } from '../fence-shared.ts';
 import { needsDataEnvelope, parseContested, renderTrustedText, trustFields, type Contested, type TrustFields } from './labels.ts';
 import { activationSuppressedSql, contestedRefSql } from './sql.ts';
-import { GUEST_ORIGIN, guestView, loadGuestMarks, unattributedGuest, withGuestSourceSql, type GuestStamp } from '../guests/marker.ts';
+import { GUEST_ORIGIN, guestView, loadGuestMarks, unattributedGuest, type GuestStamp } from '../guests/marker.ts';
 
 const withFlag = (fields: TrustFields, flagged: unknown): TrustFields => (flagged === true ? { ...fields, unconfirmed: true } : fields);
 
@@ -25,12 +25,9 @@ interface PageRef {
 }
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
+type TrustExec = Pick<BrainEngine, 'executeRaw' | 'readPageTrustRows'>;
 
 const key = (source: string | null | undefined, slug: string) => `${source ?? 'default'}\u0000${slug}`;
-
-type TrustRow = { id: number; source_id: string; slug: string; trust_tier: string; write_origin: unknown; flagged: boolean; guest: boolean };
-const trustColumns = (guestSql: (config: string, id: string) => string) => `pages.id, pages.source_id, pages.slug, trust_tier, write_origin, ${activationSuppressedSql('pages', 'pages')} AS flagged,
-  ${guestSql('s.config', 'pages.source_id')} AS guest FROM pages LEFT JOIN sources s ON s.id = pages.source_id`;
 
 /**
  * Trust fields per page id and per (source_id, slug). GBRA-504: a row in a guest source is decided here, per row from
@@ -38,23 +35,13 @@ const trustColumns = (guestSql: (config: string, id: string) => string) => `page
  * when a guest row is among them; a mark that cannot be read leaves the row unattributed, never bare). The writer is
  * shown only with `guestWriter` (an owner caller); `includeDeleted` also resolves soft-deleted pages by slug.
  */
-export async function loadPageTrust(engine: Exec, refs: readonly PageRef[], opts: { guestWriter?: boolean; includeDeleted?: boolean } = {}): Promise<{ byId: Map<number, TrustFields>; byKey: Map<string, TrustFields> }> {
+export async function loadPageTrust(engine: TrustExec, refs: readonly PageRef[], opts: { guestWriter?: boolean; includeDeleted?: boolean } = {}): Promise<{ byId: Map<number, TrustFields>; byKey: Map<string, TrustFields> }> {
   const byId = new Map<number, TrustFields>();
   const byKey = new Map<string, TrustFields>();
   const ids = [...new Set(refs.map(r => r.page_id).filter((n): n is number => typeof n === 'number' && Number.isFinite(n)))];
   const slugRefs = refs.filter(r => typeof r.page_id !== 'number');
-  const rows = await withGuestSourceSql(async guestSql => {
-    const found: Array<TrustRow & { byId: boolean }> = [];
-    if (ids.length) {
-      for (const row of await engine.executeRaw<TrustRow>(`SELECT ${trustColumns(guestSql)} WHERE pages.id = ANY($1::int[])`, [ids])) found.push({ ...row, byId: true });
-    }
-    if (slugRefs.length) {
-      for (const row of await engine.executeRaw<TrustRow>(`SELECT ${trustColumns(guestSql)}
-          WHERE ${opts.includeDeleted ? '' : 'pages.deleted_at IS NULL AND '}(pages.source_id, pages.slug) IN (SELECT * FROM unnest($1::text[], $2::text[]))`,
-        [slugRefs.map(r => r.source_id ?? 'default'), slugRefs.map(r => r.slug)])) found.push({ ...row, byId: false });
-    }
-    return found;
-  });
+  const rows = ids.length || slugRefs.length ? await engine.readPageTrustRows({ ids, keys: slugRefs.map(r => ({ source_id: r.source_id ?? 'default', slug: r.slug })),
+    includeDeleted: opts.includeDeleted === true }) : [];
   const marks = rows.some(r => r.guest === true) ? await loadGuestMarks(engine, rows.filter(r => r.guest === true).map(r => Number(r.id))) : null;
   for (const row of rows) {
     const base = withFlag(trustFields(row.trust_tier, row.write_origin), row.flagged);
@@ -77,7 +64,7 @@ export async function loadPageTrust(engine: Exec, refs: readonly PageRef[], opts
  * `loadPageTrust` started early over the rows these rows were copied from.
  * `hideHeld` (worldOnlyFacts for the caller) also drops the fence rows held from the caller (`dropHeldFenceRows`).
  */
-export async function stampPageTrust<T extends PageRef>(engine: Exec, rows: T[], floor?: TrustTier,
+export async function stampPageTrust<T extends PageRef>(engine: TrustExec, rows: T[], floor?: TrustTier,
   pageTrust?: ReturnType<typeof loadPageTrust>, hideHeld = false): Promise<T[]> {
   if (rows.length === 0) return rows;
   if (hideHeld) rows = await dropHeldFenceRows(engine, rows);

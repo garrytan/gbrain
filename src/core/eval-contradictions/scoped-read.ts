@@ -49,7 +49,7 @@ type LabeledTake = LiveTake & Labels;
 const finiteIds = (values: Array<number | null | undefined>) =>
   [...new Set(values.map(Number).filter(n => Number.isSafeInteger(n) && n > 0))];
 
-async function loadChunks(engine: Pick<BrainEngine, 'executeRaw'>, ids: number[], policy: PageReadPolicy, floor: TrustTier | undefined) {
+async function loadChunks(engine: Pick<BrainEngine, 'executeRaw' | 'readPageTrustRows'>, ids: number[], policy: PageReadPolicy, floor: TrustTier | undefined) {
   if (!ids.length) return new Map<number, LabeledChunk>();
   const params: unknown[] = [ids];
   const pageSql = pageReadFilter('p', { ...policy, ...(floor ? { minTrust: floor } : {}) }, params, true);
@@ -103,7 +103,7 @@ function supersedeSides(f: ScopedFinding): { target: ScopedMember; winner: Scope
 
 /** Resolve stored findings for a scoped reader; findings with a hidden, missing or changed side are dropped. */
 export async function resolveScopedFindings(
-  engine: Pick<BrainEngine, 'executeRaw'>,
+  engine: Pick<BrainEngine, 'executeRaw' | 'readPageTrustRows'>,
   findings: ContradictionFinding[],
   policy: PageReadPolicy,
   floor: TrustTier | undefined,
