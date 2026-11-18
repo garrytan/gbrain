@@ -8,7 +8,9 @@ name: Rust engine
 #              The advisory check downloads the RustSec database, so it needs network access.
 #   addon      builds the addon (`bun run rust:build`) and runs the Bun smoke test
 #              (rust/smoke/run.ts, including a `bun build --compile` executable) on Linux x64 and
-#              macOS arm64, then uploads the .node file.
+#              macOS arm64, then the CLI parity test (test/rust-cli-parity.serial.test.ts: each
+#              read command on a Rust brain is equal to PGLite, refused with a typed refusal, or
+#              has no Rust engine; only a diverged command fails), then uploads the .node file.
 #   without-rust  no Rust on PATH: bun install, bun run build, ./bin/gbrain --version.
 #   scope      reads a pull request's changed files and picks the advisory check and addon cells.
 #
@@ -41,6 +43,8 @@ on:
       - 'test/helpers/test-backends.ts'
       - '**/test/rust-unit-arms.txt'
       - '**/scripts/rust-unit-arms.ts'
+      - 'test/rust-cli-parity.serial.test.ts'
+      - 'test/fixtures/rust-cli-parity-brain/**'
       - '.github/workflows/rust-engine.yml'
   push:
     branches: [master]
@@ -58,6 +62,8 @@ on:
       - 'test/helpers/test-backends.ts'
       - '**/test/rust-unit-arms.txt'
       - '**/scripts/rust-unit-arms.ts'
+      - 'test/rust-cli-parity.serial.test.ts'
+      - 'test/fixtures/rust-cli-parity-brain/**'
       - '.github/workflows/rust-engine.yml'
   workflow_dispatch:
   schedule:
@@ -259,6 +265,18 @@ jobs:
           export GBRAIN_RUST_ENGINE_ADDON="$PWD/rust/target/addon/gbrain_engine.${{ matrix.target }}.node"
           test -f "$GBRAIN_RUST_ENGINE_ADDON"
           bun rust/smoke/run.ts
+      - name: Install dependencies for the CLI parity test (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
+      # Each read command runs through the real CLI on a PGLite brain and a Rust brain. A command
+      # that is equal, refused with engine_capability_missing, or has no Rust engine passes; a
+      # diverged command (another answer, an untyped error) fails. The flag makes a missing addon
+      # an error instead of a skip.
+      - name: CLI parity on a Rust brain against PGLite (no diverged command)
+        timeout-minutes: 15
+        env:
+          GBRAIN_TEST_RUST_ADDON_REQUIRED: '1'
+        run: bun test test/rust-cli-parity.serial.test.ts
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: gbrain-engine-addon-${{ matrix.target }}
