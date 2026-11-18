@@ -341,6 +341,23 @@ for (const kind of testBackends()) {
       }
     }, 120_000);
 
+    test('find_contradictions leaves out the derived take for another member, and keeps it for the owner', async () => {
+      const [take] = await engine.executeRaw<{ id: number; row_num: number }>('SELECT id, row_num FROM takes WHERE claim LIKE $1', [`%${TAKE_DERIVED}%`]);
+      const [chunk] = await engine.executeRaw<{ id: number; chunk_text: string }>(`SELECT cc.id, cc.chunk_text FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+        WHERE p.slug = $1 AND p.source_id = $2 ORDER BY cc.chunk_index LIMIT 1`, [OPEN.slug, OPEN_SRC]);
+      const side = (o: Record<string, unknown>) => ({ slug: OPEN.slug, chunk_id: null, take_id: null, take_row_num: null, source_tier: 'curated', holder: null,
+        effective_date: null, effective_date_source: null, ...o });
+      const contradiction = { kind: 'intra_page_chunk_take', combined_score: 1, verdict: 'contradiction', severity: 'high', axis: 'harbor ledger', confidence: 0.9,
+        resolution_kind: 'manual_review', resolution_command: 'gbrain get notes/open-plan',
+        a: side({ chunk_id: Number(chunk!.id), text: chunk!.chunk_text }),
+        b: side({ take_id: Number(take!.id), take_row_num: Number(take!.row_num), holder: 'world', text: `Harbor ledger planning notes ${TAKE_DERIVED}` }) };
+      await engine.writeContradictionsRun({ run_id: 'owner-only-run', judge_model: 'fixture', prompt_version: 'fixture', queries_evaluated: 1, queries_with_contradiction: 1,
+        total_contradictions_flagged: 1, wilson_ci_lower: 0, wilson_ci_upper: 1, judge_errors_total: 0, cost_usd_total: 0, duration_ms: 1, source_tier_breakdown: {},
+        report_json: { per_query: [{ query: 'harbor ledger', contradictions: [contradiction] }] } } as never);
+      const seen = async (who: string) => (await call(who, 'find_contradictions', { source_id: OPEN_SRC, limit: 100 })).text.includes(TAKE_DERIVED);
+      expect({ owner: await seen('owner'), bob: await seen('bob') }).toEqual({ owner: true, bob: false });
+    }, 120_000);
+
     test('the owner\'s own remote callers (a bound legacy token, a bound client_credentials client with no holders list) read the derived take and timeline row, also with no readable schema version', async () => {
       for (const who of ['owner', 'owner-client']) expect({ who, seen: await derivedSeenBy(who) }).toEqual({ who, seen: [TIMELINE_FANNED, TAKE_DERIVED] });
       await withoutSchemaVersion(async () => {

@@ -14,10 +14,11 @@ import { OWNER_ONLY_LINEAGE_FN, OWNER_ONLY_READ_MODE_FN } from '../access/owner-
 //
 // gbrain_owner_only_read_mode() answers once per statement how a login reads owner-only lineage:
 //   all     no privilege on a lineage table, or derivation_inputs not complete: every row counts as owner-only;
-//   source  the marks are not complete: rows with a recorded input, synthesized concepts and questions, and rows in an
-//           owner-only source count as owner-only (v322's closed mode for an unreadable mark);
-//   closed  another lineage table is not complete, or the unguarded or row-security mark is set: the same closed rows,
-//           plus the exact walk, which only adds;
+//   source  the marks are not complete: rows with a recorded input, synthesized concepts and questions, and pages and facts in an
+//           owner-only source, or in a source row the login cannot read, count as owner-only (v322's closed mode for an
+//           unreadable mark, which looked the source up as the caller, so a source row its policy hid read as open);
+//   closed  another lineage table is not complete, or the unguarded or row-security mark is set: the same closed rows
+//           (a source row hidden from the login included), plus the exact walk, which only adds;
 //   exact   the walk alone.
 // gbrain_owner_only_lineage(table, id, mode) applies it; reads from v325 pass the mode as an InitPlan, and the
 // two-argument form (reads that recorded v320 to v322) computes it per call. A missing or unknown mode counts as all.
@@ -28,6 +29,7 @@ import { OWNER_ONLY_LINEAGE_FN, OWNER_ONLY_READ_MODE_FN } from '../access/owner-
 // test pins it). Functions only; no table, trigger or row changes. No schema.sql mirror, like v320 and v322.
 const ownerOnlySource = (alias: string) => `${alias}.config->>'kind' IN ('imessage') OR ${alias}.config->>'owner_only' = 'true'`;
 const LINEAGE_TABLES = ['sources', 'facts', 'derivation_inputs', 'links', 'pages', 'takes', 'timeline_entries'];
+const openSourceMissing = (alias: string) => `NOT EXISTS (SELECT 1 FROM sources s WHERE s.id = ${alias}.source_id AND NOT coalesce((${ownerOnlySource('s')}), false))`;
 const complete = (table: string) => `gbrain_owner_only_reads_complete('public.${table}', 'r')`;
 
 export const v325: Migration = {
@@ -84,9 +86,13 @@ BEGIN
       OR (p_table = 'pages' AND EXISTS (SELECT 1 FROM pages p WHERE p.id = p_id AND p.type IN ('concept', 'question')))) THEN
     RETURN true;
   END IF;
+  IF p_mode <> 'exact' AND (
+      (p_table = 'pages' AND EXISTS (SELECT 1 FROM pages p WHERE p.id = p_id AND ${openSourceMissing('p')}))
+      OR (p_table = 'facts' AND EXISTS (SELECT 1 FROM facts f WHERE f.id = p_id AND ${openSourceMissing('f')}))) THEN
+    RETURN true;
+  END IF;
   IF p_mode = 'source' THEN
-    RETURN (p_table = 'pages' AND EXISTS (SELECT 1 FROM pages p JOIN sources s ON s.id = p.source_id WHERE p.id = p_id AND (${ownerOnlySource('s')})))
-      OR (p_table = 'facts' AND EXISTS (SELECT 1 FROM facts f JOIN sources s ON s.id = f.source_id WHERE f.id = p_id AND (${ownerOnlySource('s')})));
+    RETURN false;
   END IF;
   RETURN gbrain_owner_only_lineage_strict(p_table, p_id);
 END

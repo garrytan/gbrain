@@ -502,8 +502,8 @@ Owner-only lineage is read exactly only by a login whose reads of the lineage ta
 table owner without `FORCE`, a `BYPASSRLS` login, or a login with a permissive `USING (true)`
 policy and no restrictive one on each. On a brain that has held owner-only data any other login
 reads it closed, never open and never an error: every row with a recorded derivation input,
-every synthesized concept or question and every row in an owner-only source counts as
-owner-only for it. So the scoped writer above, whose `pages` and `sources` policies read
+every synthesized concept or question, every row in an owner-only source and every page or
+fact whose source row the login cannot read counts as owner-only for it. So the scoped writer above, whose `pages` and `sources` policies read
 `app.scopes`, sees every derived row as owner-only. A login that cannot read `derivation_inputs`
 in full (the reader role above has no grant on it) sees every row as owner-only, also after the
 last owner-only source is removed.
