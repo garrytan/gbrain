@@ -1,0 +1,1 @@
+**The `full-ci` label now removes itself once Test and E2E are dispatched (add it again at each head you want gated; a refused dispatch leaves it on), and the stress gate's shard-limit error gives its own reason and says to split the PR.**

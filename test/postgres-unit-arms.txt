@@ -128,6 +128,7 @@ test/engine-parity/extraction.test.ts
 test/engine-parity/facts.test.ts
 test/engine-parity/lifecycle.test.ts
 test/engine-parity/links.test.ts
+test/engine-parity/owner-only-marks.test.ts
 test/engine-parity/pages.test.ts
 test/engine-parity/raw-sql.test.ts
 test/engine-parity/search.test.ts

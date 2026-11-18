@@ -45,6 +45,7 @@ import {
 import { ipcSocketPathEntry } from './checks/local-ipc.ts';
 import { functionSearchPathEntry } from './checks/function-search-path.ts';
 import { guardLedgerChecksEntry } from './checks/guard-ledger-checks.ts';
+import { ownerOnlyMarksTriggersEntry } from './checks/owner-only-marks-triggers.ts';
 import { postgresTlsEntry } from './checks/postgres-tls.ts';
 import { databaseEncodingEntry } from './checks/database-encoding.ts';
 import { schemaFunctionBodiesEntry } from './checks/schema-function-bodies.ts';
@@ -270,6 +271,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   postgresTlsEntry,
   functionSearchPathEntry,
   guardLedgerChecksEntry,
+  ownerOnlyMarksTriggersEntry,
   databaseEncodingEntry,
   schemaVersionEntry,
   schemaFunctionBodiesEntry,

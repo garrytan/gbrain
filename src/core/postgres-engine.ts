@@ -160,6 +160,8 @@ import type { KeywordPageWindow } from './search/keyword-statement.ts';
 import { frontmatterWhereSql } from './search/frontmatter-where.ts';
 import type { EmbeddingState, EmbeddingStateCounts, EmbeddingStateRow } from './embedding-state.ts';
 import * as chunksImpl from './engine-sql/chunks.ts';
+import * as ownerOnlyMarksImpl from './engine-sql/owner-only-marks.ts';
+import type { OwnerOnlyTriggerState } from './access/owner-only-marks.ts';
 import * as pageBodyImpl from './engine-sql/page-body.ts';
 import type { BodyFlipInput, BodyFlipResult, BodyRegion, BodyStagingInput, BodyStagingState, ManifestRow, ManifestRowInput, SegmentChunkInput,
   SegmentedPageMeta, SegmentSweepOptions, SegmentSweepResult, SegmentTextInput } from './page-body/types.ts';
@@ -1730,6 +1732,10 @@ export class PostgresEngine implements BrainEngine {
 
   async sealChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; expectedRevision?: string }): Promise<void> {
     await this.transaction(tx => { const e = tx as PostgresEngine; return chunksImpl.sealChunks(e.engineSql, e, slug, chunks, opts); });
+  }
+
+  async ownerOnlyMarkTriggers(opts?: { ensure?: boolean; installing?: boolean }): Promise<OwnerOnlyTriggerState> {
+    return ownerOnlyMarksImpl.ownerOnlyMarkTriggers(this.engineSql, opts);
   }
 
   async deleteChunks(slug: string, opts?: { sourceId?: string }): Promise<void> {

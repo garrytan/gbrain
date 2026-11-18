@@ -43,6 +43,7 @@ const OOS = {
   raw: 'out-of-scope:raw-data',
   stub: 'out-of-scope:no-sql-stub',
   pageBody: 'out-of-scope:page-body (Wave B segmented storage, born in engine-sql/page-body.ts; pinned by test/engine-sql-page-body.test.ts)',
+  ownerOnly: 'out-of-scope:owner-only-marks (catalog and trigger DDL, born in engine-sql/owner-only-marks.ts; pinned by test/engine-parity/owner-only-marks.test.ts)',
 } as const;
 
 export const DOMAIN_OF: Record<string, string> = {
@@ -61,6 +62,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'disconnectInternal': OOS.helper,
   'initSchema': OOS.lifecycle,
   'holdSchemaMigrationLock': OOS.lifecycle,
+  'ownerOnlyMarkTriggers': OOS.ownerOnly,
   'applyForwardReferenceBootstrap': OOS.helper,
   'transaction': OOS.lifecycle,
   'transactionDirect': OOS.lifecycle,

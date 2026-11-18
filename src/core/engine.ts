@@ -1,5 +1,6 @@
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type { EngineCapabilities } from './engine-capabilities.ts';
+import type { OwnerOnlyTriggerState } from './access/owner-only-marks.ts';
 import type { GetVersionsOpts, PageVersionRows } from './page-state/version-types.ts';
 import type { PageSnapshotBatch } from './page-snapshot-batch.ts';
 import type { EntityKeyRow, EntityKeyRowsOpts } from './engine-sql/entity-keys.ts';
@@ -1281,6 +1282,12 @@ export interface BrainEngine {
    * segmented page, an archived source and a stale `expectedRevision` (SQL in engine-sql/chunks.ts).
    */
   sealChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; expectedRevision?: string }): Promise<void>;
+  /**
+   * GST-3032: the owner-only delete triggers (migration v322) that are missing or disabled, with each table's owner. With
+   * `ensure`, on a brain holding an owner-only source or a mark, sets the unguarded mark that reads owner-only lineage
+   * closed (a gap; not while `installing`), then re-creates each one on a table the current role owns (SQL in engine-sql/owner-only-marks.ts).
+   */
+  ownerOnlyMarkTriggers(opts?: { ensure?: boolean; installing?: boolean }): Promise<OwnerOnlyTriggerState>;
   /**
    * Read every chunk for a page. Scope precedence mirrors getPage (#2555):
    * a federated grant (`sourceIds[]`) wins over scalar `sourceId`; with

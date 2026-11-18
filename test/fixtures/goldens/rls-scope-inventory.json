@@ -3834,6 +3834,7 @@
         "migrateFactsToCanonical": "none",
         "onCheckout": "none",
         "openBodyStaging": "none",
+        "ownerOnlyMarkTriggers": "none",
         "purgeDeletedPages": "none",
         "putContradictionCacheEntry": "none",
         "putDreamVerdict": "none",

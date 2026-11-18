@@ -27,6 +27,7 @@ export const RUST_ENGINE_MEMBERS = {
   // schema
   initSchema: 'schema',
   holdSchemaMigrationLock: 'schema',
+  ownerOnlyMarkTriggers: 'schema',
   // transactions
   transaction: 'transactions',
   transactionDirect: 'transactions',

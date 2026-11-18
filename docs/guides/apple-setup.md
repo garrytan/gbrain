@@ -38,9 +38,10 @@ Each sync reads the chats with new messages and rebuilds every day in the lookba
 on your phone shows up and facts taken from the old text are retired. A message deleted after the lookback stays
 until you delete the page. Running a sync twice writes nothing the second time.
 
-The owner-only rule follows the source while it is registered and its pages are still in the database. If you
-remove the source (`gbrain sources remove`) or purge its pages, a concept or fact stored in another source that was
-derived from them is no longer hidden. Delete those derived pages and facts first if they should stay private.
+The owner-only rule also covers every page, fact and concept derived from the source's pages, wherever it is stored.
+Removing the source (`gbrain sources remove`, with or without `--keep-storage`) or deleting one of its pages for good
+leaves everything derived from it owner-only: a delete trigger records those rows first
+([owner-only delete triggers](../ENGINES.md#owner-only-delete-triggers)). Nothing derived is deleted.
 
 ## Errors
 
