@@ -1,7 +1,7 @@
 //! Vector search: `searchVector` and `searchTakesVector` through the public store API, matched to
-//! the PGLite engine. Vectors are written by the chunk and take families (not public yet), so these
-//! cases cover what a brain without vectors answers and what every brain refuses. The ranking,
-//! filter and cache cases live in the module's unit tests (`src/vectors.rs`).
+//! the PGLite engine: what a brain without vectors answers, what every brain refuses, and a ranking
+//! over vectors written by the chunk write. The filter, guard and cache cases live in the module's
+//! unit tests (`src/vectors.rs`).
 
 mod common;
 
@@ -98,5 +98,51 @@ fn a_query_pglite_cannot_parse_is_refused_on_any_brain() {
     assert_eq!(
         (takes.code.to_string(), takes.message),
         invalid("vector must have at least 1 dimension")
+    );
+}
+
+#[test]
+fn chunk_vectors_written_by_the_chunk_write_rank_by_cosine() {
+    let dir = TempDir::new("vectors-rank");
+    let store = open(&dir);
+    store.set_config("embedding_dimensions", "3").unwrap();
+    for (slug, vector) in [
+        ("near", [1.0, 0.0, 0.0]),
+        ("far", [-1.0, 0.0, 0.0]),
+        ("mid", [1.0, 1.0, 0.0]),
+    ] {
+        let input: PageInput = de(json!({"type": "note", "title": slug, "compiled_truth": slug}));
+        store
+            .put_page(slug, &input, &PutPageOptions::default())
+            .unwrap();
+        let chunk: ChunkInput = de(json!({
+            "chunk_index": 0, "chunk_text": slug, "embedding": vector, "model": "test:model",
+        }));
+        let seal: UpsertChunksOptions = de(json!({"seal": true}));
+        store.upsert_chunks(slug, &[chunk], &seal).unwrap();
+    }
+    let rows = store
+        .search_vector(&[1.0, 0.0, 0.0], &de(json!({"model": "test:model"})))
+        .unwrap();
+    let got: Vec<(String, f64)> = rows
+        .iter()
+        .map(|r| {
+            (
+                r["slug"].as_str().unwrap().to_string(),
+                r["score"].as_f64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(got.len(), 3);
+    assert_eq!(got[0], ("near".to_string(), 1.0));
+    assert_eq!(got[1].0, "mid");
+    assert!((got[1].1 - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-6);
+    assert_eq!(got[2], ("far".to_string(), -1.0));
+    // Another model's vectors are not candidates.
+    assert!(
+        store
+            .search_vector(&[1.0, 0.0, 0.0], &de(json!({"model": "other:model"})))
+            .unwrap()
+            .is_empty()
     );
 }

@@ -23,7 +23,9 @@
 
 use crate::chunks::{ChunkRecord, visible_chunks};
 use crate::config::read_config;
-use crate::embeddings::{StoredVector, scan_chunk_vectors, scan_take_vectors, vector_generation};
+use crate::embeddings::{
+    StoredVector, scan_chunk_vectors, scan_take_vectors, text_hash, vector_generation,
+};
 use crate::error::{Result, StoreError};
 use crate::kv::{KvRead, KvWrite};
 use crate::pages::{PageRecord, read_page_by_id};
@@ -105,7 +107,6 @@ struct IndexedVector {
     /// The page id of a chunk vector, the take id of a take vector.
     id: u64,
     chunk_index: u32,
-    model: String,
     norm_sq: f64,
     vector: Box<[f32]>,
 }
@@ -115,7 +116,6 @@ impl IndexedVector {
         IndexedVector {
             id: stored.id,
             chunk_index: stored.chunk_index,
-            model: stored.model.clone(),
             norm_sq: dot(&stored.vector, &stored.vector),
             vector: stored.vector.clone().into_boxed_slice(),
         }
@@ -388,6 +388,18 @@ fn page_passes(
     Ok(!is_archived)
 }
 
+/// PGLite's guard for a named model: `cc.model = $model AND (cc.embedded_text_hash =
+/// md5(cc.chunk_text) OR cc.embedded_text_hash IS NULL)`. The chunk record keeps the model label and
+/// the hash of the text its vector was computed from (`chunks::EmbedState`).
+fn written_by(chunk: &ChunkRecord, model: &str) -> bool {
+    chunk.meta.get("model").and_then(Value::as_str) == Some(model)
+        && chunk
+            .embed
+            .text_hash
+            .as_deref()
+            .is_none_or(|hash| hash == text_hash(&chunk.chunk_text))
+}
+
 /// The chunk-level filters of the scan.
 fn chunk_passes(chunk: &ChunkRecord, options: &VectorSearchOptions) -> bool {
     let meta_is = |key: &str, want: &Option<String>| match want.as_deref() {
@@ -470,7 +482,7 @@ fn search_chunks(
                 return Err(dims_mismatch(query.len(), stored.vector.len()));
             }
             let fresh = match options.model.as_deref() {
-                Some(model) => stored.model == model,
+                Some(model) => written_by(chunk, model),
                 None => {
                     !*migrating.get_or_insert(read_config(read, MIGRATION_STATE_KEY)?.is_some())
                 }
@@ -665,11 +677,12 @@ pub(crate) fn remove_chunk_rows(
 
 #[cfg(test)]
 mod tests {
-    //! The crate-private parts (the cache, the vector writes the members do not make yet) are
-    //! tested here; the members' refusals through the public API in `tests/vectors.rs`.
+    //! Vectors are written through the members that write them (`upsertChunks` with an
+    //! `embedding`, `updateTakeEmbeddings`); the crate-private cache is tested here too. The
+    //! refusals through the public API are in `tests/vectors.rs`.
     use super::*;
     use crate::chunks::{ChunkInput, UpsertChunksOptions};
-    use crate::embeddings::{put_chunk_vector, put_take_vector};
+    use crate::embeddings::TakeEmbeddingInput;
     use crate::pages::{PageInput, PutPageOptions};
     use crate::sources::SourceInput;
     use crate::takes::TakeInput;
@@ -677,7 +690,8 @@ mod tests {
 
     const MODEL: &str = "openai:text-embedding-3-large";
 
-    /// A sealed page whose chunk `i` holds `vectors[i]` (no vector for an empty one).
+    /// A sealed page whose chunk `i` holds `vectors[i]` (no vector for an empty one), written by
+    /// `MODEL`. The brain's `embedding_dimensions` is set to the vectors' width first.
     fn page(store: &Store, source: &str, slug: &str, vectors: &[Vec<f32>], extra: Value) -> u64 {
         let mut input =
             json!({"type": "note", "title": slug, "compiled_truth": format!("body {slug}")});
@@ -687,30 +701,33 @@ mod tests {
         let input: PageInput = serde_json::from_value(input).unwrap();
         let opts: PutPageOptions = serde_json::from_value(json!({"sourceId": source})).unwrap();
         store.put_page(slug, &input, &opts).unwrap();
-        let chunks: Vec<ChunkInput> = (0..vectors.len())
-            .map(|i| {
-                serde_json::from_value(json!({
+        if let Some(v) = vectors.iter().find(|v| !v.is_empty()) {
+            store
+                .set_config("embedding_dimensions", &v.len().to_string())
+                .unwrap();
+        }
+        let chunks: Vec<ChunkInput> = vectors
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                let mut chunk = json!({
                     "chunk_index": i, "chunk_text": format!("body {slug} {i}"),
                     "chunk_source": if i == 1 { "timeline" } else { "compiled_truth" },
-                }))
-                .unwrap()
+                });
+                if !v.is_empty() {
+                    chunk["embedding"] = json!(v);
+                    chunk["model"] = json!(MODEL);
+                }
+                serde_json::from_value(chunk).unwrap()
             })
             .collect();
         let up: UpsertChunksOptions =
             serde_json::from_value(json!({"sourceId": source, "seal": true})).unwrap();
         store.upsert_chunks(slug, &chunks, &up).unwrap();
-        let id = crate::pages::read_page(&*store.read().unwrap(), source, slug)
+        crate::pages::read_page(&*store.read().unwrap(), source, slug)
             .unwrap()
             .unwrap()
-            .id;
-        for (i, v) in vectors.iter().enumerate() {
-            if !v.is_empty() {
-                store
-                    .write(|tx| put_chunk_vector(tx, id, i as u32, MODEL, 0, v))
-                    .unwrap();
-            }
-        }
-        id
+            .id
     }
 
     fn axis(i: usize, dims: usize) -> Vec<f32> {
@@ -979,6 +996,44 @@ mod tests {
         assert_eq!(top(json!({"model": MODEL, "limit": 1})), ["a-exact"]);
     }
 
+    /// The feeder's guard cases that edit `content_chunks` with SQL: a chunk's model label and its
+    /// text hash, edited on the chunk record here.
+    #[test]
+    fn a_named_model_needs_the_chunk_label_and_a_current_text_hash() {
+        let s = store();
+        let a = page(&s, "default", "a-exact", &[axis(0, 4)], json!({}));
+        page(&s, "default", "b-other", &[axis(1, 4)], json!({}));
+        let edit = |f: &dyn Fn(&mut ChunkRecord)| {
+            s.write(|tx| {
+                let mut chunk = crate::chunks::read_chunks(&*tx, a)?.remove(0);
+                f(&mut chunk);
+                crate::put_json(tx, &crate::keys::chunk(a, 0), &chunk)
+            })
+            .unwrap();
+        };
+        let top = |model: Option<&str>| -> Vec<String> {
+            let o = opts(json!({"model": model}));
+            s.search_vector(&q(&axis(0, 4)), &o)
+                .unwrap()
+                .iter()
+                .map(|r| r["slug"].as_str().unwrap().to_string())
+                .collect()
+        };
+        assert_eq!(top(Some(MODEL)), ["a-exact", "b-other"]);
+        edit(&|c| {
+            c.meta.insert("model".into(), json!("other:model"));
+        });
+        assert_eq!(top(Some("other:model")), ["a-exact"]);
+        assert_eq!(top(Some(MODEL)), ["b-other"]);
+        // A hash of other text hides the vector from a named model only.
+        edit(&|c| c.embed.text_hash = Some(text_hash("other text")));
+        assert!(top(Some("other:model")).is_empty());
+        assert_eq!(top(None), ["a-exact", "b-other"]);
+        // No hash at all counts as current.
+        edit(&|c| c.embed.text_hash = None);
+        assert_eq!(top(Some("other:model")), ["a-exact"]);
+    }
+
     #[test]
     fn source_factors_scale_scores_but_not_unverified_stubs() {
         let s = store();
@@ -1062,14 +1117,19 @@ mod tests {
         add(side, 1, "side axis zero take", "garry");
         let takes = all_takes(&*s.read().unwrap()).unwrap();
         let id = |claim: &str| takes.iter().find(|t| t.claim == claim).unwrap().id;
+        s.set_config("embedding_dimensions", "2").unwrap();
         for (claim, v) in [
             ("axis zero take", vec![1.0f32, 0.0]),
             ("axis one take", vec![0.0, 1.0]),
             ("side axis zero take", vec![0.9, 0.1]),
         ] {
-            let take = id(claim);
-            s.write(|tx| put_take_vector(tx, take, MODEL, 0, &v))
-                .unwrap();
+            let row = TakeEmbeddingInput {
+                take_id: id(claim),
+                embedding: v.iter().map(|x| f64::from(*x)).collect(),
+                claim: claim.to_string(),
+                model: MODEL.to_string(),
+            };
+            assert_eq!(s.update_take_embeddings(&[row]).unwrap(), 1);
         }
         let claims = |o: Value| -> Vec<String> {
             let o: TakesVectorOptions = serde_json::from_value(o).unwrap();

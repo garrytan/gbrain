@@ -22,8 +22,10 @@ one committed snapshot.
   prefixes, `type` / `types`, `exclude_slugs`, the source scope, `detail: 'low'` (compiled-truth chunks
   only), `language`, `symbolKind`, the safe-chunk rule and the chunk's visibility (a chunk of a page whose
   chunks are not sealed to its current revision is not read).
-- The model guard: with a model, a vector counts only when it was written by that model. With no model
-  (PGLite's NULL), every vector counts unless the `embedding_migration.state` config row exists.
+- The model guard, as PGLite's: with a model, a vector counts only when the chunk's model label is that
+  model and the chunk's text hash is the hash of its current text, or absent (`chunks::EmbedState`; the
+  store keeps sha256 where PGLite keeps md5, and only equality is compared). With no model (PGLite's NULL),
+  every vector counts unless the `embedding_migration.state` config row exists.
 - Score: pgvector's cosine of the query and the stored float32 vector, summed in float64 and kept in
   [-1, 1], times the page's source factor (an unverified auto-extracted stub takes no factor). It matches
   PGLite within 1e-6. A zero vector on either side gives NaN; NaN ranks first, as Postgres orders it, and
@@ -56,11 +58,11 @@ the shape `searchTakes` returns, with the cosine as `score`.
 - **Refused options.** The store applies neither `where`, `afterDate`, `beforeDate`, `excludePrivate`,
   `minTrust` nor `suppressFlagged`, so a set one refuses with `engine_capability_missing` and nothing
   runs (an empty `where` object is ignored). `searchTakesVector` refuses `excludePrivate`,
-  `eligibility.floor` and `eligibility.suppressFlagged` the same way. A config that routes vectors to
-  another embedding column (`embeddingColumn` other than `embedding`) refuses too.
-- **Text-hash guard.** PGLite skips a chunk whose `embedded_text_hash` no longer matches its text. The
-  store does not keep the hash: it relies on the chunk writes deleting a chunk's vector when its text
-  changes, so a stored vector always describes its chunk's current text.
+  `eligibility.floor` and `eligibility.suppressFlagged` the same way.
+- **One vector column.** The store keeps only the text column `embedding`, as the embedding members do.
+  An `embeddingColumn` that names another column (`embedding_image`, a registered column), and a brain
+  whose config sets `search_embedding_column` or `embedding_columns`, refuse with
+  `engine_capability_missing`. PGLite would read the other column.
 
 ## The index cache
 
@@ -69,9 +71,11 @@ per store, keyed by the vector generation (raised by every vector write), so a s
 rebuilds it, and an index built from an older snapshot never replaces a newer one. The `Store` has no
 cache field yet (`lib.rs` is the core's file), so today each search builds its index from its snapshot.
 
-## Not served yet
+## Where the vectors come from
 
-The chunk writes (`upsertChunks`, `sealChunks`) still refuse a chunk that carries a vector, and take
-vectors have no writer yet, so a brain on this engine has no vectors to find until those land. The parity
-test (`test/vector-embedding-parity.test.ts`, Rust arm) checks that refusal today and runs every
-`searchVector` and `hybridSearch` case once chunk vectors are stored.
+Chunk vectors are written by the chunk writes (`upsertChunks` / `sealChunks` with an `embedding`), take
+vectors by `updateTakeEmbeddings`; both raise the vector generation. The parity test
+(`test/vector-embedding-parity.test.ts`, Rust arm) seeds its fixture through those writes and runs every
+`searchVector` and `hybridSearch` case. On this engine the hybrid search's keyword arm still refuses the
+`embeddingColumn` option hybrid search passes it and fails open, so the hybrid cases with a keyword hit
+expect the vector order alone until the keyword member serves that call.

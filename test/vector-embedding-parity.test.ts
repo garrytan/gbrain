@@ -66,9 +66,9 @@
  * store's `invalid_argument` code with PGLite's message; `excludePrivate`
  * refuses (engine_capability_missing). Cases that set state with SQL (the
  * guard's model and hash edits, embedding reads, stale chunks, state counts)
- * do not run on Rust. While the Rust store refuses a chunk vector (the chunk
- * vector writes are not served yet), the fixture write ends on that typed
- * refusal and every vector case asserts it.
+ * do not run on Rust; the store's unit tests cover the guard's model and hash
+ * rules. A brain whose config routes vectors to another column refuses on Rust,
+ * as the Rust embedding members do.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -123,15 +123,6 @@ afterAll(() => {
 for (const kind of arms) {
   describe(`vectors and embeddings (${kind})`, () => {
     const rust = kind === 'rust';
-    /** On the Rust arm: the typed refusal the fixture's vector write ended on, if it did. */
-    let refusedFixture: { code?: string; message?: string } | undefined;
-    /** On the Rust arm while chunk vectors are refused: the case ends on the fixture's refusal. */
-    const endsOnRefusal = () => {
-      if (!refusedFixture) return false;
-      expect(refusedFixture.code).toBe('engine_capability_missing');
-      expect(String(refusedFixture.message)).toContain('chunk vectors are not stored');
-      return true;
-    };
     /** The refusal code of a bad input: PGLite's SQLSTATE, or the Rust store's code (same message). */
     const badInput = (sqlstate: string) => (rust ? 'invalid_argument' : sqlstate);
     let engine: BrainEngine;
@@ -178,12 +169,7 @@ for (const kind of arms) {
       if (rust) {
         await createRustSource(engine, 'src-b', {});
         await createRustSource(engine, 'src-arch', {});
-        try {
-          await fixture();
-        } catch (error) {
-          refusedFixture = error as { code?: string; message?: string };
-          if (refusedFixture.code !== 'engine_capability_missing') throw error;
-        }
+        await fixture();
         return;
       }
       await raw(`INSERT INTO sources (id, name) VALUES ('src-b', 'src-b'), ('src-arch', 'src-arch') ON CONFLICT DO NOTHING`);
@@ -224,7 +210,6 @@ for (const kind of arms) {
     ];
 
     test('searchVector: order, ties, best chunk per page, result keys', async () => {
-      if (endsOnRefusal()) return;
       const basic = await sv(q);
       expect(ok(basic)).toEqual(ALL);
       const keys = Object.keys((await engine.searchVector(q, { limit: 1 }))[0] ?? {}).sort();
@@ -236,7 +221,6 @@ for (const kind of arms) {
     });
 
     test('searchVector: limit and offset', async () => {
-      if (endsOnRefusal()) return;
       const cases = {
         limit1: await sv(q, { limit: 1 }),
         limit0: await sv(q, { limit: 0 }),
@@ -263,7 +247,6 @@ for (const kind of arms) {
     });
 
     test('searchVector: filters', async () => {
-      if (endsOnRefusal()) return;
       const without = (...names: string[]) => ALL.filter((r) => !names.some((n) => r.startsWith(n)));
       const cases = {
         typePerson: await sv(q, { type: 'person' }),
@@ -302,7 +285,6 @@ for (const kind of arms) {
     });
 
     test('searchVector: bad query vectors', async () => {
-      if (endsOnRefusal()) return;
       const set0 = (x: number) => { const e = new Float32Array(q); e[0] = x; return e; };
       const cases = {
         zero: await sv(new Float32Array(dims)),
@@ -325,15 +307,20 @@ for (const kind of arms) {
 
     test('searchVector: model and text-hash guard', async () => {
       const col = (model: string) => ({ embeddingColumn: { name: 'embedding', type: 'vector', dimensions: dims, embeddingModel: model } });
-      if (endsOnRefusal()) return;
       const cases: Record<string, unknown> = {
         configuredModel: await sv(q, col(MODEL)),
         otherModel: await sv(q, col('other:model')),
       };
       if (rust) {
-        // The rest edits a chunk's model and text hash with SQL; the Rust engine has none.
+        // The rest edits a chunk's model and text hash with SQL; the Rust engine has none (the store's unit tests
+        // cover those rules). The store keeps one vector column, so a config naming another refuses.
         expect(cases.configuredModel).toEqual({ ok: ALL });
         expect(cases.otherModel).toEqual({ ok: [] });
+        await engine.setConfig('search_embedding_column', 'embedding_image');
+        const routed = await sv(q);
+        await engine.unsetConfig('search_embedding_column');
+        expect((routed as { refused: string }).refused).toBe('engine_capability_missing');
+        expect(await sv(q)).toEqual({ ok: ALL });
         return;
       }
       await raw(`UPDATE content_chunks SET model = 'other:model' WHERE page_id = (SELECT id FROM pages WHERE slug = 'a-exact')`);
@@ -354,7 +341,6 @@ for (const kind of arms) {
     });
 
     test('hybridSearch: fusion order over the vector arm', async () => {
-      if (endsOnRefusal()) return;
       await engine.setConfig('embedding_model', MODEL);
       await engine.setConfig('embedding_dimensions', String(dims));
       resetGateway();
