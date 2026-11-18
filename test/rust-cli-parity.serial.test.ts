@@ -370,6 +370,8 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
     expect(`${rust.stdout}\n${rust.stderr}`).not.toMatch(/DB-backed doctor run failed|filesystem-only/);
     const checks = report!.checks!;
     const pgNames = new Set(pgReport!.checks!.map((c) => c.name));
+    const pgByName = new Map(pgReport!.checks!.map((c) => [c.name, c]));
+    const likePglite = (c: Check) => pgByName.get(c.name)?.status === c.status && pgByName.get(c.name)?.message === c.message;
     const names = new Set(checks.map((c) => c.name));
     const TYPED = /does not support \w+ yet \(it needs the \w+ capability\)/;
     const sorted = (xs: Iterable<string>) => [...xs].sort();
@@ -378,8 +380,11 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // Engine-specific checks: PGLite-only (scale, local path, file scans) and the managed-sync checks PGLite skips.
       onlyPglite: sorted([...pgNames].filter((n) => !names.has(n))),
       onlyRust: sorted([...names].filter((n) => !pgNames.has(n))),
-      // Warnings that do not quote the typed refusal: each one is a refused read the check reports in its own words.
-      untypedWarnings: sorted(checks.filter((c) => c.status !== 'ok' && !TYPED.test(c.message)).map((c) => c.name)),
+      // Warnings that do not quote the typed refusal and differ from PGLite: each one is a refused read the check
+      // reports in its own words.
+      untypedWarnings: sorted(checks.filter((c) => c.status !== 'ok' && !TYPED.test(c.message) && !likePglite(c)).map((c) => c.name)),
+      // Warnings with the same status and message as PGLite on the same data: the brain itself warrants them.
+      warnLikePglite: sorted(checks.filter((c) => c.status !== 'ok' && !TYPED.test(c.message) && likePglite(c)).map((c) => c.name)),
       // Checks that report ok although a refused read stopped them: none. A refused check warns, health unknown.
       okWhileRefused: sorted(checks.filter((c) => c.status === 'ok' && TYPED.test(c.message)).map((c) => c.name)),
     }).toEqual({
@@ -390,11 +395,14 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       onlyRust: ['canonical_content_writes', 'checkout_lagging', 'commits_outside_source_root', 'dirty_age', 'git_convergence',
         'quarantined_changes', 'shared_skills_sources', 'sync_failures', 'tracked_ownership_marker',
         'transcript_secret_exposure'],
-      untypedWarnings: ['backup_coverage', 'canonical_content_writes', 'child_table_orphans', 'embedding_provider',
+      untypedWarnings: ['backup_coverage', 'canonical_content_writes', 'child_table_orphans',
         'entity_link_coverage', 'extract_atoms_backlog', 'fact_take_vectors', 'graph_coverage', 'orphan_ratio',
-        // pack_upgrade_available warns with the same message as PGLite: the pack reads are served.
-        'pack_upgrade_available', 'raw_provenance', 'retrieval_reflex_health', 'sync_failures', 'text_projection_readiness',
+        'raw_provenance', 'retrieval_reflex_health', 'sync_failures', 'text_projection_readiness',
         'timeline_coverage'],
+      // The imported fixture has no embeddings, so both engines score it below 100 and count its chunks stale; the pack
+      // reads are served, so the successor notice is the same. embeddings is not here: Rust cannot read the backlog
+      // age, so it warns with that typed refusal where PGLite reads the age and passes.
+      warnLikePglite: ['brain_score', 'embed_staleness', 'embedding_provider', 'pack_upgrade_available'],
       okWhileRefused: [],
     });
     const count = (s: string) => checks.filter((c) => c.status === s).length;
