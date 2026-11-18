@@ -1,0 +1,191 @@
+/**
+ * GST-2988 PR 3: encrypted secret store backups and the secret_store doctor check. A backup uploads one sealed export
+ * (no value, slug, path or rule in clear, never the key) to the configured storage backend and restores only where the
+ * key is; with no backend the database backup carries the store. Doctor reports entries, the last backup, keys a host
+ * lacks, an escrow never exported, spooled originals, held-back publish commits and side refs. Repo-less and keyless:
+ * runs on PGLite, and on Postgres when DATABASE_URL is set.
+ */
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { BrainEngine } from '../src/core/engine.ts';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { currentKey, escrowExported, exportKeyEscrow, markEscrowExported } from '../src/core/secret-store/keyring.ts';
+import { recordOccurrence, reveal, seal } from '../src/core/secret-store/store.ts';
+import { backupDue, backupStore, readBackupStatus, restoreBackup, BACKUP_OBJECT_PREFIX } from '../src/core/secret-store/backup.ts';
+import { createStorage } from '../src/core/storage.ts';
+import { runSecrets } from '../src/commands/secrets.ts';
+import { secretPublishMaintenance } from '../src/core/git/redact-finish.ts';
+import { secretStoreCheck } from '../src/commands/doctor/checks/secret-store.ts';
+import type { DoctorContext } from '../src/commands/doctor/context.ts';
+import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { withEnv } from './helpers/with-env.ts';
+import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
+
+const TOKEN = ['ghp', 'Zt4q'.repeat(9)].join('_');
+const OTHER = 'AKIA' + 'EXAMPLENOTREAL00';
+const dirs: string[] = [];
+const fresh = (tag: string) => { const dir = mkdtempSync(join(tmpdir(), `gbrain-ss-backup-${tag}-`)); dirs.push(dir); return dir; };
+afterAll(() => { for (const dir of dirs) rmSync(dir, { recursive: true, force: true }); });
+
+/** A gbrain home whose config names a local storage backend at `bucket` (or none). */
+function home(bucket?: string): string {
+  const dir = fresh('home');
+  mkdirSync(join(dir, '.gbrain'), { recursive: true });
+  writeFileSync(join(dir, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', ...(bucket ? { storage: { backend: 'local', bucket: 'b', localPath: bucket } } : {}) }));
+  return dir;
+}
+const env = (dir: string) => ({ GBRAIN_HOME: dir, GBRAIN_SECRET_STORE_KEY: undefined });
+const ctx = (engine: BrainEngine, remote = false) => ({ engine, remote, progress: { heartbeat() {} } }) as unknown as DoctorContext;
+const capture = async (fn: () => Promise<unknown>) => {
+  const out: string[] = [];
+  const log = console.log;
+  console.log = (...args: unknown[]) => { out.push(args.join(' ')); };
+  try { await fn(); } finally { console.log = log; }
+  return out.join('\n');
+};
+
+/** Fresh PGLite brains, opened once for the file (two per backup case, one for the restore probe, one for the git case). */
+const lite: PGLiteEngine[] = [];
+beforeAll(async () => {
+  for (let i = 0; i < 4; i++) { const engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); lite.push(engine); }
+}, 120_000);
+afterAll(async () => { for (const engine of lite.splice(0)) await engine.disconnect(); }, 60_000);
+const freshLite = () => { const engine = lite.shift(); if (!engine) throw new Error('no fresh PGLite brain left'); return engine; };
+
+const engines = testBackends().map(name => ({ name, make: async (): Promise<{ engine: BrainEngine; close: () => Promise<void> }> => {
+  if (name === 'pglite') return { engine: freshLite(), close: async () => {} };
+  const pg = await isolatedPersistencePostgres(requirePostgresTestDatabase());
+  return { engine: pg.engine, close: pg.close };
+} }));
+
+for (const { name, make } of engines) {
+  describe(`secret store backup (${name})`, () => {
+    let a: { engine: BrainEngine; close: () => Promise<void> };
+    let b: { engine: BrainEngine; close: () => Promise<void> };
+    beforeAll(async () => { a = await make(); b = await make(); }, 120_000);
+    afterAll(async () => { await a?.close(); await b?.close(); }, 60_000);
+
+    test('a backup holds no value, slug, path or rule in clear, restores where the key is, and refuses without it or when changed', async () => {
+      const bucket = fresh('bucket');
+      const dir = home(bucket);
+      await withEnv(env(dir), async () => {
+        const sealed = await seal(a.engine, { sourceId: 'default', rule: 'github_token', value: TOKEN });
+        await recordOccurrence(a.engine, { entryId: sealed.id, sourceId: 'default', slug: 'notes/deploy-plan', field: 'compiled_truth', origin: 'repair', path: 'notes/deploy-plan.md' });
+        expect(await backupDue(a.engine)).toBe(true);
+        const storage = await createStorage({ backend: 'local', bucket: 'b', localPath: bucket });
+        const out = await backupStore(a.engine, storage);
+        expect(out.object.startsWith(BACKUP_OBJECT_PREFIX)).toBe(true);
+        expect(out.entries).toBeGreaterThanOrEqual(1);
+        expect(readBackupStatus().last_success?.object).toBe(out.object);
+        expect(await backupDue(a.engine)).toBe(false);
+        const raw = (await storage.download(out.object)).toString('utf8');
+        for (const clear of [TOKEN, 'notes/deploy-plan', 'github_token', sealed.id, currentKey({ create: false })!.key.toString('base64')]) expect(raw).not.toContain(clear);
+
+        const restored = await restoreBackup(b.engine, storage, out.object);
+        expect(restored).toMatchObject({ inserted: out.entries, existing: 0, unreadable: [] });
+        expect((await reveal(b.engine, sealed.id, 'test')).value).toBe(TOKEN);
+        expect((await reveal(b.engine, sealed.id, 'test')).occurrences.map(o => o.slug)).toEqual(['notes/deploy-plan']);
+        expect(await restoreBackup(b.engine, storage, out.object)).toMatchObject({ inserted: 0, existing: out.entries });
+
+        const doc = JSON.parse(raw);
+        const flipped = Buffer.from(doc.ciphertext, 'base64'); flipped[0] ^= 1;
+        await storage.upload(`${BACKUP_OBJECT_PREFIX}changed.json`, Buffer.from(JSON.stringify({ ...doc, ciphertext: flipped.toString('base64') })));
+        await expect(restoreBackup(b.engine, storage, `${BACKUP_OBJECT_PREFIX}changed.json`)).rejects.toMatchObject({ code: 'secret_store_key_mismatch' });
+        await expect(restoreBackup(b.engine, storage, '../elsewhere.json')).rejects.toMatchObject({ code: 'invalid_params' });
+        await withEnv({ GBRAIN_HOME: home(bucket) }, async () => {
+          await expect(restoreBackup(b.engine, storage, out.object)).rejects.toMatchObject({ code: 'secret_store_key_missing' });
+        });
+      });
+    }, 60_000);
+
+    test('with no storage backend nothing is uploaded and the database backup carries the store', async () => {
+      await withEnv(env(home()), async () => {
+        const text = await capture(() => runSecrets(a.engine, ['backup']));
+        expect(text).toContain('database backup carries the secret store');
+        const check = await secretStoreCheck(ctx(a.engine));
+        expect(check.details?.backup).toMatchObject({ backend: false, carried_by: 'database_backup' });
+      });
+    }, 60_000);
+
+    test('maintenance uploads after new entries; a failing backend never stops it and doctor names the failure', async () => {
+      const bucket = fresh('bucket');
+      const dir = home(bucket);
+      await withEnv(env(dir), async () => {
+        await seal(a.engine, { sourceId: 'default', rule: 'aws_access_key', value: OTHER + 'X' });
+        expect((await secretPublishMaintenance(a.engine)).secret_store_backups).toBe(1);
+        expect(readdirSync(join(bucket, 'gbrain-secret-store')).length).toBe(1);
+        expect((await secretPublishMaintenance(a.engine)).secret_store_backups).toBeUndefined();
+
+        await seal(a.engine, { sourceId: 'default', rule: 'aws_access_key', value: OTHER + 'Y' });
+        const notADir = join(fresh('file'), 'plain-file');
+        writeFileSync(notADir, 'not a directory\n');
+        writeFileSync(join(dir, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', storage: { backend: 'local', bucket: 'b', localPath: notADir } }));
+        expect((await secretPublishMaintenance(a.engine)).secret_store_backups).toBeUndefined();
+        expect(readBackupStatus().last_failure).not.toBeNull();
+        const check = await secretStoreCheck(ctx(a.engine));
+        expect(check.status).toBe('warn');
+        expect(check.message).toContain('The last secret store backup failed');
+      });
+    }, 60_000);
+
+    test('doctor warns for an escrow never exported and a key in use this host lacks, then clears', async () => {
+      await withEnv(env(home()), async () => {
+        const engine = (await make());
+        try {
+          const sealed = await seal(engine.engine, { sourceId: 'default', rule: 'github_token', value: TOKEN });
+          await recordOccurrence(engine.engine, { entryId: sealed.id, sourceId: 'default', slug: 'notes/deploy-plan', field: 'compiled_truth', origin: 'repair' });
+          let check = await secretStoreCheck(ctx(engine.engine));
+          expect(check.status).toBe('warn');
+          expect(check.message).toContain('has never been exported');
+          const current = currentKey({ create: false })!.id;
+          writeFileSync(join(fresh('escrow'), 'escrow.json'), JSON.stringify(exportKeyEscrow(current, 'correct horse battery staple')));
+          markEscrowExported(current);
+          expect(escrowExported().has(current)).toBe(true);
+          check = await secretStoreCheck(ctx(engine.engine));
+          expect(check.status).toBe('ok');
+          expect(check.message).toContain('no storage backend, so the database backup carries the store');
+
+          await withEnv({ GBRAIN_HOME: home() }, async () => {
+            const elsewhere = await secretStoreCheck(ctx(engine.engine));
+            expect(elsewhere.status).toBe('warn');
+            expect(elsewhere.message).toContain('secret_store_key_forked');
+            expect(JSON.stringify(elsewhere)).not.toContain(TOKEN);
+          });
+        } finally { await engine.close(); }
+      });
+    }, 60_000);
+  });
+}
+
+describe('secret store doctor: held-back commits and side refs (git, local only)', () => {
+  test('counts held-back publish commits and names side refs that reach a redaction backup ref; a remote caller gets neither', async () => {
+    await withEnv(env(home()), async () => {
+      const engine = freshLite();
+      {
+        const root = fresh('repo'), remote = fresh('remote');
+        const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' }).trim();
+        execFileSync('git', ['init', '-q', '--bare', '-b', 'main', remote]);
+        git(root, 'init', '-q', '-b', 'main'); git(root, 'remote', 'add', 'origin', remote);
+        writeFileSync(join(root, 'a.md'), 'a\n'); git(root, 'add', '.'); git(root, 'commit', '-qm', 'a'); git(root, 'push', '-q', 'origin', 'main');
+        writeFileSync(join(root, 'b.md'), 'b\n'); git(root, 'add', '.'); git(root, 'commit', '-qm', 'old b');
+        git(root, 'update-ref', 'refs/gbrain/backup/redact-20261118T000000Z', 'HEAD');
+        git(root, 'branch', 'side');
+        git(root, 'reset', '-q', '--soft', 'HEAD~1'); git(root, 'commit', '-qm', 'b rebuilt');
+        writeFileSync(join(root, 'c.md'), 'c\n'); git(root, 'add', '.'); git(root, 'commit', '-qm', 'gbrain: files held back from publish', '-m', 'Gbrain-Redact-Held: refs/gbrain/backup/redact-20261118T000000Z');
+        await engine.executeRaw("UPDATE sources SET local_path=$1 WHERE id='default'", [root]);
+        await seal(engine, { sourceId: 'default', rule: 'github_token', value: TOKEN });
+        const local = await secretStoreCheck(ctx(engine));
+        expect(local.status).toBe('warn');
+        expect(local.details?.checkouts).toEqual([{ source_id: 'default', held: 1, side_refs: ['refs/heads/side'] }]);
+        expect(local.message).toContain('1 held-back publish commit(s)');
+        expect(local.message).toContain('refs/heads/side');
+        const remoteCheck = await secretStoreCheck(ctx(engine, true));
+        expect(remoteCheck.details?.checkouts).toBeUndefined();
+        expect(remoteCheck.message).not.toContain('refs/heads/side');
+      }
+    });
+  }, 60_000);
+});

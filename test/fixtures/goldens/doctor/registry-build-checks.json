@@ -1254,6 +1254,10 @@
         "name": "fence_integrity"
       },
       {
+        "category": "brain",
+        "name": "secret_store"
+      },
+      {
         "category": "ops",
         "name": "search_mode"
       },

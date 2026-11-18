@@ -109,6 +109,41 @@ presigned link's `X-Amz-Credential=` parameter as opposed to bare. An entry leav
 process that stops between its push and the move loses nothing: the next owner push or maintenance pass moves it. When
 neither the store nor the spool can be written, the push is held with `secret_store_unwritable`.
 
+## Health and backups
+
+The store lives in the brain's database, so any database backup already carries it (ciphertext only; the key is never
+in it). When the gbrain config names a `storage` backend for files (Supabase Storage, S3 or a local directory, the same
+one `gbrain files` uses), gbrain also uploads an encrypted export of the store there:
+
+- `gbrain secrets backup` uploads one now; the maintenance pass uploads one after new entries. Each object is
+  `gbrain-secret-store/<time>.json`: every entry row (already sealed) and where it was redacted, sealed again under the
+  current store key, so the bucket holds no value, page name, path or rule in clear, and never the key.
+- A failed upload never stops a push or a redaction. The next maintenance pass tries again, and doctor reports the
+  last success and the last failure.
+- `gbrain secrets backup --restore gbrain-secret-store/<time>.json` adds the entries this brain lacks. It restores only on
+  a host whose keyring holds the key the backup names (import the escrow copy first), and it skips, and lists, any row
+  that does not authenticate under it.
+- With no storage backend nothing is uploaded and nothing is needed: `gbrain secrets backup` and doctor say the database
+  backup carries the store.
+
+Purging a page (`gbrain delete <slug> --purge`, or the expiry of a deleted page) removes the places the redactor
+recorded on that page, and every sealed original no other page and no publish commit still references. An original
+another page holds, or that a redacted publish commit points to, stays until those go too. A soft delete keeps
+everything, because the page can be restored.
+
+`gbrain doctor` runs the `secret_store` check, which never prints a value. It reports entries and occurrences, where the
+store is backed up, and warns when:
+
+- entries were sealed with a key this host does not have (`secret_store_key_forked`: usually another host sharing the
+  database with its own key; set `GBRAIN_SECRET_STORE_KEY` to one shared key on every host, or import the escrow copy);
+- the current key was never exported (`gbrain secrets key export` clears it), because a lost key loses every original;
+- a storage backend is configured and the last backup failed or never ran;
+- originals still wait in this host's encrypted spool;
+- sealed originals are referenced by no page or commit any more (nothing can reveal or restore them; a page purge
+  removes its own, so these come from an older purge or a direct database edit);
+- a checkout holds held-back publish commits, or local refs that still reach commits from before a redaction rebuild
+  (the trusted local doctor only; a remote caller sees counts of entries, never paths or refs).
+
 ## What it does not do
 
 - It does not rotate or revoke credentials.
