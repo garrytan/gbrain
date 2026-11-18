@@ -107,15 +107,26 @@ export function toTimelineEntry<T extends object>(entry: T): T {
  * A version as `getVersions` returns it: the frontmatter's valid-time dates (`validDate`, as the SQL twin reads
  * them), the reason the next write gave (none is kept), and no `content_hash`, which PGLite's list leaves out.
  */
+/**
+ * The store keeps every snapshot's content_hash; PGLite's page_versions holds it only on a segmented snapshot
+ * (insertSegmentedVersion), so an inline snapshot's goes.
+ */
+function versionHash(version: object): Row {
+  const row = withDates(version, ['snapshot_at']) as Row;
+  if (row.body_storage === 'segmented') return row;
+  const { content_hash: _hash, ...rest } = row;
+  return rest;
+}
+
 export function toVersion<T extends object>(version: T): T {
-  const { content_hash: _hash, ...rest } = withDates(version, ['snapshot_at']) as Row;
+  const rest = versionHash(version);
   const frontmatter = (rest.frontmatter ?? {}) as Row;
   return { ...rest, replaced_because: null, valid_from: validDate(frontmatter.valid_from), valid_until: validDate(frontmatter.valid_until) } as T;
 }
 
 /** The row `createVersion` returns: PGLite hands back the whole inserted row, columns and defaults included. */
 export function toCreatedVersion<T extends object>(version: T): T {
-  const { content_hash: _hash, ...rest } = withDates(version, ['snapshot_at']) as Row;
+  const rest = versionHash(version);
   return {
     archived_principal_id: null, archived_principal_kind: null, archived_write_request_id: null, body_bytes: null,
     body_generation: null, body_storage: 'inline', change_reason: null, content_hash: null, successor_pruned: null,
