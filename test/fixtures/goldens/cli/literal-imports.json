@@ -199,6 +199,9 @@
       "salience": [
         "./commands/salience.ts"
       ],
+      "secrets": [
+        "./commands/secrets.ts"
+      ],
       "serve": [
         "./core/serve-log.ts",
         "./commands/serve.ts"
