@@ -76,7 +76,7 @@ export async function explainMention(engine: BrainEngine, query: string, opts: {
   const dropped: DroppedName[] = [];
   const gazetteer = await buildGazetteer(engine, { policy, dropped });
   const all = [...gazetteer.values()].flat().filter(e => e.source_id === sourceId);
-  const view = (e: GazetteerEntry) => ({ name: e.caseTokens ? e.caseTokens.join(' ') : e.tokens.join(' '), slug: e.slug, origin: e.origin ?? 'title', case_sensitive: !!e.caseTokens });
+  const view = (e: GazetteerEntry) => ({ name: `${e.atOnly ? '@' : ''}${e.caseTokens ? e.caseTokens.join(' ') : e.tokens.join(' ')}`, slug: e.slug, origin: e.origin ?? 'title', case_sensitive: !!e.caseTokens });
   const [asPage] = await engine.executeRaw<{ slug: string; type: string | null; title: string | null }>(
     'SELECT slug, type, title FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL', [sourceId, query]);
   const key = tokenizeTitle(query).join(' ');

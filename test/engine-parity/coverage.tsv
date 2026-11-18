@@ -3,9 +3,9 @@
 # legacy_e2e = called by the Postgres-gated test/e2e/engine-parity*.test.ts suite (informational).
 # pglite/postgres/rust = what each arm must do: yes (runs, compared), same (Rust must match once its arm exists),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 198/198
+# covered: 200/200
 # lifecycle: 9/9
-# pages: 24/24
+# pages: 25/25
 # search: 7/7
 # chunks: 17/17
 # extraction: 7/7
@@ -26,6 +26,7 @@
 # raw_sql: 4/4
 # code_edges: 5/5
 # eval_capture: 5/5
+# owner_only: 1/1
 # salience_enrich: 5/5
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
 connect	lifecycle	yes	1	yes	yes	yes	same
@@ -41,13 +42,13 @@ getPage	pages	yes	24	yes	yes	yes	same
 readPageSnapshot	pages	yes	6	no	yes	yes	same
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	same
 lockPageKeys	pages	yes	1	no	yes	yes	same
-putPage	pages	yes	88	yes	yes	yes	same
+putPage	pages	yes	89	yes	yes	yes	same
 findDuplicatePage	pages	yes	1	no	yes	yes	same
 findDuplicatePages	pages	yes	1	no	yes	yes	same
 deletePage	pages	yes	2	yes	yes	yes	same
 deletePages	pages	yes	1	yes	yes	yes	same
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	same
-softDeletePage	pages	yes	16	yes	yes	yes	same
+softDeletePage	pages	yes	17	yes	yes	yes	same
 softDeletePages	pages	yes	1	yes	yes	yes	same
 restorePage	pages	yes	5	yes	yes	yes	same
 purgeDeletedPages	pages	yes	1	no	yes	yes	same
@@ -56,6 +57,7 @@ findPages	pages	yes	1	no	yes	yes	same
 countPagesBy	pages	yes	1	no	yes	yes	same
 resolveSlugs	pages	yes	2	no	yes	yes	same
 getAllSlugs	pages	yes	4	no	yes	yes	same
+listEntityKeyRows	pages	yes	1	no	yes	yes	same
 listAllPageRefs	pages	yes	1	yes	yes	yes	same
 listAllSources	pages	yes	2	no	yes	yes	same
 updateSourceConfig	pages	yes	1	no	yes	yes	same
@@ -208,7 +210,7 @@ unsetConfig	config	yes	2	no	yes	yes	same
 listConfigKeys	config	yes	2	no	yes	yes	same
 getAllConfig	config	yes	1	no	yes	yes	same
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	2	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	3	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 addCodeEdges	code_edges	yes	3	yes	yes	yes	same
@@ -221,6 +223,7 @@ listEvalCandidates	eval_capture	yes	2	no	yes	yes	same
 deleteEvalCandidatesBefore	eval_capture	yes	1	no	yes	yes	same
 logEvalCaptureFailure	eval_capture	yes	1	no	yes	yes	same
 listEvalCaptureFailures	eval_capture	yes	1	no	yes	yes	same
+ownerOnlyMarkTriggers	owner_only	yes	2	no	yes	yes	same
 batchLoadEmotionalInputs	salience_enrich	yes	1	no	yes	yes	same
 setEmotionalWeightBatch	salience_enrich	yes	2	yes	yes	yes	same
 getRecentSalience	salience_enrich	yes	1	yes	yes	yes	same

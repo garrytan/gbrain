@@ -350,6 +350,7 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   { name: 'reindex', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/reindex.ts') },
   { name: 'salience', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/salience.ts') },
   { name: 'anomalies', phase: 'post-connect', thinClient: 'none', selfHelp: true, slowRead: () => 'anomalous cohorts', load: () => import('./commands/anomalies.ts') },
+  { name: 'dedupe', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, slowRead: () => 'duplicate person and company pages', load: () => import('./commands/dedupe.ts') },
   { name: 'feedback', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/feedback.ts') },
   { name: 'status', phase: 'post-connect', thinClient: 'none', slowRead: args => args.includes('--funnel') ? null : 'the brain status snapshot', help: () => import('./help/status.ts'), load: () => import('./commands/status.ts') },
   { name: 'advisor', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/advisor.ts') },

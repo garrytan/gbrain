@@ -29,7 +29,8 @@ export const MANIFEST_ARTIFACT = 'ci-manifest';
 export const MANIFEST_FILE = 'ci-manifest.json';
 export const MANIFEST_DOCS = 'docs/ci-red-runbook.md#ci-failure-manifest';
 
-export interface ManifestFile { file: string; lane: string; arm: string; executed: number; failed: number; skipped: number }
+/** `rerun`: the file's newest receipt comes from a later attempt than the run's first one, i.e. from a re-run of failed jobs. */
+export interface ManifestFile { file: string; lane: string; arm: string; executed: number; failed: number; skipped: number; rerun?: true }
 /** `signature` is the stress gate's failure signature of the JUnit failure message, so exemption records match its failures; it is omitted when the message carries a credential (then no exemption is offered). */
 export interface ManifestFailure { lane: string; file: string; test: string; arm: string; signature?: string; message?: string }
 export interface CiManifest {
@@ -41,6 +42,8 @@ export interface CiManifest {
   run_attempt: number;
   complete: boolean;
   problems: string[];
+  /** The run attempts the receipts come from: one entry unless failed jobs were re-run (absent in manifests written before it existed). */
+  attempts?: number[];
   files: ManifestFile[];
   failures: ManifestFailure[];
 }
@@ -48,16 +51,26 @@ export interface ManifestBinding { workflow: string; event: string; sha: string;
 
 /** `deltas` are the declared skips of docs/test-audit/2026-10-04/expected-deltas.tsv (a keyless lane declared empty is not a problem). */
 export function buildManifest(receipts: Receipt[], bind: ManifestBinding, deltas: { rows: DeltaRow[]; errors: string[] } = { rows: [], errors: [] }, messages: Map<string, string> = new Map()): CiManifest {
-  const side = buildSide('manifest', receipts, new Map([[String(bind.run_id), bind.run_attempt]]));
+  // Each artifact at its job's newest attempt: a re-run of failed jobs replaces only their artifacts, and the jobs it
+  // did not re-run keep the receipts of the attempt they ran in, so together they cover the whole suite.
+  const side = buildSide('manifest', receipts, new Map(), 'job');
   const problems = compare(side, undefined, deltas).issues.map(i => i.detail);
   if (!receipts.length) problems.push('no receipts were downloaded (every receipts-* upload is missing)');
+  const attemptOf = new Map<string, number>();
+  for (const r of receipts) {
+    if (r.runAttempt === undefined || r.runId !== String(bind.run_id)) continue;
+    if (r.runAttempt > bind.run_attempt) problems.push(`${r.artifact}/${r.id} comes from attempt ${r.runAttempt}, after this manifest's attempt ${bind.run_attempt}`);
+    attemptOf.set(r.artifact, Math.max(attemptOf.get(r.artifact) ?? 0, r.runAttempt));
+  }
+  const attempts = [...new Set(attemptOf.values())].sort((a, b) => a - b);
   const foreign = [...side.shas].filter(s => s && s !== bind.sha);
   if (foreign.length) problems.push(`receipts come from other commits (${foreign.map(s => s.slice(0, 12)).join(', ')}), not ${bind.sha.slice(0, 12)}`);
   const files = new Map<string, ManifestFile>();
   const failures: ManifestFailure[] = [];
   for (const id of side.identities.values()) {
     const key = `${id.lane}\u001f${id.file}\u001f${id.arm}`;
-    const entry = files.get(key) ?? { file: id.file, lane: id.lane, arm: id.arm, executed: 0, failed: 0, skipped: 0 };
+    const entry: ManifestFile = files.get(key) ?? { file: id.file, lane: id.lane, arm: id.arm, executed: 0, failed: 0, skipped: 0 };
+    if ((attemptOf.get(id.artifact) ?? 0) > attempts[0]!) entry.rerun = true;
     if (id.status === 'pass' || id.status === 'fail') entry.executed++;
     else entry.skipped++;
     if (id.status === 'fail') {
@@ -71,7 +84,7 @@ export function buildManifest(receipts: Receipt[], bind: ManifestBinding, deltas
   const byKey = (a: { lane: string; file: string; arm: string }, b: { lane: string; file: string; arm: string }) =>
     a.file.localeCompare(b.file) || a.lane.localeCompare(b.lane) || a.arm.localeCompare(b.arm);
   return {
-    schema: MANIFEST_SCHEMA, ...bind, complete: problems.length === 0, problems,
+    schema: MANIFEST_SCHEMA, ...bind, complete: problems.length === 0, problems, attempts,
     files: [...files.values()].sort(byKey),
     failures: failures.sort((a, b) => byKey(a, b) || a.test.localeCompare(b.test)),
   };
@@ -136,10 +149,17 @@ export function checkManifest(value: unknown, bind: Pick<ManifestBinding, 'sha' 
   return { manifest: m as CiManifest };
 }
 
-/** Files that executed at least one test and failed none, across every lane and arm that ran them. */
+/** Files that executed at least one test and failed none, across every lane and arm that ran them, in the run's first attempt (a pass on a re-run of failed jobs is not a clean pass). */
 export function passedFiles(manifest: CiManifest): Set<string> {
-  const failed = new Set(manifest.files.filter(f => f.failed > 0).map(f => f.file));
+  const failed = new Set(manifest.files.filter(f => f.failed > 0 || f.rerun).map(f => f.file));
   return new Set(manifest.files.filter(f => f.executed > 0 && !failed.has(f.file)).map(f => f.file));
+}
+
+/** Why the manifest cannot prove a clean pass: some files passed only on a re-run of failed jobs. */
+export function rerunProblem(manifest: CiManifest): string | undefined {
+  const rerun = [...new Set(manifest.files.filter(f => f.rerun).map(f => f.file))];
+  if (!rerun.length) return undefined;
+  return `run ${manifest.run_id} attempt ${manifest.run_attempt} re-ran only failed jobs (attempts ${(manifest.attempts ?? []).join(', ')}); ${rerun.length} file(s) passed only on that re-run (${rerun.slice(0, 3).join(', ')}${rerun.length > 3 ? ', …' : ''}), so the run cannot clear a failure`;
 }
 
 function main(argv: string[]): number {
@@ -160,7 +180,8 @@ function main(argv: string[]): number {
   const deltas = existsSync(deltasPath) ? parseDeltas(readFileSync(deltasPath, 'utf8')) : { rows: [], errors: [] };
   const manifest = buildManifest(receipts, { workflow: env.GITHUB_WORKFLOW ?? '', event: env.GITHUB_EVENT_NAME ?? '', sha: env.GITHUB_SHA, run_id: runId, run_attempt: attempt }, deltas, junitMessages(dir));
   writeFileSync(out, `${JSON.stringify(manifest, null, 2)}\n`);
-  const line = `ci-manifest: ${manifest.files.length} file/lane/arm entries, ${manifest.failures.length} failing tests, ${manifest.complete ? 'complete' : `INCOMPLETE (${manifest.problems.length} problems; nightly-watch will not clear failures from this run)`}.`;
+  const rerun = manifest.files.filter(f => f.rerun).length;
+  const line = `ci-manifest: ${manifest.files.length} file/lane/arm entries${rerun ? ` (${rerun} from a re-run of failed jobs, attempts ${(manifest.attempts ?? []).join(', ')})` : ''}, ${manifest.failures.length} failing tests, ${manifest.complete ? 'complete' : `INCOMPLETE (${manifest.problems.length} problems; nightly-watch will not clear failures from this run)`}.`;
   console.log(line);
   const summary = flag('--summary');
   if (summary) appendFileSync(summary, `${line} Docs: ${MANIFEST_DOCS}\n`);

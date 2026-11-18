@@ -1533,7 +1533,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'facts.default_visibility',
   'storage.git_lfs', // G7a: a git-canonical door commit under a Git LFS rule commits the LFS pointer; default off refuses it (persistence/git-declared.ts)
   'visibility.honor_aliases', // remote page reads honor `access`/`confidentiality` aliases on pages without `visibility`; default on, false opts out (search/private-visibility.ts)
-  'facts.entity_inference', // #5836: write-time subject inference kill switch (subject-infer.ts)
+  'facts.entity_inference', 'facts.unbacked_entity_keys', // #5836 subject inference kill switch (subject-infer.ts); GBRA-574 conversation name keys (entities/resolve-on-save.ts)
   'facts.candidate_fusion', // C2: 'rrf_free' (default, cosine arm) | 'interleave' (cosine + keyword; facts/single-prepare.ts)
   'facts.supersession_thresholds', // JSON {"provider:model@dims": number | "off"} (facts/supersession-threshold.ts)
   'facts.page_write_notability_filter', // #6231: tiers page-write extraction keeps (facts/notability-filter.ts)

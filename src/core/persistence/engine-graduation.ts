@@ -858,6 +858,8 @@ async function stepCopy(run: Run): Promise<void> {
     await run.deps.reenableTriggers(run.main!, disabled, { runId: run.m.runId });
     run.m.tables = run.m.tables.map(t => ({ ...t, disabledTriggers: false }));
   }
+  // GST-3032: copied owner_only_marks rows carry no held flag (a catalog comment); set it before verify reads the target.
+  await run.main!.ownerOnlyMarkTriggers({ ensure: true });
   run.m.timings = { ...run.m.timings, copy_ms: (run.m.timings.copy_ms ?? 0) + Date.now() - started };
   save(run);
   await boundary(run, 'copied');

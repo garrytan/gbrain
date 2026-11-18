@@ -27,6 +27,7 @@ export const RUST_ENGINE_MEMBERS = {
   // schema
   initSchema: 'schema',
   holdSchemaMigrationLock: 'schema',
+  ownerOnlyMarkTriggers: 'schema',
   // transactions
   transaction: 'transactions',
   transactionDirect: 'transactions',
@@ -51,6 +52,7 @@ export const RUST_ENGINE_MEMBERS = {
   resolveSlugs: 'pages',
   getAllSlugs: 'pages',
   listAllPageRefs: 'pages',
+  listEntityKeyRows: 'pages',
   listPrefixSampledPages: 'pages',
   listCorpusSample: 'pages',
   getPageTimestamps: 'pages',
