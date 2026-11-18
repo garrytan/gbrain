@@ -1064,6 +1064,12 @@ Chunk vectors and vector search.
 - **Depends on:** The coming vector store work (HNSW or exact scan choice, design phase 2).
 - **Estimate:** core.
 - **Notes:** Cosine score is `1 - distance`, within `1e-6` of pgvector.
+- **Store field:** `Store` holds one `pub(crate) vectors: crate::vectors::VectorCache`, made with `Default` in
+  `open_kv`, so a search passes `Some(&self.vectors)` to `load_index` and reuses the decoded vectors across reads.
+  Core defines `VectorCache` as an empty struct in `vectors.rs`; the family's own definition replaces it (keep the
+  family's file when the two conflict). The cache must be fed from committed snapshots only, so a store bound to an
+  open transaction (the transactions family's `bound_to`) gets its own `VectorCache::default()` and never shares the
+  brain's.
 - **Parity cases (3, in `search.test.ts`, `takes.test.ts`):**
   - `search.test.ts`: searchVector ranks by cosine similarity and applies filters and paging
   - `search.test.ts`: searchVector: a dense page cannot starve the page-grain result
@@ -1218,3 +1224,4 @@ The estimates are judgments from the size of the PGLite code each member reprodu
 | Segmented guard (`putPage` refuses a segmented page with PGLite's CHECK message) | built | page_body; chunk_queries, extraction and page_ops match PGLite for a NULL body (see "Segmented guard") |
 | Rename slug list (`cascade::rename_slug_rows`) | built; the aliases family calls it from `updateSlug` | facts (fills in its body), aliases (caller) |
 | Search timeline (`pages::search_timeline`: the sanitized timeline `sealChunks` sends, kept per page at the sealed revision) | built | keyword (`searchTitles`) |
+| Vector cache store field (`Store::vectors`, a `VectorCache` made in `open_kv`) | built | vectors (`load_index`) |
