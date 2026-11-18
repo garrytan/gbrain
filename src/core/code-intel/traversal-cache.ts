@@ -82,28 +82,16 @@ export async function getCachedTraversal<T>(
   key: CacheKey,
 ): Promise<CachedResponse<T> | null> {
   try {
-    const rows = await engine.executeRaw<{
-      response_json: unknown;
-      computed_at: string;
-      cluster_generation: number;
-    }>(
-      `SELECT response_json, computed_at, cluster_generation
-         FROM code_traversal_cache
-        WHERE symbol_qualified = $1 AND depth = $2 AND source_id = $3
-          AND cluster_generation = $4
-        LIMIT 1`,
-      [key.symbol_qualified, key.depth, key.source_id, key.cluster_generation],
-    );
-    if (rows.length === 0) return null;
-    const row = rows[0]!;
+    const row = await engine.getCodeTraversalCache(key);
+    if (row === null) return null;
     return {
       response: row.response_json as T,
       computed_at: row.computed_at,
-      // A bigint column: Postgres returns a BigInt, PGLite a number.
-      cluster_generation: Number(row.cluster_generation),
+      cluster_generation: row.cluster_generation,
     };
   } catch (err) {
-    // An engine without raw SQL (the Rust engine) refuses loudly: a silent miss would hide that the cache never runs.
+    // A refusal (the Rust engine, for a key or response its store cannot hold exactly) is loud: a silent miss would
+    // hide that the cache never runs.
     rethrowCapabilityRefusal(err);
     // Cache table missing on a pre-v59 brain — fall through as miss.
     return null;
@@ -123,30 +111,9 @@ export async function putCachedTraversal<T>(
   xminMax: number,
 ): Promise<void> {
   try {
-    await engine.executeRaw(
-      `INSERT INTO code_traversal_cache
-         (symbol_qualified, depth, source_id, response_json,
-          max_chunk_updated_at, xmin_max, cluster_generation)
-       VALUES ($1, $2, $3, $4::text::jsonb, $5::timestamptz, $6, $7)
-       ON CONFLICT (symbol_qualified, depth, source_id)
-       DO UPDATE SET
-         response_json = EXCLUDED.response_json,
-         max_chunk_updated_at = EXCLUDED.max_chunk_updated_at,
-         xmin_max = EXCLUDED.xmin_max,
-         cluster_generation = EXCLUDED.cluster_generation,
-         computed_at = NOW()`,
-      [
-        key.symbol_qualified,
-        key.depth,
-        key.source_id,
-        JSON.stringify(response),
-        maxChunkUpdatedAt,
-        xminMax,
-        key.cluster_generation,
-      ],
-    );
+    await engine.putCodeTraversalCache(key, response, maxChunkUpdatedAt, xminMax);
   } catch (err) {
-    // An engine without raw SQL (the Rust engine) refuses loudly, as the read does.
+    // A refusal is loud, as for the read.
     rethrowCapabilityRefusal(err);
     // Cache writes are best-effort. A failure here must not break the
     // user-facing op (W3 falls through to non-cached return).
@@ -169,22 +136,7 @@ export async function clearTraversalCache(
         'Without either, the operation is ambiguous (mirrors v0.26.5 destructive-guard).',
     );
   }
-  if (opts.allSources) {
-    const rows = await engine.executeRaw<{ count: string }>(
-      `WITH deleted AS (DELETE FROM code_traversal_cache RETURNING 1)
-       SELECT COUNT(*)::text AS count FROM deleted`,
-      [],
-    );
-    return parseInt(rows[0]?.count ?? '0', 10);
-  }
-  const rows = await engine.executeRaw<{ count: string }>(
-    `WITH deleted AS (
-       DELETE FROM code_traversal_cache WHERE source_id = $1 RETURNING 1
-     )
-     SELECT COUNT(*)::text AS count FROM deleted`,
-    [opts.sourceId!],
-  );
-  return parseInt(rows[0]?.count ?? '0', 10);
+  return engine.clearCodeTraversalCache(opts);
 }
 
 /**

@@ -305,7 +305,6 @@ src/core/claw-test/seed-pglite.ts	driver_call	1
 src/core/code-chunks.ts	execute_raw	3
 src/core/code-graph-readiness.ts	execute_raw	1
 src/core/code-intel/recursive-walk.ts	execute_raw	2
-src/core/code-intel/traversal-cache.ts	execute_raw	4
 src/core/company-brain/admission.ts	execute_raw	12
 src/core/company-brain/demo.ts	execute_raw	2
 src/core/company-brain/evidence.ts	execute_raw	3
