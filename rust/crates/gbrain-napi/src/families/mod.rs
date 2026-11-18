@@ -47,6 +47,7 @@ mod facts_trust;
 mod jobs;
 mod keyword;
 mod link_queries;
+mod link_temporal;
 mod ontology;
 mod page_body;
 mod page_ops;

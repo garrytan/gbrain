@@ -51,6 +51,10 @@ pub(crate) struct LinkRecord {
     #[serde(default)]
     pub resolution_type: Option<String>,
     pub created_at_us: i64,
+    /// `links.assertion_tense`: `past` when the origin page states the link in the past tense
+    /// (link_temporal.rs); absent reads as `present`.
+    #[serde(default)]
+    pub assertion_tense: Option<String>,
 }
 
 impl LinkRecord {
@@ -613,6 +617,7 @@ impl Store {
                 origin_field: options.origin_field.clone(),
                 resolution_type: None,
                 created_at_us: self.env.now_micros(),
+                assertion_tense: None,
             };
             check_link(&record)?;
             if let Some(mut existing) = link_at(&*tx, from_page.id, &record.unique_key())? {
@@ -693,6 +698,7 @@ impl Store {
                     origin_field: text(&link.origin_field),
                     resolution_type: link.resolution_type.clone(),
                     created_at_us: now,
+                    assertion_tense: None,
                 };
                 check_link(&record)?;
                 if tx.get(&record.unique_key())?.is_some() {
