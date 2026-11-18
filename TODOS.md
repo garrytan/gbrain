@@ -1,5 +1,10 @@
 # TODOS
 
+## Rust engine alias-trust follow-ups (filed 2026-11-18)
+
+- [ ] **P3 — alias-order-collate: pin `COLLATE "C"` on the alias read order.** **What:** `readAliases` (`src/core/search/read-enrichment.ts`) orders by `a.alias_norm, a.source_id, a.rank, a.slug` with no collation, so on a Postgres whose default collation is not C the pages of one alias can come back in another order than PGLite and the Rust store (byte order) give, and a caller that takes the first page picks another one. **Fix:** order by each text column `COLLATE "C"`, with a parity case whose slugs sort differently under a locale collation. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — alias-caller-policy: serve `resolveAliases` for a widened caller.** **What:** the Rust store still refuses `excludePrivate` for a caller whose member pages, grants or lineage widen the page policy (`storePagePolicy`), and the search alias fan-out (`src/core/search/alias-fanout.ts`) reads that refusal as no aliases, so such a caller loses alias matches on Rust with no error. **Fix:** serve the caller policy in the store, as the other `storePagePolicy` members will need too, then flip the caller case in `test/engine-parity/alias-trust.test.ts` to equal. **Effort:** M. **Priority:** P3.
+
 ## Rust engine lane 5 follow-ups (filed 2026-11-18)
 
 - [ ] **P3 — doctor-prefix-literal: match the doctor's job key prefixes literally.** **What:** `readQueuedSpendRows`, `listBuildSkewStacktraceLines` and `listFactsAbsorbJobsByKeyPrefix` (`src/core/engine-sql/jobs-checks.ts`) read their prefix as a `LIKE` pattern, so the `_` in `job_build_skew:` matches any character (a line starting `jobXbuildXskew:` counts as build skew). **Fix:** compare with `left(col, length($1)) = $1` on the SQL engines and `starts_with` in the store (`rust/crates/gbrain-store/src/jobs/checks.rs`), with a parity case that a wildcard character in a prefix no longer matches. **Effort:** S. **Priority:** P3.

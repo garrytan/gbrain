@@ -812,13 +812,17 @@ Slug renames and page aliases.
 - **Estimate:** about 5 to 6 days.
 - **Notes:** Same capability (`pages`) as page_ops and extraction. `resolveSlugWithAliasDetailed` returns how the slug was found; keep its result fields exact.
 - **Known gap:** the Rust store keeps no `alias_text` and no `case_sensitive` flag on `page_aliases` rows, so `resolveCaseSensitiveAliases` is always empty, `readPageAliasRows` gives `alias_text: null`, and `replaceDerivedAliases` stays unserved until alias storage exists (`rust/docs/store/alias_fanout_reads.md`). `findPagesByTitles` with `excludePrivate` refuses with `engine_capability_missing` for a caller whose reader identity widens the page policy; the caller's fail-open fallback reads that as no rows.
-- **Parity cases (6, in `sync-aliases.test.ts`):**
+- **Parity cases (10, in `sync-aliases.test.ts` and `alias-trust.test.ts`):**
   - `sync-aliases.test.ts`: updateSlug renames a page in place, keeps its chunks, and returns 0 when the old slug is absent
   - `sync-aliases.test.ts`: updateSlug is source-scoped and rejects a path-traversal new slug
   - `sync-aliases.test.ts`: a rename records an alias: resolveSlugWithAlias maps the old slug to the new one, per source
   - `sync-aliases.test.ts`: setPageAliases replaces a page alias set; resolveAliases maps normalized aliases to slugs with source scope
   - `sync-aliases.test.ts`: updatePageContextualRetrievalState stamps the CR mode without touching the body
   - `sync-aliases.test.ts`: rewriteLinks after updateSlug is a no-op: links follow the page id, not the slug
+  - `alias-trust.test.ts`: resolveAliases drops aliases of pages below the floor or flagged, and their titles no longer shadow a derived alias
+  - `alias-trust.test.ts`: resolveAliases under excludePrivate drops aliases of hidden pages, and a hidden title no longer shadows a derived alias
+  - `alias-trust.test.ts`: resolveAliases under excludePrivate for a caller with a reader identity: SQL arms apply the caller policy, the Rust store refuses
+  - `alias-trust.test.ts`: the search alias fan-out resolves an entity by its alias under excludePrivate and a trust floor
 
 ### page_body
 
@@ -1696,8 +1700,9 @@ and write provenance on content rows, and the trust records.
   - Not yet built: `listSingleFactMetadata` (a write-path read under the remote floor) and
     `listUnpreviewedTrustFacts` (the doctor check) have no store read. Reads of `trust_tier` through `executeRaw`
     (core memory, the eligibility scan, belief history, admin, valid time) need typed members. `resolveAliases`
-    refuses a floor or `excludePrivate`, and the alias fan-out of search turns that refusal into an empty fan-out;
-    a lift needs the trust and privacy checks on both the alias page and its title shadow. The fact read
+    serves the floor, the flagged-page filter and `excludePrivate` on both the alias page and its title shadow
+    (`alias-trust.test.ts`); it still refuses `excludePrivate` for a caller whose member pages, grants or lineage
+    widen the page policy, and the search fan-out reads that refusal as no aliases. The fact read
     eligibility refusal (`listSupersessions` and its family) has production callers and is a follow-up. The takes
     members keep their refusal.
   - Pinned by `test/engine-parity/trust-reads.test.ts` on all three engines.
