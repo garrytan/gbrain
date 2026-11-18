@@ -36,7 +36,10 @@ writes the rows the builder returns.
   `day`, `month` or `year`. Any other value is refused with `constraint_violation` (the tables' CHECKs).
 - `valid_ranges` is stored and returned in the text form Postgres prints for a `datemultirange` (`{[2019-02-01,2025-03-01)}`).
 - The privacy policy of the world scope (`originPolicy`, `excludePrivate`) uses the store's page privacy rules
-  (`facts::page_hidden`), the same rules `privatePagesFilterFragment` composes in SQL.
+  (`facts::page_hidden`), the same rules `privatePagesFilterFragment` composes in SQL. `listRelationshipNoteRows`, `listPageStatusByRef` and
+  `listRecordMetadataRows` carry a caller's reader identity and private-readable grant in the policy (the
+  `callerReaders` opt-in of `storePagePolicy`); any other caller whose policy differs (folder grants, lineage, an owner
+  read) refuses.
 - A repeated refresh over unchanged evidence writes nothing and returns 0.
 - `applyLinkTemporalRows` replaces the origin's derived transitions: the old rows go before the new rows are written. On
   Postgres the SQL statements are pipelined, which keeps their order only on one connection, so the Postgres member opens a
@@ -61,7 +64,8 @@ Pinned by `test/engine-parity/link-temporal.test.ts` and `test/engine-parity/ret
 ## Retrieval coverage
 
 The scope of the three coverage reads is `scopeFilter` (`src/core/engine-sql/retrieval-coverage.ts`): the source filter,
-the private-page policy (`excludePrivate`, as `storePagePolicy` sends it), live pages only (not soft-deleted, not
+the private-page policy (`excludePrivate`, as `storePagePolicy` sends it with `callerReaders`, so a caller's reader
+identity and private-readable grant count), live pages only (not soft-deleted, not
 quarantined, source present and not archived), the page kind, the types and the excluded slug prefixes. A page waits
 when its text projection is neither its knowledge revision nor the pre-activation marker. It needs work unless it is an
 image whose body holds a protected fence (`by_design`). The pending count matches a query word as a whole token of

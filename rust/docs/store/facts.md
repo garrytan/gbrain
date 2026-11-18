@@ -60,6 +60,14 @@ now equals its no-caller rendering (`withoutCallerAccess`, 443), the concept-inp
 compared as one token. A caller whose member pages, grants or lineage design widen the text is
 refused with `engine_capability_missing` (`src/core/rust-engine/store-members/private-provenance.ts`).
 
+A page read under `excludePrivate` sends the page policy (`storePagePolicy`). A page family that opts in with
+`callerReaders` also sends the caller's reader identity and private-readable grant, when the caller's text equals
+the rendering for a record of only those two fields. `page_hidden` then lets a page whose `readable_by` names one of
+the identity's principals pass the member-access part (`access_readers`, the twin of `gbrain_access_readers` in
+migration v282: trimmed of edge spaces and ASCII lower-cased, a bare id read as `member:<id>`, a malformed value read
+as `!nobody`), and a page of a granted source that is not a pinned question pass the privacy part
+(`orPrivateReadableSource`). The fact policy sends an empty identity and no granted source.
+
 Aliases and renames: each origin slug of the origin rule (atom `source_slug`, concept input
 `source_slug` under the input's source, chronicle `event.depth`, each `derived_from` slug) also
 names the slug its `slug_aliases` row resolves to and every slug its `slug_rename_history` rows
