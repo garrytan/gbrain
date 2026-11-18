@@ -48,7 +48,9 @@ Each returns what PGLite returns for a brain with the same contents.
 | `readJournalLimitRows()` | the config keys that start with `persistence.limits.`, the page-body keys, then `{ key: null, value: null }` | The store keeps no segmented pages, so the largest one has no size. |
 | `readHeldPageRows(pageIds)`, `readHeldCoverageRows(sourceIds)` | `[]` | The store holds no files from a sync, so nothing is held. |
 
-The other journal members (`readWriteRequest`, `readWriteRequestById`, `lockPersistenceCounters`,
-`insertWriteRequest`, `stampWriteClaim`, `lockWriteRequest`, `completeWriteRow`) run inside
-`transaction`. This engine does not serve `transaction` yet, so they refuse with
-`engine_capability_missing` there.
+The request members (`readWriteRequest`, `readWriteRequestById`, `lockPersistenceCounters`,
+`insertWriteRequest`, `stampWriteClaim`, `lockWriteRequest`, `completeWriteRow`), the claim upkeep
+(`renewWriteClaim`, `expireStaleWriteClaims`, `hasClaimableWrite`) and the admission reads
+(`readSourceMembership`, `findTopologyChanges`, `readLedgerSource`) are served from the persistence
+rows in [persistence.md](persistence.md). The journal calls most of them inside `transaction`, which
+this engine does not serve yet, so those callers still stop with `engine_capability_missing` there.

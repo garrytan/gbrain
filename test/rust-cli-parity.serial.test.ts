@@ -231,8 +231,9 @@ const COMMANDS: string[][] = [
 const RECORDED_WRITES: Array<{ args: string[]; member: string }> = [
   { args: ['put', 'notes/parity-put', '--content', '---\ntype: note\ntitle: Parity put\n---\nBody text.\n', '--json'], member: 'executeRaw' },
 ];
-// `put` passes the brain id and the source resolver, then stops at the raw read of persistence_topology_changes in
-// assertPageRequestIdentity (src/core/persistence/journal.ts).
+// `put` passes the brain id, the source resolver and the request identity reads (readTopologyChange,
+// readWriteRequest), then stops at the raw admission source read (ADMISSION_SOURCE_SQL) in preparePageAdmission
+// (src/core/persistence/page-mutations.ts).
 
 type State = 'equal' | 'refused' | 'diverged' | 'no-engine' | 'runs';
 interface Row { command: string; state: State; note: string }
