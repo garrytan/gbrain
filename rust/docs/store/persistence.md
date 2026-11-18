@@ -103,6 +103,16 @@ The consumer's housekeeping after a write (`persistence-housekeeping.ts`).
 | `brain.listPendingSegmentedProjections(filter)` | the queued jobs of segmented pages that a projector can take now, as `listPendingSegmentedProjections` returns them | `listPendingSegmentedProjections` |
 | `brain.selectProjectionWindowJobs(cursor, retryCooldown)` | the window rows (the recency lane, then the wrapped key-order lane), with `high_water` as Postgres prints a `timestamptz`; the one row of nulls for an empty queue | `selectProjectionWindowJobs` |
 
+## Writer versions
+
+When the brain started stamping writer versions on its requests (`writer-versions.ts`). Postgres reads its cutoff from
+`persistence_brain.writer_version_cutoff`, the moment migration 178 started stamping requests. This
+engine stamps every request from the brain's creation, so its cutoff is the brain's creation time.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.readWriterVersionCutoff()` | the brain's creation time as ISO text, `null` without a format record | `readWriterVersionCutoff` |
+
 ## Effect scans
 
 The effect worker's reads before and when it claims effects (`persistence-effect-scans.ts`). Each one joins

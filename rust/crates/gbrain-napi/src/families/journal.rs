@@ -381,6 +381,12 @@ impl Brain {
         self.run(env, move |s| s.list_compactable_receipts(retention_days))
     }
 
+    /// `readWriterVersionCutoff()`: the brain's creation time as ISO text, or `null`.
+    #[napi]
+    pub fn read_writer_version_cutoff<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_writer_version_cutoff())
+    }
+
     #[napi]
     pub fn read_capacity_forecast_inputs<'env>(
         &self,

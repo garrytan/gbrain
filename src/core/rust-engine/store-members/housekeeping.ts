@@ -2,7 +2,8 @@
  * The housekeeping members the Rust store answers (engine-sql/persistence-housekeeping.ts): the host's housekeeping turn
  * (claimHousekeepingTurn, completeHousekeepingTurn), the receipt reads (readReceiptBudget, listCompactableReceipts,
  * listReservationsAfter, listTrueUpRequests), the capacity forecast's reads (readCapacityForecastInputs) and the
- * projection queue reads (listPendingSegmentedProjections, selectProjectionWindowJobs).
+ * projection queue reads (listPendingSegmentedProjections, selectProjectionWindowJobs) and the writer-version cutoff
+ * (readWriterVersionCutoff).
  *
  * The store keeps no `persistence_consumers` rows, no `persistence_effects` rows and no worktree topology, so a live
  * consumer never blocks a turn and effect bytes are 0. It keeps the page projection queue: every page write updates it
@@ -14,6 +15,7 @@ import type {
   CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionWindowRow, ReceiptBudget, SegmentedProjectionFilter,
 } from '../../engine-sql/persistence-housekeeping.ts';
 import type { ProjectionScanCursor } from '../../page-state/projection-window.ts';
+import { isoTime } from '../../engine-sql/writer-versions.ts';
 import { requestRow } from '../store-codec.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
@@ -60,3 +62,10 @@ export const listPendingSegmentedProjections: StoreMember<[filter: SegmentedProj
 export const selectProjectionWindowJobs: StoreMember<[cursor: Pick<ProjectionScanCursor, 'after' | 'highWater'>, retryCooldown: boolean], ProjectionWindowRow[]> =
   (brain, cursor, retryCooldown) => storeCall({ member: 'selectProjectionWindowJobs' }, () => brain.selectProjectionWindowJobs(
     { after: { source_incarnation: cursor.after.source_incarnation, slug: cursor.after.slug }, highWater: cursor.highWater }, retryCooldown));
+
+/**
+ * The writer-version cutoff (engine-sql/writer-versions.ts): the brain's creation time, since a Rust brain stamps every
+ * request from birth.
+ */
+export const readWriterVersionCutoff: StoreMember<[], string | null> = async brain =>
+  isoTime(await storeCall({ member: 'readWriterVersionCutoff' }, () => brain.readWriterVersionCutoff()));

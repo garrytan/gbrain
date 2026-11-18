@@ -122,7 +122,6 @@ src/commands/doctor/checks/unlinked-facts.ts	execute_raw	1
 src/commands/doctor/checks/unscoped-multi-user-token.ts	execute_raw	2
 src/commands/doctor/checks/vector-plan.ts	execute_raw	4
 src/commands/doctor/checks/wakeshift.ts	execute_raw	3
-src/commands/doctor/checks/writer-version.ts	execute_raw	1
 src/commands/doctor/last-known.ts	execute_raw	2
 src/commands/doctor/report-remote.ts	execute_raw	2
 src/commands/doctor/schema-pack-checks.ts	execute_raw	3

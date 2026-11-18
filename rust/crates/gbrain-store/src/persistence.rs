@@ -48,6 +48,7 @@ mod effect_scans;
 mod housekeeping;
 mod projection_queue;
 mod topology;
+mod writer_versions;
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn};
 pub use projection_queue::{
     ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,

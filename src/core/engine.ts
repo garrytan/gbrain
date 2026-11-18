@@ -3389,6 +3389,10 @@ export interface BrainEngine {
    */
   setWriteContext(input: WriteContextInput): Promise<WriteContextResult>;
 
+  // The writer-version reads (engine-sql/writer-versions.ts): which binaries admitted and published the retained requests.
+  /** When the brain started stamping writer versions (migration 178), as ISO text; null when not recorded. */
+  readWriterVersionCutoff(): Promise<string | null>;
+
   // The connect gate's persistence reads (engine-sql/connect-gate.ts): table probes, managed roots, graduation, retired epochs.
   /** Whether persistence table `table` exists (a brain before the persistence migrations has none). */
   hasPersistenceTable(table: PersistenceTable): Promise<boolean>;
