@@ -1,6 +1,7 @@
 //! Vector search (core): an exact flat scan over the stored chunk and take vectors.
 //!
-//! Members: searchVector, searchTakesVector.
+//! Members: searchVector, searchTakesVector. `cosinesByChunkIds` is served beside the chunk
+//! vector reads (`embeddings.rs`), with the scoring rule of this file (`served_cosine`).
 //!
 //! Keys: this family writes no records, so nothing lives under `keys::VECTOR` (`X`). The vectors
 //! are the embeddings family's records (`B 'c'` chunk vectors, `B 't'` take vectors and the
@@ -223,6 +224,26 @@ fn cosine(query: &[f32], query_norm_sq: f64, stored: &IndexedVector) -> f64 {
     }
 }
 
+/// The squared length of a vector, summed in float64.
+pub(crate) fn norm_sq(vector: &[f32]) -> f64 {
+    dot(vector, vector)
+}
+
+/// The text-space cosine `cosinesByChunkIds` reports for one served stored vector
+/// (`cosineByChunkIdsStatement`): another dimension count, a zero vector or a zero query scores 0
+/// without a comparison; otherwise `1 - (stored <=> query)`, with pgvector's cosine kept in [-1, 1].
+pub(crate) fn served_cosine(query: &[f32], query_norm_sq: f64, stored: &[f32]) -> f64 {
+    if stored.len() != query.len() {
+        return 0.0;
+    }
+    let stored_norm_sq = dot(stored, stored);
+    if stored_norm_sq == 0.0 || query_norm_sq == 0.0 {
+        return 0.0;
+    }
+    let similarity = dot(query, stored) / (query_norm_sq * stored_norm_sq).sqrt();
+    1.0 - (1.0 - similarity.clamp(-1.0, 1.0))
+}
+
 /// `ORDER BY score DESC` with NaN first, as Postgres orders a float.
 fn score_desc(a: f64, b: f64) -> Ordering {
     b.total_cmp(&a)
@@ -249,7 +270,7 @@ fn js_number(value: f64) -> String {
 }
 
 /// pgvector's parse of the query vector: at least one dimension, every value finite.
-fn check_query(query: &[f64]) -> Result<Vec<f32>> {
+pub(crate) fn check_query(query: &[f64]) -> Result<Vec<f32>> {
     if query.is_empty() {
         return Err(StoreError::invalid("vector must have at least 1 dimension"));
     }

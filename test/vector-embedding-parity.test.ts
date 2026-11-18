@@ -68,8 +68,8 @@
  * guard's model and hash edits, embedding reads, stale chunks, state counts)
  * do not run on Rust; the store's unit tests cover the guard's model and hash
  * rules. A brain whose config routes vectors to another column refuses on Rust,
- * as the Rust embedding members do. hybridSearch refuses on Rust, naming cosinesByChunkIds (a search-reads
- * member not served yet), because its cosine rescoring reads it.
+ * as the Rust embedding members do. hybridSearch runs its real pipeline on the Rust brain, and its cosine
+ * rescoring reads cosinesByChunkIds, which the store serves as an exact scan.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -341,6 +341,66 @@ for (const kind of arms) {
       record(kind, 'guard', cases);
     });
 
+    test('cosinesByChunkIds: the text-space cosine of every served chunk with a vector', async () => {
+      const sources: Record<string, string> = { 'f-srcb': 'src-b', 'j-archived': 'src-arch' };
+      const idOf = new Map<string, number>();
+      for (const slug of ['a-exact', 'b-tie1', 'c-tie2', 'd-multi', 'e-person', 'f-srcb', 'g-deleted', 'h-quarantined', 'i-private', 'j-archived',
+        'k-opposite', 'l-no-chunks', 'm-pinned', 'n-timeline', 'o-skip']) {
+        for (const c of await engine.getChunks(slug, { sourceId: sources[slug] ?? 'default', includeUnsealed: true } as never)) idOf.set(`${slug}#${c.chunk_index}`, Number(c.id));
+      }
+      const nameOf = new Map([...idOf].map(([name, id]) => [id, name]));
+      const MISSING = 987_654_321;
+      const read = async (ids: number[], query: Float32Array) => {
+        const found = await engine.cosinesByChunkIds(ids, 'embedding', query);
+        return new Map([...found].map(([id, cos]) => [nameOf.get(id) ?? `unknown:${id}`, cos]));
+      };
+      /** `name=cosine` rows, sorted, the cosine rounded to 4 places: what the engines are compared on. */
+      const rowsOf = (found: Map<string, number>) => [...found].map(([name, cos]) => `${name}=${cos.toFixed(4)}`).sort();
+      /** Each cosine within SCORE_TOLERANCE of the cosine of the stored vector and the query, and exactly these chunks. */
+      const expectCosines = (found: Map<string, number>, names: string[], query: Float32Array) => {
+        expect([...found.keys()].sort()).toEqual([...names].sort());
+        for (const name of names) expect(Math.abs(found.get(name)! - cosine(stored.get(name)!, query))).toBeLessThan(SCORE_TOLERANCE);
+      };
+      const everything = [...idOf.values(), MISSING];
+      const all = await read(everything, q);
+      // Every served chunk with a vector comes back (the soft-deleted page's and the unembedded chunk's do not); a page
+      // with no chunks and an id that is no chunk give no row.
+      const served = [...all.keys()];
+      for (const keep of ['a-exact#0', 'd-multi#0', 'd-multi#1', 'd-multi#2', 'n-timeline#0', 'n-timeline#1', 'k-opposite#0', 'e-person#0', 'f-srcb#0',
+        'b-tie1#0', 'c-tie2#0', 'i-private#0']) {
+        expect(served).toContain(keep);
+      }
+      for (const gone of ['g-deleted#0', 'o-skip#0']) expect(served).not.toContain(gone);
+      expect(served.some((n) => n.startsWith('l-no-chunks') || n.startsWith('unknown:'))).toBe(false);
+      expectCosines(all, served, q);
+      expect(all.get('a-exact#0')).toBeCloseTo(1, 6);
+      expect(all.get('k-opposite#0')).toBeCloseTo(-1, 6);
+      expect(all.get('n-timeline#0')).toBeCloseTo(0.8957, 4);
+      const subset = await read([idOf.get('d-multi#1')!, idOf.get('b-tie1#0')!, MISSING], q);
+      expectCosines(subset, ['b-tie1#0', 'd-multi#1'], q);
+      const scaled = await read(everything, q.map((x) => x * 3) as Float32Array);
+      expectCosines(scaled, served, q);
+      const otherQuery = await read(everything, v(1));
+      expectCosines(otherQuery, served, v(1));
+      expect((await read([], q)).size).toBe(0);
+      expect((await read([MISSING], q)).size).toBe(0);
+      // Another dimension scores 0 for every served chunk, as does a zero query.
+      const shortQuery = await read(everything, new Float32Array([1, 2, 3]));
+      const zeroQuery = await read(everything, new Float32Array(dims));
+      for (const found of [shortQuery, zeroQuery]) expect(rowsOf(found)).toEqual(served.map((n) => `${n}=0.0000`).sort());
+      // A column name the schema would not accept is refused as PGLite refuses it; the Rust store keeps only `embedding`.
+      const badColumn = await outcome(() => engine.cosinesByChunkIds([idOf.get('a-exact#0')!], 'embedding; drop', q));
+      expect(badColumn).toMatchObject({ refused: 'embedding_column_not_registered' });
+      if (rust) {
+        const otherColumn = await outcome(() => engine.cosinesByChunkIds([idOf.get('a-exact#0')!], 'embedding_image', q));
+        expect(otherColumn).toMatchObject({ refused: 'engine_capability_missing' });
+      }
+      record(kind, 'cosines', {
+        all: rowsOf(all), subset: rowsOf(subset), scaled: rowsOf(scaled), otherQuery: rowsOf(otherQuery),
+        shortQuery: rowsOf(shortQuery), zeroQuery: rowsOf(zeroQuery), badColumn,
+      });
+    });
+
     test('hybridSearch: fusion order over the vector arm', async () => {
       await engine.setConfig('embedding_model', MODEL);
       await engine.setConfig('embedding_dimensions', String(dims));
@@ -357,17 +417,6 @@ for (const kind of arms) {
       };
       __setEmbedTransportForTests(null);
       resetGateway();
-      if (rust) {
-        // The pipeline rescores the vector arm's candidates with the engine's cosinesByChunkIds, a search-reads member
-        // the Rust engine does not serve yet, so every hybrid query refuses by name. Once that member is served, this
-        // case expects PGLite's order like every other case.
-        for (const outcomeOfCase of Object.values(cases)) {
-          expect(outcomeOfCase).toMatchObject({ refused: 'engine_capability_missing' });
-          expect((outcomeOfCase as { message: string }).message).toContain('cosinesByChunkIds');
-        }
-        record(kind, 'hybrid', cases);
-        return;
-      }
       // With no keyword hit the fused order is the vector order (the pipeline drops the tied twin and the opposite vector).
       expect(cases.vectorOnly).toEqual({ ok: ['a-exact', 'd-multi', 'n-timeline', 'f-srcb', 'i-private', 'e-person', 'b-tie1'] });
       expect(cases.withKeyword).toEqual({ ok: ['e-person', 'a-exact', 'd-multi', 'n-timeline', 'f-srcb', 'i-private', 'b-tie1'] });
