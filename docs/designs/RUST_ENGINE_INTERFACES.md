@@ -1558,6 +1558,10 @@ The Minion job queue, cycle locks, spend and rate leases, and wake subscriptions
     (`src/core/engine-sql/jobs-spend.ts`, `rust/docs/store/jobs-spend.md`). The statements that need `mcp_spend_log` or
     `oauth_clients` (`reserve`, the capped group read, the log insert inside `settle`, `getClientDailyCapCents`) stay raw
     and the Rust engine refuses them. `parity: test/engine-parity/jobs-spend.test.ts`.
+  - Subagent transcript and tool ledger. Seventeen members (`listSubagentMessages`, `insertSubagentMessage`, `listSubagentToolExecutions`,
+    `recordSubagentToolExecutions`, `startSubagentToolExecution`, `completeSubagentToolExecution`, `failSubagentToolExecution`, the
+    write-outcome, oneshot-ledger and byte-sum reads, and the dream cycle's provenance reads) serve `subagent_messages` and
+    `subagent_tool_executions` (`src/core/engine-sql/jobs-subagent.ts`, `rust/docs/store/jobs-subagent.md`). `parity: test/engine-parity/jobs-subagent.test.ts`.
   - Wake. The `minion_job_notify` trigger's `pg_notify` has no store equivalent: a Rust worker uses the short poll,
     which `sync-queue-wake.ts` already chooses when LISTEN is not available.
 - **Depends on:** the transactions family (`w`) for the members a caller runs inside its own transaction.

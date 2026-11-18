@@ -130,7 +130,7 @@ describe('C6: collectChildPutPageSlugs survives double-encoded jsonb (#745)', ()
 
   test('normalizes bigint job ids before number-keyed metadata lookups', async () => {
     const bigintEngine = {
-      executeRaw: async () => [{
+      listSubagentPutPageWrites: async () => [{
         job_id: 1001n,
         slug: 'wiki/agents/test/bigint-job-abc123',
       }],

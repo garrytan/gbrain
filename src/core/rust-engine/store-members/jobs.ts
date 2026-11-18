@@ -114,6 +114,8 @@ export * from './jobs-checks.ts';
 export * from './jobs-insight.ts';
 // Group C: the spend reservations and the lease-pressure log (engine-sql/jobs-spend.ts).
 export * from './jobs-spend.ts';
+// The subagent transcript and tool ledger (engine-sql/jobs-subagent.ts).
+export * from './jobs-subagent.ts';
 
 // ---------------------------------------------------------------- cycle locks
 

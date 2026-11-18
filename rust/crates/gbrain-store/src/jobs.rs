@@ -15,6 +15,8 @@
 //! dream-cycle reads of it (listSynthesisCompletionKeys, listRecentSynthesisCompletions). `insight`
 //! is the one read behind `describeJobs` (readJobInsight). `spend` keeps the spend reservations and the
 //! lease-pressure log (group C: the writes and reads of both, and the job spend tree).
+//! is the one read behind `describeJobs` (readJobInsight). `subagent` holds the transcript and tool
+//! ledger of a subagent job (17 members, rust/docs/store/jobs-subagent.md).
 //!
 //! See docs/designs/RUST_ENGINE_INTERFACES.md ("jobs (core)") and rust/docs/store/jobs.md.
 //!
@@ -34,6 +36,7 @@
 //!   reservation_uuid` indexes it by job, `0x22 expires_at reservation_uuid` by expiry (pending only).
 //!   `0x24 id -> record` is one lease-pressure row (sequence `lease_pressure`), `0x25 bounced_at id` its time
 //!   order and `0x26 job id` its job. The layout is in `spend.rs`.
+//! - `m 0x18..=0x1C`: the subagent messages, tool rows and their three indexes (see `subagent.rs`).
 //!
 //! Integers are big-endian; a signed one has its sign bit flipped so byte order is numeric order.
 //!
@@ -48,7 +51,8 @@
 //! children's `parent_job_id` becomes NULL (`ON DELETE SET NULL`). The other two self-references
 //! (`private_queue_owner_job_id`, `budget_owner_job_id`): a row that names the deleted job as its
 //! private-queue owner has it set to NULL (`updated_at` untouched); nothing here writes a budget
-//! owner. A job's attachments go with it (`ON DELETE CASCADE`).
+//! owner. A job's attachments, subagent messages and subagent tool rows go with it
+//! (`ON DELETE CASCADE`).
 
 mod attachments;
 mod checks;
@@ -60,6 +64,7 @@ mod private_queues;
 mod reads;
 mod spend;
 mod status;
+mod subagent;
 mod sweeps;
 mod synthesis_completions;
 
@@ -74,6 +79,7 @@ pub use private_queues::PrivateQueueState;
 pub use reads::{JobPageCursor, JobPageSpec, OverdueSpec};
 pub use spend::{ExpireScope, LeaseFilter, LeaseInsert, SpendInsert, SpendTreeSpec};
 pub use status::StatusFilter;
+pub use subagent::{FailureFallback, MessageInsert, ToolInsert, ToolStart, ToolTarget};
 pub use sweeps::{CancelOpts, PruneOutcome, PruneSpec};
 
 use crate::dream::jsonb;
@@ -707,6 +713,7 @@ fn delete_row(tx: &mut dyn KvWrite, row: &JobRecord) -> Result<()> {
     for k in attachments {
         tx.delete(&k)?;
     }
+    subagent::delete_job_rows(tx, row.id)?;
     for child in ids_under(tx, &child_prefix(row.id))? {
         if let Some(old) = load(tx, child)? {
             let mut new = old.clone();
