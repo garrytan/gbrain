@@ -110,8 +110,10 @@ nightly-watch also reads the failing jobs' annotations. A manifest or annotation
 that cannot be read, or a manifest from another SHA or attempt, is incomplete
 evidence. It is reported, never read as zero failures, and never clears a
 failure, closes an issue or grants an exemption. After a partial re-run
-("re-run failed jobs") the manifest is incomplete. Wait for the next push run,
-or replay E2E files as above.
+("re-run failed jobs") the manifest takes each job at its newest attempt, so it
+still covers every file, and marks each file whose newest receipt came from the
+re-run as `rerun`. Such a run never clears a failure: nightly-watch reports it
+as incomplete evidence. Wait for the next push run, or replay E2E files as above.
 
 ## CI health report
 

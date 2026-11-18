@@ -633,6 +633,16 @@ describe('master-red: push-to-master runs', () => {
     }
   });
 
+  test('a reused run whose source passed files only on a re-run of failed jobs keeps the incident open', async () => {
+    const src = mr<CiManifest>('ci-manifest-39170735990.json');
+    const rerun = { ...src, attempts: [1, 2], files: src.files.map((f, i) => (i === 0 ? { ...f, rerun: true as const } : f)) };
+    const { incident } = await reuseWatch(w => { w.manifests.set(`${RU.dispatch10224.id}/1`, rerun); });
+    expect(incident.state).toBe('open');
+    const state = mrState(incident);
+    expect(state.evidence!.complete).toBe(false);
+    expect(state.evidence!.problems.join(' | ')).toContain(`re-ran only failed jobs (attempts 1, 2); 1 file(s) passed only on that re-run (${src.files[0]!.file})`);
+  });
+
   test('a green run where a previously failing job did not run keeps the issue open and names the manual-close step', async () => {
     const w = testWorld(T.g8315, T.r8320);
     await go(w, T.r8320);
