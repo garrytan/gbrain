@@ -64,6 +64,12 @@ pub(crate) fn page_columns(
     Ok(())
 }
 
+/// The `emotional_weight` a page reads, as `page_columns` reports it: the stored weight, else the
+/// column default 0. The `'salience'` order of `listEnrichCandidates` sorts on it.
+pub(crate) fn emotional_weight(read: &dyn KvRead, page_id: u64) -> Result<f64> {
+    Ok(real_out(weight_of(record(read, page_id)?)))
+}
+
 /// One row of `setEmotionalWeightBatch`. A null weight is a null `real`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct EmotionalWeightRow {

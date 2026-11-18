@@ -132,6 +132,7 @@ test/engine-parity/pages.test.ts
 test/engine-parity/raw-sql.test.ts
 test/engine-parity/search.test.ts
 test/engine-parity/segmented-body.test.ts
+test/engine-parity/stats-vectors.test.ts
 test/engine-parity/stats.test.ts
 test/engine-parity/sync-aliases.test.ts
 test/engine-parity/takes.test.ts

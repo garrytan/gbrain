@@ -23,17 +23,10 @@ import type { StaleTakeOpts, StaleTakeRow, TakeEmbeddingInput } from '../../take
 import type { Chunk, StaleChunkRow } from '../../types.ts';
 import { toChunk, withDates } from '../store-codec.ts';
 import type { StoreBrain } from '../store.ts';
-import { refuseMember, storeCall, takeOptions, throwIfAborted, type StoreMember } from './common.ts';
+import { refuseMember, requireTextColumn, storeCall, takeOptions, throwIfAborted, type StoreMember } from './common.ts';
 
 type StaleChunkOpts = { sourceId?: string; signature?: string; includeNullSignature?: boolean };
 const STALE_CHUNK_OPTIONS = ['sourceId', 'signature', 'includeNullSignature'] as const;
-
-/** Refuses a member when the brain's config makes PGLite read another vector column than `embedding`. */
-async function requireTextColumn(brain: StoreBrain, member: string): Promise<void> {
-  for (const key of ['search_embedding_column', 'embedding_columns']) {
-    if (await brain.getConfig(key)) refuseMember(member, `config ${key} selects another embedding column`);
-  }
-}
 
 /** `[{ id, embedding }]` from the store as PGLite's `Map<id, Float32Array>`. */
 function vectorMap(rows: { id: number; embedding: number[] }[]): Map<number, Float32Array> {
