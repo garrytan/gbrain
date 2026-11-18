@@ -12,9 +12,8 @@
 //!
 //! A segmented page is one whose body columns are NULL (`PageText::is_null`), the shell PGLite's
 //! `createSegmentedPageShell` leaves. Its `body_bytes` lives in the page_body family's private
-//! body state (lane 3), which this family does not read yet (follow-up
-//! `chunkless-segmented-body-bytes`); until then it reads as NULL, and a NULL `body_bytes` fails
-//! `body_bytes > 0` as it does in SQL. A page's chunks are served when its
+//! body state, which this family reads through `page_body::segmented_body_bytes`; a NULL
+//! `body_bytes` fails `body_bytes > 0` as it does in SQL. A page's chunks are served when its
 //! `text_projection_revision` equals its `knowledge_revision`, the same test the SQL engines'
 //! served-projection filter makes. See rust/docs/store/chunk_queries.md.
 
@@ -43,11 +42,9 @@ fn segmented(page: &PageRecord) -> bool {
     page.compiled_truth.is_null() && page.timeline.is_null()
 }
 
-/// The page's `body_bytes`. The page_body family keeps it in its private body state; follow-up
-/// `chunkless-segmented-body-bytes` reads it through a `pub(crate)` page_body accessor once core
-/// lands the combined branch. Until then it is NULL.
-fn body_bytes(_read: &dyn KvRead, _page: &PageRecord) -> Result<Option<i64>> {
-    Ok(None)
+/// The page's `body_bytes`. The page_body family keeps it in its private body state.
+fn body_bytes(read: &dyn KvRead, page: &PageRecord) -> Result<Option<i64>> {
+    crate::page_body::segmented_body_bytes(read, page.id)
 }
 
 /// The `chunklessPagesWhere` body test: `compiled_truth <> '' OR timeline <> '' OR
@@ -393,8 +390,9 @@ mod tests {
         assert!(has_body(&shell, Some(10)));
         assert!(!has_body(&shell, Some(0)), "a fresh shell has body_bytes 0");
         assert!(!has_body(&shell, None), "NULL > 0 is not true");
-        // body_bytes is not read yet (chunkless-segmented-body-bytes), so the shell is not chunkless-with-content today, as a
-        // PGLite shell with body_bytes 0 is not.
+        // This shell has no body state (`make_shell` only nulls the columns), so its body_bytes is NULL and it is not
+        // chunkless-with-content. A published body reads through `page_body::segmented_body_bytes`
+        // (test/engine-parity/chunk-page-segmented.test.ts).
         let options = ChunklessOptions::default();
         assert_eq!(
             store.count_chunkless_pages_with_content(&options).unwrap(),

@@ -9,8 +9,11 @@
  *  - Regression: an engine that reads raw chunk rows shows draft text before the flip, returns an empty first page or a
  *    wrong max index once a replace retired a chunk or inserted one in the middle, or gives `occurrence_id` null so
  *    segmented evidence cannot map a chunk to its manifest row.
+ *  - Also: a segmented page whose published body is nonempty but has no chunks counts, and is listed, as a chunkless
+ *    page with content (the repair sweep re-chunks it); a fresh shell with no body does not. An engine that cannot read
+ *    a segmented page's body size answers 0 and an empty list, so a body that lost its chunks is never re-chunked.
  *  - Why existing coverage misses it: segmented-body.test.ts reads `getChunks` only, and chunks.test.ts pages inline
- *    pages, whose chunk_index is the order.
+ *    pages, whose chunk_index is the order and whose chunkless cases never publish a segmented body.
  *  - Seam: none. Real engines, typed methods only. Occurrence ids come from sequences, so observables map them to
  *    ordinals of the allocated ids.
  */
@@ -93,6 +96,25 @@ async function replaceAll(engine: BrainEngine, pageId: number, generation: numbe
   return occ;
 }
 
+/** Publish ONE, TWO as generation 1 of notes/big with no chunks staged, and leave the page unsealed. */
+async function publishWithoutChunks(engine: BrainEngine) {
+  const { id: pageId } = await engine.createSegmentedPageShell('notes/big', pageMeta('Big page'), { sourceId: 'default' });
+  const occ = await engine.allocateBodyOccurrenceIds(2);
+  const texts = [ONE, TWO];
+  const staging = stagingInput({ slug: 'notes/big', pageId, mode: 'create' });
+  await engine.openBodyStaging(staging);
+  await engine.stageSegmentTexts('default', texts, { stagingId: staging.id });
+  let byteStart = 0;
+  await engine.stageManifestRows(texts.map((text, seq) => {
+    const row = manifestRow({ pageId, occurrenceId: occ[seq]!, genFrom: 1, seq, text, byteStart, stagingId: staging.id });
+    byteStart += text.body.byteLength;
+    return row;
+  }));
+  await engine.flipBodyGeneration(flipInput(pageId, 0, staging.id, texts));
+  await engine.setBodyStagingState(staging.id, 'committed');
+  return pageId;
+}
+
 const words = (texts: readonly string[]) => texts.map((t) => t.split('\n')[1]!.split(' ').pop());
 
 async function pageView(engine: BrainEngine, fromIndex: number, limit: number) {
@@ -113,6 +135,21 @@ async function windowView(engine: BrainEngine, pageId: number, occ: readonly num
 }
 
 describe('engine parity: chunk reads of a segmented page', () => {
+  parityTest(
+    'a segmented page with a published body and no chunks is chunkless with content; an empty shell is not',
+    { methods: ['countChunklessPagesWithContent', 'listChunklessPagesWithContent', 'flipBodyGeneration', 'createSegmentedPageShell'] },
+    async (engine) => {
+      const { id: shellId } = await engine.createSegmentedPageShell('notes/shell', pageMeta('Shell page'), { sourceId: 'default' });
+      const empty = { count: await engine.countChunklessPagesWithContent(), slugs: (await engine.listChunklessPagesWithContent()).map((p) => p.slug) };
+      const pageId = await publishWithoutChunks(engine);
+      const published = { count: await engine.countChunklessPagesWithContent(), slugs: (await engine.listChunklessPagesWithContent()).map((p) => p.slug) };
+      expect(shellId).not.toBe(pageId);
+      expect(empty).toEqual({ count: 0, slugs: [] });
+      expect(published).toEqual({ count: 1, slugs: ['notes/big'] });
+      return { empty, published };
+    },
+  );
+
   parityTest(
     'a chunk staged for the next generation stays out of getChunkPage and getChunkWindows until the flip',
     { methods: ['stageSegmentChunks', 'getChunkPage', 'getChunkWindows', 'flipBodyGeneration', 'sealSegmentedPage'] },

@@ -624,6 +624,15 @@ pub(crate) fn timeline_lead(read: &dyn KvRead, page_id: u64) -> Result<Option<St
     Ok(read_body_state(read, page_id)?.and_then(|state| state.timeline_lead))
 }
 
+/// The `body_bytes` of segmented page `page_id`: the size a flip published, `Some(0)` for a shell no flip has
+/// published, `None` for an inline page, a missing page or a segmented page whose column is NULL (PGLite's NULL
+/// column). The chunk_queries family reads it for its `body_storage = 'segmented' AND body_bytes > 0` test.
+pub(crate) fn segmented_body_bytes(read: &dyn KvRead, page_id: u64) -> Result<Option<i64>> {
+    Ok(read_body_state(read, page_id)?
+        .filter(|state| state.body_storage == "segmented")
+        .and_then(|state| state.body_bytes))
+}
+
 fn is_segmented(state: Option<&BodyState>) -> bool {
     state.is_some_and(|s| s.body_storage == "segmented")
 }

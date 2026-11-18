@@ -103,8 +103,8 @@ setPageEmbeddingSignature	chunks	yes	1	no	yes	yes	refuses:embeddings
 invalidateStaleSignatureEmbeddings	chunks	yes	1	no	yes	yes	refuses:embeddings
 invalidateContentDriftEmbeddings	chunks	yes	1	no	yes	yes	refuses:embeddings
 listStaleChunks	chunks	yes	2	no	yes	yes	refuses:embeddings
-countChunklessPagesWithContent	chunks	yes	4	yes	yes	yes	serves
-listChunklessPagesWithContent	chunks	yes	2	yes	yes	yes	serves
+countChunklessPagesWithContent	chunks	yes	5	yes	yes	yes	serves
+listChunklessPagesWithContent	chunks	yes	3	yes	yes	yes	serves
 readEmbeddingStateCounts	chunks	yes	1	no	yes	yes	refuses:embeddings
 listEmbeddingStateRows	chunks	yes	1	no	yes	yes	refuses:embeddings
 deleteChunks	chunks	yes	2	no	yes	yes	serves
@@ -209,8 +209,8 @@ readSegmentTexts	segmented_body	yes	3	no	yes	yes	serves
 stageManifestRows	segmented_body	yes	4	no	yes	yes	serves
 readManifest	segmented_body	yes	7	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	8	no	yes	yes	serves
-createSegmentedPageShell	segmented_body	yes	5	no	yes	yes	serves
-flipBodyGeneration	segmented_body	yes	10	no	yes	yes	serves
+createSegmentedPageShell	segmented_body	yes	6	no	yes	yes	serves
+flipBodyGeneration	segmented_body	yes	11	no	yes	yes	serves
 sealSegmentedPage	segmented_body	yes	4	no	yes	yes	serves
 openBodyStaging	segmented_body	yes	6	no	yes	yes	serves
 setBodyStagingState	segmented_body	yes	5	no	yes	yes	serves
