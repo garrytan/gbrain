@@ -22,7 +22,7 @@ import type { PageInput } from '../../src/core/types.ts';
 import { withEngineScope } from '../../src/core/engine-scope.ts';
 import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
 import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
-import { basisEmbedding, createSource, parityArms, sorted, type ParityBackend } from './harness.ts';
+import { basisEmbedding, createSource, parityArms, resetArm, sorted, type EngineMethod, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { chunk, seedPage } from './chunk-fixtures.ts';
 
@@ -160,7 +160,7 @@ const mapKeys = (m: Map<unknown, unknown>, name: (id: number) => string): string
 
 /** One member as a read over the whole fixture brain. */
 interface Reader {
-  member: string;
+  member: EngineMethod;
   /** Every page the read can name, with no policy: what the case asserts for the plain read. */
   universe: string[];
   /** The view the read returns under `opts`. */
@@ -214,7 +214,7 @@ function allView(r: Reader): string[] {
   if (r.member === 'supersedingPageSlugs') return sorted(SUPERSEDED.map((k) => `${k}<${supersederSlug(k)}`));
   return sorted(r.universe);
 }
-const reader = (member: string): Reader => READERS.find((r) => r.member === member)!;
+const reader = (member: EngineMethod): Reader => READERS.find((r) => r.member === member)!;
 
 /** Reads every page alike when no policy is asked for. */
 const plainCase = (r: Reader) => async (engine: BrainEngine, backend: ParityBackend) => {
@@ -253,7 +253,7 @@ const openedCase = (r: Reader) => async (engine: BrainEngine, backend: ParityBac
   return view;
 };
 
-const describeMember = (member: string): void => {
+const describeMember = (member: EngineMethod): void => {
   const r = reader(member);
   parityTest(`${member}: without excludePrivate it reads the private, owner-only and other-source pages alike`, { methods: [member] }, plainCase(r));
   parityTest(`${member}: excludePrivate in a served brain hides the private, owner-only and derived pages and keeps the other source`, { methods: [member] }, servedCase(r));
@@ -290,6 +290,7 @@ describe('the Rust arm serves each member and returns exactly the pages PGLite l
   test('every member answers under excludePrivate with the served view and the closed view', async () => {
     const rust = arms().find((arm) => arm.backend === 'rust');
     if (!rust) return;
+    await resetArm(rust);
     const engine = rust.engine;
     const seeded = await seedBrain(engine, 'rust');
     for (const r of READERS) {

@@ -19,7 +19,7 @@ mod embedding;
 mod privacy;
 
 pub use privacy::{OwnerOnly, PrivacyPolicy};
-pub(crate) use privacy::{OwnerOnlySources, page_hidden};
+pub(crate) use privacy::{OwnerOnlyCache, OwnerOnlySources, page_hidden};
 
 use serde::{Deserialize, Serialize};
 

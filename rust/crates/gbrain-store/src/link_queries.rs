@@ -32,7 +32,7 @@
 use crate::Store;
 use crate::chunks::read_chunks;
 use crate::error::{INVALID_STATE, REVISION_CONFLICT, Result, StoreError};
-use crate::facts::{OwnerOnlySources, PrivacyPolicy, page_hidden};
+use crate::facts::{OwnerOnlyCache, PrivacyPolicy};
 use crate::keys;
 use crate::kv::{KvRead, KvWrite, collect_prefix, scan_prefix};
 use crate::links::{LinkBatchInput, LinkRecord, delete_link, in_links, out_links, put_link};
@@ -232,6 +232,7 @@ struct Pages<'a> {
     read: &'a dyn KvRead,
     pages: HashMap<u64, Option<Rc<PageRecord>>>,
     sources: HashMap<String, bool>,
+    owner_only: OwnerOnlyCache,
 }
 
 impl<'a> Pages<'a> {
@@ -240,6 +241,7 @@ impl<'a> Pages<'a> {
             read,
             pages: HashMap::new(),
             sources: HashMap::new(),
+            owner_only: OwnerOnlyCache::default(),
         }
     }
 
@@ -268,7 +270,7 @@ impl<'a> Pages<'a> {
             return Ok(false);
         }
         if let Some(policy) = &scope.exclude_private
-            && page_hidden(self.read, page, policy, &OwnerOnlySources::none())?
+            && self.owner_only.page_hidden(self.read, page, policy)?
         {
             return Ok(false);
         }

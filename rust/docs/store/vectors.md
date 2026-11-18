@@ -58,8 +58,10 @@ the shape `searchTakes` returns, with the cosine as `score`.
 - **`excludePrivate`.** A truthy one hides the pages the page policy hides, as `facts/privacy.rs`
   `page_hidden` reads it (`privatePagesFilterForCaller('p')`: private visibility or access, derived pages
   whose origin is private, the member-access rules). The policy is checked per page before ranking, so a
-  hidden page never takes a result slot and a limit counts only visible pages. The TypeScript member sends the
-  policy (`honorAliases`, `entityPrivacy`) as `exclude_private`; a caller whose policy is wider than the
+  hidden page never takes a result slot and a limit counts only visible pages. The policy also carries the owner-only rule
+  (`ownerOnly`, as `page_hidden` reads it): a page of an owner-only source never takes a slot, nor does a concept
+  synthesized from one, and under the closed form no page is served while the brain holds an owner-only source.
+  The TypeScript member sends the policy (`honorAliases`, `entityPrivacy`, `ownerOnly`) as `exclude_private`; a caller whose policy is wider than the
   store's refuses (`private-provenance.ts`). `excludePrivate` also turns on the safe-chunk rule, as in
   PGLite (`requiresSafeChunks`). A page that records no `chunker_version` counts as safe: this store's
   chunker seals, and `chunk_queries` reads such a page as sealed. Only a recorded version below 4 is unsafe.
