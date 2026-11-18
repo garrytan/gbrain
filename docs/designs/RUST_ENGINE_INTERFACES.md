@@ -62,7 +62,7 @@ small commit. Every other file in the table at the end belongs to exactly one fa
 - `test/engine-parity/{harness.ts,rust-arm.ts,coverage.ts}`, `test/rust-engine-shell.test.ts`,
   `test/rust-engine-store.test.ts`, `test/rust-arm-harness.test.ts`
 
-The list files (`lib.rs`, `families/mod.rs`, `index.ts`, `cascade.rs`, `page_columns.rs`, `page_index.rs`, the reserved block in
+The list files (`lib.rs`, `families/mod.rs`, `index.ts`, `cascade.rs`, `page_columns.rs`, `page_index.rs`, `page_projection.rs`, the reserved block in
 `keys.rs`) already name every planned family once, so no family edits them.
 
 ## Shared contracts (frozen)
@@ -160,10 +160,20 @@ Reserved tags:
 | embeddings (core) | `B` | `EMBEDDING_STATE` | yes |
 | transactions (core) | `w` | `LOCK_QUEUE` | no |
 | relations (core) | `v` | `RELATION_CATALOG` | no |
+| persistence (core) | `d` (requests stay under `J` / `j`, local writers under `W`) | `PERSISTENCE` | no |
+| jobs (core) | `m` | `JOBS` | no |
+| trust | `t` | `TRUST` | no (the trust family asks core when it needs the page-delete hook) |
 
 The `q` tag is shared. link_queries and wanted_links both key records as `q <source id> 0x00 ...`; the byte after
 `0x00` is `W` for a wanted_links record (`q <origin source id> 0x00 W <origin page id BE8> ...`), and link_queries
 uses any other byte. `keys::LINK_QUERIES` stays the one constant for both; neither family adds a tag.
+
+code_edges keeps a chunk index under its own tag `H`, after its row sub-tags `0x01` to `0x06`, because the chunk
+store keys chunks by page and index, not by id:
+
+- `H 0x07 <chunk id BE8>` -> the page id, then `0` for no `symbol_name` or `1` and the name's bytes: every chunk by id.
+- `H 0x08 <symbol_name> 0x00 <chunk id BE8>` -> empty: the chunks by `symbol_name`.
+- `H 0x09` -> empty: set once the index covers every chunk.
 
 ### Page delete cascade
 
@@ -186,6 +196,10 @@ file that names every family that needs the hook. Each listed family already has
 file, with an empty body. A family fills in only its own body, and never changes a signature or a list. A family
 that is not on a list and needs the hook asks core for a one-line addition to the list.
 
+A family that needs a call from a chunk write (`chunks::write_chunk`) or a build once per brain open (`Store::open`
+and `seed`) asks Ember first. Those calls run on every chunk write and every open, for every family. After the yes,
+the family adds the call in its own commit, apart from its family code, so the core change can be reviewed alone.
+
 All hooks are empty today, so they change no answer: every served member reads and writes exactly as before. The
 last four parts of this section are not hooks. They are core page behavior: the page origin rule lets `putPage`
 store `source_path`, the nullable page fields let a page record hold a segmented shell, the segmented guard keeps
@@ -194,7 +208,7 @@ store `source_path`, the nullable page fields let a page record hold a segmented
 #### Page columns (`page_columns.rs`)
 
 ```rust
-// In salience.rs, aliases.rs, extraction.rs and page_body.rs:
+// In salience.rs, aliases.rs, extraction.rs, page_body.rs and trust.rs:
 pub(crate) fn page_columns(read: &dyn KvRead, page: &PageRecord, columns: &mut PageColumns) -> Result<()>;
 // PageColumns:
 pub(crate) fn set(&mut self, name: &str, value: Value);
@@ -211,7 +225,7 @@ pub(crate) fn set(&mut self, name: &str, value: Value);
   decoder turns every `Page` date column into a `Date`, including `salience_touched_at`. Numbers go as JSON numbers
   (round `emotional_weight` to `f32` first, as Postgres `REAL` does).
 - **Owners:** salience (`emotional_weight`, `salience_touched_at`), aliases (`contextual_retrieval_mode`), page_body
-  (`body_storage` and `body_bytes` of a segmented page). Extraction is on the list too, but PGLite's `getPage`
+  (`body_storage` and `body_bytes` of a segmented page), trust (`trust_tier` and the write provenance fields). Extraction is on the list too, but PGLite's `getPage`
   returns no extraction stamp, so its hook stays empty unless a parity case shows one. `withheld_source_path` has no
   owner yet and stays `null`.
 - **Cost:** one read per listed family per page returned. A family whose record is absent for most pages does one
@@ -431,6 +445,29 @@ same transaction. `before` is the page as stored before the write; `after` is th
   needs the hook asks core for one line.
 - The timeline date index (`u`, timeline_queries) is a different hook in `timeline.rs`; core adds it when that family
   asks.
+
+#### Page projection (`page_projection::queue_page_projection`)
+
+```rust
+// In persistence.rs (full paths, so the file needs no import line):
+pub(crate) fn queue_page_projection(
+    tx: &mut dyn crate::kv::KvWrite,
+    before: Option<&crate::pages::PageRecord>,
+    after: Option<&crate::pages::PageRecord>,
+) -> crate::Result<()>;
+```
+
+The persistence family keeps the page projection queue (Postgres `page_projection_jobs`) in step with page writes,
+in the same transaction, as PGLite's `gbrain_queue_page_projection` trigger does on every `pages` insert, update and
+delete.
+
+- It gets the same `(before, after)` forms as the page index hook, from the same two callers: `pages::write_page`
+  and `pages::remove_page`. It fires after the page index hook, and for a hard delete before the page record is
+  deleted.
+- What the body must do (the trigger's rules): delete the job when the page is hard deleted, soft deleted, moved to
+  another slug or source, or when `text_projection_revision` equals `knowledge_revision`; write the job when the page
+  is new or its `knowledge_revision` changed.
+- **Owner:** persistence. The body is empty today, so no page write changes.
 
 #### Page origin (`source_path` on `putPage`)
 
@@ -1237,12 +1274,14 @@ The estimates are judgments from the size of the PGLite code each member reprodu
 
 | Core item | Waits on | Needed by |
 |---|---|---|
-| Page-columns hook (`page_columns.rs`): family values that `getPage` returns (`emotional_weight`, `contextual_retrieval_mode`, segmented-body fields) | built | salience, aliases, page_body; extraction listed, likely unused |
+| Page-columns hook (`page_columns.rs`): family values that `getPage` returns (`emotional_weight`, `contextual_retrieval_mode`, segmented-body fields, `trust_tier`) | built | salience, aliases, page_body, trust; extraction listed, likely unused |
 | `pages::rename_page` helper | built | aliases (`updateSlug`) |
 | Chunk-delete hook (`cascade::remove_chunk_rows`) | built | code_edges; vectors and embeddings listed |
 | Timeline entry helpers (`next_entry_id`, `read_entry`, `put_entry`) | built | timeline_queries (`upsertEventProjection`) |
 | Event projection delete (`timeline_queries::remove_event_projections`, called by `remove_page`) | built; the family fills in the body | timeline_queries |
 | Page index hook (`page_index::reindex_page`, called by `write_page` and `remove_page`) | built; the family fills in the body | keyword (`R` title trigrams), page_ops |
+| Page projection hook (`page_projection::queue_page_projection`, called by `write_page` and `remove_page`) | built; the family fills in the body | persistence (`page_projection_jobs`) |
+| Tags `d`, `m`, `t` (`PERSISTENCE`, `JOBS`, `TRUST`) and the empty `persistence.rs`, `jobs.rs` and `trust.rs` | built | persistence, jobs, trust |
 | Timeline date index hook in `timeline.rs` | a family asking | timeline_queries |
 | vectors (`X`): chunk and take vectors, vector search | the coming vector store work | embeddings, takes capability, page_body chunk vectors, `findCandidateDuplicates` with an embedding |
 | embeddings (`B`): stale counts, signatures, embedding state | vectors | stats `getHealth`, chunk_queries shared cases, takes capability |
@@ -1258,3 +1297,5 @@ The estimates are judgments from the size of the PGLite code each member reprodu
 | Search timeline (`pages::search_timeline`: the sanitized timeline `sealChunks` sends, kept per page at the sealed revision; `forget_search_timeline` on every write that sets the title or timeline) | built | keyword (`searchTitles`); page_body calls `forget_search_timeline` |
 | Vector cache store field (`Store::vectors`, a `VectorCache` made in `open_kv`) | built | vectors (`load_index`) |
 | Wanted links stub (`wanted_links.rs`: sub-tag `W` under `q`, an empty `remove_page_rows` on the page-delete list) | built; the family fills in the body | wanted_links (`listWantedPages`) |
+| Chunk-write hook (`chunks::write_chunk` calls `code_edges::put_chunk_index(tx, id, page_id, symbol_name)` for every chunk record it writes) | built on code_edges' branch (`rust-lane-code-edges-index`, in its own commit); arrives with that merge | code_edges (chunk index `H 0x07`, `H 0x08`) |
+| Open-time index build (`Store::open` calls `code_edges::build_chunk_index(&*kv)`, which indexes a brain written before the index once; `seed` calls `code_edges::seed_chunk_index(tx)`, which marks a new brain's empty index complete) | built on code_edges' branch (`rust-lane-code-edges-index`, in its own commit); arrives with that merge | code_edges (`H 0x09`) |

@@ -8,7 +8,7 @@ statements in `src/core/engine-sql/jobs.ts` and `cycle-locks.ts`; this store run
 records. Timestamps cross the binding as ISO strings; the TypeScript members
 (`src/core/rust-engine/store-members/jobs.ts`) turn them into `Date`s, as PGLite returns them.
 
-Keys, under the family tag `m` (a local constant in `jobs.rs` until `keys.rs` reserves it):
+Keys, under the family tag `keys::JOBS` (`m`):
 
 | Key | Holds |
 | --- | --- |
@@ -41,9 +41,15 @@ keys do.
 | `brain.acquireCycleLock(id, opts)` / `refreshCycleLock` / `releaseCycleLock` / `deleteCycleLockIfStale` / `readCycleLocks(filter)` | as the SQL engines (`cycle-locks.ts`); `deleteCycleLock` is the release statement | the cycle lock members |
 | `brain.assertCycleLease(id, token)` | true when the lease is held under `token` and unexpired. A read: `FOR KEY SHARE` has nothing to wait for in one write transaction | `assertCycleLease` |
 
-Refused by the TypeScript members before the store is called (`engine_capability_missing`, capability
-`minion_queue`): a delegated client's `lock`/`checkCapacity` policy, a job without submission authority, a
-private-queue owner, and `claimNextJob`'s `suspectWaitMs` (the watchdog-overdue order).
+The `minion_queue` capability is partial until jobs slice 2. `servedCapabilities()` reports it because the
+members above serve, but the queue still reaches other `minion_jobs` statements through `executeRaw`, which the
+Rust engine refuses. Four options are refused by the TypeScript members before the store is called
+(`engine_capability_missing`, capability `minion_queue`):
+
+1. `admitJob` with a delegated client's `lock` or `checkCapacity` policy.
+2. `admitJob` for a job without submission authority.
+3. `admitJob` for a job that sets a private-queue owner (`private_queue_owner_job_id`, `_token` or `_lease_until`).
+4. `claimNextJob` with `suspectWaitMs` (the watchdog-overdue claim order).
 
 Differences from PGLite:
 

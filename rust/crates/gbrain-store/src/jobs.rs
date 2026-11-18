@@ -1,11 +1,17 @@
-//! Minion jobs and cycle locks: the `minion_jobs`, `minion_inbox` and `gbrain_cycle_locks` tables
-//! of the PGLite engine, as `src/core/engine-sql/jobs.ts` and `cycle-locks.ts` run them.
+//! Jobs: the Minion job queue, cycle locks, spend and rate leases, and wake subscriptions.
+//!
+//! Built so far (jobs slice 1): the `minion_jobs`, `minion_inbox` and `gbrain_cycle_locks` tables
+//! of the PGLite engine, as `src/core/engine-sql/jobs.ts` and `cycle-locks.ts` run them. Spend and
+//! rate leases and wake subscriptions are not built: TypeScript reaches those tables through
+//! `executeRaw`, which the Rust engine refuses.
 //!
 //! Members: admitJob, getJob, listJobs, claimNextJob, renewJobLease, completeJob, failJob,
 //! reclaimStalledJobs; acquireCycleLock, refreshCycleLock, releaseCycleLock, readCycleLocks,
 //! deleteCycleLock, deleteCycleLockIfStale, assertCycleLease.
 //!
-//! Keys (family tag `JOBS`, a local `b'm'` until `keys.rs` reserves it):
+//! See docs/designs/RUST_ENGINE_INTERFACES.md ("jobs (core)") and rust/docs/store/jobs.md.
+//!
+//! Keys: every record of this family starts with `keys::JOBS` (`m`). The bytes after the tag:
 //! - `m 0x00 name -> i64`: the `minion_jobs` and `minion_inbox` id sequences (`job`, `inbox`).
 //! - `m 0x01 id -> JobRecord`: one job row.
 //! - `m 0x02 queue \0 priority created id`: the claim index, `waiting` rows only, in claim order
@@ -33,6 +39,7 @@
 use crate::dream::jsonb;
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
+use crate::keys;
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::timeline_queries::jsonb_field_text;
 use crate::{Store, get_json, put_json};
@@ -40,8 +47,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-/// The family tag. Core-hooks item 18 reserves it in `keys.rs`; until then it lives here.
-pub const JOBS: u8 = b'm';
 const SEQ: u8 = 0x00;
 const JOB: u8 = 0x01;
 const CLAIM: u8 = 0x02;
@@ -85,7 +90,7 @@ fn signed_key(v: i64) -> [u8; 8] {
 }
 
 fn prefix(sub: u8) -> Vec<u8> {
-    vec![JOBS, sub]
+    vec![keys::JOBS, sub]
 }
 
 fn job_key(id: i64) -> Vec<u8> {
