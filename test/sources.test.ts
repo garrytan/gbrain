@@ -80,6 +80,8 @@ function makeStub(rowsByPattern: Record<string, unknown[]> = {}, opts: { appears
     // The strict mode reader is a typed method; it answers from the same fake rows as executeRaw.
     readManagedModeRows: () => executeRaw('SELECT enabled FROM persistence_brain WHERE singleton=1'),
     setConfig,
+    // brainServes reads the enabled access members; this brain has none (it serves one person).
+    listActiveAccessMembers: async () => [],
     transaction: async (fn: (tx: BrainEngine) => Promise<unknown>) => fn(engine),
     // Unused methods throw if called accidentally during these tests.
     getConfig: async () => null,

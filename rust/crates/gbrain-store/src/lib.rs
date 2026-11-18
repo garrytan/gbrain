@@ -61,6 +61,7 @@ pub mod trust;
 pub mod vectors;
 pub mod wanted_links;
 pub mod write_guards;
+pub mod write_misc;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;

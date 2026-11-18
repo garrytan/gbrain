@@ -21,6 +21,7 @@ mod timeline;
 mod trust;
 mod versions;
 mod write_guards;
+mod write_misc;
 
 // Planned families: no methods yet (docs/designs/RUST_ENGINE_INTERFACES.md).
 mod aliases;

@@ -699,18 +699,9 @@ export async function addSource(
       // local_path is set, and an explicitly-passed --name / --federated is
       // applied too (silently dropping them would lie to the caller who
       // typed them). Unmentioned fields, other config keys, and pages all
-      // survive. No JSON.stringify into ::jsonb — the federated flag merges
-      // via jsonb_build_object on a bound boolean.
-      await engine.executeRaw(
-        `UPDATE sources
-            SET local_path = $2,
-                name = COALESCE($3, name),
-                config = CASE WHEN $4::boolean IS NULL THEN config
-                              ELSE COALESCE(config, '{}'::jsonb)
-                                   || jsonb_build_object('federated', $4::boolean) END
-          WHERE id = $1`,
-        [opts.id, finalPath, opts.name ?? null, opts.federated ?? null],
-      );
+      // survive (engine-sql/write-misc.ts attachSourcePath). attachPath
+      // requires --path, so finalPath is set.
+      await engine.attachSourcePath(opts.id, finalPath!, { name: opts.name ?? null, federated: opts.federated ?? null });
     } else {
       const config: Record<string, unknown> = {};
       if (opts.federated !== null && opts.federated !== undefined) {

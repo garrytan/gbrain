@@ -256,7 +256,7 @@ src/core/access/policy-transfer.ts	execute_raw	1
 src/core/access/policy.ts	execute_raw	31
 src/core/access/requester-scope.ts	execute_raw	4
 src/core/access/room.ts	execute_raw	2
-src/core/access/serves.ts	execute_raw	2
+src/core/access/serves.ts	execute_raw	1
 src/core/access/token-member-status.ts	sql_template	1
 src/core/advisor/collect-chronicle.ts	execute_raw	1
 src/core/advisor/collect-mcp-client-fit.ts	execute_raw	1
@@ -308,7 +308,7 @@ src/core/chronicle/campaign.ts	execute_raw	3
 src/core/chronicle/event-identity.ts	execute_raw	1
 src/core/chronicle/execute.ts	execute_raw	9
 src/core/chronicle/ledger-stats.ts	execute_raw	5
-src/core/chronicle/ledger.ts	execute_raw	10
+src/core/chronicle/ledger.ts	execute_raw	9
 src/core/chronicle/publish.ts	execute_raw	4
 src/core/chunkers/symbol-resolver.ts	execute_raw	8
 src/core/claw-test/seed-pglite.ts	driver_call	1
@@ -673,7 +673,7 @@ src/core/persistence/admin-lock.ts	execute_raw	7
 src/core/persistence/administration.ts	execute_raw	8
 src/core/persistence/applied-watermark.ts	execute_raw	4
 src/core/persistence/atom-maintenance.ts	execute_raw	21
-src/core/persistence/authority.ts	execute_raw	11
+src/core/persistence/authority.ts	execute_raw	10
 src/core/persistence/blocking-effects.ts	execute_raw	2
 src/core/persistence/bounded-reads.ts	execute_raw	10
 src/core/persistence/canonical-projections.ts	execute_raw	14
@@ -711,7 +711,7 @@ src/core/persistence/effect-facts.ts	execute_raw	8
 src/core/persistence/effect-journal.ts	execute_raw	24
 src/core/persistence/effect-links.ts	execute_raw	8
 src/core/persistence/effect-recovery-scan.ts	execute_raw	1
-src/core/persistence/effect-recovery.ts	execute_raw	19
+src/core/persistence/effect-recovery.ts	execute_raw	18
 src/core/persistence/effect-retry.ts	execute_raw	14
 src/core/persistence/effect-settle.ts	execute_raw	7
 src/core/persistence/effect-targets.ts	execute_raw	7
@@ -753,7 +753,7 @@ src/core/persistence/import-mutations.ts	execute_raw	3
 src/core/persistence/import-prepare.ts	execute_raw	1
 src/core/persistence/import-reads.ts	execute_raw	7
 src/core/persistence/intent-redaction.ts	execute_raw	10
-src/core/persistence/journal.ts	execute_raw	56
+src/core/persistence/journal.ts	execute_raw	55
 src/core/persistence/landing-gaps.ts	execute_raw	3
 src/core/persistence/large-page-guard.ts	execute_raw	1
 src/core/persistence/legacy-locks.ts	execute_raw	1
@@ -770,8 +770,8 @@ src/core/persistence/managed-sync-orphans.ts	execute_raw	14
 src/core/persistence/manual-links.ts	execute_raw	8
 src/core/persistence/memory-mutations.ts	execute_raw	6	GST-2897 B (#9670, opened before this ratchet): one read of a fact's entity_slug so the member it is about can withdraw it; no typed engine method exists yet
 src/core/persistence/memory-prepare.ts	execute_raw	3
-src/core/persistence/memory-proposals.ts	execute_raw	16
-src/core/persistence/mirror-read-only.ts	execute_raw	4
+src/core/persistence/memory-proposals.ts	execute_raw	13
+src/core/persistence/mirror-read-only.ts	execute_raw	3
 src/core/persistence/moved-pages.ts	execute_raw	7
 src/core/persistence/noop-kernel.ts	execute_raw	2
 src/core/persistence/onboarding.ts	execute_raw	1
@@ -785,7 +785,7 @@ src/core/persistence/ownership.ts	execute_raw	25
 src/core/persistence/page-advisories.ts	execute_raw	1
 src/core/persistence/page-append.ts	execute_raw	3
 src/core/persistence/page-batch.ts	execute_raw	2
-src/core/persistence/page-mutations.ts	execute_raw	6
+src/core/persistence/page-mutations.ts	execute_raw	5
 src/core/persistence/page-prepare.ts	execute_raw	10
 src/core/persistence/page-purge.ts	execute_raw	30
 src/core/persistence/page-upload.ts	execute_raw	16
@@ -794,7 +794,7 @@ src/core/persistence/parked-groups.ts	execute_raw	1
 src/core/persistence/pending-import.ts	execute_raw	1
 src/core/persistence/physical-root.ts	execute_raw	15
 src/core/persistence/pre-activation-release.ts	execute_raw	7
-src/core/persistence/preadmit-cache.ts	execute_raw	4
+src/core/persistence/preadmit-cache.ts	execute_raw	3
 src/core/persistence/preparation-budget.ts	execute_raw	1
 src/core/persistence/prepared-maintenance.ts	execute_raw	13
 src/core/persistence/preview-approval.ts	execute_raw	3
@@ -1041,7 +1041,7 @@ src/core/shared-skills/adopted-packs.ts	execute_raw	1
 src/core/shared-skills/catalog.ts	execute_raw	3
 src/core/shared-skills/compatibility.ts	execute_raw	2
 src/core/shared-skills/content-freshness.ts	execute_raw	1
-src/core/shared-skills/knowledge-guard.ts	execute_raw	6
+src/core/shared-skills/knowledge-guard.ts	execute_raw	3
 src/core/shared-skills/membership-authority.ts	execute_raw	4
 src/core/shared-skills/membership.ts	execute_raw	17
 src/core/shared-skills/migration-export.ts	execute_raw	7
@@ -1063,9 +1063,8 @@ src/core/slack/slack-source.ts	execute_raw	4
 src/core/source-default-search.ts	execute_raw	1
 src/core/source-delete.ts	execute_raw	2
 src/core/source-health.ts	execute_raw	6
-src/core/sources-load.ts	execute_raw	2
 src/core/sources-not-readable.ts	execute_raw	1
-src/core/sources-ops.ts	execute_raw	4	#9634, pre-ratchet: +1 is the INSERT that registers a database-only api source row (imessage); no typed engine method exists yet
+src/core/sources-ops.ts	execute_raw	3	#9634, pre-ratchet: +1 is the INSERT that registers a database-only api source row (imessage); no typed engine method exists yet
 src/core/spend-log.ts	sql_template	2
 src/core/sql-query.ts	execute_raw	2
 src/core/storage-manifest/adopt.ts	execute_raw	4
