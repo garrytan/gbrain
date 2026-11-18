@@ -59,8 +59,12 @@ fn active(b: &Brain, name: &str, queue: &str, data: Value, token: &str, lock_ms:
 }
 
 fn finished(b: &Brain, name: &str, token: &str) -> i64 {
+    finished_with(b, name, token, None)
+}
+
+fn finished_with(b: &Brain, name: &str, token: &str, result: Option<&Value>) -> i64 {
     let id = active(b, name, "default", json!({}), token, 30_000);
-    b.complete_job(id, token, None).unwrap().unwrap();
+    b.complete_job(id, token, result).unwrap().unwrap();
     id
 }
 
@@ -105,6 +109,30 @@ fn the_newest_completed_autopilot_run_of_each_kind() {
     assert_eq!(out["full"]["name"], "autopilot-cycle");
     assert_eq!(out["targeted"]["name"], "autopilot-embed");
     assert_eq!(out["full"]["status"], "completed");
+
+    // A name that only begins like the full cycle's is targeted, never the full run.
+    b.clock.advance(HOUR);
+    finished_with(
+        &b,
+        "autopilot-cycle-2",
+        "w:5",
+        Some(&json!({ "n": "prefix" })),
+    );
+    let out = b.read_last_autopilot_cycles().unwrap();
+    assert_eq!(out["full"]["name"], "autopilot-cycle");
+    assert_eq!(out["targeted"]["result"], json!({ "n": "prefix" }));
+}
+
+#[test]
+fn equal_finish_times_go_to_the_larger_id() {
+    let b = brain("st-autopilot-tie");
+    // The clock does not move, so both finish at the same instant.
+    finished_with(&b, "autopilot-cycle", "w:1", Some(&json!({ "n": 1 })));
+    finished_with(&b, "autopilot-cycle", "w:2", Some(&json!({ "n": 2 })));
+    finished_with(&b, "autopilot-extract", "w:3", Some(&json!({ "n": 3 })));
+    let out = b.read_last_autopilot_cycles().unwrap();
+    assert_eq!(out["full"]["result"], json!({ "n": 2 }));
+    assert_eq!(out["targeted"]["result"], json!({ "n": 3 }));
 }
 
 #[test]
@@ -420,25 +448,13 @@ fn source_job_counts_follow_the_window_and_the_status_groups() {
 #[test]
 fn embed_backfill_by_source_reports_only_the_requested_sources() {
     let b = brain("st-backfill");
-    let done = active(
-        &b,
-        "embed-backfill",
-        "default",
-        json!({ "sourceId": "s1" }),
-        "w:1",
-        30_000,
-    );
-    b.complete_job(done, "w:1", None).unwrap().unwrap();
+    // The first job to run finishes last: the newest completion is not the newest row.
+    let s1 = json!({ "sourceId": "s1" });
+    let first = active(&b, "embed-backfill", "default", s1.clone(), "w:1", 30_000);
+    let second = active(&b, "embed-backfill", "default", s1, "w:2", 30_000);
+    b.complete_job(second, "w:2", None).unwrap().unwrap();
     b.clock.advance(HOUR);
-    let done = active(
-        &b,
-        "embed-backfill",
-        "default",
-        json!({ "sourceId": "s1" }),
-        "w:2",
-        30_000,
-    );
-    b.complete_job(done, "w:2", None).unwrap().unwrap();
+    b.complete_job(first, "w:1", None).unwrap().unwrap();
     add(
         &b,
         "embed-backfill",

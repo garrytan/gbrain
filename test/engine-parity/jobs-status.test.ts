@@ -111,6 +111,9 @@ describe('engine parity: minion status reads', () => {
       const targetedNewer = await engine.readLastAutopilotCycles();
       await finished(engine, 'autopilot-cycle', 'completed', {}, { report: { totals: { pages: 5 } } });
       const fullNewer = await engine.readLastAutopilotCycles();
+      // A name that only begins like the full cycle's is a targeted run, never the full one.
+      await finished(engine, 'autopilot-cycle-2', 'completed', {}, { report: { totals: { pages: 6 } } });
+      const prefixNewer = await engine.readLastAutopilotCycles();
       // A waiting run changes nothing.
       await add(engine, 'autopilot-cycle');
       const withWaiting = await engine.readLastAutopilotCycles();
@@ -123,6 +126,7 @@ describe('engine parity: minion status reads', () => {
         none,
         targetedNewer: { full: view(targetedNewer.full), targeted: view(targetedNewer.targeted) },
         fullNewer: { full: view(fullNewer.full), targeted: view(fullNewer.targeted) },
+        prefixNewer: { full: view(prefixNewer.full), targeted: view(prefixNewer.targeted) },
         withWaiting: { full: view(withWaiting.full), targeted: view(withWaiting.targeted) },
       };
     });
@@ -365,9 +369,12 @@ describe('engine parity: minion status reads', () => {
     { methods: ['admitJob', 'claimNextJob', 'completeJob', 'failJob', 'getJob', 'readEmbedBackfillBySource'] }, async (engine) => {
       const job = (sourceId: string) => ({ data: { sourceId } });
       // A claim takes the oldest waiting job of its name, so the jobs that run or end come before the waiting ones.
-      await active(engine, 'embed-backfill', job('s1'));
+      // The job that ran first finishes last: the newest completion is not the newest row.
+      const lastDone = await active(engine, 'embed-backfill', job('s1'));
       await finished(engine, 'embed-backfill', 'completed', job('s1'));
-      const lastDone = await finished(engine, 'embed-backfill', 'completed', job('s1'));
+      await engine.completeJob(lastDone, `st:${lastDone}`);
+      await Bun.sleep(2);
+      await active(engine, 'embed-backfill', job('s1'));
       await finished(engine, 'embed-backfill', 'failed', job('s1'));
       await finished(engine, 'embed-backfill', 'failed', job('s2'));
       await add(engine, 'embed-backfill', job('s1'));
