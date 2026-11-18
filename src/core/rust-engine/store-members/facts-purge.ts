@@ -38,7 +38,9 @@ export const countRelinkCandidates: Member<'countRelinkCandidates'> = (brain, so
   storeCall({ member: 'countRelinkCandidates' }, () => brain.countRelinkCandidates({ sourceId }));
 
 export const listSimilarActiveFacts: Member<'listSimilarActiveFacts'> = (brain, opts) => {
-  const excludePrivate = storePrivacyPolicy('listSimilarActiveFacts', opts.excludePrivate, () => privateProvenanceFilterUnderPolicy('facts'));
+  // A caller with a reader identity and a private-readable grant is served (`callerReaders`).
+  const excludePrivate = storePrivacyPolicy('listSimilarActiveFacts', opts.excludePrivate, () => privateProvenanceFilterUnderPolicy('facts'),
+    { callerReaders: true });
   return storeCall({ member: 'listSimilarActiveFacts' }, () => brain.listSimilarActiveFacts({
     sourceId: opts.sourceId, factId: opts.factId, remote: opts.remote, minCosine: opts.minCosine, limit: opts.limit, excludePrivate }));
 };
