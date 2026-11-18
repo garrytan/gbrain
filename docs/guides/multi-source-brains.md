@@ -296,10 +296,11 @@ who may read it, before any member's bot connects:
   ```
 
   It reads its listed sources plus `default` and every federated source,
-  never a guest source or another member's own source, and it still writes
+  never a guest source or (unless it is the brain owner's key) another
+  member's own source, and it still writes
   only to its write source. Private pages and private facts stay closed in a
-  source the key reaches only through the switch. The switch needs a source
-  list (`read_shared_needs_source`): a key with no `--sources` already reads
+  source the key reaches only through the switch. A token needs a source
+  list (`read_shared_needs_source`): a token with no `--sources` already reads
   every shared source. To narrow a switched key to no source, turn the switch
   off in the same command (`--sources none --read-shared off`).
 
