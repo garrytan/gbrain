@@ -104,6 +104,66 @@ describe('engine parity: timeline entries', () => {
   );
 
   parityTest(
+    'getTimeline under excludePrivate drops every row of a hidden page and each projection of a hidden event page',
+    { methods: ['getTimeline', 'addTimelineEntry', 'upsertEventProjection', 'putPage', 'softDeletePage'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'alt');
+      const page = (slug: string, frontmatter: Record<string, unknown>, opts?: { sourceId?: string }) =>
+        engine.putPage(slug, { type: 'person', title: slug, compiled_truth: `${slug} body`, timeline: '', frontmatter }, opts);
+      await page('people/alice-example', {});
+      await page('people/alice-example', { visibility: 'private' }, { sourceId: 'alt' });
+      await page('people/private-example', { visibility: 'private' });
+      await page('people/readers-example', { readable_by: ['alice-example'] });
+      await page('people/alias-example', { access: 'Restricted' });
+      const event = (slug: string, frontmatter: Record<string, unknown>) =>
+        engine.putPage(slug, {
+          type: 'event', title: slug, compiled_truth: `${slug} body`, timeline: '',
+          frontmatter: { ...frontmatter, event: { kind: 'meeting', who: ['people/alice-example'] } },
+          effective_date: new Date('2026-06-18T09:00:00Z'), effective_date_source: 'event_date',
+        });
+      await event('life/events/open', {});
+      await event('life/events/private', { visibility: 'private' });
+      await event('life/events/readers', { readable_by: ['alice-example'] });
+      await event('life/events/alias', { access: 'Restricted' });
+      await event('life/events/open-deleted', {});
+      await event('life/events/private-deleted', { visibility: 'private' });
+      for (const [eventSlug, summary] of [
+        ['life/events/open', 'open event'], ['life/events/private', 'private event'], ['life/events/readers', 'event with readers'],
+        ['life/events/alias', 'restricted event'], ['life/events/open-deleted', 'open event, deleted later'],
+        ['life/events/private-deleted', 'private event, deleted later'],
+      ] as const) {
+        await engine.upsertEventProjection({ depthSlug: 'people/alice-example', eventSlug, date: '2026-06-18', summary });
+      }
+      await engine.softDeletePage('life/events/open-deleted');
+      await engine.softDeletePage('life/events/private-deleted');
+      await engine.addTimelineEntry('people/alice-example', { date: '2026-06-17', summary: 'plain' });
+      await engine.addTimelineEntry('people/alice-example', { date: '2026-06-16', summary: 'alt plain' }, { sourceId: 'alt' });
+      for (const slug of ['people/private-example', 'people/readers-example', 'people/alias-example']) {
+        await engine.addTimelineEntry(slug, { date: '2026-06-15', summary: `${slug} plain` });
+      }
+      const summaries = async (slug: string, opts?: Parameters<BrainEngine['getTimeline']>[1]) =>
+        (await engine.getTimeline(slug, opts)).map((e) => `${new Date(e.date).toISOString().slice(0, 10)} ${e.summary}`);
+      const all = await summaries('people/alice-example');
+      const kept = await summaries('people/alice-example', { excludePrivate: true });
+      const keptDefault = await summaries('people/alice-example', { sourceId: 'default', excludePrivate: true });
+      const keptAlt = await summaries('people/alice-example', { sourceIds: ['alt'], excludePrivate: true });
+      const keptLimited = await summaries('people/alice-example', { limit: 2, excludePrivate: true });
+      const keptWindow = await summaries('people/alice-example', { after: '2026-06-17', before: '2026-06-18', excludePrivate: true });
+      const hidden: Record<string, string[]> = {};
+      for (const slug of ['people/private-example', 'people/readers-example', 'people/alias-example']) {
+        hidden[slug] = await summaries(slug, { excludePrivate: true });
+      }
+      expect(all.length).toBe(8);
+      // The event test reads the event page by id whatever its deleted state, as the SQL EXISTS does.
+      expect(kept).toEqual(['2026-06-18 open event, deleted later', '2026-06-18 open event', '2026-06-17 plain']);
+      expect(keptDefault).toEqual(kept);
+      expect(keptAlt).toEqual([]);
+      expect(Object.values(hidden)).toEqual([[], [], []]);
+      return { all, kept, keptDefault, keptAlt, keptLimited, keptWindow, hidden };
+    },
+  );
+
+  parityTest(
     'addTimelineEntriesBatch counts inserted rows, drops missing pages and replays as no-ops',
     { methods: ['addTimelineEntriesBatch', 'getTimeline', 'putPage'] },
     async (engine, backend) => {
