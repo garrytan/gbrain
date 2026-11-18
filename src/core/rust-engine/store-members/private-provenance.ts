@@ -30,6 +30,7 @@ import {
   withCallerAccess,
   withoutCallerAccess,
   privateProvenanceFilterUnderPolicy,
+  privateFactFilterForCaller,
 } from '../../search/private-visibility.ts';
 import { MEMBER_PAGE_PREFIX } from '../../access/principals.ts';
 import { refuseMember } from './common.ts';
@@ -75,9 +76,10 @@ export function normalizeConceptInputs(sql: string): string {
   return out;
 }
 
-/** The fact policies the store implements, rendered in the current context. */
+/** The two fact policies the store implements, rendered in the current context. */
 const FACT_FORMS = [
   { sql: privateProvenanceFilterUnderPolicy, memberCase: true },
+  { sql: privateFactFilterForCaller, memberCase: false },
 ] as const;
 
 /**

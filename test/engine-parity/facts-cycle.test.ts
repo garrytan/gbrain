@@ -286,7 +286,7 @@ describe('engine parity: facts command, cycle and fence reads', () => {
     return floored;
   });
 
-  parityTest('countWorldFacts with excludePrivate drops facts of a private-provenance page, which the Rust store refuses (its rendering is not the baseline\'s)', { methods: ['countWorldFacts'] }, async (engine) => {
+  parityTest('countWorldFacts with excludePrivate drops facts of a private-provenance page', { methods: ['countWorldFacts'] }, async (engine) => {
     await engine.putPage('people/a-example', note('A'));
     await engine.putPage('notes/private', note('P', { visibility: 'private' }));
     await fact(engine, 'w', { entity_slug: 'people/a-example' });
