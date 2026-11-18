@@ -126,7 +126,7 @@ export function assertScopePageWriter(ctx: Pick<OperationContext, 'remote' | 'at
 }
 
 /** Whether a scope page is shared with its whole source: no readers, no privacy and no folder rule narrow it (a squatted page is not). */
-export async function scopePageIsShared(engine: Pick<BrainEngine, 'executeRaw'>, page: { source_id: string; slug: string; type?: string | null; frontmatter?: unknown }): Promise<boolean> {
+export async function scopePageIsShared(engine: Pick<BrainEngine, 'executeRaw' | 'isFolderRestricted'>, page: { source_id: string; slug: string; type?: string | null; frontmatter?: unknown }): Promise<boolean> {
   return normalizeReaders(page.frontmatter) === null && !isDerivationPrivate(await withFolderRestricted(engine, page));
 }
 

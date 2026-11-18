@@ -901,18 +901,16 @@ export function folderRestrictedSql(alias: string): string {
  * folderRestrictedSql for a page known by its slug (a parsed page, a row read without the column, a page about to be
  * written): judged against the applied folder rules, not the stamp. A failed read counts as restricted.
  */
-export async function folderRestricted(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string): Promise<boolean> {
+export async function folderRestricted(engine: Pick<BrainEngine, 'isFolderRestricted'>, sourceId: string, slug: string): Promise<boolean> {
   try {
-    const [row] = await engine.executeRaw<{ restricted: boolean }>(
-      'SELECT (gbrain_access_folder_rules($1, $2) IS NOT NULL OR gbrain_access_pending_covers($1, $2) OR gbrain_access_state_unreadable()) AS restricted', [sourceId, slug]);
-    return row?.restricted === true;
+    return await engine.isFolderRestricted(sourceId, slug);
   } catch {
     return true;
   }
 }
 
 /** `page` with folder_restricted looked up (folderRestricted), for a page read without it, such as a page snapshot. */
-export async function withFolderRestricted(engine: Pick<BrainEngine, 'executeRaw'>, page: { source_id: string; slug: string; type?: string | null; frontmatter?: unknown }): Promise<{ type?: string | null; frontmatter?: unknown; folder_restricted: boolean }> {
+export async function withFolderRestricted(engine: Pick<BrainEngine, 'isFolderRestricted'>, page: { source_id: string; slug: string; type?: string | null; frontmatter?: unknown }): Promise<{ type?: string | null; frontmatter?: unknown; folder_restricted: boolean }> {
   return { type: page.type, frontmatter: page.frontmatter, folder_restricted: await folderRestricted(engine, page.source_id, page.slug) };
 }
 

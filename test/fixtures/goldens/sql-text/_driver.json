@@ -3542,6 +3542,30 @@
           }
         ]
       },
+      "listEntityKeyRows": {
+        "after": [
+          {
+            "paramCount": 5,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ],
+        "default": [
+          {
+            "paramCount": 5,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "listPages": {
         "default": [
           {
@@ -4895,10 +4919,36 @@
       }
     },
     "sources": {
+      "getSource": {
+        "default": [
+          {
+            "paramCount": 1,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "listAllSources": {
         "default": [
           {
             "paramCount": 2,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "listSourceLocalPaths": {
+        "default": [
+          {
+            "paramCount": 0,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,

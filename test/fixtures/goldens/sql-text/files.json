@@ -22,8 +22,8 @@
             "params": [
               "number"
             ],
-            "sql": "SELECT id, source_id, page_slug, page_id, filename, storage_path, mime_type, size_bytes, content_hash, metadata, created_at FROM files WHERE page_id = $1 ORDER BY created_at ASC",
-            "textSha256": "07f8e614d275b21487341340a4e273afda90822171f0d900c54cda5a75b3d0c5"
+            "sql": "SELECT id, source_id, page_slug, page_id, filename, storage_path, mime_type, size_bytes, content_hash, metadata, created_at FROM files WHERE page_id = $1 ORDER BY created_at ASC, id ASC",
+            "textSha256": "24043009b3fb33ba8a355253de453ab66f87068a187ae89cee447882544891dd"
           }
         ]
       },

@@ -6,7 +6,8 @@
  *
  * Protects: the managed connector re-render carries a stored `trust_tier` marker forward when it names the tier the
  * connector import itself assigns (`external_untrusted`), so the repaired page stays clear; a stored marker naming
- * any other tier is not carried, so a stored marker can never raise what the import assigns.
+ * any other tier is not carried, so a stored marker can never raise what the import assigns (#9676: the re-render stamps
+ * the import's own tier instead, and a first import stamps it too).
  * Seams: none; the real managed Google importer with a fake People API, PGLite always and Postgres when
  * DATABASE_URL is set.
  */
@@ -49,6 +50,10 @@ async function connectorSource(engine: BrainEngine) {
 test('a repaired connector page keeps its trust_tier marker across a re-import, and the drift check stays clear', async () => withEnv(env, async () => {
   for (const engine of engines) {
     const s = await connectorSource(engine);
+    // #9676: the first import renders the marker itself; strip it to stand for a page imported before that fix.
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    await engine.executeRaw("UPDATE pages SET frontmatter = frontmatter - 'trust_tier' WHERE source_id=$1 AND slug=$2", [s.id, s.slug]);
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
     expect(await s.read()).toMatchObject({ trust_tier: 'external_untrusted', marker: null });
     const before = await scanProvenanceDrift(engine, s.id);
     expect(before.marker_missing).toBe(1);
@@ -67,7 +72,7 @@ test('a repaired connector page keeps its trust_tier marker across a re-import, 
   }
 }), 180_000);
 
-test('a stored marker naming a tier above the connector tier is not carried into the re-render', async () => withEnv(env, async () => {
+test('a stored marker naming a tier above the connector tier is lowered to the connector tier in the re-render', async () => withEnv(env, async () => {
   for (const engine of engines) {
     const s = await connectorSource(engine);
     await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
@@ -75,6 +80,6 @@ test('a stored marker naming a tier above the connector tier is not carried into
     await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
     expect((await s.read()).marker).toBe('agent_written');
     await s.resync();
-    expect(await s.read()).toMatchObject({ trust_tier: 'external_untrusted', marker: null });
+    expect(await s.read()).toMatchObject({ trust_tier: 'external_untrusted', marker: 'external_untrusted' });
   }
 }), 180_000);

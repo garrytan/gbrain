@@ -178,9 +178,7 @@ async function refreshSourcePath(engine: BrainEngine, slug: string, sourceId: st
     await engine.transaction(async tx => {
       await assertOriginUnclaimed(tx, { sourceId: sourceId ?? 'default', slug, sourcePath });
       // origin-guard-ok: assertOriginUnclaimed above, in the same savepoint
-      await tx.executeRaw(`UPDATE pages SET source_path = $1, source_uri = COALESCE($4::text, source_uri) WHERE source_id = $2 AND slug = $3
-        AND deleted_at IS NULL AND (source_path IS DISTINCT FROM $1 OR source_uri IS DISTINCT FROM COALESCE($4::text, source_uri))`,
-      [sourcePath, sourceId ?? 'default', slug, originUri]);
+      await tx.refreshPageOrigin(slug, { sourceId: sourceId ?? 'default', sourcePath, sourceUri: originUri });
     });
   } catch (error) {
     if (isOriginClaimRefusal(error)) process.stderr.write(`[import] ${slug}: origin ${sourcePath} not recorded: ${(error as Error).message}\n`);
@@ -771,8 +769,7 @@ export async function importFromContent(
         },
         // Replace every derived row atomically. Only vectors the A13 reuse gate above admitted carry over; a new
         // seal otherwise inherits nothing from an older index, whose contextual vector may have included a private sibling.
-        async () => segmented ? undefined : keptIds.length ? tx.executeRaw(`DELETE FROM content_chunks WHERE page_id = (SELECT id FROM pages WHERE slug = $1 AND source_id = $2)
-        AND NOT (id = ANY($3::int[]))`, [slug, txOpts.sourceId, keptIds]) : tx.deleteChunks(slug, txOpts),
+        async () => segmented ? undefined : keptIds.length ? tx.deleteChunksExcept(slug, keptIds, txOpts) : tx.deleteChunks(slug, txOpts),
         // Alias projection and readback share the page commit. A later writer can
         // no longer turn a successful import into a postcommit verification error.
         () => writePageAliases(tx, slug, sourceId ?? 'default', parsed, opts.activePack, mentionPolicy),
@@ -787,8 +784,7 @@ export async function importFromContent(
           // legacy NULL rows are never deleted here (#1621: reindex must not wipe
           // enrichment). A legacy row still in the frontmatter is adopted. Prepared
           // (managed) imports keep the add-only union their canonical file renders.
-          if (!opts.prepare) await tx.executeRaw(`DELETE FROM tags t USING pages p WHERE p.id = t.page_id AND p.source_id = $1 AND p.slug = $2
-          AND t.tag_source = 'frontmatter' AND NOT (t.tag = ANY($3::text[]))`, [txOpts.sourceId, slug, parsed.tags]);
+          if (!opts.prepare) await tx.pruneFrontmatterTags(slug, parsed.tags, txOpts);
           if (pageId !== undefined) return addPageTags(tx, Number(pageId), parsed.tags, opts.prepare ? undefined : 'frontmatter');
           for (const tag of parsed.tags) await tx.addTag(slug, tag, opts.prepare ? txOpts : { ...txOpts, tagSource: 'frontmatter' });
         },
@@ -813,7 +809,7 @@ export async function importFromContent(
           } else {
             // Seal only the completed, full-body sanitized replacement (the upsert above seals its own); a
             // body-only write or a failed transaction must never certify old stored fragments.
-            if (!deferSeal && !segmented) await tx.executeRaw('UPDATE pages SET chunker_version = $1 WHERE source_id = $2 AND slug = $3', [MARKDOWN_CHUNKER_VERSION, txOpts.sourceId, slug]);
+            if (!deferSeal && !segmented) await tx.setChunkerVersion(slug, MARKDOWN_CHUNKER_VERSION, txOpts);
           }
         },
       ]);
@@ -1378,8 +1374,7 @@ export async function importCodeFile(
     } else {
       await tx.deleteChunks(slug, txOpts);
     }
-    await tx.executeRaw('UPDATE pages SET chunker_version = $1 WHERE source_id = $2 AND slug = $3',
-      [MARKDOWN_CHUNKER_VERSION, txOpts.sourceId, slug]);
+    await tx.setChunkerVersion(slug, MARKDOWN_CHUNKER_VERSION, txOpts);
     await sealPageTextProjection(tx, slug, txOpts.sourceId);
     if (opts.prepare) await installCodeChunkEdges(tx, slug, txOpts.sourceId, code);
     // Read-back inside the transaction, as the markdown path does (#6011): a page is not written until it reads back,
@@ -1540,8 +1535,7 @@ async function applyImportTransaction(tx: BrainEngine, spec: ImportTransactionSp
     }
   }
   if (spec.safeChunks && spec.chunks !== undefined) {
-    await tx.executeRaw('UPDATE pages SET chunker_version = $1 WHERE source_id = $2 AND slug = $3',
-      [MARKDOWN_CHUNKER_VERSION, sourceId, spec.slug]);
+    await tx.setChunkerVersion(spec.slug, MARKDOWN_CHUNKER_VERSION, { sourceId });
     await sealPageTextProjection(tx, spec.slug, sourceId);
   }
   if (spec.after) await spec.after(tx);

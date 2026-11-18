@@ -158,6 +158,9 @@
     "getScorecard#sourceId": {},
     "getSince#default": {},
     "getSince#kind+sourceId": {},
+    "getSource#default": {
+      "raw": 1
+    },
     "getTags#default": {},
     "getTags#excludePrivate+liveOnly": {},
     "getTags#sourceIds": {},
@@ -216,6 +219,8 @@
     "listEnrichCandidates#default": {},
     "listEnrichCandidates#sourceId": {},
     "listEnrichCandidates#sourceIds+reenrich": {},
+    "listEntityKeyRows#after": {},
+    "listEntityKeyRows#default": {},
     "listFactsByEntity#allFilters": {},
     "listFactsByEntity#default": {},
     "listFactsBySession#allFilters": {},
@@ -244,6 +249,7 @@
     "listPages#updated_after": {},
     "listPrefixSampledPages#default": {},
     "listPrefixSampledPages#sourceIds": {},
+    "listSourceLocalPaths#default": {},
     "listStaleChunks#default": {
       "raw": 1
     },
@@ -324,11 +330,11 @@
       "tx": 1
     },
     "replaceDerivedLinks#default": {
-      "raw": 13,
+      "raw": 12,
       "tx": 1
     },
     "replaceDerivedLinksBatch#default": {
-      "raw": 13,
+      "raw": 12,
       "tx": 1
     },
     "resolveSlugWithAlias#default": {},
@@ -352,11 +358,11 @@
     "revertToVersion#default": {},
     "revertToVersion#sourceId": {},
     "sealChunks#default": {
-      "raw": 5,
+      "raw": 4,
       "tx": 1
     },
     "sealChunks#expectedRevision": {
-      "raw": 5,
+      "raw": 4,
       "tx": 1
     },
     "searchKeyword#cjk": {

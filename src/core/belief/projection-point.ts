@@ -42,7 +42,7 @@ export async function withUnmanagedBeliefs<T>(engine: Pick<BrainEngine, 'execute
 }
 
 /** The given sources whose ledger records now: a bulk writer wraps only their items. */
-export async function beliefCoveredSources(tx: Pick<BrainEngine, 'executeRaw'>, sourceIds: readonly string[]): Promise<Set<string>> {
+export async function beliefCoveredSources(tx: Pick<BrainEngine, 'readLedgerSource'>, sourceIds: readonly string[]): Promise<Set<string>> {
   const covered = new Set<string>();
   for (const sourceId of new Set(sourceIds)) if (coverageActive((await readLedgerSource(tx, sourceId))?.coverage ?? null)) covered.add(sourceId);
   return covered;

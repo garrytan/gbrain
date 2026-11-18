@@ -47,12 +47,20 @@ const DIM = 1536;
  * method) is asserted separately on the instance in the smoke block.
  */
 const INTERFACE_METHODS: readonly string[] = [
+  // Cycle-lock leases
+  'acquireCycleLock', 'refreshCycleLock', 'releaseCycleLock', 'readCycleLocks', 'deleteCycleLock', 'deleteCycleLockIfStale',
   // Lifecycle
   'connect', 'disconnect', 'reconnect', 'initSchema', 'transaction', 'transactionDirect', 'registerBeforeDisconnect', 'withReservedConnection',
   // Pages CRUD
   'getPage', 'readPageSnapshot', 'readPageSnapshotsBatch', 'lockPageKeys', 'putPage', 'findDuplicatePage', 'findDuplicatePages', 'deletePage', 'deletePages', 'resolveSlugsByPaths',
   'softDeletePage', 'softDeletePages', 'restorePage', 'purgeDeletedPages', 'listPages', 'findPages', 'countPagesBy', 'resolveSlugs', 'getAllSlugs',
-  'listAllPageRefs', 'listAllSources', 'updateSourceConfig', 'listPrefixSampledPages', 'listCorpusSample',
+  'listAllPageRefs', 'listEntityKeyRows', 'listAllSources', 'listSourceLocalPaths', 'updateSourceConfig', 'getSource', 'listPrefixSampledPages', 'listCorpusSample',
+  // Hybrid search reads (engine-sql/search-reads.ts) and the onboarding signal count (engine-sql/health.ts)
+  'cosinesByChunkIds', 'hasSupersedeEdges', 'supersedingPageSlugs', 'aliasCanonicalRefs', 'pageCollapseFacts', 'slugsEndingIn',
+  'generatedPagesIn', 'livePageIdsAt', 'pagesLinkingTo', 'countOnboardSignal',
+  // Import writes (engine-sql/chunks.ts, tags.ts, pages.ts)
+  'deleteChunksExcept', 'setChunkerVersion', 'writeTextProjectionSeal', 'moveChunkIndexes', 'getChunkReuseRows', 'pruneFrontmatterTags',
+  'addPageTagsById', 'replaceDerivedAliases', 'getPageSealState', 'refreshPageOrigin',
   // Search
   'searchKeyword', 'countKeywordPages', 'searchKeywordPages', 'searchTitles', 'searchVector', 'getEmbeddingsByChunkIds',
   // Chunks
@@ -104,7 +112,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // v0.46.28-34 master waves (classified at the test-gap-wave merge):
   // #3980 bulk config read, #3776 takes-embedding update, #3674 scoped
   // link removal.
-  'getAllConfig', 'updateTakeEmbeddings', 'removeLinksByPagesAndSource',
+  'getAllConfig', 'getConfigValues', 'readManagedModeRows', 'getSourceStrictness', 'readPersistenceBrainId', 'readLocalWriterRow', 'insertLocalWriterRow', 'readTransactionSettings', 'applyTransactionSettings', 'readLedgerSource', 'isFolderRestricted', 'updateTakeEmbeddings', 'removeLinksByPagesAndSource',
   // Code edges
   'addCodeEdges', 'deleteCodeEdgesForChunks', 'getCallersOf', 'getCalleesOf', 'getEdgesByChunk',
   'searchKeywordChunks',
@@ -140,6 +148,10 @@ const ENGINE_INTERNAL_HELPERS: readonly string[] = [
   'codeEdgesDeps',
   // refactor wave 1 C9: per-call engine-sql executor getter (EO1).
   'engineSql',
+  // Cycle-lock leases: the engine-sql executor the lease statements run through (the methods themselves are in INTERFACE_METHODS).
+  'cycleLockSql',
+  // Hybrid search reads: the unscoped engine-sql executor the search-read methods run through.
+  'searchRead',
   // Engine graduation: PGLite close/open that keeps the kernel lock across the custody window.
   'closeRetainingLock',
   'connectWithHeldLock',
@@ -222,12 +234,16 @@ describe('BrainEngine surface — mechanical enumeration (D9)', () => {
     let corpus = '';
     for (const f of files) corpus += readFileSync(f, 'utf8') + '\n';
 
-    const referenced = (name: string): boolean =>
-      // `.name(` / `.name!(` call sites, `.name?.(` optional-chain calls,
-      // or `name:` stub-property definitions on engine test doubles.
-      new RegExp(`[.]${name}\\s*!?\\s*\\(|[.]${name}\\?\\.\\(|\\b${name}\\s*:`).test(corpus);
+    // One pass over the corpus collects every referenced identifier:
+    // `.name(` / `.name!(` call sites, `.name?.(` optional-chain calls,
+    // or `name:` stub-property definitions on engine test doubles.
+    // One regex per method instead scans the corpus up to that method's first
+    // reference, so its cost depended on readdir order and drifted past the
+    // 5 s default when a checkout reordered test/.
+    const seen = new Set<string>();
+    for (const m of corpus.matchAll(/[.](\w+)(?:\s*!?\s*\(|\?\.\()|\b(\w+)\s*:/g)) seen.add(m[1] ?? m[2]!);
 
-    const unreferenced = INTERFACE_METHODS.filter((n) => !referenced(n));
+    const unreferenced = INTERFACE_METHODS.filter((n) => !seen.has(n));
 
     // Two-direction diff for actionable failure output:
     //  - newlyUncovered: add a real test, or allowlist + smoke it here.

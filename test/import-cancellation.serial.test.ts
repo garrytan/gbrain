@@ -54,13 +54,10 @@ test('an admission database failure racing caller cancellation remains a failure
   await reset();
   const controller = new AbortController();
   const failure = new Error('fixture admission connection failure');
-  const original = engine.executeRaw.bind(engine);
-  const querySpy = spyOn(engine, 'executeRaw').mockImplementation((sql, params) => {
-    if (sql === "SELECT local_path FROM sources WHERE local_path IS NOT NULL AND local_path <> ''") {
-      controller.abort();
-      return Promise.reject(failure);
-    }
-    return original(sql, params);
+  // The admission read of the registered source paths (withSourceFilesystemLock's lock-root read) fails as the caller aborts.
+  const querySpy = spyOn(engine, 'listSourceLocalPaths').mockImplementation(() => {
+    controller.abort();
+    return Promise.reject(failure);
   });
   try {
     await expect(performSync(engine, { repoPath: root, sourceId: 'default', noPull: true, noEmbed: true, signal: controller.signal })).rejects.toBe(failure);

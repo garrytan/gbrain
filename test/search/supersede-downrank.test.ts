@@ -112,17 +112,16 @@ describe('applySupersedeDownrank', () => {
   test('existence gate: zero-edge brain skips the downrank query; probe memoized', async () => {
     const solo = await engine.putPage('notes/solo', { type: 'note', title: 'Solo', compiled_truth: 'x' });
     const calls: string[] = [];
-    const orig = engine.executeRaw.bind(engine);
-    (engine as { executeRaw: BrainEngine['executeRaw'] }).executeRaw = ((sql: string, params?: unknown[]) => {
-      calls.push(sql);
-      return orig(sql, params);
-    }) as BrainEngine['executeRaw'];
+    const target = engine as unknown as Record<'hasSupersedeEdges' | 'supersedingPageSlugs', (...a: unknown[]) => unknown>;
+    const origProbe = target.hasSupersedeEdges;
+    const origRead = target.supersedingPageSlugs;
+    target.hasSupersedeEdges = (...a: unknown[]) => { calls.push('probe'); return origProbe.apply(engine, a); };
+    target.supersedingPageSlugs = (...a: unknown[]) => { calls.push('downrank'); return origRead.apply(engine, a); };
     try {
       const results = [res('notes/solo', solo.id)];
       await applySupersedeDownrank(results, engine);
       // One existence probe, no downrank roundtrip.
-      expect(calls.filter(s => s.includes(`link_type = 'supersedes'`) && s.includes('LIMIT 1')).length).toBe(1);
-      expect(calls.filter(s => s.includes('to_page_id = ANY')).length).toBe(0);
+      expect(calls).toEqual(['probe']);
       expect(results[0].score).toBe(1.0);
 
       // Second call inside the TTL: memoized, zero additional queries.
@@ -130,7 +129,8 @@ describe('applySupersedeDownrank', () => {
       await applySupersedeDownrank([res('notes/solo', solo.id)], engine);
       expect(calls.length).toBe(0);
     } finally {
-      delete (engine as Partial<Record<'executeRaw', unknown>>).executeRaw;
+      target.hasSupersedeEdges = origProbe;
+      target.supersedingPageSlugs = origRead;
     }
   });
 
@@ -152,14 +152,27 @@ describe('applySupersedeDownrank', () => {
 
   test('probe fail-open: a probe error never kills the stage', async () => {
     const stub = {
-      executeRaw: async (sql: string) => {
-        if (sql.includes('LIMIT 1')) throw new Error('probe boom');
-        return [{ to_page_id: 7, by_slug: 'notes/canon' }];
-      },
+      hasSupersedeEdges: async () => { throw new Error('probe boom'); },
+      supersedingPageSlugs: async () => new Map([[7, 'notes/canon']]),
     } as unknown as BrainEngine;
     const results = [res('notes/stale', 7)];
     await applySupersedeDownrank(results, stub);
     expect(results[0].superseded).toBe(true);
     expect(results[0].superseded_by).toBe('notes/canon');
+  });
+
+  test('a refused engine capability propagates from the probe and the read', async () => {
+    const refusal = Object.assign(new Error('links not served'), { code: 'engine_capability_missing' });
+    const probeRefused = {
+      hasSupersedeEdges: async () => { throw refusal; },
+      supersedingPageSlugs: async () => new Map(),
+    } as unknown as BrainEngine;
+    await expect(applySupersedeDownrank([res('notes/stale', 7)], probeRefused)).rejects.toBe(refusal);
+    _resetSupersedeProbeForTests();
+    const readRefused = {
+      hasSupersedeEdges: async () => true,
+      supersedingPageSlugs: async () => { throw refusal; },
+    } as unknown as BrainEngine;
+    await expect(applySupersedeDownrank([res('notes/stale', 7)], readRefused)).rejects.toBe(refusal);
   });
 });
