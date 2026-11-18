@@ -118,6 +118,36 @@ counter is `M next_facts_id`.
 
 ## Group 5: doctor checks (`facts/doctor.rs`)
 
+Ten members back the doctor checks. Eight are served by `facts/doctor.rs`; two refuse in the
+TypeScript store member with `engine_capability_missing`, and the three unlinked-fact reads
+refuse their `hasAttempts: true` form.
+
+| Member | Rust | Missing data when refused |
+|---|---|---|
+| `listConversationFactRows` | served | |
+| `countRedactedFacts` | served | |
+| `listOutsideContentFenceCounts` | served | |
+| `countAtomFacts` | served | |
+| `listUnpreviewedTrustFacts` | refused | the `write_gate_holds` table and the `facts.trust_tier` and `facts.write_origin` columns |
+| `countUnlinkedFactsByOrigin` | served for `hasAttempts: false` | `hasAttempts: true` reads the `fact_relink_attempts` table |
+| `countUnlinkedFactStats` | served for `hasAttempts: false` | `hasAttempts: true` reads the `fact_relink_attempts` table |
+| `countFactRelinkOutcomes` | refused | the `fact_relink_attempts` table |
+| `listUnlinkedConversationSlugs` | served for `hasAttempts: false` | `hasAttempts: true` reads the `fact_relink_attempts` table |
+| `countFactEmbeddingCoverage` | served | |
+
+- With no attempts table nothing was tried or paid, so the served unlinked reads return
+  `conversation_tried`, `conversation_paid`, `no_subject` and `conversation_unresolved` as 0,
+  and only the `relink` fix targets rows.
+- `countFactEmbeddingCoverage` treats `fact_withdrawals` as empty (the same stance as
+  "Lookups and hooks"): the Rust engine refuses `executeRaw`, the only writer of a withdrawal.
+  A fact is `partial` when its text is over 8000 UTF-16 units and the row is not stale.
+- The window reads sort by `created_at DESC` then `id DESC`; PGLite leaves a tie in
+  `created_at` unordered. Rows come sorted by source id (and origin or slug) where PGLite's
+  `GROUP BY` order is unspecified.
+- `listOutsideContentFenceCounts` reads fence rows from the `facts`, `takes` and `links`
+  indexes; a fact counts only with a `row_num` and `source_markdown_slug`, so only `insertFacts`
+  rows are seen.
+
 ## Group 5: command, cycle and fence reads (`facts/cycle.rs`)
 
 ## Group 5: purge, withdrawal, relink and fence repair (`facts/purge.rs`)

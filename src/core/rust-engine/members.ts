@@ -228,6 +228,16 @@ export const RUST_ENGINE_MEMBERS = {
   getFactsHealth: 'facts',
   migrateFactsToCanonical: 'facts',
   // facts: doctor checks (engine-sql/facts-doctor.ts)
+  listConversationFactRows: 'facts',
+  countRedactedFacts: 'facts',
+  listOutsideContentFenceCounts: 'facts',
+  countAtomFacts: 'facts',
+  listUnpreviewedTrustFacts: 'facts',
+  countUnlinkedFactsByOrigin: 'facts',
+  countUnlinkedFactStats: 'facts',
+  countFactRelinkOutcomes: 'facts',
+  listUnlinkedConversationSlugs: 'facts',
+  countFactEmbeddingCoverage: 'facts',
 
   // facts: command, cycle and fence reads (engine-sql/facts-cycle.ts)
 

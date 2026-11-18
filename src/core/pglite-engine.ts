@@ -1440,6 +1440,16 @@ export class PGLiteEngine implements BrainEngine {
   listWantedPages(opts: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; limit: number; offset: number }) { return cliReadsOpsImpl.listWantedPages(this.rawRead, opts); }
 
   // Facts statements, doctor checks (engine-sql/facts-doctor.ts), through executeRaw as before.
+  listConversationFactRows(sourceIds: string[], limit: number) { return factsDoctorImpl.listConversationFactRows(this.rawRead, sourceIds, limit); }
+  countRedactedFacts(sourceIds?: string[]) { return factsDoctorImpl.countRedactedFacts(this.rawRead, sourceIds); }
+  listOutsideContentFenceCounts() { return factsDoctorImpl.listOutsideContentFenceCounts(this.rawRead); }
+  countAtomFacts() { return factsDoctorImpl.countAtomFacts(this.rawRead); }
+  listUnpreviewedTrustFacts(limit: number) { return factsDoctorImpl.listUnpreviewedTrustFacts(this.rawRead, limit); }
+  countUnlinkedFactsByOrigin(opts: { sourceIds: string[]; auditSources: string[]; windowPerSource: number; hasAttempts: boolean }) { return factsDoctorImpl.countUnlinkedFactsByOrigin(this.rawRead, opts); }
+  countUnlinkedFactStats(opts: { sourceIds: string[]; auditSources: string[]; hasAttempts: boolean }) { return factsDoctorImpl.countUnlinkedFactStats(this.rawRead, opts); }
+  countFactRelinkOutcomes(sourceIds: string[]) { return factsDoctorImpl.countFactRelinkOutcomes(this.rawRead, sourceIds); }
+  listUnlinkedConversationSlugs(opts: { sourceId: string; auditSources: string[]; windowPerSource: number; fix: factsDoctorImpl.ConversationFixKind; hasAttempts: boolean }) { return factsDoctorImpl.listUnlinkedConversationSlugs(this.rawRead, opts); }
+  countFactEmbeddingCoverage(opts: { sourceId?: string | null; model: string; dims: number }) { return factsDoctorImpl.countFactEmbeddingCoverage(this.rawRead, opts); }
 
   // Facts statements, command, cycle and fence reads (engine-sql/facts-cycle.ts), through executeRaw as before.
 
