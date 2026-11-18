@@ -9,7 +9,7 @@ import { hostIdFor } from './identity.ts';
 import { executeClaimedGroup, PAGE_BATCH_GROUP_MAX, publishSingleWrite, singleWrite } from './group-publish.ts';
 import { preparationConfigView } from './config-snapshot.ts';
 import { CLAIM_LOST, DEFAULT_CLAIM_LEASE_TIMING, endLostLease, holdClaimForPublication, startClaimLease, type ClaimLeaseTiming } from './claim-lease.ts';
-import { claimOwnerProvablyDead, claimPhaseStamp, claimStateOf, claimTripleText, EXPIRED_PREPARING_CHARGE_SQL, enterClaimPhase, startClaimPhase, type ClaimPhaseClock, type WaitingOn } from './claim-phase.ts';
+import { claimOwnerProvablyDead, claimPhaseStamp, claimStateOf, claimTripleText, enterClaimPhase, startClaimPhase, type ClaimPhaseClock, type WaitingOn } from './claim-phase.ts';
 import { DEFAULT_PREPARATION_POLICY, preparationBudgetMs, preparationKind, startPreparation, type PreparationPolicy } from './preparation-budget.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
 import { ownerExceptionLogText } from './publication-failure.ts';
@@ -710,16 +710,8 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       const deadOwners = this.deadOwnersSeen?.length ? this.deadOwnersSeen : await this.phase('dead_owner_claims', signal => this.deadOwnerClaims(signal));
       this.deadOwnersSeen = null;
       // #6278: a claim that expired while its owner was preparing (the kill case) counts one preparation attempt.
-      await this.phase('expired_claims', signal => this.statements.executeRaw(`WITH expired AS (
-        SELECT r.id FROM persistence_requests r WHERE r.state='running' AND r.recovery IS NULL
-        AND r.publication_started=false AND ${PERSISTENCE_PROTOCOL_PREDICATE}
-        AND (r.claim_expires_at<now() OR r.claim_phase->>'token'=r.execution_token::text
-          AND concat_ws(':',r.claim_phase->'owner'->>'pid',r.claim_phase->'owner'->>'nonce',r.claim_phase->'owner'->>'start')=ANY($3::text[]))
-        AND (r.worktree_id IS NULL OR EXISTS (SELECT 1 FROM persistence_worktrees w WHERE w.id=r.worktree_id AND w.owner_host_id=$1::uuid))
-        ORDER BY r.sequence LIMIT 100 FOR UPDATE OF r SKIP LOCKED)
-        UPDATE persistence_requests r SET state='queued',execution_token=NULL,claim_expires_at=NULL,
-          preparation_attempts=r.preparation_attempts+CASE WHEN $2::boolean THEN ${EXPIRED_PREPARING_CHARGE_SQL('r')} ELSE 0 END
-        FROM expired WHERE r.id=expired.id`, [this.hostId, this.policy.deadlines, deadOwners], { signal }));
+      await this.phase('expired_claims', signal => this.engine.expireStaleWriteClaims({ hostId: this.hostId, charge: this.policy.deadlines, deadOwners },
+        { signal, direct: consumerConnectionRoute(this.engine).lane === 'direct' }));
       // PR B: a write deferred behind a refresh that outlived the barrier's wait limit ends failed, nothing applied.
       for (const row of await this.phase('deferred_expiry', signal => expireDeferredWrites(this.engine, this.hostId, signal))) this.settled(row);
     }
@@ -1118,7 +1110,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     const stop = () => prep.abort({ code: 'consumer_stopping' });
     this.abort.signal.addEventListener('abort', stop, { once: true });
     const lease = startClaimLease(
-      signal => renewWriteClaim({ executeRaw: this.engine.executeRawDirect.bind(this.engine) }, row.id, row.execution_token!, this.opts.claimLeaseMs ?? 30_000,
+      signal => renewWriteClaim(this.engine, row.id, row.execution_token!, this.opts.claimLeaseMs ?? 30_000,
         this.engine.kind === 'postgres' ? signal : undefined, claimPhaseStamp(clock, row.execution_token)),
       this.leaseTiming(), () => prep.abort({ code: 'claim_lost' }));
     const releaseReason = () => !lease.held ? 'claim_lost' : observation.deadline_exceeded ? 'preparation_deadline' : 'consumer_stopping';
@@ -1156,7 +1148,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       enterClaimPhase(clock, 'publishing');
       await faultPoint('consumer:prepared', { requestId: row.request_id, writeId: row.id, sourceId: row.source_id, operation: row.operation });
       const ceilingMs = await ceiling;
-      await holdClaimForPublication(lease, () => renewWriteClaim({ executeRaw: this.engine.executeRawDirect.bind(this.engine) }, row.id, row.execution_token!,
+      await holdClaimForPublication(lease, () => renewWriteClaim(this.engine, row.id, row.execution_token!,
         publicationLeaseMs(ceilingMs), undefined, claimPhaseStamp(clock, row.execution_token)));
       const { done, settled } = await boundPublication(() => this.publishSingle(row, prepared), this.publicationBound(row, ceilingMs, clock));
       if (done.state === 'failed') this.log('publication', done.error_code ?? 'storage_error', failureLogText(done), '', row);

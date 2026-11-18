@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 269/269
+# covered: 274/274
 # lifecycle: 9/9
 # pages: 31/31
 # search: 7/7
@@ -28,7 +28,7 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 9/9
-# persistence_journal: 10/10
+# persistence_journal: 15/15
 # cycle_locks: 6/6
 # cli_reads_ops: 7/7
 # raw_sql: 4/4
@@ -250,18 +250,23 @@ readLocalWriterRow	import_guards	yes	1	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	1	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	1	no	yes	yes	refuses:transactions
 applyTransactionSettings	import_guards	yes	1	no	yes	yes	refuses:transactions
-readLedgerSource	import_guards	yes	2	no	yes	yes	refuses:persistence_journal
+readLedgerSource	import_guards	yes	4	no	yes	yes	serves
 isFolderRestricted	import_guards	yes	1	no	yes	yes	refuses:access_control
 readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldPageRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldCoverageRows	persistence_journal	yes	1	no	yes	yes	serves
-readWriteRequest	persistence_journal	yes	1	no	yes	yes	refuses:persistence_journal
-readWriteRequestById	persistence_journal	yes	1	no	yes	yes	refuses:persistence_journal
-lockPersistenceCounters	persistence_journal	yes	1	no	yes	yes	refuses:persistence_journal
-insertWriteRequest	persistence_journal	yes	1	no	yes	yes	refuses:persistence_journal
-stampWriteClaim	persistence_journal	yes	1	no	yes	yes	refuses:persistence_journal
-lockWriteRequest	persistence_journal	yes	1	no	yes	yes	refuses:persistence_journal
-completeWriteRow	persistence_journal	yes	1	no	yes	yes	refuses:persistence_journal
+readWriteRequest	persistence_journal	yes	2	no	yes	yes	serves
+readWriteRequestById	persistence_journal	yes	4	no	yes	yes	serves
+lockPersistenceCounters	persistence_journal	yes	4	no	yes	yes	serves
+insertWriteRequest	persistence_journal	yes	4	no	yes	yes	serves
+stampWriteClaim	persistence_journal	yes	5	no	yes	yes	serves
+lockWriteRequest	persistence_journal	yes	2	no	yes	yes	serves
+completeWriteRow	persistence_journal	yes	2	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	3	no	yes	yes	serves
+findTopologyChanges	persistence_journal	yes	1	no	yes	yes	serves
+renewWriteClaim	persistence_journal	yes	1	no	yes	yes	serves
+expireStaleWriteClaims	persistence_journal	yes	1	no	yes	yes	serves
+hasClaimableWrite	persistence_journal	yes	1	no	yes	yes	serves
 acquireCycleLock	cycle_locks	yes	8	no	yes	yes	refuses:minion_queue
 refreshCycleLock	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
 releaseCycleLock	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue

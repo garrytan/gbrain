@@ -315,16 +315,14 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
       // Source membership is locked before principal/counter/request guards. A
       // deleted/recreated source never receives work accepted for its old identity.
       async () => {
-        const [source] = await tx.executeRaw<{ incarnation: string; archived: boolean }>(
-          'SELECT incarnation,archived FROM sources WHERE id=$1 FOR SHARE', [input.sourceId]);
+        const source = await tx.readSourceMembership(input.sourceId, { lock: true });
         if (!source || source.archived || source.incarnation !== input.sourceIncarnation) {
           throw new OperationError('source_changed', 'The write source is missing, archived, or was replaced.', 'Resolve the source again and submit a new request.');
         }
       },
       () => authorizeWrite(tx, input.authority, input.operation, input.slug, true),
       () => lockCounters(tx, ['brain', principalKey(input.principal)]),
-      () => input.principal.kind === 'local_cli' ? tx.executeRaw('SELECT id FROM persistence_topology_changes WHERE principal_id=$1::uuid AND request_id=$2::uuid', [input.principal.id, requestId])
-        : Promise.resolve([]),
+      () => input.principal.kind === 'local_cli' ? tx.findTopologyChanges(input.principal.id, [requestId]) : Promise.resolve([]),
       () => getWriteRequest(tx, input.principal, requestId),
     ]) as [unknown, unknown, unknown, unknown, unknown, Counter[], unknown[], WriteRequest | null];
     if (topology.length) throw lifecycleIdConflict(requestId);
@@ -393,12 +391,10 @@ export async function admitWriteGroupInTransaction(tx: BrainEngine, inputs: Writ
     () => declarePersistenceProtocol(tx),
     () => assertGraduationAdmission(tx),
     () => first.worktreeId ? assertWorktreeAdmission(tx, first) : Promise.resolve(),
-    () => tx.executeRaw<{ incarnation: string; archived: boolean }>('SELECT incarnation,archived FROM sources WHERE id=$1 FOR SHARE', [first.sourceId]),
+    () => tx.readSourceMembership(first.sourceId, { lock: true }).then(source => source ? [source] : []),
     () => Promise.all(items.map(({ input }) => authorizeWrite(tx, input.authority, input.operation, input.slug, true))),
     () => lockCounters(tx, ['brain', principalKey(first.principal)]),
-    () => first.principal.kind === 'local_cli'
-      ? tx.executeRaw<{ request_id: string }>('SELECT request_id FROM persistence_topology_changes WHERE principal_id=$1::uuid AND request_id=ANY($2::uuid[]) LIMIT 1', [first.principal.id, ids])
-      : Promise.resolve([]),
+    () => first.principal.kind === 'local_cli' ? tx.findTopologyChanges(first.principal.id, ids) : Promise.resolve([]),
     () => tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2 AND request_id=ANY($3::uuid[])',
       [first.principal.kind, first.principal.id, ids]),
   ]) as [JournalLimits, unknown, unknown, unknown, Array<{ incarnation: string; archived: boolean }>, unknown, Counter[], Array<{ request_id: string }>, WriteRequest[]];
@@ -755,10 +751,16 @@ export const CLAIM_ORDER = (priority: string) => `(${priority} AND NOT ${SYNC_KI
  * override (a process constant) or, without one, the brain config row (on unless `0`/`false`).
  */
 export function foregroundPrioritySql(): string {
-  const env = process.env[WRITE_SWITCHES.foreground_priority.env]?.trim().toLowerCase();
-  if (env === '0' || env === 'false') return 'false';
-  if (env === '1' || env === 'true') return 'true';
+  const env = foregroundPriorityOverride();
+  if (env !== null) return String(env);
   return `NOT EXISTS (SELECT 1 FROM config WHERE key='${WRITE_SWITCHES.foreground_priority.key}' AND lower(trim(value)) IN ('0','false'))`;
+}
+/** The `foreground_priority` environment override (a process constant), or null when the brain config row decides. */
+export function foregroundPriorityOverride(): boolean | null {
+  const env = process.env[WRITE_SWITCHES.foreground_priority.env]?.trim().toLowerCase();
+  if (env === '0' || env === 'false') return false;
+  if (env === '1' || env === 'true') return true;
+  return null;
 }
 /** Whether `foreground_priority` is on for this brain; on when the switch cannot be read. */
 export function foregroundPriority(engine: SqlEngine): Promise<boolean> {
@@ -766,10 +768,8 @@ export function foregroundPriority(engine: SqlEngine): Promise<boolean> {
 }
 
 /** #5401: whether `claimNextWrite` would find a row now. Read-only: no lock and no claim. */
-export async function hasClaimableWrite(engine: SqlEngine, hostId: string, excludeRoots: string[] = [], signal?: AbortSignal): Promise<boolean> {
-  const [row] = await engine.executeRaw<{ claimable: boolean }>(`SELECT EXISTS (SELECT 1 FROM persistence_requests r
-      LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id WHERE ${claimableWriteSql(foregroundPrioritySql())} LIMIT 1) AS claimable`, [hostId, excludeRoots], { signal });
-  return row?.claimable === true;
+export async function hasClaimableWrite(engine: Pick<BrainEngine, 'hasClaimableWrite'>, hostId: string, excludeRoots: string[] = [], signal?: AbortSignal): Promise<boolean> {
+  return engine.hasClaimableWrite(hostId, excludeRoots, { priority: foregroundPriorityOverride(), signal });
 }
 
 /** Claims commit before OS-lock waits. An unresolved head blocks its entire root. */
@@ -893,11 +893,8 @@ export async function claimNextLaneHead(engine: BrainEngine, hostId: string, wor
   });
 }
 /** `phase` (claim-phase.ts `claimPhaseStamp`, #6176) records the claim's current phase with the renewal. */
-export async function renewWriteClaim(engine: SqlEngine, id: string, token: string, leaseMs = 30_000, signal?: AbortSignal, phase: string | null = null): Promise<boolean> {
-  const rows = await engine.executeRaw(`UPDATE persistence_requests SET
-    claim_expires_at=now()+($3::double precision*interval '1 millisecond'),updated_at=now(),claim_phase=COALESCE($4::text::jsonb,claim_phase)
-    WHERE id=$1::uuid AND execution_token=$2::uuid AND state='running' AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING id`, [id, token, leaseMs, phase], { signal });
-  return rows.length === 1;
+export async function renewWriteClaim(engine: Pick<BrainEngine, 'renewWriteClaim'>, id: string, token: string, leaseMs = 30_000, signal?: AbortSignal, phase: string | null = null): Promise<boolean> {
+  return engine.renewWriteClaim({ id, token, leaseMs, phaseJson: phase }, { signal });
 }
 /** `charge` (#6278): a `preparation_deadline` release counts one preparation attempt; `claim_lost`, `consumer_stopping` and the rest never do. */
 export async function releaseUnpublishedClaim(engine: SqlEngine, row: WriteRequest, reason: string, opts: { charge?: boolean } = {}): Promise<void> {

@@ -157,4 +157,127 @@ impl Brain {
             s.submit_page_mutation(&required(mutation, "submitPageMutation mutation")?, limits)
         })
     }
+
+    // The TypeScript journal members (`gbrain_store::persistence`).
+
+    /// `lockPersistenceCounters(keys)`: the named counter rows in key order, created at zero.
+    #[napi]
+    pub fn lock_persistence_counters<'env>(
+        &self,
+        env: &'env Env,
+        keys: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.lock_persistence_counters(&required::<Vec<String>>(
+                keys,
+                "lockPersistenceCounters keys",
+            )?)
+        })
+    }
+
+    /// `readWriteRequest(principal, requestId)`: the full `persistence_requests` row or `null`.
+    #[napi]
+    pub fn read_write_request<'env>(
+        &self,
+        env: &'env Env,
+        principal: Value,
+        request_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_write_request(
+                &required(principal, "readWriteRequest principal")?,
+                &request_id,
+            )
+        })
+    }
+
+    /// `readWriteRequestById(id)` and `lockWriteRequest(id)`: the row or `null`.
+    #[napi]
+    pub fn read_write_request_by_id<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_write_request_by_id(&id))
+    }
+
+    /// `insertWriteRequest(row)`: the stored row (`WriteRequestInsert`).
+    #[napi]
+    pub fn insert_write_request<'env>(
+        &self,
+        env: &'env Env,
+        row: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.insert_write_request(&required(row, "insertWriteRequest row")?)
+        })
+    }
+
+    /// `stampWriteClaim({ id, token, leaseMs, phaseJson })`: the claimed row or `null`.
+    #[napi]
+    pub fn stamp_write_claim<'env>(
+        &self,
+        env: &'env Env,
+        stamp: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.stamp_write_claim(&required(stamp, "stampWriteClaim stamp")?)
+        })
+    }
+
+    /// `completeWriteRow(completion)`: the completed row, or `null` when the result does not fit.
+    #[napi]
+    pub fn complete_write_row<'env>(
+        &self,
+        env: &'env Env,
+        completion: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.complete_write_row(&required(completion, "completeWriteRow completion")?)
+        })
+    }
+
+    /// `renewWriteClaim({ id, token, leaseMs, phaseJson })`: `true` while the claim is held.
+    #[napi]
+    pub fn renew_write_claim<'env>(
+        &self,
+        env: &'env Env,
+        stamp: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.renew_write_claim(&required(stamp, "renewWriteClaim stamp")?)
+        })
+    }
+
+    #[napi]
+    pub fn expire_stale_write_claims<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.expire_stale_write_claims(&required(spec, "expireStaleWriteClaims spec")?)
+        })
+    }
+
+    /// `hasClaimableWrite({ excludeRoots, priority })`.
+    #[napi]
+    pub fn has_claimable_write<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.has_claimable_write(&required(spec, "hasClaimableWrite spec")?)
+        })
+    }
+
+    #[napi]
+    pub fn read_source_membership<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_source_membership(&source_id))
+    }
 }

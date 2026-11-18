@@ -10,12 +10,23 @@
  * 3. Existing coverage: the journal tests check behavior on today's text; none compares the written-out copy with
  *    the fragments, and a changed fragment can keep those tests green.
  * 4. Production seam: none.
+ *
+ * The claim upkeep statements in src/core/engine-sql/persistence-claims.ts follow the same rule: the claimable-row
+ * test, the renewal, the expiry and the protocol predicate are pinned below against the journal, consumer and
+ * claim-phase fragments they copy.
  */
 import { describe, expect, test } from 'bun:test';
 import { CLAIM_STAMP_SQL, COMPLETE_WRITE_PURGE_PROBE_SQL, COMPLETE_WRITE_SQL } from '../src/core/engine-sql/persistence-journal.ts';
 import { REFRESH_BARRIER_CLAIM_PREDICATE, SYNC_KIND } from '../src/core/persistence/journal.ts';
 import { EFFECT_BYTES_SQL, TRUE_UP_CLAMP_SQL } from '../src/core/persistence/receipt-bytes.ts';
 import { PURGE_PRESENCE_COLUMNS } from '../src/core/persistence/purged-intent.ts';
+import { claimableWriteFragment, EXPIRE_CLAIMS_SQL, foregroundPriorityText, hasClaimableWriteFragment, PROTOCOL_PREDICATE_SQL,
+  RENEW_CLAIM_SQL } from '../src/core/engine-sql/persistence-claims.ts';
+import { renderFragment } from '../src/core/engine-sql/fragment.ts';
+import { withEnv } from './helpers/with-env.ts';
+import { claimableWriteSql, foregroundPrioritySql } from '../src/core/persistence/journal.ts';
+import { PERSISTENCE_PROTOCOL_PREDICATE } from '../src/core/persistence/protocol.ts';
+import { EXPIRED_PREPARING_CHARGE_SQL } from '../src/core/persistence/claim-phase.ts';
 
 const completion = (purgeColumns: string) => `WITH effects AS (SELECT COALESCE(SUM(${EFFECT_BYTES_SQL}),0) AS bytes,
       COALESCE(bool_or(state<>'committed'),false) AS unfinished FROM persistence_effects WHERE request_id=$1::uuid),
@@ -48,5 +59,29 @@ describe('written-out write-journal statements', () => {
   test('the completion uses the shared effect sizing, true-up clamp and purge columns', () => {
     expect(COMPLETE_WRITE_SQL).toBe(completion(''));
     expect(COMPLETE_WRITE_PURGE_PROBE_SQL).toBe(completion(`, ${PURGE_PRESENCE_COLUMNS}`));
+  });
+
+  test('the claim upkeep copies the journal\'s claimable test, renewal, protocol predicate and expiry', async () => {
+    expect(PROTOCOL_PREDICATE_SQL).toBe(PERSISTENCE_PROTOCOL_PREDICATE);
+    for (const priority of [true, false, null]) {
+      const claimable = renderFragment(claimableWriteFragment(priority, 'host', ['root']));
+      expect(claimable.text).toBe(claimableWriteSql(foregroundPriorityText(priority)));
+      expect(claimable.params).toEqual(['host', ['root']]);
+      expect(renderFragment(hasClaimableWriteFragment(priority, 'host', [])).text).toBe(`SELECT EXISTS (SELECT 1 FROM persistence_requests r
+      LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id WHERE ${claimableWriteSql(foregroundPriorityText(priority))} LIMIT 1) AS claimable`);
+    }
+    await withEnv({ GBRAIN_SYNC_FOREGROUND_PRIORITY: undefined }, () => {
+      expect(foregroundPriorityText(null)).toBe(foregroundPrioritySql());
+    });
+    for (const [env, priority] of [['1', true], ['false', false]] as const) {
+      await withEnv({ GBRAIN_SYNC_FOREGROUND_PRIORITY: env }, () => {
+        expect(foregroundPriorityText(priority)).toBe(foregroundPrioritySql());
+      });
+    }
+    expect(RENEW_CLAIM_SQL).toBe(`UPDATE persistence_requests SET
+    claim_expires_at=now()+($3::double precision*interval '1 millisecond'),updated_at=now(),claim_phase=COALESCE($4::text::jsonb,claim_phase)
+    WHERE id=$1::uuid AND execution_token=$2::uuid AND state='running' AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING id`);
+    expect(EXPIRE_CLAIMS_SQL).toContain(`CASE WHEN $2::boolean THEN ${EXPIRED_PREPARING_CHARGE_SQL('r')} ELSE 0 END`);
+    expect(EXPIRE_CLAIMS_SQL).toContain(`AND r.publication_started=false AND ${PERSISTENCE_PROTOCOL_PREDICATE}`);
   });
 });

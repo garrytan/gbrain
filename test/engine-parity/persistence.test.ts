@@ -1,6 +1,8 @@
 /**
- * BrainEngine parity — the write-journal members (engine-sql/persistence-journal.ts): the limit read, the hold reads
- * and one request's admission, claim and completion.
+ * BrainEngine parity — the write-journal members (engine-sql/persistence-journal.ts and persistence-claims.ts): the
+ * limit read, the hold reads, one request's admission, claim and completion (in a transaction and member by member),
+ * the claim upkeep (renewal, expiry, the claimable probe) and the admission reads (source membership, topology changes,
+ * the ledger's source view).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: the journal limit rows, the held-page and held-coverage reads, and the request lifecycle (lock the
@@ -40,6 +42,25 @@ const view = (row: WriteRequest | null) => row && {
   protocol: row.protocol_version, intentBytes: Number(row.intent_bytes), terminalReservation: Number(row.terminal_reservation),
   outcome: row.outcome ?? null, errorCode: row.error_code ?? null, idIsUuid: UUID.test(row.id), completed: row.completed_at != null,
 };
+
+const HOST = 'e0000000-0000-4000-8000-0000000000e1';
+const OTHER_TOKEN = 'c0000000-0000-4000-8000-0000000000c2';
+
+/** The insert one parity request uses; `requestId` and `state` vary per case. */
+const insertRow = (incarnation: string, requestId = REQUEST) => ({
+  principalKind: PRINCIPAL.kind, principalId: PRINCIPAL.id, requestId, operation: 'put_page', sourceId: 'default',
+  sourceIncarnation: incarnation, pageId: null, slug: 'notes/parity-example', worktreeId: null, topologyGeneration: null,
+  digest: 'd'.repeat(64), intent: { kind: 'put_page', slug: 'notes/parity-example' }, authority: { scopes: ['write'] }, intentBytes: 100,
+  terminalReservation: 4096, targetKind: 'page', protocolVersion: 1, admitterVersion: 'parity', admitterHostId: null, counterKeys: KEYS,
+  clientRequestId: null, state: 'queued' as const, deferredRefreshId: null,
+});
+
+/** Admits one queued request outside a transaction, as each member runs on its own; returns its journal id. */
+async function admitDirect(engine: BrainEngine, requestId = REQUEST): Promise<string> {
+  const source = await engine.readSourceMembership('default');
+  await engine.lockPersistenceCounters(KEYS);
+  return (await engine.insertWriteRequest(insertRow(source!.incarnation, requestId))).id;
+}
 
 async function lifecycle(engine: BrainEngine) {
   const source = await engine.readLedgerSource('default');
@@ -116,5 +137,114 @@ describe('engine parity: write journal', () => {
     expect(result.completed).toMatchObject({ state: 'committed', outcome: { status: 'parity' }, completed: true, purgeFacts: false, purgePages: false });
     expect(result.released.brain).toMatchObject({ outstanding: 0, intentBytes: 0, lifetimeIds: 1 });
     return result;
+  });
+
+  parityTest('each journal member works on its own, outside a transaction', {
+    methods: ['readLedgerSource', 'lockPersistenceCounters', 'insertWriteRequest', 'readWriteRequest', 'readWriteRequestById', 'stampWriteClaim', 'lockWriteRequest', 'completeWriteRow'],
+  }, async (engine) => {
+    const source = await engine.readLedgerSource('default');
+    const locked = counters(await engine.lockPersistenceCounters(KEYS));
+    const inserted = await engine.insertWriteRequest(insertRow(source!.incarnation));
+    const charged = counters(await engine.lockPersistenceCounters(KEYS));
+    const byRequest = view(await engine.readWriteRequest(PRINCIPAL.kind, PRINCIPAL.id, REQUEST));
+    const byId = view(await engine.readWriteRequestById(inserted.id));
+    const claimed = await engine.stampWriteClaim(inserted.id, TOKEN, 60_000, JSON.stringify({ phase: 'parity' }));
+    const lockedRow = view(await engine.lockWriteRequest(inserted.id));
+    const missing = await engine.lockWriteRequest('a0000000-0000-4000-8000-0000000000a9');
+    const done = await engine.completeWriteRow({
+      id: inserted.id, state: 'failed', outcome: null, errorCode: 'parity_error', errorMessage: 'parity', consumerVersion: 'parity',
+      consumerHostId: null, errorDetail: { reason: 'parity' }, resultBytes: 0, counterKeys: KEYS, intentBytes: 100, retainedBytes: 800,
+      terminalReservation: 4096, probePurges: false,
+    });
+    const released = counters(await engine.lockPersistenceCounters(KEYS));
+    const result = { locked, inserted: view(inserted), charged, byRequest, byId, claim: claimed && { ...view(claimed), passedSync: claimed.passed_sync, token: claimed.execution_token },
+      lockedRow, missing, done: done && { ...view(done), detail: done.error_detail }, released };
+    expect(result.byRequest).toEqual(result.inserted);
+    expect(result.byId).toEqual(result.inserted);
+    expect(result.claim).toMatchObject({ state: 'running', passedSync: false, token: TOKEN });
+    expect(result.lockedRow?.state).toBe('running');
+    expect(result.missing).toBeNull();
+    expect(result.done).toMatchObject({ state: 'failed', errorCode: 'parity_error', completed: true, detail: { reason: 'parity' } });
+    expect(result.released.brain).toMatchObject({ outstanding: 0, intentBytes: 0, lifetimeIds: 1 });
+    return result;
+  });
+
+  parityTest('readSourceMembership returns the incarnation and archive flag, locked or not, and null for an unknown source', { methods: ['readSourceMembership'] }, async (engine) => {
+    const plain = await engine.readSourceMembership('default');
+    const locked = await engine.readSourceMembership('default', { lock: true });
+    const unknown = await engine.readSourceMembership('parity-no-such-source');
+    expect(plain?.incarnation).toMatch(UUID);
+    expect(locked).toEqual(plain);
+    expect(unknown).toBeNull();
+    return { archived: plain?.archived, sameAsLocked: locked?.incarnation === plain?.incarnation, unknown };
+  });
+
+  parityTest('readLedgerSource reports no purges or coverage on a fresh brain, and the batch view adds the managed rows and plan mode', { methods: ['readLedgerSource'] }, async (engine) => {
+    const plain = await engine.readLedgerSource('default');
+    const batch = await engine.readLedgerSource('default', { batch: true });
+    const unknown = await engine.readLedgerSource('parity-no-such-source');
+    expect(batch?.incarnation).toBe(plain?.incarnation);
+    expect(unknown).toBeNull();
+    const strip = (s: typeof plain) => s && { ...s, incarnation: UUID.test(s.incarnation) };
+    return { plain: strip(plain), batch: strip(batch), unknown };
+  });
+
+  parityTest('findTopologyChanges finds nothing for requests that changed no topology', { methods: ['findTopologyChanges'] }, async (engine) => {
+    const one = await engine.findTopologyChanges('d0000000-0000-4000-8000-0000000000d1', [REQUEST]);
+    const many = await engine.findTopologyChanges('d0000000-0000-4000-8000-0000000000d1', [REQUEST, OTHER_TOKEN]);
+    expect({ one, many }).toEqual({ one: [], many: [] });
+    return { one, many };
+  });
+
+  parityTest('hasClaimableWrite is false on an empty journal and true once a queued request waits', { methods: ['hasClaimableWrite', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim'] }, async (engine) => {
+    const empty = await engine.hasClaimableWrite(HOST, []);
+    const id = await admitDirect(engine);
+    const queued = { config: await engine.hasClaimableWrite(HOST, []), on: await engine.hasClaimableWrite(HOST, [], { priority: true }),
+      off: await engine.hasClaimableWrite(HOST, [], { priority: false }), excluded: await engine.hasClaimableWrite(HOST, ['/parity/elsewhere']) };
+    await engine.stampWriteClaim(id, TOKEN, 60_000, JSON.stringify({ phase: 'parity' }));
+    const claimed = await engine.hasClaimableWrite(HOST, []);
+    const answers = { empty, queued, claimed };
+    expect(answers).toEqual({ empty: false, queued: { config: true, on: true, off: true, excluded: true }, claimed: false });
+    return answers;
+  });
+
+  parityTest('renewWriteClaim extends a claim held under its token and refuses any other token', { methods: ['renewWriteClaim', 'stampWriteClaim', 'readWriteRequestById'] }, async (engine) => {
+    const id = await admitDirect(engine);
+    await engine.stampWriteClaim(id, TOKEN, 1_000, JSON.stringify({ phase: 'preparing', token: TOKEN }));
+    const before = await engine.readWriteRequestById(id);
+    const held = await engine.renewWriteClaim({ id, token: TOKEN, leaseMs: 3_600_000, phaseJson: JSON.stringify({ phase: 'publishing', token: TOKEN }) });
+    const renewed = await engine.readWriteRequestById(id);
+    const keptPhase = await engine.renewWriteClaim({ id, token: TOKEN, leaseMs: 3_600_000, phaseJson: null });
+    const kept = await engine.readWriteRequestById(id);
+    const stranger = await engine.renewWriteClaim({ id, token: OTHER_TOKEN, leaseMs: 3_600_000, phaseJson: null });
+    const unknown = await engine.renewWriteClaim({ id: 'a0000000-0000-4000-8000-0000000000a9', token: TOKEN, leaseMs: 1_000, phaseJson: null });
+    const extended = new Date(renewed!.claim_expires_at!).getTime() - new Date(before!.claim_expires_at!).getTime() > 3_000_000;
+    const answers = { held, phase: renewed?.claim_phase, keptPhase, keptPhaseValue: kept?.claim_phase, stranger, unknown, extended };
+    expect(answers).toMatchObject({ held: true, phase: { phase: 'publishing' }, keptPhase: true, keptPhaseValue: { phase: 'publishing' }, stranger: false, unknown: false, extended: true });
+    return answers;
+  });
+
+  parityTest('expireStaleWriteClaims returns an expired claim to queued, charges a preparing one when asked, and frees a dead owner\'s claim', {
+    methods: ['expireStaleWriteClaims', 'stampWriteClaim', 'readWriteRequestById', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest'],
+  }, async (engine) => {
+    const expired = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b1');
+    const live = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b2');
+    const dead = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b3');
+    await engine.stampWriteClaim(expired, TOKEN, -60_000, JSON.stringify({ phase: 'preparing', token: TOKEN }));
+    await engine.stampWriteClaim(live, OTHER_TOKEN, 3_600_000, JSON.stringify({ phase: 'preparing', token: OTHER_TOKEN }));
+    const deadToken = 'c0000000-0000-4000-8000-0000000000c3';
+    await engine.stampWriteClaim(dead, deadToken, 3_600_000, JSON.stringify({ phase: 'publishing', token: deadToken, owner: { pid: 4242, nonce: 'n1', start: 's1' } }));
+    await engine.expireStaleWriteClaims({ hostId: HOST, charge: true, deadOwners: [] });
+    const afterExpiry = await Promise.all([expired, live, dead].map(id => engine.readWriteRequestById(id)));
+    await engine.expireStaleWriteClaims({ hostId: HOST, charge: true, deadOwners: ['4242:n1:s1'] });
+    const afterDead = await engine.readWriteRequestById(dead);
+    const state = (r: WriteRequest | null) => r && { state: r.state, token: r.execution_token ?? null, leased: r.claim_expires_at != null, attempts: Number(r.preparation_attempts) };
+    const answers = { afterExpiry: afterExpiry.map(state), afterDead: state(afterDead) };
+    expect(answers).toEqual({
+      afterExpiry: [{ state: 'queued', token: null, leased: false, attempts: 1 }, { state: 'running', token: OTHER_TOKEN, leased: true, attempts: 0 },
+        { state: 'running', token: deadToken, leased: true, attempts: 0 }],
+      afterDead: { state: 'queued', token: null, leased: false, attempts: 0 },
+    });
+    return answers;
   });
 });

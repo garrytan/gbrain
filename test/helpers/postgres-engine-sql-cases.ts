@@ -47,7 +47,7 @@ const OOS = {
   importWrites: 'out-of-scope:import-writes (born in engine-sql/chunks.ts, tags.ts, pages.ts; pinned by test/engine-parity/import-writes.test.ts)',
   cliReads: 'out-of-scope:cli-reads (born in engine-sql/cli-reads-ops.ts and cli-reads-import.ts; pinned by test/engine-parity/cli-reads-ops.test.ts and cli-reads-import.test.ts)',
   wantedLinks: 'out-of-scope:wanted-links (born in engine-sql/wanted-links.ts; pinned by test/engine-parity/wanted-links.test.ts)',
-  journal: 'out-of-scope:persistence-journal (born in engine-sql/persistence-journal.ts; pinned by test/engine-parity/persistence.test.ts and test/persistence-journal-statements.test.ts)',
+  journal: 'out-of-scope:persistence-journal (born in engine-sql/persistence-journal.ts and persistence-claims.ts; pinned by test/engine-parity/persistence.test.ts and test/persistence-journal-statements.test.ts)',
   pageBody: 'out-of-scope:page-body (Wave B segmented storage, born in engine-sql/page-body.ts; pinned by test/engine-sql-page-body.test.ts)',
   cycleLocks: 'out-of-scope:cycle-locks (gbrain_cycle_locks leases, born in engine-sql/cycle-locks.ts; pinned by test/engine-parity/cycle-locks.test.ts)',
 } as const;
@@ -216,6 +216,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'readJournalLimitRows': OOS.journal, 'readHeldPageRows': OOS.journal, 'readHeldCoverageRows': OOS.journal,
   'readWriteRequest': OOS.journal, 'readWriteRequestById': OOS.journal, 'lockPersistenceCounters': OOS.journal,
   'insertWriteRequest': OOS.journal, 'stampWriteClaim': OOS.journal, 'lockWriteRequest': OOS.journal, 'completeWriteRow': OOS.journal,
+  'readSourceMembership': OOS.journal, 'findTopologyChanges': OOS.journal, 'renewWriteClaim': OOS.journal, 'expireStaleWriteClaims': OOS.journal,
+  'hasClaimableWrite': OOS.journal, 'directRawSql': OOS.helper,
   'logIngest': OOS.ingest, 'getIngestLog': OOS.ingest,
   'logEvalCandidate': OOS.eval, 'listEvalCandidates': OOS.eval, 'deleteEvalCandidatesBefore': OOS.eval,
   'logEvalCaptureFailure': OOS.eval, 'listEvalCaptureFailures': OOS.eval,
@@ -934,4 +936,14 @@ export const EXTRA_READ_CASES: SqlCase[] = [
     consumerHostId: null, errorDetail: null, resultBytes: 10, counterKeys: JOURNAL_KEYS, intentBytes: 100, retainedBytes: 110,
     terminalReservation: 4096, probePurges,
   }))])),
+  ...variants('readSourceMembership', [
+    ['default', (e) => e.readSourceMembership(SRC)],
+    ['lock', (e) => e.transaction((tx: any) => tx.readSourceMembership(SRC, { lock: true }))],
+  ]),
+  ...variants('findTopologyChanges', [['default', (e) => e.transaction((tx: any) => tx.findTopologyChanges(JOURNAL_REQUEST, [JOURNAL_REQUEST]))]]),
+  ...variants('renewWriteClaim', [['default', (e) => e.renewWriteClaim({ id: JOURNAL_REQUEST, token: JOURNAL_REQUEST, leaseMs: 30_000, phaseJson: null })]]),
+  ...variants('expireStaleWriteClaims', ([false, true] as const).map((direct) => [direct ? 'direct' : 'default',
+    (e: any) => e.expireStaleWriteClaims({ hostId: JOURNAL_REQUEST, charge: true, deadOwners: [] }, { direct })])),
+  ...variants('hasClaimableWrite', ([null, true] as const).map((priority) => [priority === null ? 'default' : 'priority',
+    (e: any) => e.hasClaimableWrite(JOURNAL_REQUEST, [], { priority })])),
 ];
