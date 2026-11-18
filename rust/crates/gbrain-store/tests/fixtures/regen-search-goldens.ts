@@ -22,28 +22,14 @@
  *   bun rust/crates/gbrain-store/tests/fixtures/regen-search-goldens.ts           # check: exit 1 on any difference
  *   bun rust/crates/gbrain-store/tests/fixtures/regen-search-goldens.ts --write   # rewrite the three files
  */
-import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { installPglite, PGLITE_VERSION } from '../../../../scripts/lib/pglite-golden.ts';
 
-const PGLITE_VERSION = '0.5.16';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '../../../../..');
-const scratch = process.env.GBRAIN_PGLITE_GOLDEN_DIR ?? '/tmp/gbrain-pglite-golden-' + PGLITE_VERSION;
 const write = process.argv.includes('--write');
-
-function installPglite(): string {
-  const entry = join(scratch, 'node_modules/@electric-sql/pglite/dist/index.js');
-  if (!existsSync(entry)) {
-    mkdirSync(scratch, { recursive: true });
-    writeFileSync(join(scratch, 'package.json'), '{"name":"pglite-golden","private":true}\n');
-    execFileSync('bun', ['add', `@electric-sql/pglite@${PGLITE_VERSION}`], { cwd: scratch, stdio: 'inherit' });
-  }
-  const pkg = JSON.parse(readFileSync(join(scratch, 'node_modules/@electric-sql/pglite/package.json'), 'utf8'));
-  if (pkg.version !== PGLITE_VERSION) throw new Error(`need PGLite ${PGLITE_VERSION}, found ${pkg.version} in ${scratch}`);
-  return entry;
-}
 
 /** `gbrain_fts_input`, the function the indexing path installs (src/core/fts-language.ts). */
 async function ftsInputSql(): Promise<string> {

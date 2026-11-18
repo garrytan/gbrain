@@ -1,6 +1,7 @@
 //! A port of the pg_trgm scoring functions: `similarity`, `word_similarity`,
 //! `strict_word_similarity` and `show_trgm` (contrib/pg_trgm/trgm_op.c, PostgreSQL 18, the default
 //! build: KEEPONLYALNUM, IGNORECASE, DIVUNION, LPADDING 2, RPADDING 1).
+//! Derived from PostgreSQL 18.6; licence and notice: third-party/postgresql/NOTICE.md
 //!
 //! - A word is a run of alphanumeric characters (`t_isalnum`). Each word is lowercased and padded
 //!   as `"  word "`; its trigrams are the 3-character windows of that padded text.
