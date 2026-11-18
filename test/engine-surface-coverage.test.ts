@@ -61,6 +61,10 @@ const INTERFACE_METHODS: readonly string[] = [
   // Graph and doctor link reads (engine-sql/link-reads.ts)
   'inboundLinkCoverage', 'listJunkEntityHubs', 'countEntityPages', 'entityGraphCoverage', 'countForeignEdges',
   'listLivePageSummaries', 'countInboundLinks', 'listLinkEndpointPages', 'listPagesTitledIn', 'wordLexemes',
+  // Code, doctor, withdrawal, repair and evidence chunk reads (engine-sql/chunk-reads.ts)
+  'findCodeDefinitions', 'listSymbolTypesForName', 'findCodeRefChunks', 'countOversizedEmbedSkips', 'countOrphanChunks',
+  'countCodeChunkPages', 'codeChunksExist', 'currentCodeChunksExist', 'listQualifiedSymbolNames', 'listWithdrawalChunks',
+  'deleteChunksForPages', 'listContextualModeCandidates', 'resolveFrozenHits',
   // Import writes (engine-sql/chunks.ts, tags.ts, pages.ts)
   'deleteChunksExcept', 'setChunkerVersion', 'writeTextProjectionSeal', 'moveChunkIndexes', 'getChunkReuseRows', 'pruneFrontmatterTags',
   'addPageTagsById', 'replaceDerivedAliases', 'getPageSealState', 'refreshPageOrigin',
@@ -155,6 +159,8 @@ const ENGINE_INTERNAL_HELPERS: readonly string[] = [
   'searchRead',
   // Graph and doctor link reads: the unscoped engine-sql executor the link-read methods run through.
   'linkRead',
+  // Code, doctor, withdrawal, repair and evidence chunk reads: the unscoped engine-sql executor they run through.
+  'chunkRead',
   // Engine graduation: PGLite close/open that keeps the kernel lock across the custody window.
   'closeRetainingLock',
   'connectWithHeldLock',

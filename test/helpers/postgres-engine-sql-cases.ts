@@ -48,6 +48,7 @@ const OOS = {
   pageBody: 'out-of-scope:page-body (Wave B segmented storage, born in engine-sql/page-body.ts; pinned by test/engine-sql-page-body.test.ts)',
   cycleLocks: 'out-of-scope:cycle-locks (gbrain_cycle_locks leases, born in engine-sql/cycle-locks.ts; pinned by test/engine-parity/cycle-locks.test.ts)',
   linkReads: 'out-of-scope:link-reads (born in engine-sql/link-reads.ts; pinned by test/engine-parity/link-reads.test.ts)',
+  chunkReads: 'out-of-scope:chunk-reads (born in engine-sql/chunk-reads.ts; pinned by test/engine-parity/chunk-reads.test.ts)',
 } as const;
 
 export const DOMAIN_OF: Record<string, string> = {
@@ -63,6 +64,20 @@ export const DOMAIN_OF: Record<string, string> = {
   'countInboundLinks': OOS.linkReads,
   'listLinkEndpointPages': OOS.linkReads,
   'listPagesTitledIn': OOS.linkReads,
+  'chunkRead': OOS.helper,
+  'findCodeDefinitions': OOS.chunkReads,
+  'listSymbolTypesForName': OOS.chunkReads,
+  'findCodeRefChunks': OOS.chunkReads,
+  'countOversizedEmbedSkips': OOS.chunkReads,
+  'countOrphanChunks': OOS.chunkReads,
+  'countCodeChunkPages': OOS.chunkReads,
+  'codeChunksExist': OOS.chunkReads,
+  'currentCodeChunksExist': OOS.chunkReads,
+  'listQualifiedSymbolNames': OOS.chunkReads,
+  'listWithdrawalChunks': OOS.chunkReads,
+  'deleteChunksForPages': OOS.chunkReads,
+  'listContextualModeCandidates': OOS.chunkReads,
+  'resolveFrozenHits': OOS.chunkReads,
   'wordLexemes': OOS.linkReads,
   'cosinesByChunkIds': OOS.searchReads,
   'hasSupersedeEdges': OOS.searchReads,

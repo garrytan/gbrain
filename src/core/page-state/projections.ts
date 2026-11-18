@@ -346,7 +346,7 @@ export async function installPageProjection(engine: BrainEngine, prepared: Proje
     if (opts.seal && opts.preserveEmbeddings) {
       const { kept, current: currentIds, provenanceModel, column } = await planProjectionKeep(tx, current!, context, stored, chunks);
       const col = quoteIdentifier(column.name);
-      await tx.executeRaw(`DELETE FROM content_chunks WHERE page_id=$1 AND NOT(id=ANY($2::int[]))`, [snapshot.page.id, kept.map(chunk => chunk.id)]);
+      await tx.deleteChunksExcept(slug, kept.map(chunk => chunk.id), { sourceId });
       await tx.executeRaw(`UPDATE content_chunks SET ${col}=NULL,
         embedded_at=NULL,embedded_text_hash=NULL,embedding_input_hash=NULL,
         embedding_pending_since=COALESCE(embedding_pending_since,now()) WHERE page_id=$1 AND

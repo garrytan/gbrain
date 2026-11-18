@@ -179,6 +179,8 @@ import type { EmbeddingState, EmbeddingStateCounts, EmbeddingStateRow } from './
 import * as chunksImpl from './engine-sql/chunks.ts';
 import * as searchReadsImpl from './engine-sql/search-reads.ts';
 import * as linkReadsImpl from './engine-sql/link-reads.ts';
+import * as chunkReadsImpl from './engine-sql/chunk-reads.ts';
+import type { CodeChunkScope, CodeSymbolQuery, FrozenHitKey, WithdrawalChunkKey } from './engine-sql/chunk-reads.ts';
 import type { ChunkMove } from './page-state/chunk-moves.ts';
 import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import * as pageBodyImpl from './engine-sql/page-body.ts';
@@ -1850,6 +1852,20 @@ export class PGLiteEngine implements BrainEngine {
   listLinkEndpointPages(sourceId: string, slugs: string[], crossSourceSlugs: string[]) { return linkReadsImpl.listLinkEndpointPages(this.linkRead, sourceId, slugs, crossSourceSlugs); }
   listPagesTitledIn(queryLower: string, scope: PageReadScope) { return linkReadsImpl.listPagesTitledIn(this.linkRead, queryLower, scope); }
   wordLexemes(words: string[]) { return linkReadsImpl.wordLexemes(this.linkRead, words); }
+  private get chunkRead() { return unscopedExecutor(this.engineSql, 'chunk reads: master engine.executeRaw, unscoped'); }
+  findCodeDefinitions(symbol: string, opts?: CodeSymbolQuery) { return chunkReadsImpl.findCodeDefinitions(this.chunkRead, symbol, opts); }
+  listSymbolTypesForName(symbol: string, opts?: Omit<CodeSymbolQuery, 'limit'>) { return chunkReadsImpl.listSymbolTypesForName(this.chunkRead, symbol, opts); }
+  findCodeRefChunks(symbol: string, opts?: CodeSymbolQuery) { return chunkReadsImpl.findCodeRefChunks(this.chunkRead, symbol, opts); }
+  countOversizedEmbedSkips(maxBytes: number) { return chunkReadsImpl.countOversizedEmbedSkips(this.chunkRead, maxBytes); }
+  countOrphanChunks() { return chunkReadsImpl.countOrphanChunks(this.chunkRead); }
+  countCodeChunkPages() { return chunkReadsImpl.countCodeChunkPages(this.chunkRead); }
+  codeChunksExist(sourceId: string | undefined, policy?: PageReadScope) { return chunkReadsImpl.codeChunksExist(this.chunkRead, sourceId, policy); }
+  currentCodeChunksExist(scope: CodeChunkScope, predicate: 'any' | 'with_symbol') { return chunkReadsImpl.currentCodeChunksExist(this.chunkRead, scope, predicate); }
+  listQualifiedSymbolNames(sourceId: string, symbol: string, opts: { match: 'exact' | 'contains'; limit: number }) { return chunkReadsImpl.listQualifiedSymbolNames(this.chunkRead, sourceId, symbol, opts); }
+  listWithdrawalChunks(sourceId: string, keys: WithdrawalChunkKey[], opts: { after: number; limit: number; subjects: string[] | null }) { return chunkReadsImpl.listWithdrawalChunks(this.chunkRead, sourceId, keys, opts); }
+  deleteChunksForPages(pageIds: readonly number[]) { return chunkReadsImpl.deleteChunksForPages(this.engineSql, pageIds); }
+  listContextualModeCandidates(sourceIds: string[]) { return chunkReadsImpl.listContextualModeCandidates(this.chunkRead, sourceIds); }
+  async resolveFrozenHits(hits: FrozenHitKey[], scope: PageReadScope) { return chunkReadsImpl.resolveFrozenHits(this.chunkRead, hits, scope, true); }
 
   // v0.41.18.0 — lazy-cached resolveBulkRetryOpts result + batch-retry helper.
   // PGLite has no Postgres pooler so retries don't fire in production; the

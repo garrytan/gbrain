@@ -6,13 +6,13 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 269/269
+# covered: 282/282
 # lifecycle: 9/9
 # pages: 31/31
 # search: 7/7
 # search_reads: 9/9
 # link_reads: 10/10
-# chunks: 22/22
+# chunks: 35/35
 # extraction: 7/7
 # links: 23/23
 # tags: 5/5
@@ -47,17 +47,17 @@ transaction	lifecycle	yes	11	no	yes	yes	refuses:transactions
 transactionDirect	lifecycle	yes	1	no	yes	yes	refuses:transactions
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	29	yes	yes	yes	serves
+getPage	pages	yes	31	yes	yes	yes	serves
 readPageSnapshot	pages	yes	7	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	146	yes	yes	yes	serves
+putPage	pages	yes	154	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
-deletePage	pages	yes	4	yes	yes	yes	serves
+deletePage	pages	yes	5	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	49	yes	yes	yes	serves
+softDeletePage	pages	yes	55	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	8	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -104,9 +104,22 @@ countInboundLinks	link_reads	yes	1	no	yes	yes	serves
 listLinkEndpointPages	link_reads	yes	1	no	yes	yes	serves
 listPagesTitledIn	link_reads	yes	1	no	yes	yes	serves
 wordLexemes	link_reads	yes	1	no	yes	yes	serves
-upsertChunks	chunks	yes	15	yes	yes	yes	serves
-sealChunks	chunks	yes	7	no	yes	yes	serves
-getChunks	chunks	yes	18	yes	yes	yes	serves
+findCodeDefinitions	chunks	yes	1	no	yes	yes	serves
+listSymbolTypesForName	chunks	yes	1	no	yes	yes	serves
+findCodeRefChunks	chunks	yes	1	no	yes	yes	serves
+countOversizedEmbedSkips	chunks	yes	1	no	yes	yes	serves
+countOrphanChunks	chunks	yes	1	no	yes	yes	serves
+countCodeChunkPages	chunks	yes	1	no	yes	yes	serves
+codeChunksExist	chunks	yes	1	no	yes	yes	serves
+currentCodeChunksExist	chunks	yes	1	no	yes	yes	serves
+listQualifiedSymbolNames	chunks	yes	1	no	yes	yes	serves
+listWithdrawalChunks	chunks	yes	1	no	yes	yes	serves
+deleteChunksForPages	chunks	yes	1	no	yes	yes	serves
+listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
+resolveFrozenHits	chunks	yes	1	no	yes	yes	serves
+upsertChunks	chunks	yes	20	yes	yes	yes	serves
+sealChunks	chunks	yes	15	no	yes	yes	serves
+getChunks	chunks	yes	21	yes	yes	yes	serves
 getChunkPage	chunks	yes	3	no	yes	yes	serves
 getChunkWindows	chunks	yes	1	no	yes	yes	serves
 countStaleChunks	chunks	yes	5	no	yes	yes	serves
@@ -120,7 +133,7 @@ listChunklessPagesWithContent	chunks	yes	1	yes	yes	yes	serves
 readEmbeddingStateCounts	chunks	yes	1	no	yes	yes	serves
 listEmbeddingStateRows	chunks	yes	1	no	yes	yes	serves
 deleteChunks	chunks	yes	3	no	yes	yes	serves
-deleteChunksExcept	chunks	yes	1	no	yes	yes	refuses:chunks
+deleteChunksExcept	chunks	yes	2	no	yes	yes	serves
 setChunkerVersion	chunks	yes	1	no	yes	yes	refuses:chunks
 writeTextProjectionSeal	chunks	yes	1	no	yes	yes	refuses:chunks
 moveChunkIndexes	chunks	yes	1	no	yes	yes	refuses:chunks
