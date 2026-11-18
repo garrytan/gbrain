@@ -267,7 +267,6 @@ src/core/belief/backfill.ts	execute_raw	8
 src/core/belief/changes.ts	execute_raw	2
 src/core/belief/coverage-report.ts	execute_raw	13
 src/core/belief/coverage.ts	execute_raw	5
-src/core/belief/history.ts	execute_raw	2
 src/core/belief/identity.ts	execute_raw	2
 src/core/belief/ledger.ts	execute_raw	1
 src/core/belief/lifetimes.ts	execute_raw	6
@@ -324,7 +323,7 @@ src/core/context/volunteer-events.ts	execute_raw	2
 src/core/context/volunteer.ts	execute_raw	1
 src/core/contextual-retrieval-service.ts	execute_raw	3
 src/core/conversation-parser/llm-base.ts	execute_raw	2
-src/core/core-memory.ts	execute_raw	2
+src/core/core-memory.ts	execute_raw	1
 src/core/cycle.ts	execute_raw	2
 src/core/cycle/calibration-profile.ts	execute_raw	2
 src/core/cycle/chronicle.ts	execute_raw	3
@@ -373,7 +372,7 @@ src/core/eligibility/activation.ts	execute_raw	2
 src/core/eligibility/explain.ts	execute_raw	3
 src/core/eligibility/fence-overlay.ts	execute_raw	3	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/core/eligibility/generation.ts	execute_raw	1
-src/core/eligibility/scan.ts	execute_raw	6
+src/core/eligibility/scan.ts	execute_raw	4
 src/core/eligibility/stamp.ts	execute_raw	3	came from master #9574 (held private restatements), which landed before this ratchet
 src/core/embed-backfill-stall.ts	execute_raw	1
 src/core/embed-backfill-submit.ts	execute_raw	2
@@ -568,7 +567,7 @@ src/core/onboard/checks.ts	sql_template	2
 src/core/onboard/impact-capture.ts	execute_raw	3
 src/core/onboard/mcp-onboarding.ts	execute_raw	1
 src/core/op-checkpoint.ts	execute_raw	7
-src/core/ops/admin.ts	execute_raw	4
+src/core/ops/admin.ts	execute_raw	2
 src/core/ops/attribution.ts	execute_raw	8
 src/core/ops/backlinks-paged.ts	execute_raw	3
 src/core/ops/chronicle.ts	execute_raw	1
@@ -595,7 +594,7 @@ src/core/ops/search.ts	execute_raw	2
 src/core/ops/storage-manifest.ts	execute_raw	1
 src/core/ops/tags.ts	execute_raw	1
 src/core/ops/trust.ts	execute_raw	1
-src/core/ops/valid-time-read.ts	execute_raw	6
+src/core/ops/valid-time-read.ts	execute_raw	5
 src/core/ops/whois.ts	execute_raw	1
 src/core/output/writer.ts	execute_raw	1
 src/core/oversized-backfill.ts	execute_raw	6

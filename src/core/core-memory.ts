@@ -17,12 +17,9 @@
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from './engine.ts';
 import { sanitizeRemoteBody } from './remote-body.ts';
-import { privatePagesFilterForCaller, remoteReadFloorSql } from './search/private-visibility.ts';
-import { quarantineFilterFragment } from './quarantine.ts';
 import { compareTrust, OWNER_TIER_FLOOR, type TrustTier } from './trust/tier.ts';
 import type { ReadEligibility } from './eligibility/policy.ts';
 import { proactiveEligibility } from './eligibility/registry.ts';
-import { activationSuppressedSql, pageEligibleSql } from './eligibility/sql.ts';
 import { compactTrustLabel, needsDataEnvelope, renderTrustedText, trustFields } from './eligibility/labels.ts';
 import { PAGE_MAX_BYTES } from './page-size-policy.ts';
 import { heldRowsForCaller } from './eligibility/fence-overlay.ts';
@@ -240,41 +237,24 @@ export interface ListCorePagesOpts {
   remote?: boolean;
 }
 
-interface CoreRow { id: number | string; source_id: string; slug: string; title: string | null; compiled_truth: string | null; frontmatter: unknown; withdrawn: boolean;
-  body_storage: string | null; body_bytes: number | string | null;
-  trust_tier?: string; write_origin?: unknown; suppressed?: boolean }
-
 /**
  * Live core pages. Bounded: the cap leaves headroom over CORE_MAX_PAGES so
  * the renderer can still report what it left out.
  */
 export async function listCorePages(exec: RawExec, opts: ListCorePagesOpts = {}): Promise<Array<CorePage & { suppressed?: boolean }>> {
-  const params: unknown[] = [];
-  const where = [`p.deleted_at IS NULL`, `p.frontmatter @> '{"always_load": true}'::jsonb`];
-  if (opts.sourceIds) {
-    params.push([...opts.sourceIds]);
-    where.push(`p.source_id = ANY($${params.length}::text[])`);
-  }
-  if (opts.exclude) {
-    params.push(opts.exclude.sourceId, opts.exclude.slug);
-    where.push(`NOT (p.source_id = $${params.length - 1} AND p.slug = $${params.length})`);
-  }
-  if (opts.excludePrivate) where.push(opts.forCaller ? privatePagesFilterForCaller('p') : remoteReadFloorSql('p'));
   const policy = opts.eligibility;
-  if (policy) where.push(quarantineFilterFragment('p'), pageEligibleSql('p', { floor: policy.floor }));
-  const trustCols = policy
-    ? `p.trust_tier, p.write_origin, ${policy.suppressFlagged ? activationSuppressedSql('pages', 'p') : 'false'} AS suppressed,` : '';
-  const rows = await exec.executeRaw<CoreRow>(
-    `SELECT p.id, p.source_id, p.slug, p.title, p.compiled_truth, p.frontmatter, p.body_storage, p.body_bytes, ${trustCols}
-        EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = p.source_id AND (w.subject = '*' OR w.subject = p.slug)) AS withdrawn
-      FROM pages p WHERE ${where.join(' AND ')} ORDER BY p.source_id, p.slug LIMIT ${CORE_MAX_PAGES * 4}`, params);
+  const rows = await exec.listCorePageRows({
+    ...(opts.sourceIds ? { sourceIds: opts.sourceIds } : {}), ...(opts.exclude ? { exclude: opts.exclude } : {}),
+    ...(opts.excludePrivate ? { excludePrivate: true, forCaller: opts.forCaller === true } : {}),
+    ...(policy ? { eligibility: policy } : {}), limit: CORE_MAX_PAGES * 4,
+  });
   const pages: Array<CorePage & { suppressed?: boolean }> = [];
   for (const r of rows) {
     if (r.suppressed === true) { pages.push({ ...toCorePage({ source_id: r.source_id, slug: r.slug, title: r.title ?? r.slug, compiled_truth: '' }), suppressed: true }); continue; }
-    const segmented = r.body_storage === 'segmented';
+    const segmented = r.segmented;
     // Wave B decision #1: a body stored in segments is read back whole up to PAGE_MAX_BYTES (24 MiB); a larger one
     // is left out of the list, never read, and doctor's core_memory check reports it (skipped_segmented).
-    if (segmented && Number(r.body_bytes ?? 0) > PAGE_MAX_BYTES) continue;
+    if (segmented && (r.body_bytes ?? 0) > PAGE_MAX_BYTES) continue;
     let compiled = r.compiled_truth ?? '';
     // Withdrawn facts (forget) are applied by the canonical snapshot read,
     // not by the stored body, so core never shows text get_page withholds.
@@ -285,12 +265,12 @@ export async function listCorePages(exec: RawExec, opts: ListCorePagesOpts = {})
         ? (await (await import('./persistence/segmented-apply.ts')).materializedSnapshot(exec, snap))!.page.compiled_truth ?? ''
         : snap.page.compiled_truth ?? '';
     } else if (segmented) {
-      compiled = (await (await import('./page-body/ingest.ts')).materializeSegmentedBody(exec, Number(r.id), r.source_id)).compiled_truth;
+      compiled = (await (await import('./page-body/ingest.ts')).materializeSegmentedBody(exec, r.id, r.source_id)).compiled_truth;
     }
     const omitRows = opts.remote === undefined ? undefined : await heldRowsForCaller(exec, opts.remote, { sourceId: r.source_id, slug: r.slug, compiled_truth: compiled });
     pages.push(toCorePage({
       source_id: r.source_id, slug: r.slug, title: r.title ?? r.slug, compiled_truth: compiled, ...(omitRows?.size ? { omitRows } : {}),
-      frontmatter: typeof r.frontmatter === 'string' ? JSON.parse(r.frontmatter) : r.frontmatter,
+      frontmatter: r.frontmatter,
       ...(policy ? trustFields(r.trust_tier, r.write_origin) : {}),
     }));
   }

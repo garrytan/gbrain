@@ -154,3 +154,24 @@ Rust guesses and gaps (1x parity):
 - A negative `limit` refuses with `invalid_argument`; Postgres raises `LIMIT must not be negative`.
 - Timestamps are microseconds. PGLite's `now()` moves in whole milliseconds, so two writes in the same millisecond
   tie on `last_seen_at` there and fall back to the id order; the parity cases wait for the clock between writes.
+
+## Tier reads (`trust::tier_reads`)
+
+Typed reads of the stamped tier and write origin that core memory, the trust scan and page history made through
+`executeRaw` (src/core/engine-sql/trust-tier-reads.ts). They read fields of the page, fact and version records, so
+the family adds no key prefix. Versions have no by-id index: the version reads scan the `V` keys once per call.
+
+| Member | Store method | PGLite statement |
+| --- | --- | --- |
+| `listCorePageRows` | `list_core_page_rows`: live pages with `always_load: true` under the source, exclude and page-policy (`facts/privacy.rs`) filters; with an eligibility, less pages with a `quarantine` key and pages below the floor (`TrustPolicy`), plus the tier, origin and `suppressed` mark. `withdrawn` is a withdrawal of the source with subject `*` or the slug. By source then slug, bytewise | `SELECT … FROM pages p WHERE p.frontmatter @> '{"always_load": true}' … ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C"` |
+| `listTrustScanRows` | `list_trust_scan_rows`: live pages, or facts, above `afterId` whose stored tier is listed, by id | `SELECT … WHERE p.id > $1 AND p.trust_tier = ANY($2) ORDER BY p.id LIMIT n` |
+| `countUnscannedTrustRows` | `count_unscanned_trust_rows`: the same rows, at or below `until` when set | `SELECT count(*) …` |
+| `listVersionTrustTiers` | `list_version_trust_tiers`: the snapshot tier of each listed version, by id | `SELECT pv.id, pv.trust_tier FROM page_versions pv WHERE pv.id = ANY($1)` |
+| `listVersionReasonWriters` | `list_version_reason_writers`: the type and tier of the page's next snapshot, else of the page (deleted or not) | `LEFT JOIN LATERAL (… ORDER BY n.id LIMIT 1)` |
+
+- The TypeScript members refuse a caller page policy that is not the no-caller one, the `takes` and
+  `timeline_entries` scan tables, and a cursor, limit or id that is not an integer. The store refuses any other
+  table and a NUL byte with `invalid_argument`.
+- The belief history reads (`readBeliefHistoryRows`, `listVisibleBeliefLifetimes`) and `pickValidTimeEdition` are
+  not served.
+- Pinned by `test/engine-parity/trust-tier-reads.test.ts` on every arm and by `tests/trust_tier_reads.rs`.

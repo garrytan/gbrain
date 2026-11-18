@@ -96,15 +96,29 @@ export function storePagePolicy(
   opts: { callerReaders?: boolean } = {},
 ): StorePrivacyPolicy | undefined {
   if (!excludePrivate) return undefined;
-  const rendered = normalizeConceptInputs(privatePagesFilterForCaller('p'));
+  return storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), opts);
+}
+
+/**
+ * The store page policy for a read whose page fragment over `p` is `rendered` in the current context: the caller's
+ * page policy, or the remote read floor (`remoteReadFloorSql('p')`, which with no labelled-only caller is the
+ * no-caller page policy). A family that opts in with `callerReaders` also serves the caller's reader identities and
+ * private-readable sources when the fragment is the canonical one for them. Any other fragment refuses.
+ */
+export function storePageTextPolicy(
+  member: string,
+  rendered: () => string,
+  opts: { callerReaders?: boolean } = {},
+): StorePrivacyPolicy {
+  const text = normalizeConceptInputs(rendered());
   const baseline = withoutCallerAccess(() => privatePagesFilterForCaller('p'));
-  if (rendered === normalizeConceptInputs(baseline)) return pagePolicyFlags(baseline);
+  if (text === normalizeConceptInputs(baseline)) return pagePolicyFlags(baseline);
   if (opts.callerReaders) {
     const access = currentCallerAccess();
     const readers = { identity: [...access.identity], privateReadableSources: [...access.privateReadableSources] };
     const canonical = withoutCallerAccess(() =>
       withCallerAccess({ ...readers, hidePrivate: true }, () => privatePagesFilterForCaller('p')));
-    if (rendered === normalizeConceptInputs(canonical)) return { ...pagePolicyFlags(canonical), ...readers };
+    if (text === normalizeConceptInputs(canonical)) return { ...pagePolicyFlags(canonical), ...readers };
   }
   refuseMember(member, 'excludePrivate for a caller whose member pages, grants or lineage widen the policy');
 }

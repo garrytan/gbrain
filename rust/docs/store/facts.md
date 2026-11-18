@@ -13,7 +13,7 @@ typed claims. Each member gives the answer PGLite gives today, odd behavior incl
 | `expireFact` | Expires an unexpired row; `supersededBy` must name an existing row (`facts_superseded_by_fkey`); `successorFrom` closes validity. |
 | `listFactsByEntity`, `listFactsSince`, `listFactsBySession` | Filtered lists, newest first, with `limit` and `offset`. `grep` is a pre-built ILIKE pattern, folded with Postgres `lower()` one code point at a time. |
 | `listFactsKeyset` | Oldest first by `(created_at, id)` after a microsecond ISO cursor. |
-| `listSupersessions` | Superseded rows, newest supersession first. |
+| `listSupersessions` | Superseded rows, newest supersession first. With a read eligibility (`eligible`, `minTrust`, `suppressFlagged`) it applies `projectionEligibleSql('facts')`: it also hides a row whose live provenance page is quarantined, a row below the trust floor and, under suppression, a flagged agent-written-or-lower row (`trust::TrustPolicy`). The store keeps no `needs_rederive` queue, so that clause hides nothing. |
 | `countUnconsolidatedFacts`, `getFactsHealth` | Counts of active rows (and the five entities with the most). |
 | `findCandidateDuplicates` | The recency arm: active same-entity rows, newest first, capped by `k`. The keyword arm (`keyword`, `factText`): the same rows less audit checkpoints, kept when `to_tsvector('english', fact)` matches the OR of the claim's `plainto_tsquery` lexemes (`keyword::or_of_lexemes`; none matches nothing), ordered by `ts_rank_cd` descending, then `created_at` and `id` descending. The cosine arm (`embedding`, no `keyword`): the same rows less audit checkpoints, kept when comparable (a vector from `embeddingModel`, `embedded_text_hash = md5(fact)`, the query's width), ordered by `halfvec` cosine distance to the query (cast to `halfvec` too; NaN last; equal distances by id). The keyword arm with an `embedding` keeps only the comparable rows and does not read the vector. An `embedding` with no (or an empty) `embeddingModel` finds nothing. The member refuses the keyword arm when `GBRAIN_FTS_LANGUAGE` is not `english`. |
 | `consolidateFact` | Stamps `consolidated_at` and `consolidated_into`. |
@@ -147,9 +147,10 @@ days by outcome and tier.
 
 ## Group 5: doctor checks (`facts/doctor.rs`)
 
-Ten members back the doctor checks. Eight are served by `facts/doctor.rs`; two refuse in the
-TypeScript store member with `engine_capability_missing`, and the three unlinked-fact reads
-refuse their `hasAttempts: true` form.
+Ten members back the doctor checks. Eight are served by `facts/doctor.rs`, one
+(`listUnpreviewedTrustFacts`) by `facts/trust_reads.rs` (below), and `countFactRelinkOutcomes`
+refuses in the TypeScript store member with `engine_capability_missing`. The three unlinked-fact
+reads refuse their `hasAttempts: true` form.
 
 | Member | Rust | Missing data when refused |
 |---|---|---|
@@ -157,7 +158,7 @@ refuse their `hasAttempts: true` form.
 | `countRedactedFacts` | served | |
 | `listOutsideContentFenceCounts` | served | |
 | `countAtomFacts` | served | |
-| `listUnpreviewedTrustFacts` | refused | no store read yet: the store keeps the write-gate holds and the `facts.trust_tier` and `facts.write_origin` columns it reads |
+| `listUnpreviewedTrustFacts` | served by `facts/trust_reads.rs` | |
 | `countUnlinkedFactsByOrigin` | served for `hasAttempts: false` | `hasAttempts: true` reads the `fact_relink_attempts` table |
 | `countUnlinkedFactStats` | served for `hasAttempts: false` | `hasAttempts: true` reads the `fact_relink_attempts` table |
 | `countFactRelinkOutcomes` | refused | the `fact_relink_attempts` table |
@@ -223,8 +224,8 @@ the columns the store has not got: `source_window`, `last_written_at` and the `w
 `last_write_*` columns.
 
 Refused with `engine_capability_missing`: `listFactsReconcileBacklog` (its reconcile ledger table
-`page_facts_reconcile` is not in the store) and `listSingleFactMetadata` (no store read yet: the
-store keeps the `trust_tier` it reads; it also reads the remote floor).
+`page_facts_reconcile` is not in the store). `listSingleFactMetadata` is served by
+`facts/trust_reads.rs` (below), except under the remote provenance floor.
 
 ## Group 5: repair classifiers and loop retirement (`facts/repair.rs`)
 
@@ -266,6 +267,16 @@ Rules of the four served members:
 - A folder rule is never read: the store holds no access tables, so no page is folder-restricted.
 - The privacy helpers (`provenance_slug`, `snapshot_allows`, `alias_private`, `derivation_private`) are
   re-implemented in `repair.rs` rather than shared with `privacy.rs`.
+
+## Group 5: stamped trust reads (`facts/trust_reads.rs`)
+
+Two reads of the `trust_tier` and `write_origin` the store stamps on every fact row. Neither needs a
+key range of its own: they read the fact rows and the write-gate holds (`trust/write_gate.rs`).
+
+| Member | Site | Served | Notes |
+|---|---|---|---|
+| `listSingleFactMetadata` | `facts/purge.ts` | yes, without the remote floor | `id = ANY(ids)` within `sourceId`: a repeated id answers once and an id no row has answers nothing. The SQL has no `ORDER BY`; the store answers in id order. The member refuses `remoteFloor: true` and an id that is not an `int4`. |
+| `listUnpreviewedTrustFacts` | doctor `trust-release-unpreviewed` | yes | Unexpired `user_confirmed` facts whose `write_origin` names the `trust_release` channel and has no `fields_previewed`, each joined to the newest released fact hold with the same source, slug, fence row (`payload->>'row_num'` as text, so `"3"` matches row 3) and request id (`IS NOT DISTINCT FROM`). A fact with no such hold drops out. In id order, at most `limit`; every row carries `total`, the count before the limit. The member refuses a limit that is not a non-negative integer. |
 
 ## Group 5: search relevance and trust reads (`facts/trust.rs`)
 

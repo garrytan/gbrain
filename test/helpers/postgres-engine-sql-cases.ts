@@ -76,12 +76,21 @@ const OOS = {
   factsTrust: 'out-of-scope:facts-trust (born in engine-sql/facts-trust.ts; pinned by test/engine-parity/facts-trust.test.ts)',
   trustWithdrawals: 'out-of-scope:trust-withdrawals (born in engine-sql/trust-withdrawals.ts; pinned by test/engine-parity/trust-withdrawals.test.ts)',
   trustWriteGate: 'out-of-scope:trust-write-gate (born in engine-sql/trust-write-gate.ts; pinned by test/engine-parity/trust-write-gate.test.ts)',
+  trustTierReads: 'out-of-scope:trust-tier-reads (born in engine-sql/trust-tier-reads.ts; pinned by test/engine-parity/trust-tier-reads.test.ts)',
   openLoops: 'out-of-scope:open-loops (born in engine-sql/open-loops.ts; pinned by test/engine-parity/open-loops.test.ts)',
   minionJobs: 'out-of-scope:minion-jobs (born in engine-sql/jobs.ts and engine-sql/jobs-queue.ts; pinned by test/engine-parity/jobs.test.ts and jobs-queue.test.ts)',
   takesReads: 'out-of-scope:takes-reads (born in engine-sql/takes-reads.ts; pinned by test/engine-parity/takes.test.ts, code-eval-salience.test.ts and test/engine-sql-takes-reads.test.ts)',
 } as const;
 
 export const DOMAIN_OF: Record<string, string> = {
+  'listCorePageRows': OOS.trustTierReads,
+  'listTrustScanRows': OOS.trustTierReads,
+  'countUnscannedTrustRows': OOS.trustTierReads,
+  'readBeliefHistoryRows': OOS.trustTierReads,
+  'listVisibleBeliefLifetimes': OOS.trustTierReads,
+  'listVersionTrustTiers': OOS.trustTierReads,
+  'listVersionReasonWriters': OOS.trustTierReads,
+  'pickValidTimeEdition': OOS.trustTierReads,
   'closeOpenLoop': OOS.openLoops,
   'listOpenLoops': OOS.openLoops,
   'upsertOpenLoop': OOS.openLoops,

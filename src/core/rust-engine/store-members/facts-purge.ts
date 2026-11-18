@@ -4,8 +4,8 @@
  * turns the ISO times the store returns into `Date`s, as PGLite returns them.
  *
  * A member not exported here refuses with `engine_capability_missing`: `listFactsReconcileBacklog` reads
- * `page_facts_reconcile`, a table the store does not have, and `listSingleFactMetadata` has no store read yet (the store
- * keeps the `trust_tier` it reads). `findActiveSingleFact` refuses the remote provenance floor and `listSimilarActiveFacts` refuses `excludePrivate`
+ * `page_facts_reconcile`, a table the store does not have. `listSingleFactMetadata` is served by facts-trust-reads.ts.
+ * `findActiveSingleFact` refuses the remote provenance floor and `listSimilarActiveFacts` refuses `excludePrivate`
  * for a caller whose policy the store does not model (private-provenance.ts).
  */
 import type { BrainEngine } from '../../engine.ts';

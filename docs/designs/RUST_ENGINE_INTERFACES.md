@@ -1726,16 +1726,21 @@ and write provenance on content rows, and the trust records.
   - No caller, still refused: `currentCodeChunksExist` and the code symbol members (the context read policy sends
     no floor), `findOrphanPages` and `listLinkSources`.
   - Ignored on purpose, as their SQL does: the raw-files, stats, ontology, timeline and chunk-page reads.
-  - Not yet built: `listSingleFactMetadata` (a write-path read under the remote floor) and
-    `listUnpreviewedTrustFacts` (the doctor check) have no store read. Reads of `trust_tier` through `executeRaw`
-    (core memory, the eligibility scan, belief history, admin, valid time) need typed members. `resolveAliases`
-    serves the floor, the flagged-page filter and `excludePrivate` on both the alias page and its title shadow
-    (`alias-trust.test.ts`), a caller's reader identity and private-readable grant included; it still refuses
-    `excludePrivate` for a caller whose folder rules, lineage or owner read change the page policy, and the search
-    fan-out reads that refusal as no aliases. The fact read
-    eligibility refusal (`listSupersessions` and its family) has production callers and is a follow-up. The takes
-    members keep their refusal.
-  - Pinned by `test/engine-parity/trust-reads.test.ts` on all three engines.
+  - Built: `listSingleFactMetadata` (refused only under the remote floor) and `listUnpreviewedTrustFacts` read the
+    stamped tier and origin (`facts/trust_reads.rs`), and `listSupersessions` honours a read eligibility.
+  - Built: the `executeRaw` reads of `trust_tier` in core memory, the eligibility scan, belief history, page history
+    (`get_versions`) and valid time are typed members (`engine-sql/trust-tier-reads.ts`). The Rust store serves
+    `listCorePageRows`, the pages and facts arms of `listTrustScanRows` and `countUnscannedTrustRows`,
+    `listVersionTrustTiers` and `listVersionReasonWriters` (`trust/tier_reads.rs`); it refuses the takes and
+    timeline scan tables, the belief history members and `pickValidTimeEdition`.
+  - `resolveAliases` serves the floor, the flagged-page filter and `excludePrivate` on both the alias page and its
+    title shadow (`alias-trust.test.ts`), a caller's reader identity and private-readable grant included; it still
+    refuses `excludePrivate` for a caller whose member pages, grants or lineage widen the page policy, and the search
+    fan-out reads that refusal as no aliases.
+  - Not yet built: the scan cursor, the claim and `max(id)` reads of the eligibility scan, the valid-time identity
+    and amendment reads, and the admin slug and lifetime reads still go through `executeRaw`. The takes members keep
+    their refusal.
+  - Pinned by `test/engine-parity/trust-reads.test.ts` and `test/engine-parity/trust-tier-reads.test.ts` on all three engines.
 
 ### catalog probes (core)
 
