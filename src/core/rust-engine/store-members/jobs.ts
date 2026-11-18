@@ -112,6 +112,8 @@ export * from './jobs-status.ts';
 export * from './jobs-checks.ts';
 // The reads behind `describeJobs` (engine-sql/jobs-insight.ts).
 export * from './jobs-insight.ts';
+// The subagent transcript and tool ledger (engine-sql/jobs-subagent.ts).
+export * from './jobs-subagent.ts';
 
 // ---------------------------------------------------------------- cycle locks
 

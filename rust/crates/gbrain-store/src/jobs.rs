@@ -54,6 +54,7 @@ mod mutations;
 mod private_queues;
 mod reads;
 mod status;
+mod subagent;
 mod sweeps;
 mod synthesis_completions;
 
@@ -67,6 +68,7 @@ pub use mutations::{DelayOpts, TokenDelta};
 pub use private_queues::PrivateQueueState;
 pub use reads::{JobPageCursor, JobPageSpec, OverdueSpec};
 pub use status::StatusFilter;
+pub use subagent::{FailureFallback, MessageInsert, ToolInsert, ToolStart, ToolTarget};
 pub use sweeps::{CancelOpts, PruneOutcome, PruneSpec};
 
 use crate::dream::jsonb;
@@ -700,6 +702,7 @@ fn delete_row(tx: &mut dyn KvWrite, row: &JobRecord) -> Result<()> {
     for k in attachments {
         tx.delete(&k)?;
     }
+    subagent::delete_job_rows(tx, row.id)?;
     for child in ids_under(tx, &child_prefix(row.id))? {
         if let Some(old) = load(tx, child)? {
             let mut new = old.clone();

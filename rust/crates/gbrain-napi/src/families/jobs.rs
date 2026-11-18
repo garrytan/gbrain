@@ -9,6 +9,7 @@ mod health;
 mod insight;
 mod ops;
 mod status;
+mod subagent;
 
 use gbrain_store::error::StoreError;
 use gbrain_store::jobs::{AdmitSpec, ClaimSpec, ListFilter, LockAcquire, LockFilter, LockHolder};
