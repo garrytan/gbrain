@@ -17,7 +17,7 @@ import { pageBodyBytes } from '../core/page-body/page-shape.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { DUPLICATE_KINDS, findDuplicateGroups, type DuplicateEvidence, type DuplicateGroup, type DuplicateKind, type DuplicateResult } from '../core/entities/duplicates.ts';
-import { decidedSets, identityHome, reconcileDecisions, recordDecisions, type DecisionInput, type RecordResult } from '../core/entities/identity-decisions.ts';
+import { decidedSets, decisionId, identityHome, reconcileDecisions, recordDecisions, type DecisionInput, type RecordResult } from '../core/entities/identity-decisions.ts';
 import type { IdentityDecisionsRead, IdentityMemberRef } from '../core/engine-sql/identity-decisions.ts';
 import { identityIdsForPages, validateEntityId } from '../core/entity-identity.ts';
 import { opError, OperationError } from '../core/ops/contract.ts';
@@ -289,6 +289,7 @@ async function runConfirm(engine: BrainEngine, args: string[]): Promise<void> {
     const inIdentity = await identitiesOf(engine, chosen);
     for (const g of chosen) {
       const held = [...new Set(g.members.map(m => inIdentity.get(memberText(m))).filter((x): x is string => !!x))];
+      if (f.join && !held.includes(f.join)) throw unknownGroup(f.join);
       if (held.length && !(held.length === 1 && held[0] === f.join)) {
         const member = g.members.find(m => inIdentity.has(memberText(m)))!;
         throw opError('identity_member_in_other_group',
@@ -322,12 +323,29 @@ async function runReject(engine: BrainEngine, args: string[]): Promise<void> {
   if (!f) return;
   if (!f.ids.length) { console.error(`gbrain dedupe reject: name at least one group id.\n\n${HELP}`); setCliExitVerdict(2); return; }
   const { result, read } = await scan(engine);
+  const same = read.decisions.filter(d => d.verdict === 'same');
   const decisions: DecisionInput[] = [];
   for (const id of [...new Set(f.ids)]) {
-    const members = result.groups.find(g => g.id === id)?.members
-      ?? read.decisions.find(d => d.group_id === id || d.entity_id === id)?.members;
-    if (!members) throw unknownGroup(id);
-    decisions.push({ verdict: 'different', members, group_id: id, entity_id: null, canonical: null, decided_by: DECIDED_BY });
+    const confirmed = same.filter(d => d.entity_id === id);
+    const members = confirmed.length ? confirmed.map(d => ({ members: d.members, group_id: d.group_id ?? id }))
+      : [result.groups.find(g => g.id === id)?.members ?? read.decisions.find(d => d.group_id === id)?.members]
+        .filter((m): m is IdentityMemberRef[] => !!m).map(m => ({ members: m, group_id: id }));
+    if (!members.length) throw unknownGroup(id);
+    for (const m of members) decisions.push({ verdict: 'different', members: m.members, group_id: m.group_id, entity_id: null, canonical: null, decided_by: DECIDED_BY });
+  }
+  const undone = new Set(decisions.map(d => decisionId(d.members)));
+  for (const d of decisions) {
+    const keys = new Set(d.members.map(memberText));
+    const other = same.find(s => !undone.has(s.decision_id) && s.members.some(m => keys.has(memberText(m))));
+    if (!other) continue;
+    const member = other.members.find(m => keys.has(memberText(m)))!;
+    throw opError('identity_member_in_other_group',
+      `gbrain dedupe reject: ${memberText(member)} of ${d.group_id} is in the group you confirmed as one person (${other.entity_id}); nothing was written.`,
+      `Undo that confirm first with gbrain dedupe reject ${other.entity_id}, then reject ${d.group_id}.`,
+      { fix: { ask_user: true, argv: ['gbrain', 'dedupe', 'reject', other.entity_id!], consent: [], actor: 'user', requires_exclusive: false,
+        why: 'Records the confirmed group as different people and removes its links, so the larger group can be rejected after it.',
+        user_message: `${memberText(member)} is in the group you confirmed as one person (${other.entity_id}). Should I undo that confirm first?`,
+        verify: { argv: ['gbrain', 'doctor', '--only', 'entity_duplicates', '--json'] } } });
   }
   const r = await recordDecisions(engine, decisions, `dedupe: record ${decisions.length} group(s) as different people`);
   const sameSource = await markDistinct(engine, decisions);

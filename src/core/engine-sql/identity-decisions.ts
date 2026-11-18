@@ -112,12 +112,16 @@ export async function applyIdentityDecisions(exec: SqlExecutor, input: ApplyIden
     RETURNING 1`)).rows.length;
   const linked = (await exec.query(`
     INSERT INTO entity_identities (entity_id, source_id, page_id, confidence, established_by, canonical)
-    SELECT r.entity_id, p.source_id, p.id, 1.0, 'dedupe:confirm',
-           p.source_id = r.canonical_source_id AND p.slug = r.canonical_slug
-             AND NOT EXISTS (SELECT 1 FROM entity_identities c WHERE c.entity_id = r.entity_id AND c.canonical)
-      FROM ${MEMBER_PAGES}
-     WHERE r.verdict = 'same' AND r.entity_id IS NOT NULL AND p.id IS NOT NULL
-       AND NOT EXISTS (SELECT 1 FROM entity_identities x WHERE x.source_id = p.source_id AND x.page_id = p.id)
+    SELECT m.entity_id, m.source_id, m.page_id, 1.0, 'dedupe:confirm',
+           m.is_canonical AND m.rn = 1 AND NOT EXISTS (SELECT 1 FROM entity_identities c WHERE c.entity_id = m.entity_id AND c.canonical)
+      FROM (SELECT r.entity_id, p.source_id, p.id AS page_id,
+                   COALESCE(p.source_id = r.canonical_source_id AND p.slug = r.canonical_slug, false) AS is_canonical,
+                   row_number() OVER (PARTITION BY r.entity_id
+                     ORDER BY COALESCE(p.source_id = r.canonical_source_id AND p.slug = r.canonical_slug, false) DESC,
+                              r.decision_id, p.source_id, p.id) AS rn
+              FROM ${MEMBER_PAGES}
+             WHERE r.verdict = 'same' AND r.entity_id IS NOT NULL AND p.id IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM entity_identities x WHERE x.source_id = p.source_id AND x.page_id = p.id)) m
     ON CONFLICT (source_id, page_id) DO NOTHING
     RETURNING 1`)).rows.length;
   return { upserted: input.upsert?.length ?? 0, removed, linked, unlinked };

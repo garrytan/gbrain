@@ -204,6 +204,45 @@ describe('without a repository', () => {
     expect((await preview()).some(g => g.id === alice || g.id === bob)).toBe(false);
   });
 
+  test('two confirmed decisions that share one identity group link with exactly one canonical page', async () => {
+    await seed();
+    const mk = (slug: string) => {
+      const members = [{ source_id: 'default', slug }, { source_id: 'source-b', slug }];
+      return { decision_id: decisionId(members), verdict: 'same', members, group_id: `g-${slug}`, entity_id: 'shared-example',
+        canonical: { source_id: 'default', slug }, decided_by: 'test', origin: 'database', home_source_id: 'default', git_blob: null };
+    };
+    await engine.applyIdentityDecisions({ upsert: [mk('people/alice-example'), mk('people/dan-sample')] } as never);
+    const linked = (await rows()).identities;
+    expect(linked).toHaveLength(4);
+    expect(linked.filter(r => r.canonical)).toHaveLength(1);
+  });
+
+  test('reject undoes every confirm of an identity group and refuses a larger group that overlaps one; --join needs an existing group', async () => {
+    await seed();
+    await expect(cli(['confirm', await groupOf('people/dan-sample'), '--join', 'nobody-example'])).rejects.toMatchObject({ code: 'dedupe_group_unknown' });
+    const alice = await groupOf('people/alice-example');
+    await cli(['confirm', alice]);
+    await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('source-c', 'source-c') ON CONFLICT DO NOTHING");
+    await page('people/alice-example', 'Alice Example', { linkedin: 'linkedin.com/in/alice-example' }, 'source-c');
+    const wider = (await preview()).find(g => g.members.length === 3)!;
+    await expect(cli(['reject', wider.id])).rejects.toMatchObject({ code: 'identity_member_in_other_group' });
+    expect((await rows()).decisions.map(d => d.verdict)).toEqual(['same']);
+    await cli(['confirm', wider.id, '--join', alice]);
+    expect((await rows()).identities.filter(r => r.slug === 'people/alice-example')).toHaveLength(3);
+    await cli(['reject', alice]);
+    const after = await rows();
+    expect(after.identities).toEqual([]);
+    expect(after.decisions.map(d => d.verdict)).toEqual(['different', 'different']);
+  });
+
+  test('a rejected group cannot be confirmed by its id; the different decision stays', async () => {
+    await seed();
+    const bob = await groupOf('people/bob-sample');
+    await cli(['reject', bob]);
+    await expect(cli(['confirm', bob])).rejects.toMatchObject({ code: 'dedupe_group_unknown' });
+    expect((await rows()).decisions.map(d => d.verdict)).toEqual(['different']);
+  });
+
   test('a page pair in one source also gets distinct_from through the page door', async () => {
     await page('people/erin-example', 'Erin Example', { email: 'erin@example.com' }, 'default');
     await page('people/erin-example-2', 'Erin Example', { email: 'erin@example.com' }, 'default');
@@ -261,13 +300,13 @@ describe('with a repository', () => {
     }
     git(root, 'add', '-A');
     git(root, 'commit', '-qm', 'pages');
-    await engine.executeRaw("INSERT INTO sources (id, name, local_path, config) VALUES ('home-a', 'home-a', $1, '{}')", [root]);
+    await engine.executeRaw("UPDATE sources SET local_path = $1 WHERE id = 'default'", [root]);
     await syncHome();
     await page('people/alice-example', 'Alice Example', { linkedin: 'linkedin.com/in/alice-example' }, 'source-b');
     await page('people/bob-sample', 'Bob Sample', { email: 'bob@example.com' }, 'source-b');
     await page('people/dan-sample', 'Dan Sample', {}, 'source-b');
   });
-  const syncHome = () => performSync(engine, { sourceId: 'home-a', repoPath: root, noPull: true, noEmbed: true, concurrency: 1 });
+  const syncHome = () => performSync(engine, { sourceId: 'default', repoPath: root, noPull: true, noEmbed: true, concurrency: 1 });
   const committed = (id: string) => git(root, 'show', `HEAD:${IDENTITY_DIR}/${id}.md`);
   const doctor = async () => (await entityDuplicatesEntry.run({ engine, orphanRatioSourceId: undefined, progress: { heartbeat() {} } } as unknown as DoctorContext) as Check[])[0] as { status: string; message: string; details: any };
 
@@ -277,10 +316,10 @@ describe('with a repository', () => {
     const pagesBefore = await engine.getPage('people/alice-example', { sourceId: 'source-b' });
     await engine.executeRaw("UPDATE sources SET config = '{\"mirror_read_only\": true}' WHERE id = 'source-b'");
     const out = await cli(['confirm', alice]);
-    expect(out).toContain('Recorded in home-a:.gbrain/identity/');
+    expect(out).toContain('Recorded in default:.gbrain/identity/');
     await cli(['reject', bob]);
-    const aliceId = decisionId([{ source_id: 'home-a', slug: 'people/alice-example' }, { source_id: 'source-b', slug: 'people/alice-example' }]);
-    const bobId = decisionId([{ source_id: 'home-a', slug: 'people/bob-sample' }, { source_id: 'source-b', slug: 'people/bob-sample' }]);
+    const aliceId = decisionId([{ source_id: 'default', slug: 'people/alice-example' }, { source_id: 'source-b', slug: 'people/alice-example' }]);
+    const bobId = decisionId([{ source_id: 'default', slug: 'people/bob-sample' }, { source_id: 'source-b', slug: 'people/bob-sample' }]);
     expect(committed(aliceId)).toContain('verdict: same');
     expect(committed(bobId)).toContain('verdict: different');
     expect(git(root, 'status', '--porcelain')).toBe('');
@@ -295,22 +334,22 @@ describe('with a repository', () => {
     await syncHome();
     const rebuilt = await rows();
     expect(rebuilt.decisions).toEqual(recorded.decisions);
-    expect(rebuilt.identities.map(r => r.source_id)).toEqual(['home-a']);
+    expect(rebuilt.identities.map(r => r.source_id)).toEqual(['default']);
     expect((await engine.listIdentityDecisions()).pending).toEqual([{ decision_id: aliceId, source_id: 'source-b', slug: 'people/alice-example', reason: 'page_missing' }]);
     expect((await doctor()).message).toContain('1 page(s) of confirmed groups are not linked');
     await page('people/alice-example', 'Alice Example', { linkedin: 'linkedin.com/in/alice-example' }, 'source-b');
     await syncHome();
-    expect((await rows()).identities.map(r => [r.source_id, r.established_by, r.canonical])).toEqual([['home-a', 'dedupe:confirm', true], ['source-b', 'dedupe:confirm', false]]);
+    expect((await rows()).identities.map(r => [r.source_id, r.established_by, r.canonical])).toEqual([['default', 'dedupe:confirm', true], ['source-b', 'dedupe:confirm', false]]);
     expect((await preview()).map(g => g.members[0]!.slug)).toEqual(['people/dan-sample']);
   });
 
   test('a decision the database holds alone moves into git with reconcile; doctor reports the drift until then', async () => {
-    await engine.applyIdentityDecisions({ upsert: [{ decision_id: decisionId([{ source_id: 'home-a', slug: 'people/dan-sample' }, { source_id: 'source-b', slug: 'people/dan-sample' }]),
-      verdict: 'different', members: [{ source_id: 'home-a', slug: 'people/dan-sample' }, { source_id: 'source-b', slug: 'people/dan-sample' }],
+    await engine.applyIdentityDecisions({ upsert: [{ decision_id: decisionId([{ source_id: 'default', slug: 'people/dan-sample' }, { source_id: 'source-b', slug: 'people/dan-sample' }]),
+      verdict: 'different', members: [{ source_id: 'default', slug: 'people/dan-sample' }, { source_id: 'source-b', slug: 'people/dan-sample' }],
       group_id: null, entity_id: null, canonical: null, decided_by: 'owner', origin: 'database', home_source_id: null, git_blob: null }] });
     const drift = await doctor();
     expect(drift.status).toBe('warn');
-    expect(drift.message).toContain('1 duplicate decision(s) are in the database but not in git (source home-a)');
+    expect(drift.message).toContain('1 duplicate decision(s) are in the database but not in git (source default)');
     await cli(['reconcile']);
     expect((await rows()).decisions.map(d => d.origin)).toEqual(['git']);
     expect((await doctor()).message).not.toContain('drift');

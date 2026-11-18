@@ -3,8 +3,8 @@
  * (gbrain dedupe confirm) and "different people" (gbrain dedupe reject) on a group of person or company pages, kept by
  * (source_id, slug).
  *
- * Where they live. On a brain whose home source (the default source, else the first other unarchived, writable source
- * whose root is a git work tree) has a repository, each decision is `.gbrain/identity/<decision_id>.md` there, frontmatter
+ * Where they live. On a brain whose home source (the default source, when it is writable and its root is a git work tree;
+ * never another source, so member names never reach a repository other sources' readers may share) has a repository, each decision is `.gbrain/identity/<decision_id>.md` there, frontmatter
  * only, committed through the one door (gbrain git commit-push's commit lock and push) before anything reaches the
  * database: the entity_identity_reviews rows are its projection, read from the committed files at HEAD (sync repeats it),
  * so a failed commit leaves no row and a database rebuilt from git gets every decision back. A pair whose pages sit in a
@@ -16,6 +16,7 @@
  * dedupe_decision_store_mismatch instead of writing a decision only the database would hold.
  */
 import { createHash } from 'node:crypto';
+import { DEFAULT_SOURCE_ID } from '../sync-failure-ledger.ts';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import yaml from 'js-yaml';
@@ -89,14 +90,12 @@ export function parseDecisionFile(text: string, id: string): (DecisionInput & { 
 
 export interface IdentityHome { sourceId: string; root: string }
 
-/** The source whose repository holds the decisions: default first, then by id; unarchived, not a read-only mirror, a git work tree. */
+/** The source whose repository holds the decisions: the default source, when it is not a read-only mirror and is a git work tree. */
 export async function identityHome(engine: BrainEngine): Promise<IdentityHome | null> {
-  for (const s of await engine.listAllSources()) {
-    if (parseSourceConfig(s.config).mirror_read_only === true) continue;
-    const root = await sourcePolicyRoot(engine, s.id);
-    if (root && isGitWorkTree(root)) return { sourceId: s.id, root };
-  }
-  return null;
+  const s = (await engine.listAllSources()).find(x => x.id === DEFAULT_SOURCE_ID);
+  if (!s || parseSourceConfig(s.config).mirror_read_only === true) return null;
+  const root = await sourcePolicyRoot(engine, s.id);
+  return root && isGitWorkTree(root) ? { sourceId: s.id, root } : null;
 }
 
 async function git(root: string, args: string[]): Promise<string> {
@@ -166,9 +165,9 @@ function commitDecisionFiles(root: string, decisions: Array<DecisionInput & { de
         return { outcome: r.outcome, commit: r.committed ?? r.sha, paths: files.map(f => f.path),
           ...(r.outcome === 'committed_local' ? { note: 'Committed locally; this checkout has no remote or is managed, so nothing was pushed.' } : {}) };
       } catch (e) {
-        if (e instanceof OperationError && (e.code === 'push_unconfirmed' || e.code === 'push_credential_refused' || e.code === 'publish_secret_found'
-          || e.code === 'publish_scan_unreadable') && committedAll(root, files)) {
-          return { outcome: 'committed_not_pushed', commit: null, paths: files.map(f => f.path), note: `Committed locally; nothing was pushed. ${e.code}: ${e.message}` };
+        if (committedAll(root, files)) {
+          const code = (e as { code?: string }).code ?? 'error';
+          return { outcome: 'committed_not_pushed', commit: null, paths: files.map(f => f.path), note: `Committed locally; nothing was pushed. ${code}: ${(e as Error).message}` };
         }
         for (const [abs, text] of before) if (text === null) rmSync(abs, { force: true }); else writeFileSync(abs, text);
         throw e;
