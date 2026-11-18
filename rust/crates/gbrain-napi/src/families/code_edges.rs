@@ -3,6 +3,7 @@
 //! Each method decodes its arguments, runs one `Store` call on the pool through `Brain::run`, and
 //! resolves plain JSON. The shell resolves defaults first (`source_id ?? 'default'`, the limit
 //! clamps, the source scope, the bare-name opt-in) and maps each row through `rowToCodeEdge`.
+//! The `code_traversal_cache` members (get, put, clear) sit at the end.
 
 use napi::Env;
 use napi::bindgen_prelude::Object;
@@ -84,5 +85,45 @@ impl Brain {
         source_id: String,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.has_code_edges_symbol(&source_id))
+    }
+
+    /// `getCodeTraversalCache(key)`: resolves `{ response_json, computed_at, cluster_generation }` or null.
+    #[napi]
+    pub fn get_code_traversal_cache<'env>(
+        &self,
+        env: &'env Env,
+        key: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let key: code_edges::CacheKeyInput = required(key, "getCodeTraversalCache key")?;
+            s.get_code_traversal_cache(&key)
+        })
+    }
+
+    /// `putCodeTraversalCache(row)`: resolves null (insert, or replace the row at the key).
+    #[napi]
+    pub fn put_code_traversal_cache<'env>(
+        &self,
+        env: &'env Env,
+        row: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let row: code_edges::CachePutInput = required(row, "putCodeTraversalCache row")?;
+            s.put_code_traversal_cache(&row)
+        })
+    }
+
+    /// `clearCodeTraversalCache({ sourceId })`: resolves the number of rows deleted (a null source clears all).
+    #[napi]
+    pub fn clear_code_traversal_cache<'env>(
+        &self,
+        env: &'env Env,
+        scope: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let scope: code_edges::CacheClearInput =
+                required(scope, "clearCodeTraversalCache scope")?;
+            s.clear_code_traversal_cache(&scope)
+        })
     }
 }

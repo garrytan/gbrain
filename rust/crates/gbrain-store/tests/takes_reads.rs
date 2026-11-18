@@ -292,6 +292,79 @@ fn mcp_resolved_takes_are_counted_in_the_callers_scope() {
     );
 }
 
+fn page_with(b: &Brain, source: &str, slug: &str, frontmatter: Value) -> u64 {
+    let input: PageInput = de(json!({
+        "type": "note", "title": slug, "compiled_truth": "x", "frontmatter": frontmatter,
+    }));
+    let opts: PutPageOptions = de(json!({"sourceId": source}));
+    b.put_page(slug, &input, &opts).unwrap()["id"]
+        .as_u64()
+        .unwrap()
+}
+
+#[test]
+fn mcp_resolved_takes_under_exclude_private_skip_the_pages_the_page_policy_hides() {
+    let b = brain("takes-reads-mcp-private");
+    source(&b, "other");
+    let pages = [
+        page_with(&b, "default", "open", json!({})),
+        page_with(&b, "default", "private", json!({"visibility": "private"})),
+        page_with(&b, "default", "readers", json!({"readable_by": ["alice"]})),
+        page_with(&b, "default", "alias", json!({"access": "restricted"})),
+        page_with(
+            &b,
+            "default",
+            "alias-world",
+            json!({"access": "restricted", "visibility": "world"}),
+        ),
+        page_with(&b, "other", "other-open", json!({})),
+        page_with(
+            &b,
+            "other",
+            "other-private",
+            json!({"visibility": "private"}),
+        ),
+    ];
+    for (i, p) in pages.iter().enumerate() {
+        let holder = if i % 2 == 0 { "garry" } else { "alice" };
+        add(&b, &[take(*p, 1, "resolved", json!({"holder": holder}))]);
+        resolve(&b, *p, 1, Some("mcp:client"));
+    }
+    let policy = |honor_aliases: bool, entity_privacy: bool| json!({"honorAliases": honor_aliases, "entityPrivacy": entity_privacy});
+    // No policy counts every page.
+    assert_eq!(mcp(&b, json!({})), 7);
+    assert_eq!(mcp(&b, json!({"excludePrivate": null})), 7);
+    // With aliases honoured: private, readers, alias and other-private are hidden.
+    let strict = policy(true, true);
+    assert_eq!(mcp(&b, json!({"excludePrivate": strict})), 3);
+    assert_eq!(
+        mcp(
+            &b,
+            json!({"excludePrivate": strict, "sourceIds": ["default"]})
+        ),
+        2
+    );
+    assert_eq!(
+        mcp(
+            &b,
+            json!({"excludePrivate": strict, "sourceIds": ["other"]})
+        ),
+        1
+    );
+    assert_eq!(
+        mcp(&b, json!({"excludePrivate": strict, "holders": ["alice"]})),
+        1
+    );
+    assert_eq!(mcp(&b, json!({"excludePrivate": strict, "holders": []})), 0);
+    // Without aliases, the `access` key alone no longer hides a page.
+    assert_eq!(mcp(&b, json!({"excludePrivate": policy(false, true)})), 4);
+    // Without the privacy part (an operator relaxed it) only the readers rule hides a page.
+    assert_eq!(mcp(&b, json!({"excludePrivate": policy(true, false)})), 6);
+    // A soft-deleted page still counts when the policy lets it through (its row stays in `pages`).
+    b.soft_delete_page("open", Some("default")).unwrap();
+    assert_eq!(mcp(&b, json!({"excludePrivate": strict})), 3);
+}
+
 #[test]
 fn take_supersession_candidates_are_live_pages_with_an_inactive_or_superseded_take() {
     let b = brain("takes-reads-supersession");

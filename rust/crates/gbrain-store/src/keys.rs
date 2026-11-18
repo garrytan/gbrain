@@ -47,6 +47,8 @@ pub const DREAM_VERDICT: u8 = b'Y';
 pub const EVAL_CAPTURE: u8 = b'Z';
 /// Family `code_edges` (`code_edges.rs`).
 pub const CODE_EDGE: u8 = b'H';
+/// Family `code_edges`, the `code_traversal_cache` table (`code_edges/traversal_cache.rs`).
+pub const CODE_TRAVERSAL_CACHE: u8 = b'g';
 /// Family `salience` (`salience.rs`).
 pub const SALIENCE: u8 = b's';
 /// Family `stats` (`stats.rs`).
