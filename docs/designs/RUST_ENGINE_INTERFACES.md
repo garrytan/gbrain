@@ -1066,10 +1066,11 @@ Chunk vectors and vector search.
 - **Notes:** Cosine score is `1 - distance`, within `1e-6` of pgvector.
 - **Store field:** `Store` holds one `pub(crate) vectors: crate::vectors::VectorCache`, made with `Default` in
   `open_kv`, so a search passes `Some(&self.vectors)` to `load_index` and reuses the decoded vectors across reads.
-  Core defines `VectorCache` as an empty struct in `vectors.rs`; the family's own definition replaces it (keep the
-  family's file when the two conflict). The cache must be fed from committed snapshots only, so a store bound to an
-  open transaction (the transactions family's `bound_to`) gets its own `VectorCache::default()` and never shares the
-  brain's.
+  Core defines `VectorCache` as an empty struct at the end of `vectors.rs`. Git merges it into the family's file with
+  no conflict and keeps both definitions, so the build fails (`E0428`): after the merge, delete core's empty struct
+  and keep the family's. The cache must be fed from committed snapshots only, so a store bound to an open transaction
+  gets its own cache and never shares the brain's: the transactions family's `bound_to` adds
+  `vectors: vectors::VectorCache::default()` (without it the build fails with `E0063`).
 - **Parity cases (3, in `search.test.ts`, `takes.test.ts`):**
   - `search.test.ts`: searchVector ranks by cosine similarity and applies filters and paging
   - `search.test.ts`: searchVector: a dense page cannot starve the page-grain result
