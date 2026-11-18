@@ -109,7 +109,10 @@ export async function listRestrictedIdentityMembers(exec: LegacyUnscopedRead, me
   return rows;
 }
 
-/** Writes and removes decisions, then reconciles the 'dedupe:confirm' identity rows; the engine runs it in one transaction. */
+/**
+ * Writes and removes decisions, then reconciles the 'dedupe:confirm' identity rows; the engine runs it in one transaction.
+ * A page a "same" decision names leaves its automatic company link ('dedupe:auto') first: the owner's decision wins.
+ */
 export async function applyIdentityDecisions(exec: SqlExecutor, input: ApplyIdentityDecisionsInput): Promise<ApplyIdentityDecisionsResult> {
   if (exec.capabilities.transactionAdvisoryLocks) await exec.run(sqlFragment`SELECT pg_advisory_xact_lock(hashtextextended('gbrain:identity-decisions', 0))`);
   if (input.expectRevision !== undefined) {
@@ -141,6 +144,10 @@ export async function applyIdentityDecisions(exec: SqlExecutor, input: ApplyIden
          SELECT 1 FROM ${MEMBER_PAGES}
           WHERE r.verdict = 'same' AND r.entity_id = ei.entity_id AND p.id = ei.page_id AND p.source_id = ei.source_id)
     RETURNING 1`)).rows.length;
+  await exec.query(`
+    DELETE FROM entity_identities ei
+     WHERE ei.established_by = 'dedupe:auto'
+       AND EXISTS (SELECT 1 FROM ${MEMBER_PAGES} WHERE r.verdict = 'same' AND r.entity_id IS NOT NULL AND p.id = ei.page_id AND p.source_id = ei.source_id)`);
   const linked = (await exec.query(`
     INSERT INTO entity_identities (entity_id, source_id, page_id, confidence, established_by, canonical)
     SELECT m.entity_id, m.source_id, m.page_id, 1.0, 'dedupe:confirm',

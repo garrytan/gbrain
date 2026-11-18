@@ -20,6 +20,7 @@
  * dedupe_decision_store_mismatch instead of writing a decision only the database would hold.
  */
 import { createHash } from 'node:crypto';
+import { pageBodyBytes } from '../page-body/page-shape.ts';
 import { isOwnerOnlySourceConfig } from '../access/owner-only.ts';
 import { DEFAULT_SOURCE_ID } from '../sync-failure-ledger.ts';
 import { closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs';
@@ -339,7 +340,10 @@ async function databaseOnly(engine: BrainEngine, home: IdentityHome, decisions: 
   return { dbOnly: rows.filter((_, i) => blocked[i] === null), committed };
 }
 
-/** Sync's hook: re-project the home source's decisions after it syncs, and retry pending members after any sync. Never throws. */
+/**
+ * Sync's hook: re-project the home source's decisions after it syncs, retry pending members after any sync, then recompute
+ * the automatic company links (company-links.ts). Never throws.
+ */
 export async function syncIdentityDecisions(engine: BrainEngine, sourceId: string, log?: (line: string) => void): Promise<void> {
   try {
     const home = await identityHome(engine);
@@ -351,6 +355,13 @@ export async function syncIdentityDecisions(engine: BrainEngine, sourceId: strin
     }
   } catch (e) {
     log?.(`[dedupe] duplicate decisions were not reconciled after this sync: ${e instanceof Error ? e.message : String(e)} (gbrain dedupe reconcile retries)`);
+  }
+  try {
+    const { sweepCompanyLinks } = await import('./company-links.ts');
+    const r = await sweepCompanyLinks(engine);
+    if (r.linked || r.unlinked) log?.(`[dedupe] automatic company links: ${r.linked} page(s) linked, ${r.unlinked} unlinked (gbrain dedupe --preview --kind auto lists them)`);
+  } catch (e) {
+    log?.(`[dedupe] automatic company links were not updated after this sync: ${e instanceof Error ? e.message : String(e)} (the next sync or gbrain dedupe reconcile retries)`);
   }
 }
 
@@ -393,6 +404,20 @@ export async function identityDrift(engine: BrainEngine, read?: IdentityDecision
     rows_without_file: [...rows.keys()].filter(id => !fileIds.has(id)).length,
     pending: r.pending,
   };
+}
+
+/** The canonical member: the page in the brain's home source when one is, else the page with the most text, else the first. */
+export async function canonicalOf(engine: BrainEngine, members: IdentityMemberRef[], homeSource: string | null): Promise<IdentityMemberRef> {
+  const home = members.find(m => m.source_id === homeSource);
+  if (home) return home;
+  let best = members[0]!;
+  let size = -1;
+  for (const m of members) {
+    const p = await engine.getPage(m.slug, { sourceId: m.source_id });
+    const n = p ? pageBodyBytes(p) : 0;
+    if (n > size) { best = m; size = n; }
+  }
+  return best;
 }
 
 /** The finder's view of the decisions: pairs kept apart, and member sets already decided as one. */
