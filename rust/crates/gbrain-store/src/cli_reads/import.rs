@@ -8,10 +8,12 @@
 //! - there are no source ingestion receipts: `hasCompanyBrainReceipt` is false;
 //! - there is no `guest_sources` table and no row-level security: a guest source is one whose
 //!   config says `guest: true`, `readGuestSourceRow` is never hidden and finds no row;
-//! - pages have no write-gate receipts: a page reads the trust tier and write origin its last
-//!   write stamped (`pages::write_page`), and never reads flagged.
 //!
-//! Keys: none of its own. It reads the source, page and timeline records.
+//! A page reads the trust tier and write origin its last write stamped (`pages::write_page`), and
+//! `flagged` is `activationSuppressedSql` over the page's write-gate receipts
+//! (`trust::activation_suppressed`).
+//!
+//! Keys: none of its own. It reads the source, page, timeline and write-gate receipt records.
 
 use crate::env::iso;
 use crate::error::{Result, StoreError};
@@ -138,15 +140,14 @@ fn source_is_guest(read: &dyn KvRead, id: &str) -> Result<bool> {
 }
 
 fn trust_row(read: &dyn KvRead, page: &PageRecord, by_id: bool) -> Result<PageTrustRow> {
+    let tier = TrustTier::stored(page.trust_tier.as_deref());
     Ok(PageTrustRow {
         id: page.id,
         source_id: page.source_id.clone(),
         slug: page.slug.clone(),
-        trust_tier: TrustTier::stored(page.trust_tier.as_deref())
-            .as_str()
-            .to_owned(),
+        trust_tier: tier.as_str().to_owned(),
         write_origin: page.write_origin.clone(),
-        flagged: false,
+        flagged: crate::trust::activation_suppressed(read, "pages", page.id, tier)?,
         guest: source_is_guest(read, &page.source_id)?,
         by_id,
     })

@@ -195,8 +195,9 @@ impl Store {
 
 /// The write trust context of the store write transaction that runs on this thread, as the
 /// stamping writers read it: `Store::write` opens it with [`Store::write_trust`] and it ends with
-/// the write, as `transaction_clock` does. A write outside one (a test that drives a writer on a
-/// bare transaction) reads the empty context: an undeclared writer, stamped `unknown`.
+/// the write, as `transaction_clock` does. A page write outside one refuses
+/// (`invalid_argument`, "a page write ran outside a store write transaction"), as the projection
+/// queue's clock read does: the stamp never guesses a writer.
 pub(crate) mod stamp_context {
     use crate::trust::WriteTrust;
     use std::cell::RefCell;
@@ -219,9 +220,11 @@ pub(crate) mod stamp_context {
         Scope(CONTEXT.with(|c| c.borrow_mut().replace(trust)))
     }
 
-    /// The open write's trust context, or the empty one outside a write.
-    pub(crate) fn current() -> WriteTrust {
-        CONTEXT.with(|c| c.borrow().clone().unwrap_or_default())
+    /// The open write's trust context. Outside a store write it refuses.
+    pub(crate) fn current() -> crate::Result<WriteTrust> {
+        CONTEXT.with(|c| c.borrow().clone()).ok_or_else(|| {
+            crate::error::StoreError::invalid("a page write ran outside a store write transaction")
+        })
     }
 }
 
@@ -234,6 +237,30 @@ mod tests {
 
     fn strings(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    #[test]
+    fn the_stamp_context_refuses_outside_a_write_and_restores_the_outer_scope() {
+        let outside = stamp_context::current().unwrap_err();
+        assert_eq!(outside.code, INVALID_ARGUMENT);
+        assert!(
+            outside
+                .message
+                .contains("outside a store write transaction")
+        );
+        let outer = WriteTrust {
+            writer: Some(crate::trust::TrustTier::AgentWritten),
+            ..WriteTrust::default()
+        };
+        let scope = stamp_context::open(outer.clone());
+        assert_eq!(stamp_context::current().unwrap().writer, outer.writer);
+        {
+            let _inner = stamp_context::open(WriteTrust::default());
+            assert_eq!(stamp_context::current().unwrap().writer, None);
+        }
+        assert_eq!(stamp_context::current().unwrap().writer, outer.writer);
+        drop(scope);
+        assert!(stamp_context::current().is_err());
     }
 
     #[test]

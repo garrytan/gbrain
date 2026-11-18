@@ -33,11 +33,16 @@ Each answer below is what Postgres gives for a brain that never wrote the missin
   whose config has `guest` set to `true` or to the text `"true"`, as the SQL `config->>'guest' = 'true'` reads it.
   `readGuestSourceRow` is never hidden and never finds a row. This is the Postgres answer for a source that is a
   guest by config with no `guest_sources` row, so the import guard in `guests/admission.ts` lets the write through,
-  as it does on Postgres for that source.
+  as it does on Postgres for that source. No `guest_sources` row can exist on Rust: `guests/sources.ts` adds one
+  through `executeRaw`, which the engine refuses with `engine_capability_missing`, so the guest admission is loud
+  on Rust and the read stays true. Page trust stamping matches too, because the trigger's guest rules key on a
+  `guest_sources` row only.
 - **Page trust.** A page reads the `trust_tier` and `write_origin` its last write stamped
   ([`write_trust.md`](write_trust.md), "Page stamping"); a page written by an undeclared writer reads
-  `trust_tier: 'unknown'` and `write_origin: null`. Pages have no activation-suppression receipts, so `flagged` is
-  always `false`. `guest` is the source's config value above.
+  `trust_tier: 'unknown'` and `write_origin: null`. `flagged` is `activationSuppressedSql`: the page's tier is at or
+  below `agent_written` and one of its write-gate receipts (`trust/write_gate.rs`) has the verdict `flag` and a reason
+  family in `standing_instruction`, `override`, `exfiltration` or `credential`. An owner rewrite that raises the tier
+  clears it and keeps the receipt. `guest` is the source's config value above.
 - **Knowledge revision.** Every stored page has a UUID `knowledge_revision`; it is never `null`. The extract stamp's
   "no revision" sentinel therefore never matches a store page, as it never matches a Postgres page written since the
   column became `NOT NULL`.

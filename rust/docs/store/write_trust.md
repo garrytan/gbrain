@@ -30,7 +30,9 @@ settings on the open store. It writes no records and has no keys.
   open nothing.
 - `write_trust()` (crate-only): the `WriteTrust` that `trust::stamp` takes. `Store::write` opens it as the
   stamp context (`stamp_context::open`) on the bound path and the unbound path, and `pages::write_page` reads it
-  with `stamp_context::current()`. With no context open, the writer is undeclared (`unknown`, no origin).
+  with `stamp_context::current()`. A store write with no declared writer stamps `unknown` and no origin. A page write
+  with no context open at all (a writer on a bare transaction) refuses with `invalid_argument`, "a page write ran
+  outside a store write transaction", as the projection queue's clock read does.
 
 ## Page stamping
 
@@ -46,7 +48,14 @@ Every page write stamps the page's `trust_tier` and `write_origin` the way the P
 - A writer that claims a tier it may not set (for example `user_confirmed`) is refused with
   `trust_raise_refused`, and nothing is written.
 
-`readPageTrustRows` returns the stamped tier and origin ([`cli-reads-import.md`](cli-reads-import.md)).
+- A tag change rewrites the page with a new knowledge revision only, as PGLite's tag trigger runs `UPDATE pages`.
+  The content is unchanged, so the tier and origin stay, and a writer that may not declare its tier still refuses,
+  as the PGLite page trigger refuses that `UPDATE`.
+- A version snapshot copies the page's tier and origin (`snapshot_version_trust`), whatever the snapshot writer
+  declares.
+
+`readPageTrustRows` returns the stamped tier and origin ([`cli-reads-import.md`](cli-reads-import.md)), and the
+retrieval coverage reads apply a trust floor and the flagged-page filter to them.
 
 ## Lifetime
 

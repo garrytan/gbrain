@@ -386,9 +386,26 @@ pub(crate) struct VersionRecord {
     pub body_generation: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body_bytes: Option<i64>,
+    /// The page's trust tier when the snapshot was taken (`snapshot_version_trust`); none is
+    /// `unknown`. Only `createVersion` returns it: `getVersions` reads no trust columns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trust_tier: Option<String>,
+    /// The page's write origin when the snapshot was taken.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write_origin: Option<Value>,
 }
 
 impl VersionRecord {
+    /// The row `createVersion` returns: the listed columns, body included, and the snapshot's
+    /// trust tier and write origin, which PGLite's `RETURNING *` carries.
+    fn to_created_json(&self) -> Value {
+        let mut v = self.to_json(true);
+        v["trust_tier"] =
+            json!(crate::trust::TrustTier::stored(self.trust_tier.as_deref()).as_str());
+        v["write_origin"] = json!(self.write_origin);
+        v
+    }
+
     fn to_json(&self, include_body: bool) -> Value {
         let mut v = json!({
             "id": self.id,
@@ -558,7 +575,7 @@ fn stamp_page_trust(before: Option<&PageRecord>, record: &PageRecord) -> Result<
     use crate::trust::{
         OriginStamp, StampRow, TrustTable, TrustTier, page_frontmatter_content, stamp,
     };
-    let context = crate::write_trust::stamp_context::current();
+    let context = crate::write_trust::stamp_context::current()?;
     let tier_of = |page: &PageRecord| TrustTier::stored(page.trust_tier.as_deref());
     let (row, stored_origin) = match before {
         None => (
@@ -1530,7 +1547,7 @@ impl Store {
                     format!("createVersion failed: page \"{slug}\" (source={source}) not found"),
                 ));
             };
-            Ok(snapshot_in(tx, &*self.env, &page)?.to_json(true))
+            Ok(snapshot_in(tx, &*self.env, &page)?.to_created_json())
         })
     }
 
@@ -1588,6 +1605,14 @@ pub(crate) fn snapshot_in(
     let mut tags = page.tags.clone();
     tags.sort();
     let segmented = crate::page_body::segmented_reference(&*tx, page.id)?;
+    // `snapshot_version_trust`: the snapshot copies the page's stamped tier and origin. No store
+    // caller supplies its own, so the backfill branch never applies.
+    let (tier, write_origin) = crate::trust::snapshot_version(
+        &crate::write_trust::stamp_context::current()?,
+        crate::trust::TrustTier::stored(page.trust_tier.as_deref()),
+        page.write_origin.as_ref(),
+        None,
+    );
     let row = VersionRecord {
         id,
         page_id: page.id,
@@ -1605,6 +1630,8 @@ pub(crate) fn snapshot_in(
         body_storage: segmented.map(|_| "segmented".to_string()),
         body_generation: segmented.map(|(generation, _)| generation),
         body_bytes: segmented.and_then(|(_, bytes)| bytes),
+        trust_tier: (tier != crate::trust::TrustTier::Unknown).then(|| tier.as_str().to_owned()),
+        write_origin,
     };
     put_json(tx, &keys::version(page.id, id), &row)?;
     Ok(row)

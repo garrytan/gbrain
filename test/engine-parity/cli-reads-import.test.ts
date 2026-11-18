@@ -29,6 +29,14 @@ async function note(engine: BrainEngine, slug: string, sourceId = 'default', fro
   return engine.putPage(slug, { type: 'note', title: slug.toUpperCase(), compiled_truth: `body of ${slug}`, frontmatter }, { sourceId });
 }
 
+/** Run `fn` in a transaction whose write trust context declares `tier` and `origin`. */
+function declaredWrite(engine: BrainEngine, tier: string, origin: Record<string, unknown> | null, fn: (tx: BrainEngine) => Promise<unknown>) {
+  return engine.transaction(async (tx) => {
+    await tx.applyTransactionSettings(['gbrain.write_trust_tier', 'gbrain.write_origin'], [tier, origin ? JSON.stringify(origin) : '']);
+    return fn(tx);
+  });
+}
+
 describe('engine parity: CLI import reads', () => {
   parityTest('listSourceRecords lists every source, default first then by id, with its import columns', { methods: ['listSourceRecords'] }, async (engine, backend) => {
     await createSource(engine, backend, 'zeta', { keep: 1 });
@@ -149,6 +157,42 @@ describe('engine parity: CLI import reads', () => {
     steps.raiseRefused = { refused, rows: await engine.readPageTrustRows({ keys: [{ source_id: 'default', slug: 'raised' }] }) };
     expect(steps.raiseRefused).toEqual({ refused: true, rows: [] });
     return steps;
+  });
+
+  parityTest('readPageTrustRows flags a page at or below agent_written with an instruction-family flag receipt', { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'upsertPageWriteGateReceipt', 'readPageTrustRows'] }, async (engine) => {
+    const receipt = (hash: string, verdict: 'flag' | 'quarantine', families: string[]) => ({
+      content_hash: hash, tier: 'agent_written', detector_version: 1, verdict, reason_families: families,
+      reasons: families.map(f => `${f} found`), detector_error: false, request_id: null,
+    });
+    const agent = (slug: string) => declaredWrite(engine, 'agent_written', { channel: 'agent' }, tx => note(tx, slug));
+    await agent('agent-flagged');
+    await engine.upsertPageWriteGateReceipt('default', 'agent-flagged', receipt('h1', 'flag', ['override']));
+    await note(engine, 'unknown-flagged');
+    await engine.upsertPageWriteGateReceipt('default', 'unknown-flagged', receipt('h1', 'flag', ['credential', 'other']));
+    await declaredWrite(engine, 'tool_observed', { channel: 'tool' }, tx => note(tx, 'tool-flagged'));
+    await engine.upsertPageWriteGateReceipt('default', 'tool-flagged', receipt('h1', 'flag', ['exfiltration']));
+    await agent('other-family');
+    await engine.upsertPageWriteGateReceipt('default', 'other-family', receipt('h1', 'flag', ['other']));
+    await agent('quarantined');
+    await engine.upsertPageWriteGateReceipt('default', 'quarantined', receipt('h1', 'quarantine', ['standing_instruction']));
+    await engine.upsertPageWriteGateReceipt('default', 'quarantined', receipt('h2', 'flag', ['other']));
+    await agent('confirmed');
+    await engine.upsertPageWriteGateReceipt('default', 'confirmed', receipt('h1', 'flag', ['standing_instruction']));
+    await declaredWrite(engine, 'operator_curated', { channel: 'owner' }, tx => tx.putPage('confirmed', { type: 'note', title: 'CONFIRMED', compiled_truth: 'confirmed by the owner' }));
+    await agent('no-receipt');
+    const slugs = ['agent-flagged', 'unknown-flagged', 'tool-flagged', 'other-family', 'quarantined', 'confirmed', 'no-receipt'];
+    const rows = await engine.readPageTrustRows({ keys: slugs.map(slug => ({ source_id: 'default', slug })) });
+    const flags = Object.fromEntries(sorted(rows.map(r => [r.slug, { tier: r.trust_tier, flagged: r.flagged }] as const), ([slug]) => slug));
+    expect(flags).toEqual({
+      'agent-flagged': { tier: 'agent_written', flagged: true },
+      'confirmed': { tier: 'operator_curated', flagged: false },
+      'no-receipt': { tier: 'agent_written', flagged: false },
+      'other-family': { tier: 'agent_written', flagged: false },
+      'quarantined': { tier: 'agent_written', flagged: false },
+      'tool-flagged': { tier: 'tool_observed', flagged: false },
+      'unknown-flagged': { tier: 'unknown', flagged: true },
+    });
+    return flags;
   });
 
   parityTest('readDatabaseClock returns the UTC clock with microseconds', { methods: ['readDatabaseClock'] }, async (engine) => {

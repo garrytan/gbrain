@@ -87,8 +87,10 @@ language is refused with `engine_capability_missing` (`keyword_search`) at the f
   is dropped after a write the SQL engines' generation ignores. A cached answer is never stale.
 - `projectionRebuildProgress` is null unless `protocol_activation` jobs are queued, and no store writer queues them yet
   (an upgrade's activation runs only on the SQL engines), so on a store it is null in practice.
-- A coverage read with `minTrust` or `suppressFlagged` in its scope refuses (`health`): the store keeps no trust tiers.
-  `requireSafeChunks` changes nothing, because these reads count pages, not chunks.
+- A coverage read applies `pageEligibleSql`'s trust part: `minTrust` drops a page whose stamped tier ranks below the
+  floor (a stored `null` counts as `unknown`; a name that is no tier refuses with `invalid_argument`), and
+  `suppressFlagged` drops a page at or below `agent_written` with an instruction-family flag receipt
+  (`trust::activation_suppressed`, as `readPageTrustRows` computes `flagged`). `requireSafeChunks` changes nothing, because these reads count pages, not chunks.
 - A relevance pattern that is not the `(^|[^[:alnum:]])<word>([^[:alnum:]]|$)` shape `coverageRelevance` builds refuses
   (`health`): the store runs no POSIX regex.
 - A pending count that reaches its cap of 1000 refuses (`health`). The SQL engines' `LIMIT` takes 1000 rows in no fixed
