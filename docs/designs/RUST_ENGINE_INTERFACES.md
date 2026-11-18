@@ -1212,6 +1212,37 @@ The relation API that replaces raw SQL.
   - `raw-sql.test.ts`: runMigration runs every statement of a multi-statement script
   - `raw-sql.test.ts`: keywordBoundedRead runs the read and returns its value; a throw propagates and the engine stays usable
 
+### trust
+
+Trust tiers and write provenance on content rows, and the trust records.
+
+- **Files:** `gbrain-store/src/trust.rs` and `gbrain-store/src/trust/stamp.rs`, then the napi and TypeScript files of
+  each trust member.
+- **Tag:** `t` (`TRUST`). Cascade on page delete: no; the trust family asks core for the page-delete hook when it
+  needs one.
+- **Build order:** page `trust_tier` and `write_origin` first (returned through the page-columns hook), then
+  `fact_withdrawals`, then `write_gate_holds` and `write_gate_receipts`.
+- **`trust::stamp`:** `stamp(ctx: &WriteTrust, table: TrustTable, row: StampRow) -> Result<Stamped>` gives the
+  tier and origin of one row, with the rules of the PGLite trigger `gbrain_stamp_trust_tier`
+  (`src/core/trust/schema.ts`):
+  - an insert gets the writer's tier, or `unknown` without one; a supplied tier counts only under backfill;
+  - a content change by an owner-tier writer restamps the row; a lower writer sets the minimum of the stored tier
+    and its own; a table in the keep list keeps its stored tier, and can still lower it;
+  - a raise needs a promotion ceiling that covers it (or backfill from `unknown` to a tier below
+    `user_confirmed`), and is otherwise refused with `trust_raise_refused`.
+  - `WriteTrust` holds the writer tier, the origin, the promotion ceiling, the backfill flag and the keep list.
+    `StampRow` is an insert with the supplied tier, or an update with the old and new tier, whether content changed
+    and whether the origin was set. `Stamped` holds the tier and the origin (keep, or set).
+  - The guest-source rules of the trigger are not in `stamp`: the store has no `guest_sources` records yet.
+- **Trust hook (persistence owns it):** a typed `setWriteContext` member holds the attribution and trust settings of
+  the open store write. The attribution seam (`persistence/context.ts`, the `set_config` calls) calls it on a Rust
+  brain in place of `executeRaw`. `write_page` and the facts insert build a `WriteTrust` from it and call
+  `trust::stamp`. A page version snapshot copies the page's tier and origin. The takes and timeline families call
+  `stamp` when they write their rows. The statements are in
+  [the put write path map](../research/rust-put-write-path.md#trust-hook).
+- **Depends on:** the transactions family for the settings of an open store write; until then a write outside a
+  transaction stamps with no writer, which is `unknown`.
+
 ## Cases that need more than one family
 
 These parity cases call members of several families. Each turns green only when every family it names is built;
