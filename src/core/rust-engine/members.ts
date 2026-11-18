@@ -97,6 +97,8 @@ export const RUST_ENGINE_MEMBERS = {
   listStaleSyncSourceIds: 'sources',
   readSourceRow: 'sources',
   lockSourceRow: 'sources',
+  countSourcePages: 'sources',
+  insertSource: 'sources',
   listSourceRecords: 'sources',
   readSourceIncarnation: 'sources',
   hasCompanyBrainReceipt: 'sources',

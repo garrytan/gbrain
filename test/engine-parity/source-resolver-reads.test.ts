@@ -1,7 +1,7 @@
 /**
  * BrainEngine parity — the source-resolution reads (`listLocalPathSources`, `listSourceRoutingRows`,
  * `countDefaultSourceSplit`, `listAllSources`, `getSource`, `listSourceRecords`, `listStaleSyncSourceIds`, `readSourceRow`,
- * `lockSourceRow`, `readSourceChunkerVersion`) that `src/core/source-resolver.ts`
+ * `lockSourceRow`, `readSourceChunkerVersion`, `countSourcePages`, `insertSource`) that `src/core/source-resolver.ts`
  * and the other `sources` readers make to pick a source or list the registered ones.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
@@ -13,7 +13,9 @@
  *    stored as a JSON string (a historical double-encoded row) reads as no keys, as `config->>'kind'` did; the advisor's
  *    stale-sync read lists live sources last synced over seven days ago, by id; one source's check row (plain or read FOR
  *    UPDATE) carries its path, raw config and archived flag, archived sources included, and null for an unknown id; the
- *    sync preflight reads the source's stamped chunker version, null before the first stamp.
+ *    sync preflight reads the source's stamped chunker version, null before the first stamp; a source's page count keeps
+ *    to that source and counts soft-deleted pages only when asked; `sources add` inserts a row with its name, path and
+ *    config (a key set to undefined is dropped), and a taken id or name throws and leaves the first row as it was.
  *  - Regression: an engine that drops archived sources from tier 4 (a cwd inside an archived checkout then falls
  *    through silently instead of refusing), counts soft-deleted pages (the guard then nags or routes a write to the
  *    wrong source), or counts pages instead of sources in `nonDefaultSources`; an engine that lists archived sources
@@ -21,7 +23,10 @@
  *    that parses a JSON-string config (a broken row then counts as a connector source in orphans and connector holds);
  *    a stale-sync read that lists archived or never-synced sources, or uses the wrong interval (the advisor then nags);
  *    a check row that hides archived sources or parses the config (record-origin, guest init and the anchor-ownership
- *    check then misjudge the source); a chunker-version read of the wrong column (every sync then reimports in full).
+ *    check then misjudge the source); a chunker-version read of the wrong column (every sync then reimports in full); a
+ *    page count that leaks across sources with a shared id prefix or ignores the soft-delete filter (`sources list` and
+ *    `sources remove` then report the wrong count); an insert that overwrites a taken id or name, or double-encodes
+ *    the config into a JSON string (every config key then reads as absent).
  *  - Why existing coverage misses it: test/source-resolver*.test.ts drive the resolver through fake engines keyed on
  *    SQL text, so they never compare real engines, and the Rust engine has no raw SQL to answer.
  *  - Seam: none. Real engines, typed reads only; sources are made and archived through the harness fixtures.
@@ -194,4 +199,47 @@ describe('engine parity: source-resolution reads', () => {
     expect(after).toEqual('7');
     return { before, after };
   });
+
+  parityTest('countSourcePages counts one source\'s pages, soft-deleted pages only when asked', { methods: ['countSourcePages'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'a');
+    await createSource(engine, backend, 'ab');
+    await seed(engine, 'a', ['notes/x', 'notes/y']);
+    await seed(engine, 'ab', ['notes/z']);
+    await seed(engine, 'default', ['notes/d']);
+    await engine.softDeletePage('notes/y', { sourceId: 'a' });
+    const counts = {
+      live: await engine.countSourcePages('a'),
+      all: await engine.countSourcePages('a', { includeDeleted: true }),
+      prefixSibling: await engine.countSourcePages('ab'),
+      defaultAll: await engine.countSourcePages('default', { includeDeleted: true }),
+      missing: await engine.countSourcePages('missing', { includeDeleted: true }),
+    };
+    expect(counts).toEqual({ live: 1, all: 2, prefixSibling: 1, defaultAll: 1, missing: 0 });
+    return counts;
+  });
+
+  parityTest('insertSource writes name, path and config, and refuses a taken id or name', { methods: ['insertSource'] }, async (engine) => {
+    await engine.insertSource({ id: 'wiki', name: 'Wiki', local_path: '/srv/brain/wiki', config: { federated: false, kind: 'url', nested: { a: [1, 2], gone: undefined }, unset: undefined } });
+    await engine.insertSource({ id: 'bare', name: 'bare', local_path: null, config: {} });
+    const refused: string[] = [];
+    for (const row of [{ id: 'wiki', name: 'Other' }, { id: 'notes', name: 'Wiki' }]) {
+      try {
+        await engine.insertSource({ ...row, local_path: null, config: {} });
+      } catch {
+        refused.push(row.id);
+      }
+    }
+    expect(refused).toEqual(['wiki', 'notes']);
+    const rows = [];
+    for (const id of ['wiki', 'bare', 'notes']) rows.push(await engine.readSourceRow(id));
+    const names = (await engine.listAllSources()).map((r) => [r.id, r.name]);
+    expect(rows).toEqual([
+      { id: 'wiki', local_path: '/srv/brain/wiki', config: { federated: false, kind: 'url', nested: { a: [1, 2] } }, archived: false },
+      { id: 'bare', local_path: null, config: {}, archived: false },
+      null,
+    ]);
+    expect(names).toEqual([['default', 'default'], ['bare', 'bare'], ['wiki', 'Wiki']]);
+    return { refused, rows, names };
+  });
 });
+

@@ -207,6 +207,28 @@
           "*"
         ]
       },
+      "countSourcePages#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "countSourcePages#includeDeleted": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "countStaleChunks#default": {
         "flagOffLanes": [
           "pool"
@@ -1770,6 +1792,17 @@
         ],
         "flagOnScopes": []
       },
+      "insertSource#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "invalidateContentDriftEmbeddings#default": {
         "flagOffLanes": [
           "pool",
@@ -2490,6 +2523,17 @@
           "*"
         ]
       },
+      "listStaleSyncSourceIds#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listStaleTakes#default": {
         "flagOffLanes": [
           "pool"
@@ -2575,6 +2619,17 @@
         "flagOn": "unscoped",
         "flagOnLanes": [
           "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "lockSourceRow#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
         ],
         "flagOnScopes": []
       },
@@ -2850,6 +2905,28 @@
         ]
       },
       "readPersistenceBrainId#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readSourceChunkerVersion#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readSourceRow#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -3891,6 +3968,7 @@
         "countKeywordPages": "direct",
         "countOnboardSignal": "none",
         "countPagesBy": "direct",
+        "countSourcePages": "none",
         "countStaleChunks": "direct",
         "countStaleFrontmatterKeyPages": "direct",
         "countStalePagesForExtraction": "direct",
@@ -3987,6 +4065,7 @@
         "insertFact": "none",
         "insertFacts": "none",
         "insertLocalWriterRow": "none",
+        "insertSource": "none",
         "invalidateContentDriftEmbeddings": "none",
         "invalidateStaleSignatureEmbeddings": "none",
         "isFolderRestricted": "none",

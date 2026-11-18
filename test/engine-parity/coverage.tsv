@@ -6,9 +6,9 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 273/273
+# covered: 275/275
 # lifecycle: 9/9
-# pages: 34/34
+# pages: 36/36
 # search: 7/7
 # search_reads: 9/9
 # link_reads: 10/10
@@ -77,6 +77,8 @@ countDefaultSourceSplit	pages	yes	1	no	yes	yes	serves
 listStaleSyncSourceIds	pages	yes	1	no	yes	yes	serves
 readSourceRow	pages	yes	1	no	yes	yes	serves
 lockSourceRow	pages	yes	1	no	yes	yes	serves
+countSourcePages	pages	yes	1	no	yes	yes	serves
+insertSource	pages	yes	1	no	yes	yes	serves
 listPrefixSampledPages	pages	yes	1	no	yes	yes	serves
 listCorpusSample	pages	yes	1	no	yes	yes	serves
 getPageSealState	pages	yes	1	no	yes	yes	refuses:pages
