@@ -54,7 +54,7 @@ async function write(engine: BrainEngine, rows: Row[]): Promise<void> {
     const front = aliases.filter(([, o]) => o === 'frontmatter').map(([a]) => a);
     if (front.length) await engine.setPageAliases(slug, 'default', front);
     const derived: DerivedAliasRow[] = aliases.filter(([, o]) => o === 'declared')
-      .map(([alias_norm]) => ({ alias_norm, origin: 'declared', case_sensitive: false, alias_text: null }));
+      .map(([alias_norm]) => ({ alias_norm, origin: 'declared', case_sensitive: false, alias_text: alias_norm }));
     if (derived.length) await engine.replaceDerivedAliases(slug, 'default', derived);
   }
 }
