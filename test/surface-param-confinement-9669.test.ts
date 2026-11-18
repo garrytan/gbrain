@@ -146,6 +146,19 @@ for (const kind of testBackends()) {
       expect(all(await dispatchToolCall(engine, 'list_pages', { slug_prefix: 'notes/' }, { remote: false, sourceId: 'default' } as Opts))).toContain(PRIV.slug);
     });
 
+    test('a starter client pages list_pages through pagination.next.offset and gets page two', async () => {
+      const slugs = (res: Result) => (JSON.parse(res.content[0]!.text) as Array<{ slug: string }>).map(row => row.slug);
+      const first = await dispatchToolCall(engine, 'list_pages', { limit: 1 }, stdio('starter'));
+      expect(first.isError).toBeFalsy();
+      const next = (first._meta as { pagination?: { next?: Record<string, unknown> } } | undefined)?.pagination?.next;
+      expect(next).toEqual({ offset: 1 });
+      const second = await dispatchToolCall(engine, 'list_pages', { limit: 1, ...next }, stdio('starter'));
+      expect(envelope(second).code).not.toBe(CODE);
+      expect(second.isError).toBeFalsy();
+      expect(slugs(second)).toHaveLength(1);
+      expect(slugs(second)[0]).not.toBe(slugs(first)[0]);
+    });
+
     test('submit_agent max_turns on starter may only lower the turns a call without it gets', async () => {
       expect(SUBMIT_AGENT_DEFAULT_MAX_TURNS).toBe(20);
       const call = (max_turns: number, surface: McpSurface) =>

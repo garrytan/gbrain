@@ -289,7 +289,10 @@ export const STARTER_CALLABLE_PARAMS: Readonly<Record<string, Readonly<Record<st
     limit: 'Caps rows per arm at 100; gbrain\'s connection check passes it.',
     source_ids: NARROW,
   },
-  list_pages: { source_ids: NARROW, slug_prefix: LIST_FILTER, where: LIST_FILTER },
+  list_pages: {
+    source_ids: NARROW, slug_prefix: LIST_FILTER, where: LIST_FILTER,
+    offset: 'The server\'s own default-sort continuation (pagination.next) and the listing_truncated fix name it; it only skips rows the caller can already list.',
+  },
   search: { fields: FULL_ROWS },
   query: { fields: FULL_ROWS },
   submit_agent: { max_turns: 'May only lower the job\'s turns below the default a call without it gets (STARTER_PARAM_CEILINGS); gbrain\'s connection check passes max_turns: 1.' },
