@@ -547,7 +547,6 @@ src/core/loops/loops-store.ts	execute_raw	15
 src/core/maintenance/run.ts	execute_raw	1
 src/core/maintenance/status.ts	execute_raw	1
 src/core/mcp-request-log-retention.ts	execute_raw	4
-src/core/mcp-usage.ts	execute_raw	3
 src/core/meetings/meetings-source.ts	execute_raw	3
 src/core/mentions/coverage.ts	execute_raw	4
 src/core/mentions/newer-mentions.ts	execute_raw	1
@@ -1037,7 +1036,6 @@ src/core/search/retrieval-coverage.ts	execute_raw	2
 src/core/search/safe-chunks.ts	execute_raw	2
 src/core/search/saved-facts-match.ts	execute_raw	1
 src/core/search/slot-history.ts	execute_raw	1	GBRA-574 F #9674 (opened before this ratchet): the readable-page lookup that maps a bare name tag to the page later written at <dir>/<tag>
-src/core/search/telemetry.ts	execute_raw	2
 src/core/search/transcript-quote.ts	execute_raw	3
 src/core/search/two-pass.ts	execute_raw	5
 src/core/serve-sync-runner.ts	execute_raw	1

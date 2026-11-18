@@ -102,6 +102,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'sampleEffectiveDates', 'sampleEffectiveDateSources', 'readMaxTimelineEntryId', 'listStoredTimelineRowsOrdered',
   'deleteTimelineRows', 'storedTimelineRowsByPageIds', 'countSegmentedTimelinePages', 'countTimelineCommentMarkupRows',
   'listTimelineOrphanPages',
+  // Search telemetry and MCP usage (engine-sql/telemetry.ts; covered by test/engine-parity/telemetry.test.ts)
+  'recordSearchTelemetry', 'readSearchStats', 'readClientOpUsage', 'readMcpRollupPrunedBefore',
   // Import writes (engine-sql/chunks.ts, tags.ts, pages.ts)
   'deleteChunksExcept', 'setChunkerVersion', 'writeTextProjectionSeal', 'moveChunkIndexes', 'getChunkReuseRows', 'pruneFrontmatterTags',
   'addPageTagsById', 'replaceDerivedAliases', 'getPageSealState', 'refreshPageOrigin',
@@ -202,6 +204,8 @@ const ENGINE_INTERNAL_HELPERS: readonly string[] = [
   'chunkRead',
   // Timeline site reads: the unscoped engine-sql executor they run through.
   'timelineRead',
+  // Search telemetry and MCP usage reads: the unscoped engine-sql executor they run through.
+  'telemetryRead',
   // CLI reads: the executors the CLI read members run through (PGLite rawRead wraps executeRaw; cliReads is the unscoped engine-sql executor).
   'rawRead',
   'cliReads',

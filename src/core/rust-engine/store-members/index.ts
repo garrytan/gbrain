@@ -51,6 +51,7 @@ import * as factsRepair from './facts-repair.ts';
 import * as factsTrust from './facts-trust.ts';
 import * as jobs from './jobs.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
+import * as telemetry from './telemetry.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
 const initSchema: StoreMember<[], void> = async () => undefined;
@@ -75,6 +76,8 @@ export const STORE_MEMBERS = {
   ...factsDoctor, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust,
   // The persistence brain identity the store already keeps (rust/docs/store/journal.md).
   ...persistenceIdentity,
+  // Search telemetry (rust/docs/store/telemetry.md).
+  ...telemetry,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;
