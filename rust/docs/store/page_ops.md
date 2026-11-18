@@ -15,7 +15,7 @@ TypeScript members send `live: true` whenever the caller passes a scope object, 
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
-| `brain.readPageSnapshotsBatch(refs, { maxBytes?, includeDeleted? }?)` | `{ snapshots, covered }`. `snapshots[i]` is `readPageSnapshot` of ref `i` or `null`; `covered` counts the refs whose prior refs' `compiled_truth` + `timeline` bytes stay within `maxBytes` (the first ref always counts) | `readPageSnapshotsBatch` |
+| `brain.readPageSnapshotsBatch(refs, { maxBytes?, includeDeleted? }?)` | `{ snapshots, covered }`. `snapshots[i]` is `readPageSnapshot` of ref `i` or `null`; `covered` counts the refs whose prior refs' `compiled_truth` + `timeline` bytes stay within `maxBytes` (the first ref always counts). A segmented page (NULL body) comes back with `compiled_truth` and `timeline` `null` and counts as 0 bytes; the TypeScript member decodes it with `toGetPage`, so reading its body throws `page_body_segmented` | `readPageSnapshotsBatch` |
 | `brain.findDuplicatePage(sourceId, { hash, frontmatterId?, excludeSlug? })` | `{ id, slug, content_hash }` or `null`: a live page with frontmatter `id` equal to `frontmatterId`, else one with `content_hash` equal to `hash`; lowest id wins | `findDuplicatePage` |
 | `brain.findDuplicatePages(sourceId, queries)` | one `findDuplicatePage` answer per query | `findDuplicatePages` |
 | `brain.softDeletePages(slugs, { sourceId? }?)` | slugs that turned deleted now, once each, in page id order. `updated_at` stays; the knowledge revision changes | `softDeletePages` |
@@ -26,13 +26,13 @@ TypeScript members send `live: true` whenever the caller passes a scope object, 
 | `brain.countPagesBy({ sourceId?, sourceIds?, since?, typeGroups? }?)` | `{ bySourceType, byTypeGroup, total }` over visible pages (live, source present and not archived) whose effective date (else `updated_at`) is at or after `since`, an ISO date or instant. `typeGroups` maps a type to its group; with it, only mapped types count in `byTypeGroup` and `total` | `countPagesBy` |
 | `brain.getAllSlugs({ sourceId? }?)` | every slug, deleted pages included, sorted and distinct; `''` means every source | `getAllSlugs` |
 | `brain.listAllPageRefs()` | `[{ source_id, slug, updated_at }]` of live pages, by source then slug | `listAllPageRefs` |
-| `brain.listPrefixSampledPages({ prefixes, excludeSlugs?, staleBias?, staleThresholdDays?, sourceId?, sourceIds? })` | one domain-bank row per prefix: the live page under it with the most inbound links, then the lowest slug | `listPrefixSampledPages` |
-| `brain.listCorpusSample({ n, excludeSlugs?, seed?, sourceId?, sourceIds? })` | up to `n` domain-bank rows of live pages, in a shuffle fixed by `seed` | `listCorpusSample` |
+| `brain.listPrefixSampledPages({ prefixes, excludeSlugs?, staleBias?, staleThresholdDays?, sourceId?, sourceIds? })` | one domain-bank row per prefix: the live inline page under it (segmented pages are left out) with the most inbound links, then the lowest slug | `listPrefixSampledPages` |
+| `brain.listCorpusSample({ n, excludeSlugs?, seed?, sourceId?, sourceIds? })` | up to `n` domain-bank rows of live inline pages (segmented pages are left out), in a shuffle fixed by `seed` | `listCorpusSample` |
 | `brain.getContentFlagsByPageIds(ids, scope?)` | `[{ id, reason, detail }]` of pages whose frontmatter `content_flag.reason` is a non-empty string | `getContentFlagsByPageIds` |
 | `brain.getUnverifiedExtractionPageIds(ids, scope?)` | `[{ id, status, unverified }]` of pages with a frontmatter `status`; `unverified` is `status = 'unverified'` and `provenance = 'auto-extracted'` | `getUnverifiedExtractionPageIds` |
 | `brain.getPageTimestamps(slugs)` | `[{ slug, ts }]` (`ts` = `updated_at`) of every page with that slug, deleted included, in page id order | `getPageTimestamps` |
 | `brain.getEffectiveDates(refs, scope?)` | `[{ source_id, slug, ts }]` (`ts` = `effective_date`, else `updated_at`) for each ref that names a page | `getEffectiveDates` |
-| `brain.revertToVersion(slug, versionId, { sourceId? }?)` | `null`. Copies the version's `compiled_truth`, `frontmatter` and `timeline` onto the page and sets `updated_at`; a missing page or version does nothing | `revertToVersion` |
+| `brain.revertToVersion(slug, versionId, { sourceId? }?)` | `null`. Copies the version's `compiled_truth` and `frontmatter` onto the page and sets `updated_at`; a missing page or version does nothing. When a page it would revert, or the version, is segmented, it refuses `page_body_segmented` and writes nothing; the TypeScript member throws PGLite's `segmentedRevertRefusal` | `revertToVersion` |
 
 A domain-bank row is `{ slug, prefix, connection_count, representative_chunk_id,
 last_retrieved_at }`.
