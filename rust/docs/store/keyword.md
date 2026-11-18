@@ -152,8 +152,11 @@ stored, and the same \"string is too long for tsvector\" error aborts the `putPa
 and the entries are cut to 65,536 and 32,768 characters), so a title of about 100,000 distinct tokens is enough. The store
 builds the trigger-form vector in `pages::write_page` whenever the page is new or its title or timeline changed, and in
 `pages::write_page_setting_vector` on every call (`keyword::check_page_vector`, which also warms the vector cache). The
-second form is for the statements that SET `title` and `timeline` whatever their values (`putPage`, the body refresh): the trigger fires with unchanged values too, and the vector can have grown since (a timeline entry
-added, a lead published), so a repeated `putPage` is refused when the page no longer fits. Every write path that sets
+second form is for the statements that SET `title` and `timeline` whatever their values (`putPage`, the body refresh, the body flip): the trigger fires with unchanged values too, and the vector can have grown since (a timeline entry
+added, a lead published), so a repeated `putPage` is refused when the page no longer fits. The flip stores its body state (with the
+incoming `timeline_lead`) before it writes the page, so the check reads the lead the flip publishes and not the one it
+replaces: a flip to a short lead is accepted whatever the old lead was, and one whose title and lead overflow is
+refused whole. Every write path that sets
 them refuses with the same message and stores nothing, with or without chunking (`index: false`). A seal that sends a search timeline
 (`pages::record_search_timeline`, from `upsertChunks` with `seal` and from the segmented seal) builds the sealed-form
 vector (`keyword::check_sealed_page_vector`) and refuses the same way, since `pageSearchVectorSql` builds it in the

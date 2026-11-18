@@ -48,7 +48,7 @@ getPage	pages	yes	34	yes	yes	yes	serves
 readPageSnapshot	pages	yes	7	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	refuses:pages
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	116	yes	yes	yes	serves
+putPage	pages	yes	117	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	refuses:pages
 findDuplicatePages	pages	yes	1	no	yes	yes	refuses:pages
 deletePage	pages	yes	6	yes	yes	yes	serves
@@ -79,7 +79,7 @@ refreshPageOrigin	pages	yes	1	no	yes	yes	refuses:pages
 searchKeyword	search	yes	27	yes	yes	yes	serves
 countKeywordPages	search	yes	5	no	yes	yes	serves
 searchKeywordPages	search	yes	8	no	yes	yes	serves
-searchTitles	search	yes	10	yes	yes	yes	serves
+searchTitles	search	yes	12	yes	yes	yes	serves
 searchVector	search	yes	2	yes	yes	yes	refuses:vector_search
 getEmbeddingsByChunkIds	search	yes	1	no	yes	yes	refuses:embeddings
 searchKeywordChunks	search	yes	6	yes	yes	yes	serves
@@ -149,7 +149,7 @@ removeTag	tags	yes	1	no	yes	yes	serves
 pruneFrontmatterTags	tags	yes	1	no	yes	yes	serves
 addPageTagsById	tags	yes	1	no	yes	yes	serves
 getTags	tags	yes	2	yes	yes	yes	serves
-addTimelineEntry	timeline	yes	6	yes	yes	yes	serves
+addTimelineEntry	timeline	yes	7	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	1	no	yes	yes	serves
 getTimeline	timeline	yes	3	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	2	no	yes	yes	refuses:timeline
@@ -203,15 +203,15 @@ findCandidateDuplicates	facts	yes	3	yes	yes	yes	refuses:facts
 consolidateFact	facts	yes	3	no	yes	yes	refuses:facts
 findTrajectory	facts	yes	1	yes	yes	yes	refuses:facts
 getFactsHealth	facts	yes	2	yes	yes	yes	refuses:facts
-allocateBodyOccurrenceIds	segmented_body	yes	2	no	yes	yes	serves
+allocateBodyOccurrenceIds	segmented_body	yes	3	no	yes	yes	serves
 stageSegmentTexts	segmented_body	yes	3	no	yes	yes	serves
 readSegmentTexts	segmented_body	yes	3	no	yes	yes	serves
 stageManifestRows	segmented_body	yes	4	no	yes	yes	serves
 readManifest	segmented_body	yes	7	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	8	no	yes	yes	serves
-createSegmentedPageShell	segmented_body	yes	6	no	yes	yes	serves
-flipBodyGeneration	segmented_body	yes	11	no	yes	yes	serves
-sealSegmentedPage	segmented_body	yes	4	no	yes	yes	serves
+createSegmentedPageShell	segmented_body	yes	7	no	yes	yes	serves
+flipBodyGeneration	segmented_body	yes	12	no	yes	yes	serves
+sealSegmentedPage	segmented_body	yes	5	no	yes	yes	serves
 openBodyStaging	segmented_body	yes	6	no	yes	yes	serves
 setBodyStagingState	segmented_body	yes	5	no	yes	yes	serves
 sweepSegments	segmented_body	yes	1	no	yes	yes	refuses:page_body
