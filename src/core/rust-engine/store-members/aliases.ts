@@ -5,8 +5,9 @@
  *
  * aliasCanonicalRefs reads its policy as `pageReadFilter('p', policy, !!policy)` does: the source clause, the live test
  * and `excludePrivate` through the page policy (private-provenance.ts `storePagePolicy`), and `minTrust` and
- * `suppressFlagged` over the page's stamped trust tier and its write-gate receipts. resolveAliases refuses a privacy,
- * trust or flag filter with `engine_capability_missing`: it must also filter the title shadow check. A
+ * `suppressFlagged` over the page's stamped trust tier and its write-gate receipts. resolveAliases reads its scope as
+ * `readAliases` does: the same policy on the page an alias names and on the page whose title shadows a derived alias.
+ * Both refuse `excludePrivate` for a caller whose member pages, grants or lineage widen the page policy. A
  * rename moves fact bindings only once the facts family fills its rename hook, and the `none` contextual retrieval
  * tier keeps no vectors to reset (rust/docs/store/aliases.md).
  */
@@ -56,11 +57,20 @@ export const resolveSlugWithAliasDetailed: StoreMember<
 export const resolveSlugWithAlias: StoreMember<[slug: string, sourceOrSources: string | readonly string[], opts?: { excludePrivate?: boolean }], string> =
   async (brain, slug, sourceOrSources, opts) => (await detailed(brain, 'resolveSlugWithAlias', slug, sourceOrSources, opts))?.canonical_slug ?? slug;
 
+/**
+ * `readAliases` (search/read-enrichment.ts): `pageReadFilter` reads no `requireSafeChunks`, so the store ignores it too.
+ * An empty `minTrust` sets no floor, as `pageReadFilter`'s truthiness test does.
+ */
 export const resolveAliases: StoreMember<[aliasNorms: string[], opts?: PageReadScope], Map<string, AliasRef[]>> = async (brain, aliasNorms, opts) => {
-  const o = takeOptions('resolveAliases', opts, ['sourceId', 'sourceIds'], ['requireSafeChunks']);
+  const o = takeOptions('resolveAliases', opts, ['sourceId', 'sourceIds', 'excludePrivate', 'minTrust', 'suppressFlagged'], ['requireSafeChunks']);
   if (aliasNorms.length === 0) return new Map();
+  const excludePrivate = storePagePolicy('resolveAliases', o.excludePrivate);
+  const scope = {
+    sourceId: o.sourceId, sourceIds: o.sourceIds,
+    excludePrivate: excludePrivate ?? null, minTrust: o.minTrust || null, suppressFlagged: o.suppressFlagged === true,
+  };
   const rows: Array<[string, AliasRef[]]> = await storeCall({ member: 'resolveAliases', sourceId: o.sourceId as string | undefined }, () =>
-    brain.resolveAliases(aliasNorms, o));
+    brain.resolveAliases(aliasNorms, scope));
   return new Map(rows);
 };
 

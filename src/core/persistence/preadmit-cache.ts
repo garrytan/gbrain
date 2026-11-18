@@ -20,7 +20,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
 import { registerEngineView, writeSwitchOn } from './switches.ts';
-import { ADMISSION_SOURCE_SQL, type AdmissionSourceRow } from '../engine-sql/write-misc.ts';
+import { ADMISSION_SOURCE_SQL, type AdmissionSourceRow, WORKTREE_BINDING_SQL, type WorktreeBinding } from '../engine-sql/write-misc.ts';
 
 export const PREADMIT_TTL_MS = 30_000;
 const BRAIN_SQL = 'SELECT brain_id FROM persistence_brain WHERE singleton=1';
@@ -29,7 +29,8 @@ const BRAIN_SQL = 'SELECT brain_id FROM persistence_brain WHERE singleton=1';
  * local path, and a source with one is never a guest source (the database refuses it: guest_source_database_only).
  */
 export { ADMISSION_SOURCE_SQL };
-const BINDING_SQL = 'SELECT s.source_id,s.source_incarnation,s.worktree_id,s.relative_path, s.topology_generation::text AS topology_generation,w.owner_host_id,w.owner_epoch::text AS owner_epoch,w.state, h.local_path,h.coordination_path FROM persistence_source_bindings s JOIN persistence_worktrees w ON w.id=s.worktree_id LEFT JOIN persistence_host_bindings h ON h.worktree_id=w.id AND h.host_id=$2::uuid WHERE s.source_id=$1';
+/** The worktree binding (engine `getWorktreeBinding`), cached under its statement text like the source row. */
+const BINDING_SQL = WORKTREE_BINDING_SQL.replace(/\s+/g, ' ').trim();
 const WRITER_SQL = new Set([
   'SELECT revoked_at,credential_hash,lane FROM persistence_local_writers WHERE id=$1::uuid',
   'SELECT lane,credential_hash,grant_ceiling,revoked_at FROM persistence_local_writers WHERE id=$1::uuid',
@@ -91,6 +92,11 @@ export async function preadmitReads(engine: BrainEngine, now: () => number = Dat
       const rows = await read(ADMISSION_SOURCE_SQL, [sourceId], undefined,
         async () => { const row = await target.readAdmissionSource(sourceId); return row ? [row as unknown as Record<string, unknown>] : []; });
       return (rows[0] as AdmissionSourceRow | undefined) ?? null;
+    };
+    if (key === 'getWorktreeBinding') return async (sourceId: string, hostId: string | null): Promise<WorktreeBinding | null> => {
+      const rows = await read(BINDING_SQL, [sourceId, hostId], undefined,
+        async () => { const row = await target.getWorktreeBinding(sourceId, hostId); return row ? [row as unknown as Record<string, unknown>] : []; });
+      return (rows[0] as WorktreeBinding | undefined) ?? null;
     };
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) => {
       const text = flat(sql);

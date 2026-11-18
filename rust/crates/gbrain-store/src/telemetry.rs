@@ -130,7 +130,7 @@ fn not_null(column: &str) -> StoreError {
     not_null_in(TABLE, column)
 }
 
-fn not_null_in(table: &str, column: &str) -> StoreError {
+pub(crate) fn not_null_in(table: &str, column: &str) -> StoreError {
     StoreError::new(
         CONSTRAINT_VIOLATION,
         format!(
@@ -145,7 +145,7 @@ fn integer_out_of_range(op: &str) -> StoreError {
 
 /// A number bound to an `INTEGER` parameter, as Postgres reads its text form: a whole number in
 /// the `int4` range, or refused.
-fn int4_param(op: &str, column: &str, value: f64) -> Result<i32> {
+pub(crate) fn int4_param(op: &str, column: &str, value: f64) -> Result<i32> {
     if !value.is_finite() || value.fract() != 0.0 {
         return Err(StoreError::new(
             INVALID_ARGUMENT,
@@ -163,7 +163,7 @@ fn int4_param(op: &str, column: &str, value: f64) -> Result<i32> {
 }
 
 /// A float8 sum: Postgres refuses a finite sum that overflows to infinity.
-fn float_add(a: f64, b: f64, op: &str) -> Result<f64> {
+pub(crate) fn float_add(a: f64, b: f64, op: &str) -> Result<f64> {
     let sum = a + b;
     if sum.is_infinite() && a.is_finite() && b.is_finite() {
         return Err(StoreError::new(
@@ -262,7 +262,7 @@ fn json_has_nul(value: &Value) -> bool {
 
 /// `now() - (days::int * interval '1 day')`: the days are read as an `int4` parameter and the
 /// result must stay in the `timestamptz` range. A null day count gives a null cutoff.
-fn days_before(op: &str, now: i64, days: Option<f64>) -> Result<Option<i64>> {
+pub(crate) fn days_before(op: &str, now: i64, days: Option<f64>) -> Result<Option<i64>> {
     let Some(days) = days else {
         return Ok(None);
     };
@@ -280,7 +280,7 @@ fn days_before(op: &str, now: i64, days: Option<f64>) -> Result<Option<i64>> {
         .map_err(|_| StoreError::new(INVALID_ARGUMENT, format!("{op}: timestamp out of range")))
 }
 
-fn parse_timestamp(op: &str, text: &str) -> Result<i64> {
+pub(crate) fn parse_timestamp(op: &str, text: &str) -> Result<i64> {
     parse_iso(text).ok_or_else(|| {
         StoreError::new(
             INVALID_ARGUMENT,

@@ -24,7 +24,10 @@ import { CONVERSATION_UNRESOLVED, RELINK_REASONS } from './relink-reasons.ts';
 
 export const PAID_REEXTRACT = 'paid_reextract';
 
-const REARMED = Object.entries(RELINK_REASONS).filter(([, r]) => !r.memoized).map(([code]) => `'${code}'`).join(', ');
+/** The miss reasons a page created after the attempt re-arms: every `RELINK_REASONS` entry that is not memoized. */
+export const REARMED_REASONS: string[] = Object.entries(RELINK_REASONS).filter(([, r]) => !r.memoized).map(([code]) => code);
+
+const REARMED = REARMED_REASONS.map(code => `'${code}'`).join(', ');
 
 /** SQL (fact alias `f`): the free relink already tried this row, and no page created since has re-armed an unmemoized miss. */
 export const conversationTriedSql = `EXISTS (SELECT 1 FROM fact_relink_attempts a WHERE a.source_id = f.source_id AND a.fact_id = f.id
@@ -43,9 +46,8 @@ export async function recordReextractMemo(db: BrainEngine, sourceId: string, slu
     `SELECT f.id, COALESCE(p.content_hash, '') AS hash FROM facts f JOIN pages p ON p.source_id = f.source_id AND p.slug = f.source_markdown_slug AND p.deleted_at IS NULL
       WHERE f.source_id = $1 AND f.source_markdown_slug = $2 AND f.source = $3 AND f.expired_at IS NULL ORDER BY f.id DESC LIMIT 1`, [sourceId, slug, TERMINAL_AUDIT_SOURCE]);
   if (!outcome) return;
-  await db.executeRaw(`DELETE FROM fact_relink_attempts WHERE source_id = $1 AND tier = $2 AND target_slug = $3`, [sourceId, PAID_REEXTRACT, slug]);
-  await db.executeRaw(`INSERT INTO fact_relink_attempts (source_id, fact_id, outcome, reason, tier, model, target_slug, run_id, attempted_at)
-    VALUES ($1, $2, $3, $4, $3, NULL, $5, NULL, now())
-    ON CONFLICT (source_id, fact_id) DO UPDATE SET outcome = EXCLUDED.outcome, reason = EXCLUDED.reason, tier = EXCLUDED.tier, target_slug = EXCLUDED.target_slug, attempted_at = EXCLUDED.attempted_at`,
-  [sourceId, Number(outcome.id), PAID_REEXTRACT, outcome.hash, slug]);
+  await db.deleteFactRelinkMemos(sourceId, PAID_REEXTRACT, slug);
+  await db.upsertFactRelinkAttempt(sourceId,
+    { factId: Number(outcome.id), outcome: PAID_REEXTRACT, reason: outcome.hash, tier: PAID_REEXTRACT, model: null, targetSlug: slug, runId: null },
+    { keepModelAndRun: true });
 }

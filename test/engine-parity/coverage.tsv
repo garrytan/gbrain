@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 562/562
+# covered: 568/568
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -40,6 +40,7 @@
 # minion_status: 11/11
 # cli_reads_ops: 7/7
 # facts_doctor: 10/10
+# fact_relink_attempts: 3/3
 # facts_cycle: 11/11
 # facts_purge: 13/13
 # facts_repair: 10/10
@@ -53,7 +54,8 @@
 # cli_reads_import: 11/11
 # wanted_links: 2/2
 # write_misc: 11/11
-# telemetry: 8/8
+# telemetry: 10/10
+# field_usage: 1/1
 # alias_fanout_reads: 4/4
 # write_guards: 7/7
 # trust_fence: 1/1
@@ -73,13 +75,13 @@ getPage	pages	yes	63	yes	yes	yes	serves
 readPageSnapshot	pages	yes	16	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	248	yes	yes	yes	serves
+putPage	pages	yes	258	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
-deletePage	pages	yes	6	yes	yes	yes	serves
+deletePage	pages	yes	7	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	84	yes	yes	yes	serves
+softDeletePage	pages	yes	85	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -105,13 +107,13 @@ listPrefixSampledPages	pages	yes	1	no	yes	yes	serves
 listCorpusSample	pages	yes	1	no	yes	yes	serves
 getPageSealState	pages	yes	5	no	yes	yes	serves
 refreshPageOrigin	pages	yes	2	no	yes	yes	serves
-searchKeyword	search	yes	14	yes	yes	yes	serves
+searchKeyword	search	yes	15	yes	yes	yes	serves
 countKeywordPages	search	yes	5	no	yes	yes	serves
 searchKeywordPages	search	yes	7	no	yes	yes	serves
 searchTitles	search	yes	8	yes	yes	yes	serves
 searchVector	search	yes	2	yes	yes	yes	refuses:vector_search
 getEmbeddingsByChunkIds	search	yes	1	no	yes	yes	serves
-searchKeywordChunks	search	yes	7	yes	yes	yes	serves
+searchKeywordChunks	search	yes	8	yes	yes	yes	serves
 cosinesByChunkIds	search_reads	yes	1	no	yes	yes	refuses:vector_search
 hasSupersedeEdges	search_reads	yes	1	no	yes	yes	serves
 supersedingPageSlugs	search_reads	yes	4	no	yes	yes	serves
@@ -285,7 +287,7 @@ putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
 insertFact	facts	yes	34	yes	yes	yes	serves
 insertFacts	facts	yes	27	no	yes	yes	serves
-deleteFactsForPage	facts	yes	2	no	yes	yes	serves
+deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	19	no	yes	yes	serves
 listFactsByEntity	facts	yes	14	yes	yes	yes	serves
 listFactsSince	facts	yes	8	yes	yes	yes	serves
@@ -304,7 +306,7 @@ readSegmentTexts	segmented_body	yes	5	no	yes	yes	serves
 stageManifestRows	segmented_body	yes	5	no	yes	yes	serves
 readManifest	segmented_body	yes	9	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	4	no	yes	yes	serves
-createSegmentedPageShell	segmented_body	yes	6	no	yes	yes	serves
+createSegmentedPageShell	segmented_body	yes	7	no	yes	yes	serves
 flipBodyGeneration	segmented_body	yes	7	no	yes	yes	serves
 sealSegmentedPage	segmented_body	yes	2	no	yes	yes	serves
 openBodyStaging	segmented_body	yes	7	no	yes	yes	serves
@@ -325,9 +327,9 @@ updateSlug	sync_aliases	yes	12	no	yes	yes	serves
 rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
 resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
-resolveAliases	sync_aliases	yes	5	no	yes	yes	serves
-setPageAliases	sync_aliases	yes	11	no	yes	yes	serves
-replaceDerivedAliases	sync_aliases	yes	6	no	yes	yes	serves
+resolveAliases	sync_aliases	yes	9	no	yes	yes	serves
+setPageAliases	sync_aliases	yes	15	no	yes	yes	serves
+replaceDerivedAliases	sync_aliases	yes	10	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
@@ -484,9 +486,12 @@ countAtomFacts	facts_doctor	yes	1	no	yes	yes	serves
 listUnpreviewedTrustFacts	facts_doctor	yes	1	no	yes	yes	refuses:facts
 countUnlinkedFactsByOrigin	facts_doctor	yes	2	no	yes	yes	serves
 countUnlinkedFactStats	facts_doctor	yes	2	no	yes	yes	serves
-countFactRelinkOutcomes	facts_doctor	yes	1	no	yes	yes	refuses:facts
+countFactRelinkOutcomes	facts_doctor	yes	1	no	yes	yes	serves
 listUnlinkedConversationSlugs	facts_doctor	yes	2	no	yes	yes	serves
 countFactEmbeddingCoverage	facts_doctor	yes	1	no	yes	yes	serves
+upsertFactRelinkAttempt	fact_relink_attempts	yes	7	no	yes	yes	serves
+listFactRelinkOutcomes	fact_relink_attempts	yes	3	no	yes	yes	serves
+deleteFactRelinkMemos	fact_relink_attempts	yes	1	no	yes	yes	serves
 listActiveFactsForEntity	facts_cycle	yes	1	no	yes	yes	serves
 listFreshExtractionOutcomes	facts_cycle	yes	1	no	yes	yes	serves
 listFenceRowGroups	facts_cycle	yes	1	no	yes	yes	serves
@@ -557,7 +562,7 @@ moveFactWithdrawalSubject	trust	yes	1	no	yes	yes	serves
 hasFactWithdrawalForSubject	trust	yes	1	no	yes	yes	serves
 listFactWithdrawalKeys	trust	yes	3	no	yes	yes	serves
 upsertWriteGateReceipt	trust	yes	3	no	yes	yes	serves
-upsertPageWriteGateReceipt	trust	yes	9	no	yes	yes	serves
+upsertPageWriteGateReceipt	trust	yes	11	no	yes	yes	serves
 deleteStalePageWriteGateReceipts	trust	yes	1	no	yes	yes	serves
 listWriteGateReceiptsFor	trust	yes	3	no	yes	yes	serves
 deleteStaleWriteGateReceipts	trust	yes	1	no	yes	yes	serves
@@ -600,8 +605,11 @@ logMcpRequest	telemetry	yes	3	no	yes	yes	serves
 readMcpLogPruneCutoff	telemetry	yes	1	no	yes	yes	serves
 pruneMcpRequestLogBatch	telemetry	yes	3	no	yes	yes	serves
 readMcpLifetimeUsage	telemetry	yes	1	no	yes	yes	serves
-findPagesByTitles	alias_fanout_reads	yes	3	no	yes	yes	serves
-resolveCaseSensitiveAliases	alias_fanout_reads	yes	3	no	yes	yes	serves
+logChatUsage	telemetry	yes	2	no	yes	yes	serves
+readChatUsage	telemetry	yes	2	no	yes	yes	serves
+readFieldUsageSamples	field_usage	yes	3	no	yes	yes	serves
+findPagesByTitles	alias_fanout_reads	yes	4	no	yes	yes	serves
+resolveCaseSensitiveAliases	alias_fanout_reads	yes	4	no	yes	yes	serves
 readPageTitle	alias_fanout_reads	yes	1	no	yes	yes	serves
 readPageAliasRows	alias_fanout_reads	yes	3	no	yes	yes	serves
 hasSegmentStorage	write_guards	yes	1	no	yes	yes	serves
