@@ -653,6 +653,7 @@ export const RUST_ENGINE_MEMBERS = {
   listVisibleBeliefLifetimes: 'belief_ledger',
   listVersionTrustTiers: 'page_versions',
   listVersionReasonWriters: 'page_versions',
+  listValidTimeIdentities: 'pages',
   pickValidTimeEdition: 'page_versions',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 

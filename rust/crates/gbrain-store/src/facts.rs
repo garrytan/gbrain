@@ -51,7 +51,7 @@ pub mod trust_reads;
 pub use fence::{FenceContext, FenceTarget};
 pub use privacy::PrivacyPolicy;
 use privacy::hidden_by_private_provenance;
-pub(crate) use privacy::page_hidden;
+pub(crate) use privacy::{page_hidden, version_hidden};
 
 use crate::chunks::embedding_dimensions;
 use crate::config::read_config;

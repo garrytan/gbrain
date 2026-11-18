@@ -98,6 +98,18 @@ pub(crate) fn page_hidden(
     Ok(!allowed)
 }
 
+/// Whether the no-caller policy hides a page version (`callerReadersAllowedSql(pv, 'snapshot') AND
+/// privacyForCaller(p, privateSnapshotFilterFragment(pv))`): the version names readers, or, with
+/// `entity_privacy`, its own fields are private. Only the version's type and frontmatter count.
+pub(crate) fn version_hidden(
+    page_type: &str,
+    fm: &Map<String, Value>,
+    policy: &PrivacyPolicy,
+) -> bool {
+    fm.contains_key("readable_by")
+        || (policy.entity_privacy && !snapshot_fields_allow(page_type, fm, policy.honor_aliases))
+}
+
 /// `holdingSlugSql`: `memory/unattributed`, or a slug ending in `/memory/unattributed`.
 fn holding_slug(slug: &str) -> bool {
     slug == "memory/unattributed" || slug.ends_with("/memory/unattributed")
@@ -110,8 +122,13 @@ fn text(frontmatter: &Map<String, Value>, key: &str) -> Option<String> {
 
 /// `derivedPageSql`: an atom, a question, or a concept with `synthesized_by`.
 fn derived_page(page: &PageRecord) -> bool {
-    matches!(page.page_type.as_str(), "atom" | "question")
-        || (page.page_type == "concept" && text(&page.frontmatter, "synthesized_by").is_some())
+    derived_fields(&page.page_type, &page.frontmatter)
+}
+
+/// `derivedPageSql` over a row's type and frontmatter (a page or one of its versions).
+fn derived_fields(page_type: &str, frontmatter: &Map<String, Value>) -> bool {
+    matches!(page_type, "atom" | "question")
+        || (page_type == "concept" && text(frontmatter, "synthesized_by").is_some())
 }
 
 /// A concept-provenance input of a question or synthesized concept (`gbrain_access_origin_restricted`
@@ -292,13 +309,19 @@ fn privacy_allows(read: &dyn KvRead, page: &PageRecord, honor_aliases: bool) -> 
 /// `privateSnapshotFilterFragment`: `visibility` (an absent one is private on a derived page),
 /// the `pinned_question` marker, and the privacy aliases of a page with no `visibility`.
 fn snapshot_allows(page: &PageRecord, honor_aliases: bool) -> bool {
-    let fm = &page.frontmatter;
+    snapshot_fields_allow(&page.page_type, &page.frontmatter, honor_aliases)
+}
+
+/// `privateSnapshotFilterFragment` over a row's type and frontmatter.
+fn snapshot_fields_allow(page_type: &str, fm: &Map<String, Value>, honor_aliases: bool) -> bool {
     let visibility = text(fm, "visibility");
-    let effective = visibility.as_deref().unwrap_or(if derived_page(page) {
-        "private"
-    } else {
-        "world"
-    });
+    let effective = visibility
+        .as_deref()
+        .unwrap_or(if derived_fields(page_type, fm) {
+            "private"
+        } else {
+            "world"
+        });
     effective != "private"
         && !fm.contains_key("pinned_question")
         && !(honor_aliases && visibility.is_none() && alias_private(fm))

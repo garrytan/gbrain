@@ -13,8 +13,8 @@
 //!
 //! The TypeScript members (src/core/rust-engine/store-members/trust-tier-reads.ts) refuse what the
 //! store does not model: a caller page policy that is not the no-caller one, the takes and
-//! timeline tables, and a cursor, limit or id that is not an integer. The belief history reads and
-//! the valid-time pick are not served.
+//! timeline tables, and a cursor, limit or id that is not an integer. The belief history reads are
+//! not served; the valid-time reads live in `trust/valid_time.rs`.
 
 use super::{TrustPolicy, TrustTier, activation_suppressed, withdrawals};
 use crate::Store;

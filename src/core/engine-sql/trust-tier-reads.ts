@@ -9,6 +9,7 @@
  *   its link events name.
  * - `listVersionTrustTiers` / `listVersionReasonWriters`: the snapshot tier of a page version, and the type and tier
  *   of the write that replaced it (the next snapshot, or the live page).
+ * - `listValidTimeIdentities`: the live pages a valid-time read may follow for a slug, with their file and checkout.
  * - `pickValidTimeEdition`: the edition of one page in force on a date, over the page and its retained versions.
  *
  * Every function takes the engine (or transaction) it runs on. Ids come back as numbers; ordered text sorts
@@ -19,7 +20,8 @@ import type { ReadEligibility } from '../eligibility/policy.ts';
 import { activationSuppressedSql, pageEligibleSql } from '../eligibility/sql.ts';
 import { quarantineFilterFragment } from '../quarantine.ts';
 import {
-  callerReadersAllowedSql, privacyForCaller, privatePagesFilterForCaller, privateSnapshotFilterFragment, remoteReadFloorSql,
+  callerReadersAllowedSql, privacyForCaller, privatePagesFilterForCaller, privatePagesFilterFragment, privateSnapshotFilterFragment,
+  remoteReadFloorSql,
 } from '../search/private-visibility.ts';
 import { validDateSql } from '../valid-time.ts';
 import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
@@ -247,6 +249,35 @@ export async function listVersionReasonWriters(tx: Raw, ids: readonly number[]):
 
 // ---------------------------------------------------------------------------------------------------------------
 // Valid time
+
+export interface ValidTimeIdentitySpec {
+  slug: string;
+  /** Only this source; null is any. */
+  sourceId: string | null;
+  /** Only these sources; null is any. */
+  sourceIds: readonly string[] | null;
+  /** Leave out the pages the caller's page policy hides. */
+  excludePrivate: boolean;
+}
+
+/** A page a valid-time read may follow: its file, its source's checkout, and whether the no-caller policy shows it. */
+export interface ValidTimeIdentityRow { id: number; source_id: string; slug: string; source_path: string | null; local_path: string | null; world: boolean }
+
+/**
+ * The live pages with this slug in the scope, by source (at most six: a read that finds more than one refuses and asks
+ * for a source). `world` is the no-caller page policy, which decides whether the page's Git history may be named.
+ */
+export async function listValidTimeIdentities(tx: Raw, spec: ValidTimeIdentitySpec): Promise<ValidTimeIdentityRow[]> {
+  const source = spec.sourceId !== null ? sqlFragment` AND p.source_id = ${spec.sourceId}` : none;
+  const sources = spec.sourceIds ? sqlFragment` AND p.source_id = ANY(${[...spec.sourceIds]}::text[])` : none;
+  const hidden = spec.excludePrivate ? sqlFragment` AND ${trustedSql(privatePagesFilterForCaller('p'))}` : none;
+  const got = await rows<{ id: number | string; source_id: string; slug: string; source_path: string | null; local_path: string | null; world: boolean }>(tx,
+    sqlFragment`SELECT p.id, p.source_id, p.slug, p.source_path, s.local_path, ${trustedSql(privatePagesFilterFragment('p'))} AS world
+      FROM pages p JOIN sources s ON s.id = p.source_id
+     WHERE p.slug = ${spec.slug} AND p.deleted_at IS NULL${source}${sources}${hidden}
+     ORDER BY p.source_id COLLATE "C" LIMIT 6`);
+  return got.map(r => ({ id: Number(r.id), source_id: r.source_id, slug: r.slug, source_path: r.source_path ?? null, local_path: r.local_path ?? null, world: r.world === true }));
+}
 
 /** The ordinal the current page takes after every version id (one past the int4 range). */
 export const VALID_TIME_CURRENT_ORD = 2147483648;

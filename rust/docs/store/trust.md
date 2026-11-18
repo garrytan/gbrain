@@ -168,11 +168,17 @@ the family adds no key prefix. Versions have no by-id index: the version reads s
 | `countUnscannedTrustRows` | `count_unscanned_trust_rows`: the same rows, at or below `until` when set | `SELECT count(*) …` |
 | `listVersionTrustTiers` | `list_version_trust_tiers`: the snapshot tier of each listed version, by id | `SELECT pv.id, pv.trust_tier FROM page_versions pv WHERE pv.id = ANY($1)` |
 | `listVersionReasonWriters` | `list_version_reason_writers`: the type and tier of the page's next snapshot, else of the page (deleted or not) | `LEFT JOIN LATERAL (… ORDER BY n.id LIMIT 1)` |
+| `listValidTimeIdentities` | `list_valid_time_identities` (`trust/valid_time.rs`): the live pages with the slug in the source scope, by source in byte order, at most six, with the source's checkout and the no-caller page policy's verdict | `… ORDER BY p.source_id COLLATE "C" LIMIT 6` |
+| `pickValidTimeEdition` | `pick_valid_time_edition`: the edition in force on a date over the page and its `V` version records, the competing ordinals and the history counts, plus `history_unpruned` | the `WITH rows AS (…)` pick |
 
 - The TypeScript members refuse a caller page policy that is not the no-caller one, the `takes` and
   `timeline_entries` scan tables, and a cursor, limit or id that is not an integer. The store refuses any other
   table and a NUL byte with `invalid_argument`.
 - The belief history reads (`readBeliefHistoryRows`, `listVisibleBeliefLifetimes`) refuse in their TypeScript
   members before any store call, for every input: the store keeps no belief ledger, so it could only answer an empty
-  one (TODOS.md `rust-belief-ledger`). `pickValidTimeEdition` is not served.
-- Pinned by `test/engine-parity/trust-tier-reads.test.ts` on every arm and by `tests/trust_tier_reads.rs`.
+  one (TODOS.md `rust-belief-ledger`).
+- `pickValidTimeEdition` also refuses a date that is not `YYYY-MM-DD` and a history PGLite would have pruned
+  (`history_unpruned`: more large inline versions than PGLite keeps, a segmented version, or a holding page over the
+  kept count; TODOS.md `rust-version-prune`). The store keeps no change reason, so `reason` and
+  `introduced_because` read null (TODOS.md `rust-version-change-reason`), and no gap or pruned successor.
+- Pinned by `test/engine-parity/trust-tier-reads.test.ts` on every arm and by `tests/trust_tier_reads.rs` and `tests/valid_time.rs`.

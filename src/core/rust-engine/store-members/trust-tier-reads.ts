@@ -1,7 +1,8 @@
 /**
  * The typed reads of stamped trust tiers (src/core/engine-sql/trust-tier-reads.ts), served from the trust store
  * (rust/crates/gbrain-store/src/trust/tier_reads.rs): `listCorePageRows`, `listTrustScanRows` and
- * `countUnscannedTrustRows` over pages and facts, `listVersionTrustTiers` and `listVersionReasonWriters`.
+ * `countUnscannedTrustRows` over pages and facts, `listVersionTrustTiers` and `listVersionReasonWriters`; and the
+ * valid-time reads (trust/valid_time.rs) `listValidTimeIdentities` and `pickValidTimeEdition`.
  *
  * Refused (`engine_capability_missing`); the members this file does not export refuse as every unserved member does:
  *  - `listCorePageRows` under `excludePrivate` for a caller whose page policy is not the no-caller one (a member
@@ -10,13 +11,25 @@
  *  - `readBeliefHistoryRows` and `listVisibleBeliefLifetimes`, always and before any store call: the store keeps no
  *    belief ledger (every `belief_events` and `belief_page_lifetimes` write goes through `executeRaw`), so a read could
  *    only answer an empty list where PGLite has events (TODOS.md `rust-belief-ledger`);
- *  - `pickValidTimeEdition`: the store has no valid-time read;
+ *  - `listValidTimeIdentities` under `excludePrivate`, and `pickValidTimeEdition` always, for a caller whose page or
+ *    snapshot policy is not the no-caller one (the pick reports every row's visibility);
+ *  - `pickValidTimeEdition` on a date that is not `YYYY-MM-DD`, rather than guess at Postgres's text order, and over
+ *    a history PGLite would have pruned (more large inline versions than it keeps, a segmented version, a long
+ *    holding page): the store never prunes, so its answer would count editions PGLite no longer has and miss the gap
+ *    it records (TODOS.md `rust-version-prune`). The store keeps no change reason, so `reason` and
+ *    `introduced_because` read null where PGLite may have one (TODOS.md `rust-version-change-reason`);
  *  - a limit, cursor or id that is not an integer, rather than guess at PGLite's bind error.
  */
 import type { BrainEngine } from '../../engine.ts';
-import { privatePagesFilterForCaller, remoteReadFloorSql } from '../../search/private-visibility.ts';
+import { LARGE_PAGE_VERSIONS_KEPT } from '../../page-body/limits.ts';
+import { PAGE_INLINE_MAX_BYTES } from '../../page-size-policy.ts';
+import {
+  callerReadersAllowedSql, privacyForCaller, privatePagesFilterForCaller, privatePagesFilterFragment, privateSnapshotFilterFragment,
+  remoteReadFloorSql, withoutCallerAccess,
+} from '../../search/private-visibility.ts';
+import { validDate } from '../../valid-time.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
-import { storePageTextPolicy } from './private-provenance.ts';
+import { storePagePolicy, storePageTextPolicy } from './private-provenance.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
@@ -82,3 +95,37 @@ const NO_BELIEF_LEDGER = 'the belief ledger, which the store does not keep yet';
 export const readBeliefHistoryRows: Member<'readBeliefHistoryRows'> = async () => refuseMember('readBeliefHistoryRows', NO_BELIEF_LEDGER);
 
 export const listVisibleBeliefLifetimes: Member<'listVisibleBeliefLifetimes'> = async () => refuseMember('listVisibleBeliefLifetimes', NO_BELIEF_LEDGER);
+
+export const listValidTimeIdentities: Member<'listValidTimeIdentities'> = (brain, spec) => {
+  const member = 'listValidTimeIdentities';
+  const excludePrivate = storePagePolicy(member, spec.excludePrivate) ?? null;
+  const world = storePageTextPolicy(member, () => privatePagesFilterFragment('p'));
+  return storeCall({ member }, () => brain.listValidTimeIdentities({
+    slug: spec.slug, sourceId: spec.sourceId, sourceIds: spec.sourceIds ? [...spec.sourceIds] : null, excludePrivate, world,
+  }));
+};
+
+/** The snapshot visibility the pick reports for a version row, in the current context. */
+const snapshotVisibleSql = () => `${callerReadersAllowedSql('pv', 'snapshot')} AND ${privacyForCaller('p', privateSnapshotFilterFragment('pv'))}`;
+
+const asDate = (v: unknown): Date | null => (typeof v === 'string' ? new Date(v) : null);
+
+export const pickValidTimeEdition: Member<'pickValidTimeEdition'> = async (brain, spec) => {
+  const member = 'pickValidTimeEdition';
+  requireInteger(member, 'page id', spec.pageId);
+  if (spec.pinOrd !== null) requireInteger(member, 'pinned ordinal', spec.pinOrd);
+  requireCount(member, 'inline byte limit', spec.inlineMaxBytes);
+  if (validDate(spec.asOf) !== spec.asOf) refuseMember(member, 'an as-of date that is not YYYY-MM-DD');
+  const policy = storePageTextPolicy(member, () => privatePagesFilterForCaller('p'));
+  if (snapshotVisibleSql() !== withoutCallerAccess(snapshotVisibleSql)) {
+    refuseMember(member, 'a caller whose readers or grants widen the snapshot policy');
+  }
+  const got = await storeCall({ member }, () => brain.pickValidTimeEdition({
+    pageId: spec.pageId, asOf: spec.asOf, excludePrivate: spec.excludePrivate, pinOrd: spec.pinOrd, inlineMaxBytes: spec.inlineMaxBytes,
+    policy, pruneMaxBytes: PAGE_INLINE_MAX_BYTES, pruneKept: LARGE_PAGE_VERSIONS_KEPT,
+  })) as { row: Record<string, unknown> | null; history_unpruned: boolean };
+  if (got.history_unpruned) refuseMember(member, 'a version history PGLite would have pruned, which the store keeps whole');
+  if (!got.row) return null;
+  const row = got.row;
+  return { ...row, replaced_at: asDate(row.replaced_at), recorded_since: asDate(row.recorded_since), created_at: asDate(row.created_at) };
+};

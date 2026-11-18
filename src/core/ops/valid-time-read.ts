@@ -19,8 +19,8 @@ import { inlineBodyBytes } from './get-page-body.ts';
 import { pageTrustForRead, readQuarantined } from './get-page-projection.ts';
 import { admitsTrust, type TrustTier } from '../trust/tier.ts';
 import { isCalendarDate } from '../link-validity.ts';
-import { VALID_TIME_CURRENT_ORD } from '../engine-sql/trust-tier-reads.ts';
-import { privateLinkOriginFilterFragment, privatePagesFilterForCaller, privatePagesFilterFragment, remoteReadFloorSql, resolveExcludePrivatePages, worldOnlyFacts } from '../search/private-visibility.ts';
+import { VALID_TIME_CURRENT_ORD, type ValidTimeIdentityRow } from '../engine-sql/trust-tier-reads.ts';
+import { privateLinkOriginFilterFragment, remoteReadFloorSql, resolveExcludePrivatePages, worldOnlyFacts } from '../search/private-visibility.ts';
 import { fenceTranscriptText, isQuotedPageType, neutralizeToolCalls, quotesStored } from '../search/transcript-quote.ts';
 import { quotedPageMeta } from './get-page-projection.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
@@ -47,7 +47,7 @@ const INSTANT = /^[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}/;
 const CURRENT_ORD = VALID_TIME_CURRENT_ORD;
 const AMENDMENTS_CAP = 20;
 
-interface Identity { id: number; source_id: string; slug: string; source_path: string | null; local_path: string | null; world: boolean }
+type Identity = ValidTimeIdentityRow;
 interface PickRow {
   version_id: number | null; ord: number; replaced_at: string | null; valid_from: string; valid_until: string | null; visible: boolean;
   reason: string | null; successor_pruned: boolean; segmented: boolean; recorded_since: string | null; introduced_because: string | null; chosen: boolean;
@@ -91,18 +91,14 @@ function refuseCombinations(ctx: OperationContext, p: Record<string, unknown>): 
 
 /** The one page the read is about: a slug in more than one granted source refuses and asks for source_id. */
 async function resolveIdentity(tx: BrainEngine, ctx: OperationContext, slug: string, scope: { sourceId?: string; sourceIds?: string[] }, excludePrivate: boolean, asOf: string): Promise<Identity> {
-  const rows = await tx.executeRaw<Identity>(`SELECT p.id, p.source_id, p.slug, p.source_path, s.local_path, ${privatePagesFilterFragment('p')} AS world
-      FROM pages p JOIN sources s ON s.id = p.source_id
-     WHERE p.slug = $1 AND p.deleted_at IS NULL AND ($2::text IS NULL OR p.source_id = $2) AND ($3::text[] IS NULL OR p.source_id = ANY($3::text[]))
-       ${excludePrivate ? `AND ${privatePagesFilterForCaller('p')}` : ''}
-     ORDER BY p.source_id LIMIT 6`, [slug, scope.sourceId ?? null, scope.sourceIds ?? null]);
+  const rows = await tx.listValidTimeIdentities({ slug, sourceId: scope.sourceId ?? null, sourceIds: scope.sourceIds ?? null, excludePrivate });
   if (rows.length > 1) {
     const sources = rows.map(r => r.source_id);
     throw opError('invalid_params', `get_page: ${slug} exists in several sources (${sources.join(', ')}); an as_of read follows one page's history.`,
       'Pass source_id to name the page.', { fix: readFix(`Reads the page in source ${sources[0]}.`, { mcp: { tool: 'get_page', arguments: { slug, source_id: sources[0], as_of: asOf } } }) });
   }
   if (!rows[0]) throw pageNotFoundError(ctx, slug, { includeDeleted: false, sourceIdParam: scope.sourceId });
-  return { ...rows[0], id: Number(rows[0].id), world: rows[0].world === true };
+  return rows[0];
 }
 
 /**

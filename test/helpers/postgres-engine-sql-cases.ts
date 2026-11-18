@@ -89,6 +89,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listVisibleBeliefLifetimes': OOS.trustTierReads,
   'listVersionTrustTiers': OOS.trustTierReads,
   'listVersionReasonWriters': OOS.trustTierReads,
+  'listValidTimeIdentities': OOS.trustTierReads,
   'pickValidTimeEdition': OOS.trustTierReads,
   'closeOpenLoop': OOS.openLoops,
   'listOpenLoops': OOS.openLoops,

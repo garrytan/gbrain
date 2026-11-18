@@ -39,6 +39,7 @@ mod eligibility;
 mod fingerprint;
 pub mod proposals;
 pub mod tier_reads;
+pub mod valid_time;
 pub mod withdrawals;
 pub mod write_gate;
 

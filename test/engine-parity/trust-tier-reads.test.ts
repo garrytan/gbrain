@@ -7,9 +7,12 @@
  *    privacy and eligibility options (quarantine, trust floor, flag suppression) with the withdrawn mark;
  *    listTrustScanRows and countUnscannedTrustRows read the rows of a table at a listed stored tier above a cursor;
  *    listVersionTrustTiers and listVersionReasonWriters read the snapshot tier of a version and the writer that replaced
- *    it; readBeliefHistoryRows, listVisibleBeliefLifetimes and pickValidTimeEdition answer the same on PGLite and
- *    Postgres. The Rust arm (GBRAIN_TEST_RUST_ARM=1) answers the page, fact and version reads and refuses the rest.
- *  - Regression: core memory, `gbrain doctor`'s trust scan, `get_versions` reasons and the as-of read call these
+ *    it; listValidTimeIdentities lists the live pages with a slug in the source scope by source; pickValidTimeEdition
+ *    picks the edition in force on a date with its competing ordinals and counts; readBeliefHistoryRows and
+ *    listVisibleBeliefLifetimes answer the same on PGLite and Postgres. The Rust arm (GBRAIN_TEST_RUST_ARM=1) answers
+ *    the page, fact, version and valid-time reads, refuses the belief reads, and stops typed where the pick would need a
+ *    change reason or a history gap the store does not keep.
+ *  - Regression: core memory, `gbrain doctor`'s trust scan, `get_versions` reasons and `get_page` with `as_of` call these
  *    members; an engine that drops an option shows a page the reader may not see or a row the scan should skip.
  *  - Why existing coverage misses it: the reads were raw SQL inside their callers, so no engine arm ran them as members.
  *  - Seam: none. Rows are written through typed members in transactions whose write trust settings declare the tier.
@@ -275,6 +278,115 @@ describe('engine parity: typed trust tier reads', () => {
       expect(pinned).toMatchObject({ ord: 'current' });
       expect(gone).toBeNull();
       return { march, july, before, pinned, gone };
+    },
+  );
+
+  parityTest(
+    'listValidTimeIdentities lists the live pages with a slug in the scope by source, with the checkout and world mark',
+    { methods: ['putPage', 'softDeletePage', 'listValidTimeIdentities'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'beta', {}, '/srv/brain/beta');
+      await createSource(engine, backend, 'alpha');
+      await createSource(engine, backend, 'gamma');
+      const note = (frontmatter: Record<string, unknown> = {}) => ({ type: 'note' as const, title: 'VT', compiled_truth: 'body', timeline: '', frontmatter });
+      await engine.putPage('vt/ident', { ...note(), source_path: 'vt/ident.md' } as never, { sourceId: 'beta' });
+      await engine.putPage('vt/ident', note(), { sourceId: 'alpha' });
+      await engine.putPage('vt/ident', note({ visibility: 'private' }), { sourceId: 'gamma' });
+      await engine.putPage('vt/ident', note(), { sourceId: 'default' });
+      await engine.softDeletePage('vt/ident', { sourceId: 'default' });
+      const list = async (spec: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; slug?: string }) =>
+        (await engine.listValidTimeIdentities({ slug: spec.slug ?? 'vt/ident', sourceId: spec.sourceId ?? null, sourceIds: spec.sourceIds ?? null, excludePrivate: spec.excludePrivate ?? false }))
+          .map(r => ({ ...r, id: typeof r.id === 'number' && r.id > 0 }));
+      const all = await list({});
+      const one = await list({ sourceId: 'beta' });
+      const granted = await list({ sourceIds: ['gamma', 'alpha'] });
+      const hidden = await list({ excludePrivate: true });
+      const missing = await list({ slug: 'vt/none' });
+      expect(all.map(r => [r.source_id, r.world])).toEqual([['alpha', true], ['beta', true], ['gamma', false]]);
+      expect(one).toEqual([{ id: true, source_id: 'beta', slug: 'vt/ident', source_path: 'vt/ident.md', local_path: '/srv/brain/beta', world: true }]);
+      expect(granted.map(r => r.source_id)).toEqual(['alpha', 'gamma']);
+      expect(hidden.map(r => r.source_id)).toEqual(['alpha', 'beta']);
+      expect(missing).toEqual([]);
+      return { all, one, granted, hidden, missing };
+    },
+  );
+
+  /** Ordinals as labels: the current page, or the version label the case gave it. */
+  const ordLabel = (labels: Map<string, string>) => (v: unknown) => (v == null ? null : Number(v) === VALID_TIME_CURRENT_ORD ? 'current' : labels.get(String(v)) ?? `?${v}`);
+
+  /** The pick with ordinals as labels and the timestamps as their presence. */
+  const pickView = (labels: Map<string, string>) => (r: Record<string, unknown> | null) => {
+    const ord = ordLabel(labels);
+    return r && ({
+      version: ord(r.version_id), ord: ord(r.ord), valid_from: r.valid_from, valid_until: r.valid_until, visible: r.visible, chosen: r.chosen,
+      reason: r.reason, introduced: r.introduced_because, tier: r.tier, successor_tier: r.successor_tier, segmented: r.segmented,
+      successor_pruned: r.successor_pruned, replaced: r.replaced_at instanceof Date, since: r.recorded_since instanceof Date,
+      competing: Array.isArray(r.competing) ? r.competing.map(ord) : r.competing, undated: Number(r.undated), large: Number(r.large_versions),
+      segmentedVersions: Number(r.segmented_versions), filed: r.any_filed, gap: r.gap_at, created: r.created_at instanceof Date,
+    });
+  };
+
+  parityTest(
+    'pickValidTimeEdition reports the competing editions, undated and large versions, and a private edition',
+    { methods: ['putPage', 'createVersion', 'getPage', 'pickValidTimeEdition'] },
+    async (engine) => {
+      const labels = new Map<string, string>();
+      const write = (body: string, frontmatter: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+        engine.putPage('vt/many', { type: 'note', title: 'VT', compiled_truth: body, timeline: '', frontmatter, ...extra } as never);
+      const snap = async (label: string) => labels.set(String((await engine.createVersion('vt/many', { sourceId: 'default' })).id), label);
+      await write('a', { valid_from: '2026-01-01', valid_until: '2026-12-31T00:00:00Z' });
+      await snap('v1');
+      await write('long body b', { valid_from: '2026-02-30' });
+      await snap('v2');
+      await write('c', { valid_from: '2025-06-01T00:00:00.000+00:00', visibility: 'private' });
+      await snap('v3');
+      await write('c', { valid_from: '2026-03-01' }, { source_path: 'vt/many.md' });
+      const pageId = (await engine.getPage('vt/many', { sourceId: 'default' }))!.id;
+      const view = pickView(labels);
+      const spec = { pageId, excludePrivate: false, pinOrd: null, inlineMaxBytes: 5 };
+      const feb = view(await engine.pickValidTimeEdition({ ...spec, asOf: '2026-02-01' }));
+      const april = view(await engine.pickValidTimeEdition({ ...spec, asOf: '2026-04-01', excludePrivate: true }));
+      const july = view(await engine.pickValidTimeEdition({ ...spec, asOf: '2025-07-01' }));
+      const early = view(await engine.pickValidTimeEdition({ ...spec, asOf: '2024-01-01' }));
+      const [pin] = [...labels].find(([, l]) => l === 'v1')!;
+      const pinned = view(await engine.pickValidTimeEdition({ ...spec, asOf: '2026-04-01', pinOrd: Number(pin) }));
+      expect(feb).toMatchObject({ ord: 'v1', chosen: true, valid_until: '2026-12-31', competing: ['v3'], undated: 1, large: 1, filed: true, visible: true });
+      expect(april).toMatchObject({ ord: 'current', chosen: true, competing: ['v3'], since: true, successor_tier: null });
+      expect(july).toMatchObject({ ord: 'v3', valid_from: '2025-06-01', visible: false, competing: ['current'] });
+      expect(early).toMatchObject({ ord: 'v3', chosen: false });
+      expect(pinned).toMatchObject({ ord: 'v1', chosen: true });
+      return { feb, april, july, early, pinned };
+    },
+  );
+
+  parityTest(
+    'pickValidTimeEdition reads the reason a version was replaced for; the Rust store keeps none and refuses the write',
+    { methods: ['putPage', 'createVersion', 'getPage', 'pickValidTimeEdition'] },
+    async (engine) => {
+      const write = (validFrom: string) => engine.putPage('vt/reason', { type: 'note', title: 'VT', compiled_truth: `body ${validFrom}`, timeline: '', frontmatter: { valid_from: validFrom } });
+      await write('2026-01-01');
+      const v1 = await engine.createVersion('vt/reason', { sourceId: 'default', reason: 'imported from the notes export' });
+      await write('2026-06-01');
+      const pageId = (await engine.getPage('vt/reason', { sourceId: 'default' }))!.id;
+      const view = pickView(new Map([[String(v1.id), 'v1']]));
+      const july = view(await engine.pickValidTimeEdition({ pageId, asOf: '2026-07-01', excludePrivate: false, pinOrd: null, inlineMaxBytes: 1_000_000 }));
+      const march = view(await engine.pickValidTimeEdition({ pageId, asOf: '2026-03-01', excludePrivate: true, pinOrd: null, inlineMaxBytes: 1_000_000 }));
+      expect(july).toMatchObject({ ord: 'current', introduced: 'imported from the notes export' });
+      expect(march).toMatchObject({ ord: 'v1', reason: 'imported from the notes export' });
+      return { july, march };
+    },
+  );
+
+  parityTest(
+    'pickValidTimeEdition reads the gap a version history records; the Rust store records none and refuses the write',
+    { methods: ['putPage', 'createVersion', 'getPage', 'pickValidTimeEdition'] },
+    async (engine) => {
+      await engine.putPage('vt/gap', { type: 'note', title: 'VT', compiled_truth: 'body', timeline: '', frontmatter: { valid_from: '2026-01-01' } });
+      await engine.createVersion('vt/gap', { sourceId: 'default', historyGap: true });
+      const pageId = (await engine.getPage('vt/gap', { sourceId: 'default' }))!.id;
+      const row = await engine.pickValidTimeEdition({ pageId, asOf: '2026-07-01', excludePrivate: false, pinOrd: null, inlineMaxBytes: 1_000_000 });
+      expect(row?.gap_at).toBeInstanceOf(Date);
+      return { gap: row?.gap_at instanceof Date };
     },
   );
 });
