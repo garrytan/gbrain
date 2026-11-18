@@ -217,6 +217,24 @@ d('single page writes on Postgres (Phase 4.1-4.4)', () => {
     }, { databaseUrl: url() });
   }, 120_000);
 
+  test('a replay of a committed request after its writer was revoked refuses with the cache on, as with it off', async () => {
+    const outcome = (cache: '0' | '1') => withEnv({ GBRAIN_PREADMIT_CACHE: cache }, async () => {
+      resetWriteSwitches();
+      let replay: { code?: string; message?: string } | null = null;
+      await managedBrain(async ({ engine, ctx }) => {
+        const params = { slug: 'notes/revoked-replay', request_id: randomUUID(), content: page('Replay', 'Committed before the revoke.') };
+        const first = await submitPageMutation(ctx, { operation: 'put_page', params: { ...params }, waitMs: 20_000 });
+        expect(first.state).toBe('committed');
+        const [row] = await engine.executeRaw<{ principal_id: string }>("SELECT principal_id FROM persistence_requests WHERE slug='notes/revoked-replay'");
+        await revokeLocalWriter(engine, row!.principal_id);
+        replay = await failure(submitPageMutation(ctx, { operation: 'put_page', params: { ...params }, waitMs: 20_000 }));
+      }, { databaseUrl: url() });
+      return replay as { code?: string } | null;
+    });
+    expect((await outcome('0'))?.code).toBe('permission_denied');
+    expect((await outcome('1'))?.code).toBe('permission_denied');
+  }, 180_000);
+
   test('a failure after the file rename and before commit restores the file through the recovery path, then the write publishes alone', async () => {
     await managedBrain(async ({ ctx, root }) => {
       const path = join(root, 'notes/crash.md');
