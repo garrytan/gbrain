@@ -257,11 +257,11 @@ releaseCycleLock	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
 readCycleLocks	cycle_locks	yes	8	no	yes	yes	refuses:minion_queue
 deleteCycleLock	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
 deleteCycleLockIfStale	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
-scanExactBatch	cli_reads_ops	yes	1	no	yes	yes	refuses:keyword_search
-nextLivePageAfter	cli_reads_ops	yes	1	no	yes	yes	refuses:pages
-listExactIdentityCandidates	cli_reads_ops	yes	1	no	yes	yes	refuses:pages
-rankEntities	cli_reads_ops	yes	1	no	yes	yes	refuses:graph
-listExtractionPendingPages	cli_reads_ops	yes	1	no	yes	yes	refuses:pages
+scanExactBatch	cli_reads_ops	yes	4	no	yes	yes	serves
+nextLivePageAfter	cli_reads_ops	yes	1	no	yes	yes	serves
+listExactIdentityCandidates	cli_reads_ops	yes	3	no	yes	yes	serves
+rankEntities	cli_reads_ops	yes	3	no	yes	yes	serves
+listExtractionPendingPages	cli_reads_ops	yes	2	no	yes	yes	serves
 listUnattributedFacts	cli_reads_ops	yes	1	no	yes	yes	refuses:facts
 listWantedPages	cli_reads_ops	yes	5	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
