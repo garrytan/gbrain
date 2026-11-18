@@ -67,4 +67,10 @@ impl Brain {
             s.get_salience_scores(&input)
         })
     }
+
+    /// `countZeroWeightWithTakes()`: `{ zero_weight_with_takes, nonzero_weight }`.
+    #[napi]
+    pub fn count_zero_weight_with_takes<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.count_zero_weight_with_takes())
+    }
 }

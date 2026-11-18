@@ -12,7 +12,8 @@
 //! submodules: `mutations` (writes on one job), `sweeps` (cancel, kill, prune, promote), `inbox`,
 //! `private_queues`, `reads` (stats and lists) and `attachments`. `synthesis_completions` keeps the
 //! `dream_synthesis_completions` archive the prune writes, under its own tag `f`, with the two
-//! dream-cycle reads of it (listSynthesisCompletionKeys, listRecentSynthesisCompletions).
+//! dream-cycle reads of it (listSynthesisCompletionKeys, listRecentSynthesisCompletions). `insight`
+//! is the one read behind `describeJobs` (readJobInsight).
 //!
 //! See docs/designs/RUST_ENGINE_INTERFACES.md ("jobs (core)") and rust/docs/store/jobs.md.
 //!
@@ -45,17 +46,27 @@
 //! owner. A job's attachments go with it (`ON DELETE CASCADE`).
 
 mod attachments;
+mod checks;
+mod health;
 mod inbox;
+mod insight;
 mod mutations;
 mod private_queues;
 mod reads;
+mod status;
 mod sweeps;
 mod synthesis_completions;
 
 pub use attachments::AttachmentInput;
+pub use checks::{
+    BuildSkewSpec, DeadDreamSpec, DeathsSpec, KeyPrefixSpec, QueuedSpendSpec, StillDeadSpec,
+};
+pub use health::{DivergenceSpec, HealthSpec};
+pub use insight::InsightSpec;
 pub use mutations::{DelayOpts, TokenDelta};
 pub use private_queues::PrivateQueueState;
 pub use reads::{JobPageCursor, JobPageSpec, OverdueSpec};
+pub use status::StatusFilter;
 pub use sweeps::{CancelOpts, PruneOutcome, PruneSpec};
 
 use crate::dream::jsonb;

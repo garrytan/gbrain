@@ -29,10 +29,11 @@ beforeAll(async () => {
   base = new PGLiteEngine();
   await base.connect({});
   await base.initSchema();
-  // computeWedgedQueueCheck only reads .kind + .executeRaw.
+  // The doctor checks read .kind, .executeRaw, the queue members and the cycle-lock read.
   pgLike = withQueueMembers({
     kind: 'postgres',
     executeRaw: base.executeRaw.bind(base),
+    readCycleLocks: base.readCycleLocks.bind(base),
   }) as unknown as BrainEngine;
 });
 
