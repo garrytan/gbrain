@@ -11,9 +11,11 @@
  * group.
  *
  * v1 posture (deliberate):
- *   - MANUAL-ONLY. Rows come exclusively from the entity_identity_link op.
+ *   - A HUMAN DECIDES. Rows come from the entity_identity_link op ('manual')
+ *     and from the owner's gbrain dedupe confirm ('dedupe:confirm', the
+ *     projection of a recorded decision: entities/identity-decisions.ts).
  *     No auto-matching, no name-similarity heuristics — a wrong identity
- *     merge silently corrupts retrieval, so v1 keeps a human in the loop.
+ *     merge silently corrupts retrieval, so a human stays in the loop.
  *     Near names are only flagged for review (entities/near-name.ts,
  *     extraction_pending possible_duplicates); nothing here is written from them.
  *   - A page belongs to at most one identity (UNIQUE (source_id, page_id));
@@ -275,6 +277,16 @@ export async function identityIdsForPages(
     if (isMissingSchemaObject(e, 'table', 'entity_identities')) return new Map();
     throw e;
   }
+}
+
+/**
+ * Count once (duplicate people PR 2): the other members of the identity group a page belongs to, when that group holds a
+ * member gbrain dedupe confirm linked; empty for a page in no group or only in a hand-made one. Trusted local callers only.
+ */
+export async function confirmedCoMembers(engine: BrainEngine, sourceId: string, slug: string): Promise<EntityIdentityMember[]> {
+  const members = await listEntityIdentities(engine, { slug, slugSourceId: sourceId });
+  if (!members.some(m => m.slug === slug && m.source_id === sourceId) || !members.some(m => m.established_by === 'dedupe:confirm')) return [];
+  return members.filter(m => !(m.slug === slug && m.source_id === sourceId));
 }
 
 /** Is the flag-gated retrieval union on? Fail-closed on any read error. */

@@ -95,9 +95,16 @@ for (const backend of testBackends()) describe(`[${backend}] the sync's held-fac
     try {
       const ended = await holder.begin(async sql => {
         await sql.unsafe('LOCK TABLE config IN ACCESS EXCLUSIVE MODE');
+        // #6040: every pooled connection is held by a read waiting on the same lock (as the persistence consumer's probe
+        // does), so the move's reads also wait for a connection; that wait ends at the budget too.
+        const poolMax = (engine as { getPoolDiagnostics?: () => { poolMax: number | null } | null }).getPoolDiagnostics?.()?.poolMax ?? 4;
+        const queued = Array.from({ length: poolMax }, () => engine.executeRaw('SELECT value FROM config WHERE key = $1', ['held-move-probe'], { timeoutMs: 5_000 }).catch(() => undefined));
+        while (((engine as { getPoolDiagnostics?: () => { tracked: { raw: number } } | null }).getPoolDiagnostics?.()?.tracked.raw ?? poolMax) < poolMax) await Bun.sleep(10);
         const started = performance.now();
         const error = await caught(moveRuledSharedHeld(engine, 'default'));
-        return { code: error?.code, ms: performance.now() - started };
+        const ms = performance.now() - started;
+        await Promise.all(queued);
+        return { code: error?.code, ms };
       });
       expect(ended.code).toBe('preparation_deadline');
       expect(ended.ms).toBeLessThan(budget + 3_000);

@@ -47,6 +47,7 @@ const OOS = {
   importWrites: 'out-of-scope:import-writes (born in engine-sql/chunks.ts, tags.ts, pages.ts; pinned by test/engine-parity/import-writes.test.ts)',
   pageBody: 'out-of-scope:page-body (Wave B segmented storage, born in engine-sql/page-body.ts; pinned by test/engine-sql-page-body.test.ts)',
   cycleLocks: 'out-of-scope:cycle-locks (gbrain_cycle_locks leases, born in engine-sql/cycle-locks.ts; pinned by test/engine-parity/cycle-locks.test.ts)',
+  identityDecisions: 'out-of-scope:identity-decisions (duplicate people PR 2, born in engine-sql/identity-decisions.ts; pinned by test/engine-parity/pages.test.ts and test/entity-dedupe-decisions.test.ts)',
   ownerOnly: 'out-of-scope:owner-only-marks (catalog and trigger DDL, born in engine-sql/owner-only-marks.ts; pinned by test/engine-parity/owner-only-marks.test.ts)',
 } as const;
 
@@ -91,6 +92,9 @@ export const DOMAIN_OF: Record<string, string> = {
   'initSchema': OOS.lifecycle,
   'holdSchemaMigrationLock': OOS.lifecycle,
   'ownerOnlyMarkTriggers': OOS.ownerOnly,
+  'listIdentityDecisions': OOS.identityDecisions,
+  'listRestrictedIdentityMembers': OOS.identityDecisions,
+  'applyIdentityDecisions': OOS.identityDecisions,
   'applyForwardReferenceBootstrap': OOS.helper,
   'transaction': OOS.lifecycle,
   'transactionDirect': OOS.lifecycle,
