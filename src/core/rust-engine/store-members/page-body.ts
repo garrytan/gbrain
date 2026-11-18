@@ -4,7 +4,7 @@
  * hex and dates as ISO strings; this file converts them to and from `Uint8Array` and `Date`.
  *
  * Served: allocateBodyOccurrenceIds, stageSegmentTexts, readSegmentTexts, stageManifestRows, readManifest,
- * stageSegmentChunks, createSegmentedPageShell, flipBodyGeneration, openBodyStaging, setBodyStagingState,
+ * stageSegmentChunks, createSegmentedPageShell, flipBodyGeneration, sealSegmentedPage, openBodyStaging, setBodyStagingState,
  * readSegmentDerivations, upsertSegmentDerivations, retireSegmentDerivations, refreshPageBody. stageSegmentChunks
  * refuses a chunk that carries a vector (vectors are not stored), as upsertChunks does.
  *
@@ -24,6 +24,7 @@ import { bodyGenerationIncompleteError, bodyStagingGoneError } from '../../engin
 import { opError } from '../../ops/contract.ts';
 import { readFix } from '../../ops/op-fix.ts';
 import { prepareChunks } from '../chunk-input.ts';
+import { sanitizeRemoteBody } from '../../remote-body.ts';
 import { storeErrorCode } from '../store-errors.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 
@@ -171,6 +172,24 @@ export const flipBodyGeneration: StoreMember<[input: BodyFlipInput], BodyFlipRes
   if (input.newGeneration !== input.expectedGeneration + 1) throw new TypeError('newGeneration must be expectedGeneration + 1');
   const sent = { ...input, closeOccurrences: [...input.closeOccurrences], retireChunkOccurrences: [...input.retireChunkOccurrences], meta: metaInput(input.meta) };
   return bodyCall('flipBodyGeneration', () => brain.flipBodyGeneration(sent));
+};
+
+/**
+ * The store reads the page's stored timeline lead and revision (`readSegmentedSealLead`, not a member), this side
+ * sanitizes the lead (`timelineLead` when given) with `sanitizeRemoteBody` as engine-sql/page-body.ts does, and the
+ * store seals the page at that revision and records the text (`pages::record_search_timeline`). A page that moved in
+ * between refuses `revision_conflict`; a missing page is a no-op. PGLite overlays the page's withdrawals and global
+ * purges on the lead first; here that overlay is the identity, because the store keeps no withdrawal ledger or purge
+ * markers (its readPageSnapshot reports no withdrawals), so the stored lead is the overlaid lead.
+ */
+export const sealSegmentedPage: StoreMember<[pageId: number, opts?: { timelineLead?: string }], void> = async (brain, pageId, opts) => {
+  const o = takeOptions('sealSegmentedPage', opts, ['timelineLead']);
+  const stored: { lead: string; revision: string } | null =
+    await storeCall({ member: 'sealSegmentedPage' }, () => brain.readSegmentedSealLead(pageId));
+  if (!stored) return;
+  const lead = typeof o.timelineLead === 'string' ? o.timelineLead : stored.lead;
+  await storeCall({ member: 'sealSegmentedPage', expectedRevision: stored.revision },
+    () => brain.sealSegmentedPage(pageId, sanitizeRemoteBody(lead), stored.revision));
 };
 
 export const openBodyStaging: StoreMember<[input: BodyStagingInput], void> = async (brain, input) => {

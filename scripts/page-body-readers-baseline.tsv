@@ -195,6 +195,7 @@ src/core/engine-sql/chunks.ts	listChunklessPagesWithContent	sql	STREAM	lane 1e f
 src/core/engine-sql/chunks.ts	listEmbeddingStateRows	sql	META	lane 1e file: octet_length metadata
 src/core/engine-sql/page-body.ts	createSegmentedPageShell	sql	NONE	not a reader: the segmented storage writer sets the body columns NULL on the shell row
 src/core/engine-sql/page-body.ts	flipBodyGeneration	sql	NONE	not a reader: the generation flip sets the body columns NULL and the segmented body columns
+src/core/engine-sql/page-body.ts	sealSegmentedPage	field	LEAD	the withdrawal overlay of the stored timeline_lead (a bounded prefix), indexed sanitized
 src/core/engine-sql/pages.ts	PAGE_VERSION_COLUMNS	sql	SEGW	lane 1e: versions of segmented pages carry no body
 src/core/engine-sql/pages.ts	listCorpusSample	sql	LEAD	segmented pages excluded from the sample in SQL (skip)
 src/core/engine-sql/pages.ts	listPrefixSampledPages	sql	LEAD	segmented pages excluded from the sample in SQL (skip)
@@ -521,7 +522,6 @@ src/core/persistence/reconcile-state.ts	readReconcileState	sql	INLINE
 src/core/persistence/reconcile.ts	runReconcilePreview	call:serializePageToMarkdown	SEGW	
 src/core/persistence/segmented-apply.ts	demoteSegmentedPage	sql	INLINE	demotion: the row turns inline with an empty body that the inline write in the same transaction fills
 src/core/persistence/segmented-apply.ts	materializedSnapshot	field	INLINE	the body materializedPage read back within PAGE_MAX_BYTES (a page over the ceiling comes back unchanged and is never read), overlaid with the snapshot withdrawals as readPageSnapshot overlays an inline body
-src/core/persistence/segmented-apply.ts	sealSegmentedPage	field	LEAD	the withdrawal overlay of the stored timeline_lead (a bounded prefix), indexed sanitized
 src/core/persistence/segmented-apply.ts	stageSegmentedImport	field	INLINE	input.page is the parsed incoming write (strings within PAGE_MAX_BYTES), never a stored segmented row
 src/core/persistence/semantic-pages.ts	prepareSemanticPageMutation	call:serializePageToMarkdown	SEGW	assertInlineBody first
 src/core/persistence/semantic-pages.ts	prepareSemanticPageMutation	field	SEGW	assertInlineBody after the identity check (tag and timeline writes refuse)

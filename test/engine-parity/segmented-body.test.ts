@@ -466,4 +466,48 @@ describe('engine parity: segmented page bodies, one call at a time', () => {
       return { noChunks, stale, missing, unpublished, live, later, inlineNow, inlineNext };
     },
   );
+
+  parityTest(
+    'sealing a segmented page shows its chunks at the current revision, again after a replace that keeps older chunks',
+    { methods: ['sealSegmentedPage', 'stageSegmentChunks', 'getChunks', 'flipBodyGeneration'] },
+    async (engine) => {
+      const texts = (rows: Awaited<ReturnType<BrainEngine['getChunks']>>) => sorted(rows.map((c) => c.chunk_text));
+      const { pageId, occurrences } = await publishApart(engine, 'notes/sealed');
+      const [one, two, three] = occurrences;
+      await engine.stageSegmentChunks(pageId, 1, [chunk(one!, 0, 'one'), chunk(two!, 0, 'two'), chunk(three!, 0, 'three')]);
+      const unsealed = texts(await engine.getChunks('notes/sealed'));
+      await engine.sealSegmentedPage(pageId);
+      const sealed = texts(await engine.getChunks('notes/sealed'));
+      // A replace that keeps ONE and TWO: their generation-1 chunks stay and show beside FOUR's.
+      // (The chunker stamp the seal keeps is not readable through an engine member; the store tests pin it.)
+      const [four] = await engine.allocateBodyOccurrenceIds(1);
+      const { stagingId } = await stageApart(engine, { pageId, slug: 'notes/sealed', genFrom: 2, texts: [FOUR], occurrences: [four!],
+        firstSeq: 2, byteStart: ONE.body.byteLength + TWO.body.byteLength });
+      await engine.stageSegmentChunks(pageId, 2, [chunk(four!, 0, 'four')]);
+      await engine.flipBodyGeneration(flipInput(pageId, 1, stagingId, [ONE, TWO, FOUR],
+        { closeOccurrences: [three!], retireChunkOccurrences: [three!] }));
+      await engine.setBodyStagingState(stagingId, 'committed');
+      const flipped = texts(await engine.getChunks('notes/sealed'));
+      await engine.sealSegmentedPage(pageId, { timelineLead: 'a lead the caller passes' });
+      const resealed = texts(await engine.getChunks('notes/sealed'));
+      const missing = await thrown(() => engine.sealSegmentedPage(987_654_321));
+      return { unsealed, sealed, flipped, resealed, missing };
+    },
+  );
+
+  parityTest(
+    'a sealed segmented page is found by its title and timeline lead',
+    { methods: ['sealSegmentedPage', 'searchTitles'] },
+    async (engine) => {
+      const { pageId } = await publishApart(engine, 'notes/sealed-titles');
+      const slugs = async (query: string) => sorted((await engine.searchTitles(query, { limit: 5 })).map((r) => r.slug));
+      const unsealed = await slugs('Segmented probe');
+      await engine.sealSegmentedPage(pageId);
+      // The flip renamed the shell to the fixture title; the stored lead is the fixture's timeline_lead.
+      const sealed = { title: await slugs('Segmented probe'), lead: await slugs('zephyrwinds') };
+      await engine.sealSegmentedPage(pageId, { timelineLead: 'a caller lead names quillfeather' });
+      const passed = { title: await slugs('Segmented probe'), stored: await slugs('zephyrwinds'), lead: await slugs('quillfeather') };
+      return { unsealed, sealed, passed };
+    },
+  );
 });

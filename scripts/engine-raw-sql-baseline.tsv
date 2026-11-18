@@ -884,7 +884,7 @@ src/core/persistence/resolve-paths.ts	execute_raw	5
 src/core/persistence/rows-behind.ts	execute_raw	4
 src/core/persistence/schema-admission.ts	execute_raw	3
 src/core/persistence/searchable.ts	execute_raw	2
-src/core/persistence/segmented-apply.ts	execute_raw	13
+src/core/persistence/segmented-apply.ts	execute_raw	9
 src/core/persistence/segmented-mirror-gate.ts	execute_raw	1
 src/core/persistence/semantic-pages.ts	execute_raw	2
 src/core/persistence/skill-activation.ts	execute_raw	12

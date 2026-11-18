@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 200/200
+# covered: 201/201
 # lifecycle: 9/9
 # pages: 25/25
 # search: 7/7
@@ -21,7 +21,7 @@
 # dream: 3/3
 # contradictions: 5/5
 # facts: 14/14
-# segmented_body: 14/14
+# segmented_body: 15/15
 # versions: 3/3
 # stats_ingest: 4/4
 # sync_aliases: 9/9
@@ -69,13 +69,13 @@ listCorpusSample	pages	yes	1	no	yes	yes	refuses:pages
 searchKeyword	search	yes	8	yes	yes	yes	serves
 countKeywordPages	search	yes	1	no	yes	yes	refuses:keyword_search
 searchKeywordPages	search	yes	1	no	yes	yes	refuses:keyword_search
-searchTitles	search	yes	1	yes	yes	yes	refuses:keyword_search
+searchTitles	search	yes	2	yes	yes	yes	refuses:keyword_search
 searchVector	search	yes	2	yes	yes	yes	refuses:vector_search
 getEmbeddingsByChunkIds	search	yes	1	no	yes	yes	refuses:embeddings
 searchKeywordChunks	search	yes	1	yes	yes	yes	refuses:keyword_search
 upsertChunks	chunks	yes	11	yes	yes	yes	serves
 sealChunks	chunks	yes	2	no	yes	yes	serves
-getChunks	chunks	yes	14	yes	yes	yes	serves
+getChunks	chunks	yes	15	yes	yes	yes	serves
 getChunkPage	chunks	yes	3	no	yes	yes	refuses:chunks
 getChunkWindows	chunks	yes	1	no	yes	yes	refuses:chunks
 countStaleChunks	chunks	yes	5	no	yes	yes	refuses:embeddings
@@ -182,9 +182,10 @@ stageSegmentTexts	segmented_body	yes	3	no	yes	yes	serves
 readSegmentTexts	segmented_body	yes	3	no	yes	yes	serves
 stageManifestRows	segmented_body	yes	4	no	yes	yes	serves
 readManifest	segmented_body	yes	7	no	yes	yes	serves
-stageSegmentChunks	segmented_body	yes	2	no	yes	yes	serves
+stageSegmentChunks	segmented_body	yes	3	no	yes	yes	serves
 createSegmentedPageShell	segmented_body	yes	5	no	yes	yes	serves
-flipBodyGeneration	segmented_body	yes	5	no	yes	yes	serves
+flipBodyGeneration	segmented_body	yes	6	no	yes	yes	serves
+sealSegmentedPage	segmented_body	yes	2	no	yes	yes	serves
 openBodyStaging	segmented_body	yes	6	no	yes	yes	serves
 setBodyStagingState	segmented_body	yes	5	no	yes	yes	serves
 sweepSegments	segmented_body	yes	1	no	yes	yes	refuses:page_body
