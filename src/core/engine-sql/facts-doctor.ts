@@ -75,7 +75,7 @@ export async function listOutsideContentFenceCounts(raw: EngineRawRead): Promise
           AND ((s.config->>'kind' = 'google' AND p.type IN ('email', 'meeting')) OR s.config->>'kind' = 'github'
                OR p.frontmatter ? 'transcript_import')
         GROUP BY p.source_id, p.slug, p.type
-        ORDER BY p.source_id, p.slug`);
+        ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C"`);
 }
 
 /** facts_health: unexpired facts that name an `atoms/` page (retired atom extraction), in every source. */
@@ -171,7 +171,7 @@ export async function listUnlinkedConversationSlugs(raw: EngineRawRead, opts: { 
       : sqlFragment`${trustedSql(tried)} AND ${trustedSql(paid)}`;
   const { text, params } = renderFragment(sqlFragment`SELECT w.slug FROM (SELECT f.source_markdown_slug AS slug, f.entity_slug IS NULL AND ${trustedSql(DERIVED)} AND ${hit} AS hit
            FROM facts f WHERE f.source_id = ${opts.sourceId} AND ${activeUnlinkedSql(opts.auditSources)} ORDER BY f.created_at DESC LIMIT ${opts.windowPerSource}) w
-        WHERE w.hit AND w.slug IS NOT NULL GROUP BY w.slug ORDER BY COUNT(*) DESC, w.slug`);
+        WHERE w.hit AND w.slug IS NOT NULL GROUP BY w.slug ORDER BY COUNT(*) DESC, w.slug COLLATE "C"`);
   return raw<{ slug: string }>(text, params);
 }
 

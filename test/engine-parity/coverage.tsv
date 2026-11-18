@@ -439,13 +439,13 @@ listUnattributedFacts	cli_reads_ops	yes	2	no	yes	yes	serves
 listWantedPages	cli_reads_ops	yes	6	no	yes	yes	serves
 listConversationFactRows	facts_doctor	yes	1	no	yes	yes	serves
 countRedactedFacts	facts_doctor	yes	1	no	yes	yes	serves
-listOutsideContentFenceCounts	facts_doctor	yes	1	no	yes	yes	serves
+listOutsideContentFenceCounts	facts_doctor	yes	2	no	yes	yes	serves
 countAtomFacts	facts_doctor	yes	1	no	yes	yes	serves
 listUnpreviewedTrustFacts	facts_doctor	yes	1	no	yes	yes	refuses:facts
 countUnlinkedFactsByOrigin	facts_doctor	yes	2	no	yes	yes	serves
 countUnlinkedFactStats	facts_doctor	yes	2	no	yes	yes	serves
 countFactRelinkOutcomes	facts_doctor	yes	1	no	yes	yes	serves
-listUnlinkedConversationSlugs	facts_doctor	yes	2	no	yes	yes	serves
+listUnlinkedConversationSlugs	facts_doctor	yes	3	no	yes	yes	serves
 countFactEmbeddingCoverage	facts_doctor	yes	1	no	yes	yes	serves
 upsertFactRelinkAttempt	fact_relink_attempts	yes	7	no	yes	yes	serves
 listFactRelinkOutcomes	fact_relink_attempts	yes	3	no	yes	yes	serves
