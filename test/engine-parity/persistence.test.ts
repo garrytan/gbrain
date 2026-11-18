@@ -189,6 +189,34 @@ describe('engine parity: write journal', () => {
     return result;
   });
 
+  parityTest('readWriteRequestProgress returns the progress columns of a queued, running and finished request, and null for an unknown id', {
+    methods: ['readWriteRequestProgress', 'stampWriteClaim', 'completeWriteRow'],
+  }, async (engine) => {
+    const id = await admitDirect(engine);
+    const progress = async () => {
+      const row = await engine.readWriteRequestProgress(id);
+      return row && { keys: Object.keys(row).sort(), state: row.state, errorCode: row.error_code ?? null, errorMessage: row.error_message ?? null,
+        outcome: row.outcome ?? null, blocked: row.blocked_reason ?? null, deferredRefresh: row.deferred_refresh_id ?? null,
+        deferredImport: row.deferred_import_from ?? null, completed: row.completed_at != null, updated: row.updated_at != null };
+    };
+    const queued = await progress();
+    await engine.stampWriteClaim(id, TOKEN, 60_000, JSON.stringify({ phase: 'parity' }));
+    const running = await progress();
+    await engine.completeWriteRow({
+      id, state: 'failed', outcome: null, errorCode: 'parity_error', errorMessage: 'parity', consumerVersion: 'parity',
+      consumerHostId: null, errorDetail: { reason: 'parity' }, resultBytes: 0, counterKeys: KEYS, intentBytes: 100, retainedBytes: 800,
+      terminalReservation: 4096, probePurges: false,
+    });
+    const finished = await progress();
+    const missing = await engine.readWriteRequestProgress('a0000000-0000-4000-8000-0000000000a9');
+    expect(queued).toMatchObject({ state: 'queued', completed: false, errorCode: null });
+    expect(queued?.keys).toEqual(['blocked_reason', 'completed_at', 'deferred_import_from', 'deferred_refresh_id', 'error_code', 'error_message', 'outcome', 'state', 'updated_at']);
+    expect(running).toMatchObject({ state: 'running', completed: false });
+    expect(finished).toMatchObject({ state: 'failed', errorCode: 'parity_error', errorMessage: 'parity', completed: true });
+    expect(missing).toBeNull();
+    return { queued, running, finished, missing };
+  });
+
   parityTest('readSourceMembership returns the incarnation and archive flag, locked or not, and null for an unknown source', { methods: ['readSourceMembership'] }, async (engine) => {
     const plain = await engine.readSourceMembership('default');
     const locked = await engine.readSourceMembership('default', { lock: true });

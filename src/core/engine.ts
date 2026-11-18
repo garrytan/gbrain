@@ -29,7 +29,7 @@ import type { ChunkMove } from './page-state/chunk-moves.ts';
 import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence-state.ts';
 import type { DurablePersistenceSettings } from './engine-sql/persistence-declaration.ts';
-import type { ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, WriteCompletion, WriteRequestInsert } from './engine-sql/persistence-journal.ts';
+import type { ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, WriteCompletion, WriteRequestInsert, WriteRequestProgress } from './engine-sql/persistence-journal.ts';
 import type { ClaimExpiry, ClaimRenewal, SourceMembership, TopologyChange, TopologyChangeInsert } from './engine-sql/persistence-claims.ts';
 import type { CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionWindowRow, ReceiptBudget, SegmentedProjectionFilter } from './engine-sql/persistence-housekeeping.ts';
 import type { ProjectionScanCursor } from './page-state/projection-window.ts';
@@ -3274,6 +3274,8 @@ export interface BrainEngine {
   readWriteRequest(principalKind: string, principalId: string, requestId: string): Promise<WriteRequest | null>;
   /** The request with journal id `id`, or null; `signal` cancels the read. */
   readWriteRequestById(id: string, opts?: { signal?: AbortSignal }): Promise<WriteRequest | null>;
+  /** The progress columns of request `id` (state, error, outcome, deferral), or null; `signal` cancels the read. */
+  readWriteRequestProgress(id: string, opts?: { signal?: AbortSignal }): Promise<WriteRequestProgress | null>;
   /** Creates the missing counter rows and locks them all FOR UPDATE in key order; returns the locked rows. */
   lockPersistenceCounters(keys: readonly string[]): Promise<CounterRow[]>;
   /** Inserts an admitted request and charges its (already locked) counters; returns the stored row. */

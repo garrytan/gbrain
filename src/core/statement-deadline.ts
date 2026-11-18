@@ -87,7 +87,7 @@ function refuse(scope: StatementDeadline): never {
 }
 
 /** The write-journal reads (engine-sql/persistence-journal.ts, persistence-claims.ts, persistence-housekeeping.ts, config.ts) that replaced statements this wrapper bounded through executeRaw. */
-const JOURNAL_TYPED_READS: ReadonlySet<string> = new Set(['readJournalLimitRows', 'readWriteRequest', 'readWriteRequestById', 'readHeldPageRows', 'readHeldCoverageRows',
+const JOURNAL_TYPED_READS: ReadonlySet<string> = new Set(['readJournalLimitRows', 'readWriteRequest', 'readWriteRequestById', 'readWriteRequestProgress', 'readHeldPageRows', 'readHeldCoverageRows',
   'readSourceMembership', 'getConfigValues', 'readReceiptBudget', 'readCapacityForecastInputs']);
 /** Those reads and the writer-binding read (engine-sql/write-misc.ts `getWorktreeBinding`), which also replaced a bounded statement. */
 const BOUNDED_TYPED_READS: ReadonlySet<string> = new Set([...JOURNAL_TYPED_READS, 'getWorktreeBinding']);

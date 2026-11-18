@@ -156,6 +156,15 @@ export async function readWriteRequestById(exec: LegacyUnscopedRead, id: string,
   return row ?? null;
 }
 
+/** #5984: the columns a waiter needs while a request is unfinished; the full row is read once it is terminal. */
+export type WriteRequestProgress = Pick<WriteRequest, 'state' | 'error_code' | 'error_message' | 'completed_at' | 'updated_at' | 'blocked_reason' | 'outcome' | 'deferred_refresh_id' | 'deferred_import_from'>;
+/** The progress columns of request `id` (the wait loop's poll). */
+export const WRITE_PROGRESS_SQL = 'SELECT state,error_code,error_message,completed_at,updated_at,blocked_reason,outcome,deferred_refresh_id,deferred_import_from FROM persistence_requests WHERE id=$1::uuid';
+export async function readWriteRequestProgress(exec: LegacyUnscopedRead, id: string, opts?: QueryOpts): Promise<WriteRequestProgress | null> {
+  const [row] = await exec.executeRaw<WriteRequestProgress>(WRITE_PROGRESS_SQL, [id], opts);
+  return row ?? null;
+}
+
 /**
  * Creates the missing counter rows and locks all of them in key order. On Postgres both statements are sent before
  * either is awaited (one round trip); a statement sent after the one that failed reports 25P02, so the error

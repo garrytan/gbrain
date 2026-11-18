@@ -253,12 +253,11 @@ export async function assertPageRequestIdentity(engine: Pick<BrainEngine, 'readT
 export async function getWriteRequestById(engine: Pick<BrainEngine, 'readWriteRequestById'>, id: string, signal?: AbortSignal): Promise<WriteRequest | null> {
   return engine.readWriteRequestById(id, { signal });
 }
-/** #5984: the columns a waiter needs while a request is unfinished; the full row is read once it is terminal. */
-export type WriteRequestProgress = Pick<WriteRequest, 'state' | 'error_code' | 'error_message' | 'completed_at' | 'updated_at' | 'blocked_reason' | 'outcome' | 'deferred_refresh_id' | 'deferred_import_from'>;
-export const WRITE_PROGRESS_SQL = 'SELECT state,error_code,error_message,completed_at,updated_at,blocked_reason,outcome,deferred_refresh_id,deferred_import_from FROM persistence_requests WHERE id=$1::uuid';
-export async function getWriteRequestProgress(engine: SqlEngine, id: string, signal?: AbortSignal): Promise<WriteRequestProgress | null> {
-  const [row] = await engine.executeRaw<WriteRequestProgress>(WRITE_PROGRESS_SQL, [id], { signal });
-  return row ?? null;
+/** #5984: the progress columns a waiter polls (engine-sql/persistence-journal.ts `readWriteRequestProgress`). */
+export { WRITE_PROGRESS_SQL, type WriteRequestProgress } from '../engine-sql/persistence-journal.ts';
+import type { WriteRequestProgress } from '../engine-sql/persistence-journal.ts';
+export async function getWriteRequestProgress(engine: Pick<BrainEngine, 'readWriteRequestProgress'>, id: string, signal?: AbortSignal): Promise<WriteRequestProgress | null> {
+  return engine.readWriteRequestProgress(id, { signal });
 }
 export function intentDigest(a: Pick<WriteAdmission, 'operation' | 'sourceId' | 'slug' | 'callerIntent'>): string {
   return digest({ operation: a.operation, source_id: a.sourceId, slug: a.slug, intent: a.callerIntent });

@@ -4879,6 +4879,7 @@
         "readTransactionSettings": "none",
         "readWriteRequest": "none",
         "readWriteRequestById": "none",
+        "readWriteRequestProgress": "none",
         "reclaimStalledJobs": "none",
         "reconnect": "none",
         "recordSearchTelemetry": "none",

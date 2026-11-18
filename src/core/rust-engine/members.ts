@@ -498,6 +498,7 @@ export const RUST_ENGINE_MEMBERS = {
   listRetiredDeactivations: 'persistence_journal',
   readWriteRequest: 'persistence_journal',
   readWriteRequestById: 'persistence_journal',
+  readWriteRequestProgress: 'persistence_journal',
   lockPersistenceCounters: 'persistence_journal',
   insertWriteRequest: 'persistence_journal',
   stampWriteClaim: 'persistence_journal',

@@ -742,7 +742,7 @@ src/core/persistence/import-mutations.ts	execute_raw	3
 src/core/persistence/import-prepare.ts	execute_raw	1
 src/core/persistence/import-reads.ts	execute_raw	7
 src/core/persistence/intent-redaction.ts	execute_raw	10
-src/core/persistence/journal.ts	execute_raw	48
+src/core/persistence/journal.ts	execute_raw	47
 src/core/persistence/landing-gaps.ts	execute_raw	3
 src/core/persistence/large-page-guard.ts	execute_raw	1
 src/core/persistence/legacy-locks.ts	execute_raw	1

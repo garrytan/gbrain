@@ -1,7 +1,7 @@
 /**
  * The write-journal members the Rust store answers: the state reads (readManagedModeRows, readLocalWriterRow,
  * insertLocalWriterRow, readJournalLimitRows, readHeldPageRows, readHeldCoverageRows), the request rows the put path
- * reads and writes (readWriteRequest, readWriteRequestById, lockPersistenceCounters, insertWriteRequest,
+ * reads and writes (readWriteRequest, readWriteRequestById, readWriteRequestProgress, lockPersistenceCounters, insertWriteRequest,
  * stampWriteClaim, lockWriteRequest, completeWriteRow), the claim upkeep (renewWriteClaim, expireStaleWriteClaims,
  * hasClaimableWrite), the admission reads (readSourceMembership, findTopologyChanges), the lifecycle receipts
  * (readTopologyChange, insertTopologyChange) and readLedgerSource.
@@ -14,7 +14,7 @@
  * rust/docs/store/persistence.md.
  */
 import type { LocalWriterInsert, LocalWriterRow } from '../../engine-sql/persistence-state.ts';
-import type { ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, WriteCompletion, WriteRequestInsert } from '../../engine-sql/persistence-journal.ts';
+import type { ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, WriteCompletion, WriteRequestInsert, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
 import type { ClaimExpiry, ClaimRenewal, SourceMembership, TopologyChange, TopologyChangeInsert } from '../../engine-sql/persistence-claims.ts';
 import type { LedgerSource } from '../../engine-sql/belief.ts';
 import type { WriteRequest } from '../../persistence/model.ts';
@@ -77,6 +77,17 @@ export const readWriteRequest: StoreMember<[principalKind: string, principalId: 
 /** The request with journal id `id`, or null. `signal` changes nothing: the read does not wait on anything. */
 export const readWriteRequestById: StoreMember<[id: string, opts?: { signal?: AbortSignal }], WriteRequest | null> =
   async (brain, id) => requestRow(await storeCall({ member: 'readWriteRequestById' }, () => brain.readWriteRequestById(id)));
+
+/**
+ * The progress columns of request `id`, or null: the columns PGLite's WRITE_PROGRESS_SQL selects, taken from the
+ * stored row. `signal` changes nothing, as for readWriteRequestById.
+ */
+export const readWriteRequestProgress: StoreMember<[id: string, opts?: { signal?: AbortSignal }], WriteRequestProgress | null> = async (brain, id) => {
+  const row = requestRow<WriteRequest>(await storeCall({ member: 'readWriteRequestProgress' }, () => brain.readWriteRequestById(id)));
+  if (!row) return null;
+  return { state: row.state, error_code: row.error_code, error_message: row.error_message, completed_at: row.completed_at, updated_at: row.updated_at,
+    blocked_reason: row.blocked_reason, outcome: row.outcome, deferred_refresh_id: row.deferred_refresh_id, deferred_import_from: row.deferred_import_from };
+};
 
 /** Request `id`, or null. FOR UPDATE changes nothing in one store write (see the header). */
 export const lockWriteRequest: StoreMember<[id: string], WriteRequest | null> =

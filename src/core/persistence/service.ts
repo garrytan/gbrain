@@ -28,6 +28,7 @@ import { writeSwitchOn } from './switches.ts';
 import { pendingWriteHint } from './health.ts';
 import { enterClaimStep, type ClaimPhaseClock } from './claim-phase.ts';
 import { receiptDeliveredHint } from './connector-errors.ts';
+import { nullUnlessCapabilityRefusal, rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import type { PgAccessReason } from '../pg-access-classify.ts';
 import { contentRefusalFromReceipt } from '../import-screen.ts';
 import { fenceIssuesFromDetail, fenceLocationFromDetail } from '../fence-repair/refusal.ts';
@@ -295,6 +296,8 @@ export async function awaitWrite(engine: BrainEngine, row: WriteRequest, config:
       const read = await readProgress(engine, id, deadline - performance.now());
       if ('cancelled' in read) continue;
       if ('error' in read) {
+        // An engine that does not serve the progress read refuses by name; polling it again cannot succeed.
+        rethrowCapabilityRefusal(read.error);
         failure = { error: read.error, attempts: (failure?.attempts ?? 0) + 1 };
         const { classifyPgAccessError } = await import('../pg-access-classify.ts');
         if (FATAL_READ_REASONS.includes(classifyPgAccessError(read.error).reason)) break;
@@ -327,7 +330,7 @@ export async function awaitWrite(engine: BrainEngine, row: WriteRequest, config:
   if (handed) row = handed;
   // A stopped wait then reads the receipt once, so a write that committed meanwhile is banked rather than reported pending.
   if (!isTerminal(row) && opts.signal?.aborted && !service.stopping) {
-    const latest = await getWriteRequestProgress(engine, id).catch(() => null);
+    const latest = await getWriteRequestProgress(engine, id).catch(nullUnlessCapabilityRefusal);
     if (latest) row = { ...row, ...latest };
     if (isTerminal(row)) return { kind: 'terminal', row: await getWriteRequestById(engine, id).catch(() => null) ?? row };
   }
