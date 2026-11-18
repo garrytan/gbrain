@@ -22,8 +22,8 @@
  *     advisor fit finding (that would let denial traffic curate the catalog).
  *
  * Windowed on `created_at` so the query rides `idx_mcp_log_time_agent`
- * (created_at, token_name). Plain SQL through `engine.executeRaw` — works on
- * BOTH engines; never writes, so no jsonb pathway is involved.
+ * (created_at, token_name). The read is the engine member
+ * `readClientOpUsage` (SQL in engine-sql/telemetry.ts); it never writes.
  *
  * Scope caveat (amendment 30): usage-derived features see HTTP clients ONLY.
  * The stdio transport (local pipe, including every bootstrap/hook-lane serve)
@@ -132,23 +132,7 @@ export async function readClientOpUsage(
   if (!Number.isInteger(days) || days < 1 || days > 3650) {
     throw new Error(`readClientOpUsage: days must be an integer in [1, 3650]; got ${String(opts.days)}`);
   }
-  // Windowed on created_at (rides idx_mcp_log_time_agent). The day count is
-  // bound as a parameter and multiplied into a unit interval — portable
-  // across Postgres and PGLite, no string-splicing into the SQL.
-  const rows = await engine.executeRaw<{
-    token_name: string | null;
-    operation: string;
-    n: number | string;
-    last_seen: unknown;
-  }>(
-    `SELECT token_name, operation, count(*)::int AS n, max(created_at) AS last_seen
-       FROM mcp_request_log
-      WHERE created_at > now() - ($1::int * interval '1 day')
-        AND token_name IS NOT NULL
-        AND status IN ('success', 'success_with_warnings', 'accepted_pending')
-      GROUP BY token_name, operation`,
-    [days],
-  );
+  const rows = await engine.readClientOpUsage(days);
 
   const byClient = new Map<string, { ops: Map<string, number>; total: number; lastSeen: string }>();
   for (const row of rows) {
@@ -202,14 +186,10 @@ const DAY_MS = 86_400_000;
 
 /** Coverage of a trailing window. A brain without the tally table (before its migration) never pruned. */
 export async function readMcpUsageCoverage(engine: BrainEngine, days: number): Promise<McpUsageCoverage> {
-  const [probe] = await engine.executeRaw<{ present: boolean; now: unknown }>(
-    "SELECT to_regclass('mcp_request_log_rollup') IS NOT NULL AS present, now() AS now");
-  const [row] = probe?.present
-    ? await engine.executeRaw<{ pruned_before: unknown }>('SELECT max(pruned_through) AS pruned_before FROM mcp_request_log_rollup')
-    : [];
-  if (!row?.pruned_before) return { requested_days: days, covered_days: days, truncated: false, pruned_before: null };
-  const prunedBefore = toIso(row.pruned_before);
-  const keptDays = Math.floor((Date.parse(toIso(probe!.now)) - Date.parse(prunedBefore)) / DAY_MS);
+  const probe = await engine.readMcpRollupPrunedBefore();
+  if (!probe.pruned_before) return { requested_days: days, covered_days: days, truncated: false, pruned_before: null };
+  const prunedBefore = toIso(probe.pruned_before);
+  const keptDays = Math.floor((Date.parse(toIso(probe.now)) - Date.parse(prunedBefore)) / DAY_MS);
   const truncated = keptDays < days;
   return { requested_days: days, covered_days: truncated ? Math.max(1, keptDays) : days, truncated, pruned_before: prunedBefore };
 }

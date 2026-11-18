@@ -1,7 +1,11 @@
 //! Timeline reads by date (the Life Chronicle reads) and event projections.
 //!
 //! Store methods for getTimelineForDate, getSince, getOnThisDay, getLastSeen,
-//! upsertEventProjection, removeTimelineRows and updateTimelineDetails.
+//! upsertEventProjection, removeTimelineRows and updateTimelineDetails, and the timeline reads
+//! of `src/core/engine-sql/timeline-reads.ts` (sampleEffectiveDates, sampleEffectiveDateSources,
+//! readMaxTimelineEntryId, listStoredTimelineRowsOrdered, deleteTimelineRows,
+//! storedTimelineRowsByPageIds, countSegmentedTimelinePages, countTimelineCommentMarkupRows,
+//! listTimelineOrphanPages).
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
 //! Each method decodes its arguments, runs one `Store` call on the pool through `Brain::run`,
@@ -112,6 +116,108 @@ impl Brain {
             let rows: Vec<timeline_queries::TimelineDetailRefresh> =
                 required(rows, "updateTimelineDetails rows")?;
             s.update_timeline_details(page_id as i64, &rows)
+        })
+    }
+
+    /// `sampleEffectiveDates()`: `{ future_dated, pre_1990 }`.
+    #[napi]
+    pub fn sample_effective_dates<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.sample_effective_dates())
+    }
+
+    /// `sampleEffectiveDateSources()`: the fallback-dated sample rows, newest first.
+    #[napi]
+    pub fn sample_effective_date_sources<'env>(
+        &self,
+        env: &'env Env,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.sample_effective_date_sources())
+    }
+
+    /// `readMaxTimelineEntryId()`: the largest entry id, or 0.
+    #[napi]
+    pub fn read_max_timeline_entry_id<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_max_timeline_entry_id())
+    }
+
+    /// `listStoredTimelineRowsOrdered(pageId)`: the page's own rows, by date then id.
+    #[napi]
+    pub fn list_stored_timeline_rows_ordered<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let page_id: i64 = arg(input, "listStoredTimelineRowsOrdered input")?;
+            s.list_stored_timeline_rows_ordered(page_id)
+        })
+    }
+
+    /// `deleteTimelineRows({ pageId, deletions })`: `{ date, removed }[]`.
+    #[napi]
+    pub fn delete_timeline_rows<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::timeline_queries::DeleteTimelineRowsInput =
+                arg(input, "deleteTimelineRows input")?;
+            s.delete_timeline_rows(&input)
+        })
+    }
+
+    /// `storedTimelineRowsByPageIds(pageIds)`: the own rows, by page id then id.
+    #[napi]
+    pub fn stored_timeline_rows_by_page_ids<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let ids: Vec<i64> = arg(input, "storedTimelineRowsByPageIds input")?;
+            s.stored_timeline_rows_by_page_ids(&ids)
+        })
+    }
+
+    /// `countSegmentedTimelinePages({ sourceIds, limit })`: `{ pages, rows, sample }`.
+    #[napi]
+    pub fn count_segmented_timeline_pages<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::timeline_queries::SegmentedTimelineInput =
+                arg(input, "countSegmentedTimelinePages input")?;
+            s.count_segmented_timeline_pages(&input)
+        })
+    }
+
+    /// `countTimelineCommentMarkupRows(sourceIds)`: a count.
+    #[napi]
+    pub fn count_timeline_comment_markup_rows<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let ids: Vec<String> = arg(input, "countTimelineCommentMarkupRows input")?;
+            s.count_timeline_comment_markup_rows(&ids)
+        })
+    }
+
+    /// `listTimelineOrphanPages({ afterId, limit, sourceId? })`: the pages, by id.
+    #[napi]
+    pub fn list_timeline_orphan_pages<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::timeline_queries::TimelineOrphanInput =
+                arg(input, "listTimelineOrphanPages input")?;
+            s.list_timeline_orphan_pages(&input)
         })
     }
 }

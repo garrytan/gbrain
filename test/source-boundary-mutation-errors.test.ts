@@ -318,6 +318,10 @@ describe('mutation-time deletion race reclassification (#4109)', () => {
       async getConfig() {
         return null;
       },
+      // The guest admission check reads the write source's guest row; WRITE_SRC is not a guest source.
+      async readGuestSourceRow() {
+        return { hidden: false, source_id: null, writers: null, trust_ceiling: null };
+      },
     } as unknown as BrainEngine;
   }
 
@@ -379,6 +383,8 @@ describe('mutation-time deletion race reclassification (#4109)', () => {
         throw new PageMissingError('addLink', 'to', 'topics/race-restored', WRITE_SRC);
       },
       async executeRaw(sql: string) { return sql.includes('FROM persistence_brain') ? [{ enabled: false }] : []; }, // explicitly unmanaged fixture (#6482: one well-formed row)
+      // The guest admission check reads the write source's guest row; WRITE_SRC is not a guest source.
+      async readGuestSourceRow() { return { hidden: false, source_id: null, writers: null, trust_ceiling: null }; },
     } as unknown as BrainEngine;
     const result = await dispatchToolCall(eng, 'add_link', {
       from: 'topics/race-from',

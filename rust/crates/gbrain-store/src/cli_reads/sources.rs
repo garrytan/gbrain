@@ -1,10 +1,13 @@
-//! Source-resolution reads: `listLocalPathSources`, `listSourceRoutingRows` and
-//! `countDefaultSourceSplit` (SQL in `src/core/engine-sql/sources.ts`). Each reads one snapshot.
+//! Source-resolution reads: `listLocalPathSources`, `listSourceRoutingRows`,
+//! `countDefaultSourceSplit` and `countSourcePages` (SQL in `src/core/engine-sql/sources.ts`).
+//! Each reads one snapshot. `insertSource` is the CLI's plain source insert.
 
-use crate::error::Result;
+use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
 use crate::kv::{KvRead, scan_prefix};
-use crate::sources::{DEFAULT_SOURCE, all_sources};
-use crate::{Store, keys};
+use crate::sources::{
+    DEFAULT_SOURCE, SourceRecord, SourceRow, all_sources, read_source, valid_source_id,
+};
+use crate::{Store, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
@@ -137,5 +140,81 @@ impl Store {
         })?;
         split.non_default_sources = others.len() as u64;
         Ok(split)
+    }
+
+    /// `countSourcePages(sourceId, { includeDeleted })`: the pages of one source, soft-deleted
+    /// pages only when `include_deleted`. An unknown source has none.
+    pub fn count_source_pages(&self, source_id: &str, include_deleted: bool) -> Result<u64> {
+        if source_id.contains('\0') {
+            return Ok(0);
+        }
+        let read = self.read()?;
+        let mut n = 0u64;
+        let mut failure = None;
+        scan_prefix(
+            &*read,
+            &keys::text(keys::PAGE, &[source_id, ""]),
+            false,
+            &mut |_, v| match serde_json::from_slice::<PageLiveness>(v) {
+                Ok(page) => {
+                    if include_deleted || page.deleted_at_us.is_none() {
+                        n += 1;
+                    }
+                    true
+                }
+                Err(e) => {
+                    failure = Some(e.into());
+                    false
+                }
+            },
+        )?;
+        failure.map_or(Ok(n), Err)
+    }
+
+    /// `insertSource(row)`: creates a source with this name, path and config. Like the SQL
+    /// primary key and the unique name, a source that already has the id or the name refuses
+    /// `constraint_violation` and nothing is written. Source ids are 1 to 32 characters of
+    /// `a-z`, `0-9` and `-` (`invalid_argument` otherwise).
+    pub fn insert_source(
+        &self,
+        id: &str,
+        name: &str,
+        local_path: Option<&str>,
+        config: &Map<String, Value>,
+    ) -> Result<SourceRow> {
+        if !valid_source_id(id) {
+            return Err(StoreError::invalid(
+                "a source id is 1 to 32 characters of a-z, 0-9 and -",
+            ));
+        }
+        self.write(|tx| {
+            if read_source(&*tx, id)?.is_some() {
+                return Err(StoreError::new(
+                    CONSTRAINT_VIOLATION,
+                    format!("source \"{id}\" already exists"),
+                ));
+            }
+            if all_sources(&*tx)?
+                .iter()
+                .any(|s| s.name.as_deref() == Some(name))
+            {
+                return Err(StoreError::new(
+                    CONSTRAINT_VIOLATION,
+                    format!("a source named \"{name}\" already exists"),
+                ));
+            }
+            let record = SourceRecord {
+                id: id.to_string(),
+                name: Some(name.to_string()),
+                local_path: local_path.map(str::to_string),
+                last_sync_at_us: None,
+                config: config.clone(),
+                incarnation: self.env.new_uuid(),
+                archived: false,
+                created_at_us: self.env.now_micros(),
+            };
+            put_json(tx, &keys::text(keys::SOURCE, &[id]), &record)?;
+            Ok(SourceRow::from(record))
+        })
     }
 }

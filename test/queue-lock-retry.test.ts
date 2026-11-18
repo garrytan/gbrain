@@ -16,6 +16,7 @@ import { join } from 'path';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import * as jobsSql from '../src/core/engine-sql/jobs.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { withQueueMembers } from './helpers/queue-engine-members.ts';
 
 function connEndedError(): Error & { code: string } {
   const e = new Error('write CONNECTION_ENDED localhost:6543') as Error & { code: string };
@@ -41,7 +42,7 @@ describe('MinionQueue lock-path recovery (issue #1678)', () => {
     await withEnv(FAST_ENV, async () => {
       let calls = 0;
       let reconnects = 0;
-      const engine = {
+      const engine = withQueueMembers({
         kind: 'postgres',
         executeRaw: async (sql: string) => {
           if (isAuthorityInventory(sql)) return [];
@@ -54,7 +55,7 @@ describe('MinionQueue lock-path recovery (issue #1678)', () => {
           return [];
         },
         reconnect: async () => { reconnects++; },
-      } as unknown as ConstructorParameters<typeof MinionQueue>[0];
+      }) as unknown as ConstructorParameters<typeof MinionQueue>[0];
 
       const q = new MinionQueue(engine);
       const out = await q.promoteDelayed();
@@ -67,7 +68,7 @@ describe('MinionQueue lock-path recovery (issue #1678)', () => {
   it('claim does NOT retry inline on a reaped-socket error (Codex #1 double-claim guard)', async () => {
     await withEnv(FAST_ENV, async () => {
       let calls = 0;
-      const engine: ConstructorParameters<typeof MinionQueue>[0] = {
+      const engine: ConstructorParameters<typeof MinionQueue>[0] = withQueueMembers({
         kind: 'postgres',
         // claim() routes through executeRawDirect (direct session pool) as of
         // the lock-hot-path fix. Only the read-only authority inventory may
@@ -86,7 +87,7 @@ describe('MinionQueue lock-path recovery (issue #1678)', () => {
         reconnect: async () => {},
         // The engine member the queue calls; it runs the shared claim SQL on executeRawDirect.
         claimNextJob: (spec: jobsSql.ClaimJobSpec) => jobsSql.claimNextJob(engine, spec),
-      } as unknown as ConstructorParameters<typeof MinionQueue>[0];
+      }) as unknown as ConstructorParameters<typeof MinionQueue>[0];
 
       const q = new MinionQueue(engine);
       await expect(q.claim('tok', 1000, 'default', ['sync'])).rejects.toThrow('CONNECTION_ENDED');
@@ -97,7 +98,7 @@ describe('MinionQueue lock-path recovery (issue #1678)', () => {
   it('an unavailable authority inventory prevents both claim and promotion mutations', async () => {
     await withEnv(FAST_ENV, async () => {
       let mutations = 0;
-      const engine = {
+      const engine = withQueueMembers({
         kind: 'postgres',
         executeRaw: async (sql: string) => {
           if (isAuthorityInventory(sql)) throw connEndedError();
@@ -106,7 +107,7 @@ describe('MinionQueue lock-path recovery (issue #1678)', () => {
         },
         executeRawDirect: async () => { mutations++; return []; },
         reconnect: async () => {},
-      } as unknown as ConstructorParameters<typeof MinionQueue>[0];
+      }) as unknown as ConstructorParameters<typeof MinionQueue>[0];
       const q = new MinionQueue(engine);
       await expect(q.promoteDelayed()).rejects.toThrow('CONNECTION_ENDED');
       await expect(q.claim('tok', 1000, 'default', ['sync'])).rejects.toThrow('CONNECTION_ENDED');

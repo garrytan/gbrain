@@ -275,3 +275,15 @@ The tables above stay pinned to `889e2bdf97`. These rows changed on `rust-engine
   provenance policy included.
 - `wanted-links-store.ts:36`, `:157` and `:159`: replaced by `readDatabaseClock` and `listWantedPages`, which Rust
   serves.
+
+### Known gap: health memo generation read
+
+`src/core/health-memo.ts` `readGeneration` stays on `executeRaw` (Ember decision A). It reads the generation config
+keys, `page_generation_clock_seq.last_value` and `persistence_brain.brain_id` in one statement, and no typed member
+exposes the page clock. On a Rust brain the read refuses with `engine_capability_missing`, `readGeneration` swallows
+the refusal and returns null, and `memoizedHealth` then computes the health numbers on every call and never stores
+them. The numbers match PGLite, but the memo never serves, so this is not parity. The refusal is hidden by the
+catch, so do not count it as equal.
+
+Follow-up: `page-generation-clock`, a store-wide page write counter in the Rust store, owned by core after #9688.
+When it lands, add a typed read for the clock and the brain id, and move `readGeneration` onto it.

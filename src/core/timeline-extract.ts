@@ -544,13 +544,7 @@ export async function pruneTimelineOrphans(
   for (;;) {
     const pageSize = Math.min(200, (opts.limit ?? Infinity) - result.pagesScanned);
     if (pageSize <= 0) break;
-    const params: unknown[] = [afterId, pageSize];
-    if (opts.sourceId) params.push(opts.sourceId);
-    const pages = await engine.executeRaw<{ id: number; slug: string; source_id: string; compiled_truth: string; timeline: string | null; body_storage: string; revision: string }>(
-      `SELECT p.id, p.slug, p.source_id, p.compiled_truth, p.timeline, p.body_storage, p.knowledge_revision::text AS revision FROM pages p
-        WHERE p.id > $1 AND p.deleted_at IS NULL${opts.sourceId ? ' AND p.source_id = $3' : ''}
-          AND EXISTS (SELECT 1 FROM timeline_entries t WHERE t.page_id = p.id AND t.event_page_id IS NULL)
-        ORDER BY p.id LIMIT $2`, params);
+    const pages = await engine.listTimelineOrphanPages({ afterId, limit: pageSize, ...(opts.sourceId ? { sourceId: opts.sourceId } : {}) });
     if (!pages.length) break;
     for (const page of pages) {
       const orphans = opts.coordinated && !opts.dryRun

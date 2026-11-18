@@ -20,9 +20,9 @@ const jobRow = (row: JobRow | null | undefined): JobRow | null => (row ? withDat
 
 /**
  * A coalesced row is the one PGLite read with `submission_authority IS NULL AS legacy_authority_is_null`; the store
- * keeps no NULL authority, so the column is always false.
+ * refuses an insert without an authority (the protocol trigger), so the column is whether the row's authority is null.
  */
-const keyedRow = (row: JobRow): JobRow => ({ ...jobRow(row)!, legacy_authority_is_null: false });
+const keyedRow = (row: JobRow): JobRow => ({ ...jobRow(row)!, legacy_authority_is_null: row.submission_authority == null });
 
 /** A transaction handle for a `decide` callback that must not reach the database: any use refuses. */
 function noDatabase(member: string): BrainEngine {
@@ -49,16 +49,11 @@ function admitError(error: unknown, spec: AdmitJobSpec): unknown {
 /**
  * The store runs the whole admission in one write and decides coalesce or release itself (same authority: coalesce a
  * live row, release a dead or cancelled one). A row held under another authority comes back as `conflict`, and the
- * caller's `decide` then throws the refusal PGLite throws. Policies the store cannot run refuse before anything is
- * written: a delegated client's lock and capacity check, a job without authority, and a private-queue owner.
+ * caller's `decide` then throws the refusal PGLite throws. A delegated client's lock and capacity check is a policy the
+ * store cannot run, so it refuses before anything is written.
  */
 export const admitJob: StoreMember<[spec: AdmitJobSpec, policy: AdmitJobPolicy], AdmitJobResult> = async (brain, spec, policy) => {
   if (policy.lock || policy.checkCapacity) refuseMember('admitJob', 'delegated client admission');
-  const v = spec.insert;
-  if (v.submission_authority == null) refuseMember('admitJob', 'a job without submission authority');
-  if (v.private_queue_owner_job_id != null || v.private_queue_owner_token != null || v.private_queue_lease_until != null) {
-    refuseMember('admitJob', 'a private-queue owner');
-  }
   const out: { outcome: 'inserted' | 'coalesced' | 'conflict'; row: JobRow; audit: AdmitJobResult['audit'] } =
     await storeCall({ member: 'admitJob' }, async () => {
       try {
@@ -82,9 +77,8 @@ export const listJobs: StoreMember<[filter?: ListJobsFilter], JobRow[]> = async 
   return rows.map(r => jobRow(r)!);
 };
 
-/** The watchdog-overdue ordering (`suspectWaitMs`) is not in the store yet, so a claim that sets it refuses. */
+/** The store orders an overdue watchdog suspect first (`suspectWaitMs`) with the mark this module passes. */
 export const claimNextJob: StoreMember<[spec: ClaimJobSpec], JobRow | null> = async (brain, spec) => {
-  if (spec.suspectWaitMs !== undefined) refuseMember('claimNextJob', 'option suspectWaitMs');
   if (spec.names.length === 0) return null;
   return jobRow(await storeCall({ member: 'claimNextJob' }, () => brain.claimNextJob({ ...spec, suspectMark: WATCHDOG_SUSPECT_MARK })));
 };
@@ -104,6 +98,9 @@ export const reclaimStalledJobs: StoreMember<[graceMs: number], { requeued: JobR
   const out: { requeued: JobRow[]; dead: JobRow[] } = await storeCall({ member: 'reclaimStalledJobs' }, () => brain.reclaimStalledJobs(graceMs, WATCHDOG_SUSPECT_MARK));
   return { requeued: out.requeued.map(r => jobRow(r)!), dead: out.dead.map(r => jobRow(r)!) };
 };
+
+// The rest of the queue (engine-sql/jobs-queue.ts).
+export * from './jobs-queue.ts';
 
 // ---------------------------------------------------------------- cycle locks
 

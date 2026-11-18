@@ -1,4 +1,5 @@
 import type { BrainEngine } from '../engine.ts';
+import { STORED_TIMELINE_SQL } from '../engine-sql/timeline-reads.ts';
 import { isQuarantined } from '../quarantine.ts';
 import type { ParsedPage } from '../import-file.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
@@ -441,11 +442,11 @@ interface StoredTimelineRow { id: number; date: string; source: string; summary:
 
 export { TAKE_COLLISIONS_SQL } from '../engine-sql/takes.ts';
 
-/** A page's own (non-event) timeline rows, in date order. */
-export const STORED_TIMELINE_SQL = 'SELECT id,date::text AS date,source,summary,detail FROM timeline_entries WHERE page_id=$1 AND event_page_id IS NULL ORDER BY date,id';
+/** A page's own (non-event) timeline rows, in date order (the statement lives in engine-sql/timeline-reads.ts). */
+export { STORED_TIMELINE_SQL };
 
 function storedTimeline(engine: BrainEngine, pageId: number): Promise<StoredTimelineRow[]> {
-  return engine.executeRaw<StoredTimelineRow>(STORED_TIMELINE_SQL, [pageId]);
+  return engine.listStoredTimelineRowsOrdered(pageId);
 }
 
 /**

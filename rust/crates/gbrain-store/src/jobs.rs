@@ -1,13 +1,16 @@
 //! Jobs: the Minion job queue, cycle locks, spend and rate leases, and wake subscriptions.
 //!
-//! Built so far (jobs slice 1): the `minion_jobs`, `minion_inbox` and `gbrain_cycle_locks` tables
-//! of the PGLite engine, as `src/core/engine-sql/jobs.ts` and `cycle-locks.ts` run them. Spend and
-//! rate leases and wake subscriptions are not built: TypeScript reaches those tables through
-//! `executeRaw`, which the Rust engine refuses.
+//! Built so far (jobs slices 1 and 2): the `minion_jobs`, `minion_inbox`, `minion_attachments` and
+//! `gbrain_cycle_locks` tables of the PGLite engine, as `src/core/engine-sql/jobs.ts`,
+//! `cycle-locks.ts` and `src/core/minions/queue.ts` run them. Spend and rate leases and wake
+//! subscriptions are not built: TypeScript reaches those tables through `executeRaw`, which the
+//! Rust engine refuses.
 //!
-//! Members: admitJob, getJob, listJobs, claimNextJob, renewJobLease, completeJob, failJob,
-//! reclaimStalledJobs; acquireCycleLock, refreshCycleLock, releaseCycleLock, readCycleLocks,
-//! deleteCycleLock, deleteCycleLockIfStale, assertCycleLease.
+//! Members (slice 1, here): admitJob, getJob, listJobs, claimNextJob, renewJobLease, completeJob,
+//! failJob, reclaimStalledJobs; acquireCycleLock, refreshCycleLock, releaseCycleLock,
+//! readCycleLocks, deleteCycleLock, deleteCycleLockIfStale, assertCycleLease. Slice 2 lives in the
+//! submodules: `mutations` (writes on one job), `sweeps` (cancel, kill, prune, promote), `inbox`,
+//! `private_queues`, `reads` (stats and lists) and `attachments`.
 //!
 //! See docs/designs/RUST_ENGINE_INTERFACES.md ("jobs (core)") and rust/docs/store/jobs.md.
 //!
@@ -21,6 +24,8 @@
 //! - `m 0x05 job id`: the inbox rows of a job (`InboxRecord`).
 //! - `m 0x06 status \0 id`: every row by status (the stall sweep, the quota and cap counts).
 //! - `m 0x07 lock_id -> LockRecord`: one cycle lock lease.
+//! - `m 0x08 job id -> AttachmentRecord`: the `minion_attachments` rows of a job (sequence `attachment`).
+//! - `m 0x09 owner id`: the rows whose `private_queue_owner_job_id` is that owner (the `ON DELETE SET NULL`).
 //!
 //! Integers are big-endian; a signed one has its sign bit flipped so byte order is numeric order.
 //!
@@ -33,8 +38,22 @@
 //!
 //! Deleting a job does what the foreign keys do: its inbox rows go (`ON DELETE CASCADE`) and its
 //! children's `parent_job_id` becomes NULL (`ON DELETE SET NULL`). The other two self-references
-//! (`private_queue_owner_job_id`, `budget_owner_job_id`) are never set by this store: admission
-//! refuses a private-queue owner, and nothing here writes a budget owner.
+//! (`private_queue_owner_job_id`, `budget_owner_job_id`): a row that names the deleted job as its
+//! private-queue owner has it set to NULL (`updated_at` untouched); nothing here writes a budget
+//! owner. A job's attachments go with it (`ON DELETE CASCADE`).
+
+mod attachments;
+mod inbox;
+mod mutations;
+mod private_queues;
+mod reads;
+mod sweeps;
+
+pub use attachments::AttachmentInput;
+pub use mutations::{DelayOpts, TokenDelta};
+pub use private_queues::PrivateQueueState;
+pub use reads::{JobPageCursor, JobPageSpec, OverdueSpec};
+pub use sweeps::{CancelOpts, PruneOutcome, PruneSpec};
 
 use crate::dream::jsonb;
 use crate::env::iso;
@@ -55,6 +74,8 @@ const KEY: u8 = 0x04;
 const INBOX: u8 = 0x05;
 const STATUS: u8 = 0x06;
 const LOCK: u8 = 0x07;
+const ATTACH: u8 = 0x08;
+const OWNED: u8 = 0x09;
 
 /// `LEASE_BEACON_QUEUE` (src/core/minions/protected-names.ts): the drain-lease holder records.
 pub const LEASE_BEACON_QUEUE: &str = "gbrain-drain-lease";
@@ -147,6 +168,30 @@ fn status_prefix(status: &str) -> Vec<u8> {
 
 fn status_key(status: &str, id: i64) -> Vec<u8> {
     let mut k = status_prefix(status);
+    k.extend_from_slice(&signed_key(id));
+    k
+}
+
+fn attach_prefix(job: i64) -> Vec<u8> {
+    let mut k = prefix(ATTACH);
+    k.extend_from_slice(&signed_key(job));
+    k
+}
+
+fn attach_key(job: i64, id: i64) -> Vec<u8> {
+    let mut k = attach_prefix(job);
+    k.extend_from_slice(&signed_key(id));
+    k
+}
+
+fn owned_prefix(owner: i64) -> Vec<u8> {
+    let mut k = prefix(OWNED);
+    k.extend_from_slice(&signed_key(owner));
+    k
+}
+
+fn owned_key(owner: i64, id: i64) -> Vec<u8> {
+    let mut k = owned_prefix(owner);
     k.extend_from_slice(&signed_key(id));
     k
 }
@@ -395,6 +440,13 @@ pub struct JobInsert {
     pub spend_authorization: Option<String>,
     #[serde(default)]
     pub max_stalled: Option<i32>,
+    /// The private-queue owner columns, stored as given (an owner job must exist).
+    #[serde(default)]
+    pub private_queue_owner_job_id: Option<i64>,
+    #[serde(default)]
+    pub private_queue_owner_token: Option<String>,
+    #[serde(default)]
+    pub private_queue_lease_until: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -463,7 +515,7 @@ pub struct LegacySpend {
     pub cap_usd: f64,
 }
 
-/// `ClaimJobSpec` minus `suspectWaitMs`, which the TypeScript member refuses.
+/// `ClaimJobSpec`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClaimSpec {
@@ -478,6 +530,9 @@ pub struct ClaimSpec {
     /// `WATCHDOG_SUSPECT_MARK`, sent by the TypeScript member.
     #[serde(default)]
     pub suspect_mark: Option<String>,
+    /// A marked job requeued at least this long ago leads the order, or blocks a busy worker.
+    #[serde(default)]
+    pub suspect_wait_ms: Option<f64>,
     #[serde(default)]
     pub handler_timeouts: HashMap<String, Value>,
     #[serde(default)]
@@ -583,6 +638,9 @@ fn save(tx: &mut dyn KvWrite, old: Option<&JobRecord>, new: &JobRecord) -> Resul
     if let Some(parent) = new.parent_job_id {
         tx.put(&child_key(parent, new.id), b"")?;
     }
+    if let Some(owner) = new.private_queue_owner_job_id {
+        tx.put(&owned_key(owner, new.id), b"")?;
+    }
     if let Some(key) = &new.idempotency_key {
         put_json(tx, &idem_key(key), &new.id)?;
     }
@@ -596,6 +654,9 @@ fn unindex(tx: &mut dyn KvWrite, old: &JobRecord) -> Result<()> {
     }
     if let Some(parent) = old.parent_job_id {
         tx.delete(&child_key(parent, old.id))?;
+    }
+    if let Some(owner) = old.private_queue_owner_job_id {
+        tx.delete(&owned_key(owner, old.id))?;
     }
     if let Some(key) = &old.idempotency_key {
         tx.delete(&idem_key(key))?;
@@ -617,10 +678,25 @@ fn delete_row(tx: &mut dyn KvWrite, row: &JobRecord) -> Result<()> {
     for k in keys {
         tx.delete(&k)?;
     }
+    let mut attachments = Vec::new();
+    scan_prefix(tx, &attach_prefix(row.id), false, &mut |k, _| {
+        attachments.push(k.to_vec());
+        true
+    })?;
+    for k in attachments {
+        tx.delete(&k)?;
+    }
     for child in ids_under(tx, &child_prefix(row.id))? {
         if let Some(old) = load(tx, child)? {
             let mut new = old.clone();
             new.parent_job_id = None;
+            save(tx, Some(&old), &new)?;
+        }
+    }
+    for owned in ids_under(tx, &owned_prefix(row.id))? {
+        if let Some(old) = load(tx, owned)? {
+            let mut new = old.clone();
+            new.private_queue_owner_job_id = None;
             save(tx, Some(&old), &new)?;
         }
     }
@@ -747,17 +823,33 @@ fn parse_time(what: &str, text: &Option<String>) -> Result<Option<i64>> {
 
 /// The coalesce rule (`coalesceDecision`) for a row stored here: a row under another submission
 /// authority is a conflict the caller refuses; a dead or cancelled row's key is released; any
-/// other row is returned.
+/// other row is returned. A row with a NULL authority (written before the authority cutover) is
+/// released when dead or cancelled, returned when completed or failed and the caller is an
+/// `application`, and otherwise a conflict (the caller raises `legacyJobAuthorityError`).
 enum Decision {
     Coalesce,
     Release,
     Conflict,
 }
 
-fn decide(row: &JobRecord, authority: &Value) -> Decision {
-    if row.submission_authority.as_ref() != Some(authority) {
+fn decide(row: &JobRecord, caller: Option<&Value>) -> Decision {
+    let releasable = row.status == "dead" || row.status == "cancelled";
+    if row.submission_authority.is_none() {
+        let application = caller
+            .and_then(|a| a.get("kind"))
+            .and_then(Value::as_str)
+            .is_some_and(|k| k == "application");
+        return if releasable {
+            Decision::Release
+        } else if (row.status == "completed" || row.status == "failed") && application {
+            Decision::Coalesce
+        } else {
+            Decision::Conflict
+        };
+    }
+    if row.submission_authority.as_ref() != caller {
         Decision::Conflict
-    } else if row.status == "dead" || row.status == "cancelled" {
+    } else if releasable {
         Decision::Release
     } else {
         Decision::Coalesce
@@ -775,17 +867,14 @@ impl Store {
     /// `admitJob`: the idempotency fast path, the parameter coalesce, the name quota, the
     /// backpressure caps, the parent checks, the insert and the parent flip, in one write.
     ///
-    /// Errors: `invalid_argument` for a NULL submission authority or a private-queue owner (this
-    /// store keeps neither), `constraint_violation` for a row a `minion_jobs` CHECK refuses,
+    /// A NULL submission authority is stored as NULL; the private-queue owner columns are stored as
+    /// given. Errors: `constraint_violation` for a row a `minion_jobs` CHECK refuses or an owner
+    /// job that does not exist (the foreign key),
     /// `admission_refused` (message `queue_quota_exceeded:<name>:<waiting>:<max>`) at the quota,
     /// and `invalid_state` for the parent refusals the SQL engines raise as plain errors.
     pub fn admit_job(&self, spec: &AdmitSpec) -> Result<AdmitOutcome> {
         let v = &spec.insert;
-        let Some(authority) = v.submission_authority.clone().filter(|a| !a.is_null()) else {
-            return Err(StoreError::invalid(
-                "admitJob: a job needs a submission authority",
-            ));
-        };
+        let authority = v.submission_authority.clone().filter(|a| !a.is_null());
         check_insert(v)?;
         let spend =
             match &v.spend_authorization {
@@ -795,9 +884,20 @@ impl Store {
                 })?),
             };
         let delay_until = parse_time("admitJob delay_until", &v.delay_until)?;
+        let lease_until = parse_time(
+            "admitJob private_queue_lease_until",
+            &v.private_queue_lease_until,
+        )?;
         let mut tx = self.kv.begin_write()?;
         let now = self.env.now_micros();
-        match admit_in(&mut *tx, spec, &authority, spend, delay_until, now)? {
+        match admit_in(
+            &mut *tx,
+            spec,
+            authority.as_ref(),
+            spend,
+            (delay_until, lease_until),
+            now,
+        )? {
             Step::Done(outcome) => {
                 tx.commit()?;
                 Ok(outcome)
@@ -860,9 +960,11 @@ impl Store {
         if spec.names.is_empty() {
             return Ok(None);
         }
-        if spec.exclude_watchdog_suspects && spec.suspect_mark.is_none() {
+        if (spec.exclude_watchdog_suspects || spec.suspect_wait_ms.is_some())
+            && spec.suspect_mark.is_none()
+        {
             return Err(StoreError::invalid(
-                "claimNextJob: excludeWatchdogSuspects needs suspectMark",
+                "claimNextJob: excludeWatchdogSuspects and suspectWaitMs need suspectMark",
             ));
         }
         let names: HashSet<&str> = spec.names.iter().map(String::as_str).collect();
@@ -874,19 +976,43 @@ impl Store {
             .collect();
         self.write(|tx| {
             let now = self.env.now_micros();
+            // `overdue`: marked, and last touched at least `suspectWaitMs` ago.
+            let overdue_cutoff = spec.suspect_wait_ms.map(|w| now - ms_to_us(w));
+            let overdue = |row: &JobRecord| {
+                overdue_cutoff.is_some_and(|c| {
+                    spec.suspect_mark.as_deref().is_some_and(|m| row.marked(m))
+                        && row.updated_at <= c
+                })
+            };
             let mut picked = None;
+            let mut first_overdue = None;
             for id in ids_under(tx, &claim_prefix(&spec.queue))? {
                 let Some(row) = load(tx, id)? else { continue };
+                let eligible =
+                    row.submission_authority.is_some() && names.contains(row.name.as_str());
+                if eligible && overdue(&row) {
+                    // A busy worker (excluding suspects) claims nothing while one waits overdue.
+                    if spec.exclude_watchdog_suspects {
+                        return Ok(None);
+                    }
+                    if !excluded.contains(row.name.as_str()) {
+                        first_overdue.get_or_insert_with(|| row.clone());
+                    }
+                }
                 let suspect = spec.exclude_watchdog_suspects
                     && spec.suspect_mark.as_deref().is_some_and(|m| row.marked(m));
-                if row.submission_authority.is_some()
-                    && names.contains(row.name.as_str())
-                    && !excluded.contains(row.name.as_str())
-                    && !suspect
+                if eligible && !excluded.contains(row.name.as_str()) && !suspect && picked.is_none()
                 {
                     picked = Some(row);
-                    break;
+                    if spec.suspect_wait_ms.is_none() {
+                        break;
+                    }
                 }
+            }
+            // `ORDER BY overdue DESC, priority, created_at`: an overdue row (that the exclusions
+            // allow) leads.
+            if first_overdue.is_some() {
+                picked = first_overdue;
             }
             let Some(old) = picked else { return Ok(None) };
             let mut new = old.clone();
@@ -1436,12 +1562,16 @@ fn legacy_spend_record(row: &JobRecord, spend: &LegacySpend, now: i64) -> Value 
     }))
 }
 
+/// The message of the `minion_queue_protocol` trigger's insert refusal (src/schema.sql).
+const MINION_QUEUE_PROTOCOL_REFUSAL: &str =
+    "Minion queue protocol 1 required: upgrade every producer and worker before restart";
+
 fn admit_in(
     tx: &mut dyn KvWrite,
     spec: &AdmitSpec,
-    authority: &Value,
+    authority: Option<&Value>,
     spend: Option<Value>,
-    delay_until: Option<i64>,
+    (delay_until, lease_until): (Option<i64>, Option<i64>),
     now: i64,
 ) -> Result<Step> {
     let v = &spec.insert;
@@ -1597,6 +1727,22 @@ fn admit_in(
             }
         }
     }
+    if let Some(owner) = v.private_queue_owner_job_id
+        && load(tx, owner)?.is_none()
+    {
+        return Err(StoreError::new(
+            CONSTRAINT_VIOLATION,
+            format!("minion_jobs foreign key: private_queue_owner_job_id {owner} does not exist"),
+        ));
+    }
+    // The SQL engines' `minion_queue_protocol` trigger refuses an insert without an authority (a
+    // legacy NULL row only exists from before the protocol, which a Rust store never held).
+    if authority.is_none() {
+        return Err(StoreError::new(
+            CONSTRAINT_VIOLATION,
+            MINION_QUEUE_PROTOCOL_REFUSAL,
+        ));
+    }
     // Insert.
     let id = next_seq(tx, "job")?;
     let row = JobRecord {
@@ -1605,7 +1751,7 @@ fn admit_in(
         queue: v.queue.clone(),
         status: v.status.clone(),
         priority: v.priority,
-        submission_authority: Some(authority.clone()),
+        submission_authority: authority.cloned(),
         claim_generation: 0,
         data: if v.data.is_null() {
             json!({})
@@ -1640,9 +1786,9 @@ fn admit_in(
         remove_on_complete: v.remove_on_complete,
         remove_on_fail: v.remove_on_fail,
         idempotency_key: v.idempotency_key.clone(),
-        private_queue_owner_job_id: None,
-        private_queue_owner_token: None,
-        private_queue_lease_until: None,
+        private_queue_owner_job_id: v.private_queue_owner_job_id,
+        private_queue_owner_token: v.private_queue_owner_token.clone(),
+        private_queue_lease_until: lease_until,
         created_at: now,
         started_at: None,
         finished_at: None,

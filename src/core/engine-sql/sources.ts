@@ -183,3 +183,26 @@ export async function countDefaultSourceSplit(exec: LegacyUnscopedRead): Promise
     nonDefaultSources: Number(r?.non_default_sources) || 0,
   };
 }
+
+/** Pages of one source (`SELECT COUNT(*)::int AS n FROM pages WHERE source_id=$1`); soft-deleted pages count only with `includeDeleted`. Unscoped on master. */
+export async function countSourcePages(exec: LegacyUnscopedRead, sourceId: string, opts?: { includeDeleted?: boolean }): Promise<number> {
+  const sql = opts?.includeDeleted === true
+    ? 'SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1'
+    : 'SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1 AND deleted_at IS NULL';
+  const [row] = await exec.executeRaw<{ n: number }>(sql, [sourceId]);
+  return Number(row?.n ?? 0);
+}
+
+/** The columns `insertSource` writes; the table fills the rest with its defaults. */
+export interface SourceInsert { id: string; name: string; local_path: string | null; config: Record<string, unknown> }
+
+/**
+ * Inserts one source row. A taken id or name throws the table's unique-key error and writes nothing. The config binds
+ * through jsonbParam, never a JSON.stringify'd string into `::jsonb` (postgres.js would double-encode it).
+ */
+export async function insertSource(exec: SqlExecutor, row: SourceInsert): Promise<void> {
+  await exec.run(sqlFragment`
+    INSERT INTO sources (id, name, local_path, config)
+         VALUES (${row.id}, ${row.name}, ${row.local_path}, ${jsonbParam(row.config)})
+  `);
+}

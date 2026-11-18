@@ -55,6 +55,7 @@ import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeGuards from './write-guards.ts';
 import * as trustFence from './trust-fence.ts';
 import * as connectGate from './connect-gate.ts';
+import * as telemetry from './telemetry.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
 const initSchema: StoreMember<[], void> = async () => undefined;
@@ -84,6 +85,8 @@ export const STORE_MEMBERS = {
   ...writeGuards, ...trustFence,
   // The connect gate's persistence reads, answered from the unmanaged brain the store keeps (rust/docs/store/journal.md).
   ...connectGate,
+  // Search telemetry (rust/docs/store/telemetry.md).
+  ...telemetry,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

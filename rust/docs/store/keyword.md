@@ -134,12 +134,12 @@ The page vector is not stored; `keyword/titles.rs` rebuilds the one PGLite last 
   title or timeline deletes the seal's record (`pages::forget_search_timeline`), as PGLite's trigger rewrites the
   vector then, also for a `putPage` of unchanged input, which keeps the revision and the seal.
 - A NULL timeline (a segmented page) reads `timeline_lead` in the trigger form, as the trigger's
-  `coalesce(timeline, timeline_lead, '')` does. page_body keeps the lead privately, so it reads NULL until page_body
-  exposes a reader (follow-up `title-vector-segmented-lead`).
+  `coalesce(timeline, timeline_lead, '')` does: the lead the page's last flip published (`page_body::timeline_lead`),
+  NULL for a shell no flip has published.
 - A sealed segmented page takes the sealed form: PGLite's `sealSegmentedPage` writes the title plus
   `sanitizeRemoteBody` of the lead with withdrawals and purges overlaid. Only TypeScript computes that text, so the
-  family that seals segmented pages must record it with `pages::record_search_timeline`. No Rust member seals a
-  segmented page yet, so no segmented page is searchable on the Rust engine today.
+  family that seals segmented pages records it with `pages::record_search_timeline` (page_body's
+  `sealSegmentedPage`), so a sealed segmented page is searchable by its title and lead.
 
 
 - `searchKeywordChunks` page filters: Postgres applies `type`, `types`, `where` and `exclude_slugs`; PGLite drops
@@ -155,7 +155,7 @@ The page vector is not stored; `keyword/titles.rs` rebuilds the one PGLite last 
 - Lexemes of 2047 bytes or more are dropped from the vector, as in PG (`MAXSTRLEN`).
 - `searchTitles` trigger form: PGLite's trigger reads the timeline entries that exist when the page row is written;
   the store approximates that with the entries created no later than `updated_at`. A NULL timeline reads the lead
-  through a stand-in that returns NULL until page_body exposes it (follow-up `title-vector-segmented-lead`).
+  the page's last flip published.
 - `searchTitles` refuses CJK queries like the other keyword members; the SQL title statement has no CJK path of its
   own, so this is conservative (follow-up `keyword-cjk`).
 - `findByTitleFuzzy` without a `sourceId` reads soft-deleted pages too, as the SQL does (follow-up
@@ -172,6 +172,4 @@ The page vector is not stored; `keyword/titles.rs` rebuilds the one PGLite last 
   `exclude_slugs`, which Postgres applies; no production caller. A PGLite behavior change, so it waits until after
   1x parity. Then the member serves the four filters with a parity case.
 - `fuzzy-title-unscoped-deleted`: the SQL unscoped arm returns soft-deleted pages.
-- `title-vector-segmented-lead`: page_body exposes `pub(crate) fn timeline_lead(read, page_id)` for the trigger
-  form, and the segmented seal records the sanitized, overlaid lead with `pages::record_search_timeline`.
 - Serve the refused privacy and trust options once the store records them.
