@@ -245,7 +245,7 @@ for (const backend of testBackends()) describe('[' + backend + '] label repairs 
   test('a --readers apply declines pages whose readable_by line its file cannot take at publish: label_edit_refused, never item_failures_systemic, exit 0', () => managedBrain(async ({ engine, root }) => {
     const slugs = [1, 2, 3, 4, 5, 6].map(n => 'notes/readers-' + n);
     // Five files write readable_by as a block list, which a label-only write cannot splice; the preview holds none of them, so the managed publish refuses.
-    await seed(engine, root, Object.fromEntries(slugs.map((slug, index) => [slug, note('Readers ' + (index + 1), index < 5 ? ['readable_by:', '  - bob-example'] : [], 'Readers body.')])));
+    await seed(engine, root, Object.fromEntries(slugs.map((slug, index) => [slug, note('Readers ' + (index + 1), index < 5 ? ['readable_by:', '  # kept by hand', '  - bob-example'] : [], 'Readers body.')])));
     await addMember(engine, 'alice-example');
     const argv = ['visibility', ...slugs.flatMap(slug => ['--slug', slug]), '--readers', 'alice-example', '--allow-without-owner'];
     const { applied, exit } = await previewApply(engine, argv);
@@ -253,7 +253,7 @@ for (const backend of testBackends()) describe('[' + backend + '] label repairs 
       .toEqual({ applied: 1, declined: { label_edit_refused: 5 }, stopped: undefined, complete: true, exit: 0 });
     expect(applied.failed.map((failed: { item: string; reason: string }) => [failed.item, failed.reason]).sort()).toEqual(slugs.slice(0, 5).map(slug => ['default:' + slug, 'label_edit_refused']));
     await settleManagedGitEffects(engine);
-    expect(onDisk(root, 'notes/readers-1')).toBe(note('Readers 1', ['readable_by:', '  - bob-example'], 'Readers body.'));
+    expect(onDisk(root, 'notes/readers-1')).toBe(note('Readers 1', ['readable_by:', '  # kept by hand', '  - bob-example'], 'Readers body.'));
   }, { databaseUrl, setup }), 240_000);
 
   test('repair private-labels clears a label on a page with gbrain\'s stamps, changing only the label line', () => managedBrain(async ({ engine, root }) => {
