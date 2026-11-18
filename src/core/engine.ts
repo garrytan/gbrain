@@ -20,7 +20,7 @@ import type { ChunkMove } from './page-state/chunk-moves.ts';
 import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence-state.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
-import type { DefaultSourceSplit, LocalPathSourceRow, SourceRoutingRow } from './engine-sql/sources.ts';
+import type { DefaultSourceSplit, LocalPathSourceRow, SourceCheckRow, SourceRoutingRow } from './engine-sql/sources.ts';
 export type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions, PageMutationPrecondition, PageWithdrawal } from './page-state/types.ts';
 import type {
   Page, PageInput, PageFilters, GetPageOpts, PageReadScope, PageReadPolicy,
@@ -1272,6 +1272,11 @@ export interface BrainEngine {
   countDefaultSourceSplit(): Promise<DefaultSourceSplit>;
   /** Live sources last synced more than seven days ago by the database clock, by id (engine-sql/sources.ts). */
   listStaleSyncSourceIds(): Promise<string[]>;
+  /** One source's id, local_path, raw config and archived flag, or null; `lockSourceRow` reads it FOR UPDATE (engine-sql/sources.ts). */
+  readSourceRow(sourceId: string): Promise<SourceCheckRow | null>;
+  lockSourceRow(sourceId: string): Promise<SourceCheckRow | null>;
+  /** The source's stamped chunker version, or null (engine-sql/sources.ts). */
+  readSourceChunkerVersion(sourceId: string): Promise<string | null>;
   /** Every source with the columns `loadAllSources` reads, `default` first then by id; a schema without `archived`/`newest_content_at` omits them. */
   listSourceRecords(): Promise<SourceRecordRow[]>;
   /** A source's config and incarnation, or null for an unknown id. */

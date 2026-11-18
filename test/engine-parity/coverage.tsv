@@ -6,12 +6,12 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 260/260
+# covered: 263/263
 # lifecycle: 9/9
-# pages: 32/32
+# pages: 34/34
 # search: 7/7
 # search_reads: 9/9
-# chunks: 22/22
+# chunks: 23/23
 # extraction: 7/7
 # links: 23/23
 # tags: 5/5
@@ -74,6 +74,8 @@ listLocalPathSources	pages	yes	1	no	yes	yes	serves
 listSourceRoutingRows	pages	yes	1	no	yes	yes	serves
 countDefaultSourceSplit	pages	yes	1	no	yes	yes	serves
 listStaleSyncSourceIds	pages	yes	1	no	yes	yes	serves
+readSourceRow	pages	yes	1	no	yes	yes	serves
+lockSourceRow	pages	yes	1	no	yes	yes	serves
 listPrefixSampledPages	pages	yes	1	no	yes	yes	serves
 listCorpusSample	pages	yes	1	no	yes	yes	serves
 getPageSealState	pages	yes	1	no	yes	yes	refuses:pages
@@ -94,6 +96,7 @@ slugsEndingIn	search_reads	yes	2	no	yes	yes	serves
 generatedPagesIn	search_reads	yes	2	no	yes	yes	serves
 livePageIdsAt	search_reads	yes	2	no	yes	yes	serves
 pagesLinkingTo	search_reads	yes	2	no	yes	yes	serves
+readSourceChunkerVersion	chunks	yes	1	no	yes	yes	refuses:chunks
 upsertChunks	chunks	yes	15	yes	yes	yes	serves
 sealChunks	chunks	yes	6	no	yes	yes	serves
 getChunks	chunks	yes	18	yes	yes	yes	serves

@@ -1,6 +1,7 @@
 /**
  * BrainEngine parity — the source-resolution reads (`listLocalPathSources`, `listSourceRoutingRows`,
- * `countDefaultSourceSplit`, `listAllSources`, `getSource`, `listSourceRecords`, `listStaleSyncSourceIds`) that `src/core/source-resolver.ts`
+ * `countDefaultSourceSplit`, `listAllSources`, `getSource`, `listSourceRecords`, `listStaleSyncSourceIds`, `readSourceRow`,
+ * `lockSourceRow`, `readSourceChunkerVersion`) that `src/core/source-resolver.ts`
  * and the other `sources` readers make to pick a source or list the registered ones.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
@@ -10,13 +11,17 @@
  *    unless asked, orders `default` first then by id, and its local-path filter also drops the storage manifest;
  *    `getSource` still finds an archived source; `listSourceRecords` keeps archived sources with their flag; a config
  *    stored as a JSON string (a historical double-encoded row) reads as no keys, as `config->>'kind'` did; the advisor's
- *    stale-sync read lists live sources last synced over seven days ago, by id.
+ *    stale-sync read lists live sources last synced over seven days ago, by id; one source's check row (plain or read FOR
+ *    UPDATE) carries its path, raw config and archived flag, archived sources included, and null for an unknown id; the
+ *    sync preflight reads the source's stamped chunker version, null before the first stamp.
  *  - Regression: an engine that drops archived sources from tier 4 (a cwd inside an archived checkout then falls
  *    through silently instead of refusing), counts soft-deleted pages (the guard then nags or routes a write to the
  *    wrong source), or counts pages instead of sources in `nonDefaultSources`; an engine that lists archived sources
  *    by default (a removed source comes back in `sources list`, doctor and the resolver's existence checks); a reader
  *    that parses a JSON-string config (a broken row then counts as a connector source in orphans and connector holds);
- *    a stale-sync read that lists archived or never-synced sources, or uses the wrong interval (the advisor then nags).
+ *    a stale-sync read that lists archived or never-synced sources, or uses the wrong interval (the advisor then nags);
+ *    a check row that hides archived sources or parses the config (record-origin, guest init and the anchor-ownership
+ *    check then misjudge the source); a chunker-version read of the wrong column (every sync then reimports in full).
  *  - Why existing coverage misses it: test/source-resolver*.test.ts drive the resolver through fake engines keyed on
  *    SQL text, so they never compare real engines, and the Rust engine has no raw SQL to answer.
  *  - Seam: none. Real engines, typed reads only; sources are made and archived through the harness fixtures.
@@ -158,5 +163,35 @@ describe('engine parity: source-resolution reads', () => {
     expect(stale).toEqual(['early', 'old']);
     return { none, stale };
   });
-});
 
+  parityTest('readSourceRow and lockSourceRow read one source\'s path, raw config and archived flag', { methods: ['readSourceRow', 'lockSourceRow'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'web', { kind: 'url', remote_url: 'https://example.com/repo.git' }, '/srv/brain/web');
+    await createSource(engine, backend, 'gone', { keep: 2 }, '/srv/brain/gone');
+    await archiveSource(engine, backend, 'gone');
+    await createSource(engine, backend, 'bare');
+    const ids = ['web', 'gone', 'bare', 'missing'];
+    const plain = [];
+    const locked = [];
+    for (const id of ids) plain.push(await engine.readSourceRow(id));
+    for (const id of ids) locked.push(await engine.lockSourceRow(id));
+    expect(plain).toEqual([
+      { id: 'web', local_path: '/srv/brain/web', config: { kind: 'url', remote_url: 'https://example.com/repo.git' }, archived: false },
+      { id: 'gone', local_path: '/srv/brain/gone', config: { keep: 2 }, archived: true },
+      { id: 'bare', local_path: null, config: {}, archived: false },
+      null,
+    ]);
+    expect(locked).toEqual(plain);
+    return { plain, locked };
+  });
+
+  // The Rust store keeps no per-source chunker stamp, so its arm stops on the typed chunks refusal at the first read.
+  parityTest('readSourceChunkerVersion reads the stamped chunker version, null before the first stamp', { methods: ['readSourceChunkerVersion'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'wiki');
+    const before = [await engine.readSourceChunkerVersion('wiki'), await engine.readSourceChunkerVersion('missing')];
+    expect(before).toEqual([null, null]);
+    await engine.executeRaw('UPDATE sources SET chunker_version = $1 WHERE id = $2', ['7', 'wiki']);
+    const after = await engine.readSourceChunkerVersion('wiki');
+    expect(after).toEqual('7');
+    return { before, after };
+  });
+});

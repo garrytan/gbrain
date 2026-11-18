@@ -95,6 +95,8 @@ export const RUST_ENGINE_MEMBERS = {
   listSourceRoutingRows: 'sources',
   countDefaultSourceSplit: 'sources',
   listStaleSyncSourceIds: 'sources',
+  readSourceRow: 'sources',
+  lockSourceRow: 'sources',
   listSourceRecords: 'sources',
   readSourceIncarnation: 'sources',
   hasCompanyBrainReceipt: 'sources',
@@ -140,6 +142,8 @@ export const RUST_ENGINE_MEMBERS = {
   // chunks
   deleteChunksExcept: 'chunks',
   setChunkerVersion: 'chunks',
+  // The store keeps no per-source chunker stamp (sync preflight's version gate), so this stays refused with chunks.
+  readSourceChunkerVersion: 'chunks',
   writeTextProjectionSeal: 'chunks',
   moveChunkIndexes: 'chunks',
   getChunkReuseRows: 'chunks',

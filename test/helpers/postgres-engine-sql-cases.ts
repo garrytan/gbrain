@@ -143,6 +143,7 @@ export const DOMAIN_OF: Record<string, string> = {
   // sources
   'listAllSources': 'sources', 'listSourceLocalPaths': 'sources', 'updateSourceConfig': 'sources',
   'listLocalPathSources': 'sources', 'listSourceRoutingRows': 'sources', 'countDefaultSourceSplit': 'sources', 'getSource': 'sources',
+  'listStaleSyncSourceIds': 'sources', 'readSourceRow': 'sources', 'lockSourceRow': 'sources', 'readSourceChunkerVersion': 'sources',
   // files
   'upsertFile': 'files', 'getFile': 'files', 'listFilesForPage': 'files',
   // chunks
@@ -569,6 +570,10 @@ export const SQL_CASES: SqlCase[] = [
   ...variants('countDefaultSourceSplit', [['default', (e) => e.countDefaultSourceSplit()]]),
   ...variants('updateSourceConfig', [['default', (e) => e.updateSourceConfig(SRC, { federated: true })]]),
   ...variants('getSource', [['default', (e) => e.getSource(SRC)]]),
+  ...variants('listStaleSyncSourceIds', [['default', (e) => e.listStaleSyncSourceIds()]]),
+  ...variants('readSourceRow', [['default', (e) => e.readSourceRow(SRC)]]),
+  ...variants('lockSourceRow', [['default', (e) => e.lockSourceRow(SRC)]]),
+  ...variants('readSourceChunkerVersion', [['default', (e) => e.readSourceChunkerVersion(SRC)]]),
 
   // ── files ──
   ...variants('upsertFile', [
