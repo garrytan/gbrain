@@ -10,8 +10,8 @@
 use crate::chunks::{ChunkInput, auto_chunks, clear_chunks, replace_chunks};
 use crate::env::{Env, iso, parse_iso};
 use crate::error::{
-    CONSTRAINT_VIOLATION, EMPTY_OVERWRITE, INVALID_SLUG, ORIGIN_CLAIMED, PAGE_NOT_FOUND,
-    REVISION_CONFLICT, REVISION_REQUIRED, Result, StoreError,
+    CONSTRAINT_VIOLATION, EMPTY_OVERWRITE, INVALID_SLUG, INVALID_STATE, ORIGIN_CLAIMED,
+    PAGE_NOT_FOUND, REVISION_CONFLICT, REVISION_REQUIRED, Result, StoreError,
 };
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::sources::{DEFAULT_SOURCE, all_sources, require_source};
@@ -1369,7 +1369,10 @@ impl Store {
         })
     }
 
-    /// `createVersion(slug, {sourceId})`: snapshots the page as it is.
+    /// `createVersion(slug, {sourceId})`: snapshots the page as it is. A segmented page (NULL body)
+    /// is refused with `invalid_state` before anything is written: PGLite versions it as a reference
+    /// to its live body generation, which pins that generation's manifest rows against the segment
+    /// sweep, and this store keeps no such reference.
     pub fn create_version(&self, slug: &str, source_id: Option<&str>) -> Result<Value> {
         self.write(|tx| {
             let source = source_id.unwrap_or(DEFAULT_SOURCE);
@@ -1379,6 +1382,12 @@ impl Store {
                     format!("createVersion failed: page \"{slug}\" (source={source}) not found"),
                 ));
             };
+            if page.compiled_truth.is_null() {
+                return Err(StoreError::new(
+                    INVALID_STATE,
+                    format!("createVersion refuses segmented page {slug} (source={source})"),
+                ));
+            }
             Ok(snapshot_in(tx, &*self.env, &page)?.to_json(true))
         })
     }
@@ -1633,6 +1642,54 @@ mod tests {
     }
 
     #[test]
+    fn create_version_refuses_a_segmented_page_and_writes_no_version() {
+        let store = crate::test_support::store();
+        put(&store, "big");
+        make_shell(&store, "big");
+        let err = store.create_version("big", None).unwrap_err();
+        assert_eq!(err.code, crate::error::INVALID_STATE);
+        assert_eq!(
+            err.message,
+            "createVersion refuses segmented page big (source=default)"
+        );
+        assert!(
+            store
+                .get_versions("big", &VersionsOptions::default())
+                .unwrap()
+                .is_empty()
+        );
+        // An inline page still versions.
+        put(&store, "small");
+        assert_eq!(
+            store.create_version("small", None).unwrap()["title"],
+            "small"
+        );
+    }
+
+    #[test]
+    fn an_impossible_effective_date_is_refused_and_writes_nothing() {
+        let store = crate::test_support::store();
+        for bad in ["2026-02-30", "2026-02-30T00:00:00Z", "2026-13-01"] {
+            let input = PageInput {
+                page_type: "note".into(),
+                title: "dated".into(),
+                compiled_truth: "body".into(),
+                effective_date: Some(bad.into()),
+                ..PageInput::default()
+            };
+            let err = store
+                .put_page("dated", &input, &PutPageOptions::default())
+                .unwrap_err();
+            assert_eq!(err.code, crate::error::INVALID_ARGUMENT, "{bad}");
+            assert!(
+                read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "dated")
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
     fn a_segmented_shell_page_reads_back_with_null_body_and_content_hash() {
         let store = crate::test_support::store();
         put(&store, "big");
@@ -1659,7 +1716,7 @@ mod tests {
     }
 
     #[test]
-    fn versions_keep_the_nulls_and_put_page_keeps_the_stored_chunker_version() {
+    fn put_page_keeps_the_stored_chunker_version_and_a_shell_is_not_versioned() {
         let store = crate::test_support::store();
         put(&store, "inline");
         store
@@ -1675,20 +1732,14 @@ mod tests {
             Some(3),
             "put_page keeps the stored chunker_version"
         );
+        // A segmented shell is not versioned: a NULL-body snapshot would keep no body at all
+        // (create_version_refuses_a_segmented_page_and_writes_no_version pins the refusal).
         put(&store, "big");
-        let shell = make_shell(&store, "big");
-        let snapshot = store.create_version("big", None).unwrap();
-        assert_eq!(snapshot["compiled_truth"], Value::Null);
-        let versions = store
-            .get_versions("big", &VersionsOptions::default())
-            .unwrap();
-        let shell_version = versions
-            .iter()
-            .find(|v| v["knowledge_revision"] == shell.knowledge_revision.as_str())
-            .expect("the shell's version is listed");
-        assert_eq!(shell_version["compiled_truth"], Value::Null);
-        assert_eq!(shell_version["timeline"], Value::Null);
-        assert_eq!(shell_version["content_hash"], Value::Null);
+        make_shell(&store, "big");
+        assert_eq!(
+            store.create_version("big", None).unwrap_err().code,
+            INVALID_STATE
+        );
     }
 
     #[test]
