@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 428/428
+# covered: 446/446
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -44,6 +44,8 @@
 # code_edges: 5/5
 # eval_capture: 5/5
 # salience_enrich: 5/5
+# trust: 15/15
+# open_loops: 3/3
 # cli_reads_import: 11/11
 # wanted_links: 2/2
 # telemetry: 4/4
@@ -58,17 +60,17 @@ transaction	lifecycle	yes	12	no	yes	yes	refuses:transactions
 transactionDirect	lifecycle	yes	1	no	yes	yes	refuses:transactions
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	48	yes	yes	yes	serves
+getPage	pages	yes	49	yes	yes	yes	serves
 readPageSnapshot	pages	yes	9	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	181	yes	yes	yes	serves
+putPage	pages	yes	182	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	5	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	65	yes	yes	yes	serves
+softDeletePage	pages	yes	66	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	8	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -453,6 +455,24 @@ setEmotionalWeightBatch	salience_enrich	yes	5	yes	yes	yes	serves
 getRecentSalience	salience_enrich	yes	2	yes	yes	yes	serves
 listEnrichCandidates	salience_enrich	yes	3	yes	yes	yes	serves
 findAnomalies	salience_enrich	yes	3	yes	yes	yes	serves
+hasCoveringFactWithdrawal	trust	yes	1	no	yes	yes	serves
+insertFactWithdrawal	trust	yes	4	no	yes	yes	serves
+listFactWithdrawalDates	trust	yes	2	no	yes	yes	serves
+moveFactWithdrawalSubject	trust	yes	1	no	yes	yes	serves
+hasFactWithdrawalForSubject	trust	yes	1	no	yes	yes	serves
+listFactWithdrawalKeys	trust	yes	3	no	yes	yes	serves
+upsertWriteGateReceipt	trust	yes	2	no	yes	yes	serves
+upsertPageWriteGateReceipt	trust	yes	1	no	yes	yes	serves
+deleteStalePageWriteGateReceipts	trust	yes	1	no	yes	yes	serves
+listWriteGateReceiptsFor	trust	yes	3	no	yes	yes	serves
+deleteStaleWriteGateReceipts	trust	yes	1	no	yes	yes	serves
+upsertWriteGateHold	trust	yes	2	no	yes	yes	serves
+listWriteGateHoldRows	trust	yes	1	no	yes	yes	serves
+getWriteGateHoldRow	trust	yes	1	no	yes	yes	serves
+decideWriteGateHold	trust	yes	2	no	yes	yes	serves
+upsertOpenLoop	open_loops	yes	4	no	yes	yes	serves
+closeOpenLoop	open_loops	yes	4	no	yes	yes	serves
+listOpenLoops	open_loops	yes	3	no	yes	yes	serves
 listSourceRecords	cli_reads_import	yes	3	no	yes	yes	serves
 readSourceIncarnation	cli_reads_import	yes	1	no	yes	yes	serves
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves

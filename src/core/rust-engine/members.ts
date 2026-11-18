@@ -407,6 +407,27 @@ export const RUST_ENGINE_MEMBERS = {
   getOntology: 'ontology',
   discoverOntologyDimensions: 'ontology',
   findOntologyConflicts: 'ontology',
+  // trust: the fact withdrawal ledger (engine-sql/trust-withdrawals.ts)
+  hasCoveringFactWithdrawal: 'facts',
+  insertFactWithdrawal: 'facts',
+  listFactWithdrawalDates: 'facts',
+  moveFactWithdrawalSubject: 'facts',
+  hasFactWithdrawalForSubject: 'facts',
+  listFactWithdrawalKeys: 'facts',
+  // trust: the write gate's receipts and holds (engine-sql/trust-write-gate.ts)
+  upsertWriteGateReceipt: 'facts',
+  upsertPageWriteGateReceipt: 'facts',
+  deleteStalePageWriteGateReceipts: 'facts',
+  listWriteGateReceiptsFor: 'facts',
+  deleteStaleWriteGateReceipts: 'facts',
+  upsertWriteGateHold: 'facts',
+  listWriteGateHoldRows: 'facts',
+  getWriteGateHoldRow: 'facts',
+  decideWriteGateHold: 'facts',
+  // open loops (engine-sql/open-loops.ts)
+  upsertOpenLoop: 'facts',
+  listOpenLoops: 'facts',
+  closeOpenLoop: 'facts',
   // persistence_journal
   readManagedModeRows: 'persistence_journal',
   readPersistenceBrainId: 'persistence_journal',
