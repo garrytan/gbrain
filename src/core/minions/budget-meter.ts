@@ -107,13 +107,7 @@ export async function reserve(
     if (cap !== null) assertFiniteNonNegative('configured cap', cap);
 
     // Step 1: sweep expired reservations for this client.
-    await sql`
-      UPDATE mcp_spend_reservations
-         SET status = 'expired'
-       WHERE client_id = ${opts.clientId}
-         AND status = 'pending'
-         AND expires_at < now()
-    `;
+    await tx.expireSpendReservations({ clientId: opts.clientId });
 
     // Step 2 + 3: SUM committed + pending, refuse if over cap.
     const rows = await sql`
@@ -148,13 +142,11 @@ export async function reserve(
     }
 
     // Step 4: INSERT reservation before releasing the client lock.
-    await sql`
-      INSERT INTO mcp_spend_reservations
-        (reservation_id, client_id, job_id, estimated_cents, model, provider, status, expires_at, estimate_known, usage_unknown_reason)
-      VALUES
-        (${reservationId}, ${opts.clientId}, ${opts.jobId ?? null},
-         ${opts.estimatedCents}, ${opts.model}, ${opts.provider}, 'pending', ${expiresAt}, ${opts.estimateKnown !== false}, ${opts.estimateKnown === false ? 'pricing_or_bound_unknown' : null})
-    `;
+    await tx.insertSpendReservation({
+      reservation_id: reservationId, client_id: opts.clientId, budget_key: null, job_id: opts.jobId ?? null,
+      estimated_cents: opts.estimatedCents, model: opts.model, provider: opts.provider, expires_at: expiresAt,
+      estimate_known: opts.estimateKnown !== false, usage_unknown_reason: opts.estimateKnown === false ? 'pricing_or_bound_unknown' : null,
+    });
   });
 
   return {
@@ -254,10 +246,7 @@ export async function reserveGroup(engine: BrainEngine, opts: GroupReserveOpts):
       // Lock-census (PR6 D5): INTENTIONALLY per budget key — every job of a group shares one total regardless of source.
       await sql`SELECT pg_advisory_xact_lock(${BigInt(clientLockKey(key))})`;
     }
-    await sql`
-      UPDATE mcp_spend_reservations SET status = 'expired'
-       WHERE budget_key = ${key} AND status = 'pending' AND expires_at < now()
-    `;
+    await tx.expireSpendReservations({ budgetKey: key });
     if (opts.capCents !== null) {
       const spend = await readGroupSpend(tx, key);
       const remaining = opts.capCents - spend.committedCents - spend.overdueCents;
@@ -268,13 +257,11 @@ export async function reserveGroup(engine: BrainEngine, opts: GroupReserveOpts):
         throw new GroupBudgetRefusal('pressure', key, spend, opts.capCents);
       }
     }
-    await sql`
-      INSERT INTO mcp_spend_reservations
-        (reservation_id, client_id, budget_key, job_id, estimated_cents, model, provider, status, expires_at, estimate_known, usage_unknown_reason)
-      VALUES
-        (${reservationId}, ${null}, ${key}, ${opts.jobId ?? null},
-         ${estimated}, ${opts.model}, ${opts.provider}, 'pending', ${expiresAt}, ${opts.estimateKnown !== false}, ${opts.estimateKnown === false ? 'pricing_or_bound_unknown' : null})
-    `;
+    await tx.insertSpendReservation({
+      reservation_id: reservationId, client_id: null, budget_key: key, job_id: opts.jobId ?? null,
+      estimated_cents: estimated, model: opts.model, provider: opts.provider, expires_at: expiresAt,
+      estimate_known: opts.estimateKnown !== false, usage_unknown_reason: opts.estimateKnown === false ? 'pricing_or_bound_unknown' : null,
+    });
   });
   return { reservationId, estimatedCents: estimated, ttlMs: RESERVATION_TTL_MS };
 }
@@ -302,26 +289,10 @@ export async function settle(
     // than dropping it. WHERE excludes 'settled', preserving idempotency. The
     // log insert is in the same transaction, so accounting failure rolls the
     // state transition back.
-    const updated = await sql`
-      UPDATE mcp_spend_reservations
-         SET status = 'settled',
-             actual_cents = ${actualCents},
-             usage_unknown_reason = NULL,
-             settled_at = now()
-       WHERE reservation_id = ${reservationId}
-         AND status IN ('pending', 'expired')
-      RETURNING client_id, budget_key, model, provider
-    `;
-    if (updated.length === 0) {
-      const existing = await sql`
-        SELECT status
-          FROM mcp_spend_reservations
-         WHERE reservation_id = ${reservationId}
-      `;
-      if (existing[0]?.status === 'settled') return;
-      throw new Error(`spend reservation not found: ${reservationId}`);
-    }
-    const row = updated[0];
+    const settled = await tx.settleSpendReservation(reservationId, actualCents);
+    if (settled.outcome === 'already_settled') return;
+    if (settled.outcome === 'missing') throw new Error(`spend reservation not found: ${reservationId}`);
+    const row = settled;
     // Mirror into mcp_spend_log so getTodaySpendCents/reserve sees it.
     await sql`
       INSERT INTO mcp_spend_log
@@ -342,15 +313,7 @@ export async function settle(
  * Returns the number of rows expired.
  */
 export async function sweepExpiredReservations(engine: BrainEngine): Promise<number> {
-  const sql = sqlQueryForEngine(engine);
-  const rows = await sql`
-    UPDATE mcp_spend_reservations
-       SET status = 'expired'
-     WHERE status = 'pending'
-       AND expires_at < now()
-    RETURNING reservation_id
-  `;
-  return rows.length;
+  return engine.expireSpendReservations();
 }
 
 /** Read the per-client cap from oauth_clients.budget_usd_per_day. Returns

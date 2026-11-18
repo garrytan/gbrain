@@ -15,7 +15,9 @@ function ledger(
   completedTools: Array<{ id: number }> = [],
 ): BrainEngine {
   return {
-    executeRaw: async (query: string) => query.includes("tool_name = 'brain_put_page'") ? rows : completedTools,
+    listSubagentWriteOutcomes: async () => rows.map((r) => ({ output: null, ...r })),
+    hasSubagentToolExecution: async (_jobId: number, opts?: { status?: string }) =>
+      opts?.status === 'complete' && completedTools.length > 0,
   } as unknown as BrainEngine;
 }
 

@@ -77,12 +77,12 @@ export async function sealImageProjections(engine: BrainEngine, opts: { limit?: 
     const notAfter = opts.notAfter === undefined ? '' : `AND j.updated_at<=$${params.push(opts.notAfter)}::text::timestamptz`;
     const window = await engine.executeRaw<Candidate & { sealable: boolean }>(`SELECT s.id AS source_id,j.source_incarnation::text AS source_incarnation,
         j.slug,j.revision::text AS revision,p.sealable IS TRUE AS sealable
-      FROM (SELECT source_incarnation,slug,revision FROM page_projection_jobs j WHERE (j.source_incarnation,j.slug) > ($1::uuid,$2) ${notAfter}
-        ORDER BY j.source_incarnation,j.slug LIMIT $3) j
+      FROM (SELECT source_incarnation,slug,revision FROM page_projection_jobs j WHERE (j.source_incarnation,j.slug COLLATE "C") > ($1::uuid,$2 COLLATE "C") ${notAfter}
+        ORDER BY j.source_incarnation,j.slug COLLATE "C" LIMIT $3) j
       LEFT JOIN LATERAL (SELECT s.id FROM sources s WHERE s.incarnation=j.source_incarnation AND NOT s.archived OFFSET 0) s ON true
       LEFT JOIN LATERAL (SELECT p.deleted_at IS NULL AND p.knowledge_revision=j.revision AND ${sealableImageSql('p')} AS sealable
         FROM pages p WHERE p.source_id=s.id AND p.slug=j.slug OFFSET 0) p ON true
-      ORDER BY j.source_incarnation,j.slug`, params);
+      ORDER BY j.source_incarnation,j.slug COLLATE "C"`, params);
     if (!window.length) break;
     const group = window.filter(row => row.sealable).slice(0, budget);
     const last = group.length === budget ? group[group.length - 1]! : window[window.length - 1]!;

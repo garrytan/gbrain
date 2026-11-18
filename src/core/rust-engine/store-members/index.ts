@@ -57,6 +57,7 @@ import * as factsTrustReads from './facts-trust-reads.ts';
 import * as trustTierReads from './trust-tier-reads.ts';
 import * as jobs from './jobs.ts';
 import * as housekeeping from './housekeeping.ts';
+import * as effectScans from './effect-scans.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeMisc from './write-misc.ts';
 import * as linkTemporal from './link-temporal.ts';
@@ -101,7 +102,7 @@ export const STORE_MEMBERS = {
   ...linkTemporal,
   // Alias fan-out reads (rust/docs/store/alias_fanout_reads.md).
   ...aliasFanoutReads,
-  ...persistence, ...housekeeping,
+  ...persistence, ...housekeeping, ...effectScans,
   ...writeMisc,
   // The page write guards a page write runs around the page row (rust/docs/store/write-guards.md).
   ...writeGuards, ...trustFence, ...trustProposals,

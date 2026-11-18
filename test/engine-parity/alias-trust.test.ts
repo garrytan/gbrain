@@ -15,6 +15,10 @@
  *    before it filters loses the declared fallback.
  *  - Why existing coverage misses it: sync-aliases.test.ts and import-writes.test.ts pass only `sourceId` and
  *    `sourceIds`; alias-fanout-reads.test.ts stubs `resolveAliases`.
+ *  - Order: the map lists aliases in byte order, and an alias's pages by source then slug in byte order, on every
+ *    engine. `readAliases` sorts its text keys `COLLATE "C"`, so a Postgres database with a locale collation (which
+ *    sorts `ábc` before `alpha` and `companies/ab` before `companies/a-c`) gives the same order as PGLite and the Rust
+ *    store, and a caller that takes the first page takes the same one.
  *  - Seam: none. Real engines, typed methods only. The caller-policy case ends on the Rust store's typed refusal.
  */
 import { describe, expect } from 'bun:test';
@@ -93,6 +97,14 @@ const PRIVACY: Row[] = [
   // A derived alias whose name is the exact title of a private page.
   ['companies/acme-example', 'Acme Example Holdings', {}, null, null, [['acme example', 'declared']]],
   ['notes/acme-crm', 'Acme Example', { visibility: 'private' }, null, null, []],
+];
+
+/** Aliases and slugs whose byte order differs from a locale collation's order. */
+const ORDER: Row[] = [
+  ['companies/ab', 'Ab Co', {}, null, null, [['shared order', 'frontmatter'], ['zulu', 'frontmatter']]],
+  ['companies/a-c', 'Ac Co', {}, null, null, [['shared order', 'frontmatter'], ['Zulu', 'frontmatter']]],
+  ['companies/eclair', 'Eclair Co', {}, null, null, [['éclair', 'frontmatter'], ['ábc', 'declared']]],
+  ['companies/alpha', 'Alpha Co', {}, null, null, [['alpha', 'frontmatter'], ['a-z', 'frontmatter'], ['az', 'frontmatter']]],
 ];
 
 const names = (rows: Row[]) => [...new Set(rows.flatMap(([, , , , , aliases]) => aliases.map(([a]) => a)))].sort();
@@ -187,6 +199,27 @@ describe('engine parity: resolveAliases under the trust floor, the flagged-page 
       expect(untrusted).toEqual([]);
       expect(unfloored.map((e) => e.pages)).toEqual([[{ slug: 'companies/widget-co', source_id: 'default' }]]);
       return { privateOnly, floored, untrusted, unfloored };
+    },
+  );
+
+  parityTest(
+    'resolveAliases lists mixed-case and non-ASCII aliases, and the pages of one alias, in byte order',
+    { methods: ['putPage', 'setPageAliases', 'replaceDerivedAliases', 'resolveAliases'] },
+    async (engine) => {
+      await write(engine, ORDER);
+      const m = await engine.resolveAliases([...names(ORDER)].reverse(), {});
+      const listed = [...m.entries()].map(([alias, refs]) => [alias, refs.map((r) => `${r.source_id}:${r.slug}`)]);
+      expect(listed).toEqual([
+        ['Zulu', ['default:companies/a-c']],
+        ['a-z', ['default:companies/alpha']],
+        ['alpha', ['default:companies/alpha']],
+        ['az', ['default:companies/alpha']],
+        ['shared order', ['default:companies/a-c', 'default:companies/ab']],
+        ['zulu', ['default:companies/ab']],
+        ['ábc', ['default:companies/eclair']],
+        ['éclair', ['default:companies/eclair']],
+      ]);
+      return listed;
     },
   );
 });

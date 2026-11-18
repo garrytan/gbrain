@@ -1,7 +1,8 @@
 //! Brain statistics, health and the ingest log: the reads behind `getStats`, `getHealth`,
 //! `listEnrichCandidates` and `findAnomalies`, and the `ingest_log` table of the PGLite engine.
 //!
-//! Members: getStats, getHealth, logIngest, getIngestLog, listEnrichCandidates, findAnomalies.
+//! Members: getStats, getHealth, countOnboardSignal, logIngest, getIngestLog,
+//! listEnrichCandidates, findAnomalies.
 //!
 //! Keys: an ingest log row lives at `n <created_at> <id>`, both 8 bytes big-endian. `created_at`
 //! is the row's microsecond timestamp with the sign bit flipped (so the byte order is the
@@ -122,6 +123,16 @@ pub struct EntityTypeFilter {
 #[serde(default, rename_all = "camelCase")]
 pub struct HealthInput {
     pub scope: Option<Vec<String>>,
+    pub entity_types: EntityTypeFilter,
+}
+
+/// Input of `countOnboardSignal`: one of the six onboarding counts and the resolved entity type
+/// filter. A signal the member does not name counts live pages, as the last arm of
+/// `engine-sql/health.ts` does.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct OnboardSignalInput {
+    pub signal: String,
     pub entity_types: EntityTypeFilter,
 }
 
@@ -413,6 +424,50 @@ impl Store {
                 .map(|(_, slug, n)| json!({ "slug": slug, "link_count": n }))
                 .collect::<Vec<_>>(),
         }))
+    }
+
+    /// `countOnboardSignal` (`engine-sql/health.ts`): one brain-wide count, with no source scope
+    /// and no quarantine filter. `stale_chunks`: chunks with no stored vector on live pages
+    /// without `embed_skip`. `entities`: live pages of an entity type; `linked_entities` and
+    /// `timeline_entities`: those with any inbound link, or any timeline entry. `takes`: every take.
+    /// Anything else: live pages.
+    pub fn count_onboard_signal(&self, input: &OnboardSignalInput) -> Result<u64> {
+        let read = self.read()?;
+        if input.signal == "takes" {
+            return Ok(crate::takes::all_takes(&*read)?.len() as u64);
+        }
+        let per_source: HashMap<&str, &Vec<String>> = input
+            .entity_types
+            .per_source
+            .iter()
+            .map(|b| (b.source_id.as_str(), &b.types))
+            .collect();
+        let is_entity = |page: &PageRecord| {
+            per_source
+                .get(page.source_id.as_str())
+                .copied()
+                .unwrap_or(&input.entity_types.types)
+                .contains(&page.page_type)
+        };
+        let mut count = 0u64;
+        for page in all_pages(&*read)?.iter().filter(|p| live(p)) {
+            count += match input.signal.as_str() {
+                "stale_chunks" if page.frontmatter.contains_key("embed_skip") => 0,
+                "stale_chunks" => read_chunks(&*read, page.id)?
+                    .iter()
+                    .filter(|c| !c.embed.has_vector())
+                    .count() as u64,
+                "entities" => u64::from(is_entity(page)),
+                "linked_entities" => {
+                    u64::from(is_entity(page) && !in_links(&*read, page.id)?.is_empty())
+                }
+                "timeline_entities" => {
+                    u64::from(is_entity(page) && self.timeline_count(page, 1)? > 0)
+                }
+                _ => 1,
+            };
+        }
+        Ok(count)
     }
 
     /// `logIngest`: appends one row. A NULL column fails as Postgres's NOT NULL check does, in
