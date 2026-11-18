@@ -17,7 +17,7 @@ import { FILTER_POLICY_FLOOR, loadTrustReadConfig, type TrustReadConfig } from '
 import { PROACTIVE_SURFACES, type ProactiveSurface } from './registry.ts';
 import { trustFields, trustLabelWords } from './labels.ts';
 
-type Exec = Pick<BrainEngine, 'executeRaw' | 'getConfig'>;
+type Exec = Pick<BrainEngine, 'executeRaw' | 'getConfig' | 'listWriteGateReceiptsFor' | 'getWriteGateHoldRow'>;
 
 export type ExplainRef =
   | { kind: 'row'; table: Exclude<EligibilityTable, 'pages'>; id: number }
@@ -66,13 +66,12 @@ export interface TrustExplanation {
   next?: string[];
 }
 
-const ISO = (col: string) => `to_char(${col} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`;
+/** Seconds-precision UTC ISO time, as the owner surfaces print it. */
+const isoSeconds = (d: Date): string => `${d.toISOString().slice(0, 19)}Z`;
 
 async function receiptsFor(engine: Exec, table: string, id: number): Promise<TrustReceiptView[]> {
-  const rows = await engine.executeRaw<TrustReceiptView & { id: string | number }>(
-    `SELECT id, verdict, reason_families, detector_version, tier, ${ISO('created_at')} AS created_at, ${ISO('last_seen_at')} AS last_seen_at
-       FROM write_gate_receipts WHERE target_table = $1 AND target_id = $2 ORDER BY last_seen_at DESC, id DESC LIMIT 20`, [table, String(id)]);
-  return rows.map(r => ({ ...r, id: Number(r.id), detector_version: Number(r.detector_version) }));
+  const rows = await engine.listWriteGateReceiptsFor(table, String(id), 20);
+  return rows.map(r => ({ ...r, created_at: isoSeconds(r.created_at), last_seen_at: isoSeconds(r.last_seen_at) }));
 }
 
 const ROW_SQL: Readonly<Record<Exclude<EligibilityTable, 'pages'>, string>> = {

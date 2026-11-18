@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 435/435
+# covered: 457/457
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -33,7 +33,7 @@
 # entity_reads: 6/6
 # cycle_locks: 7/7
 # minion_jobs: 8/8
-# minion_queue: 38/38
+# minion_queue: 42/42
 # cli_reads_ops: 7/7
 # facts_doctor: 10/10
 # facts_cycle: 11/11
@@ -44,6 +44,8 @@
 # code_edges: 5/5
 # eval_capture: 5/5
 # salience_enrich: 5/5
+# trust: 15/15
+# open_loops: 3/3
 # cli_reads_import: 11/11
 # wanted_links: 2/2
 # write_misc: 10/10
@@ -59,17 +61,17 @@ transaction	lifecycle	yes	12	no	yes	yes	refuses:transactions
 transactionDirect	lifecycle	yes	1	no	yes	yes	refuses:transactions
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	48	yes	yes	yes	serves
+getPage	pages	yes	49	yes	yes	yes	serves
 readPageSnapshot	pages	yes	9	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	181	yes	yes	yes	serves
+putPage	pages	yes	182	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	5	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	65	yes	yes	yes	serves
+softDeletePage	pages	yes	66	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	8	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -327,16 +329,16 @@ readCycleLocks	cycle_locks	yes	8	no	yes	yes	serves
 deleteCycleLock	cycle_locks	yes	1	no	yes	yes	serves
 deleteCycleLockIfStale	cycle_locks	yes	1	no	yes	yes	serves
 assertCycleLease	cycle_locks	yes	1	no	yes	yes	serves
-admitJob	minion_jobs	yes	42	no	yes	yes	serves
-getJob	minion_jobs	yes	23	no	yes	yes	serves
+admitJob	minion_jobs	yes	47	no	yes	yes	serves
+getJob	minion_jobs	yes	26	no	yes	yes	serves
 listJobs	minion_jobs	yes	1	no	yes	yes	serves
-claimNextJob	minion_jobs	yes	34	no	yes	yes	serves
+claimNextJob	minion_jobs	yes	38	no	yes	yes	serves
 renewJobLease	minion_jobs	yes	1	no	yes	yes	serves
-completeJob	minion_jobs	yes	16	no	yes	yes	serves
-failJob	minion_jobs	yes	10	no	yes	yes	serves
+completeJob	minion_jobs	yes	17	no	yes	yes	serves
+failJob	minion_jobs	yes	15	no	yes	yes	serves
 reclaimStalledJobs	minion_jobs	yes	1	no	yes	yes	serves
 deleteTerminalJob	minion_queue	yes	1	no	yes	yes	serves
-pauseJob	minion_queue	yes	5	no	yes	yes	serves
+pauseJob	minion_queue	yes	6	no	yes	yes	serves
 resumeJob	minion_queue	yes	2	no	yes	yes	serves
 failParentJob	minion_queue	yes	3	no	yes	yes	serves
 resolveParentJob	minion_queue	yes	1	no	yes	yes	serves
@@ -352,7 +354,9 @@ cancelJobs	minion_queue	yes	6	no	yes	yes	serves
 killTimedOutJobs	minion_queue	yes	1	no	yes	yes	serves
 killWallClockJobs	minion_queue	yes	1	no	yes	yes	serves
 pruneJobs	minion_queue	yes	2	no	yes	yes	serves
-retryJob	minion_queue	yes	2	no	yes	yes	serves
+listSynthesisCompletionKeys	minion_queue	yes	2	no	yes	yes	serves
+listRecentSynthesisCompletions	minion_queue	yes	1	no	yes	yes	serves
+retryJob	minion_queue	yes	5	no	yes	yes	serves
 postInboxMessage	minion_queue	yes	2	no	yes	yes	serves
 readJobInbox	minion_queue	yes	1	no	yes	yes	serves
 readChildCompletions	minion_queue	yes	4	no	yes	yes	serves
@@ -367,6 +371,8 @@ readQueueFamilyStats	minion_queue	yes	1	no	yes	yes	serves
 hasOverdueWatchdogSuspect	minion_queue	yes	1	no	yes	yes	serves
 listUnreviewedJobs	minion_queue	yes	1	no	yes	yes	serves
 getFailedJobForRetry	minion_queue	yes	2	no	yes	yes	serves
+countOpenJobsByOwner	minion_queue	yes	2	no	yes	yes	serves
+lockOAuthClient	minion_queue	yes	1	no	yes	yes	refuses:minion_queue
 listJobPage	minion_queue	yes	1	no	yes	yes	serves
 listJobAttachmentNames	minion_queue	yes	3	no	yes	yes	serves
 insertJobAttachment	minion_queue	yes	3	no	yes	yes	serves
@@ -451,6 +457,24 @@ setEmotionalWeightBatch	salience_enrich	yes	5	yes	yes	yes	serves
 getRecentSalience	salience_enrich	yes	2	yes	yes	yes	serves
 listEnrichCandidates	salience_enrich	yes	3	yes	yes	yes	serves
 findAnomalies	salience_enrich	yes	3	yes	yes	yes	serves
+hasCoveringFactWithdrawal	trust	yes	1	no	yes	yes	serves
+insertFactWithdrawal	trust	yes	4	no	yes	yes	serves
+listFactWithdrawalDates	trust	yes	2	no	yes	yes	serves
+moveFactWithdrawalSubject	trust	yes	1	no	yes	yes	serves
+hasFactWithdrawalForSubject	trust	yes	1	no	yes	yes	serves
+listFactWithdrawalKeys	trust	yes	3	no	yes	yes	serves
+upsertWriteGateReceipt	trust	yes	2	no	yes	yes	serves
+upsertPageWriteGateReceipt	trust	yes	1	no	yes	yes	serves
+deleteStalePageWriteGateReceipts	trust	yes	1	no	yes	yes	serves
+listWriteGateReceiptsFor	trust	yes	3	no	yes	yes	serves
+deleteStaleWriteGateReceipts	trust	yes	1	no	yes	yes	serves
+upsertWriteGateHold	trust	yes	2	no	yes	yes	serves
+listWriteGateHoldRows	trust	yes	1	no	yes	yes	serves
+getWriteGateHoldRow	trust	yes	1	no	yes	yes	serves
+decideWriteGateHold	trust	yes	2	no	yes	yes	serves
+upsertOpenLoop	open_loops	yes	4	no	yes	yes	serves
+closeOpenLoop	open_loops	yes	4	no	yes	yes	serves
+listOpenLoops	open_loops	yes	3	no	yes	yes	serves
 listSourceRecords	cli_reads_import	yes	3	no	yes	yes	serves
 readSourceIncarnation	cli_reads_import	yes	1	no	yes	yes	serves
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves

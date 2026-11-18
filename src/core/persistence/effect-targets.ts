@@ -40,8 +40,7 @@ export async function upgradeWithdrawalEffect(engine: BrainEngine, effect: Persi
         AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact))
         AND ${withdrawalCoversFactSql('w', 'f')}
       WHERE r.id=$2::uuid ORDER BY w.visibility,w.fact_hash,w.subject`, [effect.source_id, effect.request_id]);
-    const claims = requested.length ? requested : await tx.executeRaw<WithdrawalClaim>(`SELECT visibility,fact_hash,subject FROM fact_withdrawals
-      WHERE source_id=$1 ORDER BY visibility,fact_hash,subject LIMIT $2`, [effect.source_id, WITHDRAWAL_LIMITS.targets + 1]);
+    const claims = requested.length ? requested : await tx.listFactWithdrawalKeys(effect.source_id, WITHDRAWAL_LIMITS.targets + 1);
     if (!claims.length) throw opError('withdrawal_provenance', 'Legacy withdrawal intent has no verifiable ledger. Its queued work remains retained.',
       `Request ${effect.request_id} withdrew a fact in source ${effect.source_id} before withdrawals were ledgered, so its targets cannot be rediscovered; the effect stays parked and nothing was rewritten. Show it to the user with the writer status; report it with gbrain --version if it should have a ledger.`,
       { fix: readFix(`Shows source ${effect.source_id}'s parked effects, read-only.`, { argv: ['gbrain', 'sources', 'writer', 'status', effect.source_id, '--json'] }) });
