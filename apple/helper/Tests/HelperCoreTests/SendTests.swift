@@ -636,6 +636,33 @@ final class Harness {
         #expect(h.messages.count == 0)
     }
 
+    @Test(arguments: [false, true]) func aSendWaitingOnAKeyReplacementChecksTheNewKey(hashKeyExists: Bool) {
+        let h = Harness()
+        if hashKeyExists { h.store.state?.recipientHashKey = Base64URL.encode(Array(repeating: 7, count: 32)) }
+        let other = Base64URL.encode(Array(Curve25519.Signing.PrivateKey().publicKey.rawRepresentation))
+        h.presence.gate = DispatchSemaphore(value: 0)
+        let group = DispatchGroup()
+        group.enter()
+        DispatchQueue.global().async {
+            _ = self.admin(h, ["action": "add_key", "name": "box", "public_key": other])
+            group.leave()
+        }
+        let deadline = Date().addingTimeInterval(10)
+        while h.presence.reasons.isEmpty && Date() < deadline { Thread.sleep(forTimeInterval: 0.01) }
+        var code: String?
+        group.enter()
+        DispatchQueue.global().async {
+            code = h.send(h.request(h.body())).json["code"] as? String
+            group.leave()
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+        h.presence.gate?.signal()
+        group.wait()
+        #expect(h.store.state?.keys == [SendKey(name: "box", publicKey: other)])
+        #expect(code == "unknown_send_key")
+        #expect(h.messages.count == 0)
+    }
+
     @Test func turningSendingBackOnAfterTheConfigSwitchNeedsTheOwner() {
         let h = Harness()
         h.switchedOn = false

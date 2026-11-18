@@ -141,6 +141,8 @@ public final class SendService {
         let limits: SendLimits
         let hashKey: [UInt8]
         do {
+            stateLock.lock()
+            defer { stateLock.unlock() }
             var state = try store.load() ?? SendState()
             observeKill(&state)
             guard state.enabled, switchedOn() else { return fail(.sendDisabled) }
@@ -223,9 +225,6 @@ public final class SendService {
     }
 
     func recipientKey(_ state: inout SendState) throws -> [UInt8] {
-        stateLock.lock()
-        defer { stateLock.unlock() }
-        if state.recipientHashKey == nil { state = try store.load() ?? state }
         if state.recipientHashKey != nil {
             guard let key = state.recipientKey else { throw Problem.sendKeysTampered }
             return key
