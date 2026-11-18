@@ -21,6 +21,7 @@ import { toGetPage, toListPage } from '../src/core/rust-engine/store-codec.ts';
 import { PageRevisionConflictError } from '../src/core/page-state/types.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { ENGINE_CAPABILITIES } from '../src/core/engine-capabilities.ts';
+import { withCallerAccess } from '../src/core/search/private-visibility.ts';
 
 const TARGET = detectAddonTarget();
 const BUILT = join(import.meta.dir, '..', 'rust', 'target', 'addon', `gbrain_engine.${TARGET ?? 'unsupported'}.node`);
@@ -125,10 +126,44 @@ describe('Rust engine on the store', () => {
   withAddon('an option the store does not keep refuses engine_capability_missing instead of being dropped', async () => {
     const { engine } = await open();
     await engine.putPage('notes/a', page);
-    // The store does not evaluate the private-page filter of findAnomalies.
-    const refused = await code(() => engine.findAnomalies({ since: '2026-01-02', excludePrivate: true }));
+    // The store does not evaluate the trust floor getSalienceScores reads.
+    const refused = await code(() => engine.getSalienceScores([{ slug: 'notes/a', source_id: 'default' }], { minTrust: 'agent_written' }));
     expect(refused).toBe('engine_capability_missing');
     expect(await code(() => engine.getChunks('notes/a', { notAStoreOption: true } as never))).toBe('engine_capability_missing');
+  });
+
+  withAddon('excludePrivate on the salience and anomaly reads hides a private page the plain read returns', async () => {
+    const { engine } = await open();
+    await engine.putPage('notes/a', page);
+    for (const slug of ['notes/secret', 'notes/readers', 'atoms/bare']) {
+      const frontmatter = slug === 'notes/secret' ? { visibility: 'private' } : slug === 'notes/readers' ? { readable_by: ['alice-example'] } : {};
+      await engine.putPage(slug, { ...page, type: (slug.startsWith('atoms/') ? 'atom' : 'note') as never, frontmatter });
+      await engine.addTag(slug, 'hidden-only');
+    }
+    await engine.setEmotionalWeightBatch([{ slug: 'notes/secret', source_id: 'default', weight: 1 }]);
+    const slugs = (rows: Array<{ slug: string }>) => rows.map((r) => r.slug).sort();
+    expect((await engine.getRecentSalience({ days: 7 }))[0]!.slug).toBe('notes/secret');
+    expect(slugs(await engine.getRecentSalience({ days: 7, excludePrivate: true }))).toEqual(['notes/a']);
+    const refs = ['notes/a', 'notes/secret', 'notes/readers', 'atoms/bare'].map((slug) => ({ slug, source_id: 'default' }));
+    expect((await engine.getSalienceScores(refs, {})).get('default::notes/secret')).toBe(5);
+    expect([...(await engine.getSalienceScores(refs, { excludePrivate: true })).keys()]).toEqual(['default::notes/a']);
+    const today = new Date((await engine.getPage('notes/secret'))!.updated_at).toISOString().slice(0, 10);
+    const tag = async (excludePrivate: boolean) =>
+      (await engine.findAnomalies({ since: today, lookback_days: 1, excludePrivate })).find((r) => r.cohort_value === 'hidden-only');
+    expect((await tag(false))?.page_slugs.sort()).toEqual(['atoms/bare', 'notes/readers', 'notes/secret']);
+    expect(await tag(true)).toBeUndefined();
+  });
+
+  withAddon('excludePrivate refuses for a caller whose member identity changes the page policy PGLite renders', async () => {
+    const { engine } = await open();
+    await engine.putPage('notes/a', page);
+    const asMember = <T>(fn: () => Promise<T>) => withCallerAccess({ identity: ['member:alice-example'] }, fn);
+    const refs = [{ slug: 'notes/a', source_id: 'default' }];
+    expect(await code(() => asMember(() => engine.getRecentSalience({ days: 7, excludePrivate: true })))).toBe('engine_capability_missing');
+    expect(await code(() => asMember(() => engine.getSalienceScores(refs, { excludePrivate: true })))).toBe('engine_capability_missing');
+    expect(await code(() => asMember(() => engine.findAnomalies({ since: '2026-01-02', excludePrivate: true })))).toBe('engine_capability_missing');
+    // Without excludePrivate the caller's record does not matter: the read applies no page policy.
+    expect(await code(() => asMember(() => engine.getRecentSalience({ days: 7 })))).toBeUndefined();
   });
 
   withAddon('a chunk vector of the wrong width is refused, and writes nothing', async () => {
