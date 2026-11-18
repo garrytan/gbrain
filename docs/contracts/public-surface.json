@@ -45,6 +45,7 @@
     "gbrain day",
     "gbrain db-repair",
     "gbrain decide",
+    "gbrain dedupe",
     "gbrain delete",
     "gbrain delete-skill",
     "gbrain delta",
