@@ -68,3 +68,15 @@ two engines share that code instead of copying it:
 - Cost. Every member reads the whole page set. `getStats` and `getHealth` read the timeline of
   each page in the scope through the timeline family, one prefix scan per page. This is fine at
   the parity sizes; a brain with many thousand pages will want a per-page count record.
+
+## Follow-ups
+
+These wait for core's combined store branch, which brings in lane 4 (embeddings) and lane 5
+(salience).
+
+- stats-embedding-counts. Replace the 0 embedding counts in `getStats` and `getHealth` with
+  counts read through `crate::embeddings` (`scan_chunk_vectors`, or a count function from lane 4).
+  Add a parity case with embedded and missing chunks.
+- stats-salience-weight. Read `emotional_weight` through the salience family for the `'salience'`
+  enrich order, in place of the 0 default. Extend the enrich parity case with pages of different
+  weights.
