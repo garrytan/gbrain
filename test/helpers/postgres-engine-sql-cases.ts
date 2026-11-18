@@ -51,6 +51,7 @@ const OOS = {
   cliReadsOps: 'out-of-scope:cli-reads (born in engine-sql/cli-reads-ops.ts; pinned by test/engine-parity/cli-reads-ops.test.ts)',
   cliReadsImport: 'out-of-scope:cli-import-reads (born in engine-sql/cli-reads-import.ts; pinned by test/engine-parity/cli-reads-import.test.ts)',
   wantedLinks: 'out-of-scope:wanted-links (born in engine-sql/wanted-links.ts; pinned by test/engine-parity/wanted-links.test.ts)',
+  minionJobs: 'out-of-scope:minion-jobs (born in engine-sql/jobs.ts and engine-sql/jobs-queue.ts; pinned by test/engine-parity/jobs.test.ts and jobs-queue.test.ts)',
 } as const;
 
 export const DOMAIN_OF: Record<string, string> = {
@@ -173,7 +174,26 @@ export const DOMAIN_OF: Record<string, string> = {
   'addTimelineEntry': 'timeline', 'addTimelineEntriesBatch': 'timeline', 'getTimeline': 'timeline',
   'getTimelineForDate': 'timeline', 'getSince': 'timeline', 'getOnThisDay': 'timeline', 'getLastSeen': 'timeline',
   'upsertEventProjection': 'timeline',
+  // minion jobs (the queue's job statements; pinned by the jobs parity cases)
+  'admitJob': OOS.minionJobs, 'getJob': OOS.minionJobs, 'listJobs': OOS.minionJobs, 'claimNextJob': OOS.minionJobs,
+  'renewJobLease': OOS.minionJobs, 'completeJob': OOS.minionJobs, 'failJob': OOS.minionJobs,
+  'reclaimStalledJobs': OOS.minionJobs, 'deleteTerminalJob': OOS.minionJobs, 'pauseJob': OOS.minionJobs,
+  'resumeJob': OOS.minionJobs, 'resolveParentJob': OOS.minionJobs, 'failParentJob': OOS.minionJobs,
+  'resolveStrandedParents': OOS.minionJobs, 'detachChildJob': OOS.minionJobs, 'updateJobProgress': OOS.minionJobs,
+  'addJobTokens': OOS.minionJobs, 'delayActiveJob': OOS.minionJobs, 'releaseWatchdogClaim': OOS.minionJobs,
+  'markJobWatchdogSuspect': OOS.minionJobs, 'promoteDelayedJobs': OOS.minionJobs, 'cancelJobs': OOS.minionJobs,
+  'killTimedOutJobs': OOS.minionJobs, 'killWallClockJobs': OOS.minionJobs, 'pruneJobs': OOS.minionJobs,
+  'retryJob': OOS.minionJobs, 'postInboxMessage': OOS.minionJobs, 'readJobInbox': OOS.minionJobs,
+  'readChildCompletions': OOS.minionJobs, 'listOpenJobIdsInQueue': OOS.minionJobs,
+  'renewPrivateQueueLease': OOS.minionJobs, 'listOwnedPrivateQueues': OOS.minionJobs,
+  'readPrivateQueueState': OOS.minionJobs, 'listStaleWaitingJobIds': OOS.minionJobs,
+  'countTtlExpiredWaiting': OOS.minionJobs, 'readJobStats': OOS.minionJobs, 'readQueueFamilyStats': OOS.minionJobs,
+  'hasOverdueWatchdogSuspect': OOS.minionJobs, 'listUnreviewedJobs': OOS.minionJobs,
+  'getFailedJobForRetry': OOS.minionJobs, 'listJobPage': OOS.minionJobs, 'listJobAttachmentNames': OOS.minionJobs,
+  'insertJobAttachment': OOS.minionJobs, 'listJobAttachments': OOS.minionJobs, 'getJobAttachment': OOS.minionJobs,
+  'deleteJobAttachment': OOS.minionJobs,
   // cycle locks (retry/direct-pool transport differs per method; the lease statements are pinned by the parity cases)
+  'assertCycleLease': OOS.cycleLocks,
   'acquireCycleLock': OOS.cycleLocks, 'refreshCycleLock': OOS.cycleLocks, 'releaseCycleLock': OOS.cycleLocks,
   'readCycleLocks': OOS.cycleLocks, 'deleteCycleLock': OOS.cycleLocks, 'deleteCycleLockIfStale': OOS.cycleLocks,
   // sources
