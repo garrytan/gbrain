@@ -4072,8 +4072,7 @@
               "present": []
             },
             "occurrences": 0,
-            "spooled": 0,
-            "unreferenced": 0
+            "spooled": 0
           },
           "elapsed_ms": "<volatile>",
           "message": "The secret store holds no entries.",

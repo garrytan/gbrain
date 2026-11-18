@@ -5,7 +5,7 @@
  * that the database backup carries it); which keys entries need and whether this host holds them (a key in use that is
  * not here usually means another host sharing the database sealed with its own key: secret_store_key_forked); whether
  * the current key's escrow copy was ever exported (without it, a lost key loses every original); originals still in
- * this host's spool; sealed originals no page or commit references any more; and, on the trusted local path only, held-back publish commits and local refs that still hold
+ * this host's spool; and, on the trusted local path only, held-back publish commits and local refs that still hold
  * commits from before a redaction rebuild. Read-only; never prints a value. A brain with no entries reports ok.
  */
 import type { Check } from '../../doctor.ts';
@@ -44,13 +44,12 @@ export async function secretStoreCheck(ctx: DoctorContext): Promise<Check> {
 
 async function inspectSecretStore(ctx: DoctorContext): Promise<Check> {
   const engine = connectedEngine(ctx);
-  const [{ countsByRule, keysInUse, unreferencedEntryCount }, { keyringStatus, keyById, escrowExported }, { undrainedCount }, { readBackupStatus }, { HELD_TRAILER, BACKUP_REF_PREFIX }] = await Promise.all([
+  const [{ countsByRule, keysInUse }, { keyringStatus, keyById, escrowExported }, { undrainedCount }, { readBackupStatus }, { HELD_TRAILER, BACKUP_REF_PREFIX }] = await Promise.all([
     import('../../../core/secret-store/store.ts'), import('../../../core/secret-store/keyring.ts'), import('../../../core/secret-store/spool.ts'),
     import('../../../core/secret-store/backup.ts'), import('../../../core/git/redact-unpushed.ts')]);
   let rules: Record<string, { entries: number; occurrences: number }>;
   let inUse: Array<{ key_id: string; key_host: string; entries: number }>;
-  let unreferenced: number;
-  try { [rules, inUse, unreferenced] = await Promise.all([countsByRule(engine), keysInUse(engine), unreferencedEntryCount(engine)]); } catch {
+  try { [rules, inUse] = await Promise.all([countsByRule(engine), keysInUse(engine)]); } catch {
     return { name: NAME, status: 'ok', message: 'The secret store tables are not there yet (the migration has not run); nothing to check.' };
   }
   const entries = Object.values(rules).reduce((sum, r) => sum + r.entries, 0);
@@ -79,7 +78,7 @@ async function inspectSecretStore(ctx: DoctorContext): Promise<Check> {
   const held = checkouts.reduce((sum, c) => sum + c.held, 0);
   const sideRefs = checkouts.reduce((sum, c) => sum + c.side_refs.length, 0);
   const details = {
-    entries, occurrences, unreferenced, by_rule: rules, spooled, docs: DOCS,
+    entries, occurrences, by_rule: rules, spooled, docs: DOCS,
     keys: { origin: keyring.origin, current: keyring.current, present: keyring.keys.filter(k => k.readable).map(k => k.id), in_use: inUse, missing,
       escrow_exported: [...escrowed].sort() },
     backup: { backend, ...backup, carried_by: backend ? 'storage_backend_and_database_backup' : 'database_backup' },
@@ -92,7 +91,6 @@ async function inspectSecretStore(ctx: DoctorContext): Promise<Check> {
   if (missing.length) {
     problems.push(`${missing.reduce((s, k) => s + k.entries, 0)} entr(ies) were sealed with key(s) this host does not have (${missing.map(k => `${k.key_id} from ${k.key_host || 'an unknown host'}`).join(', ')}): secret_store_key_forked. Their originals read only where that key is; import its escrow copy with gbrain secrets key import, or set GBRAIN_SECRET_STORE_KEY to the shared key on every host.`);
   }
-  if (unreferenced) problems.push(`${unreferenced} sealed original(s) are referenced by no page or commit any more, so nothing can reveal or restore them; a page purge removes its own, so these were left by an older purge or by a direct database edit.`);
   if (needsEscrow) problems.push(`The current key ${keyring.current} has never been exported. If this machine's keyring is lost, every original sealed with it is lost; export it with gbrain secrets key export --out <file> --passphrase-stdin and keep the file elsewhere.`);
   if (backupFailing) problems.push(`The last secret store backup failed at ${backup.last_failure!.at} (${backup.last_failure!.message})${backup.last_success ? `; the last success was ${backup.last_success.at}` : ''}. Maintenance tries again; gbrain secrets backup retries now.`);
   else if (backupNever) problems.push('A storage backend is configured but the secret store was never backed up to it; maintenance does it after new entries, or run gbrain secrets backup now.');

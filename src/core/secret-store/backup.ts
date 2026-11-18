@@ -89,7 +89,8 @@ export async function backupStore(engine: BrainEngine, storage: StorageBackend):
     const object = `${BACKUP_OBJECT_PREFIX}${createdAt.replace(/[:.]/g, '-')}.json`;
     await storage.upload(object, Buffer.from(JSON.stringify(doc) + '\n', 'utf8'), 'application/json');
     const result = { object, entries: body.entries.length, occurrences: body.occurrences.length, key_id: key.id };
-    const highWater = body.entries.reduce<string | null>((max, row) => [row.created_at, row.updated_at].reduce((m, t) => (!m || t > m ? t : m), max), null);
+    const highWater = [...body.entries.flatMap(row => [row.created_at, row.updated_at]), ...body.occurrences.map(o => o.created_at)]
+      .reduce<string | null>((max, t) => (!max || t > max ? t : max), null);
     writeBackupStatus({ last_success: { at: createdAt, ...result, high_water: highWater }, last_failure: null });
     return result;
   } catch (error) {
@@ -99,28 +100,27 @@ export async function backupStore(engine: BrainEngine, storage: StorageBackend):
 }
 
 /**
- * True when the store has entries created or changed after the newest row the last successful backup held (or none ever
- * succeeded). Both sides are database timestamps, so an entry sealed while a backup ran, or a host clock ahead of the
- * database's, still makes the next pass due.
+ * True when no backup ever succeeded, or the store changed since the last one: an entry or an occurrence (a new place an
+ * existing original was redacted) newer than the newest row that backup held, or a different number of occurrences.
+ * Both sides are database timestamps, so a host clock ahead of the database's does not hide a change.
  */
 export async function backupDue(engine: BrainEngine): Promise<boolean> {
   const rows = await allEntryRows(engine);
   if (!rows.length) return false;
   const success = readBackupStatus().last_success;
   const last = success ? success.high_water ?? success.at : undefined;
-  return !last || rows.some(row => row.created_at > last || row.updated_at > last);
+  if (!success || !last) return true;
+  if (rows.some(row => row.created_at > last || row.updated_at > last)) return true;
+  const occurrences = await allOccurrenceRows(engine);
+  return occurrences.length !== success.occurrences || occurrences.some(o => o.created_at > last);
 }
 
-export interface RestoreResult { object: string; key_id: string; inserted: number; existing: number; skipped_no_page: number; unreadable: string[]; occurrences: number }
-
-export const SKIPPED_NO_PAGE_TEXT = 'skipped because their page is not in this brain (purged, or not synced yet)';
-export const SKIPPED_NO_PAGE_NEXT = 'Sync the pages, then run the same restore again.';
+export interface RestoreResult { object: string; key_id: string; inserted: number; existing: number; unreadable: string[]; occurrences: number }
 
 /**
  * Imports the entries of one backup object that the store does not hold. Each row must authenticate under a key on
- * this host before it is written; a row that does not is listed and skipped, never written. A backup whose every entry
- * is skipped because its page is not in this brain (a rebuilt brain before sync) refuses, so a script never reads it as a
- * finished restore.
+ * this host before it is written; a row that does not is listed and skipped, never written. A restore only adds rows: it
+ * never overwrites or deletes one.
  */
 export async function restoreBackup(engine: BrainEngine, storage: StorageBackend, object: string): Promise<RestoreResult> {
   if (!object.startsWith(BACKUP_OBJECT_PREFIX) || object.includes('..')) {
@@ -151,8 +151,5 @@ export async function restoreBackup(engine: BrainEngine, storage: StorageBackend
     try { openEntry(row); return true; } catch { unreadable.push(row.id); return false; }
   });
   const written = await insertBackupRows(engine, verified, body.occurrences);
-  if (body.entries.length && written.skipped_no_page === body.entries.length) {
-    throw opError('invalid_params', `Nothing was restored from ${object}: all ${written.skipped_no_page} entr${written.skipped_no_page === 1 ? 'y was' : 'ies were'} ${SKIPPED_NO_PAGE_TEXT}.`, SKIPPED_NO_PAGE_NEXT);
-  }
-  return { object, key_id: doc.key_id, inserted: written.entries, existing: verified.length - written.entries - written.skipped_no_page, skipped_no_page: written.skipped_no_page, unreadable, occurrences: written.occurrences };
+  return { object, key_id: doc.key_id, inserted: written.entries, existing: verified.length - written.entries, unreadable, occurrences: written.occurrences };
 }
