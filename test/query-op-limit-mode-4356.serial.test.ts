@@ -61,6 +61,8 @@ const { dispatchToolCall } = await import('../src/mcp/dispatch.ts');
 const engineStub = {
   getConfig: async () => null,
   executeRaw: async () => [],
+  // The query path's alias fan-out reads page titles through this typed member; none exist here.
+  findPagesByTitles: async () => [],
 } as unknown as BrainEngine;
 
 function callQuery(params: Record<string, unknown>) {
