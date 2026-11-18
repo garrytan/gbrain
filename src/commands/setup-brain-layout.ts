@@ -257,6 +257,10 @@ export interface TranscriptsOutcome extends ImportOutcome {
   readers?: { members: 'every_source_reader' | string[] | null; serves: 'one' | 'several' | null; detail: string };
   /** What can send call text off this machine, from doctor's auto_chronicle and extract_atoms_backlog checks. */
   egress?: { leaves: boolean | null; detail: string };
+  /** GST-2904: each call the import kept to the owner and its attendees, with the names it could not match. */
+  calls?: Array<{ slug: string; readers: string[]; unmatched: string[] }>;
+  /** GST-2904: why the import kept new calls open to the source's readers (the calls_not_scoped notice), and its fix. */
+  not_scoped?: { reason: string; why: string; command: string | null };
 }
 
 export interface LayoutOutcome {
@@ -357,14 +361,19 @@ function importCalls(exec: Run, launcher: string, dir: string, dryRun: boolean):
   if (count > IMPORT_INLINE_MAX) return { dir, files: count, action: 'deferred', argv, detail: `more than ${IMPORT_INLINE_MAX} call files; run the import as its own step` };
   if (dryRun) return { dir, files: count, action: 'imported', argv, detail: 'would import (read only)' };
   const imp = exec([launcher, ...args, '--json'], undefined, COMPANY_SOURCE);
-  let doc: { imported?: number; unchanged?: number; kept?: number; errors?: number; redactions?: number; pages?: Array<{ slug: string; status: string; error?: string }> };
+  let doc: { imported?: number; unchanged?: number; kept?: number; errors?: number; redactions?: number; notices?: Array<{ code: string; why: string; fix?: { argv?: string[] } }>;
+    pages?: Array<{ slug: string; status: string; error?: string; scoped?: boolean; reason?: string; readers?: string[] | null; unmatched?: string[] }> };
   try { doc = JSON.parse(imp.stdout) as typeof doc; } catch { return { dir, files: count, action: 'failed', argv, detail: lastLine(imp.stderr || imp.stdout) }; }
   const landed = (doc.pages ?? []).filter(p => p.status !== 'error');
   const failed = (doc.pages ?? []).find(p => p.status === 'error');
   const counts = { imported: doc.imported ?? 0, unchanged: doc.unchanged ?? 0, kept: doc.kept ?? 0, redactions: doc.redactions ?? 0 };
   if (!landed.length && (failed || imp.code !== 0)) return { dir, files: count, action: 'failed', argv, ...counts, detail: failed?.error ?? lastLine(imp.stderr) };
+  const calls = landed.filter(p => p.scoped && p.readers?.length).map(p => ({ slug: p.slug, readers: p.readers!, unmatched: p.unmatched ?? [] }));
+  const open = doc.notices?.find(n => n.code === 'calls_not_scoped');
+  const reason = landed.find(p => p.scoped === false && p.reason)?.reason;
   return { dir, files: count, action: 'imported', argv, ...counts, ...(failed ? { detail: `${doc.errors} file(s) not imported: ${failed.error}` } : {}),
-    ...(landed[0] ? { readers: readersOf(exec, launcher, landed[0].slug) } : {}) };
+    ...(calls.length ? { calls } : landed[0] ? { readers: readersOf(exec, launcher, landed[0].slug) } : {}),
+    ...(open ? { not_scoped: { reason: reason ?? 'unknown', why: open.why, command: open.fix?.argv?.length ? open.fix.argv.join(' ') : null } } : {}) };
 }
 
 type DoctorChecks = Array<{ name: string; details?: Record<string, unknown> }>;
@@ -532,6 +541,14 @@ export function describeLayout(o: LayoutOutcome, dryRun: boolean): string[] {
     lines.push(t.action !== 'imported' ? `  calls    ${t.action}: ${t.detail ?? ''} (${t.argv.join(' ')})`
       : `  calls    ${would}import ${t.files} call file(s) from ${t.dir} as ${CALLS_PREFIX}/<date>-<title> (read only, credentials redacted)`
         + (t.imported === undefined ? '' : `: ${t.imported} new, ${t.unchanged} unchanged, ${t.kept} kept, ${t.redactions} credential(s) redacted${t.detail ? `; ${t.detail}` : ''}`));
+    if (t.calls) {
+      lines.push('           each kept to the people on it (the owner reads every call):');
+      for (const c of t.calls) {
+        lines.push(`             ${c.slug}  ${c.readers.join(', ')}${c.readers.length === 1 && !c.unmatched.length ? ' (no other attendee matched a member)' : ''}`);
+        if (c.unmatched.length) lines.push(`                 not matched: ${c.unmatched.map(u => JSON.stringify(u)).join(', ')}. To add a reader: gbrain repair visibility --source ${COMPANY_SOURCE} --slug ${c.slug} --readers ${c.readers.join(',')},<member>`);
+      }
+    }
+    if (t.not_scoped) lines.push(`           calls kept open, as before: ${t.not_scoped.why}${t.not_scoped.command ? ` Run: ${t.not_scoped.command}` : ''}`);
     if (t.readers) lines.push(`           readable by: ${t.readers.detail}`);
     if (t.egress) lines.push(`           what leaves this machine: ${t.egress.detail}`);
   }

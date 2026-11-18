@@ -49,12 +49,12 @@ not grant access. No Ubicloud API token is passed to workflow jobs.
 
 | Workload | Runner | Capacity |
 | --- | --- | --- |
-| Unit shards, slow and eval jobs, BrainBench, admin browser, shared-skills compatibility, persistence soak, reconciliation crashes and read latency, native Linux cells, OpenClaw startup, JSONB parity, PR serial pool, E2E backend matrix, Tier 2, coverage reports and Semgrep | `ubicloud-standard-4-ubuntu-2404` | 4 vCPU, 16 GB RAM |
-| Nightly coverage serial pool, `verify`, PgBouncer/RLS deployment matrix, E2E graduation shards | `ubicloud-standard-8-ubuntu-2404` | 8 vCPU, 32 GB RAM |
+| PgBouncer/RLS deployment matrix, unit shards, slow and eval jobs, BrainBench, admin browser, shared-skills compatibility, read latency, native Linux cells, OpenClaw startup, JSONB parity, PR serial pool, E2E backend matrix, Tier 2, coverage reports and Semgrep | `ubicloud-standard-4-ubuntu-2404` | 4 vCPU, 16 GB RAM |
+| Nightly coverage serial pool, `verify`, E2E graduation shards | `ubicloud-standard-8-ubuntu-2404` | 8 vCPU, 32 GB RAM |
 | E2E Tier 1 (its CLI `init` spawns exceed their timeouts on 4 vCPUs), label-gated and nightly heavy-tests jobs | `ubicloud-standard-16-ubuntu-2404` | 16 vCPU, 64 GB RAM |
 | Label-gated heavy test suite | `ubicloud-standard-30-ubuntu-2404` | 30 vCPU, 120 GB RAM |
 | Native ARM64 glibc and musl tests | `ubicloud-standard-4-arm-ubuntu-2404` | 4 vCPU |
-| Selected E2E (one Bun process each), planning, status aggregation, dependency audit, gitleaks, security regressions and actionlint | `ubicloud-standard-2-ubuntu-2404` | 2 vCPU, 8 GB RAM |
+| Selected E2E (one Bun process each), persistence soak, reconciliation crashes, planning, status aggregation, dependency audit, gitleaks, security regressions and actionlint | `ubicloud-standard-2-ubuntu-2404` | 2 vCPU, 8 GB RAM |
 
 macOS and Windows matrices stay on GitHub-hosted runners. Release building and
 publishing also stay unchanged. The pinned upstream OSV reusable workflow does
@@ -69,7 +69,11 @@ rose from 542s to 608s and made Test the critical path. On matched
 VMs a unit shard takes the same time on 4, 8 and 16 vCPUs; the serial pool and
 `verify` take the same time on 8 and 16 vCPUs (serial shard 2: 222s and 224s;
 277s on 4); the 2,500-write PGLite soak averages 1.3-1.8 busy cores and takes
-523s on 4 vCPUs and 500s on 16. Selected E2E workers run one file at a time and
+523s on 4 vCPUs and 500s on 16. Persistence-validation's soak, reconciliation
+and PgBouncer/RLS lanes moved down one size after three paired runs (GST-3002):
+the soak's peak memory stayed under 25% of 8 GB and its slowest arm (postgres)
+went from a 5.2 to a 10.0 minute median, still shorter than the run's longest
+job, Managed-sync convergence at about 17 minutes. Selected E2E workers run one file at a time and
 fit on 2 vCPUs. Re-measure (`ubi-runner.sh run -s standard-N`) before resizing a
 runner: more CPU does not shorten a single-process job; critical path
 comes first, vCPU-minutes second.

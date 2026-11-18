@@ -98,7 +98,7 @@ export function openFactsReasonSql(f: string): string {
       OR EXISTS (SELECT 1 FROM fact_purges x WHERE x.source_id = ${f}.source_id AND x.fact_hash = gbrain_fact_fingerprint(${f}.fact)
         AND (x.subject = '*' OR x.subject = ${f}.entity_slug)) THEN 'withdrawn'
     WHEN EXISTS (SELECT 1 FROM trust_proposals tp WHERE ((tp.target_table = 'facts' AND tp.target_id = ${f}.id) OR (tp.related_table = 'facts' AND tp.related_id = ${f}.id))
-        AND (tp.status = 'pending' OR (tp.action = 'supersede_fact' AND tp.status IN ('rejected', 'undone') AND tp.before_state->'visibility' IS NOT NULL))) THEN 'contested'
+        AND (tp.status = 'pending' OR (tp.action IN ('supersede_fact', 'confirm') AND tp.status IN ('rejected', 'undone') AND tp.before_state->'visibility' IS NOT NULL))) THEN 'contested'
     ${factPageReasons(f).map(([reason, condition]) => `WHEN ${condition} THEN '${reason}'`).join('\n    ')}
     ELSE NULL END)`;
 }

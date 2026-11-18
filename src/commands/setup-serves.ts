@@ -202,7 +202,8 @@ function runServesSeveral(launcher: string, roster: string[], flags: ServesFlags
   return { mode: 'several', ...from, receipt, proof };
 }
 
-export interface ServesPlan { roster: string[]; status: ServesStatus | null; owner?: ServesOwner }
+/** `tie`: the owner a company setup's own harness entry reads as (GST-2904), known to be an enabled member once this run's labelling lands. */
+export interface ServesPlan { roster: string[]; status: ServesStatus | null; owner?: ServesOwner; tie?: string }
 
 /**
  * Before setup writes anything: the roster (an empty one refuses), the brain's serves view (none for a brain setup is
@@ -228,7 +229,8 @@ export function servesPreflight(flags: ServesFlags, launcher: string, harness: s
     const preview = run ? parsed<ServesReceipt>(run.stdout) : null;
     const said = run ? `${run.stdout}\n${run.stderr}` : '';
     const previewError = said.match(/"code"\s*:\s*"([a-z0-9_]+)"/)?.[1] ?? run?.stderr.trim().split('\n')[0]?.slice(0, 200);
-    return historyRefusal(status, preview, flags, harness, roster, owner, previewError || undefined) ?? { roster, status, owner };
+    const tie = status?.owner ?? (!status ? owner.id : preview?.owner && preview.owner.action !== 'blocked' ? preview.owner.id : undefined);
+    return historyRefusal(status, preview, flags, harness, roster, owner, previewError || undefined) ?? { roster, status, owner, ...(tie ? { tie } : {}) };
   }
   if (named && !status?.enabled_members.includes(named)) {
     return opError('invalid_params', `--stdio-member ${named} is not an enabled member of this brain, so the ${harness} sessions would read as nobody; nothing was written.`,

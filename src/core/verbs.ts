@@ -196,6 +196,13 @@ const remember: Operation = {
     // GST-2346 D1: the brain owner speaking for itself is not refused; its "world" is saved shared.
     if (p.share !== true && p.visibility === 'world' && ctx.attestedOp !== 'memory_write' && memberFacts.memberFactPage(ctx) && !memberFacts.ownerSpeaksForItself(ctx)) {
       if (attested) throw memberFacts.attestedShareRefused(verbError);
+      // GST-2897 B: a fact about another member is never pointed at share: true, which holds it for the brain owner.
+      const subject = typeof p.entity === 'string' ? await memberFacts.otherMemberSubject(ctx.engine, p.entity.trim()) : null;
+      if (subject) {
+        throw Object.assign(verbError('invalid_params', 'remember: a member credential cannot save a fact with visibility "world"; nothing was saved.',
+          `${p.entity} is about member ${subject}. Retry with no visibility to keep the fact on your own member page; a shared fact about another member is held private until the brain owner confirms it.`),
+          { reason: 'member_share_required' });
+      }
       throw Object.assign(verbError('invalid_params', 'remember: a member credential shares a fact with share: true, not visibility "world"; nothing was saved.',
         'Retry the same call with share: true in place of visibility "world" to share a fact about the team\'s work with everyone who reads this source, or with no visibility to keep a fact about a person on your own member page. A member shares only this way: pass share: true, never visibility "world".'),
         { reason: 'member_share_required' });

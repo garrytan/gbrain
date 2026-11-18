@@ -225,7 +225,7 @@ export function heldRowSql(sourceId: string, slug: string, rowNum: string, claim
   const page = (a: string) => `${a}.source_id = ${sourceId} AND ${a}.source_markdown_slug = ${slug} AND ${a}.expired_at IS NULL`;
   const granted = (a: string) => `(${grantedPrivateFactSql(a)} AND NOT EXISTS (SELECT 1 FROM trust_proposals hgp
     LEFT JOIN facts hgc ON hgp.target_table = 'facts' AND hgc.id = hgp.target_id
-    WHERE hgp.related_table = 'facts' AND hgp.related_id = ${a}.id AND hgp.action = 'supersede_fact' AND hgp.before_state->'visibility' IS NOT NULL
+    WHERE hgp.related_table = 'facts' AND hgp.related_id = ${a}.id AND hgp.action IN ('supersede_fact', 'confirm') AND hgp.before_state->'visibility' IS NOT NULL
       AND (hgc.id IS NULL OR NOT (${memberFactAdmitSql('hgc')} OR ${grantedPrivateFactSql('hgc')}))))`;
   const narrower = (a: string) => `${page(a)} AND ${a}.visibility <> 'world' AND NOT ${memberFactAdmitSql(a)} AND NOT ${granted(a)}`;
   const states = (a: string) => `(CASE WHEN ${partial} THEN strpos(${a}.fact, ${claim}) > 0 ELSE ${a}.fact = ${claim} END)`;

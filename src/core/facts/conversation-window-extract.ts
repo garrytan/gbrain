@@ -11,7 +11,7 @@ import { observationDateFrom, resolveObservationDate, type ObservationDate } fro
 import { BudgetExhausted } from '../budget/budget-tracker.ts';
 import { deriveDateContext } from '../conversation-parser/parse.ts';
 import { resolveStrictEntityReference } from '../entities/resolve.ts';
-import { resolveExtractedEntitiesForSave, type SaveTimeResolutionCounts } from '../entities/resolve-on-save.ts';
+import { resolveExtractedEntitiesForSave, unbackedEntityKeysEnabled, type SaveTimeResolutionCounts } from '../entities/resolve-on-save.ts';
 import { NON_EXTRACTABLE_AUDIT_SOURCE, TERMINAL_AUDIT_SOURCE, stampExtractorVersion } from './audit-sources.ts';
 import { CONVERSATION_ENTITY_HINTS_CAP } from './conversation-entity-hints.ts';
 import { CONVERSATION_FACTS_SOURCE_PREFIX, type ConversationFactRow } from './conversation-publication.ts';
@@ -82,12 +82,14 @@ export async function extractConversationWindow(run: ConversationWindowRun, page
     extracted = extraction.facts;
   }
   // This bulk path bypasses writeSingleFact and writes through insertFacts: every extractor-provided entity goes
-  // through the shipped resolver (alias_exact / prefix / fuzzy / slugify) while source scope is known.
+  // through the shipped resolver (alias_exact / prefix / fuzzy / slugify) while source scope is known. GBRA-574: a full
+  // name with no page keeps its name key (facts.unbacked_entity_keys); no page is created.
   const raws = extracted.map(fact => fact.entity_slug);
+  const unbacked = await unbackedEntityKeysEnabled(run.engine) ? new Map<number, string>() : undefined;
   const resolution = await resolveExtractedEntitiesForSave(run.engine, run.sourceId, extracted, (raw, message) => {
     process.stderr.write(`[extract-conversation-facts] ${page.slug} segment ${seg.startIso}..${seg.endIso} `
       + `entity resolution failed for ${JSON.stringify(raw)}: ${message}; preserving fact without an entity target\n`);
-  });
+  }, unbacked);
   if (extracted.length === 0) return { extracted: 0, rows: [], resolution };
   const visibility = await tightenToStoredPage(run.engine, run.sourceId, run.factVisibility, page);
   const rows = await inferConversationSubjects(run.engine, run.sourceId, visibility, extracted.map((fact, i) => ({ // #6764
@@ -100,13 +102,14 @@ export async function extractConversationWindow(run: ConversationWindowRun, page
     context: fact.context ?? `from ${page.slug} segment ${seg.startIso}..${seg.endIso}`,
   })));
   // GBRA-574: slots come from a second call over facts whose person was named exactly: by identity evidence alone (an
-  // exact slug, a unique basename or alias; never a prefix guess or a near name), or by subject inference, which needs
-  // one live page named in full. Never on BrainBench's injected extractor.
+  // exact slug, a unique basename or alias; never a prefix guess or a near name), by subject inference, which needs
+  // one live page named in full, or by a name key this window kept (the full name, by construction). Never on
+  // BrainBench's injected extractor.
   if (run.extractor) return { extracted: extracted.length, rows, resolution };
   const exact: boolean[] = [];
   for (const [i, row] of rows.entries()) exact.push(!!row.entity_slug && (!extracted[i]!.entity_slug
     || (await resolveStrictEntityReference(run.engine, run.sourceId, raws[i]!)).slug === row.entity_slug));
-  const tagged = await tagSlots(run.engine, run.sourceId, rows, exact, run.signal);
+  const tagged = await tagSlots(run.engine, run.sourceId, rows, exact, run.signal, unbacked);
   if (tagged.failed) {
     run.result.slot_tagging_failed = (run.result.slot_tagging_failed ?? 0) + 1;
     process.stderr.write(`[extract-conversation-facts] ${page.slug} segment ${seg.startIso}..${seg.endIso}: slot tagging failed; `
