@@ -397,6 +397,16 @@ impl Brain {
         self.run(env, move |s| s.list_writer_versions(limit))
     }
 
+    /// `recentWriterVersions(days)`: the same rows with a `requests` count.
+    #[napi]
+    pub fn recent_writer_versions<'env>(
+        &self,
+        env: &'env Env,
+        days: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.recent_writer_versions(days))
+    }
+
     #[napi]
     pub fn read_capacity_forecast_inputs<'env>(
         &self,

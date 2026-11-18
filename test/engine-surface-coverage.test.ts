@@ -200,7 +200,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // The write journal's claim upkeep, admission reads and housekeeping (engine-sql/persistence-claims.ts, persistence-housekeeping.ts).
   'readSourceMembership', 'findTopologyChanges', 'renewWriteClaim', 'expireStaleWriteClaims', 'hasClaimableWrite', 'readTopologyChange', 'insertTopologyChange', 'claimHousekeepingTurn',
   'completeHousekeepingTurn', 'readReceiptBudget', 'listCompactableReceipts', 'listReservationsAfter', 'listTrueUpRequests', 'readCapacityForecastInputs', 'listPendingSegmentedProjections', 'selectProjectionWindowJobs',
-  'readWriterVersionCutoff', 'listWriterVersions',
+  'readWriterVersionCutoff', 'listWriterVersions', 'recentWriterVersions',
   // The effect worker's recovery scans (engine-sql/persistence-effect-scans.ts).
   'listGatedMirrorRequests', 'listEffectRecoveries', 'selectClaimableEffect',
   // The page-write reads and upkeep that belong to no other domain (engine-sql/write-misc.ts).

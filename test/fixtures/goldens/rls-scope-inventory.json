@@ -3476,6 +3476,17 @@
         ],
         "flagOnScopes": []
       },
+      "recentWriterVersions#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "refreshPageBody#default": {
         "flagOffLanes": [
           "pool"
@@ -5026,6 +5037,7 @@
         "readWriteRequest": "none",
         "readWriteRequestById": "none",
         "readWriterVersionCutoff": "none",
+        "recentWriterVersions": "none",
         "reclaimStalledJobs": "none",
         "reconnect": "none",
         "recordSearchTelemetry": "none",

@@ -1,12 +1,14 @@
 /**
  * BrainEngine parity — the writer-version reads (engine-sql/writer-versions.ts): `readWriterVersionCutoff` (doctor
- * writer_version check) and `listWriterVersions` (persistence/administration.ts writer status).
+ * writer_version check), `listWriterVersions` (persistence/administration.ts writer status) and `recentWriterVersions`
+ * (doctor writer_version check, repair/extractor-facts.ts mixed-version warnings).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: the cutoff is an ISO time no later than the first request admitted after it. listWriterVersions names,
  *    per role, the latest version each host and principal stamped (a consumer only for a committed request), newest
- *    first, at most `limit`. On every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm through
- *    test/engine-parity/harness.ts).
+ *    first, at most `limit`. recentWriterVersions groups the committed requests published in the window per role, host,
+ *    principal and version, with a count, newest first; an empty window reads no row. On every engine arm (PGLite
+ *    always; Postgres with DATABASE_URL; the Rust arm through test/engine-parity/harness.ts).
  *  - Regression: an engine that refuses these reads leaves `gbrain doctor` reporting writer health unknown and hides
  *    an older writer still publishing; one that groups or orders differently names the wrong host as out of date.
  *  - Why existing coverage misses it: the reads were raw SQL in persistence/writer-versions.ts and the doctor check,
@@ -107,6 +109,28 @@ describe('engine parity: writer-version reads', () => {
         { role: 'admitter', host_id: null, principal: 'local_cli:parity-writer-b', version: 'b1' }],
       limited: [consumerA, admitterA],
       none: [],
+    });
+    return answers;
+  });
+
+  parityTest('recentWriterVersions counts the published requests per role, host, principal and version', {
+    methods: ['recentWriterVersions', 'insertWriteRequest', 'lockPersistenceCounters', 'stampWriteClaim', 'completeWriteRow', 'readSourceMembership'],
+    timeout: 60_000,
+  }, async (engine) => {
+    const empty = await engine.recentWriterVersions(7);
+    await seed(engine);
+    const week = untimed(await engine.recentWriterVersions(7));
+    const window = await engine.recentWriterVersions(0);
+    const answers = { empty, week, window };
+    expect(answers).toEqual({
+      empty: [],
+      week: [
+        { role: 'consumer', host_id: CONSUMER, principal: 'local_cli:parity-writer-a', version: 'c1', requests: 2 },
+        { role: 'admitter', host_id: ADMITTER, principal: 'local_cli:parity-writer-a', version: 'a1', requests: 2 },
+        { role: 'consumer', host_id: null, principal: 'local_cli:parity-writer-b', version: 'c3', requests: 1 },
+        { role: 'admitter', host_id: null, principal: 'local_cli:parity-writer-b', version: 'b1', requests: 1 },
+      ],
+      window: [],
     });
     return answers;
   });

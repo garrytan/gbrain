@@ -8,7 +8,7 @@
 //! unstamped consumer has no owner host to fall back to.
 
 use super::all_requests;
-use crate::env::{iso, parse_iso};
+use crate::env::{Env, iso, parse_iso};
 use crate::error::Result;
 use crate::journal::RequestRecord;
 use crate::kv::KvRead;
@@ -16,6 +16,8 @@ use crate::{Store, StoredFormat, get_json, keys};
 use serde_json::{Value, json};
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
+
+const DAY_US: f64 = 86_400_000_000.0;
 
 fn text(r: &RequestRecord, column: &str) -> Option<String> {
     r.extra
@@ -126,6 +128,71 @@ pub(crate) fn list_writer_versions_in(read: &dyn KvRead, limit: f64) -> Result<V
     Ok(rows.iter().take(limit).map(|s| s.row(false)).collect())
 }
 
+/// `RECENT_WRITER_VERSIONS_SQL`: committed requests published in the last `days`, grouped per
+/// role, host, principal and version. Admitters count when admitted at or after the cutoff and
+/// consumers when published at or after it. No cutoff (no format record) reads no rows, as the
+/// statement's `CROSS JOIN cutoff` does.
+pub(crate) fn recent_writer_versions_in(
+    read: &dyn KvRead,
+    env: &dyn Env,
+    days: f64,
+) -> Result<Vec<Value>> {
+    let format: Option<StoredFormat> = get_json(read, &keys::meta("format"))?;
+    let Some(cutoff) = format.map(|f| f.created_at_us) else {
+        return Ok(Vec::new());
+    };
+    let since = env.now_micros() - (days * DAY_US) as i64;
+    type Group = (&'static str, Option<String>, String, Option<String>);
+    let mut groups: BTreeMap<Group, Seen> = BTreeMap::new();
+    let mut add = |seen: Seen| {
+        let key = (
+            seen.role,
+            seen.host_id.clone(),
+            seen.principal.clone(),
+            seen.version.clone(),
+        );
+        let at = seen.last_seen;
+        let entry = groups.entry(key).or_insert(Seen {
+            requests: 0,
+            last_seen: None,
+            ..seen
+        });
+        entry.requests += 1;
+        entry.last_seen = entry.last_seen.max(at);
+    };
+    for r in all_requests(read)? {
+        let Some(published) = publication(&r) else {
+            continue;
+        };
+        if r.state != "committed" || published < since {
+            continue;
+        }
+        if r.created_at_us >= cutoff {
+            add(Seen {
+                role: "admitter",
+                host_id: text(&r, "admitter_host_id"),
+                principal: principal(&r),
+                version: text(&r, "admitter_version"),
+                last_seen: Some(r.created_at_us),
+                requests: 1,
+            });
+        }
+        if published >= cutoff {
+            add(Seen {
+                role: "consumer",
+                host_id: text(&r, "consumer_host_id"),
+                principal: principal(&r),
+                version: text(&r, "consumer_version"),
+                last_seen: Some(published),
+                requests: 1,
+            });
+        }
+    }
+    let mut rows: Vec<Seen> = groups.into_values().collect();
+    rows.sort_by(newest_first);
+    Ok(rows.iter().map(|s| s.row(true)).collect())
+}
+
 impl Store {
     /// `readWriterVersionCutoff()`.
     pub fn read_writer_version_cutoff(&self) -> Result<Option<String>> {
@@ -135,5 +202,10 @@ impl Store {
     /// `listWriterVersions(limit)`.
     pub fn list_writer_versions(&self, limit: f64) -> Result<Vec<Value>> {
         list_writer_versions_in(&*self.read()?, limit)
+    }
+
+    /// `recentWriterVersions(days)`.
+    pub fn recent_writer_versions(&self, days: f64) -> Result<Vec<Value>> {
+        recent_writer_versions_in(&*self.read()?, &*self.env, days)
     }
 }

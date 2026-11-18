@@ -61,21 +61,8 @@ export interface RecentWriterVersion extends ObservedWriterVersion { requests: n
  * admitted before the cutoff and published after it is judged by its publication. An unstamped consumer's
  * host falls back to the worktree owner, the only host that can publish a filesystem request.
  */
-export async function recentWriterVersions(engine: SqlEngine, days = 7): Promise<RecentWriterVersion[]> {
-  const rows = await engine.executeRaw<{ role: 'admitter' | 'consumer'; host_id: string | null; principal: string; version: string | null; last_seen: unknown; requests: number }>(
-    `WITH cutoff AS (SELECT writer_version_cutoff AS at FROM persistence_brain WHERE singleton=1 AND writer_version_cutoff IS NOT NULL),
-    recent AS (SELECT r.*,COALESCE(r.published_at,r.completed_at) AS publication FROM persistence_requests r
-      WHERE r.state='committed' AND COALESCE(r.published_at,r.completed_at)>=now()-($1::double precision*interval '1 day'))
-    SELECT 'admitter' AS role,r.admitter_host_id::text AS host_id,r.principal_kind||':'||r.principal_id AS principal,
-      r.admitter_version AS version,MAX(r.created_at) AS last_seen,COUNT(*)::integer AS requests
-    FROM recent r CROSS JOIN cutoff c WHERE r.created_at>=c.at GROUP BY 2,3,4
-    UNION ALL
-    SELECT 'consumer' AS role,COALESCE(r.consumer_host_id,w.owner_host_id)::text AS host_id,r.principal_kind||':'||r.principal_id AS principal,
-      r.consumer_version AS version,MAX(r.publication) AS last_seen,COUNT(*)::integer AS requests
-    FROM recent r LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id CROSS JOIN cutoff c WHERE r.publication>=c.at GROUP BY 2,3,4
-    ORDER BY last_seen DESC`, [days]);
-  return rows.map(row => ({ role: row.role, host_id: row.host_id, principal: row.principal, version: row.version,
-    version_label: writerVersionLabel(row.version), last_seen: iso(row.last_seen), requests: Number(row.requests) }));
+export async function recentWriterVersions(engine: Pick<BrainEngine, 'recentWriterVersions'>, days = 7): Promise<RecentWriterVersion[]> {
+  return (await engine.recentWriterVersions(days)).map(row => labelled(row));
 }
 
 /** A writer the segmented-storage gate saw in its window, by the evidence it left. */

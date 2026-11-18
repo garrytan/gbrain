@@ -3,7 +3,7 @@
  * (claimHousekeepingTurn, completeHousekeepingTurn), the receipt reads (readReceiptBudget, listCompactableReceipts,
  * listReservationsAfter, listTrueUpRequests), the capacity forecast's reads (readCapacityForecastInputs) and the
  * projection queue reads (listPendingSegmentedProjections, selectProjectionWindowJobs) and the writer-version reads
- * (readWriterVersionCutoff, listWriterVersions).
+ * (readWriterVersionCutoff, listWriterVersions, recentWriterVersions).
  *
  * The store keeps no `persistence_consumers` rows, no `persistence_effects` rows and no worktree topology, so a live
  * consumer never blocks a turn and effect bytes are 0. It keeps the page projection queue: every page write updates it
@@ -16,7 +16,7 @@ import type {
 } from '../../engine-sql/persistence-housekeeping.ts';
 import type { ProjectionScanCursor } from '../../page-state/projection-window.ts';
 import {
-  isoTime, writerVersionRow, type WriterVersionRow,
+  isoTime, recentWriterVersionRow, writerVersionRow, type RecentWriterVersionRow, type WriterVersionRow,
 } from '../../engine-sql/writer-versions.ts';
 import { requestRow } from '../store-codec.ts';
 import { storeCall, type StoreMember } from './common.ts';
@@ -75,3 +75,6 @@ export const readWriterVersionCutoff: StoreMember<[], string | null> = async bra
 
 export const listWriterVersions: StoreMember<[limit: number], WriterVersionRow[]> = async (brain, limit) =>
   ((await storeCall({ member: 'listWriterVersions' }, () => brain.listWriterVersions(limit))) as Parameters<typeof writerVersionRow>[0][]).map(writerVersionRow);
+
+export const recentWriterVersions: StoreMember<[days: number], RecentWriterVersionRow[]> = async (brain, days) =>
+  ((await storeCall({ member: 'recentWriterVersions' }, () => brain.recentWriterVersions(days))) as Parameters<typeof recentWriterVersionRow>[0][]).map(recentWriterVersionRow);

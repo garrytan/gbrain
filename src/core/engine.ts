@@ -2,7 +2,7 @@ import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } fro
 import type * as TrustWithdrawalsSql from './engine-sql/trust-withdrawals.ts';
 import type * as OpenLoopsSql from './engine-sql/open-loops.ts';
 import type { WriteContextInput, WriteContextResult } from './engine-sql/transaction-settings.ts';
-import type { WriterVersionRow } from './engine-sql/writer-versions.ts';
+import type { RecentWriterVersionRow, WriterVersionRow } from './engine-sql/writer-versions.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
 import type * as TrustWriteGateSql from './engine-sql/trust-write-gate.ts';
 import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
@@ -3395,6 +3395,8 @@ export interface BrainEngine {
   readWriterVersionCutoff(): Promise<string | null>;
   /** The latest admitter and consumer version per host and principal across all retained requests, newest first, at most `limit`. */
   listWriterVersions(limit: number): Promise<WriterVersionRow[]>;
+  /** Committed requests published in the last `days`, grouped per role, host, principal and version, stamped after the cutoff. */
+  recentWriterVersions(days: number): Promise<RecentWriterVersionRow[]>;
 
   // The connect gate's persistence reads (engine-sql/connect-gate.ts): table probes, managed roots, graduation, retired epochs.
   /** Whether persistence table `table` exists (a brain before the persistence migrations has none). */

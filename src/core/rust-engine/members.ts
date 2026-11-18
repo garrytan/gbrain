@@ -538,6 +538,7 @@ export const RUST_ENGINE_MEMBERS = {
   readCapacityForecastInputs: 'persistence_journal',
   readWriterVersionCutoff: 'persistence_journal',
   listWriterVersions: 'persistence_journal',
+  recentWriterVersions: 'persistence_journal',
   listPendingSegmentedProjections: 'persistence_journal',
   selectProjectionWindowJobs: 'persistence_journal',
   // access_control
