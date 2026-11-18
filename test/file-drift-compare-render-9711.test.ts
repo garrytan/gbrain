@@ -11,7 +11,7 @@ test('render of compare details with pages that carry no exceptions returns line
   try {
     lines = fileDriftRepair.render!({ compare: true, writes: 'none',
       pages: [{ slug: 'brain/product/x', would: 'prefer_file', why: 'the file is newer', evidence: null }],
-      next_actions: ['review the newer file'] } as never);
+      next_actions: ['review the newer file'] } as never, { diff: false });
   } catch { threw = true; }
   expect(threw).toBe(false);
   expect(lines).toContain('  review the newer file');
