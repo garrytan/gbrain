@@ -7,6 +7,7 @@ function emptyEngine() {
   const engine = {
     kind: 'pglite',
     executeRaw: async () => { dbCalls++; return []; },
+    hasCodeEdgesSymbol: async () => { dbCalls++; return true; },
     transaction: async (work: (tx: unknown) => Promise<unknown>) => {
       dbCalls++;
       return work({ executeRaw: async () => { dbCalls++; return []; } });
