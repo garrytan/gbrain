@@ -59,6 +59,7 @@ import * as telemetry from './telemetry.ts';
 import * as writeGuards from './write-guards.ts';
 import * as importMembers from './import-members.ts';
 import * as trustFence from './trust-fence.ts';
+import * as trustProposals from './trust-proposals.ts';
 import * as connectGate from './connect-gate.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
@@ -88,7 +89,7 @@ export const STORE_MEMBERS = {
   ...telemetry,
   ...persistence,
   // The page write guards a page write runs around the page row (rust/docs/store/write-guards.md).
-  ...writeGuards, ...trustFence,
+  ...writeGuards, ...trustFence, ...trustProposals,
   // The page and chunk statements a page import runs around its chunk write (rust/docs/store/import-members.md).
   ...importMembers,
   // The connect gate's persistence reads, answered from the unmanaged brain the store keeps (rust/docs/store/journal.md).

@@ -23,9 +23,11 @@ typed claims. Each member gives the answer PGLite gives today, odd behavior incl
 | `listFenceRetireCandidates`, `listFenceFactRows` | The fence guard's two reads of a page's fence rows (`facts/fence.rs`): the rows a publication would retire, and the live rows the writer may not supersede. See "The fence guard's reads". |
 | `migrateFactsToCanonical` | Moves a phantom page's active rows onto the canonical slug, `row_num` offset past the canonical page's largest. The ontology duplicates the move would make are dropped first, in its own write, as PGLite runs the two statements outside one transaction. |
 
-Rows go out with dates as microsecond ISO text, `embedding` as a number list (or null),
-`trust_tier` `unknown` and
-`write_origin` null. `fact_fingerprint` follows `gbrain_fact_fingerprint` (lowercase, fold the
+Rows go out with dates as microsecond ISO text, `embedding` as a number list (or null), and the
+stored `trust_tier` and `write_origin`. Every write of a fact row (insert, update, supersede, rename,
+purge) stamps them through `trust::stamp` from the store's write trust context
+([trust.md](trust.md#the-tier-stamp-truststamp), [write_trust.md](write_trust.md)), as PGLite's
+`gbrain_stamp_trust_tier` trigger does; a record written before the field existed reads `unknown`. `fact_fingerprint` follows `gbrain_fact_fingerprint` (lowercase, fold the
 fingerprint punctuation, collapse spaces, sha256 hex).
 
 ## Private-provenance policy (`facts/privacy.rs`)
@@ -322,16 +324,13 @@ raises).
 What PGLite reads from the transaction, the store takes as a `FenceContext`: the writer's tier
 (`gbrain.write_trust_tier`, undeclared reads as `unknown`, a name that is no tier ranks 0) and the
 opened ids (`gbrain.write_open_facts`). Both napi members take it from the store's write trust context
-(`Store::fence_context`, [write_trust.md](write_trust.md)), which the engine's transaction sets. Two
-further gaps limit what `list_fence_fact_rows` answers:
-
-- A stored row has no tier column and reads as `unknown`. Only a writer below `unknown`
-  (`external_untrusted`) sees rows above it; a row an `operator_curated` write stored is not above an
-  `agent_written` writer, where PGLite lists it (`test/rust-expected-divergence/trust_fence.tsv`).
-- There is no `trust_proposals` table, so no row is ever held.
+(`Store::fence_context`, [write_trust.md](write_trust.md)), which the engine's transaction sets.
+`above` compares the row's stored tier with the writer's. A row is held when it is not `world`, a
+cell at its number with its fact asks for `world`, and a `confirm` or `supersede_fact` proposal
+names it as the related fact, is `pending`, `rejected` or `undone`, and has a `visibility` key in its
+before state (`trust::proposals::held_narrower`, [trust.md](trust.md#trust-proposals-trustproposals)).
 
 ## Not modeled
 
-The withdrawal ledger and the insert/update guards that read it, the write-attribution and
-trust-tier triggers. Inputs whose PGLite outcome the store cannot
+The withdrawal ledger and the insert/update guards that read it, and the write-attribution trigger. Inputs whose PGLite outcome the store cannot
 reproduce refuse in the member with `engine_capability_missing`.

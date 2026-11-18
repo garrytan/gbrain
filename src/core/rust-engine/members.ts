@@ -430,6 +430,13 @@ export const RUST_ENGINE_MEMBERS = {
   listWriteGateHoldRows: 'facts',
   getWriteGateHoldRow: 'facts',
   decideWriteGateHold: 'facts',
+  // trust: the trust decision queue (engine-sql/trust-proposals.ts)
+  insertTrustProposal: 'facts',
+  getTrustProposal: 'facts',
+  listTrustProposals: 'facts',
+  pendingTrustProposalsFor: 'facts',
+  updatePendingTrustProposalAfter: 'facts',
+  transitionTrustProposal: 'facts',
   // open loops (engine-sql/open-loops.ts)
   upsertOpenLoop: 'facts',
   listOpenLoops: 'facts',

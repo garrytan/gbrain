@@ -15,12 +15,10 @@
  *    SQL arms set them with `applyTransactionSettings` inside `transaction`; the Rust engine serves neither yet, so the
  *    Rust arm sets the store's write trust context directly (rust-arm.ts `applyRustWriteTrust`) and clears it after,
  *    which is what the interfaces hook will do. Reads stay typed members (no executeRaw: D18).
- *  - Rust facts store no trust tier yet (every row reads `unknown`), so the writer-above case has a row in
- *    test/rust-expected-divergence/trust_fence.tsv. The held arm (a widening proposal) needs `trust_proposals`, which the
- *    Rust store does not keep; it is pinned by the PGLite-only case below.
+ *  - Rust fact rows store the tier their writer declared (rust/docs/store/facts.md), and the held arm reads the Rust
+ *    `trust_proposals` family, so every case below expects one answer on every arm.
  */
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
+import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { parityArms, type ParityBackend } from './harness.ts';
 import { applyRustWriteTrust } from './rust-arm.ts';
@@ -142,70 +140,63 @@ describe('engine parity: the fence guard read of a page\'s fact rows', () => {
     const answer = label(await withWriteTrustSettings(engine, backend, ['gbrain.write_trust_tier', 'gbrain.write_origin', 'gbrain.write_open_facts'],
       ['agent_written', JSON.stringify({ channel: 'mcp:put_page' }), String(zeta)],
       (tx) => tx.listFenceFactRows({ sourceId: SRC, slug: SLUG, incoming })) as never);
-    const zetaRow = { id: 'Zeta', row_num: 6, fact: 'Zeta', visibility: 'private', trust_tier: 'unknown', above: false, opened: true };
-    // PGLite keeps Gamma (operator_curated is above agent_written), so the guard files a proposal instead of expiring it.
-    // Rust stores no tier, so Gamma reads unknown, which is not above agent_written: the guard would expire it
-    // (test/rust-expected-divergence/trust_fence.tsv). The opened row is the same on both.
-    expect(answer).toEqual(backend === 'rust' ? [zetaRow] : [
+    // Gamma stays listed (operator_curated is above agent_written), so the guard files a proposal instead of expiring it.
+    expect(answer).toEqual([
       { id: 'Gamma', row_num: 3, fact: 'Gamma', visibility: 'world', trust_tier: 'operator_curated', above: true, opened: false },
-      zetaRow,
+      { id: 'Zeta', row_num: 6, fact: 'Zeta', visibility: 'private', trust_tier: 'unknown', above: false, opened: true },
     ]);
     return answer;
   });
-});
 
-// The writer's tier and the opened ids are transaction settings, which only the TypeScript engines can set today.
-describe('listFenceFactRows with a declared writer tier (PGLite)', () => {
-  let engine: PGLiteEngine;
-  beforeAll(async () => {
-    engine = new PGLiteEngine();
-    await engine.connect({});
-    await engine.initSchema();
-  }, 60_000);
-  afterAll(() => engine.disconnect());
-
-  test('a row above the writer, or opened, is listed in row order with its stored tier; a row the fence states as it is, is not', async () => {
-    // The trust trigger stamps a row with its writer's declared tier, so the tiers are set by writing under them.
-    const write = (tier: string, rows: Array<ReturnType<typeof fenceRow>>) => engine.transaction(async (tx) => {
-      await tx.applyTransactionSettings(['gbrain.write_trust_tier'], [tier]);
-      return (await tx.insertFacts(rows as never, { source_id: SRC })).ids as number[];
-    });
+  parityTest('a row above the writer, held by a widening proposal, or opened, is listed in row order with its stored tier', {
+    methods: ['insertFacts', 'insertTrustProposal', 'listFenceFactRows'],
+  }, async (engine, backend) => {
+    // A row is stamped with its writer's declared tier, so the tiers are set by writing under them.
+    const write = (tier: string, rows: Array<ReturnType<typeof fenceRow>>) => withWriteTrustSettings(engine, backend,
+      ['gbrain.write_trust_tier'], [tier], async (tx) => (await tx.insertFacts(rows as never, { source_id: SRC })).ids as number[]);
     const [gamma, alpha] = await write('operator_curated', [fenceRow(3, 'Gamma'), fenceRow(1, 'Alpha')]);
     const [beta] = await write('external_untrusted', [fenceRow(2, 'Beta')]);
-    const [, epsilon, zeta] = await write('', [
+    const [, epsilon, zeta, eta] = await write('', [
       fenceRow(4, 'Delta extracted', { source: 'cli:extract-conversation-facts:session-1' }),
       fenceRow(5, 'Epsilon', { visibility: 'private' }),
       fenceRow(6, 'Zeta', { visibility: 'private' }),
+      fenceRow(7, 'Eta', { visibility: 'private' }),
     ]);
-    expect([gamma, alpha, beta, epsilon, zeta].every((id) => typeof id === 'number')).toBe(true);
-    // A widening proposal that stored Epsilon narrower and is still pending holds it while the fence asks for world.
-    await engine.executeRaw(
-      `INSERT INTO trust_proposals (action, source_id, target_table, target_id, related_table, related_id, before_state, proposer)
-       VALUES ('confirm', $1, 'facts', $2, 'facts', $2, '{"visibility":"world"}'::jsonb, 'test')`, [SRC, epsilon]);
+    expect([gamma, alpha, beta, epsilon, zeta, eta].every((id) => typeof id === 'number')).toBe(true);
+    // A widening proposal that stored Epsilon narrower and is still pending holds it while the fence asks for world. Eta's
+    // proposal has no `visibility` in its before state, so it holds nothing.
+    const filed = await engine.insertTrustProposal({ action: 'confirm', sourceId: SRC, target: { table: 'facts', id: epsilon! },
+      related: { table: 'facts', id: epsilon! }, before: { visibility: 'world' }, proposer: 'test' });
+    const unheld = await engine.insertTrustProposal({ action: 'confirm', sourceId: SRC, target: { table: 'facts', id: eta! },
+      related: { table: 'facts', id: eta! }, before: { fact: 'Eta' }, proposer: 'test' });
+    expect([filed.created, unheld.created]).toEqual([true, true]);
     const incoming = incomingOf([
       { row_num: 1, fact: 'Alpha', visibility: 'world' },
       { row_num: 2, fact: 'Beta changed', visibility: 'world' },
       { row_num: 3, fact: 'Gamma changed', visibility: 'world' },
       { row_num: 5, fact: 'Epsilon', visibility: 'world' },
       { row_num: 6, fact: 'Zeta', visibility: 'world' },
+      { row_num: 7, fact: 'Eta', visibility: 'world' },
     ]);
-    const read = (tier: string, opened: string) => engine.transaction(async (tx) => {
-      await tx.applyTransactionSettings(['gbrain.write_trust_tier', 'gbrain.write_open_facts'], [tier, opened]);
-      return (await tx.listFenceFactRows({ sourceId: SRC, slug: SLUG, incoming })).map((r) => ({
+    const read = (tier: string, opened: string) => withWriteTrustSettings(engine, backend,
+      ['gbrain.write_trust_tier', 'gbrain.write_open_facts'], [tier, opened],
+      async (tx) => (await tx.listFenceFactRows({ sourceId: SRC, slug: SLUG, incoming })).map((r) => ({
         row_num: Number(r.row_num), fact: r.fact, trust_tier: r.trust_tier, above: r.above, opened: r.opened,
-      }));
-    });
+      })));
     const row = (row_num: number, fact: string, trust_tier: string, above: boolean, opened = false) => ({ row_num, fact, trust_tier, above, opened });
     // Rank, most trusted first: operator_curated, unknown, external_untrusted. An external writer is below Gamma (row 3) and
-    // below the unknown Epsilon and Zeta, and level with Beta; Alpha is stated as it is, and the extractor row is nobody's claim.
-    expect(await read('external_untrusted', '')).toEqual([
+    // below the unknown Epsilon, Zeta and Eta, and level with Beta; Alpha is stated as it is, and the extractor row is nobody's claim.
+    const external = await read('external_untrusted', '');
+    expect(external).toEqual([
       row(3, 'Gamma', 'operator_curated', true), row(5, 'Epsilon', 'unknown', true), row(6, 'Zeta', 'unknown', true),
+      row(7, 'Eta', 'unknown', true),
     ]);
     // An operator-curated writer is above nothing: only Epsilon (held by the pending proposal) and Zeta (opened) are listed.
-    expect(await read('operator_curated', `${zeta}`)).toEqual([
-      row(5, 'Epsilon', 'unknown', false), row(6, 'Zeta', 'unknown', false, true),
-    ]);
+    const operator = await read('operator_curated', `${zeta}`);
+    expect(operator).toEqual([row(5, 'Epsilon', 'unknown', false), row(6, 'Zeta', 'unknown', false, true)]);
     // An undeclared writer is `unknown`: it is below Gamma, and the proposal still holds Epsilon.
-    expect(await read('', '')).toEqual([row(3, 'Gamma', 'operator_curated', true), row(5, 'Epsilon', 'unknown', false)]);
-  }, 60_000);
+    const undeclared = await read('', '');
+    expect(undeclared).toEqual([row(3, 'Gamma', 'operator_curated', true), row(5, 'Epsilon', 'unknown', false)]);
+    return { external, operator, undeclared };
+  });
 });
