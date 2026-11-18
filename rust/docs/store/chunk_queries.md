@@ -88,8 +88,10 @@ the page projection, repair contextual-mode and evidence delivery. Each answers 
 
 - The read policy is `pageReadFilter`'s source clause, its page privacy policy and its live test: not deleted, no
   `quarantine` frontmatter key, in a source that exists and is not archived. The TypeScript member sends the scope;
-  a `requireSafeChunks`, `minTrust` or `suppressFlagged` scope refuses with `engine_capability_missing` before any
-  store call. Under `allSources` with no `sourceIds`, the code reads drop `sourceId`, as `codeReadFilter` does. An
+  a `requireSafeChunks` scope refuses with `engine_capability_missing` before any store call. `resolveFrozenHits`
+  takes `minTrust` and `suppressFlagged` (assemble_evidence passes the caller's floor) and applies `trust::TrustPolicy`
+  to the page's stamped tier and its write-gate receipts; the other members refuse them, as no production caller
+  passes one. Under `allSources` with no `sourceIds`, the code reads drop `sourceId`, as `codeReadFilter` does. An
   empty `sourceIds` list answers `[]` or `false` without a store call.
 - A served page is sealed or carries the activation revision (`servedTextProjectionFilter`).
 - `findCodeDefinitions` orders by the definition-type rank (function, class, interface, type, enum, struct, then the

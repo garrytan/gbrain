@@ -45,8 +45,9 @@ Numbers: arithmetic widens the f32 weight to a double first, as Postgres does fo
 - `takesHoldersAllowList`: honoured (see above).
 - `excludePrivate` (any truthy value, as `pageReadFilter` tests it) applies the page policy on both reads; see
   "Private pages" below. Links and timeline reads still refuse it.
-- `minTrust` and `suppressFlagged` refuse on `getSalienceScores` (its SQL applies `pageEligibleSql`); on
-  `getRecentSalience` they change nothing, as its SQL never reads them.
+- `minTrust` and `suppressFlagged` apply on `getSalienceScores` (its SQL applies `pageEligibleSql`) through
+  `trust::TrustPolicy`: the page's stamped tier at or above the floor, and no instruction-family write-gate receipt on
+  an agent-written-or-lower page. On `getRecentSalience` they change nothing, as its SQL never reads them.
 - `getSalienceScores` applies the live clauses whenever a read policy object is passed (`pageReadFilter(..., !!scope)`).
   Hybrid search passes its whole `SearchOpts` as the policy; the keys the SQL does not read are ignored.
 - `setEmotionalWeightBatch` refuses a NaN or infinite weight (JSON cannot carry it; PGLite stores it as a `real`).

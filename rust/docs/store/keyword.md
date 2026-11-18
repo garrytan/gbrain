@@ -29,8 +29,9 @@ Every keyword member except `findByTitleFuzzy` refuses:
 
 - a CJK query (`hasCJK`): the SQL engines take a separate CJK path (follow-up `keyword-cjk`);
 - a text search configuration other than `english` (`getFtsLanguage()`);
-- truthy `excludePrivate`, `requireSafeChunks`, `minTrust` or `suppressFlagged`: the store does not record privacy,
-  chunk safety, trust tiers or flags;
+- truthy `excludePrivate` or `requireSafeChunks`: the store does not model this privacy filter or record chunk
+  safety. (`minTrust` and `suppressFlagged` are served: every member's page filter applies `trust::TrustPolicy` to
+  the page's stamped tier and its write-gate receipts, as `buildVisibilityClause` does);
 - a date bound (`afterDate`, `beforeDate`) that is not an ISO date or date-time
   (`YYYY-M-D[( |T)H:MM[:SS[.ffffff]][Z|±HH[:MM]]]`), that is outside the calendar, or that has more than six fraction
   digits. Postgres reads more shapes (`Jan 5 2026`); those refuse rather than guess;

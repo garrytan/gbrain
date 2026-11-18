@@ -51,6 +51,7 @@ use crate::pages::{
     write_page,
 };
 use crate::sources::{read_source, require_source};
+use crate::trust::{TrustPolicy, TrustTier};
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -149,7 +150,9 @@ pub struct SlugAliasMatch {
 /// `aliasCanonicalRefs(refs, policy)`. The TypeScript member reads the policy as
 /// `pageReadFilter('p', policy, !!policy)` does: `source_ids` is its source clause (a non-empty
 /// `sourceIds`, else a non-empty `sourceId`, else none), `live` is `!!policy`, and
-/// `exclude_private` is the page policy of `excludePrivate` (`facts/privacy.rs` `page_hidden`).
+/// `exclude_private` is the page policy of `excludePrivate` (`facts/privacy.rs` `page_hidden`), and
+/// `min_trust` and `suppress_flagged` are `pageEligibleSql`'s trust floor and flagged-page filter
+/// over the page's stored tier and write-gate receipts (`trust::TrustPolicy`).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AliasCanonicalQuery {
@@ -157,6 +160,8 @@ pub struct AliasCanonicalQuery {
     pub source_ids: Option<Vec<String>>,
     pub live: bool,
     pub exclude_private: Option<PrivacyPolicy>,
+    pub min_trust: Option<String>,
+    pub suppress_flagged: bool,
 }
 
 fn key(sub: u8, parts: &[&str]) -> Vec<u8> {
@@ -744,6 +749,7 @@ impl Store {
     /// under `exclude_private`, pass the page policy. A ref holding a NUL byte names nothing.
     pub fn alias_canonical_refs(&self, query: &AliasCanonicalQuery) -> Result<Vec<Value>> {
         let read = self.read()?;
+        let trust = TrustPolicy::parse(query.min_trust.as_deref(), query.suppress_flagged)?;
         let refs: BTreeSet<(&str, &str)> = query
             .refs
             .iter()
@@ -783,6 +789,10 @@ impl Store {
             if let Some(policy) = &query.exclude_private
                 && page_hidden(&*read, &page, policy)?
             {
+                continue;
+            }
+            let tier = TrustTier::stored(page.trust_tier.as_deref());
+            if !trust.admits(&*read, "pages", page.id, tier)? {
                 continue;
             }
             out.push(serde_json::json!({"source_id": source, "canonical_slug": slug}));

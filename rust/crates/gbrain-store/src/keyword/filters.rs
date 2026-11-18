@@ -21,6 +21,7 @@ use crate::kv::KvRead;
 use crate::pages::PageRecord;
 use crate::sources::read_source;
 use crate::timeline_queries::jsonb_field_text;
+use crate::trust::{TrustPolicy, TrustTier};
 
 /// The `text_projection_revision` the v153 activation leaves on a page whose pre-upgrade index it
 /// keeps serving (`servedTextProjectionFilter`, search/safe-chunks.ts).
@@ -92,6 +93,10 @@ pub struct KeywordOptions {
     pub handles_only: bool,
     /// `searchKeyword`: the per-page candidates kept before the window (`LIMIT $2`, 3x the limit).
     pub inner_limit: Option<f64>,
+    /// `minTrust`: `buildVisibilityClause`'s trust floor over the page's stored tier.
+    pub min_trust: Option<String>,
+    /// `suppressFlagged`: drop a page `activationSuppressedSql('pages')` flags.
+    pub suppress_flagged: bool,
 }
 
 /// A parsed date bound.
@@ -119,6 +124,7 @@ impl Bound {
 /// The page-level predicates, with the source table read once per source.
 pub(super) struct PageFilter<'a> {
     options: &'a KeywordOptions,
+    trust: TrustPolicy,
     after: Option<Bound>,
     before: Option<Bound>,
     live_sources: HashMap<String, bool>,
@@ -128,6 +134,7 @@ impl<'a> PageFilter<'a> {
     pub(super) fn new(options: &'a KeywordOptions) -> Result<Self> {
         Ok(Self {
             options,
+            trust: TrustPolicy::parse(options.min_trust.as_deref(), options.suppress_flagged)?,
             after: Bound::parse(options.after_date.as_ref(), "afterDate")?,
             before: Bound::parse(options.before_date.as_ref(), "beforeDate")?,
             live_sources: HashMap::new(),
@@ -188,7 +195,15 @@ impl<'a> PageFilter<'a> {
                 live
             }
         };
-        Ok(live)
+        if !live {
+            return Ok(false);
+        }
+        self.trust.admits(
+            read,
+            "pages",
+            page.id,
+            TrustTier::stored(page.trust_tier.as_deref()),
+        )
     }
 
     /// The chunk predicates: `detail` low, `language`, `symbolKind`.

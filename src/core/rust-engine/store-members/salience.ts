@@ -6,8 +6,8 @@
  *
  * Read policy: source scope and `takesHoldersAllowList` are honoured. `excludePrivate` applies the page policy
  * (private-provenance.ts `storePagePolicy`), and refuses for a caller whose members, grants or lineage change it. On
- * getSalienceScores a trust floor or flag suppression refuses, as its SQL reads them; getRecentSalience's SQL never
- * reads them, so they change nothing there.
+ * getSalienceScores `minTrust` and `suppressFlagged` apply the page's stored trust tier and its write-gate flag receipts
+ * (`pageEligibleSql`), as its SQL does; getRecentSalience's SQL never reads them, so they change nothing there.
  */
 import { clampSearchLimit } from '../../engine.ts';
 import { resolveRecencyDecayMap, DEFAULT_FALLBACK, type RecencyDecayConfig, type RecencyDecayMap } from '../../search/recency-decay.ts';
@@ -97,8 +97,8 @@ export const getRecentSalience: StoreMember<[opts: SalienceOpts], SalienceResult
 
 export const getSalienceScores: StoreMember<[refs: Array<{ slug: string; source_id: string }>, opts?: PageReadPolicy], Map<string, number>> = async (brain, refs, opts) => {
   if (!refs.length) return new Map();
-  const o = takeOptions('getSalienceScores', opts, ['sourceId', 'sourceIds', 'takesHoldersAllowList', 'excludePrivate'],
-    ['requireSafeChunks', ...SEARCH_KEYS]);
+  const o = takeOptions('getSalienceScores', opts,
+    ['sourceId', 'sourceIds', 'takesHoldersAllowList', 'excludePrivate', 'minTrust', 'suppressFlagged'], ['requireSafeChunks', ...SEARCH_KEYS]);
   const excludePrivate = storePagePolicy('getSalienceScores', o.excludePrivate);
   const rows = (await storeCall({ member: 'getSalienceScores' }, () => brain.getSalienceScores({
     refs: refs.map((r) => ({ slug: r.slug, source_id: r.source_id })),
@@ -106,6 +106,8 @@ export const getSalienceScores: StoreMember<[refs: Array<{ slug: string; source_
     holders: holders(o),
     live: !!opts,
     exclude_private: excludePrivate ?? null,
+    min_trust: (o.minTrust as string | undefined) || null,
+    suppress_flagged: o.suppressFlagged === true,
   }))) as Array<{ slug: string; source_id: string; score: number }>;
   return new Map(rows.map((r) => [`${r.source_id}::${r.slug}`, r.score]));
 };

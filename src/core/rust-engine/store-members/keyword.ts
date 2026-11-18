@@ -62,8 +62,10 @@ const SHARED = new Set([
 ]);
 /** The page filters `searchKeywordChunks` does not apply on PGLite but Postgres does (follow-up pglite-keyword-chunks-page-filters). */
 const PAGE_FILTERS = ['type', 'types', 'where', 'exclude_slugs'] as const;
-/** Visibility options the store cannot apply (private pages, safe chunks, the trust floor). */
-const VISIBILITY = ['excludePrivate', 'requireSafeChunks', 'minTrust', 'suppressFlagged'] as const;
+/** Visibility options the store cannot apply (private pages, safe chunks). */
+const VISIBILITY = ['excludePrivate', 'requireSafeChunks'] as const;
+/** The trust options of `buildVisibilityClause`: the store reads the page's stamped tier and its write-gate receipts. */
+const TRUST = ['minTrust', 'suppressFlagged'] as const;
 
 type Member = 'searchKeyword' | 'searchKeywordChunks' | 'countKeywordPages' | 'searchKeywordPages' | 'searchTitles';
 
@@ -78,6 +80,7 @@ function keywordOptions(member: Member, query: string, opts: (SearchOpts & { tim
     if (value === undefined || value === false || NOT_READ.has(key) || SHARED.has(key)) continue;
     if (key === 'limit' || key === 'offset') continue;
     if (key === 'timeoutMs' && member === 'countKeywordPages') continue;
+    if ((TRUST as readonly string[]).includes(key)) continue;
     if (pageGrain && (key === 'keywordPhrase' || (PAGE_FILTERS as readonly string[]).includes(key))) continue;
     if (!pageGrain && (PAGE_FILTERS as readonly string[]).includes(key)) {
       // PGLite ignores these on searchKeywordChunks and Postgres applies them: refuse rather than pick one.
@@ -102,6 +105,8 @@ function keywordOptions(member: Member, query: string, opts: (SearchOpts & { tim
   const sourceIds = o.sourceIds as string[] | undefined;
   if (sourceIds && sourceIds.length > 0) out.sources = sourceIds.map(String);
   else if (o.sourceId) out.sources = [String(o.sourceId)];
+  if (o.minTrust) out.minTrust = String(o.minTrust);
+  if (o.suppressFlagged === true) out.suppressFlagged = true;
   out.hardExcludes = resolveHardExcludes(o.exclude_slug_prefixes as string[] | undefined, o.include_slug_prefixes as string[] | undefined);
   out.boosts = boostPairs((o.source_boosts as Record<string, number> | undefined) ?? resolveBoostMap(), o.detail);
   if (pageGrain) {
