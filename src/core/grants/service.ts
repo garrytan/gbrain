@@ -142,6 +142,7 @@ export async function rescopeClientGrantInTransaction(db: GrantDatabase, clientI
   const after: ClientGrant = { ...before, ...changes, revision: before.revision + 1, repairReasons: [] };
   if (changes.sourceId != null && changes.sourcesNone === undefined) after.sourcesNone = false;
   after.boundBrainId = normalizeGrantBrain(after.boundBrainId);
+  if (after.sourcesNone === true && after.readShared === true && patch.readShared !== true) throw (await import('./read-shared.ts')).readSharedNoSourceRefusal('client', before.clientId);
   validateClientGrant(after, await grantValidationContext(db, opts.servingBrainId));
   if (JSON.stringify({ ...after, revision: before.revision }) === JSON.stringify(before)) {
     return { before, after: before, revision: before.revision, dryRun: opts.dryRun === true };

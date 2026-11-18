@@ -328,6 +328,7 @@ async function rescopeInTransaction(tx: BrainEngine, args: RescopeTokenArgs): Pr
   }
   const readShared = (args.readShared ?? current.readShared === true) && next.sources.kind !== 'default';
   if (readShared && next.sources.kind === 'none') {
+    if (args.readShared !== true) throw (await import('./read-shared.ts')).readSharedNoSourceRefusal('token', name);
     throw new GrantError('invalid_grant', `Token "${name}" has no source (--sources none), so --read-shared on has no write source to add shared reads to. `
       + `Ask the user which source the key writes to, then run gbrain auth rescope --token ${name} --sources <write-source> --read-shared on.`, ['read_shared_needs_source']);
   }
