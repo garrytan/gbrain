@@ -1549,6 +1549,10 @@ The Minion job queue, cycle locks, spend and rate leases, and wake subscriptions
     `listQueueWedgeCounts`, `listPrivateQueueHealth`, `readWedgeSignals`, `readOldestWaitingAge`,
     `listStuckActiveJobsByName`) serve the doctor's queue checks, the advisor's stalled jobs and the submit-time
     probe (`src/core/engine-sql/jobs-health.ts`, `rust/docs/store/jobs-health.md`). `parity: test/engine-parity/jobs-health.test.ts`.
+  - Subagent transcript and tool ledger. Seventeen members (`listSubagentMessages`, `insertSubagentMessage`, `listSubagentToolExecutions`,
+    `recordSubagentToolExecutions`, `startSubagentToolExecution`, `completeSubagentToolExecution`, `failSubagentToolExecution`, the
+    write-outcome, oneshot-ledger and byte-sum reads, and the dream cycle's provenance reads) serve `subagent_messages` and
+    `subagent_tool_executions` (`src/core/engine-sql/jobs-subagent.ts`, `rust/docs/store/jobs-subagent.md`). `parity: test/engine-parity/jobs-subagent.test.ts`.
   - Wake. The `minion_job_notify` trigger's `pg_notify` has no store equivalent: a Rust worker uses the short poll,
     which `sync-queue-wake.ts` already chooses when LISTEN is not available.
 - **Depends on:** the transactions family (`w`) for the members a caller runs inside its own transaction.

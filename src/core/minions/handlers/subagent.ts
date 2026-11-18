@@ -376,11 +376,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
     // config repointed to a loop-incapable model between submit and replay)
     // dead-letter completed work.
     {
-      const lastRows = await engine.executeRaw<{ role: string; content_blocks: unknown }>(
-        `SELECT role, content_blocks FROM subagent_messages
-          WHERE job_id = $1 ORDER BY message_idx DESC LIMIT 1`,
-        [ctx.id],
-      );
+      const lastRows = await engine.listSubagentMessages(ctx.id, { last: true });
       const lastRow = lastRows[0];
       const lastBlocks = lastRow
         ? (typeof lastRow.content_blocks === 'string'
@@ -519,11 +515,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
     // own; the ledger-first recovery inside the runner covers post-write
     // crashes because a successful attempt persists its transcript LAST).
     if (data.mode === 'oneshot') {
-      const freshRows = await engine.executeRaw<{ n: number }>(
-        `SELECT count(*)::int AS n FROM subagent_messages WHERE job_id = $1`,
-        [ctx.id],
-      );
-      let dispatchOneshot = (freshRows[0]?.n ?? 0) === 0;
+      let dispatchOneshot = (await engine.countSubagentMessages(ctx.id)) === 0;
       if (!dispatchOneshot) {
         // Transcript persistence is two INSERTs; a crash between them leaves
         // messages WITHOUT a terminal assistant row, and the loop replay
@@ -532,13 +524,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         // suffix). Oneshot ledger rows exist only after full validation on
         // the oneshot path, so their presence routes to the runner's
         // idempotent ledger-first recovery instead of the loop.
-        const ledger = await engine.executeRaw<{ n: number }>(
-          `SELECT count(*)::int AS n FROM (
-             SELECT 1 FROM subagent_tool_executions
-              WHERE job_id = $1 AND tool_use_id LIKE $2 LIMIT 1) t`,
-          [ctx.id, `${ONESHOT_TOOL_USE_ID_PREFIX}%`],
-        );
-        dispatchOneshot = (ledger[0]?.n ?? 0) > 0;
+        dispatchOneshot = await engine.hasSubagentToolExecution(ctx.id, { toolUseIdPrefix: ONESHOT_TOOL_USE_ID_PREFIX });
       }
       if (dispatchOneshot) {
         // Rebuild put_page with deferEmbeds so the embed network call leaves
@@ -1437,35 +1423,24 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
       // it — row identity is (job_id, message_idx, ordinal), and every
       // reader resolves an execution by (message_idx, tool_use_id) or by
       // gbrain_tool_use_id, never by tool_use_id alone.
-      const rows = await engine.executeRaw<{ gbrain_tool_use_id: string }>(
-        `INSERT INTO subagent_tool_executions
-           (job_id, message_idx, tool_use_id, tool_name, input, status, schema_version, ordinal, gbrain_tool_use_id, provider_id)
-         VALUES ($1, $2, $3, $4, $5::text::jsonb, 'pending', 2, $6, $7, $8)
-         ON CONFLICT (job_id, message_idx, ordinal) DO UPDATE
-           SET status = subagent_tool_executions.status
-         RETURNING gbrain_tool_use_id::text AS gbrain_tool_use_id`,
-        [ctx.id, messageIdx, providerToolCallId, toolName, JSON.stringify(input ?? null), ordinal, candidateId, recipeIdFromModel(model)],
-      );
-      const gbrainToolUseId = rows[0]?.gbrain_tool_use_id ?? candidateId;
+      const gbrainToolUseId = (await engine.startSubagentToolExecution(ctx.id, {
+        message_idx: messageIdx,
+        ordinal,
+        tool_use_id: providerToolCallId,
+        tool_name: toolName,
+        input: JSON.stringify(input ?? null),
+        gbrain_tool_use_id: candidateId,
+        provider_id: recipeIdFromModel(model),
+      })) ?? candidateId;
       heartbeat('tool_called', { turn_idx: turnIdx, tool_name: toolName });
       return { gbrainToolUseId };
     },
     onToolCallComplete: async (gbrainToolUseId, output) => {
-      await engine.executeRaw(
-        `UPDATE subagent_tool_executions
-           SET status = 'complete', output = $1::text::jsonb, ended_at = now()
-         WHERE gbrain_tool_use_id::text = $2`,
-        [JSON.stringify(output ?? null), gbrainToolUseId],
-      );
+      await engine.completeSubagentToolExecution({ gbrainToolUseId }, JSON.stringify(output ?? null));
     },
     onToolCallFailed: async (gbrainToolUseId, errorMsg) => {
       if (pendingToolWrite) throw pendingToolWrite;
-      await engine.executeRaw(
-        `UPDATE subagent_tool_executions
-           SET status = 'failed', error = $1, ended_at = now()
-         WHERE gbrain_tool_use_id::text = $2`,
-        [errorMsg, gbrainToolUseId],
-      );
+      await engine.failSubagentToolExecution({ gbrainToolUseId }, errorMsg);
     },
     // Persist the tool-result user turn so a resume reloads a balanced
     // transcript. JSON.stringify inside persistMessage ISO-izes any Date in
