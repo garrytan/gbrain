@@ -211,6 +211,7 @@ import {
   quarantineCwdDotenv,
   type DotenvAssignment,
 } from './env-trust.ts';
+import { markJsonDocumentDelegated } from './cli-force-exit.ts';
 import { loadGbrainEnvFile } from './gbrain-env-file.ts';
 import { configDir } from './config.ts';
 import { bunSpawn } from './spawn.ts';
@@ -536,6 +537,7 @@ async function reexecSanitized(originalCwd: string, dropped: readonly string[]):
   } finally {
     rmSync(neutral, { recursive: true, force: true });
   }
+  markJsonDocumentDelegated(); // the re-run owned fd 1; the wrapper adds no second document
   if (signalCode) {
     const signals = osConstants.signals as Record<string, number | undefined>;
     process.exit(128 + (signals[signalCode] ?? 1)); // shell convention for a signal death

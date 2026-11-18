@@ -838,6 +838,14 @@ let jsonGuardMode: 'document' | 'ndjson' | null = null;
 let jsonDocumentWritten = false;
 let lastRenderedErrorCode: string | undefined;
 
+/**
+ * The sanitized re-run (cli-preflight) inherits fd 1 and owns the command's
+ * result, so the wrapper must not add a fallback or missing-document record.
+ */
+export function markJsonDocumentDelegated(): void {
+  jsonDocumentWritten = true;
+}
+
 /** renderCliError's callers record the code they rendered so the fallback document can carry it. */
 export function noteRenderedErrorCode(code: string): void {
   lastRenderedErrorCode = code;
