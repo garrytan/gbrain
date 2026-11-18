@@ -46,3 +46,39 @@ Rust guesses and gaps (1x parity):
 - A stored tier that names no tier reads as `unknown` (`TrustTier::stored`, as `storedTrustTier`); PGLite's
   trigger ranks such text 0, below `external_untrusted`. The Rust store never stores such text.
 - A non-object frontmatter cannot occur: the Rust page record holds a JSON object.
+
+## Fact withdrawals (`trust::withdrawals`)
+
+The `fact_withdrawals` ledger (src/core/facts/withdrawal-schema.ts). One record per primary key:
+
+`t 0x01 source \0 visibility \0 subject \0 fact_hash` -> `{"withdrawn_at_us": <i64>}`
+
+`fact_hash` is `gbrain_fact_fingerprint(claim)` (`trust::fingerprint::fact_fingerprint`). Rows written before v174
+hold `gbrain_fact_fingerprint_v1(claim)`, and every read matches both. Deleting a source removes its rows (the table's
+`ON DELETE CASCADE`, through `cascade::remove_source_rows`). A slug rename does not move them; the rename callers call
+`moveFactWithdrawalSubject`.
+
+| Member | Store method | PGLite statement |
+| --- | --- | --- |
+| `hasCoveringFactWithdrawal` | `has_covering_fact_withdrawal`: four point reads (`*` and the subject, the hash and the v1 hash of the claim) | `SELECT 1 … fact_hash IN ($3, v1($5)) AND (subject='*' OR subject=$4)` |
+| `insertFactWithdrawal` | `insert_fact_withdrawal`: false when the key exists, which keeps its time | `INSERT … COALESCE($5::timestamptz, now()) ON CONFLICT DO NOTHING RETURNING` |
+| `listFactWithdrawalDates` | `list_fact_withdrawal_dates`: per claim, point reads (subject given) or a scan of source and visibility (subject null); the minimum time per row number, sorted by row number | `min(withdrawn_at) … GROUP BY row_num` (no order) |
+| `moveFactWithdrawalSubject` | `move_fact_withdrawal_subject`: same slugs do nothing; otherwise each row moves unless the new subject already has the key | `MOVE_WITHDRAWAL_SUBJECT_SQL` |
+| `hasFactWithdrawalForSubject` | `has_fact_withdrawal_for_subject`: a scan of the source | `SELECT 1 … subject=$2 LIMIT 1` |
+| `listFactWithdrawalKeys` | `list_fact_withdrawal_keys`: sorted by visibility, fact_hash and subject in byte order, then cut to `limit` | `ORDER BY visibility, fact_hash, subject LIMIT $2` |
+
+Not built (they still run through `executeRaw`, which the Rust engine refuses): the reads that also read `fact_purges`
+(`isFactWithdrawn`, the ambiguous-fence check, the export snapshot), the reads that join `facts` (the effect-target
+request, the single-fact prepare, the repair and review lanes), the meta-hook watermark, and the `facts` insert guard
+`gbrain_preserve_fact_withdrawal` (the facts family's insert calls it once the facts family lands on this line).
+
+Rust guesses and gaps (1x parity):
+
+- A visibility other than `private` or `world` refuses with `invalid_argument`; Postgres raises a CHECK violation.
+- An unknown source refuses with `source_not_found`; Postgres raises a foreign-key violation.
+- `withdrawnAt` must be the ISO form `Date#toISOString` gives (or the store's own microsecond form); any other text
+  refuses with `invalid_argument`, where Postgres casts many spellings to `timestamptz`.
+- A NUL byte in any text argument refuses with `invalid_argument`, as Postgres refuses one in `text`.
+- A negative `limit` refuses with `invalid_argument`; Postgres raises `LIMIT must not be negative`.
+- The fingerprint is a copy of the facts family's (facts.rs on the facts-sites line). `pg_lower_char` follows the code
+  points probed on PGLite (`LOWER_KEEP`); a Postgres built with a different Unicode table can differ.

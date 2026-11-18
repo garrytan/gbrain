@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 198/198
+# covered: 204/204
 # lifecycle: 9/9
 # pages: 24/24
 # search: 7/7
@@ -30,6 +30,7 @@
 # code_edges: 5/5
 # eval_capture: 5/5
 # salience_enrich: 5/5
+# trust: 6/6
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
 connect	lifecycle	yes	1	yes	yes	yes	serves
 disconnect	lifecycle	yes	1	yes	yes	yes	serves
@@ -229,3 +230,9 @@ setEmotionalWeightBatch	salience_enrich	yes	2	yes	yes	yes	refuses:salience
 getRecentSalience	salience_enrich	yes	1	yes	yes	yes	refuses:salience
 listEnrichCandidates	salience_enrich	yes	1	yes	yes	yes	refuses:health
 findAnomalies	salience_enrich	yes	1	yes	yes	yes	refuses:health
+hasCoveringFactWithdrawal	trust	yes	1	no	yes	yes	serves
+insertFactWithdrawal	trust	yes	4	no	yes	yes	serves
+listFactWithdrawalDates	trust	yes	2	no	yes	yes	serves
+moveFactWithdrawalSubject	trust	yes	1	no	yes	yes	serves
+hasFactWithdrawalForSubject	trust	yes	1	no	yes	yes	serves
+listFactWithdrawalKeys	trust	yes	3	no	yes	yes	serves

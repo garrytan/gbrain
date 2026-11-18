@@ -1,4 +1,5 @@
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
+import type * as TrustWithdrawalsSql from './engine-sql/trust-withdrawals.ts';
 import type { EngineCapabilities } from './engine-capabilities.ts';
 import type { GetVersionsOpts, PageVersionRows } from './page-state/version-types.ts';
 import type { PageSnapshotBatch } from './page-snapshot-batch.ts';
@@ -2897,4 +2898,18 @@ export interface BrainEngine {
    * not a misleading mean of 1.
    */
   findAnomalies(opts: AnomaliesOpts): Promise<AnomalyResult[]>;
+
+  // Trust: the fact withdrawal ledger (engine-sql/trust-withdrawals.ts). Each runs the statement its caller ran through executeRaw.
+  /** Whether a withdrawal in the source at `visibility` covers a claim for `subject`: its fingerprint is `factHash` or the v1 fingerprint of `claim`, and its subject is '*' or `subject`. */
+  hasCoveringFactWithdrawal(sourceId: string, visibility: string, factHash: string, claim: string, subject: string): Promise<boolean>;
+  /** Records a withdrawal of `claim` (by its fingerprint) for `subject`, at `withdrawnAt` (an ISO time) or now; false when that withdrawal was already recorded. */
+  insertFactWithdrawal(sourceId: string, visibility: string, claim: string, subject: string, withdrawnAt: string | null): Promise<boolean>;
+  /** Per claim row with a matching withdrawal (same visibility, its fingerprint or v1 fingerprint, subject '*' or `subject`; any subject when null): the earliest withdrawal time. No set order. */
+  listFactWithdrawalDates(sourceId: string, claims: readonly TrustWithdrawalsSql.WithdrawalClaimRow[], subject: string | null): Promise<TrustWithdrawalsSql.WithdrawalDateRow[]>;
+  /** Rename or merge: moves the source's withdrawals of subject `oldSlug` to `newSlug`, keeping a withdrawal `newSlug` already has. */
+  moveFactWithdrawalSubject(sourceId: string, oldSlug: string, newSlug: string): Promise<void>;
+  /** Whether any withdrawal of the source has subject `subject`. */
+  hasFactWithdrawalForSubject(sourceId: string, subject: string): Promise<boolean>;
+  /** The source's withdrawal keys by visibility, fingerprint and subject, at most `limit`. */
+  listFactWithdrawalKeys(sourceId: string, limit: number): Promise<TrustWithdrawalsSql.WithdrawalKeyRow[]>;
 }

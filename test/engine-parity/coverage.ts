@@ -90,6 +90,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
   eval_capture: ['logEvalCandidate', 'listEvalCandidates', 'deleteEvalCandidatesBefore', 'logEvalCaptureFailure',
     'listEvalCaptureFailures'],
   salience_enrich: ['batchLoadEmotionalInputs', 'setEmotionalWeightBatch', 'getRecentSalience', 'listEnrichCandidates', 'findAnomalies'],
+  trust: ['hasCoveringFactWithdrawal', 'insertFactWithdrawal', 'listFactWithdrawalDates', 'moveFactWithdrawalSubject',
+    'hasFactWithdrawalForSubject', 'listFactWithdrawalKeys'],
 };
 
 /** Callable members of `interface BrainEngine`, in declaration order (`kind` excluded). */

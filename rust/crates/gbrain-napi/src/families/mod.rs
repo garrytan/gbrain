@@ -12,6 +12,7 @@ mod search;
 mod sources;
 mod tags;
 mod timeline;
+mod trust;
 mod versions;
 
 // Planned families: no methods yet (docs/designs/RUST_ENGINE_INTERFACES.md).

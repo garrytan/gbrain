@@ -242,6 +242,13 @@ export const RUST_ENGINE_MEMBERS = {
   getOntology: 'ontology',
   discoverOntologyDimensions: 'ontology',
   findOntologyConflicts: 'ontology',
+  // trust: the fact withdrawal ledger (engine-sql/trust-withdrawals.ts)
+  hasCoveringFactWithdrawal: 'facts',
+  insertFactWithdrawal: 'facts',
+  listFactWithdrawalDates: 'facts',
+  moveFactWithdrawalSubject: 'facts',
+  hasFactWithdrawalForSubject: 'facts',
+  listFactWithdrawalKeys: 'facts',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;

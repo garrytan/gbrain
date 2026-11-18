@@ -59,7 +59,6 @@ import { parseMarkdown, splitBody, serializeMarkdown } from '../markdown.ts';
 import { tryAcquireDbLock, syncLockId, type DbLockHandle } from '../db-lock.ts';
 import { isAborted } from '../abort-check.ts';
 import { logPhantomEvent, type PhantomOutcome } from '../facts/phantom-audit.ts';
-import { MOVE_WITHDRAWAL_SUBJECT_SQL } from '../facts/withdrawal-schema.ts';
 import { withHeldFactsFence } from '../facts/unfenced-facts.ts';
 import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
 import { fileBodyMatchesStored, fileDatabaseDriftToken, mirrorFileBody, readStoredBody, replaceStoredBody, replaceableFile } from '../facts/file-body-guard.ts';
@@ -691,7 +690,7 @@ export async function tryRedirectPhantom(
   // Withdrawals are scoped to the entity; the phantom was the canonical
   // entity. Moved first, so the withdrawal trigger honors them as the
   // phantom's rows take the canonical subject.
-  await engine.executeRaw(MOVE_WITHDRAWAL_SUBJECT_SQL, [sourceId, page.slug, canonical]);
+  await engine.moveFactWithdrawalSubject(sourceId, page.slug, canonical);
   const migrated = await migratePhantomFacts(engine, sourceId, page.slug, canonical, rowMap);
 
   const canonicalPage = await engine.getPage(canonical, { sourceId });
