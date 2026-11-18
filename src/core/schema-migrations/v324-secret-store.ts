@@ -12,8 +12,8 @@ import type { Migration } from './types.ts';
 // a recorded occurrence, so a marker pasted anywhere else binds to nothing. Database only, so a repo-less brain gets
 // it unchanged. Nothing is written on upgrade. No schema.sql mirror, like v307: it exists only through migrations.
 // Provisional number: confirmed at landing.
-export const v323: Migration = {
-  version: 323,
+export const v324: Migration = {
+  version: 324,
   name: 'secret_store',
   idempotent: true,
   sql: `
