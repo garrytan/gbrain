@@ -58,6 +58,18 @@ const INTERFACE_METHODS: readonly string[] = [
   // Hybrid search reads (engine-sql/search-reads.ts) and the onboarding signal count (engine-sql/health.ts)
   'cosinesByChunkIds', 'hasSupersedeEdges', 'supersedingPageSlugs', 'aliasCanonicalRefs', 'pageCollapseFacts', 'slugsEndingIn',
   'generatedPagesIn', 'livePageIdsAt', 'pagesLinkingTo', 'countOnboardSignal',
+  // Graph and doctor link reads (engine-sql/link-reads.ts)
+  'inboundLinkCoverage', 'listJunkEntityHubs', 'countEntityPages', 'entityGraphCoverage', 'countForeignEdges',
+  'listLivePageSummaries', 'countInboundLinks', 'listLinkEndpointPages', 'listPagesTitledIn', 'wordLexemes',
+  // CLI reads (engine-sql/cli-reads-ops.ts; covered by test/engine-parity/cli-reads-ops.test.ts)
+  'scanExactBatch', 'nextLivePageAfter', 'listExactIdentityCandidates', 'rankEntities', 'listExtractionPendingPages',
+  'listUnattributedFacts', 'listWantedPages',
+  // CLI import and extract reads (engine-sql/cli-reads-import.ts; covered by test/engine-parity/cli-reads-import.test.ts)
+  'listSourceRecords', 'readSourceIncarnation', 'hasCompanyBrainReceipt', 'readGuestSourceRow', 'listGuestSourceIds',
+  'hasGuestSource', 'readPageTrustRows', 'readDatabaseClock', 'listLinkPageMetadata', 'listStoredTimelineRows',
+  'filterPagesAtRevision',
+  // Wanted-link writes (engine-sql/wanted-links.ts; covered by test/engine-parity/wanted-links.test.ts)
+  'lockRegisteredSourceIds', 'replaceWantedLinkRows',
   // Import writes (engine-sql/chunks.ts, tags.ts, pages.ts)
   'deleteChunksExcept', 'setChunkerVersion', 'writeTextProjectionSeal', 'moveChunkIndexes', 'getChunkReuseRows', 'pruneFrontmatterTags',
   'addPageTagsById', 'replaceDerivedAliases', 'getPageSealState', 'refreshPageOrigin',
@@ -113,11 +125,6 @@ const INTERFACE_METHODS: readonly string[] = [
   // #3980 bulk config read, #3776 takes-embedding update, #3674 scoped
   // link removal.
   'getAllConfig', 'getConfigValues', 'readManagedModeRows', 'getSourceStrictness', 'readPersistenceBrainId', 'readLocalWriterRow', 'insertLocalWriterRow', 'readTransactionSettings', 'applyTransactionSettings', 'readLedgerSource', 'isFolderRestricted', 'readJournalLimitRows', 'readHeldPageRows', 'readHeldCoverageRows', 'readWriteRequest', 'readWriteRequestById', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'lockWriteRequest', 'completeWriteRow', 'updateTakeEmbeddings', 'removeLinksByPagesAndSource',
-  // CLI reads and the wanted-link writes the CLI members merge brought in (engine-sql/cli-reads-ops.ts,
-  // cli-reads-import.ts, wanted-links.ts).
-  'scanExactBatch', 'nextLivePageAfter', 'listExactIdentityCandidates', 'rankEntities', 'listExtractionPendingPages', 'listUnattributedFacts', 'listWantedPages',
-  'listSourceRecords', 'readSourceIncarnation', 'hasCompanyBrainReceipt', 'readGuestSourceRow', 'listGuestSourceIds', 'hasGuestSource', 'readPageTrustRows', 'readDatabaseClock', 'listLinkPageMetadata', 'listStoredTimelineRows', 'filterPagesAtRevision',
-  'lockRegisteredSourceIds', 'replaceWantedLinkRows',
   // Code edges
   'addCodeEdges', 'deleteCodeEdgesForChunks', 'getCallersOf', 'getCalleesOf', 'getEdgesByChunk',
   'searchKeywordChunks',
@@ -155,14 +162,16 @@ const ENGINE_INTERNAL_HELPERS: readonly string[] = [
   'cycleLockSql',
   // Hybrid search reads: the unscoped engine-sql executor the search-read methods run through.
   'searchRead',
+  // Graph and doctor link reads: the unscoped engine-sql executor the link-read methods run through.
+  'linkRead',
+  // CLI reads: the executors the CLI read members run through (PGLite rawRead wraps executeRaw; cliReads is the unscoped engine-sql executor).
+  'rawRead',
+  'cliReads',
   // Engine graduation: PGLite close/open that keeps the kernel lock across the custody window.
   'closeRetainingLock',
   'connectWithHeldLock',
   // #9227: whether this engine holds the datastore lock; the PGLite abandoned-claim release rests on it.
   'holdsDatastoreLock',
-  // The unscoped executors the CLI read members run through.
-  'rawRead',
-  'cliReads',
 ];
 
 /**

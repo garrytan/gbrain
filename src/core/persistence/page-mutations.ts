@@ -114,6 +114,8 @@ export function batchSharedReads(engine: BrainEngine, extra?: ReadonlySet<string
     if (key === 'getConfig') return (name: string) => once(`config:${name}`, () => target.getConfig(name));
     if (key === 'readSourceIncarnation' || key === 'hasCompanyBrainReceipt') // the typed company-profile reads
       return (sourceId: string) => once<unknown>(JSON.stringify([key, sourceId]), () => target[key](sourceId));
+    if (key === 'getConfigValues') return (keys: readonly string[]) =>
+      once(`config-values:${JSON.stringify(keys)}`, () => target.getConfigValues(keys)).then(rows => rows.map(row => ({ ...row })));
     if (key === 'getAllConfig' && extra) return () => once('config:*', () => target.getAllConfig()).then(all => ({ ...all }));
     const value = Reflect.get(target, key, target);
     return typeof value === 'function' ? value.bind(target) : value;

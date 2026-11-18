@@ -53,6 +53,8 @@ pub use titles::{TitleAttempt, TitleAttemptKind};
 #[allow(unused_imports)]
 pub(crate) use rank::{ts_rank, ts_rank_cd};
 #[allow(unused_imports)]
+pub(crate) use stem::pg_lower;
+#[allow(unused_imports)]
 pub(crate) use tsearch::{
     TsQuery, TsVector, Weight, concat, fts_input, or_of_lexemes, phraseto_tsquery, plainto_tsquery,
     setweight, to_tsvector, ts_matches, websearch_to_tsquery,

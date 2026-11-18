@@ -22,6 +22,7 @@
 
 import { annotateTemporalRow, LIVENESS_EXEMPT_LINK_TYPES, temporalLinkJoinSql, TEMPORAL_LINK_SELECT_SQL, type TemporalAnnotation } from '../link-validity.ts';
 import type { BrainEngine, FactRow } from '../engine.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import type { TrustTier } from '../trust/tier.ts';
 import type { ReadEligibility } from '../eligibility/policy.ts';
 import { trustFields } from '../eligibility/labels.ts';
@@ -638,17 +639,8 @@ async function assembleCard(
       .then(rs => rs.map(r => annotateTemporalRow(r)))
       .catch(() => [] as Array<{ from_slug: string; link_type: string; context: string | null } & TemporalAnnotation>),
     engine
-      .executeRaw<{ n: string | number }>(
-        `SELECT COUNT(*) AS n
-           FROM links l
-           JOIN pages f ON f.id = l.from_page_id
-           JOIN pages t ON t.id = l.to_page_id
-          WHERE t.slug = $1 AND t.source_id = $2 AND f.source_id = $2 AND f.deleted_at IS NULL
-            AND COALESCE(l.link_source, '') <> 'mentions'${inboundPrivacy}`,
-        [pageSlug, sourceId],
-      )
-      .then(rs => Number(rs[0]?.n ?? 0))
-      .catch(() => 0),
+      .countInboundLinks(pageSlug, sourceId, { excludePrivate: !!excludePrivate, originSameSource: !!remote })
+      .catch(err => { rethrowCapabilityRefusal(err); return 0; }),
     engine.getTimeline(pageSlug, { limit: 5, sourceId, excludePrivate, eligibility }).catch(() => []),
     Promise.all(factSlugs.map(slug => engine.listFactsByEntity(sourceId, slug, {
       activeOnly: true,

@@ -36,6 +36,7 @@ import { doctorVerify } from '../check-fix.ts';
 import { conversationPaidSql, conversationTriedSql } from '../../../core/facts/conversation-memo.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { sortSourcesById } from '../../../core/source-rows.ts';
+import { answersFromCatalog, catalogTableExists } from '../../../core/rust-engine/store-members/catalog.ts';
 
 export const UNLINKED_NEW_SHARE_WARN = 0.25;
 export const UNLINKED_NEW_MIN_FACTS = 20;
@@ -76,8 +77,10 @@ const n = (v: unknown) => Number(v ?? 0);
 
 /** Null when the brain has no facts table (nothing to report). */
 export async function unlinkedFactsStats(engine: BrainEngine, sourceIds?: readonly string[]): Promise<UnlinkedFactsStats | null> {
-  const [tables] = await engine.executeRaw<{ facts: string | null; attempts: string | null }>(
-    `SELECT to_regclass('facts')::text AS facts, to_regclass('fact_relink_attempts')::text AS attempts`);
+  const [tables] = answersFromCatalog(engine)
+    ? [{ facts: catalogTableExists(engine, 'facts'), attempts: catalogTableExists(engine, 'fact_relink_attempts') }]
+    : await engine.executeRaw<{ facts: string | null; attempts: string | null }>(
+      `SELECT to_regclass('facts')::text AS facts, to_regclass('fact_relink_attempts')::text AS attempts`);
   if (!tables?.facts) return null;
   const hasAttempts = !!tables.attempts;
   const ids = sourceIds?.length ? [...sourceIds] : sortSourcesById(await engine.listAllSources({ includeArchived: true })).map((r) => r.id);

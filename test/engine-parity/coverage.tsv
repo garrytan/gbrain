@@ -6,11 +6,12 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 269/269
+# covered: 279/279
 # lifecycle: 9/9
 # pages: 31/31
 # search: 7/7
 # search_reads: 9/9
+# link_reads: 10/10
 # chunks: 22/22
 # extraction: 7/7
 # links: 23/23
@@ -51,13 +52,13 @@ getPage	pages	yes	29	yes	yes	yes	serves
 readPageSnapshot	pages	yes	7	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	135	yes	yes	yes	serves
+putPage	pages	yes	146	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	4	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	42	yes	yes	yes	serves
+softDeletePage	pages	yes	49	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	8	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -87,15 +88,25 @@ getEmbeddingsByChunkIds	search	yes	1	no	yes	yes	serves
 searchKeywordChunks	search	yes	2	yes	yes	yes	serves
 cosinesByChunkIds	search_reads	yes	1	no	yes	yes	refuses:vector_search
 hasSupersedeEdges	search_reads	yes	1	no	yes	yes	serves
-supersedingPageSlugs	search_reads	yes	2	no	yes	yes	serves
+supersedingPageSlugs	search_reads	yes	3	no	yes	yes	serves
 aliasCanonicalRefs	search_reads	yes	2	no	yes	yes	serves
 pageCollapseFacts	search_reads	yes	2	no	yes	yes	serves
 slugsEndingIn	search_reads	yes	2	no	yes	yes	serves
 generatedPagesIn	search_reads	yes	2	no	yes	yes	serves
 livePageIdsAt	search_reads	yes	2	no	yes	yes	serves
 pagesLinkingTo	search_reads	yes	2	no	yes	yes	serves
+inboundLinkCoverage	link_reads	yes	1	no	yes	yes	serves
+listJunkEntityHubs	link_reads	yes	1	no	yes	yes	serves
+countEntityPages	link_reads	yes	1	no	yes	yes	serves
+entityGraphCoverage	link_reads	yes	1	no	yes	yes	serves
+countForeignEdges	link_reads	yes	1	no	yes	yes	serves
+listLivePageSummaries	link_reads	yes	1	no	yes	yes	serves
+countInboundLinks	link_reads	yes	1	no	yes	yes	serves
+listLinkEndpointPages	link_reads	yes	1	no	yes	yes	serves
+listPagesTitledIn	link_reads	yes	1	no	yes	yes	serves
+wordLexemes	link_reads	yes	1	no	yes	yes	serves
 upsertChunks	chunks	yes	15	yes	yes	yes	serves
-sealChunks	chunks	yes	6	no	yes	yes	serves
+sealChunks	chunks	yes	7	no	yes	yes	serves
 getChunks	chunks	yes	18	yes	yes	yes	serves
 getChunkPage	chunks	yes	3	no	yes	yes	serves
 getChunkWindows	chunks	yes	1	no	yes	yes	serves
@@ -123,8 +134,8 @@ markPagesAttendanceBlocked	extraction	yes	1	no	yes	yes	serves
 countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
-addLink	links	yes	32	yes	yes	yes	serves
-addLinksBatch	links	yes	1	yes	yes	yes	serves
+addLink	links	yes	40	yes	yes	yes	serves
+addLinksBatch	links	yes	6	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	1	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
 removeLink	links	yes	1	no	yes	yes	serves
@@ -136,22 +147,22 @@ findByTitleFuzzy	links	yes	2	no	yes	yes	serves
 traverseGraph	links	yes	3	yes	yes	yes	serves
 traversePaths	links	yes	3	yes	yes	yes	serves
 traversePathsDetailed	links	yes	1	yes	yes	yes	serves
-relationalFanout	links	yes	1	yes	yes	yes	serves
-relationalChainHop	links	yes	1	no	yes	yes	serves
-getBacklinkCounts	links	yes	1	no	yes	yes	serves
-getAdjacencyBoosts	links	yes	1	no	yes	yes	serves
+relationalFanout	links	yes	2	yes	yes	yes	serves
+relationalChainHop	links	yes	2	no	yes	yes	serves
+getBacklinkCounts	links	yes	2	no	yes	yes	serves
+getAdjacencyBoosts	links	yes	2	no	yes	yes	serves
 getContentFlagsByPageIds	links	yes	1	no	yes	yes	serves
 getUnverifiedExtractionPageIds	links	yes	1	no	yes	yes	serves
 getPageTimestamps	links	yes	1	no	yes	yes	serves
 getEffectiveDates	links	yes	1	no	yes	yes	serves
 getSalienceScores	links	yes	2	yes	yes	yes	serves
-findOrphanPages	links	yes	1	yes	yes	yes	serves
+findOrphanPages	links	yes	2	yes	yes	yes	serves
 addTag	tags	yes	9	yes	yes	yes	serves
 removeTag	tags	yes	2	no	yes	yes	serves
 pruneFrontmatterTags	tags	yes	2	no	yes	yes	serves
 addPageTagsById	tags	yes	1	no	yes	yes	serves
 getTags	tags	yes	3	yes	yes	yes	serves
-addTimelineEntry	timeline	yes	9	yes	yes	yes	serves
+addTimelineEntry	timeline	yes	10	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	1	no	yes	yes	serves
 getTimeline	timeline	yes	3	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	2	no	yes	yes	serves

@@ -24,6 +24,7 @@ import type { BrainEngine } from '../engine.ts';
 import { CONNECTOR_SOURCE_KINDS } from '../persistence/connector-identity.ts';
 import { WRITE_GATE_SCAN_BASELINE_KEY } from '../write-gate-schema.ts';
 import { OWNER_TIER_FLOOR } from './tier.ts';
+import { readConfigValue, type ConfigReader } from '../config-values.ts';
 
 export const TRUST_CLAIMED_AT_KEY = 'trust_claimed_at';
 export const TRUST_CLAIM_LIFTED_AT_KEY = 'trust_claim_lifted_at';
@@ -65,11 +66,11 @@ export function dropClaimUnlessOwnerDefault(config: Record<string, unknown>): Re
 export type LegacyCeilings = Partial<Record<'pages' | 'facts' | 'takes' | 'timeline_entries', number>> | null;
 
 /** Each table's max id when the trust migrations ran, or null (no baseline recorded: every row counts as legacy). */
-export async function readLegacyCeilings(engine: Pick<BrainEngine, 'executeRaw'>): Promise<LegacyCeilings> {
-  const [row] = await engine.executeRaw<{ value: string }>('SELECT value FROM config WHERE key = $1', [WRITE_GATE_SCAN_BASELINE_KEY]);
-  if (!row) return null;
+export async function readLegacyCeilings(engine: ConfigReader): Promise<LegacyCeilings> {
+  const value = await readConfigValue(engine, WRITE_GATE_SCAN_BASELINE_KEY);
+  if (value === undefined) return null;
   try {
-    const until = (JSON.parse(row.value) as { until?: Record<string, unknown> }).until;
+    const until = (JSON.parse(value) as { until?: Record<string, unknown> }).until;
     if (!until || typeof until !== 'object') return null;
     const out: NonNullable<LegacyCeilings> = {};
     for (const table of ['pages', 'facts', 'takes', 'timeline_entries'] as const) {

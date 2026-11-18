@@ -14,6 +14,7 @@ import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { agentFix, checkError } from '../check-fix.ts';
+import { answersFromCatalog, catalogSkipCheck } from '../../../core/rust-engine/store-members/catalog.ts';
 import { PINNED_FUNCTION_NAMES, PINNED_PATH_SQL } from '../../../core/function-search-path.ts';
 import { v277 } from '../../../core/schema-migrations/v277-function-search-path-pg-temp.ts';
 
@@ -39,6 +40,7 @@ async function runFunctionSearchPath(ctx: DoctorContext): Promise<Check[]> {
   const engine = connectedEngine(ctx);
   const checks: Check[] = [];
   ctx.progress.heartbeat('function_search_path');
+  if (answersFromCatalog(engine)) return [catalogSkipCheck('function_search_path', 'no_sql_functions')];
   try {
     const { functions, fix } = await functionSearchPathProblems(engine);
     const risk = `${functions.length} function(s) do not end their search_path with pg_temp (${functions.join(', ')}), so a temp table or view named like a purge or withdrawal ledger hides it from the guard that reads it.`;

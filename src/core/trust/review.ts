@@ -23,6 +23,7 @@
  * resident owner's IPC administration are the only callers.
  */
 import type { BrainEngine } from '../engine.ts';
+import { answersFromCatalog, catalogTableExists } from '../rust-engine/store-members/catalog.ts';
 import { opError } from '../ops/contract.ts';
 import { currentHoldStore, trustKillSwitchState } from './owner-actions.ts';
 import { getTrustProposal, listTrustProposals, pendingTrustProposalsFor, SHARE_HELD_GUARD, trustProposalRef, type TrustProposalAction, type TrustProposalRow } from './proposals.ts';
@@ -169,7 +170,8 @@ function proposalItem(p: TrustProposalRow, page: string | null, markerRepair = f
 
 // The standing-preference flag lives in write_gate_receipts (the write gate); read when the table exists.
 async function standingPreferences(engine: BrainEngine, filter: TrustReviewFilter): Promise<TrustReviewItem[]> {
-  const [table] = await engine.executeRaw<{ t: string | null }>(`SELECT to_regclass('write_gate_receipts')::text AS t`);
+  const [table] = answersFromCatalog(engine) ? [{ t: catalogTableExists(engine, 'write_gate_receipts') ? 'write_gate_receipts' : null }]
+    : await engine.executeRaw<{ t: string | null }>(`SELECT to_regclass('write_gate_receipts')::text AS t`);
   if (!table?.t) return [];
   const rows = await engine.executeRaw<{ id: number; source_id: string; kind: string; fact: string; trust_tier: string; slug: string | null; created_at: string }>(
     `SELECT f.id, f.source_id, f.kind, f.fact, f.trust_tier, f.source_markdown_slug AS slug, f.created_at FROM facts f
@@ -194,7 +196,8 @@ async function standingPreferences(engine: BrainEngine, filter: TrustReviewFilte
 
 /** Pages withheld from proactive surfaces until confirmed (eligibility/sql.ts), unless a pending proposal already lists them. */
 async function flaggedPages(engine: BrainEngine, filter: TrustReviewFilter): Promise<TrustReviewItem[]> {
-  const [table] = await engine.executeRaw<{ t: string | null }>(`SELECT to_regclass('write_gate_receipts')::text AS t`);
+  const [table] = answersFromCatalog(engine) ? [{ t: catalogTableExists(engine, 'write_gate_receipts') ? 'write_gate_receipts' : null }]
+    : await engine.executeRaw<{ t: string | null }>(`SELECT to_regclass('write_gate_receipts')::text AS t`);
   if (!table?.t) return [];
   const rows = await engine.executeRaw<{ source_id: string; slug: string; title: string | null; trust_tier: string; updated_at: string }>(
     `SELECT p.source_id, p.slug, p.title, p.trust_tier, p.updated_at FROM pages p
@@ -265,7 +268,8 @@ export async function buildTrustReview(engine: BrainEngine, filter: TrustReviewF
   if (wants(filter, 'proposal') || wants(filter, 'lowered_page') || (filter.kind && PROPOSAL_ACTIONS.includes(filter.kind))) {
     const action = filter.kind && PROPOSAL_ACTIONS.includes(filter.kind) ? filter.kind as TrustProposalAction
       : filter.kind === 'lowered_page' ? 'lower_page' : undefined;
-    const [gate] = await engine.executeRaw<{ t: string | null }>(`SELECT to_regclass('write_gate_receipts')::text AS t`);
+    const [gate] = answersFromCatalog(engine) ? [{ t: catalogTableExists(engine, 'write_gate_receipts') ? 'write_gate_receipts' : null }]
+      : await engine.executeRaw<{ t: string | null }>(`SELECT to_regclass('write_gate_receipts')::text AS t`);
     for (const p of await listTrustProposals(engine, { status: 'pending', sourceId: filter.sourceId, action, since: filter.since, limit: 1000 })) {
       if (filter.kind === 'proposal' && p.action === 'lower_page') continue;
       const flagged = !!gate?.t && p.target_table === 'pages'

@@ -11,6 +11,8 @@
  */
 import type { SqlEngine } from './model.ts';
 import { DEFAULT_PREPARATION_POLICY, PREPARATION_BUDGET_CONFIG_KEYS, resolvePreparationPolicy, type PreparationPolicy } from './preparation-budget.ts';
+import { readConfigMap } from '../config-values.ts';
+import { withoutReadDeadline } from '../read-deadline.ts';
 
 export const WRITE_SWITCHES = {
   /** Phase 4.1/4.3/4.4: single page writes publish as a group of one, the own admission claims directly, publication reuses a warm connection. */
@@ -80,8 +82,8 @@ export function readWriteSwitchSnapshot(viewed: SqlEngine, opts: { now?: () => n
   const engine = viewedEngine(viewed);
   const held = snapshots.get(engine);
   if (held && held.generation === generation && now() - held.at < SWITCH_TTL_MS) return held.read;
-  const read = engine.executeRaw<{ key: string; value: string }>('SELECT key,value FROM config WHERE key = ANY($1::text[])', [SNAPSHOT_KEYS], { signal: opts.signal })
-    .then(rows => resolve(new Map(rows.map(row => [row.key, row.value]))));
+  // Shared by every caller for SWITCH_TTL_MS, so it takes no caller's read deadline (as the statement it replaced did not).
+  const read = withoutReadDeadline(() => readConfigMap(engine, SNAPSHOT_KEYS, { signal: opts.signal })).then(resolve);
   snapshots.set(engine, { at: now(), generation, read });
   read.catch(() => { if (snapshots.get(engine)?.read === read) snapshots.delete(engine); });
   return read;
