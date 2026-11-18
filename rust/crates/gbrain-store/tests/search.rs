@@ -663,3 +663,89 @@ fn an_incremental_write_keeps_metadata_for_unchanged_text_and_never_seals() {
         .unwrap();
     assert_eq!(page["page"]["text_projection_revision"], Value::Null);
 }
+
+#[test]
+fn delete_chunks_clears_the_seal_so_a_later_unsealed_write_stays_unread() {
+    let dir = TempDir::new("search-delete-seal");
+    let store = open(&dir);
+    let page = put(&store, "doc", "base");
+    let revision = page["knowledge_revision"].as_str().unwrap().to_string();
+    let seal = UpsertChunksOptions {
+        expected_revision: Some(revision),
+        seal: true,
+        ..Default::default()
+    };
+    store
+        .upsert_chunks(
+            "doc",
+            &chunks(json!([{"chunk_index": 0, "chunk_text": "sealed words"}])),
+            &seal,
+        )
+        .unwrap();
+    assert_eq!(slugs(&find(&store, "sealed")), ["doc"]);
+    store.delete_chunks("doc", None).unwrap();
+    // PGLite's deleteChunks voids the seal: an ordinary upsert after it is not certified by it.
+    store
+        .upsert_chunks(
+            "doc",
+            &chunks(json!([{"chunk_index": 0, "chunk_text": "unsealed marigold"}])),
+            &UpsertChunksOptions::default(),
+        )
+        .unwrap();
+    assert!(
+        store
+            .get_chunks("doc", &ReadScope::default())
+            .unwrap()
+            .is_empty()
+    );
+    assert!(find(&store, "marigold").is_empty());
+    assert_eq!(store.count_chunks().unwrap(), 1);
+}
+
+#[test]
+fn seal_chunks_on_a_page_in_an_archived_source_is_page_not_found_and_writes_nothing() {
+    let dir = TempDir::new("search-archived-seal");
+    let store = open(&dir);
+    store
+        .upsert_source(&SourceInput {
+            id: "work".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    let page = store
+        .put_page(
+            "w",
+            &input("w", "kept body"),
+            &opts(json!({"sourceId": "work"})),
+        )
+        .unwrap();
+    let revision = page["knowledge_revision"].as_str().unwrap().to_string();
+    let before = store.count_chunks().unwrap();
+    store.set_source_archived("work", true).unwrap();
+    let err = store
+        .upsert_chunks(
+            "w",
+            &chunks(json!([{"chunk_index": 0, "chunk_text": "replacement"}])),
+            &UpsertChunksOptions {
+                source_id: Some("work".into()),
+                expected_revision: Some(revision),
+                seal: true,
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+    assert_eq!(err.code, PAGE_NOT_FOUND);
+    assert_eq!(err.message, "Page not found: w (source=work)");
+    assert_eq!(store.count_chunks().unwrap(), before);
+    store.set_source_archived("work", false).unwrap();
+    let got = store
+        .get_chunks(
+            "w",
+            &ReadScope {
+                source_id: Some("work".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(got.iter().all(|c| c["chunk_text"] != "replacement"));
+}

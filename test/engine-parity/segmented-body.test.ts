@@ -510,4 +510,31 @@ describe('engine parity: segmented page bodies, one call at a time', () => {
       return { unsealed, sealed, passed };
     },
   );
+
+  parityTest(
+    'sealChunks refuses a segmented page and leaves its chunks as they were',
+    { methods: ['sealChunks', 'getChunks', 'stageSegmentChunks', 'sealSegmentedPage'] },
+    async (engine) => {
+      const texts = (rows: Awaited<ReturnType<BrainEngine['getChunks']>>) => sorted(rows.map((c) => c.chunk_text));
+      const { pageId, occurrences } = await publishApart(engine, 'notes/seal-refused');
+      await engine.stageSegmentChunks(pageId, 1, occurrences.map((o, i) => chunk(o, 0, `segment ${i}`)));
+      await engine.sealSegmentedPage(pageId);
+      const before = texts(await engine.getChunks('notes/seal-refused'));
+      const empty = await thrown(() => engine.sealChunks('notes/seal-refused', []));
+      const replace = await thrown(() => engine.sealChunks('notes/seal-refused', [{ chunk_index: 0, chunk_text: 'inline text', chunk_source: 'compiled_truth' }]));
+      const after = texts(await engine.getChunks('notes/seal-refused'));
+      return { before, empty: empty?.message ?? null, replace: replace?.message ?? null, after };
+    },
+  );
+
+  parityTest(
+    'createVersion of a segmented page versions it on PGLite and is a typed refusal on the Rust store',
+    { methods: ['createVersion', 'getVersions'] },
+    async (engine) => {
+      await publishApart(engine, 'notes/versioned-big');
+      const version = await engine.createVersion('notes/versioned-big');
+      const versions = await engine.getVersions('notes/versioned-big');
+      return { title: version.title, count: versions.length };
+    },
+  );
 });
