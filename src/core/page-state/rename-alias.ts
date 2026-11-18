@@ -75,7 +75,9 @@ export async function recordSlugLineAlias(tx: Pick<BrainEngine, 'transaction'>, 
  * Move the slug-keyed rows that belong to a renamed page (#5431): facts about
  * it (`entity_slug`), facts read from its `## Facts` fence
  * (`source_markdown_slug`), its free-text search aliases (`page_aliases`), and
- * its fact withdrawals (a forgotten claim stays forgotten). Runs inside the
+ * its fact withdrawals (a forgotten claim stays forgotten), and the places the
+ * secret store redactor recorded on it (GST-2988: the purge cascade and a backup
+ * restore find a page's originals by slug). Runs inside the
  * caller's rename transaction. The new slug is free (the page UPDATE
  * succeeded), so fence rows or aliases still keyed to it belong to a purged
  * page and yield to the moved ones. An ontology observation the new slug
@@ -103,12 +105,13 @@ export async function moveSlugBindings(
     sql(`DELETE FROM page_aliases a WHERE a.source_id = $1 AND a.slug = $3
        AND EXISTS (SELECT 1 FROM page_aliases o WHERE o.source_id = $1 AND o.slug = $2 AND o.alias_norm = a.alias_norm AND o.origin = a.origin)`),
     sql(`UPDATE page_aliases SET slug = $3 WHERE source_id = $1 AND slug = $2`),
+    sql(`UPDATE secret_store_occurrence SET slug = $3 WHERE source_id = $1 AND slug = $2 AND commit_sha IS NULL`),
   ];
   for (const statement of statements) {
     try {
       await tx.transaction(savepoint => statement(savepoint));
     } catch (error) {
-      if (!isMissingSchemaObject(error, 'table', ['facts', 'page_aliases']) && !isMissingSchemaObject(error, 'column', ['dimension', 'value_hash'])) throw error;
+      if (!isMissingSchemaObject(error, 'table', ['facts', 'page_aliases', 'secret_store_occurrence']) && !isMissingSchemaObject(error, 'column', ['dimension', 'value_hash'])) throw error;
     }
   }
 }

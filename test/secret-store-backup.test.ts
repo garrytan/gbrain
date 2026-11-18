@@ -81,6 +81,11 @@ for (const { name, make } of engines) {
         expect(out.entries).toBeGreaterThanOrEqual(1);
         expect(readBackupStatus().last_success?.object).toBe(out.object);
         expect(await backupDue(a.engine)).toBe(false);
+        const during = await seal(a.engine, { sourceId: 'default', rule: 'aws_access_key', value: OTHER });
+        await a.engine.executeRaw("UPDATE secret_store SET created_at = $2::timestamptz + interval '1 millisecond', updated_at = $2::timestamptz + interval '1 millisecond' WHERE id = $1", [during.id, readBackupStatus().last_success!.high_water]);
+        expect(await backupDue(a.engine)).toBe(true);
+        await a.engine.executeRaw('DELETE FROM secret_store WHERE id = $1', [during.id]);
+        expect(await backupDue(a.engine)).toBe(false);
         const raw = (await storage.download(out.object)).toString('utf8');
         for (const clear of [TOKEN, 'notes/deploy-plan', 'github_token', sealed.id, currentKey({ create: false })!.key.toString('base64')]) expect(raw).not.toContain(clear);
 
@@ -88,9 +93,13 @@ for (const { name, make } of engines) {
           await expect(restoreBackup(b.engine, storage, out.object)).rejects.toMatchObject({ code: 'secret_store_key_missing' });
           expect(await b.engine.executeRaw('SELECT 1 FROM secret_store')).toEqual([]);
         });
+        await expect(restoreBackup(b.engine, storage, out.object)).rejects.toMatchObject({ code: 'invalid_params',
+          message: expect.stringContaining('skipped because their page is not in this brain'), suggestion: 'Sync the pages, then run the same restore again.' });
+        expect(await b.engine.executeRaw('SELECT 1 FROM secret_store')).toEqual([]);
+        expect(await b.engine.executeRaw('SELECT 1 FROM secret_store_occurrence')).toEqual([]);
         await b.engine.putPage('notes/deploy-plan', { type: 'note', title: 'Deploy plan', compiled_truth: 'Deploy notes.', timeline: '', frontmatter: {} }, { sourceId: 'default' });
         const restored = await restoreBackup(b.engine, storage, out.object);
-        expect(restored).toMatchObject({ inserted: out.entries, existing: 0, purged: 0, unreadable: [] });
+        expect(restored).toMatchObject({ inserted: out.entries, existing: 0, skipped_no_page: 0, unreadable: [] });
         expect((await reveal(b.engine, sealed.id, 'test')).value).toBe(TOKEN);
         expect((await reveal(b.engine, sealed.id, 'test')).occurrences.map(o => o.slug)).toEqual(['notes/deploy-plan']);
         expect(await restoreBackup(b.engine, storage, out.object)).toMatchObject({ inserted: 0, existing: out.entries });

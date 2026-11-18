@@ -148,12 +148,33 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
           await b.engine.executeRaw("UPDATE secret_store SET status = 'allowed', updated_at = now() WHERE id = $1", [ids.shared]);
           await b.engine.deletePages([slug], { sourceId: b.sourceId });
           const restored = await restoreBackup(b.engine, storage, out.object);
-          expect(restored).toMatchObject({ inserted: 0, purged: 1, unreadable: [] });
+          expect(restored).toMatchObject({ inserted: 0, skipped_no_page: 1, unreadable: [] });
           expect(restored.existing).toBeGreaterThanOrEqual(2);
           expect((await state(b, ids)).only).toBe(false);
           const [row] = await b.engine.executeRaw<{ status: string }>('SELECT status FROM secret_store WHERE id = $1', [ids.shared]);
           expect(row!.status).toBe('allowed');
         } finally { rmSync(bucket, { recursive: true, force: true }); }
+      });
+    }, 120_000);
+
+    test('a renamed page keeps its originals when another page takes its old slug and is purged, and takes them when it is purged', async () => {
+      await brain(async b => {
+        const foo = `notes/foo-${randomUUID().slice(0, 6)}`, bar = `notes/bar-${randomUUID().slice(0, 6)}`, stale = `notes/stale-${randomUUID().slice(0, 6)}`;
+        await b.put(foo, beliefPage({ prose: 'Foo.' }));
+        const [page] = await b.engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id = $1 AND slug = $2', [b.sourceId, foo]);
+        const moved = (await seal(b.engine, { sourceId: b.sourceId, rule: 'github_token', value: value(`moved${randomUUID().slice(0, 6)}`) })).id;
+        await recordOccurrence(b.engine, { entryId: moved, sourceId: b.sourceId, pageId: page!.id, slug: foo, field: 'compiled_truth', origin: 'repair' });
+        await b.engine.updateSlug(foo, bar, { sourceId: b.sourceId });
+        const old = (await seal(b.engine, { sourceId: b.sourceId, rule: 'github_token', value: value(`stale${randomUUID().slice(0, 6)}`) })).id;
+        await recordOccurrence(b.engine, { entryId: old, sourceId: b.sourceId, pageId: page!.id, slug: stale, field: 'compiled_truth', origin: 'repair' });
+        const entry = async (id: string) => (await b.engine.executeRaw('SELECT 1 FROM secret_store WHERE id = $1', [id])).length;
+        for (const slug of [foo, stale]) {
+          await b.engine.putPage(slug, { type: 'note', title: 'Other', compiled_truth: 'A different page at the old slug.', timeline: '', frontmatter: {} }, { sourceId: b.sourceId });
+          await b.engine.deletePages([slug], { sourceId: b.sourceId });
+        }
+        expect({ moved: await entry(moved), old: await entry(old) }).toEqual({ moved: 1, old: 1 });
+        await b.engine.deletePages([bar], { sourceId: b.sourceId });
+        expect(await entry(moved)).toBe(0);
       });
     }, 120_000);
 
