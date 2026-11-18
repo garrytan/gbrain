@@ -1,11 +1,13 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { parseGoogleSourceConfig, runGoogleSync } from '../src/core/google/google-source.ts';
-import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
-import { connectorWaitBudget, CONNECTOR_WAIT_BUDGET_MS } from '../src/core/persistence/connector-sync.ts';
+import { parseGitHubSourceConfig } from '../src/core/github-source.ts';
+import { disposePersistenceConsumer, waitForWrite } from '../src/core/persistence/service.ts';
+import type { WriteRequest } from '../src/core/persistence/model.ts';
+import { beginConnectorSync, connectorWaitBudget, CONNECTOR_WAIT_BUDGET_MS } from '../src/core/persistence/connector-sync.ts';
 import { installFaultHook, type FaultDetail, type FaultPoint } from '../src/core/persistence/fault-points.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { createConnectorFixture, options, json, googleConfig, sourceCheckpoint, withGoogleAccount, settleConnectorWrites } from './helpers/connector-fixture.ts';
+import { createConnectorFixture, options, json, googleConfig, githubConfig, sourceCheckpoint, withGoogleAccount, settleConnectorWrites, withPausedOwnerBudget } from './helpers/connector-fixture.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
 /**
@@ -28,7 +30,7 @@ const config = { ...googleConfig, g_services: 'gmail', g_history_days: 400 };
 /** 100 archive threads, 40..139 days old: one listing, four 25-thread batches. */
 const OLD = Array.from({ length: 100 }, (_, i) => ({ tid: `17bb00000000a${String(i).padStart(3, '0')}`, ms: NOW_MS - (40 + i) * DAY }));
 
-function gmail(account: string, opts: { fetchMs?: number; onThread?: (tid: string, n: number) => void } = {}) {
+function gmail(account: string, opts: { fetchMs?: number; onThread?: (tid: string, n: number) => void | Promise<void> } = {}) {
   const fetched: string[] = [];
   const fetcher = async (url: string) => {
     const u = new URL(url);
@@ -45,7 +47,7 @@ function gmail(account: string, opts: { fetchMs?: number; onThread?: (tid: strin
     const m = u.pathname.match(/\/users\/me\/threads\/([^/]+)$/);
     if (m) {
       fetched.push(m[1]);
-      opts.onThread?.(m[1], fetched.length);
+      await opts.onThread?.(m[1], fetched.length);
       if (opts.fetchMs) await sleep(opts.fetchMs);
       const t = OLD.find(x => x.tid === m[1])!;
       return json({ id: t.tid, messages: [{ id: `18d2f4a9b3d3${t.tid.slice(-4)}`, threadId: t.tid, labelIds: [], internalDate: String(t.ms),
@@ -106,6 +108,16 @@ async function seedFrozenFloor(engine: BrainEngine) {
   return { f, cfg };
 }
 
+/** Waits until every page write of `threads` has committed. */
+async function committed(engine: BrainEngine, id: string, threads: typeof OLD) {
+  for (let i = 0; i < 600; i++) {
+    const rows = await engine.executeRaw<{ slug: string }>(`SELECT slug FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='connector_v2_import' AND state='committed'`, [id]);
+    if (threads.every(t => rows.some(row => row.slug.includes(t.tid)))) return;
+    await sleep(100);
+  }
+  throw new Error('page writes did not commit');
+}
+
 async function pageStates(engine: BrainEngine, id: string) {
   await disposePersistenceConsumer(engine);
   return engine.executeRaw<{ slug: string; state: string }>(`SELECT slug,state FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='connector_v2_import'`, [id]);
@@ -144,7 +156,11 @@ test('#9681: a walk killed mid-batch keeps only durable batches behind the floor
   for (const engine of engines) {
     const { f, cfg } = await seedFrozenFloor(engine);
     const controller = new AbortController();
-    const sweep = gmail(cfg.account, { fetchMs: 120, onThread: tid => { if (tid === OLD[85].tid) controller.abort(); } });
+    // Batch three ends only after batch two's page writes are durable, so its cursor save is banked before the kill.
+    const sweep = gmail(cfg.account, { fetchMs: 120, onThread: async tid => {
+      if (tid === OLD[74].tid) await committed(engine, f.id, OLD.slice(25, 50));
+      if (tid === OLD[85].tid) controller.abort();
+    } });
     await withOwner(BUDGET_MS, slowOwner(engine, 20), () => runGoogleSync(engine, f.id, cfg, { ...options, signal: controller.signal }, sweep.fetcher)).catch(() => undefined);
     await settleConnectorWrites(engine, f.id);
     await disposePersistenceConsumer(engine);
@@ -157,6 +173,28 @@ test('#9681: a walk killed mid-batch keeps only durable batches behind the floor
     expect((await gmailState(engine, f.id))?.gmail_backfill_done).toBe(true);
   }
 }), 240_000);
+
+test('#9681: a fresh cursor save superseded before its writes commit still stamps freshness when the newer save publishes', async () => withEnv(env, async () => {
+  for (const engine of engines) {
+    const f = await boundSource(engine, githubConfig);
+    const sync = (await beginConnectorSync(engine, f.id, 'github', parseGitHubSourceConfig(githubConfig, f.dir), options))!;
+    await engine.executeRaw('UPDATE sources SET last_sync_at=NULL WHERE id=$1', [f.id]);
+    await disposePersistenceConsumer(engine);
+    await engine.executeRaw("UPDATE persistence_worktrees SET state='draining' WHERE id=$1::uuid", [f.binding.worktree_id]);
+    await withPausedOwnerBudget(() => sync.importMarkdown('notes/fresh.md', '---\ntitle: Fresh fixture\n---\nCurrent item.\n'));
+    await withPausedOwnerBudget(() => sync.saveState({ cursor: 'current-complete' }, true, '2026-01-02T00:00:00.000Z'));
+    const [page] = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE source_id=$1 AND slug='notes/fresh'", [f.id]);
+    expect(page.state).not.toBe('committed');
+    await disposePersistenceConsumer(engine);
+    await engine.executeRaw("UPDATE persistence_worktrees SET state='active' WHERE id=$1::uuid", [f.binding.worktree_id]);
+    expect((await waitForWrite(engine, page, { engine: engine.kind })).state).toBe('committed');
+    await sync.saveState({ cursor: 'backfill-batch' });
+    await settleConnectorWrites(engine, f.id);
+    const [source] = await engine.executeRaw<{ last_sync_at: unknown; newest_content_at: unknown }>('SELECT last_sync_at,newest_content_at FROM sources WHERE id=$1', [f.id]);
+    expect(source.last_sync_at).not.toBeNull();
+    expect(new Date(source.newest_content_at as string).toISOString()).toBe('2026-01-02T00:00:00.000Z');
+  }
+}), 120_000);
 
 test('#9681: a brain stuck with a frozen floor and a retained publication recovers on its next syncs', async () => withEnv(env, async () => {
   for (const engine of engines) {

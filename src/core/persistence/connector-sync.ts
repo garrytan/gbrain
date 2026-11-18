@@ -706,7 +706,7 @@ export class ManagedConnectorSync {
     else this.staged.push({ state: structuredClone(state), fresh, ...(newestContentAt ? { newestContentAt } : {}), receipts: [...this.receipts] });
     await this.publishStaged();
   }
-  /** #9681: publishes the newest staged save whose receipts all committed, dropping the older ones it supersedes; never waits past the budget. */
+  /** #9681: publishes the newest staged save whose receipts all committed, dropping the older ones it supersedes but keeping their freshness stamp; never waits past the budget. */
   private async publishStaged(): Promise<void> {
     if (!await this.settleInflight()) { this.deferred = true; return; }
     let index = this.staged.length - 1;
@@ -714,20 +714,22 @@ export class ManagedConnectorSync {
     if (index < this.staged.length - 1) this.deferred = true;
     if (index < 0) return;
     const stage = this.staged[index]!;
-    this.staged.splice(0, index + 1);
+    const superseded = this.staged.splice(0, index + 1);
+    const fresh = superseded.some(s => s.fresh);
+    const newestContentAt = superseded.map(s => s.newestContentAt).filter(Boolean).sort().at(-1);
     const covered = new Set(stage.receipts);
     this.receipts = this.receipts.filter(id => !covered.has(id));
     for (const later of this.staged) later.receipts = later.receipts.filter(id => !covered.has(id));
     const newest = !this.staged.length && !this.failedPending.length;
     // A cursor resumed from an alias key is always saved once, so it moves to the stable key.
     if (digest(this.checkpoint) === digest(this.checkpointRow) && this.checkpoint.length && digest((this.checkpoint[0] as { state?: unknown }).state ?? null) === digest(stage.state ?? null)) {
-      if (stage.fresh) await this.stampFreshness(stage.newestContentAt);
+      if (fresh) await this.stampFreshness(newestContentAt);
       this.lastSaveCommitted = newest;
       return;
     }
     const next = [{ generation: Number((this.checkpoint[0] as { generation?: number } | undefined)?.generation ?? 0) + 1, state: stage.state, run: this.runId }];
     const done = await this.submit('connector_v2_checkpoint', CHECKPOINT_SLUG, null,
-      { checkpointAfter: next, receipts: stage.receipts, fresh: stage.fresh, ...(stage.newestContentAt ? { newestContentAt: stage.newestContentAt } : {}) }, true);
+      { checkpointAfter: next, receipts: stage.receipts, fresh, ...(newestContentAt ? { newestContentAt } : {}) }, true);
     if (done.pending) { this.deferred = true; return; }
     this.checkpoint = this.checkpointRow = savedCursor(done.row!, next);
     this.lastSaveCommitted = newest;
