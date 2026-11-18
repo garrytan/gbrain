@@ -4,9 +4,9 @@
  * listReservationsAfter, listTrueUpRequests), the capacity forecast's reads (readCapacityForecastInputs) and the
  * projection queue reads (listPendingSegmentedProjections, selectProjectionWindowJobs).
  *
- * The store keeps no `persistence_consumers` rows, no `persistence_effects` rows, no worktree topology and no page
- * projection jobs, so a live consumer never blocks a turn, effect bytes are 0 and the projection queue is empty. The
- * Postgres `direct` route changes nothing here.
+ * The store keeps no `persistence_consumers` rows, no `persistence_effects` rows and no worktree topology, so a live
+ * consumer never blocks a turn and effect bytes are 0. It keeps the page projection queue: every page write updates it
+ * as PGLite's `gbrain_queue_page_projection` trigger does. The Postgres `direct` route changes nothing here.
  *
  * What each member answers and why: rust/docs/store/persistence.md ("Housekeeping").
  */
@@ -15,7 +15,7 @@ import type {
 } from '../../engine-sql/persistence-housekeeping.ts';
 import type { ProjectionScanCursor } from '../../page-state/projection-window.ts';
 import { requestRow } from '../store-codec.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { storeCall, type StoreMember } from './common.ts';
 
 /** Leases this host's turn when it is free; no resident consumer is ever live on this engine. */
 export const claimHousekeepingTurn: StoreMember<[claim: HousekeepingTurnClaim, opts?: { signal?: AbortSignal; direct?: boolean }], boolean> =
@@ -46,17 +46,17 @@ export const listTrueUpRequests: StoreMember<[ids: readonly string[]], Record<st
 export const readCapacityForecastInputs: StoreMember<[opts?: { light?: boolean }], CapacityForecastInputs> = (brain, opts) =>
   storeCall({ member: 'readCapacityForecastInputs' }, () => brain.readCapacityForecastInputs(opts?.light === true));
 
-/** The store queues no projection jobs (`queue_page_projection` keeps nothing), so no segmented job is pending. */
-export const listPendingSegmentedProjections: StoreMember<[filter: SegmentedProjectionFilter], PendingSegmentedProjection[]> = async () => [];
-
 /**
- * The queue is empty while every live page's projection is sealed: then the window is the one row of nulls Postgres
- * returns for an empty queue. A page that is not sealed stands for a job this store cannot list yet, so the read refuses
- * rather than answer "nothing pending". The check reads every page record.
+ * The jobs of live segmented pages of active sources, oldest first. Every job here has reason `canonical_change`: the
+ * writers of the other reasons are raw SQL this engine refuses.
  */
+export const listPendingSegmentedProjections: StoreMember<[filter: SegmentedProjectionFilter], PendingSegmentedProjection[]> = (brain, filter) =>
+  storeCall({ member: 'listPendingSegmentedProjections' }, () => brain.listPendingSegmentedProjections({
+    limit: filter.limit, notAfter: filter.notAfter, retryCooldown: filter.retryCooldown,
+    reasons: filter.reasons ? [...filter.reasons] : undefined, exclude: filter.exclude ? [...filter.exclude] : undefined,
+  }));
+
+/** The recency lane, then the key window; one row of nulls carrying the high water when no job is selected. */
 export const selectProjectionWindowJobs: StoreMember<[cursor: Pick<ProjectionScanCursor, 'after' | 'highWater'>, retryCooldown: boolean], ProjectionWindowRow[]> =
-  async (brain) => {
-    const empty = await storeCall({ member: 'selectProjectionWindowJobs' }, () => brain.projectionQueueEmpty()) as boolean;
-    if (!empty) refuseMember('selectProjectionWindowJobs', 'a page projection is not sealed and the store keeps no projection queue');
-    return [{ lane: null, ord: null, source_incarnation: null, slug: null, revision: null, high_water: null }];
-  };
+  (brain, cursor, retryCooldown) => storeCall({ member: 'selectProjectionWindowJobs' }, () => brain.selectProjectionWindowJobs(
+    { after: { source_incarnation: cursor.after.source_incarnation, slug: cursor.after.slug }, highWater: cursor.highWater }, retryCooldown));
