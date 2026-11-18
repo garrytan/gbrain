@@ -141,6 +141,23 @@ vectors (`searchKeyword` arms, chunk-grain and page-grain search, the page count
 matching nothing (`filters::readable_chunk_vector`) rather than failing the search that passes over it. There is no
 SQL behavior to compare that read with, so it is covered by Rust unit tests only.
 
+## A page whose vector does not fit
+
+`pages`' `trg_pages_search_vector` (`BEFORE INSERT OR UPDATE OF title, timeline`) builds the page vector before the row is
+stored, and the same \"string is too long for tsvector\" error aborts the `putPage`. The title is unbounded (the timeline
+and the entries are cut to 65,536 and 32,768 characters), so a title of about 100,000 distinct tokens is enough. The store
+builds the trigger-form vector in `pages::write_page` whenever the page is new or its title or timeline changed
+(`keyword::check_page_vector`, which also warms the vector cache), so every write path that sets them refuses with the
+same message and stores nothing, with or without chunking (`index: false`). A seal that sends a search timeline
+(`pages::record_search_timeline`, from `upsertChunks` with `seal` and from the segmented seal) builds the sealed-form
+vector (`keyword::check_sealed_page_vector`) and refuses the same way, since `pageSearchVectorSql` builds it in the
+seal's statement.
+
+A store written before those checks may hold a page SQL can never hold. `searchTitles` treats its vector as matching
+nothing (`titles::readable_page_vector`, which skips only the size error) rather than failing every search in its
+scope. The refusal is a parity case (`test/engine-parity/page-vector-overflow.test.ts`; the arm's `putPage` always writes
+with `index: false`); the chunking path and the stored page are Rust unit tests in `keyword/titles.rs`.
+
 ## The page filter
 
 `keyword/filters.rs` models `keywordFilters` and the live clause of `buildVisibilityClause`: a page is kept when it is

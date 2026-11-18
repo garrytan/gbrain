@@ -495,12 +495,16 @@ pub(crate) fn read_page_by_id(read: &dyn KvRead, id: u64) -> Result<Option<PageR
 /// (`page_projection::queue_page_projection`) with the record as stored before and after.
 pub(crate) fn write_page(tx: &mut dyn KvWrite, record: &PageRecord) -> Result<()> {
     let before = read_page_by_id(&*tx, record.id)?;
-    // A write that changes the title or timeline sets them, so PGLite's search vector trigger fires.
+    // A write that changes the title or timeline sets them, so PGLite's search vector trigger fires. It builds the
+    // vector before the row is stored, and its error ("string is too long for tsvector") aborts the write.
     if before
         .as_ref()
-        .is_some_and(|b| b.title != record.title || b.timeline != record.timeline)
+        .is_none_or(|b| b.title != record.title || b.timeline != record.timeline)
     {
-        forget_search_timeline(tx, record.id)?;
+        crate::keyword::check_page_vector(&*tx, record)?;
+        if before.is_some() {
+            forget_search_timeline(tx, record.id)?;
+        }
     }
     let key = page_key(&record.source_id, &record.slug);
     put_json(tx, &key, record)?;
@@ -1495,12 +1499,13 @@ pub(crate) fn search_timeline(read: &dyn KvRead, page_id: u64) -> Result<Option<
 }
 
 /// Records `timeline` (already sanitized by TypeScript) as the search timeline of page `page_id`
-/// at `revision`. Removes NUL (Postgres text holds none) and keeps the first
+/// at `revision`, for a page titled `title`; refuses a vector past the tsvector size cap. Removes NUL (Postgres text holds none) and keeps the first
 /// `SEARCH_TIMELINE_MAX_CHARS` characters, as `left(…, 65536)` does.
 pub(crate) fn record_search_timeline(
     tx: &mut dyn KvWrite,
     page_id: u64,
     revision: &str,
+    title: &str,
     timeline: &str,
 ) -> Result<()> {
     let timeline: String = timeline
@@ -1508,6 +1513,8 @@ pub(crate) fn record_search_timeline(
         .filter(|c| *c != '\0')
         .take(SEARCH_TIMELINE_MAX_CHARS)
         .collect();
+    // `pageSearchVectorSql` builds the vector in the seal's statement, and its error aborts the seal.
+    crate::keyword::check_sealed_page_vector(title, &timeline)?;
     let record = SearchTimeline {
         revision: revision.to_owned(),
         timeline,

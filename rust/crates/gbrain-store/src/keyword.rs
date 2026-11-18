@@ -52,6 +52,7 @@ mod vector_cache;
 
 pub use filters::{AfterKey, DateBound, KeywordOptions};
 pub use titles::{TitleAttempt, TitleAttemptKind};
+pub(crate) use titles::{check_page_vector, check_sealed_page_vector};
 
 #[allow(unused_imports)]
 pub(crate) use rank::{ts_rank, ts_rank_cd};

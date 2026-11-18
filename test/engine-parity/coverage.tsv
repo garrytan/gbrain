@@ -44,11 +44,11 @@ transaction	lifecycle	yes	11	no	yes	yes	refuses:transactions
 transactionDirect	lifecycle	yes	1	no	yes	yes	refuses:transactions
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	33	yes	yes	yes	serves
+getPage	pages	yes	34	yes	yes	yes	serves
 readPageSnapshot	pages	yes	7	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	refuses:pages
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	109	yes	yes	yes	serves
+putPage	pages	yes	110	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	refuses:pages
 findDuplicatePages	pages	yes	1	no	yes	yes	refuses:pages
 deletePage	pages	yes	6	yes	yes	yes	serves
@@ -58,7 +58,7 @@ softDeletePage	pages	yes	26	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	refuses:pages
 restorePage	pages	yes	6	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	1	no	yes	yes	refuses:pages
-listPages	pages	yes	4	yes	yes	yes	serves
+listPages	pages	yes	5	yes	yes	yes	serves
 findPages	pages	yes	1	no	yes	yes	refuses:pages
 countPagesBy	pages	yes	1	no	yes	yes	refuses:pages
 resolveSlugs	pages	yes	2	no	yes	yes	serves
@@ -79,7 +79,7 @@ refreshPageOrigin	pages	yes	1	no	yes	yes	refuses:pages
 searchKeyword	search	yes	26	yes	yes	yes	serves
 countKeywordPages	search	yes	5	no	yes	yes	serves
 searchKeywordPages	search	yes	7	no	yes	yes	serves
-searchTitles	search	yes	8	yes	yes	yes	serves
+searchTitles	search	yes	9	yes	yes	yes	serves
 searchVector	search	yes	2	yes	yes	yes	refuses:vector_search
 getEmbeddingsByChunkIds	search	yes	1	no	yes	yes	refuses:embeddings
 searchKeywordChunks	search	yes	5	yes	yes	yes	serves

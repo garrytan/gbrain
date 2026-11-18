@@ -120,6 +120,13 @@ pub(crate) struct TsVector {
     pub(crate) entries: Vec<TsEntry>,
 }
 
+/// Whether `error` is the tsvector size refusal (`check_tsvector_size`).
+pub(crate) fn is_vector_overflow(error: &StoreError) -> bool {
+    error
+        .message
+        .starts_with("string is too long for tsvector (")
+}
+
 /// The tsvector size limit check of `make_tsvector` and `tsvector_concat`: the lexeme bytes plus
 /// the aligned position arrays must stay within `MAXSTRPOS`.
 fn check_tsvector_size(entries: &[TsEntry]) -> Result<()> {

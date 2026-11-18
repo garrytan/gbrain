@@ -1455,7 +1455,13 @@ impl Store {
                 state.chunker_version = Some(i64::from(version));
                 put_json(tx, &body_key(page.id), state)?;
             }
-            crate::pages::record_search_timeline(tx, page.id, &page.knowledge_revision, timeline)
+            crate::pages::record_search_timeline(
+                tx,
+                page.id,
+                &page.knowledge_revision,
+                &page.title,
+                timeline,
+            )
         })
     }
 
@@ -2455,7 +2461,7 @@ mod segment_chunk_tests {
 
     fn keep_timeline(store: &Store, id: i64) {
         store
-            .write(|tx| crate::pages::record_search_timeline(tx, id as u64, "rev", "sealed"))
+            .write(|tx| crate::pages::record_search_timeline(tx, id as u64, "rev", "t", "sealed"))
             .unwrap();
         assert!(kept_timeline(store, id).is_some());
     }

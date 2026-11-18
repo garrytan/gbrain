@@ -850,6 +850,7 @@ impl Store {
                     tx,
                     page.id,
                     &page.knowledge_revision,
+                    &page.title,
                     timeline,
                 )?;
             }
