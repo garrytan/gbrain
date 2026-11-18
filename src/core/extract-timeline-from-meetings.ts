@@ -13,6 +13,7 @@ import type { BrainEngine } from './engine.ts';
 import type { TimelineBatchInput } from './engine.ts';
 import { buildGazetteer, findMentionedEntities, type Gazetteer } from './by-mention.ts';
 import { isCrossSourceLinksEnabled } from './link-extraction.ts';
+import { isOwnerOnlySourceConfig } from './access/owner-only.ts';
 import { computeEffectiveDate } from './effective-date.ts';
 import { parseFrontmatter } from './backfill-effective-date.ts';
 import { folderRestrictedSql, isDerivationPrivate } from './search/private-visibility.ts';
@@ -160,6 +161,10 @@ export async function extractTimelineFromMeetings(
   // with attendee edges. Each (meeting, entity) produces ONE timeline row.
   const gazetteer = opts.gazetteer ?? await buildGazetteer(engine);
   const allowCrossSource = await isCrossSourceLinksEnabled(engine);
+  // A meeting in an owner-only source never fans out into another source: reads there check a row's page, and a
+  // timeline row on an open attendee page would carry the meeting's title and date to other callers (GST-3032).
+  const ownerOnlySources = new Set((await engine.executeRaw<{ id: string; config: unknown }>('SELECT id, config FROM sources'))
+    .filter(row => isOwnerOnlySourceConfig(row.config)).map(row => row.id));
 
   const batch: TimelineBatchInput[] = [];
   // #5575 I2: the rows restate their meeting (no model), so a batch holds one meeting tier and is stamped with it.
@@ -256,9 +261,10 @@ export async function extractTimelineFromMeetings(
     // only under `link_resolution.cross_source` — the same gate the mention
     // lane below applies (the edge fetch above is brain-wide, not scoped).
     const attendees = attendeesByMeeting.get(meetingKey) ?? [];
+    const crossSource = allowCrossSource && !ownerOnlySources.has(meeting.source_id);
     const targets = new Map<string, { slug: string; source_id: string }>();
     for (const e of attendees) {
-      if (!allowCrossSource && e.attendee_source_id !== meeting.source_id) continue;
+      if (!crossSource && e.attendee_source_id !== meeting.source_id) continue;
       targets.set(`${e.attendee_source_id}::${e.attendee_slug}`, {
         slug: e.attendee_slug,
         source_id: e.attendee_source_id,
@@ -274,7 +280,7 @@ export async function extractTimelineFromMeetings(
       const mentions = findMentionedEntities(body, gazetteer, {
         fromSlug: meeting.slug,
         fromSourceId: meeting.source_id,
-        allowCrossSource,
+        allowCrossSource: crossSource,
       });
       for (const m of mentions) {
         targets.set(`${m.source_id}::${m.slug}`, {

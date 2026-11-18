@@ -40,9 +40,11 @@ const TRIGGERS = {
 const TABLES = Object.keys(TRIGGERS) as OwnerOnlyTriggerTable[];
 
 /**
- * The logins that read `sources` but cannot both read and add owner_only_marks (no grant, or row-level security with no
- * permissive policy for them): on a brain that has held owner-only data they read owner-only lineage closed and their
- * permanent deletes are refused. Superusers, BYPASSRLS logins and the table's owner (without FORCE) need nothing.
+ * The logins that read `sources` but cannot both read and add every owner_only_marks row (no grant, or row-level security
+ * without a permissive policy for them that reads and adds every row, USING (true) and WITH CHECK (true), or with a
+ * restrictive policy that applies to them; v323): on a brain that has held owner-only data they read owner-only lineage
+ * closed and their permanent deletes are refused. Superusers, BYPASSRLS logins and the table's owner (without FORCE)
+ * need nothing.
  */
 const DENIED_LOGINS_SQL = `
   SELECT pg_catalog.quote_ident(r.rolname) AS login, pg_catalog.quote_ident('owner_only_marks_read_' || r.rolname) AS read_policy,
@@ -52,8 +54,12 @@ const DENIED_LOGINS_SQL = `
      AND (NOT pg_catalog.pg_has_role(r.oid, c.relowner, 'USAGE') OR c.relforcerowsecurity)
      AND (NOT pg_catalog.has_table_privilege(r.oid, c.oid, 'SELECT') OR NOT pg_catalog.has_table_privilege(r.oid, c.oid, 'INSERT')
           OR (c.relrowsecurity AND (NOT EXISTS (SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid AND p.polpermissive AND p.polcmd::text IN ('*', 'r')
+                 AND pg_catalog.pg_get_expr(p.polqual, p.polrelid) = 'true'
                  AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS pr(id) WHERE pr.id = 0::oid OR pg_catalog.pg_has_role(r.oid, pr.id, 'USAGE')))
             OR NOT EXISTS (SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid AND p.polpermissive AND p.polcmd::text IN ('*', 'a')
+                 AND pg_catalog.pg_get_expr(coalesce(p.polwithcheck, p.polqual), p.polrelid) = 'true'
+                 AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS pr(id) WHERE pr.id = 0::oid OR pg_catalog.pg_has_role(r.oid, pr.id, 'USAGE')))
+            OR EXISTS (SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid AND NOT p.polpermissive AND p.polcmd::text IN ('*', 'r', 'a')
                  AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS pr(id) WHERE pr.id = 0::oid OR pg_catalog.pg_has_role(r.oid, pr.id, 'USAGE'))))))
    ORDER BY 1`;
 

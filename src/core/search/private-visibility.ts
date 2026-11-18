@@ -32,7 +32,7 @@ import { ruleCoversSql, validPrefix, validQualifiedRuleId } from '../access/fold
 import { holdingSlugSql } from '../facts-fence.ts';
 import { NAME_KEY_PAGE_DIRS } from '../entities/basename-dirs.ts';
 import { atomMovedOriginPrivateSql, atomOriginSlugsSql } from '../persistence/atom-origin.ts';
-import { ownerOnlyFactSql, ownerOnlyForm, ownerOnlyPageSql, ownerOnlySourcesPresent } from '../access/owner-only.ts';
+import { ownerOnlyFactSql, ownerOnlyForm, ownerOnlyPageSql, ownerOnlySourcesPresent, ownerOnlyTakeSql, ownerOnlyTimelineSql } from '../access/owner-only.ts';
 
 export const REMOTE_PRIVATE_PAGES_KEY = 'search.remote_private_pages';
 
@@ -947,11 +947,24 @@ export function privateLinkOriginFilterForCaller(linkAlias: string): string {
 
 /** privateTimelineEventFilterFragment for a remote read. */
 export function privateTimelineEventFilterForCaller(timelineAlias: string): string {
-  return `(${timelineAlias}.event_page_id IS NULL OR EXISTS (
+  return `((${timelineAlias}.event_page_id IS NULL OR EXISTS (
     SELECT 1 FROM pages event_private
     WHERE event_private.id = ${timelineAlias}.event_page_id
       AND ${privatePagesFilterForCaller('event_private')}
-  ))`;
+  ))${ownerOnlyTimelineAllowedSql(timelineAlias)})`;
+}
+
+/**
+ * A timeline row whose own recorded inputs reach owner-only data (a meeting in an owner-only source fanned onto an
+ * attendee page in another source) passes only for an owner read; its page is tested apart. Empty for the owner.
+ */
+export function ownerOnlyTimelineAllowedSql(timelineAlias: string): string {
+  return currentCallerAccess().owner ? '' : ` AND NOT ${ownerOnlyTimelineSql(timelineAlias, ownerOnlyForm(readSchemaVersion()))}`;
+}
+
+/** A take whose own recorded inputs reach owner-only data passes only for an owner read; its page is tested apart. Empty for the owner. */
+export function ownerOnlyTakeAllowedSql(takeAlias: string): string {
+  return currentCallerAccess().owner ? '' : ` AND NOT ${ownerOnlyTakeSql(takeAlias, ownerOnlyForm(readSchemaVersion()))}`;
 }
 
 /**

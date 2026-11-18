@@ -77,7 +77,10 @@ const OPEN = { slug: 'notes/open-plan', canary: 'canaryooopen' };
 const FACT_IN_SOURCE = 'canaryoofact';
 const FACT_DERIVED = 'canaryoofactderived';
 const TIMELINE = 'canaryootimeline';
-const ALL_CANARIES = [...Object.values(HIDDEN).map(h => h.canary), FACT_IN_SOURCE, FACT_DERIVED, TIMELINE];
+/** Rows on the open page whose own recorded inputs reach the chat: a meeting-style timeline fan-out and a consolidated take (GST-3032). */
+const TIMELINE_FANNED = 'canaryoofanned';
+const TAKE_DERIVED = 'canaryootake';
+const ALL_CANARIES = [...Object.values(HIDDEN).map(h => h.canary), FACT_IN_SOURCE, FACT_DERIVED, TIMELINE, TIMELINE_FANNED, TAKE_DERIVED];
 
 const pageText = (title: string, canary: string, fm: readonly string[] = []) =>
   ['---', ...(fm.some(l => l.startsWith('type:')) ? [] : ['type: note']), `title: ${title}`, ...fm, '---', `# ${title}`, '', `Harbor ledger planning notes ${canary} for the roadmap.`].join('\n');
@@ -87,6 +90,10 @@ function reads(): Array<[string, string, Record<string, unknown>]> {
   return [
     ...Object.entries(HIDDEN).map(([key, h]) => [`get_page ${key}`, 'get_page', { slug: h.slug }] as [string, string, Record<string, unknown>]),
     ['get_timeline', 'get_timeline', { slug: CHAT_SLUG }],
+    ['get_page open', 'get_page', { slug: OPEN.slug }],
+    ['get_timeline open', 'get_timeline', { slug: OPEN.slug }],
+    ['takes_list', 'takes_list', { page_slug: OPEN.slug }],
+    ['takes_search', 'takes_search', { query: `Harbor ledger planning notes ${TAKE_DERIVED}` }],
     ['search', 'search', { query: PHRASE, fields: 'full', limit: 50 }],
     ['search keyword', 'search', { query: 'planning notes', match: 'keyword', fields: 'full', limit: 50 }],
     ['query', 'query', { query: PHRASE, expand: false, fields: 'full', limit: 50 }],
@@ -170,8 +177,17 @@ for (const kind of testBackends()) {
       await engine.executeRaw(`INSERT INTO links (from_page_id, to_page_id, link_type, link_source) VALUES ($1, $2, 'synthesized_from', 'concept-provenance')`,
         [Number(await id(HIDDEN.concept.slug, OPEN_SRC)), Number(chatId)]);
       await engine.executeRaw(`INSERT INTO timeline_entries (page_id, date, summary) VALUES ($1, '2026-06-14', $2)`, [Number(chatId), `Harbor ledger planning notes ${TIMELINE}`]);
-      await engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source) VALUES ($1, $2, $3, 'fact', 'world', 'fixture')`,
+      const [factInSource] = await engine.executeRaw<{ id: number }>(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source) VALUES ($1, $2, $3, 'fact', 'world', 'fixture') RETURNING id`,
         [IMSG, OPEN.slug, `Harbor ledger planning notes ${FACT_IN_SOURCE}`]);
+      // Rows on the open page derived from owner-only rows, seeded the way older extractors wrote them: a meeting's
+      // timeline row fanned onto an attendee page in another source, and a take consolidated from an owner-only fact.
+      const openId = Number(await id(OPEN.slug, OPEN_SRC));
+      const [fanned] = await engine.executeRaw<{ id: number }>(`INSERT INTO timeline_entries (page_id, date, summary, source) VALUES ($1, '2026-06-14', $2, 'extract-timeline-from-meetings:fixture') RETURNING id`,
+        [openId, `Harbor ledger planning notes ${TIMELINE_FANNED}`]);
+      const [take] = await engine.executeRaw<{ id: number }>(`INSERT INTO takes (page_id, row_num, claim, kind, holder) VALUES ($1, 1, $2, 'take', 'world') RETURNING id`,
+        [openId, `Harbor ledger planning notes ${TAKE_DERIVED}`]);
+      await engine.executeRaw(`INSERT INTO derivation_inputs (derived_table, derived_id, input_table, input_id, source_id) VALUES
+        ('timeline_entries', $1, 'pages', $2, $4), ('takes', $3, 'facts', $5, $4)`, [String(fanned!.id), chatId, String(take!.id), OPEN_SRC, String(factInSource!.id)]);
       const [fact] = await engine.executeRaw<{ id: number }>(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source) VALUES ($1, $2, $3, 'fact', 'world', 'fixture') RETURNING id`,
         [OPEN_SRC, OPEN.slug, `Harbor ledger planning notes ${FACT_DERIVED}`]);
       await engine.executeRaw(`INSERT INTO derivation_inputs (derived_table, derived_id, input_table, input_id, source_id) VALUES ('facts', $1, 'pages', $2, $3)`, [String(fact!.id), chatId, OPEN_SRC]);
@@ -277,5 +293,13 @@ for (const kind of testBackends()) {
       expect(v320.sql).toContain(`IN (${OWNER_ONLY_KINDS.map(k => `'${k}'`).join(', ')})`);
       expect(v320.sql).toContain(`config->>'${OWNER_ONLY_FLAG}' = 'true'`);
     }, 120_000);
+
+    test('rows on an open page derived from owner-only data stay hidden from other callers after their origin is deleted', async () => {
+      await engine.deletePage(CHAT_SLUG, { sourceId: IMSG });
+      await engine.executeRaw('DELETE FROM facts WHERE source_id = $1', [IMSG]);
+      expect(await seenBy('bob')).toEqual({});
+      const owner = new Set(Object.values(await seenBy('owner')).flat());
+      expect([TIMELINE_FANNED, TAKE_DERIVED].filter(c => !owner.has(c))).toEqual([]);
+    }, 240_000);
   });
 }
