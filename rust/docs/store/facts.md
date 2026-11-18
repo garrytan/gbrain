@@ -152,6 +152,34 @@ refuse their `hasAttempts: true` form.
 
 ## Group 5: purge, withdrawal, relink and fence repair (`facts/purge.rs`)
 
+SQL in `src/core/engine-sql/facts-purge.ts`; each member sends the arguments of its `BrainEngine`
+member. Dates go out as microsecond ISO text. A fact's fingerprint is `fact_fingerprint` (the same
+normalization as `gbrain_fact_fingerprint`). An audit checkpoint row (a terminal or non-extractable
+`source` with `EXTRACTION_COMPLETE` or `EXTRACTION_NOT_APPLICABLE` as the fact) is never a purge target,
+plan row or leftover. An unbacked entity is an entity slug with no `/` and no live page of the source.
+
+| Member | What it does |
+|---|---|
+| `countFactFingerprintLeftovers` | Rows of the source with the fingerprint, checkpoint rows apart, that `visibility` and `subject` (`*` is every entity) do not cover. A row with no entity is left only by another visibility. |
+| `loadPurgeTarget` | The row `id` of the source (not a checkpoint row) with `fact_hash` and `embedding` as vector text (`float4_out`). A fractional id is `invalid_argument`; an id no row can have answers null. |
+| `planFactPurgeIds` | `[{ id }]` of one visibility with the fingerprint, in id order: the subject's rows (all with `*`) and every unbacked-entity row. |
+| `listRelinkCandidateRows` | Active rows of the source with no entity and no fence key (`row_num`, `source_markdown_slug`) after `afterId`, from `since` when set, in id order, at most `limit`. |
+| `countRelinkCandidates` | Active no-entity rows of the source that hold a fence key. |
+| `listSimilarActiveFacts` | `{ anchor, rows }`: the anchor's `has_embedding` and entity (null for an unknown id), then, when it has a vector, the other active rows of its entity and visibility with the same `embedding_model` and cosine at least `minCosine`, nearest first then by id, at most `limit`. `remote` keeps world rows. `excludePrivate` takes the store's privacy policy and refuses a caller whose policy widens it. A NaN similarity goes out as the string `NaN`; vectors of different lengths are `invalid_argument`. |
+| `findActiveSingleFact` | The lowest-id active row with the same entity (null matches null), visibility, fingerprint and speaker slot (a null speaker on either side matches) on `pageSlug`, or, with a null `pageSlug`, on no owned memory page; an empty `pageSlug` matches nothing. The row has every column of `SELECT *`. Refuses with `remoteFloor`. |
+| `listUnfencedFactRows` | Active rows with no fence key and no `dimension`, of one source or all, by source, entity (bytewise, no entity last) and id, with `page_exists` (a live page of the entity). |
+| `listHeldFenceFactRows` | A page's active fence rows by `row_num` then id, less rows whose `source` starts with `cli:extract-conversation-facts`. |
+| `listWithdrawalSlugs` | Sorted distinct `COALESCE(source_markdown_slug, entity_slug)` of the active rows with the fingerprint and visibility that the subject covers: `*`, the subject's entity, an unbacked-entity row unless the subject is an owned memory page, or a row on that page. |
+| `expireFactsByWithdrawal` | The write: stamps `expired_at` now and `valid_until` at the lesser of its value and now on the same rows (by the text's fingerprint) and answers `[{ id }]` in id order. Run it on the engine, outside a transaction. |
+
+`SELECT *` rows (`findActiveSingleFact`) carry the columns the store has not got as constants:
+`trust_tier` `unknown`, and null for `write_origin`, `source_window`, `last_written_at` and the
+`write_*` and `last_write_*` columns.
+
+Refused with `engine_capability_missing`: `listFactsReconcileBacklog` (its reconcile ledger table
+`page_facts_reconcile` is not in the store) and `listSingleFactMetadata` (the store keeps no
+`trust_tier`; it also reads the remote floor).
+
 ## Group 5: repair classifiers and loop retirement (`facts/repair.rs`)
 
 Ten members (`src/core/engine-sql/facts-repair.ts`). Four read only `facts` and `pages` and are served; six read a

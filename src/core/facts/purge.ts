@@ -29,7 +29,6 @@ import { contentHash, rowToPage } from '../utils.ts';
 import { rewriteLiveSegmentedFences, rewriteSegmentedGeneration, segmentedBodyContains } from '../page-body/segment-rewrite.ts';
 import { continueDerivationPurges, derivationPurgeState, recordDerivationPurge } from '../page-body/segment-derive.ts';
 import { discoverWithdrawalTargets, withdrawalDiscoveryFailure } from './withdrawal-discovery.ts';
-import { unbackedEntitySql } from './withdrawal-schema.ts';
 import { dropPurgedFenceRows } from './purge-overlay.ts';
 import { derivedRowsFrom, hideDerivedRows, type DerivationRef } from './derivation-inputs.ts';
 import { initializeLocalPersistence, requestPrincipalForContext } from '../persistence/page-mutations.ts';
@@ -39,7 +38,6 @@ import { assertPersistenceAccepting } from '../persistence/service.ts';
 import { declareDurablePersistence } from '../persistence/protocol.ts';
 import { parseWriteRequestId } from '../persistence/preconditions.ts';
 import { withCoordinatedWrite } from '../persistence/context.ts';
-import { outcomeMarkerSql } from './audit-sources.ts';
 import { requestAttribution } from '../persistence/attribution.ts';
 import { isTerminal, principalKey, type WriteRequest } from '../persistence/model.ts';
 import { retryWriteAdmission } from '../persistence/admission-retry.ts';
@@ -105,10 +103,7 @@ function notFound(rawId: string): OperationError {
 }
 
 async function loadTarget(engine: BrainEngine, id: number, sourceId: string): Promise<PurgeTarget | null> {
-  const [row] = await engine.executeRaw<PurgeTarget>(`SELECT id,source_id,visibility,fact,entity_slug,source_markdown_slug,
-      gbrain_fact_fingerprint(fact) AS fact_hash,embedding::text AS embedding,embedding_model
-    FROM facts WHERE id=$1 AND source_id=$2 AND NOT ${outcomeMarkerSql('facts')}`, [id, sourceId]);
-  return row ? { ...row, id: Number(row.id) } : null;
+  return engine.loadPurgeTarget(id, sourceId);
 }
 
 /** @internal Work the cross-part staging scan does, for its bound test: parts visited and bytes read. Counts, not time. */
@@ -172,8 +167,7 @@ export async function planFactPurge(engine: BrainEngine, target: PurgeTarget, al
   const unbacked = !allSubjects && !!target.entity_slug && !target.entity_slug.includes('/') && (await engine.executeRaw(
     'SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL LIMIT 1', [target.source_id, target.entity_slug])).length === 0;
   const subject = allSubjects || unbacked ? '*' : target.entity_slug ?? '*';
-  const facts = await engine.executeRaw<{ id: number }>(`SELECT id FROM facts WHERE source_id=$1 AND visibility=$2
-    AND gbrain_fact_fingerprint(fact)=$3 AND ($4='*' OR entity_slug=$4 OR ${unbackedEntitySql('facts')}) AND NOT ${outcomeMarkerSql('facts')} ORDER BY id`, [target.source_id, target.visibility, target.fact_hash, subject]);
+  const facts = await engine.planFactPurgeIds(target.source_id, target.visibility, target.fact_hash, subject);
   const factIds = facts.map(f => Number(f.id));
   const takes = (await engine.executeRaw<{ id: number; page_id: number }>(`SELECT DISTINCT k.id,k.page_id FROM takes k JOIN pages p ON p.id=k.page_id
     WHERE p.source_id=$1 AND (k.id IN (SELECT consolidated_into FROM facts WHERE id=ANY($2::bigint[]) AND consolidated_into IS NOT NULL)

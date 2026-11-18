@@ -66,6 +66,11 @@ const VETTED_BUILDERS: Record<string, string> = {
 
   // facts-purge.ts builders
 
+  outcomeMarkerSql: 'src/core/facts/audit-sources.ts: constant checkpoint-row predicate over a caller facts alias; the source and fact lists are module constants',
+  unbackedEntitySql: 'src/core/facts/withdrawal-schema.ts: constant unbacked-name-key predicate over a caller facts alias; the callers pass constant aliases',
+  ownedMemorySubjectSql: 'src/core/facts/withdrawal-schema.ts: constant owned-memory-subject predicate over a caller column expression; engine-sql passes only the constant column q.subject',
+  remoteProvenanceFloorSql: 'src/core/search/private-visibility.ts: constant remote provenance floor (private-provenance filter plus labelled-only) over a caller facts alias',
+
   // facts-repair.ts builders
   contextHeadSql: 'src/core/facts/gone-page-facts.ts: constant head-of-context expression over a caller facts alias; no values',
   withdrawalCoversFactSql: 'src/core/access/member-facts.ts: constant withdrawal-covers-fact predicate over caller withdrawal and fact aliases; no values',

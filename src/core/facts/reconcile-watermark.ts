@@ -21,6 +21,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { FACTS_FENCE_BEGIN } from '../facts-fence.ts';
+import { DUE, OWNS_FENCE_ROWS } from '../engine-sql/facts-purge.ts';
 
 export type FactsReconcileOutcome = 'complete' | 'deferred' | 'invalid' | 'cancelled';
 
@@ -36,9 +37,6 @@ export const FACTS_DRAIN_BUDGET_MS = 60_000;
 /** Upper bound on pages one run settles in bulk as having no fence and no fence rows. */
 const FACTLESS_SETTLE_LIMIT = 10_000;
 
-const DUE = `(r.page_id IS NULL OR r.reconciled_revision IS DISTINCT FROM p.knowledge_revision)`;
-const OWNS_FENCE_ROWS = `EXISTS (SELECT 1 FROM facts f
-  WHERE f.source_id = p.source_id AND f.source_markdown_slug = p.slug AND f.row_num IS NOT NULL)`;
 const RETRYABLE = `NOT COALESCE(r.outcome = 'invalid' AND r.attempted_revision IS NOT DISTINCT FROM p.knowledge_revision, false)`;
 
 /**
@@ -135,27 +133,11 @@ export interface FactsReconcileBacklog {
  * materialized before the body match so a settled brain reads no page body.
  */
 export async function readFactsReconcileBacklog(engine: BrainEngine): Promise<FactsReconcileBacklog> {
-  const rows = await engine.executeRaw<{ source_id: string; slug: string; invalid: boolean }>(
-    `WITH due AS MATERIALIZED (
-       SELECT p.id, p.source_id, p.slug, p.knowledge_revision, r.outcome, r.attempted_revision
-         FROM pages p LEFT JOIN page_facts_reconcile r ON r.page_id = p.id
-        WHERE p.deleted_at IS NULL AND ${DUE}
-     )
-     SELECT d.source_id, d.slug,
-            COALESCE(d.outcome = 'invalid' AND d.attempted_revision IS NOT DISTINCT FROM d.knowledge_revision, false) AS invalid
-       FROM due d JOIN pages p ON p.id = d.id
-      WHERE p.compiled_truth LIKE $1 OR p.timeline LIKE $1 OR ${OWNS_FENCE_ROWS}
-      ORDER BY d.source_id, d.slug`,
-    [`%${FACTS_FENCE_BEGIN}%`],
-  );
-  const [segmented] = await engine.executeRaw<{ n: number }>(
-    `SELECT COUNT(*)::int AS n FROM pages p LEFT JOIN page_facts_reconcile r ON r.page_id = p.id
-      WHERE p.deleted_at IS NULL AND ${DUE} AND p.body_storage = 'segmented' AND NOT ${OWNS_FENCE_ROWS}`,
-  ).catch(() => []);
+  const { rows, segmented } = await engine.listFactsReconcileBacklog();
   return {
     pending: rows.filter(r => !r.invalid).length,
     invalid: rows.filter(r => r.invalid).map(r => ({ source_id: r.source_id, slug: r.slug })),
-    ...(segmented?.n ? { skipped_segmented: Number(segmented.n) } : {}),
+    ...(segmented ? { skipped_segmented: segmented } : {}),
   };
 }
 
