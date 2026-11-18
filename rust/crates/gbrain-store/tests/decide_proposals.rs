@@ -9,8 +9,8 @@ use gbrain_store::eval_capture::decide_proposals::{
     DecideProposalInput, DecideProposalTransition, DecideReviewProposalInput,
     DecideReviewProposalTransition, ListDecideProposalsOptions, ReviewQueueOp, SweepDeferredOp,
 };
-use memory_env::{brain, T0};
-use serde_json::{json, Value};
+use memory_env::{T0, brain};
+use serde_json::{Value, json};
 
 const MINUTE: i64 = 60 * 1_000_000;
 const DAY: i64 = 24 * 60 * MINUTE;
@@ -201,9 +201,10 @@ fn a_proposal_reads_back_with_reals_as_their_shortest_decimal_and_microsecond_st
     input.threshold = None;
     b.insert_decide_proposal(&input).unwrap();
     b.clock.advance(1_500_000);
-    assert!(b
-        .transition_decide_proposal(&moved(1, "pending", "accepted"))
-        .unwrap());
+    assert!(
+        b.transition_decide_proposal(&moved(1, "pending", "accepted"))
+            .unwrap()
+    );
     let row = b.get_decide_proposal(1).unwrap().unwrap();
     // 0.1 stored as a REAL reads back as 0.1, not 0.10000000149011612.
     assert_eq!(row["p_supersede"], json!(0.1));
@@ -224,15 +225,18 @@ fn a_transition_moves_a_proposal_once_and_a_null_state_keeps_the_stored_one() {
     first.after = Some("after".into());
     assert!(b.transition_decide_proposal(&first).unwrap());
     // Not in `pending` any more, and a row that does not exist.
-    assert!(!b
-        .transition_decide_proposal(&moved(1, "pending", "rejected"))
-        .unwrap());
-    assert!(!b
-        .transition_decide_proposal(&moved(9, "pending", "rejected"))
-        .unwrap());
-    assert!(!b
-        .transition_decide_proposal(&moved(-1, "pending", "rejected"))
-        .unwrap());
+    assert!(
+        !b.transition_decide_proposal(&moved(1, "pending", "rejected"))
+            .unwrap()
+    );
+    assert!(
+        !b.transition_decide_proposal(&moved(9, "pending", "rejected"))
+            .unwrap()
+    );
+    assert!(
+        !b.transition_decide_proposal(&moved(-1, "pending", "rejected"))
+            .unwrap()
+    );
     let mut second = moved(1, "accepted", "rolled_back");
     second.after = Some("later".into());
     assert!(b.transition_decide_proposal(&second).unwrap());
@@ -256,9 +260,10 @@ fn the_lists_filter_by_status_order_by_pair_index_or_age_and_limit() {
             .unwrap();
     }
     // Ids 1..=3 were inserted for pair indexes 2, 1, 0.
-    assert!(b
-        .transition_decide_proposal(&moved(2, "pending", "rejected"))
-        .unwrap());
+    assert!(
+        b.transition_decide_proposal(&moved(2, "pending", "rejected"))
+            .unwrap()
+    );
     assert_eq!(
         b.list_decide_proposal_ids("s1", "pending").unwrap(),
         vec![3, 1]
@@ -267,10 +272,11 @@ fn the_lists_filter_by_status_order_by_pair_index_or_age_and_limit() {
         b.list_decide_proposal_ids("s1", "rejected").unwrap(),
         vec![2]
     );
-    assert!(b
-        .list_decide_proposal_ids("other", "pending")
-        .unwrap()
-        .is_empty());
+    assert!(
+        b.list_decide_proposal_ids("other", "pending")
+            .unwrap()
+            .is_empty()
+    );
     let listed = |status: Option<&str>, limit: Option<i64>| {
         b.list_decide_proposals(&ListDecideProposalsOptions {
             status: status.map(Into::into),
@@ -365,25 +371,29 @@ fn review_proposals_list_by_status_read_with_postgres_text_stamps_and_move_once(
     b.clock.advance(500_000);
     b.insert_decide_review_proposal(&review("withdraw", "a", "b", "x"))
         .unwrap();
-    assert!(b
-        .transition_decide_review_proposal(&review_moved(1, "pending", "accepted"))
-        .unwrap());
-    assert!(!b
-        .transition_decide_review_proposal(&review_moved(1, "pending", "rejected"))
-        .unwrap());
-    assert!(!b
-        .transition_decide_review_proposal(&review_moved(7, "pending", "rejected"))
-        .unwrap());
+    assert!(
+        b.transition_decide_review_proposal(&review_moved(1, "pending", "accepted"))
+            .unwrap()
+    );
+    assert!(
+        !b.transition_decide_review_proposal(&review_moved(1, "pending", "rejected"))
+            .unwrap()
+    );
+    assert!(
+        !b.transition_decide_review_proposal(&review_moved(7, "pending", "rejected"))
+            .unwrap()
+    );
     let all = b.list_decide_review_proposals("all").unwrap();
     assert_eq!(ids(&all, "id"), vec![1, 2]);
     assert_eq!(
         ids(&b.list_decide_review_proposals("pending").unwrap(), "id"),
         vec![2]
     );
-    assert!(b
-        .list_decide_review_proposals("rejected")
-        .unwrap()
-        .is_empty());
+    assert!(
+        b.list_decide_review_proposals("rejected")
+            .unwrap()
+            .is_empty()
+    );
     let row = b.get_decide_review_proposal(2).unwrap().unwrap();
     assert_eq!(row["created_at"], json!("2027-01-15 08:00:00.5+00"));
     assert_eq!(row["decided_at"], Value::Null);
@@ -414,10 +424,11 @@ fn the_pending_ids_of_a_sweep_leave_out_withdrawals_unless_asked() {
         b.list_decide_review_proposal_ids("s1", true).unwrap(),
         vec![1, 2]
     );
-    assert!(b
-        .list_decide_review_proposal_ids("s2", true)
-        .unwrap()
-        .is_empty());
+    assert!(
+        b.list_decide_review_proposal_ids("s2", true)
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
@@ -511,14 +522,16 @@ fn a_queued_pair_is_due_at_once_and_a_defer_backs_it_off_ten_minutes_per_attempt
     b.clock.advance(1);
     assert_eq!(due(10)[0]["attempts"], json!(2));
     // Another kind or source does not see the row; a negative limit is refused.
-    assert!(b
-        .list_due_decide_review_queue("withdraw", "default", 10)
-        .unwrap()
-        .is_empty());
-    assert!(b
-        .list_due_decide_review_queue("dup", "work", 10)
-        .unwrap()
-        .is_empty());
+    assert!(
+        b.list_due_decide_review_queue("withdraw", "default", 10)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        b.list_due_decide_review_queue("dup", "work", 10)
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(
         b.list_due_decide_review_queue("dup", "default", -1)
             .unwrap_err()
@@ -571,10 +584,11 @@ fn a_queue_row_with_five_attempts_is_no_longer_due_and_the_due_rows_come_back_in
         refs(b.list_due_decide_review_queue("dup", "default", 2).unwrap()),
         vec!["Bz", "ba"]
     );
-    assert!(b
-        .list_due_decide_review_queue("dup", "default", 0)
-        .unwrap()
-        .is_empty());
+    assert!(
+        b.list_due_decide_review_queue("dup", "default", 0)
+            .unwrap()
+            .is_empty()
+    );
     for _ in 0..4 {
         b.apply_decide_review_queue(&defer_queue("dup", "a", "a"))
             .unwrap();
@@ -592,11 +606,12 @@ fn a_queue_row_with_five_attempts_is_no_longer_due_and_the_due_rows_come_back_in
         .unwrap();
     b.clock.advance(600 * MINUTE);
     // Five attempts: the row stays in the table but is never handed back.
-    assert!(b
-        .list_due_decide_review_queue("dup", "default", 10)
-        .unwrap()
-        .iter()
-        .all(|r| r["a_ref"] != "a"));
+    assert!(
+        b.list_due_decide_review_queue("dup", "default", 10)
+            .unwrap()
+            .iter()
+            .all(|r| r["a_ref"] != "a")
+    );
 }
 
 #[test]
@@ -667,10 +682,11 @@ fn relinked_facts_are_queued_once_and_the_due_ones_come_back_by_due_time_then_fa
         ),
         vec![3]
     );
-    assert!(b
-        .list_due_decide_sweep_deferred("work", 10)
-        .unwrap()
-        .is_empty());
+    assert!(
+        b.list_due_decide_sweep_deferred("work", 10)
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(
         b.list_due_decide_sweep_deferred("default", -1)
             .unwrap_err()

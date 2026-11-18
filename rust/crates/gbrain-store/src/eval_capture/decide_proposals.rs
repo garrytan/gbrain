@@ -33,15 +33,15 @@
 //! already holds the row.
 
 use crate::env::iso;
-use crate::error::{Result, StoreError, CONSTRAINT_VIOLATION, INVALID_ARGUMENT};
+use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
 use crate::facts::{like, read_fact, real};
-use crate::kv::{scan_prefix, KvRead};
+use crate::kv::{KvRead, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::next_id;
 use crate::timeline_queries::timestamptz_text;
-use crate::{get_json, keys, put_json, Store};
+use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const NEXT_PROPOSAL_ID: &str = "decide_proposal_next_id";
 const NEXT_REVIEW_PROPOSAL_ID: &str = "decide_review_proposal_next_id";

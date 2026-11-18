@@ -4,12 +4,12 @@
 //! Each method decodes its arguments, runs one `Store` call on the pool through `Brain::run`, and
 //! resolves plain JSON. Row ids are numbers.
 
-use napi::bindgen_prelude::Object;
 use napi::Env;
+use napi::bindgen_prelude::Object;
 use napi_derive::napi;
 use serde_json::Value;
 
-use crate::store_binding::{arg, required, Brain};
+use crate::store_binding::{Brain, arg, required};
 
 #[napi]
 impl Brain {
