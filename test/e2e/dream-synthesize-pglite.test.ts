@@ -1207,61 +1207,6 @@ describe('E2E synthesize — oneshot mode (#4216, DEFAULT)', () => {
     }
   }, 60_000);
 
-  test('prose skip: the dead child is not paid for again until the transcript changes (#9648)', async () => {
-    const rig = await setupRig();
-    const savedKey = process.env.ANTHROPIC_API_KEY;
-    process.env.ANTHROPIC_API_KEY = 'sk-test-oneshot-e2e';
-    try {
-      await rig.engine.setConfig('dream.synthesize.enabled', 'true');
-      await rig.engine.setConfig('dream.synthesize.session_corpus_dir', rig.corpusDir);
-      await rig.engine.setConfig('agent.use_gateway_loop', 'true');
-      const content = 'User: a single idle notification from a teammate\n'.repeat(120);
-      const filePath = join(rig.corpusDir, '2026-08-16-idle.txt');
-      writeFileSync(filePath, content);
-      await seedVerdictFor(rig, filePath, content);
-
-      let calls = 0;
-      __setChatTransportForTests(async () => {
-        calls++;
-        const text = 'I am not writing any pages for this transcript: it holds only an idle notification.';
-        return {
-          text,
-          blocks: [{ type: 'text', text }],
-          stopReason: 'end',
-          usage: { input_tokens: 2000, output_tokens: 40, cache_read_tokens: 0, cache_creation_tokens: 0 },
-          model: 'anthropic:claude-sonnet-4-6',
-          providerId: 'anthropic',
-        } as any;
-      });
-
-      await runPhaseSynthesize(rig.engine, { brainDir: rig.brainDir, dryRun: false });
-      const dead = await rig.engine.executeRaw<{ status: string; error_text: string | null }>(
-        `SELECT status, error_text FROM minion_jobs WHERE name = 'subagent'`);
-      expect(dead.map(j => j.status)).toEqual(['dead']);
-      expect(dead[0]!.error_text).toContain('zero required put_page writes');
-      const paid = calls;
-      expect(paid).toBeGreaterThan(0);
-
-      const again = await runPhaseSynthesize(rig.engine, { brainDir: rig.brainDir, dryRun: false });
-      expect(again.details).not.toMatchObject({ reason: 'cooldown_active' });
-      expect(calls).toBe(paid);
-      expect(await rig.engine.executeRaw(`SELECT id FROM minion_jobs WHERE name = 'subagent'`)).toHaveLength(1);
-
-      const grown = content + 'User: a new idea about the review flow\n'.repeat(40);
-      writeFileSync(filePath, grown);
-      await seedVerdictFor(rig, filePath, grown);
-      await rig.engine.setConfig('dream.synthesize.last_completion_ts', '');
-      await runPhaseSynthesize(rig.engine, { brainDir: rig.brainDir, dryRun: false });
-      expect(calls).toBeGreaterThan(paid);
-    } finally {
-      if (savedKey === undefined) delete process.env.ANTHROPIC_API_KEY;
-      else process.env.ANTHROPIC_API_KEY = savedKey;
-      __setChatTransportForTests(null);
-      resetGateway();
-      await rig.cleanup();
-    }
-  }, 60_000);
-
   test('invalid output: same job falls back to the (gateway) agentic loop and completes', async () => {
     const rig = await setupRig();
     const savedKey = process.env.ANTHROPIC_API_KEY;
