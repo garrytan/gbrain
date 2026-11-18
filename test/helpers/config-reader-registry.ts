@@ -157,6 +157,10 @@ export const UNRESOLVED_CONFIG_READS: readonly UnresolvedConfigRead[] = [
   { file: 'src/core/questions/phase.ts', expr: 'key', why: P },
   { file: 'src/core/reindex-consent.ts', expr: 'key', why: P },
   { file: 'src/core/rust-engine/store-members/config.ts', expr: 'key', why: P },
+  // link-queries.ts reads the link extraction generation (a registered const key) and hands a `(key) => getConfig(brain,
+  // key)` adapter to effectiveRangesEnabled; the scan reads `brain`, the store member's first argument.
+  { file: 'src/core/rust-engine/store-members/link-queries.ts', expr: 'brain', why: P },
+  { file: 'src/core/rust-engine/store-members/link-queries.ts', expr: 'brain', why: P },
   // The store getConfig member takes the native brain first and the key second, so the scan reads `brain`; both calls
   // are `(key) => getConfig(brain, key)` adapters handed to resolveEntityTypes and the doctor orphan/timeline policy
   // loaders, whose getConfig reads (direct or in the helpers they call) carry the keys and are scanned there.
