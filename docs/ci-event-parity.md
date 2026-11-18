@@ -248,11 +248,13 @@ inventory:
   Tier 2 file (`test/e2e/skills.test.ts`): a VM has neither the keys nor
   openclaw, so every test in it would skip.
 - gstack accepts only `push` and `workflow_dispatch` runs whose newest attempt
-  succeeded. **A flaky job means re-running the whole workflow.** "Re-run failed
-  jobs" carries every job that passed, the ledger job that writes the manifest
-  included, over from the older attempt, so the new attempt has no manifest of
-  its own and its `tree.json` has no `files` (`inventory_uncovered`); a
-  `tree.json` left from an older attempt is refused too (`artifact_mismatch`).
+  succeeded. After "Re-run failed jobs", the failed jobs and the jobs that need
+  them (the ledger job that writes the manifest included) run again; the
+  manifest counts each job at its newest attempt, so `tree.json` still lists
+  every test file, and it names the files that passed only on the re-run in
+  `rerun_files`, with the run's `attempts`. A failing test left in the newest
+  attempt of any job means `tree.json` has no `files` (`inventory_uncovered`);
+  a `tree.json` left from an older attempt is refused too (`artifact_mismatch`).
 - The profiles live in `.gstack/pregate.json`: `run_profiles` `test`
   (`test.yml`, job `full-suite`, artifact `full-suite-tree`) and `e2e`
   (`e2e.yml`, job `e2e-full-suite`, artifact `e2e-full-suite-tree`), each
