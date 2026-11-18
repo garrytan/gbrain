@@ -159,7 +159,8 @@ export async function readWriteRequestById(exec: LegacyUnscopedRead, id: string,
 /**
  * Creates the missing counter rows and locks all of them in key order. On Postgres both statements are sent before
  * either is awaited (one round trip); a statement sent after the one that failed reports 25P02, so the error
- * thrown is the other one.
+ * thrown is the other one. Pipelining keeps their order only on one connection, so on Postgres `exec` must be a
+ * transaction's (the engine member opens one when its caller has none).
  */
 export async function lockPersistenceCounters(exec: SqlExecutor, keys: readonly string[]): Promise<CounterRow[]> {
   const sorted = [...new Set(keys)].sort();
