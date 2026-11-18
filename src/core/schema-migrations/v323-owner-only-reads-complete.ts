@@ -1,6 +1,5 @@
 import type { Migration } from './types.ts';
 import { OWNER_ONLY_LINEAGE_FN, OWNER_ONLY_READ_MODE_FN } from '../access/owner-only.ts';
-import { OWNER_ONLY_HELD } from './v322-owner-only-marks.ts';
 
 // Applied by src/core/migrate.ts on the next initSchema(); see docs/ENGINES.md
 // ("Canonical schema sources") for when schema.sql or a TS fragment also changes.
@@ -24,10 +23,9 @@ import { OWNER_ONLY_HELD } from './v322-owner-only-marks.ts';
 // two-argument form (reads that recorded v320 to v322) computes it per call. A missing or unknown mode counts as all.
 // Plpgsql keeps each table read in its own statement, so a login without a grant on a table never plans a read of it.
 //
-// gbrain_owner_only_hold() takes a transaction advisory lock before the first-ever COMMENT and re-reads the flag, so two
-// sessions recording it at once no longer fail one of them with "tuple concurrently updated"; a session whose snapshot
-// cannot see the other's comment (REPEATABLE READ) gets owner_only_marks_flag_race (40001), which a retry clears.
-// Functions only; no table, trigger or row changes. No schema.sql mirror, like v320 and v322.
+// gbrain_owner_only_hold() is unchanged: COMMENT takes a SHARE UPDATE EXCLUSIVE lock on owner_only_marks, so two sessions
+// recording the flag at once queue on it and both commit, under READ COMMITTED and REPEATABLE READ alike (the scoped-login
+// test pins it). Functions only; no table, trigger or row changes. No schema.sql mirror, like v320 and v322.
 const ownerOnlySource = (alias: string) => `${alias}.config->>'kind' IN ('imessage') OR ${alias}.config->>'owner_only' = 'true'`;
 const LINEAGE_TABLES = ['sources', 'facts', 'derivation_inputs', 'links', 'pages', 'takes', 'timeline_entries'];
 const complete = (table: string) => `gbrain_owner_only_reads_complete('public.${table}', 'r')`;
@@ -100,30 +98,6 @@ BEGIN
     RETURN false;
   END IF;
   RETURN ${OWNER_ONLY_LINEAGE_FN}(p_table, p_id, ${OWNER_ONLY_READ_MODE_FN}());
-END
-$fn$;
-CREATE OR REPLACE FUNCTION gbrain_owner_only_hold() RETURNS void
-  LANGUAGE plpgsql VOLATILE SET search_path = pg_catalog, public, pg_temp AS $fn$
-BEGIN
-  IF gbrain_owner_only_held() THEN
-    RETURN;
-  END IF;
-  PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('gbrain:owner_only_held', 0));
-  IF gbrain_owner_only_held() THEN
-    RETURN;
-  END IF;
-  BEGIN
-    COMMENT ON TABLE public.owner_only_marks IS '${OWNER_ONLY_HELD}';
-  EXCEPTION
-    WHEN insufficient_privilege THEN
-      RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'owner_only_marks_unwritable: this is the brain''s first owner-only data, and only the owner of owner_only_marks ('
-          || pg_catalog.pg_get_userbyid((SELECT c.relowner FROM pg_catalog.pg_class c WHERE c.oid = 'public.owner_only_marks'::pg_catalog.regclass))
-          || ') can record that owner-only lineage stays guarded from now on',
-        HINT = 'Make this change once as that role; see docs/ENGINES.md#owner-only-delete-triggers.';
-    WHEN internal_error OR unique_violation OR serialization_failure THEN
-      RAISE EXCEPTION USING ERRCODE = '40001', MESSAGE = 'owner_only_marks_flag_race: another session recorded that this brain holds owner-only data at the same moment, and this transaction cannot see it yet',
-        HINT = 'Retry the change; the flag is recorded once that session commits.';
-  END;
 END
 $fn$;
 `,

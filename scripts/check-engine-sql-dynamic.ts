@@ -59,6 +59,7 @@ const VETTED_BUILDERS: Record<string, string> = {
   privatePagesFilterForCaller: 'src/core/search/private-visibility.ts: privatePagesFilterFragment ORed with the private-readable source ids, each checked by isValidSourceId (alphabet [a-z0-9-], no quote) before it is quoted in',
   privateLinkOriginFilterForCaller: 'src/core/search/private-visibility.ts: constant link-origin predicate ORed with isValidSourceId-checked private-readable source ids',
   privateTimelineEventFilterForCaller: 'src/core/search/private-visibility.ts: constant timeline-event predicate ORed with isValidSourceId-checked private-readable source ids',
+  ownerOnlyTakeAllowedSql: 'src/core/search/private-visibility.ts: empty for the owner, else NOT the owner-only lineage test (access/owner-only.ts) on a code-provided take alias: constant function names and table literal, no values',
   orPrivateReadableSource: 'src/core/search/private-visibility.ts: wraps a caller predicate with isValidSourceId-checked private-readable source ids quoted as literals',
   replacedBecauseSql: 'src/core/engine-sql/pages.ts: constant GBRA-217 reason projection over a caller alias, with callerReadersAllowedSql on the successor (identities checked by validIdentity before they are quoted in); the boolean picks one of two constant texts',
   validDateSql: 'src/core/valid-time.ts: constant GBRA-217 date normaliser over a caller column expression; engine-sql passes only constant pv.frontmatter keys',
