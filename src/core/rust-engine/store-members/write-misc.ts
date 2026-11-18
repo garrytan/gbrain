@@ -1,0 +1,66 @@
+/**
+ * The page-write reads and upkeep that belong to no other domain (BrainEngine readSourceState through
+ * purgeMemoryProposals; SQL in engine-sql/write-misc.ts). The source and link-endpoint reads are served by gbrain-store
+ * `write_misc`; the rest answer for state the store does not keep. What each member answers and why:
+ * rust/docs/store/write_misc.md.
+ */
+import type {
+  AdmissionSourceRow, LinkEndpointPageRow, SharedSkillPackRoot, SourceStateOptions, SourceStateRow,
+} from '../../engine-sql/write-misc.ts';
+import { storeCall, type StoreMember } from './common.ts';
+
+/**
+ * The source's incarnation, archived flag, local path and config, or null. `lock: 'share'` asks the SQL engines to hold
+ * the row FOR SHARE; the store runs one write transaction at a time, so the option changes nothing here.
+ */
+export const readSourceState: StoreMember<[sourceId: string, opts?: SourceStateOptions], SourceStateRow | null> = (brain, sourceId) =>
+  storeCall({ member: 'readSourceState', sourceId }, () => brain.readSourceState(sourceId));
+
+/** A config value as `config->>'key'` reads it: text as is, null for a missing key, JSON text otherwise. */
+function jsonText(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  return typeof value === 'string' ? value : JSON.stringify(value);
+}
+
+/**
+ * Page admission's source row. The store has no guest_sources table and no row-level security: a guest source is one
+ * whose config says `guest: true` (as readGuestSourceRow), so no guest_sources row joins and nothing is hidden.
+ */
+export const readAdmissionSource: StoreMember<[sourceId: string], AdmissionSourceRow | null> = async (brain, sourceId) => {
+  const row: SourceStateRow | null = await storeCall({ member: 'readAdmissionSource', sourceId }, () => brain.readSourceState(sourceId));
+  if (!row) return null;
+  return {
+    incarnation: row.incarnation, archived: row.archived, local_path: row.local_path,
+    kind: jsonText(row.config.kind), role: jsonText(row.config.role),
+    guest_writers: null, guest_trust_ceiling: null, guest_sources_hidden: false,
+  };
+};
+
+/** The live pages that can be endpoints of the origin's links: own pages, then other sources' pages for the refs. */
+export const listLinkEndpointPages: StoreMember<[sourceId: string, slugs: readonly string[], crossSourceSlugs: readonly string[]], LinkEndpointPageRow[]> =
+  async (brain, sourceId, slugs, crossSourceSlugs) => slugs.length === 0 ? [] :
+    storeCall({ member: 'listLinkEndpointPages', sourceId }, () => brain.listLinkEndpointPages(sourceId, [...slugs], [...crossSourceSlugs]));
+
+/**
+ * The store answers as a current schema with no shared skillpacks does: the table exists (the store is never on a
+ * schema from before shared skills) and holds no pack, so listSharedSkillPackRoots returns nothing.
+ */
+export const sharedSkillPackTablePresent: StoreMember<[], boolean> = async () => true;
+
+/** The store keeps no shared skillpacks (see sharedSkillPackTablePresent), so no pack has roots. */
+export const listSharedSkillPackRoots: StoreMember<[hostId: string], SharedSkillPackRoot[]> = async () => [];
+
+/** The store keeps no chronicle extraction state, so no page has events. */
+export const hasExtractedEvents: StoreMember<[sourceId: string, pageId: number], boolean> = async () => false;
+
+/** The store keeps no access members, so none is active. */
+export const listActiveAccessMembers: StoreMember<[], string[]> = async () => [];
+
+/** The store keeps no memory proposals, so upkeep expires nothing. */
+export const expireMemoryProposals: StoreMember<[reason: string], number> = async () => 0;
+
+/** No memory proposals exist on this engine (see expireMemoryProposals), so none awaits its owner. */
+export const listAwaitingMemoryProposals: StoreMember<[limit: number], Array<Record<string, unknown>>> = async () => [];
+
+/** No memory proposals exist on this engine (see expireMemoryProposals), so upkeep purges nothing. */
+export const purgeMemoryProposals: StoreMember<[retentionDays: number], number> = async () => 0;

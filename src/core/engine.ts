@@ -23,6 +23,7 @@ import type { ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, W
 import type { WriteRequest } from './persistence/model.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, SourceRoutingRow } from './engine-sql/sources.ts';
+import type { AdmissionSourceRow, LinkEndpointPageRow, SharedSkillPackRoot, SourceStateOptions, SourceStateRow } from './engine-sql/write-misc.ts';
 export type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions, PageMutationPrecondition, PageWithdrawal } from './page-state/types.ts';
 import type {
   Page, PageInput, PageFilters, GetPageOpts, PageReadScope, PageReadPolicy,
@@ -1288,6 +1289,20 @@ export interface BrainEngine {
   readPageTrustRows(lookup: PageTrustLookup): Promise<PageTrustRow[]>;
   /** The database clock as a UTC ISO string with microseconds (`YYYY-MM-DDTHH:MM:SS.ffffffZ`). */
   readDatabaseClock(): Promise<string>;
+  /**
+   * Page-write reads and upkeep that belong to no other domain (SQL and contracts in engine-sql/write-misc.ts). A Rust
+   * brain keeps no shared skillpacks, chronicle state, access members or memory proposals, so it answers those empty.
+   */
+  readSourceState(sourceId: string, opts?: SourceStateOptions): Promise<SourceStateRow | null>;
+  readAdmissionSource(sourceId: string): Promise<AdmissionSourceRow | null>;
+  listLinkEndpointPages(sourceId: string, slugs: readonly string[], crossSourceSlugs: readonly string[]): Promise<LinkEndpointPageRow[]>;
+  sharedSkillPackTablePresent(): Promise<boolean>;
+  listSharedSkillPackRoots(hostId: string): Promise<SharedSkillPackRoot[]>;
+  hasExtractedEvents(sourceId: string, pageId: number): Promise<boolean>;
+  listActiveAccessMembers(): Promise<string[]>;
+  expireMemoryProposals(reason: string): Promise<number>;
+  listAwaitingMemoryProposals(limit: number): Promise<Array<Record<string, unknown>>>;
+  purgeMemoryProposals(retentionDays: number): Promise<number>;
   /** Every live page (of one source when given) with aliases and knowledge revision, by source then slug. */
   listLinkPageMetadata(sourceId?: string): Promise<LinkPageMetadataRow[]>;
   /** A page's stored non-event timeline rows, in no particular order. */

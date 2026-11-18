@@ -88,6 +88,8 @@ export const RUST_ENGINE_MEMBERS = {
   listLinkPageMetadata: 'pages',
   filterPagesAtRevision: 'pages',
   readDatabaseClock: 'pages',
+  listLinkEndpointPages: 'pages',
+  hasExtractedEvents: 'pages',
   // sources
   getSource: 'sources',
   listSourceLocalPaths: 'sources',
@@ -103,6 +105,10 @@ export const RUST_ENGINE_MEMBERS = {
   getSourceStrictness: 'sources',
   listAllSources: 'sources',
   updateSourceConfig: 'sources',
+  readSourceState: 'sources',
+  readAdmissionSource: 'sources',
+  sharedSkillPackTablePresent: 'sources',
+  listSharedSkillPackRoots: 'sources',
   // config
   getConfigValues: 'config',
   getConfig: 'config',
@@ -307,8 +313,12 @@ export const RUST_ENGINE_MEMBERS = {
   lockWriteRequest: 'persistence_journal',
   completeWriteRow: 'persistence_journal',
   readLedgerSource: 'persistence_journal',
+  expireMemoryProposals: 'persistence_journal',
+  listAwaitingMemoryProposals: 'persistence_journal',
+  purgeMemoryProposals: 'persistence_journal',
   // access_control
   isFolderRestricted: 'access_control',
+  listActiveAccessMembers: 'access_control',
   // minion_queue (the Rust plan ships cycle locks with the minion queue: docs/designs/RUST_ENGINE.md, "Cycle locks")
   acquireCycleLock: 'minion_queue',
   refreshCycleLock: 'minion_queue',
