@@ -65,6 +65,7 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
     crate::extraction::remove_source_rows(tx, source_id)?;
     crate::trust::remove_source_rows(tx, source_id)?;
     crate::facts::loops::remove_source_rows(tx, source_id)?;
+    crate::eval_capture::calibration_profiles::remove_source_rows(tx, source_id)?;
     Ok(())
 }
 

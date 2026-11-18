@@ -1,7 +1,7 @@
 /**
  * v0.36.1.0 (T12) — calibration doctor check tests.
  *
- * Hermetic. Mock engine + injected executeRaw responses.
+ * Hermetic. Mock engine + injected executeRaw responses (and typed profile members).
  *
  * Tests cover:
  *  - checkAbandonedThreads: zero count → ok; non-zero → ok with count
@@ -10,7 +10,7 @@
  *  - checkGradeConfidenceDrift: < 30 applied → ok ("math arrives in v0.37+");
  *    >= 30 → ok placeholder
  *  - checkVoiceGateHealth: 0 in window → ok; high fail rate → warn
- *  - all checks return status='warn' with diagnostic on executeRaw throw
+ *  - all checks return status='warn' with diagnostic on an engine throw
  */
 
 import { describe, test, expect } from 'bun:test';
@@ -45,21 +45,19 @@ function buildMockEngine(opts: {
       if (sql.includes('FROM takes')) {
         return [{ count: opts.abandonedCount ?? 0 } as unknown as T];
       }
-      if (sql.includes('FROM calibration_profiles WHERE holder')) {
-        return [{ generated_at: opts.freshGeneratedAt ?? null } as unknown as T];
-      }
       if (sql.includes('FROM take_grade_cache')) {
         return [{ applied_count: opts.gradeAppliedCount ?? 0 } as unknown as T];
       }
-      if (sql.includes('FROM calibration_profiles\n         WHERE generated_at')) {
-        return [
-          {
-            total: opts.voiceTotal ?? 0,
-            failures: opts.voiceFailures ?? 0,
-          } as unknown as T,
-        ];
-      }
       return [] as T[];
+    },
+    // The profile reads are typed members; `throwOn` matches their names the way it matches SQL text.
+    async getLatestCalibrationProfile() {
+      if (opts.throwOn?.test('getLatestCalibrationProfile')) throw new Error('mock engine error: getLatestCalibrationProfile');
+      return opts.freshGeneratedAt ? { generated_at: opts.freshGeneratedAt } : null;
+    },
+    async readVoiceGateHealth() {
+      if (opts.throwOn?.test('readVoiceGateHealth')) throw new Error('mock engine error: readVoiceGateHealth');
+      return { total: opts.voiceTotal ?? 0, failures: opts.voiceFailures ?? 0 };
     },
   } as unknown as BrainEngine;
 }
@@ -123,7 +121,7 @@ describe('checkCalibrationFreshness', () => {
 
   test('engine throw → warn with diagnostic', async () => {
     const out = await checkCalibrationFreshness(
-      buildMockEngine({ throwOn: /FROM calibration_profiles WHERE holder/ }),
+      buildMockEngine({ throwOn: /getLatestCalibrationProfile/ }),
     );
     expect(out.status).toBe('warn');
     expect(out.message).toContain('Could not check calibration freshness');
@@ -184,7 +182,7 @@ describe('checkVoiceGateHealth', () => {
 
   test('engine throw → warn with diagnostic', async () => {
     const out = await checkVoiceGateHealth(
-      buildMockEngine({ throwOn: /WHERE generated_at/ }),
+      buildMockEngine({ throwOn: /readVoiceGateHealth/ }),
     );
     expect(out.status).toBe('warn');
     expect(out.message).toContain('Could not check voice gate health');

@@ -991,6 +991,17 @@ Captured eval candidates and capture failures.
   - `code-eval-salience.test.ts`: listEvalCandidates since-window and deleteEvalCandidatesBefore split old from new rows
   - `code-eval-salience.test.ts`: logEvalCaptureFailure records reasons; listEvalCaptureFailures filters by since
 
+### calibration_profiles
+
+Generated calibration profiles per holder and source (decide family, group B). Shares the eval_capture tag and capability.
+
+- **Files:** `gbrain-store/src/eval_capture/calibration_profiles.rs`, `gbrain-napi/src/families/calibration_profiles.rs`, `store-members/calibration-profiles.ts`; the SQL is `src/core/engine-sql/calibration-profiles.ts`. Detail: `rust/docs/store/calibration-profiles.md`.
+- **Tag:** `Z` (`EVAL_CAPTURE`), sub-tags `0x20` (record) and `0x21` (newest-first index). Cascade on source delete: the store removes the source's rows (`remove_source_rows`, unit-tested only: the Rust store serves no source delete yet).
+- **Members (5), capability:** `eval_capture` (5): `getLatestCalibrationProfile`, `isCalibrationProfileUnchanged`, `insertCalibrationProfile`, `readVoiceGateHealth`, `purgeCalibrationProfilesByWave`.
+- **Postgres tables:** `calibration_profiles`.
+- **Parity cases (5, in `calibration-profiles.test.ts`):** newest profile with filters and id tie-break; unchanged check (REAL-rounded, NULL-safe); insert defaults and refusals that write nothing; voice-gate health over the 7-day window; wave purge dry run and delete.
+- **Notes:** The other undo-wave statements (takes, take_grade_cache, take_nudge_log) stay raw SQL and refuse on a Rust brain.
+
 ### code_edges
 
 Code call edges between chunks and symbols.

@@ -32,7 +32,8 @@ export interface CalibrationProfileRow {
   source_id: string;
   holder: string;
   wave_version: string;
-  generated_at: string;
+  /** A `Date` from the engine (`new Date(...)` accepts both). */
+  generated_at: Date | string;
   published: boolean;
   total_resolved: number;
   brier: number | null;
@@ -51,31 +52,13 @@ export async function getLatestProfile(
   engine: BrainEngine,
   opts: { holder: string; sourceId?: string; sourceIds?: string[] },
 ): Promise<CalibrationProfileRow | null> {
-  let sql = `SELECT id, source_id, holder, wave_version, generated_at, published,
-            total_resolved, brier, accuracy, partial_rate, grade_completion,
-            pattern_statements, active_bias_tags,
-            voice_gate_passed, voice_gate_attempts, model_id
-       FROM calibration_profiles
-       WHERE holder = $1`;
-  const params: unknown[] = [opts.holder];
-
-  if (opts.sourceIds && opts.sourceIds.length > 0) {
-    sql += ` AND source_id = ANY($2::text[])`;
-    params.push(opts.sourceIds);
-  } else if (opts.sourceId) {
-    sql += ` AND source_id = $2`;
-    params.push(opts.sourceId);
-  }
-
-  sql += ` ORDER BY generated_at DESC LIMIT 1`;
-
-  const rows = await engine.executeRaw<CalibrationProfileRow>(sql, params);
-  if (!rows[0]) return null;
-  // `id` is BIGSERIAL → the pg driver returns it as a JS bigint, which crashes
-  // JSON.stringify on the --json / MCP output paths once a row exists. Coerce to
-  // string — matches the postgres.js int8 wire shape (and cli.ts's ENG-2
-  // "bigint → string" contract); String() has no 2^53 ceiling, unlike Number().
-  return { ...rows[0], id: String(rows[0].id) };
+  // The typed member reads the row (`sourceIds` wins when non-empty, else `sourceId`); it returns `id` as text and
+  // `generated_at` as a `Date`.
+  const row = await engine.getLatestCalibrationProfile({
+    holder: opts.holder,
+    ...(opts.sourceIds && opts.sourceIds.length > 0 ? { sourceIds: opts.sourceIds } : { sourceId: opts.sourceId || undefined }),
+  });
+  return row as CalibrationProfileRow | null;
 }
 
 /** Human format the profile for terminal output. */

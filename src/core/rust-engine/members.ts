@@ -635,6 +635,12 @@ export const RUST_ENGINE_MEMBERS = {
   listTakeSupersessionCandidates: 'takes',
   countZeroWeightWithTakes: 'salience',
   hasCodeEdgesSymbol: 'code_edges',
+  // Decide family, group B: calibration profiles (the eval_capture capability serves the decide family's Z-tag records).
+  getLatestCalibrationProfile: 'eval_capture',
+  isCalibrationProfileUnchanged: 'eval_capture',
+  insertCalibrationProfile: 'eval_capture',
+  readVoiceGateHealth: 'eval_capture',
+  purgeCalibrationProfilesByWave: 'eval_capture',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;

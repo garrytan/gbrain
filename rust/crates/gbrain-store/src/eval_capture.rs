@@ -8,6 +8,8 @@
 //! - `Z 0x01 <candidate id u64 BE>` -> `CandidateRecord` (JSON).
 //! - `Z 0x02 <failure id u64 BE>` -> `FailureRecord` (JSON).
 //! - Id counters: `M next_eval_candidate_id`, `M next_eval_failure_id`.
+//! - `Z 0x20` and `Z 0x21`: the `calibration_profiles` table, a child module
+//!   (`eval_capture/calibration_profiles.rs`, rust/docs/store/calibration-profiles.md).
 //!
 //! Both tables are small logs read whole: the list members scan every record of their table,
 //! filter, and sort `created_at DESC, id DESC` (candidates) or `ts DESC, id DESC` (failures).
@@ -22,6 +24,8 @@
 //! one of the candidate's sources (any source when it names none), as PGLite does: an expired,
 //! superseded or consolidated fact, or one whose page is soft-deleted, still counts
 //! (`facts::fact_exists`).
+
+pub mod calibration_profiles;
 
 use crate::env::{iso, parse_iso};
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
