@@ -87,6 +87,14 @@ function refuseUnapplied(opts: SearchOpts): SearchOpts {
 
 export const searchVector: StoreMember<[embedding: Float32Array, opts?: SearchOpts], SearchResult[]> = async (brain, embedding, opts = {}) => {
   const o = takeOptions('searchVector', refuseUnapplied(opts), VECTOR_FILTERS, VECTOR_IGNORED) as SearchOpts;
+  const model = guardModel(o.embeddingColumn);
+  // The store keeps one vector column, `embedding`; a brain whose config routes vectors to another column is refused
+  // as the embedding members refuse it, not answered from the wrong space.
+  for (const key of ['search_embedding_column', 'embedding_columns']) {
+    if (await storeCall({ member: 'searchVector' }, () => brain.getConfig(key))) {
+      refuseMember('searchVector', `config ${key} selects another embedding column`);
+    }
+  }
   const cap = searchLimitCap();
   const limit = clampSearchLimit(o.limit, 20, cap);
   if (o.limit && o.limit > cap) {
@@ -103,7 +111,7 @@ export const searchVector: StoreMember<[embedding: Float32Array, opts?: SearchOp
     language: o.language || null,
     symbolKind: o.symbolKind || null,
     source_ids: sourceScope(o),
-    model: guardModel(o.embeddingColumn),
+    model,
     source_factors: sourceFactors(o.source_boosts ?? resolveBoostMap(), o.detail),
     require_safe_chunks: requiresSafeChunks(o),
   };
