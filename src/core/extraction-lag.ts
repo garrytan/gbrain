@@ -16,7 +16,7 @@ import { previewMentionPass } from './mentions/stale.ts';
 import { readMentionPolicy } from './mentions/policy.ts';
 import { resolveEnvNumber, warnOnceForEnv } from './env-number.ts';
 import { isMissingSchemaObject } from './utils.ts';
-import { managedPersistenceEnabled } from './persistence/ownership.ts';
+import { readManagedModeTyped } from './persistence/ownership.ts';
 import { resolveIncludeFrontmatter } from './extract-frontmatter.ts';
 import { LINK_HOLD_THRESHOLD_RUNS, linkExtractionRetryFix } from './persistence/links-extraction-holds.ts';
 
@@ -61,7 +61,7 @@ export async function readExtractionLag(engine: BrainEngine, opts: { sourceId?: 
 async function readLagRow(engine: BrainEngine, opts: { sourceId?: string; timeoutMs?: number }) {
   // #9295: count the wanted rows the configured sweep re-resolves (a managed or frontmatter sweep: every producer). The
   // managed-mode read needs no config, so it goes out with the config read rather than one round trip before the count.
-  const [versionTs, managed] = await Promise.all([effectiveLinkExtractorWatermark(engine), managedPersistenceEnabled(engine)]);
+  const [versionTs, managed] = await Promise.all([effectiveLinkExtractorWatermark(engine), readManagedModeTyped(engine)]);
   const wantedProducers = managed || await resolveIncludeFrontmatter(engine) ? undefined : ['body'];
   const read = async (attendance: boolean, held: boolean, guests: boolean) => {
     const { text, params } = extractionLagStatement({ sourceId: opts.sourceId, versionTs, attendance, held, guests, wantedProducers });
