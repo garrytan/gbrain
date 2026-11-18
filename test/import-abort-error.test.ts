@@ -27,6 +27,10 @@ const engineStub = {
   getConfig: async () => null,
   // The typed managed-mode read (import.ts) answers through this stub's own executeRaw, so `answering` overrides reach it.
   readManagedModeRows(this: { executeRaw: (sql: string) => Promise<unknown[]> }) { return this.executeRaw('SELECT enabled FROM persistence_brain'); },
+  // The guest-source gate (guests/admission.ts lookupGuestSource) reads one row: visible, and no guest_sources entry.
+  readGuestSourceRow: async () => ({ hidden: false, source_id: null, writers: null, trust_ceiling: null }),
+  // The company-brain profile read (company-brain/profile.ts): no receipt, so not a company brain.
+  hasCompanyBrainReceipt: async () => false,
 } as unknown as BrainEngine;
 
 // The CLI dispatch (src/cli/commands/import.ts) exits on any ImportAbortError
