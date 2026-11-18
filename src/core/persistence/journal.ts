@@ -1011,7 +1011,7 @@ export async function reclaimReleasedWrite(engine: BrainEngine, id: string, leas
 }
 
 /** In the SAME transaction as page publication. Counters are always before request locks. */
-export async function completeWrite(tx: SqlEngine & Pick<BrainEngine, 'lockPersistenceCounters' | 'lockWriteRequest' | 'completeWriteRow'>, row: WriteRequest, state: 'committed' | 'conflict' | 'failed' | 'cancelled',
+export async function completeWrite(tx: SqlEngine & Pick<BrainEngine, 'lockPersistenceCounters' | 'lockWriteRequest' | 'completeWriteRow' | 'declarePersistence'>, row: WriteRequest, state: 'committed' | 'conflict' | 'failed' | 'cancelled',
   outcome: Record<string, unknown>, error?: { code: string; message: string; detail?: unknown },
   /** #5984: the caller's transaction already declared the protocol, set synchronous_commit, locked these counters and this row FOR UPDATE. */
   locked?: WriteRequest): Promise<WriteRequest> {

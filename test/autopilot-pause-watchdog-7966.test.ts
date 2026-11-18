@@ -13,6 +13,7 @@ import { MinionWorker } from '../src/core/minions/worker.ts';
 import { computeWedgedQueueCheck } from '../src/commands/doctor.ts';
 import { waitFor } from './helpers/wait-for.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { withQueueMembers } from './helpers/queue-engine-members.ts';
 
 let engine: PGLiteEngine;
 const dirs: string[] = [];
@@ -138,7 +139,7 @@ describe('worker watchdog under an autopilot pause (#7966)', () => {
 });
 
 describe('doctor wedged_queue under an autopilot pause (#7966)', () => {
-  const pgLike = () => ({ kind: 'postgres', executeRaw: engine.executeRaw.bind(engine) }) as unknown as BrainEngine;
+  const pgLike = () => withQueueMembers({ kind: 'postgres', executeRaw: engine.executeRaw.bind(engine) }) as unknown as BrainEngine;
   async function seedWedged(): Promise<void> {
     for (const [status, updated] of [['waiting', 'now()'], ['completed', "now() - interval '20 min'"]] as const) {
       await engine.executeRaw(

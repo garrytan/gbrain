@@ -1,8 +1,12 @@
+import type { BrainEngine } from '../engine.ts';
+import { BRAIN_SHARE } from '../engine-sql/persistence-declaration.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { readPersistenceBrain } from './managed-mode.ts';
 
 const declared = new WeakSet<object>();
+/** An engine that can declare the protocol (BrainEngine declarePersistence; engine-sql/persistence-declaration.ts holds the text). */
+export type DeclaringEngine = Pick<BrainEngine, 'declarePersistence'>;
 /**
  * Global persistence lock order: the `persistence_brain` row, then worktree
  * rows (id order), then source rows (id order), then counters, requests and
@@ -15,14 +19,13 @@ const declared = new WeakSet<object>();
  * statement as its settings (a missing row still declares). Declare before
  * any other row lock. A transaction needing the exclusive brain lock takes it
  * first and declares after it.
+ *
+ * Transaction-local; #5984: a transaction engine declares it once (a savepoint is its own engine object).
  */
-const BRAIN_SHARE = '(SELECT brain_id::text FROM persistence_brain WHERE singleton=1 FOR SHARE) AS brain';
-
-/** Transaction-local; #5984: a transaction engine declares it once (a savepoint is its own engine object). */
-export async function declarePersistenceProtocol(tx: SqlEngine): Promise<void> {
+export async function declarePersistenceProtocol(tx: DeclaringEngine): Promise<void> {
   const inTransaction = (tx as { _pageTransaction?: boolean })._pageTransaction === true;
   if (inTransaction && declared.has(tx)) return;
-  await tx.executeRaw(`SELECT set_config('gbrain.persistence_protocol','2',true),${BRAIN_SHARE}`);
+  await tx.declarePersistence();
   if (inTransaction) declared.add(tx);
 }
 
@@ -36,13 +39,11 @@ export async function declarePersistenceProtocol(tx: SqlEngine): Promise<void> {
  * Returns the brain id read under that lock (null when the row is missing). `idleInTransaction` also sets a
  * transaction-local idle bound in the same statement, first (a publication's, publication-deadline.ts).
  */
-export async function declareDurablePersistence(tx: SqlEngine, lockTimeout = '1s', statementTimeout = '5s', idleInTransaction?: string): Promise<string | null> {
-  const idle = idleInTransaction === undefined ? '' : "set_config('idle_in_transaction_session_timeout',$3,true),";
-  const [row] = await tx.executeRaw<{ brain: string | null }>(`SELECT ${idle}set_config('gbrain.persistence_protocol','2',true),set_config('synchronous_commit','on',true),
-    set_config('lock_timeout',$1,true),set_config('statement_timeout',$2,true),${BRAIN_SHARE}`,
-    idleInTransaction === undefined ? [lockTimeout, statementTimeout] : [lockTimeout, statementTimeout, idleInTransaction]);
+export async function declareDurablePersistence(tx: DeclaringEngine, lockTimeout = '1s', statementTimeout = '5s', idleInTransaction?: string): Promise<string | null> {
+  const brain = await tx.declarePersistence({ durable: idleInTransaction === undefined
+    ? { lockTimeout, statementTimeout } : { lockTimeout, statementTimeout, idleInTransaction } });
   if ((tx as { _pageTransaction?: boolean })._pageTransaction === true) declared.add(tx);
-  return row?.brain ?? null;
+  return brain;
 }
 
 const LOCAL_SETTING = String.raw`set_config\('[a-z_.]+',(?:\$\d+|'[^']*'),true\)`;

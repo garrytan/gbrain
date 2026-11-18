@@ -202,11 +202,7 @@ function ambiguityFix(page: TakePage, ambiguous: SupersessionAnalysis['ambiguous
 }
 
 async function candidatePages(engine: BrainEngine, sourceIds: string[], after: RepairCursor | null): Promise<TakePage[]> {
-  const pages = await engine.executeRaw<TakePage>(
-    `SELECT p.id, p.source_id, p.slug FROM pages p
-      WHERE p.source_id = ANY($1::text[]) AND p.deleted_at IS NULL
-        AND EXISTS (SELECT 1 FROM takes t WHERE t.page_id = p.id AND (t.active = false OR t.source ILIKE '%superseded by #%'))
-      ORDER BY p.id`, [sourceIds]);
+  const pages: TakePage[] = await engine.listTakeSupersessionCandidates(sourceIds);
   return pages.filter(page => afterCursor({ phase: 0, id: page.id }, after));
 }
 

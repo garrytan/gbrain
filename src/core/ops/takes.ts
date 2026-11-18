@@ -23,7 +23,7 @@ import {
 } from './context.ts';
 import { embedQueryWithPrefix } from '../search/query-prefix.ts';
 import { ALL_SOURCES } from '../source-id.ts';
-import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { keepRoomEvidence } from '../access/room.ts';
 
 /** Result pages whose takes D2 checks: the page a get_page read returned, or the first distinct pages of a search/query. */
@@ -257,29 +257,13 @@ const takes_calibration: Operation = {
  */
 async function countMcpResolved(ctx: OperationContext): Promise<number> {
   const scope = await readPolicyOpts(ctx);
-  const where: string[] = [`t.resolved_at IS NOT NULL`, `t.resolved_by LIKE 'mcp:%'`];
-  if (scope.excludePrivate) where.push(privatePagesFilterForCaller('p'));
-  const params: unknown[] = [];
-  if (scope.sourceIds && scope.sourceIds.length > 0) {
-    params.push(scope.sourceIds);
-    where.push(`p.source_id = ANY($${params.length}::text[])`);
-  } else if (scope.sourceId) {
-    params.push(scope.sourceId);
-    where.push(`p.source_id = $${params.length}`);
-  }
-  const holders = readHolders(ctx);
-  if (holders !== undefined) {
-    params.push(holders);
-    where.push(`t.holder = ANY($${params.length}::text[])`);
-  }
+  const sourceIds = scope.sourceIds && scope.sourceIds.length > 0 ? scope.sourceIds : scope.sourceId ? [scope.sourceId] : null;
+  const holders = readHolders(ctx) ?? null;
   try {
-    const rows = await ctx.engine.executeRaw<{ n: string }>(
-      `SELECT count(*)::text AS n FROM takes t JOIN pages p ON p.id = t.page_id WHERE ${where.join(' AND ')}`,
-      params,
-    );
-    return parseInt(rows[0]?.n ?? '0', 10);
-  } catch {
-    // Decoration only — never fail the aggregate over the provenance count.
+    return await ctx.engine.countMcpResolvedTakes({ sourceIds, holders, excludePrivate: !!scope.excludePrivate });
+  } catch (e) {
+    // Decoration only — never fail the aggregate over the provenance count, except for an engine that cannot serve it.
+    rethrowCapabilityRefusal(e);
     return 0;
   }
 }

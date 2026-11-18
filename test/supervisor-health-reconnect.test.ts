@@ -14,6 +14,7 @@ import { MinionSupervisor } from '../src/core/minions/supervisor.ts';
 import { OwnerProcessingState, writeWorkerProcessingStatus } from '../src/core/minions/processing-state.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { withQueueMembers } from './helpers/queue-engine-members.ts';
 
 type Emission = { event: string; reason?: string; [k: string]: unknown };
 
@@ -25,7 +26,7 @@ const healthyRow = [{
 function harness(opts: { reconnect?: () => Promise<void> } = {}) {
   const events: Emission[] = [];
   const state = { healthy: false, reconnects: 0, pending: null as null | ((e: Error) => void) };
-  const engine = {
+  const engine = withQueueMembers({
     kind: 'postgres',
     async executeRaw() {
       if (state.healthy) return healthyRow;
@@ -35,7 +36,7 @@ function harness(opts: { reconnect?: () => Promise<void> } = {}) {
       state.reconnects++;
       if (opts.reconnect) await opts.reconnect();
     },
-  } as unknown as BrainEngine;
+  }) as unknown as BrainEngine;
   const sup = new MinionSupervisor(engine, {
     cliPath: '/bin/true',
     maxRssMb: 0,

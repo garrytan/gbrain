@@ -34,14 +34,14 @@ export function hiddenFenceRows(existing: FencePage): Set<number> {
 }
 
 /** The page's stored canonical rows (row number to claim) for prior-aware renumbering. */
-export async function storedFenceRows(engine: Pick<BrainEngine, 'executeRaw' | 'listStoredFenceFactRows'>, sourceId: string, slug: string, pageId: number | null): Promise<StoredRowMap> {
+export async function storedFenceRows(engine: Pick<BrainEngine, 'executeRaw' | 'listStoredFenceFactRows' | 'listTakeRowsForPage'>, sourceId: string, slug: string, pageId: number | null): Promise<StoredRowMap> {
   const facts = await engine.listStoredFenceFactRows(sourceId, slug);
-  const takes = pageId === null ? [] : await engine.executeRaw<{ row_num: number; claim: string }>('SELECT row_num, claim FROM takes WHERE page_id=$1', [pageId]);
+  const takes = pageId === null ? [] : await engine.listTakeRowsForPage(pageId);
   return { facts: new Map(facts.map(r => [Number(r.row_num), r.fact])), takes: new Map(takes.map(r => [Number(r.row_num), r.claim])) };
 }
 
 export interface ImportFenceInput {
-  engine: Pick<BrainEngine, 'executeRaw' | 'listStoredFenceFactRows'>;
+  engine: Pick<BrainEngine, 'executeRaw' | 'listStoredFenceFactRows' | 'listTakeRowsForPage'>;
   sourceId: string;
   slug: string;
   /** The sections as they will be stored (after text sanitizing). */
@@ -100,7 +100,7 @@ export async function applyImportFences(input: Omit<Parameters<typeof resolveImp
  * when it has something to rewrite.
  */
 export async function resolveImportFences(input: {
-  engine: Pick<BrainEngine, 'executeRaw' | 'listStoredFenceFactRows' | 'getConfig' | 'isFolderRestricted'>; sourceId: string; slug: string; mode: 'coordinated' | 'lenient';
+  engine: Pick<BrainEngine, 'executeRaw' | 'listStoredFenceFactRows' | 'listTakeRowsForPage' | 'getConfig' | 'isFolderRestricted'>; sourceId: string; slug: string; mode: 'coordinated' | 'lenient';
   screened: FenceScreen | null | undefined; screen: FenceScreen | undefined;
   parsed: Pick<ParsedMarkdown, 'compiled_truth' | 'timeline' | 'type' | 'frontmatter'>; activePack?: ParseOpts['activePack'];
   existing: (FencePage & { id: number }) | null; remote: boolean;
@@ -133,7 +133,7 @@ export async function resolveImportFences(input: {
  * and the issues; a residual only in the other kind leaves the page as it is,
  * as the verb never reads that fence.
  */
-export async function normalizeTargetFences(engine: Pick<BrainEngine, 'executeRaw' | 'listStoredFenceFactRows' | 'getConfig' | 'isFolderRestricted'>, input: StoredPageInput & { kind: FenceKind }): Promise<{ page: FencePage; fixes: FenceFix[] }> {
+export async function normalizeTargetFences(engine: Pick<BrainEngine, 'executeRaw' | 'listStoredFenceFactRows' | 'listTakeRowsForPage' | 'getConfig' | 'isFolderRestricted'>, input: StoredPageInput & { kind: FenceKind }): Promise<{ page: FencePage; fixes: FenceFix[] }> {
   const { page, step } = await storedPageStep(engine, input);
   if (step.status === 'normalized') return { page: step.page, fixes: step.fixes };
   if (step.status === 'clean') return { page, fixes: [] };
@@ -147,7 +147,7 @@ export async function normalizeTargetFences(engine: Pick<BrainEngine, 'executeRa
 interface StoredPageInput { sourceId: string; slug: string; page: FencePage & { id: number; type?: string | null; frontmatter?: unknown } }
 
 /** Tier 1 over a page body the caller is about to write (switch read only when there is a fix; stored rows only for `renumber`). */
-async function storedPageStep(engine: Pick<BrainEngine, 'executeRaw' | 'listStoredFenceFactRows' | 'getConfig' | 'isFolderRestricted'>, input: StoredPageInput): Promise<{ page: FencePage; step: FenceStep<FencePage> }> {
+async function storedPageStep(engine: Pick<BrainEngine, 'executeRaw' | 'listStoredFenceFactRows' | 'listTakeRowsForPage' | 'getConfig' | 'isFolderRestricted'>, input: StoredPageInput): Promise<{ page: FencePage; step: FenceStep<FencePage> }> {
   const page = { compiled_truth: input.page.compiled_truth ?? '', timeline: input.page.timeline ?? '', slug: input.slug };
   const ctx: FenceCtx = { pageVisibility: effectiveVisibility({ kind: 'page', page: { type: input.page.type ?? null, frontmatter: input.page.frontmatter,
     folder_restricted: await folderRestricted(engine, input.sourceId, input.slug) } }) };
@@ -160,7 +160,7 @@ async function storedPageStep(engine: Pick<BrainEngine, 'executeRaw' | 'listStor
 }
 
 /** #6188: Tier 1 before a maintenance writer compiles a body (synthesize verify); null when nothing changed or a fence stays residual. */
-export async function normalizePageFences(engine: Pick<BrainEngine, 'executeRaw' | 'listStoredFenceFactRows' | 'getConfig' | 'isFolderRestricted'>, input: StoredPageInput): Promise<{ page: FencePage; fixes: FenceFix[] } | null> {
+export async function normalizePageFences(engine: Pick<BrainEngine, 'executeRaw' | 'listStoredFenceFactRows' | 'listTakeRowsForPage' | 'getConfig' | 'isFolderRestricted'>, input: StoredPageInput): Promise<{ page: FencePage; fixes: FenceFix[] } | null> {
   const { step } = await storedPageStep(engine, input);
   return step.status === 'normalized' ? { page: step.page, fixes: step.fixes } : null;
 }

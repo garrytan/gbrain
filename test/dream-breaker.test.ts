@@ -107,7 +107,7 @@ describe('dead-submission counter', () => {
 
   test('a failing count query leaves the breaker off for the run', async () => {
     const broken = new Proxy(engine, { get(target, key) {
-      if (key === 'executeRaw') return async () => { throw new Error('pool reaped'); };
+      if (key === 'executeRaw' || key === 'countDeadDreamSubmissionRows') return async () => { throw new Error('pool reaped'); };
       const value = Reflect.get(target, key);
       return typeof value === 'function' ? value.bind(target) : value;
     } });

@@ -75,7 +75,8 @@ function fakeEngine(opts: FakeEngineOpts = {}): BrainEngine {
       if (key === 'version') return opts.schemaVersion ?? String(LATEST_VERSION);
       return null; // schema_pack → default resolution; everything else unset
     },
-    executeRaw: async (): Promise<unknown[]> => [], // minion_jobs, chronicle gap, mcp-client-fit → quiet
+    executeRaw: async (): Promise<unknown[]> => [], // chronicle gap, mcp-client-fit → quiet
+    listStuckActiveJobsByName: async () => [], // collect-stalled-jobs' stuck-jobs arm → quiet
     // collect-stalled-jobs' stale-sync arm (the deterministic `info` lever): sources last synced 30 days ago.
     ...stubSourceMembers((opts.staleSyncIds ?? []).map((id) => ({ id, last_sync_at: new Date(Date.now() - 30 * 86400_000) }))),
     getStats: async () => ({

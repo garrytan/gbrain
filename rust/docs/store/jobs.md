@@ -2,11 +2,16 @@
 
 Part of the store contract in [rust/README.md](../../README.md) ("The brain store"): the rules there apply to every method here.
 
+The doctor's job checks (ten typed reads over the same rows) are in [jobs-checks.md](jobs-checks.md).
+
 The `minion_jobs` lifecycle the queue (`src/core/minions/queue.ts`) reaches through typed engine members,
 the `minion_inbox` and `minion_attachments` rows, and the `gbrain_cycle_locks` leases. The SQL engines run the
 statements in `src/core/engine-sql/jobs.ts` and `cycle-locks.ts`; this store runs the same rules on its own
 records. Timestamps cross the binding as ISO strings; the TypeScript members
 (`src/core/rust-engine/store-members/jobs.ts`) turn them into `Date`s, as PGLite returns them.
+
+The queue health reads (the doctor's queue checks, the advisor's stalled jobs and the submit-time probe) are in [jobs-health.md](jobs-health.md).
+The status reads (counts, last runs, windows) are in [jobs-status.md](jobs-status.md).
 
 Keys, under the family tag `keys::JOBS` (`m`):
 
@@ -80,6 +85,7 @@ said.
 | `brain.listUnreviewedJobs()` / `getFailedJobForRetry(id)` | `{ id, submission_authority }` of live rows whose authority is not exactly the application one (NULL included); `{ name, data }` of a `failed`/`dead` row |
 | `brain.readJobSourceState(sourceId)` | `{ archived, created_at }` (`created_at` ISO) of the source an agent job was accepted against, or null for an unknown id; the job authority check (`assertCurrentAgent`) denies the job when the source is gone, archived or created again after acceptance |
 | `brain.countOpenJobsByOwner(clientId)` | how many `subagent` rows in a non-terminal status (`waiting`, `active`, `delayed`, `waiting-children`, `paused`), in any queue, have `data->>'__owner_client_id'` equal to `clientId` (a number owner matches its text; a null owner matches nothing) |
+| `brain.readJobInsight(spec)` | the six reads behind `describeJobs`: submitter, queue position, slot holders, live children, live leases with their beacon, foreign-owner tokens; see [jobs-insight.md](jobs-insight.md) |
 | `brain.listJobPage({ status?, queue?, name?, ownerClientId?, ownerActor?, limit, cursor })` | rows with `created_us`, newest first by `(created_at, id)`, after the `{ micros, id }` cursor |
 | `brain.listJobAttachmentNames(jobId)` / `insertJobAttachment(jobId, input)` / `listJobAttachments(jobId)` / `getJobAttachment(jobId, filename)` / `deleteJobAttachment(jobId, filename)` | names (null for a missing job); the metadata; metadata by `(created_at, id)`; metadata plus `content_b64`, or null; whether a row went. A missing job, a negative size or a repeated filename (`uniq_minion_attachments_job_filename`) is `constraint_violation` |
 
@@ -97,6 +103,9 @@ reads, `countOpenJobsByOwner` and `readJobSourceState` come from the store. The 
 `MinionQueue.retryJob` runs the job authority check first. An application job needs no read. An agent job
 (`remote_agent`) reads its source with `readJobSourceState`, so a source that is gone, archived or created again
 is denied on the store as on PGLite; a current source goes on to the owner's `oauth_clients` read, which refuses.
+The archived-source branch is pinned by cargo only (`job_source_state_reads_archived_and_the_creation_stamp` in
+`tests/jobs_slice2.rs`). The parity suite cannot reach it: no member the Rust engine serves archives a source, so
+a mutant that always reads `archived` as false passes parity and fails cargo.
 A generic remote job (`remote_generic`) reads its principal first (`SELECT client_id, deleted_at, scope, source_id,
 bound_slug_prefixes, surface, allowed_operations FROM oauth_clients WHERE client_id = $1`, or `SELECT * FROM
 access_tokens WHERE id = $1` for a legacy token), so its retry refuses at that read until the grants family is in

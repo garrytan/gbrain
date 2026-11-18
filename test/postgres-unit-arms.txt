@@ -145,7 +145,11 @@ test/engine-parity/field-usage.test.ts
 test/engine-parity/import-members.test.ts
 test/engine-parity/import-path.test.ts
 test/engine-parity/import-writes.test.ts
+test/engine-parity/jobs-checks.test.ts
+test/engine-parity/jobs-health.test.ts
+test/engine-parity/jobs-insight.test.ts
 test/engine-parity/jobs-queue.test.ts
+test/engine-parity/jobs-status.test.ts
 test/engine-parity/jobs.test.ts
 test/engine-parity/lifecycle.test.ts
 test/engine-parity/link-reads.test.ts
@@ -153,6 +157,7 @@ test/engine-parity/link-temporal.test.ts
 test/engine-parity/links.test.ts
 test/engine-parity/open-loops.test.ts
 test/engine-parity/pages.test.ts
+test/engine-parity/persistence-declaration.test.ts
 test/engine-parity/persistence.test.ts
 test/engine-parity/private-page-reads.test.ts
 test/engine-parity/raw-sql.test.ts
@@ -169,6 +174,7 @@ test/engine-parity/telemetry.test.ts
 test/engine-parity/timeline-reads.test.ts
 test/engine-parity/timeline.test.ts
 test/engine-parity/transaction-settings.test.ts
+test/engine-parity/traversal-cache.test.ts
 test/engine-parity/trust-fence.test.ts
 test/engine-parity/trust-proposals.test.ts
 test/engine-parity/trust-withdrawals.test.ts
