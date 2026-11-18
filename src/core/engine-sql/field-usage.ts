@@ -7,6 +7,8 @@
  * segments) is sampled with a null body, which the caller reads as empty. Each value is a bound parameter.
  */
 import type { LegacyUnscopedRead } from './brands.ts';
+import { sqlFragment } from './fragment.ts';
+import { rows } from './search-reads.ts';
 
 export interface FieldUsageQuery {
   /** One source; omitted reads the whole brain. */
@@ -34,24 +36,19 @@ function frontmatterObject(value: unknown): Record<string, unknown> {
  * id in the answer.
  */
 export async function readFieldUsageSamples(exec: LegacyUnscopedRead, query: FieldUsageQuery): Promise<FieldUsageTypeSample[]> {
-  const scoped = query.sourceId !== undefined && query.sourceId !== '';
-  const scope = scoped ? 'AND pages.source_id = $1' : '';
-  const params: unknown[] = scoped ? [query.sourceId] : [];
-  const types = await exec.executeRaw<{ type: string; pages: number }>(
-    `SELECT pages.type, count(*)::int AS pages FROM pages
-      WHERE pages.deleted_at IS NULL AND coalesce(pages.type, '') <> '' ${scope}
-      GROUP BY pages.type ORDER BY count(*) DESC, pages.type COLLATE "C" LIMIT $${params.length + 1}`,
-    [...params, Math.max(0, Math.floor(query.maxTypes))]);
+  const scope = query.sourceId !== undefined && query.sourceId !== ''
+    ? sqlFragment` AND pages.source_id = ${query.sourceId}` : sqlFragment``;
+  const types = await rows<{ type: string; pages: number }>(exec, sqlFragment`SELECT pages.type, count(*)::int AS pages FROM pages
+      WHERE pages.deleted_at IS NULL AND coalesce(pages.type, '') <> ''${scope}
+      GROUP BY pages.type ORDER BY count(*) DESC, pages.type COLLATE "C" LIMIT ${Math.max(0, Math.floor(query.maxTypes))}`);
   const sample = Math.max(1, Math.floor(query.samplePerType));
   const out: FieldUsageTypeSample[] = [];
   for (const { type, pages } of types) {
-    const rows = await exec.executeRaw<{ frontmatter: unknown; compiled_truth: string | null }>(
-      `SELECT pages.frontmatter, pages.compiled_truth FROM pages
-        WHERE pages.deleted_at IS NULL AND pages.type = $${params.length + 1} ${scope}
-        ORDER BY pages.id LIMIT $${params.length + 2}`,
-      [...params, type, sample]);
+    const sampled = await rows<{ frontmatter: unknown; compiled_truth: string | null }>(exec, sqlFragment`SELECT pages.frontmatter, pages.compiled_truth FROM pages
+        WHERE pages.deleted_at IS NULL AND pages.type = ${type}${scope}
+        ORDER BY pages.id LIMIT ${sample}`);
     out.push({ type: String(type), pages: Number(pages),
-      rows: rows.map((r) => ({ frontmatter: frontmatterObject(r.frontmatter), compiled_truth: r.compiled_truth ?? null })) });
+      rows: sampled.map((r) => ({ frontmatter: frontmatterObject(r.frontmatter), compiled_truth: r.compiled_truth ?? null })) });
   }
   return out;
 }
