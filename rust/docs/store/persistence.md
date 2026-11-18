@@ -103,6 +103,22 @@ The consumer's housekeeping after a write (`persistence-housekeeping.ts`).
 | `brain.listPendingSegmentedProjections(filter)` | the queued jobs of segmented pages that a projector can take now, as `listPendingSegmentedProjections` returns them | `listPendingSegmentedProjections` |
 | `brain.selectProjectionWindowJobs(cursor, retryCooldown)` | the window rows (the recency lane, then the wrapped key-order lane), with `high_water` as Postgres prints a `timestamptz`; the one row of nulls for an empty queue | `selectProjectionWindowJobs` |
 
+## Effect scans
+
+The effect worker's reads before and when it claims effects (`persistence-effect-scans.ts`). Each one joins
+`persistence_effects` to the worktrees the host owns. This engine keeps no worktree and records no
+effect, so each scan answers no row. The arguments are checked as the Postgres casts check them: a host
+id that is not a uuid refuses with `invalid input syntax for type uuid: "<id>"`, an `after` that is
+not a bigint with `invalid input syntax for type bigint: "<after>"` (or `value "<after>" is out of range
+for type bigint`), a fractional limit with the same bigint syntax message and a negative limit with
+`LIMIT must not be negative`.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.listGatedMirrorRequests(hostId)` | `[]`: no withdrawal mirror is parked on a worktree here. The gate and allowed codes change nothing, so they are not sent | `listGatedMirrorRequests` |
+| `brain.listEffectRecoveries(hostId, after, limit)` | `[]`: no effect carries a recovery on a worktree here | `listEffectRecoveries` |
+| `brain.selectClaimableEffect(hostId)` | `null`: no effect is recorded here, so none is claimable. The dead owner keys change nothing, so they are not sent | `selectClaimableEffect` |
+
 ## Projection queue
 
 Every page write updates the queue in the same store transaction, as PGLite's

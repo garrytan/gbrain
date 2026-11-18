@@ -124,6 +124,7 @@ test/enforced-member-writes-setting.serial.test.ts
 test/enforced-member-writes.serial.test.ts
 test/enforced-member.serial.test.ts
 test/engine-parity/alias-fanout-reads.test.ts
+test/engine-parity/alias-trust.test.ts
 test/engine-parity/chunk-reads.test.ts
 test/engine-parity/chunks.test.ts
 test/engine-parity/cli-capabilities.test.ts
@@ -133,14 +134,17 @@ test/engine-parity/code-eval-salience.test.ts
 test/engine-parity/config-ingest.test.ts
 test/engine-parity/connect-gate.test.ts
 test/engine-parity/cycle-locks.test.ts
+test/engine-parity/effect-scans.test.ts
 test/engine-parity/entity-reads.test.ts
 test/engine-parity/extraction.test.ts
+test/engine-parity/fact-relink-attempts.test.ts
 test/engine-parity/facts-cycle.test.ts
 test/engine-parity/facts-doctor.test.ts
 test/engine-parity/facts-purge.test.ts
 test/engine-parity/facts-repair.test.ts
 test/engine-parity/facts-trust.test.ts
 test/engine-parity/facts.test.ts
+test/engine-parity/field-usage.test.ts
 test/engine-parity/import-members.test.ts
 test/engine-parity/import-path.test.ts
 test/engine-parity/import-writes.test.ts
@@ -185,6 +189,7 @@ test/engine-parity/versions-raw.test.ts
 test/engine-parity/wanted-links.test.ts
 test/engine-parity/write-guards.test.ts
 test/engine-parity/write-misc.test.ts
+test/engine-sql-fact-relink-attempts.test.ts
 test/engine-sql-facts-keyset.test.ts
 test/eval-log-tables-parity.test.ts
 test/extract-all-stamp-intersection.serial.test.ts
@@ -319,6 +324,7 @@ test/large-pages/projection-claim-ownership.test.ts
 test/large-pages/projection-demotion-race.test.ts
 test/large-pages/projection-lock-hold.test.ts
 test/large-pages/projection-parity.test.ts
+test/large-pages/projection-queue-byte-order-index.test.ts
 test/large-pages/projection-queue-order.test.ts
 test/large-pages/publication-seal-bounded.test.ts
 test/large-pages/purge-fact-inflight-staging.test.ts
@@ -774,6 +780,7 @@ test/sync-drift-rescreen-progress-gst2515.test.ts
 test/sync-dry-run-drain-7167.test.ts
 test/sync-exits-l4-6712.test.ts
 test/sync-fence-trend-open-9646.test.ts
+test/sync-fence-trend-sequence-order.test.ts
 test/sync-fenced-slices-gbra133.test.ts
 test/sync-file-drift-agrees-7931.test.ts
 test/sync-filter-owned-9024.test.ts

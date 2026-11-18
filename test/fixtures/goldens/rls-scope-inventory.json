@@ -2160,6 +2160,28 @@
           "src-a"
         ]
       },
+      "listEffectRecoveries#after": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listEffectRecoveries#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listEmbeddingStateRows#default": {
         "flagOffLanes": [
           "pool"
@@ -2321,6 +2343,17 @@
         "flagOnScopes": []
       },
       "listFilesForPage#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listGatedMirrorRequests#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -3930,6 +3963,28 @@
           "src-a"
         ]
       },
+      "selectClaimableEffect#dead": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "selectClaimableEffect#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "selectProjectionWindowJobs#default": {
         "flagOffLanes": [
           "pool"
@@ -4546,6 +4601,7 @@
         "deleteCycleLock": "none",
         "deleteCycleLockIfStale": "none",
         "deleteEvalCandidatesBefore": "none",
+        "deleteFactRelinkMemos": "none",
         "deleteFactsForPage": "none",
         "deleteJobAttachment": "none",
         "deletePage": "none",
@@ -4698,6 +4754,7 @@
         "listConversationFactRows": "none",
         "listCorpusSample": "direct",
         "listDeadFactsAbsorbJobsByKeys": "none",
+        "listEffectRecoveries": "none",
         "listEmbeddingStateRows": "direct",
         "listEnrichCandidates": "none",
         "listEvalCandidates": "none",
@@ -4705,6 +4762,7 @@
         "listExactIdentityCandidates": "none",
         "listExtractionPendingPages": "none",
         "listExtractorFactsForClassification": "none",
+        "listFactRelinkOutcomes": "none",
         "listFactWithdrawalDates": "none",
         "listFactWithdrawalKeys": "none",
         "listFactsAbsorbJobsByKeyPrefix": "none",
@@ -4721,6 +4779,7 @@
         "listFenceRowGroups": "none",
         "listFilesForPage": "none",
         "listFreshExtractionOutcomes": "none",
+        "listGatedMirrorRequests": "none",
         "listGuestSourceIds": "none",
         "listHeldFenceFactRows": "none",
         "listHostConsumerRows": "none",
@@ -4808,6 +4867,7 @@
         "lockRegisteredSourceIds": "none",
         "lockSourceRow": "none",
         "lockWriteRequest": "none",
+        "logChatUsage": "none",
         "logEvalCandidate": "none",
         "logEvalCaptureFailure": "none",
         "logIngest": "none",
@@ -4850,6 +4910,7 @@
         "rawTransaction": "none",
         "readAdmissionSource": "none",
         "readCapacityForecastInputs": "none",
+        "readChatUsage": "none",
         "readChildCompletions": "none",
         "readClientOpUsage": "none",
         "readCycleLocks": "none",
@@ -4859,6 +4920,7 @@
         "readExtractionLagCounts": "none",
         "readFactForOwnerAction": "none",
         "readFactSubject": "none",
+        "readFieldUsageSamples": "none",
         "readGlobalMaintenanceDeaths": "none",
         "readGraduationGateRow": "none",
         "readGuestSourceRow": "none",
@@ -4981,6 +5043,7 @@
         "searchTakesVector": "none",
         "searchTitles": "direct",
         "searchVector": "direct",
+        "selectClaimableEffect": "none",
         "selectProjectionWindowJobs": "none",
         "setBodyStagingState": "none",
         "setChunkerVersion": "none",
@@ -5029,6 +5092,7 @@
         "updateTimelineDetails": "none",
         "upsertChunks": "via:_upsertChunksOnce",
         "upsertEventProjection": "none",
+        "upsertFactRelinkAttempt": "none",
         "upsertFile": "none",
         "upsertOpenLoop": "none",
         "upsertPageWriteGateReceipt": "none",

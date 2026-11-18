@@ -65,7 +65,8 @@ or count:
 Ignored, as in the SQL statements: the vector, reranking, recency and reporting options (`onVectorPoolMeta`,
 `cjkKeyword`, `embeddingColumn`, `recencyBoost`, `tokenBudget`, `reranker`, `relationalRetrieval` and the rest of
 `NOT_READ` in the TS member), `keywordTimeoutCache` (a statement-timeout cache), `countKeywordPages`'s `timeoutMs`
-(only a statement timeout) and the paging members' `opts.limit` / `opts.offset` (the `page` window wins).
+(only a statement timeout), `searchKeywordChunks`'s `keywordPhrase` (its statement ranks without the phrase factor)
+and the paging members' `opts.limit` / `opts.offset` (the `page` window wins).
 `searchKeyword` reads `orFallback`, `orFill`, `rankQuery`, `keywordPhrase` and `onKeywordIncomplete` as the hybrid
 keyword arm does; `searchTitles` reads `onKeywordIncomplete`. `searchTitles` answers nothing for `language` or
 `symbolKind`, as the SQL engines do.

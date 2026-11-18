@@ -17,7 +17,9 @@ mock.module(HARDENING, () => ({ ...actual, hardenFunctionSearchPaths: async (eng
 } }));
 const { v277 } = await import('../src/core/schema-migrations/v277-function-search-path-pg-temp.ts');
 const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
-const { LATEST_VERSION, runMigrations } = await import('../src/core/migrate.ts');
+const { LATEST_VERSION, MIGRATIONS, runMigrations } = await import('../src/core/migrate.ts');
+// Migrations from v277 up: count the registry, since a lane can leave a gap in the version numbers.
+const FROM_V277 = MIGRATIONS.filter(m => m.version >= v277.version).length;
 
 async function captureStderr<T>(run: () => Promise<T>): Promise<{ result: T | Error; stderr: string }> {
   const write = process.stderr.write.bind(process.stderr);
@@ -46,7 +48,7 @@ describe('the search_path step after a migration run is best-effort (#7632)', ()
     await engine.executeRaw(`UPDATE config SET value = '${v277.version - 1}' WHERE key = 'version'`);
     Object.assign(state, { calls: 0, failFrom: 2 });
     const { result, stderr } = await captureStderr(() => runMigrations(engine));
-    expect(result).toEqual({ applied: LATEST_VERSION - v277.version + 1, current: LATEST_VERSION });
+    expect(result).toEqual({ applied: FROM_V277, current: LATEST_VERSION });
     expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
     expect(stderr).toContain('search_path: pg_temp not restored on gbrain functions (canceling statement due to lock timeout)');
     expect(await searchPath('gbrain_try_jsonb')).toBe('search_path=pg_catalog, public, pg_temp');
@@ -75,6 +77,6 @@ describe('the search_path step after a migration run is best-effort (#7632)', ()
     expect(stderr).not.toContain('pg_temp not restored');
     expect(await engine.getConfig('version')).toBe(String(v277.version - 1));
     Object.assign(state, { calls: 0, failFrom: Infinity });
-    expect((await captureStderr(() => runMigrations(engine))).result).toEqual({ applied: LATEST_VERSION - v277.version + 1, current: LATEST_VERSION });
+    expect((await captureStderr(() => runMigrations(engine))).result).toEqual({ applied: FROM_V277, current: LATEST_VERSION });
   }, 120_000);
 });

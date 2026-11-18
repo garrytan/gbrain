@@ -42,8 +42,9 @@ impl Brain {
         })
     }
 
-    /// `resolveAliases(aliasNorms, { sourceId?, sourceIds? }?)`: resolves `[aliasNorm, [{ slug,
-    /// source_id }]]` pairs, aliases in order.
+    /// `resolveAliases(aliasNorms, { sourceId?, sourceIds?, excludePrivate?, minTrust?,
+    /// suppressFlagged? }?)` (`AliasScope`): resolves `[aliasNorm, [{ slug, source_id }]]` pairs,
+    /// aliases in order.
     #[napi]
     pub fn resolve_aliases<'env>(
         &self,

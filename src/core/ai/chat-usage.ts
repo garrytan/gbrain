@@ -37,6 +37,7 @@ import { canonicalLookup, priceAtPromptSize } from '../model-pricing.ts';
 import { priceFor, type PricingOverrides } from '../budget/reservation-cost.ts';
 import { embeddedEngineInScope } from '../engine-scope.ts';
 import { engineKey } from '../engine-key.ts';
+import type { BrainEngine } from '../engine.ts';
 
 export interface ChatUsageRecord {
   /** "provider:modelId" of the model that actually answered. */
@@ -234,30 +235,13 @@ export function recordChatUsage(input: {
 }
 
 /**
- * Standard sink: INSERT into chat_usage_log via the engine's executeRaw.
- * Positional parameters only — no JSONB, no string-built SQL. Registered by
+ * Standard sink: appends the record to chat_usage_log through the engine's
+ * typed `logChatUsage` member (SQL in engine-sql/chat-usage.ts). Registered by
  * the engine factory (last engine created wins; multi-brain processes log
  * against the most recently created engine — documented best-effort).
  */
-export function makeEngineChatUsageSink(engine: {
-  executeRaw: (sql: string, params?: unknown[]) => Promise<unknown>;
-}): ChatUsageSink {
+export function makeEngineChatUsageSink(engine: Pick<BrainEngine, 'logChatUsage'>): ChatUsageSink {
   return async (r: ChatUsageRecord): Promise<void> => {
-    await engine.executeRaw(
-      `INSERT INTO chat_usage_log
-         (model, provider, phase, input_tokens, output_tokens,
-          cache_read_tokens, cache_write_tokens, cost_usd)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [
-        r.model,
-        r.provider,
-        r.phase,
-        r.input_tokens,
-        r.output_tokens,
-        r.cache_read_tokens,
-        r.cache_write_tokens,
-        r.cost_usd,
-      ],
-    );
+    await engine.logChatUsage(r);
   };
 }

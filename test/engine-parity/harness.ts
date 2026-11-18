@@ -264,7 +264,7 @@ function recordingEngine(engine: BrainEngine, calls: Set<string>, refusals: unkn
       return (...args: unknown[]) => {
         calls.add(prop);
         // The transaction handle is an engine too: record the calls made on it.
-        if (prop === 'transaction' && typeof args[0] === 'function') {
+        if ((prop === 'transaction' || prop === 'transactionDirect') && typeof args[0] === 'function') {
           const fn = args[0] as (tx: BrainEngine) => unknown;
           args = [(tx: BrainEngine) => fn(recordingEngine(tx, calls, refusals)), ...args.slice(1)];
         }
