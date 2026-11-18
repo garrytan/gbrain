@@ -109,6 +109,7 @@ export * from './jobs-queue.ts';
 export * from './jobs-health.ts';
 // The status reads (engine-sql/jobs-status.ts).
 export * from './jobs-status.ts';
+export * from './jobs-checks.ts';
 
 // ---------------------------------------------------------------- cycle locks
 
