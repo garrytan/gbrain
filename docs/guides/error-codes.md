@@ -1508,6 +1508,40 @@ More: [docs/guides/repair.md#managed-sync-orphans](../../docs/guides/repair.md#m
 |---|---|---|---|---|---|---|
 | The brain database could not be reached or refused the operation. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
 
+### dedupe_decision_store_mismatch
+
+<a id="dedupe_decision_store_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain dedupe confirm, reject or reconcile refused because this brain's duplicate decisions are kept in git in its home source and this host sees no git work tree for that source, so nothing was written. | On a brain with a repository git is the record of every duplicate decision and the database only its projection; a decision written to the database alone would be dropped by the next sync of the checkout and lost with the database. | Run the command on the host that holds the checkout, or restore the checkout and run gbrain dedupe reconcile there. Run: gbrain sources list --json | user | `gbrain doctor --json` | 1 | no |
+
+### dedupe_group_not_confirmable
+
+<a id="dedupe_group_not_confirmable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain dedupe confirm refused a group it does not confirm: a conflict (an account or registry id disagrees), a thin page or a same-source group, a group whose only shared keys are contact or handle keys given together with other groups, or a --join that would put two pages recorded as different people in one identity; confirm and reject also refuse a group with a page in an owner-only, archived owner-only or removed source, or a page outside the default source that not every reader of it may read, on a brain whose default source has a repository. Nothing was written. | A conflict is never proposed, same-source duplicates are collapsed rather than linked, and a shared email, phone, X handle or domain alone is also carried by households, teams and family addresses, so those groups are read and confirmed one at a time. A decision file names every member's source and slug, so an owner-only page in one would be readable by anyone who reads the repository. | Confirm a contact-only group on its own (gbrain dedupe confirm <group-id>), read its hint line in gbrain dedupe confirm first, and leave conflicts, thin pages and same-source groups for review. Run: gbrain dedupe confirm | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `conflict`, `thin`, `in_source`, `contact_key_only_batch`, `owner_only_source`, `restricted_page`, `rejected_pair`.
+
+### dedupe_group_unknown
+
+<a id="dedupe_group_unknown"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain dedupe confirm or reject was given a group id that neither the current preview nor any recorded decision names, so nothing was written. | A group id is a hash of its member pages: a page added, removed or renamed since the preview was read changes or removes the id, and acting on a different set than the one read could join or split the wrong pages. | Read the current groups with gbrain dedupe --preview (or gbrain dedupe confirm for the confirm list) and use an id it prints. Run: gbrain dedupe --preview | agent | `repeat the read that failed` | 1 | no |
+
+### dedupe_page_changed
+
+<a id="dedupe_page_changed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain dedupe reject recorded the decision, but a page changed while its distinct_from line was being written, so that page was not edited. | The distinct_from edit is published through the page door against the revision it read, so a concurrent edit is never overwritten. | Run the same gbrain dedupe reject command again; the decision is already recorded and only the page edit is retried. Run: gbrain dedupe --preview | agent | `repeat the read that failed` | 1 | no |
+
 ### deep_health_probe_failed
 
 <a id="deep_health_probe_failed"></a>
@@ -2911,6 +2945,22 @@ More: [docs/designs/GIT_CANONICAL_MEMORY.md#remote-and-hosted-writes](../../docs
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The request_id already belongs to a different accepted operation. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### identity_link_owned_by_dedupe
+
+<a id="identity_link_owned_by_dedupe"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| entity_identity_link or entity_identity_unlink refused to move or remove a page that gbrain dedupe confirm linked, so nothing changed. | That link is the projection of a recorded duplicate decision (kept in git on a brain with a repository): removing the row alone would come back at the next reconcile while the decision still says the pages are one person. | Run gbrain dedupe reject <entity_id> on the brain host: it records that the pages are different people and removes the link. Run: gbrain entity-identity-list --json | agent | `repeat the read that failed` | 1 | no |
+
+### identity_member_in_other_group
+
+<a id="identity_member_in_other_group"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A page of the group already belongs to another identity group, so gbrain dedupe confirm wrote nothing. | A page belongs to at most one identity group; confirming would move it out of the group someone already made. | Add the other pages to that group with gbrain dedupe confirm <group-id> --join <entity_id>, or remove the page from it first. Run: gbrain entity-identity-list --json | agent | `repeat the read that failed` | 1 | no |
 
 ### independent_principal_required
 
@@ -4941,6 +4991,24 @@ Reasons: `digest`, `engine_abi`, `engine_build`, `target`, `load_failed`.
 | The Rust engine is selected (engine: rust), but no addon for this gbrain release is installed on this machine, or no addon is published for this platform, so gbrain opened nothing and wrote nothing. | The Rust engine ships as a separate addon file kept in the gbrain home, checked against the checksum in this release's manifest before it loads. Without a checked addon the engine cannot open, and gbrain refuses before touching the brain. | Point GBRAIN_RUST_ENGINE_ADDON at an addon you built with bun run rust:build, or switch engine in the gbrain config back to pglite or postgres. | user | `gbrain doctor --json` | 1 | yes |
 
 Reasons: `unsupported_target`, `not_installed`, `override_not_found`.
+
+### rust_store_locked
+
+<a id="rust_store_locked"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Rust engine could not open this brain because another gbrain process, or another engine in this process, has its store open, so nothing was opened or written. | A Rust brain has one owner at a time: the process that opened it holds the store until it disconnects. A second open does not wait. | Stop the other gbrain process that is using this brain, or disconnect the other engine, then try again. | user | `gbrain doctor --json` | 1 | yes |
+
+### rust_store_unreadable
+
+<a id="rust_store_unreadable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Rust engine could not read or write this brain's store directory (its format is one this gbrain does not read, its records failed their integrity check, or the disk failed), so the call did not complete and nothing past the last committed write changed. | The store checks its FORMAT file before it opens its records, and it verifies its records as it reads them. It stops rather than guess. | Check that the brain directory is the one you meant and that the disk is healthy. For a format from a newer gbrain, upgrade gbrain. For damaged records, restore the brain from a backup. | user | `gbrain doctor --json` | 1 | no |
+
+Reasons: `format_unknown`, `store_corrupt`, `store_io`.
 
 ### schedule_install_failed
 
