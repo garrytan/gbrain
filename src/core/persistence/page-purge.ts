@@ -537,6 +537,9 @@ export async function unpurgePage(ctx: OperationContext, p: Record<string, unkno
   });
 }
 
+/** Bytes of unreferenced segment text one claim-sweep statement lowers (the 5 s statement budget). */
+const CLAIM_SWEEP_CHUNK_BYTES = 4 * 1024 * 1024;
+
 /**
  * Delete a purged page with its segment storage (Wave B, spec 11), in the caller's transaction: the segment texts its
  * manifests referenced go with it, and so do its stagings (one of a create has no page row to cascade from). So do the
@@ -565,10 +568,22 @@ export async function deletePageWithSegments(tx: BrainEngine, sourceId: string, 
     AND NOT EXISTS (SELECT 1 FROM page_body_manifest m WHERE m.source_id=t.source_id AND m.sha256=t.sha256) AND NOT ${stagingNeedsTextSql('t')} RETURNING 1`, [sourceId, shas])).length : 0;
   const forms = claimTextForms(claims), carrying: string[] = [];
   for (let at = 0; at < forms.length; at += CLAIM_FORMS_BATCH) {
-    carrying.push(...(await tx.executeRaw<{ sha: string }>(`DELETE FROM page_segment_texts d WHERE (d.source_id,d.sha256) IN (SELECT t.source_id,t.sha256
-      FROM page_segment_texts t WHERE t.source_id=$1 AND NOT EXISTS (SELECT 1 FROM page_body_manifest m WHERE m.source_id=t.source_id AND m.sha256=t.sha256) OFFSET 0)
-    AND EXISTS (SELECT 1 FROM unnest($2::text[]) AS n WHERE strpos(lower(convert_from(d.body,'UTF8')),n)>0) AND NOT ${stagingNeedsTextSql('d')}
-    RETURNING encode(d.sha256,'hex') AS sha`, [sourceId, forms.slice(at, at + CLAIM_FORMS_BATCH)])).map(r => r.sha));
+    const batch = forms.slice(at, at + CLAIM_FORMS_BATCH);
+    // The unreferenced texts, listed without reading a body; each chunk lowers its texts once (not once per form).
+    const unreferenced = await tx.executeRaw<{ sha: string; n: number }>(`SELECT encode(t.sha256,'hex') AS sha, octet_length(t.body)::int AS n
+      FROM page_segment_texts t WHERE t.source_id=$1 AND NOT EXISTS (SELECT 1 FROM page_body_manifest m WHERE m.source_id=t.source_id AND m.sha256=t.sha256)`, [sourceId]);
+    for (let from = 0; from < unreferenced.length;) {
+      const chunk: string[] = [];
+      for (let bytes = 0; from < unreferenced.length && (chunk.length === 0 || bytes + unreferenced[from]!.n <= CLAIM_SWEEP_CHUNK_BYTES); from++) {
+        chunk.push(unreferenced[from]!.sha); bytes += unreferenced[from]!.n;
+      }
+      carrying.push(...(await tx.executeRaw<{ sha: string }>(`WITH cand AS MATERIALIZED (SELECT t.sha256, lower(convert_from(t.body,'UTF8')) AS lb
+        FROM page_segment_texts t WHERE t.source_id=$1 AND t.sha256=ANY(SELECT decode(h,'hex') FROM unnest($3::text[]) AS h))
+      DELETE FROM page_segment_texts d USING cand WHERE d.source_id=$1 AND d.sha256=cand.sha256
+      AND EXISTS (SELECT 1 FROM unnest($2::text[]) AS n WHERE strpos(cand.lb,n)>0)
+      AND NOT EXISTS (SELECT 1 FROM page_body_manifest m WHERE m.source_id=d.source_id AND m.sha256=d.sha256) AND NOT ${stagingNeedsTextSql('d')}
+      RETURNING encode(d.sha256,'hex') AS sha`, [sourceId, batch, chunk])).map(r => r.sha));
+    }
   }
   return { shas: [...shas, ...carrying], page_body_manifest: manifest, page_body_stagings: stagings, page_segment_texts: texts + carrying.length };
 }
