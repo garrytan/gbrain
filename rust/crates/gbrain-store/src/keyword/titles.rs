@@ -45,6 +45,7 @@
 //! `ts_rank_cd` is a `real`; times the numeric source factor it is a `double precision`.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -56,6 +57,7 @@ use super::tsearch::{
     TsQuery, TsVector, Weight, concat, fts_input, setweight, to_tsvector, ts_filter, ts_matches,
     tsquery_or, websearch_to_tsquery,
 };
+use super::vector_cache::{VectorKind, cached};
 use crate::Store;
 use crate::chunks::{ChunkRecord, read_chunks, read_segment_view};
 use crate::env::iso;
@@ -128,16 +130,23 @@ fn trigger_timeline(
 }
 
 /// The page's `search_vector` (see the module doc).
-fn page_vector(read: &dyn KvRead, page: &PageRecord) -> Result<TsVector> {
-    let title = weighted(&page.title, Weight::A)?;
+/// Cached by its form and texts (`vector_cache`).
+fn page_vector(read: &dyn KvRead, page: &PageRecord) -> Result<Arc<TsVector>> {
     if let Some(sealed) = search_timeline(read, page.id)?
         && page.text_projection_revision.as_deref() == Some(sealed.revision.as_str())
     {
-        let timeline = weighted(left(&sealed.timeline, SEARCH_TIMELINE_MAX_CHARS), Weight::C)?;
-        return concat(&title, &timeline);
+        return cached(
+            VectorKind::PageSealed,
+            &[&page.title, &sealed.timeline],
+            || {
+                let title = weighted(&page.title, Weight::A)?;
+                let timeline =
+                    weighted(left(&sealed.timeline, SEARCH_TIMELINE_MAX_CHARS), Weight::C)?;
+                concat(&title, &timeline)
+            },
+        );
     }
     let raw = trigger_timeline(page.timeline.as_deref(), || timeline_lead(read, page))?;
-    let timeline = weighted(left(&raw, TIMELINE_FTS_MAX_CHARS), Weight::C)?;
     let mut entries: Vec<TimelineRecord> = Vec::new();
     let mut failure = None;
     scan_prefix(read, &keys::timeline_prefix(page.id), false, &mut |_, v| {
@@ -160,8 +169,16 @@ fn page_vector(read: &dyn KvRead, page: &PageRecord) -> Result<TsVector> {
         .map(|e| format!("{} {}", e.summary, e.detail))
         .collect::<Vec<_>>()
         .join(" ");
-    let entries = weighted(left(&joined, TIMELINE_ENTRIES_FTS_MAX_CHARS), Weight::C)?;
-    concat(&concat(&title, &timeline)?, &entries)
+    cached(
+        VectorKind::PageTrigger,
+        &[&page.title, &raw, &joined],
+        || {
+            let title = weighted(&page.title, Weight::A)?;
+            let timeline = weighted(left(&raw, TIMELINE_FTS_MAX_CHARS), Weight::C)?;
+            let entries = weighted(left(&joined, TIMELINE_ENTRIES_FTS_MAX_CHARS), Weight::C)?;
+            concat(&concat(&title, &timeline)?, &entries)
+        },
+    )
 }
 
 /// `$tsq`: each text's `websearch_to_tsquery(gbrain_fts_input(t))`, ORed from the left.
@@ -185,7 +202,7 @@ fn exact_title_key(title: &str) -> String {
 /// A page that passed the filters, with its vectors built on first use.
 struct Candidate {
     page: PageRecord,
-    whole: TsVector,
+    whole: Arc<TsVector>,
     title: Option<TsVector>,
 }
 
