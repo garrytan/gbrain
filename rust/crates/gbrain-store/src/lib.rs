@@ -40,6 +40,7 @@ pub mod embeddings;
 pub mod eval_capture;
 pub mod extraction;
 pub mod facts;
+pub mod jobs;
 pub mod keyword;
 pub mod link_queries;
 pub mod ontology;

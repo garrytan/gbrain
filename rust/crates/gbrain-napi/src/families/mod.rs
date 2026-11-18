@@ -28,6 +28,7 @@ mod embeddings;
 mod eval_capture;
 mod extraction;
 mod facts;
+mod jobs;
 mod keyword;
 mod link_queries;
 mod ontology;

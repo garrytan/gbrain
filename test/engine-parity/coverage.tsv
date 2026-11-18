@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 259/259
+# covered: 268/268
 # lifecycle: 9/9
 # pages: 31/31
 # search: 7/7
@@ -28,7 +28,8 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 9/9
-# cycle_locks: 6/6
+# cycle_locks: 7/7
+# minion_jobs: 8/8
 # cli_reads_ops: 7/7
 # raw_sql: 4/4
 # code_edges: 5/5
@@ -251,12 +252,21 @@ readTransactionSettings	import_guards	yes	1	no	yes	yes	refuses:transactions
 applyTransactionSettings	import_guards	yes	1	no	yes	yes	refuses:transactions
 readLedgerSource	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
 isFolderRestricted	import_guards	yes	1	no	yes	yes	refuses:access_control
-acquireCycleLock	cycle_locks	yes	8	no	yes	yes	refuses:minion_queue
-refreshCycleLock	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
-releaseCycleLock	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
-readCycleLocks	cycle_locks	yes	8	no	yes	yes	refuses:minion_queue
-deleteCycleLock	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
-deleteCycleLockIfStale	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
+acquireCycleLock	cycle_locks	yes	10	no	yes	yes	serves
+refreshCycleLock	cycle_locks	yes	1	no	yes	yes	serves
+releaseCycleLock	cycle_locks	yes	1	no	yes	yes	serves
+readCycleLocks	cycle_locks	yes	8	no	yes	yes	serves
+deleteCycleLock	cycle_locks	yes	1	no	yes	yes	serves
+deleteCycleLockIfStale	cycle_locks	yes	1	no	yes	yes	serves
+assertCycleLease	cycle_locks	yes	1	no	yes	yes	serves
+admitJob	minion_jobs	yes	14	no	yes	yes	serves
+getJob	minion_jobs	yes	7	no	yes	yes	serves
+listJobs	minion_jobs	yes	1	no	yes	yes	serves
+claimNextJob	minion_jobs	yes	10	no	yes	yes	serves
+renewJobLease	minion_jobs	yes	1	no	yes	yes	serves
+completeJob	minion_jobs	yes	3	no	yes	yes	serves
+failJob	minion_jobs	yes	2	no	yes	yes	serves
+reclaimStalledJobs	minion_jobs	yes	1	no	yes	yes	serves
 scanExactBatch	cli_reads_ops	yes	4	no	yes	yes	serves
 nextLivePageAfter	cli_reads_ops	yes	1	no	yes	yes	serves
 listExactIdentityCandidates	cli_reads_ops	yes	3	no	yes	yes	serves
