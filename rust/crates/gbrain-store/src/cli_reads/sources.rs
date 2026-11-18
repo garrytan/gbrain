@@ -1,0 +1,128 @@
+//! Source-resolution reads: `listLocalPathSources`, `listSourceRoutingRows` and
+//! `countDefaultSourceSplit` (SQL in `src/core/engine-sql/sources.ts`). Each reads one snapshot.
+
+use crate::error::Result;
+use crate::kv::{KvRead, scan_prefix};
+use crate::sources::{DEFAULT_SOURCE, all_sources};
+use crate::{Store, keys};
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
+use std::collections::BTreeSet;
+
+/// A source with a checkout path: `LocalPathSourceRow`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct LocalPathSourceRow {
+    pub id: String,
+    pub local_path: String,
+    pub archived: bool,
+}
+
+/// One source as the resolver routes on it: `SourceRoutingRow`. `default_has_pages` is the same
+/// on every row: whether the `default` source has a live page.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SourceRoutingRow {
+    pub id: String,
+    pub local_path: Option<String>,
+    pub archived: bool,
+    pub config: Map<String, Value>,
+    pub default_has_pages: bool,
+}
+
+/// Live pages in `default`, live pages elsewhere, and how many other sources hold them:
+/// `DefaultSourceSplit`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DefaultSourceSplit {
+    pub default_pages: u64,
+    pub non_default_pages: u64,
+    pub non_default_sources: u64,
+}
+
+/// The two fields of a page record these reads need; the rest of the record is not decoded.
+#[derive(Deserialize)]
+struct PageLiveness {
+    source_id: String,
+    #[serde(default)]
+    deleted_at_us: Option<i64>,
+}
+
+/// Calls `f` with the source of each live page under `prefix` until it returns false.
+fn scan_live_pages(read: &dyn KvRead, prefix: &[u8], f: &mut dyn FnMut(&str) -> bool) -> Result<()> {
+    let mut failure = None;
+    scan_prefix(read, prefix, false, &mut |_, v| match serde_json::from_slice::<PageLiveness>(v) {
+        Ok(page) if page.deleted_at_us.is_none() => f(&page.source_id),
+        Ok(_) => true,
+        Err(e) => {
+            failure = Some(e.into());
+            false
+        }
+    })?;
+    failure.map_or(Ok(()), Err)
+}
+
+fn default_has_live_pages(read: &dyn KvRead) -> Result<bool> {
+    let mut found = false;
+    scan_live_pages(read, &keys::text(keys::PAGE, &[DEFAULT_SOURCE, ""]), &mut |_| {
+        found = true;
+        false
+    })?;
+    Ok(found)
+}
+
+impl Store {
+    /// Every source with a `local_path`, archived ones included, in id order.
+    pub fn list_local_path_sources(&self) -> Result<Vec<LocalPathSourceRow>> {
+        let read = self.read()?;
+        Ok(all_sources(&*read)?
+            .into_iter()
+            .filter_map(|s| {
+                s.local_path.map(|local_path| LocalPathSourceRow {
+                    id: s.id,
+                    local_path,
+                    archived: s.archived,
+                })
+            })
+            .collect())
+    }
+
+    /// Every source, archived ones included, in id order, each with `default_has_pages`.
+    pub fn list_source_routing_rows(&self) -> Result<Vec<SourceRoutingRow>> {
+        let read = self.read()?;
+        let sources = all_sources(&*read)?;
+        let default_has_pages = default_has_live_pages(&*read)?;
+        Ok(sources
+            .into_iter()
+            .map(|s| SourceRoutingRow {
+                id: s.id,
+                local_path: s.local_path,
+                archived: s.archived,
+                config: s.config,
+                default_has_pages,
+            })
+            .collect())
+    }
+
+    /// How live pages split between `default` and the other sources.
+    pub fn count_default_source_split(&self) -> Result<DefaultSourceSplit> {
+        let read = self.read()?;
+        let mut split = DefaultSourceSplit {
+            default_pages: 0,
+            non_default_pages: 0,
+            non_default_sources: 0,
+        };
+        let mut others = BTreeSet::new();
+        scan_live_pages(&*read, &[keys::PAGE], &mut |source_id| {
+            if source_id == DEFAULT_SOURCE {
+                split.default_pages += 1;
+            } else {
+                split.non_default_pages += 1;
+                if !others.contains(source_id) {
+                    others.insert(source_id.to_string());
+                }
+            }
+            true
+        })?;
+        split.non_default_sources = others.len() as u64;
+        Ok(split)
+    }
+}
