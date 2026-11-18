@@ -62,7 +62,7 @@ const SHARED = new Set([
   'detail', 'language', 'symbolKind', 'afterDate', 'afterDateInclusive', 'beforeDate', 'beforeDateInclusive', 'sourceId',
   'sourceIds', 'exclude_slug_prefixes', 'include_slug_prefixes', 'source_boosts',
 ]);
-/** The page filters `searchKeywordChunks` does not apply on PGLite but Postgres does (follow-up pglite-keyword-chunks-page-filters). */
+/** The page filters every keyword statement applies: single type, multi-type, frontmatter `where`, exact-slug excludes. */
 const PAGE_FILTERS = ['type', 'types', 'where', 'exclude_slugs'] as const;
 /**
  * Visibility options the store applies (`buildVisibilityClause`): the page privacy policy (storePagePolicy), the
@@ -85,14 +85,7 @@ function keywordOptions(member: Member, query: string, opts: (SearchOpts & { tim
     if (key === 'limit' || key === 'offset') continue;
     if ((VISIBILITY as readonly string[]).includes(key)) continue;
     if (key === 'timeoutMs' && member === 'countKeywordPages') continue;
-    if (pageGrain && (key === 'keywordPhrase' || (PAGE_FILTERS as readonly string[]).includes(key))) continue;
-    if (!pageGrain && (PAGE_FILTERS as readonly string[]).includes(key)) {
-      // PGLite ignores these on searchKeywordChunks and Postgres applies them: refuse rather than pick one.
-      const empty = value === null || value === '' || (Array.isArray(value) && value.length === 0)
-        || (key === 'where' && typeof value === 'object' && Object.keys(value as object).length === 0);
-      if (empty) continue;
-      refuseMember(member, `option ${key} (follow-up pglite-keyword-chunks-page-filters)`);
-    }
+    if ((PAGE_FILTERS as readonly string[]).includes(key) || (pageGrain && key === 'keywordPhrase')) continue;
     refuseMember(member, `option ${key}`);
   }
 
@@ -107,13 +100,11 @@ function keywordOptions(member: Member, query: string, opts: (SearchOpts & { tim
   else if (o.sourceId) out.sources = [String(o.sourceId)];
   out.hardExcludes = resolveHardExcludes(o.exclude_slug_prefixes as string[] | undefined, o.include_slug_prefixes as string[] | undefined);
   out.boosts = boostPairs((o.source_boosts as Record<string, number> | undefined) ?? resolveBoostMap(), o.detail);
-  if (pageGrain) {
-    if (o.type) out.type = String(o.type);
-    if ((o.types as string[] | undefined)?.length) out.types = (o.types as string[]).map(String);
-    if (o.where) out.where = whereFields(member, o.where);
-    if ((o.exclude_slugs as string[] | undefined)?.length) out.excludeSlugs = (o.exclude_slugs as string[]).map(String);
-    if (o.keywordPhrase === true) out.phrase = true;
-  }
+  if (o.type) out.type = String(o.type);
+  if ((o.types as string[] | undefined)?.length) out.types = (o.types as string[]).map(String);
+  if (o.where) out.where = whereFields(member, o.where);
+  if ((o.exclude_slugs as string[] | undefined)?.length) out.excludeSlugs = (o.exclude_slugs as string[]).map(String);
+  if (pageGrain && o.keywordPhrase === true) out.phrase = true;
   const policy = storePagePolicy(member, o.excludePrivate);
   if (policy) out.excludePrivate = policy;
   if (requiresSafeChunks(opts)) out.requireSafeChunks = true;

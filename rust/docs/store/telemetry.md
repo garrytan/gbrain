@@ -61,6 +61,9 @@ Differences from PGLite:
 
 ## Known gaps
 
-None in this family. The legacy HTTP transport (`src/mcp/http-transport.ts`, `logRequest`) writes its request
+- `readMcpLifetimeUsage` sorts by `token_name COLLATE "C"`; no test tells that from the database default, because
+  both test databases sort in byte order (PGLite `C`, the local Postgres `C.UTF-8`).
+
+The legacy HTTP transport (`src/mcp/http-transport.ts`, `logRequest`) writes its request
 log row through `logMcpRequest`, and `lifetimeUsage` (`src/core/mcp-request-log-retention.ts`) reads through
 `readMcpLifetimeUsage`, which also absorbs the tally-table probe `rollupTablePresent` used to make.
