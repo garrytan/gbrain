@@ -58,14 +58,14 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	18	no	yes	yes	serves
+transaction	lifecycle	yes	19	no	yes	yes	serves
 transactionDirect	lifecycle	yes	1	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 getPage	pages	yes	53	yes	yes	yes	serves
 readPageSnapshot	pages	yes	9	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
-lockPageKeys	pages	yes	1	no	yes	yes	serves
+lockPageKeys	pages	yes	2	no	yes	yes	serves
 putPage	pages	yes	187	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
@@ -497,7 +497,7 @@ upsertOpenLoop	open_loops	yes	4	no	yes	yes	serves
 closeOpenLoop	open_loops	yes	4	no	yes	yes	serves
 listOpenLoops	open_loops	yes	3	no	yes	yes	serves
 listSourceRecords	cli_reads_import	yes	3	no	yes	yes	serves
-readSourceIncarnation	cli_reads_import	yes	2	no	yes	yes	serves
+readSourceIncarnation	cli_reads_import	yes	3	no	yes	yes	serves
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves
 readGuestSourceRow	cli_reads_import	yes	1	no	yes	yes	serves
 listGuestSourceIds	cli_reads_import	yes	1	no	yes	yes	serves

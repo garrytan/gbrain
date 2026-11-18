@@ -1242,6 +1242,7 @@ Transactions and the page-key lock queue.
   - `lifecycle.test.ts`: transactionDirect commits on success and rolls back on throw
   - `lifecycle.test.ts`: a nested transaction joins the outer one: an outer throw rolls back inner writes too
   - `pages.test.ts`: lockPageKeys holds keys inside a transaction
+  - `pages.test.ts`: lockPageKeys refuses a missing source and a recreated one, and holds a key whose source matches
   - `raw-sql.test.ts`: executeRawDirect answers like executeRaw and joins an open transaction
   - `segmented-body.test.ts`: a segmented page publishes generation 1 from staged texts and manifest rows
 
