@@ -337,4 +337,53 @@ describe('engine parity: search', () => {
       return { byIndex, namedSize: named.size, emptySize: empty.size };
     },
   );
+  parityTest(
+    'keyword pages and chunks agree on scores, phrase and handle boosts, where, dates, sources and boosts',
+    { methods: ['countKeywordPages', 'searchKeywordPages', 'searchKeywordChunks'] },
+    async (engine, backend) => {
+      const day = (iso: string) => new Date(iso);
+      await seedPage(engine, {
+        slug: 'notes/nebula-drive',
+        input: { type: 'note', title: 'Nebula drive', compiled_truth: 'x', timeline: '', frontmatter: { status: 'active', rank: 3 }, effective_date: day('2026-03-01T00:00:00Z'), effective_date_source: 'date' },
+        chunks: [chunk(0, 'the nebula drive hums near the core'), chunk(1, 'drive nebula backwards for the drive test')],
+      });
+      await seedPage(engine, {
+        slug: 'notes/drive-log',
+        input: { type: 'note', title: 'Drive log', compiled_truth: 'x', timeline: '', frontmatter: { status: ['draft', 'active'] }, effective_date: day('2026-05-10T12:00:00Z'), effective_date_source: 'date' },
+        chunks: [chunk(0, 'nebula readings and one drive entry', { chunk_source: 'timeline' })],
+      });
+      await seedPage(engine, {
+        slug: 'archive/nebula-old',
+        input: { type: 'concept', title: 'Old nebula', compiled_truth: 'x', timeline: '', frontmatter: { rank: '3' } },
+        chunks: [chunk(0, 'nebula drive nebula drive nebula drive')],
+      });
+      await createSource(engine, backend, 'side');
+      await seedPage(engine, {
+        slug: 'notes/side-nebula',
+        input: { type: 'note', title: 'Side nebula', compiled_truth: 'x', timeline: '' },
+        chunks: [chunk(0, 'a nebula drive on the side')],
+      }, { sourceId: 'side' });
+
+      const view = (rows: SearchResult[]) => rows.map((r) => ({ slug: r.slug, score: round(r.score), source_id: r.source_id }));
+      const q = 'nebula drive';
+      const pages = view(await engine.searchKeywordPages(q, undefined, { limit: 10 }));
+      const phrase = view(await engine.searchKeywordPages(q, { keywordPhrase: true }, { limit: 10 }));
+      const handle = view(await engine.searchKeywordPages('drive-log', undefined, { limit: 10 }));
+      const handleCount = await engine.countKeywordPages('drive-log');
+      const where = view(await engine.searchKeywordPages(q, { where: { status: ['active'] } }, { limit: 10 }));
+      const whereNumber = view(await engine.searchKeywordPages(q, { where: { rank: ['3'] } }, { limit: 10 }));
+      const after = view(await engine.searchKeywordPages(q, { afterDate: '2026-04-01' }, { limit: 10 }));
+      const before = view(await engine.searchKeywordPages(q, { beforeDate: '2026-03-01T00:00:00Z', beforeDateInclusive: true }, { limit: 10 }));
+      const scoped = view(await engine.searchKeywordPages(q, { sourceIds: ['side'] }, { limit: 10 }));
+      const boosted = view(await engine.searchKeywordPages(q, { source_boosts: { 'archive/': 0.5, 'notes/': 1.5 } }, { limit: 10 }));
+      const excluded = await engine.countKeywordPages(q, { exclude_slug_prefixes: ['archive/'] });
+      const chunks = view(await engine.searchKeywordChunks(q, { limit: 10 }));
+      const lowDetail = view(await engine.searchKeywordChunks(q, { limit: 10, detail: 'low' }));
+      const offset = view(await engine.searchKeywordChunks(q, { limit: 2, offset: 1 }));
+      expect(handleCount).toBe(1);
+      expect(handle.map((r) => r.slug)).toEqual(['notes/drive-log']);
+      expect(lowDetail.some((r) => r.slug === 'notes/drive-log')).toBe(false);
+      return { pages, phrase, handle, handleCount, where, whereNumber, after, before, scoped, boosted, excluded, chunks, lowDetail, offset };
+    },
+  );
 });
