@@ -2,7 +2,8 @@
 //! family under the facts tag.
 //!
 //! Members: `upsertOpenLoop`, `listOpenLoops` and `closeOpenLoop` (src/core/loops/loops-store.ts,
-//! SQL in src/core/engine-sql/open-loops.ts). The other loop statements (thread auto-close, the
+//! SQL in src/core/engine-sql/open-loops.ts), and `closedLoopWithActiveFact` (the `loops_close`
+//! retry read, SQL in src/core/engine-sql/facts-repair.ts). The other loop statements (thread auto-close, the
 //! staleness pass, mutes and the loop-fact reads) still run through `executeRaw` and refuse on
 //! this engine.
 //!
@@ -438,6 +439,40 @@ impl Store {
             Ok(Some(row_json(uid, &r)))
         })
     }
+
+    /// `closedLoopWithActiveFact`: loop `loop_id` (in `source_id` when given) when it is closed
+    /// (`done` or `dropped`) and its commitment fact exists with no `expired_at`, as
+    /// `{ id, status, fact_id }`. `None` otherwise, also for a loop with no fact.
+    pub fn closed_loop_with_active_fact(
+        &self,
+        source_id: Option<&str>,
+        loop_id: i64,
+    ) -> Result<Option<Value>> {
+        no_nul(
+            "closedLoopWithActiveFact",
+            &[("sourceId", source_id.unwrap_or(""))],
+        )?;
+        let Ok(uid) = u64::try_from(loop_id) else {
+            return Ok(None);
+        };
+        let read = self.read()?;
+        let Some(r) = read_row(&*read, uid)? else {
+            return Ok(None);
+        };
+        if !matches!(r.status.as_str(), "done" | "dropped")
+            || source_id.is_some_and(|s| s != r.source_id)
+        {
+            return Ok(None);
+        }
+        let Some(fact_id) = r.fact_id else {
+            return Ok(None);
+        };
+        let Ok(fid) = u64::try_from(fact_id) else {
+            return Ok(None);
+        };
+        let active = super::read_fact(&*read, fid)?.is_some_and(|f| f.expired_at_us.is_none());
+        Ok(active.then(|| json!({ "id": uid, "status": r.status, "fact_id": fact_id })))
+    }
 }
 
 #[cfg(test)]
@@ -515,6 +550,62 @@ mod tests {
         assert_eq!(ids, vec![1, 4]);
         assert_eq!(rows[0]["status"], "open");
         assert_eq!(rows[0]["closed_by"], Value::Null);
+    }
+
+    #[test]
+    fn closed_loop_with_active_fact_needs_a_closed_loop_and_a_live_fact() {
+        use crate::facts::{ExpireFactArgs, InsertFactArgs, NewFactInput};
+        let s = store();
+        source(&s, "src");
+        let fact = |text: &str| -> i64 {
+            let args = InsertFactArgs {
+                input: NewFactInput {
+                    fact: Some(text.into()),
+                    source: Some("test".into()),
+                    ..NewFactInput::default()
+                },
+                source_id: "src".into(),
+                supersede_id: None,
+            };
+            s.insert_fact(&args).unwrap()["id"].as_i64().unwrap()
+        };
+        let live = fact("send the deck");
+        let gone = fact("call back");
+        let mut a = input("src", "a", T1);
+        a.fact_id = Some(live);
+        let mut b = input("src", "b", T1);
+        b.fact_id = Some(gone);
+        let a = s.upsert_open_loop(&a).unwrap().id;
+        let b = s.upsert_open_loop(&b).unwrap().id;
+        let none = s.upsert_open_loop(&input("src", "c", T1)).unwrap().id;
+        // Still open: no row.
+        assert!(s.closed_loop_with_active_fact(None, a).unwrap().is_none());
+        for id in [a, b, none] {
+            s.close_open_loop(None, id, "done", "manual")
+                .unwrap()
+                .unwrap();
+        }
+        s.expire_fact(&ExpireFactArgs {
+            id: gone as f64,
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(
+            s.closed_loop_with_active_fact(Some("src"), a).unwrap(),
+            Some(json!({ "id": a, "status": "done", "fact_id": live }))
+        );
+        assert!(
+            s.closed_loop_with_active_fact(Some("other"), a)
+                .unwrap()
+                .is_none()
+        );
+        assert!(s.closed_loop_with_active_fact(None, b).unwrap().is_none());
+        assert!(
+            s.closed_loop_with_active_fact(None, none)
+                .unwrap()
+                .is_none()
+        );
+        assert!(s.closed_loop_with_active_fact(None, -1).unwrap().is_none());
     }
 
     #[test]

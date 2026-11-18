@@ -1,6 +1,7 @@
 /**
  * Timeline reads by date: the Life Chronicle reads (BrainEngine getTimelineForDate, getSince, getOnThisDay,
- * getLastSeen), the event projection write (upsertEventProjection), and the timeline reads and delete of
+ * getLastSeen), the event projection write (upsertEventProjection), the two page-write row members
+ * (removeTimelineRows, updateTimelineDetails), and the timeline reads and delete of
  * src/core/engine-sql/timeline-reads.ts (sampleEffectiveDates, sampleEffectiveDateSources, readMaxTimelineEntryId,
  * listStoredTimelineRowsOrdered, deleteTimelineRows, storedTimelineRowsByPageIds, countSegmentedTimelinePages,
  * countTimelineCommentMarkupRows, listTimelineOrphanPages). Those statements apply no read policy, so these members take
@@ -12,6 +13,7 @@
  * unexported.
  */
 import { finalizeLastSeen } from '../../chronicle/last-seen.ts';
+import type { TimelineDetailRefresh, TimelineRowRemoval } from '../../engine-sql/timeline.ts';
 import type { ChronicleTimelineOpts, ChronicleTimelineRow, LastSeenResult, PageReadScope } from '../../types.ts';
 import type {
   EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRow, PageTimelineRow, SegmentedTimelinePages, TimelineOrphanPage,
@@ -53,6 +55,13 @@ type EventProjection = { depthSlug: string; eventSlug: string; date: string; sum
 export const upsertEventProjection: StoreMember<[opts: EventProjection], { projected: boolean }> = (brain, opts) => {
   const options = takeOptions('upsertEventProjection', opts, ['depthSlug', 'eventSlug', 'date', 'summary', 'detail', 'sourceId']);
   return storeCall({ member: 'upsertEventProjection' }, () => brain.upsertEventProjection(options));
+};
+
+export const removeTimelineRows: StoreMember<[pageId: number, rows: TimelineRowRemoval[]], Array<{ date: string; removed: boolean }>> = (brain, pageId, rows) =>
+  storeCall({ member: 'removeTimelineRows' }, () => brain.removeTimelineRows(pageId, rows));
+
+export const updateTimelineDetails: StoreMember<[pageId: number, rows: TimelineDetailRefresh[]], void> = async (brain, pageId, rows) => {
+  await storeCall({ member: 'updateTimelineDetails' }, () => brain.updateTimelineDetails(pageId, rows));
 };
 
 // ---------------------------------------------------------------------------------------------------------------------

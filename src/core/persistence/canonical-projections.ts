@@ -440,10 +440,7 @@ export function materializedHistoryRanges(body: string): Array<[number, number]>
 
 interface StoredTimelineRow { id: number; date: string; source: string; summary: string; detail: string }
 
-/** The page's stored takes a fence's new rows (`$2`) would collide with: the same row number, another claim, kind or holder. */
-export const TAKE_COLLISIONS_SQL = `SELECT k.row_num FROM takes k
-    JOIN jsonb_to_recordset($2::text::jsonb) AS n(row_num integer,claim text,kind text,holder text) ON n.row_num=k.row_num
-    WHERE k.page_id=$1 AND (k.claim,k.kind,k.holder) IS DISTINCT FROM (n.claim,n.kind,n.holder) ORDER BY k.row_num LIMIT $3`;
+export { TAKE_COLLISIONS_SQL } from '../engine-sql/takes.ts';
 
 /** A page's own (non-event) timeline rows, in date order (the statement lives in engine-sql/timeline-reads.ts). */
 export { STORED_TIMELINE_SQL };
@@ -704,9 +701,9 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
   const priorCanonical = prior && prior_?.takesWarn
     ? new Set([...priorTakes, ...(await engine.executeRaw<{ row_num: number }>('SELECT row_num FROM takes WHERE page_id=$1', [prior.page.id])).map(r => Number(r.row_num))])
     : priorTakes;
-  const newTakes = JSON.stringify(takes.filter(t => !priorCanonical.has(t.rowNum)).map(t => ({ row_num: t.rowNum, claim: t.claim, kind: t.kind, holder: t.holder })));
+  const newTakes = takes.filter(t => !priorCanonical.has(t.rowNum)).map(t => ({ row_num: t.rowNum, claim: t.claim, kind: t.kind, holder: t.holder }));
   const takeRowsGone = [...priorTakes].filter(n => !takes.some(t => t.rowNum === n));
-  const collisions = async (db: BrainEngine, pageId: number) => (await db.executeRaw<{ row_num: number }>(TAKE_COLLISIONS_SQL, [pageId, newTakes, FENCE_ROWS_MAX])).map(r => Number(r.row_num));
+  const collisions = (db: BrainEngine, pageId: number) => db.matchTakeRows(pageId, newTakes, FENCE_ROWS_MAX);
   const refuseCollisions = async (db: BrainEngine, pageId: number) => {
     const rows = await collisions(db, pageId);
     if (rows.length) throw takeCollision(rows, sections.takes, slug, sourceId);
@@ -724,7 +721,7 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
     // it. It stays as it is and a `forget` proposal asks the owner (trust/fence-guard.ts), decided before any statement runs.
     const heldTimeline = await heldRows(tx, 'timeline_entries', [...deletionRows, ...refreshRows].map(row => Number(row.id)));
     const deletions = deletionRows.filter(row => !heldTimeline.has(Number(row.id)));
-    const refreshes = JSON.stringify(refreshRows.filter(row => !heldTimeline.has(Number(row.id))));
+    const refreshes = refreshRows.filter(row => !heldTimeline.has(Number(row.id)));
     const heldTakes = projectFences ? await guardFenceTakes(tx, id, takes, takeRowsGone) : [];
     const heldRowNums = new Set(heldTakes.map(row => row.row_num));
     const projectedTakes = heldRowNums.size ? takes.filter(take => !heldRowNums.has(take.rowNum)) : takes;
@@ -767,7 +764,7 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
       [sourceId, slug, fieldRows]) : Promise.resolve([]);
     const checkTakes = () => refuseCollisions(tx, id);
     const dropTakes = (held: boolean) => () => held ? Promise.resolve([])
-      : tx.executeRaw('DELETE FROM takes WHERE page_id=$1 AND row_num=ANY($2::integer[])', [id, takeRowsGone.filter(n => !heldRowNums.has(n))]);
+      : tx.deleteTakeRows(id, takeRowsGone.filter(n => !heldRowNums.has(n)));
     // A fence row's resolution cells are written as Markdown says, so a revert to a version that carries them restores
     // them. A row without resolution cells keeps the stored resolution (a database-only grade, e.g. unmanaged
     // grade_takes) unless its claim changed in place, which drops the old claim's grade. A held take keeps its grade:
@@ -794,11 +791,10 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
     // Event-page references have a different canonical origin and remain intact;
     // new rows carry their Markdown detail on insert, pinned rows refresh only from their preimage.
     const timelineRows = [
-      () => tx.deleteTimelineRows(id, deletions)
+      () => tx.removeTimelineRows(id, deletions)
         .then(rows => { for (const row of rows) if (row.removed) removedDates.push(row.date); return rows; }),
       ...timelineChunks(timeline).map(rows => () => insertCanonicalTimeline(tx, id, rows)),
-      () => tx.executeRaw(`UPDATE timeline_entries t SET detail=r.next FROM jsonb_to_recordset($2::text::jsonb) AS r(id integer,detail text,next text)
-        WHERE t.page_id=$1 AND t.event_page_id IS NULL AND t.id=r.id AND t.detail=r.detail`, [id, refreshes]),
+      () => tx.updateTimelineDetails(id, refreshes),
     ];
     const started = Date.now();
     const steps: Array<[string, number]> = [];

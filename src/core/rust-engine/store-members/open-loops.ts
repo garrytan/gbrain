@@ -1,5 +1,6 @@
 /**
- * Open loops: the upsert, list and close members (BrainEngine upsertOpenLoop, listOpenLoops, closeOpenLoop), over
+ * Open loops: the upsert, list and close members (BrainEngine upsertOpenLoop, listOpenLoops, closeOpenLoop) and the
+ * `loops_close` retry read closedLoopWithActiveFact (engine-sql/facts-repair.ts), over
  * `rust/crates/gbrain-store/src/facts/loops.rs`. The store returns times as ISO text; these members turn them into
  * Dates, as the SQL engines return them, and loops-store.ts normalizes the rows the same way on every engine.
  *
@@ -10,7 +11,7 @@
  */
 import type { BrainEngine } from '../../engine.ts';
 import { withDates } from '../store-codec.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
@@ -77,4 +78,11 @@ export const listOpenLoops: Member<'listOpenLoops'> = async (brain, opts = {}) =
   };
   const rows: Record<string, unknown>[] = await storeCall({ member: 'listOpenLoops' }, () => brain.listOpenLoops(query));
   return rows.map(toRow);
+};
+
+/** `closedLoopWithActiveFact`: the closed loop whose commitment fact is still active, or null. The id binds as `bigint`. */
+export const closedLoopWithActiveFact: Member<'closedLoopWithActiveFact'> = (brain, sourceId, loopId) => {
+  const m = 'closedLoopWithActiveFact';
+  if (!Number.isSafeInteger(loopId)) refuseMember(m, 'a loop id that is not an integer');
+  return storeCall({ member: m, sourceId: sourceId ?? undefined }, () => brain.closedLoopWithActiveFact(sourceId, loopId));
 };

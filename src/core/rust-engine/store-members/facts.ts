@@ -2,7 +2,7 @@
  * Facts and their supersession chains (BrainEngine insertFact, insertFacts, deleteFactsForPage, expireFact,
  * listFactsByEntity, listFactsSince, listFactsKeyset, listFactsBySession, listSupersessions, countUnconsolidatedFacts,
  * findCandidateDuplicates, consolidateFact, findTrajectory, getFactsHealth, migrateFactsToCanonical, listUnattributedFacts,
- * pageCollapseFacts).
+ * pageCollapseFacts, listFenceRetireCandidates).
  *
  * Each member applies the defaults and clamps of src/core/engine-sql/facts.ts, then makes one store call. What the
  * store cannot answer exactly refuses with `engine_capability_missing`: a read eligibility policy, `excludePrivate` for a
@@ -242,6 +242,17 @@ export const pageCollapseFacts: Member<'pageCollapseFacts'> = async (brain, ids,
 
 export const countUnconsolidatedFacts: Member<'countUnconsolidatedFacts'> = (brain, sourceId) =>
   storeCall({ member: 'countUnconsolidatedFacts' }, () => brain.countUnconsolidatedFacts(sourceId));
+
+/** The store reads the page's rows by number; ids come back as numbers, and the times as the `jsonb` text PGLite's statement gives. */
+export const listFenceRetireCandidates: Member<'listFenceRetireCandidates'> = async (brain, target) => {
+  const rows = await storeCall({ member: 'listFenceRetireCandidates', slug: target.slug, sourceId: target.sourceId },
+    () => brain.listFenceRetireCandidates({ sourceId: target.sourceId, slug: target.slug, incoming: target.incoming })) as Row[];
+  return rows.map((row) => ({
+    ...row, id: Number(row.id),
+    superseded_by: row.superseded_by == null ? null : Number(row.superseded_by),
+    consolidated_into: row.consolidated_into == null ? null : Number(row.consolidated_into),
+  })) as unknown as Awaited<ReturnType<BrainEngine['listFenceRetireCandidates']>>;
+};
 
 export const findCandidateDuplicates: Member<'findCandidateDuplicates'> = async (brain, sourceId, entitySlug, factText, opts) => {
   const o = takeOptions('findCandidateDuplicates', opts,

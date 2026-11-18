@@ -4,7 +4,7 @@
  *
  * Served: listSessionFactsForClassification, listSessionFactTwins, listCapturedFactsForClassification and
  * listWorldFactsFromPrivateSources, which read only `facts` and `pages`. Refused, because the store holds no such table:
- * loopFactDrift and closedLoopWithActiveFact (`open_loops`), countLabelFacts (`open_loops`, `fact_withdrawals`),
+ * loopFactDrift (`open_loops`; closedLoopWithActiveFact is served from open-loops.ts), countLabelFacts (`open_loops`, `fact_withdrawals`),
  * listExtractorFactsForClassification (`persistence_requests`, `fact_withdrawals`), countPurgedPageFacts (`page_purges`,
  * `fact_withdrawals`, `open_loops`) and listUnwithdrawnFacts (`derived_generations`, `derived_generation_items`,
  * `fact_withdrawals`).

@@ -19,11 +19,15 @@ mod sources;
 mod tags;
 mod timeline;
 mod trust;
+mod trust_fence;
+mod trust_proposals;
 mod versions;
 mod write_guards;
 mod write_misc;
+mod write_trust;
 
 // Planned families: no methods yet (docs/designs/RUST_ENGINE_INTERFACES.md).
+mod alias_fanout_reads;
 mod aliases;
 mod chunk_queries;
 mod code_edges;
@@ -42,6 +46,7 @@ mod facts_trust;
 mod jobs;
 mod keyword;
 mod link_queries;
+mod link_temporal;
 mod ontology;
 mod page_body;
 mod page_ops;

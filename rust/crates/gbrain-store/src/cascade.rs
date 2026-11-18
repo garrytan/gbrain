@@ -21,6 +21,7 @@
 use crate::Result;
 use crate::kv::KvWrite;
 use crate::pages::PageRecord;
+use crate::trust::WriteTrust;
 
 pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()> {
     crate::extraction::remove_page_rows(tx, page)?;
@@ -33,6 +34,7 @@ pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Resul
     crate::vectors::remove_page_rows(tx, page)?;
     crate::embeddings::remove_page_rows(tx, page)?;
     crate::wanted_links::remove_page_rows(tx, page)?;
+    crate::link_queries::link_temporal::remove_page_rows(tx, page)?;
     Ok(())
 }
 
@@ -69,11 +71,12 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
 // The aliases family's `updateSlug` is the first caller.
 pub(crate) fn rename_slug_rows(
     tx: &mut dyn KvWrite,
+    trust: &WriteTrust,
     source_id: &str,
     old_slug: &str,
     new_slug: &str,
 ) -> Result<()> {
-    crate::facts::rename_slug_rows(tx, source_id, old_slug, new_slug)?;
+    crate::facts::rename_slug_rows(tx, trust, source_id, old_slug, new_slug)?;
     Ok(())
 }
 
@@ -196,7 +199,15 @@ pub(crate) mod tests {
             .put_page("a", &input, &PutPageOptions::default())
             .unwrap();
         store
-            .write(|tx| super::rename_slug_rows(tx, "default", "a", "b"))
+            .write(|tx| {
+                super::rename_slug_rows(
+                    tx,
+                    &crate::trust::WriteTrust::default(),
+                    "default",
+                    "a",
+                    "b",
+                )
+            })
             .unwrap();
         let read = store.read().unwrap();
         assert!(

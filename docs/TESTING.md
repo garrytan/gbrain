@@ -286,6 +286,52 @@ file), the [race hunt](#race-hunt) and the lane guard.
 and on a bad list row. An arm deliberately left out is an `ALLOWLIST` row in
 `scripts/check-postgres-lane-coverage.ts` naming its reason and TODO; a row
 for a file that is laned, has no arm or is gone fails.
+
+#### Engine parity arms
+
+`test/engine-parity/` runs each case on PGLite, then on Postgres when
+`DATABASE_URL` is set, then on Rust when `GBRAIN_TEST_RUST_ARM=1`. To run the
+Postgres arm locally, use the CI image with its default `en_US.utf8` locale
+(a C-locale server hides text-order differences):
+
+```bash
+docker run -d --name parity-pg -e POSTGRES_PASSWORD=postgres -p 127.0.0.1:55432:5432 pgvector/pgvector:pg16
+docker exec parity-pg pg_isready -U postgres
+docker exec parity-pg psql -U postgres -c 'CREATE DATABASE gbrain_test'
+docker exec parity-pg psql -U postgres -d gbrain_test -c 'CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm'
+DATABASE_URL=postgresql://postgres:postgres@localhost:55432/gbrain_test GBRAIN_TEST_ALLOW_DATABASE_URL=1 \
+  bun test --timeout=60000 ./test/engine-parity/
+docker rm -f parity-pg
+```
+
+The database name must contain `test`, or the guard refuses it. The harness
+creates one fresh database per file from that URL and empties it between
+cases without restarting its sequences. A case must not compare or pass raw
+generated ids: count them from the case's first row, or compare by name.
+For the Rust arm, run `bun run rust:build`, then add
+`GBRAIN_TEST_RUST_ARM=1 GBRAIN_RUST_ENGINE_ADDON=$PWD/rust/target/addon/gbrain_engine.linux-x64-glibc.node`.
+
+With the same `DATABASE_URL` set, also run the Postgres SQL goldens:
+
+```bash
+bun test ./test/engine-sql-sql-text.test.ts ./test/postgres-rls-scope-inventory.test.ts
+```
+
+These goldens record the Postgres engine's SQL on a recording fake. A change
+to Postgres SQL (for example a `COLLATE "C"`) moves them, so run them with
+every Postgres arm. Regenerate them with `GBRAIN_TEST_UPDATE_GOLDENS=1` and
+commit the changed files.
+
+Two more goldens read a real Postgres database, so they also need
+`DATABASE_URL`:
+
+```bash
+bun test ./test/e2e/schema-catalog-golden.test.ts ./test/e2e/doctor-json-golden.test.ts
+```
+
+Commit first: the doctor golden's `eval_drift` check fails on uncommitted
+retrieval files.
+
 ### Stress gate
 
 `stress-changed-tests` (in `test-status`) runs each touched test file 10x on fresh databases; local twin `bun run test:stress`. Details: [scripts/stress/README.md](../scripts/stress/README.md).

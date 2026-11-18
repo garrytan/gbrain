@@ -38,12 +38,14 @@ mod collapse;
 pub mod cycle;
 pub mod doctor;
 mod embedding;
+mod fence;
 pub mod loops;
 mod privacy;
 pub mod purge;
 pub mod repair;
 pub mod trust;
 
+pub use fence::{FenceContext, FenceTarget};
 pub use privacy::PrivacyPolicy;
 use privacy::hidden_by_private_provenance;
 pub(crate) use privacy::page_hidden;
@@ -59,6 +61,7 @@ use crate::links::no_nul;
 use crate::pages::{next_id, read_page};
 use crate::sources::read_source;
 use crate::timeline_queries::timestamptz_text;
+use crate::trust::{OriginStamp, StampRow, TrustTable, TrustTier, WriteTrust, stamp};
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -149,9 +152,40 @@ pub(crate) struct FactRecord {
     pub value_hash: Option<String>,
     pub dim_status: Option<String>,
     pub attributed_to: Option<String>,
+    /// `trust_tier`: the tier name [`write_fact`] stamped (`trust::stamp`). Empty, as in a record
+    /// written before the store kept the column, reads as `unknown` ([`TrustTier::stored`]).
+    pub trust_tier: String,
+    /// `write_origin`: the provenance JSON of the write that stamped the row (NULL: none).
+    pub write_origin: Option<Value>,
 }
 
 impl FactRecord {
+    /// The stored tier (`storedTrustTier`).
+    pub(crate) fn tier(&self) -> TrustTier {
+        TrustTier::stored(Some(&self.trust_tier))
+    }
+
+    /// Whether a [`TrustTable::Facts`] content column differs between `self` and `new` (the
+    /// trigger's `IS DISTINCT FROM` chain): fact, entity_slug, kind, the four claim columns,
+    /// value, event_type, dimension and context.
+    fn trust_content_changed(&self, new: &FactRecord) -> bool {
+        let float = |a: Option<f64>, b: Option<f64>| match (a, b) {
+            (Some(a), Some(b)) => !(a == b || (a.is_nan() && b.is_nan())),
+            (a, b) => a.is_some() != b.is_some(),
+        };
+        self.fact != new.fact
+            || self.entity_slug != new.entity_slug
+            || self.kind != new.kind
+            || self.claim_metric != new.claim_metric
+            || float(self.claim_value, new.claim_value)
+            || self.claim_unit != new.claim_unit
+            || self.claim_period != new.claim_period
+            || self.value != new.value
+            || self.event_type != new.event_type
+            || self.dimension != new.dimension
+            || self.context != new.context
+    }
+
     /// `expired_at IS NULL AND (valid_until IS NULL OR valid_until > now())`.
     pub(crate) fn active(&self, now: i64) -> bool {
         self.expired_at_us.is_none() && self.valid_until_us.is_none_or(|until| until > now)
@@ -221,8 +255,8 @@ impl FactRecord {
         if let Some(who) = self.attributed_to.as_deref().filter(|s| !s.is_empty()) {
             out.insert("attributed_to".into(), json!(who));
         }
-        out.insert("trust_tier".into(), json!("unknown"));
-        out.insert("write_origin".into(), Value::Null);
+        out.insert("trust_tier".into(), json!(self.tier().as_str()));
+        out.insert("write_origin".into(), json!(self.write_origin));
         if let Some(m) = self.claim_metric.as_deref().filter(|s| !s.is_empty()) {
             out.insert("claim_metric".into(), json!(m));
         }
@@ -429,13 +463,45 @@ pub(crate) fn read_fact(read: &dyn KvRead, id: u64) -> Result<Option<FactRecord>
     get_json(read, &fact_key(id))
 }
 
-/// Writes `new` (replacing `old`, the same row as stored) and its index entries. A unique index
-/// another row holds refuses as Postgres does (`23505`); the caller's write then rolls back.
+/// The `facts` row trigger `gbrain_stamp_trust_tier` (`trust::stamp`): the row `new` with the tier
+/// and write origin the trust context `trust` gives it, as an insert (`old` `None`) or an update
+/// of `old`. A refused raise or an undeclared-above-floor writer is the trigger's error.
+pub(crate) fn stamp_fact(
+    trust: &WriteTrust,
+    old: Option<&FactRecord>,
+    new: &FactRecord,
+) -> Result<FactRecord> {
+    let row = match old {
+        None => StampRow::Insert {
+            supplied: new.tier(),
+        },
+        Some(old) => StampRow::Update {
+            old: old.tier(),
+            new: new.tier(),
+            content_changed: old.trust_content_changed(new),
+            origin_set: old.write_origin != new.write_origin,
+        },
+    };
+    let stamped = stamp(trust, TrustTable::Facts, row)?;
+    let mut out = new.clone();
+    out.trust_tier = stamped.tier.as_str().to_string();
+    if let OriginStamp::Set(origin) = stamped.origin {
+        out.write_origin = origin;
+    }
+    Ok(out)
+}
+
+/// Writes `new` (replacing `old`, the same row as stored) and its index entries, stamped first
+/// with the trust context `trust` ([`stamp_fact`], a `BEFORE` row trigger, so a refusal comes
+/// before a unique-index refusal). A unique index another row holds refuses as Postgres does
+/// (`23505`); the caller's write then rolls back.
 pub(crate) fn write_fact(
     tx: &mut dyn KvWrite,
+    trust: &WriteTrust,
     old: Option<&FactRecord>,
     new: &FactRecord,
 ) -> Result<()> {
+    let new = &stamp_fact(trust, old, new)?;
     if let Some(old) = old {
         for (key, _) in index_keys(old) {
             tx.delete(&key)?;
@@ -458,8 +524,13 @@ pub(crate) fn write_fact(
 }
 
 /// Deletes a row and its index entries, then clears `superseded_by` on the rows that named it
-/// (`facts_superseded_by_fkey ... ON DELETE SET NULL`).
-pub(crate) fn delete_fact(tx: &mut dyn KvWrite, row: &FactRecord) -> Result<()> {
+/// (`facts_superseded_by_fkey ... ON DELETE SET NULL`), an update the trust stamp sees under
+/// `trust`.
+pub(crate) fn delete_fact(
+    tx: &mut dyn KvWrite,
+    trust: &WriteTrust,
+    row: &FactRecord,
+) -> Result<()> {
     for (key, _) in index_keys(row) {
         tx.delete(&key)?;
     }
@@ -468,7 +539,7 @@ pub(crate) fn delete_fact(tx: &mut dyn KvWrite, row: &FactRecord) -> Result<()> 
         if let Some(old) = read_fact(tx, referrer)? {
             let mut new = old.clone();
             new.superseded_by = None;
-            write_fact(tx, Some(&old), &new)?;
+            write_fact(tx, trust, Some(&old), &new)?;
         }
     }
     Ok(())
@@ -548,9 +619,13 @@ pub(crate) fn fact_exists(read: &dyn KvRead, id: u64, source_ids: &[String]) -> 
 /// every fact row of the source, as `facts_source_id_fkey ... ON DELETE CASCADE` does. A row of
 /// another source that named one of them as its successor keeps its row with `superseded_by`
 /// cleared (`ON DELETE SET NULL`).
+///
+/// No store member deletes a source yet, so no trust context reaches here: the `SET NULL` update
+/// is stamped as an undeclared writer's, which changes no content column and keeps each tier.
 pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
+    let trust = &WriteTrust::default();
     for row in source_rows(tx, source_id)? {
-        delete_fact(tx, &row)?;
+        delete_fact(tx, trust, &row)?;
     }
     Ok(())
 }
@@ -1058,7 +1133,12 @@ pub(crate) fn require_fact_source(read: &dyn KvRead, source_id: &str) -> Result<
 }
 
 /// `deleteFactsForPage`'s filter, inside the caller's write. Returns the rows deleted.
-fn delete_for_page(tx: &mut dyn KvWrite, op: &str, args: &PageDeleteArgs) -> Result<u64> {
+fn delete_for_page(
+    tx: &mut dyn KvWrite,
+    trust: &WriteTrust,
+    op: &str,
+    args: &PageDeleteArgs,
+) -> Result<u64> {
     no_nul(op, &[("slug", &args.slug), ("source_id", &args.source_id)])?;
     let patterns: Vec<String> = args
         .exclude_source_prefixes
@@ -1084,7 +1164,7 @@ fn delete_for_page(tx: &mut dyn KvWrite, op: &str, args: &PageDeleteArgs) -> Res
         {
             continue;
         }
-        delete_fact(tx, &row)?;
+        delete_fact(tx, trust, &row)?;
         deleted += 1;
     }
     Ok(deleted)
@@ -1234,6 +1314,7 @@ impl Store {
     pub fn insert_fact(&self, args: &InsertFactArgs) -> Result<Value> {
         const OP: &str = "insertFact";
         let now = self.env.now_micros();
+        let trust = &self.write_trust()?;
         self.write(|tx| {
             let dims = match args.input.embedding {
                 Some(_) => embedding_dimensions(tx)?,
@@ -1243,7 +1324,7 @@ impl Store {
             check_row(OP, &row)?;
             require_fact_source(tx, &args.source_id)?;
             row.id = next_id(tx, COUNTER)?;
-            write_fact(tx, None, &row)?;
+            write_fact(tx, trust, None, &row)?;
             let Some(supersede) = args.supersede_id else {
                 return Ok(json!({ "id": row.id, "status": "inserted" }));
             };
@@ -1254,7 +1335,7 @@ impl Store {
                 new.expired_at_us = Some(now);
                 new.superseded_by = Some(row.id);
                 new.valid_until_us = Some(closed_until(&old, row.valid_from_us, now));
-                write_fact(tx, Some(&old), &new)?;
+                write_fact(tx, trust, Some(&old), &new)?;
             }
             Ok(json!({ "id": row.id, "status": "superseded" }))
         })
@@ -1266,6 +1347,7 @@ impl Store {
         let now = self.env.now_micros();
         let at = opt_time(OP, "at", &args.at)?.unwrap_or(now);
         let successor = opt_time(OP, "successorFrom", &args.successor_from)?;
+        let trust = &self.write_trust()?;
         self.write(|tx| {
             let Some(old) = fact_by_number(tx, OP, "id", args.id)? else {
                 return Ok(false);
@@ -1286,7 +1368,7 @@ impl Store {
             if let Some(successor) = successor {
                 new.valid_until_us = Some(closed_until(&old, successor, now));
             }
-            write_fact(tx, Some(&old), &new)?;
+            write_fact(tx, trust, Some(&old), &new)?;
             Ok(true)
         })
     }
@@ -1300,11 +1382,12 @@ impl Store {
             return Ok(json!({ "inserted": 0, "ids": [], "warnings": [], "deleted": 0 }));
         }
         let now = self.env.now_micros();
+        let trust = &self.write_trust()?;
         self.write(|tx| {
             let deleted = match &args.delete_for_page_first {
                 Some(del) => {
                     let del = PageDeleteArgs { source_id: args.source_id.clone(), ..del.clone() };
-                    delete_for_page(tx, OP, &del)?
+                    delete_for_page(tx, trust, OP, &del)?
                 }
                 None => 0,
             };
@@ -1327,14 +1410,17 @@ impl Store {
                     _ => false,
                 };
                 if taken {
+                    // The BEFORE INSERT trust trigger runs before ON CONFLICT skips the row, so a
+                    // writer the stamp refuses is refused here too.
+                    stamp_fact(trust, None, &row)?;
                     row_ids.push(None);
                     continue;
                 }
                 require_fact_source(tx, &args.source_id)?;
-                write_fact(tx, None, &row)?;
+                write_fact(tx, trust, None, &row)?;
                 row_ids.push(Some(row.id));
             }
-            let warnings = link_supersessions(tx, &args.source_id, &args.rows, &row_ids)?;
+            let warnings = link_supersessions(tx, trust, &args.source_id, &args.rows, &row_ids)?;
             let ids: Vec<u64> = row_ids.iter().flatten().copied().collect();
             Ok(json!({ "inserted": ids.len(), "ids": ids, "warnings": warnings, "deleted": deleted }))
         })
@@ -1342,7 +1428,8 @@ impl Store {
 
     /// `deleteFactsForPage(slug, source_id, { excludeSourcePrefixes, preserveExpiredLegacy })`.
     pub fn delete_facts_for_page(&self, args: &PageDeleteArgs) -> Result<u64> {
-        self.write(|tx| delete_for_page(tx, "deleteFactsForPage", args))
+        let trust = &self.write_trust()?;
+        self.write(|tx| delete_for_page(tx, trust, "deleteFactsForPage", args))
     }
 
     /// `listFactsByEntity`: `valid_from DESC, id DESC`.
@@ -1562,12 +1649,13 @@ impl Store {
         const OP: &str = "consolidateFact";
         let take = bigint(OP, "takeId", take_id)?;
         let now = self.env.now_micros();
+        let trust = &self.write_trust()?;
         self.write(|tx| {
             if let Some(old) = fact_by_number(tx, OP, "id", id)? {
                 let mut new = old.clone();
                 new.consolidated_at_us = Some(now);
                 new.consolidated_into = Some(take);
-                write_fact(tx, Some(&old), &new)?;
+                write_fact(tx, trust, Some(&old), &new)?;
             }
             Ok(())
         })
@@ -1731,13 +1819,14 @@ impl Store {
         )?;
         // PGLite runs the duplicate drop and the move as two statements outside one transaction:
         // a move that then fails keeps the drop.
+        let trust = &self.write_trust()?;
         self.write(|tx| {
             let moving = page_rows(tx, source_id, phantom)?
                 .into_iter()
                 .filter(|r| r.expired_at_us.is_none() && r.dimension.is_some())
                 .collect();
             let to = || Some(canonical.to_string());
-            drop_rekey_duplicates(tx, source_id, moving, |_| (to(), to()))
+            drop_rekey_duplicates(tx, trust, source_id, moving, |_| (to(), to()))
         })?;
         self.write(|tx| {
             let offset = page_rows(tx, source_id, canonical)?
@@ -1760,7 +1849,7 @@ impl Store {
                         })?),
                         None => None,
                     };
-                write_fact(tx, Some(old), &new)?;
+                write_fact(tx, trust, Some(old), &new)?;
             }
             Ok(moving.len() as u64)
         })
@@ -1776,6 +1865,7 @@ impl Store {
 /// slot up, and delete the other dropped rows.
 fn drop_rekey_duplicates(
     tx: &mut dyn KvWrite,
+    trust: &WriteTrust,
     source_id: &str,
     moving: Vec<FactRecord>,
     target: impl Fn(&FactRecord) -> (Option<String>, Option<String>),
@@ -1839,7 +1929,7 @@ fn drop_rekey_duplicates(
             if let Some(old) = read_fact(tx, referrer)? {
                 let mut new = old.clone();
                 new.superseded_by = if old.id == *keep { None } else { Some(*keep) };
-                write_fact(tx, Some(&old), &new)?;
+                write_fact(tx, trust, Some(&old), &new)?;
             }
         }
     }
@@ -1853,9 +1943,9 @@ fn drop_rekey_duplicates(
             new.value = None;
             new.value_hash = None;
             new.dim_status = None;
-            write_fact(tx, Some(&old), &new)?;
+            write_fact(tx, trust, Some(&old), &new)?;
         } else if old.dimension.is_some() {
-            delete_fact(tx, &old)?;
+            delete_fact(tx, trust, &old)?;
         }
     }
     Ok(())
@@ -1872,6 +1962,7 @@ fn drop_rekey_duplicates(
 /// moves nothing. Called by `cascade::rename_slug_rows`.
 pub(crate) fn rename_slug_rows(
     tx: &mut dyn KvWrite,
+    trust: &WriteTrust,
     source_id: &str,
     old: &str,
     new: &str,
@@ -1885,13 +1976,13 @@ pub(crate) fn rename_slug_rows(
         .filter(|r| r.dimension.is_some())
         .cloned()
         .collect();
-    drop_rekey_duplicates(tx, source_id, moving, |r| {
+    drop_rekey_duplicates(tx, trust, source_id, moving, |r| {
         (Some(new.to_string()), r.source_markdown_slug.clone())
     })?;
     for row in entity_rows(tx, source_id, old)? {
         let mut moved = row.clone();
         moved.entity_slug = Some(new.to_string());
-        write_fact(tx, Some(&row), &moved)?;
+        write_fact(tx, trust, Some(&row), &moved)?;
     }
     let held: HashSet<i32> = page_rows(tx, source_id, old)?
         .iter()
@@ -1901,20 +1992,20 @@ pub(crate) fn rename_slug_rows(
         if row.row_num.is_some_and(|n| held.contains(&n))
             && let Some(current) = read_fact(tx, row.id)?
         {
-            delete_fact(tx, &current)?;
+            delete_fact(tx, trust, &current)?;
         }
     }
     let moving = page_rows(tx, source_id, old)?
         .into_iter()
         .filter(|r| r.dimension.is_some())
         .collect();
-    drop_rekey_duplicates(tx, source_id, moving, |r| {
+    drop_rekey_duplicates(tx, trust, source_id, moving, |r| {
         (r.entity_slug.clone(), Some(new.to_string()))
     })?;
     for row in page_rows(tx, source_id, old)? {
         let mut moved = row.clone();
         moved.source_markdown_slug = Some(new.to_string());
-        write_fact(tx, Some(&row), &moved)?;
+        write_fact(tx, trust, Some(&row), &moved)?;
     }
     Ok(())
 }
@@ -1940,6 +2031,7 @@ struct Target {
 /// struck-but-not-superseded or cyclic reference with a warning. Returns the warnings.
 fn link_supersessions(
     tx: &mut dyn KvWrite,
+    trust: &WriteTrust,
     source_id: &str,
     rows: &[NewFactInput],
     row_ids: &[Option<u64>],
@@ -2047,7 +2139,7 @@ fn link_supersessions(
         if let Some(old) = read_fact(tx, id)? {
             let mut new = old.clone();
             new.superseded_by = Some(target);
-            write_fact(tx, Some(&old), &new)?;
+            write_fact(tx, trust, Some(&old), &new)?;
         }
     }
     Ok(warnings)
@@ -2279,7 +2371,15 @@ mod tests {
             })
             .unwrap();
         store
-            .write(|tx| crate::cascade::rename_slug_rows(tx, "default", "people/old", "people/new"))
+            .write(|tx| {
+                crate::cascade::rename_slug_rows(
+                    tx,
+                    &WriteTrust::default(),
+                    "default",
+                    "people/old",
+                    "people/new",
+                )
+            })
             .unwrap();
         let read = store.read().unwrap();
         let view = |id: u64| {
@@ -2330,7 +2430,15 @@ mod tests {
         // A rename onto the same slug changes nothing.
         drop(read);
         store
-            .write(|tx| rename_slug_rows(tx, "default", "people/new", "people/new"))
+            .write(|tx| {
+                rename_slug_rows(
+                    tx,
+                    &WriteTrust::default(),
+                    "default",
+                    "people/new",
+                    "people/new",
+                )
+            })
             .unwrap();
         assert_eq!(
             source_rows(&*store.read().unwrap(), "default")

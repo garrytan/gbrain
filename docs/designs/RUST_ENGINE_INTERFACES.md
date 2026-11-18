@@ -153,6 +153,7 @@ Reserved tags:
 | raw_files | `r` | `RAW_FILES` | yes |
 | link_queries | `q` | `LINK_QUERIES` | no |
 | wanted_links | `q`, sub-tag `W` (shared with link_queries) | `LINK_QUERIES` | yes |
+| link_temporal | `q`, sub-tags `R` and `T` (shared with link_queries) | `LINK_QUERIES` | yes |
 | timeline_queries | `u` | `TIMELINE_QUERIES` | no |
 | keyword | `R` | `TRIGRAM` | no |
 | chunk_queries | `c` | `CHUNK_QUERIES` | no |
@@ -188,8 +189,9 @@ in its module header:
 change to this table and to `keys.rs`.
 
 The `q` tag is shared. link_queries and wanted_links both key records as `q <source id> 0x00 ...`; the byte after
-`0x00` is `W` for a wanted_links record (`q <origin source id> 0x00 W <origin page id BE8> ...`), and link_queries
-uses any other byte. `keys::LINK_QUERIES` stays the one constant for both; neither family adds a tag.
+`0x00` is `W` for a wanted_links record (`q <origin source id> 0x00 W <origin page id BE8> ...`), `R` for a
+link_temporal relationship state row and `T` for a link_temporal transition row, and link_queries uses any other byte.
+`keys::LINK_QUERIES` stays the one constant for all three; no family adds a tag.
 
 code_edges keeps a chunk index under its own tag `H`, after its row sub-tags `0x01` to `0x06`, because the chunk
 store keys chunks by page and index, not by id:
@@ -490,7 +492,7 @@ delete.
 - What the body must do (the trigger's rules): delete the job when the page is hard deleted, soft deleted, moved to
   another slug or source, or when `text_projection_revision` equals `knowledge_revision`; write the job when the page
   is new or its `knowledge_revision` changed.
-- **Owner:** persistence. The body is empty today, so no page write changes.
+- **Owner:** persistence. The body is `persistence/projection_queue.rs` (`rust/docs/store/persistence.md`, "Projection queue").
 
 #### Page origin (`source_path` on `putPage`)
 
@@ -522,6 +524,11 @@ store keeps the same rule in `pages.rs`.
   `sealImportedPage`, `readLivePageBody`; SQL in `engine-sql/write-guards.ts`). The store answers them in
   `write_guards.rs`, and `bindPageOrigin` runs the same origin check as `putPage`. See
   [`rust/docs/store/write-guards.md`](../../rust/docs/store/write-guards.md).
+- **Fence reads.** The fence projection's retire read and the fence guard's trust read are typed engine members
+  (`listFenceRetireCandidates`, capability `facts`, SQL in `engine-sql/facts.ts`; `listFenceFactRows`, capability
+  `facts`, SQL in `engine-sql/trust-fence.ts`). The store answers them in `facts/fence.rs` in the default write
+  context (no writer tier, nothing opened), so `listFenceFactRows` is empty until the Rust write context supplies the
+  writer's tier and the opened ids. See [`rust/docs/store/facts.md`](../../rust/docs/store/facts.md).
 - **Parity case:** `pages.test.ts`: putPage records source_path and refuses a second live page of the same file.
 
 #### Nullable page fields (`PageText` in `pages.rs`)
@@ -804,6 +811,7 @@ Slug renames and page aliases.
 - **Depends on:** `updateSlug` moves the page key (`P`) from the old slug to the new one through core's `pages::rename_page` (built; "Core hooks"). This family versions the page first (`pages::snapshot_in`), then calls `rename_page`, then records the alias, moves its own slug bindings (`page_aliases`, statements 7 and 8 of "Rename slug rows"), and calls `cascade::rename_slug_rows` for the facts records. Links, chunks, tags, timeline and versions follow the page id and need no change.
 - **Estimate:** about 5 to 6 days.
 - **Notes:** Same capability (`pages`) as page_ops and extraction. `resolveSlugWithAliasDetailed` returns how the slug was found; keep its result fields exact.
+- **Known gap:** the Rust store keeps no `alias_text` and no `case_sensitive` flag on `page_aliases` rows, so `resolveCaseSensitiveAliases` is always empty, `readPageAliasRows` gives `alias_text: null`, and `replaceDerivedAliases` stays unserved until alias storage exists (`rust/docs/store/alias_fanout_reads.md`). `findPagesByTitles` with `excludePrivate` refuses with `engine_capability_missing` for a caller whose reader identity widens the page policy; the caller's fail-open fallback reads that as no rows.
 - **Parity cases (6, in `sync-aliases.test.ts`):**
   - `sync-aliases.test.ts`: updateSlug renames a page in place, keeps its chunks, and returns 0 when the old slug is absent
   - `sync-aliases.test.ts`: updateSlug is source-scoped and rejects a path-traversal new slug
@@ -826,6 +834,12 @@ Segmented page bodies: segment texts, manifests, staging and derivations.
 - **Estimate:** about 7 to 8 days: texts and manifest 1 to 2, flip and staging 3, sweep 2, derivations 1.
 - **Notes:** Segment bodies are bytes; sha256 and bodies cross the binding as hex or `Buffer`. `flipBodyGeneration` and `sweepSegments` are each one store write.
 - **Segment storage probe:** `hasSegmentStorage` (capability `page_body`, in `write_guards.rs`) is true when any segment text (`b 0x01`) or body staging (`b 0x03`) exists. The journal reads it before it looks for segmented pages.
+- **Page write rows.** The fence projection's timeline and takes statements are typed engine members:
+  `removeTimelineRows` and `updateTimelineDetails` (SQL in `engine-sql/timeline.ts`; the store answers them in
+  `timeline_queries.rs` through the core helpers `remove_entry` and `recompute_latest`) and `matchTakeRows` and
+  `deleteTakeRows` (SQL in `engine-sql/takes.ts`; answered in `takes.rs`). See
+  [`timeline_queries.md`](../../rust/docs/store/timeline_queries.md) and [`takes.md`](../../rust/docs/store/takes.md).
+- **Connect gate reads:** `hasPersistenceTable`, `listManagedRootBindings`, `readGraduationGateRow` and `listRetiredDeactivations` (capability `persistence_journal`, SQL in `engine-sql/connect-gate.ts`) are answered in TypeScript from the one unmanaged brain the store keeps; they replace the raw-SQL capability checks the graduation and deactivation gates used. Caller-visible change: an engine that refuses one of these members now refuses the connect (or the retired-marker cleanup) with `engine_capability_missing`, where the old `lacksRawSql` skip read it as "no custody row"; only a missing table (`42P01`) still reads as no row. See [`rust/docs/store/journal.md`](../../rust/docs/store/journal.md).
 - **Parity cases (6, in `segmented-body.test.ts`, `sync-aliases.test.ts`):**
   - `segmented-body.test.ts`: a segmented page publishes generation 1 from staged texts and manifest rows
   - `segmented-body.test.ts`: a replace flips to generation 2, closes retired rows and refuses a stale generation
@@ -896,14 +910,14 @@ Takes and synthesis evidence.
 
 - **Files:** `gbrain-store/src/takes.rs`, `gbrain-napi/src/families/takes.rs`, `store-members/takes.ts`.
 - **Tag:** `A` (`TAKE`). Cascade on page delete: yes.
-- **Members (10), capability:** `takes` (10).
-- **Store and binding:** `addTakesBatch` (`add_takes_batch`), `listTakes` (`list_takes`), `searchTakes` (`search_takes`), `updateTake` (`update_take`), `supersedeTake` (`supersede_take`), `resolveTake` (`resolve_take`), `getScorecard` (`get_scorecard`), `getCalibrationCurve` (`get_calibration_curve`), `addSynthesisEvidence` (`add_synthesis_evidence`), `listActiveTakesForPages` (`list_active_takes_for_pages`).
+- **Members (12), capability:** `takes` (12).
+- **Store and binding:** `addTakesBatch` (`add_takes_batch`), `listTakes` (`list_takes`), `searchTakes` (`search_takes`), `updateTake` (`update_take`), `supersedeTake` (`supersede_take`), `resolveTake` (`resolve_take`), `getScorecard` (`get_scorecard`), `getCalibrationCurve` (`get_calibration_curve`), `addSynthesisEvidence` (`add_synthesis_evidence`), `listActiveTakesForPages` (`list_active_takes_for_pages`), `matchTakeRows` (`match_take_rows`), `deleteTakeRows` (`delete_take_rows`).
 - **Postgres tables:** `takes` (unique `(page_id, row_num)`), `synthesis_evidence`, read of `take_grade_cache` for `ungradedFirst`.
 - **Keys:** `A 0x01 <take id>` row; `A 0x02 <page id> <row_num u32>` to the take id (unique); `A 0x03 <synthesis page id> <take page id> <row_num>` evidence; `A 0x04 <take page id> <row_num> <synthesis page id>` reverse evidence. `M next_take_id`. `remove_page_rows` deletes the page's takes and every evidence row that names it.
 - **Depends on:** Core page helpers for slug and visibility joins. Vector search over takes and take embeddings belong to core (vectors, embeddings); the `takes` capability is reported only after those land.
 - **Estimate:** about 4 days.
 - **Notes:** `weight` is REAL: clamp and round as `buildTakeRows` does, then store as `f32`. `since_date` is text compared after padding, not a date. `searchTakes` is a trigram `word_similarity` score: share the keyword family's trigram code once it exists, or build `pg_trgm` scoring in this family and let keyword call it.
-- **Parity cases (19, in `code-eval-salience.test.ts`, `facts.test.ts`, `links.test.ts`, `takes.test.ts`):**
+- **Parity cases (21, in `code-eval-salience.test.ts`, `facts.test.ts`, `links.test.ts`, `takes.test.ts`):**
   - `code-eval-salience.test.ts`: batchLoadEmotionalInputs returns tags and active takes per page; slug filter narrows
   - `code-eval-salience.test.ts`: setEmotionalWeightBatch counts changed rows only, is source-keyed, and feeds getRecentSalience ordering
   - `facts.test.ts`: listFactsByEntity filters by kind, visibility, session, grep (wildcards literal) and consolidation
@@ -923,6 +937,8 @@ Takes and synthesis evidence.
   - `takes.test.ts`: listActiveTakesForPages groups active takes per page in row order, filters by allow-list, and keys empty pages
   - `takes.test.ts`: searchTakes ranks active takes by trigram similarity and applies holder allow-list, source and limit
   - `takes.test.ts`: take embeddings: write, read back, vector search, and staleness accounting
+  - `takes.test.ts`: matchTakeRows lists the stored takes a fence row would collide with, null-safe, ascending, limited, for one page only
+  - `takes.test.ts`: deleteTakeRows deletes the page takes at the listed row numbers with their evidence, and an empty list deletes nothing
 
 ### contradictions
 
@@ -1090,20 +1106,44 @@ engine refuses.
   prefix, these records included.
 - **Postgres tables:** `wanted_links`.
 
+### link_temporal
+
+Link temporal state: the `link_transitions` and `link_relationships` rows of temporal link types, the keyword index
+rebuild counts and the retrieval coverage counts. Detail: `rust/docs/store/link_temporal.md`.
+
+- **Files:** `gbrain-store/src/link_queries/link_temporal.rs`, `gbrain-store/src/link_queries/retrieval_coverage.rs`, `gbrain-napi/src/families/link_temporal.rs`, `store-members/link-temporal.ts`, `store-members/link-refresh.ts`.
+- **Tag:** `q` (`LINK_QUERIES`), sub-tags `R` and `T`, shared with link_queries. Cascade on page delete: yes (`remove_page_rows` drops the rows whose from, to or origin page it is).
+- **Keys:** `q <source> 0x00 R <from BE8> <to BE8> <link_type> 0x00 <scope>` (state row) and `q <source> 0x00 T <from BE8> <to BE8> <link_type> 0x00 <id BE8>` (transition); counter `M link_transition_id`.
+- **Members (21), capability:** `links` (12), `keyword_search` (4, a no-op under `english`), `health` (5: `countEmbeddingHeldPages`, `countPendingProjectionPages`, `projectionRebuildProgress`, `readProjectionReadinessGeneration`, `readProjectionReadiness`).
+- **Postgres tables:** `link_transitions`, `link_relationships`, `links.assertion_tense`; SQL in `src/core/engine-sql/link-temporal.ts`, `search-vector.ts`, `retrieval-coverage.ts`.
+- **Parity cases:** `test/engine-parity/link-temporal.test.ts`, `test/engine-parity/retrieval-coverage.test.ts`.
+- **Follow-ups:** When the transactions core item lands,
+  the refresh after a link write and the temporal and wanted steps of a derived-link publication run in one store
+  transaction, as on PGLite and Postgres.
+
 ### timeline_queries
 
 Timeline reads by date and event projections.
 
 - **Files:** `gbrain-store/src/timeline_queries.rs`, `gbrain-napi/src/families/timeline_queries.rs`, `store-members/timeline-queries.ts`.
 - **Tag:** `u` (`TIMELINE_QUERIES`). Cascade on page delete: no.
-- **Members (5), capability:** `timeline` (5).
-- **Store and binding:** `getTimelineForDate` (`get_timeline_for_date`), `getSince` (`get_since`), `getOnThisDay` (`get_on_this_day`), `getLastSeen` (`get_last_seen`), `upsertEventProjection` (`upsert_event_projection`).
+- **Members (7), capability:** `timeline` (7).
+- **Store and binding:** `getTimelineForDate` (`get_timeline_for_date`), `getSince` (`get_since`), `getOnThisDay` (`get_on_this_day`), `getLastSeen` (`get_last_seen`), `upsertEventProjection` (`upsert_event_projection`), `removeTimelineRows` (`remove_timeline_rows`), `updateTimelineDetails` (`update_timeline_details`).
 - **Postgres tables:** `timeline_entries`, `pages.effective_date`.
 - **Keys:** Reads and writes core timeline rows (`E`, `D`, `G`) only through the timeline entry helpers ("Core hooks"). `u <date> 0x00 <entry id>` date index if a read needs one, kept by a core hook in `timeline.rs`; event projections indexed under `u 0x01 <event_page_id be8> <date>`.
 - **Depends on:** The timeline entry helpers and the `remove_event_projections` stub (both built; fill in the stub). Ask core for a date index hook if a scan is too slow.
 - **Estimate:** about 1 to 2 days.
 - **Notes:** Dates are `YYYY-MM-DD` text. `getOnThisDay` matches month and day across years.
-- **Parity cases (5, in `timeline.test.ts`):**
+- **Follow-up (timeline-member-dedupe):** `removeTimelineRows` (`engine-sql/timeline.ts`) and `deleteTimelineRows`
+  (`engine-sql/timeline-reads.ts`) do the same work: delete a page's timeline rows that still match field for field,
+  and report each date. The canonical projection (`persistence/canonical-projections.ts`) calls `removeTimelineRows`
+  on the persistence branch and `deleteTimelineRows` on the CLI members branch. Both members stay, each with its own
+  Rust store member, until a later change moves every caller to one of them and retires the other on all three
+  engines and the Rust store.
+- **Parity cases (8, in `timeline.test.ts`):**
+  - `timeline.test.ts`: removeTimelineRows deletes only the rows that still match field for field, never an event projection or another page, and reports each deleted date
+  - `timeline.test.ts`: removeTimelineRows reads dates as dates and keeps the page order of the deleted rows
+  - `timeline.test.ts`: updateTimelineDetails rewrites a detail only while the stored one is still the preimage, on the page own rows
   - `timeline.test.ts`: upsertEventProjection updates in place on the same (event, date) and refuses missing pages
   - `timeline.test.ts`: getTimelineForDate returns one day or its ISO week, ordered by event effective_date
   - `timeline.test.ts`: getSince filters by lower-bound date and event kind
@@ -1220,6 +1260,7 @@ Transactions and the page-key lock queue.
   - `lifecycle.test.ts`: transactionDirect commits on success and rolls back on throw
   - `lifecycle.test.ts`: a nested transaction joins the outer one: an outer throw rolls back inner writes too
   - `pages.test.ts`: lockPageKeys holds keys inside a transaction
+  - `pages.test.ts`: lockPageKeys refuses a missing source and a recreated one, and holds a key whose source matches
   - `raw-sql.test.ts`: executeRawDirect answers like executeRaw and joins an open transaction
   - `segmented-body.test.ts`: a segmented page publishes generation 1 from staged texts and manifest rows
 
@@ -1490,6 +1531,14 @@ The Minion job queue, cycle locks, spend and rate leases, and wake subscriptions
     counts and inserts in one write, so no second admission can see the count before the insert. The cases in
     `test/minions-admission.test.ts` stay as they are. Budget reservations (`budget-meter.ts`) and rate leases
     (`rate-leases.ts`) follow the same rule: count, check the cap, write, in one member.
+  - Delegated admission and retry: the refuse-before-write guard. `admitJob` with a delegated client's policy and
+    `retryJob` run the TypeScript policy on a narrow handle (`src/core/rust-engine/delegated-policy-handle.ts`) that
+    serves the job reads, `countOpenJobsByOwner` and `readJobSourceState` from the store. When the policy has called
+    `lockOAuthClient`, the handle records it (`handle.locked()`), and the member refuses (`engine_capability_missing`)
+    before it writes anything: the lock, the capacity count and the write are separate store calls, so they are not
+    one admission. The guard stays until admission is one store write. The store keeps no `oauth_clients` or
+    `access_tokens` table, so the policy's grant read refuses the same way, and `lockOAuthClient` called directly
+    refuses too (a lock that locks nothing would hide a missing guarantee).
   - Cycle locks. PGLite's acquire (`src/core/db-lock.ts`) is an upsert that takes a held row only when
     `ttl_expires_at` has passed and `last_refreshed_at` is null or older than the steal grace, and returns the fence
     `extract(epoch from acquired_at)`. `acquireLease` does the same check and write in one member and returns the same
@@ -1544,6 +1593,8 @@ Trust tiers, the write gate, trust review, fact withdrawal and the belief ledger
   - `t 0x06 <page id BE8>`: a gate receipt; `t 0x07 <hold id BE8>`: a gate hold.
   - `t 0x08 <fact id BE8>`: a withdrawal; `t 0x09 ...`: fact and take purges; `t 0x0a ...`: review queue rows.
   - `t 0x10` to `t 0x14`: belief events, lifetimes, commit marks, retier manifest and redactions.
+  - Built so far (rust/docs/store/trust.md is the record of the bytes): `t 0x01` fact withdrawals, `t 0x02` to
+    `t 0x05` write gate receipts and holds, `t 0x06` to `t 0x08` trust proposals and their pending and by-row indexes.
 - **Transaction rules:** a tier change and its tier index change in one write. `lowerPageTrustTiers` and
   `relowerClaimedRows` read the current tier and write the lower one in the same write, so a concurrent raise is not
   lost. `insertFactWithdrawal` checks for an existing withdrawal and writes in one write (PGLite's unique key gives
@@ -1597,8 +1648,29 @@ and write provenance on content rows, and the trust records.
   `trust::stamp`. A page version snapshot copies the page's tier and origin. The takes and timeline families call
   `stamp` when they write their rows. The statements are in
   [the put write path map](../research/rust-put-write-path.md#trust-hook).
-- **Depends on:** the transactions family for the settings of an open store write; until then a write outside a
-  transaction stamps with no writer, which is `unknown`.
+- **Write trust context (built, store side):** `gbrain_store::write_trust` holds the six trust settings
+  (`gbrain.write_trust_tier`, `gbrain.write_origin`, `gbrain.write_trust_promotion`, `gbrain.write_trust_backfill`,
+  `gbrain.write_trust_keep`, `gbrain.write_open_facts`) on the open store, as text, with `set_config` /
+  `current_setting(name, true)` semantics. Brain methods: `applyWriteTrust(names, values)`,
+  `readWriteTrust(names)` (`(string | null)[]`) and `clearWriteTrust()`. The fence reads (`listFenceFactRows`,
+  `listFenceRetireCandidates`) take the writer's tier and the opened ids from it (`Store::fence_context`);
+  `trust::stamp` will take `Store::write_trust()` once the writers stamp. See
+  [`rust/docs/store/write_trust.md`](../../rust/docs/store/write_trust.md).
+- **Hook (built):** the Rust engine's `applyTransactionSettings` and `readTransactionSettings`
+  (`store-members/transactions.ts`) route the six names to `applyWriteTrust` / `readWriteTrust` on the
+  transaction's store. The attribution and source-scope names (`gbrain.write_sources`, `gbrain.write_request`,
+  `gbrain.write_principal_kind`, `gbrain.write_principal_id`, `gbrain.git_protocol`) stay on the transaction in
+  TypeScript. The transaction calls `clearWriteTrust()` when it ends, at commit and at rollback; a savepoint rollback
+  restores both halves. Any other name refuses with `engine_capability_missing` (`setting=<name>` in the detail).
+  Contract: [`rust/docs/store/transactions.md`](../../rust/docs/store/transactions.md), item 12. The trust half of
+  `setWriteContext` will call the same store methods.
+- **One writer rule:** the store admits one write transaction at a time (`kv.begin_write()` holds the writer), and
+  each transaction's handle has its own context, which starts empty. Two transactions opened together run one after
+  the other and never read each other's settings; the shared store never reads a transaction's settings. Pinned by
+  `test/engine-parity/transaction-settings.test.ts` and the store test
+  `a_second_transaction_waits_for_the_writer_and_starts_with_an_empty_context`.
+- **Depends on:** nothing more for the settings of an open store write. A write outside a transaction stamps with no
+  writer, which is `unknown`, as on PGLite.
 
 ### catalog probes (core)
 
@@ -1717,7 +1789,7 @@ brain; then the first persistence slice (about 4 days, core) comes first.
 | Page-columns hook (`page_columns.rs`): family values that `getPage` returns (`emotional_weight`, `contextual_retrieval_mode`, segmented-body fields, `trust_tier`) | built | salience, aliases, page_body, trust; extraction listed, likely unused |
 | `pages::rename_page` helper | built | aliases (`updateSlug`) |
 | Chunk-delete hook (`cascade::remove_chunk_rows`) | built | code_edges; vectors and embeddings listed |
-| Timeline entry helpers (`next_entry_id`, `read_entry`, `put_entry`) | built | timeline_queries (`upsertEventProjection`) |
+| Timeline entry helpers (`next_entry_id`, `read_entry`, `put_entry`, `remove_entry`, `recompute_latest`) | built | timeline_queries (`upsertEventProjection`, `removeTimelineRows`, `updateTimelineDetails`) |
 | Event projection delete (`timeline_queries::remove_event_projections`, called by `remove_page`) | built; the family fills in the body | timeline_queries |
 | Page index hook (`page_index::reindex_page`, called by `write_page` and `remove_page`) | built; the family fills in the body | keyword (`R` title trigrams), page_ops |
 | Page projection hook (`page_projection::queue_page_projection`, called by `write_page` and `remove_page`) | built; the family fills in the body | persistence (`page_projection_jobs`) |
@@ -1725,7 +1797,7 @@ brain; then the first persistence slice (about 4 days, core) comes first.
 | Timeline date index hook in `timeline.rs` | a family asking | timeline_queries |
 | vectors (`X`): chunk and take vectors, vector search | the coming vector store work | embeddings, takes capability, page_body chunk vectors, `findCandidateDuplicates` with an embedding |
 | embeddings (`B`): stale counts, signatures, embedding state | vectors | stats `getHealth`, chunk_queries shared cases, takes capability |
-| transactions (`w`): the BrainEngine `transaction` callback across napi and `lockPageKeys` | a store transaction that stays open across napi calls | the nine cases that open a transaction |
+| transactions (`w`): the BrainEngine `transaction` callback across napi and `lockPageKeys` | a store transaction that stays open across napi calls | the nine cases that open a transaction; link_temporal (one transaction for the link refresh and the derived-link steps) |
 | relations (`v`): the relation API in place of raw SQL | Track 2 of the design (D18) | not in the Dec 1 scope; `executeRaw` and the rest keep refusing |
 | Source-delete list (`cascade::remove_source_rows`) | built; nothing calls it yet | facts, aliases, code_edges, link_queries, raw_files, page_body, takes, extraction |
 | Source delete itself (a store member in place of the raw SQL) | nothing | serving `sources remove` on the Rust engine |

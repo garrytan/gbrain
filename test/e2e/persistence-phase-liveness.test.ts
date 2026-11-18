@@ -510,7 +510,7 @@ describe.skipIf(!url)('PostgreSQL persistence phase cancellation', () => {
     });
     await held.promise;
     try {
-      await expect(renewWriteClaim({ executeRaw: engine.executeRawDirect.bind(engine) }, row.id, row.execution_token!, 30000,
+      await expect(renewWriteClaim(engine, row.id, row.execution_token!, 30000,
         AbortSignal.timeout(100))).rejects.toMatchObject({ code: '57014' });
     } finally { release.resolve(); await holding; }
     expect((await getWriteRequestById(engine, row.id))?.claim_expires_at).toEqual(row.claim_expires_at);

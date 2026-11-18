@@ -261,6 +261,10 @@ pub struct PutPageOptions {
     /// `putPage` writes it, and whatever chunks it had stay (unread until they are sealed again).
     /// Default true. `chunks` has no effect when this is false.
     pub index: Option<bool>,
+    /// The contextual retrieval stamp written with the page, as PGLite's `putPage` writes
+    /// `contextual_retrieval_mode` and `corpus_generation` in its upsert. A `none` mode writes
+    /// nothing, and neither does an absent stamp: the stored state stays.
+    pub contextual_retrieval: Option<crate::aliases::ContextualRetrievalStamp>,
 }
 
 /// Which pages a read may see. Mirrors `GetPageOpts`: `source_ids` wins when it is not empty.
@@ -776,7 +780,7 @@ fn assert_body_inline(existing: Option<&PageRecord>) -> Result<()> {
 }
 
 /// PGLite's `PROTECTED_MARKER` (`src/core/search/safe-chunks.ts`): `<!--- gbrain:(facts|takes):(begin|end) -->`.
-fn has_protected_text(text: &str) -> bool {
+pub(crate) fn has_protected_text(text: &str) -> bool {
     ["facts", "takes"].iter().any(|kind| {
         ["begin", "end"]
             .iter()
@@ -985,6 +989,9 @@ pub(crate) fn put_page_in(
     // page keyword vector on every `putPage`, also when the values are unchanged.
     forget_search_timeline(tx, record.id)?;
     write_page(tx, &record)?;
+    if let Some(stamp) = &options.contextual_retrieval {
+        crate::aliases::stamp_contextual_retrieval(tx, record.id, stamp)?;
+    }
     let mut record = record;
     if options.index == Some(false) {
         return Ok(record);

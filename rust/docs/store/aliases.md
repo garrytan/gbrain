@@ -70,8 +70,9 @@ Where this engine differs from PGLite:
 
 - `setPageAliases` writes the `frontmatter` rows and `replaceDerivedAliases` the `declared` and
   `subject` rows of the mention pass. A rename carries a derived row's `{ c, t }` value to the new
-  slug. `alias_text` and `case_sensitive` are kept but no store read returns them yet: no served
-  member reads them.
+  slug. The store keeps `alias_text` and `case_sensitive` on that value, and the alias fan-out
+  reads `resolveCaseSensitiveAliases` and `readPageAliasRows` return them
+  ([alias_fanout_reads.md](alias_fanout_reads.md)).
 - PGLite outside a transaction keeps the DELETE of `replaceDerivedAliases` when its INSERT fails;
   the store writes nothing on a refusal. The mention pass runs it inside a transaction, where both
   roll back.

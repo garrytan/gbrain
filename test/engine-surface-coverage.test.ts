@@ -60,7 +60,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'postInboxMessage', 'readJobInbox', 'readChildCompletions',
   'listOpenJobIdsInQueue', 'renewPrivateQueueLease', 'listOwnedPrivateQueues', 'readPrivateQueueState',
   'listStaleWaitingJobIds', 'countTtlExpiredWaiting', 'readJobStats', 'readQueueFamilyStats', 'hasOverdueWatchdogSuspect',
-  'listUnreviewedJobs', 'getFailedJobForRetry', 'countOpenJobsByOwner', 'lockOAuthClient', 'listJobPage',
+  'listUnreviewedJobs', 'getFailedJobForRetry', 'countOpenJobsByOwner', 'readJobSourceState', 'lockOAuthClient', 'listJobPage',
   'listJobAttachmentNames', 'insertJobAttachment', 'listJobAttachments', 'getJobAttachment', 'deleteJobAttachment',
   // Lifecycle
   'connect', 'disconnect', 'reconnect', 'initSchema', 'transaction', 'transactionDirect', 'registerBeforeDisconnect', 'withReservedConnection',
@@ -74,6 +74,11 @@ const INTERFACE_METHODS: readonly string[] = [
   // Graph and doctor link reads (engine-sql/link-reads.ts)
   'inboundLinkCoverage', 'listJunkEntityHubs', 'countEntityPages', 'entityGraphCoverage', 'countForeignEdges',
   'listLivePageSummaries', 'countInboundLinks', 'listLinkEndpointPages', 'listPagesTitledIn', 'wordLexemes',
+  // Link temporal state, search-vector maintenance and retrieval coverage (engine-sql/link-temporal.ts, search-vector.ts, retrieval-coverage.ts).
+  'readLinkRelationshipEvidence', 'writeLinkRelationshipState', 'linkRelationshipKeysForPages', 'staleLinkRelationshipKeys', 'linkRelationshipKeysForOrigin', 'applyLinkTemporalRows',
+  'writeManualLinkTransitions', 'removeManualLinkTransitions', 'listRelationshipNoteRows', 'edgeValidityCounts', 'listPageStatusByRef', 'listRecordMetadataRows',
+  'countSearchVectorRows', 'replaceSearchVectorTriggerFunction', 'backfillSearchVectors', 'ensureFactsKeywordIndex', 'countPendingProjectionPages', 'countEmbeddingHeldPages', 'projectionRebuildProgress',
+  'readProjectionReadinessGeneration', 'readProjectionReadiness',
   // Code, doctor, withdrawal, repair and evidence chunk reads (engine-sql/chunk-reads.ts)
   'findCodeDefinitions', 'listSymbolTypesForName', 'findCodeRefChunks', 'countOversizedEmbedSkips', 'countOrphanChunks',
   'countCodeChunkPages', 'codeChunksExist', 'currentCodeChunksExist', 'listQualifiedSymbolNames', 'listWithdrawalChunks',
@@ -105,11 +110,21 @@ const INTERFACE_METHODS: readonly string[] = [
   'listTimelineOrphanPages',
   // Search telemetry and MCP usage (engine-sql/telemetry.ts; covered by test/engine-parity/telemetry.test.ts)
   'recordSearchTelemetry', 'readSearchStats', 'readClientOpUsage', 'readMcpRollupPrunedBefore',
+  'logMcpRequest', 'readMcpLogPruneCutoff', 'pruneMcpRequestLogBatch', 'readMcpLifetimeUsage',
+  // Alias fan-out reads (engine-sql/alias-fanout-reads.ts; covered by test/engine-parity/alias-fanout-reads.test.ts)
+  'findPagesByTitles', 'resolveCaseSensitiveAliases', 'readPageTitle', 'readPageAliasRows',
   // Import writes (engine-sql/chunks.ts, tags.ts, pages.ts)
   'deleteChunksExcept', 'setChunkerVersion', 'writeTextProjectionSeal', 'moveChunkIndexes', 'getChunkReuseRows', 'pruneFrontmatterTags',
   'addPageTagsById', 'replaceDerivedAliases', 'getPageSealState', 'refreshPageOrigin',
   // Page write guards (engine-sql/write-guards.ts).
   'readPageOrigin', 'listOriginClaims', 'bindPageOrigin', 'stampPageIngest', 'sealImportedPage', 'readLivePageBody', 'hasSegmentStorage',
+  // The fence guard's reads of a page's fact rows (engine-sql/facts.ts, engine-sql/trust-fence.ts).
+  'listFenceRetireCandidates', 'listFenceFactRows',
+  // The trust decision queue (engine-sql/trust-proposals.ts).
+  'insertTrustProposal', 'getTrustProposal', 'listTrustProposals', 'pendingTrustProposalsFor', 'updatePendingTrustProposalAfter',
+  'transitionTrustProposal',
+  // The connect gate's persistence reads (engine-sql/connect-gate.ts).
+  'hasPersistenceTable', 'listManagedRootBindings', 'readGraduationGateRow', 'listRetiredDeactivations',
   // Search
   'searchKeyword', 'countKeywordPages', 'searchKeywordPages', 'searchTitles', 'searchVector', 'getEmbeddingsByChunkIds',
   // Chunks
@@ -129,7 +144,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'addTag', 'removeTag', 'getTags',
   // Timeline + chronicle
   'addTimelineEntry', 'addTimelineEntriesBatch', 'getTimeline', 'getTimelineForDate', 'getSince',
-  'getOnThisDay', 'getLastSeen', 'upsertEventProjection',
+  'getOnThisDay', 'getLastSeen', 'upsertEventProjection', 'removeTimelineRows', 'updateTimelineDetails',
   // Ontology
   'mergeOntologyFact', 'getOntology', 'discoverOntologyDimensions', 'findOntologyConflicts',
   // Raw data + files
@@ -137,7 +152,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // Takes
   'addTakesBatch', 'listTakes', 'searchTakes', 'searchTakesVector', 'getTakeEmbeddings',
   'countStaleTakes', 'listStaleTakes', 'updateTake', 'supersedeTake', 'resolveTake',
-  'getScorecard', 'getCalibrationCurve', 'addSynthesisEvidence',
+  'getScorecard', 'getCalibrationCurve', 'addSynthesisEvidence', 'matchTakeRows', 'deleteTakeRows',
   // Dream verdicts (sweepDreamVerdicts: wave-k #4069 TTL housekeeping,
   // covered by test/dream-verdict-cache-ttl.test.ts)
   'getDreamVerdict', 'putDreamVerdict', 'sweepDreamVerdicts',
@@ -162,6 +177,9 @@ const INTERFACE_METHODS: readonly string[] = [
   // #3980 bulk config read, #3776 takes-embedding update, #3674 scoped
   // link removal.
   'getAllConfig', 'getConfigValues', 'readManagedModeRows', 'getSourceStrictness', 'readPersistenceBrainId', 'readLocalWriterRow', 'insertLocalWriterRow', 'readTransactionSettings', 'applyTransactionSettings', 'readLedgerSource', 'isFolderRestricted', 'readJournalLimitRows', 'readHeldPageRows', 'readHeldCoverageRows', 'readWriteRequest', 'readWriteRequestById', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'lockWriteRequest', 'completeWriteRow', 'readMentionLastPass', 'countPagesDueForMentions', 'readIdentitySiblingCandidates', 'findExactSlug', 'readExtractionLagCounts', 'readIgnoredPrivacyLabelPages', 'updateTakeEmbeddings', 'removeLinksByPagesAndSource',
+  // The write journal's claim upkeep, admission reads and housekeeping (engine-sql/persistence-claims.ts, persistence-housekeeping.ts).
+  'readSourceMembership', 'findTopologyChanges', 'renewWriteClaim', 'expireStaleWriteClaims', 'hasClaimableWrite', 'readTopologyChange', 'insertTopologyChange', 'claimHousekeepingTurn',
+  'completeHousekeepingTurn', 'readReceiptBudget', 'listCompactableReceipts', 'listReservationsAfter', 'listTrueUpRequests', 'readCapacityForecastInputs', 'listPendingSegmentedProjections', 'selectProjectionWindowJobs',
   // The page-write reads and upkeep that belong to no other domain (engine-sql/write-misc.ts).
   'readSourceState', 'readAdmissionSource', 'sharedSkillPackTablePresent', 'listSharedSkillPackRoots', 'getWorktreeBinding', 'hasExtractedEvents', 'listActiveAccessMembers', 'expireMemoryProposals', 'listAwaitingMemoryProposals', 'purgeMemoryProposals', 'attachSourcePath',
   // Code edges
@@ -213,12 +231,16 @@ const ENGINE_INTERNAL_HELPERS: readonly string[] = [
   'searchRead',
   // Graph and doctor link reads: the unscoped engine-sql executor the link-read methods run through.
   'linkRead',
+  // Link temporal state, search-vector and retrieval-coverage members: the unscoped engine-sql executor they run through.
+  'linkTemporal',
   // Code, doctor, withdrawal, repair and evidence chunk reads: the unscoped engine-sql executor they run through.
   'chunkRead',
   // Timeline site reads: the unscoped engine-sql executor they run through.
   'timelineRead',
   // Search telemetry and MCP usage reads: the unscoped engine-sql executor they run through.
   'telemetryRead',
+  // Alias fan-out reads: the unscoped engine-sql executor they run through.
+  'aliasFanoutRead',
   // CLI reads: the executors the CLI read members run through (PGLite rawRead wraps executeRaw; cliReads is the unscoped engine-sql executor).
   'rawRead',
   'cliReads',
