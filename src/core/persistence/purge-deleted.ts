@@ -451,8 +451,8 @@ async function purgeExpired(engine: BrainEngine, olderThanHours: number, opts: {
       blocked: [...originParked(reparked), ...recorded.blocked, ...owner.blocked, ...held.map(row => syncDeleteHeld(row, olderThanHours))],
       deferred: 0, failed: recorded.failed + owner.failed, inactive: 0, parked: recorded.parked, capacity_deferred: 0, held: held.length, ...(reparked.length ? { origin_parked: reparked.length } : {}) };
   }
-  // W3 (#7587): an automatic run reconciles the purges an earlier run left pending before it selects or submits anything.
-  const deferral = await DreamWriteDeferralPass.start(engine, 'purge', opts.automatic === true);
+  // W3 (#7587, #9742): every run, consented manual ones included, reconciles the purges an earlier run left pending before it selects or submits anything.
+  const deferral = await DreamWriteDeferralPass.start(engine, 'purge', true);
   const selection = await selectPurgeCandidates(engine, olderThanHours, opts);
   for (const [sourceId, active] of Object.entries(selection.writers)) await notePurgeSourceWriter(engine, sourceId, active);
   await prunePurgeParks(engine);
