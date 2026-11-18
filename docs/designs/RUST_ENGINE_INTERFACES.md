@@ -1555,6 +1555,7 @@ Trust tiers, the write gate, trust review, fact withdrawal and the belief ledger
   list; trust owns the table, and facts calls `trust::remove_source_rows` or drops the entry. The access tables
   (`access_rules`, `access_members`, `access_tokens`, `access_policy_state`, `oauth_clients`, `oauth_grant_audit`,
   `guest_sources`) belong to the `access` family in the contract map, not to trust.
+  No access rules on Rust: `isFolderRestricted` answers false until an access-rule store exists, and the access-rule write refuses (`raw_sql`).
 - **Depends on:** the facts family (fact ids and the withdrawal overlap); the page-columns hook (built).
 - **Owner:** group 4 (memory records), after facts and contradictions.
 - **Estimate:** about 8 days, plus about 4 for the belief ledger.

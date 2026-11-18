@@ -16,7 +16,8 @@
  *    compare the empty answer every arm gives on a fresh brain (rust/docs/store/write_misc.md).
  */
 import { describe, expect } from 'bun:test';
-import { archiveSource, createSource, parityArms } from './harness.ts';
+import { archiveSource, createSource, parityArms, restrictFolder } from './harness.ts';
+import { isCapabilityRefusal } from './arm-capabilities.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { SourceStateRow } from '../../src/core/engine-sql/write-misc.ts';
@@ -101,6 +102,22 @@ describe('engine parity: write misc', () => {
     };
     expect(answers).toEqual({ plain: false, nested: false, otherSource: false, unknownSource: false });
     return answers;
+  });
+
+  // isFolderRestricted is constant false on Rust only because no Rust brain can hold access state: the access-rule write
+  // (the restrictFolder fixture's raw SQL) must stop on the typed raw_sql refusal there and leave the folder open.
+  parityTest('restrictFolder, the access-rule write, refuses on Rust and restricts the folder on the SQL engines', { methods: ['isFolderRestricted'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'work');
+    const write = await restrictFolder(engine, backend, 'work', 'private/', 'rule').then(() => null, (e: unknown) => e);
+    if (backend === 'rust') {
+      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
+      expect(await engine.isFolderRestricted('work', 'private/diary')).toBe(false);
+      throw write;
+    }
+    expect(write).toBeNull();
+    const underRule = await engine.isFolderRestricted('work', 'private/diary');
+    expect(underRule).toBe(true);
+    return { underRule };
   });
 
   parityTest('expireMemoryProposals expires nothing on a fresh brain', { methods: ['expireMemoryProposals'] }, async (engine) => {
