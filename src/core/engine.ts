@@ -1,4 +1,8 @@
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
+import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
+import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
+import type { RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
+import type { ExtractionPendingRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
 import type { EngineCapabilities } from './engine-capabilities.ts';
 import type { GetVersionsOpts, PageVersionRows } from './page-state/version-types.ts';
 import type { PageSnapshotBatch } from './page-snapshot-batch.ts';
@@ -2890,6 +2894,26 @@ export interface BrainEngine {
    * Callers decide what a malformed answer means; the direct-write guard refuses it (persistence/managed-mode.ts).
    */
   readManagedModeRows(): Promise<Array<{ enabled: unknown }>>;
+
+  // Read-command statements (engine-sql/cli-reads-ops.ts). Each runs the statement its op ran through executeRaw.
+  /**
+   * One exact-phrase scan batch: the next `batchPages` in-scope pages after `afterPageId`, in id order, with their
+   * matches or the reason their text could not be read. Null when the phrase has no searchable word. Postgres runs it
+   * with JIT off under a `timeoutMs` statement deadline; a timeout throws the statement-timeout error.
+   */
+  scanExactBatch(opts: ExactScanOpts, afterPageId: number, batchPages: number, timeoutMs: number): Promise<ExactBatchRow[] | null>;
+  /** The first live page after `afterPageId` in id order, in any source, or null. */
+  nextLivePageAfter(afterPageId: number): Promise<{ id: number; slug: string; source_id: string } | null>;
+  /** whois candidates by title, slug basename, alias and email (engine-sql/exact-identity.ts), at most `opts.limit`. */
+  listExactIdentityCandidates(opts: ExactIdentityStatementOpts): Promise<ExactIdentityRow[]>;
+  /** rank_entities rows (engine-sql/graph-rank.ts); Postgres bounds the statement by `timeoutMs`, and a timeout throws the statement-timeout error. */
+  rankEntities(opts: RankEntitiesStatementOpts, timeoutMs: number): Promise<RankEntityRow[]>;
+  /** Unverified auto-extracted pages visible in scope (`sourceIds` wins over `sourceId`), newest first. */
+  listExtractionPendingPages(opts: { sourceIds?: string[]; sourceId?: string; limit: number; offset: number }): Promise<ExtractionPendingRow[]>;
+  /** Active facts with no entity in `sourceIds`, newest id first; `worldOnly` keeps world facts, `excludePrivateProvenance` drops private-provenance facts. */
+  listUnattributedFacts(opts: { sourceIds: string[]; worldOnly: boolean; excludePrivateProvenance: boolean; limit: number; offset: number }): Promise<UnattributedFactRow[]>;
+  /** Missing link targets in scope, most-referenced first, with their total; `excludePrivate` drops private origins and private bare-name matches. */
+  listWantedPages(opts: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; limit: number; offset: number }): Promise<{ total: number; rows: WantedPageRow[] }>;
 
   /** True when the source's `config.canonical` is `git` (a git-canonical source); false for anything else, including an unknown id. */
   getSourceStrictness(sourceId: string): Promise<boolean>;

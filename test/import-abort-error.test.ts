@@ -23,6 +23,8 @@ const engineStub = {
   kind: 'pglite',
   executeRaw: async (sql: string) => sql.includes('FROM persistence_brain') ? [{ enabled: false }] : [], // #6482: the strict mode reader needs one well-formed unmanaged row.
   getConfig: async () => null,
+  // The typed managed-mode read (import.ts) answers through this stub's own executeRaw, so `answering` overrides reach it.
+  readManagedModeRows(this: { executeRaw: (sql: string) => Promise<unknown[]> }) { return this.executeRaw('SELECT enabled FROM persistence_brain'); },
 } as unknown as BrainEngine;
 
 // The CLI dispatch (src/cli/commands/import.ts) exits on any ImportAbortError

@@ -8,6 +8,7 @@
 import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import type { SqlEngine } from './model.ts';
+import type { BrainEngine } from '../engine.ts';
 import { MANAGED_MODE_SQL, MANAGED_MODE_ROWS_JSON_SQL } from '../engine-sql/persistence-state.ts';
 
 // The statements live with the engine's typed persistence-state reads (`engine-sql/persistence-state.ts`); every plain reader sends them unchanged.
@@ -52,6 +53,10 @@ export async function readManagedMode(engine: SqlEngine, opts: ManagedModeReadOp
   const sql = opts.lock ? `${MANAGED_MODE_SQL} FOR ${opts.lock.toUpperCase()}` : MANAGED_MODE_SQL;
   const rows = await engine.executeRaw<{ enabled: unknown }>(sql, undefined, opts.signal ? { signal: opts.signal } : undefined);
   return managedModeFromRows(rows, opts.refusal).enabled;
+}
+/** `readManagedMode` with no lock and no signal, through the typed `readManagedModeRows` member (every engine serves it). */
+export async function readManagedModeTyped(engine: Pick<BrainEngine, 'readManagedModeRows'>, refusal?: ManagedModeRefusalContext): Promise<boolean> {
+  return managedModeFromRows(await engine.readManagedModeRows(), refusal).enabled;
 }
 /**
  * Read-only inspection for the diagnostics that *report* the persistence state (`writer status`, the fix the refusal
