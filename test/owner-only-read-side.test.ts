@@ -6,7 +6,7 @@
  *    iMessage page live in its source), so it is owner-only by its page; a meeting in an owner-only source never fans a
  *    timeline row onto a page in another source, even with link_resolution.cross_source on; a read whose schema version
  *    is unknown treats every row as owner-only on a brain that has held owner-only data, also after its last owner-only
- *    source is removed, and the v323 form reads the exact lineage.
+ *    source is removed, and the v324 form reads the exact lineage.
  * 2. Fails when: consolidate resolves an entity page outside the facts' source, the extractor fans out of an owner-only
  *    source, or the closed form tests only for a live owner-only source.
  * 3. Real seams: runPhaseConsolidate, extractTimelineFromMeetings, the trigger-written marks and the v322 flag on PGLite.
@@ -73,7 +73,7 @@ describe('owner-only lineage, read side (GST-3032 part 2)', () => {
     expect((await engine.getTimeline('people/bob-example', { sourceId: 'default' })).map(e => e.source)).toEqual(['extract-timeline-from-meetings:meetings/open-sync']);
   }, 120_000);
 
-  test('with no schema version a read counts every row owner-only once the brain has held owner-only data; the v323 form reads exact lineage', async () => {
+  test('with no schema version a read counts every row owner-only once the brain has held owner-only data; the v324 form reads exact lineage', async () => {
     const origin = await page('notes/vault-origin', 'vault', 'note');
     const derived = await page('notes/derived-from-vault', 'default', 'note');
     const open = await page('notes/plainly-open', 'default', 'note');

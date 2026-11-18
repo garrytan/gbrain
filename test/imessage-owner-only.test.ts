@@ -125,7 +125,7 @@ for (const kind of testBackends()) {
       const sourceId = auth.sourceId ?? OPEN_SRC;
       const localFederated = await noGrantFederatedScope(engine, auth.hasSourceGrant, sourceId);
       const out = await dispatchToolCall(engine, op, { ...params }, {
-        remote: true, transport: 'http', auth, sourceId, takesHoldersAllowList: auth.takesHoldersAllowList ?? ['world'],
+        remote: true, transport: 'http', auth, sourceId, takesHoldersAllowList: who === 'owner-client' ? auth.takesHoldersAllowList : auth.takesHoldersAllowList ?? ['world'],
         ...(localFederated ? { localFederatedSourceIds: localFederated } : {}), ...(ch.header ? { onBehalfOf: { header: ch.header } } : {}),
         ...(ch.actor ? { actor: { header: ch.actor } } : {}),
       });
@@ -202,6 +202,10 @@ for (const kind of testBackends()) {
       };
       await mint('owner', { member: OWNER, mayActFor: [`member:${OWNER}`, 'member:bob-example', 'guest'] }, ['read', 'write']);
       await mint('delegate', { member: OWNER });
+      // The owner's own OAuth client (client_credentials, no holders list), bound to the owner like a remote agent of theirs.
+      const registered = await provider().registerClientManual('owner-agent-example', ['client_credentials'], 'read', [], OPEN_SRC, grant);
+      await bindCredential(engine, { kind: 'client', id: registered.clientId }, { member: OWNER });
+      tokens['owner-client'] = (await provider().exchangeClientCredentials(registered.clientId, registered.clientSecret!, 'read')).access_token;
       await mint('bob', { member: 'bob-example' }, ['read', 'write']);
       await mint('unbound', null);
       // Writers whose write floor (the grant's first source) is an owner-only source.
@@ -294,12 +298,40 @@ for (const kind of testBackends()) {
       expect(v320.sql).toContain(`config->>'${OWNER_ONLY_FLAG}' = 'true'`);
     }, 120_000);
 
-    test('rows on an open page derived from owner-only data stay hidden from other callers after their origin is deleted', async () => {
+    /** Runs `fn` while the brain's schema version cannot be read (the config row is unparseable), so reads take the closed form. */
+    async function withoutSchemaVersion<T>(fn: () => Promise<T>): Promise<T> {
+      const [{ v }] = await engine.executeRaw<{ v: string }>(`SELECT value AS v FROM config WHERE key = 'version'`);
+      await engine.executeRaw(`UPDATE config SET value = 'unreadable' WHERE key = 'version'`);
+      __resetPrivateVisibilityCacheForTests();
+      try { return await fn(); } finally {
+        await engine.executeRaw(`UPDATE config SET value = $1 WHERE key = 'version'`, [v]);
+        __resetPrivateVisibilityCacheForTests();
+      }
+    }
+    /** The derived take and timeline canaries `who` reads on any path. */
+    const derivedSeenBy = async (who: string) => { const seen = new Set(Object.values(await seenBy(who)).flat()); return [TIMELINE_FANNED, TAKE_DERIVED].filter(c => seen.has(c)); };
+
+    test('the owner\'s own remote callers (a bound legacy token, a bound client_credentials client with no holders list) read the derived take and timeline row, also with no readable schema version', async () => {
+      for (const who of ['owner', 'owner-client']) expect({ who, seen: await derivedSeenBy(who) }).toEqual({ who, seen: [TIMELINE_FANNED, TAKE_DERIVED] });
+      await withoutSchemaVersion(async () => {
+        for (const who of ['owner', 'owner-client']) expect({ who, seen: await derivedSeenBy(who) }).toEqual({ who, seen: [TIMELINE_FANNED, TAKE_DERIVED] });
+        expect(await seenBy('bob')).toEqual({});
+        // The closed form is in effect: even the open page is owner-only for another member, and the owner still reads it.
+        expect((await call('bob', 'get_page', { slug: OPEN.slug })).text).not.toContain(OPEN.canary);
+        expect((await call('owner-client', 'get_page', { slug: OPEN.slug })).text).toContain(OPEN.canary);
+      });
+    }, 240_000);
+
+    test('rows on an open page derived from owner-only data stay hidden from other callers after their origin is deleted, and the owner\'s remote callers keep them', async () => {
       await engine.deletePage(CHAT_SLUG, { sourceId: IMSG });
       await engine.executeRaw('DELETE FROM facts WHERE source_id = $1', [IMSG]);
       expect(await seenBy('bob')).toEqual({});
-      const owner = new Set(Object.values(await seenBy('owner')).flat());
-      expect([TIMELINE_FANNED, TAKE_DERIVED].filter(c => !owner.has(c))).toEqual([]);
+      for (const who of ['owner', 'owner-client']) expect({ who, seen: await derivedSeenBy(who) }).toEqual({ who, seen: [TIMELINE_FANNED, TAKE_DERIVED] });
+      await withoutSchemaVersion(async () => {
+        expect(await seenBy('bob')).toEqual({});
+        expect((await call('bob', 'get_page', { slug: OPEN.slug })).text).not.toContain(OPEN.canary);
+        for (const who of ['owner', 'owner-client']) expect({ who, seen: await derivedSeenBy(who) }).toEqual({ who, seen: [TIMELINE_FANNED, TAKE_DERIVED] });
+      });
     }, 240_000);
   });
 }
