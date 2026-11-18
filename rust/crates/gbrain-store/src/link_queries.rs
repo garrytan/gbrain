@@ -43,6 +43,7 @@ use crate::pages::{
 };
 use crate::sources::read_source;
 use crate::timeline_queries::jsonb_field_text;
+use crate::trust::{TrustPolicy, TrustTier};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -107,9 +108,18 @@ pub struct GraphScope {
     pub scoped: bool,
     /// `excludePrivate`: the page policy `privatePagesFilterForCaller` (`facts/privacy.rs`).
     pub exclude_private: Option<PrivacyPolicy>,
+    /// `minTrust`: `pageEligibleSql`'s floor over the page's stamped tier (`trust::TrustPolicy`).
+    pub min_trust: Option<String>,
+    /// `suppressFlagged`: drop a page `activationSuppressedSql('pages')` flags.
+    pub suppress_flagged: bool,
 }
 
 impl GraphScope {
+    /// `pageReadFilter`'s `pageEligibleSql` clause: the trust floor and the flagged-page filter.
+    fn trust(&self) -> Result<TrustPolicy> {
+        TrustPolicy::parse(self.min_trust.as_deref(), self.suppress_flagged)
+    }
+
     /// `pageReadFilter`'s source clause: `sourceIds` when not empty, else a non-empty `sourceId`.
     fn source_ok(&self, source_id: &str) -> bool {
         match (&self.source_ids, &self.source_id) {
@@ -181,6 +191,9 @@ pub struct FanoutOptions {
     pub scoped: bool,
     /// `excludePrivate`: the page policy on the seed, step and origin pages.
     pub exclude_private: Option<PrivacyPolicy>,
+    /// `minTrust` and `suppressFlagged`: the trust policy on the same pages ([`GraphScope`]).
+    pub min_trust: Option<String>,
+    pub suppress_flagged: bool,
     pub seed_refs: Option<Vec<PageRef>>,
     pub link_types: Option<Vec<String>>,
     pub direction: Option<String>,
@@ -197,6 +210,9 @@ pub struct ChainHopOptions {
     pub source_ids: Option<Vec<String>>,
     /// `excludePrivate`: the page policy on every endpoint, origin, neighbor and evidence page.
     pub exclude_private: Option<PrivacyPolicy>,
+    /// `minTrust` and `suppressFlagged`: the trust policy on the same pages ([`GraphScope`]).
+    pub min_trust: Option<String>,
+    pub suppress_flagged: bool,
     pub link_types: Vec<String>,
     pub toward: String,
     pub subject_types: Vec<String>,
@@ -294,6 +310,10 @@ impl<'a> Pages<'a> {
         if let Some(policy) = &scope.exclude_private
             && page_hidden(self.read, page, policy)?
         {
+            return Ok(false);
+        }
+        let tier = TrustTier::stored(page.trust_tier.as_deref());
+        if !scope.trust()?.admits(self.read, "pages", page.id, tier)? {
             return Ok(false);
         }
         if !live {
@@ -889,7 +909,7 @@ impl Store {
             source_id: options.source_id.clone(),
             source_ids: options.source_ids.clone(),
             scoped: true,
-            exclude_private: None,
+            ..GraphScope::default()
         };
         let scoped = scope.has_sources();
         let mut pages = Pages::new(&*read);
@@ -937,7 +957,7 @@ impl Store {
             source_id: options.source_id.clone(),
             source_ids: options.source_ids.clone(),
             scoped: true,
-            exclude_private: None,
+            ..GraphScope::default()
         };
         let islanded = options.mode.as_deref().unwrap_or("islanded") == "islanded";
         let mut pages = Pages::new(&*read);
@@ -1187,6 +1207,8 @@ impl Store {
             source_ids: options.source_ids.clone(),
             scoped: options.scoped,
             exclude_private: options.exclude_private,
+            min_trust: options.min_trust.clone(),
+            suppress_flagged: options.suppress_flagged,
         };
         let policy = scope.scoped;
         // Without a read policy pageReadFilter renders TRUE, source clause included.
@@ -1368,6 +1390,8 @@ impl Store {
             source_ids: options.source_ids.clone(),
             scoped: true,
             exclude_private: options.exclude_private,
+            min_trust: options.min_trust.clone(),
+            suppress_flagged: options.suppress_flagged,
         };
         let cap = options.neighbor_cap.clamp(1, 1000);
         let has = |list: &[String], v: &str| list.iter().any(|x| x == v);

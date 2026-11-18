@@ -34,11 +34,13 @@
 #[allow(dead_code)]
 mod stamp;
 
+mod eligibility;
 mod fingerprint;
 pub mod proposals;
 pub mod withdrawals;
 pub mod write_gate;
 
+pub(crate) use eligibility::TrustPolicy;
 pub(crate) use write_gate::activation_suppressed;
 
 #[allow(unused_imports)] // the takes and timeline parts wait for their writers

@@ -23,6 +23,7 @@ import type { CorpusSampleOpts, DomainBankRow, DomainBankSampleOpts, PageReadSco
 import { toGetPage } from '../store-codec.ts';
 import { storeErrorCode } from '../store-errors.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { storePagePolicy } from './private-provenance.ts';
 
 /** PGLite's single-batch primitives throw a plain `Error` past `DELETE_BATCH_SIZE`; the caller chunks. */
 function checkBatch(member: string, n: number): void {
@@ -30,15 +31,21 @@ function checkBatch(member: string, n: number): void {
 }
 
 /**
- * A `PageReadScope` as the store reads it. Any scope object turns on PGLite's live filter (not deleted, not quarantined,
- * source not archived), so `live` says one was passed. The privacy and trust filters refuse when set: the store keeps no
- * trust tiers or private markers it could filter on. `requireSafeChunks` changes nothing on these reads.
+ * A `PageReadScope` as the store reads it (`pageReadFilter`, search/read-policy-sql.ts). Any scope object turns on
+ * PGLite's live filter (not deleted, not quarantined, source not archived), so `live` says one was passed.
+ * `excludePrivate` applies the page policy (private-provenance.ts `storePagePolicy`); `minTrust` and `suppressFlagged`
+ * apply the page's stored trust tier and its write-gate flag receipts (`pageEligibleSql`). `requireSafeChunks` changes
+ * nothing on these reads.
  */
 function readScope(member: string, opts: PageReadScope | undefined): Record<string, unknown> {
   if (opts === undefined || opts === null) return {};
-  for (const key of ['excludePrivate', 'minTrust', 'suppressFlagged'] as const) if (opts[key]) refuseMember(member, `option ${key}`);
-  const taken = takeOptions(member, opts, ['sourceId', 'sourceIds'], ['requireSafeChunks', 'excludePrivate', 'minTrust', 'suppressFlagged']);
-  return { ...taken, live: true };
+  const taken = takeOptions(member, opts, ['sourceId', 'sourceIds', 'excludePrivate', 'minTrust', 'suppressFlagged'], ['requireSafeChunks']);
+  return {
+    sourceId: taken.sourceId, sourceIds: taken.sourceIds, live: true,
+    excludePrivate: storePagePolicy(member, taken.excludePrivate) ?? null,
+    minTrust: taken.minTrust || null,
+    suppressFlagged: taken.suppressFlagged === true,
+  };
 }
 
 const reviveDate = (value: unknown): Date => new Date(String(value));

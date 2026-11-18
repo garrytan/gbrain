@@ -2,15 +2,16 @@
  * Group 5 facts members, search relevance and trust reads (src/core/engine-sql/facts-trust.ts), served from the facts store
  * (rust/crates/gbrain-store/src/facts/trust.rs). A member not exported here refuses with `engine_capability_missing`.
  *
- * Served: `listFactsForRelevance` (the keyword and entity arms) and `countUncomparableFacts`. The store answers the pool's
- * read policy exactly when the caller has no trust floor and no flagged-fact suppression, the visibility rule is the plain
- * `world` one, the privacy policy is the no-caller one (private-provenance.ts), the keyword arm runs in the `english` FTS
- * configuration, and the facts embedding column is `halfvec` (the only column type the store keeps).
+ * Served: `listFactsForRelevance` (the keyword and entity arms) and `countUncomparableFacts`. The pool's trust floor and
+ * flagged-fact suppression go to the store, which reads each fact's stamped `trust_tier` and its write-gate receipts. The
+ * store answers the rest of the pool's read policy exactly when the visibility rule is the plain `world` one, the privacy
+ * policy is the no-caller one (private-provenance.ts), the keyword arm runs in the `english` FTS configuration, and the
+ * facts embedding column is `halfvec` (the only column type the store keeps).
  *
  * Refused (not exported): `matchSavedFacts`, `readFactForOwnerAction`, `listStandingPreferences`,
- * `listLexicalContestCandidates`, `listRestatedPrivateCopies` and `countDerivedFactTaint`. Each reads `trust_tier`,
- * `write_origin` or the write-gate receipts, which the store does not keep. The `entity_ended` arm reads the withdrawal
- * ledger, which it does not keep either.
+ * `listLexicalContestCandidates`, `listRestatedPrivateCopies` and `countDerivedFactTaint`. The store keeps the columns
+ * they read (`trust_tier`, `write_origin`, the write-gate receipts), but no store read for them is built yet. The
+ * `entity_ended` arm reads the withdrawal ledger through `gbrain_fact_fingerprint`, which no store read joins yet.
  */
 import type { BrainEngine } from '../../engine.ts';
 import { escapeLikePattern } from '../../cjk.ts';
@@ -27,7 +28,6 @@ type Row = Record<string, unknown>;
 
 /** The pool's scope and filters as the store reads them, or a refusal for a policy it cannot answer. */
 function poolArgs(member: string, scope: FactPoolScope, filters: FactPoolFilters | undefined): Row {
-  if (scope.minTrust || scope.suppressFlagged) refuseMember(member, 'a trust floor or flagged-fact suppression');
   if (scope.worldOnly && factVisibilitySql('facts', ['world']) !== "facts.visibility IN ('world')") {
     refuseMember(member, 'visibility widened by member pages or grants');
   }
@@ -36,6 +36,8 @@ function poolArgs(member: string, scope: FactPoolScope, filters: FactPoolFilters
     sourceIds: [...new Set(scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? 'default'])],
     worldOnly: scope.worldOnly,
     excludePrivate: storePrivacyPolicy(member, scope.excludePrivate, () => privateProvenanceFilterUnderPolicy('facts')),
+    minTrust: scope.minTrust || null,
+    suppressFlagged: scope.suppressFlagged === true,
     ...(filters?.entities ? { entities: filters.entities.map(e => ({ sourceId: e.sourceId, slug: e.slug })) } : {}),
     ...(filters?.sessionId ? { sessionId: filters.sessionId } : {}),
     ...(filters?.since ? { since: filters.since.toISOString() } : {}),

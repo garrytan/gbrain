@@ -131,8 +131,8 @@ describe('Rust engine on the store', () => {
   withAddon('an option the store does not keep refuses engine_capability_missing instead of being dropped', async () => {
     const { engine } = await open();
     await engine.putPage('notes/a', page);
-    // The store does not evaluate the trust floor getSalienceScores reads.
-    const refused = await code(() => engine.getSalienceScores([{ slug: 'notes/a', source_id: 'default' }], { minTrust: 'agent_written' }));
+    // findOrphanPages takes no trust floor on Rust: no production caller sends one, so it refuses.
+    const refused = await code(() => engine.findOrphanPages({ minTrust: 'agent_written' }));
     expect(refused).toBe('engine_capability_missing');
   });
 
