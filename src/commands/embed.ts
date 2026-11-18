@@ -452,7 +452,7 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
   // v0.37.10.0 T7 (D9): refuse cleanly when init persisted the deferred-setup
   // sentinel. Skipped in dryRun mode so plan-mode introspection still works.
   if (!opts.dryRun) {
-    await assertBrainRowEmbeddingEnabled(engine);
+    await assertBrainRowEmbeddingEnabled(engine, loadConfig());
   }
 
   // v0.41.6.0 D1: preflight embedding credentials. Skipped in dryRun mode
