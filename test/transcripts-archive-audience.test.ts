@@ -119,8 +119,9 @@ describe('archive and the brain audience (pglite, remote=true)', () => {
   test('a run whose audience lookup failed writes no day page and ends archive_audience_unproven', async () => {
     const failing = new Proxy(engine, { get(target, prop) {
       const value = Reflect.get(target, prop, target);
-      if (prop !== 'executeRaw') return typeof value === 'function' ? value.bind(target) : value;
-      return (sql: string, params?: unknown[]) => /mcp_request_log/.test(sql) ? Promise.reject(new Error('synthetic usage read failure')) : target.executeRaw(sql, params);
+      // The usage read is the engine's typed telemetry member (SQL in engine-sql/telemetry.ts).
+      if (prop === 'readClientOpUsage') return () => Promise.reject(new Error('synthetic usage read failure'));
+      return typeof value === 'function' ? value.bind(target) : value;
     } }) as unknown as BrainEngine;
     const reader = staticReader('claude-code', [conversation('claude-code', 'session-unproven', [['user', '2026-10-01T10:00:00.000Z', 'unproven audience note']])]);
     const err = await runTranscriptArchive(failing, { mode: 'backfill', from: '2026-10-01', to: '2026-10-01', readers: [reader], now: new Date('2026-10-05T00:00:00Z') }).then(() => null, (e: { code?: string }) => e);
