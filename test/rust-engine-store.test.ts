@@ -185,6 +185,30 @@ describe('Rust engine on the store', () => {
     expect((await engine.getHealth()).page_count).toBe(1);
   });
 
+  withAddon('raw data and files cross the binding as PGLite returns them', async () => {
+    const { engine } = await open();
+    const created = await engine.putPage('notes/a', page);
+    // A missing page throws PGLite's plain Error, not a typed one.
+    const missing = await engine.putRawData('notes/none', 's', {}).catch((e: unknown) => e);
+    expect(missing).toBeInstanceOf(Error);
+    expect((missing as Error).message).toBe('putRawData failed: page "notes/none" not found');
+    expect((missing as { code?: unknown }).code).toBeUndefined();
+    // JSON.stringify drops undefined members and calls toJSON, as PGLite's binding does.
+    await engine.putRawData('notes/a', 's', { keep: 1, drop: undefined, at: new Date(0) });
+    const [row] = await engine.getRawData('notes/a');
+    expect(row!.data).toEqual({ keep: 1, at: '1970-01-01T00:00:00.000Z' });
+    expect(row!.fetched_at).toBeInstanceOf(Date);
+    expect(await code(() => engine.getRawData('notes/a', undefined, { excludePrivate: true }))).toBe('engine_capability_missing');
+    // A size past 2^31 crosses N-API as a double and comes back whole.
+    const spec = { page_id: created.id, filename: 'a.png', storage_path: 'f/a.png', content_hash: 'h', size_bytes: 5_000_000_000 };
+    expect((await engine.upsertFile(spec)).created).toBe(true);
+    const [file] = await engine.listFilesForPage(created.id);
+    expect(file!.size_bytes).toBe(5_000_000_000);
+    expect(file!.metadata).toEqual({});
+    expect(file!.created_at).toBeInstanceOf(Date);
+    expect((await engine.getFile('default', 'f/a.png'))?.page_id).toBe(created.id);
+  });
+
   withAddon('a brain on a partial capability set reports exactly what the store serves', async () => {
     const { engine } = await open();
     expect([...engine.capabilities].sort()).toEqual([...servedCapabilities()].sort());
@@ -203,6 +227,16 @@ describe('Rust store members', () => {
       expect(needed.length).toBeGreaterThan(0);
       for (const member of needed) expect(Object.hasOwn(STORE_MEMBERS, member)).toBe(true);
     }
+  });
+
+  test("revertToVersion turns the store's page_body_segmented refusal into PGLite's segmentedRevertRefusal", async () => {
+    const refusal = Object.assign(new Error('segmented'), { code: 'page_body_segmented' });
+    const brain = { revertToVersion: async () => { throw refusal; } };
+    const revert = STORE_MEMBERS.revertToVersion as (brain: unknown, slug: string, versionId: number) => Promise<void>;
+    const error = await revert(brain, 'notes/a', 7).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(OperationError);
+    expect((error as OperationError).code).toBe('page_body_segmented');
+    expect((error as Error).message).toBe('Page notes/a or its version 7 is stored in segments, so revert_version cannot restore it yet; nothing was changed.');
   });
 });
 
