@@ -19,6 +19,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { lockCounters } from './journal.ts';
+import { requireTransactions } from '../rust-engine/errors.ts';
 import { principalKey, type WriteRequest } from './model.ts';
 import { declarePersistenceProtocol, isPersistenceDeclaration } from './protocol.ts';
 import { EFFECT_BYTES_SQL, retainedReceiptBytes, TRUE_UP_CLAMP_SQL } from './receipt-bytes.ts';
@@ -32,11 +33,7 @@ const UNSETTLED = "('queued','running')";
 export async function trueUpRequests(engine: BrainEngine, requestIds: Iterable<string>): Promise<number> {
   const ids = [...new Set(requestIds)];
   if (!ids.length) return 0;
-  const rows = await engine.executeRaw<Candidate>(`SELECT r.id,r.intent,r.authority,r.outcome,r.error_message,r.error_detail,r.client_request_id,
-      r.terminal_reservation,r.principal_kind,r.principal_id,r.compacted,
-      COALESCE((SELECT SUM(${EFFECT_BYTES_SQL}) FROM persistence_effects e WHERE e.request_id=r.id),0)::text AS effect_bytes,
-      EXISTS(SELECT 1 FROM persistence_effects e WHERE e.request_id=r.id AND e.state IN ${UNSETTLED}) AS unfinished
-    FROM persistence_requests r WHERE r.id=ANY($1::uuid[]) AND r.state IN ('committed','failed','conflict','cancelled')`, [ids]);
+  const rows = await engine.listTrueUpRequests<Candidate>(ids);
   const shrink = rows.flatMap(row => {
     if (row.unfinished) return [];
     const old = Number(row.terminal_reservation);
@@ -45,6 +42,7 @@ export async function trueUpRequests(engine: BrainEngine, requestIds: Iterable<s
   });
   if (!shrink.length) return 0;
   const keys = ['brain', ...shrink.map(({ row }) => principalKey({ kind: row.principal_kind, id: row.principal_id }))];
+  requireTransactions(engine, 'trueUpRequests', 'it locks the counters and compare-and-sets the reservations in one transaction');
   return engine.transaction(async tx => {
     await declarePersistenceProtocol(tx);
     await lockCounters(tx, keys);
@@ -80,8 +78,7 @@ export async function sweepCompactedReservations(engine: BrainEngine, scan = 100
   const cursor = await engine.getConfig(COMPACTED_SWEEP_KEY);
   if (cursor === 'done') return { freed_bytes: 0, done: true };
   const after = cursor && /^\d+$/.test(cursor) ? cursor : '0';
-  const window = await engine.executeRaw<{ id: string; sequence: string; compacted: boolean }>(`SELECT id,sequence::text AS sequence,compacted
-    FROM persistence_requests WHERE sequence>$1::bigint ORDER BY sequence LIMIT $2`, [after, scan]);
+  const window = await engine.listReservationsAfter(after, scan);
   if (!window.length) {
     await engine.setConfig(COMPACTED_SWEEP_KEY, 'done');
     return { freed_bytes: 0, done: true };

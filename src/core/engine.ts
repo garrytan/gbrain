@@ -29,6 +29,9 @@ import type { ChunkMove } from './page-state/chunk-moves.ts';
 import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence-state.ts';
 import type { ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, WriteCompletion, WriteRequestInsert } from './engine-sql/persistence-journal.ts';
+import type { ClaimExpiry, ClaimRenewal, SourceMembership, TopologyChange, TopologyChangeInsert } from './engine-sql/persistence-claims.ts';
+import type { CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionWindowRow, ReceiptBudget, SegmentedProjectionFilter } from './engine-sql/persistence-housekeeping.ts';
+import type { ProjectionScanCursor } from './page-state/projection-window.ts';
 import type { WriteRequest } from './persistence/model.ts';
 import type { ImportedPageSeal, LivePageBodyRow, OriginClaimRow, PageIngestStamp, PageOriginRow, PageOriginTarget } from './engine-sql/write-guards.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
@@ -46,7 +49,8 @@ import type {
 import type { JunkEntityHubRow, LinkEndpointPage, LivePageSummary, TitledPage } from './engine-sql/link-reads.ts';
 import type { CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuery, ContextualModeCandidate, FrozenHitKey, FrozenHitRow, WithdrawalChunkKey, WithdrawalChunkRow } from './engine-sql/chunk-reads.ts';
 import type { EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRow, PageTimelineRow, SegmentedTimelinePages, TimelineOrphanPage, TimelineRowDeletion } from './engine-sql/timeline-reads.ts';
-import type { McpOpUsageRow, McpRollupPrunedBefore, SearchTelemetryBucket, SearchTelemetryRow } from './engine-sql/telemetry.ts';
+import type { CaseSensitiveAliasRow, PageAliasRow, TitleHitRow } from './engine-sql/alias-fanout-reads.ts';
+import type { McpLifetimeUsageRow, McpLogPruneBatch, McpLogPruneCutoff, McpOpUsageRow, McpRequestLogRow, McpRollupPrunedBefore, SearchTelemetryBucket, SearchTelemetryRow } from './engine-sql/telemetry.ts';
 export type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions, PageMutationPrecondition, PageWithdrawal } from './page-state/types.ts';
 import type {
   Page, PageInput, PageFilters, GetPageOpts, PageReadScope, PageReadPolicy,
@@ -1478,6 +1482,16 @@ export interface BrainEngine {
   readSearchStats(cutoffDate: string): Promise<SearchTelemetryRow[]>;
   readClientOpUsage(days: number): Promise<McpOpUsageRow[]>;
   readMcpRollupPrunedBefore(): Promise<McpRollupPrunedBefore>;
+  /** The MCP request log insert, its retention prune and the lifetime usage read (SQL and contracts in engine-sql/telemetry.ts). */
+  logMcpRequest(row: McpRequestLogRow): Promise<void>;
+  readMcpLogPruneCutoff(days: number): Promise<McpLogPruneCutoff>;
+  pruneMcpRequestLogBatch(cutoff: string, keepOperations: readonly string[], limit: number): Promise<McpLogPruneBatch>;
+  readMcpLifetimeUsage(tokenNames: readonly string[]): Promise<McpLifetimeUsageRow[]>;
+  /** Alias fan-out's exact-title lookup, case-sensitive alias read, page title and alias rows (SQL and contracts in engine-sql/alias-fanout-reads.ts). */
+  findPagesByTitles(titleNorms: readonly string[], sourceIds: readonly string[], types: readonly string[], opts?: { excludePrivate?: boolean }): Promise<TitleHitRow[]>;
+  resolveCaseSensitiveAliases(aliasNorms: readonly string[], sourceIds: readonly string[]): Promise<CaseSensitiveAliasRow[]>;
+  readPageTitle(sourceId: string, slug: string): Promise<string | null>;
+  readPageAliasRows(sourceIds: readonly string[], slugs: readonly string[]): Promise<PageAliasRow[]>;
 
   // Chunks
   /**
@@ -3165,6 +3179,39 @@ export interface BrainEngine {
   lockWriteRequest(id: string): Promise<WriteRequest | null>;
   /** Records a request's terminal state and releases its counters; null when the result exceeds its reservation. */
   completeWriteRow(completion: WriteCompletion): Promise<CompletedWriteRow | null>;
+  // Write-claim statements (engine-sql/persistence-claims.ts): the text journal.ts, authority.ts and consumer.ts sent through executeRaw.
+  /** A source's incarnation and archive flag, or null; `lock` reads it FOR SHARE until the transaction ends. */
+  readSourceMembership(sourceId: string, opts?: { lock?: boolean }): Promise<SourceMembership | null>;
+  /** `[{ request_id }]` for the first of `requestIds` a topology change of local writer `principalId` used, or []. */
+  findTopologyChanges(principalId: string, requestIds: string[]): Promise<Array<{ request_id: string }>>;
+  readTopologyChange(principalId: string, requestId: string): Promise<TopologyChange | null>;
+  insertTopologyChange(row: TopologyChangeInsert): Promise<TopologyChange>;
+  /** Extends a claim's lease (and records its phase); true while the request is running under the token. Postgres sends it on the direct pool. */
+  renewWriteClaim(renewal: ClaimRenewal, opts?: { signal?: AbortSignal }): Promise<boolean>;
+  /** Returns expired claims and claims of dead owners to queued, at most 100; `direct` sends it on the Postgres direct pool. */
+  expireStaleWriteClaims(expiry: ClaimExpiry, opts?: { signal?: AbortSignal; direct?: boolean }): Promise<void>;
+  /** Whether a claim would find a row now; `priority` overrides the foreground-priority config row when set. */
+  hasClaimableWrite(hostId: string, excludeRoots: string[], opts?: { priority?: boolean | null; signal?: AbortSignal }): Promise<boolean>;
+  // Housekeeping statements (engine-sql/persistence-housekeeping.ts): the text housekeeping-turn.ts, compaction-pass.ts, journal.ts,
+  // receipt-true-up.ts, capacity-forecast.ts and the projection queue readers sent through executeRaw after a write.
+  /** Leases this host's housekeeping turn; true when it was free. `direct` sends it on the Postgres direct pool. */
+  claimHousekeepingTurn(claim: HousekeepingTurnClaim, opts?: { signal?: AbortSignal; direct?: boolean }): Promise<boolean>;
+  /** Marks this host's leased housekeeping turn finished. `direct` sends it on the Postgres direct pool. */
+  completeHousekeepingTurn(turn: { op: string; hostId: string }, opts?: { direct?: boolean }): Promise<void>;
+  /** The explicit receipt retention (null when unset), the brain's reserved terminal bytes and now minus `floorDays`, as text. */
+  readReceiptBudget(retentionKey: string, floorDays: number): Promise<ReceiptBudget>;
+  /** Up to 100 compactable receipts completed over `retentionDays` ago, oldest first, without unresolved caller refusals or open-sync rows. */
+  listCompactableReceipts<R = Record<string, unknown>>(retentionDays: number): Promise<R[]>;
+  /** `{ id, sequence, compacted }` of up to `limit` requests after sequence `after`, in sequence order. */
+  listReservationsAfter(after: string, limit: number): Promise<Array<{ id: string; sequence: string; compacted: boolean }>>;
+  /** The terminal requests among `ids` with their effect bytes and whether an effect is unfinished, in sequence order. */
+  listTrueUpRequests<R = Record<string, unknown>>(ids: readonly string[]): Promise<R[]>;
+  /** The capacity forecast's reads: counters, per-day principal and topology rows, history, reclaimable bytes and the table size. */
+  readCapacityForecastInputs(opts?: { light?: boolean }): Promise<CapacityForecastInputs>;
+  /** Pending segmented-page projection jobs ready to rebuild, oldest first. */
+  listPendingSegmentedProjections(filter: SegmentedProjectionFilter): Promise<PendingSegmentedProjection[]>;
+  /** The resident projection pass's window of pending jobs after `cursor`, with the high-water row last. */
+  selectProjectionWindowJobs(cursor: Pick<ProjectionScanCursor, 'after' | 'highWater'>, retryCooldown: boolean): Promise<ProjectionWindowRow[]>;
 
   /**
    * The current value of each named transaction-local setting (`current_setting(name, true)`), in `names` order, null

@@ -4,7 +4,8 @@
  * `cycle.purge.mcp_request_log_retention_days` (unset, 0 or off = off; never
  * fewer than 30 days, so every built-in 30-day usage window stays complete).
  *
- * Each batch is ONE statement: pick the oldest rows past the cutoff (index
+ * Each batch is ONE statement (`engine.pruneMcpRequestLogBatch`, SQL in
+ * engine-sql/telemetry.ts): pick the oldest rows past the cutoff (index
  * order on created_at, FOR UPDATE SKIP LOCKED so two prunes never take the
  * same row), delete them, and add them to the per-token tally
  * `mcp_request_log_rollup` (count, newest time, pruned_through). A failed
@@ -77,56 +78,27 @@ export interface McpLogPruneOpts {
   yieldBetweenBatches?: boolean;
 }
 
-async function rollupTablePresent(engine: BrainEngine): Promise<boolean> {
-  const [row] = await engine.executeRaw<{ present: boolean }>("SELECT to_regclass('mcp_request_log_rollup') IS NOT NULL AS present");
-  return row?.present === true;
-}
-
 const iso = (v: unknown): string => (v instanceof Date ? v : new Date(String(v))).toISOString();
-
-const PRUNE_BATCH_SQL = `
-WITH victims AS MATERIALIZED (
-  SELECT id FROM mcp_request_log
-   WHERE created_at < $1::timestamptz AND operation <> ALL($2::text[])
-   ORDER BY created_at
-   LIMIT $3
-   FOR UPDATE SKIP LOCKED
-), deleted AS (
-  DELETE FROM mcp_request_log l USING victims v WHERE l.id = v.id
-  RETURNING l.token_name, l.created_at
-), agg AS (
-  SELECT COALESCE(token_name, '') AS token_name, count(*)::bigint AS n, max(created_at) AS newest
-    FROM deleted GROUP BY 1
-), tallied AS (
-  INSERT INTO mcp_request_log_rollup AS r (token_name, requests, last_used_at, pruned_through)
-  SELECT token_name, n, newest, newest FROM agg
-  ON CONFLICT (token_name) DO UPDATE SET
-    requests = r.requests + EXCLUDED.requests,
-    last_used_at = GREATEST(r.last_used_at, EXCLUDED.last_used_at),
-    pruned_through = GREATEST(r.pruned_through, EXCLUDED.pruned_through)
-  RETURNING 1
-)
-SELECT (SELECT count(*) FROM deleted)::int AS deleted, (SELECT max(created_at) FROM deleted) AS newest, (SELECT count(*) FROM tallied)::int AS tallied`;
 
 /** Prune rows older than `days` in bounded batches. Throws on a database error (each batch's statement rolls back whole). */
 export async function pruneMcpRequestLog(engine: BrainEngine, days: number, opts: McpLogPruneOpts = {}): Promise<McpLogPruneResult> {
-  if (!(await rollupTablePresent(engine))) {
+  const started = Date.now();
+  const { rollup_present, cutoff } = await engine.readMcpLogPruneCutoff(days);
+  if (!rollup_present) {
     console.warn('[mcp-request-log] retention is on but mcp_request_log_rollup does not exist yet (run gbrain apply-migrations); nothing was pruned');
     return { deleted: 0, capped: false, skipped: 'no_rollup_table', pruned_through: null };
   }
   const batchSize = opts.batchSize ?? MCP_LOG_PRUNE_BATCH;
   const maxBatches = opts.maxBatches ?? MCP_LOG_PRUNE_MAX_BATCHES;
-  const started = Date.now();
-  const [{ cutoff }] = await engine.executeRaw<{ cutoff: unknown }>("SELECT now() - ($1::int * interval '1 day') AS cutoff", [days]);
   const cutoffIso = iso(cutoff);
   const audit = [...AUDIT_LOG_OPERATIONS];
   let deleted = 0;
   let newest: string | null = null;
   for (let batch = 0; batch < maxBatches; batch++) {
-    const [row] = await engine.executeRaw<{ deleted: number; newest: unknown }>(PRUNE_BATCH_SQL, [cutoffIso, audit, batchSize]);
-    const n = Number(row?.deleted ?? 0);
+    const row = await engine.pruneMcpRequestLogBatch(cutoffIso, audit, batchSize);
+    const n = row.deleted;
     deleted += n;
-    const batchNewest = n > 0 && row?.newest ? iso(row.newest) : null;
+    const batchNewest = n > 0 && row.newest ? iso(row.newest) : null;
     if (batchNewest !== null && (newest === null || batchNewest > newest)) newest = batchNewest;
     if (n < batchSize) return { deleted, capped: false, skipped: null, pruned_through: newest };
     if (opts.budgetMs !== undefined && Date.now() - started >= opts.budgetMs) break;
@@ -159,23 +131,13 @@ export async function runMcpLogRetention(engine: BrainEngine, opts: McpLogPruneO
 
 /**
  * Lifetime requests and last use per token: the rows still in the log plus
- * the pruned tally, in one statement. Before the tally table exists, the log
- * alone (nothing was pruned).
+ * the pruned tally (`engine.readMcpLifetimeUsage`). Before the tally table
+ * exists, the log alone (nothing was pruned).
  */
 export async function lifetimeUsage(engine: BrainEngine, tokenNames: string[]): Promise<Map<string, { requests: number; last_used_at: string | null }>> {
   if (tokenNames.length === 0) return new Map();
-  const kept = `SELECT token_name, count(*)::bigint AS n, max(created_at) AS newest FROM mcp_request_log WHERE token_name = ANY($1::text[]) GROUP BY token_name`;
-  const rows = await engine.executeRaw<{ token_name: string; requests: string | number; last_used_at: unknown }>(
-    (await rollupTablePresent(engine))
-      ? `SELECT token_name, sum(n)::bigint AS requests, max(newest) AS last_used_at FROM (
-           ${kept}
-           UNION ALL
-           SELECT token_name, requests, last_used_at FROM mcp_request_log_rollup WHERE token_name = ANY($1::text[])
-         ) u GROUP BY token_name`
-      : `SELECT token_name, n AS requests, newest AS last_used_at FROM (${kept}) k`,
-    [tokenNames],
-  );
-  return new Map(rows.map((r) => [r.token_name, { requests: Number(r.requests), last_used_at: r.last_used_at ? iso(r.last_used_at) : null }]));
+  const rows = await engine.readMcpLifetimeUsage(tokenNames);
+  return new Map(rows.map((r) => [r.token_name, { requests: r.requests, last_used_at: r.last_used_at ? iso(r.last_used_at) : null }]));
 }
 
 export interface McpLogPruneTickerOpts {

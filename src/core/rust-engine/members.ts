@@ -90,6 +90,11 @@ export const RUST_ENGINE_MEMBERS = {
   resolveAliases: 'pages',
   setPageAliases: 'pages',
   updatePageContextualRetrievalState: 'pages',
+  // alias fan-out reads (engine-sql/alias-fanout-reads.ts; rust/docs/store/alias_fanout_reads.md)
+  findPagesByTitles: 'pages',
+  resolveCaseSensitiveAliases: 'pages',
+  readPageTitle: 'pages',
+  readPageAliasRows: 'pages',
   readPageTrustRows: 'pages',
   listLinkPageMetadata: 'pages',
   filterPagesAtRevision: 'pages',
@@ -389,12 +394,16 @@ export const RUST_ENGINE_MEMBERS = {
   deleteEvalCandidatesBefore: 'eval_capture',
   logEvalCaptureFailure: 'eval_capture',
   listEvalCaptureFailures: 'eval_capture',
-  // telemetry (engine-sql/telemetry.ts): the store serves the search telemetry pair; the MCP usage reads refuse until a
-  // typed member writes the MCP request log, so `telemetry` is not reported yet.
+  // telemetry (engine-sql/telemetry.ts): search telemetry, the MCP request log with its retention prune, and the MCP
+  // usage reads; the store serves every member (rust/docs/store/telemetry.md).
   recordSearchTelemetry: 'telemetry',
   readSearchStats: 'telemetry',
   readClientOpUsage: 'telemetry',
   readMcpRollupPrunedBefore: 'telemetry',
+  readMcpLifetimeUsage: 'telemetry',
+  logMcpRequest: 'telemetry',
+  readMcpLogPruneCutoff: 'telemetry',
+  pruneMcpRequestLogBatch: 'telemetry',
   // ingest_log
   logIngest: 'ingest_log',
   getIngestLog: 'ingest_log',
@@ -453,6 +462,22 @@ export const RUST_ENGINE_MEMBERS = {
   expireMemoryProposals: 'persistence_journal',
   listAwaitingMemoryProposals: 'persistence_journal',
   purgeMemoryProposals: 'persistence_journal',
+  readSourceMembership: 'persistence_journal',
+  findTopologyChanges: 'persistence_journal',
+  readTopologyChange: 'persistence_journal',
+  insertTopologyChange: 'persistence_journal',
+  renewWriteClaim: 'persistence_journal',
+  expireStaleWriteClaims: 'persistence_journal',
+  hasClaimableWrite: 'persistence_journal',
+  claimHousekeepingTurn: 'persistence_journal',
+  completeHousekeepingTurn: 'persistence_journal',
+  readReceiptBudget: 'persistence_journal',
+  listCompactableReceipts: 'persistence_journal',
+  listReservationsAfter: 'persistence_journal',
+  listTrueUpRequests: 'persistence_journal',
+  readCapacityForecastInputs: 'persistence_journal',
+  listPendingSegmentedProjections: 'persistence_journal',
+  selectProjectionWindowJobs: 'persistence_journal',
   // access_control
   isFolderRestricted: 'access_control',
   listActiveAccessMembers: 'access_control',
