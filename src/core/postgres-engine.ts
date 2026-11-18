@@ -9,7 +9,7 @@ import { assertPageRevision } from './page-state/types.ts';
 import { assertOriginUnclaimed, assertRevivalUnclaimed, classifyOriginUniqueViolation } from './persistence/origin-guard.ts';
 import { lockUnheldPageKeys, withHeldPageKeys, type HeldPageKeys } from './page-state/guards.ts';
 import { readPageSnapshot as readCanonicalPageSnapshot } from './page-state/snapshot.ts';
-import { readDeadline } from './read-deadline.ts';
+import { readDeadline, readDeadlineSignal } from './read-deadline.ts';
 import { readPageSnapshotsBatch } from './page-snapshot-batch.ts';
 import { createPageVersion, type VersionHistory } from './page-state/versions.ts';
 import { moveSlugBindings, recordRenameAlias } from './page-state/rename-alias.ts';
@@ -429,12 +429,12 @@ export class PostgresEngine implements BrainEngine {
    * A typed read that master issued through `executeRaw`, which a preparer's bounded view (persistence/bounded-reads.ts)
    * ended on the server at the claim's deadline. Under `withReadDeadline` it runs as `withScopedReadTransaction`'s
    * deadline path does (a reserved read-only transaction whose `statement_timeout` is the time left); otherwise, inside
-   * a transaction, or for a locking read (`unbounded`), it runs on the current connection as before.
+   * a transaction or a locking read (`unbounded`) uses the current connection. A clock abort discards it at once (#8155).
    */
   private preparationRead<T>(fn: (exec: SqlExecutor) => Promise<T>, unbounded?: boolean): Promise<T> {
     const deadlineAt = this._pageTransaction || unbounded ? undefined : readDeadline();
     if (deadlineAt === undefined) return fn(this.autocommitSql);
-    return runDeadlineRead(this.sql, deadlineAt, tx => fn(this.engineSqlOn(tx)), this.checkoutGauge, cancelSettleMs());
+    return runDeadlineRead(this.sql, deadlineAt, tx => fn(this.engineSqlOn(tx)), this.checkoutGauge, cancelSettleMs(), readDeadlineSignal());
   }
 
   /** An unscoped read in its own transaction with JIT off (search-settings.ts); a savepoint inside a caller's transaction. */

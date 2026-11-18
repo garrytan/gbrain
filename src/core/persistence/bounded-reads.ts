@@ -66,6 +66,10 @@ export function isConnectionEnd(error: unknown): error is { code: string } {
   return code === 'CONNECTION_DESTROYED' || code === 'CONNECTION_CLOSED';
 }
 
+function isAbortError(error: unknown): boolean {
+  return (error as { name?: unknown } | null)?.name === 'AbortError';
+}
+
 /** Whether `error` is the server ending a statement at a timeout (ours, or a shorter session one). */
 export function isStatementTimeout(error: unknown): error is { code: string } {
   const code = (error as { code?: unknown } | null)?.code;
@@ -126,8 +130,11 @@ export function boundedReads(engine: BrainEngine, clock: ClaimPhaseClock | undef
     if (!opts.engineReads && !typedRead) return value.bind(target);
     return (...args: unknown[]) => {
       if (typedRead) recordClaimSql(clock, `SELECT FROM ${String(key)}`);
-      const result = withReadDeadline(deadlineAt, () => value.apply(target, args));
+      // A typed read also takes the clock's signal, as master's raw statement did (#8155); a shared memo read drops it.
+      const result = withReadDeadline(deadlineAt, () => value.apply(target, args), typedRead ? clock!.signal : undefined);
       return result instanceof Promise ? result.catch(error => {
+        // The clock's abort ended the read and discarded its connection: the error is the abort reason the consumer knows.
+        if (typedRead && clock!.signal?.aborted && !isSharedReadFailure(error) && (isAbortError(error) || isConnectionEnd(error))) throw clock!.signal.reason;
         const refused = error instanceof ReadDeadlineError;
         if (!refused && (!isStatementTimeout(error) || isSharedReadFailure(error) || Date.now() < deadlineAt)) throw error;
         if (clock!.signal?.aborted) throw clock!.signal.reason;
