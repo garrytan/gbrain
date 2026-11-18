@@ -65,6 +65,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'readPageOrigin', 'listOriginClaims', 'bindPageOrigin', 'stampPageIngest', 'sealImportedPage', 'readLivePageBody', 'hasSegmentStorage',
   // The fence guard's reads of a page's fact rows (engine-sql/facts.ts, engine-sql/trust-fence.ts).
   'listFenceRetireCandidates', 'listFenceFactRows',
+  // The connect gate's persistence reads (engine-sql/connect-gate.ts).
+  'hasPersistenceTable', 'listManagedRootBindings', 'readGraduationGateRow', 'listRetiredDeactivations',
   // Search
   'searchKeyword', 'countKeywordPages', 'searchKeywordPages', 'searchTitles', 'searchVector', 'getEmbeddingsByChunkIds',
   // Chunks

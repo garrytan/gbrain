@@ -25,6 +25,7 @@ import type { TimelineDetailRefresh, TimelineRowRemoval } from './engine-sql/tim
 import type { TakeFenceRow } from './engine-sql/takes.ts';
 import type { FactPreimage, FenceProjectionTarget } from './engine-sql/facts.ts';
 import type { FenceFactRow, FenceRowsTarget } from './engine-sql/trust-fence.ts';
+import type { GraduationGateRow, ManagedRootBindingRow, PersistenceTable, RetiredDeactivationRow } from './engine-sql/connect-gate.ts';
 import type { ImportedPageSeal, LivePageBodyRow, OriginClaimRow, PageIngestStamp, PageOriginRow, PageOriginTarget } from './engine-sql/write-guards.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, SourceRoutingRow } from './engine-sql/sources.ts';
@@ -3014,6 +3015,16 @@ export interface BrainEngine {
 
   /** Sets each named setting to the value at its index for the rest of the current transaction (`set_config(name, value, true)`), in one statement. */
   applyTransactionSettings(names: readonly string[], values: readonly string[]): Promise<void>;
+
+  // The connect gate's persistence reads (engine-sql/connect-gate.ts): table probes, managed roots, graduation, retired epochs.
+  /** Whether persistence table `table` exists (a brain before the persistence migrations has none). */
+  hasPersistenceTable(table: PersistenceTable): Promise<boolean>;
+  /** The managed roots host `hostId` binds, plus every source with a local path, in one snapshot. */
+  listManagedRootBindings(hostId: string, opts?: { signal?: AbortSignal }): Promise<ManagedRootBindingRow[]>;
+  /** The graduation custody row, or null; `withRunSetting` adds the run the current transaction declares. */
+  readGraduationGateRow(opts?: { withRunSetting?: boolean }): Promise<GraduationGateRow | null>;
+  /** The outcome of every committed writer deactivation. */
+  listRetiredDeactivations(): Promise<RetiredDeactivationRow[]>;
 
   /**
    * What the belief ledger knows about one source (incarnation, purge epoch, newest coverage event, whether any purge
