@@ -52,6 +52,7 @@ pub mod takes;
 pub mod timeline_queries;
 pub mod transactions;
 pub mod vectors;
+pub mod wanted_links;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;

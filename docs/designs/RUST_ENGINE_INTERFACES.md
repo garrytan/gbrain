@@ -152,6 +152,7 @@ Reserved tags:
 | stats | `n` | `INGEST_LOG` | no |
 | raw_files | `r` | `RAW_FILES` | yes |
 | link_queries | `q` | `LINK_QUERIES` | no |
+| wanted_links | `q`, sub-tag `W` (shared with link_queries) | `LINK_QUERIES` | yes |
 | timeline_queries | `u` | `TIMELINE_QUERIES` | no |
 | keyword | `R` | `TRIGRAM` | no |
 | chunk_queries | `c` | `CHUNK_QUERIES` | no |
@@ -159,6 +160,10 @@ Reserved tags:
 | embeddings (core) | `B` | `EMBEDDING_STATE` | yes |
 | transactions (core) | `w` | `LOCK_QUEUE` | no |
 | relations (core) | `v` | `RELATION_CATALOG` | no |
+
+The `q` tag is shared. link_queries and wanted_links both key records as `q <source id> 0x00 ...`; the byte after
+`0x00` is `W` for a wanted_links record (`q <origin source id> 0x00 W <origin page id BE8> ...`), and link_queries
+uses any other byte. `keys::LINK_QUERIES` stays the one constant for both; neither family adds a tag.
 
 ### Page delete cascade
 
@@ -347,11 +352,15 @@ family's records keyed by source, not by page; records under a page go through t
   `pages::remove_page` (so the page and chunk hooks fire), then calls this list, then deletes the source record.
 - **Owners** (the Postgres tables that cascade on `sources.id`): facts (`facts`, `fact_withdrawals`), aliases
   (`slug_aliases`, `page_aliases`), code_edges (`code_edges_chunk`, `code_edges_symbol`), link_queries
-  (`wanted_links`), raw_files (`files`), page_body (`page_segment_texts`, `page_body_stagings` and the other segment
+  (its own `q` records and the wanted_links family's `wanted_links` records, `q <source> 0x00 W ...`), raw_files (`files`), page_body (`page_segment_texts`, `page_body_stagings` and the other segment
   tables), takes (`take_proposals`, `take_nudge_log`), extraction (`extract_atoms_page_state`).
 - **Not on the list:** eval_capture (`eval_candidates.source_ids` is a text array with no foreign key) and stats
   (`ingest_log` has no foreign key). A family that is not listed and keys records by source asks core for one line.
-- The stubs in `facts.rs` and `link_queries.rs` use full paths (`crate::kv::KvWrite`, `crate::Result`), so they need no
+- **Shared `q` prefix.** `link_queries::remove_source_rows` deletes everything under `q <source> 0x00`, so it owns the
+  source-delete cascade for both link_queries and wanted_links. It must not narrow that prefix (for example to the
+  link_queries sub-keys only), or a source delete leaves the source's wanted links behind. wanted_links has no
+  `remove_source_rows` of its own.
+- The stubs in `facts.rs`, `link_queries.rs` and `wanted_links.rs` use full paths (`crate::kv::KvWrite`, `crate::Result`), so they need no
   import line in a file that has none yet.
 
 #### Rename slug rows (`cascade::rename_slug_rows`)
@@ -983,7 +992,7 @@ Link and graph members the links and graph capabilities still refuse.
 - **Members (10), capability:** `links` (6), `graph` (4).
 - **Store and binding:** `replaceDerivedLinks` (`replace_derived_links`), `replaceDerivedLinksBatch` (`replace_derived_links_batch`), `removeLinksByPagesAndSource` (`remove_links_by_pages_and_source`), `listLinkSources` (`list_link_sources`), `getBacklinkCounts` (`get_backlink_counts`), `rewriteLinks` (`rewrite_links`), `relationalFanout` (`relational_fanout`), `relationalChainHop` (`relational_chain_hop`), `getAdjacencyBoosts` (`get_adjacency_boosts`), `findOrphanPages` (`find_orphan_pages`).
 - **Postgres tables:** `links` (through `links.rs`), `pages`.
-- **Keys:** No new rows for most members; `q` is for derived-link bookkeeping if `replaceDerivedLinks` needs it (`q <source> 0x00 <origin page id> ...`). Link rows themselves are written only through the `links.rs` helpers.
+- **Keys:** No new rows for most members; `q` is for derived-link bookkeeping if `replaceDerivedLinks` needs it (`q <source> 0x00 <origin page id> ...`). The byte `W` after `q <source> 0x00` belongs to wanted_links; link_queries keys never start with it there. `remove_source_rows` deletes the whole `q <source> 0x00` prefix, wanted links included, and must not narrow it. Link rows themselves are written only through the `links.rs` helpers.
 - **Depends on:** Core link helpers. Ask core for any write helper the derived-link replace needs. `rewriteLinks` follows the page id and is a no-op on links (one case also needs aliases).
 - **Estimate:** about 3 days.
 - **Notes:** `getLinks`/`getBacklinks` with a source list constrain both ends; a scalar source constrains only the from side. `relationalFanout` and `relationalChainHop` must keep the PGLite depth and order.
@@ -998,6 +1007,20 @@ Link and graph members the links and graph capabilities still refuse.
   - `links.test.ts`: getAdjacencyBoosts aggregates in-set linkers only
   - `links.test.ts`: findOrphanPages: islanded default vs inbound mode, with source scope
   - `sync-aliases.test.ts`: rewriteLinks after updateSlug is a no-op: links follow the page id, not the slug
+
+### wanted_links
+
+The `wanted_links` table reads and writes that `listWantedPages` needs: authored links whose target page does not
+exist (`src/core/wanted-links-store.ts`). TypeScript reaches the table through `executeRaw` today, which the Rust
+engine refuses.
+
+- **Files:** `gbrain-store/src/wanted_links.rs` (stub, with an empty `remove_page_rows`).
+- **Tag:** `q` (`LINK_QUERIES`), sub-tag `W`, shared with link_queries. Cascade on page delete: yes
+  (`wanted_links.origin_page_id` is `ON DELETE CASCADE`).
+- **Keys:** `q <origin source id> 0x00 W <origin page id BE8> ...`. `wanted_links.rs` defines the bytes after `W`.
+- **Source delete:** no hook of its own. `link_queries::remove_source_rows` deletes the whole `q <source> 0x00`
+  prefix, these records included.
+- **Postgres tables:** `wanted_links`.
 
 ### timeline_queries
 
@@ -1234,3 +1257,4 @@ The estimates are judgments from the size of the PGLite code each member reprodu
 | Rename slug list (`cascade::rename_slug_rows`) | built; the aliases family calls it from `updateSlug` | facts (fills in its body), aliases (caller) |
 | Search timeline (`pages::search_timeline`: the sanitized timeline `sealChunks` sends, kept per page at the sealed revision; `forget_search_timeline` on every write that sets the title or timeline) | built | keyword (`searchTitles`); page_body calls `forget_search_timeline` |
 | Vector cache store field (`Store::vectors`, a `VectorCache` made in `open_kv`) | built | vectors (`load_index`) |
+| Wanted links stub (`wanted_links.rs`: sub-tag `W` under `q`, an empty `remove_page_rows` on the page-delete list) | built; the family fills in the body | wanted_links (`listWantedPages`) |
