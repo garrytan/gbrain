@@ -11,6 +11,7 @@
 import type { HybridSearchOpts, PostFusionOpts } from '../../search/hybrid.ts';
 import type { PageReadScope } from '../../types.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { storePagePolicy } from './private-provenance.ts';
 
 /**
  * Every key hybridSearch's option bag carries that does not decide which pages a marker read may see: the search's own
@@ -42,17 +43,21 @@ void HYBRID_BAG_KEYS_COMPLETE;
 
 /**
  * A `PageReadScope` as the store reads it. Any scope object turns on PGLite's live filter (not deleted, not quarantined,
- * source not archived), so `live` says one was passed. The privacy and trust filters refuse when set: the store keeps no
- * trust tiers or private markers it could filter on. `requireSafeChunks` changes nothing on these reads. `hybridBag` is
- * for the marker reads hybridSearch hands its whole option bag: it also accepts and ignores the bag's own keys; any other
- * key still refuses.
+ * source not archived), so `live` says one was passed. The trust filters refuse when set: the store keeps no trust tiers.
+ * `requireSafeChunks` changes nothing on these reads. `markerRead` is for the marker reads hybridSearch hands its whole
+ * option bag: they also accept and ignore the bag's own keys (any other key still refuses) and serve `excludePrivate`
+ * as the page policy `pageReadFilter` adds (private-provenance.ts `storePagePolicy`, which refuses a caller whose policy
+ * is wider than the store's). getEffectiveDates still refuses `excludePrivate`.
  */
-function readScope(member: string, opts: PageReadScope | undefined, hybridBag = false): Record<string, unknown> {
+function readScope(member: string, opts: PageReadScope | undefined, markerRead = false): Record<string, unknown> {
   if (opts === undefined || opts === null) return {};
-  for (const key of ['excludePrivate', 'minTrust', 'suppressFlagged'] as const) if (opts[key]) refuseMember(member, `option ${key}`);
-  const ignored = ['requireSafeChunks', 'excludePrivate', 'minTrust', 'suppressFlagged', ...(hybridBag ? HYBRID_BAG_KEYS : [])];
+  for (const key of markerRead ? (['minTrust', 'suppressFlagged'] as const) : (['excludePrivate', 'minTrust', 'suppressFlagged'] as const)) {
+    if (opts[key]) refuseMember(member, `option ${key}`);
+  }
+  const ignored = ['requireSafeChunks', 'excludePrivate', 'minTrust', 'suppressFlagged', ...(markerRead ? HYBRID_BAG_KEYS : [])];
   const taken = takeOptions(member, opts, ['sourceId', 'sourceIds'], ignored);
-  return { ...taken, live: true };
+  const excludePrivate = markerRead ? storePagePolicy(member, opts.excludePrivate) : undefined;
+  return { ...taken, live: true, ...(excludePrivate ? { excludePrivate } : {}) };
 }
 
 const reviveDate = (value: unknown): Date => new Date(String(value));

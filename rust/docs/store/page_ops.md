@@ -7,15 +7,20 @@ Every date is an ISO string with microseconds (`2026-08-10T12:00:00.000123Z`) or
 TypeScript members turn them into `Date` where PGLite returns one. Text sorts in byte order.
 There are no secondary indexes yet: each method scans the pages of its scope.
 
-A read scope (`PageReadScope`) is `{ sourceId?, sourceIds?, live? }`. A non-empty `sourceIds`
+A read scope (`PageReadScope`) is `{ sourceId?, sourceIds?, live?, excludePrivate? }`. A non-empty `sourceIds`
 wins over a non-empty `sourceId`; with neither, every source. `live: true` also hides deleted pages,
 pages whose frontmatter has a `quarantine` key and pages of a missing or archived source. The
 TypeScript members send `live: true` whenever the caller passes a scope object, and refuse
-`engine_capability_missing` for a truthy `excludePrivate`, `minTrust` or `suppressFlagged`.
+`engine_capability_missing` for a truthy `minTrust` or `suppressFlagged`.
+
+`excludePrivate` is the page policy `pageReadFilter` adds, as `facts/privacy.rs` `page_hidden` reads it
+(`{ honorAliases, entityPrivacy }`, as `resolveAliases` takes it): a page the policy hides is not read. The
+TypeScript members `getContentFlagsByPageIds` and `getUnverifiedExtractionPageIds` send it from a truthy
+`excludePrivate` through `storePagePolicy`, which refuses a caller whose policy is wider than the store's.
 `getContentFlagsByPageIds` and `getUnverifiedExtractionPageIds` also accept and ignore the other keys of hybrid
 search's option bag (its settings, callbacks and `takesHoldersAllowList`), because hybrid search hands them that whole bag
 as their policy; any other key still refuses. `getEffectiveDates` gets a policy hybrid search builds, so it keeps the
-strict list.
+strict list and still refuses a truthy `excludePrivate` (the store method would apply it).
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |

@@ -510,6 +510,11 @@ for (const kind of arms) {
       await engine.updateSlug('z-before', 'z-after');
       await page('z-after', [near(29)]);
       await engine.setPageAliases('zorbit', 'default', ['zorbit']);
+      // Private pages with markers and no chunks, so no search row shows them: only the marker reads below see them.
+      await page('h-hidden', [], { fm: { visibility: 'private', content_flag: { reason: 'spam', detail: 'y' }, status: 'unverified', provenance: 'auto-extracted' } });
+      await page('h-access', [], { fm: { access: 'private', status: 'draft' } });
+      // `visibility` decides when a page has it, so an explicit public page stays readable under a private access key.
+      await page('h-public', [], { fm: { visibility: 'public', access: 'private', status: 'review' } });
       // The earlier hybrid case memoized "no supersede edge" for this engine.
       _resetSupersedeProbeForTests();
       resetGateway();
@@ -555,11 +560,31 @@ for (const kind of arms) {
           marks: [...marks].map(([id, m]) => `${name(id)} ${m.status} ${m.unverified}`).sort(),
         };
       });
+      // The remote and untrusted path: excludePrivate hides the markers of private pages exactly as it hides their rows.
+      const privateBag = async () => outcome(async () => {
+        const rowsIn = await vectorRows();
+        const hidden = await engine.getPage('h-hidden');
+        const access = await engine.getPage('h-access');
+        const explicit = await engine.getPage('h-public');
+        const extra = [{ page_id: hidden!.id, slug: 'h-hidden' }, { page_id: access!.id, slug: 'h-access' }, { page_id: explicit!.id, slug: 'h-public' }];
+        const ids = [...rowsIn.map((r) => r.page_id), ...extra.map((r) => r.page_id)];
+        const name = (id: number) => [...rowsIn, ...extra].find((r) => r.page_id === id)!.slug;
+        const read = async (extra: Record<string, unknown>) => {
+          const flags = await engine.getContentFlagsByPageIds(ids, { ...bagOpts, ...extra } as never);
+          const marks = await engine.getUnverifiedExtractionPageIds(ids, { ...bagOpts, ...extra } as never);
+          return {
+            flags: [...flags].map(([id, f]) => `${name(id)} ${f.reason} ${f.detail}`).sort(),
+            marks: [...marks].map(([id, m]) => `${name(id)} ${m.status} ${m.unverified}`).sort(),
+          };
+        };
+        return { open: await read({}), off: await read({ excludePrivate: false }), hiding: await read({ excludePrivate: true }), scoped: await read({ excludePrivate: true, sourceId: 'default' }) };
+      });
       if (rust) {
         const ids = (await vectorRows()).map((r) => r.page_id);
         expect(await outcome(() => engine.getContentFlagsByPageIds(ids, { notAnOption: true } as never))).toMatchObject({ refused: 'engine_capability_missing' });
         expect(await outcome(() => engine.getUnverifiedExtractionPageIds(ids, { notAnOption: true } as never))).toMatchObject({ refused: 'engine_capability_missing' });
-        expect(await outcome(() => engine.getContentFlagsByPageIds(ids, { excludePrivate: true } as never))).toMatchObject({ refused: 'engine_capability_missing' });
+        expect(await outcome(() => engine.getContentFlagsByPageIds(ids, { minTrust: 0.5 } as never))).toMatchObject({ refused: 'engine_capability_missing' });
+        expect(await outcome(() => engine.getUnverifiedExtractionPageIds(ids, { suppressFlagged: true } as never))).toMatchObject({ refused: 'engine_capability_missing' });
       }
       // The generated-page demotion reads the entity the query names, the live page at it and the pages linking to it.
       const demotion = async (scope: { excludePrivate?: boolean }) => outcome(async () => {
@@ -573,6 +598,7 @@ for (const kind of arms) {
         stages: await every(),
         markers: await markers(),
         bag: await bag(),
+        privateBag: await privateBag(),
         demotion: await demotion({ excludePrivate: false }),
         // hybridSearch passes no excludePrivate unless the caller set it, and the demotion then resolves the entity under excludePrivate: true.
         demotionDefault: await demotion({}),
@@ -594,12 +620,15 @@ for (const kind of arms) {
           marks: expect.arrayContaining(['t-auto unverified true', 'r-target verified false']),
         },
       });
+      const everyone = { flags: ['h-hidden spam y', 't-flagged spam x'], marks: ['h-access draft false', 'h-hidden unverified true', 'h-public review false', 'r-target verified false', 't-auto unverified true'] };
+      const hiding = { flags: ['t-flagged spam x'], marks: ['h-public review false', 'r-target verified false', 't-auto unverified true'] };
+      expect(cases.privateBag).toEqual({ ok: { open: everyone, off: everyone, hiding, scoped: hiding } });
       expect(cases.demotion).toEqual({ ok: DEMOTION });
       expect(cases.demotionDefault).toEqual({ ok: DEMOTION });
       expect(cases.demotionPrivate).toEqual({ ok: DEMOTION });
       record(kind, 'hybrid-stages', cases);
       // Leave the shared fixture as the later cases expect it (the Rust arm runs none of the cases that count chunks).
-      if (!rust) await raw(`DELETE FROM pages WHERE slug IN ('s-old', 's-new', 'r-target', 'r-stub', 't-auto', 't-flagged', 'u-dated', 'zorbit', 'z-gen', 'z-after')`);
+      if (!rust) await raw(`DELETE FROM pages WHERE slug IN ('s-old', 's-new', 'r-target', 'r-stub', 't-auto', 't-flagged', 'u-dated', 'zorbit', 'z-gen', 'z-after', 'h-hidden', 'h-access', 'h-public')`);
     }, 60_000);
 
     // Sets its state with SQL and reads embedding-state members; not on the Rust arm.

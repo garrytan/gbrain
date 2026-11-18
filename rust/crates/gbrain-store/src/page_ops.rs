@@ -11,6 +11,7 @@
 use crate::Store;
 use crate::env::iso;
 use crate::error::Result;
+use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::kv::KvRead;
 use crate::pages::{PageRecord, all_pages, read_page};
 use crate::sources::{SourceRecord, all_sources};
@@ -29,12 +30,15 @@ pub struct PageRef {
 
 /// The `PageReadScope` of the id and ref reads. `live` is true when the caller passed a scope at
 /// all: PGLite then adds its live filter (not deleted, not quarantined, source not archived).
+/// `exclude_private` (`excludePrivate`) is the page policy `pageReadFilter` adds, as
+/// `facts/privacy.rs` `page_hidden` reads it; `None` hides nothing.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct PageReadScope {
     pub source_id: Option<String>,
     pub source_ids: Option<Vec<String>>,
     pub live: bool,
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 /// Postgres `->>` on a JSON value: a string as is, `null` as SQL NULL, anything else as its jsonb
@@ -86,18 +90,24 @@ fn sources_by_id(read: &dyn KvRead) -> Result<HashMap<String, SourceRecord>> {
 
 /// `pageReadFilter(alias, scope, params, live)` for the scope fields the store has.
 fn passes_read_scope(
+    read: &dyn KvRead,
     page: &PageRecord,
     scope: &PageReadScope,
     sources: &HashMap<String, SourceRecord>,
-) -> bool {
+) -> Result<bool> {
     if let Some(ids) = scope.source_ids.as_ref().filter(|ids| !ids.is_empty()) {
         if !ids.contains(&page.source_id) {
-            return false;
+            return Ok(false);
         }
     } else if let Some(id) = scope.source_id.as_ref().filter(|id| !id.is_empty())
         && *id != page.source_id
     {
-        return false;
+        return Ok(false);
+    }
+    if let Some(policy) = &scope.exclude_private
+        && page_hidden(read, page, policy)?
+    {
+        return Ok(false);
     }
     if scope.live {
         let unarchived = sources.get(&page.source_id).is_some_and(|s| !s.archived);
@@ -105,10 +115,10 @@ fn passes_read_scope(
             || page.frontmatter.contains_key("quarantine")
             || !unarchived
         {
-            return false;
+            return Ok(false);
         }
     }
-    true
+    Ok(true)
 }
 
 impl Store {
@@ -151,7 +161,7 @@ impl Store {
                 continue;
             }
             if let Some(page) = read_page(&*read, &r.source_id, &r.slug)?
-                && passes_read_scope(&page, scope, &sources)
+                && passes_read_scope(&*read, &page, scope, &sources)?
             {
                 out.push(json!({
                     "slug": page.slug,
@@ -173,7 +183,7 @@ impl Store {
         let mut out = Vec::new();
         for id in wanted {
             if let Some(page) = crate::pages::read_page_by_id(&*read, id)?
-                && passes_read_scope(&page, scope, &sources)
+                && passes_read_scope(&*read, &page, scope, &sources)?
             {
                 out.push(page);
             }
