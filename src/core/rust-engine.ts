@@ -238,16 +238,8 @@ export class RustEngine {
     while (this._writer) await this._writer.done;
   }
 
-  /**
-   * Opens the engine's write transaction and runs `run` on the bound store handle, inside the re-entry context: commits
-   * when `run` resolves, rolls back and rethrows the original error when it throws. Waits for an open transaction
-   * first (the writer gate), bounded by `opts.signal`: an abort while waiting rejects `cancelled`, and an already-aborted
-   * signal rejects before anything opens, as PGLite does.
-   */
-  async _openTransaction<T>(opts: TransactionOptions | undefined, run: (scope: RustTransactionScope) => Promise<T>): Promise<T> {
-    const signal = opts?.signal;
-    if (signal?.aborted) throw transactionAborted(signal);
-    await this._admit('transaction');
+  /** Waits until no transaction holds the writer, bounded by `signal`: an abort while waiting rejects `cancelled`. */
+  private async _awaitWriter(signal: AbortSignal | undefined): Promise<void> {
     while (this._writer) {
       const open = this._writer.done;
       if (!signal) { await open; continue; }
@@ -260,7 +252,27 @@ export class RustEngine {
           'Retry the transaction, or give it a signal that allows a longer wait.', { detail: 'member=transaction' });
       }
     }
-    const rootBrain = (await this.storeFor('transaction')).brain;
+  }
+
+  /**
+   * Opens the engine's write transaction and runs `run` on the bound store handle, inside the re-entry context: commits
+   * when `run` resolves, rolls back and rethrows the original error when it throws. Waits for an open transaction
+   * first (the writer gate), bounded by `opts.signal`: an abort while waiting rejects `cancelled`, and an already-aborted
+   * signal rejects before anything opens, as PGLite does.
+   */
+  async _openTransaction<T>(opts: TransactionOptions | undefined, run: (scope: RustTransactionScope) => Promise<T>): Promise<T> {
+    const signal = opts?.signal;
+    if (signal?.aborted) throw transactionAborted(signal);
+    await this._admit('transaction');
+    // Every await can let another transaction take the writer, so the check that the writer is free and the claim of
+    // it run with no await between them. Otherwise two transactions pass the gate together, and the second one's
+    // begin blocks the one-thread transaction pool that the first one needs to commit: both wait forever.
+    let rootBrain: StoreBrain;
+    for (;;) {
+      await this._awaitWriter(signal);
+      rootBrain = (await this.storeFor('transaction')).brain;
+      if (!this._writer) break;
+    }
     let release!: () => void;
     const done = new Promise<void>((resolve) => { release = resolve; });
     const { Pool, Brain } = this.addon as { Pool: new (threads: number) => { shutdown(waitMs: number): Promise<unknown> }; Brain: new (pool: unknown) => StoreBrain };
