@@ -1,6 +1,11 @@
 /**
  * Timeline reads by date: the Life Chronicle reads (BrainEngine getTimelineForDate, getSince, getOnThisDay,
- * getLastSeen) and the event projection write (upsertEventProjection).
+ * getLastSeen), the event projection write (upsertEventProjection), and the timeline reads and delete of
+ * src/core/engine-sql/timeline-reads.ts (sampleEffectiveDates, sampleEffectiveDateSources, readMaxTimelineEntryId,
+ * listStoredTimelineRowsOrdered, deleteTimelineRows, storedTimelineRowsByPageIds, countSegmentedTimelinePages,
+ * countTimelineCommentMarkupRows, listTimelineOrphanPages). Those statements apply no read policy, so these members take
+ * none. A value the SQL engines would fail to bind (an id or limit that is not an integer, a negative limit) refuses
+ * rather than being guessed at. See rust/docs/store/timeline_queries.md.
  *
  * Export only BrainEngine members from this file, each a `StoreMember` named after the member it serves (see tags.ts):
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
@@ -8,7 +13,11 @@
  */
 import { finalizeLastSeen } from '../../chronicle/last-seen.ts';
 import type { ChronicleTimelineOpts, ChronicleTimelineRow, LastSeenResult, PageReadScope } from '../../types.ts';
-import { storeCall, takeOptions, type StoreMember } from './common.ts';
+import type {
+  EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRow, PageTimelineRow, SegmentedTimelinePages, TimelineOrphanPage,
+  TimelineRowDeletion,
+} from '../../engine-sql/timeline-reads.ts';
+import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 
 // The chronicle reads never read these PageReadScope keys on PGLite either. `excludePrivate` is not here: the SQL
 // engines apply a privacy filter for it, so it refuses.
@@ -45,3 +54,90 @@ export const upsertEventProjection: StoreMember<[opts: EventProjection], { proje
   const options = takeOptions('upsertEventProjection', opts, ['depthSlug', 'eventSlug', 'date', 'summary', 'detail', 'sourceId']);
   return storeCall({ member: 'upsertEventProjection' }, () => brain.upsertEventProjection(options));
 };
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The timeline reads of src/core/engine-sql/timeline-reads.ts
+// ---------------------------------------------------------------------------------------------------------------------
+
+const INT32_MAX = 2 ** 31 - 1;
+
+/** A value the SQL engines bind as an `integer`: one that is not an int4 is refused rather than guessed at. */
+function int32(member: string, id: number): number {
+  if (!Number.isInteger(id) || Math.abs(id) > INT32_MAX) refuseMember(member, 'an id that is not a 32-bit integer');
+  return id;
+}
+
+/** A value the SQL engines bind as a `bigint`. */
+function bigint(member: string, what: string, n: number): number {
+  if (!Number.isSafeInteger(n)) refuseMember(member, `${what} that is not an integer`);
+  return n;
+}
+
+/** A `LIMIT` value: Postgres refuses a negative one. */
+function limitOf(member: string, limit: number): number {
+  if (!Number.isSafeInteger(limit) || limit < 0) refuseMember(member, 'a limit that is not a non-negative integer');
+  return limit;
+}
+
+const ownRow = (r: OwnTimelineRow): OwnTimelineRow =>
+  ({ id: Number(r.id), date: r.date, source: r.source, summary: r.summary, detail: r.detail });
+
+export const sampleEffectiveDates: StoreMember<[], EffectiveDateSampleCounts> = async (brain) => {
+  const r: EffectiveDateSampleCounts = await storeCall({ member: 'sampleEffectiveDates' }, () => brain.sampleEffectiveDates());
+  return { future_dated: Number(r.future_dated), pre_1990: Number(r.pre_1990) };
+};
+
+export const sampleEffectiveDateSources: StoreMember<[], EffectiveDateFallbackRow[]> = async (brain) => {
+  const rows: Array<{ slug: string; frontmatter: unknown; created_at: string; updated_at: string }> =
+    await storeCall({ member: 'sampleEffectiveDateSources' }, () => brain.sampleEffectiveDateSources());
+  return rows.map(r => ({ slug: r.slug, frontmatter: r.frontmatter, created_at: new Date(r.created_at), updated_at: new Date(r.updated_at) }));
+};
+
+export const readMaxTimelineEntryId: StoreMember<[], number> =
+  async (brain) => Number(await storeCall({ member: 'readMaxTimelineEntryId' }, () => brain.readMaxTimelineEntryId()));
+
+export const listStoredTimelineRowsOrdered: StoreMember<[pageId: number], OwnTimelineRow[]> = async (brain, pageId) => {
+  const id = int32('listStoredTimelineRowsOrdered', pageId);
+  const rows: OwnTimelineRow[] = await storeCall({ member: 'listStoredTimelineRowsOrdered' }, () => brain.listStoredTimelineRowsOrdered(id));
+  return rows.map(ownRow);
+};
+
+export const deleteTimelineRows: StoreMember<[pageId: number, deletions: readonly TimelineRowDeletion[]], Array<{ date: string; removed: boolean }>> =
+  (brain, pageId, deletions) => {
+    const member = 'deleteTimelineRows';
+    const id = int32(member, pageId);
+    // The JSON document the SQL engines send: JSON.stringify drops an undefined field, which reads as NULL.
+    const wire = deletions.map(d => {
+      if (d.id !== undefined && d.id !== null) int32(member, d.id);
+      return JSON.parse(JSON.stringify(d)) as Record<string, unknown>;
+    });
+    return storeCall({ member }, () => brain.deleteTimelineRows({ pageId: id, deletions: wire }));
+  };
+
+export const storedTimelineRowsByPageIds: StoreMember<[pageIds: readonly number[]], PageTimelineRow[]> = async (brain, pageIds) => {
+  const member = 'storedTimelineRowsByPageIds';
+  if (!pageIds.length) return [];
+  const ids = pageIds.map(id => bigint(member, 'a page id', id));
+  const rows: PageTimelineRow[] = await storeCall({ member }, () => brain.storedTimelineRowsByPageIds(ids));
+  return rows.map(r => ({ page_id: Number(r.page_id), ...ownRow(r) }));
+};
+
+export const countSegmentedTimelinePages: StoreMember<[sourceIds: readonly string[], limit: number], SegmentedTimelinePages> =
+  async (brain, sourceIds, limit) => {
+    const member = 'countSegmentedTimelinePages';
+    const input = { sourceIds: [...sourceIds], limit: limitOf(member, limit) };
+    const r: SegmentedTimelinePages = await storeCall({ member }, () => brain.countSegmentedTimelinePages(input));
+    return { pages: Number(r.pages), rows: Number(r.rows), sample: r.sample.map(p => ({ source_id: p.source_id, slug: p.slug })) };
+  };
+
+export const countTimelineCommentMarkupRows: StoreMember<[sourceIds: readonly string[]], number> = async (brain, sourceIds) =>
+  Number(await storeCall({ member: 'countTimelineCommentMarkupRows' }, () => brain.countTimelineCommentMarkupRows([...sourceIds])));
+
+export const listTimelineOrphanPages: StoreMember<[opts: { afterId: number; limit: number; sourceId?: string }], TimelineOrphanPage[]> =
+  async (brain, opts) => {
+    const member = 'listTimelineOrphanPages';
+    const o = takeOptions(member, opts, ['afterId', 'limit', 'sourceId']) as { afterId: number; limit: number; sourceId?: string };
+    const input = { afterId: bigint(member, 'an afterId', o.afterId), limit: limitOf(member, o.limit), sourceId: o.sourceId || null };
+    const rows: TimelineOrphanPage[] = await storeCall({ member }, () => brain.listTimelineOrphanPages(input));
+    return rows.map(r => ({ ...r, id: Number(r.id) }));
+  };

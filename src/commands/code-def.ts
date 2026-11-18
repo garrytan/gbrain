@@ -21,7 +21,8 @@ import type { BrainEngine } from '../core/engine.ts';
 import { errorFor, serializeError } from '../core/errors.ts';
 import { resolveCodeReadiness, readinessHint } from '../core/code-graph-readiness.ts';
 import { resolveCliCodeScope, positionalArgs, parseFlag } from './code-scope.ts';
-import { codeReadFilter, type CodeReadScope } from '../core/code-intel/read-scope.ts';
+import type { CodeReadScope } from '../core/code-intel/read-scope.ts';
+import { rethrowCapabilityRefusal } from '../core/engine-capability-refusal.ts';
 
 export interface CodeDefResult {
   slug: string;
@@ -49,43 +50,9 @@ export async function findCodeDef(
   symbol: string,
   opts: { limit?: number; language?: string } & CodeReadScope = {},
 ): Promise<CodeDefResult[]> {
-  const limit = opts.limit ?? 20;
-  // Placeholders are numbered as params are appended: a fixed $2 broke the
-  // moment a second optional predicate joined --lang.
-  const params: unknown[] = [symbol];
-  let whereLang = '';
-  if (opts.language) {
-    params.push(opts.language);
-    whereLang = `AND cc.language = $${params.length}`;
-  }
-  const whereSource = `AND ${codeReadFilter(params, opts)}`;
-  params.push(limit);
   // Deterministic ordering: exact type matches first (functions before
   // export_statement wrappers), then page slug, then line number.
-  const rows = await engine.executeRaw<{
-    slug: string; source_id: string; file: string | null; language: string | null;
-    symbol_type: string | null; start_line: number | null; end_line: number | null;
-    chunk_text: string;
-  }>(
-    `SELECT p.slug, p.source_id, (p.frontmatter->>'file') AS file, cc.language, cc.symbol_type,
-            cc.start_line, cc.end_line, cc.chunk_text
-     FROM content_chunks cc
-     JOIN pages p ON p.id = cc.page_id
-     WHERE cc.symbol_name = $1
-       ${whereLang}
-       ${whereSource}
-       AND p.page_kind = 'code'
-       AND cc.symbol_type IN ('${DEF_TYPES.join("','")}', 'export statement')
-     ORDER BY
-       CASE cc.symbol_type
-         WHEN 'function' THEN 1 WHEN 'class' THEN 2 WHEN 'interface' THEN 3
-         WHEN 'type' THEN 4 WHEN 'enum' THEN 5 WHEN 'struct' THEN 6
-         ELSE 7
-       END,
-       p.slug, cc.start_line, p.source_id
-     LIMIT $${params.length}`,
-    params,
-  );
+  const rows = await engine.findCodeDefinitions(symbol, opts);
   return rows.map((r) => ({
     slug: r.slug,
     source_id: r.source_id,
@@ -112,31 +79,11 @@ export async function probeFilteredSymbolTypes(
   symbol: string,
   opts: { language?: string } & CodeReadScope = {},
 ): Promise<string[]> {
-  const params: unknown[] = [symbol];
-  let whereLang = '';
-  if (opts.language) {
-    params.push(opts.language);
-    whereLang = `AND cc.language = $${params.length}`;
-  }
   // Scoped with the main lookup: an unscoped probe would claim "the symbol IS
   // indexed, just filtered" on the strength of a different repo's chunks.
-  const whereSource = `AND ${codeReadFilter(params, opts)}`;
-  const rows = await engine.executeRaw<{ symbol_type: string | null }>(
-    `SELECT DISTINCT cc.symbol_type
-     FROM content_chunks cc
-     JOIN pages p ON p.id = cc.page_id
-     WHERE cc.symbol_name = $1
-       ${whereLang}
-       ${whereSource}
-       AND p.page_kind = 'code'
-     ORDER BY cc.symbol_type
-     LIMIT 20`,
-    params,
-  );
+  const types = await engine.listSymbolTypesForName(symbol, opts);
   const allow = new Set([...DEF_TYPES, 'export statement']);
-  return rows
-    .map((r) => r.symbol_type)
-    .filter((t): t is string => t != null && !allow.has(t));
+  return types.filter((t): t is string => t != null && !allow.has(t));
 }
 
 function shouldEmitJson(args: string[]): boolean {
@@ -190,8 +137,10 @@ export async function runCodeDef(engine: BrainEngine, args: string[]): Promise<v
     if (results.length === 0) {
       try {
         filteredTypes = await probeFilteredSymbolTypes(engine, sym, { language, sourceId, allSources });
-      } catch {
-        // Supplementary signal — never fail the command on the probe.
+      } catch (err) {
+        // Supplementary signal — never fail the command on the probe, except
+        // an engine that cannot answer it: that must not read as "no types".
+        rethrowCapabilityRefusal(err);
       }
     }
     const filteredHint = filteredTypes.length > 0

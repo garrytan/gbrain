@@ -20,6 +20,7 @@
  */
 
 import type { BrainEngine } from './engine.ts';
+import { answersFromCatalog, catalogTableExists } from './rust-engine/store-members/catalog.ts';
 
 const CONSTRAINT_NAME = 'links_link_source_check';
 
@@ -53,6 +54,12 @@ export interface LinkSourceCheckStatus {
 }
 
 export async function checkLinkSourceCheck(engine: BrainEngine): Promise<LinkSourceCheckStatus> {
+  // Rust: the links table is the links capability, and the links store enforces the v114 kebab-case gate on every
+  // write (rust/crates/gbrain-store/src/links.rs valid_link_source), so the constraint answers "present".
+  if (answersFromCatalog(engine)) {
+    const present = catalogTableExists(engine, 'links');
+    return { tablePresent: present, constraintPresent: present, def: null, drift: null, needsRepair: false };
+  }
   const tbl = await engine.executeRaw<{ reg: string | null }>(`SELECT to_regclass('links')::text AS reg`);
   if (!tbl[0]?.reg) {
     return { tablePresent: false, constraintPresent: false, def: null, drift: null, needsRepair: false };

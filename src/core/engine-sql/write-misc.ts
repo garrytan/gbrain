@@ -1,7 +1,7 @@
 /**
  * The statements a page write ran through `executeRaw` that belong to no other storage domain
  * (docs/research/rust-put-write-path.md): the source-state reads of admission, publication and effect recovery, the
- * link-endpoint read of link preparation, the shared-skillpack screen, the chronicle retire check, the access-member
+ * shared-skillpack screen, the chronicle retire check, the access-member
  * read of `brainServes` and memory-proposal upkeep. Each function keeps the statement text its call site ran, so PGLite
  * and Postgres answer exactly as before; a Rust brain answers from its store
  * (rust/crates/gbrain-store/src/write_misc.rs, rust/docs/store/write_misc.md).
@@ -27,9 +27,6 @@ export interface AdmissionSourceRow {
   guest_writers: string[] | null; guest_trust_ceiling: string | null; guest_sources_hidden: boolean;
 }
 
-/** One live page `listLinkEndpointPages` returns: a possible link endpoint. */
-export interface LinkEndpointPageRow { slug: string; source_id: string; type: string; knowledge_revision: string }
-
 /** One shared skillpack bound to its source's current incarnation, with the roots its files live under on this host. */
 export interface SharedSkillPackRoot {
   source_id: string; source_incarnation: string; source_root: string | null; worktree_root: string | null; relative_path: string | null;
@@ -39,20 +36,6 @@ export interface SharedSkillPackRoot {
 const admissionSource = (sourceId: string) => sqlFragment`SELECT s.incarnation,s.archived,s.local_path,s.config->>'kind' AS kind,s.config->>'role' AS role,g.writers AS guest_writers,g.trust_ceiling AS guest_trust_ceiling,${trustedSql(GUEST_SOURCES_HIDDEN_SQL)} AS guest_sources_hidden FROM sources s LEFT JOIN guest_sources g ON g.source_id=s.id WHERE s.id=${sourceId}`;
 /** The admission statement text; the pre-admission cache (persistence/preadmit-cache.ts) keys its entries on it. */
 export const ADMISSION_SOURCE_SQL = renderFragment(admissionSource('')).text;
-
-/**
- * Link endpoints by slug: every live page in the origin source, plus other
- * sources' pages for the slugs the origin lacks or a link names elsewhere ($3).
- * The origin read and each source's residual read use (source_id, slug).
- */
-export const LINK_ENDPOINTS_SQL = `WITH own AS (
-    SELECT slug, source_id, type, knowledge_revision FROM pages WHERE source_id=$1 AND slug=ANY($2::text[]) AND deleted_at IS NULL),
-  elsewhere AS (SELECT array_agg(k) AS refs FROM unnest($2::text[]) k WHERE k=ANY($3::text[]) OR NOT EXISTS (SELECT 1 FROM own WHERE own.slug=k))
-  SELECT slug, source_id, type, knowledge_revision FROM own
-  UNION ALL
-  SELECT p.slug, p.source_id, p.type, p.knowledge_revision FROM elsewhere e, sources s, LATERAL (SELECT slug, source_id, type, knowledge_revision
-    FROM pages WHERE source_id=s.id AND slug=ANY(e.refs) AND deleted_at IS NULL OFFSET 0) p
-  WHERE s.id<>$1`;
 
 /** A config column as an object: PGLite can return jsonb as text, and a missing config reads as `{}`. */
 function configObject(config: unknown): Record<string, unknown> {
@@ -74,12 +57,6 @@ export async function readAdmissionSource(exec: LegacyUnscopedRead, sourceId: st
   const { text, params } = renderFragment(admissionSource(sourceId));
   const [row] = await exec.executeRaw<AdmissionSourceRow>(text, params);
   return row ?? null;
-}
-
-/** The live pages that can be endpoints of the origin's links, own source first, in no particular order within each part. */
-export function listLinkEndpointPages(exec: LegacyUnscopedRead, sourceId: string, slugs: readonly string[],
-  crossSourceSlugs: readonly string[]): Promise<LinkEndpointPageRow[]> {
-  return exec.executeRaw<LinkEndpointPageRow>(LINK_ENDPOINTS_SQL, [sourceId, [...slugs], [...crossSourceSlugs]]);
 }
 
 /** Whether the schema has the shared_skill_packs table (a brain created before shared skills does not). */

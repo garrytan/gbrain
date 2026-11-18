@@ -595,7 +595,7 @@ for (const kind of testBackends()) {
         link_type: 'attended', link_source: 'frontmatter', origin_slug: meeting, origin_source_id: sourceId, origin_field: 'attendees' }]);
       const before = await engine.getLinks(meeting, { sourceId });
       const snapshot = (await engine.readPageSnapshot(meeting, { sourceId }))!;
-      const metadata = spyOn(engine, 'listLinkEndpointPages').mockImplementation(async () => []);
+      const metadata = spyOn(engine, 'listLinkEndpointPages').mockImplementation(() => Promise.resolve([]));
       try {
         const op = operations.find(op => op.name === 'put_page')!;
         const result = await op.handler({ engine, config: { engine: kind as 'pglite' | 'postgres' }, remote: false, sourceId,

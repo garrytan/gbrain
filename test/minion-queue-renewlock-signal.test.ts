@@ -11,6 +11,7 @@
 import { describe, expect, test } from 'bun:test';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import * as jobsSql from '../src/core/engine-sql/jobs.ts';
 
 function makeCaptureEngine() {
   const calls: Array<{
@@ -18,7 +19,7 @@ function makeCaptureEngine() {
     params: unknown[] | undefined;
     opts: { signal?: AbortSignal } | undefined;
   }> = [];
-  const engine = {
+  const engine: BrainEngine = {
     kind: 'postgres',
     executeRawDirect: async (
       sql: string,
@@ -28,6 +29,9 @@ function makeCaptureEngine() {
       calls.push({ sql, params, opts });
       return [{ id: 1 }];
     },
+    // The engine member the queue calls; it runs the shared SQL on executeRawDirect.
+    renewJobLease: (id: number, token: string, ms: number, opts?: { signal?: AbortSignal }) =>
+      jobsSql.renewJobLease(engine, id, token, ms, opts),
   } as unknown as BrainEngine;
   return { engine, calls };
 }
@@ -58,9 +62,11 @@ describe('MinionQueue.renewLock signal forwarding (issue #6)', () => {
   });
 
   test('token-fence miss returns false regardless of signal', async () => {
-    const engine = {
+    const engine: BrainEngine = {
       kind: 'postgres',
       executeRawDirect: async () => [],
+      renewJobLease: (id: number, token: string, ms: number, opts?: { signal?: AbortSignal }) =>
+        jobsSql.renewJobLease(engine, id, token, ms, opts),
     } as unknown as BrainEngine;
     const queue = new MinionQueue(engine);
     const ac = new AbortController();

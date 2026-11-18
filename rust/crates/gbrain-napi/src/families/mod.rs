@@ -3,12 +3,14 @@
 //! so building a family never edits this list.
 
 mod chunks;
+mod cli_entities;
 mod cli_reads_import;
 mod cli_reads_ops;
 mod cli_reads_search_pages;
 mod cli_sources;
 mod config;
 mod graph;
+mod import_members;
 mod journal;
 mod links;
 mod pages;
@@ -17,6 +19,7 @@ mod sources;
 mod tags;
 mod timeline;
 mod versions;
+mod write_guards;
 mod write_misc;
 
 // Planned families: no methods yet (docs/designs/RUST_ENGINE_INTERFACES.md).
@@ -29,6 +32,12 @@ mod embeddings;
 mod eval_capture;
 mod extraction;
 mod facts;
+mod facts_cycle;
+mod facts_doctor;
+mod facts_purge;
+mod facts_repair;
+mod facts_trust;
+mod jobs;
 mod keyword;
 mod link_queries;
 mod ontology;
@@ -39,6 +48,7 @@ mod relations;
 mod salience;
 mod stats;
 mod takes;
+mod telemetry;
 mod timeline_queries;
 mod transactions;
 mod vectors;

@@ -8,7 +8,7 @@
  *     engine-shaped: collect-migration (the ONLY collector that can emit
  *     `critical`) keys on engine.getConfig('version') vs LATEST_VERSION,
  *     collect-chronicle emits `warn` from engine.findOntologyConflicts, and
- *     collect-stalled-jobs emits `info` (stale_sync) from engine.listAllSources.
+ *     collect-stalled-jobs emits `info` (stale_sync) from engine.listStaleSyncSourceIds.
  *   - --apply's consent gate (requireConsent: exit 3 with the payload when
  *     non-interactive without --yes) and its spawn seam (child_process.spawn
  *     behind spawnCliChild, spied via the module namespace — Bun named imports

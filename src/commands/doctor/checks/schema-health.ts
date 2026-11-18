@@ -28,6 +28,7 @@ import { embeddingsDisabled } from '../../../core/embedding-disabled.ts';
 import { quoteIdentifier, resolveActiveEmbeddingColumnFromEngine } from '../../../core/search/embedding-column.ts';
 import { agentFix, checkError, doctorVerify, infoCheck, keylessEnablementFix } from '../check-fix.ts';
 import { readMigrationTimeout } from '../../../core/migration-timeout.ts';
+import { answersFromCatalog, catalogSkipCheck } from '../../../core/rust-engine/store-members/catalog.ts';
 import { migrationTimeoutAdvice } from '../../../core/migration-timeout-advice.ts';
 import type { MissingTable, MissingTablesReport } from '../../../core/schema-missing-tables.ts';
 
@@ -124,6 +125,8 @@ async function runRls(ctx: DoctorContext): Promise<Check[]> {
       status: 'ok',
       message: 'Skipped (PGLite — no PostgREST exposure, RLS not applicable)',
     });
+  } else if (answersFromCatalog(engine)) {
+    checks.push(catalogSkipCheck('rls', 'no_row_policies'));
   } else {
     try {
       const sql = db.getConnection();
@@ -234,6 +237,9 @@ async function runSchemaVersion(ctx: DoctorContext): Promise<Check[]> {
       // Forward skew (schemaVersionHealth warns AHEAD above): an ahead DB is
       // a superset of this client's expected columns — the diff below would
       // only mislead. "Upgrade this client" is the real fix; skip the diff.
+    } else if (answersFromCatalog(engine)) {
+      // Rust: live columns come from the relation catalog, which does not exist yet.
+      checks.push(catalogSkipCheck('schema_columns', 'no_relation_catalog'));
     } else if (schemaVersion >= LATEST_VERSION) {
       // Ledger-current branch. Dynamic import is deliberate: the positional
       // source guard in test/doctor-schema-column-diff.test.ts pins that the
@@ -265,11 +271,16 @@ async function runSchemaVersion(ctx: DoctorContext): Promise<Check[]> {
     // 6c. #6911: tables the applied migrations created that the brain no longer has (the ledger cannot see a drop).
     // Below head too: a missing cache that a pending migration alters wedges apply-migrations with 42P01.
     progress.heartbeat('schema_missing_tables');
-    try {
-      const { readMissingTables } = await import('../../../core/schema-missing-tables.ts');
-      checks.push({ name: 'schema_missing_tables', ...missingTablesFields(await readMissingTables(engine)) });
-    } catch (error) {
-      checks.push(checkError('schema_missing_tables', 'check for tables the applied migrations created', error));
+    if (answersFromCatalog(engine)) {
+      // Rust: the store has no Postgres tables to compare with the migrations, so the check is skipped, not "missing".
+      checks.push(catalogSkipCheck('schema_missing_tables', 'no_relation_catalog'));
+    } else {
+      try {
+        const { readMissingTables } = await import('../../../core/schema-missing-tables.ts');
+        checks.push({ name: 'schema_missing_tables', ...missingTablesFields(await readMissingTables(engine)) });
+      } catch (error) {
+        checks.push(checkError('schema_missing_tables', 'check for tables the applied migrations created', error));
+      }
     }
   } catch {
     checks.push(checkError('schema_version', 'check schema version'));
@@ -343,6 +354,8 @@ async function runRlsEventTrigger(ctx: DoctorContext): Promise<Check[]> {
       status: 'ok',
       message: 'Skipped (PGLite — no event trigger support)',
     });
+  } else if (answersFromCatalog(engine)) {
+    checks.push(catalogSkipCheck('rls_event_trigger', 'no_row_policies'));
   } else {
     try {
       const sql = db.getConnection();

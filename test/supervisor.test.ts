@@ -10,6 +10,7 @@ import { MinionQueue } from '../src/core/minions/queue.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { maybeRunWorkerStartupRecovery } from '../src/commands/jobs.ts';
 import { surfaceFileSource } from './helpers/source-surface.ts';
+import { withQueueMembers } from './helpers/queue-engine-members.ts';
 
 const TEST_PID_FILE = '/tmp/gbrain-supervisor-test.pid';
 
@@ -583,11 +584,11 @@ describe('MinionSupervisor', () => {
     });
 
     it('resolves and reports startup recovery failure when the engine throws', async () => {
-      const throwingEngine = {
+      const throwingEngine = withQueueMembers({
         executeRaw: async () => {
           throw new Error('injected executeRaw failure');
         },
-      } as unknown as BrainEngine;
+      }) as unknown as BrainEngine;
       const diagnostic = spyOn(console, 'error').mockImplementation(() => {});
       try {
         await expect(

@@ -44,8 +44,18 @@ import * as cliReadsOps from './cli-reads-ops.ts';
 import * as cliReadsSearchPages from './cli-reads-search-pages.ts';
 import * as wantedLinks from './wanted-links.ts';
 import * as persistence from './persistence.ts';
+import * as cliEntities from './cli-entities.ts';
+import * as factsDoctor from './facts-doctor.ts';
+import * as factsCycle from './facts-cycle.ts';
+import * as factsPurge from './facts-purge.ts';
+import * as factsRepair from './facts-repair.ts';
+import * as factsTrust from './facts-trust.ts';
+import * as jobs from './jobs.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeMisc from './write-misc.ts';
+import * as telemetry from './telemetry.ts';
+import * as writeGuards from './write-guards.ts';
+import * as importMembers from './import-members.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
 const initSchema: StoreMember<[], void> = async () => undefined;
@@ -59,14 +69,25 @@ export const STORE_MEMBERS = {
   ...pageOps, ...extraction, ...aliases, ...pageBody, ...facts, ...ontology, ...takes, ...contradictions, ...dream,
   ...evalCapture, ...codeEdges, ...salience, ...stats, ...rawFiles, ...linkQueries, ...timelineQueries, ...keyword,
   ...chunkQueries, ...vectors, ...embeddings, ...transactions, ...relations, ...wantedLinks,
+  // The minion queue and its cycle locks (rust/crates/gbrain-store/src/jobs.rs).
+  ...jobs,
   // Typed reads that replace raw SQL in CLI paths (rust/crates/gbrain-store/src/cli_reads/).
   ...cliSources,
   // Typed reads that CLI paths ran through executeRaw (docs/research/rust-cli-executeraw-map.md).
   ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages,
+  ...cliEntities,
+  // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
+  ...factsDoctor, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust,
   // The persistence brain identity the store already keeps (rust/docs/store/journal.md).
   ...persistenceIdentity,
+  // Search telemetry (rust/docs/store/telemetry.md).
+  ...telemetry,
   ...persistence,
   ...writeMisc,
+  // The page write guards a page write runs around the page row (rust/docs/store/write-guards.md).
+  ...writeGuards,
+  // The page and chunk statements a page import runs around its chunk write (rust/docs/store/import-members.md).
+  ...importMembers,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

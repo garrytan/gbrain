@@ -34,8 +34,6 @@ export interface OriginTarget {
   scope?: SyncOriginScope | null;
 }
 
-interface TargetRow { id: number; slug: string; source_path: string | null; deleted_at: unknown }
-
 /** The read-only preview of the origin-twin repair, which names the page that keeps the file. */
 export function originTwinsFix(sourceId: string) {
   return readFix(`Previews which page of source ${sourceId} keeps each shared origin; read-only.`, { argv: ['gbrain', 'repair', 'origin-twins', '--source', sourceId] });
@@ -77,9 +75,11 @@ function gitRootOf(path: string): string | null {
 }
 
 /** The origin form of a source pinned to source-root slugs at a subdirectory of its repository; undefined otherwise. */
-async function originScopeOf(tx: Exec, sourceId: string): Promise<SyncOriginScope | undefined> {
-  const source = await (tx as unknown as Pick<BrainEngine, 'readSourceState'>).readSourceState(sourceId);
-  return sourceOriginScope(sourceId, source?.local_path ?? null, source?.config.slug_root_mode ?? null);
+async function originScopeOf(tx: BrainEngine, sourceId: string): Promise<SyncOriginScope | undefined> {
+  const source = await tx.getSource(sourceId);
+  // `config->>'slug_root_mode'` of a config that is not an object (a jsonb scalar) is NULL.
+  const config = source?.config, mode = config && typeof config === 'object' && !Array.isArray(config) ? (config as Record<string, unknown>).slug_root_mode : null;
+  return sourceOriginScope(sourceId, source?.local_path ?? null, typeof mode === 'string' ? mode : null);
 }
 
 /** `originScopeOf` from a source's `local_path` and `config.slug_root_mode`, for a caller that already has the source row. */
@@ -115,9 +115,7 @@ function sameOrigin(recorded: string, recordedSlug: string | undefined, origin: 
  */
 export async function assertOriginUnclaimed(tx: BrainEngine, target: OriginTarget): Promise<void> {
   if (!(tx as { _heldPageKeys?: unknown })._heldPageKeys) throw new Error('assertOriginUnclaimed requires engine.transaction(): the origin lock and the write must commit together');
-  const [row] = target.pageId != null
-    ? await tx.executeRaw<TargetRow>('SELECT id, slug, source_path, deleted_at FROM pages WHERE id=$1 AND source_id=$2', [target.pageId, target.sourceId])
-    : target.slug ? await tx.executeRaw<TargetRow>('SELECT id, slug, source_path, deleted_at FROM pages WHERE source_id=$1 AND slug=$2', [target.sourceId, target.slug]) : [];
+  const row = await tx.readPageOrigin({ sourceId: target.sourceId, pageId: target.pageId, slug: target.slug });
   const origin = target.sourcePath ?? row?.source_path ?? null;
   if (!origin || row && row.deleted_at != null && !target.revive) return;
   const scope = target.scope === undefined ? await originScopeOf(tx, target.sourceId) : target.scope ?? undefined;
@@ -126,12 +124,7 @@ export async function assertOriginUnclaimed(tx: BrainEngine, target: OriginTarge
   const prefix = scope?.slugMode === 'source-root' && scope.scope ? `${scope.scope}/` : null;
   const forms = [origin, ...(prefix ? [prefix + origin] : []), ...(prefix && origin.startsWith(prefix) ? [origin.slice(prefix.length)] : [])];
   const spellings = [...new Set(forms.map(originKey))].sort();
-  for (const key of [...new Set(forms.map(lockKey))].sort()) {
-    await tx.executeRaw('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`gbrain:origin:${JSON.stringify([target.sourceId, key])}`]);
-  }
-  const pathSql = process.platform === 'win32' ? "lower(replace(source_path,chr(92),'/'))=ANY($2::text[])" : 'source_path=ANY($2::text[])';
-  const holders = (await tx.executeRaw<{ slug: string; source_path: string }>(
-    `SELECT slug, source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND ${pathSql} AND id<>$3 ORDER BY slug`, [target.sourceId, spellings, row?.id ?? -1]))
+  const holders = (await tx.listOriginClaims(target.sourceId, spellings, { lockKeys: [...new Set(forms.map(lockKey))].sort(), excludePageId: row ? Number(row.id) : null }))
     .filter(holder => sameOrigin(holder.source_path, holder.slug, origin, slug, scope));
   if (holders.length) throw originAlreadyClaimed(target.sourceId, origin, holders.map(holder => holder.slug), slug);
 }
@@ -144,13 +137,9 @@ export async function assertOriginUnclaimed(tx: BrainEngine, target: OriginTarge
  */
 export async function bindOrigin(tx: BrainEngine, target: OriginTarget & { sourcePath: string; onlyIfUnset?: boolean; liveOnly?: boolean }): Promise<number> {
   await assertOriginUnclaimed(tx, target);
-  const by = target.pageId != null ? 'id=$2' : 'slug=$2';
-  const params = [target.sourceId, target.pageId ?? target.slug, target.sourcePath];
   try {
-    const changed = (await tx.executeRaw(`UPDATE pages SET source_path=$3 WHERE source_id=$1 AND ${by} AND ${target.onlyIfUnset ? 'source_path IS NULL' : 'source_path IS DISTINCT FROM $3'}`
-      + `${target.liveOnly ? ' AND deleted_at IS NULL' : ''} RETURNING id`, params)).length;
-    await tx.executeRaw(`UPDATE pages SET database_only_reason=NULL WHERE source_id=$1 AND ${by} AND source_path=$3 AND database_only_reason='origin_twin'`, params);
-    return changed;
+    return await tx.bindPageOrigin({ sourceId: target.sourceId, pageId: target.pageId, slug: target.slug, sourcePath: target.sourcePath,
+      onlyIfUnset: target.onlyIfUnset, liveOnly: target.liveOnly });
   } catch (error) {
     throw classifyOriginUniqueViolation(error, target) ?? error;
   }

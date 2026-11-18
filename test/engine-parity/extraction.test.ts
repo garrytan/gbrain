@@ -206,6 +206,52 @@ describe('engine parity: extraction', () => {
   );
 
   parityTest(
+    'readExtractionLagCounts counts live, actionable-stale, attendance-blocked and held pages in each statement shape',
+    { methods: ['putPage', 'markPagesExtractedBatch', 'markPagesAttendanceBlocked', 'softDeletePage', 'readExtractionLagCounts'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'work');
+      await createSource(engine, backend, 'visitors', { guest: true });
+      await put(engine, 'notes/never', page('Never'));
+      await put(engine, 'notes/fresh', page('Fresh'));
+      await put(engine, 'notes/edited', page('Edited'));
+      const blocked = await put(engine, 'notes/blocked', page('Blocked'));
+      await put(engine, 'notes/gone', page('Gone'));
+      await put(engine, 'notes/quarantined', page('Quarantined', 'q body', { quarantine: { reason: 'junk' } }));
+      await put(engine, 'notes/work-only', page('Work only'), 'work');
+      await put(engine, 'notes/visitor', page('Visitor'), 'visitors');
+      await engine.softDeletePage('notes/gone');
+      expect(await engine.markPagesExtractedBatch(
+        [{ slug: 'notes/fresh', source_id: 'default' }, { slug: 'notes/edited', source_id: 'default', extractedAt: OLD }], FRESH)).toBe(2);
+      expect(await engine.markPagesAttendanceBlocked([{ slug: 'notes/blocked', source_id: 'default', revision: blocked.knowledge_revision! }])).toBe(1);
+
+      const lag = async (q: Partial<Parameters<BrainEngine['readExtractionLagCounts']>[0]> = {}) => {
+        const row = await engine.readExtractionLagCounts({ versionTs: VERSION_BEFORE_FRESH, attendance: true, held: true, guests: true, ...q });
+        return row ? Object.fromEntries(Object.entries(row).map(([k, v]) => [k, Number(v)])) : row;
+      };
+      // One source: four live pages (deleted and quarantined are not counted); never and edited are stale, blocked waits.
+      const scoped = await lag({ sourceId: 'default' });
+      expect(scoped).toEqual({ total: 4, stale: 2, attendance_blocked: 1, held: 0 });
+      // Before the attendance marker existed nothing was blocked, so the blocked page is stale.
+      const noMarker = await lag({ sourceId: 'default', attendance: false, held: false });
+      expect(noMarker).toEqual({ total: 4, stale: 3, attendance_blocked: 0, held: 0 });
+      // A newer extractor version makes the fresh stamp stale too.
+      const newerVersion = await lag({ sourceId: 'default', versionTs: VERSION_AFTER_FRESH });
+      expect(newerVersion).toEqual({ total: 4, stale: 3, attendance_blocked: 1, held: 0 });
+      // Brain-wide: the guest page counts as live but is never stale; before the guest migration it was.
+      const brainWide = await lag();
+      expect(brainWide).toEqual({ total: 6, stale: 3, attendance_blocked: 1, held: 0 });
+      const noGuests = await lag({ guests: false });
+      expect(noGuests).toEqual({ total: 6, stale: 4, attendance_blocked: 1, held: 0 });
+      // No wanted links exist, so limiting their producers changes nothing.
+      const bodyOnly = await lag({ sourceId: 'default', wantedProducers: ['body'] });
+      expect(bodyOnly).toEqual(scoped);
+      const emptySource = await lag({ sourceId: 'no-such-source' });
+      expect(emptySource).toEqual({ total: 0, stale: 0, attendance_blocked: 0, held: 0 });
+      return { scoped, noMarker, newerVersion, brainWide, noGuests, bodyOnly, emptySource };
+    },
+  );
+
+  parityTest(
     'markPagesAttendanceBlocked marks a page at its revision; attendance narrows the stale set and an edit releases it',
     {
       methods: ['putPage', 'markPagesAttendanceBlocked', 'markPagesExtractedBatch', 'softDeletePage', 'countStalePagesForExtraction', 'listStalePagesForExtraction'],

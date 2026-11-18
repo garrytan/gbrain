@@ -7,11 +7,12 @@
 //!
 //! `list_pages` and `resolve_slugs` scan every page: there are no secondary indexes yet.
 
+use crate::chunk_queries::SAFE_FENCE_CHUNKER_VERSION;
 use crate::chunks::{ChunkInput, auto_chunks, clear_chunks, replace_chunks};
 use crate::env::{Env, iso, parse_iso};
 use crate::error::{
-    CONSTRAINT_VIOLATION, EMPTY_OVERWRITE, INVALID_SLUG, ORIGIN_CLAIMED, PAGE_NOT_FOUND,
-    REVISION_CONFLICT, REVISION_REQUIRED, Result, StoreError,
+    CONSTRAINT_VIOLATION, EMPTY_OVERWRITE, INVALID_ARGUMENT, INVALID_SLUG, ORIGIN_CLAIMED,
+    PAGE_NOT_FOUND, REVISION_CONFLICT, REVISION_REQUIRED, Result, StoreError,
 };
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::sources::{DEFAULT_SOURCE, all_sources, require_source};
@@ -116,9 +117,9 @@ impl PartialEq<String> for PageText {
 ///
 /// Nullable columns (shared item 12): `compiled_truth` and `timeline` are [`PageText`], NULL exactly on a segmented
 /// shell page. `content_hash` is `None` on a segmented shell page until its body is published, as PGLite's
-/// `createSegmentedPageShell` leaves it; `put_page` always sets it. `chunker_version` is `None` when the store has not
-/// recorded one: `put_page` keeps the stored value and sets none on a new page, and it is not part of `to_page`
-/// (PGLite's `rowToPage` leaves it out). Each new field reads as NULL from a record written before it existed.
+/// `createSegmentedPageShell` leaves it; `put_page` always sets it. `chunker_version` is `None` only on a record written
+/// before the store recorded one: `put_page` writes PGLite's value ([`body_write_chunker_version`]) and a seal writes
+/// the safe fence version. It is not part of `to_page` (PGLite's `rowToPage` leaves it out). Each new field reads as NULL from a record written before it existed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct PageRecord {
     pub id: u64,
@@ -231,6 +232,8 @@ pub struct PageInput {
     pub source_kind: Option<String>,
     pub source_uri: Option<String>,
     pub ingested_via: Option<String>,
+    /// Read only for a new page, as in PGLite: `putPage` stores `LEAST(chunker_version ?? 0, fence - 1)`.
+    pub chunker_version: Option<f64>,
 }
 
 pub(crate) fn double_option<'de, D, T>(d: D) -> std::result::Result<Option<Option<T>>, D::Error>
@@ -362,6 +365,15 @@ pub(crate) struct VersionRecord {
     pub knowledge_revision: String,
     pub is_deleted: bool,
     pub snapshot_at_us: i64,
+    /// `segmented` on the snapshot of a segmented page (`insertSegmentedVersion`), which references
+    /// the page's live body generation instead of copying the body; absent on an inline snapshot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_storage: Option<String>,
+    /// The body generation a segmented snapshot references: a root of the segment sweep.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_generation: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_bytes: Option<i64>,
 }
 
 impl VersionRecord {
@@ -382,6 +394,12 @@ impl VersionRecord {
         if include_body {
             v["compiled_truth"] = json!(self.compiled_truth);
             v["timeline"] = json!(self.timeline);
+        }
+        // PGLite's getVersions adds the segmented columns on a segmented snapshot only.
+        if let Some(storage) = &self.body_storage {
+            v["body_storage"] = json!(storage);
+            v["body_generation"] = json!(self.body_generation);
+            v["body_bytes"] = json!(self.body_bytes);
         }
         v
     }
@@ -511,7 +529,7 @@ pub(crate) fn write_page(tx: &mut dyn KvWrite, record: &PageRecord) -> Result<()
 
 /// An origin (`source_path`) in the form PGLite compares two of them: as stored, and on Windows
 /// with `\` read as `/` and case folded (`originKey` of `persistence/origin-guard.ts`).
-fn origin_key(path: &str) -> String {
+pub(crate) fn origin_key(path: &str) -> String {
     if cfg!(windows) {
         path.replace('\\', "/").to_lowercase()
     } else {
@@ -520,7 +538,7 @@ fn origin_key(path: &str) -> String {
 }
 
 /// The origin a page claims: its `source_path` while the page is live and the path is not empty.
-fn claimed_origin(page: &PageRecord) -> Option<String> {
+pub(crate) fn claimed_origin(page: &PageRecord) -> Option<String> {
     match (&page.source_path, page.deleted_at_us) {
         (Some(path), None) if !path.is_empty() => Some(origin_key(path)),
         _ => None,
@@ -585,7 +603,7 @@ fn origin_holders(
 /// origin the write records (`None` keeps the stored one). Refuses with `origin_claimed` when
 /// another live page of the source records that origin, unless the target is live and already
 /// records it. An empty origin is never checked.
-fn assert_origin_unclaimed(
+pub(crate) fn assert_origin_unclaimed(
     read: &dyn KvRead,
     source_id: &str,
     slug: &str,
@@ -757,6 +775,59 @@ fn assert_body_inline(existing: Option<&PageRecord>) -> Result<()> {
     Ok(())
 }
 
+/// PGLite's `PROTECTED_MARKER` (`src/core/search/safe-chunks.ts`): `<!--- gbrain:(facts|takes):(begin|end) -->`.
+fn has_protected_text(text: &str) -> bool {
+    ["facts", "takes"].iter().any(|kind| {
+        ["begin", "end"]
+            .iter()
+            .any(|edge| text.contains(&format!("<!--- gbrain:{kind}:{edge} -->")))
+    })
+}
+
+/// The chunker version `putPage` stores on a new page: PGLite's `Math.min(chunker_version ?? 0, fence - 1)`,
+/// bound as a smallint.
+fn new_page_chunker_version(given: Option<f64>) -> Result<i16> {
+    let version = given
+        .unwrap_or(0.0)
+        .min(f64::from(SAFE_FENCE_CHUNKER_VERSION - 1));
+    if !version.is_finite() || version.fract() != 0.0 {
+        return Err(StoreError::new(
+            INVALID_ARGUMENT,
+            format!("invalid input syntax for type smallint: \"{version}\""),
+        ));
+    }
+    if version < f64::from(i16::MIN) {
+        return Err(StoreError::new(
+            INVALID_ARGUMENT,
+            format!("value \"{version}\" is out of range for type smallint"),
+        ));
+    }
+    Ok(version as i16)
+}
+
+/// PGLite's `bodyWriteChunkVersion`: an unchanged body keeps the stored version; a changed body that
+/// is or was protected, or whose page was already marked, is -1; any other changed body drops below
+/// the safe fence, so its old fragments are never certified.
+fn body_write_chunker_version(
+    old: &PageRecord,
+    compiled_truth: &str,
+    timeline: &str,
+) -> Option<i16> {
+    if old.compiled_truth == compiled_truth && old.timeline == timeline {
+        return old.chunker_version;
+    }
+    let stored = old.chunker_version.unwrap_or(0);
+    if stored < 0
+        || has_protected_text(&old.compiled_truth)
+        || has_protected_text(&old.timeline)
+        || has_protected_text(compiled_truth)
+        || has_protected_text(timeline)
+    {
+        return Some(-1);
+    }
+    Some(stored.min(SAFE_FENCE_CHUNKER_VERSION - 1))
+}
+
 /// Inserts or updates a page inside the caller's write transaction. Returns the stored record.
 pub(crate) fn put_page_in(
     tx: &mut dyn KvWrite,
@@ -827,6 +898,7 @@ pub(crate) fn put_page_in(
     let compiled_truth = clean(&input.compiled_truth);
     let timeline = clean(input.timeline.as_deref().unwrap_or(""));
     let page_kind = input.page_kind.clone().unwrap_or_else(|| "markdown".into());
+    let new_version = new_page_chunker_version(input.chunker_version)?;
 
     let record = match existing {
         None => PageRecord {
@@ -840,7 +912,7 @@ pub(crate) fn put_page_in(
             timeline: timeline.into(),
             frontmatter,
             content_hash: Some(hash),
-            chunker_version: None,
+            chunker_version: Some(new_version),
             source_path: input.source_path.clone(),
             knowledge_revision: env.new_uuid(),
             text_projection_revision: None,
@@ -873,7 +945,9 @@ pub(crate) fn put_page_in(
                     old.text_projection_revision.clone(),
                 )
             };
+            let chunker_version = body_write_chunker_version(&old, &compiled_truth, &timeline);
             PageRecord {
+                chunker_version,
                 page_type: input.page_type.clone(),
                 page_kind,
                 title,
@@ -1413,6 +1487,21 @@ impl Store {
     }
 }
 
+/// The body generations the page's segmented snapshots reference (`page_versions.body_generation`):
+/// each keeps its generation's manifest rows from the segment sweep.
+pub(crate) fn version_generations(read: &dyn KvRead, page_id: u64) -> Result<Vec<i64>> {
+    let mut out = Vec::new();
+    let mut failure = None;
+    scan_prefix(read, &keys::version_prefix(page_id), false, &mut |_, v| {
+        match serde_json::from_slice::<VersionRecord>(v) {
+            Ok(row) => out.extend(row.body_generation),
+            Err(e) => failure = Some(StoreError::from(e)),
+        }
+        failure.is_none()
+    })?;
+    failure.map_or(Ok(out), Err)
+}
+
 pub(crate) fn snapshot_in(
     tx: &mut dyn KvWrite,
     env: &dyn Env,
@@ -1421,6 +1510,7 @@ pub(crate) fn snapshot_in(
     let id = next_id(tx, NEXT_VERSION_ID)?;
     let mut tags = page.tags.clone();
     tags.sort();
+    let segmented = crate::page_body::segmented_reference(&*tx, page.id)?;
     let row = VersionRecord {
         id,
         page_id: page.id,
@@ -1435,6 +1525,9 @@ pub(crate) fn snapshot_in(
         knowledge_revision: page.knowledge_revision.clone(),
         is_deleted: page.deleted_at_us.is_some(),
         snapshot_at_us: env.now_micros(),
+        body_storage: segmented.map(|_| "segmented".to_string()),
+        body_generation: segmented.map(|(generation, _)| generation),
+        body_bytes: segmented.and_then(|(_, bytes)| bytes),
     };
     put_json(tx, &keys::version(page.id, id), &row)?;
     Ok(row)
@@ -1656,6 +1749,121 @@ mod tests {
         let listed = store.list_pages(&PageFilters::default()).unwrap();
         assert_eq!(listed[0]["content_hash"], Value::Null);
         assert_eq!(listed[0]["compiled_truth"], Value::Null);
+    }
+
+    /// PGLite's `bodyWriteChunkVersion` and its new-page `LEAST(chunker_version ?? 0, fence - 1)`.
+    #[test]
+    fn put_page_writes_the_chunker_version_pglite_writes() {
+        let store = crate::test_support::store();
+        let write = |slug: &str, body: &str, timeline: &str, version: Option<f64>| {
+            let input = PageInput {
+                page_type: "note".into(),
+                title: slug.into(),
+                compiled_truth: body.into(),
+                timeline: Some(timeline.into()),
+                chunker_version: version,
+                ..PageInput::default()
+            };
+            let options = PutPageOptions {
+                index: Some(false),
+                ..PutPageOptions::default()
+            };
+            store.put_page(slug, &input, &options).map(|_| {
+                read_page(&*store.read().unwrap(), DEFAULT_SOURCE, slug)
+                    .unwrap()
+                    .unwrap()
+                    .chunker_version
+            })
+        };
+        let stamp = |slug: &str, version: i16| {
+            store
+                .write(|tx| {
+                    let mut page = read_page(&*tx, DEFAULT_SOURCE, slug)?.unwrap();
+                    page.chunker_version = Some(version);
+                    write_page(tx, &page)
+                })
+                .unwrap();
+        };
+        let fence = "<!--- gbrain:takes:end -->";
+        assert_eq!(write("n", "a", "", None).unwrap(), Some(0));
+        assert_eq!(write("g", "a", "", Some(2.0)).unwrap(), Some(2));
+        assert_eq!(write("h", "a", "", Some(9.0)).unwrap(), Some(3));
+        assert_eq!(write("m", "a", "", Some(-7.0)).unwrap(), Some(-7));
+        let bad = write("x", "a", "", Some(1.5)).unwrap_err();
+        assert_eq!(bad.code, INVALID_ARGUMENT);
+        assert_eq!(
+            bad.message,
+            "invalid input syntax for type smallint: \"1.5\""
+        );
+        let low = write("x", "a", "", Some(-40000.0)).unwrap_err();
+        assert_eq!(
+            low.message,
+            "value \"-40000\" is out of range for type smallint"
+        );
+        stamp("n", 4);
+        assert_eq!(
+            write("n", "a", "", Some(1.0)).unwrap(),
+            Some(4),
+            "same body keeps"
+        );
+        assert_eq!(
+            write("n", "b", "", None).unwrap(),
+            Some(3),
+            "body drops below the fence"
+        );
+        stamp("n", 4);
+        assert_eq!(
+            write("n", "b", "t", None).unwrap(),
+            Some(3),
+            "timeline drops too"
+        );
+        stamp("n", 2);
+        assert_eq!(
+            write("n", "c", "t", None).unwrap(),
+            Some(2),
+            "below the fence stays"
+        );
+        assert_eq!(
+            write("n", fence, "t", None).unwrap(),
+            Some(-1),
+            "new protected text"
+        );
+        assert_eq!(
+            write("n", "d", "t", None).unwrap(),
+            Some(-1),
+            "old protected text"
+        );
+        assert_eq!(
+            write("n", "e", "t", None).unwrap(),
+            Some(-1),
+            "a marked page stays marked"
+        );
+        stamp("n", 4);
+        assert_eq!(write("n", fence, "t", None).unwrap(), Some(-1));
+        stamp("n", 4);
+        assert_eq!(
+            write("n", fence, "t", None).unwrap(),
+            Some(4),
+            "same body keeps, even protected"
+        );
+        // A seal stamps the safe fence version.
+        store
+            .upsert_chunks(
+                "g",
+                &[],
+                &crate::chunks::UpsertChunksOptions {
+                    seal: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "g")
+                .unwrap()
+                .unwrap()
+                .chunker_version,
+            Some(SAFE_FENCE_CHUNKER_VERSION)
+        );
     }
 
     #[test]

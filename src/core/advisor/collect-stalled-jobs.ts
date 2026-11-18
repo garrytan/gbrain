@@ -6,12 +6,12 @@
  * objects yield no finding. Any other read failure is rethrown so runAdvisor
  * reports `collector_failed:stalled-jobs` instead of a clean check. Engine-agnostic
  * SQL via executeRaw (works on Postgres + PGLite); timestamps compared with
- * `now()` which both engines provide. No PG-only constructs.
+ * `now()` which both engines provide. No PG-only constructs. The stale-sync read
+ * is the typed `listStaleSyncSourceIds` member (database clock on PGLite and Postgres).
  */
 
 import type { AdvisorCollector, AdvisorFinding } from './types.ts';
 import { isMissingSchemaObject } from '../utils.ts';
-import { sortSourcesById } from '../source-rows.ts';
 
 export const collectStalledJobs: AdvisorCollector = {
   id: 'stalled-jobs',
@@ -48,16 +48,13 @@ export const collectStalledJobs: AdvisorCollector = {
 
     // Stale federated sources: synced sources that haven't advanced in a week.
     try {
-      const staleBefore = Date.now() - 7 * 86400_000;
-      const rows = sortSourcesById(await ctx.engine.listAllSources())
-        .filter(s => s.last_sync_at !== null && s.last_sync_at.getTime() < staleBefore);
-      for (const r of rows) {
+      for (const id of await ctx.engine.listStaleSyncSourceIds()) {
         findings.push({
-          id: `stale_sync:${r.id}`,
+          id: `stale_sync:${id}`,
           severity: 'info',
-          title: `Source "${r.id}" hasn't synced in over a week.`,
+          title: `Source "${id}" hasn't synced in over a week.`,
           detail: 'Re-sync to pull in new content the brain has not indexed yet.',
-          fix: { command_argv: ['gbrain', 'sync', '--source', r.id] },
+          fix: { command_argv: ['gbrain', 'sync', '--source', id] },
           collector: 'stalled-jobs',
           ask_user: true,
         });

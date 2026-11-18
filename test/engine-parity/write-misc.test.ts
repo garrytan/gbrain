@@ -2,16 +2,16 @@
  * BrainEngine parity — the page-write reads and upkeep that belong to no other family (engine-sql/write-misc.ts).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: readSourceState, readAdmissionSource, listLinkEndpointPages, sharedSkillPackTablePresent,
+ *  - Contract: readSourceState, readAdmissionSource, sharedSkillPackTablePresent,
  *    listSharedSkillPackRoots, hasExtractedEvents, listActiveAccessMembers, isFolderRestricted, expireMemoryProposals,
  *    listAwaitingMemoryProposals and purgeMemoryProposals return the same observable result on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
- *  - Regression: a source-state read that differs changes whether page admission, the mirror read-only guard, the
- *    origin guard and link policy accept a write; an endpoint read that differs changes which links a page write
- *    resolves; the rest decide the shared-skillpack screen, chronicle retirement, `access serves` and proposal upkeep.
+ *  - Regression: a source-state read that differs changes whether page admission, the mirror read-only guard and
+ *    link policy accept a write; the rest decide the shared-skillpack screen, chronicle retirement, `access serves`
+ *    and proposal upkeep.
  *  - Why existing coverage misses it: the call sites ran these statements through `executeRaw`, which the parity cases
  *    cannot call (D18), so no case compared them across engines (docs/research/rust-put-write-path.md).
- *  - Seam: none. Generated values (incarnation uuids, knowledge revisions) are compared by shape, never by value. The
+ *  - Seam: none. Generated values (incarnation uuids) are compared by shape, never by value. The
  *    Rust store keeps no skillpacks, chronicle state, access members, folder rules or memory proposals, so those cases
  *    compare the empty answer every arm gives on a fresh brain (rust/docs/store/write_misc.md).
  */
@@ -61,29 +61,6 @@ describe('engine parity: write misc', () => {
     expect(missing).toBeNull();
     const view = (row: typeof alpha) => row && (expect(row.incarnation).toMatch(UUID), { ...row, incarnation: 'uuid' });
     return { alpha: view(alpha), plain: view(plain), missing };
-  });
-
-  parityTest('listLinkEndpointPages returns own live pages, then other sources\' pages for missing and cross-source slugs', { methods: ['listLinkEndpointPages'] }, async (engine, backend) => {
-    await createSource(engine, backend, 'alpha');
-    await note(engine, 'people/a');
-    await note(engine, 'people/b', 'default', 'person');
-    await note(engine, 'people/b', 'alpha');
-    await note(engine, 'people/c', 'alpha', 'person');
-    await note(engine, 'people/d');
-    await engine.softDeletePage('people/d', { sourceId: 'default' });
-    const rows = await engine.listLinkEndpointPages('default', ['people/a', 'people/b', 'people/c', 'people/d', 'people/none'], ['people/b']);
-    const empty = await engine.listLinkEndpointPages('default', [], []);
-    expect(empty).toEqual([]);
-    for (const row of rows) expect(row.knowledge_revision).toMatch(UUID);
-    const sorted = rows.map(r => ({ slug: r.slug, source_id: r.source_id, type: r.type }))
-      .sort((x, y) => x.source_id.localeCompare(y.source_id) || x.slug.localeCompare(y.slug));
-    expect(sorted).toEqual([
-      { slug: 'people/b', source_id: 'alpha', type: 'note' },
-      { slug: 'people/c', source_id: 'alpha', type: 'person' },
-      { slug: 'people/a', source_id: 'default', type: 'note' },
-      { slug: 'people/b', source_id: 'default', type: 'person' },
-    ]);
-    return { sorted, empty };
   });
 
   parityTest('sharedSkillPackTablePresent answers for a current schema', { methods: ['sharedSkillPackTablePresent'] }, async (engine) => {

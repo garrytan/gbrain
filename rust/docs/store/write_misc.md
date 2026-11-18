@@ -4,17 +4,15 @@ Part of the store contract in [rust/README.md](../../README.md) ("The brain stor
 
 These are statements that a page write ran through `executeRaw` and that belong to no other storage domain
 ([docs/research/rust-put-write-path.md](../../../docs/research/rust-put-write-path.md)). PGLite and Postgres run the
-same SQL as before, now in `src/core/engine-sql/write-misc.ts`. The store answers the source and link-endpoint reads
-from its source and page records (`crates/gbrain-store/src/write_misc.rs`) and has no keys of its own. The TypeScript
+same SQL as before, now in `src/core/engine-sql/write-misc.ts`. The store answers the source read
+from its source records (`crates/gbrain-store/src/write_misc.rs`) and has no keys of its own. The TypeScript
 members (`src/core/rust-engine/store-members/write-misc.ts`) answer the others for state the store does not keep.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `brain.readSourceState(sourceId)` | `{ incarnation, archived, local_path, config }`, or `null` for an unknown id | `readSourceState` |
-| `brain.listLinkEndpointPages(sourceId, slugs, crossSourceSlugs)` | the live pages of `sourceId` whose slug is in `slugs`, by slug, then the live pages of every other source whose slug is a ref (a slug in `crossSourceSlugs`, or one `sourceId` lacks), by source then slug: `{ slug, source_id, type, knowledge_revision }` | `listLinkEndpointPages` |
 
-The SQL engines return `listLinkEndpointPages` rows in no particular order within each part; callers do not depend
-on the order.
+The link endpoint read (`listLinkEndpointPages`) is in [link_queries.md](link_queries.md).
 
 ## TypeScript members
 

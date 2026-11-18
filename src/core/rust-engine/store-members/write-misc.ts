@@ -1,12 +1,12 @@
 /**
  * The page-write reads and upkeep that belong to no other domain (BrainEngine readSourceState through
  * purgeMemoryProposals; SQL in engine-sql/write-misc.ts), and the folder access read beside the access members
- * (isFolderRestricted; SQL in engine-sql/access-control.ts). The source and link-endpoint reads are served by gbrain-store
+ * (isFolderRestricted; SQL in engine-sql/access-control.ts). The source reads are served by gbrain-store
  * `write_misc`; the rest answer for state the store does not keep. What each member answers and why:
  * rust/docs/store/write_misc.md.
  */
 import type {
-  AdmissionSourceRow, LinkEndpointPageRow, SharedSkillPackRoot, SourceStateOptions, SourceStateRow,
+  AdmissionSourceRow, SharedSkillPackRoot, SourceStateOptions, SourceStateRow,
 } from '../../engine-sql/write-misc.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
@@ -36,11 +36,6 @@ export const readAdmissionSource: StoreMember<[sourceId: string], AdmissionSourc
     guest_writers: null, guest_trust_ceiling: null, guest_sources_hidden: false,
   };
 };
-
-/** The live pages that can be endpoints of the origin's links: own pages, then other sources' pages for the refs. */
-export const listLinkEndpointPages: StoreMember<[sourceId: string, slugs: readonly string[], crossSourceSlugs: readonly string[]], LinkEndpointPageRow[]> =
-  async (brain, sourceId, slugs, crossSourceSlugs) => slugs.length === 0 ? [] :
-    storeCall({ member: 'listLinkEndpointPages', sourceId }, () => brain.listLinkEndpointPages(sourceId, [...slugs], [...crossSourceSlugs]));
 
 /**
  * The store answers as a current schema with no shared skillpacks does: the table exists (the store is never on a

@@ -113,8 +113,7 @@ function fenceCellFor(fact: FenceFactAppendInput['fact'], rowNum: number, slug: 
 export async function prepareFenceFactCreate(engine: BrainEngine, row: WriteRequest, config: GBrainConfig,
   input: { fact: NewFact & { valid_from: Date }; pendingTier: TrustTier; frontmatter: string; heading: string; storedVisibility?: string }, signal?: AbortSignal): Promise<FenceFactAppend> {
   const page = { sourceId: row.source_id, slug: row.slug };
-  const [indexedMax] = await engine.executeRaw<{ n: number }>('SELECT COALESCE(MAX(row_num),0)::int AS n FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', [row.source_id, row.slug]);
-  const rowNum = (indexedMax?.n ?? 0) + 1;
+  const rowNum = (await engine.maxFenceRowNum(row.source_id, row.slug)) + 1;
   const { expected_revision: _ignored, ...intent } = row.intent ?? {};
   const content = `${input.frontmatter}\n${upsertFactRow(`${input.heading}\n`, fenceCellFor(input.fact, rowNum, row.slug)).body}`;
   const prepared = await withPendingFenceRows({ ...page, rowNums: [rowNum], tier: input.pendingTier },
@@ -168,11 +167,11 @@ export async function prepareFenceFactAppend(engine: BrainEngine, row: WriteRequ
   const fencesNormalized = target.fixes.length ? { fences_normalized: pageFencesNormalized({ sourceId: row.source_id, slug: row.slug, fixes: target.fixes,
     writer: row.principal_kind, path: snapshot?.page.source_path ?? null, remote: row.authority.remote }) } : {};
   // #6696 C9: a facts row the fence does not hold (extraction, a hand edit) still owns its row_num, so the new row numbers past both.
-  const [indexedMax] = await engine.executeRaw<{ n: number }>('SELECT COALESCE(MAX(row_num),0)::int AS n FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', [row.source_id, row.slug]);
+  const indexedMax = await engine.maxFenceRowNum(row.source_id, row.slug);
   // #6686: the fence is edited in the section it lives in (a lone timeline fence stays below the sentinel); the other section is kept byte for byte.
   const section = factsFenceSection(target.page);
   const fenced = { compiled_truth: target.page.compiled_truth, timeline: target.page.timeline ?? '' };
-  const rowNum = Math.max(indexedMax?.n ?? 0, ...[fenced.compiled_truth, fenced.timeline].flatMap(text => parseFactsFenceFor(text, page).facts.map(f => f.rowNum))) + 1;
+  const rowNum = Math.max(indexedMax, ...[fenced.compiled_truth, fenced.timeline].flatMap(text => parseFactsFenceFor(text, page).facts.map(f => f.rowNum))) + 1;
   const cell = fenceCellFor(fact, rowNum, row.slug);
   const unfenced = snapshot ? (await withHeldFactsFence(engine, row.source_id, row.slug, fenced))[section] : fenced[section];
   // #6385 R12: an entity fence that does not parse cleanly refuses typed instead of losing the rows it skipped.

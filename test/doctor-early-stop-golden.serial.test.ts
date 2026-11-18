@@ -85,6 +85,8 @@ function statsRejectingEngine(err: Error): BrainEngine {
       if (prop === 'then') return undefined;
       if (prop === 'getStats') return () => Promise.reject(err);
       if (prop === 'getConfig') return async () => null;
+      // Single-row reads answer null (no row), not the list default below.
+      if (prop === 'getSource') return async () => null;
       return async () => [];
     },
   }) as unknown as BrainEngine;

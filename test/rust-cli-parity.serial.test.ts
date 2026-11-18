@@ -9,8 +9,17 @@
  * timings, clock-derived values and each brain's temp path (the rules of test/rust-engine-differential.test.ts),
  * and fractions agree to one part in a million (clock-decayed scores move between runs milliseconds apart).
  *
+ * When a setup write is refused on the Rust brain (the typed refusal), the Rust brain does not hold the fixture, and
+ * comparing its reads with the full PGLite brain would only report the missing pages. A third brain, the mirror,
+ * is then the reference: a PGLite brain that ran only the setup writes the Rust brain completed. Both hold the same
+ * data, so each read must still answer the same way (exit code and JSON); the table marks those rows `vs mirror`.
+ * The full PGLite brain still runs every command, so the fixture and the command list stay checked.
+ *
+ * Doctor is the one exception: its report cannot equal PGLite's while members refuse, so its own test (`runs`) checks
+ * that it finishes with no failed check and no filesystem-only fallback, and pins each difference from PGLite.
+ *
  * Each command ends in one of three states:
- *  - `equal`: the Rust brain printed the same JSON as the PGLite brain, value for value.
+ *  - `equal`: the Rust brain printed the same JSON as the reference brain, value for value.
  *  - `refused`: the command failed with the typed `engine_capability_missing` refusal; the table names the member.
  *  - `diverged`: anything else (other JSON, an untyped error, output that is not JSON). The test fails on it: a
  *    wrong answer is never acceptable.
@@ -25,7 +34,9 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  * 1. Protects: the agent-facing contract of the read commands, end to end (flag parsing, operation dispatch, engine
  *    members, JSON rendering), on a Rust brain.
- * 2. Fails when: a Rust member answers a command differently from PGLite, or a refusal is untyped or a near answer.
+ * 2. Fails when: a Rust member answers a command differently from PGLite (or from the mirror when a setup write was
+ *    refused), or a refusal is untyped or a near answer; or doctor on the Rust brain fails a check, falls back to the
+ *    filesystem-only checks, or gains a check name, an untyped warning or an ok-while-refused check not listed.
  * 3. Existing coverage: the engine parity suite (test/engine-parity/) compares single members in process; nothing
  *    compares whole CLI commands, where several members and the operation layer combine.
  * 4. Seams: none. It runs the real CLI and needs the addon `bun run rust:build` writes; it skips without it
@@ -49,10 +60,13 @@ if (!HAVE_ADDON && process.env.GBRAIN_TEST_RUST_ADDON_REQUIRED === '1') {
 
 type Backend = 'pglite' | 'rust';
 interface Brain { backend: Backend; home: string; db: string }
+type BrainName = Backend | 'mirror';
 interface Run { exitCode: number; stdout: string; stderr: string }
 
 let root = '';
-const brains = {} as Record<Backend, Brain>;
+const brains = {} as Record<BrainName, Brain>;
+/** Set when a Rust setup write was refused: reads are then compared with the mirror, not the full PGLite brain. */
+let useMirror = false;
 
 function childEnv(brain: Brain): Record<string, string> {
   const out: Record<string, string> = {};
@@ -79,9 +93,9 @@ async function cli(brain: Brain, args: string[]): Promise<Run> {
   return { stdout, stderr, exitCode };
 }
 
-function makeBrain(backend: Backend): Brain {
-  const home = join(root, backend, 'home');
-  const db = join(root, backend, 'db');
+function makeBrain(backend: Backend, name: BrainName = backend): Brain {
+  const home = join(root, name, 'home');
+  const db = join(root, name, 'db');
   mkdirSync(join(home, '.gbrain'), { recursive: true });
   writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine: backend, database_path: db }));
   return { backend, home, db };
@@ -220,7 +234,7 @@ const RECORDED_WRITES: Array<{ args: string[]; member: string }> = [
 // `put` passes the brain id and the source resolver, then stops at the raw read of persistence_topology_changes in
 // assertPageRequestIdentity (src/core/persistence/journal.ts).
 
-type State = 'equal' | 'refused' | 'diverged' | 'no-engine';
+type State = 'equal' | 'refused' | 'diverged' | 'no-engine' | 'runs';
 interface Row { command: string; state: State; note: string }
 const table: Row[] = [];
 const setupRows: Row[] = [];
@@ -232,6 +246,7 @@ function printTable(): void {
   const lines = ['[rust cli parity] setup:', ...setupRows.map((r) => `  ${r.command} | ${r.state}${r.note ? ` (${r.note})` : ''}`),
     '[rust cli parity] commands:', ...table.map((r) => `  ${r.command} | ${r.state}${r.note ? ` (${r.note})` : ''}`)];
   const count = (s: State) => table.filter((r) => r.state === s).length;
+  if (useMirror) lines.push('[rust cli parity] a Rust setup write was refused: reads were compared with the mirror (PGLite with the same completed writes)');
   lines.push(`[rust cli parity] ${count('equal')} equal, ${count('refused')} refused, ${count('diverged')} diverged, ${count('no-engine')} without a Rust engine`);
   console.log(lines.join('\n'));
 }
@@ -241,10 +256,17 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
     root = mkdtempSync(join(tmpdir(), 'gb-rust-cli-parity-'));
     brains.pglite = makeBrain('pglite');
     brains.rust = makeBrain('rust');
+    brains.mirror = makeBrain('pglite', 'mirror');
     for (const args of SETUP) {
       const [pg, rust] = await Promise.all([cli(brains.pglite, args), cli(brains.rust, args)]);
       if (pg.exitCode !== 0) throw new Error(`PGLite setup ${label(args)} failed (${pg.exitCode}): ${pg.stdout}\n${pg.stderr}`);
       if (engineMissing(rust)) { rustArm = 'no-engine'; setupRows.push({ command: label(args), state: 'no-engine', note: 'the CLI has no rust engine value' }); continue; }
+      if (rust.exitCode === 0) {
+        const mirror = await cli(brains.mirror, args);
+        if (mirror.exitCode !== 0) throw new Error(`mirror setup ${label(args)} failed (${mirror.exitCode}): ${mirror.stdout}\n${mirror.stderr}`);
+      } else {
+        useMirror = true;
+      }
       const member = refusedMember(rust);
       setupRows.push({ command: label(args), state: rust.exitCode === 0 ? 'equal' : member ? 'refused' : 'diverged', note: rust.exitCode === 0 ? 'ran' : member ?? rust.stdout.slice(0, 300) + rust.stderr.slice(0, 300) });
     }
@@ -257,6 +279,8 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
 
   test('setup never ends in an untyped Rust failure', () => {
     expect(setupRows.filter((r) => r.state === 'diverged')).toEqual([]);
+    // The mirror is the reference only while a Rust setup write is refused; once every write runs, the full brain is.
+    expect(useMirror).toBe(setupRows.some((r) => r.state === 'refused'));
   });
 
   for (const args of COMMANDS) {
@@ -274,13 +298,19 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
         table.push({ command: label(args), state: 'refused', note: member });
         return;
       }
-      const rustJson = parseJson(rust.stdout);
-      const want = normalize(pgJson, pathsOf(brains.pglite));
-      const got = rustJson === undefined ? `${rust.stdout}\n${rust.stderr}` : normalize(rustJson, pathsOf(brains.rust));
-      const equal = rust.exitCode === 0 && same(got, want);
-      table.push({ command: label(args), state: equal ? 'equal' : 'diverged', note: equal ? '' : `exit ${rust.exitCode}` });
+      const ref = useMirror ? await cli(brains.mirror, args) : pg;
+      const refBrain = useMirror ? brains.mirror : brains.pglite;
+      const asJson = (run: Run, brain: Brain) => {
+        const json = parseJson(run.stdout);
+        return normalize(json === undefined ? `${run.stdout}\n${run.stderr}` : json, pathsOf(brain));
+      };
+      const want = { exitCode: ref.exitCode, json: asJson(ref, refBrain) };
+      const got = { exitCode: rust.exitCode, json: asJson(rust, brains.rust) };
+      const equal = got.exitCode === want.exitCode && same(got.json, want.json);
+      const notes = [useMirror ? 'vs mirror' : '', equal && ref.exitCode !== 0 ? `both exit ${ref.exitCode}` : '', equal ? '' : `exit ${rust.exitCode}`].filter(Boolean);
+      table.push({ command: label(args), state: equal ? 'equal' : 'diverged', note: notes.join(', ') });
       // A wrong answer is never acceptable: the Rust brain refuses with a typed refusal or answers exactly.
-      if (!equal) expect({ exitCode: rust.exitCode, json: got }).toEqual({ exitCode: 0, json: want });
+      if (!equal) expect(got).toEqual(want);
     }, 240_000);
   }
 
@@ -298,4 +328,50 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       expect({ member, written: /written=nothing/.test(rust.stdout) }).toEqual({ member: next, written: true });
     }, 240_000);
   }
+
+  // Doctor reads every health table, so its report is not expected to equal PGLite's while members still refuse.
+  // The contract here is that doctor runs on a Rust brain: it finishes, fails nothing, never falls back to the
+  // filesystem-only checks, and says why for each check it could not run. The lists below pin every difference
+  // from PGLite that is not a typed refusal, so a new one fails this test until it is reviewed and listed.
+  test('doctor --json on a Rust brain runs every check and names the cause of each warning', async () => {
+    const [pg, rust] = await Promise.all([cli(brains.pglite, ['doctor', '--json']), rustArm === 'on' ? cli(brains.rust, ['doctor', '--json']) : Promise.resolve(null)]);
+    type Check = { name: string; status: string; message: string };
+    const pgReport = parseJson(pg.stdout) as { checks?: Check[] } | undefined;
+    expect({ exitCode: pg.exitCode, checks: Array.isArray(pgReport?.checks) }).toEqual({ exitCode: 0, checks: true });
+    if (!rust || engineMissing(rust)) { table.push({ command: 'doctor --json', state: 'no-engine', note: '' }); return; }
+    const report = parseJson(rust.stdout) as { engine?: string; checks?: Check[] } | undefined;
+    expect({ exitCode: rust.exitCode, engine: report?.engine, checks: Array.isArray(report?.checks) }).toEqual({ exitCode: 0, engine: 'rust', checks: true });
+    expect(`${rust.stdout}\n${rust.stderr}`).not.toMatch(/DB-backed doctor run failed|filesystem-only/);
+    const checks = report!.checks!;
+    const pgNames = new Set(pgReport!.checks!.map((c) => c.name));
+    const names = new Set(checks.map((c) => c.name));
+    const TYPED = /does not support \w+ yet \(it needs the \w+ capability\)/;
+    const sorted = (xs: Iterable<string>) => [...xs].sort();
+    expect({
+      fail: checks.filter((c) => c.status === 'fail').map((c) => c.name),
+      // Engine-specific checks: PGLite-only (scale, local path, file scans) and the managed-sync checks PGLite skips.
+      onlyPglite: sorted([...pgNames].filter((n) => !names.has(n))),
+      onlyRust: sorted([...names].filter((n) => !pgNames.has(n))),
+      // Warnings that do not quote the typed refusal: each one is a refused read the check reports in its own words.
+      untypedWarnings: sorted(checks.filter((c) => c.status !== 'ok' && !TYPED.test(c.message)).map((c) => c.name)),
+      // Checks that report ok although a refused read stopped them: none. A refused check warns, health unknown.
+      okWhileRefused: sorted(checks.filter((c) => c.status === 'ok' && TYPED.test(c.message)).map((c) => c.name)),
+    }).toEqual({
+      fail: [],
+      onlyPglite: ['default_source_local_path', 'frontmatter_repairable', 'image_assets', 'pglite_scale'],
+      // multi_source_drift is gone from this list: it reads listSourceRecords, which Rust serves, so on this
+      // one-source brain it skips exactly as PGLite does instead of warning with the executeRaw refusal.
+      onlyRust: ['canonical_content_writes', 'checkout_lagging', 'commits_outside_source_root', 'dirty_age', 'git_convergence',
+        'quarantined_changes', 'shared_skills_sources', 'sync_failures', 'tracked_ownership_marker',
+        'transcript_secret_exposure'],
+      untypedWarnings: ['backup_coverage', 'canonical_content_writes', 'child_table_orphans', 'embedding_provider',
+        'entity_link_coverage', 'extract_atoms_backlog', 'fact_take_vectors', 'graph_coverage', 'orphan_ratio',
+        // pack_upgrade_available warns with the same message as PGLite: the pack reads are served.
+        'pack_upgrade_available', 'raw_provenance', 'retrieval_reflex_health', 'sync_failures', 'text_projection_readiness',
+        'timeline_coverage'],
+      okWhileRefused: [],
+    });
+    const count = (s: string) => checks.filter((c) => c.status === s).length;
+    table.push({ command: 'doctor --json', state: 'runs', note: ` ${checks.length} checks, ${count('ok')} ok, ${count('warn')} warn, 0 fail; PGLite ${pgReport!.checks!.length}` });
+  }, 600_000);
 });

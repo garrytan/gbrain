@@ -30,6 +30,19 @@ impl Brain {
         })
     }
 
+    /// `readExtractionLagCounts({ sourceId?, versionTs, attendance, held?, guests?,
+    /// wantedProducers? })`: resolves `{ total, stale, attendance_blocked, held }`.
+    #[napi]
+    pub fn read_extraction_lag_counts<'env>(
+        &self,
+        env: &'env Env,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_extraction_lag_counts(&arg(options, "readExtractionLagCounts options")?)
+        })
+    }
+
     /// `listStalePagesForExtraction({ batchSize, afterPageId?, sourceId?, versionTs?, held?,
     /// wantedProducers? })`: `StalePageRow`s by id, `updated_at` as an ISO string.
     #[napi]

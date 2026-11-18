@@ -72,9 +72,6 @@ async function sourceBasenameIndex(engine: BrainEngine, sourceId: string): Promi
   return (await next).index;
 }
 
-/** The link-endpoint statement (engine `listLinkEndpointPages`); its home is engine-sql/write-misc.ts. */
-export { LINK_ENDPOINTS_SQL } from '../engine-sql/write-misc.ts';
-
 /**
  * `primeSemantics`: install the pack relation semantics now, during preparation, so apply's
  * replacement does not read them again inside the publication transaction.

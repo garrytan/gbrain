@@ -1154,9 +1154,7 @@ export async function vacuumPersistenceQueues(engine: BrainEngine): Promise<numb
  * existence probe.
  */
 export async function sweepSegmentStorage(engine: BrainEngine): Promise<void> {
-  const [row] = await engine.executeRaw<{ present: boolean }>(
-    'SELECT EXISTS (SELECT 1 FROM page_body_stagings) OR EXISTS (SELECT 1 FROM page_segment_texts) AS present');
-  if (!row?.present) return;
+  if (!await engine.hasSegmentStorage()) return;
   if (!await readManagedMode(engine)) { await engine.sweepSegments({ expireStagings: true }); return; }
   const owned = await engine.executeRaw<{ source_id: string }>(`SELECT s.source_id FROM persistence_source_bindings s
     JOIN persistence_worktrees w ON w.id=s.worktree_id WHERE w.owner_host_id=$1::uuid AND w.state='active'`, [hostIdFor(engine)]);

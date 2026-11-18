@@ -116,8 +116,10 @@ describe('legacy coalesce matrix on every queue path (PGLite)', () => {
     const old = await new MinionQueue(engine).add('legacy-fixture', { n: 2 }, { idempotency_key: 'cas-key' });
     await engine.executeRaw("UPDATE minion_jobs SET status = 'cancelled', submission_authority = NULL WHERE id = $1", [old.id]);
     // Between the fast-path read and the release, an operator authorizes the row.
-    const reviewing = new Proxy(engine, {
+    const reviewing: PGLiteEngine = new Proxy(engine, {
       get(target, prop) {
+        // admitJob opens its own transaction: run it with this proxy as `this` so that transaction is the reviewed one.
+        if (prop === 'admitJob') return (...args: unknown[]) => Reflect.apply(Reflect.get(target, prop), reviewing, args);
         if (prop !== 'transaction') { const v = Reflect.get(target, prop); return typeof v === 'function' ? v.bind(target) : v; }
         return <T>(fn: (tx: PGLiteEngine) => Promise<T>) => target.transaction(tx => fn(new Proxy(tx, {
           get(t, p) {

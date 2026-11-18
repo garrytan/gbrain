@@ -20,15 +20,13 @@ export function prepareDelegatedReplay(name: string, original: Record<string, un
 
 /** Terminal -> waiting consumes a client slot just like a fresh submission. */
 export async function admitDelegatedRetry(tx: BrainEngine, id: number): Promise<boolean> {
-  const rows = await tx.executeRaw<{ name: string; data: Record<string, unknown> }>(
-    "SELECT name,data FROM minion_jobs WHERE id=$1 AND status IN ('failed','dead')", [id]);
-  if (!rows.length) return false;
-  const { clientId } = prepareDelegatedReplay(rows[0].name, rows[0].data);
+  const prior = await tx.getFailedJobForRetry(id);
+  if (!prior) return false;
+  const { clientId } = prepareDelegatedReplay(prior.name, prior.data);
   if (!clientId) return true;
-  const limit = await lockDelegatedSubmission(tx, clientId, rows[0].name, rows[0].data, id);
+  const limit = await lockDelegatedSubmission(tx, clientId, prior.name, prior.data, id);
   // Another retry may have won while this transaction waited for the client.
-  const current = await tx.executeRaw("SELECT id FROM minion_jobs WHERE id=$1 AND status IN ('failed','dead')", [id]);
-  if (!current.length) return false;
+  if (!await tx.getFailedJobForRetry(id)) return false;
   await checkDelegatedCapacity(tx, clientId, limit);
   return true;
 }

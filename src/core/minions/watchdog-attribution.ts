@@ -44,15 +44,8 @@ export function unmarkedJobSql(param: string): string {
 }
 
 /** A co-runner of a watchdog drain back to `waiting`, token-fenced, marked, no attempt burned. False when the claim moved on. */
-export async function releaseWatchdogClaim(engine: BrainEngine, id: number, lockToken: string, errorText: string): Promise<boolean> {
-  const rows = await engine.executeRaw<{ id: number }>(
-    `UPDATE minion_jobs SET status = 'waiting', error_text = $3, stacktrace = ${appendSuspectMarkSql('$4')},
-       started_at = NULL, timeout_at = NULL, lock_token = NULL, lock_until = NULL, updated_at = now()
-     WHERE id = $1 AND status = 'active' AND lock_token = $2
-     RETURNING id`,
-    [id, lockToken, errorText, WATCHDOG_SUSPECT_MARK],
-  );
-  return rows.length > 0;
+export function releaseWatchdogClaim(engine: BrainEngine, id: number, lockToken: string, errorText: string): Promise<boolean> {
+  return engine.releaseWatchdogClaim(id, lockToken, errorText);
 }
 
 /**
@@ -72,7 +65,7 @@ export async function settleWatchdogAbort(queue: Pick<MinionQueue, 'releaseWatch
 /** Keeps a job charged for a solo trip marked, so its retry runs alone too. Best-effort: the charge does not depend on it. */
 async function markWatchdogSuspect(engine: BrainEngine, id: number): Promise<void> {
   try {
-    await engine.executeRaw(`UPDATE minion_jobs SET stacktrace = ${appendSuspectMarkSql('$2')} WHERE id = $1`, [id, WATCHDOG_SUSPECT_MARK]);
+    await engine.markJobWatchdogSuspect(id);
   } catch (e) {
     console.error(`[worker] could not mark job ${id} to run alone after its RSS watchdog trip: ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -105,37 +98,3 @@ async function releaseWatchdogCoRunner(queue: Pick<MinionQueue, 'releaseWatchdog
   }
 }
 
-
-const CO_RUNNER_STALL = 'worker_stalled_with_co_runners: ';
-const workerOf = (token: string | null): string | null => token && token.includes(':') ? token.slice(0, token.indexOf(':')) : null;
-
-/**
- * The stalled candidates whose worker held other expired claims (a live
- * worker keeps renewing the claims it still runs), requeued with the
- * mark and no stall counted (FOR UPDATE SKIP LOCKED, with the sweep's grace).
- * Returns the requeued rows and the candidates left to the counting sweep.
- */
-export async function requeueCoRunnerStalls<C extends { id: number }>(tx: BrainEngine, candidates: C[], graceMs: number): Promise<{ requeued: Record<string, unknown>[]; rest: C[] }> {
-  const rows = await tx.executeRaw<{ id: number; lock_token: string | null; marked: boolean }>(
-    `SELECT id, lock_token, ${markedJobSql('$2')} AS marked FROM minion_jobs WHERE status = 'active' AND (lock_until < now() OR id = ANY($1::bigint[]))`,
-    [candidates.map(c => c.id), WATCHDOG_SUSPECT_MARK]);
-  const evidence = new Set((await tx.executeRaw<{ error_text: string }>(
-    `SELECT DISTINCT error_text FROM minion_jobs WHERE status IN ('waiting', 'active', 'delayed') AND starts_with(error_text, $1)`, [CO_RUNNER_STALL])).map(r => r.error_text));
-  const perWorker = new Map<string, number>();
-  for (const row of rows) { const worker = workerOf(row.lock_token); if (worker) perWorker.set(worker, (perWorker.get(worker) ?? 0) + 1); }
-  const byId = new Map(rows.map(row => [Number(row.id), row]));
-  const shared = new Set(candidates.filter(c => {
-    const row = byId.get(Number(c.id));
-    const worker = workerOf(row?.lock_token ?? null);
-    return row && !row.marked && worker !== null && ((perWorker.get(worker) ?? 0) > 1 || evidence.has(CO_RUNNER_STALL + worker));
-  }).map(c => Number(c.id)));
-  if (shared.size === 0) return { requeued: [], rest: candidates };
-  const requeued = await tx.executeRaw<Record<string, unknown>>(
-    `UPDATE minion_jobs SET status = 'waiting', error_text = $3 || split_part(lock_token, ':', 1), stacktrace = ${appendSuspectMarkSql('$4')},
-       started_at = NULL, lock_token = NULL, lock_until = NULL, updated_at = now()
-     WHERE id IN (SELECT id FROM minion_jobs WHERE id = ANY($1::bigint[]) AND status = 'active'
-                    AND lock_until < now() - ($2::double precision * interval '1 millisecond') FOR UPDATE SKIP LOCKED)
-     RETURNING *`,
-    [[...shared], graceMs, CO_RUNNER_STALL, WATCHDOG_SUSPECT_MARK]);
-  return { requeued, rest: candidates.filter(c => !shared.has(Number(c.id))) };
-}

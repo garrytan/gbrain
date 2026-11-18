@@ -118,6 +118,8 @@ export function batchSharedReads(engine: BrainEngine, extra?: ReadonlySet<string
     // The screen's shared skillpack reads (knowledge-guard.ts), once per batch.
     if (key === 'sharedSkillPackTablePresent' && extra) return () => once(key, () => target.sharedSkillPackTablePresent());
     if (key === 'listSharedSkillPackRoots' && extra) return (hostId: string) => once(JSON.stringify([key, hostId]), () => target.listSharedSkillPackRoots(hostId));
+    if (key === 'getConfigValues') return (keys: readonly string[]) =>
+      once(`config-values:${JSON.stringify(keys)}`, () => target.getConfigValues(keys)).then(rows => rows.map(row => ({ ...row })));
     if (key === 'getAllConfig' && extra) return () => once('config:*', () => target.getAllConfig()).then(all => ({ ...all }));
     const value = Reflect.get(target, key, target);
     return typeof value === 'function' ? value.bind(target) : value;

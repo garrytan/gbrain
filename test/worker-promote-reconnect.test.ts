@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { MinionWorker } from '../src/core/minions/worker.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { withQueueMembers } from './helpers/queue-engine-members.ts';
 
 function makeEngineWithReconnect(counter: { calls: number }, events: string[]): BrainEngine & { reconnect: () => Promise<void> } {
-  return {
+  return withQueueMembers({
     kind: 'postgres',
     executeRaw: async (sql: string) => {
       if (sql.trim() === 'SELECT 1') return [];
@@ -17,7 +18,7 @@ function makeEngineWithReconnect(counter: { calls: number }, events: string[]): 
       counter.calls += 1;
       events.push('reconnect');
     },
-  } as unknown as BrainEngine & { reconnect: () => Promise<void> };
+  }) as unknown as BrainEngine & { reconnect: () => Promise<void> };
 }
 
 describe('MinionWorker connection recovery', () => {

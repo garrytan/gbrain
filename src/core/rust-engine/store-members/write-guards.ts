@@ -1,0 +1,52 @@
+/**
+ * The page write guards (BrainEngine readPageOrigin, listOriginClaims, bindPageOrigin, stampPageIngest,
+ * sealImportedPage, readLivePageBody, hasSegmentStorage): the reads and writes a page write runs around the page row
+ * (engine-sql/write-guards.ts on the SQL engines). The store runs one write transaction at a time, so the advisory
+ * locks PGLite takes before it lists origin claims are already held, and `listOriginClaims` takes none.
+ *
+ * What each member answers and why: rust/docs/store/write-guards.md.
+ */
+import type { ImportedPageSeal, LivePageBodyRow, OriginClaimRow, PageIngestStamp, PageOriginRow, PageOriginTarget } from '../../engine-sql/write-guards.ts';
+import { storeCall, type StoreMember } from './common.ts';
+
+/** The page a target names, live or a tombstone. `deleted_at` comes back as a Date, as PGLite returns a timestamptz. */
+export const readPageOrigin: StoreMember<[target: PageOriginTarget], PageOriginRow | null> = async (brain, target) => {
+  const row = await storeCall({ member: 'readPageOrigin', slug: target.slug ?? undefined, sourceId: target.sourceId },
+    () => brain.readPageOrigin({ sourceId: target.sourceId, pageId: target.pageId ?? null, slug: target.slug ?? null })) as
+    { id: number; slug: string; source_path: string | null; deleted_at: string | null } | null;
+  return row && { id: Number(row.id), slug: row.slug, source_path: row.source_path, deleted_at: row.deleted_at === null ? null : new Date(row.deleted_at) };
+};
+
+export const listOriginClaims: StoreMember<[sourceId: string, spellings: readonly string[], opts: { lockKeys: readonly string[]; excludePageId?: number | null }], OriginClaimRow[]> =
+  (brain, sourceId, spellings, opts) => storeCall({ member: 'listOriginClaims', sourceId },
+    () => brain.listOriginClaims(sourceId, [...spellings], { lockKeys: [...opts.lockKeys], excludePageId: opts.excludePageId ?? null }));
+
+/** The store refuses an origin another live page records with `origin_claimed`, as PGLite's unique index does. */
+export const bindPageOrigin: StoreMember<[target: PageOriginTarget & { sourcePath: string; onlyIfUnset?: boolean; liveOnly?: boolean }], number> =
+  async (brain, target) => Number(await storeCall({ member: 'bindPageOrigin', slug: target.slug ?? undefined, sourceId: target.sourceId },
+    () => brain.bindPageOrigin({
+      sourceId: target.sourceId, pageId: target.pageId ?? null, slug: target.slug ?? null, sourcePath: target.sourcePath,
+      onlyIfUnset: target.onlyIfUnset === true, liveOnly: target.liveOnly === true,
+    })));
+
+/** `ingestedAt` goes to the store as `Date#toISOString` (millisecond precision); an unparsable time throws, as the cast does. */
+export const stampPageIngest: StoreMember<[slug: string, stamp: PageIngestStamp], void> = async (brain, slug, stamp) => {
+  const at = stamp.ingestedAt == null ? null : new Date(stamp.ingestedAt);
+  if (at && Number.isNaN(at.getTime())) throw new Error(`stampPageIngest: invalid ingested_at ${JSON.stringify(stamp.ingestedAt)}`);
+  await storeCall({ member: 'stampPageIngest', slug, sourceId: stamp.sourceId }, () => brain.stampPageIngest(slug, {
+    sourceId: stamp.sourceId, sourceKind: stamp.sourceKind ?? null, ingestedVia: stamp.ingestedVia ?? null, ingestedAt: at?.toISOString() ?? null,
+  }));
+};
+
+export const sealImportedPage: StoreMember<[slug: string, seal: ImportedPageSeal], { id: number } | null> = async (brain, slug, seal) => {
+  const row = await storeCall({ member: 'sealImportedPage', slug, sourceId: seal.sourceId }, () => brain.sealImportedPage(slug, {
+    sourceId: seal.sourceId, revision: seal.revision ?? null, timelineText: seal.timelineText, chunkerVersion: seal.chunkerVersion,
+  })) as { id: number } | null;
+  return row && { id: Number(row.id) };
+};
+
+export const readLivePageBody: StoreMember<[slug: string, opts: { sourceId: string }], LivePageBodyRow | null> = (brain, slug, opts) =>
+  storeCall({ member: 'readLivePageBody', slug, sourceId: opts.sourceId }, () => brain.readLivePageBody(slug, opts.sourceId));
+
+/** True once a segment text or a body staging is stored; the store keeps neither until the page-body family lands. */
+export const hasSegmentStorage: StoreMember<[], boolean> = (brain) => storeCall({ member: 'hasSegmentStorage' }, () => brain.hasSegmentStorage());
