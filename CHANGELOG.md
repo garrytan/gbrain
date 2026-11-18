@@ -10,6 +10,52 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.739.0] - 2026-11-18
+
+**The company-brain, multi-source, access and admin guides now explain how a member's key reads every shared source with `--read-shared on`, and the recall reference documents `merged_sources`.**
+
+### Documentation
+- "My teammate can't see anything" leads with the read-shared switch; multi-source brains, access designations, the admin guide and the mcp-access skill say what it reads, what it never opens and how to narrow a switched key.
+- The recall `entity` reference and the key-files index name the namesake merge and `merged_sources`.
+
+**recall answers "what do we know about acme-example?" for a member who keeps private notes about it.**
+
+### Changed
+- On a key with `--read-shared on` and a private write source, recall (entity, since and question) returns the facts from that source and from one shared source holding the same-named entity, each labelled with its `source_id`, and names the pair in `merged_sources`. Before, it returned no facts and `ambiguous_entity`. Every other namesake split keeps that answer.
+
+<!-- behavior-change: recall_read_shared_merge_gst2898 -->
+
+**A member key can write to one source and also read every shared source, now and later.**
+
+### Added
+- `gbrain auth create <name> --sources <write-source> --read-shared on`, and `--read-shared on|off` on `gbrain auth rescope` (tokens and OAuth clients) and `gbrain auth register-client`. Shared means `default` plus every federated source, never a guest source and, for a key bound to a member, never another member's own source. A source federated later is read on the next call with no re-grant; writes stay in the write source. Every existing key reads exactly what it read before, because the switch is off until you turn it on.
+- `whoami` reports `write_source`, `read_sources` and `read_shared`; `gbrain access check` reports `read_shared` and `reads_now`; the admin API takes and reports `read_shared`. A write naming another source says which sources the key reads and the one it writes, and `gbrain sources federate` names the keys that read the newly shared source.
+
+<!-- behavior-change: key_read_shared_gst2898 -->
+
+**Secrets that gbrain redacts are now kept in an encrypted secret store, so you can read an original back or undo a false positive.**
+
+<!-- behavior-change: secret_store_gst2988 -->
+
+### Added
+- `gbrain repair secret-spans --apply` seals each redacted value in an encrypted secret store (two new tables, migration v324) and writes a marker that names its entry, `<REDACTED:rule:ss_…>`. Retained versions of the page are redacted too.
+- `gbrain secrets list`, `reveal`, `restore` (preview, then `--expect`) and `key status|export|import`. The key is a 0600 file on the machine that is never overwritten; `GBRAIN_SECRET_STORE_KEY` overrides it, and `key export` writes a passphrase-protected backup.
+- MCP `reveal_secret`, granted only by name per token (`gbrain auth rescope --refresh-operations --add reveal_secret`; `--all-new` never adds it), only for pages the caller can read, and audited.
+
+**A push no longer stops on a secret in commits that were never pushed: gbrain replaces the value with a secret store marker and pushes.**
+
+<!-- behavior-change: publish_redacts_secrets_gst2988 -->
+
+### Changed
+- Every publish (`gbrain git commit-push`, a managed worktree's page-write backups, `gbrain sources refresh` and the other automatic pushes) rebuilds unpushed commits that hold a value the scanner names, with `<REDACTED:rule:ss_…>` markers, and pushes them. The originals go to the secret store (through an encrypted spool on the machine when the database is not at hand), the database copy of each redacted page gets the same marker, and the old commits stay under `refs/gbrain/backup/` for 7 days. `gbrain config set secrets.on_push refuse` keeps the old refusal, and so does `GBRAIN_SECRETS_ON_PUSH=refuse` (its only value; any other value changes nothing and prints a notice).
+- A managed worktree's page-write backup that runs past its budget redacting or scanning is retried once in the background with 4 times the budget, without holding other checkouts.
+- Files the scan cannot vouch for and changes to `.gbrain-scan-allow` or `.gitattributes` are held back in one local commit instead of blocking the push; the push is scanned with the remote's allowlist.
+
+### Added
+- `gbrain git redact-unpushed --source <id>`: preview what a publish would redact, then `--apply --expect <hash>`.
+- `gbrain secrets list` shows how many redacted originals still wait in this machine's spool (`spooled` with `--json`), entries and occurrences by rule (`by_rule`), and what publish redactions replaced by rule, including how many AWS key ids sat in a presigned link's `X-Amz-Credential=` parameter as opposed to bare (`publish_redactions`). The `publish_secret_redacted` notice carries the same counts.
+- Notices `publish_secret_redacted`, `publish_secret_held_back`, `publish_secret_side_refs`, `publish_secret_unsigned`, `secret_store_spooled`; codes `publish_secret_rebuild_race`, `publish_secret_rebuild_unbounded`.
+
 ## [0.60.738.0] - 2026-11-18
 
 **A small macOS helper that gives gbrain read-only access to your Messages history now lives in `apple/helper/`. Nothing in gbrain calls it yet.**
