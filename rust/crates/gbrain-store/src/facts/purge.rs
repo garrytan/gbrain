@@ -2,7 +2,8 @@
 //!
 //! Eleven of the thirteen members are served from the fact rows and the pages. Two answer nothing:
 //! `listFactsReconcileBacklog` reads `page_facts_reconcile`, a table the store does not have, and
-//! `listSingleFactMetadata` reads `trust_tier`, a column it does not keep (rust/docs/store/facts.md).
+//! `listSingleFactMetadata` has no store read yet (the store keeps the `trust_tier` it reads;
+//! rust/docs/store/facts.md).
 //!
 //! Text comparisons are byte comparisons, as Postgres's deterministic collation makes them, and a
 //! NULL entity or slug never equals anything (`entity_slug = $4` is NULL for a row with no entity).
@@ -84,9 +85,9 @@ fn fence_columns(out: &mut Map<String, Value>, r: &FactRecord) {
 }
 
 /// `SELECT * FROM facts` for one row, as the single-fact decision reads it: every column, the
-/// times as ISO text, `embedding` as the vector's text. The store keeps no `trust_tier`,
-/// `write_origin`, `source_window` or write-principal columns: they are the values a row written
-/// here carries (`unknown` and NULL), as `listFactsByEntity` answers.
+/// times as ISO text, `embedding` as the vector's text, and the stamped `trust_tier` and
+/// `write_origin`. The store keeps no `source_window` or write-principal columns: they are NULL,
+/// the values a row written here carries, as `listFactsByEntity` answers.
 fn select_star(r: &FactRecord) -> Value {
     let time = |us: Option<i64>| us.map(iso);
     let mut out = Map::new();
@@ -123,12 +124,12 @@ fn select_star(r: &FactRecord) -> Value {
         "last_write_principal_kind",
         "last_write_principal_id",
         "last_written_at",
-        "write_origin",
         "source_window",
     ] {
         out.insert(column.into(), Value::Null);
     }
-    out.insert("trust_tier".into(), json!("unknown"));
+    out.insert("write_origin".into(), json!(r.write_origin));
+    out.insert("trust_tier".into(), json!(r.tier().as_str()));
     Value::Object(out)
 }
 

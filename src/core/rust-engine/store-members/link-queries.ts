@@ -12,8 +12,10 @@
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
  * unexported.
  *
- * The store models the source filter and the live test of the read policy (src/core/search/read-policy-sql.ts). A
- * privacy, trust, flag, safe-chunk or temporal policy refuses with `engine_capability_missing`. A derived-link
+ * The store models the source filter, the page privacy policy (storePagePolicy), the trust floor and flag suppression
+ * (`minTrust`, `suppressFlagged`: the page's stamped tier and its write-gate receipts) and the live test of the read
+ * policy (src/core/search/read-policy-sql.ts). A privacy policy the store does not model or a temporal policy refuses
+ * with `engine_capability_missing`. A derived-link
  * replacement serves every option PGLite takes: the origin snapshot and the line-grammar generation are checked before
  * the store call, and the wanted pages and the origin's temporal evidence (link-temporal-apply.ts) are written after it,
  * as separate store calls. See rust/docs/store/link_queries.md and rust/docs/store/link_temporal.md.
@@ -51,14 +53,18 @@ const SCOPE_KEYS = ['sourceId', 'sourceIds'] as const;
 const POLICY_SCOPE_KEYS = [...SCOPE_KEYS, 'excludePrivate'] as const;
 /** Keys `pageReadFilter` never reads: the SQL engines ignore them in these statements, so the store does too. */
 const UNREAD_BY_FILTER = ['requireSafeChunks', 'takesHoldersAllowList'] as const;
+/** `pageReadFilter`'s trust options: `pageEligibleSql` over the page's stamped tier and its write-gate receipts. */
+const TRUST_KEYS = ['minTrust', 'suppressFlagged'] as const;
+/** The policy keys plus the trust options, for the members whose SQL is `pageReadFilter` over the whole scope. */
+const READ_SCOPE_KEYS = [...POLICY_SCOPE_KEYS, ...TRUST_KEYS] as const;
 /** For relationalFanout the unread keys still turn the live filter on, through `hasReadPolicy`. */
-const POLICY_KEYS = [...POLICY_SCOPE_KEYS, ...UNREAD_BY_FILTER] as const;
+const POLICY_KEYS = [...READ_SCOPE_KEYS, ...UNREAD_BY_FILTER] as const;
 const INT32_MAX = 2 ** 31 - 1;
 
 /** `hasReadPolicy` of read-policy-sql.ts over the options takeOptions kept (the refused keys are absent or false). */
 function hasReadPolicy(opts: Record<string, unknown>): boolean {
   return !!((opts.sourceIds as unknown[] | undefined)?.length || opts.sourceId || opts.excludePrivate || opts.requireSafeChunks
-    || opts.takesHoldersAllowList !== undefined);
+    || opts.takesHoldersAllowList !== undefined || opts.minTrust || opts.suppressFlagged);
 }
 
 /** Ids the SQL engines cast to `int[]`: an id that is not an int4 is refused rather than guessed at. */
@@ -71,8 +77,10 @@ function int32Ids(member: string, ids: readonly number[], label?: string): numbe
 }
 
 /** The wire scope: the source filter and, under `excludePrivate`, the store page policy (null otherwise). */
-const scopeOf = (member: string, o: Record<string, unknown>) =>
-  ({ sourceId: o.sourceId, sourceIds: o.sourceIds, excludePrivate: storePagePolicy(member, o.excludePrivate) ?? null });
+const scopeOf = (member: string, o: Record<string, unknown>) => ({
+  sourceId: o.sourceId, sourceIds: o.sourceIds, excludePrivate: storePagePolicy(member, o.excludePrivate) ?? null,
+  minTrust: (o.minTrust as string | undefined) || null, suppressFlagged: o.suppressFlagged === true,
+});
 
 /**
  * Ids the SQL engines cast to `bigint[]`: a non-integer is refused (the cast fails there). An id below 1 or past
@@ -273,7 +281,7 @@ export const getBacklinkCounts: StoreMember<[pageIds: number[], opts?: PageReadS
   async (brain, pageIds, opts) => {
     const result = new Map(pageIds.map(id => [id, 0]));
     if (!pageIds.length) return result;
-    const options = takeOptions('getBacklinkCounts', opts, POLICY_SCOPE_KEYS, UNREAD_BY_FILTER);
+    const options = takeOptions('getBacklinkCounts', opts, READ_SCOPE_KEYS, UNREAD_BY_FILTER);
     int32Ids('getBacklinkCounts', pageIds);
     const rows: Array<{ page_id: number; cnt: number }> = await storeCall({ member: 'getBacklinkCounts' },
       () => brain.getBacklinkCounts(pageIds, { ...scopeOf('getBacklinkCounts', options), scoped: !!opts }));
@@ -285,7 +293,7 @@ export const getAdjacencyBoosts: StoreMember<[pageIds: number[], opts?: PageRead
   async (brain, pageIds, opts) => {
     if (!pageIds.length) return new Map();
     int32Ids('getAdjacencyBoosts', pageIds, 'readAdjacencyBoosts');
-    const options = takeOptions('getAdjacencyBoosts', opts, POLICY_SCOPE_KEYS, UNREAD_BY_FILTER);
+    const options = takeOptions('getAdjacencyBoosts', opts, READ_SCOPE_KEYS, UNREAD_BY_FILTER);
     const rows: Array<{ to_page_id: number; hits: number; cross_source_hits: number }> = await storeCall({ member: 'getAdjacencyBoosts' },
       () => brain.getAdjacencyBoosts(pageIds, { ...scopeOf('getAdjacencyBoosts', options), scoped: !!opts }));
     return new Map(rows.map(row => [Number(row.to_page_id), { hits: Number(row.hits), cross_source_hits: Number(row.cross_source_hits) }]));
@@ -318,7 +326,7 @@ export const relationalChainHop: StoreMember<[frontierPageIds: number[], opts: C
     if (!frontierPageIds.length || !opts.linkTypes.length) return [];
     const ids = int32Ids('relationalChainHop', [...new Set(frontierPageIds)], 'readChainHop');
     const options = takeOptions('relationalChainHop', opts,
-      [...POLICY_SCOPE_KEYS, 'linkTypes', 'toward', 'subjectTypes', 'objectTypes', 'degreeLinkTypes', 'neighborCap'], UNREAD_BY_FILTER);
+      [...READ_SCOPE_KEYS, 'linkTypes', 'toward', 'subjectTypes', 'objectTypes', 'degreeLinkTypes', 'neighborCap'], UNREAD_BY_FILTER);
     const cap = Math.max(1, Math.min(opts.neighborCap, 1000));
     if (!Number.isInteger(cap)) refuseMember('relationalChainHop', 'a neighborCap that is not an integer');
     const wire = {
@@ -353,7 +361,7 @@ export const supersedingPageSlugs: StoreMember<[pageIds: number[], policy?: Page
   async (brain, pageIds, policy) => {
     const result = new Map<number, string>();
     if (pageIds.length === 0) return result;
-    const options = takeOptions('supersedingPageSlugs', policy, POLICY_SCOPE_KEYS, UNREAD_BY_FILTER);
+    const options = takeOptions('supersedingPageSlugs', policy, READ_SCOPE_KEYS, UNREAD_BY_FILTER);
     const ids = bigintIds('supersedingPageSlugs', pageIds);
     const rows: Array<{ to_page_id: number; by_slug: string }> = await storeCall({ member: 'supersedingPageSlugs' },
       () => brain.supersedingPageSlugs(ids, { ...scopeOf('supersedingPageSlugs', options), scoped: !!policy }));
@@ -418,7 +426,7 @@ export const countForeignEdges: StoreMember<[slug: string, sourceId: string, dir
 /** Every page that is not soft-deleted and `scope` reads; the store returns them in page id order. */
 export const listLivePageSummaries: StoreMember<[scope?: PageReadScope], LivePageSummary[]> =
   async (brain, scope) => {
-    const options = takeOptions('listLivePageSummaries', scope, POLICY_SCOPE_KEYS, UNREAD_BY_FILTER);
+    const options = takeOptions('listLivePageSummaries', scope, READ_SCOPE_KEYS, UNREAD_BY_FILTER);
     const rows: LivePageSummary[] = await storeCall({ member: 'listLivePageSummaries' },
       () => brain.listLivePageSummaries({ ...scopeOf('listLivePageSummaries', options), scoped: true }));
     return rows.map(r => ({ slug: r.slug, type: r.type, quarantined: !!r.quarantined }));
@@ -440,7 +448,7 @@ export const listLinkEndpointPages: StoreMember<[sourceId: string, slugs: string
 /** The entity anchor's titled pages: by source id and slug, at most 50. */
 export const listPagesTitledIn: StoreMember<[queryLower: string, scope: PageReadScope], TitledPage[]> =
   async (brain, queryLower, scope) => {
-    const options = takeOptions('listPagesTitledIn', scope, POLICY_SCOPE_KEYS, UNREAD_BY_FILTER);
+    const options = takeOptions('listPagesTitledIn', scope, READ_SCOPE_KEYS, UNREAD_BY_FILTER);
     const rows: TitledPage[] = await storeCall({ member: 'listPagesTitledIn' },
       () => brain.listPagesTitledIn({ queryLower, scope: { ...scopeOf('listPagesTitledIn', options), scoped: true } }));
     return rows.map(r => ({ ...r, id: Number(r.id) }));

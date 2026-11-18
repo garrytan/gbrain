@@ -133,7 +133,7 @@ refuse their `hasAttempts: true` form.
 | `countRedactedFacts` | served | |
 | `listOutsideContentFenceCounts` | served | |
 | `countAtomFacts` | served | |
-| `listUnpreviewedTrustFacts` | refused | the `write_gate_holds` table and the `facts.trust_tier` and `facts.write_origin` columns |
+| `listUnpreviewedTrustFacts` | refused | no store read yet: the store keeps the write-gate holds and the `facts.trust_tier` and `facts.write_origin` columns it reads |
 | `countUnlinkedFactsByOrigin` | served for `hasAttempts: false` | `hasAttempts: true` reads the `fact_relink_attempts` table |
 | `countUnlinkedFactStats` | served for `hasAttempts: false` | `hasAttempts: true` reads the `fact_relink_attempts` table |
 | `countFactRelinkOutcomes` | refused | the `fact_relink_attempts` table |
@@ -170,7 +170,7 @@ Each member is one store call (a scan of the fact rows, no SQL). The TypeScript 
 | `findBulkFactDays` | the bulk days of unarchived sources under a `rule`, with top sources and self-dated claims | served; refused when a count threshold is not an integer or the share is not finite |
 | `maxFenceRowNum` | the largest `row_num` of a page coordinate, 0 for none | served |
 | `listStoredFenceFactRows` | the numbered rows of a page coordinate, oldest id first | served |
-| `countWorldFacts` | the entity card's unexpired fact count under its visibility and privacy | served; refused under a trust floor (no `trust_tier`), under `suppressFlagged` (no `write_gate_receipts`) and for `excludePrivate` when the caller's rendering is not the store's policy. Deleted and quarantined pages are always hidden, and `needs_rederive` is treated as empty, as in `takes.rs` |
+| `countWorldFacts` | the entity card's unexpired fact count under its visibility and privacy | served; a trust floor (`eligibility.floor`) and `suppressFlagged` apply `trust::TrustPolicy` to the fact's stamped tier and its write-gate receipts; refused for `excludePrivate` when the caller's rendering is not the store's policy. Deleted and quarantined pages are always hidden, and `needs_rederive` is treated as empty, as in `takes.rs` |
 
 ## Group 5: purge, withdrawal, relink and fence repair (`facts/purge.rs`)
 
@@ -194,13 +194,13 @@ plan row or leftover. An unbacked entity is an entity slug with no `/` and no li
 | `listWithdrawalSlugs` | Sorted distinct `COALESCE(source_markdown_slug, entity_slug)` of the active rows with the fingerprint and visibility that the subject covers: `*`, the subject's entity, an unbacked-entity row unless the subject is an owned memory page, or a row on that page. |
 | `expireFactsByWithdrawal` | The write: stamps `expired_at` now and `valid_until` at the lesser of its value and now on the same rows (by the text's fingerprint) and answers `[{ id }]` in id order. Run it on the engine, outside a transaction. |
 
-`SELECT *` rows (`findActiveSingleFact`) carry the columns the store has not got as constants:
-`trust_tier` `unknown`, and null for `write_origin`, `source_window`, `last_written_at` and the
-`write_*` and `last_write_*` columns.
+`SELECT *` rows (`findActiveSingleFact`) carry the stored `trust_tier` and `write_origin`, and null for
+the columns the store has not got: `source_window`, `last_written_at` and the `write_*` and
+`last_write_*` columns.
 
 Refused with `engine_capability_missing`: `listFactsReconcileBacklog` (its reconcile ledger table
-`page_facts_reconcile` is not in the store) and `listSingleFactMetadata` (the store keeps no
-`trust_tier`; it also reads the remote floor).
+`page_facts_reconcile` is not in the store) and `listSingleFactMetadata` (no store read yet: the
+store keeps the `trust_tier` it reads; it also reads the remote floor).
 
 ## Group 5: repair classifiers and loop retirement (`facts/repair.rs`)
 
@@ -262,8 +262,8 @@ provenance page carries no `quarantine` key (a soft-deleted page still counts, a
 `deleted_at`); `worldOnly`; the private-provenance policy under `excludePrivate`; a soft-deleted entity or
 provenance page hides the row; then the entity, session, `since` (on `valid_from`) and `grep` filters.
 
-- A `minTrust` floor or `suppressFlagged` refuses in the member: the store keeps no `trust_tier` or
-  write-gate receipt. The `needs_rederive` anti-join is not modelled, so no row is hidden by it (the
+- A `minTrust` floor and `suppressFlagged` apply `trust::TrustPolicy` to the fact's stamped tier and its
+  write-gate receipts, as the SQL's trust floor and suppression clauses do. The `needs_rederive` anti-join is not modelled, so no row is hidden by it (the
   takes family does the same).
 - `similarity` is `1 - cosine distance` for a row whose vector has the query's model and length and whose
   `embedded_text_hash` is `md5(fact)`, else NULL. Distances are `f32` sums as `facts/embedding.rs`

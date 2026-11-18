@@ -4,9 +4,11 @@
  * (removeTimelineRows, updateTimelineDetails), and the timeline reads and delete of
  * src/core/engine-sql/timeline-reads.ts (sampleEffectiveDates, sampleEffectiveDateSources, readMaxTimelineEntryId,
  * listStoredTimelineRowsOrdered, deleteTimelineRows, storedTimelineRowsByPageIds, countSegmentedTimelinePages,
- * countTimelineCommentMarkupRows, listTimelineOrphanPages). Those statements apply no read policy, so these members take
- * none. A value the SQL engines would fail to bind (an id or limit that is not an integer, a negative limit) refuses
- * rather than being guessed at. See rust/docs/store/timeline_queries.md.
+ * countTimelineCommentMarkupRows, listTimelineOrphanPages). The chronicle reads take the page privacy policy of
+ * `excludePrivate` (storePagePolicy): a row drops when the policy hides its depth page or its event page. The other
+ * statements apply no read policy, so their members take none. A value the SQL engines would fail to bind (an id or
+ * limit that is not an integer, a negative limit) refuses rather than being guessed at. See
+ * rust/docs/store/timeline_queries.md.
  *
  * Export only BrainEngine members from this file, each a `StoreMember` named after the member it serves (see tags.ts):
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
@@ -20,30 +22,37 @@ import type {
   TimelineRowDeletion,
 } from '../../engine-sql/timeline-reads.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { storePagePolicy } from './private-provenance.ts';
 
-// The chronicle reads never read these PageReadScope keys on PGLite either. `excludePrivate` is not here: the SQL
-// engines apply a privacy filter for it, so it refuses.
+// The chronicle reads never read these PageReadScope keys on PGLite either. `excludePrivate` is served: the store
+// applies the page policy to the depth page and the event page of each row.
 const UNREAD_SCOPE = ['requireSafeChunks', 'minTrust', 'suppressFlagged'] as const;
 // getTimelineForDate ignores `kind` and getSince ignores `week` on PGLite; the store ignores them the same way.
-const CHRONICLE = ['week', 'kind', 'limit', 'sourceId', 'sourceIds'] as const;
+const CHRONICLE = ['week', 'kind', 'limit', 'sourceId', 'sourceIds', 'excludePrivate'] as const;
+
+/** The options with `excludePrivate` replaced by the page policy the store applies, or null for none. */
+function withPolicy(member: string, options: Record<string, unknown>): Record<string, unknown> {
+  return { ...options, excludePrivate: storePagePolicy(member, options.excludePrivate) ?? null };
+}
 
 export const getTimelineForDate: StoreMember<[date: string, opts?: ChronicleTimelineOpts], ChronicleTimelineRow[]> = (brain, date, opts) => {
-  const options = takeOptions('getTimelineForDate', opts, CHRONICLE, UNREAD_SCOPE);
+  const options = withPolicy('getTimelineForDate', takeOptions('getTimelineForDate', opts, CHRONICLE, UNREAD_SCOPE));
   return storeCall({ member: 'getTimelineForDate' }, () => brain.getTimelineForDate(date, options));
 };
 
 export const getSince: StoreMember<[date: string, opts?: ChronicleTimelineOpts], ChronicleTimelineRow[]> = (brain, date, opts) => {
-  const options = takeOptions('getSince', opts, CHRONICLE, UNREAD_SCOPE);
+  const options = withPolicy('getSince', takeOptions('getSince', opts, CHRONICLE, UNREAD_SCOPE));
   return storeCall({ member: 'getSince' }, () => brain.getSince(date, options));
 };
 
 export const getOnThisDay: StoreMember<[opts?: PageReadScope & { date?: string; limit?: number }], ChronicleTimelineRow[]> = (brain, opts) => {
-  const options = takeOptions('getOnThisDay', opts, ['date', 'limit', 'sourceId', 'sourceIds'], UNREAD_SCOPE);
+  const options = withPolicy('getOnThisDay',
+    takeOptions('getOnThisDay', opts, ['date', 'limit', 'sourceId', 'sourceIds', 'excludePrivate'], UNREAD_SCOPE));
   return storeCall({ member: 'getOnThisDay' }, () => brain.getOnThisDay(options));
 };
 
 export const getLastSeen: StoreMember<[entitySlug: string, opts?: PageReadScope & { asof?: string }], LastSeenResult> = async (brain, entitySlug, opts) => {
-  const options = takeOptions('getLastSeen', opts, ['asof', 'sourceId', 'sourceIds'], UNREAD_SCOPE);
+  const options = withPolicy('getLastSeen', takeOptions('getLastSeen', opts, ['asof', 'sourceId', 'sourceIds', 'excludePrivate'], UNREAD_SCOPE));
   const row: { last_date: string | null; last_event_slug: string | null } =
     await storeCall({ member: 'getLastSeen', slug: entitySlug }, () => brain.getLastSeen(entitySlug, options));
   // The day count is the shared finalizer both SQL engines use.

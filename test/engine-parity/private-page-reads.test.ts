@@ -1,6 +1,7 @@
 /**
  * BrainEngine parity — the page policy of `excludePrivate` on the salience and anomaly reads (getRecentSalience,
- * getSalienceScores, findAnomalies).
+ * getSalienceScores, findAnomalies) and on the chunk reads (getChunkPage, getChunkWindows), with the safe-chunk fence
+ * an `excludePrivate` chunk read implies.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: under `excludePrivate`, each read drops exactly the pages `pageReadFilter`'s page policy
@@ -18,6 +19,7 @@ import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { createSource, pick, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { chunk, installChunks } from './chunk-fixtures.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -130,6 +132,57 @@ describe('engine parity: excludePrivate on page reads', () => {
       expect(on.find((r) => r.cohort_value === 'secret-only')).toBeUndefined();
       expect(on.find((r) => r.cohort_value === 'probe')?.page_slugs).toEqual(KEPT);
       return { off, on, scoped };
+    },
+  );
+});
+
+describe('engine parity: excludePrivate and the safe-chunk fence on chunk reads', () => {
+  parityTest(
+    'getChunkPage and getChunkWindows under excludePrivate read only the pages the page policy keeps and the safe fence passes',
+    { methods: ['putPage', 'addLink', 'sealChunks', 'setChunkerVersion', 'getPage', 'getChunkPage', 'getChunkWindows'] },
+    async (engine, backend) => {
+      await fixture(engine, backend);
+      for (const [slug] of PAGES) await installChunks(engine, slug, [chunk(0, `About ${slug}.`)]);
+      await installChunks(engine, 'notes/private', [chunk(0, 'Other.')], { sourceId: 'other' });
+      await installChunks(engine, 'notes/open', [chunk(0, 'Other.')], { sourceId: 'other' });
+      // Sealed text, but a chunker version short of the safe fence: only the safe-chunk read drops it.
+      await engine.putPage('notes/fence-short', { type: 'note', title: 'Fence short', compiled_truth: 'Short.', timeline: '' });
+      await installChunks(engine, 'notes/fence-short', [chunk(0, 'Short.')]);
+      await engine.setChunkerVersion('notes/fence-short', 3);
+      const slugs = [...PAGES.map(([slug]) => slug), 'notes/fence-short'];
+
+      type Scope = { excludePrivate?: boolean; requireSafeChunks?: boolean };
+      const pageRead = async (scope: Scope, sourceId = 'default') => {
+        const seen: string[] = [];
+        for (const slug of slugs) {
+          const page = await engine.getChunkPage(slug, { sourceId, fromIndex: 0, limit: 10, ...scope });
+          if (page.total_chunks > 0) seen.push(`${slug}:${page.total_chunks}:${page.max_chunk_index}:${page.chunks.map((c) => c.chunk_text).join('|')}`);
+        }
+        return seen;
+      };
+      const slugOf = new Map<number, string>();
+      for (const slug of slugs) slugOf.set((await engine.getPage(slug))!.id, `default:${slug}`);
+      slugOf.set((await engine.getPage('notes/private', { sourceId: 'other' }))!.id, 'other:notes/private');
+      const requests = [...slugOf.keys()].map((page_id, i) => ({ page_id, from_index: 0, to_index: 5, priority: i % 3 }));
+      const windowRead = async (scope: Scope) => sorted((await engine.getChunkWindows(requests, {
+        chunkSources: ['compiled_truth'], maxRows: 100, sourceIds: ['default', 'other'], ...scope,
+      })).map((p) => `${slugOf.get(p.page_id)}:${p.sealed}:${p.chunks.map((c) => c.chunk_text).join('|')}`));
+
+      const pageOn = await pageRead({ excludePrivate: true });
+      const windowOn = await windowRead({ excludePrivate: true });
+      expect(sorted(pageOn.map((row) => row.split(':')[0]!))).toEqual(KEPT);
+      expect(windowOn.map((row) => row.split(':').slice(0, 2).join(':'))).toEqual(KEPT.map((s) => `default:${s}`));
+      return {
+        pageOff: await pageRead({}),
+        pageOn,
+        pageNoFence: await pageRead({ excludePrivate: true, requireSafeChunks: false }),
+        pageFenceOnly: await pageRead({ requireSafeChunks: true }),
+        pageOther: await pageRead({ excludePrivate: true }, 'other'),
+        windowOff: await windowRead({}),
+        windowOn,
+        windowNoFence: await windowRead({ excludePrivate: true, requireSafeChunks: false }),
+        windowFenceOnly: await windowRead({ requireSafeChunks: true }),
+      };
     },
   );
 });
