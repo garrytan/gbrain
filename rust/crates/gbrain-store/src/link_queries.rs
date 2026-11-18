@@ -7,11 +7,14 @@
 //!
 //! It also serves the three link reads of hybrid search's ranking stage
 //! (src/core/engine-sql/search-reads.ts): `hasSupersedeEdges`, `supersedingPageSlugs` and
-//! `pagesLinkingTo`.
+//! `pagesLinkingTo`, and in `site_reads` the link reads of src/core/engine-sql/link-reads.ts.
 //!
 //! Members: replaceDerivedLinks, replaceDerivedLinksBatch, removeLinksByPagesAndSource,
 //! listLinkSources, getBacklinkCounts, rewriteLinks, relationalFanout, relationalChainHop,
-//! getAdjacencyBoosts, findOrphanPages, hasSupersedeEdges, supersedingPageSlugs, pagesLinkingTo.
+//! getAdjacencyBoosts, findOrphanPages, hasSupersedeEdges, supersedingPageSlugs, pagesLinkingTo;
+//! site_reads: inboundLinkCoverage, listJunkEntityHubs, countEntityPages, entityGraphCoverage,
+//! countForeignEdges, listLivePageSummaries, countInboundLinks, listLinkEndpointPages,
+//! listPagesTitledIn, wordLexemes.
 //!
 //! Reads and writes go through the core links helpers (`put_link`, `delete_link`, `out_links`,
 //! `in_links`) and the page and source readers.
@@ -30,6 +33,7 @@
 use crate::Store;
 use crate::chunks::read_chunks;
 use crate::error::{INVALID_STATE, REVISION_CONFLICT, Result, StoreError};
+use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::keys;
 use crate::kv::{KvRead, KvWrite, collect_prefix, scan_prefix};
 use crate::links::{LinkBatchInput, LinkRecord, delete_link, in_links, out_links, put_link};
@@ -42,6 +46,12 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
+
+mod site_reads;
+pub use site_reads::{
+    EndpointsInput, EntityPagesInput, ForeignEdgesInput, InboundCountInput, InboundCoverageInput,
+    JunkHubsInput, TitledInput,
+};
 
 /// The frontmatter key that hides a page (`quarantineFilterFragment`).
 const QUARANTINE_KEY: &str = "quarantine";
@@ -81,6 +91,8 @@ pub struct GraphScope {
     pub source_id: Option<String>,
     pub source_ids: Option<Vec<String>>,
     pub scoped: bool,
+    /// `excludePrivate`: the page policy `privatePagesFilterForCaller` (`facts/privacy.rs`).
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 impl GraphScope {
@@ -113,6 +125,8 @@ pub struct LinkSourcesOptions {
 pub struct OrphanOptions {
     pub source_id: Option<String>,
     pub source_ids: Option<Vec<String>>,
+    /// `excludePrivate`: the page policy on the candidate, its link ends and their origins.
+    pub exclude_private: Option<PrivacyPolicy>,
     pub mode: Option<String>,
     pub scope_inbound: bool,
 }
@@ -151,6 +165,8 @@ pub struct FanoutOptions {
     pub source_ids: Option<Vec<String>>,
     /// `hasReadPolicy(opts)`.
     pub scoped: bool,
+    /// `excludePrivate`: the page policy on the seed, step and origin pages.
+    pub exclude_private: Option<PrivacyPolicy>,
     pub seed_refs: Option<Vec<PageRef>>,
     pub link_types: Option<Vec<String>>,
     pub direction: Option<String>,
@@ -165,6 +181,8 @@ pub struct FanoutOptions {
 pub struct ChainHopOptions {
     pub source_id: Option<String>,
     pub source_ids: Option<Vec<String>>,
+    /// `excludePrivate`: the page policy on every endpoint, origin, neighbor and evidence page.
+    pub exclude_private: Option<PrivacyPolicy>,
     pub link_types: Vec<String>,
     pub toward: String,
     pub subject_types: Vec<String>,
@@ -257,6 +275,11 @@ impl<'a> Pages<'a> {
     /// `pageReadFilter(alias, scope, params, live)`.
     fn passes(&mut self, page: &PageRecord, scope: &GraphScope, live: bool) -> Result<bool> {
         if !scope.source_ok(&page.source_id) {
+            return Ok(false);
+        }
+        if let Some(policy) = &scope.exclude_private
+            && page_hidden(self.read, page, policy)?
+        {
             return Ok(false);
         }
         if !live {
@@ -851,6 +874,7 @@ impl Store {
             source_id: options.source_id.clone(),
             source_ids: options.source_ids.clone(),
             scoped: true,
+            exclude_private: None,
         };
         let scoped = scope.has_sources();
         let mut pages = Pages::new(&*read);
@@ -898,6 +922,7 @@ impl Store {
             source_id: options.source_id.clone(),
             source_ids: options.source_ids.clone(),
             scoped: true,
+            exclude_private: None,
         };
         let islanded = options.mode.as_deref().unwrap_or("islanded") == "islanded";
         let mut pages = Pages::new(&*read);
@@ -910,6 +935,19 @@ impl Store {
             };
             if end.deleted_at_us.is_some() {
                 return Ok(false);
+            }
+            // `privatePagesFilterForCaller(end)` and `privateLinkOriginFilterForCaller(l)`: the
+            // origin passes the page policy alone, live or not.
+            if let Some(policy) = &options.exclude_private {
+                if page_hidden(pages.read, &end, policy)? {
+                    return Ok(false);
+                }
+                if let Some(o) = link.origin_page_id {
+                    match pages.get(o)? {
+                        Some(origin) if !page_hidden(pages.read, &origin, policy)? => {}
+                        _ => return Ok(false),
+                    }
+                }
             }
             if !options.scope_inbound {
                 return Ok(true);
@@ -924,10 +962,18 @@ impl Store {
                     .is_some_and(|p| p.deleted_at_us.is_none() && scope.source_ok(&p.source_id)),
             })
         };
-        let mut candidates: Vec<PageRecord> = all_pages(&*read)?
-            .into_iter()
-            .filter(|p| p.deleted_at_us.is_none() && scope.source_ok(&p.source_id))
-            .collect();
+        let mut candidates = Vec::new();
+        for page in all_pages(&*read)? {
+            if page.deleted_at_us.is_some() || !scope.source_ok(&page.source_id) {
+                continue;
+            }
+            if let Some(policy) = &options.exclude_private
+                && page_hidden(&*read, &page, policy)?
+            {
+                continue;
+            }
+            candidates.push(page);
+        }
         candidates.sort_by(|a, b| {
             a.slug
                 .cmp(&b.slug)
@@ -1125,6 +1171,7 @@ impl Store {
             source_id: options.source_id.clone(),
             source_ids: options.source_ids.clone(),
             scoped: options.scoped,
+            exclude_private: options.exclude_private,
         };
         let policy = scope.scoped;
         // Without a read policy pageReadFilter renders TRUE, source clause included.
@@ -1305,6 +1352,7 @@ impl Store {
             source_id: options.source_id.clone(),
             source_ids: options.source_ids.clone(),
             scoped: true,
+            exclude_private: options.exclude_private,
         };
         let cap = options.neighbor_cap.clamp(1, 1000);
         let has = |list: &[String], v: &str| list.iter().any(|x| x == v);
@@ -1521,6 +1569,7 @@ mod tests {
             source_ids: Some(vec![]),
             source_id: Some("a".into()),
             scoped: true,
+            ..GraphScope::default()
         };
         assert!(empty_ids.source_ok("a") && !empty_ids.source_ok("b"));
         let blank = GraphScope {
@@ -1532,6 +1581,7 @@ mod tests {
             source_ids: Some(vec!["b".into()]),
             source_id: Some("a".into()),
             scoped: true,
+            ..GraphScope::default()
         };
         assert!(ids.source_ok("b") && !ids.source_ok("a"));
     }

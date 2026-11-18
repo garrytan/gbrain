@@ -26,11 +26,11 @@
       "countStaleChunks": {
         "default": [
           {
-            "paramCount": 0,
+            "paramCount": 1,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
-              "simple": true
+              "simple": false
             },
             "via": "unsafe"
           },
@@ -45,11 +45,11 @@
         ],
         "signature+includeNullSignature": [
           {
-            "paramCount": 0,
+            "paramCount": 1,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
-              "simple": true
+              "simple": false
             },
             "via": "unsafe"
           },
@@ -64,11 +64,11 @@
         ],
         "signature+sourceId": [
           {
-            "paramCount": 0,
+            "paramCount": 1,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
-              "simple": true
+              "simple": false
             },
             "via": "unsafe"
           },
@@ -98,11 +98,11 @@
       "getChunkPage": {
         "default": [
           {
-            "paramCount": 0,
+            "paramCount": 1,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
-              "simple": true
+              "simple": false
             },
             "via": "unsafe"
           },
@@ -136,11 +136,11 @@
         ],
         "sourceIds+excludePrivate": [
           {
-            "paramCount": 0,
+            "paramCount": 1,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
-              "simple": true
+              "simple": false
             },
             "via": "unsafe"
           },
@@ -218,11 +218,11 @@
       "getChunks": {
         "default": [
           {
-            "paramCount": 0,
+            "paramCount": 1,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
-              "simple": true
+              "simple": false
             },
             "via": "unsafe"
           },
@@ -247,11 +247,11 @@
         ],
         "excludePrivate": [
           {
-            "paramCount": 0,
+            "paramCount": 1,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
-              "simple": true
+              "simple": false
             },
             "via": "unsafe"
           },
@@ -276,11 +276,11 @@
         ],
         "includeEmbedding": [
           {
-            "paramCount": 0,
+            "paramCount": 1,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
-              "simple": true
+              "simple": false
             },
             "via": "unsafe"
           },
@@ -305,11 +305,11 @@
         ],
         "includeUnsealed": [
           {
-            "paramCount": 0,
+            "paramCount": 1,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
-              "simple": true
+              "simple": false
             },
             "via": "unsafe"
           },
@@ -334,11 +334,11 @@
         ],
         "requireSafeChunks": [
           {
-            "paramCount": 0,
+            "paramCount": 1,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
-              "simple": true
+              "simple": false
             },
             "via": "unsafe"
           },
@@ -363,11 +363,11 @@
         ],
         "sourceIds": [
           {
-            "paramCount": 0,
+            "paramCount": 1,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
-              "simple": true
+              "simple": false
             },
             "via": "unsafe"
           },
@@ -440,11 +440,11 @@
       "invalidateContentDriftEmbeddings": {
         "default": [
           {
-            "paramCount": 0,
+            "paramCount": 1,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
-              "simple": true
+              "simple": false
             },
             "via": "unsafe"
           },
@@ -469,11 +469,11 @@
         ],
         "sourceId": [
           {
-            "paramCount": 0,
+            "paramCount": 1,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
-              "simple": true
+              "simple": false
             },
             "via": "unsafe"
           },
@@ -500,11 +500,11 @@
       "invalidateStaleSignatureEmbeddings": {
         "default": [
           {
-            "paramCount": 0,
+            "paramCount": 1,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
-              "simple": true
+              "simple": false
             },
             "via": "unsafe"
           },
@@ -529,11 +529,11 @@
         ],
         "sourceId+includeNullSignature": [
           {
-            "paramCount": 0,
+            "paramCount": 1,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
-              "simple": true
+              "simple": false
             },
             "via": "unsafe"
           },
@@ -582,11 +582,11 @@
       "listEmbeddingStateRows": {
         "default": [
           {
-            "paramCount": 0,
+            "paramCount": 1,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
-              "simple": true
+              "simple": false
             },
             "via": "unsafe"
           },
@@ -602,11 +602,11 @@
         ],
         "sourceIds": [
           {
-            "paramCount": 0,
+            "paramCount": 1,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
-              "simple": true
+              "simple": false
             },
             "via": "unsafe"
           },
@@ -624,11 +624,11 @@
       "listStaleChunks": {
         "default": [
           {
-            "paramCount": 0,
+            "paramCount": 1,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
-              "simple": true
+              "simple": false
             },
             "via": "unsafe"
           },
@@ -644,11 +644,11 @@
         ],
         "sourceId": [
           {
-            "paramCount": 0,
+            "paramCount": 1,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
-              "simple": true
+              "simple": false
             },
             "via": "unsafe"
           },
@@ -664,11 +664,11 @@
         ],
         "updated_desc": [
           {
-            "paramCount": 0,
+            "paramCount": 1,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
-              "simple": true
+              "simple": false
             },
             "via": "unsafe"
           },
@@ -684,11 +684,11 @@
         ],
         "updated_desc+cursor": [
           {
-            "paramCount": 0,
+            "paramCount": 1,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
-              "simple": true
+              "simple": false
             },
             "via": "unsafe"
           },
@@ -704,11 +704,11 @@
         ],
         "updated_desc+sourceId": [
           {
-            "paramCount": 0,
+            "paramCount": 1,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
-              "simple": true
+              "simple": false
             },
             "via": "unsafe"
           },
@@ -724,11 +724,11 @@
         ],
         "updated_desc+sourceId+cursor": [
           {
-            "paramCount": 0,
+            "paramCount": 1,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
-              "simple": true
+              "simple": false
             },
             "via": "unsafe"
           },
@@ -746,11 +746,11 @@
       "readEmbeddingStateCounts": {
         "full": [
           {
-            "paramCount": 0,
+            "paramCount": 1,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
-              "simple": true
+              "simple": false
             },
             "via": "unsafe"
           },
@@ -784,11 +784,11 @@
         ],
         "full+sourceIds": [
           {
-            "paramCount": 0,
+            "paramCount": 1,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
-              "simple": true
+              "simple": false
             },
             "via": "unsafe"
           },
@@ -822,11 +822,11 @@
         ],
         "ops": [
           {
-            "paramCount": 0,
+            "paramCount": 1,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
-              "simple": true
+              "simple": false
             },
             "via": "unsafe"
           },
@@ -1041,11 +1041,11 @@
       "sumStaleChunkChars": {
         "default": [
           {
-            "paramCount": 0,
+            "paramCount": 1,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
-              "simple": true
+              "simple": false
             },
             "via": "unsafe"
           },
@@ -1060,11 +1060,11 @@
         ],
         "signature": [
           {
-            "paramCount": 0,
+            "paramCount": 1,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
-              "simple": true
+              "simple": false
             },
             "via": "unsafe"
           },

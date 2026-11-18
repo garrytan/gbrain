@@ -38,6 +38,7 @@ const SPIKE_FACTOR = 3;
 
 export type { CapacityResource } from './limits.ts';
 import type { CapacityResource } from './limits.ts';
+import { readConfigMap, readConfigValue } from '../config-values.ts';
 export interface CapacityForecastRow {
   scope: string; resource: CapacityResource; used: number; limit: number; pct: number; config_key: string;
   /** Window days actually observed (under 7 when the history is younger). */
@@ -76,8 +77,7 @@ function daysSetting(raw: string | undefined, fallback: number): number {
 }
 
 async function readDays(engine: SqlEngine, key: string, fallback: number): Promise<number> {
-  const [row] = await engine.executeRaw<{ value: string }>('SELECT value FROM config WHERE key=$1', [key]);
-  return daysSetting(row?.value, fallback);
+  return daysSetting(await readConfigValue(engine, key), fallback);
 }
 
 export interface CapacityConfig { warnDays: number; failDays: number; retentionDays: number; pauseShare: number }
@@ -88,9 +88,7 @@ export interface CapacityConfig { warnDays: number; failDays: number; retentionD
  * unreadable retention setting keeps the default, as the forecast always treated it.
  */
 export async function readCapacityConfig(engine: SqlEngine): Promise<CapacityConfig> {
-  const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key,value FROM config WHERE key = ANY($1::text[])',
-    [[CAPACITY_WARN_DAYS_KEY, CAPACITY_FAIL_DAYS_KEY, RECEIPT_RETENTION_KEY, BACKGROUND_PAUSE_KEY]]);
-  const value = new Map(rows.map(row => [row.key, row.value]));
+  const value = await readConfigMap(engine, [CAPACITY_WARN_DAYS_KEY, CAPACITY_FAIL_DAYS_KEY, RECEIPT_RETENTION_KEY, BACKGROUND_PAUSE_KEY]);
   const retention = value.get(RECEIPT_RETENTION_KEY);
   let retentionDays = DEFAULT_RECEIPT_RETENTION_DAYS;
   try {

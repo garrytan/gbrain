@@ -13,12 +13,15 @@ import { ownerActivity, OWNER_STALE_MS } from '../../../core/persistence/owner-a
 import { PENDING_WRITE_EXIT_CODE } from '../../../core/exit-codes.ts';
 import { agentFix, checkError } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { answersFromCatalog, catalogTableExists } from '../../../core/rust-engine/store-members/catalog.ts';
 
 const DOCS = 'docs/guides/troubleshooting.md#owner-host-stale';
 
 export async function ownerHostStaleCheck(engine: BrainEngine): Promise<Check> {
   try {
-    const [present] = await engine.executeRaw<{ managed: boolean }>(`SELECT to_regclass('public.persistence_requests') IS NOT NULL AND to_regclass('public.persistence_worktrees') IS NOT NULL AS managed`);
+    const [present] = answersFromCatalog(engine)
+      ? [{ managed: catalogTableExists(engine, 'persistence_requests') && catalogTableExists(engine, 'persistence_worktrees') }]
+      : await engine.executeRaw<{ managed: boolean }>(`SELECT to_regclass('public.persistence_requests') IS NOT NULL AND to_regclass('public.persistence_worktrees') IS NOT NULL AS managed`);
     if (!present?.managed) return { name: 'owner_host_stale', status: 'ok', message: 'This brain keeps no managed write journal.', details: { count: 0, stale_after_ms: OWNER_STALE_MS, stale: [], docs: DOCS } };
     const open = await engine.executeRaw<{ worktree_id: string; open_writes: number; oldest_open: string | Date; source_ids: string[] | null }>(`
       SELECT r.worktree_id::text AS worktree_id, count(*)::int AS open_writes, min(r.created_at) AS oldest_open,

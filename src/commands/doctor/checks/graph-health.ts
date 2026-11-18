@@ -7,10 +7,8 @@
  * src/commands/doctor/registry.ts and src/core/doctor-categories.ts.
  */
 
-import { renderFragment, sqlFragment, trustedSql } from '../../../core/engine-sql/fragment.ts';
 import { startHeartbeat } from '../../../core/progress.ts';
-import { quarantineFilterFragment } from '../../../core/quarantine.ts';
-import { entityTypePredicateSql, resolveEntityTypes } from '../../../core/schema-pack/entity-types.ts';
+import { resolveEntityTypes } from '../../../core/schema-pack/entity-types.ts';
 import { MIN_ENTITY_PAGES_FOR_COVERAGE } from '../../../core/types.ts';
 import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry, doctorHealth, doctorSourceIds } from '../context.ts';
@@ -36,8 +34,6 @@ async function runGraphCoverage(ctx: DoctorContext): Promise<Check[]> {
     // through the same policy getHealth binds. A pack that does not load is a
     // warn below, never a legacy-list reading.
     const entityTypes = await resolveEntityTypes(engine, null);
-    const isEntity = entityTypePredicateSql('pages', entityTypes.filter);
-    const quarantine = trustedSql(quarantineFilterFragment('pages'));
     // deleted_at IS NULL: a brain whose only entity pages are soft-deleted has
     // zero LIVE entities, and must take the short-circuit below rather than
     // warn about coverage on pages the rest of the system treats as gone.
@@ -45,8 +41,7 @@ async function runGraphCoverage(ctx: DoctorContext): Promise<Check[]> {
     // without it the two disagree about whether entity pages exist at all.
     // #4280: quarantined shells are excluded too — parity with onboard's
     // VISIBLE_ENTITY_PREDICATE, which never counted them.
-    const countSql = renderFragment(sqlFragment`SELECT COUNT(*)::int AS count FROM pages WHERE pages.deleted_at IS NULL AND ${isEntity} AND ${quarantine}`);
-    const entityCount = (await engine.executeRaw<{ count: number }>(countSql.text, countSql.params))[0]?.count ?? 0;
+    const entityCount = await engine.countEntityPages(entityTypes.filter, { excludeQuarantined: true });
 
     // Compute coverage against eligible entities only — exclude test fixtures
     // (`tools/gbrain/test/*`) and template stubs (`templates/new-person`) so
@@ -58,26 +53,12 @@ async function runGraphCoverage(ctx: DoctorContext): Promise<Check[]> {
     // entity_link_coverage (inbound EXISTS, target 70%): a brain of
     // inbound-only entities (meetings link TO people) read ok there and
     // warn here. Same in/out predicate + 70% target both places now.
-    const eligibleSql = renderFragment(sqlFragment`WITH eligible AS (
-        SELECT pages.id FROM pages
-        WHERE pages.deleted_at IS NULL
-          AND ${isEntity}
-          AND ${quarantine}
-          AND pages.slug NOT LIKE 'tools/gbrain/test/%'
-          AND pages.slug <> 'templates/new-person'
-      )
-      SELECT
-        (SELECT count(*)::int FROM eligible) AS entities,
-        (SELECT count(*)::int FROM eligible e
-           WHERE EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = e.id)
-              OR EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = e.id)) AS connected,
-        (SELECT count(DISTINCT page_id)::int FROM timeline_entries WHERE page_id IN (SELECT id FROM eligible)) AS timeline`);
-    const eligibleStats = (await engine.executeRaw<{ entities: number; connected: number; timeline: number }>(eligibleSql.text, eligibleSql.params))[0]
-      ?? { entities: entityCount, connected: 0, timeline: 0 };
+    const eligibleStats = (await engine.entityGraphCoverage(entityTypes.filter))
+      ?? { entities: entityCount, connected: 0, withTimeline: 0 };
 
     const eligibleEntityCount = Number(eligibleStats.entities ?? entityCount);
     const linkCoverage = eligibleEntityCount > 0 ? Number(eligibleStats.connected ?? 0) / eligibleEntityCount : 0;
-    const timelineCoverage = eligibleEntityCount > 0 ? Number(eligibleStats.timeline ?? 0) / eligibleEntityCount : 0;
+    const timelineCoverage = eligibleEntityCount > 0 ? Number(eligibleStats.withTimeline ?? 0) / eligibleEntityCount : 0;
     const linkPct = (linkCoverage * 100).toFixed(0);
     const timelinePct = (timelineCoverage * 100).toFixed(0);
     if (entityTypes.status === 'pack_unavailable') {
@@ -180,10 +161,7 @@ async function runOrphanRatio(ctx: DoctorContext): Promise<Check[]> {
     const inSource = srcId ? ` in source '${srcId}'` : '';
     // #4772: entity types per the pack of the asked source (brain-wide: every source's pack).
     const entityTypes = await resolveEntityTypes(engine, srcId ? [srcId] : null);
-    const countSql = renderFragment(sqlFragment`SELECT COUNT(*)::int AS count FROM pages
-      WHERE ${entityTypePredicateSql('pages', entityTypes.filter)} AND pages.deleted_at IS NULL
-        ${srcId ? sqlFragment`AND pages.source_id = ${srcId}::text` : sqlFragment``}`);
-    const entityCount = (await engine.executeRaw<{ count: number }>(countSql.text, countSql.params))[0]?.count ?? 0;
+    const entityCount = await engine.countEntityPages(entityTypes.filter, srcId ? { sourceId: srcId } : undefined);
     // Brain-wide (no --source): <100 entities is vacuous — small brains
     // naturally show a high orphan ratio; not actionable signal. Skip.
     // #4772: with the pack unavailable the count is unknown, not small, so
