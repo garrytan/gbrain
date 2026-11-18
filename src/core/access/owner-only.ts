@@ -104,7 +104,7 @@ export function ownerOnlyForm(schemaVersion: number | undefined): OwnerOnlyForm 
 
 /**
  * The page row `alias` is owner-only: held in an owner-only source, a synthesized concept or question with an input page
- * there, or derived (by its recorded inputs, up to 8 hops) from a row there. `alias` is a code-provided literal.
+ * there, or derived (by its recorded inputs, transitively) from a row there. `alias` is a code-provided literal.
  */
 export function ownerOnlyPageSql(alias: string, form: OwnerOnlyForm): string {
   return form === 'fn' ? `((SELECT ${OWNER_ONLY_LINEAGE_FN}()) AND ${OWNER_ONLY_LINEAGE_FN}('pages', ${alias}.id))` : ANY_OWNER_ONLY_SQL;
