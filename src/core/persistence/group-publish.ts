@@ -40,7 +40,7 @@ import { OperationError } from '../ops/contract.ts';
 import { withoutReadDeadline } from '../read-deadline.ts';
 import { authorizeStoredRequest, sharedWriterRow, storedAuthorizationReads } from './authority.ts';
 import { hostIdFor } from './identity.ts';
-import { acquireWorktree, acquireWorktreeShared, getWorktreeBinding, guardOwnership, joinWorktreeLease, MANAGED_MODE_SQL, WORKTREE_BINDING_SQL } from './ownership.ts';
+import { acquireWorktree, acquireWorktreeShared, getWorktreeBinding, guardOwnership, joinWorktreeLease, MANAGED_MODE_SQL, sharedWorktreeBinding } from './ownership.ts';
 import { isLockOpenFailure, type NativeLockHandle } from './native-lock.ts';
 import { awaitLaneBegin, awaitLaneTurn, LaneAbort, laneApplyBegin, laneClaimed, laneFinished, lanePolicy, stepDownLanes, type LaneState } from './sync-lanes.ts';
 import { laneFaultBlockedReason, windowPredecessor } from './sync-window.ts';
@@ -176,25 +176,24 @@ function groupReads(tx: BrainEngine): BrainEngine {
 /**
  * #5984: reads a claimed group's preparation repeats for every member and that
  * publication checks again inside the group transaction (the local writer, the
- * source binding and root, the coordinator switch); the source's own row
- * (`getSource`, `readSourceState`) and the shared skill packs are typed reads, below.
+ * source root, the coordinator switch); the source's own row (`getSource`,
+ * `readSourceState`), its worktree binding (`getWorktreeBinding`) and the shared
+ * skill packs are typed reads, below.
  * Plain reads only; a locking read is never answered here.
  */
 const STABLE_IN_PREPARATION = new Set([
   'SELECT lane,revoked_at,grant_ceiling FROM persistence_local_writers WHERE id=$1::uuid',
-  'SELECT s.source_id,s.source_incarnation,s.worktree_id,s.relative_path, s.topology_generation::text AS topology_generation,w.owner_host_id,w.owner_epoch::text AS owner_epoch,w.state, h.local_path,h.coordination_path FROM persistence_source_bindings s JOIN persistence_worktrees w ON w.id=s.worktree_id LEFT JOIN persistence_host_bindings h ON h.worktree_id=w.id AND h.host_id=$2::uuid WHERE s.source_id=$1',
   'SELECT local_path FROM sources WHERE id=$1',
   MANAGED_MODE_SQL,
 ]);
 /**
  * #5984: the engine a claimed group's members are prepared with. The reads
- * above, source rows (`getSource`) and config values (`getConfig`, `getAllConfig`) are answered once for
+ * above, source rows (`getSource`), worktree bindings (`getWorktreeBinding`) and config values (`getConfig`, `getAllConfig`) are answered once for
  * the whole preparation, as if every member were prepared at the same moment;
  * publication re-checks what it relies on under its locks. It lives only for
  * one group's preparation; a failed read is not kept. `also` adds plain reads a
  * caller's preparations repeat (GBRA-108: the legacy sweep's read-only screen).
  */
-const BINDING_KEY = flat(WORKTREE_BINDING_SQL);
 export function preparationReads(engine: BrainEngine, imports?: ImportGroupReads, also: readonly string[] = []): BrainEngine {
   const stable = also.length ? new Set([...STABLE_IN_PREPARATION, ...also.map(flat)]) : STABLE_IN_PREPARATION;
   const reads = new Map<string, Promise<unknown>>();
@@ -222,9 +221,8 @@ export function preparationReads(engine: BrainEngine, imports?: ImportGroupReads
       opts?.lock ? target.readSourceState(sourceId, opts) : once(JSON.stringify([key, sourceId]), () => target.readSourceState(sourceId));
     if (key === 'sharedSkillPackTablePresent') return () => once(key, () => target.sharedSkillPackTablePresent());
     if (key === 'listSharedSkillPackRoots') return (hostId: string) => once(JSON.stringify([key, hostId]), () => target.listSharedSkillPackRoots(hostId));
-    // The writer-binding read is the typed WORKTREE_BINDING_SQL: answered once only where a caller lists that statement (the legacy sweep's screen).
-    if (key === 'getWorktreeBinding' && stable.has(BINDING_KEY)) return (sourceId: string, hostId: string | null) =>
-      once(JSON.stringify([BINDING_KEY, [sourceId, hostId]]), () => target.getWorktreeBinding(sourceId, hostId));
+    // The worktree binding, once per source and host for the group, taking no member's deadline or signal (an absence is read again).
+    if (key === 'getWorktreeBinding') return sharedWorktreeBinding(reads, once, (sourceId, hostId) => withoutReadDeadline(() => target.getWorktreeBinding(sourceId, hostId)));
     if (imports && key === 'readPageSnapshot') return (slug: string, opts?: Parameters<BrainEngine['readPageSnapshot']>[1]) =>
       imports.snapshot(slug, opts) ?? target.readPageSnapshot(slug, opts);
     if (imports && key === 'findDuplicatePage') return (sourceId: string, opts: Parameters<NonNullable<BrainEngine['findDuplicatePage']>>[1]) => imports.findDuplicate(sourceId, opts);

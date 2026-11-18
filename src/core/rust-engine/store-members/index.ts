@@ -64,9 +64,11 @@ import * as aliasFanoutReads from './alias-fanout-reads.ts';
 import * as writeGuards from './write-guards.ts';
 import * as trustFence from './trust-fence.ts';
 import * as trustProposals from './trust-proposals.ts';
+import * as factRelinkAttempts from './fact-relink-attempts.ts';
 import * as connectGate from './connect-gate.ts';
 import * as telemetry from './telemetry.ts';
 import * as importMembers from './import-members.ts';
+import * as fieldUsage from './field-usage.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
 const initSchema: StoreMember<[], void> = async () => undefined;
@@ -88,7 +90,7 @@ export const STORE_MEMBERS = {
   ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages,
   ...cliEntities,
   // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
-  ...factsDoctor, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust, ...factsTrustReads,
+  ...factsDoctor, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust, ...factsTrustReads, ...factRelinkAttempts,
   // Typed reads of stamped trust tiers (rust/docs/store/trust.md, "Tier reads").
   ...trustTierReads,
   // The persistence brain identity the store already keeps (rust/docs/store/journal.md).
@@ -107,6 +109,8 @@ export const STORE_MEMBERS = {
   ...connectGate,
   // The page and chunk statements a page import runs around its chunk write (rust/docs/store/import-members.md).
   ...importMembers,
+  // The field usage sample read of schema detect --fields (rust/docs/store/field-usage.md).
+  ...fieldUsage,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

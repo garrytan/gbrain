@@ -101,6 +101,22 @@ counter is `M next_facts_id`.
 | `F 0x07 source entity dimension value_hash source_markdown_slug valid_from` | id | `idx_facts_ontology_stint_dedup` (unique). |
 | `F 0x08 id` | `LoopRecord` (JSON) | One `open_loops` row. Its counter is `M next_open_loops_id`. |
 | `F 0x09 source dedup_key` | id | `open_loops_dedup` (unique). |
+| `F 0x0A source fact_id` | `AttemptRecord` (JSON) | One `fact_relink_attempts` row (primary key `(source_id, fact_id)`). `fact_id` is sign-flipped big-endian, so key order is numeric order. |
+| `F 0x0B source tier target_slug fact_id` | empty | Attempts that carry both a tier and a target page, for `deleteFactRelinkMemos` and the paid memo read. |
+
+### Relink attempts (`facts/relink.rs`)
+
+`upsertFactRelinkAttempt` writes one row per `(source, fact)`; a second write replaces every
+column and stamps `attempted_at` with the store clock. With `keepModelAndRun`, a conflict keeps
+the stored `model` and `run_id` (a first write stores the given ones). The row has no foreign
+key, as in Postgres: deleting a fact or its page leaves the attempt in place, and the source
+check is the caller's. `listFactRelinkOutcomes` answers in fact-id order. The doctor's unlinked
+reads use the attempts as memos: a row is tried when its attempt is `conversation_unresolved`,
+unless a page created in the source after the attempt re-arms a NULL or re-armed reason
+(`REARMED_REASONS` in `facts/conversation-memo.ts`, passed in by the TypeScript member); it is
+paid when a `paid_reextract` attempt for its page has the page's current `content_hash` as its
+reason. `countFactRelinkOutcomes` counts `no_subject` rows and the `linked` rows of the last 7
+days by outcome and tier.
 
 ## Lookups and hooks for other families
 

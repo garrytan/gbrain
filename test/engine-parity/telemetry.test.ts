@@ -178,13 +178,94 @@ describe('engine parity: telemetry', () => {
     },
   );
 
+  parityTest(
+    'logChatUsage appends ledger rows and readChatUsage sums the window per model and phase in cost order',
+    { methods: ['logChatUsage', 'readChatUsage'] },
+    async (engine) => {
+      const empty = await engine.readChatUsage(30);
+      expect(empty).toEqual({ rows: [], logged_since: null });
+      const log = (model: string, phase: string | null, cost: number | null, ageDays: number, tokens = 1) =>
+        engine.logChatUsage({
+          model, provider: model.split(':')[0]!, phase, input_tokens: tokens, output_tokens: 2 * tokens,
+          cache_read_tokens: tokens > 1 ? 1 : 0, cache_write_tokens: 0, cost_usd: cost,
+          created_at: new Date(Date.now() - ageDays * DAY_MS),
+        });
+      await log('acme:model-b', 'job:dream', 0.5, 1, 10);
+      await log('acme:model-b', 'job:dream', 0.25, 2, 4);
+      await log('acme:model-b', 'job:dream', null, 3);
+      await log('acme:model-a', null, 0.625, 1, 3);
+      // Equal sums: the tie breaks on model, then phase, in byte order (a null phase first).
+      await log('acme:model-c', 'job:z', 0.25, 1);
+      await log('acme:model-c', 'job:A', 0.25, 1);
+      await log('acme:model-c', null, 0.25, 1);
+      await log('acme:Model-c', 'job:z', 0.25, 1);
+      // Unpriced groups sort after every priced one.
+      await log('acme:unpriced', 'job:dream', null, 1);
+      await log('acme:unpriced', null, null, 1, 7);
+      // Outside a week, inside a month.
+      await log('acme:model-old', 'job:dream', 4, 20, 100);
+      const week = await engine.readChatUsage(7);
+      const month = await engine.readChatUsage(30);
+      const since = (text: string | null) => {
+        expect(text).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(\.\d{1,6})?\+00$/);
+        return Math.round((Date.now() - Date.parse(text!.replace(' ', 'T').replace(/\+00$/, 'Z'))) / DAY_MS);
+      };
+      const order = (rows: typeof week.rows) => rows.map((r) => `${r.model}/${r.phase ?? '-'}`);
+      expect(order(week.rows)).toEqual([
+        'acme:model-b/job:dream', 'acme:model-a/-', 'acme:Model-c/job:z', 'acme:model-c/-', 'acme:model-c/job:A',
+        'acme:model-c/job:z', 'acme:unpriced/-', 'acme:unpriced/job:dream',
+      ]);
+      expect(week.rows[0]).toEqual({
+        model: 'acme:model-b', phase: 'job:dream', calls: 3, input_tokens: 15, output_tokens: 30, cache_read_tokens: 2,
+        cache_write_tokens: 0, cost_usd: 0.75, unpriced_calls: 1,
+      });
+      expect(week.rows.find((r) => r.model === 'acme:unpriced' && r.phase === null)).toEqual({
+        model: 'acme:unpriced', phase: null, calls: 1, input_tokens: 7, output_tokens: 14, cache_read_tokens: 1,
+        cache_write_tokens: 0, cost_usd: null, unpriced_calls: 1,
+      });
+      expect(order(month.rows)[0]).toBe('acme:model-old/job:dream');
+      expect(since(week.logged_since)).toBe(20);
+      expect(week.logged_since).toBe(month.logged_since);
+      return { empty, week: week.rows, month: month.rows, since: since(month.logged_since) };
+    },
+  );
+
+  parityTest(
+    'logChatUsage stamps the database clock when no time is given and refuses a null model',
+    { methods: ['logChatUsage', 'readChatUsage'] },
+    async (engine) => {
+      await engine.logChatUsage({
+        model: 'acme:model-a', provider: null, phase: null, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0,
+        cache_write_tokens: 0, cost_usd: 0,
+      });
+      let refusal: string | null = null;
+      try {
+        await engine.logChatUsage({
+          model: null as unknown as string, provider: null, phase: null, input_tokens: 0, output_tokens: 0,
+          cache_read_tokens: 0, cache_write_tokens: 0, cost_usd: null,
+        });
+      } catch (e) {
+        refusal = /null value in column "model"/.test(String((e as Error).message)) ? 'not_null' : String((e as Error).message);
+      }
+      const day = await engine.readChatUsage(1);
+      const result = { refusal, rows: day.rows, hasSince: day.logged_since !== null };
+      expect(result).toEqual({
+        refusal: 'not_null', hasSince: true,
+        rows: [{ model: 'acme:model-a', phase: null, calls: 1, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0,
+          cache_write_tokens: 0, cost_usd: 0, unpriced_calls: 0 }],
+      });
+      return result;
+    },
+  );
+
   // The Rust arm reports `telemetry` only once the store serves every member of it; serving some of them must leave the
   // reported capability list exactly as it was.
   test('the Rust capability list gains telemetry only when every telemetry member is served', () => {
     const members = Object.entries(RUST_ENGINE_MEMBERS).filter(([, cls]) => cls === 'telemetry').map(([m]) => m).sort();
     expect(members).toEqual([
-      'logMcpRequest', 'pruneMcpRequestLogBatch', 'readClientOpUsage', 'readMcpLifetimeUsage', 'readMcpLogPruneCutoff',
-      'readMcpRollupPrunedBefore', 'readSearchStats', 'recordSearchTelemetry',
+      'logChatUsage', 'logMcpRequest', 'pruneMcpRequestLogBatch', 'readChatUsage', 'readClientOpUsage',
+      'readMcpLifetimeUsage', 'readMcpLogPruneCutoff', 'readMcpRollupPrunedBefore', 'readSearchStats',
+      'recordSearchTelemetry',
     ]);
     const served = members.filter((m) => m in STORE_MEMBERS);
     const reported = servedCapabilities();

@@ -192,6 +192,8 @@ src/core/engine-sql/chunks.ts	listChunklessPagesWithContent	sql	STREAM	lane 1e f
 src/core/engine-sql/chunks.ts	listEmbeddingStateRows	sql	META	lane 1e file: octet_length metadata
 src/core/engine-sql/facts-purge.ts	listFactsReconcileBacklog	sql	STREAM	group 5 facts sites: moved from facts/reconcile-watermark.ts readFactsReconcileBacklog unchanged
 src/core/engine-sql/facts-repair.ts	countLabelFacts	sql	STREAM	group 5 facts sites: moved from repair/conversation-labels.ts countLabelFacts unchanged
+src/core/engine-sql/field-usage.ts	readFieldUsageSamples	field	LEAD	moved from schema-pack/field-usage.ts runFieldUsage unchanged: whole inline bodies of the sampled pages; a segmented page samples a null body, read as empty (TODOS.md)
+src/core/engine-sql/field-usage.ts	readFieldUsageSamples	sql	LEAD	moved from schema-pack/field-usage.ts runFieldUsage unchanged: whole inline bodies of the sampled pages; a segmented page samples a null body, read as empty (TODOS.md)
 src/core/engine-sql/jobs-status.ts	readQueuedPageChars	sql	META	the facts drain's cost estimate, moved from facts/drain.ts estimateBacklogUsd: average capped compiled_truth length
 src/core/engine-sql/page-body.ts	createSegmentedPageShell	sql	NONE	not a reader: the segmented storage writer sets the body columns NULL on the shell row
 src/core/engine-sql/page-body.ts	flipBodyGeneration	sql	NONE	not a reader: the generation flip sets the body columns NULL and the segmented body columns
@@ -628,6 +630,7 @@ src/core/repair/visibility.ts	planEvents	sql	META
 src/core/repair/visibility.ts	planLineage	sql	META	
 src/core/repair/visibility.ts	visibilityWrite	call:serializePageToMarkdown	SEGW	
 src/core/rust-engine/store-members/chunks.ts	sealChunks	field	STREAM	mirrors sealPageTextProjection (text-seal.ts): sends sanitizeRemoteBody(timeline) with the seal for the page keyword vector; a segmented page (null timeline from the Rust store) sends none
+src/core/rust-engine/store-members/field-usage.ts	readFieldUsageSamples	field	LEAD	the Rust arm of engine-sql/field-usage.ts readFieldUsageSamples: passes the store's sampled compiled_truth through; a segmented page samples a null body (TODOS.md)
 src/core/rust-engine/store-members/page-body.ts	refreshPageBody	call:refreshPageBody	SEGW	forwards to the Rust store, which refuses a segmented page as the body-storage CHECK does; callers assert first
 src/core/rust-engine/store-members/page-ops.ts	toDomainBankRow	field	INLINE	copies the domain-bank body the Rust store returned; the store keeps every body inline
 src/core/rust-engine/store-members/pages.ts	putPage	call:putPage	INLINE	forwards the caller's page to the Rust store, which keeps every body inline; it reads no stored body
@@ -637,7 +640,6 @@ src/core/schema-migrations/v124-page-search-vector-drop-compiled-truth.ts	v124	s
 src/core/schema-migrations/v189-pages-credential-projection-pending.ts	v189	sql	NONE	not a live reader: historical migration over inline pages (segmented pages did not exist)
 src/core/schema-migrations/v248-segmented-page-storage.ts	COMMON_SQL	sql	NONE	not a live reader: migration DDL for the segmented body columns and their CHECK
 src/core/schema-pack/field-usage.ts	runFieldUsage	field	LEAD	
-src/core/schema-pack/field-usage.ts	runFieldUsage	sql	LEAD	
 src/core/schema-pack/page-to-alias.ts	resolveValue	field	LEAD	
 src/core/schema-pack/page-to-alias.ts	runPageToAliasCore	field	LEAD	
 src/core/schema-pack/page-to-alias.ts	runPageToAliasCore	sql	LEAD	

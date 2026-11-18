@@ -22,6 +22,7 @@
 //!   the `idx_facts_ontology_stint_dedup` unique index (every part not NULL, as Postgres counts
 //!   NULLs distinct).
 //! - `F 0x08` and `F 0x09`: the `open_loops` table (`facts/loops.rs` lists them).
+//! - `F 0x0A` and `F 0x0B`: the `fact_relink_attempts` table (`facts/relink.rs` lists them).
 //! - meta `next_facts_id`: the id sequence. An insert that `ON CONFLICT DO NOTHING` skips still
 //!   takes an id, as `nextval` does.
 //!
@@ -42,6 +43,7 @@ mod fence;
 pub mod loops;
 mod privacy;
 pub mod purge;
+pub mod relink;
 pub mod repair;
 pub mod trust;
 pub mod trust_reads;
