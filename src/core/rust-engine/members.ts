@@ -207,6 +207,8 @@ export const RUST_ENGINE_MEMBERS = {
   getOnThisDay: 'timeline',
   getLastSeen: 'timeline',
   upsertEventProjection: 'timeline',
+  removeTimelineRows: 'timeline',
+  updateTimelineDetails: 'timeline',
   // graph
   traverseGraph: 'graph',
   rankEntities: 'graph',
@@ -250,6 +252,8 @@ export const RUST_ENGINE_MEMBERS = {
   getCalibrationCurve: 'takes',
   addSynthesisEvidence: 'takes',
   listActiveTakesForPages: 'takes',
+  matchTakeRows: 'takes',
+  deleteTakeRows: 'takes',
   // files
   upsertFile: 'files',
   getFile: 'files',

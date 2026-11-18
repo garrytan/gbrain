@@ -247,6 +247,41 @@ pub(crate) fn latest_entry_micros(read: &dyn KvRead, page_id: u64) -> Result<Opt
         .and_then(|b| latest_micros(&b)))
 }
 
+/// Deletes one entry: its `E` key, and its `D` key when that still points at the entry (a later
+/// entry that took the dedup slot keeps it). The page's `G` is not touched; call
+/// `recompute_latest` once after the deletes of one statement.
+pub(crate) fn remove_entry(tx: &mut dyn KvWrite, entry: &TimelineRecord) -> Result<()> {
+    tx.delete(&keys::timeline(entry.page_id, &entry.date, entry.id))?;
+    let dedup = entry.dedup_key();
+    if tx.get(&dedup)?.and_then(|b| keys::be8(&b)) == Some(entry.id) {
+        tx.delete(&dedup)?;
+    }
+    Ok(())
+}
+
+/// Sets `G page_id` to the newest `created_at` of the entries the page still has (event
+/// projections included), and deletes it when none is left: after a delete the `stale` flag of
+/// keyword search must compare with the rows that exist, as `max(created_at)` does.
+pub(crate) fn recompute_latest(tx: &mut dyn KvWrite, page_id: u64) -> Result<()> {
+    let mut newest: Option<i64> = None;
+    let mut bad = None;
+    scan_prefix(&*tx, &keys::timeline_prefix(page_id), false, &mut |_, v| {
+        match serde_json::from_slice::<TimelineRecord>(v) {
+            Ok(e) => newest = Some(newest.map_or(e.created_at_us, |n| n.max(e.created_at_us))),
+            Err(e) => bad = Some(StoreError::from(e)),
+        }
+        bad.is_none()
+    })?;
+    if let Some(e) = bad {
+        return Err(e);
+    }
+    let latest = keys::timeline_latest(page_id);
+    match newest {
+        Some(us) => tx.put(&latest, &us.to_be_bytes()),
+        None => tx.delete(&latest),
+    }
+}
+
 /// `ON DELETE CASCADE` of `timeline_entries.page_id`.
 pub(crate) fn remove_page_timeline(tx: &mut dyn KvWrite, page_id: u64) -> Result<()> {
     let mut doomed = Vec::new();
@@ -603,5 +638,61 @@ mod tests {
             Some(x.id.to_be_bytes().to_vec())
         );
         assert_eq!(entries(&store, "a").len(), 2);
+    }
+
+    #[test]
+    fn remove_entry_keeps_a_dedup_key_that_points_elsewhere_and_recompute_follows_the_rows() {
+        let store = crate::test_support::store();
+        let a = page(&store, "a");
+        let (x, y) = store
+            .write(|tx| {
+                let x = entry(next_entry_id(tx)?, a, "2026-01-02", "one", 10);
+                put_entry(tx, None, &x)?;
+                let y = entry(next_entry_id(tx)?, a, "2026-03-04", "two", 30);
+                put_entry(tx, None, &y)?;
+                Ok((x, y))
+            })
+            .unwrap();
+        // Another entry took x's dedup slot: removing x leaves the slot with its owner.
+        store
+            .write(|tx| {
+                tx.put(&x.dedup_key(), &y.id.to_be_bytes())?;
+                remove_entry(tx, &x)?;
+                recompute_latest(tx, a)
+            })
+            .unwrap();
+        let read = store.read().unwrap();
+        assert!(read_entry(&*read, a, "2026-01-02", x.id).unwrap().is_none());
+        assert_eq!(
+            read.get(&x.dedup_key()).unwrap(),
+            Some(y.id.to_be_bytes().to_vec())
+        );
+        assert_eq!(latest_entry_micros(&*read, a).unwrap(), Some(30));
+        drop(read);
+
+        // The newest entry goes: G falls back to the newest row that is left, then disappears.
+        let z = store
+            .write(|tx| {
+                let z = entry(next_entry_id(tx)?, a, "2026-05-06", "three", 20);
+                put_entry(tx, None, &z)?;
+                remove_entry(tx, &y)?;
+                recompute_latest(tx, a)?;
+                Ok(z)
+            })
+            .unwrap();
+        let read = store.read().unwrap();
+        assert!(read.get(&y.dedup_key()).unwrap().is_none());
+        assert_eq!(latest_entry_micros(&*read, a).unwrap(), Some(20));
+        drop(read);
+        store
+            .write(|tx| {
+                remove_entry(tx, &z)?;
+                recompute_latest(tx, a)
+            })
+            .unwrap();
+        assert_eq!(
+            latest_entry_micros(&*store.read().unwrap(), a).unwrap(),
+            None
+        );
     }
 }

@@ -1,12 +1,14 @@
 /**
  * Timeline reads by date: the Life Chronicle reads (BrainEngine getTimelineForDate, getSince, getOnThisDay,
- * getLastSeen) and the event projection write (upsertEventProjection).
+ * getLastSeen), the event projection write (upsertEventProjection) and the two page-write row members
+ * (removeTimelineRows, updateTimelineDetails).
  *
  * Export only BrainEngine members from this file, each a `StoreMember` named after the member it serves (see tags.ts):
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
  * unexported.
  */
 import { finalizeLastSeen } from '../../chronicle/last-seen.ts';
+import type { TimelineDetailRefresh, TimelineRowRemoval } from '../../engine-sql/timeline.ts';
 import type { ChronicleTimelineOpts, ChronicleTimelineRow, LastSeenResult, PageReadScope } from '../../types.ts';
 import { storeCall, takeOptions, type StoreMember } from './common.ts';
 
@@ -44,4 +46,11 @@ type EventProjection = { depthSlug: string; eventSlug: string; date: string; sum
 export const upsertEventProjection: StoreMember<[opts: EventProjection], { projected: boolean }> = (brain, opts) => {
   const options = takeOptions('upsertEventProjection', opts, ['depthSlug', 'eventSlug', 'date', 'summary', 'detail', 'sourceId']);
   return storeCall({ member: 'upsertEventProjection' }, () => brain.upsertEventProjection(options));
+};
+
+export const removeTimelineRows: StoreMember<[pageId: number, rows: TimelineRowRemoval[]], Array<{ date: string; removed: boolean }>> = (brain, pageId, rows) =>
+  storeCall({ member: 'removeTimelineRows' }, () => brain.removeTimelineRows(pageId, rows));
+
+export const updateTimelineDetails: StoreMember<[pageId: number, rows: TimelineDetailRefresh[]], void> = async (brain, pageId, rows) => {
+  await storeCall({ member: 'updateTimelineDetails' }, () => brain.updateTimelineDetails(pageId, rows));
 };

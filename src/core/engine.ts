@@ -21,6 +21,8 @@ import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence-state.ts';
 import type { ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, WriteCompletion, WriteRequestInsert } from './engine-sql/persistence-journal.ts';
 import type { WriteRequest } from './persistence/model.ts';
+import type { TimelineDetailRefresh, TimelineRowRemoval } from './engine-sql/timeline.ts';
+import type { TakeFenceRow } from './engine-sql/takes.ts';
 import type { ImportedPageSeal, LivePageBodyRow, OriginClaimRow, PageIngestStamp, PageOriginRow, PageOriginTarget } from './engine-sql/write-guards.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, SourceRoutingRow } from './engine-sql/sources.ts';
@@ -2107,6 +2109,19 @@ export interface BrainEngine {
    */
   upsertEventProjection(opts: { depthSlug: string; eventSlug: string; date: string; summary: string; detail?: string; sourceId?: string }): Promise<{ projected: boolean }>;
 
+  /**
+   * Delete the page's own (non-event) timeline rows that `rows` name and that still match them on every field (id,
+   * date, source, summary, detail): a row changed since it was read stays, and an event projection (a row with an
+   * event page) is never touched. Returns each deleted row's date (`YYYY-MM-DD`) and its `removed` mark. A page write
+   * calls it inside its own transaction (engine-sql/timeline.ts).
+   */
+  removeTimelineRows(pageId: number, rows: readonly TimelineRowRemoval[]): Promise<Array<{ date: string; removed: boolean }>>;
+  /**
+   * Replace the detail of the page's own (non-event) timeline rows named in `rows` with `next` when the stored detail
+   * still equals the preimage `detail`; any other row stays. Event projections are never touched.
+   */
+  updateTimelineDetails(pageId: number, rows: readonly TimelineDetailRefresh[]): Promise<void>;
+
   // v0.42.x — Life Chronicle (#2390) per-entity ontology (rides `facts`).
   /**
    * Record one ontology observation (entity has dimension=value). Idempotent on
@@ -2294,6 +2309,14 @@ export interface BrainEngine {
     pageIds: number[],
     opts?: { takesHoldersAllowList?: string[] },
   ): Promise<Map<number, Take[]>>;
+
+  /**
+   * The row numbers of the page's stored takes whose claim, kind or holder differs (null-safe) from the fence row of
+   * the same number in `rows`, ascending, at most `limit`. A page write refuses a fence that would take them over.
+   */
+  matchTakeRows(pageId: number, rows: readonly TakeFenceRow[], limit: number): Promise<number[]>;
+  /** Delete the page's takes at `rowNums`, with their synthesis evidence; an empty list deletes nothing. */
+  deleteTakeRows(pageId: number, rowNums: readonly number[]): Promise<void>;
 
   /**
    * Persist a single contradiction-probe run row. Caller supplies a full

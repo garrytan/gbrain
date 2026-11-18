@@ -2096,6 +2096,9 @@ export class PostgresEngine implements BrainEngine {
     return timelineImpl.upsertEventProjection(this.engineSql, opts);
   }
 
+  removeTimelineRows(pageId: number, rows: readonly timelineImpl.TimelineRowRemoval[]) { return timelineImpl.removeTimelineRows(this.autocommitSql, pageId, rows); }
+  updateTimelineDetails(pageId: number, rows: readonly timelineImpl.TimelineDetailRefresh[]) { return timelineImpl.updateTimelineDetails(this.autocommitSql, pageId, rows); }
+
   async mergeOntologyFact(obs: OntologyObservationInput): Promise<OntologyMergeResult> {
     const sql = this.sql;
     const sourceId = obs.sourceId ?? 'default';
@@ -2590,6 +2593,9 @@ export class PostgresEngine implements BrainEngine {
   ): Promise<Map<number, Take[]>> {
     return takesImpl.listActiveTakesForPages(unscopedExecutor(this.engineSql, 'takes: unscoped on master (EO4 inventory)'), pageIds, opts);
   }
+
+  matchTakeRows(pageId: number, rows: readonly takesImpl.TakeFenceRow[], limit: number) { return this.preparationRead(exec => takesImpl.matchTakeRows(unscopedExecutor(exec, 'page write: fence take collision read ran unscoped through executeRaw'), pageId, rows, limit)); }
+  deleteTakeRows(pageId: number, rowNums: readonly number[]) { return takesImpl.deleteTakeRows(this.autocommitSql, pageId, rowNums); }
 
   async writeContradictionsRun(row: {
     run_id: string;

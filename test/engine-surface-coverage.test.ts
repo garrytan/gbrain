@@ -82,7 +82,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'addTag', 'removeTag', 'getTags',
   // Timeline + chronicle
   'addTimelineEntry', 'addTimelineEntriesBatch', 'getTimeline', 'getTimelineForDate', 'getSince',
-  'getOnThisDay', 'getLastSeen', 'upsertEventProjection',
+  'getOnThisDay', 'getLastSeen', 'upsertEventProjection', 'removeTimelineRows', 'updateTimelineDetails',
   // Ontology
   'mergeOntologyFact', 'getOntology', 'discoverOntologyDimensions', 'findOntologyConflicts',
   // Raw data + files
@@ -90,7 +90,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // Takes
   'addTakesBatch', 'listTakes', 'searchTakes', 'searchTakesVector', 'getTakeEmbeddings',
   'countStaleTakes', 'listStaleTakes', 'updateTake', 'supersedeTake', 'resolveTake',
-  'getScorecard', 'getCalibrationCurve', 'addSynthesisEvidence',
+  'getScorecard', 'getCalibrationCurve', 'addSynthesisEvidence', 'matchTakeRows', 'deleteTakeRows',
   // Dream verdicts (sweepDreamVerdicts: wave-k #4069 TTL housekeeping,
   // covered by test/dream-verdict-cache-ttl.test.ts)
   'getDreamVerdict', 'putDreamVerdict', 'sweepDreamVerdicts',
