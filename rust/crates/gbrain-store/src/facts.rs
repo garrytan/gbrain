@@ -38,8 +38,8 @@ mod embedding;
 mod privacy;
 
 pub use privacy::PrivacyPolicy;
-pub(crate) use privacy::page_hidden;
 use privacy::hidden_by_private_provenance;
+pub(crate) use privacy::page_hidden;
 
 use crate::chunks::embedding_dimensions;
 use crate::config::read_config;
