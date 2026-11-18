@@ -304,6 +304,15 @@ write ops are local-only. Retrieval-side union — `get_links` /
 by the `entity_identity.union` config key (default off) and never widens a
 federated caller's source grant.
 
+`gbrain dedupe` proposes such groups from shared ids and names and links
+one only when you confirm it (`gbrain dedupe confirm <group-id>`; `gbrain
+dedupe reject <group-id>` records "different people"). Those rows carry
+`established_by: dedupe:confirm`; the decision behind them lives in
+`.gbrain/identity/<decision-id>.md` in the brain's repository (or in the
+`entity_identity_reviews` table on a brain with no repository), so a
+rebuilt database keeps it. `rank_entities` and enrichment tiering count a
+confirmed group once; hand-made groups count as before.
+
 ## Cross-source link edges
 
 Wikilink and markdown-link edges stay inside one source by default. When a

@@ -43,6 +43,7 @@ const OOS = {
   raw: 'out-of-scope:raw-data',
   stub: 'out-of-scope:no-sql-stub',
   pageBody: 'out-of-scope:page-body (Wave B segmented storage, born in engine-sql/page-body.ts; pinned by test/engine-sql-page-body.test.ts)',
+  identityDecisions: 'out-of-scope:identity-decisions (duplicate people PR 2, born in engine-sql/identity-decisions.ts; pinned by test/engine-parity/pages.test.ts and test/entity-dedupe-decisions.test.ts)',
   ownerOnly: 'out-of-scope:owner-only-marks (catalog and trigger DDL, born in engine-sql/owner-only-marks.ts; pinned by test/engine-parity/owner-only-marks.test.ts)',
 } as const;
 
@@ -63,6 +64,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'initSchema': OOS.lifecycle,
   'holdSchemaMigrationLock': OOS.lifecycle,
   'ownerOnlyMarkTriggers': OOS.ownerOnly,
+  'listIdentityDecisions': OOS.identityDecisions,
+  'applyIdentityDecisions': OOS.identityDecisions,
   'applyForwardReferenceBootstrap': OOS.helper,
   'transaction': OOS.lifecycle,
   'transactionDirect': OOS.lifecycle,

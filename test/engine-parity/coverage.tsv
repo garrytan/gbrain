@@ -3,9 +3,9 @@
 # legacy_e2e = called by the Postgres-gated test/e2e/engine-parity*.test.ts suite (informational).
 # pglite/postgres/rust = what each arm must do: yes (runs, compared), same (Rust must match once its arm exists),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 200/200
+# covered: 202/202
 # lifecycle: 9/9
-# pages: 25/25
+# pages: 27/27
 # search: 7/7
 # chunks: 17/17
 # extraction: 7/7
@@ -42,7 +42,7 @@ getPage	pages	yes	24	yes	yes	yes	same
 readPageSnapshot	pages	yes	6	no	yes	yes	same
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	same
 lockPageKeys	pages	yes	1	no	yes	yes	same
-putPage	pages	yes	89	yes	yes	yes	same
+putPage	pages	yes	90	yes	yes	yes	same
 findDuplicatePage	pages	yes	1	no	yes	yes	same
 findDuplicatePages	pages	yes	1	no	yes	yes	same
 deletePage	pages	yes	2	yes	yes	yes	same
@@ -58,6 +58,8 @@ countPagesBy	pages	yes	1	no	yes	yes	same
 resolveSlugs	pages	yes	2	no	yes	yes	same
 getAllSlugs	pages	yes	4	no	yes	yes	same
 listEntityKeyRows	pages	yes	1	no	yes	yes	same
+listIdentityDecisions	pages	yes	1	no	yes	yes	same
+applyIdentityDecisions	pages	yes	1	no	yes	yes	same
 listAllPageRefs	pages	yes	1	yes	yes	yes	same
 listAllSources	pages	yes	2	no	yes	yes	same
 updateSourceConfig	pages	yes	1	no	yes	yes	same

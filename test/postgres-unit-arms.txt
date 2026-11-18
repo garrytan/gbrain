@@ -138,6 +138,7 @@ test/engine-parity/takes.test.ts
 test/engine-parity/timeline.test.ts
 test/engine-parity/versions-raw.test.ts
 test/engine-sql-facts-keyset.test.ts
+test/entity-dedupe-decisions.test.ts
 test/entity-duplicates-finder.test.ts
 test/extract-all-stamp-intersection.serial.test.ts
 test/extract-atoms-concurrent-run-7923.test.ts
