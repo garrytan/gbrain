@@ -47,7 +47,7 @@ const QUARANTINE_KEY: &str = "quarantine";
 const EMBED_SKIP_KEY: &str = "embed_skip";
 /// `SAFE_FENCE_CHUNKER_VERSION` (`src/core/search/safe-chunks.ts`): a page chunked at this version
 /// or later has sealed chunks.
-const SAFE_FENCE_CHUNKER_VERSION: i16 = 4;
+pub(crate) const SAFE_FENCE_CHUNKER_VERSION: i16 = 4;
 
 /// True for a segmented shell page: its body columns are NULL.
 fn segmented(page: &PageRecord) -> bool {

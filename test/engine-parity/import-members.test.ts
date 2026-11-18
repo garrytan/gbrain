@@ -17,8 +17,8 @@
  *    and page-state/*.ts, which no other parity case calls one by one.
  *  - Seam: none. Typed members only (no executeRaw: D18). Page and chunk ids are compared as "the row the case wrote";
  *    a refusal is compared by the Postgres message text it carries, not by its code. Not covered, as the arms differ by
- *    design (rust/docs/store/import-members.md): a call that ends with a chunk at a negative index, the state an alias
- *    refusal leaves outside a transaction, and the chunker version a body change writes after a seal.
+ *    design (rust/docs/store/import-members.md): a call that ends with a chunk at a negative index and the state an alias
+ *    refusal leaves outside a transaction.
  */
 import { describe, expect } from 'bun:test';
 import { basisEmbedding, parityArms } from './harness.ts';
@@ -248,6 +248,44 @@ describe('engine parity: import members', () => {
       ],
       withMode: ['none', 'none'],
       missing: [],
+    });
+    return answers;
+  });
+
+  parityTest('putPage keeps the chunker version only for an unchanged body, lowers it below the safe fence on a body change, and marks protected text -1', {
+    methods: ['putPage', 'getPage', 'setChunkerVersion', 'getPageSealState'],
+  }, async (engine) => {
+    const FENCE = '<!--- gbrain:facts:begin -->\n| fact |\n<!--- gbrain:facts:end -->';
+    const version = async (slug: string) => (await engine.getPageSealState(await idOf(engine, slug)))?.chunker_version ?? null;
+    const answers: Record<string, number | null> = {};
+    await engine.putPage('notes/fence-new', { ...NOTE, chunker_version: 2 });
+    answers.newGiven = await version('notes/fence-new');
+    await engine.putPage('notes/fence-high', { ...NOTE, chunker_version: 9 });
+    answers.newAboveFence = await version('notes/fence-high');
+    await engine.putPage('notes/fence-a', NOTE);
+    await engine.setChunkerVersion('notes/fence-a', 4);
+    await engine.putPage('notes/fence-a', { ...NOTE, title: 'Renamed note', chunker_version: 1 });
+    answers.sameBody = await version('notes/fence-a');
+    await engine.putPage('notes/fence-a', { ...NOTE, compiled_truth: 'A changed import example.' });
+    answers.changedBody = await version('notes/fence-a');
+    await engine.setChunkerVersion('notes/fence-a', 4);
+    await engine.putPage('notes/fence-a', { ...NOTE, timeline: '- 2026-01-01 an event' });
+    answers.changedTimeline = await version('notes/fence-a');
+    await engine.putPage('notes/fence-a', { ...NOTE, compiled_truth: `Protected.\n\n${FENCE}` });
+    answers.protectedNew = await version('notes/fence-a');
+    await engine.putPage('notes/fence-a', { ...NOTE, compiled_truth: 'Plain again.' });
+    answers.afterNegative = await version('notes/fence-a');
+    await engine.putPage('notes/fence-b', { ...NOTE, timeline: FENCE });
+    await engine.setChunkerVersion('notes/fence-b', 4);
+    await engine.putPage('notes/fence-b', { ...NOTE, compiled_truth: 'Fence removed.' });
+    answers.protectedOld = await version('notes/fence-b');
+    await engine.putPage('notes/fence-c', NOTE);
+    await engine.setChunkerVersion('notes/fence-c', 2);
+    await engine.putPage('notes/fence-c', { ...NOTE, compiled_truth: 'Below the fence, changed.' });
+    answers.belowFence = await version('notes/fence-c');
+    expect(answers).toEqual({
+      newGiven: 2, newAboveFence: 3, sameBody: 4, changedBody: 3, changedTimeline: 3,
+      protectedNew: -1, afterNegative: -1, protectedOld: -1, belowFence: 2,
     });
     return answers;
   });

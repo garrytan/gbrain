@@ -38,6 +38,9 @@ one write at a time.
   keeps no image or multimodal vector, so those columns read as `NULL`.
 - **Stats.** `moveChunkIndexes` moves postings with their chunks; the document count and term
   statistics of the keyword index do not change, as a move adds and removes nothing.
+- **A claimed origin.** `refreshPageOrigin` refuses an origin another live page of the source holds with
+  `origin_claimed` itself; PGLite leaves it to the unique index `pages_live_origin_key`, whose violation the
+  caller maps.
 - **Error codes.** The refusals carry the store codes (`invalid_argument`, `constraint_violation`,
   `origin_claimed`) with Postgres's message text, not SQLSTATE codes.
 

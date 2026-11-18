@@ -312,8 +312,7 @@ fn page_seal_state(read: &dyn KvRead, page_id: u64) -> Result<Option<i16>> {
     if page.deleted_at_us.is_some() || segmented {
         return Ok(None);
     }
-    // PGLite's `putPage` stores `LEAST(COALESCE(chunker_version, 0), fence - 1)` on a new page; the
-    // store records none until a seal, which reads the same.
+    // A record written before the store recorded a version reads as PGLite's new-page default, 0.
     Ok(Some(page.chunker_version.unwrap_or(0)))
 }
 
@@ -421,7 +420,15 @@ mod tests {
             ..Default::default()
         };
         let page = store
-            .put_page(slug, &input, &crate::pages::PutPageOptions::default())
+            .put_page(
+                slug,
+                &input,
+                // As the TypeScript `putPage` writes it: no chunks and no seal.
+                &crate::pages::PutPageOptions {
+                    index: Some(false),
+                    ..Default::default()
+                },
+            )
             .unwrap();
         page["id"].as_u64().unwrap()
     }
