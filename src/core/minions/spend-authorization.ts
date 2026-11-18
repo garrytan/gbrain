@@ -248,9 +248,7 @@ export async function spendRefusal(
 
 async function pressureRenewals(engine: BrainEngine, jobId: number, budgetKey: string): Promise<number> {
   try {
-    const rows = await engine.executeRaw<{ n: number | string }>(
-      'SELECT count(*)::int AS n FROM minion_lease_pressure_log WHERE job_id = $1 AND lease_key = $2', [jobId, budgetKey]);
-    return Number(rows[0]?.n ?? 0);
+    return await engine.countLeasePressure({ jobId, leaseKey: budgetKey });
   } catch { return 0; }
 }
 
@@ -333,10 +331,7 @@ export async function runWithJobSpend<T>(
     return { async settle(usage: Parameters<typeof actualCents>[1]) {
       const c = actualCents(call, usage, pricingOverrides);
       if (c !== null) await settle(engine, hold.reservationId, c, call.operation);
-      else await engine.executeRaw(
-        `UPDATE mcp_spend_reservations SET usage_unknown_reason = $2 WHERE reservation_id = $1 AND status IN ('pending','expired')`,
-        [hold.reservationId, usage === null ? 'provider_usage_unknown' : 'pricing_unknown'],
-      );
+      else await engine.markSpendUsageUnknown(hold.reservationId, usage === null ? 'provider_usage_unknown' : 'pricing_unknown');
     } };
   };
   let result: T;

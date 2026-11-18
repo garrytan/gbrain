@@ -8,6 +8,7 @@ mod checks;
 mod health;
 mod insight;
 mod ops;
+mod spend;
 mod status;
 
 use gbrain_store::error::StoreError;
