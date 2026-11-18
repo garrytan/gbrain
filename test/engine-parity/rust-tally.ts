@@ -54,6 +54,9 @@ function readPins(): Map<string, TallyPin> {
 export function checkRustTally(file: string, tally: FileTally, registered: number,
   pins: Map<string, TallyPin> = readPins(), env: Record<string, string | undefined> = process.env): string | null {
   if (tally.compared + tally.refused + tally.diverged + tally.skipped !== registered) return null;
+  // The pin covers test/engine-parity/ only. A file outside it that runs the parity harness (doctor-catalog-probes,
+  // rust-arm-harness) has no parity file name and no pin row.
+  if (file === '') return null;
   const out = env[OUT_ENV];
   if (out) {
     appendFileSync(out, `${file}\t${tally.compared}\t${tally.refused}\n`);

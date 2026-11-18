@@ -42,6 +42,11 @@ describe('Rust parity tally pin', () => {
     ]).toEqual([{ value: null }, { threw: true }, { threw: true }]);
   });
 
+  test('a Rust-arm file outside test/engine-parity/ (no parity file name) is not checked', () => {
+    // doctor-catalog-probes.test.ts runs the parity harness from test/; the harness finds no parity file name for it.
+    expect(outcome(() => checkRustTally('', tally(8, 0), 8, pins, {}))).toEqual({ value: null });
+  });
+
   test('the checked-in pin has one row per parity file and round-trips', () => {
     const text = readFileSync(RUST_TALLY_PATH, 'utf8');
     const files = readdirSync(join(import.meta.dir, 'engine-parity')).filter((f) => f.endsWith('.test.ts') && f !== 'coverage.test.ts')
