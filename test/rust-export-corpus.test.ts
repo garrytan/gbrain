@@ -18,7 +18,7 @@
  *  - Seam: none. A real git repository, the script run as a subprocess with the environment changed.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createEngine } from '../src/core/engine-factory.ts';
@@ -92,6 +92,34 @@ describe('export-corpus', () => {
       expect({ exit: run.exitCode, refused: run.stderr.toString().includes('could not tell whether') })
         .toEqual({ exit: 2, refused: true });
       expect(existsSync(join(out, 'pages.jsonl'))).toBe(false);
+    });
+
+    // A stand-in git that exits 128 with the given stderr: a test cannot hand a directory to another owner, so this
+    // is the seam that gives the guard the messages real git prints for unsafe ownership or in another language.
+    const fakeBin = join(root, 'fake-git-bin');
+    mkdirSync(fakeBin, { recursive: true });
+    writeFileSync(join(fakeBin, 'git'), '#!/bin/sh\nprintf \'%s\\n\' "$FAKE_GIT_STDERR" >&2\nexit 128\n');
+    chmodSync(join(fakeBin, 'git'), 0o755);
+    const exportWithFakeGit = (target: string, stderr: string) => Bun.spawnSync(
+      [process.execPath, script, '--out', target, '--pglite-dir', join(root, 'guard-brain')],
+      { stdout: 'pipe', stderr: 'pipe', env: { ...process.env, PATH: fakeBin, FAKE_GIT_STDERR: stderr } });
+
+    test('an unsafe-ownership answer whose path names "not a git repository" still refuses', () => {
+      const repoAtOddPath = join(root, 'not a git repository', 'repo');
+      mkdirSync(repoAtOddPath, { recursive: true });
+      const target = join(repoAtOddPath, 'corpus');
+      const run = exportWithFakeGit(target, `fatal: detected dubious ownership in repository at '${repoAtOddPath}'`);
+      expect({ exit: run.exitCode, refused: run.stderr.toString().includes('could not tell whether') })
+        .toEqual({ exit: 2, refused: true });
+      expect(existsSync(join(target, 'pages.jsonl'))).toBe(false);
+    });
+
+    test('a git answer in another language refuses rather than guess', () => {
+      const target = join(root, 'localized', 'corpus');
+      const run = exportWithFakeGit(target, 'fatal: Kein Git-Repository (oder irgendeines der Elternverzeichnisse): .git');
+      expect({ exit: run.exitCode, refused: run.stderr.toString().includes('could not tell whether') })
+        .toEqual({ exit: 2, refused: true });
+      expect(existsSync(join(target, 'pages.jsonl'))).toBe(false);
     });
   });
 });

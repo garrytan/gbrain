@@ -59,21 +59,25 @@ const rand = () => { // mulberry32
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 };
 
+/** The one answer that counts as outside a repository: git's own, in the C locale, exit 128. */
+const OUTSIDE_ANY_REPOSITORY = 'fatal: not a git repository (or any of the parent directories): .git';
+
 /**
- * Where `dir` sits relative to git. Only a probe that git itself answers with "not a git repository" counts as
- * outside: a missing git, unsafe ownership or any other probe failure is 'unknown', which the caller refuses like
- * 'inside'. Inherited GIT_* settings are dropped so a stray GIT_DIR cannot point the probe somewhere else.
+ * Where `dir` sits relative to git. Only exit 128 with stderr exactly OUTSIDE_ANY_REPOSITORY counts as outside:
+ * a missing git, unsafe ownership, a message in another language or any other probe failure is 'unknown', which
+ * the caller refuses like 'inside'. The probe runs with LC_ALL=C and LANG=C so that message is the same on every
+ * machine, and inherited GIT_* settings are dropped so a stray GIT_DIR cannot point the probe somewhere else.
  */
 function gitWorkTreeStatus(dir: string): { status: 'inside' | 'outside' | 'unknown'; detail: string } {
   let probe = dir;
   while (!existsSync(probe)) probe = resolve(probe, '..');
-  const env: Record<string, string> = { LC_ALL: 'C' };
+  const env: Record<string, string> = { LC_ALL: 'C', LANG: 'C' };
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined && !key.startsWith('GIT_') && key !== 'LC_ALL' && key !== 'LANG') env[key] = value;
   }
   const run = spawnSync('git', ['-C', probe, 'rev-parse', '--is-inside-work-tree'], { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   if (run.status === 0) return { status: 'inside', detail: '' };
-  if (run.status === 128 && /not a git repository/i.test(run.stderr ?? '')) return { status: 'outside', detail: '' };
+  if (run.status === 128 && (run.stderr ?? '').replace(/\r?\n$/, '') === OUTSIDE_ANY_REPOSITORY) return { status: 'outside', detail: '' };
   const detail = run.error ? run.error.message : (run.stderr ?? '').trim() || `git exited ${run.status}`;
   return { status: 'unknown', detail };
 }
