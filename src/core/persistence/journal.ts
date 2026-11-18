@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { WRITE_SWITCHES, writeSwitchOn } from './switches.ts';
 import type { BrainEngine } from '../engine.ts';
 import { getCode } from '../retry-matcher.ts';
+import { requireTransactions } from '../rust-engine/errors.ts';
 import { assertRecoveryStagingAbsent } from './staging.ts';
 import { markNotAdmitted, OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
@@ -820,6 +821,7 @@ export async function claimNextWrite(engine: BrainEngine, hostId: string, leaseM
   laneRoots: string[] = [], syncSeen: Record<string, string> = {}): Promise<(WriteRequest & { passed_sync?: boolean; seen_sequence?: string | null }) | null> {
   const first = `(${foregroundPrioritySql()}) AND NOT (COALESCE(r.worktree_id::text,'db:'||r.source_incarnation::text)=ANY($3::text[]))`;
   const holderOnly = !RESIDENT_CONSUMER_KINDS.includes(claimOwnerKind());
+  requireTransactions(engine, 'claimNextWrite', 'it selects the head under FOR UPDATE SKIP LOCKED and stamps the claim in one transaction');
   return engine.transactionDirect(async tx => {
     // The protocol declaration and the FIFO head read are sent together.
     const [, [row]] = await pipelined(tx, [
@@ -1223,6 +1225,7 @@ export const COMPACTABLE_STATES = ['committed', 'conflict', 'failed', 'cancelled
  */
 export async function compactReceipt(engine: BrainEngine, row: Pick<WriteRequest, 'id' | 'principal_kind' | 'principal_id'>,
   opts: { states?: readonly string[]; completedBefore?: string } = {}): Promise<{ freed_bytes: number } | { skipped: string }> {
+  requireTransactions(engine, 'compactReceipt', 'it rechecks the receipt under its row lock and releases the counters in one transaction');
   return engine.transaction(async tx => {
     await declarePersistenceProtocol(tx);
     await tx.executeRaw("SET LOCAL lock_timeout = '2s'");

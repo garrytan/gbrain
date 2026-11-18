@@ -19,6 +19,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { lockCounters } from './journal.ts';
+import { requireTransactions } from '../rust-engine/errors.ts';
 import { principalKey, type WriteRequest } from './model.ts';
 import { declarePersistenceProtocol, isPersistenceDeclaration } from './protocol.ts';
 import { EFFECT_BYTES_SQL, retainedReceiptBytes, TRUE_UP_CLAMP_SQL } from './receipt-bytes.ts';
@@ -41,6 +42,7 @@ export async function trueUpRequests(engine: BrainEngine, requestIds: Iterable<s
   });
   if (!shrink.length) return 0;
   const keys = ['brain', ...shrink.map(({ row }) => principalKey({ kind: row.principal_kind, id: row.principal_id }))];
+  requireTransactions(engine, 'trueUpRequests', 'it locks the counters and compare-and-sets the reservations in one transaction');
   return engine.transaction(async tx => {
     await declarePersistenceProtocol(tx);
     await lockCounters(tx, keys);
