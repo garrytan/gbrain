@@ -353,16 +353,17 @@ export async function withConnectorSync<T>(engine: BrainEngine, sourceId: string
       if (!(error instanceof ConnectorWaitBudgetStop)) {
         // #6831: a run cut short by its caller's deadline or cancel is not a failure of the source.
         const failure = combined.aborted ? undefined : error;
-        if (error instanceof OperationError || (failure && !(error instanceof LockStolenError))) await session.finish(failure).catch(() => {});
+        if (error instanceof OperationError || (failure && !(error instanceof LockStolenError))) await session.finish(failure, signal, combined.aborted).catch(() => {});
         throw error;
       }
-      await session.finish();
+      await session.finish(undefined, signal, combined.aborted);
       if (onPending) return onPending(null, session);
       error.suggestion = `Accepted connector writes are still pending; they are recorded and resolved first on the next run: gbrain sync --source ${sourceId}`;
       throw error;
     }
-    await session.assertLease(engine);
-    await session.finish();
+    // Caller cancellation stops content writes, but final bookkeeping may still
+    // run under the live lease. A stolen or expired lease must still refuse it.
+    await session.finish(undefined, signal, combined.aborted);
     return session.deferred && onPending ? onPending(result, session) : result;
   });
 }
@@ -390,6 +391,8 @@ export class ManagedConnectorSync {
   private failedPending: ConnectorPendingEntry[] = [];
   private reseen = new Set<string>();
   private reseenItems = new Set<string>();
+  /** Items resolved or represented by a replacement in this run's pending ledger. */
+  private accountedItems = new Set<string>();
   private connectorState!: ConnectorState;
   private waitCharged = 0;
   private outstandingCap = 90;
@@ -427,15 +430,15 @@ export class ManagedConnectorSync {
   }
   /** Whether this run publishes canonical files (a bound worktree root) rather than database-only rows. */
   get bound(): boolean { return this.canonicalRoot !== null; }
-  async assertLease(engine: BrainEngine): Promise<void> {
+  async assertLease(engine: BrainEngine, signal = this.lease?.signal): Promise<void> {
     if (!this.lease) return;
-    this.lease.signal.throwIfAborted();
+    signal?.throwIfAborted();
     const { handle } = this.lease;
     const [owned] = await engine.executeRaw(`SELECT id FROM gbrain_cycle_locks
       WHERE id=$1 AND acquisition_token=$2::uuid AND extract(epoch from acquired_at)::text=$3
         AND ttl_expires_at>now() FOR SHARE`, [handle.id, handle.acquisitionToken, handle.acquiredAt]);
     if (!owned) throw new LockStolenError(handle.id);
-    this.lease.signal.throwIfAborted();
+    signal?.throwIfAborted();
   }
   async load(): Promise<void> {
     await this.recover('__managed_sync_checkpoint__');
@@ -798,18 +801,26 @@ export class ManagedConnectorSync {
    * error the run ended on (#6831): it is recorded with a count of runs in a row that ended that way. Only a complete
    * run (its cursor saved, nothing pending or failed) clears it; a partial or wait-budget stop leaves it as it was.
    */
-  async finish(failure?: unknown): Promise<void> {
+  async finish(failure?: unknown, leaseSignal = this.lease?.signal, interrupted = false): Promise<void> {
+    await this.assertLease(this.engine, leaseSignal);
     await this.refreshPending().catch(() => {});
     const now = new Date().toISOString();
     const outstanding = [...this.pendingRows.values()].map(pending => pending.entry);
-    const complete = this.lastSaveCommitted && !outstanding.length && !this.failedPending.length && !this.stopped;
+    const complete = !interrupted && this.lastSaveCommitted && !outstanding.length && !this.failedPending.length && !this.stopped;
     // Only a complete --full sweep (which also reconciles deletions) proves that a failed item it never reached
     // was deleted upstream. Delta and targeted runs keep every unreached carried entry for its automatic retry.
     const unreached = this.unreachedCarried();
     const dropUnreached = complete && this.fullSweep && !this.targeted;
-    const unresolved = dropUnreached ? [] : unreached;
+    // submit marks an item seen before retry admission. A cancelled admission
+    // can leave no replacement receipt. Retain those entries on interruption,
+    // but do not resurrect failures whose retry already committed or is tracked.
+    const unresolved = interrupted ? this.carried.filter(entry => !this.accountedItems.has(entry.itemRef)) : dropUnreached ? [] : unreached;
     if (dropUnreached) this.counts.dropped_upstream += unreached.filter(entry => entry.itemRef !== CHECKPOINT_SLUG).length;
-    const released = await this.releasableHeldEntries([...unresolved, ...this.failedPending]).catch(() => new Set<string>());
+    // Cancellation can prevent the holds checkpoint from publishing after its
+    // slugs were registered in memory. Keep the retry ledger until a later run
+    // can durably transfer those failed receipts into item holds.
+    const released = interrupted ? new Set<string>()
+      : await this.releasableHeldEntries([...unresolved, ...this.failedPending]).catch(() => new Set<string>());
     const pending = [...new Map([...unresolved, ...this.failedPending, ...outstanding, ...(this.pendingCheckpoint ? [this.pendingCheckpoint] : [])]
       .filter(entry => !released.has(entry.requestId))
       .map(entry => [entry.requestId, entry])).values()];
@@ -828,7 +839,7 @@ export class ManagedConnectorSync {
       page_admissions: this.counts.page_admissions, skipped_unchanged: this.counts.skipped_unchanged, pending: pending.length,
       checkpoint_admissions: this.counts.checkpoint_admissions, stopped_on_wait_budget: this.stopped, dropped_upstream: this.counts.dropped_upstream,
       ...(this.counts.purged_skipped ? { purged_skipped: this.counts.purged_skipped } : {}), finished_at: now } };
-    await this.writeState();
+    await this.writeState(leaseSignal);
   }
   /**
    * #6831: records a connector item skipped because its content matches a page purge tombstone, either screened out
@@ -837,6 +848,7 @@ export class ManagedConnectorSync {
    * same content until the owner clears the tombstone (`gbrain pages unpurge <slug>`).
    */
   private skipPurged(slug: string, row: WriteRequest | null): void {
+    this.accountedItems.add(slug);
     if (row) this.receipts = this.receipts.filter(id => id !== row.id);
     this.counts.purged_skipped++;
     this.purged.push({ slug, request_id: row?.request_id ?? null, at: new Date().toISOString() });
@@ -908,9 +920,9 @@ export class ManagedConnectorSync {
     this.connectorState = { ...this.connectorState, first_attempt_at: this.connectorState.first_attempt_at ?? new Date().toISOString() };
   }
   /** One statement: the state row changes only while this run still holds the connector sync lease. */
-  private async writeState(): Promise<void> {
+  private async writeState(signal = this.lease?.signal): Promise<void> {
     if (!this.lease) { await writeManagedConnectorState(this.engine, this.sourceId, this.source.incarnation, this.connectorState); return; }
-    this.lease.signal.throwIfAborted();
+    signal?.throwIfAborted();
     const { handle } = this.lease;
     const written = await writeManagedConnectorState(this.engine, this.sourceId, this.source.incarnation, this.connectorState,
       { id: handle.id, token: handle.acquisitionToken, acquiredAt: handle.acquiredAt });
@@ -1063,6 +1075,7 @@ export class ManagedConnectorSync {
     } else if (!row) {
       if (page && !prior.retry && await this.unchanged(kind, slug, intent, snapshot, sourcePath)) {
         this.counts.skipped_unchanged++;
+        this.accountedItems.add(slug);
         return { row: null, pending: false, created: false };
       }
       if (kind === 'connector_v2_import' && await this.carriesPurgedPage(slug, extra.content)) {
@@ -1088,16 +1101,19 @@ export class ManagedConnectorSync {
       row = await waitForWrite(this.engine, row!, loadConfig() ?? { engine: this.engine.kind }, maintenancePublishWaitMs());
       writeResponse(row);
       this.receipts.push(row.id);
+      this.accountedItems.add(slug);
       return { row, pending: false, created: false };
     }
     row = await this.budgetedWait(row!);
     if (kind === 'connector_v2_checkpoint') {
       if (!isTerminal(row)) {
         this.pendingCheckpoint = { itemRef: CHECKPOINT_SLUG, requestId: row.request_id, baseRequestId, admittedAt: new Date(row.created_at).toISOString() };
+        this.accountedItems.add(slug);
         this.stopped = true;
         throw new ConnectorWaitBudgetStop(row);
       }
       writeResponse(row);
+      this.accountedItems.add(slug);
       return { row, pending: false, created: false };
     }
     if (isTerminal(row)) {
@@ -1105,6 +1121,7 @@ export class ManagedConnectorSync {
       if (row.state !== 'committed') this.lastFailedItem = { slug, requestId: row.request_id };
       writeResponse(row);
       this.receipts.push(row.id);
+      this.accountedItems.add(slug);
       if (row.outcome?.noop !== true) {
         if (kind === 'connector_v2_delete') this.counts.deleted++; else if (row.outcome?.status === 'created') this.counts.created++; else this.counts.updated++;
       }
@@ -1114,6 +1131,7 @@ export class ManagedConnectorSync {
     const counted = !snapshot ? 'created' : kind === 'connector_v2_delete' ? 'deleted' : 'updated';
     this.pendingRows.set(row.id, { row, bytes: Buffer.byteLength(JSON.stringify(intent)), counted,
       entry: { itemRef: slug, requestId: row.request_id, baseRequestId, admittedAt: new Date(row.created_at).toISOString() } });
+    this.accountedItems.add(slug);
     this.counts[counted]++;
     await this.makeRoom();
     return { row, pending: true, created: !snapshot };
