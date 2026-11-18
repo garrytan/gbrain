@@ -46,6 +46,9 @@ import { ownerOnlyTriggersLeftLine } from '../access/owner-only-marks.ts';
 const OWNER_ONLY_SOURCE = `config->>'kind' IN ('imessage') OR config->>'owner_only' = 'true'`;
 /** The comment on owner_only_marks that records, once and for good, that the brain has held owner-only data. */
 export const OWNER_ONLY_HELD = 'gbrain:owner_only_held (GST-3032): this brain has held owner-only data, so owner-only lineage stays guarded';
+/** The held flag test, inline: a nested function call per deleted row costs a search_path switch (GST-3032 timing). */
+const HELD_SQL = `EXISTS (SELECT 1 FROM pg_catalog.pg_description d WHERE d.objoid = 'public.owner_only_marks'::pg_catalog.regclass
+    AND d.classoid = 'pg_catalog.pg_class'::pg_catalog.regclass AND d.objsubid = 0 AND d.description = '${OWNER_ONLY_HELD}')`;
 /** Refuse a delete that needs owner_only_marks this role cannot read and add, naming the grant. */
 const MARKS_DENIED_RAISE = `    RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'owner_only_marks_unwritable: this brain holds owner-only data, and this database role ('
         || current_user || ') cannot read and add owner_only_marks, so deleting this row could leave a row derived from owner-only data unmarked',
@@ -75,7 +78,7 @@ DROP POLICY IF EXISTS owner_only_marks_read ON owner_only_marks;
 DROP POLICY IF EXISTS owner_only_marks_add ON owner_only_marks;
 CREATE OR REPLACE FUNCTION gbrain_owner_only_held() RETURNS boolean
   LANGUAGE sql STABLE PARALLEL SAFE SET search_path = pg_catalog, public, pg_temp AS $fn$
-  SELECT pg_catalog.obj_description('public.owner_only_marks'::pg_catalog.regclass, 'pg_class') IS NOT DISTINCT FROM '${OWNER_ONLY_HELD}'
+  SELECT ${HELD_SQL}
 $fn$;
 CREATE OR REPLACE FUNCTION gbrain_owner_only_hold() RETURNS void
   LANGUAGE plpgsql VOLATILE SET search_path = pg_catalog, public, pg_temp AS $fn$
@@ -166,7 +169,7 @@ END
 $fn$;
 CREATE OR REPLACE FUNCTION ${OWNER_ONLY_LINEAGE_FN}() RETURNS boolean
   LANGUAGE sql STABLE PARALLEL SAFE SET search_path = pg_catalog, public, pg_temp AS $fn$
-  SELECT EXISTS (SELECT 1 FROM sources s WHERE ${OWNER_ONLY_SOURCE.replace(/config/g, 's.config')}) OR gbrain_owner_only_held()
+  SELECT EXISTS (SELECT 1 FROM sources s WHERE ${OWNER_ONLY_SOURCE.replace(/config/g, 's.config')}) OR ${HELD_SQL}
 $fn$;
 CREATE OR REPLACE FUNCTION gbrain_owner_only_mark_derived(p_table TEXT, p_ids BIGINT[]) RETURNS void
   LANGUAGE plpgsql VOLATILE SET search_path = pg_catalog, public, pg_temp AS $fn$
@@ -219,7 +222,7 @@ CREATE OR REPLACE FUNCTION gbrain_owner_only_row_deleted() RETURNS trigger
 DECLARE
   owner_only boolean;
 BEGIN
-  IF NOT ${OWNER_ONLY_LINEAGE_FN}() THEN
+  IF NOT ${HELD_SQL} AND NOT EXISTS (SELECT 1 FROM sources s WHERE ${OWNER_ONLY_SOURCE.replace(/config/g, 's.config')}) THEN
     RETURN OLD;
   END IF;
   IF gbrain_owner_only_marks_denied('r') THEN

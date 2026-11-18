@@ -5261,8 +5261,8 @@
         "idempotent": true,
         "name": "owner_only_marks",
         "sql": {
-          "length": 12539,
-          "sha256": "0f611e7765509daad71e97d6e9b8d2a25fd8aa860e65b978560174b9d26a3b05"
+          "length": 13369,
+          "sha256": "3048ae52b2cb348f3549795d549324610f695cb270ccb6644289cbafc05221f2"
         },
         "sqlFor": "absent",
         "transaction": "absent",

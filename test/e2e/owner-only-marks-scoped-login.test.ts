@@ -44,7 +44,7 @@ const text = (title: string) => ['---', 'type: note', `title: ${title}`, '---', 
 
 /** The SQL between `marker`'s begin and end comments in docs/ENGINES.md, with each placeholder replaced. */
 function docsRecipe(marker: string, roles: Record<string, string>): string {
-  // test-reads-source-ok[structural]: the operator recipes are applied verbatim, so the documented statements are the tested ones.
+  // The operator recipes are applied verbatim, so the documented statements are the tested ones.
   const doc = readFileSync(new URL('../../docs/ENGINES.md', import.meta.url), 'utf8');
   const begin = doc.indexOf(`<!-- gbrain:${marker}:begin`);
   const open = doc.indexOf('```sql\n', begin);
