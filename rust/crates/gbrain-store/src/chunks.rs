@@ -326,8 +326,8 @@ fn kept_meta(input: &ChunkInput) -> Map<String, Value> {
         .collect()
 }
 
-/// Writes a chunk record, its postings when the chunk is visible at `view_generation`, and its
-/// share of the stats (the caller stores them).
+/// Writes a chunk record, its postings when the chunk is visible at `view_generation`, its entry
+/// in the code_edges chunk index, and its share of the stats (the caller stores them).
 fn write_chunk(
     tx: &mut dyn KvWrite,
     record: &ChunkRecord,
@@ -335,6 +335,12 @@ fn write_chunk(
     stats: &mut ChunkStats,
 ) -> Result<()> {
     put_json(tx, &keys::chunk(record.page_id, record.chunk_index), record)?;
+    crate::code_edges::put_chunk_index(
+        tx,
+        record.id,
+        record.page_id,
+        record.meta.get("symbol_name").and_then(Value::as_str),
+    )?;
     if record.visible_at(view_generation) {
         put_postings(tx, record)?;
     }

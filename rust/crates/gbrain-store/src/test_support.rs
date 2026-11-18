@@ -43,8 +43,17 @@ impl FileBackend for MemFile {
     }
 }
 
+/// An empty record store on an in-memory file, for a test that opens it more than once.
+pub(crate) fn mem_kv() -> Arc<RedbKv> {
+    Arc::new(RedbKv::open_backend(Box::<MemFile>::default()).unwrap())
+}
+
+/// Opens a brain on `kv`.
+pub(crate) fn open(kv: &Arc<RedbKv>) -> Store {
+    Store::open_kv(kv.clone(), Arc::new(SystemEnv), OpenOptions::default()).unwrap()
+}
+
 /// A fresh brain on an in-memory file, with the `default` source.
 pub(crate) fn store() -> Store {
-    let kv = RedbKv::open_backend(Box::<MemFile>::default()).unwrap();
-    Store::open_kv(Arc::new(kv), Arc::new(SystemEnv), OpenOptions::default()).unwrap()
+    open(&mem_kv())
 }

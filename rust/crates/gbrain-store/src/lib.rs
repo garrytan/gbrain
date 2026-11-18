@@ -180,6 +180,8 @@ impl Store {
         };
         // The schema version is the config the TypeScript migrations keep; a brain that has none
         // (it never was seeded) reports 0.
+        // A brain written before the code_edges chunk index existed is indexed once.
+        code_edges::build_chunk_index(&*kv)?;
         let schema_version = config::read_config(&*kv.snapshot()?, "version")?
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
@@ -251,5 +253,6 @@ fn seed(tx: &mut dyn KvWrite, env: &dyn Env, options: &OpenOptions) -> Result<()
         &keys::text(keys::CONFIG, &["version"]),
         options.schema_version.to_string().as_bytes(),
     )?;
+    code_edges::seed_chunk_index(tx)?;
     sources::seed_default_source(tx, env)
 }
