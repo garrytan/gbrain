@@ -48,6 +48,26 @@ Each returns what PGLite returns for a brain with the same contents.
 | `readJournalLimitRows()` | the config keys that start with `persistence.limits.`, the page-body keys, then `{ key: null, value: null }` | The store keeps no segmented pages, so the largest one has no size. |
 | `readHeldPageRows(pageIds)`, `readHeldCoverageRows(sourceIds)` | `[]` | The store holds no files from a sync, so nothing is held. |
 
+`src/core/rust-engine/store-members/connect-gate.ts` answers the connect gate's persistence reads the same way
+(SQL for PGLite and Postgres in `src/core/engine-sql/connect-gate.ts`):
+
+| Member | Answer | Why |
+| --- | --- | --- |
+| `hasPersistenceTable(table)` | `true` | The store keeps the persistence state of one unmanaged brain, so every table a gate probes is there and empty. |
+| `listManagedRootBindings(hostId, opts?)` | each source with a local path (archived ones too), with null `worktree_id` and `topology_generation` | No host binds a managed worktree; the source rows are the second half of PGLite's UNION. |
+| `readGraduationGateRow(opts?)` | `null` | No graduation targets or leaves this engine, so there is no custody row and no run setting to compare. |
+| `listRetiredDeactivations()` | `[]` | A brain here is never managed, so no writer deactivation committed. |
+
+Caller-visible change (4e0f4976c4): before these members, the graduation connect gate (`readGraduationConnectRow`,
+`assertGraduationConnectAllowed`) and the retired-marker cleanup (`cleanupRetiredManagedMarkers`) skipped their reads
+on any engine that does not report the `raw_sql` capability (`lacksRawSql`), and read that as "no custody row" and
+"nothing to clean up". The skips are gone. An engine that refuses `readGraduationGateRow` or `hasPersistenceTable`
+with `engine_capability_missing` now refuses the connect, or the cleanup, with that refusal instead of carrying on as
+if no row existed. Only a missing table (`42P01`, a brain before the migration) still reads as no row. The Rust
+engine serves both members, so its connect is unchanged. An engine or test fake that does not report `raw_sql` and
+does not serve these members now stops at connect. Refusing is the safer answer: a guessed "no row" could admit a
+connect during a graduation.
+
 The other journal members (`readWriteRequest`, `readWriteRequestById`, `lockPersistenceCounters`,
 `insertWriteRequest`, `stampWriteClaim`, `lockWriteRequest`, `completeWriteRow`) run inside
 `transaction`. This engine does not serve `transaction` yet, so they refuse with

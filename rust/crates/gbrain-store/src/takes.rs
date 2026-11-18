@@ -317,6 +317,17 @@ pub struct CalibrationOptions {
     pub source_ids: Option<Vec<Option<String>>>,
 }
 
+/// One fence row of `matchTakeRows`: the identity fields a stored take is compared with. A null
+/// field is distinct from any stored text.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct FenceRowInput {
+    pub row_num: Value,
+    pub claim: Option<String>,
+    pub kind: Option<String>,
+    pub holder: Option<String>,
+}
+
 /// One `SynthesisEvidenceInput`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -1443,6 +1454,79 @@ impl Store {
                 })
             })
             .collect())
+    }
+
+    /// `matchTakeRows(pageId, rows, limit)`: the row numbers of the page's stored takes that
+    /// differ in claim, kind or holder (a null fence field differs) from a fence row of the same
+    /// number, ascending, at most `limit` (a null limit is no limit, a negative one is
+    /// `invalid_argument`). A stored take that several fence rows of its number differ from is
+    /// listed once for each, as the join lists it.
+    pub fn match_take_rows(
+        &self,
+        page_id: i64,
+        rows: &[FenceRowInput],
+        limit: &Value,
+    ) -> Result<Vec<i32>> {
+        const OP: &str = "matchTakeRows";
+        let mut fence = Vec::with_capacity(rows.len());
+        for row in rows {
+            fence.push((int4(&row.row_num, OP, "row_num")?, row));
+        }
+        let limit = match int4(limit, OP, "limit")? {
+            None => usize::MAX,
+            Some(n) => usize::try_from(n)
+                .map_err(|_| StoreError::invalid(format!("{OP}: LIMIT must not be negative")))?,
+        };
+        let Ok(page_id) = u64::try_from(page_id) else {
+            return Ok(Vec::new());
+        };
+        let read = self.read()?;
+        let stored: BTreeMap<i32, TakeRecord> = page_takes(&*read, page_id)?
+            .into_iter()
+            .map(|t| (t.row_num, t))
+            .collect();
+        let mut out = Vec::new();
+        for (row_num, row) in fence {
+            let Some(take) = row_num.and_then(|n| stored.get(&n)) else {
+                continue;
+            };
+            let same = row.claim.as_deref() == Some(take.claim.as_str())
+                && row.kind.as_deref() == Some(take.kind.as_str())
+                && row.holder.as_deref() == Some(take.holder.as_str());
+            if !same {
+                out.push(take.row_num);
+            }
+        }
+        out.sort_unstable();
+        out.truncate(limit);
+        Ok(out)
+    }
+
+    /// `deleteTakeRows(pageId, rowNums)`: deletes the page's takes at the listed row numbers with
+    /// the evidence rows that cite them (`ON DELETE CASCADE`) and their embeddings. A null entry
+    /// or a number with no take deletes nothing; an empty list is no write.
+    pub fn delete_take_rows(&self, page_id: i64, row_nums: &[Value]) -> Result<()> {
+        const OP: &str = "deleteTakeRows";
+        let mut wanted = BTreeSet::new();
+        for value in row_nums {
+            if let Some(n) = int4(value, OP, "row_nums")? {
+                wanted.insert(n);
+            }
+        }
+        let Ok(page_id) = u64::try_from(page_id) else {
+            return Ok(());
+        };
+        if wanted.is_empty() {
+            return Ok(());
+        }
+        self.write(|tx| {
+            for row_num in wanted {
+                if let Some(take) = take_at(&*tx, page_id, row_num)? {
+                    delete_take(tx, &take)?;
+                }
+            }
+            Ok(())
+        })
     }
 
     /// `addSynthesisEvidence(rows)`: inserts each row unless its

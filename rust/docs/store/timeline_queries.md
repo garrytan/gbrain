@@ -24,6 +24,8 @@ Code: `rust/crates/gbrain-store/src/timeline_queries.rs`, the napi methods in
 | `countSegmentedTimelinePages(sourceIds, limit)` | served (site read) |
 | `countTimelineCommentMarkupRows(sourceIds)` | served (site read) |
 | `listTimelineOrphanPages({ afterId, limit, sourceId? })` | served (site read) |
+| `removeTimelineRows(pageId, rows)` | served, through `remove_entry` and `recompute_latest` |
+| `updateTimelineDetails(pageId, rows)` | served, through `put_entry` |
 
 `excludePrivate: true` refuses: the SQL engines apply a privacy filter for it. `requireSafeChunks`, `minTrust` and
 `suppressFlagged` are ignored, because the SQL reads ignore them too.
@@ -103,6 +105,27 @@ The members refuse with `engine_capability_missing` a value the SQL engines woul
 that is not a 32-bit integer, a page id or `afterId` that is not an integer, and a limit that is negative or not an
 integer.
 
+## removeTimelineRows and updateTimelineDetails
+
+The fence projection's two statements over `jsonb_to_recordset` (`engine-sql/timeline.ts`). Both reach only the
+page's own entries (`event_page_id` is null) and find them by id: the store has no id index, so it scans the
+page's `E` keys.
+
+- `removeTimelineRows(pageId, rows)` deletes a row only while the stored `date`, `source`, `summary` and `detail`
+  all equal the row's. A null field equals nothing, so that row stays. It returns `[{ date, removed }]` for the
+  deleted rows in the order `rows` names them (the order PGLite returns; the caller only collects the dates). A row
+  named twice is deleted and returned once. Every `date` is read as a date before anything is deleted, so a bad
+  one is `invalid_argument` for the whole call (`YYYY/MM/DD` is a date). An empty list, a negative page id and a
+  row of another page change nothing.
+- Each delete removes the `E` key and the `D` key when it still points at the entry, so the same entry can be
+  added again. `G` is then set again to the newest `created_at` of the entries the page still has (event
+  projections included), or deleted when none is left, as `max(created_at)` follows the rows.
+- `updateTimelineDetails(pageId, rows)` sets `detail` to `next` while the stored detail equals the row's `detail`
+  (null equals nothing). A row named twice applies once, the first. A null `next` on a matching row is
+  `constraint_violation` (`detail` is `NOT NULL`) and the call keeps nothing. The entry keeps its id, date,
+  source, summary and `created_at`; the write goes through `put_entry`, so `G` is not lowered.
+- Text with a NUL byte is `invalid_argument`.
+
 ## Keys
 
 The reads write nothing and scan every `E` record. The family keeps one index, in place of `idx_timeline_event_dedup`:
@@ -116,9 +139,9 @@ event page (the hard delete of its depth page removes the entry and leaves the r
 
 ## Known differences
 
-- The core latest-entry marker `G` only goes up, except after `deleteTimelineRows`, which resets it. A projection
-  moved to another depth page leaves `G` of the old page where it was, while Postgres computes the newest
-  `created_at` each time. No parity case reads that today.
+- The core latest-entry marker `G` only goes up, except after `deleteTimelineRows` and `removeTimelineRows`,
+  which set it again. A projection moved to another depth page leaves `G` of the old page where it was, while
+  Postgres computes the newest `created_at` each time. No parity case reads that today.
 - `trust_tier` of a timeline row is not modeled, so fence-guard's held-row count (`heldRows` for `timeline_entries`)
   stays on the SQL path. Follow-up: `timeline-trust-tier-not-modeled`.
 - Time zone: the store reads `current_date`, `te.date::timestamptz` and `effective_date::text` in UTC (the frozen

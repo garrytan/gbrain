@@ -39,11 +39,13 @@ pub mod cycle;
 pub mod doctor;
 mod embedding;
 pub mod loops;
+mod fence;
 mod privacy;
 pub mod purge;
 pub mod repair;
 pub mod trust;
 
+pub use fence::{FenceContext, FenceTarget};
 pub use privacy::PrivacyPolicy;
 use privacy::hidden_by_private_provenance;
 pub(crate) use privacy::page_hidden;

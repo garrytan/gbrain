@@ -61,6 +61,7 @@ pub mod trust;
 pub mod vectors;
 pub mod wanted_links;
 pub mod write_guards;
+pub mod write_trust;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -118,6 +119,8 @@ pub struct Store {
     /// only.
     #[allow(dead_code)] // the vector search family reads it
     pub(crate) vectors: vectors::VectorCache,
+    /// The write trust context: the transaction-local trust settings (`write_trust.rs`).
+    pub(crate) write_context: write_trust::WriteContextSlot,
     info: StoreInfo,
 }
 
@@ -200,6 +203,7 @@ impl Store {
             kv,
             env,
             vectors: vectors::VectorCache::default(),
+            write_context: write_trust::WriteContextSlot::default(),
             info: StoreInfo {
                 brain_id: stored.brain_id,
                 format_version: stored.format_version,
