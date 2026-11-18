@@ -20,11 +20,9 @@ const { parseArgs } = __testing;
 
 function buildMockEngine(opts: { rows: CalibrationProfileRow[] }): {
   engine: BrainEngine;
-  capturedSql: string[];
-  capturedParams: unknown[][];
+  specs: Array<{ holder?: string; sourceId?: string; sourceIds?: string[] }>;
 } {
-  const capturedSql: string[] = [];
-  const capturedParams: unknown[][] = [];
+  const specs: Array<{ holder?: string; sourceId?: string; sourceIds?: string[] }> = [];
   const engine = {
     kind: 'pglite',
     // #2464: getCalibrationProfileOp resolves the owner holder via
@@ -33,23 +31,16 @@ function buildMockEngine(opts: { rows: CalibrationProfileRow[] }): {
     async getConfig(): Promise<string | null> {
       return null;
     },
-    async executeRaw<T>(sql: string, params?: unknown[]): Promise<T[]> {
-      capturedSql.push(sql);
-      capturedParams.push(params ?? []);
-      // SELECT first row matching holder + optional source filter
-      const holder = (params ?? [])[0];
-      const matching = opts.rows.filter(r => r.holder === holder);
-      if ((params ?? []).length > 1) {
-        const p2 = (params ?? [])[1];
-        if (Array.isArray(p2)) {
-          return matching.filter(r => (p2 as string[]).includes(r.source_id)) as unknown as T[];
-        }
-        return matching.filter(r => r.source_id === p2) as unknown as T[];
-      }
-      return matching as unknown as T[];
+    // The typed member filters by holder and, when given, by one source or a list of sources (the list wins).
+    async getLatestCalibrationProfile(spec: { holder?: string; sourceId?: string; sourceIds?: string[] }) {
+      specs.push(spec);
+      let matching = opts.rows.filter(r => r.holder === spec.holder);
+      if (spec.sourceIds) matching = matching.filter(r => spec.sourceIds!.includes(r.source_id));
+      else if (spec.sourceId) matching = matching.filter(r => r.source_id === spec.sourceId);
+      return matching[0] ?? null;
     },
   } as unknown as BrainEngine;
-  return { engine, capturedSql, capturedParams };
+  return { engine, specs };
 }
 
 function buildCtx(engine: BrainEngine, opts: { sourceId?: string; allowedSources?: string[] } = {}): OperationContext {
@@ -149,24 +140,25 @@ describe('getLatestProfile', () => {
       buildProfile({ holder: 'garry', source_id: 'tenant-a' }),
       buildProfile({ holder: 'garry', source_id: 'tenant-c' }),
     ];
-    const { engine, capturedSql, capturedParams } = buildMockEngine({ rows });
-    await getLatestProfile(engine, { holder: 'garry', sourceIds: ['tenant-a', 'tenant-b'] });
-    expect(capturedSql[0]).toContain('= ANY($2::text[])');
-    expect(capturedParams[0]![1]).toEqual(['tenant-a', 'tenant-b']);
+    const { engine, specs } = buildMockEngine({ rows });
+    const profile = await getLatestProfile(engine, { holder: 'garry', sourceIds: ['tenant-a', 'tenant-b'] });
+    expect(specs[0]).toEqual({ holder: 'garry', sourceIds: ['tenant-a', 'tenant-b'] });
+    expect(profile!.source_id).toBe('tenant-a');
   });
 
   test('no source filter when neither sourceId nor sourceIds is passed', async () => {
-    const { engine, capturedSql } = buildMockEngine({ rows: [] });
+    const { engine, specs } = buildMockEngine({ rows: [] });
     await getLatestProfile(engine, { holder: 'garry' });
-    // SELECT clause names the column but WHERE clause omits source_id filter.
-    expect(capturedSql[0]).not.toContain('AND source_id');
+    // No source filter reaches the member (an empty list is treated as no list, an empty id as no id).
+    expect(specs[0]!.sourceId).toBeUndefined();
+    expect(specs[0]!.sourceIds).toBeUndefined();
   });
 
-  test('coerces BIGSERIAL bigint id to number so JSON.stringify is safe (#2450)', async () => {
+  test('the id stays text so JSON.stringify is safe (#2450; the engine member now does the bigint-to-text coercion)', async () => {
     const engine = {
       kind: 'pglite',
-      async executeRaw<T>(): Promise<T[]> {
-        return [{ ...buildProfile({ holder: 'brain' }), id: 10n }] as unknown as T[];
+      async getLatestCalibrationProfile() {
+        return { ...buildProfile({ holder: 'brain' }), id: '10' };
       },
     } as unknown as BrainEngine;
     const p = await getLatestProfile(engine, { holder: 'brain' });
