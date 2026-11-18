@@ -867,7 +867,7 @@ src/core/persistence/unindexed-files.ts	execute_raw	8
 src/core/persistence/upload-streamed.ts	execute_raw	1
 src/core/persistence/worktree-refresh.ts	execute_raw	32
 src/core/persistence/write-applied.ts	execute_raw	1
-src/core/persistence/writer-versions.ts	execute_raw	3
+src/core/persistence/writer-versions.ts	execute_raw	2
 src/core/pglite-statements.ts	driver_call	1
 src/core/planner-stats.ts	execute_raw	14
 src/core/post-upgrade-reembed.ts	execute_raw	1

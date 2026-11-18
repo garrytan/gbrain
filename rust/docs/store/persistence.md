@@ -105,13 +105,16 @@ The consumer's housekeeping after a write (`persistence-housekeeping.ts`).
 
 ## Writer versions
 
-When the brain started stamping writer versions on its requests (`writer-versions.ts`). Postgres reads its cutoff from
+Which binaries admitted and published the retained requests (`writer-versions.ts`), from the
+`admitter_*` and `consumer_*` stamps on each request. Postgres reads its cutoff from
 `persistence_brain.writer_version_cutoff`, the moment migration 178 started stamping requests. This
-engine stamps every request from the brain's creation, so its cutoff is the brain's creation time.
+engine stamps every request from the brain's creation, so its cutoff is the brain's creation time. No
+request is bound to a worktree here, so an unstamped consumer has no owner host to fall back to.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `brain.readWriterVersionCutoff()` | the brain's creation time as ISO text, `null` without a format record | `readWriterVersionCutoff` |
+| `brain.listWriterVersions(limit)` | per role, the latest request of each host and principal (a consumer only for a committed request), newest first (null times first, ties by role, host, principal), at most `limit` | `listWriterVersions` |
 
 ## Effect scans
 

@@ -387,6 +387,16 @@ impl Brain {
         self.run(env, move |s| s.read_writer_version_cutoff())
     }
 
+    /// `listWriterVersions(limit)`: `{ role, host_id, principal, version, last_seen }` rows.
+    #[napi]
+    pub fn list_writer_versions<'env>(
+        &self,
+        env: &'env Env,
+        limit: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_writer_versions(limit))
+    }
+
     #[napi]
     pub fn read_capacity_forecast_inputs<'env>(
         &self,
