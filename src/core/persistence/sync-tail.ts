@@ -43,7 +43,7 @@ export interface SyncTailReport {
  * `failed` status and its notice. The obligation is cleared (compare-and-swap) only when every step ran; a checkpoint
  * that committed meanwhile keeps its own.
  */
-export interface TailBacklogShare { maxPages: number; budgetMs: number }
+export interface TailBacklogShare { maxPages: number; deadlineAtMs: number }
 
 /**
  * With `deferBacklog` the link extraction derives only the pages the run imported; what is left of the tail's page cap and
@@ -86,14 +86,14 @@ export async function runSyncTail(engine: BrainEngine, sourceId: string, opts: {
   const underived = links ? Math.max(0, slugs.length - links.pages - links.skipped) : 0;
   const truncated = underived > 0 && (Date.now() >= deadlineAt || links!.pages + links!.skipped >= SYNC_TAIL_MAX_PAGES);
   const status: SyncTailReport['status'] = failure !== null ? 'failed' : !ran ? 'deferred' : truncated ? 'truncated' : statistics === 'failed' ? 'degraded' : 'done';
-  const backlog = opts.deferBacklog && links ? { maxPages: SYNC_TAIL_MAX_PAGES - links.pages - links.skipped - (links.failed ?? 0), budgetMs: deadlineAt - Date.now() } : null;
-  return { status, runs: owed.length, statistics, ...(links ? { links, underived } : {}), ...(backlog && backlog.maxPages > 0 && backlog.budgetMs > 0 ? { backlog } : {}),
+  const backlog = opts.deferBacklog && links ? { maxPages: SYNC_TAIL_MAX_PAGES - links.pages - links.skipped - (links.failed ?? 0), deadlineAtMs: deadlineAt } : null;
+  return { status, runs: owed.length, statistics, ...(links ? { links, underived } : {}), ...(backlog && backlog.maxPages > 0 && backlog.deadlineAtMs > Date.now() ? { backlog } : {}),
     ...(status === 'done' ? {} : { notice: tailNotice(sourceId, status, { statistics, underived, failure }) }) };
 }
 
-/** The stale-link backlog share a deferred tail left (`runSyncTail` with `deferBacklog`), with the tail's own cap and time. */
+/** The stale-link backlog share a deferred tail left (`runSyncTail` with `deferBacklog`): the tail's unspent page cap, until its deadline. */
 export function drainSyncTailBacklog(engine: BrainEngine, sourceId: string, share: TailBacklogShare, signal?: AbortSignal): Promise<ManagedLinkExtraction> {
-  return extractManagedStaleLinks(engine, { sourceId, maxPages: share.maxPages, timeBudgetMs: share.budgetMs, signal, mentions: false });
+  return extractManagedStaleLinks(engine, { sourceId, maxPages: share.maxPages, timeBudgetMs: Math.max(1, share.deadlineAtMs - Date.now()), signal, mentions: false });
 }
 
 function tailNotice(sourceId: string, status: Exclude<SyncTailReport['status'], 'done'>, d: { statistics: SyncTailReport['statistics']; underived?: number; failure: string | null }): Notice {

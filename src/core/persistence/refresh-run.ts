@@ -54,27 +54,28 @@ export async function withRefreshRun<T extends object>(engine: BrainEngine, opts
   const run: RefreshRun = { phases: {}, backlog: [] };
   let result: T;
   try { result = await refresh(run); }
-  catch (error) { await finishRefreshRun(engine, run, opts); throw error; }
+  catch (error) { await finishRefreshRun(engine, run, opts).catch(() => undefined); throw error; }
   return { ...result, ...await finishRefreshRun(engine, run, opts) };
 }
 
 /**
  * Spends the run's backlog shares (after every refresh lock is released) and returns the result fields the run reports.
  * A source whose drain lock another process holds is skipped and named; a failure is reported on the share's entry and
- * never fails the refresh, whose imports already completed. `beforeDrain` is the test seam `hooks.backlog`.
+ * never fails the refresh, whose imports already completed. The drains share the latest member tail's deadline, so they
+ * end when the in-lock tails would have. `beforeDrain` is the test seam `hooks.backlog`.
  */
 async function finishRefreshRun(engine: BrainEngine, run: RefreshRun, opts: FinishOptions): Promise<RefreshRunReport> {
   const drained: RefreshLinkBacklog[] = [];
   if (run.backlog.length) {
     const { drainSyncTailBacklog } = await import('./sync-tail.ts');
-    const started = performance.now();
+    const started = performance.now(), deadlineAtMs = Math.max(...run.backlog.map(item => item.share.deadlineAtMs));
     for (const { sourceId, share } of run.backlog) {
       try {
         const lock = await tryAcquireNativeLock(join(persistenceHome(), 'locks', `link-backlog-${createHash('sha256').update(sourceId).digest('hex').slice(0, 32)}.lock`));
         if (!lock) { drained.push({ source_id: sourceId, outcome: 'skipped', pages: 0 }); continue; }
         try {
           await opts.beforeDrain?.(sourceId);
-          const links = await drainSyncTailBacklog(engine, sourceId, share);
+          const links = await drainSyncTailBacklog(engine, sourceId, { ...share, deadlineAtMs });
           drained.push({ source_id: sourceId, outcome: 'drained', pages: links.pages, remaining: links.remaining });
         } finally { await lock.release(); }
       } catch (error) {
