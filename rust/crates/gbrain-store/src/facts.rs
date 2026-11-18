@@ -44,6 +44,7 @@ pub mod loops;
 mod privacy;
 pub mod purge;
 pub mod relink;
+pub mod relink_writes;
 pub mod repair;
 pub mod trust;
 

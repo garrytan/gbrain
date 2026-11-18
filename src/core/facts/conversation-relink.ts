@@ -51,7 +51,7 @@ import { conversationTriedSql } from './conversation-memo.ts';
 import { appendContextNote } from './subject-infer.ts';
 import { ENTITY_LINKABLE_SQL, entityLinkable } from './attribution.ts';
 import { inferConversationSubject } from './conversation-subject-infer.ts';
-import { unbackedEntitySql } from './withdrawal-schema.ts';
+import { ACTIVE_UNLINKED_FACT_SQL, UNBACKED_FACT_SQL, derivedConversationRow } from '../engine-sql/fact-relink-writes.ts';
 import { resolveStrictEntityReference } from '../entities/resolve.ts';
 import { dropRekeyDuplicates } from './ontology-rekey.ts';
 
@@ -60,12 +60,12 @@ export const CONVERSATION_RELINK_INTENT = 'managed_maintenance_conversation_reli
 export const CONVERSATION_RELINK_ANCHOR = '.maintenance/conversation-relink';
 /** Pages one run relinks when no `--slugs` are named. */
 export const CONVERSATION_RELINK_PAGES = 50;
-/** The SQL predicate (on alias `f`, audit sources as `$audit`) of a conversation extractor's derived fact row. */
-export const derivedConversationRow = (audit: string) => `f.source LIKE 'cli:extract-conversation-facts%' AND f.source <> ALL(${audit}::text[])`;
-const LIVE = 'f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())';
-const ACTIVE = `f.entity_slug IS NULL AND ${LIVE}`;
+// The derived-row predicate and the live, unlinked and unbacked row tests live with the relink writer (engine-sql/fact-relink-writes.ts),
+// so the planner here and the guarded link read the same text.
+export { derivedConversationRow };
+const ACTIVE = ACTIVE_UNLINKED_FACT_SQL;
 /** GBRA-574: a derived row on an unbacked name key (`--unbacked`). */
-const UNBACKED = `${unbackedEntitySql('f')} AND ${LIVE}`;
+const UNBACKED = UNBACKED_FACT_SQL;
 
 /** A planned link; `from` is the unbacked name key a `--unbacked` row moves off (absent: a row with no entity). */
 export interface ConversationRelinkRow { id: number; fact: string; entity_slug: string; context: string; from?: string }
@@ -149,12 +149,9 @@ async function linkRows(tx: BrainEngine, sourceId: string, slug: string, rows: C
     // A re-keyed row's slot gives way to one its target already holds on the page (facts/ontology-rekey.ts), so the move never collides.
     if (row.from) await dropRekeyDuplicates(tx, sourceId, { where: `f.id = $2::bigint AND ${UNBACKED}`, entity: '$3::text', sms: 'f.source_markdown_slug',
       params: [row.id, row.entity_slug] });
-    const done = await tx.executeRaw<{ id: number | string }>(
-      `UPDATE facts f SET entity_slug = $4, context = $5 WHERE f.source_id = $1 AND f.id = $2 AND f.source_markdown_slug = $3 AND f.fact = $6
-          AND ${row.from ? `f.entity_slug = $8 AND ${UNBACKED}` : ACTIVE} AND ${ENTITY_LINKABLE_SQL} AND ${derivedConversationRow('$7')}
-          AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id = $1 AND p.slug = $4 AND p.deleted_at IS NULL) RETURNING f.id`,
-      [sourceId, row.id, slug, row.entity_slug, row.context, row.fact, [...AUDIT_ROW_SOURCES], ...(row.from ? [row.from] : [])]);
-    if (!done.length) continue;
+    const done = await tx.linkConversationFact(sourceId,
+      { factId: row.id, pageSlug: slug, fact: row.fact, entitySlug: row.entity_slug, context: row.context, from: row.from ?? null });
+    if (!done) continue;
     linked.push(row.id);
     const tier = row.from ? 'unbacked' : 'mention';
     if (attempts) await tx.upsertFactRelinkAttempt(sourceId,

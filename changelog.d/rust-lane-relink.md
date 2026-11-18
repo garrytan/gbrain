@@ -3,3 +3,4 @@
 ### Changed
 - The Rust engine now keeps the relink attempt record: the last outcome for each fact, the model verdict memos and the paid re-extraction memo of each conversation page. `gbrain facts relink` and conversation relinking skip a fact a model already judged, the same as on Postgres.
 - On the Rust engine, the `unlinked_facts` doctor check now counts the conversation rows that free relinking already tried and the ones a paid re-extraction already covered, and names the right fix for each page. Before, those counts stopped on a missing-capability refusal.
+- On the Rust engine, `gbrain facts relink` can now publish the facts it placed and link conversation facts to their pages. Before, those writes ran raw SQL the Rust engine does not take.

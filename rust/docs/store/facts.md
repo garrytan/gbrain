@@ -118,6 +118,19 @@ paid when a `paid_reextract` attempt for its page has the page's current `conten
 reason. `countFactRelinkOutcomes` counts `no_subject` rows and the `linked` rows of the last 7
 days by outcome and tier.
 
+### Relink writes (`facts/relink_writes.rs`)
+
+`placeRelinkedFact` changes one row of the source that has no place yet (no entity, no fence
+key, not expired). `link` sets the entity and the fence key (`source_markdown_slug`, `row_num`)
+and the context; `retire` sets the entity, `expired_at` (the store clock) and the context. A
+fence position another row holds refuses with `23505` on `idx_facts_fence_key`. A bad `rowNum`
+or an unknown action is `invalid_argument`. `linkConversationFact` sets the entity and the
+context only while the row is still as planned: on the given page with the given text, live
+(not expired, `valid_until` unset or later), with no entity or on the unbacked name key `from`,
+user or unattributed, written by a conversation extractor, and the target page is live. Both
+return false and write nothing when the row does not match. Not modeled: the withdrawal and
+purge triggers of the Postgres `UPDATE`, because their ledgers have no Rust writer.
+
 ## Lookups and hooks for other families
 
 - `read_fact`, `write_fact`, `delete_fact` (`pub(crate)`): row access for the ontology family.
