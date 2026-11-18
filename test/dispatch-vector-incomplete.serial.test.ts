@@ -24,6 +24,16 @@ const engine = {
   // No pages and no saved facts in this fake brain: the typed trust and saved-facts reads find nothing.
   readPageTrustRows: async () => [],
   matchSavedFacts: async () => [],
+  // Alias fan-out reads titles and aliases through typed members; this fake brain has no pages, so each finds nothing.
+  findPagesByTitles: async () => [],
+  resolveAliases: async () => new Map(),
+  resolveCaseSensitiveAliases: async () => [],
+  readPageTitle: async () => null,
+  readPageAliasRows: async () => [],
+  // Readiness and coverage read through typed members: no generation (never cached), nothing pending, no held pages.
+  readProjectionReadinessGeneration: async () => null,
+  readProjectionReadiness: async () => ({ pending: false }),
+  countEmbeddingHeldPages: async () => null,
 } as unknown as BrainEngine;
 
 describe('HTTP MCP dispatch preserves bounded-vector incompleteness', () => {
