@@ -46,6 +46,11 @@ function counting(target: PGLiteEngine) {
       statements.push(`getConfigValues ${JSON.stringify(keys)}`);
       return obj.getConfigValues(keys);
     };
+    // The vacuum's segment storage probe is a typed member (engine-sql/write-guards.ts) that runs one statement.
+    if (key === 'hasSegmentStorage') return () => {
+      statements.push('hasSegmentStorage');
+      return obj.hasSegmentStorage();
+    };
     const value = Reflect.get(obj, key);
     return typeof value === 'function' ? value.bind(obj) : value;
   } });
