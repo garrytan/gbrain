@@ -85,18 +85,23 @@ export async function runBoundedStatement<T>(conn: Sql, sql: string, params: unk
  * #8651: the deadline also ends the wait for a free connection; a read whose deadline passed before it had one is
  * never sent (`ReadDeadlineError`). A COMMIT still unsettled at the deadline, and at least `settleMs` after it was
  * sent, has its connection discarded so the connection and its gauge slot come back.
+ * `signal` (the preparation's cancellation, read-deadline.ts) also ends the wait for a connection, and an abort after the
+ * connection was reserved rejects at once with an `AbortError` and discards it (#8155): a socket or pooler that stopped
+ * answering never keeps the read, or the connection, past the budget.
  */
 // engine-sql-ok: transaction control around a caller's read (BEGIN READ ONLY / SET LOCAL statement_timeout / COMMIT), no storage-domain SQL
-export async function runDeadlineRead<T>(conn: Sql, deadlineAt: number, run: (tx: Sql) => Promise<T>, gauge: CheckoutGauge, settleMs: number): Promise<T> {
+export async function runDeadlineRead<T>(conn: Sql, deadlineAt: number, run: (tx: Sql) => Promise<T>, gauge: CheckoutGauge, settleMs: number, signal?: AbortSignal): Promise<T> {
+  if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
   if (Date.now() >= deadlineAt) throw new ReadDeadlineError();
   gauge.acquire('reserved');
   const expiry = new AbortController();
   const timer = setTimeout(() => expiry.abort(), deadlineAt - Date.now());
   let reserved: postgres.ReservedSql;
   try {
-    reserved = await reserveWithCancellation(reserve => conn.reserve(reserve), expiry.signal);
+    reserved = await reserveWithCancellation(reserve => conn.reserve(reserve), signal ? AbortSignal.any([expiry.signal, signal]) : expiry.signal);
   } catch (error) {
     gauge.release('reserved');
+    if (signal?.aborted) throw error;
     throw expiry.signal.aborted ? new ReadDeadlineError() : error;
   } finally { clearTimeout(timer); }
   if (Date.now() >= deadlineAt) {
@@ -107,23 +112,45 @@ export async function runDeadlineRead<T>(conn: Sql, deadlineAt: number, run: (tx
   gauge.checkedOut();
   const ms = Math.max(1, Math.ceil(deadlineAt - Date.now()));
   const opened = reserved.unsafe(`BEGIN READ ONLY; SET LOCAL statement_timeout = ${ms}`).simple().execute().then(() => undefined, (error: unknown) => error);
+  let discarded = false;
+  let onAbort: (() => void) | undefined;
   try {
-    const result = await run(reserved as unknown as Sql);
-    const failed = await opened;
-    if (failed) throw failed;
-    return result;
+    const read = (async () => {
+      const result = await run(reserved as unknown as Sql);
+      const failed = await opened;
+      if (failed) throw failed;
+      return result;
+    })();
+    if (!signal) return await read;
+    read.catch(() => {});
+    return await Promise.race([read, new Promise<never>((_, reject) => {
+      onAbort = () => {
+        discarded = true;
+        reserved.discard();
+        gauge.release('reserved');
+        reject(new DOMException('aborted', 'AbortError'));
+      };
+      if (signal.aborted) onAbort();
+      else signal.addEventListener('abort', onAbort, { once: true });
+    })]);
   } finally {
-    let settled = false;
-    const settle = () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(stuck);
-      reserved.release();
-      gauge.release('reserved');
-    };
-    const stuck = setTimeout(() => { reserved.discard(); settle(); }, Math.max(deadlineAt - Date.now(), settleMs));
-    stuck.unref?.();
-    void reserved.unsafe('COMMIT').execute().then(settle, settle);
+    if (onAbort) signal?.removeEventListener('abort', onAbort);
+    if (!discarded) settleCommit(reserved, gauge, deadlineAt, settleMs);
   }
+}
+
+/** Sends the read's trailing COMMIT; a COMMIT still unsettled at the deadline (and `settleMs` after it was sent) has its connection discarded. */
+function settleCommit(reserved: postgres.ReservedSql, gauge: CheckoutGauge, deadlineAt: number, settleMs: number): void {
+  let settled = false;
+  const settle = () => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(stuck);
+    reserved.release();
+    gauge.release('reserved');
+  };
+  const stuck = setTimeout(() => { reserved.discard(); settle(); }, Math.max(deadlineAt - Date.now(), settleMs));
+  stuck.unref?.();
+  void reserved.unsafe('COMMIT').execute().then(settle, settle);
 }
 

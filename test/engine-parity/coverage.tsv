@@ -6,14 +6,15 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 201/201
+# covered: 239/239
 # lifecycle: 9/9
-# pages: 25/25
+# pages: 29/29
 # search: 7/7
-# chunks: 17/17
+# search_reads: 9/9
+# chunks: 22/22
 # extraction: 7/7
 # links: 23/23
-# tags: 3/3
+# tags: 5/5
 # timeline: 8/8
 # ontology: 4/4
 # raw_files: 5/5
@@ -23,9 +24,11 @@
 # facts: 14/14
 # segmented_body: 15/15
 # versions: 3/3
-# stats_ingest: 4/4
-# sync_aliases: 9/9
-# config: 5/5
+# stats_ingest: 5/5
+# sync_aliases: 10/10
+# config: 6/6
+# import_guards: 9/9
+# cycle_locks: 6/6
 # raw_sql: 4/4
 # code_edges: 5/5
 # eval_capture: 5/5
@@ -37,21 +40,21 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	8	no	yes	yes	refuses:transactions
+transaction	lifecycle	yes	11	no	yes	yes	refuses:transactions
 transactionDirect	lifecycle	yes	1	no	yes	yes	refuses:transactions
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	30	yes	yes	yes	serves
-readPageSnapshot	pages	yes	6	no	yes	yes	serves
+getPage	pages	yes	33	yes	yes	yes	serves
+readPageSnapshot	pages	yes	7	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	refuses:pages
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	91	yes	yes	yes	serves
+putPage	pages	yes	106	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	refuses:pages
 findDuplicatePages	pages	yes	1	no	yes	yes	refuses:pages
 deletePage	pages	yes	3	yes	yes	yes	serves
 deletePages	pages	yes	1	yes	yes	yes	refuses:pages
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	refuses:pages
-softDeletePage	pages	yes	18	yes	yes	yes	serves
+softDeletePage	pages	yes	25	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	refuses:pages
 restorePage	pages	yes	6	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	1	no	yes	yes	refuses:pages
@@ -64,18 +67,31 @@ listEntityKeyRows	pages	yes	1	no	yes	yes	refuses:pages
 listAllPageRefs	pages	yes	1	yes	yes	yes	refuses:pages
 listAllSources	pages	yes	2	no	yes	yes	serves
 updateSourceConfig	pages	yes	1	no	yes	yes	serves
+getSource	pages	yes	1	no	yes	yes	refuses:sources
+listSourceLocalPaths	pages	yes	1	no	yes	yes	refuses:sources
 listPrefixSampledPages	pages	yes	1	no	yes	yes	refuses:pages
 listCorpusSample	pages	yes	1	no	yes	yes	refuses:pages
+getPageSealState	pages	yes	1	no	yes	yes	refuses:pages
+refreshPageOrigin	pages	yes	1	no	yes	yes	refuses:pages
 searchKeyword	search	yes	8	yes	yes	yes	serves
 countKeywordPages	search	yes	1	no	yes	yes	refuses:keyword_search
 searchKeywordPages	search	yes	1	no	yes	yes	refuses:keyword_search
-searchTitles	search	yes	2	yes	yes	yes	refuses:keyword_search
+searchTitles	search	yes	3	yes	yes	yes	refuses:keyword_search
 searchVector	search	yes	2	yes	yes	yes	refuses:vector_search
 getEmbeddingsByChunkIds	search	yes	1	no	yes	yes	refuses:embeddings
 searchKeywordChunks	search	yes	1	yes	yes	yes	refuses:keyword_search
-upsertChunks	chunks	yes	11	yes	yes	yes	serves
-sealChunks	chunks	yes	2	no	yes	yes	serves
-getChunks	chunks	yes	15	yes	yes	yes	serves
+cosinesByChunkIds	search_reads	yes	1	no	yes	yes	refuses:vector_search
+hasSupersedeEdges	search_reads	yes	1	no	yes	yes	refuses:links
+supersedingPageSlugs	search_reads	yes	1	no	yes	yes	refuses:links
+aliasCanonicalRefs	search_reads	yes	1	no	yes	yes	refuses:pages
+pageCollapseFacts	search_reads	yes	1	no	yes	yes	refuses:facts
+slugsEndingIn	search_reads	yes	1	no	yes	yes	refuses:pages
+generatedPagesIn	search_reads	yes	1	no	yes	yes	refuses:pages
+livePageIdsAt	search_reads	yes	1	no	yes	yes	refuses:pages
+pagesLinkingTo	search_reads	yes	1	no	yes	yes	refuses:links
+upsertChunks	chunks	yes	13	yes	yes	yes	serves
+sealChunks	chunks	yes	6	no	yes	yes	serves
+getChunks	chunks	yes	19	yes	yes	yes	serves
 getChunkPage	chunks	yes	3	no	yes	yes	refuses:chunks
 getChunkWindows	chunks	yes	1	no	yes	yes	refuses:chunks
 countStaleChunks	chunks	yes	5	no	yes	yes	refuses:embeddings
@@ -89,6 +105,11 @@ listChunklessPagesWithContent	chunks	yes	1	yes	yes	yes	refuses:chunks
 readEmbeddingStateCounts	chunks	yes	1	no	yes	yes	refuses:embeddings
 listEmbeddingStateRows	chunks	yes	1	no	yes	yes	refuses:embeddings
 deleteChunks	chunks	yes	2	no	yes	yes	serves
+deleteChunksExcept	chunks	yes	1	no	yes	yes	refuses:chunks
+setChunkerVersion	chunks	yes	1	no	yes	yes	refuses:chunks
+writeTextProjectionSeal	chunks	yes	1	no	yes	yes	refuses:chunks
+moveChunkIndexes	chunks	yes	1	no	yes	yes	refuses:chunks
+getChunkReuseRows	chunks	yes	1	no	yes	yes	refuses:chunks
 getChunksWithEmbeddings	chunks	yes	1	no	yes	yes	refuses:embeddings
 countStalePagesForExtraction	extraction	yes	4	yes	yes	yes	refuses:pages
 listStalePagesForExtraction	extraction	yes	3	yes	yes	yes	refuses:pages
@@ -97,7 +118,7 @@ markPagesAttendanceBlocked	extraction	yes	1	no	yes	yes	refuses:pages
 countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	refuses:pages
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	refuses:pages
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	refuses:pages
-addLink	links	yes	17	yes	yes	yes	serves
+addLink	links	yes	20	yes	yes	yes	serves
 addLinksBatch	links	yes	1	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	1	no	yes	yes	refuses:links
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	refuses:links
@@ -122,8 +143,10 @@ getSalienceScores	links	yes	1	yes	yes	yes	refuses:salience
 findOrphanPages	links	yes	1	yes	yes	yes	refuses:graph
 addTag	tags	yes	5	yes	yes	yes	serves
 removeTag	tags	yes	1	no	yes	yes	serves
-getTags	tags	yes	1	yes	yes	yes	serves
-addTimelineEntry	timeline	yes	5	yes	yes	yes	serves
+pruneFrontmatterTags	tags	yes	1	no	yes	yes	refuses:tags
+addPageTagsById	tags	yes	1	no	yes	yes	refuses:tags
+getTags	tags	yes	2	yes	yes	yes	serves
+addTimelineEntry	timeline	yes	6	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	1	no	yes	yes	serves
 getTimeline	timeline	yes	3	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	2	no	yes	yes	refuses:timeline
@@ -140,7 +163,7 @@ getRawData	raw_files	yes	2	yes	yes	yes	refuses:raw_data
 upsertFile	raw_files	yes	2	no	yes	yes	refuses:files
 getFile	raw_files	yes	2	no	yes	yes	refuses:files
 listFilesForPage	raw_files	yes	1	no	yes	yes	refuses:files
-addTakesBatch	takes	yes	19	yes	yes	yes	refuses:takes
+addTakesBatch	takes	yes	20	yes	yes	yes	refuses:takes
 updateTakeEmbeddings	takes	yes	1	no	yes	yes	refuses:takes
 listTakes	takes	yes	11	no	yes	yes	refuses:takes
 searchTakes	takes	yes	1	no	yes	yes	refuses:takes
@@ -195,24 +218,42 @@ retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 createVersion	versions	yes	4	no	yes	yes	serves
 getVersions	versions	yes	3	no	yes	yes	serves
 revertToVersion	versions	yes	2	no	yes	yes	refuses:page_versions
+countOnboardSignal	stats_ingest	yes	1	no	yes	yes	refuses:health
 getStats	stats_ingest	yes	2	yes	yes	yes	refuses:health
 getHealth	stats_ingest	yes	2	yes	yes	yes	refuses:health
 logIngest	stats_ingest	yes	1	no	yes	yes	refuses:ingest_log
 getIngestLog	stats_ingest	yes	1	no	yes	yes	refuses:ingest_log
-updateSlug	sync_aliases	yes	4	no	yes	yes	refuses:pages
+updateSlug	sync_aliases	yes	5	no	yes	yes	refuses:pages
 rewriteLinks	sync_aliases	yes	1	no	yes	yes	refuses:links
 resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	refuses:pages
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	refuses:pages
-resolveAliases	sync_aliases	yes	1	no	yes	yes	refuses:pages
-setPageAliases	sync_aliases	yes	1	no	yes	yes	refuses:pages
+resolveAliases	sync_aliases	yes	2	no	yes	yes	refuses:pages
+setPageAliases	sync_aliases	yes	2	no	yes	yes	refuses:pages
+replaceDerivedAliases	sync_aliases	yes	1	no	yes	yes	refuses:pages
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	1	no	yes	yes	refuses:pages
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	refuses:facts
 getConfig	config	yes	4	no	yes	yes	serves
-setConfig	config	yes	7	no	yes	yes	serves
+setConfig	config	yes	8	no	yes	yes	serves
 unsetConfig	config	yes	2	no	yes	yes	serves
 listConfigKeys	config	yes	2	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
+getConfigValues	config	yes	1	no	yes	yes	refuses:config
+readManagedModeRows	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
+getSourceStrictness	import_guards	yes	1	no	yes	yes	refuses:sources
+readPersistenceBrainId	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
+readLocalWriterRow	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
+insertLocalWriterRow	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
+readTransactionSettings	import_guards	yes	1	no	yes	yes	refuses:transactions
+applyTransactionSettings	import_guards	yes	1	no	yes	yes	refuses:transactions
+readLedgerSource	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
+isFolderRestricted	import_guards	yes	1	no	yes	yes	refuses:access_control
+acquireCycleLock	cycle_locks	yes	8	no	yes	yes	refuses:minion_queue
+refreshCycleLock	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
+releaseCycleLock	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
+readCycleLocks	cycle_locks	yes	8	no	yes	yes	refuses:minion_queue
+deleteCycleLock	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
+deleteCycleLockIfStale	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 executeRaw	raw_sql	yes	3	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql

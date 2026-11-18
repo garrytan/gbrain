@@ -34,10 +34,19 @@ export const RUST_ENGINE_MEMBERS = {
   // so it refuses with raw_sql and `schema` stays served.
   ownerOnlyMarkTriggers: 'raw_sql',
   // transactions
+  readTransactionSettings: 'transactions',
+  applyTransactionSettings: 'transactions',
   transaction: 'transactions',
   transactionDirect: 'transactions',
   lockPageKeys: 'transactions',
   // pages
+  aliasCanonicalRefs: 'pages',
+  slugsEndingIn: 'pages',
+  generatedPagesIn: 'pages',
+  livePageIdsAt: 'pages',
+  replaceDerivedAliases: 'pages',
+  getPageSealState: 'pages',
+  refreshPageOrigin: 'pages',
   getPage: 'pages',
   readPageSnapshot: 'pages',
   readPageSnapshotsBatch: 'pages',
@@ -78,9 +87,13 @@ export const RUST_ENGINE_MEMBERS = {
   setPageAliases: 'pages',
   updatePageContextualRetrievalState: 'pages',
   // sources
+  getSource: 'sources',
+  listSourceLocalPaths: 'sources',
+  getSourceStrictness: 'sources',
   listAllSources: 'sources',
   updateSourceConfig: 'sources',
   // config
+  getConfigValues: 'config',
   getConfig: 'config',
   setConfig: 'config',
   unsetConfig: 'config',
@@ -108,10 +121,17 @@ export const RUST_ENGINE_MEMBERS = {
   upsertSegmentDerivations: 'page_body',
   retireSegmentDerivations: 'page_body',
   // tags
+  pruneFrontmatterTags: 'tags',
+  addPageTagsById: 'tags',
   addTag: 'tags',
   removeTag: 'tags',
   getTags: 'tags',
   // chunks
+  deleteChunksExcept: 'chunks',
+  setChunkerVersion: 'chunks',
+  writeTextProjectionSeal: 'chunks',
+  moveChunkIndexes: 'chunks',
+  getChunkReuseRows: 'chunks',
   upsertChunks: 'chunks',
   sealChunks: 'chunks',
   getChunks: 'chunks',
@@ -139,8 +159,12 @@ export const RUST_ENGINE_MEMBERS = {
   searchKeywordChunks: 'keyword_search',
   findByTitleFuzzy: 'keyword_search',
   // vector_search
+  cosinesByChunkIds: 'vector_search',
   searchVector: 'vector_search',
   // links
+  hasSupersedeEdges: 'links',
+  supersedingPageSlugs: 'links',
+  pagesLinkingTo: 'links',
   addLink: 'links',
   addLinksBatch: 'links',
   replaceDerivedLinks: 'links',
@@ -170,6 +194,7 @@ export const RUST_ENGINE_MEMBERS = {
   getAdjacencyBoosts: 'graph',
   findOrphanPages: 'graph',
   // facts
+  pageCollapseFacts: 'facts',
   insertFact: 'facts',
   insertFacts: 'facts',
   deleteFactsForPage: 'facts',
@@ -217,6 +242,7 @@ export const RUST_ENGINE_MEMBERS = {
   setEmotionalWeightBatch: 'salience',
   getRecentSalience: 'salience',
   // health
+  countOnboardSignal: 'health',
   getStats: 'health',
   getHealth: 'health',
   listEnrichCandidates: 'health',
@@ -248,6 +274,21 @@ export const RUST_ENGINE_MEMBERS = {
   getOntology: 'ontology',
   discoverOntologyDimensions: 'ontology',
   findOntologyConflicts: 'ontology',
+  // persistence_journal
+  readManagedModeRows: 'persistence_journal',
+  readPersistenceBrainId: 'persistence_journal',
+  readLocalWriterRow: 'persistence_journal',
+  insertLocalWriterRow: 'persistence_journal',
+  readLedgerSource: 'persistence_journal',
+  // access_control
+  isFolderRestricted: 'access_control',
+  // minion_queue (the Rust plan ships cycle locks with the minion queue: docs/designs/RUST_ENGINE.md, "Cycle locks")
+  acquireCycleLock: 'minion_queue',
+  refreshCycleLock: 'minion_queue',
+  releaseCycleLock: 'minion_queue',
+  readCycleLocks: 'minion_queue',
+  deleteCycleLock: 'minion_queue',
+  deleteCycleLockIfStale: 'minion_queue',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;

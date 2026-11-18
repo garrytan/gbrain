@@ -9,7 +9,7 @@ import { assertPageRevision } from './page-state/types.ts';
 import { assertOriginUnclaimed, assertRevivalUnclaimed, classifyOriginUniqueViolation } from './persistence/origin-guard.ts';
 import { lockUnheldPageKeys, withHeldPageKeys, type HeldPageKeys } from './page-state/guards.ts';
 import { readPageSnapshot as readCanonicalPageSnapshot } from './page-state/snapshot.ts';
-import { readDeadline } from './read-deadline.ts';
+import { readDeadline, readDeadlineSignal } from './read-deadline.ts';
 import { readPageSnapshotsBatch } from './page-snapshot-batch.ts';
 import { createPageVersion, type VersionHistory } from './page-state/versions.ts';
 import { moveSlugBindings, recordRenameAlias } from './page-state/rename-alias.ts';
@@ -67,7 +67,7 @@ import { logBatchRetry as auditLogBatchRetry, logBatchExhausted as auditLogBatch
 import type {
   DomainBankSampleOpts, CorpusSampleOpts, DomainBankRow,
 } from './types.ts';
-import { DREAM_VERDICT_TTL_SECONDS, clampSearchLimit, type TransactionOptions } from './engine.ts';
+import { DREAM_VERDICT_TTL_SECONDS, clampSearchLimit, type CycleLockFilter, type TransactionOptions } from './engine.ts';
 import { transactionAborted, withTransactionAbort, type Discardable } from './postgres-engine/transaction-abort.ts';
 import { readWriteTransactions, retryReadOnlyAutocommit } from './postgres-engine/read-write-transactions.ts';
 import { searchLimitCap } from './search/eval-pool-depth.ts';
@@ -93,7 +93,7 @@ import { splitEmbeddingSignature, currentSpaceChunkPredicate, lockEmbeddingSourc
 import { SAFE_FENCE_CHUNKER_VERSION, bodyWriteChunkVersion, chunkManifestReads, currentTextProjectionFilter, requiresSafeChunks, safeChunksFilter } from './search/safe-chunks.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
-  Chunk, ChunkInput, StaleChunkRow, StalePageRow, ChunklessPageRow,
+  Chunk, ChunkInput, ChunkReuseRow, StaleChunkRow, StalePageRow, ChunklessPageRow,
   SearchResult, SearchOpts, ResolvedColumn,
   Link, GraphNode, GraphPath,
   TimelineEntry, TimelineInput, TimelineOpts,
@@ -154,12 +154,22 @@ import * as tagsImpl from './engine-sql/tags.ts';
 import * as linksImpl from './engine-sql/links.ts';
 import * as timelineImpl from './engine-sql/timeline.ts';
 import * as sourcesImpl from './engine-sql/sources.ts';
+import * as persistenceStateImpl from './engine-sql/persistence-state.ts';
+import * as transactionSettingsImpl from './engine-sql/transaction-settings.ts';
+import * as beliefImpl from './engine-sql/belief.ts';
+import * as configImpl from './engine-sql/config.ts';
+import * as accessControlImpl from './engine-sql/access-control.ts';
+import * as cycleLocksImpl from './engine-sql/cycle-locks.ts';
+import { noteDirectPoolLease } from './direct-pool-profile.ts';
 import * as filesImpl from './engine-sql/files.ts';
 import type { ChunkWindowRequest, ChunkWindowOpts, ChunkWindowPage } from './search/chunk-windows.ts';
 import type { KeywordPageWindow } from './search/keyword-statement.ts';
 import { frontmatterWhereSql } from './search/frontmatter-where.ts';
 import type { EmbeddingState, EmbeddingStateCounts, EmbeddingStateRow } from './embedding-state.ts';
 import * as chunksImpl from './engine-sql/chunks.ts';
+import * as searchReadsImpl from './engine-sql/search-reads.ts';
+import type { ChunkMove } from './page-state/chunk-moves.ts';
+import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import * as ownerOnlyMarksImpl from './engine-sql/owner-only-marks.ts';
 import type { OwnerOnlyTriggerState } from './access/owner-only-marks.ts';
 import * as pageBodyImpl from './engine-sql/page-body.ts';
@@ -324,6 +334,14 @@ export class PostgresEngine implements BrainEngine {
     return this.engineSqlOn(this.sql);
   }
 
+  /** engineSql whose statements a read-only session default refused (25006) run once more in BEGIN READ WRITE, as executeRaw's do (#7183). */
+  private get autocommitSql(): SqlExecutor {
+    return postgresExecutor(this.sql, {
+      runUnsafe: (c, sql, params, opts) => retryReadOnlyAutocommit(c, cc => this.runUnsafe(cc, sql, params, opts)),
+      gauge: this.checkoutGauge,
+    });
+  }
+
   /** Executor over a handle the engine yielded (e.g. `withScopedReadTransaction`'s `tx`). */
   private engineSqlOn(conn: ReturnType<typeof postgres>): SqlExecutor {
     return postgresExecutor(conn, {
@@ -409,6 +427,18 @@ export class PostgresEngine implements BrainEngine {
       };
       return withSearchSettings(tx, this._pageTransaction, settings, () => callback(tx), VECTOR_SETTING_DEFAULTS);
     });
+  }
+
+  /**
+   * A typed read that master issued through `executeRaw`, which a preparer's bounded view (persistence/bounded-reads.ts)
+   * ended on the server at the claim's deadline. Under `withReadDeadline` it runs as `withScopedReadTransaction`'s
+   * deadline path does (a reserved read-only transaction whose `statement_timeout` is the time left); otherwise, inside
+   * a transaction or a locking read (`unbounded`) uses the current connection. A clock abort discards it at once (#8155).
+   */
+  private preparationRead<T>(fn: (exec: SqlExecutor) => Promise<T>, unbounded?: boolean): Promise<T> {
+    const deadlineAt = this._pageTransaction || unbounded ? undefined : readDeadline();
+    if (deadlineAt === undefined) return fn(this.autocommitSql);
+    return runDeadlineRead(this.sql, deadlineAt, tx => fn(this.engineSqlOn(tx)), this.checkoutGauge, cancelSettleMs(), readDeadlineSignal());
   }
 
   /** An unscoped read in its own transaction with JIT off (search-settings.ts); a savepoint inside a caller's transaction. */
@@ -1042,6 +1072,22 @@ export class PostgresEngine implements BrainEngine {
     return sourcesImpl.updateSourceConfig(this.engineSql, sourceId, patch);
   }
 
+  // Import-path guard, attribution and config reads: SQL in engine-sql (persistence-state, transaction-settings, belief, config, access-control, sources).
+  getSource(sourceId: string) { return this.preparationRead(exec => sourcesImpl.getSource(unscopedExecutor(exec, 'sources: single-row read ran unscoped through executeRaw'), sourceId)); }
+  getConfigValues(keys: readonly string[]) { return this.preparationRead(exec => configImpl.getConfigValues(unscopedExecutor(exec, 'config: keyed read ran unscoped through executeRaw'), keys)); }
+  readManagedModeRows() { return this.preparationRead(exec => persistenceStateImpl.readManagedModeRows(unscopedExecutor(exec, 'persistence: managed-mode read ran unscoped through executeRaw'))); }
+  getSourceStrictness(sourceId: string) { return this.preparationRead(exec => persistenceStateImpl.getSourceStrictness(unscopedExecutor(exec, 'persistence: strict-source read ran unscoped through executeRaw'), sourceId)); }
+  readPersistenceBrainId() { return this.preparationRead(exec => persistenceStateImpl.readPersistenceBrainId(unscopedExecutor(exec, 'persistence: brain identity read ran unscoped through executeRaw'))); }
+  readLocalWriterRow(id: string, opts?: { lock?: boolean }) { return this.preparationRead(exec => persistenceStateImpl.readLocalWriterRow(unscopedExecutor(exec, 'persistence: local writer read ran unscoped through executeRaw'), id, opts), opts?.lock); }
+  insertLocalWriterRow(row: persistenceStateImpl.LocalWriterInsert) { return persistenceStateImpl.insertLocalWriterRow(this.autocommitSql, row); }
+  readTransactionSettings(names: readonly string[]) { return transactionSettingsImpl.readTransactionSettings(unscopedExecutor(this.engineSql, 'transaction settings: read ran through the transaction executeRaw'), names); }
+  applyTransactionSettings(names: readonly string[], values: readonly string[]) { return transactionSettingsImpl.applyTransactionSettings(this.autocommitSql, names, values); }
+  readLedgerSource(sourceId: string, opts?: { batch?: boolean }) { return this.preparationRead(exec => beliefImpl.readLedgerSource(unscopedExecutor(exec, 'belief: ledger source probe ran unscoped through executeRaw'), sourceId, opts), opts?.batch); }
+  isFolderRestricted(sourceId: string, slug: string) { return this.preparationRead(exec => accessControlImpl.isFolderRestricted(unscopedExecutor(exec, 'access: folder rule read ran unscoped through executeRaw'), sourceId, slug)); }
+  async listSourceLocalPaths(): Promise<string[]> {
+    return this.preparationRead(exec => sourcesImpl.listSourceLocalPaths(unscopedExecutor(exec, 'sources: unscoped on master (the filesystem lock read it through executeRaw)')));
+  }
+
   // v0.37.0 — domain-bank engine methods (D14 + D5 + D10).
   //
   // `listPrefixSampledPages`: one page per prefix, tiebroken by inbound-link
@@ -1550,6 +1596,20 @@ export class PostgresEngine implements BrainEngine {
   async getEmbeddingsByChunkIds(ids: number[], column: string = 'embedding'): Promise<Map<number, Float32Array>> {
     return chunksImpl.getEmbeddingsByChunkIds(unscopedExecutor(this.engineSql, 'chunks: unscoped on master (EO4 inventory)'), ids, column);
   }
+  // Search ranking-stage reads and onboarding counts: master's engine.executeRaw statements, unscoped as on master.
+  private get searchRead() { return unscopedExecutor(this.engineSql, 'search reads: master engine.executeRaw, unscoped'); }
+  async cosinesByChunkIds(ids: number[], column: string, query: Float32Array) { return searchReadsImpl.cosinesByChunkIds(this.searchRead, ids, column, query); }
+  async hasSupersedeEdges() { return searchReadsImpl.hasSupersedeEdges(this.searchRead); }
+  async supersedingPageSlugs(pageIds: number[], policy?: PageReadPolicy) { return searchReadsImpl.supersedingPageSlugs(this.searchRead, pageIds, policy); }
+  async aliasCanonicalRefs(refs: Array<{ slug: string; source_id: string }>, policy?: PageReadPolicy) { return searchReadsImpl.aliasCanonicalRefs(this.searchRead, refs, policy); }
+  async pageCollapseFacts(ids: number[], bodyIds: number[]) { return searchReadsImpl.pageCollapseFacts(this.searchRead, ids, bodyIds); }
+  async slugsEndingIn(sourceId: string, word: string) { return searchReadsImpl.slugsEndingIn(this.searchRead, sourceId, word); }
+  async generatedPagesIn(ids: number[]) { return searchReadsImpl.generatedPagesIn(this.searchRead, ids); }
+  async livePageIdsAt(refs: Array<{ slug: string; source_id: string }>) { return searchReadsImpl.livePageIdsAt(this.searchRead, refs); }
+  async pagesLinkingTo(fromIds: number[], toIds: number[]) { return searchReadsImpl.pagesLinkingTo(this.searchRead, fromIds, toIds); }
+  async countOnboardSignal(signal: healthImpl.OnboardSignal, entityTypes: import('./schema-pack/entity-types.ts').EntityTypeFilter, opts?: { signal?: AbortSignal }) {
+    return healthImpl.countOnboardSignal(this.searchRead, signal, entityTypes, opts);
+  }
 
   // v0.41.18.0: lazy-cached resolveBulkRetryOpts result. Constructor-time
   // resolution would force env validation at module-load, which breaks tests
@@ -1742,6 +1802,26 @@ export class PostgresEngine implements BrainEngine {
     return chunksImpl.deleteChunks(this.engineSql, slug, opts);
   }
 
+  async deleteChunksExcept(slug: string, keepIds: readonly number[], opts?: { sourceId?: string }): Promise<void> {
+    return chunksImpl.deleteChunksExcept(this.autocommitSql, slug, keepIds, opts);
+  }
+
+  async setChunkerVersion(slug: string, version: number, opts?: { sourceId?: string }): Promise<void> {
+    return chunksImpl.setChunkerVersion(this.autocommitSql, slug, version, opts);
+  }
+
+  async writeTextProjectionSeal(slug: string, opts: { sourceId: string; revision: string; timelineText: string }): Promise<void> {
+    return chunksImpl.writeTextProjectionSeal(this.autocommitSql, slug, opts);
+  }
+
+  async moveChunkIndexes(pageId: number, waves: readonly (readonly ChunkMove[])[]): Promise<void> {
+    return chunksImpl.moveChunkIndexes(this.autocommitSql, pageId, waves);
+  }
+
+  async getChunkReuseRows(slug: string, opts?: { sourceId?: string }): Promise<ChunkReuseRow[]> {
+    return this.preparationRead(exec => chunksImpl.getChunkReuseRows(unscopedExecutor(exec, 'chunks: import reuse read ran unscoped on the pool on master (executeRaw)'), slug, opts));
+  }
+
   async countStalePagesForExtraction(opts?: { sourceId?: string; versionTs?: string; attendance?: 'exclude' | 'blocked'; held?: 'exclude' | 'only'; wantedProducers?: readonly string[] }): Promise<number> {
     return this.withScopedReadTransaction(undefined, opts?.sourceId, tx => pagesImpl.countStalePagesForExtraction(scopedRead(this.engineSqlOn(tx)), opts));
   }
@@ -1925,6 +2005,14 @@ export class PostgresEngine implements BrainEngine {
     return mutatePageTag(this, { sourceId: opts?.sourceId ?? 'default', slug }, tag, false);
   }
 
+  async pruneFrontmatterTags(slug: string, keep: readonly string[], opts?: { sourceId?: string }): Promise<void> {
+    return tagsImpl.pruneFrontmatterTags(this.autocommitSql, slug, keep, opts);
+  }
+
+  async addPageTagsById(pageId: number, tags: readonly string[], opts?: { tagSource?: 'frontmatter' }): Promise<void> {
+    return tagsImpl.addPageTagsById(this.autocommitSql, pageId, tags, opts);
+  }
+
   async getTags(slug: string, opts?: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; liveOnly?: boolean }): Promise<string[]> {
     return tagsImpl.getTags(unscopedExecutor(this.engineSql, 'tags: unscoped on master (EO4 inventory)'), slug, opts);
   }
@@ -2104,7 +2192,7 @@ export class PostgresEngine implements BrainEngine {
           AND confidence >= ${minConf} ${scope} ${privacy} ${visibility}
       )
       SELECT entity_slug, dimension,
-             json_agg(json_build_object('value', value, 'source', source, 'confidence', confidence, 'fact_id', fact_id)) AS values
+             json_agg(json_build_object('value', value, 'source', source, 'confidence', confidence, 'fact_id', fact_id) ORDER BY fact_id) AS values
       FROM cur
       GROUP BY entity_slug, dimension
       HAVING count(DISTINCT value) >= 2 AND count(DISTINCT source) >= 2
@@ -2164,27 +2252,27 @@ export class PostgresEngine implements BrainEngine {
     if (source && sourceIds) {
       rows = await sql`SELECT rd.source, rd.data, rd.fetched_at FROM raw_data rd
         JOIN pages p ON p.id = rd.page_id ${privacy} ${alive}
-        WHERE p.slug = ${slug} AND rd.source = ${source} AND p.source_id = ANY(${sourceIds}::text[])`;
+        WHERE p.slug = ${slug} AND rd.source = ${source} AND p.source_id = ANY(${sourceIds}::text[]) ORDER BY p.source_id COLLATE "C", rd.source COLLATE "C"`;
     } else if (sourceIds) {
       rows = await sql`SELECT rd.source, rd.data, rd.fetched_at FROM raw_data rd
         JOIN pages p ON p.id = rd.page_id ${privacy} ${alive}
-        WHERE p.slug = ${slug} AND p.source_id = ANY(${sourceIds}::text[])`;
+        WHERE p.slug = ${slug} AND p.source_id = ANY(${sourceIds}::text[]) ORDER BY p.source_id COLLATE "C", rd.source COLLATE "C"`;
     } else if (source && sourceId) {
       rows = await sql`SELECT rd.source, rd.data, rd.fetched_at FROM raw_data rd
         JOIN pages p ON p.id = rd.page_id ${privacy} ${alive}
-        WHERE p.slug = ${slug} AND rd.source = ${source} AND p.source_id = ${sourceId}`;
+        WHERE p.slug = ${slug} AND rd.source = ${source} AND p.source_id = ${sourceId} ORDER BY p.source_id COLLATE "C", rd.source COLLATE "C"`;
     } else if (source) {
       rows = await sql`SELECT rd.source, rd.data, rd.fetched_at FROM raw_data rd
         JOIN pages p ON p.id = rd.page_id ${privacy} ${alive}
-        WHERE p.slug = ${slug} AND rd.source = ${source}`;
+        WHERE p.slug = ${slug} AND rd.source = ${source} ORDER BY p.source_id COLLATE "C", rd.source COLLATE "C"`;
     } else if (sourceId) {
       rows = await sql`SELECT rd.source, rd.data, rd.fetched_at FROM raw_data rd
         JOIN pages p ON p.id = rd.page_id ${privacy} ${alive}
-        WHERE p.slug = ${slug} AND p.source_id = ${sourceId}`;
+        WHERE p.slug = ${slug} AND p.source_id = ${sourceId} ORDER BY p.source_id COLLATE "C", rd.source COLLATE "C"`;
     } else {
       rows = await sql`SELECT rd.source, rd.data, rd.fetched_at FROM raw_data rd
         JOIN pages p ON p.id = rd.page_id ${privacy} ${alive}
-        WHERE p.slug = ${slug}`;
+        WHERE p.slug = ${slug} ORDER BY p.source_id COLLATE "C", rd.source COLLATE "C"`;
     }
     return rows as unknown as RawData[];
   }
@@ -2697,8 +2785,9 @@ export class PostgresEngine implements BrainEngine {
     const scope = opts?.sourceIds && opts.sourceIds.length > 0
       ? sql`WHERE source_id = ANY(${opts.sourceIds}::text[])`
       : sql``;
+    // id DESC breaks ties: PGLite's clock ticks in milliseconds, so rows written in one millisecond share created_at.
     const rows = await sql`
-      SELECT id, source_id, source_type, source_ref, pages_updated, summary, created_at FROM ingest_log ${scope} ORDER BY created_at DESC LIMIT ${limit}
+      SELECT id, source_id, source_type, source_ref, pages_updated, summary, created_at FROM ingest_log ${scope} ORDER BY created_at DESC, id DESC LIMIT ${limit}
     `;
     // Belt-and-suspenders source_id fallback for any pre-v50 row.
     return (rows as unknown as IngestLogEntry[]).map(r => ({
@@ -2748,6 +2837,18 @@ export class PostgresEngine implements BrainEngine {
   async setPageAliases(slug: string, sourceId: string, aliasNorms: string[], opts?: { inline?: boolean }): Promise<void> {
     if (opts?.inline && this._pageTransaction) return pagesImpl.setPageAliases(this.engineSql, this, slug, sourceId, aliasNorms);
     return this.transaction(tx => pagesImpl.setPageAliases((tx as PostgresEngine).engineSql, tx, slug, sourceId, aliasNorms));
+  }
+
+  async replaceDerivedAliases(slug: string, sourceId: string, aliases: readonly DerivedAliasRow[]): Promise<void> {
+    return pagesImpl.replaceDerivedAliases(this.autocommitSql, slug, sourceId, aliases);
+  }
+
+  async getPageSealState(pageId: number): Promise<{ chunker_version: number | null } | null> {
+    return this.preparationRead(exec => pagesImpl.getPageSealState(unscopedExecutor(exec, 'pages: seal-state read ran unscoped on the pool on master (executeRaw)'), pageId));
+  }
+
+  async refreshPageOrigin(slug: string, opts: { sourceId: string; sourcePath: string; sourceUri?: string | null }): Promise<void> {
+    return pagesImpl.refreshPageOrigin(this.autocommitSql, slug, opts);
   }
 
   // Config
@@ -3082,6 +3183,23 @@ export class PostgresEngine implements BrainEngine {
     }
   }
 
+  // Cycle-lock SQL lives once in ./engine-sql/cycle-locks.ts. Acquire / release / delete ran as autocommit tagged
+  // templates under retryReadOnlyAutocommit on the pool; the renewal runs on the direct session pool (#1794).
+  /** Executor whose `query` is `executeRawDirect`: the lease renewal's transport (direct pool, signal-cancellable). */
+  private get directEngineSql(): SqlExecutor {
+    return { ...this.engineSql, query: async (sql, params, opts) => ({ rows: await this.executeRawDirect(sql, params as unknown[] | undefined, opts), affectedRows: 0 }) };
+  }
+  async acquireCycleLock(lockId: string, opts: Parameters<BrainEngine['acquireCycleLock']>[1]) {
+    const held = await retryReadOnlyAutocommit(this.sql, c => cycleLocksImpl.acquireCycleLock(this.engineSqlOn(c), lockId, opts));
+    if (held) noteDirectPoolLease();
+    return held;
+  }
+  async refreshCycleLock(lockId: string, opts: Parameters<BrainEngine['refreshCycleLock']>[1], queryOpts?: { signal?: AbortSignal }) { return cycleLocksImpl.refreshCycleLock(this.directEngineSql, lockId, opts, queryOpts); }
+  async releaseCycleLock(lockId: string, opts: Parameters<BrainEngine['releaseCycleLock']>[1]) { return retryReadOnlyAutocommit(this.sql, c => cycleLocksImpl.releaseCycleLock(this.engineSqlOn(c), lockId, opts)); }
+  async readCycleLocks(filter: CycleLockFilter) { return cycleLocksImpl.readCycleLocks(unscopedExecutor(this.engineSql, 'cycle locks: unscoped on master (db-lock selectLockRows)'), filter); }
+  async deleteCycleLock(lockId: string, opts: Parameters<BrainEngine['deleteCycleLock']>[1]) { return retryReadOnlyAutocommit(this.sql, c => cycleLocksImpl.deleteCycleLock(this.engineSqlOn(c), lockId, opts)); }
+  async deleteCycleLockIfStale(lockId: string, opts: Parameters<BrainEngine['deleteCycleLockIfStale']>[1]) { return retryReadOnlyAutocommit(this.sql, c => cycleLocksImpl.deleteCycleLockIfStale(this.engineSqlOn(c), lockId, opts)); }
+
   // ============================================================
   // v0.20.0 Cathedral II: code edges (Layer 1 stubs — filled by Layer 5)
   // ============================================================
@@ -3172,7 +3290,7 @@ export class PostgresEngine implements BrainEngine {
     const rows = await sql`
       SELECT * FROM eval_capture_failures
       WHERE ts >= ${since}
-      ORDER BY ts DESC
+      ORDER BY ts DESC, id DESC
     `;
     return rows as unknown as EvalCaptureFailure[];
   }

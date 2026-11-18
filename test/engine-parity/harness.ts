@@ -29,6 +29,7 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
+import { enableBeliefLedger } from '../../src/core/belief/coverage.ts';
 import type { EngineConfig } from '../../src/core/types.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
@@ -182,17 +183,56 @@ async function resetArm(arm: ParityArm): Promise<void> {
  * method). Harness-only SQL behind the backend switch; a Rust arm supplies its
  * own path here. Cases call this instead of executeRaw.
  */
-export async function createSource(engine: BrainEngine, backend: ParityBackend, id: string, config: Record<string, unknown> = {}): Promise<void> {
+export async function createSource(engine: BrainEngine, backend: ParityBackend, id: string, config: Record<string, unknown> = {}, localPath?: string): Promise<void> {
   switch (backend) {
     case 'rust':
-      await createRustSource(engine, id, config);
+      await createRustSource(engine, id, config, localPath);
       return;
     case 'pglite':
     case 'postgres':
       await engine.executeRaw(
-        `INSERT INTO sources (id, name, config) VALUES ($1, $1, $2::text::jsonb) ON CONFLICT (id) DO NOTHING`,
-        [id, JSON.stringify(config)],
+        `INSERT INTO sources (id, name, config, local_path) VALUES ($1, $1, $2::text::jsonb, $3) ON CONFLICT (id) DO NOTHING`,
+        [id, JSON.stringify(config), localPath ?? null],
       );
+      return;
+    default:
+      return assertNever(backend);
+  }
+}
+
+/**
+ * Fixture: start belief-ledger coverage on a source, so its ledger probe reports a coverage event. The ledger has no
+ * typed enable method; this runs the production enable path behind the backend switch, as `createSource` does.
+ */
+export async function enableBeliefCoverage(engine: BrainEngine, backend: ParityBackend, sourceId: string): Promise<void> {
+  switch (backend) {
+    case 'rust':
+      throw new Error('enableBeliefCoverage: the Rust store has no belief ledger; a case reaching this fixture on the Rust arm must stop on a typed refusal first');
+    case 'pglite':
+    case 'postgres':
+      await enableBeliefLedger(engine, sourceId);
+      return;
+    default:
+      return assertNever(backend);
+  }
+}
+
+/**
+ * Fixture: put a folder access rule (`kind: 'rule'`) or a pending coverage prefix (`kind: 'pending'`) on `prefix` of a
+ * source, so the folder-restriction read has something to find. Harness-only SQL behind the backend switch.
+ */
+export async function restrictFolder(engine: BrainEngine, backend: ParityBackend, sourceId: string, prefix: string, kind: 'rule' | 'pending'): Promise<void> {
+  switch (backend) {
+    case 'rust':
+      throw new Error('restrictFolder: the Rust store has no folder access rules; a case reaching this fixture on the Rust arm must stop on a typed refusal first');
+    case 'pglite':
+    case 'postgres':
+      await engine.executeRaw('INSERT INTO access_policy_state (source_id) VALUES ($1) ON CONFLICT (source_id) DO NOTHING', [sourceId]);
+      if (kind === 'rule') {
+        await engine.executeRaw(`INSERT INTO access_rules (source_id, rule_id, prefix, readable_by, revision) VALUES ($1, 'parity-rule', $2, ARRAY['member:parity'], 1)`, [sourceId, prefix]);
+      } else {
+        await engine.executeRaw(`INSERT INTO access_pending_coverage (source_id, prefix, reason) VALUES ($1, $2, 'pending')`, [sourceId, prefix]);
+      }
       return;
     default:
       return assertNever(backend);
