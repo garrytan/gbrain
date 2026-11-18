@@ -23,6 +23,8 @@ import type { ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, W
 import type { WriteRequest } from './persistence/model.ts';
 import type { TimelineDetailRefresh, TimelineRowRemoval } from './engine-sql/timeline.ts';
 import type { TakeFenceRow } from './engine-sql/takes.ts';
+import type { FactPreimage, FenceProjectionTarget } from './engine-sql/facts.ts';
+import type { FenceFactRow, FenceRowsTarget } from './engine-sql/trust-fence.ts';
 import type { ImportedPageSeal, LivePageBodyRow, OriginClaimRow, PageIngestStamp, PageOriginRow, PageOriginTarget } from './engine-sql/write-guards.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, SourceRoutingRow } from './engine-sql/sources.ts';
@@ -2596,6 +2598,14 @@ export interface BrainEngine {
   countUnconsolidatedFacts(source_id: string): Promise<number>;
 
   /**
+   * The facts a page publication's fence projection would retire (engine-sql/facts.ts `listFenceRetireCandidates`): the
+   * before-state of each fact attached to the page at a fence position that the incoming fence (`target.incoming`, the
+   * JSON text of its row_num, fact and visibility) does not hold as it is, by row number then id. A conversation-extractor
+   * row counts only when a fence row claims its number; a private row `gbrain repair open-facts` opens never does.
+   */
+  listFenceRetireCandidates(target: FenceProjectionTarget): Promise<FactPreimage[]>;
+
+  /**
    * Find candidate duplicates for a new fact within a source+entity bucket.
    * Entity-prefilter is mandatory (bounds the contradiction-classifier blast
    * radius). Hard cap k=5 by default. Embedding-cosine when both sides have
@@ -2825,6 +2835,12 @@ export interface BrainEngine {
   sealImportedPage(slug: string, seal: ImportedPageSeal): Promise<{ id: number } | null>;
   /** A live page's frontmatter, body columns, body storage and content hash (the valid-time advisory's after image), or null. */
   readLivePageBody(slug: string, opts: { sourceId: string }): Promise<LivePageBodyRow | null>;
+  /**
+   * The page's live fence facts the writer may not simply expire (engine-sql/trust-fence.ts), by row number and locked until
+   * the transaction ends: more trusted than the writer's declared tier, held narrower by a widening proposal the incoming
+   * fence still asks to widen, or opened by `gbrain repair open-facts`. Each row carries its stored `trust_tier`.
+   */
+  listFenceFactRows(target: FenceRowsTarget): Promise<FenceFactRow[]>;
 
   /**
    * v0.35.5 — narrow UPDATE of `pages.compiled_truth`, `pages.timeline`, and

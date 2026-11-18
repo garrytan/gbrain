@@ -16,6 +16,7 @@ mod search;
 mod sources;
 mod tags;
 mod timeline;
+mod trust_fence;
 mod versions;
 mod write_guards;
 

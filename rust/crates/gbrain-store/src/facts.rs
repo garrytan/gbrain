@@ -35,8 +35,10 @@
 
 mod collapse;
 mod embedding;
+mod fence;
 mod privacy;
 
+pub use fence::{FenceContext, FenceTarget};
 pub use privacy::PrivacyPolicy;
 use privacy::hidden_by_private_provenance;
 pub(crate) use privacy::page_hidden;

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 280/280
+# covered: 278/278
 # lifecycle: 9/9
 # pages: 31/31
 # search: 7/7
@@ -15,13 +15,13 @@
 # extraction: 7/7
 # links: 23/23
 # tags: 5/5
-# timeline: 10/10
+# timeline: 8/8
 # ontology: 4/4
 # raw_files: 5/5
-# takes: 17/17
+# takes: 15/15
 # dream: 3/3
 # contradictions: 5/5
-# facts: 14/14
+# facts: 15/15
 # segmented_body: 14/14
 # versions: 3/3
 # stats_ingest: 5/5
@@ -38,6 +38,7 @@
 # cli_reads_import: 11/11
 # wanted_links: 2/2
 # write_guards: 7/7
+# trust_fence: 1/1
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
 connect	lifecycle	yes	1	yes	yes	yes	serves
 disconnect	lifecycle	yes	1	yes	yes	yes	serves
@@ -48,11 +49,11 @@ transaction	lifecycle	yes	12	no	yes	yes	refuses:transactions
 transactionDirect	lifecycle	yes	1	no	yes	yes	refuses:transactions
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	38	yes	yes	yes	serves
+getPage	pages	yes	35	yes	yes	yes	serves
 readPageSnapshot	pages	yes	8	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	147	yes	yes	yes	serves
+putPage	pages	yes	142	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	4	yes	yes	yes	serves
@@ -152,16 +153,14 @@ removeTag	tags	yes	2	no	yes	yes	serves
 pruneFrontmatterTags	tags	yes	2	no	yes	yes	serves
 addPageTagsById	tags	yes	1	no	yes	yes	serves
 getTags	tags	yes	3	yes	yes	yes	serves
-addTimelineEntry	timeline	yes	12	yes	yes	yes	serves
+addTimelineEntry	timeline	yes	9	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	1	no	yes	yes	serves
-getTimeline	timeline	yes	5	yes	yes	yes	serves
+getTimeline	timeline	yes	3	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	2	no	yes	yes	serves
 getSince	timeline	yes	1	no	yes	yes	serves
 getOnThisDay	timeline	yes	1	no	yes	yes	serves
 getLastSeen	timeline	yes	1	no	yes	yes	serves
-upsertEventProjection	timeline	yes	6	no	yes	yes	serves
-removeTimelineRows	timeline	yes	2	no	yes	yes	serves
-updateTimelineDetails	timeline	yes	1	no	yes	yes	serves
+upsertEventProjection	timeline	yes	4	no	yes	yes	serves
 mergeOntologyFact	ontology	yes	5	no	yes	yes	serves
 getOntology	ontology	yes	3	no	yes	yes	serves
 discoverOntologyDimensions	ontology	yes	1	no	yes	yes	serves
@@ -171,9 +170,9 @@ getRawData	raw_files	yes	2	yes	yes	yes	serves
 upsertFile	raw_files	yes	2	no	yes	yes	serves
 getFile	raw_files	yes	2	no	yes	yes	serves
 listFilesForPage	raw_files	yes	1	no	yes	yes	serves
-addTakesBatch	takes	yes	22	yes	yes	yes	serves
+addTakesBatch	takes	yes	20	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	1	no	yes	yes	serves
-listTakes	takes	yes	12	no	yes	yes	serves
+listTakes	takes	yes	11	no	yes	yes	serves
 searchTakes	takes	yes	1	no	yes	yes	serves
 searchTakesVector	takes	yes	1	no	yes	yes	refuses:takes
 getTakeEmbeddings	takes	yes	1	no	yes	yes	serves
@@ -184,10 +183,8 @@ supersedeTake	takes	yes	1	no	yes	yes	serves
 resolveTake	takes	yes	5	no	yes	yes	serves
 getScorecard	takes	yes	1	no	yes	yes	serves
 getCalibrationCurve	takes	yes	1	no	yes	yes	serves
-addSynthesisEvidence	takes	yes	2	no	yes	yes	serves
+addSynthesisEvidence	takes	yes	1	no	yes	yes	serves
 listActiveTakesForPages	takes	yes	2	no	yes	yes	serves
-matchTakeRows	takes	yes	1	no	yes	yes	serves
-deleteTakeRows	takes	yes	1	no	yes	yes	serves
 getDreamVerdict	dream	yes	1	yes	yes	yes	serves
 putDreamVerdict	dream	yes	1	yes	yes	yes	serves
 sweepDreamVerdicts	dream	yes	1	no	yes	yes	serves
@@ -197,15 +194,16 @@ getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
 insertFact	facts	yes	27	yes	yes	yes	serves
-insertFacts	facts	yes	14	no	yes	yes	serves
+insertFacts	facts	yes	16	no	yes	yes	serves
 deleteFactsForPage	facts	yes	2	no	yes	yes	serves
-expireFact	facts	yes	10	no	yes	yes	serves
+expireFact	facts	yes	11	no	yes	yes	serves
 listFactsByEntity	facts	yes	13	yes	yes	yes	serves
 listFactsSince	facts	yes	8	yes	yes	yes	serves
 listFactsKeyset	facts	yes	2	no	yes	yes	serves
 listFactsBySession	facts	yes	3	yes	yes	yes	serves
 listSupersessions	facts	yes	5	yes	yes	yes	serves
 countUnconsolidatedFacts	facts	yes	2	yes	yes	yes	serves
+listFenceRetireCandidates	facts	yes	1	no	yes	yes	serves
 findCandidateDuplicates	facts	yes	6	yes	yes	yes	serves
 consolidateFact	facts	yes	3	no	yes	yes	serves
 findTrajectory	facts	yes	3	yes	yes	yes	serves
@@ -308,7 +306,7 @@ hasGuestSource	cli_reads_import	yes	1	no	yes	yes	serves
 readPageTrustRows	cli_reads_import	yes	1	no	yes	yes	serves
 readDatabaseClock	cli_reads_import	yes	1	no	yes	yes	serves
 listLinkPageMetadata	cli_reads_import	yes	1	no	yes	yes	serves
-listStoredTimelineRows	cli_reads_import	yes	4	no	yes	yes	serves
+listStoredTimelineRows	cli_reads_import	yes	1	no	yes	yes	serves
 filterPagesAtRevision	cli_reads_import	yes	1	no	yes	yes	serves
 lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	serves
 replaceWantedLinkRows	wanted_links	yes	6	no	yes	yes	serves
@@ -319,3 +317,4 @@ bindPageOrigin	write_guards	yes	1	no	yes	yes	serves
 stampPageIngest	write_guards	yes	1	no	yes	yes	serves
 sealImportedPage	write_guards	yes	1	no	yes	yes	serves
 readLivePageBody	write_guards	yes	1	no	yes	yes	serves
+listFenceFactRows	trust_fence	yes	1	no	yes	yes	serves
