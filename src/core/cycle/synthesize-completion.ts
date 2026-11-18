@@ -123,6 +123,11 @@ async function readManagedSourceIncarnation(engine: BrainEngine, sourceId: strin
  * `dream_synthesis_completions` (the prune archives them), so pruning never
  * makes a synthesized transcript eligible again. Loads source-scoped
  * completions once per phase; no repeated history scan per transcript.
+ *
+ * #9648: a child that finished cleanly with prose and no page write (a skip
+ * the model wrote outside the skip JSON) dead-letters under require_writes and
+ * releases its key. That dead key counts as settled too, so the same content
+ * is not paid for again every cycle; changed content has a new key.
  */
 async function loadSuccessfulSynthesisKeys(
   engine: BrainEngine,
@@ -136,6 +141,14 @@ async function loadSuccessfulSynthesisKeys(
         AND status = 'completed'
         AND COALESCE(NULLIF(data->>'source_id', ''), 'default') = $1
         AND idempotency_key LIKE $2
+     UNION
+     SELECT COALESCE(idempotency_key, data->>'__released_idempotency_key')
+       FROM minion_jobs
+      WHERE name = 'subagent'
+        AND status = 'dead'
+        AND COALESCE(NULLIF(data->>'source_id', ''), 'default') = $1
+        AND COALESCE(idempotency_key, data->>'__released_idempotency_key') LIKE $2
+        AND error_text LIKE '%zero required put_page writes — a clean model finish%'
      UNION
      SELECT idempotency_key FROM dream_synthesis_completions
       WHERE source_id = $1 AND idempotency_key LIKE $2`,
