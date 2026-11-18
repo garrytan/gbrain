@@ -4,7 +4,7 @@ import type { OwnerOnlyTriggerState } from './access/owner-only-marks.ts';
 import type { GetVersionsOpts, PageVersionRows } from './page-state/version-types.ts';
 import type { PageSnapshotBatch } from './page-snapshot-batch.ts';
 import type { EntityKeyRow, EntityKeyRowsOpts } from './engine-sql/entity-keys.ts';
-import type { ApplyIdentityDecisionsInput, ApplyIdentityDecisionsResult, IdentityDecisionsRead } from './engine-sql/identity-decisions.ts';
+import type { ApplyIdentityDecisionsInput, ApplyIdentityDecisionsResult, IdentityDecisionsRead, IdentityMemberRef } from './engine-sql/identity-decisions.ts';
 import type { LinkReadScope } from './link-validity.ts';
 import type { ChunkWindowRequest, ChunkWindowOpts, ChunkWindowPage } from './search/chunk-windows.ts';
 import type { KeywordPageWindow } from './search/keyword-statement.ts';
@@ -1163,6 +1163,8 @@ export interface BrainEngine {
   listEntityKeyRows(opts: EntityKeyRowsOpts): Promise<EntityKeyRow[]>;
   /** The owner's identity decisions (migration v325) and the members a "same" decision could not link yet (SQL in engine-sql/identity-decisions.ts). */
   listIdentityDecisions(): Promise<IdentityDecisionsRead>;
+  /** The given pages that not every reader may read: readers named, a folder rule or a private label (SQL in engine-sql/identity-decisions.ts). */
+  listRestrictedIdentityMembers(members: ReadonlyArray<IdentityMemberRef>): Promise<IdentityMemberRef[]>;
   /** Writes and removes identity decisions and reconciles their 'dedupe:confirm' identity rows, in one transaction. */
   applyIdentityDecisions(input: ApplyIdentityDecisionsInput): Promise<ApplyIdentityDecisionsResult>;
 

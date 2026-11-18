@@ -36,7 +36,6 @@ import { gitChildEnv } from '../git-env.ts';
 import { HARDENED_GIT_ARGS, NO_LAZY_FETCH_ENV } from '../hardened-git.ts';
 import { parseSourceConfig } from '../sources-load.ts';
 import { spawnSync } from '../spawn.ts';
-import { readPolicyFragment } from '../search/private-visibility.ts';
 
 export const IDENTITY_DIR = '.gbrain/identity';
 const DECISION_ID = /^[0-9a-f]{16}$/;
@@ -244,9 +243,7 @@ export interface UnpublishableMember { member: IdentityMemberRef; reason: 'owner
 export async function unpublishableMembers(engine: BrainEngine, homeSourceId: string, decisions: ReadonlyArray<{ members: IdentityMemberRef[] }>): Promise<Array<UnpublishableMember | null>> {
   const sources = new Map((await engine.listAllSources({ includeArchived: true })).map(s => [s.id, s]));
   const outside = decisions.flatMap(d => d.members).filter(m => m.source_id !== homeSourceId && sources.has(m.source_id));
-  const restricted = new Set(outside.length ? (await engine.executeRaw<{ source_id: string; slug: string }>(
-    `SELECT p.source_id, p.slug FROM pages p JOIN unnest($1::text[], $2::text[]) AS t(source_id, slug) ON p.source_id = t.source_id AND p.slug = t.slug
-      WHERE NOT ${readPolicyFragment('p', [], true)}`, [outside.map(m => m.source_id), outside.map(m => m.slug)])).map(r => `${r.source_id}:${r.slug}`) : []);
+  const restricted = new Set((await engine.listRestrictedIdentityMembers(outside)).map(r => `${r.source_id}:${r.slug}`));
   return decisions.map(d => {
     for (const member of d.members) {
       const source = sources.get(member.source_id);

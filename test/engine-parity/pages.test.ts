@@ -379,7 +379,7 @@ describe('engine parity: pages', () => {
   );
   parityTest(
     'listIdentityDecisions / applyIdentityDecisions: decisions by (source, slug), confirmed members linked, missing pages pending',
-    { methods: ['putPage', 'applyIdentityDecisions', 'listIdentityDecisions'] },
+    { methods: ['putPage', 'applyIdentityDecisions', 'listIdentityDecisions', 'listRestrictedIdentityMembers'] },
     async (engine) => {
       await seed(engine, [['people/alice-example', ALICE], ['people/bob-example', { type: 'person', title: 'Bob Example', compiled_truth: 'Bob.', frontmatter: {} }]]);
       const ref = (slug: string) => ({ source_id: 'default', slug });
@@ -398,6 +398,8 @@ describe('engine parity: pages', () => {
       expect(read.decisions.map(d => [d.decision_id, d.verdict, d.members.length, d.canonical?.slug ?? null]))
         .toEqual([['0000000000000001', 'same', 2, 'people/alice-example'], ['0000000000000002', 'same', 2, 'people/carol-example'], ['0000000000000003', 'different', 2, null]]);
       expect(read.pending.map(p => [p.decision_id, p.slug, p.reason])).toEqual([['0000000000000002', 'people/carol-example', 'page_missing'], ['0000000000000002', 'people/dan-example', 'page_missing']]);
+      expect(await engine.listRestrictedIdentityMembers([])).toEqual([]);
+      expect(await engine.listRestrictedIdentityMembers([ref('people/alice-example'), ref('people/carol-example')])).toEqual([]);
       const removed = await engine.applyIdentityDecisions({ remove: ['0000000000000001'] });
       expect(removed).toEqual({ upserted: 0, removed: 1, linked: 0, unlinked: 2 });
       return { applied, decisions: read.decisions.map(d => ({ ...d, decided_at: d.decided_at.slice(0, 10) })), pending: read.pending, removed };

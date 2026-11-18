@@ -12,7 +12,8 @@
  */
 import { jsonbParam, type SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
-import { sqlFragment } from './fragment.ts';
+import { sqlFragment, trustedSql } from './fragment.ts';
+import { privatePagesFilterFragment } from '../search/private-visibility.ts';
 
 export interface IdentityMemberRef { source_id: string; slug: string }
 export type IdentityVerdict = 'same' | 'different';
@@ -82,6 +83,16 @@ export async function listIdentityDecisions(exec: LegacyUnscopedRead): Promise<I
     })),
     pending: pending.map(p => ({ decision_id: p.decision_id, source_id: p.source_id, slug: p.slug, reason: p.reason })),
   };
+}
+
+/** The members whose page names readers, sits under a folder rule or carries a private label: not every reader may read them. */
+export async function listRestrictedIdentityMembers(exec: LegacyUnscopedRead, members: ReadonlyArray<IdentityMemberRef>): Promise<IdentityMemberRef[]> {
+  if (!members.length) return [];
+  const { rows } = await exec.run<IdentityMemberRef>(sqlFragment`
+    SELECT p.source_id, p.slug FROM pages p
+      JOIN unnest(${members.map(m => m.source_id)}::text[], ${members.map(m => m.slug)}::text[]) AS t(source_id, slug) ON p.source_id = t.source_id AND p.slug = t.slug
+     WHERE NOT ${trustedSql(privatePagesFilterFragment('p'))}`);
+  return rows;
 }
 
 /** Writes and removes decisions, then reconciles the 'dedupe:confirm' identity rows; the engine runs it in one transaction. */

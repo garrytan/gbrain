@@ -93,6 +93,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'holdSchemaMigrationLock': OOS.lifecycle,
   'ownerOnlyMarkTriggers': OOS.ownerOnly,
   'listIdentityDecisions': OOS.identityDecisions,
+  'listRestrictedIdentityMembers': OOS.identityDecisions,
   'applyIdentityDecisions': OOS.identityDecisions,
   'applyForwardReferenceBootstrap': OOS.helper,
   'transaction': OOS.lifecycle,
