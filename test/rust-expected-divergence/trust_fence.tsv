@@ -1,0 +1,3 @@
+# Parity cases of the trust fence family where the Rust engine is expected to answer differently from PGLite. Edited by hand.
+# Columns (tab separated): parity file, case name, normaliser, why the answer differs (test/rust-expected-divergence/search.tsv).
+test/engine-parity/trust-fence.test.ts	an agent writer below a stored fact's tier: the more trusted row is listed above the writer, the opened row as opened	fence-rows-above-writer	Rust fact rows store no trust_tier yet (lane 4: the facts insert must stamp the writer's tier with trust::stamp from the write trust context), so the operator_curated row reads unknown, which is not above an agent_written writer, and Rust leaves it out where PGLite lists it above the writer

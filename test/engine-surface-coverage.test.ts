@@ -113,6 +113,10 @@ const INTERFACE_METHODS: readonly string[] = [
   'addPageTagsById', 'replaceDerivedAliases', 'getPageSealState', 'refreshPageOrigin',
   // Page write guards (engine-sql/write-guards.ts).
   'readPageOrigin', 'listOriginClaims', 'bindPageOrigin', 'stampPageIngest', 'sealImportedPage', 'readLivePageBody', 'hasSegmentStorage',
+  // The fence guard's reads of a page's fact rows (engine-sql/facts.ts, engine-sql/trust-fence.ts).
+  'listFenceRetireCandidates', 'listFenceFactRows',
+  // The connect gate's persistence reads (engine-sql/connect-gate.ts).
+  'hasPersistenceTable', 'listManagedRootBindings', 'readGraduationGateRow', 'listRetiredDeactivations',
   // Search
   'searchKeyword', 'countKeywordPages', 'searchKeywordPages', 'searchTitles', 'searchVector', 'getEmbeddingsByChunkIds',
   // Chunks
@@ -132,7 +136,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'addTag', 'removeTag', 'getTags',
   // Timeline + chronicle
   'addTimelineEntry', 'addTimelineEntriesBatch', 'getTimeline', 'getTimelineForDate', 'getSince',
-  'getOnThisDay', 'getLastSeen', 'upsertEventProjection',
+  'getOnThisDay', 'getLastSeen', 'upsertEventProjection', 'removeTimelineRows', 'updateTimelineDetails',
   // Ontology
   'mergeOntologyFact', 'getOntology', 'discoverOntologyDimensions', 'findOntologyConflicts',
   // Raw data + files
@@ -140,7 +144,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // Takes
   'addTakesBatch', 'listTakes', 'searchTakes', 'searchTakesVector', 'getTakeEmbeddings',
   'countStaleTakes', 'listStaleTakes', 'updateTake', 'supersedeTake', 'resolveTake',
-  'getScorecard', 'getCalibrationCurve', 'addSynthesisEvidence',
+  'getScorecard', 'getCalibrationCurve', 'addSynthesisEvidence', 'matchTakeRows', 'deleteTakeRows',
   // Dream verdicts (sweepDreamVerdicts: wave-k #4069 TTL housekeeping,
   // covered by test/dream-verdict-cache-ttl.test.ts)
   'getDreamVerdict', 'putDreamVerdict', 'sweepDreamVerdicts',
@@ -164,7 +168,10 @@ const INTERFACE_METHODS: readonly string[] = [
   // v0.46.28-34 master waves (classified at the test-gap-wave merge):
   // #3980 bulk config read, #3776 takes-embedding update, #3674 scoped
   // link removal.
-  'getAllConfig', 'getConfigValues', 'readManagedModeRows', 'getSourceStrictness', 'readPersistenceBrainId', 'readLocalWriterRow', 'insertLocalWriterRow', 'readTransactionSettings', 'applyTransactionSettings', 'readLedgerSource', 'isFolderRestricted', 'readJournalLimitRows', 'readHeldPageRows', 'readHeldCoverageRows', 'readWriteRequest', 'readWriteRequestById', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'lockWriteRequest', 'completeWriteRow', 'readMentionLastPass', 'countPagesDueForMentions', 'readIdentitySiblingCandidates', 'findExactSlug', 'readExtractionLagCounts', 'readIgnoredPrivacyLabelPages', 'updateTakeEmbeddings', 'removeLinksByPagesAndSource', 'readSourceMembership', 'findTopologyChanges', 'renewWriteClaim', 'expireStaleWriteClaims', 'hasClaimableWrite', 'readTopologyChange', 'insertTopologyChange', 'claimHousekeepingTurn', 'completeHousekeepingTurn', 'readReceiptBudget', 'listCompactableReceipts', 'listReservationsAfter', 'listTrueUpRequests', 'readCapacityForecastInputs', 'listPendingSegmentedProjections', 'selectProjectionWindowJobs',
+  'getAllConfig', 'getConfigValues', 'readManagedModeRows', 'getSourceStrictness', 'readPersistenceBrainId', 'readLocalWriterRow', 'insertLocalWriterRow', 'readTransactionSettings', 'applyTransactionSettings', 'readLedgerSource', 'isFolderRestricted', 'readJournalLimitRows', 'readHeldPageRows', 'readHeldCoverageRows', 'readWriteRequest', 'readWriteRequestById', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'lockWriteRequest', 'completeWriteRow', 'readMentionLastPass', 'countPagesDueForMentions', 'readIdentitySiblingCandidates', 'findExactSlug', 'readExtractionLagCounts', 'readIgnoredPrivacyLabelPages', 'updateTakeEmbeddings', 'removeLinksByPagesAndSource',
+  // The write journal's claim upkeep, admission reads and housekeeping (engine-sql/persistence-claims.ts, persistence-housekeeping.ts).
+  'readSourceMembership', 'findTopologyChanges', 'renewWriteClaim', 'expireStaleWriteClaims', 'hasClaimableWrite', 'readTopologyChange', 'insertTopologyChange', 'claimHousekeepingTurn',
+  'completeHousekeepingTurn', 'readReceiptBudget', 'listCompactableReceipts', 'listReservationsAfter', 'listTrueUpRequests', 'readCapacityForecastInputs', 'listPendingSegmentedProjections', 'selectProjectionWindowJobs',
   // The page-write reads and upkeep that belong to no other domain (engine-sql/write-misc.ts).
   'readSourceState', 'readAdmissionSource', 'sharedSkillPackTablePresent', 'listSharedSkillPackRoots', 'hasExtractedEvents', 'listActiveAccessMembers', 'expireMemoryProposals', 'listAwaitingMemoryProposals', 'purgeMemoryProposals', 'attachSourcePath',
   // Code edges

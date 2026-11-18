@@ -63,6 +63,7 @@ pub mod vectors;
 pub mod wanted_links;
 pub mod write_guards;
 pub mod write_misc;
+pub mod write_trust;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -120,7 +121,12 @@ pub struct Store {
     /// only.
     #[allow(dead_code)] // the vector search family reads it
     pub(crate) vectors: vectors::VectorCache,
+    /// The write trust context: the transaction-local trust settings (`write_trust.rs`).
+    pub(crate) write_context: write_trust::WriteContextSlot,
     info: StoreInfo,
+    /// The open transaction this store runs on (`transactions.rs`); `None` for the brain's own
+    /// store, whose writes each commit on their own.
+    pub(crate) bound: Option<Arc<transactions::Transaction>>,
 }
 
 pub(crate) fn get_json<T: DeserializeOwned>(read: &dyn KvRead, key: &[u8]) -> Result<Option<T>> {
@@ -202,13 +208,34 @@ impl Store {
             kv,
             env,
             vectors: vectors::VectorCache::default(),
+            write_context: write_trust::WriteContextSlot::default(),
             info: StoreInfo {
                 brain_id: stored.brain_id,
                 format_version: stored.format_version,
                 schema_version,
                 created,
             },
+            bound: None,
         })
+    }
+
+    /// A store on the same brain whose reads and writes run inside `tx` (`transactions.rs`).
+    pub(crate) fn bound_to(&self, tx: Arc<transactions::Transaction>) -> Store {
+        Store {
+            kv: self.kv.clone(),
+            // One time for the whole transaction, as PGLite's now() (`transactions.rs`, "Time").
+            env: Arc::new(transactions::TransactionClock::starting_now(
+                self.env.clone(),
+            )),
+            // The cache holds committed snapshots only; a transaction reads its own uncommitted
+            // writes, so its store starts with an empty cache of its own.
+            vectors: vectors::VectorCache::default(),
+            // The write trust context belongs to the transaction's handle, not the shared store: it
+            // starts empty and ends with the handle (`write_trust.rs`, "Lifetime").
+            write_context: write_trust::WriteContextSlot::default(),
+            info: self.info.clone(),
+            bound: Some(tx),
+        }
     }
 
     pub fn info(&self) -> &StoreInfo {
@@ -228,12 +255,22 @@ impl Store {
     /// reference to the underlying engine is dropped.
     pub fn close(self) {}
 
+    /// A consistent state to read: a snapshot, or the bound transaction's own view (its writes
+    /// included).
     pub(crate) fn read(&self) -> Result<Box<dyn KvRead>> {
+        if let Some(tx) = &self.bound {
+            return Ok(tx.reader());
+        }
         self.kv.snapshot()
     }
 
     /// Runs `f` in the write transaction and commits when it returns `Ok`. An `Err` rolls back.
+    /// On a store bound to a transaction, `f` is one statement of it: kept when it returns `Ok`,
+    /// dropped when it returns `Err`, committed with the transaction.
     pub(crate) fn write<T>(&self, f: impl FnOnce(&mut dyn KvWrite) -> Result<T>) -> Result<T> {
+        if let Some(tx) = &self.bound {
+            return tx.statement(f);
+        }
         let mut tx = self.kv.begin_write()?;
         let _clock = crate::env::transaction_clock::open(self.env.clone());
         let value = f(&mut *tx)?;

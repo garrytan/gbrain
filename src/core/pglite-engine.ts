@@ -169,6 +169,7 @@ import * as writeMiscImpl from './engine-sql/write-misc.ts';
 import * as persistenceStateImpl from './engine-sql/persistence-state.ts';
 import * as persistenceJournalImpl from './engine-sql/persistence-journal.ts';
 import * as writeGuardsImpl from './engine-sql/write-guards.ts';
+import * as trustFenceImpl from './engine-sql/trust-fence.ts';
 import * as persistenceClaimsImpl from './engine-sql/persistence-claims.ts';
 import * as housekeepingImpl from './engine-sql/persistence-housekeeping.ts';
 import type { ProjectionScanCursor } from './page-state/projection-window.ts';
@@ -182,6 +183,7 @@ import type { ExactScanOpts } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts } from './engine-sql/exact-identity.ts';
 import type { RankEntitiesStatementOpts } from './engine-sql/graph-rank.ts';
 import * as transactionSettingsImpl from './engine-sql/transaction-settings.ts';
+import * as connectGateImpl from './engine-sql/connect-gate.ts';
 import * as beliefImpl from './engine-sql/belief.ts';
 import * as configImpl from './engine-sql/config.ts';
 import * as accessControlImpl from './engine-sql/access-control.ts';
@@ -1562,6 +1564,10 @@ export class PGLiteEngine implements BrainEngine {
   selectProjectionWindowJobs(cursor: Pick<ProjectionScanCursor, 'after' | 'highWater'>, retryCooldown: boolean) { return housekeepingImpl.selectProjectionWindowJobs(unscopedExecutor(this.engineSql, 'projections: resident window read ran unscoped through executeRaw'), cursor, retryCooldown); }
   readTransactionSettings(names: readonly string[]) { return transactionSettingsImpl.readTransactionSettings(unscopedExecutor(this.engineSql, 'transaction settings: read ran through the transaction executeRaw'), names); }
   applyTransactionSettings(names: readonly string[], values: readonly string[]) { return transactionSettingsImpl.applyTransactionSettings(this.engineSql, names, values); }
+  hasPersistenceTable(table: connectGateImpl.PersistenceTable) { return connectGateImpl.hasPersistenceTable(unscopedExecutor(this.engineSql, 'connect gate: persistence read ran unscoped through executeRaw'), table); }
+  listManagedRootBindings(hostId: string, opts?: { signal?: AbortSignal }) { return connectGateImpl.listManagedRootBindings(unscopedExecutor(this.engineSql, 'connect gate: persistence read ran unscoped through executeRaw'), hostId, opts); }
+  readGraduationGateRow(opts?: { withRunSetting?: boolean }) { return connectGateImpl.readGraduationGateRow(unscopedExecutor(this.engineSql, 'connect gate: persistence read ran unscoped through executeRaw'), opts); }
+  listRetiredDeactivations() { return connectGateImpl.listRetiredDeactivations(unscopedExecutor(this.engineSql, 'connect gate: persistence read ran unscoped through executeRaw')); }
   readLedgerSource(sourceId: string, opts?: { batch?: boolean }) { return beliefImpl.readLedgerSource(unscopedExecutor(this.engineSql, 'belief: ledger source probe ran unscoped through executeRaw'), sourceId, opts); }
   isFolderRestricted(sourceId: string, slug: string) { return accessControlImpl.isFolderRestricted(unscopedExecutor(this.engineSql, 'access: folder rule read ran unscoped through executeRaw'), sourceId, slug); }
   // Entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts).
@@ -2441,6 +2447,9 @@ export class PGLiteEngine implements BrainEngine {
     return timelineImpl.upsertEventProjection(this.engineSql, opts);
   }
 
+  removeTimelineRows(pageId: number, rows: readonly timelineImpl.TimelineRowRemoval[]) { return timelineImpl.removeTimelineRows(this.engineSql, pageId, rows); }
+  updateTimelineDetails(pageId: number, rows: readonly timelineImpl.TimelineDetailRefresh[]) { return timelineImpl.updateTimelineDetails(this.engineSql, pageId, rows); }
+
   async mergeOntologyFact(obs: OntologyObservationInput): Promise<OntologyMergeResult> {
     const sourceId = obs.sourceId ?? 'default';
     const dimension = normalizeDimension(obs.dimension);
@@ -2836,6 +2845,10 @@ export class PGLiteEngine implements BrainEngine {
     return factsImpl.countUnconsolidatedFacts(unscopedExecutor(this.engineSql, 'facts: unscoped on master (EO4 inventory)'), source_id);
   }
 
+  listFenceRetireCandidates(target: factsImpl.FenceProjectionTarget) {
+    return factsImpl.listFenceRetireCandidates(unscopedExecutor(this.engineSql, 'fence projection: fact read ran unscoped through executeRaw'), target);
+  }
+
   async findCandidateDuplicates(
     source_id: string,
     entitySlug: string,
@@ -2902,6 +2915,9 @@ export class PGLiteEngine implements BrainEngine {
   ): Promise<Map<number, Take[]>> {
     return takesImpl.listActiveTakesForPages(unscopedExecutor(this.engineSql, 'takes: unscoped on master (EO4 inventory)'), pageIds, opts);
   }
+
+  matchTakeRows(pageId: number, rows: readonly takesImpl.TakeFenceRow[], limit: number) { return takesImpl.matchTakeRows(unscopedExecutor(this.engineSql, 'page write: fence take collision read ran unscoped through executeRaw'), pageId, rows, limit); }
+  deleteTakeRows(pageId: number, rowNums: readonly number[]) { return takesImpl.deleteTakeRows(this.engineSql, pageId, rowNums); }
 
   async writeContradictionsRun(row: {
     run_id: string;
@@ -3201,6 +3217,7 @@ export class PGLiteEngine implements BrainEngine {
   stampPageIngest(slug: string, stamp: writeGuardsImpl.PageIngestStamp) { return writeGuardsImpl.stampPageIngest(this.engineSql, slug, stamp); }
   sealImportedPage(slug: string, seal: writeGuardsImpl.ImportedPageSeal) { return writeGuardsImpl.sealImportedPage(this.engineSql, slug, seal); }
   readLivePageBody(slug: string, opts: { sourceId: string }) { return writeGuardsImpl.readLivePageBody(unscopedExecutor(this.engineSql, 'valid-time advisory: page body read ran unscoped through executeRaw'), slug, opts); }
+  listFenceFactRows(target: trustFenceImpl.FenceRowsTarget) { return trustFenceImpl.listFenceFactRows(unscopedExecutor(this.engineSql, 'fence guard: locking fact read ran unscoped through executeRaw'), target); }
 
   // Config
   async getConfig(key: string): Promise<string | null> {

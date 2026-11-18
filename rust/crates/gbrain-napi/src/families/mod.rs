@@ -19,9 +19,11 @@ mod sources;
 mod tags;
 mod timeline;
 mod trust;
+mod trust_fence;
 mod versions;
 mod write_guards;
 mod write_misc;
+mod write_trust;
 
 // Planned families: no methods yet (docs/designs/RUST_ENGINE_INTERFACES.md).
 mod alias_fanout_reads;
