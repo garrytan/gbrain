@@ -19,7 +19,7 @@ export const DEFAULT_RECEIPT_RETENTION_DAYS = 30;
 export const RECEIPT_TARGET_KEY = 'persistence.housekeeping.receipt_target_bytes';
 export const DEFAULT_RECEIPT_TARGET_BYTES = 8 * 1024 ** 3;
 export const HOUSEKEEPING_FLOOR_DAYS = 7;
-export async function readReceiptTargetBytes(engine:SqlEngine):Promise<number> {
+export async function readReceiptTargetBytes(engine:Pick<BrainEngine,'getConfigValues'>):Promise<number> {
   const value=await readConfigValue(engine,RECEIPT_TARGET_KEY);
   return value!==undefined ? parseJournalConfigValue(RECEIPT_TARGET_KEY,value) : DEFAULT_RECEIPT_TARGET_BYTES;
 }
@@ -80,7 +80,7 @@ export async function readJournalLimits(engine:Pick<BrainEngine,'readJournalLimi
   }
   return limits;
 }
-export async function readReceiptRetentionDays(engine:SqlEngine):Promise<number> {
+export async function readReceiptRetentionDays(engine:Pick<BrainEngine,'getConfigValues'>):Promise<number> {
   const value=await readConfigValue(engine,RECEIPT_RETENTION_KEY);
   return value!==undefined ? parseJournalConfigValue(RECEIPT_RETENTION_KEY,value) : DEFAULT_RECEIPT_RETENTION_DAYS;
 }
@@ -129,8 +129,8 @@ export async function oneYearCapacity(engine:SqlEngine,scope:string,setting:'Lif
   principal ? [principal[1],principal[2]] : []);
   const perDay=sample!.admissions/Math.max(1/24,(sample!.age_seconds ?? 0)/86_400);
   // Admission refusals call this under the counter locks inside their transaction, on its SqlEngine, so the setting is read there.
-  const retention=await engine.executeRaw<{value:string}>('SELECT value FROM config WHERE key=$1',[RECEIPT_RETENTION_KEY])
-    .then(([row])=>row ? parseJournalConfigValue(RECEIPT_RETENTION_KEY,row.value) : DEFAULT_RECEIPT_RETENTION_DAYS).catch(()=>DEFAULT_RECEIPT_RETENTION_DAYS);
+  const retention=await readConfigValue(engine,RECEIPT_RETENTION_KEY)
+    .then(value=>value!==undefined ? parseJournalConfigValue(RECEIPT_RETENTION_KEY,value) : DEFAULT_RECEIPT_RETENTION_DAYS).catch(()=>DEFAULT_RECEIPT_RETENTION_DAYS);
   const measured=(value:number|null|undefined,fallback:number)=>Number.isFinite(Number(value)) && Number(value)>0 ? Number(value) : fallback;
   return resource==='lifetime_ids' ? recommendedLimit(resource,used,limit,{perDay},retention)
     : recommendedLimit(resource,used,limit,{perDay:perDay*measured(sample!.gross,RECEIPT_RESERVATION_FLOOR),netPerDay:perDay*measured(sample!.net,RETAINED_RECEIPT_BYTES)},retention);

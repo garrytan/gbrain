@@ -49,7 +49,8 @@ import type {
 import type { JunkEntityHubRow, LinkEndpointPage, LivePageSummary, TitledPage } from './engine-sql/link-reads.ts';
 import type { CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuery, ContextualModeCandidate, FrozenHitKey, FrozenHitRow, WithdrawalChunkKey, WithdrawalChunkRow } from './engine-sql/chunk-reads.ts';
 import type { EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRow, PageTimelineRow, SegmentedTimelinePages, TimelineOrphanPage, TimelineRowDeletion } from './engine-sql/timeline-reads.ts';
-import type { McpLogPruneBatch, McpLogPruneCutoff, McpOpUsageRow, McpRequestLogRow, McpRollupPrunedBefore, SearchTelemetryBucket, SearchTelemetryRow } from './engine-sql/telemetry.ts';
+import type { CaseSensitiveAliasRow, PageAliasRow, TitleHitRow } from './engine-sql/alias-fanout-reads.ts';
+import type { McpLifetimeUsageRow, McpLogPruneBatch, McpLogPruneCutoff, McpOpUsageRow, McpRequestLogRow, McpRollupPrunedBefore, SearchTelemetryBucket, SearchTelemetryRow } from './engine-sql/telemetry.ts';
 import type * as LinkTemporalSql from './engine-sql/link-temporal.ts';
 import type { RelationshipEvidence, RelationshipKey, RelationshipStateWrite } from './link-relationships.ts';
 import type { CoverageRelevance, ProjectionRebuildProgress, ScopedCount } from './search/retrieval-coverage.ts';
@@ -1516,10 +1517,16 @@ export interface BrainEngine {
   readSearchStats(cutoffDate: string): Promise<SearchTelemetryRow[]>;
   readClientOpUsage(days: number): Promise<McpOpUsageRow[]>;
   readMcpRollupPrunedBefore(): Promise<McpRollupPrunedBefore>;
-  /** The MCP request log insert and its retention prune (SQL and contracts in engine-sql/telemetry.ts). */
+  /** The MCP request log insert, its retention prune and the lifetime usage read (SQL and contracts in engine-sql/telemetry.ts). */
   logMcpRequest(row: McpRequestLogRow): Promise<void>;
   readMcpLogPruneCutoff(days: number): Promise<McpLogPruneCutoff>;
   pruneMcpRequestLogBatch(cutoff: string, keepOperations: readonly string[], limit: number): Promise<McpLogPruneBatch>;
+  readMcpLifetimeUsage(tokenNames: readonly string[]): Promise<McpLifetimeUsageRow[]>;
+  /** Alias fan-out's exact-title lookup, case-sensitive alias read, page title and alias rows (SQL and contracts in engine-sql/alias-fanout-reads.ts). */
+  findPagesByTitles(titleNorms: readonly string[], sourceIds: readonly string[], types: readonly string[], opts?: { excludePrivate?: boolean }): Promise<TitleHitRow[]>;
+  resolveCaseSensitiveAliases(aliasNorms: readonly string[], sourceIds: readonly string[]): Promise<CaseSensitiveAliasRow[]>;
+  readPageTitle(sourceId: string, slug: string): Promise<string | null>;
+  readPageAliasRows(sourceIds: readonly string[], slugs: readonly string[]): Promise<PageAliasRow[]>;
 
   // Chunks
   /**

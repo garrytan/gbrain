@@ -6,7 +6,7 @@
 //! usage and doctor read both.
 //!
 //! Members: recordSearchTelemetry, readSearchStats, logMcpRequest, readMcpLogPruneCutoff,
-//! pruneMcpRequestLogBatch, readClientOpUsage, readMcpRollupPrunedBefore
+//! pruneMcpRequestLogBatch, readClientOpUsage, readMcpRollupPrunedBefore, readMcpLifetimeUsage
 //! (`src/core/engine-sql/telemetry.ts`).
 //!
 //! Keys (every record starts with `keys::TELEMETRY`, `a`, then the table's sub-tag):
@@ -30,7 +30,7 @@ use crate::links::no_nul;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 const TABLE: &str = "search_telemetry";
 const OP_RECORD: &str = "recordSearchTelemetry";
@@ -40,6 +40,7 @@ const OP_LOG: &str = "logMcpRequest";
 const OP_CUTOFF: &str = "readMcpLogPruneCutoff";
 const OP_PRUNE: &str = "pruneMcpRequestLogBatch";
 const OP_USAGE: &str = "readClientOpUsage";
+const OP_LIFETIME: &str = "readMcpLifetimeUsage";
 const LOG_ID_COUNTER: &str = "next_mcp_request_id";
 const DAY_US: i128 = 86_400_000_000;
 /// The `timestamptz` range in Unix microseconds: 4714-11-24 BC 00:00:00 UTC up to (not including)
@@ -640,6 +641,61 @@ impl Store {
         Ok(out)
     }
 
+    /// `readMcpLifetimeUsage(tokenNames)`: per asked token, the request log rows it still has (every
+    /// status and operation) plus its tally row: `requests` summed, `last_used_at` the newest of the
+    /// newest `created_at` and the tally's `last_used_at`, as ISO text. A null list or a null name
+    /// matches nothing; a NULL-token log row never matches, and the tally's `''` row (the pruned
+    /// NULL-token rows) matches only an asked `''`. Rows come in token byte order. A NUL in a name
+    /// refuses with `invalid_argument`; a sum past `int8` with `integer out of range`.
+    pub fn read_mcp_lifetime_usage(
+        &self,
+        token_names: Option<&[Option<String>]>,
+    ) -> Result<Vec<Value>> {
+        let asked: BTreeSet<&str> = token_names
+            .unwrap_or_default()
+            .iter()
+            .flatten()
+            .map(String::as_str)
+            .collect();
+        for name in &asked {
+            no_nul(OP_LIFETIME, &[("tokenNames", name)])?;
+        }
+        if asked.is_empty() {
+            return Ok(Vec::new());
+        }
+        let read = self.read()?;
+        let mut totals: BTreeMap<String, (i64, Option<i64>)> = BTreeMap::new();
+        for (_, row) in read_log(&*read)? {
+            let Some(token) = row.token_name else {
+                continue;
+            };
+            if !asked.contains(token.as_str()) {
+                continue;
+            }
+            let entry = totals.entry(token).or_insert((0, None));
+            entry.0 += 1;
+            entry.1 = entry.1.max(Some(row.created_us));
+        }
+        for name in &asked {
+            let Some(tally) = get_json::<RollupRecord>(&*read, &rollup_key(name))? else {
+                continue;
+            };
+            let entry = totals.entry(tally.token_name).or_insert((0, None));
+            entry.0 = entry
+                .0
+                .checked_add(tally.requests)
+                .ok_or_else(|| integer_out_of_range(OP_LIFETIME))?;
+            // max() skips a NULL, as Postgres's max does.
+            entry.1 = entry.1.max(tally.last_used_us);
+        }
+        Ok(totals
+            .into_iter()
+            .map(|(token_name, (requests, last))| {
+                json!({ "token_name": token_name, "requests": requests, "last_used_at": last.map(iso) })
+            })
+            .collect())
+    }
+
     /// `readMcpRollupPrunedBefore()`: the newest `pruned_through` of the tally (null when nothing
     /// was pruned) and the store clock, as ISO text.
     pub fn read_mcp_rollup_pruned_before(&self) -> Result<Value> {
@@ -881,6 +937,71 @@ mod tests {
         );
         assert_eq!(
             s.prune_mcp_request_log_batch(Some(&cutoff), Some(&keep), Some(-1.0))
+                .unwrap_err()
+                .code,
+            INVALID_ARGUMENT
+        );
+    }
+
+    #[test]
+    fn lifetime_usage_adds_kept_rows_to_the_tally_per_asked_token() {
+        let s = store();
+        let names = |list: &[Option<&str>]| -> Vec<Option<String>> {
+            list.iter().map(|n| n.map(str::to_string)).collect()
+        };
+        assert!(s.read_mcp_lifetime_usage(None).unwrap().is_empty());
+        assert!(s.read_mcp_lifetime_usage(Some(&[])).unwrap().is_empty());
+        for (token, status, age) in [
+            (Some("token-a"), "success", 40.0),
+            (Some("token-a"), "error", 2.0),
+            (Some("token-b"), "success", 50.0),
+            (None, "auth_failed", 45.0),
+        ] {
+            s.log_mcp_request(&request(token, "search", status, age))
+                .unwrap();
+        }
+        let cutoff = s.read_mcp_log_prune_cutoff(Some(30.0)).unwrap()["cutoff"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        s.prune_mcp_request_log_batch(Some(&cutoff), Some(&[]), None)
+            .unwrap();
+        let ask = names(&[Some("token-b"), None, Some("token-a"), Some(""), Some("x")]);
+        let rows = s.read_mcp_lifetime_usage(Some(&ask)).unwrap();
+        let shape: Vec<(&str, i64)> = rows
+            .iter()
+            .map(|r| {
+                (
+                    r["token_name"].as_str().unwrap(),
+                    r["requests"].as_i64().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(shape, vec![("", 1), ("token-a", 2), ("token-b", 1)]);
+        assert!(rows.iter().all(|r| r["last_used_at"].is_string()));
+        // The '' tally row answers only an asked ''.
+        let without_empty = s
+            .read_mcp_lifetime_usage(Some(&names(&[Some("token-a")])))
+            .unwrap();
+        assert_eq!(without_empty.len(), 1);
+        assert_eq!(
+            s.read_mcp_lifetime_usage(Some(&names(&[Some("a\0b")])))
+                .unwrap_err()
+                .code,
+            INVALID_ARGUMENT
+        );
+        s.write(|tx| {
+            let record = RollupRecord {
+                token_name: "token-a".to_string(),
+                requests: i64::MAX,
+                last_used_us: None,
+                pruned_through_us: None,
+            };
+            put_json(tx, &rollup_key("token-a"), &record)
+        })
+        .unwrap();
+        assert_eq!(
+            s.read_mcp_lifetime_usage(Some(&names(&[Some("token-a")])))
                 .unwrap_err()
                 .code,
             INVALID_ARGUMENT

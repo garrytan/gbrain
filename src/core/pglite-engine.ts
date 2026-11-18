@@ -213,6 +213,7 @@ import * as chunkReadsImpl from './engine-sql/chunk-reads.ts';
 import * as timelineReadsImpl from './engine-sql/timeline-reads.ts';
 import type { TimelineRowDeletion } from './engine-sql/timeline-reads.ts';
 import * as telemetryImpl from './engine-sql/telemetry.ts';
+import * as aliasFanoutReadsImpl from './engine-sql/alias-fanout-reads.ts';
 import type { McpRequestLogRow, SearchTelemetryBucket } from './engine-sql/telemetry.ts';
 import type { CodeChunkScope, CodeSymbolQuery, FrozenHitKey, WithdrawalChunkKey } from './engine-sql/chunk-reads.ts';
 import type { ChunkMove } from './page-state/chunk-moves.ts';
@@ -2061,6 +2062,12 @@ export class PGLiteEngine implements BrainEngine {
   logMcpRequest(row: McpRequestLogRow) { return telemetryImpl.logMcpRequest(this.engineSql, row); }
   readMcpLogPruneCutoff(days: number) { return telemetryImpl.readMcpLogPruneCutoff(this.engineSql, days); }
   pruneMcpRequestLogBatch(cutoff: string, keepOperations: readonly string[], limit: number) { return telemetryImpl.pruneMcpRequestLogBatch(this.engineSql, cutoff, keepOperations, limit); }
+  readMcpLifetimeUsage(tokenNames: readonly string[]) { return telemetryImpl.readMcpLifetimeUsage(this.telemetryRead, tokenNames); }
+  private get aliasFanoutRead() { return unscopedExecutor(this.engineSql, 'alias fan-out reads: master engine.executeRaw, unscoped'); }
+  findPagesByTitles(titleNorms: readonly string[], sourceIds: readonly string[], types: readonly string[], opts?: { excludePrivate?: boolean }) { return aliasFanoutReadsImpl.findPagesByTitles(this.aliasFanoutRead, titleNorms, sourceIds, types, opts); }
+  resolveCaseSensitiveAliases(aliasNorms: readonly string[], sourceIds: readonly string[]) { return aliasFanoutReadsImpl.resolveCaseSensitiveAliases(this.aliasFanoutRead, aliasNorms, sourceIds); }
+  readPageTitle(sourceId: string, slug: string) { return aliasFanoutReadsImpl.readPageTitle(this.aliasFanoutRead, sourceId, slug); }
+  readPageAliasRows(sourceIds: readonly string[], slugs: readonly string[]) { return aliasFanoutReadsImpl.readPageAliasRows(this.aliasFanoutRead, sourceIds, slugs); }
 
   // v0.41.18.0 — lazy-cached resolveBulkRetryOpts result + batch-retry helper.
   // PGLite has no Postgres pooler so retries don't fire in production; the
