@@ -9,6 +9,7 @@ mod cli_reads_ops;
 mod cli_reads_search_pages;
 mod cli_sources;
 mod config;
+mod fact_relink;
 mod graph;
 mod import_members;
 mod journal;

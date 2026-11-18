@@ -3,16 +3,16 @@
 //! Each function below answers one statement; the clause-by-clause reading is in its comment.
 //!
 //! What the store does not hold, and so refuses in the TypeScript members: the `write_gate_holds`
-//! table and the `trust_tier` and `write_origin` columns (`listUnpreviewedTrustFacts`), and the
-//! `fact_relink_attempts` table (`countFactRelinkOutcomes`, and the `hasAttempts` form of the three
-//! unlinked-fact reads, whose tried / paid memos read it). The unlinked-fact reads here are the
-//! `hasAttempts: false` form: a brain with no attempts table, where both memos are `false`.
+//! table and the `trust_tier` and `write_origin` columns (`listUnpreviewedTrustFacts`). The
+//! unlinked-fact reads serve both forms: with `hasAttempts` the tried / paid / no-subject memos
+//! read `fact_relink_attempts` (`facts/relink.rs`, `Memos`); without it every memo is `false`.
 //!
 //! Shared rules: `now()` is the store clock; text sorts in byte order; an array parameter is a set
 //! (`= ANY`) except where the statement unnests it, which repeats an id given twice; a NUL byte in
 //! any text refuses, as Postgres does.
 
 use super::embedding::md5_hex;
+use super::relink::Memos;
 use super::{AUDIT_ROW_SOURCES, DAY_US, FactRecord, count_arg, like, source_rows};
 use crate::Store;
 use crate::error::{Result, StoreError};
@@ -65,6 +65,9 @@ pub struct UnlinkedQuery {
     pub window_per_source: f64,
     pub fix: ConversationFix,
     pub has_attempts: bool,
+    /// `REARMED` of facts/conversation-memo.ts: the relink reasons a newer page re-arms. The
+    /// TypeScript member passes the list, so the two cannot drift.
+    pub rearmed_reasons: Vec<String>,
 }
 
 /// `countFactEmbeddingCoverage(opts)`.
@@ -126,14 +129,22 @@ fn newest_window(mut rows: Vec<FactRecord>, window: usize) -> Vec<FactRecord> {
     rows
 }
 
-/// Refuses the `hasAttempts` form: its tried and paid memos read `fact_relink_attempts`.
-fn no_attempts(op: &str, q: &UnlinkedQuery) -> Result<()> {
-    if q.has_attempts {
-        return Err(StoreError::invalid(format!(
-            "{op}: the store holds no fact_relink_attempts table (hasAttempts must be false)"
-        )));
-    }
-    Ok(())
+/// The attempts memos of the `hasAttempts` form, or `None` (every memo `false`) without it.
+fn memos<'a>(read: &'a dyn KvRead, q: &'a UnlinkedQuery) -> Option<Memos<'a>> {
+    q.has_attempts.then(|| Memos::new(read, &q.rearmed_reasons))
+}
+
+/// `texts` with each re-armed reason, for the NUL check.
+fn with_rearmed<'a>(
+    mut texts: Vec<(&'a str, &'a str)>,
+    q: &'a UnlinkedQuery,
+) -> Vec<(&'a str, &'a str)> {
+    texts.extend(
+        q.rearmed_reasons
+            .iter()
+            .map(|r| ("rearmedReasons", r.as_str())),
+    );
+    texts
 }
 
 /// The first `[a-z]+` run that follows an `entity inferred from ` in `text`:
@@ -328,28 +339,29 @@ impl Store {
             .count() as u64)
     }
 
-    /// `countUnlinkedFactsByOrigin(opts)` (`hasAttempts` false): for each id of `sourceIds` (an id
+    /// `countUnlinkedFactsByOrigin(opts)`: for each id of `sourceIds` (an id
     /// given twice counts twice, as the statement's `unnest` does), the source's newest
     /// `windowPerSource` active facts, counted by origin: `active`, `unlinked` (no entity),
     /// `fence_owned` (unlinked, a fence row or page, not conversation-derived), `conversation`
-    /// (unlinked and derived), and the tried / paid memo counts, which are 0 with no attempts
-    /// table. Rows come by source id then origin.
+    /// (unlinked and derived), and `conversation_tried` / `conversation_paid`, the unlinked derived
+    /// rows free relink tried, and of those the ones a paid re-extraction covers (both 0 without
+    /// `hasAttempts`). Rows come by source id then origin.
     pub fn count_unlinked_facts_by_origin(&self, q: &UnlinkedQuery) -> Result<Vec<Value>> {
         const OP: &str = "countUnlinkedFactsByOrigin";
-        no_attempts(OP, q)?;
         let texts: Vec<(&str, &str)> = q
             .source_ids
             .iter()
             .map(|s| ("sourceIds", s.as_str()))
             .chain(q.audit_sources.iter().map(|s| ("auditSources", s.as_str())))
             .collect();
-        no_nul(OP, &texts)?;
+        no_nul(OP, &with_rearmed(texts, q))?;
         let window = count_arg(OP, "windowPerSource", q.window_per_source)?;
         let audit: BTreeSet<&str> = q.audit_sources.iter().map(String::as_str).collect();
         let read = self.read()?;
         let now = self.env.now_micros();
-        // (active, unlinked, fence_owned, conversation) per (source, origin).
-        let mut groups: BTreeMap<(String, &'static str), [u64; 4]> = BTreeMap::new();
+        let mut memos = memos(&*read, q);
+        // (active, unlinked, fence_owned, conversation, tried, paid) per (source, origin).
+        let mut groups: BTreeMap<(String, &'static str), [u64; 6]> = BTreeMap::new();
         for id in &q.source_ids {
             let rows: Vec<FactRecord> = source_rows(&*read, id)?
                 .into_iter()
@@ -359,11 +371,17 @@ impl Store {
                 let unlinked = row.entity_slug.is_none();
                 let derived = row.conversation_slot();
                 let fence = row.row_num.is_some() || row.source_markdown_slug.is_some();
+                let tried =
+                    unlinked && derived && memos.as_mut().map_or(Ok(false), |m| m.tried(&row))?;
+                let paid =
+                    unlinked && derived && memos.as_mut().map_or(Ok(false), |m| m.paid(&row))?;
                 let g = groups.entry((id.clone(), origin(&row))).or_default();
                 g[0] += 1;
                 g[1] += u64::from(unlinked);
                 g[2] += u64::from(unlinked && fence && !derived);
                 g[3] += u64::from(unlinked && derived);
+                g[4] += u64::from(tried);
+                g[5] += u64::from(tried && paid);
             }
         }
         Ok(groups
@@ -376,40 +394,46 @@ impl Store {
                     "unlinked": g[1],
                     "fence_owned": g[2],
                     "conversation": g[3],
-                    "conversation_tried": 0,
-                    "conversation_paid": 0,
+                    "conversation_tried": g[4],
+                    "conversation_paid": g[5],
                 })
             })
             .collect())
     }
 
-    /// `countUnlinkedFactStats(opts)` (`hasAttempts` false): over the active facts of `sourceIds`
-    /// created in the last 7 days, `facts`, `unlinked`, `no_subject` and `conversation_unresolved`
-    /// (both 0 with no attempts table), and `inferred_page` / `inferred_mention`, the facts whose
+    /// `countUnlinkedFactStats(opts)`: over the active facts of `sourceIds` created in the last 7
+    /// days, `facts`, `unlinked`, `no_subject` (unlinked, the attempt's outcome `no_subject`) and
+    /// `conversation_unresolved` (unlinked and tried; both 0 without `hasAttempts`), and `inferred_page` / `inferred_mention`, the facts whose
     /// `context` is `entity inferred from <tier>` (alone or after ` — `) with that tier.
     pub fn count_unlinked_fact_stats(&self, q: &UnlinkedQuery) -> Result<Value> {
         const OP: &str = "countUnlinkedFactStats";
-        no_attempts(OP, q)?;
         let texts: Vec<(&str, &str)> = q
             .source_ids
             .iter()
             .map(|s| ("sourceIds", s.as_str()))
             .chain(q.audit_sources.iter().map(|s| ("auditSources", s.as_str())))
             .collect();
-        no_nul(OP, &texts)?;
+        no_nul(OP, &with_rearmed(texts, q))?;
         let audit: BTreeSet<&str> = q.audit_sources.iter().map(String::as_str).collect();
         let sources: BTreeSet<&str> = q.source_ids.iter().map(String::as_str).collect();
         let read = self.read()?;
         let now = self.env.now_micros();
         let since = now - 7 * DAY_US;
+        let mut memos = memos(&*read, q);
         let (mut facts, mut unlinked, mut page, mut mention) = (0u64, 0u64, 0u64, 0u64);
+        let (mut no_subject, mut unresolved) = (0u64, 0u64);
         for source in sources {
             for row in source_rows(&*read, source)? {
                 if row.created_at_us < since || !active_unlinked(&row, now, &audit) {
                     continue;
                 }
                 facts += 1;
-                unlinked += u64::from(row.entity_slug.is_none());
+                if row.entity_slug.is_none() {
+                    unlinked += 1;
+                    no_subject +=
+                        u64::from(memos.as_ref().map_or(Ok(false), |m| m.no_subject(&row))?);
+                    unresolved += u64::from(memos.as_mut().map_or(Ok(false), |m| m.tried(&row))?);
+                }
                 let inferred = match row.context.as_deref() {
                     Some(c) => {
                         like(c, "entity inferred from %", false)?
@@ -429,24 +453,24 @@ impl Store {
         Ok(json!({
             "facts": facts,
             "unlinked": unlinked,
-            "no_subject": 0,
-            "conversation_unresolved": 0,
+            "no_subject": no_subject,
+            "conversation_unresolved": unresolved,
             "inferred_page": page,
             "inferred_mention": mention,
         }))
     }
 
-    /// `listUnlinkedConversationSlugs(opts)` (`hasAttempts` false): in the newest
-    /// `windowPerSource` active facts of one source, the pages (`source_markdown_slug`) holding
-    /// unlinked conversation-derived rows that the fix targets, most rows first, then by slug.
-    /// With no attempts table nothing is tried, so only the `relink` fix targets rows.
+    /// `listUnlinkedConversationSlugs(opts)`: in the newest `windowPerSource` active facts of one
+    /// source, the pages (`source_markdown_slug`) holding unlinked conversation-derived rows that
+    /// the fix targets, most rows first, then by slug: `relink` the rows not tried, `reextract` the
+    /// tried ones not paid, `manual` the tried and paid ones. Without `hasAttempts` nothing is
+    /// tried, so only `relink` targets rows.
     pub fn list_unlinked_conversation_slugs(&self, q: &UnlinkedQuery) -> Result<Vec<Value>> {
         const OP: &str = "listUnlinkedConversationSlugs";
-        no_attempts(OP, q)?;
         let texts: Vec<(&str, &str)> = std::iter::once(("sourceId", q.source_id.as_str()))
             .chain(q.audit_sources.iter().map(|s| ("auditSources", s.as_str())))
             .collect();
-        no_nul(OP, &texts)?;
+        no_nul(OP, &with_rearmed(texts, q))?;
         let window = count_arg(OP, "windowPerSource", q.window_per_source)?;
         let audit: BTreeSet<&str> = q.audit_sources.iter().map(String::as_str).collect();
         let read = self.read()?;
@@ -455,11 +479,22 @@ impl Store {
             .into_iter()
             .filter(|r| active_unlinked(r, now, &audit))
             .collect();
+        let mut memos = memos(&*read, q);
         let mut pages: BTreeMap<String, u64> = BTreeMap::new();
         for row in newest_window(rows, window) {
-            let hit = q.fix == ConversationFix::Relink
-                && row.entity_slug.is_none()
-                && row.conversation_slot();
+            if row.entity_slug.is_some() || !row.conversation_slot() {
+                continue;
+            }
+            let tried = memos.as_mut().map_or(Ok(false), |m| m.tried(&row))?;
+            let hit = match q.fix {
+                ConversationFix::Relink => !tried,
+                ConversationFix::Reextract => {
+                    tried && !memos.as_mut().map_or(Ok(false), |m| m.paid(&row))?
+                }
+                ConversationFix::Manual => {
+                    tried && memos.as_mut().map_or(Ok(false), |m| m.paid(&row))?
+                }
+            };
             if let (true, Some(slug)) = (hit, row.source_markdown_slug) {
                 *pages.entry(slug).or_default() += 1;
             }

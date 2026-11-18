@@ -61,6 +61,7 @@ import * as writeGuards from './write-guards.ts';
 import * as importMembers from './import-members.ts';
 import * as trustFence from './trust-fence.ts';
 import * as trustProposals from './trust-proposals.ts';
+import * as factRelinkAttempts from './fact-relink-attempts.ts';
 import * as connectGate from './connect-gate.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
@@ -83,7 +84,7 @@ export const STORE_MEMBERS = {
   ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages,
   ...cliEntities,
   // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
-  ...factsDoctor, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust,
+  ...factsDoctor, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust, ...factRelinkAttempts,
   // The persistence brain identity the store already keeps (rust/docs/store/journal.md).
   ...persistenceIdentity,
   // Search telemetry (rust/docs/store/telemetry.md).

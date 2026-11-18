@@ -1,15 +1,17 @@
 /**
  * Group 5 facts members, doctor checks (src/core/engine-sql/facts-doctor.ts), served from the facts store
- * (rust/crates/gbrain-store/src/facts/doctor.rs). A member not exported here refuses with `engine_capability_missing`:
- * `listUnpreviewedTrustFacts` (the store holds no `write_gate_holds` table and no `trust_tier` or `write_origin` column) and
- * `countFactRelinkOutcomes` (no `fact_relink_attempts` table).
+ * (rust/crates/gbrain-store/src/facts/doctor.rs and facts/relink.rs). A member not exported here refuses with
+ * `engine_capability_missing`: `listUnpreviewedTrustFacts` (the store holds no `write_gate_holds` table and no `trust_tier`
+ * or `write_origin` column).
  *
- * The three unlinked-fact reads are served for a brain with no attempts table (`hasAttempts: false`, where the tried and
- * paid memos are false) and refuse `hasAttempts: true`, whose memos read `fact_relink_attempts`. A number that PGLite
+ * The three unlinked-fact reads serve both forms: `hasAttempts: true` reads the tried, paid and no-subject memos from the
+ * store's `fact_relink_attempts` rows, and `hasAttempts: false` makes every memo false. Each passes `REARMED_REASONS`, the
+ * reasons a newer page re-arms, so the store's tried memo reads the same list as `conversationTriedSql`. A number that PGLite
  * binds as `LIMIT` or `int` and the store cannot read the same way (a fraction, a negative limit, a width past int4)
  * refuses rather than guess at PGLite's cast error.
  */
 import type { BrainEngine } from '../../engine.ts';
+import { REARMED_REASONS } from '../../facts/conversation-memo.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
@@ -34,20 +36,21 @@ export const countAtomFacts: Member<'countAtomFacts'> = (brain) =>
   storeCall({ member: 'countAtomFacts' }, () => brain.countAtomFacts());
 
 export const countUnlinkedFactsByOrigin: Member<'countUnlinkedFactsByOrigin'> = (brain, opts) => {
-  if (opts.hasAttempts) refuseMember('countUnlinkedFactsByOrigin', 'the fact_relink_attempts table');
   requireCount('countUnlinkedFactsByOrigin', 'a window', opts.windowPerSource);
-  return storeCall({ member: 'countUnlinkedFactsByOrigin' }, () => brain.countUnlinkedFactsByOrigin(opts));
+  return storeCall({ member: 'countUnlinkedFactsByOrigin' }, () =>
+    brain.countUnlinkedFactsByOrigin({ ...opts, rearmedReasons: REARMED_REASONS }));
 };
 
-export const countUnlinkedFactStats: Member<'countUnlinkedFactStats'> = (brain, opts) => {
-  if (opts.hasAttempts) refuseMember('countUnlinkedFactStats', 'the fact_relink_attempts table');
-  return storeCall({ member: 'countUnlinkedFactStats' }, () => brain.countUnlinkedFactStats(opts));
-};
+export const countUnlinkedFactStats: Member<'countUnlinkedFactStats'> = (brain, opts) =>
+  storeCall({ member: 'countUnlinkedFactStats' }, () => brain.countUnlinkedFactStats({ ...opts, rearmedReasons: REARMED_REASONS }));
+
+export const countFactRelinkOutcomes: Member<'countFactRelinkOutcomes'> = (brain, sourceIds) =>
+  storeCall({ member: 'countFactRelinkOutcomes' }, () => brain.countFactRelinkOutcomes(sourceIds));
 
 export const listUnlinkedConversationSlugs: Member<'listUnlinkedConversationSlugs'> = (brain, opts) => {
-  if (opts.hasAttempts) refuseMember('listUnlinkedConversationSlugs', 'the fact_relink_attempts table');
   requireCount('listUnlinkedConversationSlugs', 'a window', opts.windowPerSource);
-  return storeCall({ member: 'listUnlinkedConversationSlugs' }, () => brain.listUnlinkedConversationSlugs(opts));
+  return storeCall({ member: 'listUnlinkedConversationSlugs' }, () =>
+    brain.listUnlinkedConversationSlugs({ ...opts, rearmedReasons: REARMED_REASONS }));
 };
 
 export const countFactEmbeddingCoverage: Member<'countFactEmbeddingCoverage'> = (brain, opts) => {
