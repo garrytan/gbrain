@@ -172,7 +172,10 @@ export const consolidationAdapter: GenerationAdapter<undefined> = {
   retiredBy: 'generation-restore',
   modelProduced: false,
   strictOrder: true,
-  lockKeys: () => [],
+  // #9692: the members' consolidation marks and validity are database rows, so a managed source restores them through
+  // the writer, journaled on the cluster's entity page.
+  databaseOnly: true,
+  lockKeys: key => [{ sourceId: key.sourceId, slug: key.ownerKey.slice('entity:'.length, key.ownerKey.indexOf(':cluster:')) }],
   async readInput(engine, key) {
     const ids = clusterIds(key.ownerKey);
     const rows = await factPreimages(engine, key.sourceId, ids);
