@@ -103,6 +103,7 @@ test/derived-origin-carry-private.test.ts
 test/derived-origin-recheck-plan.test.ts
 test/direct-pool-profile.test.ts
 test/doctor-attest-read-shared-scope.test.ts
+test/doctor-catalog-probes.test.ts
 test/doctor-database-encoding.test.ts
 test/doctor-frontmatter-holds.test.ts
 test/doctor-guard-ledger-checks.test.ts

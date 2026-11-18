@@ -121,3 +121,14 @@ export function missingCapabilities(
 ): Capability[] {
   return requiredCapabilities(consumer, name).filter(c => !engine.capabilities.has(c));
 }
+
+/**
+ * True only when `engine` reports a capability set without `raw_sql` (the Rust engine, D18). Reads of tables such an
+ * engine does not have (persistence custody, planner statistics) skip with their "nothing there" answer instead of
+ * refusing. An object without a capability set, such as a transaction handle, counts as raw SQL, so PGLite and
+ * Postgres always run their SQL.
+ */
+export function lacksRawSql(engine: object): boolean {
+  const caps = (engine as { capabilities?: EngineCapabilities }).capabilities;
+  return !!caps && !caps.has('raw_sql');
+}

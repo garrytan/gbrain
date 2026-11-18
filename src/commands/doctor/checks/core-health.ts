@@ -15,6 +15,7 @@ import type { ProgressReporter } from '../../../core/progress.ts';
 import type { Check } from '../../doctor.ts';
 import { PAGE_CHILD_FK_TARGETS, orphanPredicate } from '../../../core/repair/orphan-children.ts';
 import { checkError } from '../check-fix.ts';
+import { answersFromCatalog, catalogSkipCheck, reportsCapability } from '../../../core/rust-engine/store-members/catalog.ts';
 import { isMissingSchemaObject } from '../../../core/utils.ts';
 
 /**
@@ -139,6 +140,12 @@ export async function whoknowsHealthCheck(_engine: BrainEngine): Promise<Check> 
  * healthy PGLite brain into a false warning.
  */
 export async function pgvectorCheck(engine: BrainEngine): Promise<Check> {
+  // Rust: no pgvector extension; vector search is the store's vector_search capability.
+  if (answersFromCatalog(engine)) {
+    return reportsCapability(engine, 'vector_search')
+      ? { name: 'pgvector', status: 'ok', message: 'Vector search is served by the engine store (no pgvector extension)' }
+      : catalogSkipCheck('pgvector', 'capability_not_reported', 'vector_search');
+  }
   try {
     const ext = await engine.executeRaw<{ extname: string }>(
       `SELECT extname FROM pg_extension WHERE extname = 'vector'`,
@@ -162,6 +169,7 @@ export async function pgvectorCheck(engine: BrainEngine): Promise<Check> {
  * off the actual index shape via checkPagesUpsertArbiter.
  */
 export async function pagesUpsertArbiterCheck(engine: BrainEngine): Promise<Check> {
+  if (answersFromCatalog(engine)) return catalogSkipCheck('pages_upsert_arbiter', 'store_keyed_pages');
   try {
     const { checkPagesUpsertArbiter } = await import('../../../core/pages-upsert-arbiter.ts');
     const status = await checkPagesUpsertArbiter(engine);
@@ -244,6 +252,7 @@ export async function jsonbIntegrityCheck(
   engine: BrainEngine,
   progress?: Pick<ProgressReporter, 'heartbeat'>,
 ): Promise<Check> {
+  if (answersFromCatalog(engine)) return catalogSkipCheck('jsonb_integrity', 'no_jsonb_storage');
   try {
     const targets: Array<{ table: string; col: string; expected: 'object' | 'array'; jsonPayloadOnly?: boolean }> = [
       { table: 'pages',                    col: 'frontmatter',    expected: 'object' },

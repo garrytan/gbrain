@@ -31,6 +31,7 @@ import type { PublicCategory } from './public-category.ts';
 import { GRANDFATHER_RETIRED } from './publication-failure.ts';
 import { classifyTerminal, dispositionOf, driftSinceAction, faultOperation, TERMINAL_FIXED_IN, supersessionOrderSql, supersessionSql, terminalInspectArgv, terminalKnockOnSql, type TerminalCategory,
   type TerminalDisposition, type TerminalVerdict, CONNECTION_MESSAGE_PATTERN, LEGACY_PUBLICATION_PREFIX } from './terminal-classify.ts';
+import { readConfigRows, type ConfigReader } from '../config-values.ts';
 
 export const TERMINAL_WINDOW_KEY = 'persistence.terminal_failures.window_days';
 export const TERMINAL_SPIKE_FACTOR_KEY = 'persistence.terminal_failures.spike_factor';
@@ -51,8 +52,8 @@ export function validateTerminalConfigValue(key: string, value: string): string 
   return ok ? null : `${key} must be ${key === TERMINAL_WINDOW_KEY ? 'a whole number of days from 1 to 3650' : 'a positive number'}; got ${JSON.stringify(value)}.`;
 }
 
-export async function readTerminalThresholds(engine: Pick<BrainEngine, 'executeRaw'>, requestedDays?: number): Promise<TerminalThresholds> {
-  const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key,value FROM config WHERE key=ANY($1::text[])', [[...TERMINAL_CONFIG_KEYS]]);
+export async function readTerminalThresholds(engine: ConfigReader, requestedDays?: number): Promise<TerminalThresholds> {
+  const rows = await readConfigRows(engine, TERMINAL_CONFIG_KEYS);
   const read = (key: string, fallback: number) => {
     const raw = rows.find(row => row.key === key)?.value;
     return raw !== undefined && validateTerminalConfigValue(key, raw) === null ? Number(raw) : fallback;

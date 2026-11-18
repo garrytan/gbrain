@@ -14,14 +14,14 @@ import type { BrainEngine } from '../engine.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
 import type { Action } from '../agent-output.ts';
 import { LATEST_SCHEMA_VERSION } from '../schema-migrations/latest.generated.ts';
+import { readConfigValue, type ConfigReader } from '../config-values.ts';
 
 export const SCHEMA_BEHIND_REASON = 'schema_behind';
 
 /** Whether the brain's schema version is below this build's; null when it cannot be read. A terminal-receipt reader's input. */
-export async function readSchemaBehind(engine: Pick<BrainEngine, 'executeRaw'>): Promise<boolean | null> {
+export async function readSchemaBehind(engine: ConfigReader): Promise<boolean | null> {
   try {
-    const [row] = await engine.executeRaw<{ value: string | null }>(`SELECT value FROM config WHERE key='version'`);
-    const current = Number.parseInt(row?.value ?? '', 10);
+    const current = Number.parseInt(await readConfigValue(engine, 'version') ?? '', 10);
     return Number.isSafeInteger(current) ? current < LATEST_SCHEMA_VERSION : null;
   } catch {
     return null;
@@ -41,8 +41,7 @@ export function schemaBehindFix(ownsSchema: boolean): Action {
  * raise for a new request, or null.
  */
 export async function schemaAdmissionRefusal(tx: BrainEngine): Promise<OperationError | null> {
-  const [row] = await tx.executeRaw<{ value: string | null }>(`SELECT value FROM config WHERE key='version'`);
-  const current = Number.parseInt(row?.value ?? '', 10);
+  const current = Number.parseInt(await readConfigValue(tx, 'version') ?? '', 10);
   if (!Number.isSafeInteger(current) || current >= LATEST_SCHEMA_VERSION) return null;
   // Loaded only when behind: the lock module pulls in the engine factory.
   if ((await import('../migration-orchestration-lock.ts')).migrationOrchestrationHeldHere()) return null;
