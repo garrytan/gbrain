@@ -27,7 +27,12 @@ Code: `rust/crates/gbrain-store/src/timeline_queries.rs`, the napi methods in
 | `countTimelineCommentMarkupRows(sourceIds)` | served (site read) |
 | `listTimelineOrphanPages({ afterId, limit, sourceId? })` | served (site read) |
 
-`excludePrivate: true` refuses: the SQL engines apply a privacy filter for it. `requireSafeChunks`, `minTrust` and
+`excludePrivate` is served on the four chronicle reads. The TypeScript member reads the page policy from the rendered
+SQL (`storePagePolicy`) and passes it as `excludePrivate`; it refuses a caller whose member pages, grants or lineage
+widen the policy. Under the policy a row drops when `privatePagesFilterForCaller('p')` hides its depth page, or when
+`privateTimelineEventFilterForCaller('te')` hides its event page (`page_hidden` in facts/privacy.rs for both). The
+event test is an `EXISTS` on the event page by id with no source scope, so an event page outside the scope (whose
+fields the join nulls out) still hides the row when the policy hides it. `requireSafeChunks`, `minTrust` and
 `suppressFlagged` are ignored, because the SQL reads ignore them too.
 
 ## The shared join
