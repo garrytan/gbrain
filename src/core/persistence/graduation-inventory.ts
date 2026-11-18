@@ -78,6 +78,7 @@ export const GRADUATION_INVENTORY: Inventory = {
     carry('dream_verdicts', 'operational', 'Paid dream triage verdict cache.'),
     carry('drift_decisions', 'user_data', 'Take drift decisions and when they were applied.'),
     carry('entity_identities', 'user_data', 'Established entity identities.'),
+    carry('entity_identity_reviews', 'user_data', "The owner's duplicate-people decisions: the record on a brain with no repository, else the projection of the committed decision files."),
     carry('eval_candidates', 'operational', 'Captured retrieval eval candidates.'),
     carry('eval_capture_failures', 'operational', 'Eval capture failure log.'),
     carry('eval_contradictions_cache', 'operational', 'Paid contradiction judge cache; rebuilding spends money.'),

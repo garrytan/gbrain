@@ -21,6 +21,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { EntityKeyRow } from '../engine-sql/entity-keys.ts';
 import { NAME_TITLE_TOKENS, nameWords } from './name-variants.ts';
 import { CORPORATE_SUFFIXES } from './near-name.ts';
+import { GITHUB_RESERVED_NAMES } from './github-reserved.ts';
 import { HANDLE_FRONTMATTER_KEYS, frontmatterHandle } from '../by-mention.ts';
 import { personTypesFromPack } from '../schema-pack/entity-types.ts';
 import { buildAliasGraph, expandClosure } from '../schema-pack/closure.ts';
@@ -92,6 +93,11 @@ export interface FindDuplicatesOptions {
   /** Declared id fields per entity kind; replaces the schema packs' `identity_keys` when set. */
   identityKeys?: Partial<Record<EntityKind, string[]>>;
   matchers?: DuplicateMatcher[];
+  /**
+   * The owner's recorded decisions (gbrain dedupe confirm and reject): every pair inside an `apart` set is kept out of every
+   * group, like `distinct_from`; a group whose members all sit in one `confirmed` set is decided and left out.
+   */
+  decided?: { apart: DuplicateMember[][]; confirmed: DuplicateMember[][] };
 }
 
 const PLACEHOLDER_WORDS = new Set(['unknown', 'none', 'null', 'n/a', 'na', 'tbd', 'todo', '-', '?']);
@@ -101,12 +107,6 @@ export const ROLE_MAILBOXES: ReadonlySet<string> = new Set(['team', 'support', '
 export const FREE_MAIL_DOMAINS: ReadonlySet<string> = new Set(['gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'live.com', 'msn.com',
   'yahoo.com', 'ymail.com', 'icloud.com', 'me.com', 'mac.com', 'aol.com', 'proton.me', 'protonmail.com', 'gmx.com', 'gmx.de', 'web.de', 'mail.com',
   'yandex.com', 'yandex.ru', 'qq.com', '163.com', '126.com', 'zoho.com', 'fastmail.com', 'hey.com']);
-
-/** First path segments github.com keeps for itself: a URL under one names no user, and no account can take the name. */
-const GITHUB_RESERVED: ReadonlySet<string> = new Set(['orgs', 'organizations', 'users', 'sponsors', 'settings', 'marketplace', 'features',
-  'topics', 'collections', 'explore', 'trending', 'about', 'pricing', 'enterprise', 'login', 'logout', 'join', 'signup', 'notifications',
-  'issues', 'pulls', 'search', 'apps', 'security', 'site', 'contact', 'readme', 'events', 'codespaces', 'new', 'dashboard', 'home',
-  'stars', 'watching', 'account', 'customer-stories', 'team', 'teams', 'blog', 'discussions']);
 
 interface KeySpec { key: KeyType; field: string; key_class: KeyClass; fields: readonly string[]; kinds: readonly EntityKind[]; norm: (raw: string, kind: EntityKind) => string | null }
 const BOTH: readonly EntityKind[] = ['person', 'company'];
@@ -128,7 +128,7 @@ const KEY_SPECS: readonly KeySpec[] = [
   { key: 'github', field: 'github', key_class: 'exclusive', fields: ['github'], kinds: BOTH, norm: raw => {
     const v = raw.toLowerCase().replace(/^@/, '');
     const login = /^(?:https?:\/\/)?(?:www\.)?github\.com\/([^/?#\s]+)/.exec(v)?.[1] ?? v;
-    return /^[a-z0-9][a-z0-9-]{0,38}$/.test(login) && !GITHUB_RESERVED.has(login) ? login : null;
+    return /^[a-z0-9][a-z0-9-]{0,38}$/.test(login) && !GITHUB_RESERVED_NAMES.has(login) ? login : null;
   } },
   { key: 'domain', field: 'domain', key_class: 'contact', fields: ['domain', 'website'], kinds: ['company'], norm: raw => {
     const host = raw.toLowerCase().replace(/^[a-z][a-z0-9+.-]*:\/\//, '').split(/[/?#:]/)[0]!.replace(/^www\./, '');
@@ -432,6 +432,29 @@ function classOf(d: Draft, carriers: Map<string, EntityPage[]>): { cls: Duplicat
 
 const hasDistinctPair = (members: EntityPage[]) => members.some(a => a.distinctFrom.size > 0 && members.some(b => a !== b && a.distinctFrom.has(b.slug)));
 
+function decidedChecks(decided: FindDuplicatesOptions['decided']) {
+  const apartOf = new Map<string, Set<string>>();
+  for (const set of decided?.apart ?? []) for (const a of set) {
+    const others = apartOf.get(pageKey(a)) ?? new Set<string>();
+    for (const b of set) if (pageKey(b) !== pageKey(a)) others.add(pageKey(b));
+    apartOf.set(pageKey(a), others);
+  }
+  const confirmedSets = (decided?.confirmed ?? []).map(set => new Set(set.map(pageKey)));
+  const confirmedIn = new Map<string, number[]>();
+  confirmedSets.forEach((set, i) => { for (const k of set) confirmedIn.set(k, [...(confirmedIn.get(k) ?? []), i]); });
+  return {
+    keptApart: (members: EntityPage[]) => {
+      if (hasDistinctPair(members)) return true;
+      if (!apartOf.size) return false;
+      const inGroup = new Set(members.map(pageKey));
+      return members.some(a => [...(apartOf.get(pageKey(a)) ?? [])].some(b => inGroup.has(b)));
+    },
+    confirmed: (members: DuplicateMember[]) => {
+      return (confirmedIn.get(pageKey(members[0]!)) ?? []).some(i => members.every(m => confirmedSets[i]!.has(pageKey(m))));
+    },
+  };
+}
+
 function groupId(kind: DuplicateKind, members: DuplicateMember[]): string {
   const lines = members.map(pageKey).sort(cmp).join('\n');
   return `dedupe/${createHash('sha256').update(`${kind}\n${lines}`).digest('hex').slice(0, 16)}`;
@@ -440,6 +463,7 @@ function groupId(kind: DuplicateKind, members: DuplicateMember[]): string {
 export async function findDuplicateGroups(engine: BrainEngine, opts: FindDuplicatesOptions = {}): Promise<DuplicateResult> {
   const { scan, byKey, crowded, carriers } = await loadScan(engine, opts);
   const matchers = opts.matchers ?? DEFAULT_MATCHERS;
+  const { keptApart, confirmed } = decidedChecks(opts.decided);
   const drafts = new Map<string, Draft>();
   const draftKey = (kind: DuplicateKind, members: EntityPage[]) => `${kind}\n${members.map(pageKey).sort(cmp).join('\n')}`;
   const add = (draft: Draft) => {
@@ -457,7 +481,7 @@ export async function findDuplicateGroups(engine: BrainEngine, opts: FindDuplica
     for (const p of await matcher.propose(scan)) {
       const members = [...new Map(p.members.map(m => [pageKey(m), byKey.get(pageKey(m))])).values()].filter((m): m is EntityPage => !!m);
       if (members.length < 2) continue;
-      if (hasDistinctPair(members)) continue;
+      if (keptApart(members)) continue;
       const spread = new Set(members.map(m => m.source_id)).size > 1 ? 'cross_source' : 'in_source';
       const kind: DuplicateKind = p.kind === 'conflict' || p.kind === 'thin' ? p.kind : spread;
       const evidence = new Map<string, DuplicateEvidence>();
@@ -480,7 +504,7 @@ export async function findDuplicateGroups(engine: BrainEngine, opts: FindDuplica
   for (const parts of groupBy(clean, ([k]) => find(k)).values()) {
     if (parts.length < 2) continue;
     const members = [...new Map(parts.flatMap(([, d]) => d.members).map(m => [pageKey(m), m])).values()];
-    if (hasDistinctPair(members)) continue;
+    if (keptApart(members)) continue;
     for (const [k] of parts) drafts.delete(k);
     const evidence = new Map(parts.flatMap(([, d]) => [...d.evidence]));
     const union: Draft = { kind: 'cross_source', members, evidence, proposed: [], builtin: true, union: { parts: parts.length, failed: false } };
@@ -492,6 +516,7 @@ export async function findDuplicateGroups(engine: BrainEngine, opts: FindDuplica
   for (const d of drafts.values()) {
     if (opts.sourceId && !d.members.some(m => m.source_id === opts.sourceId)) continue;
     if (opts.kind && d.kind !== opts.kind) continue;
+    if (confirmed(d.members)) continue;
     const { cls, evidence } = classOf(d, carriers);
     const members = d.members.map(m => ({ source_id: m.source_id, slug: m.slug }))
       .sort((a, b) => cmp(a.source_id, b.source_id) || cmp(a.slug, b.slug));
