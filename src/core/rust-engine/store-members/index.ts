@@ -55,6 +55,7 @@ import * as factsRepair from './facts-repair.ts';
 import * as factsTrust from './facts-trust.ts';
 import * as jobs from './jobs.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
+import * as writeMisc from './write-misc.ts';
 import * as telemetry from './telemetry.ts';
 import * as writeGuards from './write-guards.ts';
 import * as importMembers from './import-members.ts';
@@ -88,6 +89,7 @@ export const STORE_MEMBERS = {
   // Search telemetry (rust/docs/store/telemetry.md).
   ...telemetry,
   ...persistence,
+  ...writeMisc,
   // The page write guards a page write runs around the page row (rust/docs/store/write-guards.md).
   ...writeGuards, ...trustFence, ...trustProposals,
   // The page and chunk statements a page import runs around its chunk write (rust/docs/store/import-members.md).

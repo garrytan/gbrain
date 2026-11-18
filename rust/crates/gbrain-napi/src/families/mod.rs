@@ -23,6 +23,7 @@ mod trust_fence;
 mod trust_proposals;
 mod versions;
 mod write_guards;
+mod write_misc;
 mod write_trust;
 
 // Planned families: no methods yet (docs/designs/RUST_ENGINE_INTERFACES.md).

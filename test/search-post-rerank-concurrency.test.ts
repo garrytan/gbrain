@@ -134,7 +134,7 @@ describe('search op (remote)', () => {
     const r = await search({ query: 'widget renewal terms' });
     expect(r.isError).toBeFalsy();
     expect(text(r)).toContain('Widget-co renewal terms moved to net 45.');
-    const factReads = events.filter(e => e.at === 'start' && /\bFROM facts f WHERE f\.source_id = ANY\(\$1::text\[\]\)/.test(e.sql));
+    const factReads = events.filter(e => e.at === 'start' && /\bFROM facts f WHERE f\.source_id = ANY\(\$\d+::text\[\]\)/.test(e.sql));
     expect(factReads).toHaveLength(1);
   }, 60_000);
 
@@ -143,7 +143,7 @@ describe('search op (remote)', () => {
     const r = await search({ query: 'gadget orders shipped' });
     expect(r.isError).toBeFalsy();
     expect(text(r)).not.toContain('Saved facts');
-    const factReads = events.filter(e => e.at === 'start' && /\bFROM facts f WHERE f\.source_id = ANY\(\$1::text\[\]\)/.test(e.sql));
+    const factReads = events.filter(e => e.at === 'start' && /\bFROM facts f WHERE f\.source_id = ANY\(\$\d+::text\[\]\)/.test(e.sql));
     expect(factReads).toHaveLength(1);
   }, 60_000);
 });

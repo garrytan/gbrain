@@ -148,8 +148,9 @@ describe('run refusals are recorded, retryable skips that never fail the pass', 
     await engine.setConfig('brain.audience', 'personal');
     const failing = new Proxy(engine, { get(target, prop) {
       const value = Reflect.get(target, prop, target);
-      if (prop !== 'executeRaw') return typeof value === 'function' ? value.bind(target) : value;
-      return (sql: string, params?: unknown[]) => /mcp_request_log/.test(sql) ? Promise.reject(new Error('synthetic usage read failure')) : target.executeRaw(sql, params);
+      // The usage read is the engine's typed telemetry member (SQL in engine-sql/telemetry.ts).
+      if (prop === 'readClientOpUsage') return () => Promise.reject(new Error('synthetic usage read failure'));
+      return typeof value === 'function' ? value.bind(target) : value;
     } }) as unknown as BrainEngine;
     await engine.executeRaw('DELETE FROM config WHERE key = $1', ['brain.audience']);
     const outcome = await runArchiveMaintenance(failing, { runner: 'test', now: NOW, readers: readers() });

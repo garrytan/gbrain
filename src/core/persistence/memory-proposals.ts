@@ -188,18 +188,16 @@ export async function cancelOwnProposal(engine: SqlEngine, row: MemoryProposal):
  */
 export async function runMemoryProposalUpkeep(engine: BrainEngine, opts: { scanLimit?: number } = {}): Promise<{ expired: number; closed: number; failed: number; purged: number }> {
   const limits = await readProposalLimits(engine);
-  let expired: unknown[];
+  let expired: number;
   try {
-    expired = await engine.executeRaw(`UPDATE memory_proposals SET state='expired', reason=$1, decided_by='gbrain:expiry', decided_at=now(), updated_at=now()
-      WHERE state='awaiting_owner' AND expires_at<=now() RETURNING 1`, [expiryReason(limits)]);
+    expired = await engine.expireMemoryProposals(expiryReason(limits));
   } catch (error) {
     const { isMissingSchemaObject } = await import('../utils.ts');
     if (isMissingSchemaObject(error, 'table', 'memory_proposals')) return { expired: 0, closed: 0, failed: 0, purged: 0 };
     throw error;
   }
   const { authorizeWrite } = await import('./authority.ts');
-  const pending = (await engine.executeRaw<Record<string, unknown>>(`SELECT * FROM memory_proposals WHERE state='awaiting_owner'
-    ORDER BY created_at LIMIT $1`, [opts.scanLimit ?? 200])).map(normalize);
+  const pending = (await engine.listAwaitingMemoryProposals(opts.scanLimit ?? 200)).map(normalize);
   const { ItemRun } = await import('../item-failure.ts');
   const run = new ItemRun('memory_proposals.upkeep_authority');
   let closed = 0;
@@ -211,9 +209,8 @@ export async function runMemoryProposalUpkeep(engine: BrainEngine, opts: { scanL
     }
     run.succeed();
   }
-  const purged = await engine.executeRaw(`DELETE FROM memory_proposals WHERE state<>'awaiting_owner'
-    AND COALESCE(decided_at, updated_at) <= now() - ($1::integer * interval '1 day') RETURNING 1`, [limits.retentionDays]);
-  return { expired: expired.length, closed, failed: run.failures.length, purged: purged.length };
+  const purged = await engine.purgeMemoryProposals(limits.retentionDays);
+  return { expired, closed, failed: run.failures.length, purged };
 }
 
 /** What QM reads for a proposal with no journal row (get_write_request, cancel_write_request): never the proposed text. */

@@ -315,8 +315,7 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
       // Source membership is locked before principal/counter/request guards. A
       // deleted/recreated source never receives work accepted for its old identity.
       async () => {
-        const [source] = await tx.executeRaw<{ incarnation: string; archived: boolean }>(
-          'SELECT incarnation,archived FROM sources WHERE id=$1 FOR SHARE', [input.sourceId]);
+        const source = await tx.readSourceState(input.sourceId, { lock: 'share' });
         if (!source || source.archived || source.incarnation !== input.sourceIncarnation) {
           throw new OperationError('source_changed', 'The write source is missing, archived, or was replaced.', 'Resolve the source again and submit a new request.');
         }

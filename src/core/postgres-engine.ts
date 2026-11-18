@@ -159,6 +159,7 @@ import * as wantedLinksImpl from './engine-sql/wanted-links.ts';
 import * as timelineImpl from './engine-sql/timeline.ts';
 import * as sourcesImpl from './engine-sql/sources.ts';
 import * as cliReadsImpl from './engine-sql/cli-reads-import.ts';
+import * as writeMiscImpl from './engine-sql/write-misc.ts';
 import * as persistenceStateImpl from './engine-sql/persistence-state.ts';
 import * as persistenceJournalImpl from './engine-sql/persistence-journal.ts';
 import * as writeGuardsImpl from './engine-sql/write-guards.ts';
@@ -200,7 +201,7 @@ import * as chunkReadsImpl from './engine-sql/chunk-reads.ts';
 import * as timelineReadsImpl from './engine-sql/timeline-reads.ts';
 import type { TimelineRowDeletion } from './engine-sql/timeline-reads.ts';
 import * as telemetryImpl from './engine-sql/telemetry.ts';
-import type { SearchTelemetryBucket } from './engine-sql/telemetry.ts';
+import type { McpRequestLogRow, SearchTelemetryBucket } from './engine-sql/telemetry.ts';
 import type { CodeChunkScope, CodeSymbolQuery, FrozenHitKey, WithdrawalChunkKey } from './engine-sql/chunk-reads.ts';
 import type { ChunkMove } from './page-state/chunk-moves.ts';
 import type { DerivedAliasRow } from './engine-sql/pages.ts';
@@ -1232,6 +1233,23 @@ export class PostgresEngine implements BrainEngine {
   hasGuestSource() { return cliReadsImpl.hasGuestSource(this.cliReads); }
   readPageTrustRows(lookup: PageTrustLookup) { return cliReadsImpl.readPageTrustRows(this.cliReads, lookup); }
   readDatabaseClock() { return cliReadsImpl.readDatabaseClock(this.cliReads); }
+  /** Page-write reads (engine-sql/write-misc.ts); a preparation read ends at its deadline, a locked read runs in the caller's transaction. */
+  private get writeMiscReads() { return unscopedExecutor(this.engineSql, 'write misc: page writes ran these unscoped through executeRaw'); }
+  private writeMiscRead<T>(fn: (exec: ReturnType<typeof unscopedExecutor>) => Promise<T>) {
+    return this.preparationRead(exec => fn(unscopedExecutor(exec, 'write misc: page writes ran these unscoped through executeRaw')));
+  }
+  readSourceState(sourceId: string, opts?: writeMiscImpl.SourceStateOptions) {
+    return opts?.lock === 'share' ? writeMiscImpl.readSourceState(this.writeMiscReads, sourceId, opts) : this.writeMiscRead(exec => writeMiscImpl.readSourceState(exec, sourceId, opts));
+  }
+  readAdmissionSource(sourceId: string) { return this.writeMiscRead(exec => writeMiscImpl.readAdmissionSource(exec, sourceId)); }
+  sharedSkillPackTablePresent() { return this.writeMiscRead(exec => writeMiscImpl.sharedSkillPackTablePresent(exec)); }
+  listSharedSkillPackRoots(hostId: string) { return this.writeMiscRead(exec => writeMiscImpl.listSharedSkillPackRoots(exec, hostId)); }
+  hasExtractedEvents(sourceId: string, pageId: number) { return writeMiscImpl.hasExtractedEvents(this.writeMiscReads, sourceId, pageId); }
+  listActiveAccessMembers() { return writeMiscImpl.listActiveAccessMembers(this.writeMiscReads); }
+  expireMemoryProposals(reason: string) { return writeMiscImpl.expireMemoryProposals(this.engineSql, reason); }
+  listAwaitingMemoryProposals(limit: number) { return writeMiscImpl.listAwaitingMemoryProposals(this.writeMiscReads, limit); }
+  purgeMemoryProposals(retentionDays: number) { return writeMiscImpl.purgeMemoryProposals(this.engineSql, retentionDays); }
+  attachSourcePath(sourceId: string, localPath: string, opts?: writeMiscImpl.AttachSourcePathOptions) { return writeMiscImpl.attachSourcePath(this.engineSql, sourceId, localPath, opts); }
   listLinkPageMetadata(sourceId?: string) { return cliReadsImpl.listLinkPageMetadata(this.cliReads, sourceId); }
   listStoredTimelineRows(sourceId: string, slug: string) { return cliReadsImpl.listStoredTimelineRows(this.cliReads, sourceId, slug); }
   filterPagesAtRevision(refs: readonly PageAtRevisionRef[]) { return cliReadsImpl.filterPagesAtRevision(this.cliReads, refs); }
@@ -1766,7 +1784,10 @@ export class PostgresEngine implements BrainEngine {
   countForeignEdges(slug: string, sourceId: string, direction: 'in' | 'out' | 'both') { return linkReadsImpl.countForeignEdges(this.linkRead, slug, sourceId, direction); }
   listLivePageSummaries(scope?: PageReadScope) { return linkReadsImpl.listLivePageSummaries(this.linkRead, scope); }
   countInboundLinks(slug: string, sourceId: string, opts: { excludePrivate: boolean; originSameSource: boolean }) { return linkReadsImpl.countInboundLinks(this.linkRead, slug, sourceId, opts); }
-  listLinkEndpointPages(sourceId: string, slugs: string[], crossSourceSlugs: string[]) { return linkReadsImpl.listLinkEndpointPages(this.linkRead, sourceId, slugs, crossSourceSlugs); }
+  /** Link preparation's endpoint read: master bounded it through executeRaw, so a preparation read ends at its deadline. */
+  listLinkEndpointPages(sourceId: string, slugs: string[], crossSourceSlugs: string[]) {
+    return this.preparationRead(exec => linkReadsImpl.listLinkEndpointPages(unscopedExecutor(exec, 'link reads: master engine.executeRaw, unscoped'), sourceId, slugs, crossSourceSlugs));
+  }
   listPagesTitledIn(queryLower: string, scope: PageReadScope) { return linkReadsImpl.listPagesTitledIn(this.linkRead, queryLower, scope); }
   wordLexemes(words: string[]) { return linkReadsImpl.wordLexemes(this.linkRead, words); }
   private get chunkRead() { return unscopedExecutor(this.engineSql, 'chunk reads: master engine.executeRaw, unscoped'); }
@@ -1798,6 +1819,9 @@ export class PostgresEngine implements BrainEngine {
   readSearchStats(cutoffDate: string) { return telemetryImpl.readSearchStats(this.telemetryRead, cutoffDate); }
   readClientOpUsage(days: number) { return telemetryImpl.readClientOpUsage(this.telemetryRead, days); }
   readMcpRollupPrunedBefore() { return telemetryImpl.readMcpRollupPrunedBefore(this.telemetryRead); }
+  logMcpRequest(row: McpRequestLogRow) { return telemetryImpl.logMcpRequest(this.autocommitSql, row); }
+  readMcpLogPruneCutoff(days: number) { return telemetryImpl.readMcpLogPruneCutoff(this.autocommitSql, days); }
+  pruneMcpRequestLogBatch(cutoff: string, keepOperations: readonly string[], limit: number) { return telemetryImpl.pruneMcpRequestLogBatch(this.autocommitSql, cutoff, keepOperations, limit); }
 
   // v0.41.18.0: lazy-cached resolveBulkRetryOpts result. Constructor-time
   // resolution would force env validation at module-load, which breaks tests

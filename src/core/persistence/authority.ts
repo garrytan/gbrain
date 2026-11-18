@@ -111,7 +111,10 @@ function localWriterRow(engine: SqlEngine, id: string, lock: boolean): Promise<A
 /** #5984: one membership read per source per transaction; a FOR SHARE read also answers a plain one. */
 function sourceMembership(engine: SqlEngine, sourceId: string, lock: boolean) {
   return transactionMemo(engine, lock ? [`source-membership:${sourceId}:share`] : [`source-membership:${sourceId}`, `source-membership:${sourceId}:share`],
-    () => engine.executeRaw<{ incarnation: string; archived: boolean }>(`SELECT incarnation,archived FROM sources WHERE id=$1${lock ? ' FOR SHARE' : ''}`, [sourceId]));
+    async () => {
+      const source = await (engine as unknown as Pick<BrainEngine, 'readSourceState'>).readSourceState(sourceId, lock ? { lock: 'share' } : undefined);
+      return source ? [source] : [];
+    });
 }
 /**
  * #5984: the reads `authorizeStoredRequest` shares across the rows of one

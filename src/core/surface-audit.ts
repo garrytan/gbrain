@@ -5,7 +5,7 @@
  * request_tools persist) writes one typed `mcp_request_log` row —
  * `operation='surface_change'`, `token_name`/`agent_name` = the acting
  * identity, `params` = a RAW OBJECT carrying `{actor, client_id, old, new,
- * via}` via executeRawJsonb (NEVER `JSON.stringify` into a `::jsonb` cast —
+ * via}` via `engine.logMcpRequest` (NEVER `JSON.stringify` into a `::jsonb` cast —
  * the #2339 double-encode class). Zero new DDL: it rides the existing
  * request log + `idx_mcp_log_time_agent` and the retention TODO, and is
  * remote-queryable via the E4 usage machinery. "Why did client X see 20
@@ -22,7 +22,6 @@
  */
 
 import type { BrainEngine } from './engine.ts';
-import { executeRawJsonb } from './sql-query.ts';
 
 export interface SurfaceChangeAudit {
   /** Acting identity: OAuth client id (self-persist), 'operator' (CLI), 'admin-api'. */
@@ -42,13 +41,10 @@ export async function writeSurfaceChangeAudit(
   audit: SurfaceChangeAudit,
 ): Promise<boolean> {
   try {
-    await executeRawJsonb(
-      engine,
-      `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params)
-       VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
-      [audit.actor, audit.actor, 'surface_change', 0, 'success'],
-      [{ actor: audit.actor, client_id: audit.client_id, old: audit.old, new: audit.new, via: audit.via }],
-    );
+    await engine.logMcpRequest({
+      token_name: audit.actor, agent_name: audit.actor, operation: 'surface_change', latency_ms: 0, status: 'success',
+      params: { actor: audit.actor, client_id: audit.client_id, old: audit.old, new: audit.new, via: audit.via },
+    });
     return true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

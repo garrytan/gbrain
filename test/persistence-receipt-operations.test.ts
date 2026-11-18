@@ -128,9 +128,9 @@ describe('own-principal write receipt operations', () => {
     const proxy = new Proxy(engine, { get(target, key) {
       if (key === 'executeRaw') return async (...args: Parameters<typeof engine.executeRaw>) => {
         if (args[0].includes('WITH roots AS')) queries++;
-        if (args[0].startsWith('SELECT incarnation,archived FROM sources')) throw new Error('AUTHORIZATION_DATABASE_UNAVAILABLE');
         return target.executeRaw(...args);
       };
+      if (key === 'readSourceState') return async () => { throw new Error('AUTHORIZATION_DATABASE_UNAVAILABLE'); };
       const value = Reflect.get(target, key);
       return typeof value === 'function' ? value.bind(target) : value;
     } });
