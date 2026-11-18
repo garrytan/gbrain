@@ -28,7 +28,7 @@ refuses.
 | `brain.findDuplicatePages(sourceId, queries)` | one `findDuplicatePage` answer per query | `findDuplicatePages` |
 | `brain.softDeletePages(slugs, { sourceId? }?)` | slugs that turned deleted now, once each, in page id order. `updated_at` stays; the knowledge revision changes | `softDeletePages` |
 | `brain.deletePages(slugs, { sourceId? }?)` | slugs removed (live or deleted), in page id order. In the same transaction it drops those slugs from captured eval candidates of the source (`eval_capture::remove_retrieved_slugs`) | `deletePages` |
-| `brain.purgeDeletedPages(olderThanHours, { dryRun?, excludeIds? }?)` | `{ slugs, count }` of pages deleted more than `olderThanHours` (negative counts as 0) ago, plus `pages: [{ slug, source_id, deleted_at }]` on a dry run | `purgeDeletedPages` (the TypeScript member still refuses, see below) |
+| `brain.purgeDeletedPages(olderThanHours, { dryRun?, excludeIds? }?)` | `{ slugs, count }` of pages deleted more than `olderThanHours` (negative counts as 0) ago, plus `pages: [{ slug, source_id, deleted_at }]` on a dry run | `purgeDeletedPages` (minus the pages a hold keeps, see below) |
 | `brain.resolveSlugsByPaths(paths, { sourceId })` | `[{ slug, source_path, live }]` for every page of the source whose `source_path` is one of `paths`, sorted by path then slug; the TypeScript member keeps one slug per path (`pickCanonicalOrigin`) | `resolveSlugsByPaths` |
 | `brain.findPages({ pattern: { kind, like }, types?, limit, sourceId?, sourceIds?, excludeSlugPrefixes? })` | `{ rows, total }`. `like` is a Postgres `LIKE` pattern (`%`, `_`, `\` escape), case-folded. A `name` pattern matches the title, or the slug when its last segment matches too; `prefix` and `glob` match the slug or `source_path`. Live pages of unarchived sources only. Rows sort by slug, then source; `total` is every match, or 0 when no row is returned | `findPages` |
 | `brain.countPagesBy({ sourceId?, sourceIds?, since?, typeGroups? }?)` | `{ bySourceType, byTypeGroup, total }` over visible pages (live, source present and not archived) whose effective date (else `updated_at`) is at or after `since`, an ISO date or instant. `typeGroups` maps a type to its group; with it, only mapped types count in `byTypeGroup` and `total` | `countPagesBy` |
@@ -57,18 +57,50 @@ last_retrieved_at }`.
 - After a hard delete PGLite also scrubs retrieval logs, ratings, weights, the volunteer log, the
   gazetteer and write-gate holds. The store keeps none of those yet, so only eval candidates change.
 
-## Still refused by the TypeScript engine
+## The purgeDeletedPages holds
 
-- `purgeDeletedPages`: PGLite skips a tombstone that one of four holds keeps. Two of them can
-  never match a Rust store row, and two can, so the member refuses:
-  - Sync identity downgrade (`op_checkpoints`, op `sync-identity-downgrade`): only
-    `executeRaw` writes it (`recordIdentityDowngrades`), and the Rust engine refuses `executeRaw`.
-  - Derived origin park (`op_checkpoints`, op `derived-origin-park`): only `executeRaw` writes it
-    (`parkDerivedOrigin`).
-  - Atom retirement (`pages`: an `atom` stamped `retired_by: managed-reextract`, deleted under 30
-    days ago, still restorable) and derived retirement (`pages`: any `DERIVED_RETIRED_BY` stamp,
-    deleted under `generations.restore_days` ago, read from `config`). The derived writers stamp
-    with `executeRaw`, but the served `putPage` also stores a `retired_by` key from a local
-    caller (only a remote write is refused, `reserved_frontmatter_key`), and the served
-    `softDeletePage`/`softDeletePages` set `deleted_at`. A purge with no holds would remove a
-    page PGLite keeps.
+PGLite's purge (`purgeDeletedPages`, `src/core/engine-sql/pages.ts:329`) skips a tombstone that one
+of four holds keeps (`pages.ts:349-353` for the dry run, `:370-380` for the delete). The store
+applies the two that read only the page row and `config`, and the other two never match a Rust row:
+
+- Derived retirement (`derivedRetirementPurgeHold`,
+  `src/core/persistence/derived-retirement-hold.ts:38-41`): the page's `retired_by` text is one of
+  `DERIVED_RETIRED_BY` (`:19`: extract-atoms, managed-reextract, stale-atoms, life-chronicle,
+  generation-restore, synthesis-resynthesis, synthesis-cleanup) and `deleted_at > now - restore
+  days`. The restore days are `RESTORE_DAYS_SQL` (`src/core/generations/config.ts:59`, bounds at
+  `:12`): the `generations.restore_days` config value when it is 1 to 3 ASCII digits naming 3 to
+  365, else 30.
+- Atom retirement (`atomRetirementPurgeHold`, `src/core/persistence/atom-retirement-hold.ts:80-84`):
+  the page is an `atom` stamped `retired_by: managed-reextract` (`:25`), `deleted_at > now - 30
+  days` (`ATOM_RESTORE_HOLD_DAYS`, `:28`), and it is restorable by `atomRetirementsSql`
+  (`:41-69`). Restorable means: the atom is deleted and not imported (`imported_from` empty, `:33`);
+  it has an origin key, `slug:<source_slug>` or else `path:<source_path>` (`:31`); a `source_slug`
+  origin is a live page of the same source; no live non-imported atom of the same source and
+  origin has a different hash; and its hash is the hash of the origin's latest retirement
+  (`retired_at` text descending with NULL last, then id descending). A hash is `source_hash` with
+  one leading `pending:` removed (`:30`). Because `managed-reextract` is also a derived stamp, the
+  atom hold only matters once the restore days have passed and the 30 days have not.
+- Both windows are open while `deleted_at` is strictly after `now` minus the days. PGLite runs in
+  `Etc/GMT0`, so a day is 24 hours. Text compares in byte order.
+- Sync identity downgrade (`op_checkpoints`, op `sync-identity-downgrade`, `pages.ts:349`) and
+  derived origin park (`derivedOriginPurgeHold`, `src/core/persistence/derived-origin-hold.ts:31`)
+  never match: only `executeRaw` writes those rows, through `recordIdentityDowngrades`
+  (`src/core/sync-identity-downgrades.ts`) and `parkDerivedOrigin` (`derived-origin-hold.ts`,
+  called from `src/core/repair/origin-carry.ts`), and the Rust engine refuses `executeRaw`. The
+  family that serves `op_checkpoints` must add both holds.
+
+Each purged page goes through `remove_page` and the eval-candidate scrub, as `deletePages` does.
+Other differences:
+
+- A real run returns its slugs ordered by `deleted_at`, then slug. PGLite returns them in the
+  `DELETE ... RETURNING` order, which is the table's row order, so the parity cases compare a real
+  run's slugs sorted. A dry run orders by `deleted_at`, then slug, on both.
+- PGLite also expires the facts of the purged pages (`expireGonePageFacts`). The Rust facts family
+  refuses every member, so the store holds no facts; that family must add the expiry when it lands.
+  PGLite also deletes the pages' body stagings and orphaned segment texts; the store keeps neither
+  yet, and the `page_body` family's `remove_page_rows` hook must remove them when it lands.
+- The parity cases cannot stand a tombstone days in the past (the Rust arm reads the system clock),
+  so every stamped page there is inside its window. The store unit tests in
+  `crates/gbrain-store/src/page_ops.rs` set `deleted_at` directly and cover the windows closing,
+  the restore-days fallback and each restorable rule. A one-off script ran the same scenarios
+  on PGLite with `deleted_at` moved back by SQL and got the same answers.
