@@ -53,6 +53,8 @@ export const ENGINE_CAPABILITIES = [
   'health',
   'raw_data',
   'eval_capture',
+  /** Search telemetry, MCP usage, retrieval feedback and the budget ledger (key tag `a`). */
+  'telemetry',
   'ingest_log',
   'dream_verdicts',
   'contradictions',
