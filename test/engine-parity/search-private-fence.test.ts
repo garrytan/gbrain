@@ -27,10 +27,10 @@ import { chunk, seedPage } from './chunk-fixtures.ts';
 
 const { parityTest, arms } = parityArms(testBackends());
 
-const SECRET = 'zephyr9vault';
+const FENCED_WORD = 'zephyr9vault';
 const WORLD = 'notes/world';
 const CLEAN = 'notes/clean';
-const FENCE = `<!--- gbrain:takes:begin -->\n| # | claim | kind | who | weight | since | source |\n|---|-------|------|-----|--------|-------|--------|\n| 1 | heron guards the ${SECRET} | fact | world | 1.0 | 2026-01 | note |\n<!--- gbrain:takes:end -->`;
+const FENCE = `<!--- gbrain:takes:begin -->\n| # | claim | kind | who | weight | since | source |\n|---|-------|------|-----|--------|-------|--------|\n| 1 | heron guards the ${FENCED_WORD} | fact | world | 1.0 | 2026-01 | note |\n<!--- gbrain:takes:end -->`;
 
 /** The default put of the engine's own arm: native and chunking on Rust, the typed put (no chunking) on the SQL arms. */
 async function defaultPut(engine: BrainEngine, backend: ParityBackend): Promise<void> {
@@ -50,7 +50,7 @@ async function served<T>(backend: ParityBackend, read: () => Promise<T>): Promis
   return withEngineScope(own, read);
 }
 
-const leaks = (value: unknown): boolean => JSON.stringify(value).toLowerCase().includes(SECRET);
+const leaks = (value: unknown): boolean => JSON.stringify(value).toLowerCase().includes(FENCED_WORD);
 
 describe('protected fence text and the search members', () => {
   parityTest(
@@ -66,7 +66,7 @@ describe('protected fence text and the search members', () => {
       await defaultPut(engine, backend);
       const search = (q: string) => served(backend, () => engine.searchKeyword(q, { limit: 20, excludePrivate: true }));
       const byPage = await search('heron');
-      const bySecret = await search(SECRET);
+      const bySecret = await search(FENCED_WORD);
       expect({ byPage: leaks(byPage), bySecret: leaks(bySecret) }).toEqual({ byPage: false, bySecret: false });
       expect(byPage.map((r) => r.slug)).toEqual([CLEAN]);
       return { byPage: byPage.map((r) => r.slug), bySecret: bySecret.map((r) => r.slug) };
@@ -77,7 +77,7 @@ describe('protected fence text and the search members', () => {
   // no secret can come out), and on both SQL engines the secret stays out.
   const noLeak = async (engine: BrainEngine, backend: ParityBackend, read: (q: string) => Promise<unknown[]>) => {
     await defaultPut(engine, backend);
-    const leaked = await served(backend, async () => leaks([...await read('heron'), ...await read(SECRET)]));
+    const leaked = await served(backend, async () => leaks([...await read('heron'), ...await read(FENCED_WORD)]));
     expect(leaked).toBe(false);
     return { leaked };
   };
