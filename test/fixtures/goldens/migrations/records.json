@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 316,
+    "count": 317,
     "gaps": [
       17,
       18,
@@ -85,6 +85,7 @@
       "migrationNotice": "9a6607b26a9719ef1833571b137bc8ebfcd1e16d545e89ff8728cf3ccbcbb409",
       "migrationStatementTimeoutMs": "2883be5073d2cd96cc17136e2f7d3223c6bdafebe3ef3c7a6836be320867251d",
       "originTwinsRepairCommand": "fb3c721e48d9f2a98845ef91231836d4a37eb5929e9a9b62f8dfab5ce395c462",
+      "ownerOnlyTriggersLeftLine": "e2e038846f7bd002831fc04b96dfd907fda768129de2971f934f199c87a6e83c",
       "pageSearchVectorTriggerFnSql": "2e418d7069473de186e9d38a726afa009b71902ce20d704638decf299f14757b",
       "protectTables": "ca31d41dd1fbc1d0cc4a41855741b55f4ec3d428dc264fb2aaf5cd1592082a14",
       "quietMigrationNotices": "4045c32034a8f46204dd5d89e185ff5c35e8073f560f14caa8b127f8a695957c",
@@ -105,7 +106,7 @@
       "widenIdentityIndex": "86a6176bd7637d964dbc1d3cd3b1bdfa3ca0161e1ee248c37d7380a1471282e6",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 321,
+    "latest": 322,
     "records": [
       {
         "handler": {
@@ -5248,6 +5249,25 @@
         "transaction": "absent",
         "verify": "absent",
         "version": 321
+      },
+      {
+        "handler": {
+          "form": "arrow",
+          "helpers": [
+            "ownerOnlyTriggersLeftLine"
+          ],
+          "sha256": "89c7fa05473ad788506d98a1422230a436f7cb7e8e0f9fc4fd1a2eadb5b49b0b"
+        },
+        "idempotent": true,
+        "name": "owner_only_marks",
+        "sql": {
+          "length": 12539,
+          "sha256": "0f611e7765509daad71e97d6e9b8d2a25fd8aa860e65b978560174b9d26a3b05"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 322
       }
     ],
     "versions": [
@@ -5566,7 +5586,8 @@
       318,
       319,
       320,
-      321
+      321,
+      322
     ]
   },
   "normalizer": "migrations-record-v1"

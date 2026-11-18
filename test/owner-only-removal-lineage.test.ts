@@ -24,7 +24,7 @@ import { deleteSourceRow } from '../src/core/source-delete.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { OWNER_ONLY_FLAG, OWNER_ONLY_KINDS, ownerOnlySourcesPresent } from '../src/core/access/owner-only.ts';
 import { runMigrations } from '../src/core/migrate.ts';
-import { v322 } from '../src/core/schema-migrations/v322-owner-only-marks.ts';
+import { OWNER_ONLY_HELD, v322 } from '../src/core/schema-migrations/v322-owner-only-marks.ts';
 import { ownerOnlyTriggersLeftLine } from '../src/core/access/owner-only-marks.ts';
 import { ownerOnlyMarksTriggersEntry } from '../src/commands/doctor/checks/owner-only-marks-triggers.ts';
 import type { Check } from '../src/commands/doctor.ts';
@@ -301,15 +301,21 @@ for (const kind of testBackends()) {
       }
       await engine.executeRaw('ALTER TABLE pages ENABLE ROW LEVEL SECURITY');
       await engine.executeRaw(`CREATE POLICY gst3032_probe ON pages TO ${role} USING (true)`);
+      await engine.executeRaw(`CREATE POLICY gst3032_sources ON sources FOR SELECT TO ${role} USING (true)`);
+      await engine.executeRaw(`CREATE POLICY gst3032_marks_read ON owner_only_marks FOR SELECT TO ${role} USING (true)`);
+      await engine.executeRaw(`CREATE POLICY gst3032_marks_add ON owner_only_marks FOR INSERT TO ${role} WITH CHECK (true)`);
       const url = new URL(databaseUrl); url.username = role; url.password = 'scoped-example';
       const asRole = new PostgresEngine();
       await asRole.connect({ database_url: url.toString(), poolSize: 1 });
       try {
-        await expect(asRole.executeRaw('DELETE FROM pages WHERE id = $1', [chat])).rejects.toThrow(/owner_only_lineage_unreadable/);
+        await expect(asRole.executeRaw('DELETE FROM pages WHERE id = $1', [chat])).rejects.toThrow(/owner_only_lineage_unreadable: this row is owner-only/);
         expect((await engine.executeRaw('SELECT 1 FROM pages WHERE id = $1', [chat])).length).toBe(1);
       } finally {
         await asRole.disconnect();
         await engine.executeRaw('DROP POLICY gst3032_probe ON pages');
+        await engine.executeRaw('DROP POLICY gst3032_sources ON sources');
+        await engine.executeRaw('DROP POLICY gst3032_marks_read ON owner_only_marks');
+        await engine.executeRaw('DROP POLICY gst3032_marks_add ON owner_only_marks');
         if (!wasOn) await engine.executeRaw('ALTER TABLE pages DISABLE ROW LEVEL SECURITY');
         await engine.executeRaw(`REASSIGN OWNED BY ${role} TO ${admin}`);
         await engine.executeRaw(`DROP OWNED BY ${role}`);
@@ -360,9 +366,13 @@ describe('the owner-only guard after the last owner-only source is gone', () => 
   beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({ engine: 'pglite' } as never); await engine.initSchema(); }, 120_000);
   afterAll(async () => { await engine.disconnect(); });
 
-  test('a mark alone keeps the guard on; a brain with neither a source nor a mark skips it', async () => {
+  test('a brain that never held owner-only data skips the guard without reading the marks; the one-way flag keeps it on', async () => {
     expect(await ownerOnlySourcesPresent(engine)).toBe(false);
     await engine.executeRaw(`INSERT INTO owner_only_marks (row_table, row_id) VALUES ('pages', '1')`);
+    expect(await ownerOnlySourcesPresent(engine)).toBe(false);
+    await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ('held-once', 'held-once', '{"owner_only":true}'::jsonb)`);
+    await engine.executeRaw(`DELETE FROM sources WHERE id = 'held-once'`);
     expect(await ownerOnlySourcesPresent(engine)).toBe(true);
+    expect((await engine.executeRaw<{ c: string }>(`SELECT obj_description('owner_only_marks'::regclass, 'pg_class') AS c`))[0]!.c).toBe(OWNER_ONLY_HELD);
   });
 });

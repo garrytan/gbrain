@@ -11,9 +11,9 @@ import { sqlFragment } from './fragment.ts';
 /** Each guarded table: its trigger, the function it must run, and the one statement that (re)creates it atomically. */
 const TRIGGERS = {
   sources: {
-    trigger: 'gbrain_owner_only_source_deleted_trg',
-    fn: 'gbrain_owner_only_source_deleted',
-    create: 'DO $t$ BEGIN DROP TRIGGER IF EXISTS gbrain_owner_only_source_deleted_trg ON sources; CREATE TRIGGER gbrain_owner_only_source_deleted_trg BEFORE DELETE ON sources FOR EACH ROW EXECUTE FUNCTION gbrain_owner_only_source_deleted(); END $t$',
+    trigger: 'gbrain_owner_only_source_changed_trg',
+    fn: 'gbrain_owner_only_source_changed',
+    create: 'DO $t$ BEGIN DROP TRIGGER IF EXISTS gbrain_owner_only_source_changed_trg ON sources; CREATE TRIGGER gbrain_owner_only_source_changed_trg BEFORE INSERT OR UPDATE OF config OR DELETE ON sources FOR EACH ROW EXECUTE FUNCTION gbrain_owner_only_source_changed(); END $t$',
   },
   pages: {
     trigger: 'gbrain_owner_only_row_deleted_trg',
@@ -39,6 +39,24 @@ const TRIGGERS = {
 
 const TABLES = Object.keys(TRIGGERS) as OwnerOnlyTriggerTable[];
 
+/**
+ * The logins that read `sources` but cannot both read and add owner_only_marks (no grant, or row-level security with no
+ * permissive policy for them): on a brain that has held owner-only data they read owner-only lineage closed and their
+ * permanent deletes are refused. Superusers, BYPASSRLS logins and the table's owner (without FORCE) need nothing.
+ */
+const DENIED_LOGINS_SQL = `
+  SELECT pg_catalog.quote_ident(r.rolname) AS login, pg_catalog.quote_ident('owner_only_marks_read_' || r.rolname) AS read_policy,
+         pg_catalog.quote_ident('owner_only_marks_add_' || r.rolname) AS add_policy FROM pg_catalog.pg_roles r, pg_catalog.pg_class c
+   WHERE c.oid = 'public.owner_only_marks'::pg_catalog.regclass AND r.rolcanlogin AND NOT r.rolsuper AND NOT r.rolbypassrls
+     AND pg_catalog.has_table_privilege(r.oid, 'public.sources', 'SELECT')
+     AND (NOT pg_catalog.pg_has_role(r.oid, c.relowner, 'USAGE') OR c.relforcerowsecurity)
+     AND (NOT pg_catalog.has_table_privilege(r.oid, c.oid, 'SELECT') OR NOT pg_catalog.has_table_privilege(r.oid, c.oid, 'INSERT')
+          OR (c.relrowsecurity AND (NOT EXISTS (SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid AND p.polpermissive AND p.polcmd::text IN ('*', 'r')
+                 AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS pr(id) WHERE pr.id = 0::oid OR pg_catalog.pg_has_role(r.oid, pr.id, 'USAGE')))
+            OR NOT EXISTS (SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid AND p.polpermissive AND p.polcmd::text IN ('*', 'a')
+                 AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS pr(id) WHERE pr.id = 0::oid OR pg_catalog.pg_has_role(r.oid, pr.id, 'USAGE'))))))
+   ORDER BY 1`;
+
 async function readState(exec: SqlExecutor): Promise<OwnerOnlyTriggerState> {
   const { rows } = await exec.run<{ tbl: OwnerOnlyTriggerTable; owner: string; owned: boolean }>(sqlFragment`
     SELECT g.tbl, pg_get_userbyid(c.relowner)::text AS owner, pg_has_role(current_user, c.relowner, 'USAGE') AS owned
@@ -47,9 +65,14 @@ async function readState(exec: SqlExecutor): Promise<OwnerOnlyTriggerState> {
      WHERE NOT EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid = c.oid AND t.tgname = g.trg AND NOT t.tgisinternal
                          AND t.tgenabled <> 'D' AND t.tgfoid = to_regprocedure('public.' || g.fn || '()'))
      ORDER BY g.tbl`);
-  const { rows: [state] } = await exec.query<{ role: string; closed: boolean }>(
-    `SELECT quote_ident(current_user) AS role, EXISTS (SELECT 1 FROM owner_only_marks m WHERE m.row_table = '*' AND m.row_id = 'unguarded') AS closed`);
-  return { missing: rows.map(r => ({ table: r.tbl, owner: r.owner, owned: r.owned })), role: state!.role, closed: state!.closed };
+  const { rows: [state] } = await exec.query<{ role: string; closed: boolean; row_security: boolean; held: boolean }>(
+    `SELECT quote_ident(current_user) AS role, EXISTS (SELECT 1 FROM owner_only_marks m WHERE m.row_table = '*' AND m.row_id = 'unguarded') AS closed,
+            EXISTS (SELECT 1 FROM owner_only_marks m WHERE m.row_table = '*' AND m.row_id = 'row_security') AS row_security,
+            gbrain_owner_only_held() AS held`);
+  const logins = state!.held ? (await exec.query<{ login: string; read_policy: string; add_policy: string }>(DENIED_LOGINS_SQL)).rows
+    .map(r => ({ login: r.login, readPolicy: r.read_policy, addPolicy: r.add_policy })) : [];
+  return { missing: rows.map(r => ({ table: r.tbl, owner: r.owner, owned: r.owned })), role: state!.role, closed: state!.closed, rowSecurity: state!.row_security,
+    held: state!.held, deniedLogins: logins };
 }
 
 /**
@@ -60,11 +83,14 @@ async function readState(exec: SqlExecutor): Promise<OwnerOnlyTriggerState> {
 export async function ownerOnlyMarkTriggers(exec: SqlExecutor, opts?: { ensure?: boolean; installing?: boolean }): Promise<OwnerOnlyTriggerState> {
   const before = await readState(exec);
   if (!opts?.ensure || before.missing.length === 0) return before;
-  const closeIfPresent = `INSERT INTO owner_only_marks (row_table, row_id) SELECT '*', 'unguarded' WHERE gbrain_owner_only_lineage() ON CONFLICT DO NOTHING`;
-  if (!opts.installing) await exec.query(closeIfPresent);
+  const closeIfPresent = async () => {
+    await exec.query(`SELECT gbrain_owner_only_hold() WHERE gbrain_owner_only_lineage()`);
+    await exec.query(`INSERT INTO owner_only_marks (row_table, row_id) SELECT '*', 'unguarded' WHERE gbrain_owner_only_lineage() ON CONFLICT DO NOTHING`);
+  };
+  if (!opts.installing) await closeIfPresent();
   const owned = before.missing.filter(m => m.owned);
   for (const { table } of owned) await exec.query(TRIGGERS[table].create);
   const after = owned.length ? await readState(exec) : before;
-  if (after.missing.length > 0) await exec.query(closeIfPresent);
+  if (after.missing.length > 0) await closeIfPresent();
   return readState(exec);
 }

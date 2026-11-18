@@ -23,6 +23,12 @@ export interface OwnerOnlyTriggerState {
   role: string;
   /** The unguarded mark is set: owner-only lineage reads closed. */
   closed: boolean;
+  /** The row-security mark is set: a role whose reads row-level security limits deleted a row, so lineage reads closed. */
+  rowSecurity: boolean;
+  /** The brain has held owner-only data (v322's flag on owner_only_marks), so the guard stays on for good. */
+  held: boolean;
+  /** Logins that read `sources` but cannot read and add marks, quoted, with the quoted names of the policies doctor prints; empty unless `held`. */
+  deniedLogins: Array<{ login: string; readPolicy: string; addPolicy: string }>;
 }
 
 /** Every migration run: create each delete trigger a role that owns its table can now create; name what is left. Never throws. */
