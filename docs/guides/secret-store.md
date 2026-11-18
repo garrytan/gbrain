@@ -122,7 +122,10 @@ one `gbrain files` uses), gbrain also uploads an encrypted export of the store t
   last success and the last failure.
 - `gbrain secrets backup --restore gbrain-secret-store/<time>.json` adds the entries this brain lacks. It restores only on
   a host whose keyring holds the key the backup names (import the escrow copy first), and it skips, and lists, any row
-  that does not authenticate under it.
+  that does not authenticate under it. An entry already here is left as it is, even when the backup's copy differs.
+  An original whose every recorded place was on a page that is gone is skipped and counted, so a restore never brings
+  back what a page purge removed; after rebuilding a brain, sync the pages first and then restore (re-running it adds
+  anything it skipped).
 - With no storage backend nothing is uploaded and nothing is needed: `gbrain secrets backup` and doctor say the database
   backup carries the store.
 

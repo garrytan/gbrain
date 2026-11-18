@@ -8,7 +8,13 @@ import { describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { operations } from '../src/core/operations.ts';
 import { purgeDeletedPagesCoordinated } from '../src/core/persistence/purge-deleted.ts';
-import { recordOccurrence, seal } from '../src/core/secret-store/store.ts';
+import { recordOccurrence, reveal, seal } from '../src/core/secret-store/store.ts';
+import { scrubPurgedSlugStores } from '../src/core/persistence/purge-slug-stores.ts';
+import { backupStore, restoreBackup } from '../src/core/secret-store/backup.ts';
+import { createStorage } from '../src/core/storage.ts';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { secretStoreCheck } from '../src/commands/doctor/checks/secret-store.ts';
 import type { DoctorContext } from '../src/commands/doctor/context.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -77,6 +83,80 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
       });
     }, 120_000);
 
+    test('an original on a redacted commit that is not pushed yet (held back, slug or no slug) is never removed by the cascade', async () => {
+      await brain(async b => {
+        const { slug, other, ids } = await pages(b);
+        const held = (await seal(b.engine, { sourceId: b.sourceId, rule: 'github_token', value: value(`held${randomUUID().slice(0, 6)}`) })).id;
+        await recordOccurrence(b.engine, { entryId: held, sourceId: b.sourceId, slug, field: 'compiled_truth', origin: 'repair' });
+        await recordOccurrence(b.engine, { entryId: held, sourceId: b.sourceId, field: 'file', origin: 'publish_rebuild', commit: 'b'.repeat(40), path: `${slug}.md`, line: 3 });
+        await b.engine.deletePages([slug], { sourceId: b.sourceId });
+        expectCascade(await state(b, ids), ids, slug, other);
+        const [kept] = await b.engine.executeRaw<{ n: number | string }>('SELECT count(*) AS n FROM secret_store_occurrence WHERE entry_id = $1 AND commit_sha IS NOT NULL', [held]);
+        expect((await reveal(b.engine, held, 'test')).value).toStartWith('ghp_held');
+        expect(Number(kept!.n)).toBe(1);
+      });
+    }, 120_000);
+
+    test('two pages purged in one batch that share an original remove it once, after both; a failure inside the delete leaves everything', async () => {
+      await brain(async b => {
+        const one = `notes/one-${randomUUID().slice(0, 6)}`, two = `notes/two-${randomUUID().slice(0, 6)}`;
+        await b.put(one, beliefPage({ prose: 'One.' }));
+        await b.put(two, beliefPage({ prose: 'Two.' }));
+        const shared = (await seal(b.engine, { sourceId: b.sourceId, rule: 'github_token', value: value(`pair${randomUUID().slice(0, 6)}`) })).id;
+        for (const slug of [one, two]) await recordOccurrence(b.engine, { entryId: shared, sourceId: b.sourceId, slug, field: 'compiled_truth', origin: 'repair' });
+        const rows = async () => (await b.engine.executeRaw('SELECT 1 FROM secret_store_occurrence WHERE entry_id = $1', [shared])).length;
+        const entry = async () => (await b.engine.executeRaw('SELECT 1 FROM secret_store WHERE id = $1', [shared])).length;
+        const failed = await b.engine.transaction(async tx => {
+          await tx.executeRaw('DELETE FROM pages WHERE source_id = $1 AND slug = ANY($2::text[])', [b.sourceId, [one, two]]);
+          const removed = await scrubPurgedSlugStores(tx, b.sourceId, [one, two]);
+          expect(removed).toMatchObject({ secret_store_occurrence: 2, secret_store: 1 });
+          throw new Error('fault between the page delete and commit');
+        }).then(() => 'committed', (e: Error) => e.message);
+        expect(failed).toBe('fault between the page delete and commit');
+        expect({ occurrences: await rows(), entry: await entry() }).toEqual({ occurrences: 2, entry: 1 });
+        expect(await b.engine.readPageSnapshot(one, { sourceId: b.sourceId })).not.toBeNull();
+        expect(await b.engine.deletePages([one, two], { sourceId: b.sourceId })).toHaveLength(2);
+        expect({ occurrences: await rows(), entry: await entry() }).toEqual({ occurrences: 0, entry: 0 });
+        expect(await scrubPurgedSlugStores(b.engine, b.sourceId, [one, two])).toMatchObject({ secret_store_occurrence: 0, secret_store: 0 });
+      });
+    }, 120_000);
+
+    test('a soft-deleted page inside its window still references its originals, and restore_page brings it back with the secret readable', async () => {
+      await brain(async b => {
+        const { slug, ids } = await pages(b);
+        const live = await b.engine.readPageSnapshot(slug, { sourceId: b.sourceId });
+        await b.op('delete_page', { slug, expected_revision: live!.revision });
+        await purgeDeletedPagesCoordinated(b.engine, 72);
+        expect((await state(b, ids)).only).toBe(true);
+        expect((await reveal(b.engine, ids.only, 'test')).value).toStartWith('ghp_only');
+        const gone = await b.engine.readPageSnapshot(slug, { sourceId: b.sourceId, includeDeleted: true });
+        await b.op('restore_page', { slug, expected_revision: gone!.revision });
+        expect(await b.engine.readPageSnapshot(slug, { sourceId: b.sourceId })).not.toBeNull();
+        const back = await reveal(b.engine, ids.only, 'test');
+        expect(back.value).toStartWith('ghp_only');
+        expect(back.occurrences.map(o => o.slug)).toEqual([slug]);
+      });
+    }, 120_000);
+
+    test('a backup restore never brings back an original a purge removed, and leaves a newer local row as it is', async () => {
+      await brain(async b => {
+        const bucket = mkdtempSync(join(tmpdir(), 'gbrain-ss-purge-bucket-'));
+        try {
+          const storage = await createStorage({ backend: 'local', bucket: 'b', localPath: bucket });
+          const { slug, ids } = await pages(b);
+          const out = await backupStore(b.engine, storage);
+          await b.engine.executeRaw("UPDATE secret_store SET status = 'allowed', updated_at = now() WHERE id = $1", [ids.shared]);
+          await b.engine.deletePages([slug], { sourceId: b.sourceId });
+          const restored = await restoreBackup(b.engine, storage, out.object);
+          expect(restored).toMatchObject({ inserted: 0, purged: 1, unreadable: [] });
+          expect(restored.existing).toBeGreaterThanOrEqual(2);
+          expect((await state(b, ids)).only).toBe(false);
+          const [row] = await b.engine.executeRaw<{ status: string }>('SELECT status FROM secret_store WHERE id = $1', [ids.shared]);
+          expect(row!.status).toBe('allowed');
+        } finally { rmSync(bucket, { recursive: true, force: true }); }
+      });
+    }, 120_000);
+
     test('doctor counts sealed originals no page or commit references', async () => {
       await brain(async b => {
         const ctx = { engine: b.engine, remote: true, progress: { heartbeat() {} } } as unknown as DoctorContext;
@@ -86,6 +166,7 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
         expect((after.details as { unreferenced: number }).unreferenced).toBe(((before.details as { unreferenced?: number } | undefined)?.unreferenced ?? 0) + 1);
         expect(after.status).toBe('warn');
         expect(after.message).toContain('referenced by no page or commit');
+        expect((await b.engine.executeRaw('SELECT 1 FROM secret_store WHERE id = $1', [orphan])).length).toBe(1);
         await recordOccurrence(b.engine, { entryId: orphan, sourceId: b.sourceId, slug: 'notes/x', field: 'compiled_truth', origin: 'repair' });
         expect((await secretStoreCheck(ctx)).message).not.toContain('referenced by no page or commit');
       });

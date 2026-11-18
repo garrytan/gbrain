@@ -212,29 +212,40 @@ export async function allOccurrenceRows(engine: BrainEngine): Promise<BackupOccu
 }
 
 /**
- * Writes backed-up entries the store does not hold (by id, and never over a row that holds the same value), with the
- * occurrences of the entries it wrote. An occurrence's page_id is kept only when that page still exists; entries of a
- * source this brain no longer has are skipped.
+ * Writes backed-up entries the store does not hold (by id, and never over a row that holds the same value, so a local
+ * row changed since the backup stays as it is), with the occurrences of the entries it wrote. An occurrence on a page
+ * (a slug and no commit) comes back only while that page exists in the source, live or soft-deleted; an entry whose
+ * every occurrence was on pages that are gone is not written (`purged`), so a restore never brings back an original a
+ * page purge removed. Restore after the pages are back (sync first); re-running it adds what it skipped. An
+ * occurrence's page_id is kept only when that page still exists; entries of a source this brain no longer has are skipped.
  */
-export async function insertBackupRows(engine: BrainEngine, entries: BackupEntryRow[], occurrences: BackupOccurrenceRow[]): Promise<{ entries: number; occurrences: number }> {
-  let written = 0, occ = 0;
+export async function insertBackupRows(engine: BrainEngine, entries: BackupEntryRow[], occurrences: BackupOccurrenceRow[]): Promise<{ entries: number; occurrences: number; purged: number }> {
+  let written = 0, occ = 0, purged = 0;
+  const onPage = (o: BackupOccurrenceRow) => o.commit_sha === null && o.slug !== null;
   await engine.transaction(async tx => {
     for (const row of entries) {
+      const own = occurrences.filter(x => x.entry_id === row.id);
+      const pageSlugs = [...new Set(own.filter(onPage).map(o => o.slug as string))];
+      const anchored = own.length === 0 || own.some(o => !onPage(o));
       const inserted = await tx.executeRaw<{ id: string }>(`INSERT INTO secret_store (id,source_id,rule,ciphertext,nonce,tag,key_id,key_host,value_mac,status,created_at,updated_at)
         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::timestamptz,$12::timestamptz WHERE EXISTS (SELECT 1 FROM sources WHERE id=$2)
+          AND ($13::boolean OR EXISTS (SELECT 1 FROM pages p WHERE p.source_id=$2 AND p.slug = ANY($14::text[])))
         ON CONFLICT DO NOTHING RETURNING id`,
-      [row.id, row.source_id, row.rule, row.ciphertext, row.nonce, row.tag, row.key_id, row.key_host, row.value_mac, row.status, row.created_at, row.updated_at]);
-      if (!inserted.length) continue;
+      [row.id, row.source_id, row.rule, row.ciphertext, row.nonce, row.tag, row.key_id, row.key_host, row.value_mac, row.status, row.created_at, row.updated_at, anchored, pageSlugs]);
+      if (!inserted.length) {
+        if (!anchored && !(await entryRow(tx, row.id).then(() => true, () => false))) purged++;
+        continue;
+      }
       written++;
-      for (const o of occurrences.filter(x => x.entry_id === row.id)) {
-        await tx.executeRaw(`INSERT INTO secret_store_occurrence (entry_id,source_id,page_id,slug,field,origin,commit_sha,path,line,pre_field_sha256,created_by,created_at)
-          VALUES ($1,$2,(SELECT id FROM pages WHERE id=$3),$4,$5,$6,$7,$8,$9,$10,$11,$12::timestamptz)`,
-        [o.entry_id, o.source_id, o.page_id, o.slug, o.field, o.origin, o.commit_sha, o.path, o.line, o.pre_field_sha256, o.created_by, o.created_at]);
-        occ++;
+      for (const o of own) {
+        occ += (await tx.executeRaw(`INSERT INTO secret_store_occurrence (entry_id,source_id,page_id,slug,field,origin,commit_sha,path,line,pre_field_sha256,created_by,created_at)
+          SELECT $1,$2,(SELECT id FROM pages WHERE id=$3),$4,$5,$6,$7,$8,$9,$10,$11,$12::timestamptz
+          WHERE $7::text IS NOT NULL OR $4::text IS NULL OR EXISTS (SELECT 1 FROM pages p WHERE p.source_id=$2 AND p.slug=$4) RETURNING 1`,
+        [o.entry_id, o.source_id, o.page_id, o.slug, o.field, o.origin, o.commit_sha, o.path, o.line, o.pre_field_sha256, o.created_by, o.created_at])).length;
       }
     }
   });
-  return { entries: written, occurrences: occ };
+  return { entries: written, occurrences: occ, purged };
 }
 
 /**

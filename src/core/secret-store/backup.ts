@@ -105,7 +105,7 @@ export async function backupDue(engine: BrainEngine): Promise<boolean> {
   return !last || rows.some(row => row.created_at > last || row.updated_at > last);
 }
 
-export interface RestoreResult { object: string; key_id: string; inserted: number; existing: number; unreadable: string[]; occurrences: number }
+export interface RestoreResult { object: string; key_id: string; inserted: number; existing: number; purged: number; unreadable: string[]; occurrences: number }
 
 /**
  * Imports the entries of one backup object that the store does not hold. Each row must authenticate under a key on
@@ -140,5 +140,5 @@ export async function restoreBackup(engine: BrainEngine, storage: StorageBackend
     try { openEntry(row); return true; } catch { unreadable.push(row.id); return false; }
   });
   const written = await insertBackupRows(engine, verified, body.occurrences);
-  return { object, key_id: doc.key_id, inserted: written.entries, existing: verified.length - written.entries, unreadable, occurrences: written.occurrences };
+  return { object, key_id: doc.key_id, inserted: written.entries, existing: verified.length - written.entries - written.purged, purged: written.purged, unreadable, occurrences: written.occurrences };
 }

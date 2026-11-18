@@ -135,7 +135,8 @@ export async function runSecrets(engine: BrainEngine, args: string[]): Promise<v
     const object = flag(rest, '--restore');
     if (object) {
       const out = await restoreBackup(engine, storage, object);
-      print(json, out, [`Restored ${out.inserted} entr${out.inserted === 1 ? 'y' : 'ies'} (${out.occurrences} occurrence(s)) from ${out.object}; ${out.existing} already here.`,
+      print(json, out, [`Restored ${out.inserted} entr${out.inserted === 1 ? 'y' : 'ies'} (${out.occurrences} occurrence(s)) from ${out.object}; ${out.existing} already here and left as they are.`,
+        ...(out.purged ? [`Skipped ${out.purged} whose pages are gone (purged, or not synced yet); sync first and run the restore again to add any that come back.`] : []),
         ...(out.unreadable.length ? [`Skipped ${out.unreadable.length} that do not authenticate under a key on this host: ${out.unreadable.join(', ')}`] : [])].join('\n'));
       return;
     }

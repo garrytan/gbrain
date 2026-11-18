@@ -84,8 +84,13 @@ for (const { name, make } of engines) {
         const raw = (await storage.download(out.object)).toString('utf8');
         for (const clear of [TOKEN, 'notes/deploy-plan', 'github_token', sealed.id, currentKey({ create: false })!.key.toString('base64')]) expect(raw).not.toContain(clear);
 
+        await withEnv({ GBRAIN_HOME: home(bucket) }, async () => {
+          await expect(restoreBackup(b.engine, storage, out.object)).rejects.toMatchObject({ code: 'secret_store_key_missing' });
+          expect(await b.engine.executeRaw('SELECT 1 FROM secret_store')).toEqual([]);
+        });
+        await b.engine.putPage('notes/deploy-plan', { type: 'note', title: 'Deploy plan', compiled_truth: 'Deploy notes.', timeline: '', frontmatter: {} }, { sourceId: 'default' });
         const restored = await restoreBackup(b.engine, storage, out.object);
-        expect(restored).toMatchObject({ inserted: out.entries, existing: 0, unreadable: [] });
+        expect(restored).toMatchObject({ inserted: out.entries, existing: 0, purged: 0, unreadable: [] });
         expect((await reveal(b.engine, sealed.id, 'test')).value).toBe(TOKEN);
         expect((await reveal(b.engine, sealed.id, 'test')).occurrences.map(o => o.slug)).toEqual(['notes/deploy-plan']);
         expect(await restoreBackup(b.engine, storage, out.object)).toMatchObject({ inserted: 0, existing: out.entries });
@@ -95,9 +100,6 @@ for (const { name, make } of engines) {
         await storage.upload(`${BACKUP_OBJECT_PREFIX}changed.json`, Buffer.from(JSON.stringify({ ...doc, ciphertext: flipped.toString('base64') })));
         await expect(restoreBackup(b.engine, storage, `${BACKUP_OBJECT_PREFIX}changed.json`)).rejects.toMatchObject({ code: 'secret_store_key_mismatch' });
         await expect(restoreBackup(b.engine, storage, '../elsewhere.json')).rejects.toMatchObject({ code: 'invalid_params' });
-        await withEnv({ GBRAIN_HOME: home(bucket) }, async () => {
-          await expect(restoreBackup(b.engine, storage, out.object)).rejects.toMatchObject({ code: 'secret_store_key_missing' });
-        });
       });
     }, 60_000);
 
