@@ -495,7 +495,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'claimHousekeepingTurn': OOS.journal, 'completeHousekeepingTurn': OOS.journal, 'readReceiptBudget': OOS.journal,
   'listCompactableReceipts': OOS.journal, 'listReservationsAfter': OOS.journal, 'listTrueUpRequests': OOS.journal,
   'readCapacityForecastInputs': OOS.journal, 'listPendingSegmentedProjections': OOS.journal, 'selectProjectionWindowJobs': OOS.journal,
-  'listGatedMirrorRequests': OOS.effectScans,
+  'listGatedMirrorRequests': OOS.effectScans, 'listEffectRecoveries': OOS.effectScans,
   'logIngest': OOS.ingest, 'getIngestLog': OOS.ingest,
   'logEvalCandidate': OOS.eval, 'listEvalCandidates': OOS.eval, 'deleteEvalCandidatesBefore': OOS.eval,
   'logEvalCaptureFailure': OOS.eval, 'listEvalCaptureFailures': OOS.eval,
@@ -1269,4 +1269,5 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('listPendingSegmentedProjections', [['default', (e) => e.listPendingSegmentedProjections({ limit: 10, reasons: ['segmented_projecting'] })]]),
   ...variants('selectProjectionWindowJobs', [['default', (e) => e.selectProjectionWindowJobs({ after: { source_incarnation: JOURNAL_REQUEST, slug: SLUG }, highWater: null }, true)]]),
   ...variants('listGatedMirrorRequests', [['default', (e) => e.listGatedMirrorRequests(JOURNAL_REQUEST, 'segmented_mirror_writer_gate', ['segmented_mirror_writer_gate', 'withdrawal_mirror_failed'])]]),
+  ...variants('listEffectRecoveries', [['default', (e) => e.listEffectRecoveries(JOURNAL_REQUEST, null, 10)], ['after', (e) => e.listEffectRecoveries(JOURNAL_REQUEST, '12', 10)]]),
 ];

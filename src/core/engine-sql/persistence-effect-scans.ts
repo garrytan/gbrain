@@ -3,8 +3,9 @@
  *
  * The reads the effect worker's pass (persistence/effects.ts `runEffectPass`) sent through `executeRaw` before it claims
  * effects: the requests whose parked mirror targets only wait on the segmented writer gate
- * (persistence/segmented-mirror-gate.ts `resumeGatedMirrors`). The text is the one that caller has always sent, byte for
- * byte, written out in full so this module imports no persistence code; the codes it matches arrive as arguments.
+ * (persistence/segmented-mirror-gate.ts `resumeGatedMirrors`), and the effects with a recovery due
+ * (persistence/effect-recovery-scan.ts `selectEffectRecoveries`). Each text is the one its caller has always sent, byte
+ * for byte, written out in full so this module imports no persistence code; the codes it matches arrive as arguments.
  * Decisions stay with the callers.
  */
 import type { LegacyUnscopedRead } from './brands.ts';
@@ -27,4 +28,19 @@ export interface GatedMirrorRequest { id: string; source_id: string; request_id:
  */
 export function listGatedMirrorRequests(exec: LegacyUnscopedRead, hostId: string, gateCode: string, allowedCodes: readonly string[]): Promise<GatedMirrorRequest[]> {
   return exec.executeRaw<GatedMirrorRequest>(GATED_MIRROR_REQUESTS_SQL, [hostId, JSON.stringify([{ error_code: gateCode }]), [...allowedCodes]]);
+}
+
+/** `listEffectRecoveries`: $1 host id, $2 the id to scan after (null from the start), $3 the row limit. */
+export const EFFECT_RECOVERIES_SQL = `SELECT e.* FROM persistence_effects e
+    JOIN persistence_worktrees w ON w.id=e.worktree_id
+    WHERE e.recovery IS NOT NULL AND w.owner_host_id=$1::uuid AND e.next_attempt_at<=now()
+      AND ($2::bigint IS NULL OR e.id>$2::bigint) ORDER BY e.id LIMIT $3`;
+
+/**
+ * Up to `limit` effects on worktrees host `hostId` owns that carry a recovery due now, in id order, after effect id
+ * `after` (from the start when null). An id that is not a uuid, an `after` that is not a bigint and a negative limit
+ * refuse, as their casts and LIMIT do.
+ */
+export function listEffectRecoveries<R = Record<string, unknown>>(exec: LegacyUnscopedRead, hostId: string, after: string | null, limit: number): Promise<R[]> {
+  return exec.executeRaw<R>(EFFECT_RECOVERIES_SQL, [hostId, after, limit]);
 }

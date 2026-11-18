@@ -3337,6 +3337,11 @@ export interface BrainEngine {
    * unsettled effects are parked only with a code in `allowedCodes` (`resumeGatedMirrors`). A non-uuid host id refuses.
    */
   listGatedMirrorRequests(hostId: string, gateCode: string, allowedCodes: readonly string[]): Promise<GatedMirrorRequest[]>;
+  /**
+   * Up to `limit` effects on worktrees `hostId` owns with a recovery due now, in id order after effect id `after` (from
+   * the start when null) (`selectEffectRecoveries`). A non-uuid host, a non-bigint `after` or a negative limit refuses.
+   */
+  listEffectRecoveries<R = Record<string, unknown>>(hostId: string, after: string | null, limit: number): Promise<R[]>;
 
   /**
    * The current value of each named transaction-local setting (`current_setting(name, true)`), in `names` order, null

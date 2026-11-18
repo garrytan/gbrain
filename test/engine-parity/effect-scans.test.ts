@@ -1,11 +1,13 @@
 /**
  * BrainEngine parity — the effect worker's scans (engine-sql/persistence-effect-scans.ts): `listGatedMirrorRequests`
- * (persistence/segmented-mirror-gate.ts `resumeGatedMirrors`).
+ * (persistence/segmented-mirror-gate.ts `resumeGatedMirrors`) and `listEffectRecoveries`
+ * (persistence/effect-recovery-scan.ts `selectEffectRecoveries`).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: on a brain with no worktree, each scan answers no row for any uuid host id (lowercase or uppercase),
  *    also after a write request is admitted and queued; a host id that is not a uuid refuses with the `::uuid` cast's
- *    message, never with an empty answer. On every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm
+ *    message, never with an empty answer; so does a recovery cursor that is not a bigint (syntax or range) and a limit
+ *    that is fractional or negative. On every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm
  *    through test/engine-parity/harness.ts).
  *  - Regression: an engine that cannot run a scan stops every effect pass of the write worker, so a queued `gbrain put`
  *    is never applied; one that answers empty for a bad host id hides a caller bug Postgres reports.
@@ -66,6 +68,35 @@ describe('engine parity: effect scans', () => {
       /invalid input syntax for type uuid/);
     const answers = { empty, queued, upper, bad };
     expect(answers).toEqual({ empty: [], queued: [], upper: [], bad: 'invalid input syntax for type uuid' });
+    return answers;
+  });
+
+  parityTest('listEffectRecoveries finds no recovery without a worktree and refuses what its casts refuse', {
+    methods: ['listEffectRecoveries', 'readSourceMembership'],
+    timeout: 60_000,
+  }, async (engine) => {
+    const empty = await engine.listEffectRecoveries(HOST, null, 10);
+    await registerLocalWriter(engine, 'cli');
+    await admitPut(engine, 'notes/effect-recovery', REQUEST);
+    const queued = await engine.listEffectRecoveries(HOST, null, 10);
+    const cursor = await engine.listEffectRecoveries(HOST.toUpperCase(), ' +12 ', 0);
+    const refusal = (hostId: string, after: string | null, limit: number) =>
+      outcome(() => engine.listEffectRecoveries(hostId, after, limit), /invalid input syntax for type \w+: "[^"]*"|value "[^"]*" is out of range for type bigint|LIMIT must not be negative/);
+    const refused = {
+      host: await refusal('not-a-host', null, 10),
+      after: await refusal(HOST, 'x1', 10),
+      range: await refusal(HOST, '99999999999999999999', 10),
+      negative: await refusal(HOST, null, -1),
+      fraction: await refusal(HOST, null, 1.5),
+    };
+    const answers = { empty, queued, cursor, refused };
+    expect(answers).toEqual({ empty: [], queued: [], cursor: [], refused: {
+      host: 'invalid input syntax for type uuid: "not-a-host"',
+      after: 'invalid input syntax for type bigint: "x1"',
+      range: 'value "99999999999999999999" is out of range for type bigint',
+      negative: 'LIMIT must not be negative',
+      fraction: 'invalid input syntax for type bigint: "1.5"',
+    } });
     return answers;
   });
 });

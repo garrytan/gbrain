@@ -2160,6 +2160,28 @@
           "src-a"
         ]
       },
+      "listEffectRecoveries#after": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listEffectRecoveries#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listEmbeddingStateRows#default": {
         "flagOffLanes": [
           "pool"
@@ -4708,6 +4730,7 @@
         "listConversationFactRows": "none",
         "listCorpusSample": "direct",
         "listDeadFactsAbsorbJobsByKeys": "none",
+        "listEffectRecoveries": "none",
         "listEmbeddingStateRows": "direct",
         "listEnrichCandidates": "none",
         "listEvalCandidates": "none",

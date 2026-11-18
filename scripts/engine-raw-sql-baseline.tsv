@@ -689,7 +689,6 @@ src/core/persistence/effect-catchup.ts	execute_raw	1
 src/core/persistence/effect-facts.ts	execute_raw	8
 src/core/persistence/effect-journal.ts	execute_raw	24
 src/core/persistence/effect-links.ts	execute_raw	8
-src/core/persistence/effect-recovery-scan.ts	execute_raw	1
 src/core/persistence/effect-recovery.ts	execute_raw	18
 src/core/persistence/effect-retry.ts	execute_raw	14
 src/core/persistence/effect-settle.ts	execute_raw	7
