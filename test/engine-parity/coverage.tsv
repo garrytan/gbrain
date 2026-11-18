@@ -36,14 +36,14 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	8	no	yes	yes	refuses:transactions
-transactionDirect	lifecycle	yes	1	no	yes	yes	refuses:transactions
+transaction	lifecycle	yes	8	no	yes	yes	serves
+transactionDirect	lifecycle	yes	1	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 getPage	pages	yes	25	yes	yes	yes	serves
 readPageSnapshot	pages	yes	6	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	refuses:pages
-lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
+lockPageKeys	pages	yes	1	no	yes	yes	serves
 putPage	pages	yes	89	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	refuses:pages
 findDuplicatePages	pages	yes	1	no	yes	yes	refuses:pages
