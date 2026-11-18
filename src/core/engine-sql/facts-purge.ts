@@ -172,7 +172,7 @@ export async function listUnfencedFactRows(raw: EngineRawRead, opts: { sourceId?
        FROM facts f
       WHERE row_num IS NULL AND expired_at IS NULL AND dimension IS NULL
         ${opts.sourceId !== undefined ? sqlFragment`AND source_id = ${opts.sourceId}` : sqlFragment``}
-      ORDER BY source_id, entity_slug, id`);
+      ORDER BY source_id COLLATE "C", entity_slug COLLATE "C", id`);
   return raw<UnfencedFactRow>(text, params);
 }
 

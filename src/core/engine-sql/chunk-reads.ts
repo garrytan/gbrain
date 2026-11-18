@@ -191,14 +191,15 @@ export async function listQualifiedSymbolNames(
     ? sqlFragment`AND (symbol_name = ${symbol} OR symbol_name_qualified = ${symbol})`
     : sqlFragment`AND symbol_name_qualified ILIKE ${`%${symbol}%`}`;
   const found = await rows<{ symbol_name_qualified: string }>(exec,
+    // Bytewise order on every engine: the column is selected under COLLATE "C" (DISTINCT orders only by what it selects).
     // chunk-visibility-ok: the served projection filter of codeReadFilter is master's visibility test here
-    sqlFragment`SELECT DISTINCT symbol_name_qualified
+    sqlFragment`SELECT DISTINCT symbol_name_qualified COLLATE "C" AS symbol_name_qualified
          FROM content_chunks
          JOIN pages p ON p.id = content_chunks.page_id
         WHERE p.source_id = ${sourceId} AND ${codeFilter({})}
           AND symbol_name_qualified IS NOT NULL
           ${where}
-        ORDER BY symbol_name_qualified
+        ORDER BY 1
         LIMIT ${opts.limit}`,
   );
   return found.map(r => r.symbol_name_qualified);
