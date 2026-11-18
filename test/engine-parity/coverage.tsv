@@ -72,13 +72,13 @@ getPage	pages	yes	59	yes	yes	yes	serves
 readPageSnapshot	pages	yes	16	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	231	yes	yes	yes	serves
+putPage	pages	yes	234	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	6	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	81	yes	yes	yes	serves
+softDeletePage	pages	yes	82	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -232,9 +232,9 @@ storedTimelineRowsByPageIds	timeline	yes	1	no	yes	yes	serves
 countSegmentedTimelinePages	timeline	yes	1	no	yes	yes	serves
 countTimelineCommentMarkupRows	timeline	yes	1	no	yes	yes	serves
 listTimelineOrphanPages	timeline	yes	1	no	yes	yes	serves
-addTimelineEntry	timeline	yes	17	yes	yes	yes	serves
+addTimelineEntry	timeline	yes	20	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	1	no	yes	yes	serves
-getTimeline	timeline	yes	6	yes	yes	yes	serves
+getTimeline	timeline	yes	9	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	2	no	yes	yes	serves
 getSince	timeline	yes	1	no	yes	yes	serves
 getOnThisDay	timeline	yes	1	no	yes	yes	serves
@@ -513,7 +513,7 @@ listFactWithdrawalDates	trust	yes	2	no	yes	yes	serves
 moveFactWithdrawalSubject	trust	yes	1	no	yes	yes	serves
 hasFactWithdrawalForSubject	trust	yes	1	no	yes	yes	serves
 listFactWithdrawalKeys	trust	yes	3	no	yes	yes	serves
-upsertWriteGateReceipt	trust	yes	2	no	yes	yes	serves
+upsertWriteGateReceipt	trust	yes	3	no	yes	yes	serves
 upsertPageWriteGateReceipt	trust	yes	4	no	yes	yes	serves
 deleteStalePageWriteGateReceipts	trust	yes	1	no	yes	yes	serves
 listWriteGateReceiptsFor	trust	yes	3	no	yes	yes	serves

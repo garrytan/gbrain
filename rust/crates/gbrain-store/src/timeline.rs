@@ -103,6 +103,10 @@ pub struct TimelineOptions {
     /// `excludePrivate`: the page policy (`facts/privacy.rs` `page_hidden`) the TypeScript member
     /// reads from the rendered SQL; null reads every row.
     pub exclude_private: Option<PrivacyPolicy>,
+    /// A read-eligibility policy was given (`eligibility`): hide the rows `projectionEligibleSql`
+    /// always hides. The TypeScript member refuses a policy with `floor` or `suppressFlagged`.
+    pub eligible_only: bool,
+    /// A raw `eligibility` value is refused; the TypeScript member sends `eligibleOnly` instead.
     pub eligibility: Option<Value>,
 }
 
@@ -505,6 +509,7 @@ impl Store {
         for source in scope_sources(&*read, &options.source_id, &options.source_ids)? {
             if let Some(page) = read_page(&*read, &source, slug)?
                 && page_visible(&*read, &page, &options.exclude_private)?
+                && (!options.eligible_only || eligible_page(&page))
             {
                 let keep = |row: &TimelineRecord| match &options.exclude_private {
                     Some(policy) => event_visible(&*read, row, policy),
@@ -524,6 +529,15 @@ impl Store {
         rows.truncate(limit);
         Ok(rows.iter().map(TimelineRecord::to_json).collect())
     }
+}
+
+/// The part of `projectionEligibleSql('timeline_entries', 'te', ..)` a policy without `floor` or
+/// `suppressFlagged` applies. Every row of `getTimeline` hangs on `page` (`te.page_id = p.id`), so a
+/// soft-deleted page, or a page whose frontmatter has a `quarantine` key (any value), hides all of its
+/// rows. The third clause hides rows listed in `needs_rederive`, which only a raw-SQL purge writes;
+/// this engine has no such rows.
+fn eligible_page(page: &PageRecord) -> bool {
+    page.deleted_at_us.is_none() && !page.frontmatter.contains_key("quarantine")
 }
 
 /// Whether the page policy, when there is one, lets `page` read.
@@ -827,5 +841,45 @@ mod tests {
         let options: TimelineOptions =
             serde_json::from_value(json!({"eligibility": {"x": 1}})).unwrap();
         assert!(store.get_timeline("people/a", &options).is_err());
+    }
+
+    #[test]
+    fn eligible_only_hides_the_rows_of_a_soft_deleted_or_quarantined_page() {
+        let store = crate::test_support::store();
+        let put = |slug: &str, frontmatter: Value| -> u64 {
+            let input: PageInput = serde_json::from_value(json!({
+                "type": "note", "title": slug, "compiled_truth": "body", "frontmatter": frontmatter,
+            }))
+            .unwrap();
+            store
+                .put_page(slug, &input, &PutPageOptions::default())
+                .unwrap()["id"]
+                .as_u64()
+                .unwrap()
+        };
+        let open = put("people/open", json!({}));
+        let gone = put("people/gone", json!({}));
+        let held = put("people/held", json!({"quarantine": false}));
+        store
+            .write(|tx| {
+                for (page_id, summary) in [(open, "open"), (gone, "gone"), (held, "held")] {
+                    let id = next_entry_id(tx)?;
+                    put_entry(tx, None, &entry(id, page_id, "2026-01-01", summary, 1))?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        store.soft_delete_page("people/gone", None).unwrap();
+        let count = |slug: &str, eligible_only: bool| -> usize {
+            let options: TimelineOptions =
+                serde_json::from_value(json!({"eligibleOnly": eligible_only})).unwrap();
+            store.get_timeline(slug, &options).unwrap().len()
+        };
+        for slug in ["people/open", "people/gone", "people/held"] {
+            assert_eq!(count(slug, false), 1, "{slug}");
+        }
+        assert_eq!(count("people/open", true), 1);
+        assert_eq!(count("people/gone", true), 0);
+        assert_eq!(count("people/held", true), 0);
     }
 }

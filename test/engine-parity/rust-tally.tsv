@@ -43,7 +43,7 @@ test/engine-parity/sync-aliases.test.ts	9	0
 test/engine-parity/takes.test.ts	17	1
 test/engine-parity/telemetry.test.ts	8	0
 test/engine-parity/timeline-reads.test.ts	4	0
-test/engine-parity/timeline.test.ts	16	1
+test/engine-parity/timeline.test.ts	17	3
 test/engine-parity/transaction-settings.test.ts	5	1
 test/engine-parity/trust-fence.test.ts	4	0
 test/engine-parity/trust-proposals.test.ts	3	0

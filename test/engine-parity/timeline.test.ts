@@ -164,6 +164,112 @@ describe('engine parity: timeline entries', () => {
   );
 
   parityTest(
+    'getTimeline under an eligibility policy drops every row of a soft-deleted or quarantined page, before the limit',
+    { methods: ['getTimeline', 'addTimelineEntry', 'putPage', 'softDeletePage'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'alt');
+      const page = (slug: string, frontmatter: Record<string, unknown>, opts?: { sourceId?: string }) =>
+        engine.putPage(slug, { type: 'person', title: slug, compiled_truth: `${slug} body`, timeline: '', frontmatter }, opts);
+      await page('people/alice-example', {});
+      await page('people/alice-example', { quarantine: { reason: 'review' } }, { sourceId: 'alt' });
+      await page('people/held-example', { quarantine: false });
+      await page('people/gone-example', {});
+      await page('people/private-example', { visibility: 'private' });
+      for (const [slug, date, summary, sourceId] of [
+        ['people/alice-example', '2026-06-15', 'open old', undefined],
+        ['people/alice-example', '2026-06-17', 'open new', undefined],
+        ['people/alice-example', '2026-06-18', 'quarantined in alt', 'alt'],
+        ['people/alice-example', '2026-06-19', 'quarantined in alt, newest', 'alt'],
+        ['people/held-example', '2026-06-15', 'held', undefined],
+        ['people/gone-example', '2026-06-15', 'gone', undefined],
+        ['people/private-example', '2026-06-15', 'private', undefined],
+      ] as const) {
+        await engine.addTimelineEntry(slug, { date, summary }, sourceId ? { sourceId } : undefined);
+      }
+      await engine.softDeletePage('people/gone-example');
+      const summaries = async (slug: string, opts?: Parameters<BrainEngine['getTimeline']>[1]) =>
+        (await engine.getTimeline(slug, opts)).map((e) => `${new Date(e.date).toISOString().slice(0, 10)} ${e.summary}`);
+      const out = {
+        all: await summaries('people/alice-example'),
+        eligible: await summaries('people/alice-example', { eligibility: {} }),
+        eligibleAlt: await summaries('people/alice-example', { sourceIds: ['alt'], eligibility: {} }),
+        eligibleLimited: await summaries('people/alice-example', { limit: 1, eligibility: {} }),
+        eligibleWindow: await summaries('people/alice-example', { after: '2026-06-16', eligibility: {} }),
+        noPolicy: await summaries('people/alice-example', { eligibility: undefined }),
+        held: await summaries('people/held-example'),
+        heldEligible: await summaries('people/held-example', { eligibility: {} }),
+        gone: await summaries('people/gone-example'),
+        goneEligible: await summaries('people/gone-example', { eligibility: {} }),
+        privateEligible: await summaries('people/private-example', { eligibility: {} }),
+        privateBoth: await summaries('people/private-example', { eligibility: {}, excludePrivate: true }),
+      };
+      expect(out.all.length).toBe(4);
+      expect(out.eligible).toEqual(['2026-06-17 open new', '2026-06-15 open old']);
+      expect(out.eligibleAlt).toEqual([]);
+      expect(out.eligibleLimited).toEqual(['2026-06-17 open new']);
+      expect(out.eligibleWindow).toEqual(['2026-06-17 open new']);
+      expect(out.noPolicy).toEqual(out.all);
+      expect([out.held, out.gone]).toEqual([['2026-06-15 held'], ['2026-06-15 gone']]);
+      expect([out.heldEligible, out.goneEligible]).toEqual([[], []]);
+      expect(out.privateEligible).toEqual(['2026-06-15 private']);
+      expect(out.privateBoth).toEqual([]);
+      return out;
+    },
+  );
+
+  parityTest(
+    'getTimeline under an eligibility trust floor drops rows below the floor; the Rust store keeps no row tier and refuses',
+    { methods: ['getTimeline', 'addTimelineEntry', 'putPage'] },
+    async (engine) => {
+      await engine.putPage('people/alice-example', { type: 'person', title: 'alice', compiled_truth: 'body', timeline: '' });
+      for (const [tier, date] of [['operator_curated', '2026-06-15'], ['agent_written', '2026-06-16'], ['external_untrusted', '2026-06-17']] as const) {
+        await engine.transaction(async (tx) => {
+          await tx.applyTransactionSettings(['gbrain.write_trust_tier', 'gbrain.write_origin'], [tier, JSON.stringify({ channel: tier })]);
+          await tx.addTimelineEntry('people/alice-example', { date, summary: tier });
+        });
+      }
+      const summaries = async (opts?: Parameters<BrainEngine['getTimeline']>[1]) =>
+        (await engine.getTimeline('people/alice-example', opts)).map((e) => e.summary);
+      const out = {
+        curated: await summaries({ eligibility: { floor: 'operator_curated' } }),
+        agent: await summaries({ eligibility: { floor: 'agent_written' } }),
+      };
+      expect(out.curated).toEqual(['operator_curated']);
+      expect(out.agent).toEqual(['agent_written', 'operator_curated']);
+      return out;
+    },
+  );
+
+  parityTest(
+    'getTimeline under eligibility suppressFlagged drops flagged rows at or below agent_written; the Rust store keeps no receipts and refuses',
+    { methods: ['getTimeline', 'addTimelineEntry', 'putPage', 'upsertWriteGateReceipt'] },
+    async (engine) => {
+      await engine.putPage('people/alice-example', { type: 'person', title: 'alice', compiled_truth: 'body', timeline: '' });
+      for (const [tier, date, summary] of [
+        ['agent_written', '2026-06-15', 'agent flagged'], ['agent_written', '2026-06-16', 'agent clean'],
+        ['operator_curated', '2026-06-17', 'curated flagged'],
+      ] as const) {
+        await engine.transaction(async (tx) => {
+          await tx.applyTransactionSettings(['gbrain.write_trust_tier', 'gbrain.write_origin'], [tier, JSON.stringify({ channel: tier })]);
+          await tx.addTimelineEntry('people/alice-example', { date, summary });
+        });
+      }
+      // Receipt targets need the row ids; they are written, never returned or compared.
+      for (const row of await engine.getTimeline('people/alice-example')) {
+        if (!row.summary.endsWith('flagged')) continue;
+        await engine.upsertWriteGateReceipt({
+          target_table: 'timeline_entries', target_id: String(row.id), source_id: 'default',
+          content_hash: 'h1', tier: 'agent_written', detector_version: 1, verdict: 'flag', reason_families: ['override'],
+          reasons: ['override'], detector_error: false, request_id: null,
+        });
+      }
+      const suppressed = (await engine.getTimeline('people/alice-example', { eligibility: { suppressFlagged: true } })).map((e) => e.summary);
+      expect(suppressed).toEqual(['curated flagged', 'agent clean']);
+      return { suppressed };
+    },
+  );
+
+  parityTest(
     'addTimelineEntriesBatch counts inserted rows, drops missing pages and replays as no-ops',
     { methods: ['addTimelineEntriesBatch', 'getTimeline', 'putPage'] },
     async (engine, backend) => {

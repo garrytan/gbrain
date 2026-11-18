@@ -153,5 +153,6 @@ event page (the hard delete of its depth page removes the entry and leaves the r
 - `timeline-trust-tier-not-modeled` (tracked): the store keeps no `trust_tier` on a timeline row, so every read
   returns `unknown` and fence-guard's held-row count (`heldRows` for `timeline_entries`) refuses on Rust and stays on
   the SQL path. Done when the record carries the tier the write path stamps, `heldRows` for `timeline_entries` is a
-  typed member served from the store, and a parity case compares a held row on both arms.
+  typed member served from the store, and a parity case compares a held row on both arms. `getTimeline` under an
+  `eligibility` policy with `floor` or `suppressFlagged` refuses for the same reason (links-graph-timeline.md).
 - `chronicle-reads-host-time-zone`: see Known differences.
