@@ -210,8 +210,8 @@ test('checkpoint replay keeps its originally admitted page dependencies when ano
     const [accepted] = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='connector_v2_checkpoint'", [f.id]);
     const [dependency] = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE source_id=$1 AND slug='notes/first'", [f.id]);
     expect(accepted.intent?.receipts).toEqual([dependency.id]);
-    await withPausedOwnerBudget(() => second.saveState(state, true));
-    expect(second.deferred).toBe(true);
+    // A save replayed from another run is not this run's to hold in flight: the sweep stops, so its later page writes are never refused.
+    await expect(withPausedOwnerBudget(() => second.saveState(state, true))).rejects.toMatchObject({ code: 'write_pending', writeRequest: { request_id: accepted.request_id } });
     expect(await engine.executeRaw("SELECT id FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='connector_v2_checkpoint'", [f.id])).toHaveLength(1);
     expect((await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid', [accepted.id]))[0].intent?.receipts).toEqual([dependency.id]);
     await disposePersistenceConsumer(engine);

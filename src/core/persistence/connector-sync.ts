@@ -1160,7 +1160,9 @@ export class ManagedConnectorSync {
     if (kind === 'connector_v2_checkpoint') {
       if (!isTerminal(row)) {
         const entry = { itemRef: CHECKPOINT_SLUG, requestId: row.request_id, baseRequestId, admittedAt: new Date(row.created_at).toISOString() };
-        if (inflight) { this.inflight = { row, next: savedCursor(row, extra.checkpointAfter!), entry }; return { row, pending: true, created: false }; }
+        // #9681: only this run's own save stays in flight; a replayed save another run admitted stops the sweep as before.
+        const saved = savedCursor(row, extra.checkpointAfter!);
+        if (inflight && (saved[0] as { run?: unknown } | undefined)?.run === this.runId) { this.inflight = { row, next: saved, entry }; return { row, pending: true, created: false }; }
         this.pendingCheckpoint = entry;
         this.stopped = true;
         throw new ConnectorWaitBudgetStop(row);
