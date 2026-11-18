@@ -1293,7 +1293,8 @@ export function parseAuthCreateArgs(rest: string[]): { name: string; takesHolder
   }
   const shared = parseCreateSourceFlags(rest);
   if (shared.error) return { name: '', error: shared.error };
-  const positional = rest.find(a => !a.startsWith('--') && a !== takesValue && a !== scopesValue && a !== minValue && !shared.values.includes(a));
+  const flagValueAt = new Set(['--takes-holders', '--scopes', '--min-trust', '--sources', '--read-shared'].map(flag => rest.indexOf(flag)).filter(i => i >= 0).map(i => i + 1));
+  const positional = rest.find((a, i) => !a.startsWith('--') && !flagValueAt.has(i));
   return { name: positional || '', takesHolders, ...(scopes !== undefined ? { scopes } : {}), ...(isTrustTier(minValue) ? { minTrust: minValue } : {}),
     ...(shared.sources ? { sources: shared.sources } : {}), ...(shared.readShared ? { readShared: true } : {}) };
 }

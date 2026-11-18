@@ -229,6 +229,8 @@ export interface AddSourceOpts {
    * `tokenEnv`; no secret lands in sources.config. See src/core/slack/.
    */
   slack?: import('./slack/source-add.ts').AddSourceSlackOpts;
+  /** Register an imessage-kind source (the GBrain Helper on this Mac); always database-recorded and owner-only. See src/core/imessage/. */
+  imessage?: import('./imessage/source-add.ts').AddSourceIMessageOpts;
 }
 
 export interface RemoveSourceOpts {
@@ -437,7 +439,13 @@ export async function assertNoOverlappingPath(
  * pages into --dir, inside a Git checkout that no other source covers (a nested
  * root would import every page twice).
  */
-async function insertApiSource(engine: BrainEngine, opts: AddSourceOpts, kind: 'meetings' | 'slack'): Promise<void> {
+async function insertApiSource(engine: BrainEngine, opts: AddSourceOpts, kind: 'meetings' | 'slack' | 'imessage'): Promise<void> {
+  if (kind === 'imessage') {
+    const { imessageSourceConfig } = await import('./imessage/source-add.ts');
+    await engine.executeRaw('INSERT INTO sources (id, name, local_path, config) VALUES ($1, $2, NULL, $3::text::jsonb)',
+      [opts.id, opts.name ?? opts.id, JSON.stringify(imessageSourceConfig(opts.imessage!, opts.federated))]);
+    return;
+  }
   const { chooseMeetingsRecord, meetingsSourceConfig } = await import('./meetings/source-add.ts');
   const { slackSourceConfig } = await import('./slack/source-add.ts');
   const request = kind === 'slack' ? opts.slack! : opts.meetings!;
@@ -521,7 +529,7 @@ export async function addSource(
     !!opts.localPath &&
     !opts.remoteUrl &&
     !opts.github &&
-    !opts.google && !opts.meetings && !opts.slack;
+    !opts.google && !opts.meetings && !opts.slack && !opts.imessage;
   if (existing.length > 0 && !attachPath) {
     const pathNote = existing[0]!.local_path
       ? ` with local_path ${existing[0]!.local_path}`
@@ -697,8 +705,8 @@ export async function addSource(
            VALUES ($1, $2, $3, $4::text::jsonb)`,
       [opts.id, displayName, finalPath, JSON.stringify(config)],
     );
-  } else if (opts.meetings || opts.slack) {
-    await insertApiSource(engine, opts, opts.slack ? 'slack' : 'meetings');
+  } else if (opts.meetings || opts.slack || opts.imessage) {
+    await insertApiSource(engine, opts, opts.imessage ? 'imessage' : opts.slack ? 'slack' : 'meetings');
   } else {
     // ── Path B: --path or no path (existing behavior, pre-v0.28) ─────────
     // #2707: only validate when the path actually exists — a not-yet-created

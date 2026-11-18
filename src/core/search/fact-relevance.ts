@@ -363,16 +363,30 @@ export async function countUncomparableFacts(engine: BrainEngine, scope: FactPoo
  * the pool's read policy, so a row the caller cannot see never shapes a window the caller sees; ordered by valid_from, id.
  * A row whose stored valid_until has passed still ends the value before it; withdrawn and superseded rows never do.
  */
-export async function readSlotRows(engine: BrainEngine, scope: FactPoolScope, slots: ReadonlyArray<{ source_id: string; entity_slug: string; dimension: string }>): Promise<SlotRow[]> {
+export async function readSlotRows(engine: BrainEngine, scope: FactPoolScope, slots: ReadonlyArray<{ source_id: string; entity_slug: string; dimension: string }>): Promise<Array<SlotRow & Omit<FactCandidate, 'entity'>>> {
   if (!slots.length) return [];
   const { where, params } = poolPredicate(scope, { includeExpired: true });
   const n = params.length;
-  return engine.executeRaw<SlotRow>(
-    `SELECT f.id, f.source_id, f.entity_slug, f.dimension, f.value_hash, f.valid_from, f.source_markdown_slug, f.fact FROM facts f
+  return engine.executeRaw<SlotRow & Omit<FactCandidate, 'entity'>>(
+    `SELECT ${COLS} FROM facts f
      WHERE ${where} AND f.expired_at IS NULL AND f.superseded_by IS NULL AND f.dimension IS NOT NULL AND f.value_hash IS NOT NULL AND COALESCE(f.dim_status, 'active') = 'active' AND ${CONVERSATION_SLOT_SQL}
        AND (f.source_id, f.entity_slug, f.dimension) IN (SELECT * FROM unnest($${n + 1}::text[], $${n + 2}::text[], $${n + 3}::text[]))
      ORDER BY f.valid_from, f.id`,
     [...params, slots.map(s => s.source_id), slots.map(s => s.entity_slug), slots.map(s => s.dimension)]);
+}
+
+/**
+ * GBRA-574 F (D1): the distinct (source_id, entity_slug) pairs among `keys` that hold an active fact in the pool under
+ * its read policy and have no live page at that slug (an unbacked name key), at most `limit`, by source then slug.
+ */
+export async function poolUnbackedKeys(engine: BrainEngine, scope: FactPoolScope, keys: readonly string[], limit: number): Promise<Array<{ source_id: string; entity_slug: string }>> {
+  if (!keys.length) return [];
+  const { where, params } = poolPredicate(scope, undefined);
+  const n = params.length;
+  return engine.executeRaw<{ source_id: string; entity_slug: string }>(
+    `SELECT DISTINCT f.source_id, f.entity_slug FROM facts f WHERE ${where} AND f.entity_slug = ANY($${n + 1}::text[])
+       AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.entity_slug AND p.deleted_at IS NULL)
+     ORDER BY f.source_id, f.entity_slug LIMIT $${n + 2}`, [...params, [...keys], limit]);
 }
 
 /** GBRA-574 B5: what marks a later fact as calling an earlier one off: saved-facts-match.ts's RETRACTION plus plain cancellation words. Fixed, never configurable. */

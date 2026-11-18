@@ -227,6 +227,17 @@ for (const kind of testBackends()) {
       expect(() => parseRescopeTokenArgs(['rescope-me', '--read-shared', 'yes'])).toThrow('--read-shared must be on or off');
     }, 240_000);
 
+    test('rescope never stores the switch on a key with no source list: on refuses, a reset to default clears it, and a later narrowing stays off', async () => {
+      const unlisted = await mintLegacyToken(engine, { name: 'unlisted', scopes: ['read', 'write'], takesHolders: ['world'] });
+      await bindCredential(engine, { kind: 'token', id: unlisted.id }, { member: 'carol-example' });
+      await expect(rescopeLegacyToken(engine, parseRescopeTokenArgs(['unlisted', '--read-shared', 'on']))).rejects.toMatchObject({ reasons: ['read_shared_needs_source'] });
+      await mint2('reset-me', [PRIVATE_ALICE]);
+      const reset = await rescopeLegacyToken(engine, parseRescopeTokenArgs(['reset-me', '--reset-default', 'sources']));
+      expect(reset.after.readShared).not.toBe(true);
+      await rescopeLegacyToken(engine, parseRescopeTokenArgs(['reset-me', '--sources', PRIVATE_ALICE]));
+      expect((await verify('reset-me')).allowedSources).toEqual([PRIVATE_ALICE]);
+    }, 240_000);
+
     test('OAuth clients: a switched client reads the shared set after its active-source filter; invalidating tokens keeps the switch', async () => {
       const registered = await provider().registerClientManual('client-alice-example', ['client_credentials'], 'read', [], PRIVATE_ALICE);
       await bindCredential(engine, { kind: 'client', id: registered.clientId }, { member: 'alice-example' });
