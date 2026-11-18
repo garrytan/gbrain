@@ -13,6 +13,8 @@ import { runPersistenceAdministration } from '../core/persistence/administration
 import type { PersistenceAdminOperation } from '../core/persistence/admin-contract.ts';
 import { reportPersistenceCliError } from './persistence-delegate.ts';
 import { bigintToStringReplacer } from '../core/utils.ts';
+import { postgresStatusReadError } from '../cli/postgres-status-read-error.ts';
+import { writeCliError } from '../cli/cli-error.ts';
 
 export const WRITER_HELP = `Usage:
   gbrain sources writer status [<source>] [--probe] [--json]
@@ -250,8 +252,10 @@ export async function runPersistenceAdminCli(group: Group, args: string[], conne
     return;
   }
   let owned: BrainEngine | undefined;
+  let operation: PersistenceAdminOperation | undefined;
   try {
     const parsed = parsePersistenceAdminArgs(group, args);
+    operation = parsed.operation;
     const brainId = resolveBrainId(parsed.brain ?? getCliOptions().brain);
     const config = adminHostConfig(persistenceConfigForBrain(loadConfig(), brainId, brainId === 'host' ? [] : loadMounts()), brainId,
       'Writer administration', GROUP_ARGV[group].slice(1).join(' '));
@@ -283,6 +287,13 @@ export async function runPersistenceAdminCli(group: Group, args: string[], conne
     // #6678: a credential repair that refused some parked pushes on their own is partial and exits 1.
     if ((parsed.operation === 'writer_git_durability' || parsed.operation === 'writer_retry_effects') && (result as { status?: unknown }).status === 'partial') setCliExitVerdict(1);
   } catch (error) {
+    if (operation === 'writer_status' && args.includes('--json')) {
+      const classified = postgresStatusReadError(error, (connected ?? owned)?.kind ?? null);
+      if (classified !== error) {
+        setCliExitVerdict(writeCliError(classified, 'sources', { json: true }));
+        return;
+      }
+    }
     if (!await reportPersistenceCliError(error, args.includes('--json'))) {
       console.error(error instanceof Error ? error.message : String(error));
       setCliExitVerdict(1);
