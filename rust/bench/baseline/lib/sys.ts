@@ -57,8 +57,10 @@ export interface ServerMemory { processes: number; rss_bytes: number; pss_bytes:
 
 function procStatusKb(pid: number, field: string): number {
   try {
-    const m = new RegExp(`${field}:\\s+(\\d+) kB`).exec(readFileSync(`/proc/${pid}/status`, 'utf8'));
-    return m ? Number(m[1]) : 0;
+    // A line parse, not a RegExp built from `field`: /proc/<pid>/status lines read "VmRSS:\t  1234 kB".
+    const line = readFileSync(`/proc/${pid}/status`, 'utf8').split('\n').find((l) => l.startsWith(`${field}:`));
+    const value = line ? Number.parseInt(line.slice(field.length + 1).trim(), 10) : Number.NaN;
+    return Number.isFinite(value) ? value : 0;
   } catch { return 0; }
 }
 
