@@ -80,6 +80,17 @@ export async function updateSourceConfig(exec: SqlExecutor, sourceId: string, pa
     return affectedRows > 0;
   }
 
+/**
+ * Ids of live sources whose last sync is more than seven days old by the database clock (`now()`), by id: the
+ * advisor's stale-sync read. Unscoped on master. Throws on a schema without `last_sync_at` or `archived`.
+ */
+export async function listStaleSyncSourceIds(exec: LegacyUnscopedRead): Promise<string[]> {
+  const rows = await exec.executeRaw<{ id: string }>(
+    `SELECT id FROM sources WHERE last_sync_at IS NOT NULL AND last_sync_at < now() - interval '7 days' AND NOT archived ORDER BY id`,
+  );
+  return rows.map(r => r.id);
+}
+
 /** One source with the columns import and contextual retrieval read, or null for an unknown id. Rows come back as the driver returns them. */
 export async function getSource(exec: LegacyUnscopedRead, sourceId: string): Promise<SourceDetailRow | null> {
   const rows = await exec.executeRaw<SourceDetailRow>(

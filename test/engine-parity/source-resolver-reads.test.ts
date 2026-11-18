@@ -1,6 +1,6 @@
 /**
  * BrainEngine parity — the source-resolution reads (`listLocalPathSources`, `listSourceRoutingRows`,
- * `countDefaultSourceSplit`, `listAllSources`, `getSource`, `listSourceRecords`) that `src/core/source-resolver.ts`
+ * `countDefaultSourceSplit`, `listAllSources`, `getSource`, `listSourceRecords`, `listStaleSyncSourceIds`) that `src/core/source-resolver.ts`
  * and the other `sources` readers make to pick a source or list the registered ones.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
@@ -9,18 +9,21 @@
  *    split counts live pages only and counts distinct non-default sources; `listAllSources` hides archived sources
  *    unless asked, orders `default` first then by id, and its local-path filter also drops the storage manifest;
  *    `getSource` still finds an archived source; `listSourceRecords` keeps archived sources with their flag; a config
- *    stored as a JSON string (a historical double-encoded row) reads as no keys, as `config->>'kind'` did.
+ *    stored as a JSON string (a historical double-encoded row) reads as no keys, as `config->>'kind'` did; the advisor's
+ *    stale-sync read lists live sources last synced over seven days ago, by id.
  *  - Regression: an engine that drops archived sources from tier 4 (a cwd inside an archived checkout then falls
  *    through silently instead of refusing), counts soft-deleted pages (the guard then nags or routes a write to the
  *    wrong source), or counts pages instead of sources in `nonDefaultSources`; an engine that lists archived sources
  *    by default (a removed source comes back in `sources list`, doctor and the resolver's existence checks); a reader
- *    that parses a JSON-string config (a broken row then counts as a connector source in orphans and connector holds).
+ *    that parses a JSON-string config (a broken row then counts as a connector source in orphans and connector holds);
+ *    a stale-sync read that lists archived or never-synced sources, or uses the wrong interval (the advisor then nags).
  *  - Why existing coverage misses it: test/source-resolver*.test.ts drive the resolver through fake engines keyed on
  *    SQL text, so they never compare real engines, and the Rust engine has no raw SQL to answer.
  *  - Seam: none. Real engines, typed reads only; sources are made and archived through the harness fixtures.
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import type { RustEngine } from '../../src/core/rust-engine.ts';
 import type { PageInput } from '../../src/core/types.ts';
 import { archiveSource, createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
@@ -129,4 +132,31 @@ describe('engine parity: source-resolution reads', () => {
     expect(connectors).toEqual(['mail']);
     return { kinds, connectors };
   });
+
+  // The engines compare with their own clock: PGLite and Postgres with the database's `now()`, the Rust store with the
+  // process clock. The fixture keeps every sync far from the seven-day edge, so both clocks answer the same.
+  parityTest('listStaleSyncSourceIds lists live sources last synced over seven days ago, by id', { methods: ['listStaleSyncSourceIds'] }, async (engine, backend) => {
+    const none = await engine.listStaleSyncSourceIds();
+    expect(none).toEqual([]);
+    const syncedDaysAgo = async (id: string, days: number | null) => {
+      await createSource(engine, backend, id);
+      if (days === null) return;
+      if (backend === 'rust') {
+        const at = new Date(Date.now() - days * 86_400_000).toISOString();
+        await (engine as unknown as RustEngine).openStore('setLastSync').brain.upsertSource({ id, last_sync_at: at });
+      } else {
+        await engine.executeRaw(`UPDATE sources SET last_sync_at = now() - make_interval(days => $2::int) WHERE id = $1`, [id, days]);
+      }
+    };
+    await syncedDaysAgo('old', 30);
+    await syncedDaysAgo('early', 8);
+    await syncedDaysAgo('recent', 6);
+    await syncedDaysAgo('never', null);
+    await syncedDaysAgo('gone', 30);
+    await archiveSource(engine, backend, 'gone');
+    const stale = await engine.listStaleSyncSourceIds();
+    expect(stale).toEqual(['early', 'old']);
+    return { none, stale };
+  });
 });
+

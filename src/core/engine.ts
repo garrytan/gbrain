@@ -1270,6 +1270,8 @@ export interface BrainEngine {
   listLocalPathSources(): Promise<LocalPathSourceRow[]>;
   listSourceRoutingRows(): Promise<SourceRoutingRow[]>;
   countDefaultSourceSplit(): Promise<DefaultSourceSplit>;
+  /** Live sources last synced more than seven days ago by the database clock, by id (engine-sql/sources.ts). */
+  listStaleSyncSourceIds(): Promise<string[]>;
   /** Every source with the columns `loadAllSources` reads, `default` first then by id; a schema without `archived`/`newest_content_at` omits them. */
   listSourceRecords(): Promise<SourceRecordRow[]>;
   /** A source's config and incarnation, or null for an unknown id. */

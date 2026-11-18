@@ -94,6 +94,7 @@ export const RUST_ENGINE_MEMBERS = {
   listLocalPathSources: 'sources',
   listSourceRoutingRows: 'sources',
   countDefaultSourceSplit: 'sources',
+  listStaleSyncSourceIds: 'sources',
   listSourceRecords: 'sources',
   readSourceIncarnation: 'sources',
   hasCompanyBrainReceipt: 'sources',

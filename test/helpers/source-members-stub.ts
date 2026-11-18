@@ -1,7 +1,7 @@
 /**
  * Typed `sources` members for hermetic stub engines. Production code reads `sources` through these BrainEngine members
  * (listAllSources, getSource, listLocalPathSources, listSourceRoutingRows, listSourceRecords, countDefaultSourceSplit,
- * readSourceIncarnation) instead of `executeRaw`, so a stub engine that used to answer SQL text spreads these instead.
+ * listStaleSyncSourceIds, readSourceIncarnation) instead of `executeRaw`, so a stub engine that used to answer SQL text spreads these instead.
  * Each member answers as the engine-sql statement does: the same filters, the same order, the same row shape.
  */
 import type { SourceDetailRow, SourceIncarnationRow, SourceRecordRow, SourceRow } from '../../src/core/engine.ts';
@@ -84,6 +84,11 @@ export function stubSourceMembers(sources: readonly StubSourceRow[] | (() => rea
     async countDefaultSourceSplit(): Promise<DefaultSourceSplit> {
       enter('countDefaultSourceSplit');
       return { defaultPages: hasPages() ? 1 : 0, nonDefaultPages: 0, nonDefaultSources: 0 };
+    },
+    async listStaleSyncSourceIds(): Promise<string[]> {
+      enter('listStaleSyncSourceIds');
+      const staleBefore = Date.now() - 7 * 86_400_000;
+      return byId(rows()).filter(r => !r.archived && r.last_sync_at !== null && r.last_sync_at.getTime() < staleBefore).map(r => r.id);
     },
     async readSourceIncarnation(id: string): Promise<SourceIncarnationRow | null> {
       enter('readSourceIncarnation');

@@ -209,7 +209,7 @@ describe('collect-stalled-jobs', () => {
         if (new RegExp(`FROM ${table}\\b`).test(sql)) throw err;
         return [];
       },
-      ...stubSourceMembers([], { fail: (member) => (table === 'sources' && member === 'listAllSources' ? err as Error : undefined) }),
+      ...stubSourceMembers([], { fail: (member) => (table === 'sources' && member === 'listStaleSyncSourceIds' ? err as Error : undefined) }),
     };
   }
 
