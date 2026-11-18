@@ -34,6 +34,7 @@ src/commands/decide/claims-sweep.ts	execute_raw	1
 src/commands/decide/proposals.ts	execute_raw	2
 src/commands/diag.ts	execute_raw	4
 src/commands/doctor/checks/access-lineage.ts	execute_raw	2
+src/commands/doctor/checks/access-pages-read-by-nobody.ts	execute_raw	4	GBRA-582 item 9 (handover PR 2): set-based read-by-nobody scan over pages.page_readers and access_group_members; no typed engine method exists yet
 src/commands/doctor/checks/agent-session-facts.ts	execute_raw	1
 src/commands/doctor/checks/atom-body-recheck.ts	execute_raw	3
 src/commands/doctor/checks/atom-fence-rows.ts	execute_raw	1
@@ -273,6 +274,7 @@ src/core/access/actor.ts	execute_raw	7
 src/core/access/attest-sources.ts	sql_template	8
 src/core/access/caller.ts	execute_raw	9
 src/core/access/federation-exposure.ts	execute_raw	1
+src/core/access/handover.ts	execute_raw	13	GBRA-582 item 9 (handover PR 2): the new access_handovers record (v322) and the planner reads of pages, sources, access_group_members and credentials; writes go through the label and rule doors
 src/core/access/implicit-placement.ts	execute_raw	1	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/core/access/labelled-only.ts	execute_raw	4
 src/core/access/member-facts.ts	execute_raw	2	GST-2897 B (#9670, opened before this ratchet): one access_members lookup to see whether the member a share is about is enabled; no typed engine method exists yet

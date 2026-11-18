@@ -311,6 +311,15 @@ refused (`permission_denied`). `gbrain access member list` and `gbrain access ch
 which labelled-only members a page leaves out, and doctor's `access_labelled_only_members` lists them. An older gbrain
 binary sharing the same database ignores the grant, so upgrade every binary that serves the brain before turning it on.
 
+### When someone leaves (`gbrain access member handover`)
+
+A disabled or removed member's pages stay labelled with its id, so a page whose `readable_by` names only that member
+is read by no member remotely. `gbrain access member handover <id>` previews giving those pages, and folder rules naming
+only that member, to the owner; pages others read stay as they are, and nothing opens to every reader unless asked
+(`--set kept=everyone`). Apply with `--yes --expect <plan_hash>`; `--undo <handover id>` restores the recorded readers
+once the member is enabled again. Doctor's `access_pages_read_by_nobody` lists pages no enabled member reads. See
+[When someone leaves](member-handover.md).
+
 ### Pages every member's key can read
 
 On a brain that serves several people, a key bound to a member reads a page with no label like any other key: the
