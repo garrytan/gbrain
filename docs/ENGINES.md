@@ -1704,8 +1704,12 @@ store cannot read refuses `rust_store_unreadable` with its reason (`gbrain error
 that is not connected refuses `engine_closed`. These members run on the store (`src/core/rust-engine/store-members/`):
 
 - Config, sources and tags: `getConfig`, `setConfig`, `unsetConfig`, `listConfigKeys`, `getAllConfig`,
-  `listAllSources`, `updateSourceConfig`, `addTag`, `removeTag`, `getTags`. These are the members that make the `config`, `sources`, `tags` and `schema`
-  capabilities complete.
+  `getConfigValues`, `listAllSources`, `updateSourceConfig`, `getSource`, `listSourceLocalPaths`,
+  `getSourceStrictness`, `addTag`, `removeTag`, `getTags`, `pruneFrontmatterTags`, `addPageTagsById`. These are the
+  members that make the `config`, `sources`, `tags` and `schema` capabilities complete. The store keeps each tag's
+  claim (`added` or `frontmatter`) as PGLite's `tags.tag_source` does, so an import prune removes only the tags the
+  import claimed. `getSource` reads `last_commit`, `contextual_retrieval_mode` and `trust_frontmatter_overrides` as
+  null, null and false: only the sync anchor and source admin SQL write those columns, and neither runs on a Rust brain.
 - Pages: `getPage`, `readPageSnapshot`, `putPage`, `deletePage`, `softDeletePage`, `restorePage`, `listPages`,
   `resolveSlugs`. A stale `expectedRevision` refuses with `PageRevisionConflictError`, as on PGLite.
 - Versions, chunks, keyword search, links, graph and timeline: `createVersion`, `getVersions`, `upsertChunks`,
