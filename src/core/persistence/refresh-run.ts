@@ -2,7 +2,7 @@
  * GST-3107: one `gbrain sources refresh` run's phase times, how long it held the worktree's refresh lock, and the
  * stale-link backlog shares its member syncs left. Inside a run, a member sync's tail derives links only for the pages it
  * imported (`runSyncTail` with `deferBacklog`), so the refresh lock is not held while the backlog drains; the run spends
- * each share after every refresh lock is released, one drain per source at a time.
+ * each share after every refresh lock is released, one refresh's drain per source at a time.
  */
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
