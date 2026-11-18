@@ -1255,6 +1255,8 @@ impl Store {
                 ingested_at_us: meta_ingested(meta).then_some(now),
                 tags: Vec::new(),
                 tag_sources: BTreeMap::new(),
+                trust_tier: None,
+                write_origin: None,
             };
             write_page(tx, &record)?;
             let state = BodyState {
