@@ -77,6 +77,20 @@ pub const PERSISTENCE: u8 = b'd';
 pub const JOBS: u8 = b'm';
 /// Family `trust` (`trust.rs`).
 pub const TRUST: u8 = b't';
+/// Family `telemetry` (`telemetry.rs`): search telemetry, MCP usage, retrieval feedback and the
+/// budget ledger. The byte after the tag names the table (`TELEMETRY_*` below).
+pub const TELEMETRY: u8 = b'a';
+/// `telemetry` sub-tags, one per table. Never reuse, reorder or repurpose one.
+pub const TELEMETRY_SEARCH: u8 = 0x01; // search_telemetry
+pub const TELEMETRY_MCP_REQUEST: u8 = 0x02; // mcp_request_log
+pub const TELEMETRY_MCP_ROLLUP: u8 = 0x03; // mcp_request_log_rollup
+pub const TELEMETRY_RETRIEVAL_EVENT: u8 = 0x04; // retrieval_events
+pub const TELEMETRY_RETRIEVAL_EVENT_PAGE: u8 = 0x05; // retrieval_event_pages
+pub const TELEMETRY_RETRIEVAL_EVENT_LINK: u8 = 0x06; // retrieval_event_links
+pub const TELEMETRY_FEEDBACK: u8 = 0x07; // retrieval_feedback
+pub const TELEMETRY_RETRIEVAL_WEIGHT: u8 = 0x08; // retrieval_weights
+pub const TELEMETRY_BUDGET_LEDGER: u8 = 0x09; // budget_ledger
+pub const TELEMETRY_BUDGET_RESERVATION: u8 = 0x0A; // budget_reservations
 
 pub fn text(tag: u8, parts: &[&str]) -> Vec<u8> {
     let mut key = vec![tag];
