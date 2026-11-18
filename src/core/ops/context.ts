@@ -26,7 +26,7 @@ import { isSearchMode } from '../search/mode.ts';
 import { stampEvidence, type EvidenceOpts } from '../search/evidence.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from '../eval-capture.ts';
 import type { SearchResult, HybridSearchMeta, PageReadScope, PageReadPolicy } from '../types.ts';
-import { ownerReadsUnmarked, resolveExcludePrivatePages, isPrivatePage } from '../search/private-visibility.ts';
+import { ownerWidened, resolveExcludePrivatePages, isPrivatePage } from '../search/private-visibility.ts';
 import { assertMemberPageWriter, assertScopePageWriter } from '../access/member-facts.ts';
 import { pageNotVisibleError, remoteTargetHidden } from '../persistence/page-visibility.ts';
 
@@ -738,12 +738,12 @@ export function assertSourceInCallerWriteScope(ctx: OperationContext, id: string
 
 /**
  * The take holders a read returns; undefined reads every holder. Holder permissions are independent of the operator's
- * page-visibility opt-out. A remote credential with no stored list reads world takes, except one bound to the brain
- * owner speaking for itself (GST-3058, R94), which reads every holder; a stored list is always honoured.
+ * page-visibility opt-out. A remote credential with no stored list reads world takes, except the brain owner's own
+ * direct remote call (ownerWidened, GST-3058, R94), which reads every holder; a stored list is always honoured.
  */
 export function readHolders(ctx: OperationContext): string[] | undefined {
   if (ctx.remote === false) return ctx.takesHoldersAllowList;
-  return ctx.takesHoldersAllowList ?? (ownerReadsUnmarked() ? undefined : ['world']);
+  return ctx.takesHoldersAllowList ?? (ownerWidened() ? undefined : ['world']);
 }
 
 /** Resolve policy once at the operation boundary; callers may supply a canonical per-call scope. */

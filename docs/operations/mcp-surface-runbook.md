@@ -248,31 +248,33 @@ restores enforcement on the same schedule. Resolver:
 
 Page-visibility opt-outs do not change protected-body filtering: remote page
 and history bodies retain only world Facts and omit every Takes fence. The
-exception is a credential bound to the brain owner speaking for itself:
-`get_page` and `fetch_page` give it the Facts fence as stored, and the Takes
-fence as stored when the credential has no holders list (GST-3058). A
-credential with a holders list gets no Takes fence in `get_page` and reads its
-takes through `takes_list`; its graph hops skip evidence pages that hold
-takes. Known limit: the owner's `put_page`, inline or streamed, still restores
-the private rows as stored for every remote writer, so editing or deleting one
-does not stick yet (the old row stays); use the local CLI for that until
-GST-3064 lands. The `get_page` read view (windows, lines, bytes, section,
+exception is a direct remote call from a credential bound to the brain owner,
+speaking for itself, with no room declared (dispatch switches it on there and
+nowhere else): `get_page` and `fetch_page` give it the Facts fence as stored,
+and the Takes fence as stored when the credential has no holders list
+(GST-3058). A credential with a holders list gets no Takes fence in `get_page`
+and reads its takes through `takes_list`; its graph hops skip evidence pages
+that hold takes. The `get_page` read view (windows, lines, bytes, section,
 grep) is the same text for every caller, the local CLI included; the owner reads
 the private rows of a large or segmented page through `view: 'markdown'` (a
-segmented page only when the credential has no holders list). With no
-holders list it also reads every holder wherever a read filters takes by
-holder, among them `takes_list`, `takes_search`,
-`takes_scorecard`, `takes_calibration`, `search`, `query`, `recall`,
-`delta`, `think` and `synthesize`; `synthesize` reads world takes only for
-a non-owner with no list. Known limit: in a group chat (a declared room) the
-owner's caller reads world takes and gated hop text, as before this PR, until
-GST-3066 adds marks to those operations. Its `get_page` keeps the Facts rows,
-and a whole-body read or `view: 'markdown'` whose body carries private or
-held rows is marked `room_access: {readable: false, reason: 'private_label'}`;
-the mark is per page, so a page with one private row is marked whole. Held rows
-inside read-view windows and in a holders-list owner's segmented markdown view
-are not marked, as before this PR. The local CLI's `--room` marks a page whose
-body carries private rows, held rows or takes `private_label` too. History
+segmented page only when the credential has no holders list). With no holders
+list it also reads every holder wherever a read filters takes by holder, among
+them `takes_list`, `takes_search`, `takes_scorecard`, `takes_calibration`,
+`search`, `query`, `recall`, `delta`, `think` and `synthesize`;
+`synthesize` reads world takes only for a non-owner with no list. Known
+limits: agent jobs and group chats (a declared room) read as before this PR
+until GST-3066, as do stdio, on-behalf-of audiences and attested actors; an
+agent job reads its client's stored takes holders list, else world takes. The
+owner's `put_page`, inline or streamed, still restores the private rows as
+stored for every remote writer, so editing or deleting one does not stick yet;
+use the local CLI for that until GST-3064 lands. With a room declared, a
+`get_page` whole-body read or `view: 'markdown'` whose returned body carries
+rows a world-only read strips (private rows, held rows, takes) is marked
+`room_access: {readable: false, reason: 'private_label'}`; the mark is per
+page, so a page with one such row is marked whole. Held rows inside read-view
+windows and in a segmented page's markdown view are not marked, as before this
+PR. The local CLI's `--room` marks
+pages the same way. History
 also checks snapshot visibility while page privacy is enforced. Malformed
 protected sections are omitted; unterminated or interleaved sections discard
 the remaining tail. Restricted salience counts only permitted active takes and

@@ -366,8 +366,8 @@ export interface CallerAccess {
   privateFactSources: readonly string[];
   hidePrivate: boolean;
   owner: boolean;
-  /** GST-3058: the request declared a room (access/room.ts); the owner's widenings that no room mark covers stay off (ownerReadsUnmarked). */
-  room?: boolean;
+  /** GST-3058: set only by dispatch, for a direct remote call from an owner-bound credential with no room declared: the owner's widenings apply (ownerWidened). */
+  ownerReads?: boolean;
   /**
    * GST-2490 / GBRA-108 design 3: a lineage read, one member speaking for itself in a non-mutating operation: the owner
    * always, any other member only under access.members_read_lineage. Derived pages and facts pass when that member reads
@@ -440,7 +440,7 @@ export function withCallerAccess<T>(access: Partial<CallerAccess>, fn: () => T):
     applyRemoteReadPolicy: access.applyRemoteReadPolicy ?? base.applyRemoteReadPolicy,
     restricted: access.restricted ?? base.restricted,
     remotePolicy: access.remotePolicy ?? base.remotePolicy,
-    room: access.room ?? (fresh ? false : base.room === true),
+    ownerReads: access.ownerReads ?? (fresh ? false : base.ownerReads === true),
   }), fn);
 }
 
@@ -476,13 +476,14 @@ export function callerIsOwner(): boolean {
 }
 
 /**
- * GST-3058: whether the owner's widenings that no room mark covers apply: every take holder for a credential with no
- * holders list, and graph-hop text cut from fenced evidence. Only with no room declared; in a room the owner's caller
- * reads those as before them, until their operations carry room marks (GST-3066).
+ * GST-3058: whether the owner's widenings apply: the Facts fence as stored on get_page and fetch_page, a segmented
+ * page's markdown view, every take holder for a credential with no holders list, and graph-hop text cut from fenced
+ * evidence. Off unless dispatch switched it on for a direct remote call from an owner-bound credential with no room
+ * declared; every other context (agent jobs, on-behalf-of audiences, stdio, attested actors) reads as before them.
  */
-export function ownerReadsUnmarked(): boolean {
+export function ownerWidened(): boolean {
   const access = currentCallerAccess();
-  return access.owner && access.room !== true;
+  return access.owner && access.ownerReads === true;
 }
 
 /**

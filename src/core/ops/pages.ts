@@ -32,7 +32,7 @@ import { sanitizeRemoteBody } from '../remote-body.ts';
 import { getContentFlag } from '../quarantine.ts';
 import { fileHeldField, readHeldPages } from '../persistence/held-reads.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
-import { callerIsOwner, resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs, isPrivatePageForCaller } from '../search/private-visibility.ts';
+import { ownerWidened, resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs, isPrivatePageForCaller } from '../search/private-visibility.ts';
 import { heldRowsForCaller } from '../eligibility/fence-overlay.ts';
 import { unquoteAnyTranscriptText } from '../search/transcript-quote.ts';
 import { withIgnoredPrivacyLabelNotice } from '../search/ignored-privacy-labels.ts';
@@ -97,7 +97,7 @@ async function dropPrivateSlugs(
  */
 async function stripPrivacyFencesForRemoteReader(ctx: OperationContext, page: Page): Promise<Page> {
   const omitRows = await heldRowsForCaller(ctx.engine, ctx.remote, { sourceId: page.source_id, slug: page.slug, compiled_truth: page.compiled_truth, timeline: page.timeline });
-  const owner = callerIsOwner() ? { keepTakes: readHolders(ctx) === undefined } : undefined;
+  const owner = ownerWidened() ? { keepTakes: readHolders(ctx) === undefined } : undefined;
   const opts = { includeWithdrawn: true, keepMaterializedMarkers: true, omitRows, owner }; // #5567: markers round-trip remote edits
   return { ...page, compiled_truth: sanitizeRemoteBody(page.compiled_truth, opts), timeline: sanitizeRemoteBody(page.timeline ?? '', opts) };
 }

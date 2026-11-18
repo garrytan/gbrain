@@ -21,6 +21,8 @@ import { mintLegacyToken } from '../src/core/token-mint.ts';
 import { buildOperationContext, dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { operations } from '../src/core/operations.ts';
 import { markCliResult } from '../src/cli/room.ts';
+import { buildBrainTools } from '../src/core/minions/tools/brain-allowlist.ts';
+import { join } from 'node:path';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { credentialHolders, setOwner } from '../src/core/access/owner.ts';
 import { bindCredential } from '../src/core/access/members.ts';
@@ -260,14 +262,24 @@ for (const kind of testBackends()) {
     };
     const NOT_READABLE = { readable: false, reason: 'private_label' };
 
-    test('room marks: an owner read that carries private rows or takes is marked not readable for the room; a page with neither stays readable', async () => {
+    const localMark = async (params: Record<string, unknown>) => {
+      const local = await operations.find(o => o.name === 'get_page')!.handler(buildOperationContext(engine, params, { remote: false }), params);
+      const marked = (await markCliResult(engine, 'get_page', local, BOB, { sourceId: 'default' })).result as Record<string, unknown>;
+      return { priv: JSON.stringify(marked).includes(PRIV), mark: marked.room_access };
+    };
+
+    test('room marks: in a room the owner\'s credential reads get_page as before this change and a page showing held rows is marked; the local CLI\'s --room marks private rows and takes; a page with neither stays readable', async () => {
       for (const who of OWNERS) {
-        expect({ who, ...await roomMark(who, 'get_page', { slug: LIA }) }).toEqual({ who, priv: true, mark: NOT_READABLE });
-        expect({ who, ...await roomMark(who, 'get_page', { slug: TAKER, include_content: true }) }).toEqual({ who, priv: true, mark: NOT_READABLE });
-        expect({ who, ...await roomMark(who, 'get_page', { slug: LIA, body: 'window', view: 'markdown', bytes: { offset: 0, length: 100_000 } }) }).toEqual({ who, priv: true, mark: NOT_READABLE });
+        expect({ who, ...await roomMark(who, 'get_page', { slug: LIA }) }).toEqual({ who, priv: false, mark: NOT_READABLE });
+        expect({ who, ...await roomMark(who, 'get_page', { slug: TAKER, include_content: true }) }).toEqual({ who, priv: false, mark: { readable: true } });
+        expect({ who, ...await roomMark(who, 'get_page', { slug: LIA, body: 'window', view: 'markdown', bytes: { offset: 0, length: 100_000 } }) }).toEqual({ who, priv: false, mark: NOT_READABLE });
         expect({ who, ...await roomMark(who, 'get_page', { slug: LIA, lines: { from: 1, count: 200 } }) }).toEqual({ who, priv: false, mark: { readable: true } });
         expect({ who, ...await roomMark(who, 'get_page', { slug: TARGET }) }).toEqual({ who, priv: false, mark: { readable: true } });
       }
+      expect(await localMark({ slug: LIA })).toEqual({ priv: true, mark: NOT_READABLE });
+      expect(await localMark({ slug: TAKER, include_content: true })).toEqual({ priv: true, mark: NOT_READABLE });
+      expect(await localMark({ slug: LIA, body: 'window', view: 'markdown', bytes: { offset: 0, length: 100_000 } })).toEqual({ priv: true, mark: NOT_READABLE });
+      expect(await localMark({ slug: TARGET })).toEqual({ priv: false, mark: { readable: true } });
       const held = page('person', 'Held Room Example', [row(1, 'Held room world'), row(2, 'Held room ' + HELD + 'room')]);
       await put('people/held-room-example', held); await holdRow(HELD + 'room');
       const heldText = await call('ownerC', 'get_page', { slug: 'people/held-room-example', room: ['member:' + BOB] });
@@ -287,16 +299,31 @@ for (const kind of testBackends()) {
       await importSegmented(engine, SEG, pageContent('## Facts\n\n' + renderFactsTable([row(1, 'Seg world'), row(2, 'Seg secret ' + PRIV, 'private')] as never) + '\n\n' + ('Seg prose line here. '.repeat(40) + '\n\n').repeat(1400)));
       const md = { slug: SEG, body: 'window', view: 'markdown', bytes: { offset: 0, length: 100_000 } };
       expect(await roomMark('ownerC', 'get_page', md)).toEqual({ priv: false, mark: { readable: true } });
-      const local = await operations.find(o => o.name === 'get_page')!.handler(buildOperationContext(engine, md, { remote: false }), md);
-      const marked = (await markCliResult(engine, 'get_page', local, BOB, { sourceId: 'default' })).result as Record<string, unknown>;
-      expect({ priv: JSON.stringify(marked).includes(PRIV), mark: marked.room_access }).toEqual({ priv: true, mark: NOT_READABLE });
+      expect(await localMark(md)).toEqual({ priv: true, mark: NOT_READABLE });
       expect(await roomMark('ownerT', 'get_page', md)).toEqual({ priv: false, mark: { readable: true } });
       expect(await roomMark('bobR', 'get_page', md)).toEqual({ priv: false, mark: { readable: true } });
       for (const who of ['ownerC', 'bobR'] as Caller[]) {
         const text = await call(who, 'fetch', { id: LIA, room: ['member:' + BOB] });
-        expect({ who, priv: text.includes(PRIV), readableTrue: text.includes('"readable":true') }).toEqual({ who, priv: who === 'ownerC', readableTrue: false });
+        expect({ who, priv: text.includes(PRIV), readableTrue: text.includes('"readable":true') }).toEqual({ who, priv: false, readableTrue: false });
       }
     }, 600_000);
+    test('an owner client\'s agent job reads as before this change: search, query, get_page and traverse_graph give it what a member token reads, plus the held rows an owner read on master', async () => {
+      const { clientId } = await provider().verifyAccessToken(tokens.ownerC!) as unknown as AuthInfo;
+      const jobTools = buildBrainTools({ subagentId: 9, engine, config: { engine: 'pglite' } as never, sourceId: 'default',
+        delegatedAuth: { clientId, scopes: ['read', 'agent'], sourceId: 'default', allowedSources: ['default'] } });
+      const job = async (op: string, input: Record<string, unknown>) => JSON.stringify(await jobTools.find(t => t.name === 'brain_' + op)!.execute(input, { engine, jobId: 1, remote: true } as never));
+      const canaries = [PRIV, HELD, HOP_TAKE, ...TAKES.map(x => x[1])];
+      const reads: Array<[string, Record<string, unknown>]> = [
+        ['search', { query: 'Taker view' }], ['query', { query: 'Taker view' }], ['get_page', { slug: LIA }], ['get_page', { slug: TAKER }],
+        ['traverse_graph', { slug: LIA, hops: HOPS }], ['traverse_graph', { slug: BACKER, hops: HOPS }],
+      ];
+      for (const [op, input] of reads) {
+        const member = seen(await call('bob', op, input), canaries);
+        const master = op === 'get_page' && input.slug === LIA ? [HELD] : member;
+        expect({ op, input, job: seen(await job(op, input), canaries) }).toEqual({ op, input, job: master });
+      }
+      expect(seen(await job('get_page', { slug: TAKER }), [PRIV, ...TAKES.map(x => x[1])])).toEqual([]);
+    }, 300_000);
     test('in a declared room the owner reads world takes and gated hop text, as before this change; with no room it reads the widened result; a member is unchanged', async () => {
       const canaries = TAKES.map(t => t[1]);
       const room = { room: ['member:' + BOB] };
@@ -319,9 +346,18 @@ for (const kind of testBackends()) {
       const owner = await provider().verifyAccessToken(tokens.ownerC!) as unknown as AuthInfo;
       const ownerAccess = { owner: true, identity: ['member:' + OWNER] } as never;
       expect({
-        noRoom: withCallerAccess(ownerAccess, () => readHolders({ remote: true, auth: owner } as never)),
-        room: withCallerAccess({ ...(ownerAccess as object), room: true } as never, () => readHolders({ remote: true, auth: owner } as never)),
-      }).toEqual({ noRoom: undefined, room: ['world'] });
+        switchedOn: withCallerAccess({ ...(ownerAccess as object), ownerReads: true } as never, () => readHolders({ remote: true, auth: owner } as never)),
+        ownerAlone: withCallerAccess(ownerAccess, () => readHolders({ remote: true, auth: owner } as never)),
+      }).toEqual({ switchedOn: undefined, ownerAlone: ['world'] });
     }, 300_000);
   });
 }
+
+// GST-3058: the owner's widenings are off unless dispatch switches them on for a direct remote call from an owner-bound
+// credential with no room declared. This census fails when a second site sets the flag.
+test('census: only dispatch switches the owner widening on', () => {
+  const grep = (args: string[]) => Bun.spawnSync(['git', 'grep', ...args, '--', 'src'], { cwd: join(import.meta.dir, '..') }).stdout.toString().trim().split('\n');
+  expect(grep(['-l', '-E', 'ownerReads\\??:']).sort()).toEqual(['src/core/search/private-visibility.ts', 'src/mcp/dispatch.ts']);
+  expect(grep(['-c', '-E', 'ownerReads\\??:'])).toEqual(expect.arrayContaining(['src/core/search/private-visibility.ts:2', 'src/mcp/dispatch.ts:1']));
+  expect(grep(['-c', 'ownerReads: true'])).toEqual(['src/mcp/dispatch.ts:1']);
+});
