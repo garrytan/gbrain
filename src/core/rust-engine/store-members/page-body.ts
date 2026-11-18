@@ -151,7 +151,7 @@ export const stageSegmentChunks: StoreMember<[pageId: number, generation: number
     for (const chunk of chunks) {
       if (chunk.embedding !== undefined || chunk.embedding_image !== undefined) refuseMember('stageSegmentChunks', 'chunk vectors are not stored');
     }
-    const columnModel = await textColumnModel(brain, 'stageSegmentChunks', embeddingColumn);
+    const columnModel = textColumnModel('stageSegmentChunks', embeddingColumn);
     const prepared = await prepareChunks(brain, chunks.map(chunk => ({ ...chunk, chunk_index: 0 })), columnModel);
     const sent = prepared.map((row, i) => {
       const { chunk_index: _index, ...rest } = row;

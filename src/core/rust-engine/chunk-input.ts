@@ -24,17 +24,16 @@ async function defaultModel(brain: StoreBrain): Promise<string> {
 /**
  * The model label a chunk write under the caller's `embeddingColumn` stamps on a chunk that names none, or `undefined`
  * for the brain's default (PGLite's upsertChunks: `writeCol.embeddingModel || ...`). The store keeps one vector column,
- * `embedding`, of the configured width (`embedding_dimensions`, 1536 when unset), so only a descriptor of that column is
- * served: any other name, a `halfvec`, or another width refuses `engine_capability_missing`.
+ * `embedding`, so only a `vector` descriptor of that name is served; any other name or a `halfvec` refuses
+ * `engine_capability_missing`. The descriptor's `dimensions` is not read, as PGLite's `::vector` cast never reads it
+ * (the default descriptor carries a 1536 placeholder on every brain): the store's width check on each vector
+ * (`embedding_dimensions`, chunks.rs) is what refuses a vector of another width.
  */
-export async function textColumnModel(brain: StoreBrain, member: string, embeddingColumn: unknown): Promise<string | undefined> {
+export function textColumnModel(member: string, embeddingColumn: unknown): string | undefined {
   if (embeddingColumn === undefined) return undefined;
   const column = normalizeEngineColumn(embeddingColumn as ResolvedColumn);
-  // The store's own reading of the width (chunks.rs embedding_dimensions): a positive integer, else 1536.
-  const configured = (await brain.getConfig('embedding_dimensions'))?.trim() ?? '';
-  const width = /^\d+$/.test(configured) && Number(configured) > 0 ? Number(configured) : 1536;
-  if (column.name !== 'embedding' || column.type !== 'vector' || column.dimensions !== width) {
-    refuseMember(member, `option embeddingColumn ${column.name} ${column.type}(${column.dimensions}); the store keeps embedding vector(${width}) only`);
+  if (column.name !== 'embedding' || column.type !== 'vector') {
+    refuseMember(member, `option embeddingColumn ${column.name} ${column.type}; the store keeps embedding vector only`);
   }
   return column.embeddingModel || undefined;
 }

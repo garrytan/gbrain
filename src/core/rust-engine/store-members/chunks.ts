@@ -1,7 +1,7 @@
 /**
  * Chunk members (BrainEngine upsertChunks, sealChunks, getChunks, deleteChunks). A chunk's text vector (`embedding`) is
  * stored with it (rust/docs/store/embeddings.md); an image vector (`embedding_image`) is not, so a chunk that carries
- * one is refused, and so is an `embeddingColumn` that names another column than `embedding` of the configured width.
+ * one is refused, and so is an `embeddingColumn` that names another column than the `embedding` vector column.
  */
 import type { Chunk, ChunkInput } from '../../types.ts';
 import { prepareChunks, textColumnModel } from '../chunk-input.ts';
@@ -38,7 +38,7 @@ export const upsertChunks: StoreMember<[slug: string, chunks: ChunkInput[], opts
     ['sourceId', 'expectedRevision', 'sealChunkerVersion', 'pageId', 'deferSeal', 'embeddingColumn'], ['signal', 'auditSite']);
   if (options.sealChunkerVersion !== undefined) options.sealChunkerVersion = String(options.sealChunkerVersion);
   throwIfAborted(opts?.signal);
-  const columnModel = await textColumnModel(brain, 'upsertChunks', embeddingColumn);
+  const columnModel = textColumnModel('upsertChunks', embeddingColumn);
   await writeChunks(brain, slug, chunks, options, 'upsertChunks', columnModel);
 };
 
