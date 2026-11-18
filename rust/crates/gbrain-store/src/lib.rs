@@ -19,6 +19,7 @@ pub mod keys;
 pub mod kv;
 pub mod links;
 mod page_columns;
+mod page_index;
 pub mod pages;
 pub mod redb_kv;
 pub mod search;

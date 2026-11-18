@@ -17,6 +17,7 @@ import { openRustEngine, RustEngine } from '../src/core/rust-engine.ts';
 import { RUST_ENGINE_MEMBERS } from '../src/core/rust-engine/members.ts';
 import { servedCapabilities } from '../src/core/rust-engine/store-capabilities.ts';
 import { STORE_MEMBERS } from '../src/core/rust-engine/store-members/index.ts';
+import { toGetPage, toListPage } from '../src/core/rust-engine/store-codec.ts';
 import { PageRevisionConflictError } from '../src/core/page-state/types.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { ENGINE_CAPABILITIES } from '../src/core/engine-capabilities.ts';
@@ -179,5 +180,29 @@ describe('Rust store members', () => {
       expect(needed.length).toBeGreaterThan(0);
       for (const member of needed) expect(Object.hasOwn(STORE_MEMBERS, member)).toBe(true);
     }
+  });
+});
+
+describe('Rust store page codec', () => {
+  const stored = {
+    id: 1, slug: 'big', source_id: 'default', type: 'note', page_kind: 'markdown', title: 'Big', frontmatter: {},
+    compiled_truth: null, timeline: null, content_hash: null, created_at: '2026-01-01T00:00:00.000000Z',
+    updated_at: '2026-01-01T00:00:00.000000Z', updated_at_iso: '2026-01-01T00:00:00.000000Z',
+  };
+
+  test('a segmented shell page keeps a null content_hash and guards its body like PGLite rowToPage', () => {
+    for (const page of [toGetPage(stored), toListPage(stored)] as Record<string, unknown>[]) {
+      expect(page.content_hash).toBeNull();
+      expect(Object.keys(page)).toContain('compiled_truth');
+      expect(() => page.compiled_truth).toThrow(expect.objectContaining({ code: 'page_body_segmented' }));
+      expect(() => page.timeline).toThrow(expect.objectContaining({ code: 'page_body_segmented' }));
+    }
+  });
+
+  test('an inline page reads its body and content_hash unchanged', () => {
+    const page = toGetPage({ ...stored, compiled_truth: 'body', timeline: '', content_hash: 'abc' }) as Record<string, unknown>;
+    expect(page.compiled_truth).toBe('body');
+    expect(page.timeline).toBe('');
+    expect(page.content_hash).toBe('abc');
   });
 });

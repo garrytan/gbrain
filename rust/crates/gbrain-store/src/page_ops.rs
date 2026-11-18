@@ -423,7 +423,8 @@ fn find_duplicate_in(
         .filter(|p| p.source_id == source_id && p.deleted_at_us.is_none())
         .filter(|p| {
             let id = fm_text(&p.frontmatter, "id");
-            p.content_hash == query.hash || (fm_id.is_some() && id.as_deref() == fm_id)
+            p.content_hash.as_deref() == Some(query.hash.as_str())
+                || (fm_id.is_some() && id.as_deref() == fm_id)
         })
         .filter(|p| query.exclude_slug.as_deref() != Some(p.slug.as_str()))
         .min_by(|a, b| {
@@ -446,6 +447,16 @@ fn domain_bank_row(read: &dyn KvRead, page: &PageRecord) -> Result<Value> {
         "last_retrieved_at": Value::Null,
         "representative_chunk_id": Value::Null,
     }))
+}
+
+/// The page index hook (`page_index::reindex_page`): keeps this family's index of page fields in
+/// step with a page write. Empty until this family indexes a page field.
+pub(crate) fn reindex_page(
+    _tx: &mut dyn crate::kv::KvWrite,
+    _before: Option<&crate::pages::PageRecord>,
+    _after: Option<&crate::pages::PageRecord>,
+) -> crate::Result<()> {
+    Ok(())
 }
 
 impl Store {
