@@ -67,6 +67,9 @@ and 8.
 
 Where this engine differs from PGLite:
 
+- The store keeps no `alias_text` and no `case_sensitive` flag, so case-sensitive alias reads are always
+  empty and `replaceDerivedAliases` stays unserved until alias storage exists (known gap; see
+  [alias_fanout_reads.md](alias_fanout_reads.md)).
 - Only `setPageAliases` writes page aliases, so every row has origin `frontmatter`. The `declared`
   and `subject` rows of the mention pass have no typed writer here; `resolveAliases` still ranks
   origins, so a later writer needs no reader change.
