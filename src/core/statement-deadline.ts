@@ -95,6 +95,8 @@ export function deadlineBoundEngine<E extends object>(engine: E): E {
   const raw = engineCacheKey(engine) as E;
   const known = wrappers.get(raw);
   if (known) return known as E;
+  // Only Postgres takes a per-statement bound; the other engines run a statement to its end. An engine's kind never changes.
+  const boundsStatements = (raw as { kind?: string }).kind === 'postgres';
   const wrapper = new Proxy(raw, { get(target, key) {
     if (key === RAW_ENGINE) return target;
     const value = Reflect.get(target, key, target);
@@ -105,7 +107,7 @@ export function deadlineBoundEngine<E extends object>(engine: E): E {
       if (!scope || scope.deadlineAt === null) return call(sql, params, opts);
       const left = scope.deadlineAt - Date.now();
       if (left <= 0) refuse(scope);
-      if ((target as { kind?: string }).kind !== 'postgres') return call(sql, params, opts);
+      if (!boundsStatements) return call(sql, params, opts);
       const signal = opts?.signal ? AbortSignal.any([opts.signal, AbortSignal.timeout(left)]) : AbortSignal.timeout(left);
       try {
         return await call(sql, params, { ...opts, signal, timeoutMs: Math.min(left, opts?.timeoutMs ?? left), deadlineAt: scope.deadlineAt });
@@ -118,7 +120,7 @@ export function deadlineBoundEngine<E extends object>(engine: E): E {
     return new Proxy(value as (...a: unknown[]) => unknown, { apply(fn, _self, args) {
       const scope = scopes.getStore();
       if (scope && scope.deadlineAt !== null && Date.now() >= scope.deadlineAt) refuse(scope);
-      if (!scope || scope.deadlineAt === null || typeof key !== 'string' || !JOURNAL_TYPED_READS.has(key) || (target as { kind?: string }).kind !== 'postgres') {
+      if (!scope || scope.deadlineAt === null || typeof key !== 'string' || !JOURNAL_TYPED_READS.has(key) || !boundsStatements) {
         return Reflect.apply(fn, target, args);
       }
       // A journal read that replaced an executeRaw statement keeps that statement's bound: the engine ends it at the deadline.
