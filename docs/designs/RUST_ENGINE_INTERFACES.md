@@ -95,7 +95,7 @@ Keys are byte strings compared byte by byte. The first byte is the tag.
 
 | Tag | Records | Owner |
 |---|---|---|
-| `M` | meta: format record, id counters (`M next_<name>`), chunk stats, per-page segment chunk views (`M chunk_segment_view/<page id>`) | core |
+| `M` | meta: format record, id counters (`M next_<name>`), chunk stats, per-page segment chunk views (`M chunk_segment_view/<page id>`), per-page search timelines (`M page_search_timeline/<page id>`) | core |
 | `C` | config | core |
 | `S` | sources | core |
 | `P` / `I` | page by `(source, slug)` / page id to page key | core (pages) |
@@ -182,9 +182,9 @@ file, with an empty body. A family fills in only its own body, and never changes
 that is not on a list and needs the hook asks core for a one-line addition to the list.
 
 All hooks are empty today, so they change no answer: every served member reads and writes exactly as before. The
-last three parts of this section are not hooks. They are core page behavior: the page origin rule lets `putPage`
-store `source_path`, the nullable page fields let a page record hold a segmented shell, and the segmented guard keeps
-`putPage` off such a page.
+last four parts of this section are not hooks. They are core page behavior: the page origin rule lets `putPage`
+store `source_path`, the nullable page fields let a page record hold a segmented shell, the segmented guard keeps
+`putPage` off such a page, and the search timeline keeps the timeline text of the page keyword vector.
 
 #### Page columns (`page_columns.rs`)
 
@@ -512,6 +512,32 @@ others. Each family below must give the PGLite answer for a segmented shell page
 These readers already match PGLite and need no change: page_ops `find_duplicate_in` (a shell has no hash, so it never
 matches), the prior byte sum in `read_page_snapshots_batch` (a shell adds 0), page_body `refresh_page_body` (it
 refuses as above), and core `auto_chunks` (`putPage` never reaches a shell now).
+
+#### Search timeline (`pages::search_timeline`)
+
+```rust
+pub(crate) struct SearchTimeline { pub revision: String, pub timeline: String }
+pub(crate) fn search_timeline(read: &dyn KvRead, page_id: u64) -> Result<Option<SearchTimeline>>;
+pub(crate) fn record_search_timeline(tx: &mut dyn KvWrite, page_id: u64, revision: &str, timeline: &str) -> Result<()>;
+pub(crate) const SEARCH_TIMELINE_MAX_CHARS: usize = 65_536;
+```
+
+PGLite's page keyword vector is the title (weight A) plus `left(sanitizeRemoteBody(timeline), 65536)` (weight C),
+set when the page's chunks are sealed (`sealPageTextProjection`). The sanitizer stays in TypeScript, so the seal
+carries its output to the store.
+
+- **Input.** TypeScript `sealChunks` sends `searchTimeline: sanitizeRemoteBody(timeline)` in the `upsertChunks`
+  options (`UpsertChunksOptions::search_timeline`) next to `seal: true`. A segmented page (NULL timeline) sends none.
+  A write without `seal` ignores it.
+- **Record.** The store keeps `{ revision, timeline }` under `M page_search_timeline/<page id>`, in the seal's
+  transaction: the page's `knowledge_revision` at the seal, and the text with NUL removed and cut to
+  `SEARCH_TIMELINE_MAX_CHARS` characters (Postgres `left` counts characters).
+- **Read.** The keyword family (`searchTitles`) reads it with `search_timeline`. The text describes the page's
+  current text when `revision` equals the page's `text_projection_revision`. A seal without the text (the store's own
+  indexing `putPage`) leaves the record at its older revision; `None` means no seal sent one.
+- **Delete.** `remove_page` deletes it on a hard delete. A soft delete keeps it.
+- **Other writers.** A family that seals a page by another path and has the sanitized text from TypeScript calls
+  `record_search_timeline` in the same transaction; no family writes the key itself.
 
 ### Write transactions and the journal
 
@@ -1191,3 +1217,4 @@ The estimates are judgments from the size of the PGLite code each member reprodu
 | Nullable page fields (`PageText`, `content_hash: Option`, `chunker_version: Option<i16>`; codec `guardNullBody`) | built | page_body (shell and flip writes) |
 | Segmented guard (`putPage` refuses a segmented page with PGLite's CHECK message) | built | page_body; chunk_queries, extraction and page_ops match PGLite for a NULL body (see "Segmented guard") |
 | Rename slug list (`cascade::rename_slug_rows`) | built; the aliases family calls it from `updateSlug` | facts (fills in its body), aliases (caller) |
+| Search timeline (`pages::search_timeline`: the sanitized timeline `sealChunks` sends, kept per page at the sealed revision) | built | keyword (`searchTitles`) |

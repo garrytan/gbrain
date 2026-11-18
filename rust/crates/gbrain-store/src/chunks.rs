@@ -734,6 +734,10 @@ pub struct UpsertChunksOptions {
     /// PGLite's `sealChunks`: replace every chunk of the page with `chunks` (no merge with what
     /// was there) and seal them to the page's current revision, even when `chunks` is empty.
     pub seal: bool,
+    /// With `seal`: `sanitizeRemoteBody(timeline)` of the page, the timeline text of its keyword
+    /// vector. The store keeps it at the sealed revision (`pages::record_search_timeline`). Ignored
+    /// without `seal`.
+    pub search_timeline: Option<String>,
 }
 
 impl Store {
@@ -764,6 +768,15 @@ impl Store {
                 }
             }
             let seal = options.seal;
+            if let Some(timeline) = options.search_timeline.as_deref().filter(|_| seal) {
+                // The seal keeps the page's revision, so the text is recorded at it now.
+                crate::pages::record_search_timeline(
+                    tx,
+                    page.id,
+                    &page.knowledge_revision,
+                    timeline,
+                )?;
+            }
             if chunks.is_empty() && !seal {
                 // PGLite: an empty write removes the chunks and leaves the page unsealed.
                 replace_chunks(tx, &mut page, chunks, false, true)?;
