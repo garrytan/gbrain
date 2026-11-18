@@ -68,7 +68,7 @@ searchKeyword	search	yes	8	yes	yes	yes	serves
 countKeywordPages	search	yes	1	no	yes	yes	refuses:keyword_search
 searchKeywordPages	search	yes	1	no	yes	yes	refuses:keyword_search
 searchTitles	search	yes	1	yes	yes	yes	refuses:keyword_search
-searchVector	search	yes	2	yes	yes	yes	refuses:vector_search
+searchVector	search	yes	2	yes	yes	yes	serves
 getEmbeddingsByChunkIds	search	yes	1	no	yes	yes	refuses:embeddings
 searchKeywordChunks	search	yes	1	yes	yes	yes	refuses:keyword_search
 upsertChunks	chunks	yes	11	yes	yes	yes	serves
@@ -142,7 +142,7 @@ addTakesBatch	takes	yes	19	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	1	no	yes	yes	refuses:takes
 listTakes	takes	yes	11	no	yes	yes	serves
 searchTakes	takes	yes	1	no	yes	yes	serves
-searchTakesVector	takes	yes	1	no	yes	yes	refuses:takes
+searchTakesVector	takes	yes	1	no	yes	yes	serves
 getTakeEmbeddings	takes	yes	1	no	yes	yes	refuses:takes
 countStaleTakes	takes	yes	1	no	yes	yes	refuses:takes
 listStaleTakes	takes	yes	1	no	yes	yes	refuses:takes
