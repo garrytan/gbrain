@@ -85,6 +85,11 @@ pub struct KeywordOptions {
     pub handles: Vec<String>,
     /// `searchKeywordPages`' keyset.
     pub after: Option<AfterKey>,
+    /// `searchKeywordPages`: only the handle arm (`buildKeywordHandlePagesStatement`, the keyword
+    /// arm's rows for the pages the query's slug handles name).
+    pub handles_only: bool,
+    /// `searchKeyword`: the per-page candidates kept before the window (`LIMIT $2`, 3x the limit).
+    pub inner_limit: Option<f64>,
 }
 
 /// A parsed date bound.
@@ -199,7 +204,7 @@ impl<'a> PageFilter<'a> {
 
 /// `servedTextProjectionFilter`: the page's text projection is current, or the activation
 /// sentinel.
-fn served(page: &PageRecord) -> bool {
+pub(super) fn served(page: &PageRecord) -> bool {
     match page.text_projection_revision.as_deref() {
         Some(r) => r == page.knowledge_revision || r == ACTIVATION_SERVED_REVISION,
         None => false,

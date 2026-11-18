@@ -1,8 +1,9 @@
 //! Keyword search members of the keyword_search capability, and title trigrams.
 //!
-//! Served: findByTitleFuzzy (`keyword/title_fuzzy.rs`), searchKeywordChunks (`keyword/chunk_search.rs`),
-//! countKeywordPages and searchKeywordPages (`keyword/page_search.rs`), with the page and chunk
-//! filters they share in `keyword/filters.rs`. Not built: searchTitles, which still refuses with
+//! Served: findByTitleFuzzy (`keyword/title_fuzzy.rs`), searchKeyword (`keyword/arm.rs`: the
+//! arm's statement and the rare-word read its OR retry ranks with), searchKeywordChunks
+//! (`keyword/chunk_search.rs`), countKeywordPages and searchKeywordPages (`keyword/page_search.rs`),
+//! with the page and chunk filters they share in `keyword/filters.rs`. Not built: searchTitles, which still refuses with
 //! `engine_capability_missing` in the TypeScript engine. rust/docs/store/keyword.md lists what
 //! each member reads, refuses and leaves as a follow-up.
 //!
@@ -31,6 +32,7 @@
 //!
 //! See docs/designs/RUST_ENGINE_INTERFACES.md.
 
+mod arm;
 mod chunk_search;
 mod filters;
 mod page_search;

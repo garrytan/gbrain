@@ -14,7 +14,8 @@
 //! keep each page's best chunk (highest score, then lowest chunk id), apply the keyset
 //! `score < s OR (score = s AND page_id > p)`, order by score descending and page id, and take
 //! `LIMIT $limit OFFSET $offset` without clamping. The query is the raw one (no dash-run
-//! collapse), and `stale` is always false.
+//! collapse), and `stale` is always false. With `handlesOnly` only the handle arm runs
+//! (`searchHandlePages`, the keyword arm's rows for the pages a slug handle names).
 
 use std::collections::BTreeMap;
 
@@ -73,6 +74,9 @@ impl Store {
             }
             let basename = page.slug.rsplit('/').next().unwrap_or(&page.slug);
             let handle = options.handles.iter().any(|h| h == basename);
+            if options.handles_only && !handle {
+                continue;
+            }
             let generation = read_segment_view(&*read, page.id)?.generation;
             let mut factor: Option<f64> = None;
             let mut best: Option<Best> = None;
@@ -84,7 +88,7 @@ impl Store {
                     continue;
                 }
                 let vector = chunk_vector(&chunk)?;
-                let text = ts_matches(&vector, &matcher.query);
+                let text = !options.handles_only && ts_matches(&vector, &matcher.query);
                 if !text && !handle {
                     continue;
                 }

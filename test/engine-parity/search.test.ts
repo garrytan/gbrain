@@ -386,4 +386,74 @@ describe('engine parity: search', () => {
       return { pages, phrase, handle, handleCount, where, whereNumber, after, before, scoped, boosted, excluded, chunks, lowDetail, offset };
     },
   );
+
+  parityTest(
+    'searchKeyword serves the hybrid arm options: OR retry by rarity, identifier probe, handles, phrase, rank query and windows',
+    { methods: ['searchKeyword'] },
+    async (engine) => {
+      const day = (iso: string) => new Date(iso);
+      await seedPage(engine, {
+        slug: 'notes/nebula-drive',
+        input: { type: 'note', title: 'Nebula drive', compiled_truth: 'x', timeline: '', frontmatter: { status: 'active' }, effective_date: day('2026-03-01T00:00:00Z'), effective_date_source: 'date' },
+        chunks: [chunk(0, 'the nebula drive hums near the core'), chunk(1, 'drive nebula backwards for the drive test')],
+      });
+      await seedPage(engine, {
+        slug: 'notes/drive-log',
+        input: { type: 'note', title: 'Drive log', compiled_truth: 'x', timeline: '', frontmatter: { status: 'draft' }, effective_date: day('2026-05-10T12:00:00Z'), effective_date_source: 'date' },
+        chunks: [chunk(0, 'nebula readings and one drive entry')],
+      });
+      await seedPage(engine, {
+        slug: 'notes/weekly-digest-412',
+        input: { type: 'note', title: 'Weekly digest', compiled_truth: 'x', timeline: '' },
+        chunks: [chunk(0, 'digest 412 covered the quokka census')],
+      });
+      for (const n of [1, 2, 3]) {
+        await seedPage(engine, {
+          slug: `notes/weekly-digest-${n}`,
+          input: { type: 'note', title: `Weekly digest ${n}`, compiled_truth: 'x', timeline: '' },
+          chunks: [chunk(0, `the weekly digest said the latest news was about nebula drive work, week ${n}, and more weekly digest news`)],
+        });
+      }
+
+      const view = (rows: SearchResult[]) => rows.map((r) => ({
+        slug: r.slug, chunk_index: r.chunk_index, score: round(r.score),
+        relaxed: r.keyword_relaxed ?? false, fill: (r as { keyword_fill?: boolean }).keyword_fill ?? false,
+      }));
+      const incomplete: string[] = [];
+      // What hybridSearch passes the keyword arm (search/hybrid/request.ts, arms.ts): knobs PGLite does not read included.
+      const hybrid = {
+        limit: 5, detail: undefined, embeddingColumn: { name: 'embedding', dims: 1536 } as never, cjkKeyword: { deadlineMs: 1000, onMeta: () => undefined } as never,
+        keywordTimeoutCache: true, vectorLegacyGuard: undefined, hnswIterativeScan: undefined, onVectorPoolMeta: () => undefined,
+        onKeywordIncomplete: (reason: string) => { incomplete.push(reason); }, orFallback: true,
+      } as Parameters<BrainEngine['searchKeyword']>[1];
+      const search = async (q: string, opts: Parameters<BrainEngine['searchKeyword']>[1]) => view(await engine.searchKeyword(q, opts));
+      const out = {
+        strict: await search('nebula drive', hybrid),
+        relaxed: await search('nebula quokka census', hybrid),
+        probe: await search('what did the latest weekly digest (#412) say', hybrid),
+        handles: await search('drive-log readings nebula', hybrid),
+        phrase: await search('nebula drive', { ...hybrid, keywordPhrase: true }),
+        rankQuery: await search('nebula drive', { ...hybrid, rankQuery: 'core' }),
+        where: await search('nebula drive', { ...hybrid, where: { status: ['active'] } }),
+        after: await search('nebula drive', { ...hybrid, afterDate: '2026-04-01' }),
+        window: await search('nebula or digest or drive', { limit: 2, offset: 1 }),
+        windowPastInner: await search('nebula or digest or drive', { limit: 1, offset: 4 }),
+        fill: await search('nebula quokka', { ...hybrid, orFill: true }),
+        fillPaged: await search('nebula quokka', { ...hybrid, orFill: true, offset: 1 }),
+        strictOnly: await search('nebula quokka', { limit: 5 }),
+        empty: await search('', hybrid),
+        stopwords: await search('the and of', hybrid),
+      };
+      expect(out.strict.length).toBeGreaterThan(0);
+      expect(out.relaxed.every((r) => r.relaxed)).toBe(true);
+      expect(out.relaxed[0]!.slug).toBe('notes/weekly-digest-412');
+      expect(out.probe[0]!.slug).toBe('notes/weekly-digest-412');
+      expect(out.handles[0]!.slug).toBe('notes/drive-log');
+      expect(out.fill.every((r) => r.fill)).toBe(true);
+      expect(out.fillPaged).toEqual([]);
+      expect(out.strictOnly).toEqual([]);
+      expect(incomplete).toEqual([]);
+      return out;
+    },
+  );
 });

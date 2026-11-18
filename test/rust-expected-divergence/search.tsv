@@ -4,4 +4,3 @@
 # answer on the Rust arm (GBRAIN_TEST_RUST_ARM=1) only when Rust returns a value (a thrown error never passes) and both answers
 # are equal after the named normaliser (DIVERGENCE_NORMALIZERS in test/engine-parity/rust-arm.ts). When the case starts to match
 # PGLite the run fails until the row is removed.
-test/engine-parity/search.test.ts	searchKeyword ranks the same pages for the same query	ranking-order-and-score	keyword ranking is BM25 and not parity with PGLite (design D5): scores differ, and ties order differently
