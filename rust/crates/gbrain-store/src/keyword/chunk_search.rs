@@ -20,17 +20,19 @@ use super::filters::{
 use super::rank::ts_rank;
 use super::tsearch::{ts_matches, websearch_to_tsquery};
 use crate::Store;
-use crate::chunks::{read_chunks, read_segment_view};
+use crate::chunks::{ChunkRecord, read_chunks, read_segment_view};
 use crate::error::Result;
-use crate::pages::all_pages;
+use crate::pages::{PageRecord, all_pages};
 use crate::timeline::latest_entry_micros;
 use serde_json::Value;
 
+/// A matching chunk; its row is built only when it falls in the requested window.
 struct Hit {
     score: f64,
     page_id: u64,
-    chunk_id: u64,
-    row: Value,
+    page: usize,
+    chunk: ChunkRecord,
+    stale: bool,
 }
 
 impl Store {
@@ -47,6 +49,7 @@ impl Store {
         let read = self.read()?;
         let mut filter = PageFilter::new(options)?;
         let mut hits: Vec<Hit> = Vec::new();
+        let mut pages: Vec<PageRecord> = Vec::new();
         for page in all_pages(&*read)? {
             if !filter.keeps(&*read, &page)? {
                 continue;
@@ -72,26 +75,29 @@ impl Store {
                         s
                     }
                 };
-                let score = f64::from(ts_rank(&vector, &q)) * factor;
                 hits.push(Hit {
-                    score,
+                    score: f64::from(ts_rank(&vector, &q)) * factor,
                     page_id: page.id,
-                    chunk_id: chunk.id,
-                    row: result_row(&page, &chunk, score, stale),
+                    page: pages.len(),
+                    chunk,
+                    stale,
                 });
+            }
+            if hits.last().is_some_and(|h| h.page == pages.len()) {
+                pages.push(page);
             }
         }
         hits.sort_by(|a, b| {
             b.score
                 .total_cmp(&a.score)
                 .then(a.page_id.cmp(&b.page_id))
-                .then(a.chunk_id.cmp(&b.chunk_id))
+                .then(a.chunk.id.cmp(&b.chunk.id))
         });
         Ok(hits
-            .into_iter()
+            .iter()
             .skip(offset)
             .take(limit)
-            .map(|h| h.row)
+            .map(|h| result_row(&pages[h.page], &h.chunk, h.score, h.stale))
             .collect())
     }
 }

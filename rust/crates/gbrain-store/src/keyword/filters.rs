@@ -7,11 +7,13 @@
 //! date bounds as UTC microseconds), so the store applies exactly the predicates it is given.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use super::tsearch::{TsVector, Weight, concat, fts_input, setweight, to_tsvector};
+use super::vector_cache::{VectorKind, cached};
 use crate::chunks::ChunkRecord;
 use crate::env::iso;
 use crate::error::{Result, StoreError};
@@ -254,18 +256,17 @@ pub(super) fn source_factor(page: &PageRecord, boosts: &[(String, f64)]) -> f64 
 }
 
 /// The chunk's `search_vector` (`update_chunk_search_vector`): doc comment and qualified symbol
-/// name at weight A, the chunk text at weight B.
-pub(super) fn chunk_vector(chunk: &ChunkRecord) -> Result<TsVector> {
-    let part = |key: &str, weight: Weight| -> Result<TsVector> {
-        let text = meta_text(&chunk.meta, key).unwrap_or_default();
-        Ok(setweight(to_tsvector(&fts_input(&text))?, weight))
-    };
-    let head = concat(
-        &part("doc_comment", Weight::A)?,
-        &part("symbol_name_qualified", Weight::A)?,
-    )?;
-    let body = setweight(to_tsvector(&fts_input(&chunk.chunk_text))?, Weight::B);
-    concat(&head, &body)
+/// name at weight A, the chunk text at weight B. Cached by those texts (`vector_cache`).
+pub(super) fn chunk_vector(chunk: &ChunkRecord) -> Result<Arc<TsVector>> {
+    let text = |key: &str| chunk.meta.get(key).and_then(Value::as_str).unwrap_or("");
+    let (doc, symbol) = (text("doc_comment"), text("symbol_name_qualified"));
+    cached(VectorKind::Chunk, &[doc, symbol, &chunk.chunk_text], || {
+        let part = |text: &str, weight: Weight| -> Result<TsVector> {
+            Ok(setweight(to_tsvector(&fts_input(text))?, weight))
+        };
+        let head = concat(&part(doc, Weight::A)?, &part(symbol, Weight::A)?)?;
+        concat(&head, &part(&chunk.chunk_text, Weight::B)?)
+    })
 }
 
 /// `[[:space:]]` in a Postgres regular expression.

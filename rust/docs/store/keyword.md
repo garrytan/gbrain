@@ -56,6 +56,24 @@ keyword arm does; `searchTitles` reads `onKeywordIncomplete`. `searchTitles` ans
 None written. The family owns the `R` tag and reads pages, chunks, segment views and sources through their families'
 readers. Every member is a full scan of the live pages (follow-up `keyword-lexeme-index`).
 
+## The vector cache
+
+The store keeps no `search_vector`, so each member rebuilds a chunk's or a page's vector from its text. Rebuilt
+vectors go into a process-wide cache (`keyword/vector_cache.rs`):
+
+- The key is the exact input: the text search configuration (`english`), the vector kind (chunk, sealed page vector,
+  trigger page vector), and every text the vector is built from, each with its byte length. A vector is a pure function
+  of its key, so a hit is always the vector a rebuild gives. No write clears the cache; it is safe for a store bound to a
+  transaction and across stores in one process.
+- The bound is `VECTOR_CACHE_BYTES`, 64 MiB of keys and vectors (an estimate of their heap size). The cache keeps two
+  generations: a hit in the older one moves to the newer one; when the newer one holds half the bound, the older one is
+  dropped. An entry larger than half the bound is not cached. A rebuild that fails (a vector over the size limit) is not
+  cached.
+- Timing (release build, 2,000 pages, 4,000 chunks of about 150 words, `searchKeywordChunks`, limit 20): before the
+  cache, every query took 365-390 ms, of which reading pages and chunks was about 10 ms and `to_tsvector` the rest.
+  With the cache, the first query takes about 340 ms (it fills the cache) and later queries take 16-22 ms. The cache
+  holds about 19 MB for these 4,000 chunks.
+
 ## The page filter
 
 `keyword/filters.rs` models `keywordFilters` and the live clause of `buildVisibilityClause`: a page is kept when it is
@@ -146,8 +164,9 @@ The page vector is not stored; `keyword/titles.rs` rebuilds the one PGLite last 
 
 ## Follow-ups
 
-- `keyword-lexeme-index`: every member scans every live page and recomputes `to_tsvector` per chunk per query. Add a
-  positional lexeme index (or cache the chunk vectors) when the brains it serves outgrow a scan.
+- `keyword-lexeme-index`: every member still scans every live page and its chunks (about 8-10 ms per 4,000 chunks),
+  and the first query after a start, or after the text outgrows the 64 MiB cache, rebuilds every vector. Add a stored
+  positional lexeme index when the scan or a cold cache becomes the bottleneck for the brains the store serves.
 - `keyword-cjk`: serve CJK queries (the SQL engines' bigram path).
 - `pglite-keyword-chunks-page-filters`: PGLite's `searchKeywordChunks` drops `type`, `types`, `where` and
   `exclude_slugs`, which Postgres applies; no production caller. A PGLite behavior change, so it waits until after

@@ -5,8 +5,9 @@
 //! (`keyword/chunk_search.rs`), countKeywordPages and searchKeywordPages (`keyword/page_search.rs`),
 //! and searchTitles (`keyword/titles.rs`: the title arm's statements, over page vectors rebuilt
 //! from the page, its timeline entries and the sealed search timeline), with the page and chunk
-//! filters they share in `keyword/filters.rs`. rust/docs/store/keyword.md lists what each member
-//! reads, refuses and leaves as a follow-up.
+//! filters they share in `keyword/filters.rs`. The rebuilt chunk and page vectors are cached in
+//! `keyword/vector_cache.rs` (bounded, keyed by the exact input text). rust/docs/store/keyword.md
+//! lists what each member reads, refuses and leaves as a follow-up.
 //!
 //! This family also writes the `ts_rank` compatibility ranker (design D5) over the core keyword
 //! postings (`keys::POSTING`, `T`); the facts keyword arm reuses it.
@@ -47,6 +48,7 @@ mod title_fuzzy;
 mod titles;
 mod trgm;
 mod tsearch;
+mod vector_cache;
 
 pub use filters::{AfterKey, DateBound, KeywordOptions};
 pub use titles::{TitleAttempt, TitleAttemptKind};
