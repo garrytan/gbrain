@@ -60,7 +60,7 @@ async function fenceRollup(engine: BrainEngine) {
 }
 
 /** The engine with one method answering `fail` when `when` matches its first argument. */
-function failing(engine: BrainEngine, method: 'executeRaw' | 'readPageSnapshot', when: (first: unknown) => boolean, message: string, typed = false): BrainEngine {
+function failing(engine: BrainEngine, method: 'executeRaw' | 'readPageSnapshot' | 'listSourceRoutingRows', when: (first: unknown) => boolean, message: string, typed = false): BrainEngine {
   return new Proxy(engine, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
@@ -72,9 +72,9 @@ function failing(engine: BrainEngine, method: 'executeRaw' | 'readPageSnapshot',
   }) as BrainEngine;
 }
 
-/** The engine with the fence planner's source read failing, so the whole fence step throws. */
+/** The engine with the fence planner's source read (the typed `listSourceRoutingRows` member) failing, so the whole fence step throws. */
 const failingFencePlanner = (engine: BrainEngine) =>
-  failing(engine, 'executeRaw', sql => sql === 'SELECT id, local_path, archived, config FROM sources', 'synthetic fence planner failure');
+  failing(engine, 'listSourceRoutingRows', () => true, 'synthetic fence planner failure');
 
 for (const backend of testBackends()) {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
@@ -124,7 +124,7 @@ for (const backend of testBackends()) {
 
   test(`${backend}: a fence step refused with a typed error (owner checks) is a hold, not a halt`, async () => {
     await unmanagedBrain(databaseUrl, async ({ engine, root }) => {
-      const refused = failing(engine, 'executeRaw', sql => sql === 'SELECT id, local_path, archived, config FROM sources', 'synthetic owner refusal', true);
+      const refused = failing(engine, 'listSourceRoutingRows', () => true, 'synthetic owner refusal', true);
       const result = await extractFactsPhase(refused, root);
       expect((result.details as { warnings: string[] }).warnings.join('\n')).toContain('FACTS_FENCE_FAILED: synthetic owner refusal');
       expect(await fenceRollup(engine)).toMatchObject({ halts: 0, rounds: 1 });
