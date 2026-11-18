@@ -102,10 +102,10 @@ const HYBRID_PLAIN = [
   'n-timeline 0.9461',
   'z-gen 0.9255 provenance="generated"',
   'z-after 0.9151',
-  't-auto 0.9047',
+  't-auto 0.9047 status="unverified" unverified=true',
   'u-dated 0.8946',
-  't-flagged 0.8848',
-  'r-target 0.8477 collapsed=[{"slug":"r-stub","source_id":"default","reason":"redirect"}]',
+  't-flagged 0.8848 content_flag={"reason":"spam","detail":"x"}',
+  'r-target 0.8477 collapsed=[{"slug":"r-stub","source_id":"default","reason":"redirect"}] status="verified"',
   's-new 0.8654',
   'zorbit 0.8393',
   'e-person 0.5536',
@@ -507,11 +507,10 @@ for (const kind of arms) {
       });
       /** The vector arm's rows, as the post-fusion stages take them. */
       const vectorRows = async () => (await engine.searchVector(q, { limit: 40 })) as unknown as SearchResult[];
-      // hybridSearch hands the page marker reads its whole option bag, which the Rust store's marker reads refuse (an
-      // unknown truthy key), so content flags and extraction marks stay off the hybrid rows here; they are read below
-      // through the same stamping functions with no policy.
+      // hybridSearch hands the page marker reads its whole option bag, so the rows keep their content flags, statuses and
+      // unverified marks only when the store's marker reads accept the hybrid policy keys.
       const hybrid = async (query: string, opts: Record<string, unknown> = {}) =>
-        outcome(async () => show(await hybridSearch(engine, query, { expansion: false, limit: 40, ...opts } as never)).map((r) => r.replace(/ (content_flag|status|unverified)=\S+/g, '')));
+        outcome(async () => show(await hybridSearch(engine, query, { expansion: false, limit: 40, ...opts } as never)));
       // The post-fusion stages with every metadata stage switched on, over the vector arm's rows.
       const every = async () => outcome(async () => {
         const rowsIn = await vectorRows();
@@ -524,6 +523,26 @@ for (const kind of arms) {
         await stampUnverifiedExtractions(engine, rowsIn);
         return show(rowsIn.filter((r) => r.content_flag || r.status));
       });
+      // The marker reads called directly with a hybrid-style option bag (settings, a callback, an empty holders list): the
+      // same flags and marks come back on both engines. A key that is not in the bag still refuses on the Rust arm.
+      const bagOpts = { expansion: false, limit: 40, takesHoldersAllowList: [], onMeta: () => undefined, _queryPrefix: '', _embeddingOptedOut: false };
+      const bag = async () => outcome(async () => {
+        const rowsIn = await vectorRows();
+        const ids = rowsIn.map((r) => r.page_id);
+        const name = (id: number) => rowsIn.find((r) => r.page_id === id)!.slug;
+        const flags = await engine.getContentFlagsByPageIds(ids, bagOpts as never);
+        const marks = await engine.getUnverifiedExtractionPageIds(ids, bagOpts as never);
+        return {
+          flags: [...flags].map(([id, f]) => `${name(id)} ${f.reason} ${f.detail}`).sort(),
+          marks: [...marks].map(([id, m]) => `${name(id)} ${m.status} ${m.unverified}`).sort(),
+        };
+      });
+      if (rust) {
+        const ids = (await vectorRows()).map((r) => r.page_id);
+        expect(await outcome(() => engine.getContentFlagsByPageIds(ids, { notAnOption: true } as never))).toMatchObject({ refused: 'engine_capability_missing' });
+        expect(await outcome(() => engine.getUnverifiedExtractionPageIds(ids, { notAnOption: true } as never))).toMatchObject({ refused: 'engine_capability_missing' });
+        expect(await outcome(() => engine.getContentFlagsByPageIds(ids, { excludePrivate: true } as never))).toMatchObject({ refused: 'engine_capability_missing' });
+      }
       // The generated-page demotion reads the entity the query names, the live page at it and the pages linking to it.
       const demotion = async () => outcome(async () => {
         const rowsIn = await vectorRows();
@@ -534,6 +553,7 @@ for (const kind of arms) {
         plain: await hybrid('nonlexicalsaffronquery'),
         stages: await every(),
         markers: await markers(),
+        bag: await bag(),
         demotion: await demotion(),
       };
       __setEmbedTransportForTests(null);
@@ -545,6 +565,12 @@ for (const kind of arms) {
       expect({ ok: (cases.stages as { ok: string[] }).ok.filter((r) => r !== dated) }).toEqual({ ok: STAGES_WITHOUT_DATED });
       expect(cases.plain).toEqual({ ok: HYBRID_PLAIN });
       expect(cases.markers).toEqual({ ok: MARKERS });
+      expect(cases.bag).toEqual({
+        ok: {
+          flags: expect.arrayContaining(['t-flagged spam x']),
+          marks: expect.arrayContaining(['t-auto unverified true', 'r-target verified false']),
+        },
+      });
       expect(cases.demotion).toEqual({ ok: DEMOTION });
       record(kind, 'hybrid-stages', cases);
       // Leave the shared fixture as the later cases expect it (the Rust arm runs none of the cases that count chunks).

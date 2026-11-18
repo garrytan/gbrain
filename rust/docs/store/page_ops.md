@@ -12,6 +12,10 @@ wins over a non-empty `sourceId`; with neither, every source. `live: true` also 
 pages whose frontmatter has a `quarantine` key and pages of a missing or archived source. The
 TypeScript members send `live: true` whenever the caller passes a scope object, and refuse
 `engine_capability_missing` for a truthy `excludePrivate`, `minTrust` or `suppressFlagged`.
+`getContentFlagsByPageIds` and `getUnverifiedExtractionPageIds` also accept and ignore the other keys of hybrid
+search's option bag (its settings, callbacks and `takesHoldersAllowList`), because hybrid search hands them that whole bag
+as their policy; any other key still refuses. `getEffectiveDates` gets a policy hybrid search builds, so it keeps the
+strict list.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
