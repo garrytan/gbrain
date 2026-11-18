@@ -4,7 +4,8 @@ Code: `rust/crates/gbrain-store/src/keyword.rs` and its `keyword/` modules, the 
 `rust/crates/gbrain-napi/src/families/keyword.rs` and the members in
 `src/core/rust-engine/store-members/keyword.ts`. The references are `src/core/engine-sql/pages.ts`
 (`findByTitleFuzzy`), `src/core/search/keyword-statement.ts` with `src/core/engine-sql/keyword-pages.ts`
-(`countKeywordPages`, `searchKeywordPages`) and the `searchKeywordChunks` statement in `pglite-engine.ts` and
+(`searchKeyword`, `countKeywordPages`, `searchKeywordPages`), `src/core/search/title-statement.ts` with
+`src/core/engine-sql/titles.ts` (`searchTitles`) and the `searchKeywordChunks` statement in `pglite-engine.ts` and
 `postgres-engine.ts`.
 
 ## Members
@@ -12,10 +13,11 @@ Code: `rust/crates/gbrain-store/src/keyword.rs` and its `keyword/` modules, the 
 | Member | State |
 |---|---|
 | `findByTitleFuzzy(name, dirPrefix?, minSimilarity?, sourceId?)` | served (`keyword/title_fuzzy.rs`) |
+| `searchKeyword(query, opts?)` | served (`keyword/arm.rs`), with the hybrid keyword arm's options |
 | `searchKeywordChunks(query, opts?)` | served (`keyword/chunk_search.rs`) |
 | `countKeywordPages(query, opts?)` | served (`keyword/page_search.rs`) |
 | `searchKeywordPages(query, opts, page)` | served (`keyword/page_search.rs`) |
-| `searchTitles(query, opts?)` | not built; refuses with `engine_capability_missing` |
+| `searchTitles(query, opts?)` | served (`keyword/titles.rs`), the hybrid title arm |
 
 The building blocks are stable and shared with other families: the pg_trgm scorer (`keyword/trgm.rs`), the `english`
 text search port (`keyword/tsearch.rs`, `keyword/parser.rs`, `keyword/stem.rs`) and the `ts_rank` / `ts_rank_cd`
@@ -23,7 +25,7 @@ rankers (`keyword/rank.rs`). Their signatures are listed in the `keyword.rs` hea
 
 ### Refusals (`engine_capability_missing`)
 
-All three keyword members refuse:
+Every keyword member except `findByTitleFuzzy` refuses:
 
 - a CJK query (`hasCJK`): the SQL engines take a separate CJK path (follow-up `keyword-cjk`);
 - a text search configuration other than `english` (`getFtsLanguage()`);
@@ -41,10 +43,13 @@ All three keyword members refuse:
 `searchKeywordChunks` also refuses `type`, a non-empty `types`, a non-empty `where` and a non-empty `exclude_slugs`:
 Postgres applies them and PGLite ignores them (follow-up `keyword-chunks-page-filters`).
 
-Ignored, as in the SQL statements: the hybrid, vector, reranking, recency and reporting options (`onVectorPoolMeta`,
-`cjkKeyword`, `orFallback`, `rankQuery`, `embeddingColumn`, `recencyBoost`, `tokenBudget`, `reranker`,
-`relationalRetrieval` and the rest of `NOT_READ` in the TS member), `countKeywordPages`'s `timeoutMs` (only a
-statement timeout) and the paging members' `opts.limit` / `opts.offset` (the `page` window wins).
+Ignored, as in the SQL statements: the vector, reranking, recency and reporting options (`onVectorPoolMeta`,
+`cjkKeyword`, `embeddingColumn`, `recencyBoost`, `tokenBudget`, `reranker`, `relationalRetrieval` and the rest of
+`NOT_READ` in the TS member), `keywordTimeoutCache` (a statement-timeout cache), `countKeywordPages`'s `timeoutMs`
+(only a statement timeout) and the paging members' `opts.limit` / `opts.offset` (the `page` window wins).
+`searchKeyword` reads `orFallback`, `orFill`, `rankQuery`, `keywordPhrase` and `onKeywordIncomplete` as the hybrid
+keyword arm does; `searchTitles` reads `onKeywordIncomplete`. `searchTitles` answers nothing for `language` or
+`symbolKind`, as the SQL engines do.
 
 ## Keys
 
@@ -75,7 +80,40 @@ auto-extracted unverified page). A handle page (its slug basename is a handle) s
 and matches even without a text match. Pages take their best chunk (highest score, then the lower chunk id) and sort by
 score descending, then page id; chunks sort by score, page id and chunk id. `countKeywordPages` stops at 10,001.
 
-## Known differences
+## searchKeyword (the hybrid keyword arm)
+
+Hybrid's keyword arm (`search/hybrid/arms.ts`) calls `searchKeyword` with `keywordTimeoutCache`, and with
+`orFallback`, `orFill`, `rankQuery` and `keywordPhrase` when the caller sets them. The TS member runs PGLite's
+orchestration (`keywordArmRows`: the strict statement, the identifier probe, the slug handles, the OR retry ranked by
+term rarity with `rankOrFallbackByRarity`) and the store answers each statement:
+
+- `searchKeywordArm(match, rank, options)`: chunks matching `websearch_to_tsquery(match)`, scored with
+  `ts_rank(vector, websearch_to_tsquery(rank))` × phrase factor × source factor, the best chunk per page, the
+  `innerLimit` (`min(limit × 3, cap × 3)`) inner window, then `offset` and `limit`.
+- `keywordRareTermPages(terms, cap)`: per term, the pages holding it, up to `RARE_TERM_CHUNK_CAP` chunks.
+- the slug handles go through `searchKeywordPages` with `handlesOnly`.
+
+The core BM25 member (`store-members/search.ts`) is gone; its napi method and `Store::search_keyword` stay, unused.
+
+## searchTitles (the hybrid title arm)
+
+The TS member runs `engine-sql/titles.ts`: the strict attempt over the whole page vector; when more pages match than
+`titleWholeVectorCandidates()` (5,000), `onKeywordIncomplete('candidate_budget')` and the title-only attempt leads; with
+no strict rows past the offset, the any-word retry (`buildOrFallbackWebsearchQuery`) ranked per word by rarity
+(`rankByRarity`, at most `RARITY_MAX_TERMS` words and no offset), with rows that hold every identifier token first and
+the rest tagged `keyword_relaxed`. Every attempt ORs in the given-name variants (`titleNameVariants`). The store runs a
+list of attempts over one read (`searchTitlesAttempts`); the rows sort by exact title (`lower(btrim(title, ' "''' ||
+chr(160)))` against `normalizeAlias(query)`), then `ts_rank_cd(vector, q) × source factor`, then page id.
+
+The page vector is not stored; `keyword/titles.rs` rebuilds the one PGLite last wrote:
+
+- Sealed form, when the page's last seal sent its sanitized timeline (`pages::search_timeline`) and that seal is current
+  (its revision equals `text_projection_revision`): title at weight A, `left(sanitized timeline, 65536)` at C.
+- Trigger form otherwise: title at A, `left(timeline, 65536)` at C and the page's timeline entries created no later
+  than its `updated_at` (`summary || ' ' || detail` by id, `left(…, 32768)`) at C. A page whose revision is not sealed
+  is not served at all (the page filter), so this form serves only a page sealed without text (the store's own
+  indexing `putPage`) and an activation page.
+
 
 - `searchKeywordChunks` follows PGLite: no page filters (they refuse), `stale` computed from the newest timeline entry
   against `updated_at`. Postgres applies the page filters and always returns `stale: false`
@@ -85,6 +123,15 @@ score descending, then page id; chunks sort by score, page id and chunk id. `cou
   2^53 can match differently.
 - `message_id` is blank when it is only ASCII `[[:space:]]`, as the SQL trims it; other Unicode spaces count as text.
 - Lexemes of 2047 bytes or more are dropped from the vector, as in PG (`MAXSTRLEN`).
+- `searchTitles` sets `stale` from the newest timeline entry against `updated_at`, as PGLite does; Postgres returns
+  `stale: false`.
+- `searchTitles` trigger form: PGLite's trigger reads the timeline entries that exist when the page row is written;
+  the store approximates that with the entries created no later than `updated_at`, and reads a NULL timeline as empty
+  where PGLite falls back to `timeline_lead` (follow-up `title-vector-segmented-lead`).
+- `searchTitles` after a re-put of an unchanged page: PGLite's trigger rewrites the vector to the trigger form (the
+  revision, and so the seal, stays); the store keeps the sealed form (follow-up `title-vector-reput-after-seal`).
+- `searchTitles` refuses CJK queries like the other keyword members; the SQL title statement has no CJK path of its
+  own, so this is conservative (follow-up `keyword-cjk`).
 - `findByTitleFuzzy` without a `sourceId` reads soft-deleted pages too, as the SQL does (follow-up
   `fuzzy-title-unscoped-deleted`). PGLite types `$minSimilarity` as `real`; Postgres may bind it as `float8`, which
   would compare in f64 (not verified).
@@ -96,4 +143,7 @@ score descending, then page id; chunks sort by score, page id and chunk id. `cou
 - `keyword-cjk`: serve CJK queries (the SQL engines' bigram path).
 - `keyword-chunks-page-filters`: settle which engine is right for `searchKeywordChunks` page filters and `stale`.
 - `fuzzy-title-unscoped-deleted`: the SQL unscoped arm returns soft-deleted pages.
+- `title-vector-segmented-lead`: keep `timeline_lead` so the trigger form of a segmented page matches.
+- `title-vector-reput-after-seal`: core drops `M page_search_timeline/<page id>` on every putPage write that sets
+  `title` or `timeline`, so a re-put reads the trigger form as PGLite does.
 - Serve the refused privacy and trust options once the store records them.

@@ -5,9 +5,8 @@
 //! (`keyword/chunk_search.rs`), countKeywordPages and searchKeywordPages (`keyword/page_search.rs`),
 //! and searchTitles (`keyword/titles.rs`: the title arm's statements, over page vectors rebuilt
 //! from the page, its timeline entries and the sealed search timeline), with the page and chunk
-//! filters they share in `keyword/filters.rs`. searchTitles refuses until the sealed search
-//! timeline (core-hooks item 13) merges. rust/docs/store/keyword.md lists what each member reads,
-//! refuses and leaves as a follow-up.
+//! filters they share in `keyword/filters.rs`. rust/docs/store/keyword.md lists what each member
+//! reads, refuses and leaves as a follow-up.
 //!
 //! Built: the pg_trgm scorer (`keyword/trgm.rs`), for findByTitleFuzzy here and for other
 //! families (searchTakes). Its signatures and thresholds are stable:

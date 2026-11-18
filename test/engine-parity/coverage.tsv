@@ -64,10 +64,10 @@ listAllSources	pages	yes	2	no	yes	yes	serves
 updateSourceConfig	pages	yes	1	no	yes	yes	serves
 listPrefixSampledPages	pages	yes	1	no	yes	yes	refuses:pages
 listCorpusSample	pages	yes	1	no	yes	yes	refuses:pages
-searchKeyword	search	yes	8	yes	yes	yes	serves
+searchKeyword	search	yes	9	yes	yes	yes	serves
 countKeywordPages	search	yes	2	no	yes	yes	serves
 searchKeywordPages	search	yes	2	no	yes	yes	serves
-searchTitles	search	yes	1	yes	yes	yes	refuses:keyword_search
+searchTitles	search	yes	2	yes	yes	yes	serves
 searchVector	search	yes	2	yes	yes	yes	refuses:vector_search
 getEmbeddingsByChunkIds	search	yes	1	no	yes	yes	refuses:embeddings
 searchKeywordChunks	search	yes	2	yes	yes	yes	serves
