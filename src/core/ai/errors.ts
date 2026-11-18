@@ -151,6 +151,16 @@ export function normalizeAIError(err: unknown, context?: string, redact?: (text:
   const msg = redact ? redact(raw) : raw;
   const ctxPrefix = context ? `[${context}] ` : '';
 
+  // A 4xx whose text reports a refused connection to the provider's own local backend (Ollama answers 400 while its
+  // runner restarts) is a transient outage of a valid request, not a config problem.
+  if (typeof status === 'number' && status >= 400 && status < 500 && status !== 429) {
+    const body = (err as { responseBody?: unknown } | null)?.responseBody;
+    const text = `${msg} ${typeof body === 'string' ? (redact ? redact(body) : body) : ''}`;
+    if (/\bconnect: connection refused\b|"error"\s*:\s*"connection refused"/i.test(text)) {
+      return carryStatusFields(err, new AITransientError(`${ctxPrefix}${msg}`, err));
+    }
+  }
+
   // 4xx (except 429) = config-level, non-retryable. A 403 whose body says the
   // project has no access to the model is a model problem, not a key problem.
   if (typeof status === 'number' && status >= 400 && status < 500 && status !== 429) {
