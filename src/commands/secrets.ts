@@ -127,19 +127,19 @@ export async function runSecrets(engine: BrainEngine, args: string[]): Promise<v
   }
   if (sub === 'backup') {
     const { backupStore, configuredStorage, restoreBackup } = await import('../core/secret-store/backup.ts');
-    const storage = await configuredStorage();
-    if (!storage) {
+    const configured = await configuredStorage();
+    if (!configured) {
       print(json, { backend: null, carried_by: 'database_backup' }, 'No storage backend is configured, so nothing was uploaded: the brain\'s database backup carries the secret store.');
       return;
     }
     const object = flag(rest, '--restore');
     if (object) {
-      const out = await restoreBackup(engine, storage, object);
+      const out = await restoreBackup(engine, configured.storage, object);
       print(json, out, [`Restored ${out.inserted} entr${out.inserted === 1 ? 'y' : 'ies'} (${out.occurrences} occurrence(s)) from ${out.object}; ${out.existing} already here and left as they are.`,
         ...(out.unreadable.length ? [`Skipped ${out.unreadable.length} that do not authenticate under a key on this host: ${out.unreadable.join(', ')}`] : [])].join('\n'));
       return;
     }
-    const out = await backupStore(engine, storage);
+    const out = await backupStore(engine, configured.storage, configured.identity);
     print(json, out, `Uploaded ${out.object}: ${out.entries} entr${out.entries === 1 ? 'y' : 'ies'}, ${out.occurrences} occurrence(s), sealed with key ${out.key_id}. It restores only where that key is.`);
     return;
   }

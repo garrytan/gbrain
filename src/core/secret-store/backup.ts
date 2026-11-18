@@ -17,9 +17,9 @@ import type { BrainEngine } from '../engine.ts';
 import { atomicWriteFileSync } from '../atomic-write.ts';
 import { gbrainPath, loadConfig } from '../config.ts';
 import { opError } from '../ops/contract.ts';
-import type { StorageBackend } from '../storage.ts';
+import type { StorageBackend, StorageConfig } from '../storage.ts';
 import { currentKey, keyById, storeHost } from './keyring.ts';
-import { allEntryRows, allOccurrenceRows, insertBackupRows, openEntry, type BackupEntryRow, type BackupOccurrenceRow } from './store.ts';
+import { insertBackupRows, openEntry, storeSnapshot, type BackupEntryRow, type BackupOccurrenceRow } from './store.ts';
 
 export const BACKUP_OBJECT_PREFIX = 'gbrain-secret-store/';
 const KIND = 'gbrain-secret-store-backup';
@@ -28,7 +28,7 @@ interface BackupDocument { kind: typeof KIND; version: 1; key_id: string; create
 interface BackupBody { entries: BackupEntryRow[]; occurrences: BackupOccurrenceRow[] }
 
 export interface BackupStatus {
-  last_success: { at: string; object: string; entries: number; occurrences: number; key_id: string; high_water?: string | null } | null;
+  last_success: { at: string; object: string; entries: number; occurrences: number; key_id: string; high_water?: string | null; backend?: string } | null;
   last_failure: { at: string; message: string } | null;
 }
 
@@ -49,12 +49,21 @@ function writeBackupStatus(status: BackupStatus): void {
 
 const aad = (keyId: string, createdAt: string) => Buffer.from(`${KIND}-v1\0${keyId}\0${createdAt}`);
 
-/** The storage backend the owner configured for files, or null when there is none. */
-export async function configuredStorage(): Promise<StorageBackend | null> {
-  const storage = loadConfig()?.storage;
-  if (!storage) return null;
+/**
+ * Names a storage backend by kind, bucket and where it lives (endpoint or project host, local path), never by its
+ * credentials, so the backup status can tell a backend it wrote to from one it never did.
+ */
+export function storageIdentity(config: Pick<StorageConfig, 'backend' | 'bucket'> & Partial<Pick<StorageConfig, 'endpoint' | 'projectUrl' | 'localPath'>>): string {
+  const host = (url?: string) => { try { return url ? new URL(url).host : ''; } catch { return ''; } };
+  return [config.backend, config.bucket, host(config.endpoint) || host(config.projectUrl), config.localPath ?? ''].join(':').replace(/:+$/, '');
+}
+
+/** The storage backend the owner configured for files with its identity, or null when there is none. */
+export async function configuredStorage(): Promise<{ storage: StorageBackend; identity: string } | null> {
+  const config = loadConfig()?.storage as StorageConfig | undefined;
+  if (!config) return null;
   const { createStorage } = await import('../storage.ts');
-  return createStorage(storage as Parameters<typeof createStorage>[0]);
+  return { storage: await createStorage(config), identity: storageIdentity(config) };
 }
 
 export interface BackupResult { object: string; entries: number; occurrences: number; key_id: string }
@@ -64,21 +73,29 @@ function recordFailure(error: unknown): void {
 }
 
 /**
- * The maintenance step: with a storage backend configured and entries newer than the last success, uploads one backup.
- * Returns whether it uploaded; a failure (the backend included) is recorded for doctor and the next pass tries again.
+ * The maintenance step: with a storage backend configured and the store changed since the last success to it, uploads
+ * one backup. A host with no store key skips (it never makes one just to back up; doctor says why). Returns whether it
+ * uploaded; a failure (the backend included) is recorded for doctor and the next pass tries again.
  */
 export async function backupIfDue(engine: BrainEngine): Promise<boolean> {
-  let storage: StorageBackend | null;
-  try { storage = await configuredStorage(); } catch (error) { recordFailure(error); return false; }
-  if (!storage || !await backupDue(engine)) return false;
-  try { await backupStore(engine, storage); return true; } catch { return false; }
+  let configured: Awaited<ReturnType<typeof configuredStorage>>;
+  try { configured = await configuredStorage(); } catch (error) { recordFailure(error); return false; }
+  if (!configured || !currentKey({ create: false }) || !await backupDue(engine, configured.identity)) return false;
+  try { await backupStore(engine, configured.storage, configured.identity); return true; } catch { return false; }
 }
 
-/** Uploads one encrypted export of the whole store and records it as the last success (or the failure, then throws). */
-export async function backupStore(engine: BrainEngine, storage: StorageBackend): Promise<BackupResult> {
+/**
+ * Uploads one encrypted export of the whole store, sealed under this host's current key, and records it as the last
+ * success to `backend` (or the failure, then throws). It never creates a key: a host without one is refused.
+ */
+export async function backupStore(engine: BrainEngine, storage: StorageBackend, backend?: string): Promise<BackupResult> {
+  const key = currentKey({ create: false });
+  if (!key) {
+    throw opError('secret_store_key_missing', 'This host has no secret store key, so nothing was backed up (a backup is sealed under an existing key and never makes one).',
+      'Import the key the store uses with gbrain secrets key import <file> --passphrase-stdin, or set GBRAIN_SECRET_STORE_KEY, then run the backup again.');
+  }
   try {
-    const key = currentKey({ create: true })!;
-    const body: BackupBody = { entries: await allEntryRows(engine), occurrences: await allOccurrenceRows(engine) };
+    const body: BackupBody = await storeSnapshot(engine);
     const createdAt = new Date().toISOString();
     const nonce = randomBytes(12);
     const cipher = createCipheriv('aes-256-gcm', key.key, nonce, { authTagLength: 16 });
@@ -91,7 +108,7 @@ export async function backupStore(engine: BrainEngine, storage: StorageBackend):
     const result = { object, entries: body.entries.length, occurrences: body.occurrences.length, key_id: key.id };
     const highWater = [...body.entries.flatMap(row => [row.created_at, row.updated_at]), ...body.occurrences.map(o => o.created_at)]
       .reduce<string | null>((max, t) => (!max || t > max ? t : max), null);
-    writeBackupStatus({ last_success: { at: createdAt, ...result, high_water: highWater }, last_failure: null });
+    writeBackupStatus({ last_success: { at: createdAt, ...result, high_water: highWater, ...(backend ? { backend } : {}) }, last_failure: null });
     return result;
   } catch (error) {
     recordFailure(error);
@@ -100,19 +117,19 @@ export async function backupStore(engine: BrainEngine, storage: StorageBackend):
 }
 
 /**
- * True when no backup ever succeeded, or the store changed since the last one: an entry or an occurrence (a new place an
- * existing original was redacted) newer than the newest row that backup held, or a different number of occurrences.
- * Both sides are database timestamps, so a host clock ahead of the database's does not hide a change.
+ * True when no backup ever succeeded to `backend` (the last success went to another backend, or names none), or the
+ * store changed since: an entry or an occurrence (a new place an existing original was redacted) newer than the newest
+ * row that backup held, or a different number of entries or occurrences. Both sides are database timestamps, so a host
+ * clock ahead of the database's does not hide a change.
  */
-export async function backupDue(engine: BrainEngine): Promise<boolean> {
-  const rows = await allEntryRows(engine);
-  if (!rows.length) return false;
+export async function backupDue(engine: BrainEngine, backend?: string): Promise<boolean> {
+  const { entries, occurrences } = await storeSnapshot(engine);
+  if (!entries.length) return false;
   const success = readBackupStatus().last_success;
   const last = success ? success.high_water ?? success.at : undefined;
-  if (!success || !last) return true;
-  if (rows.some(row => row.created_at > last || row.updated_at > last)) return true;
-  const occurrences = await allOccurrenceRows(engine);
-  return occurrences.length !== success.occurrences || occurrences.some(o => o.created_at > last);
+  if (!success || !last || (backend !== undefined && success.backend !== backend)) return true;
+  if (entries.length !== success.entries || occurrences.length !== success.occurrences) return true;
+  return entries.some(row => row.created_at > last || row.updated_at > last) || occurrences.some(o => o.created_at > last);
 }
 
 export interface RestoreResult { object: string; key_id: string; inserted: number; existing: number; unreadable: string[]; occurrences: number }

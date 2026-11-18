@@ -44,7 +44,7 @@ export async function secretStoreCheck(ctx: DoctorContext): Promise<Check> {
 
 async function inspectSecretStore(ctx: DoctorContext): Promise<Check> {
   const engine = connectedEngine(ctx);
-  const [{ countsByRule, keysInUse }, { keyringStatus, keyById, escrowExported }, { undrainedCount }, { readBackupStatus }, { HELD_TRAILER, BACKUP_REF_PREFIX }] = await Promise.all([
+  const [{ countsByRule, keysInUse }, { keyringStatus, keyById, escrowExported }, { undrainedCount }, { readBackupStatus, storageIdentity }, { HELD_TRAILER, BACKUP_REF_PREFIX }] = await Promise.all([
     import('../../../core/secret-store/store.ts'), import('../../../core/secret-store/keyring.ts'), import('../../../core/secret-store/spool.ts'),
     import('../../../core/secret-store/backup.ts'), import('../../../core/git/redact-unpushed.ts')]);
   let rules: Record<string, { entries: number; occurrences: number }>;
@@ -61,9 +61,12 @@ async function inspectSecretStore(ctx: DoctorContext): Promise<Check> {
   const needsEscrow = keyring.origin === 'keyring' && keyring.current !== null && entries > 0 && inUse.some(k => k.key_id === keyring.current) && !escrowed.has(keyring.current);
   const backup = readBackupStatus();
   const { loadConfig } = await import('../../../core/config.ts');
-  const backend = Boolean(loadConfig()?.storage);
+  const storage = loadConfig()?.storage as Parameters<typeof storageIdentity>[0] | undefined;
+  const backend = Boolean(storage);
+  const backedUpHere = Boolean(storage && backup.last_success?.backend === storageIdentity(storage));
+  const backupKeyless = backend && entries > 0 && keyring.current === null;
   const backupFailing = backend && entries > 0 && backup.last_failure !== null && (!backup.last_success || backup.last_failure.at > backup.last_success.at);
-  const backupNever = backend && entries > 0 && !backup.last_success;
+  const backupNever = backend && entries > 0 && !backedUpHere;
   const checkouts: Array<{ source_id: string; held: number; side_refs: string[] }> = [];
   if (!ctx.remote) {
     const seen = new Set<string>();
@@ -93,12 +96,13 @@ async function inspectSecretStore(ctx: DoctorContext): Promise<Check> {
   }
   if (needsEscrow) problems.push(`The current key ${keyring.current} has never been exported. If this machine's keyring is lost, every original sealed with it is lost; export it with gbrain secrets key export --out <file> --passphrase-stdin and keep the file elsewhere.`);
   if (backupFailing) problems.push(`The last secret store backup failed at ${backup.last_failure!.at} (${backup.last_failure!.message})${backup.last_success ? `; the last success was ${backup.last_success.at}` : ''}. Maintenance tries again; gbrain secrets backup retries now.`);
+  else if (backupKeyless) problems.push('This host has no secret store key, so it does not back the store up to the storage backend (a backup is sealed under an existing key and maintenance never makes one); import the store key with gbrain secrets key import, or set GBRAIN_SECRET_STORE_KEY.');
   else if (backupNever) problems.push('A storage backend is configured but the secret store was never backed up to it; maintenance does it after new entries, or run gbrain secrets backup now.');
   if (spooled) problems.push(`${spooled} original(s) wait in this host's encrypted spool for the store; the next maintenance pass or push moves them.`);
   if (held) problems.push(`${held} held-back publish commit(s) keep files on this machine that the remote does not have (${checkouts.filter(c => c.held).map(c => c.source_id).join(', ')}); see gbrain git redact-unpushed --source <id>.`);
   if (sideRefs) problems.push(`${sideRefs} local ref(s) still hold commits from before a redaction rebuild, with the original values (${checkouts.flatMap(c => c.side_refs).slice(0, 5).join(', ')}); delete or rebuild them.`);
   const where = backend
-    ? backup.last_success ? `last backed up ${backup.last_success.at} to the storage backend` : 'not yet backed up to the storage backend'
+    ? backedUpHere ? `last backed up ${backup.last_success!.at} to the storage backend` : 'not yet backed up to the configured storage backend'
     : 'no storage backend, so the database backup carries the store';
   const summary = `${entries} entr${entries === 1 ? 'y' : 'ies'}, ${occurrences} occurrence(s); ${where}.`;
   if (!problems.length) return { name: NAME, status: 'ok', details, message: `The secret store is healthy: ${summary}` };

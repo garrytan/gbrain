@@ -198,17 +198,18 @@ export interface BackupOccurrenceRow {
   path: string | null; line: number | null; pre_field_sha256: string | null; created_by: string; created_at: string;
 }
 
-/** Every entry row as stored (ciphertext, never a value), for an encrypted backup (backup.ts). */
-export async function allEntryRows(engine: BrainEngine): Promise<BackupEntryRow[]> {
-  return engine.executeRaw<BackupEntryRow>(`SELECT id,source_id,rule,ciphertext,nonce,tag,key_id,key_host,value_mac,status,
-    to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at
-    FROM secret_store ORDER BY id`);
-}
-
-/** Every occurrence row, for an encrypted backup (backup.ts). */
-export async function allOccurrenceRows(engine: BrainEngine): Promise<BackupOccurrenceRow[]> {
-  return engine.executeRaw<BackupOccurrenceRow>(`SELECT entry_id,source_id,page_id,slug,field,origin,commit_sha,path,line,pre_field_sha256,created_by,
-    to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at FROM secret_store_occurrence ORDER BY id`);
+/**
+ * Every entry row as stored (ciphertext, never a value) and every occurrence row, for an encrypted backup (backup.ts).
+ * One statement reads both, so they come from one snapshot: an entry sealed while the backup reads is in neither list.
+ */
+export async function storeSnapshot(engine: BrainEngine): Promise<{ entries: BackupEntryRow[]; occurrences: BackupOccurrenceRow[] }> {
+  const ts = (col: string) => `to_char(${col} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
+  const [row] = await engine.executeRaw<{ entries: string; occurrences: string }>(`SELECT
+    (SELECT coalesce(jsonb_agg(to_jsonb(e) ORDER BY e.id), '[]'::jsonb)::text FROM (SELECT id,source_id,rule,ciphertext,nonce,tag,key_id,key_host,value_mac,status,
+      ${ts('created_at')} AS created_at, ${ts('updated_at')} AS updated_at FROM secret_store) e) AS entries,
+    (SELECT coalesce(jsonb_agg(to_jsonb(o) - 'ord' ORDER BY o.ord), '[]'::jsonb)::text FROM (SELECT id AS ord,entry_id,source_id,page_id,slug,field,origin,commit_sha,path,line,
+      pre_field_sha256,created_by,${ts('created_at')} AS created_at FROM secret_store_occurrence) o) AS occurrences`);
+  return { entries: JSON.parse(row!.entries) as BackupEntryRow[], occurrences: JSON.parse(row!.occurrences) as BackupOccurrenceRow[] };
 }
 
 /**

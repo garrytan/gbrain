@@ -115,9 +115,13 @@ The store lives in the brain's database, so any database backup already carries 
 in it). When the gbrain config names a `storage` backend for files (Supabase Storage, S3 or a local directory, the same
 one `gbrain files` uses), gbrain also uploads an encrypted export of the store there:
 
-- `gbrain secrets backup` uploads one now; the maintenance pass uploads one after new entries. Each object is
-  `gbrain-secret-store/<time>.json`: every entry row (already sealed) and where it was redacted, sealed again under the
-  current store key, so the bucket holds no value, page name, path or rule in clear, and never the key.
+- `gbrain secrets backup` uploads one now; the maintenance pass uploads one when the store changed since the last
+  backup to that backend, or when the configured backend is one it never wrote to. Each object is
+  `gbrain-secret-store/<time>.json`: every entry row (already sealed) and where it was redacted, read in one snapshot
+  and sealed again under the current store key, so the bucket holds no value, page name, path or rule in clear, and
+  never the key.
+- A backup never creates a key. On a host with no store key, `gbrain secrets backup` refuses with
+  `secret_store_key_missing`, maintenance skips the upload, and doctor says why; import the store key first.
 - A failed upload never stops a push or a redaction. The next maintenance pass tries again, and doctor reports the
   last success and the last failure.
 - `gbrain secrets backup --restore gbrain-secret-store/<time>.json` adds the entries this brain lacks. It restores only on

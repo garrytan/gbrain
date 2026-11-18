@@ -7,14 +7,14 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { currentKey, escrowExported, exportKeyEscrow, markEscrowExported } from '../src/core/secret-store/keyring.ts';
+import { currentKey, escrowExported, exportKeyEscrow, keyringStatus, markEscrowExported } from '../src/core/secret-store/keyring.ts';
 import { recordOccurrence, reveal, seal } from '../src/core/secret-store/store.ts';
-import { backupDue, backupStore, readBackupStatus, restoreBackup, BACKUP_OBJECT_PREFIX } from '../src/core/secret-store/backup.ts';
+import { backupDue, backupIfDue, backupStatusFile, backupStore, readBackupStatus, restoreBackup, storageIdentity, BACKUP_OBJECT_PREFIX } from '../src/core/secret-store/backup.ts';
 import { createStorage } from '../src/core/storage.ts';
 import { runSecrets } from '../src/commands/secrets.ts';
 import { secretPublishMaintenance } from '../src/core/git/redact-finish.ts';
@@ -47,10 +47,10 @@ const capture = async (fn: () => Promise<unknown>) => {
   return out.join('\n');
 };
 
-/** Fresh PGLite brains, opened once for the file (two per backup case, one for the restore probe, one for the git case). */
+/** Fresh PGLite brains, opened once for the file (two per backup case, one for the restore probe, one for the no-key host, one for the git case). */
 const lite: PGLiteEngine[] = [];
 beforeAll(async () => {
-  for (let i = 0; i < 4; i++) { const engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); lite.push(engine); }
+  for (let i = 0; i < 5; i++) { const engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); lite.push(engine); }
 }, 120_000);
 afterAll(async () => { for (const engine of lite.splice(0)) await engine.disconnect(); }, 60_000);
 const freshLite = () => { const engine = lite.shift(); if (!engine) throw new Error('no fresh PGLite brain left'); return engine; };
@@ -110,6 +110,74 @@ for (const { name, make } of engines) {
         await expect(restoreBackup(b.engine, storage, `${BACKUP_OBJECT_PREFIX}changed.json`)).rejects.toMatchObject({ code: 'secret_store_key_mismatch' });
         await expect(restoreBackup(b.engine, storage, '../elsewhere.json')).rejects.toMatchObject({ code: 'invalid_params' });
       });
+    }, 60_000);
+
+    test('a backup reads entries and occurrences in one snapshot, is due again for a different backend or a drifted entry count, and doctor names the backend it never wrote to', async () => {
+      const bucket = fresh('bucket'), other = fresh('bucket');
+      const dir = home(bucket);
+      await withEnv(env(dir), async () => {
+        await seal(a.engine, { sourceId: 'default', rule: 'github_token', value: TOKEN });
+        const storage = await createStorage({ backend: 'local', bucket: 'b', localPath: bucket });
+        const here = storageIdentity({ backend: 'local', bucket: 'b', localPath: bucket });
+        const [before] = await a.engine.executeRaw<{ n: number | string }>('SELECT count(*) AS n FROM secret_store_occurrence');
+        let raced = false;
+        const racing = new Proxy(a.engine, { get(target, prop) {
+          if (prop !== 'executeRaw') { const v = Reflect.get(target, prop); return typeof v === 'function' ? v.bind(target) : v; }
+          return async (sql: string, params?: unknown[]) => {
+            const rows = await target.executeRaw(sql, params as never);
+            if (!raced && /FROM secret_store/.test(sql)) {
+              raced = true;
+              const late = await seal(target, { sourceId: 'default', rule: 'aws_access_key', value: OTHER + 'RACE' });
+              await recordOccurrence(target, { entryId: late.id, sourceId: 'default', slug: 'notes/late', field: 'compiled_truth', origin: 'repair' });
+            }
+            return rows;
+          };
+        } }) as BrainEngine;
+        const out = await backupStore(racing, storage, here);
+        expect(raced).toBe(true);
+        expect(out.occurrences).toBe(Number(before!.n));
+        expect(await backupDue(a.engine, here)).toBe(true);
+        const second = await backupStore(a.engine, storage, here);
+        expect(await backupDue(a.engine, here)).toBe(false);
+        expect(await backupDue(a.engine, storageIdentity({ backend: 'local', bucket: 'b', localPath: other }))).toBe(true);
+        const status = JSON.parse(readFileSync(backupStatusFile(), 'utf8'));
+        writeFileSync(backupStatusFile(), JSON.stringify({ ...status, last_success: { ...status.last_success, entries: second.entries - 1 } }));
+        expect(await backupDue(a.engine, here)).toBe(true);
+        writeFileSync(backupStatusFile(), JSON.stringify(status));
+        writeFileSync(join(dir, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', storage: { backend: 'local', bucket: 'b', localPath: other } }));
+        const check = await secretStoreCheck(ctx(a.engine));
+        expect(check.message).toContain('never backed up to it');
+        expect(check.message).not.toContain('last backed up');
+      });
+    }, 60_000);
+
+    test('a host with no store key never makes one to back up: maintenance skips and doctor says why; an escrow never exported warns before and after a backup', async () => {
+      const bucket = fresh('bucket');
+      const engine = await make();
+      try {
+        await withEnv(env(home()), async () => {
+          const sealed = await seal(engine.engine, { sourceId: 'default', rule: 'github_token', value: TOKEN });
+          await recordOccurrence(engine.engine, { entryId: sealed.id, sourceId: 'default', slug: 'notes/deploy-plan', field: 'compiled_truth', origin: 'repair' });
+        });
+        const keyless = home(bucket);
+        await withEnv(env(keyless), async () => {
+          expect(await backupIfDue(engine.engine)).toBe(false);
+          expect(keyringStatus().current).toBeNull();
+          expect(readBackupStatus().last_success).toBeNull();
+          expect(existsSync(join(bucket, 'gbrain-secret-store'))).toBe(false);
+          const check = await secretStoreCheck(ctx(engine.engine));
+          expect(check.status).toBe('warn');
+          expect(check.message).toContain('has no secret store key, so it does not back the store up');
+          await expect(runSecrets(engine.engine, ['backup'])).rejects.toMatchObject({ code: 'secret_store_key_missing' });
+          expect(keyringStatus().current).toBeNull();
+        });
+        await withEnv(env(home(bucket)), async () => {
+          await seal(engine.engine, { sourceId: 'default', rule: 'aws_access_key', value: OTHER + 'ESC' });
+          expect((await secretStoreCheck(ctx(engine.engine))).message).toContain('has never been exported');
+          expect(await backupIfDue(engine.engine)).toBe(true);
+          expect((await secretStoreCheck(ctx(engine.engine))).message).toContain('has never been exported');
+        });
+      } finally { await engine.close(); }
     }, 60_000);
 
     test('with no storage backend nothing is uploaded and the database backup carries the store', async () => {
