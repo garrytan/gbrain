@@ -491,6 +491,8 @@ export const RUST_ENGINE_MEMBERS = {
   listJobAttachments: 'minion_queue',
   getJobAttachment: 'minion_queue',
   deleteJobAttachment: 'minion_queue',
+  // Group D (jobs insight)
+  readJobInsight: 'minion_queue',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;

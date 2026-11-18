@@ -31,6 +31,7 @@ import type { LedgerSource } from './engine-sql/belief.ts';
 import type { ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, MentionDueQuery, SiblingCandidateQuery, SiblingCandidateRow } from './engine-sql/entity-reads.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
 import type { AdmitJobPolicy, AdmitJobResult, AdmitJobSpec, ClaimJobSpec, JobRow, ListJobsFilter } from './engine-sql/jobs.ts';
+import type { JobInsightRows, JobInsightSpec } from './engine-sql/jobs-insight.ts';
 import type {
   CancelJobsSpec, DelayActiveJobSpec, JobAttachmentInsert, JobPageSpec, JobStatsRead, JobTokenCounts, PrivateQueueState, PruneJobsSpec,
   SynthesisCompletion, SynthesisCompletionPrefix, JobSourceState,
@@ -3444,6 +3445,9 @@ export interface BrainEngine {
   getJobAttachment(jobId: number, filename: string): Promise<JobRow | null>;
   /** Delete one attachment; false when there was none. */
   deleteJobAttachment(jobId: number, filename: string): Promise<boolean>;
+  // Group D (jobs insight): the reads behind `describeJobs`.
+  /** Submitter, queue position, slot holders, live children, blocking locks and foreign-owner tokens of a batch of jobs. */
+  readJobInsight(spec: JobInsightSpec): Promise<JobInsightRows>;
 
   // ============================================================
   // v0.20.0 Cathedral II: code edges (Layer 5 populates, Layer 7 consumes)

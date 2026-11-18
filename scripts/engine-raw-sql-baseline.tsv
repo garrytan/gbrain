@@ -572,7 +572,7 @@ src/core/minions/handlers/sync-job-drain.ts	execute_raw	1
 src/core/minions/handlers/sync.ts	execute_raw	3
 src/core/minions/idempotency-coalesce.ts	execute_raw	1
 src/core/minions/job-context.ts	execute_raw	2
-src/core/minions/job-insight.ts	execute_raw	8
+src/core/minions/job-insight.ts	execute_raw	1
 src/core/minions/lease-pressure-audit.ts	execute_raw	3
 src/core/minions/legacy-cancel.ts	execute_raw	4
 src/core/minions/legacy-selection.ts	execute_raw	2

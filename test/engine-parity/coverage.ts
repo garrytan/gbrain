@@ -111,7 +111,9 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'readJobInbox', 'readChildCompletions', 'listOpenJobIdsInQueue', 'renewPrivateQueueLease', 'listOwnedPrivateQueues',
     'readPrivateQueueState', 'listStaleWaitingJobIds', 'countTtlExpiredWaiting', 'readJobStats', 'readQueueFamilyStats',
     'hasOverdueWatchdogSuspect', 'listUnreviewedJobs', 'getFailedJobForRetry', 'countOpenJobsByOwner', 'readJobSourceState', 'lockOAuthClient', 'listJobPage', 'listJobAttachmentNames',
-    'insertJobAttachment', 'listJobAttachments', 'getJobAttachment', 'deleteJobAttachment'],
+    'insertJobAttachment', 'listJobAttachments', 'getJobAttachment', 'deleteJobAttachment',
+    // group D (jobs insight)
+    'readJobInsight'],
   cli_reads_ops: ['scanExactBatch', 'nextLivePageAfter', 'listExactIdentityCandidates', 'rankEntities', 'listExtractionPendingPages',
     'listUnattributedFacts', 'listWantedPages'],
   // facts_doctor: doctor checks
