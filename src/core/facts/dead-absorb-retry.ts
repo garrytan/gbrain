@@ -16,6 +16,7 @@
  * dead and is counted. Entries settle when their job completes or its row is gone.
  */
 import type { BrainEngine } from '../engine.ts';
+import type { FactsAbsorbJobRow } from '../engine-sql/jobs-checks.ts';
 import { classifyJobError } from '../minions/error-classify.ts';
 
 export const FACTS_ABSORB_RETRY_STATE_KEY = 'facts.absorb_retry.state';
@@ -98,20 +99,14 @@ async function readState(engine: BrainEngine): Promise<RetryState> {
 
 const writeState = (engine: BrainEngine, state: RetryState) => engine.setConfig(FACTS_ABSORB_RETRY_STATE_KEY, JSON.stringify(state));
 
-const JOB_COLUMNS = "id, idempotency_key, status, error_text, data->>'slug' AS slug, COALESCE(data->>'sourceId', 'default') AS source_id, finished_at";
-const newEntry = (row: JobRow, cls: DeadAbsorbClass, now: number): RetryEntry => ({ job_id: Number(row.id), slug: row.slug, source_id: row.source_id, class: cls,
+const newEntry = (row: FactsAbsorbJobRow, cls: DeadAbsorbClass, now: number): RetryEntry => ({ job_id: Number(row.id), slug: row.slug, source_id: row.source_id, class: cls,
   first_dead_at: new Date(row.finished_at ?? now).toISOString(), resubmits: 0, last_resubmit_at: null, cleared_at: null });
-
-interface JobRow { id: number | string; idempotency_key: string; status: string; error_text: string | null; slug: string | null; source_id: string; finished_at: string | Date | null }
 
 /** Reconcile the set with the dead rows; with apply, re-submit the eligible keys and persist. */
 async function reconcile(engine: BrainEngine, opts: { apply: boolean; record?: boolean; now: number }): Promise<DeadAbsorbRetryResult> {
   const state = await readState(engine);
   const max = await loadMaxResubmits(engine);
-  const rows = await engine.executeRaw<JobRow>(
-    `SELECT ${JOB_COLUMNS} FROM minion_jobs
-      WHERE name = 'facts-absorb' AND idempotency_key LIKE $1 AND (status = 'dead' OR idempotency_key = ANY($2::text[]))`,
-    [`${WRITE_KEY_PREFIX}%`, Object.keys(state.keys)]);
+  const rows = await engine.listFactsAbsorbJobsByKeyPrefix({ prefix: WRITE_KEY_PREFIX, keys: Object.keys(state.keys) });
   const byKey = new Map(rows.map(r => [r.idempotency_key, r]));
   for (const key of Object.keys(state.keys)) {
     const row = byKey.get(key);
@@ -189,7 +184,7 @@ export async function updateDeadFactsAbsorbKeys(engine: BrainEngine, action: 're
   await reconcile(engine, { apply: false, record: true, now });
   const state = await readState(engine);
   if (keys !== 'all') {
-    const rows = await engine.executeRaw<JobRow>(`SELECT ${JOB_COLUMNS} FROM minion_jobs WHERE name = 'facts-absorb' AND status = 'dead' AND idempotency_key = ANY($1::text[])`, [keys]);
+    const rows = await engine.listDeadFactsAbsorbJobsByKeys(keys);
     for (const row of rows) state.keys[row.idempotency_key] ??= newEntry(row, classifyDeadFactsAbsorb(row.error_text), now);
   }
   const targets = (keys === 'all' ? Object.keys(state.keys) : keys).filter(k => state.keys[k]);

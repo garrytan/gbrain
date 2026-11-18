@@ -22,12 +22,11 @@ const LISTED = 10;
 
 export async function embedBackfillStalledCheck(engine: BrainEngine): Promise<Check> {
   try {
-    const sources = await engine.executeRaw<{ source_id: string }>(
-      `SELECT DISTINCT data->>'sourceId' AS source_id FROM minion_jobs
-        WHERE name = 'embed-backfill' AND status IN ('failed', 'dead') AND progress ? 'stall'`);
+    const sources = await engine.listStalledEmbedBackfillSources();
     const stalled = [];
-    for (const { source_id } of sources) {
-      const stall = source_id ? await readEmbedBackfillStall(engine, source_id) : null;
+    for (const source_id of sources) {
+      if (!source_id) continue;
+      const stall = await readEmbedBackfillStall(engine, source_id);
       if (!stall) continue;
       const current = await readEmbedBackfillBlockers(engine, source_id, stall.signature);
       if (current.fingerprint !== stall.fingerprint) continue;

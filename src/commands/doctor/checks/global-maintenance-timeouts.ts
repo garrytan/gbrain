@@ -18,32 +18,14 @@ const DEATHS = 3;
 
 export async function globalMaintenanceTimeoutsCheck(engine: BrainEngine): Promise<Check> {
   try {
-    const recent = await engine.executeRaw<{ id: number; status: string; error_text: string | null }>(
-      `SELECT id, status, error_text FROM minion_jobs
-        WHERE name = 'autopilot-global-maintenance' AND status IN ('completed', 'failed', 'dead', 'cancelled')
-        ORDER BY finished_at DESC NULLS LAST, id DESC LIMIT ${DEATHS}`);
+    const { recent, child_timeouts } = await engine.readGlobalMaintenanceDeaths({ deaths: DEATHS });
     const timeoutDeaths = recent.length === DEATHS
       && recent.every(job => job.status === 'dead' && /timeout exceeded/.test(job.error_text ?? ''));
     const progress = await readGlobalMaintenanceProgress(engine);
     const phases = Object.entries(progress.timeouts ?? {})
       .filter(([, t]) => t.count >= DEATHS)
       .map(([phase, t]) => ({ phase, consecutive_deaths: t.count, last_at: t.last_at }));
-    const children = await engine.executeRaw<{ phase: 'patterns' | 'synthesize'; deaths: number; last_at: string | null }>(
-      `SELECT phase, count(*)::int AS deaths, max(finished_at)::text AS last_at FROM (
-         SELECT phase, status, error_text, finished_at,
-                row_number() OVER (PARTITION BY phase ORDER BY finished_at DESC NULLS LAST, id DESC) AS n
-           FROM (SELECT id, status, error_text, finished_at,
-                        CASE WHEN key LIKE 'dream:patterns:%' THEN 'patterns' ELSE 'synthesize' END AS phase
-                   FROM (SELECT id, status, error_text, finished_at,
-                                COALESCE(idempotency_key, data->>'__released_idempotency_key') AS key
-                           FROM minion_jobs
-                          WHERE name = 'subagent' AND status IN ('completed', 'failed', 'dead', 'cancelled')) keyed
-                  WHERE key LIKE 'dream:patterns:%' OR key LIKE 'dream:synth%') phased
-       ) recent
-        WHERE n <= ${DEATHS}
-        GROUP BY phase
-       HAVING count(*) = ${DEATHS} AND bool_and(status = 'dead' AND error_text ~ 'timeout exceeded')`);
-    const childTimeouts = children.map(c => ({ phase: c.phase, consecutive_deaths: Number(c.deaths), last_at: c.last_at }));
+    const childTimeouts = child_timeouts.map(c => ({ phase: c.phase, consecutive_deaths: c.deaths, last_at: c.last_at }));
     const phase = phases[0]?.phase ?? childTimeouts[0]?.phase ?? progress.running_phase ?? progress.next_phase;
     if (!timeoutDeaths && phases.length === 0 && childTimeouts.length === 0) {
       return { name: 'global_maintenance_timeouts', status: 'ok', message: 'Brain-wide maintenance jobs are finishing within their deadline.' };

@@ -119,14 +119,14 @@ describe('engine parity: transaction-local settings', () => {
   parityTest('a setting name the Rust engine does not keep refuses on Rust', {
     methods: ['transaction', 'readTransactionSettings'],
   }, async (engine, backend) => {
-    const read = (tx: BrainEngine) => tx.readTransactionSettings([TIER, 'gbrain.persistence_protocol']);
+    const read = (tx: BrainEngine) => tx.readTransactionSettings([TIER, 'gbrain.writer_quiesced']);
     return engine.transaction(async (tx) => {
       if (backend !== 'rust') return unset(await read(tx));
       const refusal = await read(tx).then(() => null, (error: unknown) => error);
       expect(refusal).toMatchObject({
         code: 'engine_capability_missing',
         reason: 'transactions',
-        detail: 'member=readTransactionSettings capability=transactions setting=gbrain.persistence_protocol outcome=none written=nothing',
+        detail: 'member=readTransactionSettings capability=transactions setting=gbrain.writer_quiesced outcome=none written=nothing',
       });
       throw refusal;
     });

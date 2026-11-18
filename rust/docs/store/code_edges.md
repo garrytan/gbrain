@@ -60,3 +60,5 @@ that source (`ON DELETE CASCADE` on `source_id`).
 - `code-edges-chunk-id-index`: the store keeps no index from a chunk id to its page and `symbol_name`, so the live
   filter and the bare fallback of `getCallersOf` / `getCalleesOf` scan every chunk once per call (O(chunks)). A core
   index keyed by chunk id would make these reads O(rows read). Correctness does not need it; it is deferred to core.
+
+`hasCodeEdgesSymbol(sourceId)` (whether the source owns an unresolved symbol-table edge) is documented in [takes-reads.md](takes-reads.md).

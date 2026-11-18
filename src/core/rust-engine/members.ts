@@ -35,6 +35,7 @@ export const RUST_ENGINE_MEMBERS = {
   transaction: 'transactions',
   transactionDirect: 'transactions',
   lockPageKeys: 'transactions',
+  declarePersistence: 'transactions',
   // pages
   aliasCanonicalRefs: 'pages',
   nextLivePageAfter: 'pages',
@@ -591,6 +592,49 @@ export const RUST_ENGINE_MEMBERS = {
   listJobAttachments: 'minion_queue',
   getJobAttachment: 'minion_queue',
   deleteJobAttachment: 'minion_queue',
+  // queue health reads (lane 5 group A)
+  readQueueHealthSignals: 'minion_queue',
+  listWaitingByQueue: 'minion_queue',
+  readQueueDivergence: 'minion_queue',
+  listQueueWedgeCounts: 'minion_queue',
+  listPrivateQueueHealth: 'minion_queue',
+  readWedgeSignals: 'minion_queue',
+  readOldestWaitingAge: 'minion_queue',
+  listStuckActiveJobsByName: 'minion_queue',
+  // Job counts and last-run reads for the status surfaces (engine-sql/jobs-status.ts).
+  readLastAutopilotCycles: 'minion_queue',
+  countJobsByStatus: 'minion_queue',
+  readWaitingQueueDepths: 'minion_queue',
+  readLastCompletedJobAt: 'minion_queue',
+  countTtlCancelledByName: 'minion_queue',
+  readWaitingScopeState: 'minion_queue',
+  countRecentCompletedJobs: 'minion_queue',
+  listRecentFailedJobErrors: 'minion_queue',
+  readQueuedPageChars: 'minion_queue',
+  readSourceJobCounts: 'minion_queue',
+  readEmbedBackfillBySource: 'minion_queue',
+  // Group C: the queue reads of the doctor checks and the dream breaker.
+  listStalledEmbedBackfillSources: 'minion_queue',
+  readGlobalMaintenanceDeaths: 'minion_queue',
+  readLastFailedGlobalMaintenanceJob: 'minion_queue',
+  listFactsAbsorbJobsStillDead: 'minion_queue',
+  readLegacyJobAuthority: 'minion_queue',
+  readQueuedSpendRows: 'minion_queue',
+  listBuildSkewStacktraceLines: 'minion_queue',
+  countDeadDreamSubmissionRows: 'minion_queue',
+  listFactsAbsorbJobsByKeyPrefix: 'minion_queue',
+  listDeadFactsAbsorbJobsByKeys: 'minion_queue',
+  // Group D (jobs insight)
+  readJobInsight: 'minion_queue',
+  // Group D (takes, salience and code-edge reads)
+  countOffGridTakeWeights: 'takes',
+  countTakes: 'takes',
+  planFactPurgeTakes: 'takes',
+  listTakeRowsForPage: 'takes',
+  countMcpResolvedTakes: 'takes',
+  listTakeSupersessionCandidates: 'takes',
+  countZeroWeightWithTakes: 'salience',
+  hasCodeEdgesSymbol: 'code_edges',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;

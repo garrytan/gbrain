@@ -1,6 +1,6 @@
 /**
  * legacy_job_authority (#5157, DX-O3(a)): the claim gate's population, read
- * with the gate's own predicate (`UNREVIEWED_LIVE_JOBS_WHERE`) so the two counts
+ * with the gate's own predicate (`UNREVIEWED_LIVE_JOBS_WHERE`, inside the engine member) so the two counts
  * never drift. Live rows whose authority is SQL NULL (authorizable with
  * `gbrain jobs authorize-legacy --select`) or unsupported non-NULL block
  * every worker, so the check fails and names the recovery order. Terminal
@@ -11,7 +11,7 @@
 import type { BrainEngine } from '../../../core/engine.ts';
 import { ERROR_CATALOGUE } from '../../../core/error-catalogue.ts';
 import { LIVE_LEGACY_PREVIEW, legacyRecoveryHint } from '../../../core/minions/legacy-selection.ts';
-import { UNREVIEWED_LIVE_JOBS_WHERE, parseSubmissionAuthority } from '../../../core/minions/submission-authority.ts';
+import { parseSubmissionAuthority } from '../../../core/minions/submission-authority.ts';
 import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 
@@ -28,25 +28,17 @@ export interface LegacyJobAuthorityState {
 }
 
 export async function readLegacyJobAuthority(engine: BrainEngine): Promise<LegacyJobAuthorityState> {
-  const live = (await engine.executeRaw<{ id: number; status: string; submission_authority: unknown; legacy_authority_is_null: boolean }>(
-    `SELECT id, status, submission_authority, submission_authority IS NULL AS legacy_authority_is_null
-       FROM minion_jobs WHERE ${UNREVIEWED_LIVE_JOBS_WHERE} ORDER BY id`))
-    .filter(row => !parseSubmissionAuthority(row.submission_authority));
+  const read = await engine.readLegacyJobAuthority();
+  const live = read.live.filter(row => !parseSubmissionAuthority(row.submission_authority));
   const authorizable: Record<string, number> = {};
   for (const row of live) if (row.legacy_authority_is_null === true) authorizable[row.status] = (authorizable[row.status] ?? 0) + 1;
   const unsupported = live.filter(row => row.legacy_authority_is_null !== true);
-  const active = await engine.executeRaw<{ id: number }>("SELECT id FROM minion_jobs WHERE status = 'active' ORDER BY id LIMIT 10");
-  const terminal = await engine.executeRaw<{ status: string; count: number | string }>(
-    `SELECT status, count(*) AS count FROM minion_jobs
-      WHERE submission_authority IS NULL AND idempotency_key IS NOT NULL
-        AND status IN ('completed','failed','dead','cancelled')
-      GROUP BY status ORDER BY status`);
   return {
     authorizable,
-    unsupported_ids: unsupported.slice(0, 10).map(row => Number(row.id)),
+    unsupported_ids: unsupported.slice(0, 10).map(row => row.id),
     unsupported: unsupported.length,
-    active_ids: active.map(row => Number(row.id)),
-    terminal_keyed: Object.fromEntries(terminal.map(row => [row.status, Number(row.count)])),
+    active_ids: read.active_ids,
+    terminal_keyed: Object.fromEntries(read.terminal_keyed.map(row => [row.status, row.count])),
   };
 }
 
@@ -64,20 +56,11 @@ export interface QueuedSpendState {
 export async function readQueuedSpend(engine: BrainEngine): Promise<QueuedSpendState> {
   const { paidJobNames } = await import('../../jobs/shared.ts');
   const { FENCED_ROW_WAIT_MS, LEGACY_SPEND_KEY_PREFIXES } = await import('../../../core/minions/spend-authorization.ts');
-  const legacy = Object.entries(LEGACY_SPEND_KEY_PREFIXES)
-    .map(([name, prefixes]) => `(name = '${name}' AND (${prefixes.map(p => `idempotency_key LIKE '${p}%'`).join(' OR ')}))`).join(' OR ');
-  const rows = await engine.executeRaw<{ name: string; basis: string; n: number | string }>(
-    `SELECT name, CASE WHEN spend_authorization IS NOT NULL THEN spend_authorization->>'kind'
-                       WHEN ${legacy} THEN 'legacy_default' ELSE 'unrecorded' END AS basis, count(*) AS n
-       FROM minion_jobs WHERE status IN ('waiting','delayed','paused','waiting-children')
-      GROUP BY 1, 2`);
+  const { by_basis: rows, waiting_ids: waiting } = await engine.readQueuedSpendRows({ legacyPrefixes: LEGACY_SPEND_KEY_PREFIXES, waitMs: FENCED_ROW_WAIT_MS });
   const paid = new Set(await paidJobNames(rows.map(r => r.name)));
   const by_basis: Record<string, number> = {};
-  for (const r of rows) if (paid.has(r.name)) by_basis[r.basis] = (by_basis[r.basis] ?? 0) + Number(r.n);
-  const waiting = await engine.executeRaw<{ id: number }>(
-    `SELECT id FROM minion_jobs WHERE status = 'waiting' AND spend_authorization IS NOT NULL
-        AND updated_at < now() - ($1::double precision * interval '1 millisecond') ORDER BY id`, [FENCED_ROW_WAIT_MS]);
-  return { by_basis, long_waiting_ids: waiting.slice(0, 10).map(r => Number(r.id)), long_waiting: waiting.length };
+  for (const r of rows) if (paid.has(r.name)) by_basis[String(r.basis)] = (by_basis[String(r.basis)] ?? 0) + r.n;
+  return { by_basis, long_waiting_ids: waiting.slice(0, 10), long_waiting: waiting.length };
 }
 
 export async function legacyJobAuthorityCheck(engine: BrainEngine): Promise<Check> {

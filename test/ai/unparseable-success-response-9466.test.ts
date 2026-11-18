@@ -79,7 +79,7 @@ describe('#9466 a success response whose body is not JSON', () => {
     const engine = {
       getConfig: async (name: string) => config[name] ?? null,
       setConfig: async (name: string, value: string) => { config[name] = value; },
-      executeRaw: async () => [{ id: 7, idempotency_key: key, status: 'dead', error_text: extraction.message, slug: 'notes/alpha',
+      listFactsAbsorbJobsByKeyPrefix: async () => [{ id: 7, idempotency_key: key, status: 'dead', error_text: extraction.message, slug: 'notes/alpha',
         source_id: 'default', finished_at: '2026-01-01T00:00:00.000Z' }],
     } as unknown as BrainEngine;
     const result = await readDeadFactsAbsorbRetry(engine);
