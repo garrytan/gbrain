@@ -1687,6 +1687,27 @@ and write provenance on content rows, and the trust records.
   `a_second_transaction_waits_for_the_writer_and_starts_with_an_empty_context`.
 - **Depends on:** nothing more for the settings of an open store write. A write outside a transaction stamps with no
   writer, which is `unknown`, as on PGLite.
+- **Trust reads (built):** the read members that a production caller sends `minTrust` or `suppressFlagged` apply
+  them on Rust through `TrustPolicy` (`rust/crates/gbrain-store/src/trust/eligibility.rs`), the twin of the
+  trust floor and suppression clauses of `pageEligibleSql`. A name that is no tier refuses with `invalid_argument`.
+  - Lifted, each with a caller: the page reads of `page-ops.ts` (which also take `excludePrivate`),
+    `aliasCanonicalRefs`, `getSalienceScores`, `countWorldFacts`, `listFactsForRelevance`, `countUncomparableFacts`,
+    the five keyword members, the link and graph reads (`getBacklinkCounts`, `getAdjacencyBoosts`,
+    `supersedingPageSlugs`, `relationalFanout`, `relationalChainHop`, `listLivePageSummaries`,
+    `listPagesTitledIn`; callers in hybrid search, relational recall, relational chains and the entity anchor) and
+    `resolveFrozenHits` (the `assemble_evidence` delivery path). `findActiveSingleFact` and the other `SELECT *`
+    fact reads return the stored `trust_tier` and `write_origin`.
+  - No caller, still refused: `currentCodeChunksExist` and the code symbol members (the context read policy sends
+    no floor), `findOrphanPages` and `listLinkSources`.
+  - Ignored on purpose, as their SQL does: the raw-files, stats, ontology, timeline and chunk-page reads.
+  - Not yet built: `listSingleFactMetadata` (a write-path read under the remote floor) and
+    `listUnpreviewedTrustFacts` (the doctor check) have no store read. Reads of `trust_tier` through `executeRaw`
+    (core memory, the eligibility scan, belief history, admin, valid time) need typed members. `resolveAliases`
+    refuses a floor or `excludePrivate`, and the alias fan-out of search turns that refusal into an empty fan-out;
+    a lift needs the trust and privacy checks on both the alias page and its title shadow. The fact read
+    eligibility refusal (`listSupersessions` and its family) has production callers and is a follow-up. The takes
+    members keep their refusal.
+  - Pinned by `test/engine-parity/trust-reads.test.ts` on all three engines.
 
 ### catalog probes (core)
 

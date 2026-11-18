@@ -278,7 +278,7 @@ describe('engine parity: facts command, cycle and fence reads', () => {
     return result;
   });
 
-  parityTest('countWorldFacts under a trust floor applies the floor, which the Rust store cannot (no trust_tier) and so refuses', { methods: ['countWorldFacts'] }, async (engine) => {
+  parityTest('countWorldFacts under a trust floor drops a fact below the floor', { methods: ['countWorldFacts'] }, async (engine) => {
     await engine.putPage('people/a-example', note('A'));
     await fact(engine, 'w', { entity_slug: 'people/a-example' });
     const floored = await engine.countWorldFacts({ sourceId: 'default', entitySlugs: ['people/a-example'], worldOnly: false, excludePrivate: false, eligibility: { floor: 'user_confirmed' } });

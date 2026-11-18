@@ -149,6 +149,18 @@ describe('findEnvKeyTypos', () => {
     expect(got.find(t => t.userSet === 'OPENAPI_API_KEY')).toBeUndefined();
   });
 
+  test('an unrelated short key is not a typo of a short provider key', async () => {
+    // EXA_API_KEY and CAPY_API_KEY are within 3 edits of NAN_API_KEY, but they
+    // name other services. Calling them typos made keyless init exit 1.
+    const got = await findEnvKeyTypos({ EXA_API_KEY: 'x', CAPY_API_KEY: 'y' });
+    expect(got).toEqual([]);
+  });
+
+  test('a one-letter slip in a short provider key is still a typo', async () => {
+    const got = await findEnvKeyTypos({ NAM_API_KEY: 'x' });
+    expect(got.find(t => t.userSet === 'NAM_API_KEY')?.suggested).toBe('NAN_API_KEY');
+  });
+
   test('detects VOYAG_API_KEY → VOYAGE_API_KEY (1 char delete)', async () => {
     const got = await findEnvKeyTypos({ VOYAG_API_KEY: 'pa-test' });
     const v = got.find(t => t.userSet === 'VOYAG_API_KEY');

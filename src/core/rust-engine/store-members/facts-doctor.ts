@@ -1,8 +1,8 @@
 /**
  * Group 5 facts members, doctor checks (src/core/engine-sql/facts-doctor.ts), served from the facts store
  * (rust/crates/gbrain-store/src/facts/doctor.rs and facts/relink.rs). A member not exported here refuses with
- * `engine_capability_missing`: `listUnpreviewedTrustFacts` (the store holds no `write_gate_holds` table and no `trust_tier`
- * or `write_origin` column).
+ * `engine_capability_missing`: `listUnpreviewedTrustFacts` (no store read yet: the store keeps the write-gate holds and
+ * the `trust_tier` and `write_origin` columns it reads).
  *
  * The three unlinked-fact reads serve both forms: `hasAttempts: true` reads the tried, paid and no-subject memos from the
  * store's `fact_relink_attempts` rows, and `hasAttempts: false` makes every memo false. Each passes `REARMED_REASONS`, the
