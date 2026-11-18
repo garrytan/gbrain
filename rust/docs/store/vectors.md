@@ -68,8 +68,9 @@ the shape `searchTakes` returns, with the cosine as `score`.
 
 `VectorIndex` holds one snapshot's decoded vectors and their squared norms. `VectorCache` keeps one index
 per store, keyed by the vector generation (raised by every vector write), so a search after a write
-rebuilds it, and an index built from an older snapshot never replaces a newer one. The `Store` has no
-cache field yet (`lib.rs` is the core's file), so today each search builds its index from its snapshot.
+rebuilds it, and an index built from an older snapshot never replaces a newer one. The `Store` holds
+the cache (`Store::vectors`, made in `open_kv`), and both searches read it, so searches with no vector
+write between them reuse one decoded index. The cache is fed only from committed snapshots.
 
 ## Where the vectors come from
 
