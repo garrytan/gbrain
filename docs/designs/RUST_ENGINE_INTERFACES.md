@@ -1549,6 +1549,13 @@ The Minion job queue, cycle locks, spend and rate leases, and wake subscriptions
     `listQueueWedgeCounts`, `listPrivateQueueHealth`, `readWedgeSignals`, `readOldestWaitingAge`,
     `listStuckActiveJobsByName`) serve the doctor's queue checks, the advisor's stalled jobs and the submit-time
     probe (`src/core/engine-sql/jobs-health.ts`, `rust/docs/store/jobs-health.md`). `parity: test/engine-parity/jobs-health.test.ts`.
+  - Spend reservations and the lease-pressure log. Eight members (`readJobSpendTree`, `insertSpendReservation`,
+    `expireSpendReservations`, `settleSpendReservation`, `markSpendUsageUnknown`, `insertLeasePressure`,
+    `countLeasePressure`, `listRecentLeasePressure`) serve `describeJobs`, the hold's insert, sweep, settle and
+    unknown-usage mark, and the lease-pressure audit, `jobs stats` and the `subagent_health` check
+    (`src/core/engine-sql/jobs-spend.ts`, `rust/docs/store/jobs-spend.md`). The statements that need `mcp_spend_log` or
+    `oauth_clients` (`reserve`, the capped group read, the log insert inside `settle`, `getClientDailyCapCents`) stay raw
+    and the Rust engine refuses them. `parity: test/engine-parity/jobs-spend.test.ts`.
   - Wake. The `minion_job_notify` trigger's `pg_notify` has no store equivalent: a Rust worker uses the short poll,
     which `sync-queue-wake.ts` already chooses when LISTEN is not available.
 - **Depends on:** the transactions family (`w`) for the members a caller runs inside its own transaction.

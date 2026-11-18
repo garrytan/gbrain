@@ -403,6 +403,15 @@ export const DOMAIN_OF: Record<string, string> = {
   'listDeadFactsAbsorbJobsByKeys': OOS.minionJobs,
   // group D (jobs insight)
   'readJobInsight': OOS.minionJobs,
+  // group C (spend reservations and lease pressure)
+  'readJobSpendTree': OOS.minionJobs,
+  'insertSpendReservation': OOS.minionJobs,
+  'expireSpendReservations': OOS.minionJobs,
+  'settleSpendReservation': OOS.minionJobs,
+  'markSpendUsageUnknown': OOS.minionJobs,
+  'insertLeasePressure': OOS.minionJobs,
+  'countLeasePressure': OOS.minionJobs,
+  'listRecentLeasePressure': OOS.minionJobs,
   // group D (takes, salience and code-edge reads)
   'countOffGridTakeWeights': OOS.takesReads,
   'countTakes': OOS.takesReads,

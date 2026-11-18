@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 558/558
+# covered: 566/566
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -36,7 +36,7 @@
 # entity_reads: 6/6
 # cycle_locks: 7/7
 # minion_jobs: 8/8
-# minion_queue: 62/62
+# minion_queue: 70/70
 # minion_status: 11/11
 # cli_reads_ops: 7/7
 # facts_doctor: 10/10
@@ -385,15 +385,15 @@ readCycleLocks	cycle_locks	yes	8	no	yes	yes	serves
 deleteCycleLock	cycle_locks	yes	1	no	yes	yes	serves
 deleteCycleLockIfStale	cycle_locks	yes	1	no	yes	yes	serves
 assertCycleLease	cycle_locks	yes	1	no	yes	yes	serves
-admitJob	minion_jobs	yes	78	no	yes	yes	serves
+admitJob	minion_jobs	yes	82	no	yes	yes	serves
 getJob	minion_jobs	yes	34	no	yes	yes	serves
 listJobs	minion_jobs	yes	1	no	yes	yes	serves
-claimNextJob	minion_jobs	yes	69	no	yes	yes	serves
+claimNextJob	minion_jobs	yes	70	no	yes	yes	serves
 renewJobLease	minion_jobs	yes	1	no	yes	yes	serves
-completeJob	minion_jobs	yes	38	no	yes	yes	serves
+completeJob	minion_jobs	yes	39	no	yes	yes	serves
 failJob	minion_jobs	yes	33	no	yes	yes	serves
 reclaimStalledJobs	minion_jobs	yes	2	no	yes	yes	serves
-deleteTerminalJob	minion_queue	yes	1	no	yes	yes	serves
+deleteTerminalJob	minion_queue	yes	2	no	yes	yes	serves
 pauseJob	minion_queue	yes	8	no	yes	yes	serves
 resumeJob	minion_queue	yes	2	no	yes	yes	serves
 failParentJob	minion_queue	yes	3	no	yes	yes	serves
@@ -455,6 +455,14 @@ countDeadDreamSubmissionRows	minion_queue	yes	1	no	yes	yes	serves
 listFactsAbsorbJobsByKeyPrefix	minion_queue	yes	1	no	yes	yes	serves
 listDeadFactsAbsorbJobsByKeys	minion_queue	yes	1	no	yes	yes	serves
 readJobInsight	minion_queue	yes	2	no	yes	yes	serves
+readJobSpendTree	minion_queue	yes	2	no	yes	yes	serves
+insertSpendReservation	minion_queue	yes	3	no	yes	yes	serves
+expireSpendReservations	minion_queue	yes	1	no	yes	yes	serves
+settleSpendReservation	minion_queue	yes	3	no	yes	yes	serves
+markSpendUsageUnknown	minion_queue	yes	1	no	yes	yes	serves
+insertLeasePressure	minion_queue	yes	2	no	yes	yes	serves
+countLeasePressure	minion_queue	yes	2	no	yes	yes	serves
+listRecentLeasePressure	minion_queue	yes	2	no	yes	yes	serves
 readLastAutopilotCycles	minion_status	yes	1	no	yes	yes	serves
 countJobsByStatus	minion_status	yes	1	no	yes	yes	serves
 readWaitingQueueDepths	minion_status	yes	1	no	yes	yes	serves

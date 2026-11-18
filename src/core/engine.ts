@@ -49,6 +49,9 @@ import type {
 } from './engine-sql/write-misc.ts';
 import type { AdmitJobPolicy, AdmitJobResult, AdmitJobSpec, ClaimJobSpec, JobRow, ListJobsFilter } from './engine-sql/jobs.ts';
 import type { JobInsightRows, JobInsightSpec } from './engine-sql/jobs-insight.ts';
+import type {
+  ExpireSpendScope, JobSpendTreeSpec, LeasePressureFilter, LeasePressureInsert, LeasePressureRow, SettleSpendOutcome, SpendReservationInsert, SpendTreeRow,
+} from './engine-sql/jobs-spend.ts';
 import type { McpResolvedSpec, PurgeTakesSpec } from './engine-sql/takes-reads.ts';
 import type {
   CancelJobsSpec, DelayActiveJobSpec, JobAttachmentInsert, JobPageSpec, JobStatsRead, JobTokenCounts, PrivateQueueState, PruneJobsSpec,
@@ -3700,6 +3703,23 @@ export interface BrainEngine {
   // Group D (jobs insight): the reads behind `describeJobs`.
   /** Submitter, queue position, slot holders, live children, blocking locks and foreign-owner tokens of a batch of jobs. */
   readJobInsight(spec: JobInsightSpec): Promise<JobInsightRows>;
+  // Group C (spend reservations and lease pressure): `mcp_spend_reservations` and `minion_lease_pressure_log`.
+  /** Per described job: the settled cents, priced count and unsettled count of the reservations of itself and its descendants. */
+  readJobSpendTree(spec: JobSpendTreeSpec): Promise<SpendTreeRow[]>;
+  /** One new `pending` spend reservation, for a client or a budget group, optionally tied to a job. */
+  insertSpendReservation(row: SpendReservationInsert): Promise<void>;
+  /** Mark every overdue `pending` reservation `expired` (all, one client's or one group's); how many. */
+  expireSpendReservations(scope?: ExpireSpendScope): Promise<number>;
+  /** Settle a pending or expired hold at its actual cents (idempotent: a settled one reports `already_settled`). */
+  settleSpendReservation(reservationId: string, actualCents: number): Promise<SettleSpendOutcome>;
+  /** Record why a pending or expired hold's usage is unknown; whether a row changed. */
+  markSpendUsageUnknown(reservationId: string, reason: string): Promise<boolean>;
+  /** One rate-lease bounce appended to the lease-pressure log. */
+  insertLeasePressure(row: LeasePressureInsert): Promise<void>;
+  /** How many lease bounces match every given field (window in ms, job id, lease key). */
+  countLeasePressure(filter?: LeasePressureFilter): Promise<number>;
+  /** The bounces of the last `windowMs` ms, newest first, at most `limit`. */
+  listRecentLeasePressure(windowMs: number, limit: number): Promise<LeasePressureRow[]>;
   // Group D (takes, salience and code-edge reads): the counts and lists doctor, onboarding and repair read.
   /** Takes more than 0.001 off the 0.05 weight grid, of all takes. */
   countOffGridTakeWeights(): Promise<{ off_grid: number; total: number }>;

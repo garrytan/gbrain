@@ -112,6 +112,8 @@ export * from './jobs-status.ts';
 export * from './jobs-checks.ts';
 // The reads behind `describeJobs` (engine-sql/jobs-insight.ts).
 export * from './jobs-insight.ts';
+// Group C: the spend reservations and the lease-pressure log (engine-sql/jobs-spend.ts).
+export * from './jobs-spend.ts';
 
 // ---------------------------------------------------------------- cycle locks
 

@@ -625,6 +625,15 @@ export const RUST_ENGINE_MEMBERS = {
   listDeadFactsAbsorbJobsByKeys: 'minion_queue',
   // Group D (jobs insight)
   readJobInsight: 'minion_queue',
+  // Group C (spend reservations and lease pressure)
+  readJobSpendTree: 'minion_queue',
+  insertSpendReservation: 'minion_queue',
+  expireSpendReservations: 'minion_queue',
+  settleSpendReservation: 'minion_queue',
+  markSpendUsageUnknown: 'minion_queue',
+  insertLeasePressure: 'minion_queue',
+  countLeasePressure: 'minion_queue',
+  listRecentLeasePressure: 'minion_queue',
   // Group D (takes, salience and code-edge reads)
   countOffGridTakeWeights: 'takes',
   countTakes: 'takes',
