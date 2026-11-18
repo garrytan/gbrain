@@ -670,6 +670,27 @@ export const RUST_ENGINE_MEMBERS = {
   applyDecideReviewQueue: 'eval_capture',
   listDueDecideSweepDeferred: 'eval_capture',
   applyDecideSweepDeferred: 'eval_capture',
+  // Group A (decide store): the eval_capture capability, the family the Z key tag belongs to
+  readDecideState: 'eval_capture',
+  upsertDecideState: 'eval_capture',
+  deleteDecideState: 'eval_capture',
+  ensureDecideState: 'eval_capture',
+  insertDecideSpend: 'eval_capture',
+  dailyDecideSpend: 'eval_capture',
+  listDecideSpendBySlot: 'eval_capture',
+  insertDecideReceipts: 'eval_capture',
+  pruneDecideReceipts: 'eval_capture',
+  listDecideReceiptStats: 'eval_capture',
+  decideSlotUsage: 'eval_capture',
+  decideConflictNoEntityCounts: 'eval_capture',
+  listDecideReplayReceipts: 'eval_capture',
+  listDecideResolvedModels: 'eval_capture',
+  listDecideMixedModelDecisions: 'eval_capture',
+  insertDecideCalibration: 'eval_capture',
+  storeDecideQualification: 'eval_capture',
+  listDecideCalibrations: 'eval_capture',
+  getDecideCalibration: 'eval_capture',
+  setDecideCalibrationRetired: 'eval_capture',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;

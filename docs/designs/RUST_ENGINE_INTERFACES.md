@@ -989,6 +989,7 @@ Captured eval candidates and capture failures.
 - **Tag:** `Z` (`EVAL_CAPTURE`). Cascade on page delete: no.
 - **Members (5), capability:** `eval_capture` (5).
 - **Store and binding:** `logEvalCandidate` (`log_eval_candidate`), `listEvalCandidates` (`list_eval_candidates`), `deleteEvalCandidatesBefore` (`delete_eval_candidates_before`), `logEvalCaptureFailure` (`log_eval_capture_failure`), `listEvalCaptureFailures` (`list_eval_capture_failures`).
+- **Decide store (inside this family):** 20 more members serve the decide tables `decide_state`, `decide_spend`, `decision_receipts` and `decide_calibrations` under sub-tags `Z 0x10..=0x15` (record in rust/docs/store/decide-store.md): `readDecideState`, `upsertDecideState`, `deleteDecideState`, `ensureDecideState`, `insertDecideSpend`, `dailyDecideSpend`, `listDecideSpendBySlot`, `insertDecideReceipts`, `pruneDecideReceipts`, `listDecideReceiptStats`, `decideSlotUsage`, `decideConflictNoEntityCounts`, `listDecideReplayReceipts`, `listDecideResolvedModels`, `listDecideMixedModelDecisions`, `insertDecideCalibration`, `storeDecideQualification`, `listDecideCalibrations`, `getDecideCalibration`, `setDecideCalibrationRetired`. Parity: `test/engine-parity/decide-store.test.ts`.
 - **Postgres tables:** `eval_candidates`, `eval_capture_failures`.
 - **Keys:** `Z 0x01 <id>` candidate; `Z 0x02 <id>` failure; `M next_eval_candidate_id`, `M next_eval_failure_id`. Expose `pub(crate) fn remove_retrieved_slugs(tx, source_id, slugs)` for page_ops.
 - **Depends on:** None.

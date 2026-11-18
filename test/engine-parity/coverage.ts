@@ -208,6 +208,14 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'transitionDecideProposal', 'listDecideProposedPairs', 'insertDecideReviewProposal', 'listDecideReviewProposals',
     'getDecideReviewProposal', 'transitionDecideReviewProposal', 'listDecideReviewProposalIds', 'readProposalReviewRates',
     'listDueDecideReviewQueue', 'applyDecideReviewQueue', 'listDueDecideSweepDeferred', 'applyDecideSweepDeferred'],
+  // decide_store: the decide state, spend, receipt and calibration tables (engine-sql/decide-store.ts)
+  decide_store: [
+    'readDecideState', 'upsertDecideState', 'deleteDecideState', 'ensureDecideState',
+    'insertDecideSpend', 'dailyDecideSpend', 'listDecideSpendBySlot',
+    'insertDecideReceipts', 'pruneDecideReceipts', 'listDecideReceiptStats', 'decideSlotUsage', 'decideConflictNoEntityCounts',
+    'listDecideReplayReceipts', 'listDecideResolvedModels', 'listDecideMixedModelDecisions',
+    'insertDecideCalibration', 'storeDecideQualification', 'listDecideCalibrations', 'getDecideCalibration', 'setDecideCalibrationRetired',
+  ],
 };
 
 /** Callable members of `interface BrainEngine`, in declaration order (`kind` excluded). */

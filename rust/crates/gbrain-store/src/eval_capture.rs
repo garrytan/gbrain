@@ -13,6 +13,9 @@
 //!   (`eval_capture/calibration_profiles.rs`, rust/docs/store/calibration-profiles.md).
 //! - `Z 0x30..=0x3F`: the decide proposal tables (`decide_proposals.rs`): sub-tags 0x30, 0x31, 0x32,
 //!   0x38, 0x39, 0x3C and 0x3D.
+//! - Sub-tags `0x10..=0x1F` belong to the decide store ([`decide_store`], rust/docs/store/decide-store.md):
+//!   `0x10` state, `0x11` spend, `0x12` spend time index, `0x13` receipts, `0x14` receipt time index,
+//!   `0x15` calibrations.
 //!
 //! Both tables are small logs read whole: the list members scan every record of their table,
 //! filter, and sort `created_at DESC, id DESC` (candidates) or `ts DESC, id DESC` (failures).
@@ -29,6 +32,7 @@
 //! (`facts::fact_exists`).
 
 pub mod calibration_profiles;
+pub mod decide_store;
 
 use crate::env::{iso, parse_iso};
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
