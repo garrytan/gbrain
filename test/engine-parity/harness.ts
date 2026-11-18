@@ -37,6 +37,7 @@ import { resetPgliteState, truncateCascade } from '../helpers/reset-pglite.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import type { TestBackend } from '../helpers/test-backends.ts';
 import { armHas, isCapabilityRefusal, missingCapability, type EngineCapability } from './arm-capabilities.ts';
+import { checkRustTally } from './rust-tally.ts';
 import {
   archiveRustSource, createRustSource, newRustBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow,
 } from './rust-arm.ts';
@@ -300,6 +301,9 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
   const selected: ParityBackend[] = [...backends, ...(rustArmRequested() ? ['rust' as const] : [])];
   const testFile = callerTestFile(new Error().stack);
   const tally: RustTally = { compared: 0, refused: 0, diverged: 0 };
+  // Cases this file declared, and the ones the Rust arm skipped on an `n/a` capability (rust-tally.ts).
+  let registered = 0;
+  let skipped = 0;
   beforeAll(async () => {
     const opened: ParityArm[] = [];
     try {
@@ -316,10 +320,13 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
     for (const arm of closing) await arm.close();
     if (closing.some((arm) => arm.backend === 'rust')) {
       console.log(`[rust arm] ${testFile}: ${tally.compared} equal to PGLite, ${tally.refused} stopped on a typed refusal, ${tally.diverged} expected divergences`);
+      const better = checkRustTally(testFile, { ...tally, skipped }, registered);
+      if (better !== null) console.log(better);
     }
   }, 60_000);
 
   function parityTest<T>(name: string, opts: ParityCaseOpts, scenario: ParityScenario<T>): void {
+    registered++;
     test(name, async () => {
       expect(arms.length).toBeGreaterThan(0);
       const results: Array<{ backend: ParityBackend; value: T }> = [];
@@ -336,7 +343,10 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
           },
         };
         const runs = armHas(arm.backend, opts.requires);
-        if (!runs && missingCapability(opts.requires!).kind === 'n/a') continue;
+        if (!runs && missingCapability(opts.requires!).kind === 'n/a') {
+          if (arm.backend === 'rust') skipped++;
+          continue;
+        }
         if (arm.backend === 'rust') {
           const divergence = readDivergences().find((row) => row.file === testFile && row.name === name);
           try {
