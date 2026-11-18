@@ -4,7 +4,11 @@
 //! resolves plain JSON. Job rows carry timestamps as ISO strings; the shell makes them `Date`s
 //! (rust/docs/store/jobs.md).
 
+mod checks;
+mod health;
+mod insight;
 mod ops;
+mod status;
 
 use gbrain_store::error::StoreError;
 use gbrain_store::jobs::{AdmitSpec, ClaimSpec, ListFilter, LockAcquire, LockFilter, LockHolder};

@@ -424,15 +424,7 @@ export async function checkVolunteerChannels(
 
 export async function takesWeightGridCheck(engine: BrainEngine): Promise<Check> {
   try {
-    const rows = await engine.executeRaw<{ off_grid: string | number; total: string | number }>(
-      `SELECT
-         count(*) FILTER (WHERE weight IS NOT NULL
-                          AND abs(weight::numeric - ROUND(weight::numeric * 20) / 20) > 0.001)::int AS off_grid,
-         count(*)::int AS total
-       FROM takes`,
-    );
-    const total = Number(rows[0]?.total ?? 0);
-    const offGrid = Number(rows[0]?.off_grid ?? 0);
+    const { off_grid: offGrid, total } = await engine.countOffGridTakeWeights();
     if (total === 0) {
       return { name: 'takes_weight_grid', status: 'ok', message: 'No takes yet' };
     }

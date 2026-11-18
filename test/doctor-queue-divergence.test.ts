@@ -15,6 +15,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'bun:test'
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { withQueueMembers } from './helpers/queue-engine-members.ts';
 import { computeQueueHealthCheck, buildChecks } from '../src/commands/doctor.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
@@ -25,11 +26,11 @@ beforeAll(async () => {
   base = new PGLiteEngine();
   await base.connect({});
   await base.initSchema();
-  // computeQueueHealthCheck only reads .kind + .executeRaw.
-  pgLike = {
+  // computeQueueHealthCheck reads .kind, .executeRaw and the queue-health members.
+  pgLike = withQueueMembers({
     kind: 'postgres',
     executeRaw: base.executeRaw.bind(base),
-  } as unknown as BrainEngine;
+  }) as unknown as BrainEngine;
 });
 
 afterAll(async () => {

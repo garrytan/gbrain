@@ -42,6 +42,7 @@ const HEALTHY_STATS = {
   }),
   getConfig: async () => null,
   executeRaw: async () => [],
+  listStuckActiveJobsByName: async () => [],
 };
 
 const FIXTURES: Fixture[] = [
@@ -67,10 +68,7 @@ const FIXTURES: Fixture[] = [
     name: 'stalled worker + stale source',
     engine: {
       ...HEALTHY_STATS,
-      executeRaw: (async (sql: string) => {
-        if (/minion_jobs/.test(sql)) return [{ name: 'embed-backfill', n: 3 }];
-        return [];
-      }) as AdvisorContext['engine']['executeRaw'],
+      listStuckActiveJobsByName: async () => [{ name: 'embed-backfill', n: 3 }],
       ...stubSourceMembers([{ id: 'wiki', last_sync_at: new Date(Date.now() - 30 * 86400_000) }]),
     },
     expect: ['stalled_job:embed-backfill', 'stale_sync:wiki'],

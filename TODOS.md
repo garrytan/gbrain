@@ -1,5 +1,9 @@
 # TODOS
 
+## Rust engine lane 5 follow-ups (filed 2026-11-18)
+
+- [ ] **P3 — doctor-prefix-literal: match the doctor's job key prefixes literally.** **What:** `readQueuedSpendRows`, `listBuildSkewStacktraceLines` and `listFactsAbsorbJobsByKeyPrefix` (`src/core/engine-sql/jobs-checks.ts`) read their prefix as a `LIKE` pattern, so the `_` in `job_build_skew:` matches any character (a line starting `jobXbuildXskew:` counts as build skew). **Fix:** compare with `left(col, length($1)) = $1` on the SQL engines and `starts_with` in the store (`rust/crates/gbrain-store/src/jobs/checks.rs`), with a parity case that a wildcard character in a prefix no longer matches. **Effort:** S. **Priority:** P3.
+
 ## Busy-agent soak cell follow-ups (filed 2026-11-11, GBRA-332, #8829)
 
 - [ ] **P2 — Refresh diverged-publish child waits 0 s for the push lock (#8975).** **What:** a refresh whose checkout diverged publishes through a child that runs `commit-push` with `GBRAIN_PUBLISH_LOCK_WAIT_SECONDS=0` (`publishInChild` in `worktree-refresh.ts`), so a refresh tick racing another committer refuses `push_unconfirmed` instead of waiting its turn. The busy-agent soak cell's mode (h) shows it as an informational red, parked by its `.github/nightly-known-red.tsv` row. **Fix:** give the child the normal push-lock wait, then delete the known-red row. **Effort:** S. **Priority:** P2.

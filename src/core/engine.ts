@@ -48,11 +48,24 @@ import type {
   AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from './engine-sql/write-misc.ts';
 import type { AdmitJobPolicy, AdmitJobResult, AdmitJobSpec, ClaimJobSpec, JobRow, ListJobsFilter } from './engine-sql/jobs.ts';
+import type { JobInsightRows, JobInsightSpec } from './engine-sql/jobs-insight.ts';
+import type { McpResolvedSpec, PurgeTakesSpec } from './engine-sql/takes-reads.ts';
 import type {
   CancelJobsSpec, DelayActiveJobSpec, JobAttachmentInsert, JobPageSpec, JobStatsRead, JobTokenCounts, PrivateQueueState, PruneJobsSpec,
   SynthesisCompletion, SynthesisCompletionPrefix, JobSourceState,
   QueueFamilyRow, RetryJobPolicy,
 } from './engine-sql/jobs-queue.ts';
+import type {
+  PrivateQueueHealthRow, QueueDivergence, QueueDivergenceSpec, QueueHealthSignals, QueueHealthSpec, QueueWedgeRow, QueueWedgeSignals, WaitingByQueueRow,
+} from './engine-sql/jobs-health.ts';
+import type {
+  EmbedBackfillState, FailedJobError, JobStatusCount, JobStatusFilter, LastAutopilotCycles, QueueDepth, SourceJobCounts, TtlCancelledCount,
+  WaitingScopeState,
+} from './engine-sql/jobs-status.ts';
+import type {
+  DeadDreamSubmissionSpec, FactsAbsorbJobRow, FactsAbsorbStillDead, GlobalMaintenanceDeaths, LastFailedGlobalMaintenanceJob,
+  LegacyJobAuthorityRead, QueuedSpendRows,
+} from './engine-sql/jobs-checks.ts';
 import type { JunkEntityHubRow, LinkEndpointPage, LivePageSummary, TitledPage } from './engine-sql/link-reads.ts';
 import type { CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuery, ContextualModeCandidate, FrozenHitKey, FrozenHitRow, WithdrawalChunkKey, WithdrawalChunkRow } from './engine-sql/chunk-reads.ts';
 import type { EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRow, PageTimelineRow, SegmentedTimelinePages, TimelineOrphanPage, TimelineRowDeletion } from './engine-sql/timeline-reads.ts';
@@ -3620,6 +3633,90 @@ export interface BrainEngine {
   getJobAttachment(jobId: number, filename: string): Promise<JobRow | null>;
   /** Delete one attachment; false when there was none. */
   deleteJobAttachment(jobId: number, filename: string): Promise<boolean>;
+  // Queue health reads (lane 5 group A; engine-sql/jobs-health.ts): what doctor's queue checks, the advisor and the submit probe ask.
+  /** The `queue_health` check's counts: stalled-forever, deep, watchdog-killed, prompt_too_long and old embed-backfill jobs. */
+  readQueueHealthSignals(spec: QueueHealthSpec): Promise<QueueHealthSignals>;
+  /** Waiting jobs per queue (depth, oldest age in seconds), deepest first. */
+  listWaitingByQueue(): Promise<WaitingByQueueRow[]>;
+  /** Intake, completions and waiting per job name, and the waiting-TTL cancellations, over a window. */
+  readQueueDivergence(spec: QueueDivergenceSpec): Promise<QueueDivergence>;
+  /** Per queue (private dream queues excluded): live active rows, waiting rows and minutes since the last completion. */
+  listQueueWedgeCounts(): Promise<QueueWedgeRow[]>;
+  /** Per dream-inline private queue: live active, waiting-class and paused rows, oldest wait and birth, source id. */
+  listPrivateQueueHealth(): Promise<PrivateQueueHealthRow[]>;
+  /** One queue's wedge signals (stalled, live active, waiting, claimable, last completions). `opts.signal` cancels a SQL statement. */
+  readWedgeSignals(queue: string, handlerNames: readonly string[], opts?: { signal?: AbortSignal }): Promise<QueueWedgeSignals>;
+  /** The age in whole seconds of the oldest waiting job in a queue, or null with none. */
+  readOldestWaitingAge(queue: string, opts?: { signal?: AbortSignal }): Promise<number | null>;
+  /** Active jobs whose lock lapsed or whose stalled counter reached two, per name. */
+  listStuckActiveJobsByName(): Promise<Array<{ name: string; n: number }>>;
+
+  // Minion job counts and last-run reads for the status surfaces (engine-sql/jobs-status.ts): `gbrain status`, `jobs stats`,
+  // the facts drain backlog, source health and the sync status report. Windows are seconds.
+  /** The newest completed `autopilot-cycle` job and the newest completed `autopilot-*` job (finished-at order), or null each. */
+  readLastAutopilotCycles(): Promise<LastAutopilotCycles>;
+  /** Job counts by status, in status order, over the jobs a filter (name, queue, statuses) matches; no filter counts all. */
+  countJobsByStatus(filter?: JobStatusFilter): Promise<JobStatusCount[]>;
+  /** Waiting depth and oldest-waiting age in seconds per queue with waiting work, deepest first. */
+  readWaitingQueueDepths(): Promise<QueueDepth[]>;
+  /** The freshest `updated_at` among completed jobs, or null. */
+  readLastCompletedJobAt(): Promise<Date | null>;
+  /** Cancelled jobs whose `error_text` matches the LIKE pattern and that finished in the last `withinSeconds`, counted by name. */
+  countTtlCancelledByName(reasonLike: string, withinSeconds: number): Promise<TtlCancelledCount[]>;
+  /** The waiting jobs sharing a returned job's source scope, plus its id and age in minutes while it is active with a live lease. */
+  readWaitingScopeState(spec: { name: string; queue: string; jobId: number }): Promise<WaitingScopeState>;
+  /** Jobs of a name that completed within the last `withinSeconds`. */
+  countRecentCompletedJobs(name: string, withinSeconds: number): Promise<number>;
+  /** The id and failure text of dead or failed jobs updated within the last `withinSeconds`, by id. */
+  listRecentFailedJobErrors(withinSeconds: number): Promise<FailedJobError[]>;
+  /** The average page text length (capped at `maxChars`) of the pages queued jobs of a name and queue point at, or null. */
+  readQueuedPageChars(spec: { name: string; queue: string; maxChars: number }): Promise<number | null>;
+  /** Per-source failure, queue and embed-backfill counts over the `sync` and `embed-backfill` jobs. */
+  readSourceJobCounts(failedWithinSeconds: number): Promise<SourceJobCounts[]>;
+  /** The embed-backfill jobs of each named source: queued, active and last completion. */
+  readEmbedBackfillBySource(sourceIds: readonly string[]): Promise<EmbedBackfillState[]>;
+
+  // Group C: the queue reads the doctor checks and the dream breaker make (engine-sql/jobs-checks.ts).
+  /** The distinct `sourceId` of embed-backfill jobs that ended failed or dead with a stall record in their progress (null: a job without a source). */
+  listStalledEmbedBackfillSources(): Promise<Array<string | null>>;
+  /** How the last `deaths` brain-wide maintenance jobs and each dream phase's last `deaths` children died (the `global_maintenance_timeouts` check). */
+  readGlobalMaintenanceDeaths(spec: { deaths: number }): Promise<GlobalMaintenanceDeaths>;
+  /** The newest brain-wide maintenance job that ended without completing after `since` (a timestamp text, or null for all), with the count and earliest finish of them all. */
+  readLastFailedGlobalMaintenanceJob(since: string | null): Promise<LastFailedGlobalMaintenanceJob | null>;
+  /** Facts-absorb jobs dead or failed inside `hours` that no later job for the same page completed: the total and the newest `limit` (the `facts_extraction_health` check). */
+  listFactsAbsorbJobsStillDead(spec: { hours: number; limit: number }): Promise<FactsAbsorbStillDead>;
+  /** The claim gate's population and the terminal keyed rows with SQL NULL authority (the `legacy_job_authority` check). */
+  readLegacyJobAuthority(): Promise<LegacyJobAuthorityRead>;
+  /** Queued jobs by name and spend basis, and the spend-authorized rows waiting longer than `waitMs` (the `legacy_job_authority` spend census). */
+  readQueuedSpendRows(spec: { legacyPrefixes: Readonly<Record<string, readonly string[]>>; waitMs: number }): Promise<QueuedSpendRows>;
+  /** The stacktrace lines `LIKE prefix || '%'` (a LIKE pattern: `_` is a wildcard) of the newest `scanJobs` recently updated jobs (the `runtime_build_skew` check). */
+  listBuildSkewStacktraceLines(spec: { prefix: string; windowHours: number; scanJobs: number }): Promise<Array<{ id: number; line: string }>>;
+  /** Dead dream submissions per base key inside the window, resets applied (the dream breaker's counting rule). */
+  countDeadDreamSubmissionRows(spec: DeadDreamSubmissionSpec): Promise<Array<{ base_key: string; dead_submissions: number; last_dead_at: string }>>;
+  /** Facts-absorb jobs whose key is `LIKE prefix || '%'` (a LIKE pattern) that are dead or whose key is in `keys` (the dead-write retry's reconcile). */
+  listFactsAbsorbJobsByKeyPrefix(spec: { prefix: string; keys: readonly string[] }): Promise<FactsAbsorbJobRow[]>;
+  /** The dead facts-absorb jobs with a key in `keys` (the dead-write retry's operator controls). */
+  listDeadFactsAbsorbJobsByKeys(keys: readonly string[]): Promise<FactsAbsorbJobRow[]>;
+  // Group D (jobs insight): the reads behind `describeJobs`.
+  /** Submitter, queue position, slot holders, live children, blocking locks and foreign-owner tokens of a batch of jobs. */
+  readJobInsight(spec: JobInsightSpec): Promise<JobInsightRows>;
+  // Group D (takes, salience and code-edge reads): the counts and lists doctor, onboarding and repair read.
+  /** Takes more than 0.001 off the 0.05 weight grid, of all takes. */
+  countOffGridTakeWeights(): Promise<{ off_grid: number; total: number }>;
+  /** How many takes the brain holds. */
+  countTakes(): Promise<number>;
+  /** The takes a fact purge removes: consolidated from a purged fact, or echoing the purged claim. */
+  planFactPurgeTakes(spec: PurgeTakesSpec): Promise<Array<{ id: number; page_id: number }>>;
+  /** The page's stored takes, row number to claim. */
+  listTakeRowsForPage(pageId: number): Promise<Array<{ row_num: number; claim: string }>>;
+  /** Resolved takes stamped `mcp:` by the MCP server, in the caller's source and holder scope. */
+  countMcpResolvedTakes(spec: McpResolvedSpec): Promise<number>;
+  /** Live pages of the sources with an inactive or `superseded by #` take, by page id. */
+  listTakeSupersessionCandidates(sourceIds: readonly string[]): Promise<Array<{ id: number; source_id: string; slug: string }>>;
+  /** Pages with an active take and no emotional weight yet, and pages with a weight. */
+  countZeroWeightWithTakes(): Promise<{ zero_weight_with_takes: number; nonzero_weight: number }>;
+  /** Whether the source owns an unresolved (symbol-target) code edge. */
+  hasCodeEdgesSymbol(sourceId: string): Promise<boolean>;
 
   // ============================================================
   // v0.20.0 Cathedral II: code edges (Layer 5 populates, Layer 7 consumes)

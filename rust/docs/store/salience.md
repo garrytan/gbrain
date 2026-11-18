@@ -88,3 +88,5 @@ private-readable sources or lineage change the text), it refuses with `engine_ca
   in key order and takes by row number.
 - The score uses the store clock once per read for `now` (Postgres `now()` is the transaction start); the recency term
   then matches within 1e-6.
+
+`countZeroWeightWithTakes()` (the doctor's `salience_health` counts) is documented in [takes-reads.md](takes-reads.md).
