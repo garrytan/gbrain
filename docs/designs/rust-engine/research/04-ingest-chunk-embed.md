@@ -132,7 +132,7 @@ Delimiter hierarchy (`DELIMITERS`, `:50-56`): L0 `\n\n` paragraphs; L1 `\n` line
 
 Version constants (any boundary change must bump these to force reindex or re-embed):
 - `MARKDOWN_CHUNKER_VERSION` = `SAFE_FENCE_CHUNKER_VERSION` = 4 (`src/core/search/safe-chunks.ts:6`; re-exported at `recursive.ts:48`).
-- `SEGMENTED_CHUNKER_VERSION` = 5 (`src/core/page-body/segment-chunks.ts:47`).
+- `SEGMENTED_CHUNKER_VERSION` = 5 (`src/core/search/safe-chunks.ts:23`, re-exported by `src/core/page-body/segment-chunks.ts`).
 
 Token estimate: `estimateEmbedTokens` (`src/core/chunkers/token-estimate.ts:190`). `cl100kAvailable()` (`:48`) gates an exact tokenizer; the fallback when it is false is **(inferred: a heuristic)**. Whether the exact path runs depends on the host (see Rust risks).
 
