@@ -8,7 +8,9 @@
 //! - `Z 0x01 <candidate id u64 BE>` -> `CandidateRecord` (JSON).
 //! - `Z 0x02 <failure id u64 BE>` -> `FailureRecord` (JSON).
 //! - Id counters: `M next_eval_candidate_id`, `M next_eval_failure_id`.
-//! - Sub-tags `0x10..=0x1F` belong to the decide store ([`decide_store`], rust/docs/store/decide-store.md).
+//! - Sub-tags `0x10..=0x1F` belong to the decide store ([`decide_store`], rust/docs/store/decide-store.md):
+//!   `0x10` state, `0x11` spend, `0x12` spend time index, `0x13` receipts, `0x14` receipt time index,
+//!   `0x15` calibrations.
 //!
 //! Both tables are small logs read whole: the list members scan every record of their table,
 //! filter, and sort `created_at DESC, id DESC` (candidates) or `ts DESC, id DESC` (failures).
