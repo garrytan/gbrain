@@ -7,6 +7,7 @@
  * member runs without the engine's transaction, which a scripted fake has no use for.
  */
 import * as jobsQueue from '../../src/core/engine-sql/jobs-queue.ts';
+import * as jobsHealth from '../../src/core/engine-sql/jobs-health.ts';
 
 const MEMBERS = [
   'deleteTerminalJob', 'pauseJob', 'resumeJob', 'failParentJob', 'resolveParentJob', 'resolveStrandedParents', 'detachChildJob',
@@ -20,12 +21,23 @@ const MEMBERS = [
   'listJobAttachmentNames', 'insertJobAttachment', 'listJobAttachments', 'getJobAttachment', 'deleteJobAttachment',
 ] as const satisfies ReadonlyArray<keyof typeof jobsQueue>;
 
+/** The queue-health reads (engine-sql/jobs-health.ts), added the same way. */
+const HEALTH_MEMBERS = [
+  'readQueueHealthSignals', 'listWaitingByQueue', 'readQueueDivergence', 'listQueueWedgeCounts', 'listPrivateQueueHealth',
+  'readWedgeSignals', 'readOldestWaitingAge', 'listStuckActiveJobsByName',
+] as const satisfies ReadonlyArray<keyof typeof jobsHealth>;
+
 /** `fake` with every queue member it lacks, each running the shared statement on `fake`. */
 export function withQueueMembers<T extends object>(fake: T): T {
   const target = fake as Record<string, unknown>;
   for (const name of MEMBERS) {
     if (name in target) continue;
     const member = jobsQueue[name] as (tx: unknown, ...args: unknown[]) => unknown;
+    target[name] = (...args: unknown[]) => member(fake, ...args);
+  }
+  for (const name of HEALTH_MEMBERS) {
+    if (name in target) continue;
+    const member = jobsHealth[name] as (tx: unknown, ...args: unknown[]) => unknown;
     target[name] = (...args: unknown[]) => member(fake, ...args);
   }
   return fake;

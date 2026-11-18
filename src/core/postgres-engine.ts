@@ -175,6 +175,8 @@ import * as cycleLocksImpl from './engine-sql/cycle-locks.ts';
 import * as jobsImpl from './engine-sql/jobs.ts';
 import type { AdmitJobPolicy, AdmitJobSpec, ClaimJobSpec, ListJobsFilter } from './engine-sql/jobs.ts';
 import * as jobsQueue from './engine-sql/jobs-queue.ts';
+import * as jobsHealth from './engine-sql/jobs-health.ts';
+import type { QueueDivergenceSpec, QueueHealthSpec } from './engine-sql/jobs-health.ts';
 import type {
   CancelJobsSpec, DelayActiveJobSpec, JobAttachmentInsert, JobPageSpec, JobTokenCounts, PruneJobsSpec, RetryJobPolicy,
   SynthesisCompletionPrefix,
@@ -3443,6 +3445,15 @@ export class PostgresEngine implements BrainEngine {
   async listJobAttachments(jobId: number) { return jobsQueue.listJobAttachments(this, jobId); }
   async getJobAttachment(jobId: number, filename: string) { return jobsQueue.getJobAttachment(this, jobId, filename); }
   async deleteJobAttachment(jobId: number, filename: string) { return jobsQueue.deleteJobAttachment(this, jobId, filename); }
+  // Queue health reads (lane 5 group A; engine-sql/jobs-health.ts).
+  async readQueueHealthSignals(spec: QueueHealthSpec) { return jobsHealth.readQueueHealthSignals(this, spec); }
+  async listWaitingByQueue() { return jobsHealth.listWaitingByQueue(this); }
+  async readQueueDivergence(spec: QueueDivergenceSpec) { return jobsHealth.readQueueDivergence(this, spec); }
+  async listQueueWedgeCounts() { return jobsHealth.listQueueWedgeCounts(this); }
+  async listPrivateQueueHealth() { return jobsHealth.listPrivateQueueHealth(this); }
+  async readWedgeSignals(queue: string, handlerNames: readonly string[], opts?: { signal?: AbortSignal }) { return jobsHealth.readWedgeSignals(this, queue, handlerNames, opts); }
+  async readOldestWaitingAge(queue: string, opts?: { signal?: AbortSignal }) { return jobsHealth.readOldestWaitingAge(this, queue, opts); }
+  async listStuckActiveJobsByName() { return jobsHealth.listStuckActiveJobsByName(this); }
 
   // ============================================================
   // v0.20.0 Cathedral II: code edges (Layer 1 stubs — filled by Layer 5)

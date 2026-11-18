@@ -8,6 +8,8 @@ statements in `src/core/engine-sql/jobs.ts` and `cycle-locks.ts`; this store run
 records. Timestamps cross the binding as ISO strings; the TypeScript members
 (`src/core/rust-engine/store-members/jobs.ts`) turn them into `Date`s, as PGLite returns them.
 
+The queue health reads (the doctor's queue checks, the advisor's stalled jobs and the submit-time probe) are in [jobs-health.md](jobs-health.md).
+
 Keys, under the family tag `keys::JOBS` (`m`):
 
 | Key | Holds |

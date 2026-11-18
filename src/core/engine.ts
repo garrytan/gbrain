@@ -36,6 +36,9 @@ import type {
   SynthesisCompletion, SynthesisCompletionPrefix, JobSourceState,
   QueueFamilyRow, RetryJobPolicy,
 } from './engine-sql/jobs-queue.ts';
+import type {
+  PrivateQueueHealthRow, QueueDivergence, QueueDivergenceSpec, QueueHealthSignals, QueueHealthSpec, QueueWedgeRow, QueueWedgeSignals, WaitingByQueueRow,
+} from './engine-sql/jobs-health.ts';
 import type { JunkEntityHubRow, LinkEndpointPage, LivePageSummary, TitledPage } from './engine-sql/link-reads.ts';
 import type { CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuery, ContextualModeCandidate, FrozenHitKey, FrozenHitRow, WithdrawalChunkKey, WithdrawalChunkRow } from './engine-sql/chunk-reads.ts';
 import type { EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRow, PageTimelineRow, SegmentedTimelinePages, TimelineOrphanPage, TimelineRowDeletion } from './engine-sql/timeline-reads.ts';
@@ -3444,6 +3447,23 @@ export interface BrainEngine {
   getJobAttachment(jobId: number, filename: string): Promise<JobRow | null>;
   /** Delete one attachment; false when there was none. */
   deleteJobAttachment(jobId: number, filename: string): Promise<boolean>;
+  // Queue health reads (lane 5 group A; engine-sql/jobs-health.ts): what doctor's queue checks, the advisor and the submit probe ask.
+  /** The `queue_health` check's counts: stalled-forever, deep, watchdog-killed, prompt_too_long and old embed-backfill jobs. */
+  readQueueHealthSignals(spec: QueueHealthSpec): Promise<QueueHealthSignals>;
+  /** Waiting jobs per queue (depth, oldest age in seconds), deepest first. */
+  listWaitingByQueue(): Promise<WaitingByQueueRow[]>;
+  /** Intake, completions and waiting per job name, and the waiting-TTL cancellations, over a window. */
+  readQueueDivergence(spec: QueueDivergenceSpec): Promise<QueueDivergence>;
+  /** Per queue (private dream queues excluded): live active rows, waiting rows and minutes since the last completion. */
+  listQueueWedgeCounts(): Promise<QueueWedgeRow[]>;
+  /** Per dream-inline private queue: live active, waiting-class and paused rows, oldest wait and birth, source id. */
+  listPrivateQueueHealth(): Promise<PrivateQueueHealthRow[]>;
+  /** One queue's wedge signals (stalled, live active, waiting, claimable, last completions). `opts.signal` cancels a SQL statement. */
+  readWedgeSignals(queue: string, handlerNames: readonly string[], opts?: { signal?: AbortSignal }): Promise<QueueWedgeSignals>;
+  /** The age in whole seconds of the oldest waiting job in a queue, or null with none. */
+  readOldestWaitingAge(queue: string, opts?: { signal?: AbortSignal }): Promise<number | null>;
+  /** Active jobs whose lock lapsed or whose stalled counter reached two, per name. */
+  listStuckActiveJobsByName(): Promise<Array<{ name: string; n: number }>>;
 
   // ============================================================
   // v0.20.0 Cathedral II: code edges (Layer 5 populates, Layer 7 consumes)

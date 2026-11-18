@@ -45,6 +45,7 @@
 //! owner. A job's attachments go with it (`ON DELETE CASCADE`).
 
 mod attachments;
+mod health;
 mod inbox;
 mod mutations;
 mod private_queues;
@@ -53,6 +54,7 @@ mod sweeps;
 mod synthesis_completions;
 
 pub use attachments::AttachmentInput;
+pub use health::{DivergenceSpec, HealthSpec};
 pub use mutations::{DelayOpts, TokenDelta};
 pub use private_queues::PrivateQueueState;
 pub use reads::{JobPageCursor, JobPageSpec, OverdueSpec};

@@ -4,6 +4,7 @@
 //! resolves plain JSON. Job rows carry timestamps as ISO strings; the shell makes them `Date`s
 //! (rust/docs/store/jobs.md).
 
+mod health;
 mod ops;
 
 use gbrain_store::error::StoreError;
