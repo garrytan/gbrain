@@ -73,6 +73,8 @@ export const RUST_ENGINE_MEMBERS = {
   listAllPageRefs: 'pages',
   listPrefixSampledPages: 'pages',
   listCorpusSample: 'pages',
+  // schema detect --fields (engine-sql/field-usage.ts; rust/docs/store/field-usage.md).
+  readFieldUsageSamples: 'pages',
   getPageTimestamps: 'pages',
   getEffectiveDates: 'pages',
   getContentFlagsByPageIds: 'pages',

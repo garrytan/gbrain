@@ -59,6 +59,7 @@ import type { EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRo
 import type { CaseSensitiveAliasRow, PageAliasRow, TitleHitRow } from './engine-sql/alias-fanout-reads.ts';
 import type { McpLifetimeUsageRow, McpLogPruneBatch, McpLogPruneCutoff, McpOpUsageRow, McpRequestLogRow, McpRollupPrunedBefore, SearchTelemetryBucket, SearchTelemetryRow } from './engine-sql/telemetry.ts';
 import type { ChatUsageLogRow, ChatUsageWindow } from './engine-sql/chat-usage.ts';
+import type { FieldUsageQuery, FieldUsageTypeSample } from './engine-sql/field-usage.ts';
 import type * as LinkTemporalSql from './engine-sql/link-temporal.ts';
 import type { RelationshipEvidence, RelationshipKey, RelationshipStateWrite } from './link-relationships.ts';
 import type { CoverageRelevance, ProjectionRebuildProgress, ScopedCount } from './search/retrieval-coverage.ts';
@@ -1537,6 +1538,8 @@ export interface BrainEngine {
   /** The chat usage ledger insert and the get_usage window read (SQL and contracts in engine-sql/chat-usage.ts). */
   logChatUsage(row: ChatUsageLogRow): Promise<void>;
   readChatUsage(days: number): Promise<ChatUsageWindow>;
+  /** `schema detect --fields`: live page type counts and per-type page samples (SQL and contract in engine-sql/field-usage.ts). */
+  readFieldUsageSamples(query: FieldUsageQuery): Promise<FieldUsageTypeSample[]>;
   /** Alias fan-out's exact-title lookup, case-sensitive alias read, page title and alias rows (SQL and contracts in engine-sql/alias-fanout-reads.ts). */
   findPagesByTitles(titleNorms: readonly string[], sourceIds: readonly string[], types: readonly string[], opts?: { excludePrivate?: boolean }): Promise<TitleHitRow[]>;
   resolveCaseSensitiveAliases(aliasNorms: readonly string[], sourceIds: readonly string[]): Promise<CaseSensitiveAliasRow[]>;
