@@ -47,7 +47,7 @@ import {
   type ConsumerHeartbeat, type ConsumerPool, type ConsumerProcessIdentity, type ListedConsumer,
 } from './consumer-heartbeat.ts';
 import { DEFAULT_PREPARATION_POLICY } from './preparation-budget.ts';
-import { consumerConnectionRoute, consumerStatementEngine } from './consumer-lane.ts';
+import { consumerConnectionRoute, consumerOnDirectLane, consumerStatementEngine } from './consumer-lane.ts';
 import { readWriteSwitchSnapshot } from './switches.ts';
 
 export type ConsumerMode = 'probing' | 'full' | 'waiter_only' | 'promoted';
@@ -182,7 +182,7 @@ export class WaiterOnlyConsumer implements PersistenceConsumerLike {
         if (!on) { await this.becomeFull('full', 'single_consumer_off'); return; }
       }
       ceiling = await bounded(this.opts.ceilingMs ? this.opts.ceilingMs() : readWriteSwitchSnapshot(this.statements, { signal: cancel.signal }).then(s => s.preparation.ceilingMs, () => DEFAULT_PREPARATION_POLICY.ceilingMs));
-      rows = await bounded(this.opts.readConsumers ? this.opts.readConsumers(cancel.signal) : listHostConsumers(this.statements, this.opts.hostId, { signal: cancel.signal }));
+      rows = await bounded(this.opts.readConsumers ? this.opts.readConsumers(cancel.signal) : listHostConsumers(this.statements, this.opts.hostId, { signal: cancel.signal, direct: consumerOnDirectLane(this.engine) }));
     } catch (error) {
       if (this.stopping) return;
       if (cancel.signal.aborted) {
@@ -241,7 +241,7 @@ export class WaiterOnlyConsumer implements PersistenceConsumerLike {
   private async reportServeOverlap(reason: string): Promise<void> {
     try {
       const signal = AbortSignal.timeout(this.opts.phaseMs ?? 5000);
-      const rows = await (this.opts.readConsumers ? this.opts.readConsumers(signal) : listHostConsumers(this.statements, this.opts.hostId, { signal }));
+      const rows = await (this.opts.readConsumers ? this.opts.readConsumers(signal) : listHostConsumers(this.statements, this.opts.hostId, { signal, direct: consumerOnDirectLane(this.engine) }));
       const serve = rows.find(row => row.kind === 'serve' && !(row.pid === this.self.pid && row.nonce === this.self.nonce) && row.renewed_age_ms < CONSUMER_LIVE_MS);
       if (serve) this.log(`phase=consumer_probe reason=two_consumers_on_host message="this ${this.opts.kind} process consumes beside serve pid ${serve.pid} on this host (${reason}); both claim writes until one exits"`);
     } catch { /* best-effort: doctor's two_consumers_on_host reports the overlap too */ }

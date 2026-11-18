@@ -3,7 +3,8 @@
  * insertLocalWriterRow, readJournalLimitRows, readHeldPageRows, readHeldCoverageRows), the request rows the put path
  * reads and writes (readWriteRequest, readWriteRequestById, readWriteRequestProgress, lockPersistenceCounters, insertWriteRequest,
  * stampWriteClaim, lockWriteRequest, completeWriteRow), the claim upkeep (renewWriteClaim, expireStaleWriteClaims,
- * hasClaimableWrite), the admission reads (readSourceMembership, findTopologyChanges), the lifecycle receipts
+ * hasClaimableWrite), the consumer rows (listHostConsumerRows, probeLiveConsumerRows, renewConsumerRow,
+ * deleteConsumerRow, stampWorktreeHeartbeats), the admission reads (readSourceMembership, findTopologyChanges), the lifecycle receipts
  * (readTopologyChange, insertTopologyChange) and readLedgerSource.
  *
  * Each store call is one store write transaction, so the row locks PGLite takes (FOR SHARE, FOR UPDATE, the counter
@@ -15,7 +16,7 @@
  */
 import type { LocalWriterInsert, LocalWriterRow } from '../../engine-sql/persistence-state.ts';
 import type { ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, WriteCompletion, WriteRequestInsert, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
-import type { ClaimExpiry, ClaimRenewal, SourceMembership, TopologyChange, TopologyChangeInsert } from '../../engine-sql/persistence-claims.ts';
+import type { ClaimExpiry, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from '../../engine-sql/persistence-claims.ts';
 import type { LedgerSource } from '../../engine-sql/belief.ts';
 import type { WriteRequest } from '../../persistence/model.ts';
 import { PAGE_BODY_CONFIG_KEYS } from '../../page-body/limits.ts';
@@ -126,6 +127,19 @@ export const expireStaleWriteClaims: StoreMember<[expiry: ClaimExpiry, opts?: { 
 export const hasClaimableWrite: StoreMember<[hostId: string, excludeRoots: string[], opts?: { priority?: boolean | null; signal?: AbortSignal }], boolean> =
   (brain, _hostId, excludeRoots, opts) =>
     storeCall({ member: 'hasClaimableWrite' }, () => brain.hasClaimableWrite({ excludeRoots, priority: opts?.priority ?? null }));
+
+// The consumer rows. One process owns this engine's brain, so the store keeps no consumer heartbeat rows and no
+// worktrees: the reads answer none (PGLite's callers answer the same without a read) and the writes change nothing.
+/** The host's consumer rows; none here. */
+export const listHostConsumerRows: StoreMember<[hostId: string, opts?: { signal?: AbortSignal; direct?: boolean }], ConsumerRowRead[]> = async () => [];
+/** The host's live full consumers other than the caller; none here. */
+export const probeLiveConsumerRows: StoreMember<[probe: ConsumerProbe, opts?: { signal?: AbortSignal; direct?: boolean }], ConsumerRowRead[]> = async () => [];
+/** The heartbeat renewal; no row is kept. */
+export const renewConsumerRow: StoreMember<[renewal: ConsumerRenewal, opts?: { signal?: AbortSignal }], void> = async () => undefined;
+/** The heartbeat's row delete; there is no row. */
+export const deleteConsumerRow: StoreMember<[key: ConsumerRowKey, opts?: { signal?: AbortSignal }], void> = async () => undefined;
+/** The worktree heartbeat stamp; this engine has no worktrees. */
+export const stampWorktreeHeartbeats: StoreMember<[hostId: string, opts?: { signal?: AbortSignal }], void> = async () => undefined;
 
 /** A source's incarnation and archive flag, or null. FOR SHARE changes nothing in one store write. */
 export const readSourceMembership: StoreMember<[sourceId: string, opts?: { lock?: boolean }], SourceMembership | null> = (brain, sourceId) =>

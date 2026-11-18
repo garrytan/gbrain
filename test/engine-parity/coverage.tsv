@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 560/560
+# covered: 565/565
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 9/9
-# persistence_journal: 28/28
+# persistence_journal: 33/33
 # entity_reads: 6/6
 # cycle_locks: 7/7
 # minion_jobs: 8/8
@@ -365,6 +365,11 @@ insertTopologyChange	persistence_journal	yes	4	no	yes	yes	serves
 renewWriteClaim	persistence_journal	yes	1	no	yes	yes	serves
 expireStaleWriteClaims	persistence_journal	yes	1	no	yes	yes	serves
 hasClaimableWrite	persistence_journal	yes	1	no	yes	yes	serves
+listHostConsumerRows	persistence_journal	yes	2	no	yes	yes	serves
+probeLiveConsumerRows	persistence_journal	yes	1	no	yes	yes	serves
+renewConsumerRow	persistence_journal	yes	1	no	yes	yes	serves
+deleteConsumerRow	persistence_journal	yes	1	no	yes	yes	serves
+stampWorktreeHeartbeats	persistence_journal	yes	1	no	yes	yes	serves
 claimHousekeepingTurn	persistence_journal	yes	1	no	yes	yes	serves
 completeHousekeepingTurn	persistence_journal	yes	1	no	yes	yes	serves
 readReceiptBudget	persistence_journal	yes	1	no	yes	yes	serves

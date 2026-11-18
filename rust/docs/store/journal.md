@@ -72,4 +72,6 @@ The request members (`readWriteRequest`, `readWriteRequestById`, `readWriteReque
 `insertWriteRequest`, `stampWriteClaim`, `lockWriteRequest`, `completeWriteRow`), the claim upkeep
 (`renewWriteClaim`, `expireStaleWriteClaims`, `hasClaimableWrite`) and the admission reads
 (`readSourceMembership`, `findTopologyChanges`, `readLedgerSource`) are served from the persistence
-rows in [persistence.md](persistence.md). The journal calls most of them inside `transaction`.
+rows in [persistence.md](persistence.md). The journal calls most of them inside `transaction`. The consumer row
+members (`listHostConsumerRows`, `probeLiveConsumerRows`, `renewConsumerRow`, `deleteConsumerRow`,
+`stampWorktreeHeartbeats`) keep no stored state; see "TypeScript members with no stored state" there.

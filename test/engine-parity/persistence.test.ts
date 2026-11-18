@@ -24,6 +24,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import type { WriteRequest } from '../../src/core/persistence/model.ts';
 import type { TopologyChange } from '../../src/core/engine-sql/persistence-claims.ts';
 import { assertPageRequestIdentity } from '../../src/core/persistence/journal.ts';
+import { CONSUMER_LIVE_MS, listHostConsumers, probeLiveFullConsumer, RESIDENT_CONSUMER_KINDS, startConsumerHeartbeat } from '../../src/core/persistence/consumer-heartbeat.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -215,6 +216,48 @@ describe('engine parity: write journal', () => {
     expect(finished).toMatchObject({ state: 'failed', errorCode: 'parity_error', errorMessage: 'parity', completed: true });
     expect(missing).toBeNull();
     return { queued, running, finished, missing };
+  });
+
+  parityTest('the consumer row members find no consumers of a host without one, a renewed row is gone after its delete, and the worktree stamp changes nothing', {
+    methods: ['listHostConsumerRows', 'probeLiveConsumerRows', 'renewConsumerRow', 'deleteConsumerRow', 'stampWorktreeHeartbeats'],
+  }, async (engine) => {
+    // The Rust store keeps no consumer rows (one process owns its brain), so the case compares no list taken between renew and delete.
+    const host = 'e0000000-0000-4000-8000-0000000000e7';
+    const key = { hostId: host, pid: 1, nonce: 'parity-nonce' };
+    const before = await engine.listHostConsumerRows(host);
+    const probe = await engine.probeLiveConsumerRows({ ...key, kinds: RESIDENT_CONSUMER_KINDS, liveMs: CONSUMER_LIVE_MS });
+    const renewed = await engine.renewConsumerRow({ ...key, pidNs: null, kind: 'serve', mode: 'full', restartRequired: false, rootBarrierAgeMs: null,
+      pool: null, hostJsonPath: '/parity/host.json', persistenceHome: '/parity', mintedUnder: null, version: 'parity', purgeMs: 60_000, bootId: null, processStart: null });
+    await engine.deleteConsumerRow(key);
+    const missingDelete = await engine.deleteConsumerRow(key);
+    await engine.stampWorktreeHeartbeats(host);
+    const after = await engine.listHostConsumerRows(host, { direct: true });
+    expect(before).toEqual([]);
+    expect(probe).toEqual([]);
+    expect(after).toEqual([]);
+    return { before, probe, renewed, missingDelete, after };
+  });
+
+  // PGLite admits one process, so its callers answer without an engine call; the Postgres and Rust arms reach every
+  // consumer row member. The row read after the stop goes to the engine on every arm.
+  parityTest('a consumer heartbeat renews and stops without a failure, and leaves the host with no live owner',
+    { methods: ['listHostConsumerRows'] }, async (engine) => {
+    const host = 'e0000000-0000-4000-8000-0000000000e8';
+    const listed = await listHostConsumers(engine, host);
+    const owner = await probeLiveFullConsumer(engine, host);
+    const heartbeat = startConsumerHeartbeat(engine, host, { kind: 'serve', mode: 'full', everyMs: 3_600_000,
+      report: () => ({ restart_required: false, root_barrier_age_ms: null }), paths: { host_json_path: '/parity/host.json', persistence_home: '/parity', minted_under: null } });
+    await heartbeat.renew();
+    const failures = heartbeat.failures;
+    await heartbeat.stop();
+    const afterStop = await listHostConsumers(engine, host);
+    const rowsAfterStop = await engine.listHostConsumerRows(host);
+    expect(listed).toEqual([]);
+    expect(owner).toBeNull();
+    expect(failures).toBe(0);
+    expect(afterStop).toEqual([]);
+    expect(rowsAfterStop).toEqual([]);
+    return { listed, owner, failures, afterStop, rowsAfterStop };
   });
 
   parityTest('readSourceMembership returns the incarnation and archive flag, locked or not, and null for an unknown source', { methods: ['readSourceMembership'] }, async (engine) => {

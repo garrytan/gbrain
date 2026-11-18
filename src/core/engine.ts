@@ -30,7 +30,7 @@ import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence-state.ts';
 import type { DurablePersistenceSettings } from './engine-sql/persistence-declaration.ts';
 import type { ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, WriteCompletion, WriteRequestInsert, WriteRequestProgress } from './engine-sql/persistence-journal.ts';
-import type { ClaimExpiry, ClaimRenewal, SourceMembership, TopologyChange, TopologyChangeInsert } from './engine-sql/persistence-claims.ts';
+import type { ClaimExpiry, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from './engine-sql/persistence-claims.ts';
 import type { CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionWindowRow, ReceiptBudget, SegmentedProjectionFilter } from './engine-sql/persistence-housekeeping.ts';
 import type { ProjectionScanCursor } from './page-state/projection-window.ts';
 import type { WriteRequest } from './persistence/model.ts';
@@ -3312,6 +3312,13 @@ export interface BrainEngine {
   expireStaleWriteClaims(expiry: ClaimExpiry, opts?: { signal?: AbortSignal; direct?: boolean }): Promise<void>;
   /** Whether a claim would find a row now; `priority` overrides the foreground-priority config row when set. */
   hasClaimableWrite(hostId: string, excludeRoots: string[], opts?: { priority?: boolean | null; signal?: AbortSignal }): Promise<boolean>;
+  /** Consumer rows (persistence/consumer-heartbeat.ts): the host's rows oldest first, and its live full rows other than the caller's. `direct`: the Postgres direct pool. */
+  listHostConsumerRows(hostId: string, opts?: { signal?: AbortSignal; direct?: boolean }): Promise<ConsumerRowRead[]>;
+  probeLiveConsumerRows(probe: ConsumerProbe, opts?: { signal?: AbortSignal; direct?: boolean }): Promise<ConsumerRowRead[]>;
+  /** The heartbeat's renewal (purges the host's lapsed rows), its row delete and its worktree stamp; Postgres sends each on the direct pool. */
+  renewConsumerRow(renewal: ConsumerRenewal, opts?: { signal?: AbortSignal }): Promise<void>;
+  deleteConsumerRow(key: ConsumerRowKey, opts?: { signal?: AbortSignal }): Promise<void>;
+  stampWorktreeHeartbeats(hostId: string, opts?: { signal?: AbortSignal }): Promise<void>;
   // Housekeeping statements (engine-sql/persistence-housekeeping.ts): the text housekeeping-turn.ts, compaction-pass.ts, journal.ts,
   // receipt-true-up.ts, capacity-forecast.ts and the projection queue readers sent through executeRaw after a write.
   /** Leases this host's housekeeping turn; true when it was free. `direct` sends it on the Postgres direct pool. */
