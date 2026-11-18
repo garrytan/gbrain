@@ -75,7 +75,9 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
-import { hybridSearch } from '../src/core/search/hybrid.ts';
+import { _resetSupersedeProbeForTests, hybridSearch, runPostFusionStages, stampContentFlags, stampUnverifiedExtractions } from '../src/core/search/hybrid.ts';
+import type { SearchResult } from '../src/core/types.ts';
+import { applyGeneratedDemotion } from '../src/core/search/provenance-demotion.ts';
 import { testBackends, type TestBackend } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
@@ -92,6 +94,50 @@ const RUST_DIMS = 1536;
 const MODEL = 'openai:text-embedding-3-large';
 /** Largest score difference allowed from the float64 cosine of the stored float32 vectors. */
 const SCORE_TOLERANCE = 1e-6;
+
+/** The expected rows of the ranking-stages case, as PGLite ranks them: `slug score flags`, the score to 4 places. */
+const HYBRID_PLAIN = [
+  'a-exact 1.0000',
+  'd-multi 0.9885',
+  'n-timeline 0.9461',
+  'z-gen 0.9255 provenance="generated"',
+  'z-after 0.9151',
+  't-auto 0.9047',
+  'u-dated 0.8946',
+  't-flagged 0.8848',
+  'r-target 0.8477 collapsed=[{"slug":"r-stub","source_id":"default","reason":"redirect"}]',
+  's-new 0.8654',
+  'zorbit 0.8393',
+  'e-person 0.5536',
+];
+const STAGES_WITHOUT_DATED = [
+  'a-exact 1.3000 recency_boost=1.3',
+  'd-multi 1.3000 recency_boost=1.3',
+  'n-timeline 1.1644 recency_boost=1.3',
+  'z-gen 1.1218 recency_boost=1.3',
+  'z-after 1.1777 alias_resolved_boost=1.05 recency_boost=1.3',
+  't-auto 1.1202 recency_boost=1.3',
+  't-flagged 1.1177 recency_boost=1.3',
+  'r-stub 1.1138 recency_boost=1.3',
+  's-new 1.1123 recency_boost=1.3',
+  's-old 0.5749 superseded_by="s-new" backlink_count=1 recency_boost=1.3',
+  'r-target 1.1098 recency_boost=1.3',
+  'zorbit 1.1476 backlink_count=1 recency_boost=1.3',
+  'f-srcb 0.0317 recency_boost=1.3',
+  'i-private 0.0315 recency_boost=1.3',
+  'e-person -0.0277 recency_boost=1.3',
+  'b-tie1 -0.0542 recency_boost=1.3',
+  'c-tie2 -0.0542 recency_boost=1.3',
+  'k-opposite -1.3000 recency_boost=1.3',
+];
+const MARKERS = [
+  't-auto 0.8617 status="unverified" unverified=true',
+  't-flagged 0.8597 content_flag={"reason":"spam","detail":"x"}',
+  'r-target 0.8537 status="verified"',
+];
+const DEMOTION = [
+  'z-gen 0.4315 provenance="generated" generated_demotion=0.5',
+];
 
 function record(kind: TestBackend | 'rust', name: string, value: unknown): void {
   const run = seen.get(kind) ?? {};
@@ -134,9 +180,9 @@ for (const kind of arms) {
     /** Every stored vector by `slug#chunk_index`, for the expected scores. */
     const stored = new Map<string, Float32Array>();
     const v = (i: number) => prngUnitVector(i, dims);
-    const page = async (slug: string, vecs: Array<Float32Array | null>, o: { type?: string; sourceId?: string; fm?: Record<string, unknown>; timeline?: boolean } = {}) => {
+    const page = async (slug: string, vecs: Array<Float32Array | null>, o: { type?: string; sourceId?: string; fm?: Record<string, unknown>; timeline?: boolean; effectiveDate?: string } = {}) => {
       const scope = o.sourceId ? { sourceId: o.sourceId } : undefined;
-      await engine.putPage(slug, { type: o.type ?? 'note', title: slug, compiled_truth: `body ${slug}`, timeline: o.timeline ? `timeline ${slug}` : '', frontmatter: o.fm ?? {} } as never, scope as never);
+      await engine.putPage(slug, { type: o.type ?? 'note', title: slug, compiled_truth: `body ${slug}`, timeline: o.timeline ? `timeline ${slug}` : '', frontmatter: o.fm ?? {}, ...(o.effectiveDate ? { effective_date: o.effectiveDate } : {}) } as never, scope as never);
       const chunks = vecs.map((e, i) => ({
         chunk_index: i, chunk_text: o.timeline && i === 0 ? `timeline ${slug}` : `body ${slug} ${i}`,
         chunk_source: o.timeline && i === 0 ? 'timeline' : 'compiled_truth', ...(e ? { embedding: e, model: MODEL } : {}),
@@ -423,6 +469,86 @@ for (const kind of arms) {
       expect(cases.bothArms).toEqual({ ok: ['a-exact', 'd-multi', 'n-timeline', 'f-srcb', 'i-private', 'b-tie1', 'e-person', 'c-tie2', 'd-multi', 'n-timeline'] });
       expect(cases.limit3).toEqual({ ok: ['a-exact', 'd-multi', 'n-timeline'] });
       record(kind, 'hybrid', cases);
+    }, 60_000);
+
+    // Adds its own pages, after the cases that read every page of the shared fixture. Every read hybridSearch makes on the Rust store (page marker and date reads,
+    // the supersede, alias, collapse and generated-page reads) feeds the scores and flags compared here.
+    test('hybridSearch: ranking stages and page reads over a supersede link, an alias, a redirect and a generated page', async () => {
+      const link = (from: string, to: string, type: string) => engine.addLink(from, to, '', type);
+      /** A vector close to the query, so the page stays inside the result window. */
+      const near = (k: number) => q.map((x, i) => (i === k ? x + 0.6 : x));
+      await page('s-old', [near(20)]);
+      await page('s-new', [near(21)]);
+      await link('s-new', 's-old', 'supersedes');
+      await page('r-target', [near(22)], { fm: { status: 'verified' } });
+      await page('r-stub', [near(23)], { fm: { redirect_to: 'r-target' } });
+      await page('t-auto', [near(24)], { fm: { status: 'unverified', provenance: 'auto-extracted' } });
+      await page('t-flagged', [near(25)], { fm: { content_flag: { reason: 'spam', detail: 'x' } } });
+      await page('u-dated', [near(26)], { effectiveDate: '2020-01-02T00:00:00Z' });
+      await page('zorbit', [near(27)]);
+      await page('z-gen', [near(28)], { fm: { dream_generated: true } });
+      await link('z-gen', 'zorbit', 'mentions');
+      await page('z-before', []);
+      await engine.updateSlug('z-before', 'z-after');
+      await page('z-after', [near(29)]);
+      await engine.setPageAliases('zorbit', 'default', ['zorbit']);
+      // The earlier hybrid case memoized "no supersede edge" for this engine.
+      _resetSupersedeProbeForTests();
+      resetGateway();
+      configureGateway({ embedding_model: MODEL, embedding_dimensions: dims, env: { OPENAI_API_KEY: 'synthetic-only' } });
+      await engine.setConfig('embedding_model', MODEL);
+      await engine.setConfig('embedding_dimensions', String(dims));
+      __setEmbedTransportForTests(async ({ values }) => ({ values, warnings: [], embeddings: values.map(() => Array.from(q)), usage: { tokens: 1 } }) as never);
+      const FLAGS = ['superseded_by', 'provenance', 'generated_demotion', 'alias_resolved_boost', 'redirect_to', 'collapsed', 'backlink_count',
+        'recency_boost', 'salience_boost', 'graph_boost', 'content_flag', 'status', 'unverified'];
+      const show = (list: unknown[]) => (list as Array<Record<string, unknown>>).map((x) => {
+        const flags = FLAGS.filter((k) => x[k] !== undefined).map((k) => `${k}=${JSON.stringify(x[k], (_k, val) => (typeof val === 'number' ? Number(val.toFixed(4)) : val))}`);
+        return `${x.slug} ${Number(x.score).toFixed(4)}${flags.length ? ' ' + flags.join(' ') : ''}`;
+      });
+      /** The vector arm's rows, as the post-fusion stages take them. */
+      const vectorRows = async () => (await engine.searchVector(q, { limit: 40 })) as unknown as SearchResult[];
+      // hybridSearch hands the page marker reads its whole option bag, which the Rust store's marker reads refuse (an
+      // unknown truthy key), so content flags and extraction marks stay off the hybrid rows here; they are read below
+      // through the same stamping functions with no policy.
+      const hybrid = async (query: string, opts: Record<string, unknown> = {}) =>
+        outcome(async () => show(await hybridSearch(engine, query, { expansion: false, limit: 40, ...opts } as never)).map((r) => r.replace(/ (content_flag|status|unverified)=\S+/g, '')));
+      // The post-fusion stages with every metadata stage switched on, over the vector arm's rows.
+      const every = async () => outcome(async () => {
+        const rowsIn = await vectorRows();
+        await runPostFusionStages(engine, rowsIn, { applyBacklinks: true, salience: 'on', recency: 'on', graphSignalsEnabled: true } as never);
+        return show(rowsIn);
+      });
+      const markers = async () => outcome(async () => {
+        const rowsIn = await vectorRows();
+        await stampContentFlags(engine, rowsIn);
+        await stampUnverifiedExtractions(engine, rowsIn);
+        return show(rowsIn.filter((r) => r.content_flag || r.status));
+      });
+      // The generated-page demotion reads the entity the query names, the live page at it and the pages linking to it.
+      const demotion = async () => outcome(async () => {
+        const rowsIn = await vectorRows();
+        await applyGeneratedDemotion(engine, rowsIn, 'Zorbit', { excludePrivate: false });
+        return show(rowsIn.filter((r) => r.provenance || r.generated_demotion));
+      });
+      const cases = {
+        plain: await hybrid('nonlexicalsaffronquery'),
+        stages: await every(),
+        markers: await markers(),
+        demotion: await demotion(),
+      };
+      __setEmbedTransportForTests(null);
+      resetGateway();
+      // The date-dependent row (u-dated has a 2020 effective date, so its recency factor shrinks with the days) is
+      // checked on its own; every other row is fixed. The two engines are compared at the end of the file.
+      const dated = (cases.stages as { ok: string[] }).ok.find((r) => r.startsWith('u-dated '))!;
+      expect(dated).toMatch(/^u-dated 0\.\d{4} recency_boost=1\.0\d*$/);
+      expect({ ok: (cases.stages as { ok: string[] }).ok.filter((r) => r !== dated) }).toEqual({ ok: STAGES_WITHOUT_DATED });
+      expect(cases.plain).toEqual({ ok: HYBRID_PLAIN });
+      expect(cases.markers).toEqual({ ok: MARKERS });
+      expect(cases.demotion).toEqual({ ok: DEMOTION });
+      record(kind, 'hybrid-stages', cases);
+      // Leave the shared fixture as the later cases expect it (the Rust arm runs none of the cases that count chunks).
+      if (!rust) await raw(`DELETE FROM pages WHERE slug IN ('s-old', 's-new', 'r-target', 'r-stub', 't-auto', 't-flagged', 'u-dated', 'zorbit', 'z-gen', 'z-after')`);
     }, 60_000);
 
     // Sets its state with SQL and reads embedding-state members; not on the Rust arm.
