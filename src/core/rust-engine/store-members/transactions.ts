@@ -89,7 +89,8 @@ export const readTransactionSettings = async function readTransactionSettings(th
 /**
  * `set_config(name, value, true)` for each name, for the rest of the transaction. Outside a transaction the setting
  * lasts one statement on PGLite, so nothing is kept. The store checks the trust values first (a tier that is no tier,
- * an origin that is not JSON, a request that is not a UUID refuse `invalid_argument`) and nothing changes when it refuses.
+ * an origin that is not JSON refuse `invalid_argument`) and nothing changes when it refuses. A request that is not a
+ * UUID is kept; the timeline write refuses it, as PGLite's attribution trigger does.
  */
 export const applyTransactionSettings = async function applyTransactionSettings(this: RustEngine, brain: StoreBrain, names: readonly string[], values: readonly string[]): Promise<void> {
   checkSettingNames('applyTransactionSettings', names);

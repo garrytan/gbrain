@@ -28,20 +28,10 @@ use serde_json::{Map, Value, json};
 const FIXTURE: &str = include_str!("fixtures/graph-parity.json");
 const UNDEF: &str = "$undef";
 
-/// Columns PGLite's `getTimeline` returns beyond `TimelineEntry` (the write-provenance and
-/// trust columns of `timeline_entries`). They are null or `"unknown"` for every row the
-/// typed writes make; Rust does not emit them (README "Divergences").
-const PGLITE_ONLY_TIMELINE_KEYS: &[&str] = &[
-    "write_request_id",
-    "write_principal_kind",
-    "write_principal_id",
-    "last_write_request_id",
-    "last_write_principal_kind",
-    "last_write_principal_id",
-    "last_written_at",
-    "trust_tier",
-    "write_origin",
-];
+/// Columns PGLite's `getTimeline` returns beyond `TimelineEntry` that Rust does not emit yet: the
+/// trust columns of `timeline_entries`. They are `"unknown"` or null for every row the typed writes
+/// make. The write receipt columns are compared: Rust stamps them on each write.
+const PGLITE_ONLY_TIMELINE_KEYS: &[&str] = &["trust_tier", "write_origin"];
 
 fn is_undef(value: &Value) -> bool {
     value.as_str() == Some(UNDEF)

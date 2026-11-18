@@ -19,7 +19,7 @@ use serde_json::{Map, Value, json};
 use super::TimelineRecord;
 use crate::env::{iso, transaction_clock};
 use crate::error::{Result, StoreError};
-use crate::write_trust::{WriteAttribution, stamp_context};
+use crate::write_trust::{WRITE_REQUEST, WriteAttribution, stamp_context};
 
 /// The seven receipt columns. A record stored before the receipt reads every one as null.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,9 +116,17 @@ fn content_changed(old: &TimelineRecord, new: &TimelineRecord) -> bool {
 }
 
 /// `new` as the attribution trigger leaves it: an insert when `old` is `None`, else an update of
-/// `old` (the module rules).
+/// `old` (the module rules). A `gbrain.write_request` that is not a UUID is `invalid_argument`
+/// for every write, as the trigger casts it with `::uuid` before it reads anything else.
 pub(crate) fn stamp(old: Option<&TimelineRecord>, new: &TimelineRecord) -> Result<TimelineRecord> {
     let actor = stamp_context::current()?.attribution;
+    if let Some(request) = actor.request_id.as_deref()
+        && !crate::env::is_uuid(request)
+    {
+        return Err(StoreError::invalid(format!(
+            "{WRITE_REQUEST} is not a UUID: {request}"
+        )));
+    }
     let mut out = new.clone();
     let receipt = &mut out.receipt;
     let Some(old) = old else {
@@ -291,6 +299,35 @@ mod tests {
             edited.receipt.last_write_principal_id.as_deref(),
             Some("client:b")
         );
+    }
+
+    #[test]
+    fn a_request_that_is_not_a_uuid_refuses_every_write() {
+        let old = stamped(
+            actor(Some(R1), "application", "host:a"),
+            1,
+            None,
+            &record("d"),
+        );
+        for (who, old) in [
+            (actor(Some("req-1"), "application", "host:a"), None),
+            (actor(Some("r1"), "application", "host:a"), Some(&old)),
+            (
+                WriteAttribution {
+                    request_id: Some("0b9c4f0e-1a2b-4c3d-8e4f-5a6b7c8d9e0".into()),
+                    ..WriteAttribution::default()
+                },
+                None,
+            ),
+        ] {
+            let _trust = stamp_context::open(WriteTrust {
+                attribution: who,
+                ..WriteTrust::default()
+            });
+            let _clock = transaction_clock::open(Arc::new(At(2)));
+            let err = stamp(old, &record("e")).unwrap_err();
+            assert_eq!(err.code, INVALID_ARGUMENT);
+        }
     }
 
     #[test]

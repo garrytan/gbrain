@@ -30,10 +30,10 @@
 //! Stricter than PGLite, on purpose: a value the trust rules would refuse when they read it is
 //! refused when it is set (`invalid_argument`), with the context unchanged: a tier or promotion
 //! name that is no tier (PGLite raises `22023` in the stamp trigger, and the fence read ranks it 0),
-//! a `write_origin` that is not JSON (PGLite raises at `::jsonb` in the trigger), a
-//! `write_request` that is not a UUID (PGLite raises at `::uuid` in the attribution trigger), and a
-//! setting name outside the nine (the engine routes no other name here). TypeScript sets none of
-//! these.
+//! a `write_origin` that is not JSON (PGLite raises at `::jsonb` in the trigger), and a setting
+//! name outside the nine (the engine routes no other name here). TypeScript sets none of these. A
+//! `write_request` that is not a UUID is kept as set, as `set_config` keeps it; the timeline write
+//! refuses it, as the attribution trigger raises at its `::uuid` cast (`timeline::receipt`).
 //!
 //! Keys: none. The context is per open store, in memory, never written.
 
@@ -81,7 +81,7 @@ pub const WRITE_TRUST_SETTINGS: [&str; 9] = [
 
 /// The actor of one write, as the attribution trigger reads it: each setting with `''` read as
 /// unset (`NULLIF(current_setting(name, true), '')`). The request id is lower case, as a `uuid`
-/// reads back.
+/// reads back; the receipt writer refuses one that is not a UUID.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WriteAttribution {
     /// `gbrain.write_request`: the persistence request, or `None` for a write with no journal request.
@@ -90,16 +90,6 @@ pub struct WriteAttribution {
     pub principal_kind: Option<String>,
     /// `gbrain.write_principal_id`.
     pub principal_id: Option<String>,
-}
-
-/// True for the text form a `uuid` input accepts here: 32 hex digits in the 8-4-4-4-12 groups.
-fn is_uuid(text: &str) -> bool {
-    let groups: Vec<&str> = text.split('-').collect();
-    groups.len() == 5
-        && groups
-            .iter()
-            .zip([8, 4, 4, 4, 12])
-            .all(|(g, n)| g.len() == n && g.bytes().all(|b| b.is_ascii_hexdigit()))
 }
 
 /// The settings text of one open store (`Store::write_context`).
@@ -135,9 +125,6 @@ fn check(name: &'static str, value: &str) -> Result<()> {
         WRITE_ORIGIN if !value.is_empty() => serde_json::from_str::<Value>(value)
             .map(|_| ())
             .map_err(|e| StoreError::invalid(format!("{WRITE_ORIGIN} is not JSON: {e}"))),
-        WRITE_REQUEST if !value.is_empty() && !is_uuid(value) => Err(StoreError::invalid(format!(
-            "{WRITE_REQUEST} is not a UUID: {value}"
-        ))),
         _ => Ok(()),
     }
 }
@@ -432,6 +419,21 @@ mod tests {
     }
 
     #[test]
+    fn a_request_that_is_not_a_uuid_is_kept_as_set() {
+        let s = store();
+        s.apply_write_trust(&strings(&[WRITE_REQUEST]), &strings(&["req-1"]))
+            .unwrap();
+        assert_eq!(
+            s.read_write_trust(&strings(&[WRITE_REQUEST])).unwrap(),
+            vec![Some("req-1".to_string())]
+        );
+        assert_eq!(
+            s.write_trust().unwrap().attribution.request_id.as_deref(),
+            Some("req-1")
+        );
+    }
+
+    #[test]
     fn an_empty_attribution_setting_reads_as_unset() {
         let s = store();
         s.apply_write_trust(
@@ -477,11 +479,6 @@ mod tests {
             (
                 vec![WRITE_OPEN_FACTS, "gbrain.write_sources"],
                 vec!["1", "[]"],
-            ),
-            (vec![WRITE_OPEN_FACTS, WRITE_REQUEST], vec!["1", "r1"]),
-            (
-                vec![WRITE_OPEN_FACTS, WRITE_REQUEST],
-                vec!["1", "0b9c4f0e-1a2b-4c3d-8e4f-5a6b7c8d9e0"],
             ),
             (vec![WRITE_OPEN_FACTS], vec![]),
         ] {

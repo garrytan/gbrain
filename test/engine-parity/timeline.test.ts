@@ -417,6 +417,22 @@ describe('engine parity: timeline write receipts', () => {
       return { rows, projectionKept, kept, notOlder };
     },
   );
+
+  parityTest(
+    'a write request that is not a UUID is kept by the setting and refuses the timeline write that reads it',
+    { methods: ['transaction', 'applyTransactionSettings', 'readTransactionSettings', 'addTimelineEntry', 'getTimeline', 'putPage'] },
+    async (engine) => {
+      await putPlain(engine, 'people/bad-request');
+      const names = ['gbrain.write_request', 'gbrain.write_principal_kind', 'gbrain.write_principal_id'];
+      let kept: Array<string | null> = [];
+      const outcome = await engine.transaction(async (tx) => {
+        await tx.applyTransactionSettings(names, ['req-1', 'application', 'host:test-a']);
+        kept = await tx.readTransactionSettings(names);
+        await tx.addTimelineEntry('people/bad-request', { date: '2026-08-09', summary: 'refused add' });
+      }).then(() => 'written', () => 'refused');
+      return { kept, outcome, rows: (await engine.getTimeline('people/bad-request')).length };
+    },
+  );
 });
 
 describe('engine parity: chronicle reads and event projection', () => {

@@ -78,10 +78,12 @@ rollback, and a savepoint rollback sets the nine back to what they were when the
   - a tier or promotion name that is no tier (PGLite accepts it in `set_config`, raises `22023` in the stamp
     trigger, and ranks it 0 in the fence read);
   - a `write_origin` that is not JSON (PGLite raises at the trigger's `::jsonb` cast);
-  - a `write_request` that is not a UUID (PGLite raises at the attribution trigger's `::uuid` cast);
   - a setting name outside the nine (the engine routes no other name here);
   - lists of different lengths.
   TypeScript sets none of these.
+- A `write_request` that is not a UUID is kept as set, as `set_config` keeps it. A timeline write then refuses with
+  `invalid_argument`, as PGLite's attribution trigger raises at its `::uuid` cast. A page, fact or take write does
+  not read it yet, so it is not refused there (PGLite's trigger raises on those tables too).
 - Only the timeline writer reads the attribution settings. A trust proposal the store files still reads
   `proposer_principal_kind`, `proposer_principal_id` and `write_request_id` NULL ([trust.md](trust.md#trust-proposals-trustproposals)),
   and facts, takes and page versions carry no write receipt yet (TODOS.md).
