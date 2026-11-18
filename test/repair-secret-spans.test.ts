@@ -37,6 +37,8 @@ const GITHUB = 'ghp' + '_' + 'EXAMPLEnotREAL'.repeat(3);
 const BEARER = 'EXAMPLEtokenNOTreal' + '1234567890abcdef';
 const SECRETS = [OPENAI, AWS, GITHUB, BEARER];
 const M = (rule: string) => `<REDACTED:${rule}>`;
+// GST-2988: redaction now writes store-backed markers <REDACTED:rule:ss_id>; P reads them as the plain marker.
+const P = <T,>(value: T): T => JSON.parse(JSON.stringify(value, (_key, v) => typeof v === 'bigint' ? String(v) : v).replace(/<REDACTED:([a-z0-9_]+):ss_[0-9a-f]{12}>/g, '<REDACTED:$1>'));
 
 const ALPHA_BODY = [`# Alpha Example`, '', `The deploy notes keep the old key ${OPENAI} here.`, `A pasted marker then a key: ${M('openai')}${OPENAI} glued.`,
   `Authorization: Bearer ${BEARER}`, `The token ${BEARER} appears again bare.`, 'Nothing else changes, not even this line.'].join('\n');
@@ -89,7 +91,7 @@ async function seed(engine: BrainEngine) {
   // #8049 shape: a stored timeline whose bullet names a day that does not exist (an older writer stored it as text).
   await engine.executeRaw(`UPDATE pages SET timeline=$2 WHERE source_id='default' AND slug=$1`,
     ['notes/bad-date-example', `## Timeline\n\n- **2024-02-30** | import — Moved ${GITHUB} to the vault`]);
-  const alpha = await pageRow(engine, 'notes/alpha-example');
+  const alpha = P(await pageRow(engine, 'notes/alpha-example'));
   const clean = await pageRow(engine, 'notes/clean-example');
   await engine.executeRaw("INSERT INTO timeline_entries(page_id,date,source,summary,detail) VALUES ($1,'2024-01-02','import',$2,''),($1,'2024-03-04','import','Unrelated entry','')",
     [alpha.id, `Rotated ${AWS} out of the build`]);
@@ -162,7 +164,7 @@ describe('GST-327 gbrain repair secret-spans on a repo-less brain', () => {
         expect(leaked(result)).toEqual([]);
 
         // Only the spans changed, everywhere the page is stored.
-        const alpha = await pageRow(engine, 'notes/alpha-example');
+        const alpha = P(await pageRow(engine, 'notes/alpha-example'));
         expect(alpha.compiled_truth).toBe(ALPHA_BODY.replace(`${M('openai')}${OPENAI}`, `${M('openai')}${M('openai')}`)
           .replaceAll(OPENAI, M('openai')).replaceAll(BEARER, M('bearer')));
         expect(alpha.timeline).toBe(ALPHA_TIMELINE.replace(AWS, M('aws_access_key')));
@@ -170,7 +172,7 @@ describe('GST-327 gbrain repair secret-spans on a repo-less brain', () => {
         expect(alpha.title).toBe('Alpha Example');
         expect(alpha.revision).not.toBe(alphaBefore.revision);
         expect(alpha.trust_tier).toBe(alphaBefore.trust_tier);
-        const rows = await snapshotDb(engine);
+        const rows = P(await snapshotDb(engine));
         expect(rows.timeline.map((row: any) => row.summary).join('\n')).toContain(`Rotated ${M('aws_access_key')} out of the build`);
         expect(rows.timeline.map((row: any) => row.date)).toEqual(edited.timeline.map((row: any) => row.date));
         expect(rows.facts).toEqual([expect.objectContaining({ fact: `The CI token is ${M('github_token')}.`, context: `Seen next to ${M('aws_access_key')} in the notes (edited)`, embedded_at: null })]);
@@ -186,7 +188,7 @@ describe('GST-327 gbrain repair secret-spans on a repo-less brain', () => {
         expect(large.body_storage).toBe('segmented');
         expect(large.frontmatter.embed_skip).toBe('oversized');
         expect(large.revision).not.toBe(largeBefore.revision);
-        expect(await materializeSegmentedBody(engine, Number(large.id), 'default'))
+        expect(P(await materializeSegmentedBody(engine, Number(large.id), 'default')))
           .toEqual({ compiled_truth: largeBody.compiled_truth.replace(AWS, M('aws_access_key')), timeline: largeBody.timeline });
 
         // Every rewritten page is sealed again at its new revision, with chunks rebuilt from the redacted body.
@@ -200,7 +202,7 @@ describe('GST-327 gbrain repair secret-spans on a repo-less brain', () => {
         expect(leaked(receipts)).toEqual([]);
 
         // The impossible-date page was redacted in the same batch, its date left as stored.
-        const bad = await pageRow(engine, 'notes/bad-date-example');
+        const bad = P(await pageRow(engine, 'notes/bad-date-example'));
         expect(bad.timeline).toBe(`## Timeline\n\n- **2024-02-30** | import — Moved ${M('github_token')} to the vault`);
 
         // The clean page is untouched, and a second preview finds nothing.
@@ -275,7 +277,7 @@ for (const backend of testBackends()) describe(`GST-327 gbrain repair secret-spa
     expect(result.outcomes).toEqual({ redacted: 1 });
     expect(result.verification).toMatchObject({ residual_matches: 0 });
 
-    const after = await pageRow(engine, slug);
+    const after = P(await pageRow(engine, slug));
     expect(after.compiled_truth).toBe(page.compiled_truth.replace(OPENAI, M('openai')));
     expect(after.revision).not.toBe(page.revision);
     expect(await hold()).toEqual(holdBefore);

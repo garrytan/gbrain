@@ -4102,6 +4102,28 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     }
   },
   {
+    "name": "reveal_secret",
+    "idempotent": true,
+    "outputRedaction": {
+      "exempt": "returns the original value of a secret-store entry by design; gated by an explicit grant and page read access, and audited"
+    },
+    "description": "Return the original value behind a <REDACTED:rule:ss_...> marker. Needs a token whose operation list names reveal_secret and read access to a page holding the marker; every call is audited.",
+    "params": {
+      "id": {
+        "type": "string",
+        "required": true,
+        "description": "Entry id from the marker (ss_ followed by 12 hex)."
+      }
+    },
+    "scope": "read",
+    "mutating": false,
+    "area": "secrets",
+    "cliHints": {
+      "name": "reveal-secret",
+      "hidden": true
+    }
+  },
+  {
     "name": "submit_job",
     "idempotent": false,
     "outputRedaction": {

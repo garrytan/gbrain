@@ -1,5 +1,5 @@
 /**
- * The owner's identity decisions (`BrainEngine.listIdentityDecisions` / `applyIdentityDecisions`, migration v323): "same
+ * The owner's identity decisions (`BrainEngine.listIdentityDecisions` / `applyIdentityDecisions`, migration v325): "same
  * person" and "different people" verdicts on a group of pages, kept by (source_id, slug), and the entity_identities rows
  * a "same" decision materializes (established_by 'dedupe:confirm'). One implementation for both engines; the write runs
  * inside the engine's transaction, so the decision rows and the identity rows change together or not at all.

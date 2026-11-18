@@ -646,7 +646,16 @@ For a 25-person company at sustained use, expect about $40 a month in embeddings
 
 ### "My teammate can't see anything"
 
-Check `gbrain auth list` on the host and confirm their client has `--source` set to a source that actually exists. Empty or null `--source` means the client falls through to the `default` source, which probably has no content if you set up three named sources. Under Model C, run `gbrain access check --token <their token>` to see what the credential reads, axis by axis, and `gbrain access who-can-read <slug>` for a page they expect: a credential bound to no member, or to one missing from the page's `readable_by` or a folder rule covering it, gets `not_found`.
+If their key writes to its own source, it reads only the sources its grant lists. To have it also read every shared source, now and later, turn on the read-shared switch on the brain host:
+
+```bash
+gbrain auth rescope --token bot-alice-example --read-shared on
+gbrain auth rescope --client <client_id> --read-shared on   # an OAuth client
+```
+
+Writes stay in the key's own source. Shared means `default` plus every federated source; a guest source is never included, nor another member's own source unless the key is the brain owner's, and private pages and private facts stay closed in every source the key reaches only through the switch. A source you federate later is read on the next request with no re-grant (`gbrain sources federate` names the keys that now read it). `gbrain access check --token bot-alice-example` lists what the key reads now, and `--read-shared off` takes it back to its listed sources.
+
+Otherwise, check `gbrain auth list` on the host and confirm their client has `--source` set to a source that actually exists. Empty or null `--source` means the client falls through to the `default` source, which probably has no content if you set up three named sources. Under Model C, run `gbrain access check --token <their token>` to see what the credential reads, axis by axis, and `gbrain access who-can-read <slug>` for a page they expect: a credential bound to no member, or to one missing from the page's `readable_by` or a folder rule covering it, gets `not_found`.
 
 ### "Sync is slow and feels stuck"
 

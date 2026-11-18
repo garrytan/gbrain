@@ -47,6 +47,8 @@ function makeStub(rowsByPattern: Record<string, unknown[]> = {}): {
   const engine = {
     kind: 'pglite' as const,
     executeRaw,
+    // The strict mode reader is a typed method; it answers from the same fake rows as executeRaw.
+    readManagedModeRows: () => executeRaw('SELECT enabled FROM persistence_brain WHERE singleton=1'),
     setConfig,
     transaction: async (fn: (tx: BrainEngine) => Promise<unknown>) => fn(engine),
     // Unused methods throw if called accidentally during these tests.

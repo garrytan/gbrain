@@ -466,6 +466,19 @@
       "retrieval_weights.retrieval_weights_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
       "retrieval_weights.retrieval_weights_weight_check": "c CHECK (((weight >= (0)::double precision) AND (weight <= (1)::double precision)))",
       "search_telemetry.search_telemetry_pkey": "p PRIMARY KEY (date, mode, intent)",
+      "secret_store.secret_store_id_check": "c CHECK ((id ~ '^ss_[0-9a-f]{12}$'::text))",
+      "secret_store.secret_store_key_id_check": "c CHECK ((key_id ~ '^[0-9a-f]{16}$'::text))",
+      "secret_store.secret_store_pkey": "p PRIMARY KEY (id)",
+      "secret_store.secret_store_rule_check": "c CHECK ((rule ~ '^[a-z0-9_]{1,64}$'::text))",
+      "secret_store.secret_store_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
+      "secret_store.secret_store_source_id_value_mac_key": "u UNIQUE (source_id, value_mac)",
+      "secret_store.secret_store_status_check": "c CHECK ((status = ANY (ARRAY['active'::text, 'allowed'::text])))",
+      "secret_store.secret_store_value_mac_check": "c CHECK ((value_mac ~ '^[0-9a-f]{64}$'::text))",
+      "secret_store_occurrence.secret_store_occurrence_entry_id_fkey": "f FOREIGN KEY (entry_id) REFERENCES secret_store(id) ON DELETE CASCADE",
+      "secret_store_occurrence.secret_store_occurrence_origin_check": "c CHECK ((origin = ANY (ARRAY['repair'::text, 'publish_rebuild'::text, 'transcript'::text, 'archive'::text, 'capture'::text])))",
+      "secret_store_occurrence.secret_store_occurrence_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE SET NULL",
+      "secret_store_occurrence.secret_store_occurrence_pkey": "p PRIMARY KEY (id)",
+      "secret_store_occurrence.secret_store_occurrence_pre_field_sha256_check": "c CHECK (((pre_field_sha256 IS NULL) OR (pre_field_sha256 ~ '^[0-9a-f]{64}$'::text)))",
       "session_context_state.session_context_state_pkey": "p PRIMARY KEY (source_id, client_id, session_id)",
       "shared_skill_delivery_batches.shared_skill_delivery_batches_installation_id_epoch_sequenc_key": "u UNIQUE (installation_id, epoch, sequence)",
       "shared_skill_delivery_batches.shared_skill_delivery_batches_installation_id_fkey": "f FOREIGN KEY (installation_id) REFERENCES shared_skill_members(installation_id) ON DELETE CASCADE",
@@ -1131,6 +1144,12 @@
       "search_telemetry": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
+      "secret_store": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "secret_store_occurrence": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "session_context_state": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -1698,6 +1717,11 @@
       "retrieval_feedback_pkey": "CREATE UNIQUE INDEX retrieval_feedback_pkey ON public.retrieval_feedback USING btree (event_id, signal, element_kind, source_id, element_key)",
       "retrieval_weights_pkey": "CREATE UNIQUE INDEX retrieval_weights_pkey ON public.retrieval_weights USING btree (source_id, element_kind, element_key)",
       "search_telemetry_pkey": "CREATE UNIQUE INDEX search_telemetry_pkey ON public.search_telemetry USING btree (date, mode, intent)",
+      "secret_store_occurrence_entry_idx": "CREATE INDEX secret_store_occurrence_entry_idx ON public.secret_store_occurrence USING btree (entry_id)",
+      "secret_store_occurrence_page_idx": "CREATE INDEX secret_store_occurrence_page_idx ON public.secret_store_occurrence USING btree (source_id, slug)",
+      "secret_store_occurrence_pkey": "CREATE UNIQUE INDEX secret_store_occurrence_pkey ON public.secret_store_occurrence USING btree (id)",
+      "secret_store_pkey": "CREATE UNIQUE INDEX secret_store_pkey ON public.secret_store USING btree (id)",
+      "secret_store_source_id_value_mac_key": "CREATE UNIQUE INDEX secret_store_source_id_value_mac_key ON public.secret_store USING btree (source_id, value_mac)",
       "session_context_state_pkey": "CREATE UNIQUE INDEX session_context_state_pkey ON public.session_context_state USING btree (source_id, client_id, session_id)",
       "session_context_state_updated_idx": "CREATE INDEX session_context_state_updated_idx ON public.session_context_state USING btree (updated_at)",
       "shared_skill_delivery_batches_installation_id_epoch_sequenc_key": "CREATE UNIQUE INDEX shared_skill_delivery_batches_installation_id_epoch_sequenc_key ON public.shared_skill_delivery_batches USING btree (installation_id, epoch, sequence)",
@@ -1850,6 +1874,7 @@
       "pinned_questions_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=pinned_questions.id",
       "question_evidence_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=question_evidence.id",
       "raw_data_id_seq": "integer start=1 min=1 max=2147483647 increment=1 cycle=false cache=1 owned_by=raw_data.id",
+      "secret_store_occurrence_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=secret_store_occurrence.id",
       "slug_aliases_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=slug_aliases.id",
       "subagent_messages_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=subagent_messages.id",
       "subagent_rate_leases_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=subagent_rate_leases.id",
@@ -2000,7 +2025,8 @@
           "21 attest_sources ARRAY/_text NULL",
           "22 attest_read text/text NULL",
           "23 reads_unscoped timestamp with time zone/timestamptz NULL",
-          "24 private_facts text/text NOT NULL DEFAULT 'none'::text"
+          "24 private_facts text/text NOT NULL DEFAULT 'none'::text",
+          "25 read_shared_revision integer/int4 NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
@@ -3353,7 +3379,8 @@
           "38 attest_sources ARRAY/_text NULL",
           "39 attest_read text/text NULL",
           "40 reads_unscoped timestamp with time zone/timestamptz NULL",
-          "41 private_facts text/text NOT NULL DEFAULT 'none'::text"
+          "41 private_facts text/text NOT NULL DEFAULT 'none'::text",
+          "42 read_shared_revision integer/int4 NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
@@ -4221,6 +4248,41 @@
           "14 rank1_lt_solid integer/int4 NOT NULL DEFAULT 0",
           "15 rank1_solid integer/int4 NOT NULL DEFAULT 0",
           "16 rank1_high integer/int4 NOT NULL DEFAULT 0"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "secret_store": {
+        "columns": [
+          "1 id text/text NOT NULL",
+          "2 source_id text/text NOT NULL",
+          "3 rule text/text NOT NULL",
+          "4 ciphertext text/text NOT NULL",
+          "5 nonce text/text NOT NULL",
+          "6 tag text/text NOT NULL",
+          "7 key_id text/text NOT NULL",
+          "8 key_host text/text NOT NULL DEFAULT ''::text",
+          "9 value_mac text/text NOT NULL",
+          "10 status text/text NOT NULL DEFAULT 'active'::text",
+          "11 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "12 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "secret_store_occurrence": {
+        "columns": [
+          "1 id bigint/int8 NOT NULL DEFAULT nextval('secret_store_occurrence_id_seq'::regclass)",
+          "2 entry_id text/text NOT NULL",
+          "3 source_id text/text NOT NULL",
+          "4 page_id integer/int4 NULL",
+          "5 slug text/text NULL",
+          "6 field text/text NOT NULL",
+          "7 origin text/text NOT NULL",
+          "8 commit_sha text/text NULL",
+          "9 path text/text NULL",
+          "10 line integer/int4 NULL",
+          "11 pre_field_sha256 text/text NULL",
+          "12 created_by text/text NOT NULL DEFAULT ''::text",
+          "13 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

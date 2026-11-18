@@ -1191,6 +1191,24 @@ export async function setPageAliases(
         SELECT $1,a,$2 FROM unnest($3::text[]) AS a ON CONFLICT DO NOTHING`, [sourceId, slug, uniq]);
   }
 
+/** A derived alias row of one page (`origin` declared or subject, written by the mention pass). */
+export interface DerivedAliasRow { alias_norm: string; origin: string; case_sensitive: boolean; alias_text: string }
+
+/**
+ * Replace one page's derived alias rows (`origin` declared/subject) with `aliases`: delete the existing ones, insert
+ * the new set (an empty list only deletes). Frontmatter rows are untouched. Runs on the caller's transaction engine
+ * (the page import's, or `reindex --aliases`'s).
+ */
+export async function replaceDerivedAliases(exec: SqlExecutor, slug: string, sourceId: string, aliases: readonly DerivedAliasRow[]): Promise<void> {
+  await exec.executeRaw(`DELETE FROM page_aliases WHERE source_id = $1 AND slug = $2 AND origin IN ('declared','subject')`, [sourceId, slug]);
+  if (aliases.length) {
+    await exec.executeRaw(
+      `INSERT INTO page_aliases (source_id, alias_norm, slug, origin, case_sensitive, alias_text)
+       SELECT $1, a, $2, o, c::boolean, t FROM unnest($3::text[], $4::text[], $5::text[], $6::text[]) AS x(a, o, c, t) ON CONFLICT DO NOTHING`,
+      [sourceId, slug, aliases.map(a => a.alias_norm), aliases.map(a => a.origin), aliases.map(a => String(a.case_sensitive)), aliases.map(a => a.alias_text)]);
+  }
+}
+
 export async function resolveSlugWithAliasDetailed(
   exec: LegacyUnscopedRead,
   slug: string,
@@ -1223,3 +1241,28 @@ export async function resolveSlugWithAliasDetailed(
       throw e;
     }
   }
+
+
+/** A live, unsegmented page's chunker version (`getPageSealState`; also the batched import read in persistence/import-reads.ts). */
+export const SAFE_FENCE_SQL = "SELECT chunker_version FROM pages WHERE id=$1 AND deleted_at IS NULL AND body_storage IS DISTINCT FROM 'segmented'";
+
+/**
+ * A live page's stored `chunker_version` by page id (null: it holds none), or null when the page is gone, deleted or
+ * stored segmented (its projection is built from its segments). The import compares it to the safe-chunk fence.
+ */
+export async function getPageSealState(exec: LegacyUnscopedRead, pageId: number): Promise<{ chunker_version: number | null } | null> {
+  const [row] = await exec.executeRaw<{ chunker_version: number | null }>(SAFE_FENCE_SQL, [pageId]);
+  return row ?? null;
+}
+
+/**
+ * Record where a live page's file lives: set `source_path` and, when `sourceUri` is given and the page has none or
+ * differs, `source_uri`. A page already holding both writes nothing (a zero-row UPDATE would still fire the
+ * generation-clock trigger). The caller holds the origin claim (`assertOriginUnclaimed`) in the same transaction.
+ */
+export async function refreshPageOrigin(exec: SqlExecutor, slug: string, opts: { sourceId: string; sourcePath: string; sourceUri?: string | null }): Promise<void> {
+  // origin-guard-ok: the caller (import-file refreshSourcePath) runs assertOriginUnclaimed in the same savepoint
+  await exec.executeRaw(`UPDATE pages SET source_path = $1, source_uri = COALESCE($4::text, source_uri) WHERE source_id = $2 AND slug = $3
+        AND deleted_at IS NULL AND (source_path IS DISTINCT FROM $1 OR source_uri IS DISTINCT FROM COALESCE($4::text, source_uri))`,
+  [opts.sourcePath, opts.sourceId, slug, opts.sourceUri ?? null]);
+}

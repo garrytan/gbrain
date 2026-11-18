@@ -218,22 +218,23 @@ describe('#5621 noEmbed imports record the wrapping convention for the later emb
 
   test('a failed source read fails the noEmbed import instead of stamping the global mode', async () => {
     const slug = 'notes/defer-read-fault';
-    const original = engine.executeRaw;
+    // The source-row read is the typed `getSource` method.
+    const original = engine.getSource;
     let faults = 0;
     // Keep `this`: transaction engines inherit this property, and routing
     // their reads back to the outer engine would deadlock PGLite.
-    engine.executeRaw = async function (this: PGLiteEngine, sql: string, params?: unknown[]) {
-      if (faults === 0 && sql.includes('trust_frontmatter_overrides') && sql.includes('FROM sources WHERE id')) {
+    engine.getSource = async function (this: PGLiteEngine, sourceId: string) {
+      if (faults === 0) {
         faults++;
         throw new Error('source read reset');
       }
-      return original.call(this, sql, params);
-    } as typeof engine.executeRaw;
+      return original.call(this, sourceId);
+    } as typeof engine.getSource;
     try {
       await expect(importFromContent(engine, slug, deferred('fault'), { sourceId: 'vault-off', noEmbed: true }))
         .rejects.toThrow('source read reset');
     } finally {
-      engine.executeRaw = original;
+      engine.getSource = original;
     }
     expect(faults).toBe(1);
     const rows = await engine.executeRaw(`SELECT 1 FROM pages WHERE slug = $1 AND source_id = 'vault-off'`, [slug]);

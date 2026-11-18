@@ -92,12 +92,22 @@ const whoami: Operation = {
     }
     // Legacy access_tokens reuse `name` as both clientId and clientName, so the
     // transport comes from the verifier-set principal (prefix only as fallback).
+    // GST-2898: where this connection writes and the sources it reads unqualified, resolved (the read-shared switch
+    // included), so an agent can tell the user without learning it from refusals.
+    const { NO_SOURCES } = await import('../source-id.ts');
+    const writeSource = ctx.auth.sourceId && ctx.auth.sourceId !== NO_SOURCES ? ctx.auth.sourceId : null;
+    const sourcesView = {
+      write_source: writeSource,
+      read_sources: ctx.auth.allowedSources ?? (ctx.localFederatedSourceIds?.length ? [...ctx.localFederatedSourceIds] : writeSource ? [writeSource] : []),
+      read_shared: ctx.auth.readShared === true,
+    };
     if (authTransport(ctx.auth) === 'oauth') {
       return {
         transport: 'oauth',
         features: WHOAMI_FEATURES,
         client_id: ctx.auth.clientId,
         client_name: ctx.auth.clientName ?? ctx.auth.clientId,
+        ...sourcesView,
         ...await resolveAuthCapabilities(ctx.auth, ctx.engine, ctx.config, { surfaceCeiling: ctx.surfaceCeiling }),
         access: await withApplied(await credentialAccessView(ctx.engine, ctx.auth)),
       };
@@ -108,6 +118,7 @@ const whoami: Operation = {
       token_name: ctx.auth.clientName ?? ctx.auth.clientId,
       scopes: ctx.auth.scopes,
       expires_at: null,
+      ...sourcesView,
       access: await withApplied(await credentialAccessView(ctx.engine, ctx.auth)),
       grant_diagnosis: await resolveGrantDiagnosis(ctx.auth, ctx.engine, ctx.config, { surfaceCeiling: ctx.surfaceCeiling }),
       readiness: readiness('http'),
