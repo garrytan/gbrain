@@ -549,6 +549,7 @@ export const RUST_ENGINE_MEMBERS = {
   listUnreviewedJobs: 'minion_queue',
   getFailedJobForRetry: 'minion_queue',
   countOpenJobsByOwner: 'minion_queue',
+  readJobSourceState: 'minion_queue',
   lockOAuthClient: 'minion_queue',
   listJobPage: 'minion_queue',
   listJobAttachmentNames: 'minion_queue',

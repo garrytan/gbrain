@@ -444,6 +444,16 @@ impl Brain {
         self.run(env, move |s| s.count_open_jobs_by_owner(&client_id))
     }
 
+    /// `readJobSourceState(sourceId)`: `{ archived, created_at }` or null.
+    #[napi]
+    pub fn read_job_source_state<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_job_source_state(&source_id))
+    }
+
     /// `listJobPage({ status, queue, name, ownerClientId, ownerActor, limit, cursor })`: rows with
     /// `created_us`.
     #[napi]

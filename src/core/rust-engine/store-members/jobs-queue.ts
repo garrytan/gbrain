@@ -9,7 +9,7 @@ import {
   DREAM_INLINE_PRIVATE_QUEUE_PREFIX,
   type CancelJobsSpec, type DelayActiveJobSpec, type JobAttachmentInsert, type JobPageSpec, type JobStatsRead,
   type JobTokenCounts, type PrivateQueueState, type PruneJobsSpec, type QueueFamilyRow, type RetryJobPolicy,
-  type SynthesisCompletion, type SynthesisCompletionPrefix,
+  type JobSourceState, type SynthesisCompletion, type SynthesisCompletionPrefix,
 } from '../../engine-sql/jobs-queue.ts';
 import { WATCHDOG_SUSPECT_MARK } from '../../minions/watchdog-attribution.ts';
 import { delegatedPolicyHandle } from '../delegated-policy-handle.ts';
@@ -170,6 +170,12 @@ export const getFailedJobForRetry: StoreMember<[id: number], { name: string; dat
  */
 export const countOpenJobsByOwner: StoreMember<[clientId: string], number> = (brain, clientId) =>
   call('countOpenJobsByOwner', () => brain.countOpenJobsByOwner(clientId));
+
+/** An agent job's source (archived, created_at), or null; the store reads the source record. */
+export const readJobSourceState: StoreMember<[sourceId: string], JobSourceState | null> = async (brain, sourceId) => {
+  const row: JobSourceState | null = await call('readJobSourceState', () => brain.readJobSourceState(sourceId));
+  return row ? withDates(row, ['created_at']) : null;
+};
 
 export const listJobPage: StoreMember<[spec: JobPageSpec], JobRow[]> = async (brain, spec) =>
   jobRows(await call('listJobPage', () => brain.listJobPage({ ...spec, cursor: spec.cursor ?? null })));

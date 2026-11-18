@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 490/490
+# covered: 491/491
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -33,7 +33,7 @@
 # entity_reads: 6/6
 # cycle_locks: 7/7
 # minion_jobs: 8/8
-# minion_queue: 42/42
+# minion_queue: 43/43
 # cli_reads_ops: 7/7
 # facts_doctor: 10/10
 # facts_cycle: 11/11
@@ -65,18 +65,18 @@ transactionDirect	lifecycle	yes	1	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 getPage	pages	yes	55	yes	yes	yes	serves
-readPageSnapshot	pages	yes	9	no	yes	yes	serves
+readPageSnapshot	pages	yes	10	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	198	yes	yes	yes	serves
+putPage	pages	yes	199	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
-deletePage	pages	yes	5	yes	yes	yes	serves
+deletePage	pages	yes	6	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	71	yes	yes	yes	serves
+softDeletePage	pages	yes	72	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
-restorePage	pages	yes	8	yes	yes	yes	serves
+restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
 listPages	pages	yes	4	yes	yes	yes	serves
 findPages	pages	yes	1	no	yes	yes	serves
@@ -86,7 +86,7 @@ getAllSlugs	pages	yes	4	no	yes	yes	serves
 listAllPageRefs	pages	yes	1	yes	yes	yes	serves
 listAllSources	pages	yes	3	no	yes	yes	serves
 updateSourceConfig	pages	yes	1	no	yes	yes	serves
-getSource	pages	yes	4	no	yes	yes	serves
+getSource	pages	yes	6	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
 listLocalPathSources	pages	yes	1	no	yes	yes	serves
 listSourceRoutingRows	pages	yes	1	no	yes	yes	serves
@@ -141,7 +141,7 @@ deleteChunksForPages	chunks	yes	1	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	1	no	yes	yes	serves
 upsertChunks	chunks	yes	21	yes	yes	yes	serves
-sealChunks	chunks	yes	19	no	yes	yes	serves
+sealChunks	chunks	yes	20	no	yes	yes	serves
 getChunks	chunks	yes	24	yes	yes	yes	serves
 getChunkPage	chunks	yes	3	no	yes	yes	serves
 getChunkWindows	chunks	yes	1	no	yes	yes	serves
@@ -288,7 +288,7 @@ getStats	stats_ingest	yes	4	yes	yes	yes	serves
 getHealth	stats_ingest	yes	5	yes	yes	yes	serves
 logIngest	stats_ingest	yes	2	no	yes	yes	serves
 getIngestLog	stats_ingest	yes	2	no	yes	yes	serves
-updateSlug	sync_aliases	yes	10	no	yes	yes	serves
+updateSlug	sync_aliases	yes	11	no	yes	yes	serves
 rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
 resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
@@ -323,7 +323,7 @@ insertWriteRequest	persistence_journal	yes	9	no	yes	yes	serves
 stampWriteClaim	persistence_journal	yes	8	no	yes	yes	serves
 lockWriteRequest	persistence_journal	yes	2	no	yes	yes	serves
 completeWriteRow	persistence_journal	yes	5	no	yes	yes	serves
-readSourceMembership	persistence_journal	yes	8	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	9	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	2	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	2	no	yes	yes	serves
 insertTopologyChange	persistence_journal	yes	4	no	yes	yes	serves
@@ -337,8 +337,8 @@ listCompactableReceipts	persistence_journal	yes	1	no	yes	yes	serves
 listReservationsAfter	persistence_journal	yes	1	no	yes	yes	serves
 listTrueUpRequests	persistence_journal	yes	1	no	yes	yes	serves
 readCapacityForecastInputs	persistence_journal	yes	1	no	yes	yes	serves
-listPendingSegmentedProjections	persistence_journal	yes	1	no	yes	yes	serves
-selectProjectionWindowJobs	persistence_journal	yes	1	no	yes	yes	serves
+listPendingSegmentedProjections	persistence_journal	yes	2	no	yes	yes	serves
+selectProjectionWindowJobs	persistence_journal	yes	2	no	yes	yes	serves
 readMentionLastPass	entity_reads	yes	1	no	yes	yes	serves
 countPagesDueForMentions	entity_reads	yes	1	no	yes	yes	serves
 readIdentitySiblingCandidates	entity_reads	yes	2	no	yes	yes	serves
@@ -352,13 +352,13 @@ readCycleLocks	cycle_locks	yes	8	no	yes	yes	serves
 deleteCycleLock	cycle_locks	yes	1	no	yes	yes	serves
 deleteCycleLockIfStale	cycle_locks	yes	1	no	yes	yes	serves
 assertCycleLease	cycle_locks	yes	1	no	yes	yes	serves
-admitJob	minion_jobs	yes	47	no	yes	yes	serves
-getJob	minion_jobs	yes	26	no	yes	yes	serves
+admitJob	minion_jobs	yes	49	no	yes	yes	serves
+getJob	minion_jobs	yes	28	no	yes	yes	serves
 listJobs	minion_jobs	yes	1	no	yes	yes	serves
-claimNextJob	minion_jobs	yes	38	no	yes	yes	serves
+claimNextJob	minion_jobs	yes	40	no	yes	yes	serves
 renewJobLease	minion_jobs	yes	1	no	yes	yes	serves
 completeJob	minion_jobs	yes	17	no	yes	yes	serves
-failJob	minion_jobs	yes	15	no	yes	yes	serves
+failJob	minion_jobs	yes	17	no	yes	yes	serves
 reclaimStalledJobs	minion_jobs	yes	1	no	yes	yes	serves
 deleteTerminalJob	minion_queue	yes	1	no	yes	yes	serves
 pauseJob	minion_queue	yes	6	no	yes	yes	serves
@@ -379,7 +379,7 @@ killWallClockJobs	minion_queue	yes	1	no	yes	yes	serves
 pruneJobs	minion_queue	yes	2	no	yes	yes	serves
 listSynthesisCompletionKeys	minion_queue	yes	2	no	yes	yes	serves
 listRecentSynthesisCompletions	minion_queue	yes	1	no	yes	yes	serves
-retryJob	minion_queue	yes	5	no	yes	yes	serves
+retryJob	minion_queue	yes	7	no	yes	yes	serves
 postInboxMessage	minion_queue	yes	2	no	yes	yes	serves
 readJobInbox	minion_queue	yes	1	no	yes	yes	serves
 readChildCompletions	minion_queue	yes	4	no	yes	yes	serves
@@ -396,6 +396,7 @@ listUnreviewedJobs	minion_queue	yes	1	no	yes	yes	serves
 getFailedJobForRetry	minion_queue	yes	2	no	yes	yes	serves
 countOpenJobsByOwner	minion_queue	yes	2	no	yes	yes	serves
 lockOAuthClient	minion_queue	yes	1	no	yes	yes	refuses:minion_queue
+readJobSourceState	minion_queue	yes	1	no	yes	yes	serves
 listJobPage	minion_queue	yes	1	no	yes	yes	serves
 listJobAttachmentNames	minion_queue	yes	3	no	yes	yes	serves
 insertJobAttachment	minion_queue	yes	3	no	yes	yes	serves
