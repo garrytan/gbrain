@@ -537,11 +537,11 @@ async function reexecSanitized(originalCwd: string, dropped: readonly string[]):
   } finally {
     rmSync(neutral, { recursive: true, force: true });
   }
-  noteJsonDocumentDelegated();
   if (signalCode) {
     const signals = osConstants.signals as Record<string, number | undefined>;
     process.exit(128 + (signals[signalCode] ?? 1)); // shell convention for a signal death
   }
+  noteJsonDocumentDelegated();
   process.exit(code);
 }
 

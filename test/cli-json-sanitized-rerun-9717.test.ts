@@ -4,7 +4,7 @@
  * on a non-zero exit, so stdout held two documents. Spawned directly (not through test/helpers/cli-spawn.ts, which
  * passes --no-env-file and would keep Bun from loading the .env), with a hermetic HOME.
  */
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -37,6 +37,27 @@ describe('#9717: --json after the sanitized re-run', () => {
     expect(() => JSON.parse(rerun.stdout)).not.toThrow();
     expect(JSON.parse(rerun.stdout)).toEqual(JSON.parse(control.stdout));
   });
+
+  test('a re-run killed by a signal still gets the wrapper\'s command_failed document', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-9717-cwd-'));
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-9717-home-'));
+    scratch.push(dir, home);
+    writeFileSync(join(dir, '.env'), 'OPENCLAW_GATEWAY_TOKEN=x\n');
+    const wrapper = spawn(process.execPath, [CLI_PATH, ...failing], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'],
+      env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: home, GBRAIN_HOME: home, PWD: dir, GBRAIN_SKIP_STARTUP_HOOKS: '1' } });
+    let stdout = '';
+    wrapper.stdout!.on('data', chunk => { stdout += chunk; });
+    const exited = new Promise<number | null>(resolve => wrapper.on('exit', code => resolve(code)));
+    let child = '';
+    for (let i = 0; i < 500 && !child; i++) {
+      child = spawnSync('pgrep', ['-P', String(wrapper.pid)], { encoding: 'utf8' }).stdout.trim().split('\n')[0] ?? '';
+      if (!child) await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    expect(child).not.toBe('');
+    process.kill(Number(child), 'SIGKILL');
+    expect(await exited).toBe(137);
+    expect(JSON.parse(stdout)).toMatchObject({ code: 'command_failed' });
+  }, 60_000);
 
   test('control: an exit 0 writes the command document alone', () => {
     const rerun = runFrom('OPENCLAW_GATEWAY_TOKEN=x\n', ['errors', 'no_brain', '--json']);
