@@ -65,6 +65,8 @@ import * as trustProposals from './trust-proposals.ts';
 import * as connectGate from './connect-gate.ts';
 import * as telemetry from './telemetry.ts';
 import * as importMembers from './import-members.ts';
+// Group C: decide proposals and review proposals (rust/docs/store/decide-proposals.md).
+import * as decideProposals from './decide-proposals.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
 const initSchema: StoreMember<[], void> = async () => undefined;
@@ -103,6 +105,8 @@ export const STORE_MEMBERS = {
   ...connectGate,
   // The page and chunk statements a page import runs around its chunk write (rust/docs/store/import-members.md).
   ...importMembers,
+  // Group C: the decide proposal tables (rust/docs/store/decide-proposals.md).
+  ...decideProposals,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

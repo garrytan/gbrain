@@ -60,3 +60,5 @@ mod timeline_queries;
 mod transactions;
 mod vectors;
 mod wanted_links;
+// Group C: decide proposals and review proposals (rust/docs/store/decide-proposals.md).
+mod decide_proposals;
