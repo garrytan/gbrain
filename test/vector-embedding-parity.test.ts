@@ -128,6 +128,20 @@ const HYBRID_NAMED = [
   'z-gen 0.2471 provenance="generated" generated_demotion=0.5',
   'e-person 0.1913',
 ];
+/** The same query with excludePrivate: true: PGLite hides the generated page and the rest of the order holds (11 rows). */
+const HYBRID_NAMED_PRIVATE = [
+  'zorbit 1.3600 backlink_count=1',
+  'a-exact 0.5471',
+  'd-multi 0.5430',
+  'z-after 0.5150 alias_resolved_boost=1.05',
+  'n-timeline 0.5078',
+  't-auto 0.4866 status=\"unverified\" unverified=true',
+  'u-dated 0.4828',
+  't-flagged 0.4792 content_flag={\"reason\":\"spam\",\"detail\":\"x\"}',
+  'r-target 0.4649 collapsed=[{\"slug\":\"r-stub\",\"source_id\":\"default\",\"reason\":\"redirect\"}] status=\"verified\"',
+  's-new 0.4715',
+  'e-person 0.1939',
+];
 const STAGES_WITHOUT_DATED = [
   'a-exact 1.3000 recency_boost=1.3',
   'd-multi 1.3000 recency_boost=1.3',
@@ -595,6 +609,8 @@ for (const kind of arms) {
       const cases = {
         plain: await hybrid('nonlexicalsaffronquery'),
         named: await hybrid('Zorbit'),
+        // A caller that hides private pages: PGLite answers it, so the Rust arm must answer it or refuse it, never return no rows.
+        namedPrivate: await hybrid('Zorbit', { excludePrivate: true }),
         stages: await every(),
         markers: await markers(),
         bag: await bag(),
@@ -613,6 +629,12 @@ for (const kind of arms) {
       expect({ ok: (cases.stages as { ok: string[] }).ok.filter((r) => r !== dated) }).toEqual({ ok: STAGES_WITHOUT_DATED });
       expect(cases.plain).toEqual({ ok: HYBRID_PLAIN });
       expect(cases.named).toEqual({ ok: HYBRID_NAMED });
+      if (rust) {
+        // The arms refuse excludePrivate (engine_capability_missing); hybridSearch must pass the refusal on, not read it as an empty arm.
+        expect(cases.namedPrivate).toMatchObject({ refused: 'engine_capability_missing', message: expect.stringMatching(/search(Keyword|Titles|Vector) \(option excludePrivate\)/) });
+      } else {
+        expect(cases.namedPrivate).toEqual({ ok: HYBRID_NAMED_PRIVATE });
+      }
       expect(cases.markers).toEqual({ ok: MARKERS });
       expect(cases.bag).toEqual({
         ok: {
