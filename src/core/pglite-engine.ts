@@ -198,6 +198,7 @@ import type { QueueDivergenceSpec, QueueHealthSpec } from './engine-sql/jobs-hea
 import * as jobsStatus from './engine-sql/jobs-status.ts';
 import type { JobStatusFilter } from './engine-sql/jobs-status.ts';
 import * as jobsChecks from './engine-sql/jobs-checks.ts';
+import * as jobsWake from './engine-sql/jobs-wake.ts';
 import type { DeadDreamSubmissionSpec } from './engine-sql/jobs-checks.ts';
 import * as jobsInsight from './engine-sql/jobs-insight.ts';
 import * as takesReads from './engine-sql/takes-reads.ts';
@@ -3627,4 +3628,25 @@ export class PGLiteEngine implements BrainEngine {
   listWriteGateHoldRows(opts: trustWriteGateImpl.WriteGateHoldListOpts) { return trustWriteGateImpl.listWriteGateHoldRows(unscopedExecutor(this.engineSql, 'trust: the write gate read ran through executeRaw unscoped'), opts); }
   getWriteGateHoldRow(id: number) { return trustWriteGateImpl.getWriteGateHoldRow(unscopedExecutor(this.engineSql, 'trust: the write gate read ran through executeRaw unscoped'), id); }
   decideWriteGateHold(id: number, status: 'released' | 'dropped', decidedBy: string) { return trustWriteGateImpl.decideWriteGateHold(this.engineSql, id, status, decidedBy); }
+
+  // Group A (jobs-tables): the Wakeshift report-back tables (engine-sql/jobs-wake.ts).
+  openWakeWatch(watch: jobsWake.WakeWatchInsert) { return jobsWake.openWakeWatch(this, watch); }
+  listWakeWatches(filter: jobsWake.WakeWatchFilter) { return jobsWake.listWakeWatches(this, filter); }
+  endWakeWatches(spec: jobsWake.EndWakeWatches) { return jobsWake.endWakeWatches(this, spec); }
+  countWakeWatches() { return jobsWake.countWakeWatches(this); }
+  readWakeDoctor() { return jobsWake.readWakeDoctor(this); }
+  countPendingWakeForgets() { return jobsWake.countPendingWakeForgets(this); }
+  listWakeCrons() { return jobsWake.listWakeCrons(this); }
+  addWakeCron(name: string) { return jobsWake.addWakeCron(this, name); }
+  removeWakeCron(name: string) { return jobsWake.removeWakeCron(this, name); }
+  hasWakeCron(name: string) { return jobsWake.hasWakeCron(this, name); }
+  recordWakeCronRun(run: { name: string; status: string; finishedAt: string | null }) { return jobsWake.recordWakeCronRun(this, run); }
+  hasWakeTermsAcceptance(principalKey: string, termsVersion: string) { return jobsWake.hasWakeTermsAcceptance(this, principalKey, termsVersion); }
+  recordWakeTermsAcceptance(principalKey: string, termsVersion: string) { return jobsWake.recordWakeTermsAcceptance(this, principalKey, termsVersion); }
+  listDueWakeWatches(spec: { ids?: readonly number[] } = {}) { return jobsWake.listDueWakeWatches(this, spec); }
+  claimWakeWatch(id: number, leaseSeconds: number) { return jobsWake.claimWakeWatch(this, id, leaseSeconds); }
+  settleWakeWatch(settle: jobsWake.WakeWatchSettle) { return jobsWake.settleWakeWatch(this, settle); }
+  queueWakeForget(wakeUser: string, memberId: string | null) { return jobsWake.queueWakeForget(this, wakeUser, memberId); }
+  claimWakeForgets(spec: { leaseSeconds: number; limit: number }) { return jobsWake.claimWakeForgets(this, spec); }
+  settleWakeForget(settle: jobsWake.WakeForgetSettle) { return jobsWake.settleWakeForget(this, settle); }
 }

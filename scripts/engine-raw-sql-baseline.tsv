@@ -121,7 +121,6 @@ src/commands/doctor/checks/unindexed-files.ts	execute_raw	1
 src/commands/doctor/checks/unlinked-facts.ts	execute_raw	1
 src/commands/doctor/checks/unscoped-multi-user-token.ts	execute_raw	2
 src/commands/doctor/checks/vector-plan.ts	execute_raw	4
-src/commands/doctor/checks/wakeshift.ts	execute_raw	3
 src/commands/doctor/checks/writer-version.ts	execute_raw	1
 src/commands/doctor/last-known.ts	execute_raw	2
 src/commands/doctor/report-remote.ts	execute_raw	2
@@ -227,7 +226,6 @@ src/commands/sync/run.ts	execute_raw	3
 src/commands/takes.ts	execute_raw	2
 src/commands/trust.ts	execute_raw	1
 src/commands/upgrade.ts	execute_raw	1
-src/commands/wakeshift.ts	execute_raw	6
 src/core/access/actor.ts	execute_raw	7
 src/core/access/attest-sources.ts	sql_template	8
 src/core/access/caller.ts	execute_raw	9
@@ -609,7 +607,6 @@ src/core/ops/tags.ts	execute_raw	1
 src/core/ops/trust.ts	execute_raw	1
 src/core/ops/usage.ts	execute_raw	2
 src/core/ops/valid-time-read.ts	execute_raw	6
-src/core/ops/wakeshift.ts	execute_raw	5
 src/core/ops/whois.ts	execute_raw	1
 src/core/output/writer.ts	execute_raw	1
 src/core/oversized-backfill.ts	execute_raw	6
@@ -1115,10 +1112,8 @@ src/core/verbs/entity-references.ts	execute_raw	1
 src/core/verbs/entity-source.ts	execute_raw	1
 src/core/verbs/entity-text-mentions.ts	execute_raw	1
 src/core/verbs/entity-variants.ts	execute_raw	4
-src/core/wakeshift/drain.ts	execute_raw	10
+src/core/wakeshift/drain.ts	execute_raw	2
 src/core/wakeshift/forget.ts	sql_template	6
-src/core/wakeshift/spool.ts	execute_raw	3
-src/core/wakeshift/terms.ts	execute_raw	2
 src/core/write-gate-scan.ts	execute_raw	2
 src/core/write-through.ts	execute_raw	2
 src/eval/brainbench/adapters/codex.ts	execute_raw	1
