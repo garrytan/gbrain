@@ -176,6 +176,12 @@ fn w_alpha(c: u32) -> bool {
     }
 }
 
+/// `t_isalnum` for one character (`iswalnum` under the C.UTF-8 ctype): the parser's letter
+/// class or an ASCII digit. The websearch `or` check uses it.
+pub(crate) fn is_alnum_char(c: char) -> bool {
+    w_alpha(c as u32) || w_digit(c as u32)
+}
+
 fn w_digit(c: u32) -> bool {
     (0x30..=0x39).contains(&c)
 }

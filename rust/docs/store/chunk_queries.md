@@ -63,7 +63,7 @@ the store does not guess at that cast.
 ## The chunkless reads
 
 A page counts when it is live, has a non-empty `compiled_truth` or `timeline` (or is segmented with `body_bytes > 0`;
-`body_bytes` is a page column the page_body family adds, and it reads as NULL until that family writes one), has no `quarantine` frontmatter key,
+`body_bytes` reads as NULL for now, see the follow-up below), has no `quarantine` frontmatter key,
 has no chunk rows, and either is not sealed or carries `embed_skip`. A page sealed with no chunks does not count.
 `sourceId` scopes the read only when it is a non-empty string, as the SQL truthiness test does.
 
@@ -79,3 +79,11 @@ given, at most `batchSize` rows (default 50). A negative or fractional `batchSiz
   the fence.
 - The activation sentinel revision (`ACTIVATION_SERVED_REVISION`) of the served-projection filter does not exist in
   the store.
+
+## Follow-ups
+
+- `chunkless-segmented-body-bytes`: the page_body family (lane 3) stores a segmented page's `body_bytes` in its
+  private body state under the page_body tag, not as a page column. This family reads `body_bytes` as NULL today, so
+  a segmented page never counts as chunkless with content. After core lands the combined branch, read `body_bytes`
+  through a `pub(crate)` accessor in `page_body.rs` (ask the Rust BrainEngine owner for it) and add one unit test
+  where a segmented page with `body_bytes > 0` counts.
