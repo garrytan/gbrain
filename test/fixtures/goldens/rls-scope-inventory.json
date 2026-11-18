@@ -3993,6 +3993,7 @@
         "listLinkSources": "direct",
         "listPages": "direct",
         "listPrefixSampledPages": "direct",
+        "listRestrictedIdentityMembers": "none",
         "listSourceLocalPaths": "none",
         "listStaleChunks": "direct",
         "listStaleFrontmatterKeyPages": "direct",
