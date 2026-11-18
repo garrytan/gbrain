@@ -70,6 +70,12 @@ const engineStub = {
   // Search reads result trust through this typed member; the stub has no pages.
   readPageTrustRows: async () => [],
   countEmbeddingHeldPages: async () => null,
+  // Alias fan-out reads titles and aliases through typed members; the stub has no pages, so each finds nothing.
+  findPagesByTitles: async () => [],
+  resolveAliases: async () => new Map(),
+  resolveCaseSensitiveAliases: async () => [],
+  readPageTitle: async () => null,
+  readPageAliasRows: async () => [],
   listSourceRecords: async () => { sourceListings++; return []; },
   executeRaw: async (sql: string) => {
     rawCalls.push(String(sql));
