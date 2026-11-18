@@ -1,0 +1,25 @@
+{
+  "seed_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+  "key_name": "box",
+  "public_key": "ebVWLo_mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ",
+  "vectors": [
+    {
+      "name": "ascii",
+      "idempotencyKey": "owner-msg-0001",
+      "timestamp": 1795000000,
+      "nonce": "00112233445566778899aabbccddeeff",
+      "body": "{\"owner_instruction\":\"text alice-example that I am running late\",\"requested_by\":\"owner\",\"text\":\"Running 10 min late\",\"to\":\"+15550100\"}",
+      "canonical": "GBRAIN-SIGN-V1\nPOST\n/v1/imessage/send\n1795000000\n00112233445566778899aabbccddeeff\nowner-msg-0001\n1ebe99ebef444f5e27f465d3d34395379d23edc730b48c8c3320da4819520cc7",
+      "authorization": "GBrain-Sign key=box, ts=1795000000, nonce=00112233445566778899aabbccddeeff, sig=dmZQYsjC74myzvw738DlaTIpecZ2KJuHAWR1x5YG-h2RPWntlfoGna6AcDKCW_CZksSn9M9QHRQDVvRRcepmBQ"
+    },
+    {
+      "name": "emoji_and_quotes",
+      "idempotencyKey": "owner_msg.0002",
+      "timestamp": 1795000123,
+      "nonce": "ffeeddccbbaa99887766554433221100",
+      "body": "{\"to\":\"test@example.invalid\",\"text\":\"Quote \\\" back\\\\slash 👋🏽 \\\" & do shell script \\\"touch /tmp/x\\\" & \\\"\",\"requested_by\":\"owner\",\"owner_instruction\":\"say hi\"}",
+      "canonical": "GBRAIN-SIGN-V1\nPOST\n/v1/imessage/send\n1795000123\nffeeddccbbaa99887766554433221100\nowner_msg.0002\n87ec0d3de5f8d1299410ce5a9bf746080c103dc93fc8b7b1a2817a71aeb068a7",
+      "authorization": "GBrain-Sign key=box, ts=1795000123, nonce=ffeeddccbbaa99887766554433221100, sig=caWb23VVEk6OPCTycEo77UGiWszlyacobY1vVGnId83c5rDuFTGUgQswcP7Ws_KMqy3LCUWv88QuE4w8x_JMAA"
+    }
+  ]
+}
