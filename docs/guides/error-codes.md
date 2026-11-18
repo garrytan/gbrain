@@ -3852,6 +3852,14 @@ More: [docs/guides/windowed-reads.md#page_shrink_refused](../../docs/guides/wind
 
 More: [docs/guides/windowed-reads.md#page_too_large_for_inline](../../docs/guides/windowed-reads.md#page_too_large_for_inline)
 
+### param_not_on_surface
+
+<a id="param_not_on_surface"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A remote caller passed a parameter that its tool surface leaves out of the tool's schema; nothing ran. | The tool surface the brain operator set for a connection (verbs, starter, full) limits the parameters it may pass as well as the tools it may call, so a starter client cannot reach behaviour such as include_deleted that only the full surface offers. | Repeat the call without that parameter, or widen the surface with request_tools when the fix offers it. | agent | `repeat the read that failed` | 1 | no |
+
 ### parse_error
 
 <a id="parse_error"></a>
