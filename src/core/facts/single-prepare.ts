@@ -167,20 +167,14 @@ export async function listSupersessionCandidates(engine: BrainEngine, sourceId: 
  * `lane` is the writer's `facts.source`: capture lanes never drop by cosine (#5888).
  */
 export async function decideSingleFact(engine: BrainEngine, sourceId: string, input: SingleFactIntent, embedding: Float32Array | null, embeddingModel?: string | null, lane?: string | null, opts: { excludePrivate?: boolean } = {}): Promise<FactDecision> {
-  const [exact] = await engine.executeRaw<FactCandidate>(`SELECT * FROM facts WHERE source_id=$1
-    AND entity_slug IS NOT DISTINCT FROM $2 AND visibility=$3 AND expired_at IS NULL
-    AND (valid_until IS NULL OR valid_until>now()) AND gbrain_fact_fingerprint(fact)=gbrain_fact_fingerprint($4)
-    AND ($5::text IS NULL OR attributed_to IS NULL OR attributed_to=$5)${opts.excludePrivate && !input.page_slug ? ` AND ${remoteProvenanceFloorSql('facts')}` : ''}
-    AND ${input.page_slug ? 'source_markdown_slug=$6' : `($6::text IS NULL AND NOT ${onOwnedMemoryPageSql('facts')})`}
-    ORDER BY id LIMIT 1`, [sourceId, input.entity_slug, input.visibility, input.fact, input.attributed_to ?? null, input.page_slug ?? null]);
+  const remoteFloor = opts.excludePrivate === true && !input.page_slug;
+  const exact = await engine.findActiveSingleFact({ sourceId, entitySlug: input.entity_slug, visibility: input.visibility, fact: input.fact,
+    attributedTo: input.attributed_to ?? null, pageSlug: input.page_slug ?? null, remoteFloor });
   if (exact) return { status: 'duplicate', candidate: { ...exact, id: Number(exact.id) } };
   if (embedding && input.entity_slug) {
     const candidates = await listSupersessionCandidates(engine, sourceId, input.entity_slug, input.fact, embedding, embeddingModel, undefined, input.attributed_to ?? null,
       input.page_slug ? { onlyPage: input.page_slug } : { excludeMemberPages: true });
-    const metadata = await engine.executeRaw<{ id: number; source_markdown_slug: string | null; row_num: number | null; trust_tier: FactRow['trust_tier'];
-      claim_metric: string | null; claim_unit: string | null; claim_period: string | null }>(
-      `SELECT id,source_markdown_slug,row_num,trust_tier,claim_metric,claim_unit,claim_period FROM facts WHERE source_id=$1 AND id=ANY($2::int[])${opts.excludePrivate && !input.page_slug ? ` AND ${remoteProvenanceFloorSql('facts')}` : ''}`,
-      [sourceId, candidates.map(c => c.id)]);
+    const metadata = await engine.listSingleFactMetadata({ sourceId, ids: candidates.map(c => c.id), remoteFloor });
     let candidate: FactCandidate | null = null;
     let score = -1;
     for (const found of candidates) {

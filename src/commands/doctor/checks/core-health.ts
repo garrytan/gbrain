@@ -15,6 +15,7 @@ import type { ProgressReporter } from '../../../core/progress.ts';
 import type { Check } from '../../doctor.ts';
 import { PAGE_CHILD_FK_TARGETS, orphanPredicate } from '../../../core/repair/orphan-children.ts';
 import { checkError } from '../check-fix.ts';
+import { capabilityRefusal, capabilityUnknownCheck } from '../budget.ts';
 import { answersFromCatalog, catalogSkipCheck, reportsCapability } from '../../../core/rust-engine/store-members/catalog.ts';
 import { isMissingSchemaObject } from '../../../core/utils.ts';
 
@@ -403,6 +404,11 @@ export async function checkVolunteerChannels(
     // Discriminate table-absent (pre-v117 brain) from transient failures —
     // a connection blip on a fully-migrated brain must not be misreported
     // as an old schema. Info-only either way; never block doctor.
+    const refusal = capabilityRefusal(e);
+    if (refusal) {
+      const unknown = capabilityUnknownCheck(name, refusal);
+      return { ...unknown, details: { ...unknown.details, window_days: 7, channels: {} } };
+    }
     const msg = e instanceof Error ? e.message : String(e);
     const tableAbsent = isMissingSchemaObject(e, 'table', 'context_volunteer_events');
     return {
@@ -488,10 +494,12 @@ export async function childTableOrphansCheck(engine: BrainEngine): Promise<Check
   const errors: string[] = [];
   for (const target of PAGE_CHILD_FK_TARGETS) {
     try {
-      const rows = await engine.executeRaw<{ n: string | number }>(
-        `SELECT COUNT(*)::int AS n FROM ${target.table} WHERE ${orphanPredicate(target)}`,
-      );
-      const n = Number(rows[0]?.n ?? 0);
+      // The chunk target is an engine member, so an engine without raw SQL can still answer it.
+      const n = target.table === 'content_chunks' && target.col === 'page_id'
+        ? await engine.countOrphanChunks()
+        : Number((await engine.executeRaw<{ n: string | number }>(
+          `SELECT COUNT(*)::int AS n FROM ${target.table} WHERE ${orphanPredicate(target)}`,
+        ))[0]?.n ?? 0);
       if (n > 0) {
         totalOrphans += n;
         breakdown.push(`${target.table}.${target.col}=${n}`);

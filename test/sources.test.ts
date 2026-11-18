@@ -14,6 +14,7 @@ import { join } from 'path';
 import { runSources } from '../src/commands/sources.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { countSourcePages } from '../src/core/engine-sql/sources.ts';
+import { withTypedSourceReads } from './helpers/typed-source-reads.ts';
 
 // ── Stub engine that records queries ───────────────────────
 
@@ -68,7 +69,7 @@ function makeStub(rowsByPattern: Record<string, unknown[]> = {}, opts: { appears
   const insertSource = async (row: { id: string; name: string; local_path: string | null; config: Record<string, unknown> }) => {
     calls.push({ sql: 'INSERT INTO sources (id, name, local_path, config)', params: [row.id, row.name, row.local_path, JSON.stringify(row.config)] });
   };
-  const engine = {
+  const engine = withTypedSourceReads({
     kind: 'pglite' as const,
     executeRaw,
     countSourcePages: (sourceId: string, o?: { includeDeleted?: boolean }) => countSourcePages({ executeRaw } as never, sourceId, o),
@@ -82,7 +83,7 @@ function makeStub(rowsByPattern: Record<string, unknown[]> = {}, opts: { appears
     transaction: async (fn: (tx: BrainEngine) => Promise<unknown>) => fn(engine),
     // Unused methods throw if called accidentally during these tests.
     getConfig: async () => null,
-  } as unknown as BrainEngine;
+  } as unknown as BrainEngine);
 
   return { engine, calls, configSet };
 }
@@ -270,10 +271,26 @@ describe('sources list', () => {
       'COUNT(*)::int AS n FROM pages': [{ n: 1 }],
     });
 
-    await runSources(engine, ['list']);
+    const asked: unknown[] = [];
+    const countSourcePages = engine.countSourcePages.bind(engine);
+    (engine as { countSourcePages: unknown }).countSourcePages = (id: string, opts?: { includeDeleted?: boolean }) => {
+      asked.push({ id, opts });
+      return countSourcePages(id, opts);
+    };
+    const lines: string[] = [];
+    const logSpy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => { lines.push(a.map(String).join(' ')); });
+    try {
+      await runSources(engine, ['list']);
+    } finally {
+      logSpy.mockRestore();
+    }
 
-    const count = calls.find(c => c.sql.includes('COUNT(*)::int AS n FROM pages'));
-    expect(count?.sql).toContain('deleted_at IS NULL');
+    // The count comes from the typed page count for this one source, live pages only (no includeDeleted).
+    expect(asked).toEqual([{ id: 'default', opts: undefined }]);
+    expect(calls.find(c => c.sql.includes('COUNT(*)::int AS n FROM pages'))?.sql).toContain('deleted_at IS NULL');
+    // The rows come from the typed source listing, so no list statement reaches executeRaw.
+    expect(calls.some(c => c.sql.includes('ORDER BY (id = \'default\') DESC'))).toBe(false);
+    expect(lines.find(l => l.includes('default'))).toContain('1');
   });
 
   test('distinguishes explicit false / absent key / explicit true in the human-readable label', async () => {

@@ -38,6 +38,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import type { HybridSearchMeta } from '../types.ts';
 import { registerBackgroundWorkDrainer, type BackgroundWorkDrainMode } from '../background-work.ts';
 import { engineKey } from '../engine-key.ts';
@@ -694,7 +695,9 @@ export async function readSearchStats(
       empty_results: { total: empty_total, by_cause: empty_by_cause },
       rerank_gate: { ...rerank_gate, would_skip_rate: rerank_gate.graded > 0 ? rerank_gate.would_skip / rerank_gate.graded : 0 },
     };
-  } catch {
+  } catch (err) {
+    // An engine that cannot read the table refuses; zeros would read as "no searches".
+    rethrowCapabilityRefusal(err);
     // Best-effort by design: a pre-v0.32.3 brain WITHOUT the search_telemetry
     // table shows "0 searches" (with the coverage caveat explaining low/zero
     // counts), NOT a crash — a long-standing contract pinned by

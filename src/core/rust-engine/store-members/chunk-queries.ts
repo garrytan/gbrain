@@ -1,14 +1,29 @@
 /**
  * Chunk reads beyond the core chunks members: one page of a page's chunks (BrainEngine getChunkPage), batched chunk
- * windows for evidence delivery (getChunkWindows) and the pages with a body but no chunks
- * (countChunklessPagesWithContent, listChunklessPagesWithContent).
+ * windows for evidence delivery (getChunkWindows), the pages with a body but no chunks
+ * (countChunklessPagesWithContent, listChunklessPagesWithContent), the import's deleteChunksExcept, and the chunk reads
+ * and deletes of src/core/engine-sql/chunk-reads.ts (findCodeDefinitions, listSymbolTypesForName, findCodeRefChunks,
+ * countOversizedEmbedSkips, countOrphanChunks, countCodeChunkPages, codeChunksExist, currentCodeChunksExist,
+ * listQualifiedSymbolNames, listWithdrawalChunks, deleteChunksForPages, listContextualModeCandidates,
+ * resolveFrozenHits).
  *
  * Export only BrainEngine members from this file, each a `StoreMember` named after the member it serves (see tags.ts):
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
  * unexported.
+ *
+ * The chunk-reads members model the source filter, the page privacy policy (storePagePolicy) and the live test of the
+ * read policy (src/core/search/read-policy-sql.ts). A trust, flag or safe-chunk policy refuses with
+ * `engine_capability_missing` (the store records no chunker-version fence). See rust/docs/store/chunk_queries.md.
  */
 import { mapChunkWindowRows, type ChunkWindowOpts, type ChunkWindowPage, type ChunkWindowRequest } from '../../search/chunk-windows.ts';
 import type { Chunk, ChunklessPageRow, PageReadScope } from '../../types.ts';
+import { DEF_TYPES } from '../../chunkers/def-types.ts';
+import type {
+  CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuery, ContextualModeCandidate, FrozenHitKey, FrozenHitRow,
+  WithdrawalChunkKey, WithdrawalChunkRow,
+} from '../../engine-sql/chunk-reads.ts';
+import { requiresSafeChunks } from '../../search/safe-chunks.ts';
+import { storePagePolicy } from './private-provenance.ts';
 import { toChunk } from '../store-codec.ts';
 import { namedSourceIds, refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 
@@ -60,4 +75,165 @@ export const listChunklessPagesWithContent: StoreMember<[opts?: { batchSize?: nu
   (brain, opts) => {
     const options = takeOptions('listChunklessPagesWithContent', opts, ['batchSize', 'afterPageId', 'sourceId']);
     return storeCall({ member: 'listChunklessPagesWithContent' }, () => brain.listChunklessPagesWithContent(options));
+  };
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The chunk reads of src/core/engine-sql/chunk-reads.ts
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** The read-policy keys these members model: the source filter, `allSources` and the page privacy policy. */
+const POLICY_KEYS = ['sourceId', 'sourceIds', 'allSources', 'excludePrivate', 'requireSafeChunks'] as const;
+/** `pageReadFilter` never reads it, so the SQL engines ignore it in these statements and the store does too. */
+const UNREAD_BY_FILTER = ['takesHoldersAllowList'] as const;
+const INT32_MAX = 2 ** 31 - 1;
+
+/** Ids the SQL engines cast to `int[]`: an id that is not an int4 is refused rather than guessed at. */
+function int32Ids(member: string, ids: readonly number[]): number[] {
+  for (const id of ids) {
+    if (!Number.isInteger(id) || Math.abs(id) > INT32_MAX) refuseMember(member, 'an id that is not a 32-bit integer');
+  }
+  return [...ids];
+}
+
+/**
+ * The wire scope of `pageReadFilter`: the source filter (`codeReadFilter` drops `sourceId` under `allSources` when no
+ * `sourceIds` is given) and, under `excludePrivate`, the store page policy. A safe-chunk scope refuses.
+ */
+function wireScope(member: string, o: Record<string, unknown>, code: boolean): { sourceId?: unknown; sourceIds?: unknown; excludePrivate: unknown } {
+  if (requiresSafeChunks(o as PageReadScope)) refuseMember(member, 'a safe-chunk read (the store records no chunker-version fence)');
+  const dropSource = code && !!o.allSources && o.sourceIds === undefined;
+  return {
+    sourceId: dropSource ? undefined : o.sourceId,
+    sourceIds: o.sourceIds,
+    excludePrivate: storePagePolicy(member, o.excludePrivate) ?? null,
+  };
+}
+
+/** `sourceIds: []` makes `codeReadFilter` (and codeChunksExist) `FALSE`: no row. */
+const namesNoSource = (o: Record<string, unknown>) => Array.isArray(o.sourceIds) && o.sourceIds.length === 0;
+
+const lineOf = (v: unknown) => (v === null || v === undefined ? null : Number(v));
+
+function codeRow<T extends CodeDefinitionRow>(r: T): T {
+  return { ...r, start_line: lineOf(r.start_line), end_line: lineOf(r.end_line) };
+}
+
+function symbolInput(member: string, symbol: string, opts: CodeSymbolQuery | undefined, withLimit: boolean) {
+  const o = takeOptions(member, opts, [...POLICY_KEYS, 'language', ...(withLimit ? ['limit'] : [])], UNREAD_BY_FILTER);
+  const scope = wireScope(member, o, true);
+  return { o, input: { symbol, language: o.language ?? null, limit: o.limit ?? null, scope } };
+}
+
+export const findCodeDefinitions: StoreMember<[symbol: string, opts?: CodeSymbolQuery], CodeDefinitionRow[]> =
+  async (brain, symbol, opts) => {
+    const { o, input } = symbolInput('findCodeDefinitions', symbol, opts, true);
+    if (namesNoSource(o)) return [];
+    const rows: CodeDefinitionRow[] = await storeCall({ member: 'findCodeDefinitions' },
+      () => brain.findCodeDefinitions({ ...input, limit: input.limit ?? 20, defTypes: [...DEF_TYPES, 'export statement'] }));
+    return rows.map(codeRow);
+  };
+
+export const listSymbolTypesForName: StoreMember<[symbol: string, opts?: Omit<CodeSymbolQuery, 'limit'>], Array<string | null>> =
+  async (brain, symbol, opts) => {
+    const { o, input } = symbolInput('listSymbolTypesForName', symbol, opts, false);
+    if (namesNoSource(o)) return [];
+    return storeCall({ member: 'listSymbolTypesForName' }, () => brain.listSymbolTypesForName(input));
+  };
+
+export const findCodeRefChunks: StoreMember<[symbol: string, opts?: CodeSymbolQuery], CodeRefChunkRow[]> =
+  async (brain, symbol, opts) => {
+    const { o, input } = symbolInput('findCodeRefChunks', symbol, opts, true);
+    if (namesNoSource(o)) return [];
+    const rows: CodeRefChunkRow[] = await storeCall({ member: 'findCodeRefChunks' },
+      () => brain.findCodeRefChunks({ ...input, limit: input.limit ?? 50 }));
+    return rows.map(codeRow);
+  };
+
+export const countOversizedEmbedSkips: StoreMember<[maxBytes: number], { marked: number; chunkless: number }> =
+  async (brain, maxBytes) => {
+    const r: { marked: number; chunkless: number } = await storeCall({ member: 'countOversizedEmbedSkips' },
+      () => brain.countOversizedEmbedSkips(Number(maxBytes)));
+    return { marked: Number(r.marked), chunkless: Number(r.chunkless) };
+  };
+
+export const countOrphanChunks: StoreMember<[], number> =
+  async (brain) => Number(await storeCall({ member: 'countOrphanChunks' }, () => brain.countOrphanChunks()));
+
+export const countCodeChunkPages: StoreMember<[], { chunks: number; pages: number }> = async (brain) => {
+  const r: { chunks: number; pages: number } = await storeCall({ member: 'countCodeChunkPages' }, () => brain.countCodeChunkPages());
+  return { chunks: Number(r.chunks), pages: Number(r.pages) };
+};
+
+/** Any stored chunk of a live code page under `{ ...policy, sourceId }`; `pageReadFilter` reads no `allSources`. */
+export const codeChunksExist: StoreMember<[sourceId: string | undefined, policy?: PageReadScope], boolean> =
+  async (brain, sourceId, policy) => {
+    const o = takeOptions('codeChunksExist', { ...policy, sourceId }, POLICY_KEYS.filter(k => k !== 'allSources'), UNREAD_BY_FILTER);
+    if (namesNoSource(o)) return false;
+    // pageReadFilter reads no safe-chunk key; only codeReadFilter does.
+    const scope = { sourceId: o.sourceId, sourceIds: o.sourceIds, excludePrivate: storePagePolicy('codeChunksExist', o.excludePrivate) ?? null };
+    return !!(await storeCall({ member: 'codeChunksExist' }, () => brain.codeChunksExist({ served: false, withSymbol: false, scope })));
+  };
+
+export const currentCodeChunksExist: StoreMember<[scope: CodeChunkScope, predicate: 'any' | 'with_symbol'], boolean> =
+  async (brain, scope, predicate) => {
+    const o = takeOptions('currentCodeChunksExist', scope, POLICY_KEYS, UNREAD_BY_FILTER);
+    if (namesNoSource(o)) return false;
+    const wire = wireScope('currentCodeChunksExist', o, true);
+    return !!(await storeCall({ member: 'currentCodeChunksExist' },
+      () => brain.codeChunksExist({ served: true, withSymbol: predicate === 'with_symbol', scope: wire })));
+  };
+
+export const listQualifiedSymbolNames: StoreMember<[sourceId: string, symbol: string, opts: { match: 'exact' | 'contains'; limit: number }], string[]> =
+  async (brain, sourceId, symbol, opts) => {
+    const limit = Math.max(0, Math.floor(opts.limit));
+    if (!Number.isSafeInteger(limit)) refuseMember('listQualifiedSymbolNames', 'a limit that is not a finite number');
+    return storeCall({ member: 'listQualifiedSymbolNames' },
+      () => brain.listQualifiedSymbolNames({ sourceId, symbol, match: opts.match === 'contains' ? 'contains' : 'exact', limit }));
+  };
+
+export const listWithdrawalChunks: StoreMember<[sourceId: string, keys: WithdrawalChunkKey[], opts: { after: number; limit: number; subjects: string[] | null }], WithdrawalChunkRow[]> =
+  async (brain, sourceId, keys, opts) => {
+    if (!Number.isSafeInteger(opts.after) || !Number.isSafeInteger(opts.limit)) refuseMember('listWithdrawalChunks', 'an after or limit that is not an integer');
+    const rows: WithdrawalChunkRow[] = await storeCall({ member: 'listWithdrawalChunks' }, () => brain.listWithdrawalChunks({
+      sourceId, keys: keys.map(k => ({ subject: k.subject, patterns: k.patterns })), after: opts.after, limit: Math.max(0, opts.limit), subjects: opts.subjects,
+    }));
+    return rows.map(r => ({ ...r, id: Number(r.id), page_id: Number(r.page_id) }));
+  };
+
+export const deleteChunksForPages: StoreMember<[pageIds: readonly number[]], void> = async (brain, pageIds) => {
+  const ids = int32Ids('deleteChunksForPages', pageIds);
+  await storeCall({ member: 'deleteChunksForPages' }, () => brain.deleteChunksForPages(ids));
+};
+
+/** Unlike deleteChunks the slug is matched as written and the text seal is kept. */
+export const deleteChunksExcept: StoreMember<[slug: string, keepIds: readonly number[], opts?: { sourceId?: string }], void> =
+  async (brain, slug, keepIds, opts) => {
+    const keep = int32Ids('deleteChunksExcept', keepIds);
+    const { sourceId } = takeOptions('deleteChunksExcept', opts, ['sourceId']) as { sourceId?: string };
+    await storeCall({ member: 'deleteChunksExcept', slug }, () => brain.deleteChunksExcept({ slug, keepIds: keep, sourceId: sourceId ?? 'default' }));
+  };
+
+export const listContextualModeCandidates: StoreMember<[sourceIds: string[]], ContextualModeCandidate[]> =
+  async (brain, sourceIds) => {
+    const rows: ContextualModeCandidate[] = await storeCall({ member: 'listContextualModeCandidates' },
+      () => brain.listContextualModeCandidates(sourceIds.map(String)));
+    return rows.map(r => ({ ...r, id: Number(r.id), chars: Number(r.chars) }));
+  };
+
+export const resolveFrozenHits: StoreMember<[hits: FrozenHitKey[], scope: PageReadScope], FrozenHitRow[]> =
+  async (brain, hits, scope) => {
+    if (hits.length === 0) return [];
+    const o = takeOptions('resolveFrozenHits', scope, POLICY_KEYS.filter(k => k !== 'allSources'), UNREAD_BY_FILTER);
+    const wire = wireScope('resolveFrozenHits', o, false);
+    // The SQL engines bind chunk ids and ords into int[]; a value outside int4 is refused there.
+    int32Ids('resolveFrozenHits', hits.flatMap(h => [h.chunk_id, h.ord]));
+    const rows: FrozenHitRow[] = await storeCall({ member: 'resolveFrozenHits' }, () => brain.resolveFrozenHits({
+      hits: hits.map(h => ({ source_id: String(h.source_id), slug: String(h.slug), chunk_id: h.chunk_id, ord: h.ord })), scope: wire,
+    }));
+    return rows.map(r => ({
+      ...r,
+      ord: Number(r.ord),
+      page_id: Number(r.page_id),
+      effective_date: r.effective_date === null || r.effective_date === undefined ? null : new Date(r.effective_date),
+    }));
   };

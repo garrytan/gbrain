@@ -15,6 +15,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import { isQuarantined } from '../quarantine.ts';
+import { pageSnapshotKey } from '../page-snapshot-batch.ts';
 import { followRetirement, isIdentityEntity } from '../entities/resolve.ts';
 import { NAME_MATCH_RANK, NAME_TITLE_TOKENS, WEAK_NAME_MATCHES, hasLeadingTitle, matchNameVariant, parsePersonName, probeWords, stripLeadingTitles, type NameMatchKind } from '../entities/name-variants.ts';
 
@@ -154,9 +155,11 @@ export async function readPossibleDuplicates<R extends VariantRow>(
     if (core.length < 2) return [];
     const last = core[core.length - 1]!;
     const slugs = [...NAME_TITLE_TOKENS].flatMap(t => [`people/${t}-${last}`, `people/${t}-${core.join('-')}`]);
-    const stubs = await engine.executeRaw<R>(
-      `SELECT ${opts.selectColumns} FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND slug = ANY($2::text[]) AND slug <> $3${opts.privatePredicate}`,
-      [sourceId, slugs, row.slug]);
+    const stubs: VariantRow[] = opts.privatePredicate === ''
+      ? await liveStubs(engine, sourceId, [...new Set(slugs)].filter(slug => slug !== row.slug))
+      : await engine.executeRaw<R>(
+        `SELECT ${opts.selectColumns} FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND slug = ANY($2::text[]) AND slug <> $3${opts.privatePredicate}`,
+        [sourceId, slugs, row.slug]);
     const out: PossibleDuplicate[] = [];
     for (const stub of stubs) {
       if (opts.omitQuarantined && isQuarantined(stub.frontmatter)) continue;
@@ -166,4 +169,23 @@ export async function readPossibleDuplicates<R extends VariantRow>(
   } catch {
     return [];
   }
+}
+
+/**
+ * The live pages at `slugs` in the source, in `slugs` order, as the stub rows readPossibleDuplicates needs (slug,
+ * title, type, frontmatter). Read through the typed page snapshots when no private-page predicate applies.
+ */
+async function liveStubs(engine: BrainEngine, sourceId: string, slugs: readonly string[]): Promise<VariantRow[]> {
+  const refs = slugs.map(slug => ({ slug, sourceId }));
+  const out: VariantRow[] = [];
+  for (let start = 0; start < refs.length;) {
+    const { snapshots, covered } = await engine.readPageSnapshotsBatch(refs.slice(start), { absentIsNull: true });
+    if (covered < 1) throw new Error('readPageSnapshotsBatch covered no ref');
+    for (const ref of refs.slice(start, start + covered)) {
+      const page = snapshots.get(pageSnapshotKey(sourceId, ref.slug))?.page;
+      if (page) out.push({ slug: page.slug, title: page.title, type: page.type, frontmatter: page.frontmatter });
+    }
+    start += covered;
+  }
+  return out;
 }

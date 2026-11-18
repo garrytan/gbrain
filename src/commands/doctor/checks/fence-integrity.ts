@@ -35,6 +35,7 @@
  * the fix asks the user about that opt-in.
  */
 import type { BrainEngine } from '../../../core/engine.ts';
+import { nullUnlessCapabilityRefusal } from '../../../core/engine-capability-refusal.ts';
 import type { Check } from '../../doctor.ts';
 import { agentFix, doctorVerify, withSkippedSegmented } from '../check-fix.ts';
 import { scanDeadline } from '../budget.ts';
@@ -168,7 +169,7 @@ export async function fenceIntegrityResult(engine: BrainEngine, opts: { timeoutM
   const trendRows = await readTrend(engine, census.map(c => c.source_id), from);
   const trend = census.map(c => sourceTrend(c.source_id, trendRows.get(c.source_id) ?? []));
   const caps = await readFenceRepairCaps(engine);
-  const today = await dailyLedger(engine, FENCE_REPAIR_LEDGER, { now }).readDay().catch(() => null);
+  const today = await dailyLedger(engine, FENCE_REPAIR_LEDGER, { now }).readDay().catch(nullUnlessCapabilityRefusal);
   const waiting = census.filter(c => c.total);
   const partial = census.filter(c => !c.scan.complete);
   const noisy = trend.filter(t => t.normalized_7d >= FENCE_NORMALIZATION_WARN_7D);

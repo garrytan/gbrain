@@ -1,14 +1,19 @@
 //! Chunk reads beyond the core chunks family: one page of a page's chunks
-//! (`getChunkPage`), batched chunk windows for evidence delivery (`getChunkWindows`) and the
+//! (`getChunkPage`), batched chunk windows for evidence delivery (`getChunkWindows`), the
 //! pages that have a body but no chunks (`countChunklessPagesWithContent`,
-//! `listChunklessPagesWithContent`).
+//! `listChunklessPagesWithContent`), and the chunk reads and deletes of
+//! `src/core/engine-sql/chunk-reads.ts` (`site_reads`).
 //!
 //! Members: getChunkPage, getChunkWindows, countChunklessPagesWithContent,
-//! listChunklessPagesWithContent.
+//! listChunklessPagesWithContent, findCodeDefinitions, listSymbolTypesForName,
+//! findCodeRefChunks, countOversizedEmbedSkips, countOrphanChunks, countCodeChunkPages,
+//! codeChunksExist, currentCodeChunksExist, listQualifiedSymbolNames, listWithdrawalChunks,
+//! deleteChunksForPages, deleteChunksExcept, listContextualModeCandidates, resolveFrozenHits.
 //!
 //! Every member reads records other families own (pages, chunks, sources) through their
-//! `pub(crate)` readers and writes nothing, so this family keeps no records of its own: no key
-//! starts with `keys::CHUNK_QUERIES` (`c`).
+//! `pub(crate)` readers; the two deletes remove chunk rows through the chunks family's
+//! `pub(crate)` deleters. This family keeps no records of its own: no key starts with
+//! `keys::CHUNK_QUERIES` (`c`).
 //!
 //! A segmented page is one whose body columns are NULL (`PageText::is_null`), the shell PGLite's
 //! `createSegmentedPageShell` leaves. Its `body_bytes` lives in the page_body family's private
@@ -27,6 +32,12 @@ use crate::sources::read_source;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
+
+mod site_reads;
+pub use site_reads::{
+    ChunkReadScope, CodeChunksExistInput, CodeSymbolInput, DeleteChunksExceptInput, FrozenHit,
+    FrozenHitsInput, QualifiedNamesInput, WithdrawalChunksInput, WithdrawalKey,
+};
 
 /// `listChunklessPagesWithContent`'s default batch size.
 const DEFAULT_CHUNKLESS_BATCH: u64 = 50;

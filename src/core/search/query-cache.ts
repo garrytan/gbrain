@@ -35,6 +35,7 @@ import { createHash } from 'node:crypto';
 export function semanticResultCacheAvailable(): boolean { return false; }
 
 import type { BrainEngine } from '../engine.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import type { SearchResult, HybridSearchMeta } from '../types.ts';
 import { buildPageGenerationsSnapshot, CACHE_GATE_WHERE_CLAUSE } from './query-cache-gate.ts';
 import { readConfigRows } from '../config-values.ts';
@@ -412,7 +413,8 @@ export class SemanticQueryCache {
          SELECT COUNT(*)::int AS n FROM deleted`,
       );
       return rows[0]?.n ?? 0;
-    } catch {
+    } catch (err) {
+      rethrowCapabilityRefusal(err);
       return 0;
     }
   }
@@ -434,7 +436,8 @@ export class SemanticQueryCache {
          FROM query_cache`,
       );
       return rows[0] ?? { total_rows: 0, total_hits: 0, fresh_rows: 0, stale_rows: 0 };
-    } catch {
+    } catch (err) {
+      rethrowCapabilityRefusal(err);
       // Best-effort by design (parity with readSearchStats): a brain without
       // the cache table shows all-zero, not a crash. cache_stats wraps this in
       // withRelationGuard for other unexpected relation errors; the

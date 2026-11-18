@@ -774,24 +774,11 @@ export async function findFreshExtractionOutcomes(
       : regularPageVersionToken(current);
     expected.set(current.slug, token);
   }
-  const rows = await engine.executeRaw<{
-    slug: string;
-    source: string;
-    source_session: string | null;
-  }>(
-    `SELECT source_markdown_slug AS slug, source, source_session
-       FROM facts
-      WHERE source_id = $1
-        AND source_markdown_slug = ANY($2::text[])
-        AND source = ANY($3::text[]) AND expired_at IS NULL
-      ORDER BY source_markdown_slug,
-        CASE WHEN source = $4 THEN 0 ELSE 1 END`,
-    [
-      sourceId,
-      pages.map((page) => page.slug),
-      [TERMINAL_AUDIT_SOURCE, NON_EXTRACTABLE_AUDIT_SOURCE],
-      TERMINAL_AUDIT_SOURCE,
-    ],
+  const rows = await engine.listFreshExtractionOutcomes(
+    sourceId,
+    pages.map((page) => page.slug),
+    [TERMINAL_AUDIT_SOURCE, NON_EXTRACTABLE_AUDIT_SOURCE],
+    TERMINAL_AUDIT_SOURCE,
   );
   const outcomes = new Map<string, DurableExtractionOutcome>();
   for (const row of rows) {

@@ -551,8 +551,7 @@ export async function verifyFactPurge(engine: BrainEngine, input: { target: Purg
     if (entry.class !== 'out_of_scope' || entry.reason !== 'probed_reported') continue;
     stores.push(await probeInventoryStore(engine, entry, src, [claim], deadline));
   }
-  const [other] = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM facts WHERE source_id=$1 AND gbrain_fact_fingerprint(fact)=$2
-    AND NOT (visibility=$3 AND ($4='*' OR entity_slug=$4)) AND NOT ${outcomeMarkerSql('facts')}`, [src, target.fact_hash, target.visibility, plan.subject]);
+  const otherScope = await engine.countFactFingerprintLeftovers(src, target.fact_hash, target.visibility, plan.subject);
   const files = await pageFilePaths(engine, src, plan.pages.map(page => page.page_id));
   stores.push(...onDiskReports(files.files, claim, dryRun));
   let vacuumed: string | null = null;
@@ -572,8 +571,8 @@ export async function verifyFactPurge(engine: BrainEngine, input: { target: Purg
     detail: `${input.reasonCommits.tombstoned} commit message reason(s) in this repository quote the claim. Commits already pushed keep their message text, as they keep file history; purge never rewrites them. `
       + 'Each (commit, path) is tombstoned, so no later sync or re-import stores that reason again.'
       + (input.reasonCommits.limited ? ` Only the newest ${input.reasonCommits.commits} commits were checked (--reason-scan-limit); a reason in an older commit could be mirrored again by a re-import.` : '') });
-  if (Number(other?.n ?? 0)) residuals.push({ store: 'facts_other_scope', status: 'out_of_scope', reason: plan.subject === '*' ? 'other_visibility' : 'other_subject', remaining: Number(other.n),
-    detail: `${other.n} fact row(s) state the same claim about another entity or at another visibility; rerun with --all-subjects to purge every entity's copy.` });
+  if (otherScope) residuals.push({ store: 'facts_other_scope', status: 'out_of_scope', reason: plan.subject === '*' ? 'other_visibility' : 'other_subject', remaining: otherScope,
+    detail: `${otherScope} fact row(s) state the same claim about another entity or at another visibility; rerun with --all-subjects to purge every entity's copy.` });
   residuals.push(...stores.filter(s => s.reason === 'source_prose' || s.reason === 'probed_reported' || s.store === 'canonical_markdown' && s.status === 'out_of_scope'));
   const next = dryRun
     ? ['Review the residuals with the user, then confirm with the token printed above (gbrain forget <id> --purge asks for it on a terminal).']

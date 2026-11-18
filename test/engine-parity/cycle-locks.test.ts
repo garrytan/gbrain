@@ -185,6 +185,19 @@ describe('engine parity: cycle locks', () => {
     };
   });
 
+  parityTest('assertCycleLease holds only for the current token of an unexpired lease', { methods: ['acquireCycleLock', 'assertCycleLease'] }, async (engine) => {
+    await engine.acquireCycleLock('gbrain-fs:held', lease(101, TOKEN_A));
+    await engine.acquireCycleLock('gbrain-fs:expired', lease(102, TOKEN_B, { ttlMinutes: -1 }));
+    const result = {
+      holder: await engine.assertCycleLease('gbrain-fs:held', TOKEN_A),
+      stranger: await engine.assertCycleLease('gbrain-fs:held', TOKEN_B),
+      expired: await engine.assertCycleLease('gbrain-fs:expired', TOKEN_B),
+      missing: await engine.assertCycleLease('gbrain-fs:none', TOKEN_A),
+    };
+    expect(result).toEqual({ holder: true, stranger: false, expired: false, missing: false });
+    return result;
+  });
+
   parityTest('listSourceLocalPaths returns every registered path and drops sources without one', { methods: ['listSourceLocalPaths'] }, async (engine, backend) => {
     await createSource(engine, backend, 'with-path-a', {}, '/srv/brain/a');
     await createSource(engine, backend, 'with-path-b', {}, '/srv/brain/b');

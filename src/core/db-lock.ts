@@ -26,6 +26,7 @@ import { randomUUID } from 'node:crypto';
 import type { BrainEngine, CycleLockFilter } from './engine.ts';
 import { rethrowCapabilityRefusal } from './engine-capability-refusal.ts';
 import { isRustEngineKind } from './sql-engine-kind.ts';
+import { ASSERT_LEASE_SQL } from './engine-sql/cycle-locks.ts';
 
 export interface DbLockHandle {
   id: string;
@@ -223,7 +224,7 @@ export function isLockHolderLive(snap: LockSnapshot, ttlMinutes: number = DEFAUL
  * DELETE (release, break-lock) does. Returns the row when the fence holds, none when the lease is gone.
  */
 export function fenceLockRow(tx: Pick<BrainEngine, 'executeRaw'>, lockId: string, token: string): Promise<unknown[]> {
-  return tx.executeRaw('SELECT 1 FROM gbrain_cycle_locks WHERE id=$1 AND acquisition_token=$2::uuid AND ttl_expires_at > now() FOR KEY SHARE', [lockId, token]);
+  return tx.executeRaw(ASSERT_LEASE_SQL, [lockId, token]);
 }
 
 export async function tryAcquireDbLock(

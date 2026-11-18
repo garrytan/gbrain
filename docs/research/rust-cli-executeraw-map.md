@@ -263,3 +263,15 @@ All come from `import` on a fresh brain, under `initSchema` and the migration ru
 - `src/core/search/projection-statistics.ts`: 40
 - `src/core/timeline-dedup-repair.ts`: 80, 87, 204, 211
 - `src/core/vector-index.ts`: 41
+
+## Status after the `rust-engine/cli-members` merge
+
+The tables above stay pinned to `889e2bdf97`. These rows changed on `rust-engine/cli-members`:
+
+- `source-resolver.ts:358`: the resolver reads `listSourceRoutingRows` and `countDefaultSourceSplit`, which Rust
+  serves, so the hidden refusal is gone.
+- `extraction-lag.ts:68`: replaced by `readExtractionLagCounts`, which Rust answers with the same counts as PGLite.
+- `review-lists.ts:31` (unattributed facts): replaced by `listUnattributedFacts`, which Rust serves, private
+  provenance policy included.
+- `wanted-links-store.ts:36`, `:157` and `:159`: replaced by `readDatabaseClock` and `listWantedPages`, which Rust
+  serves.

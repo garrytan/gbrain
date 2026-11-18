@@ -510,7 +510,7 @@ describe('saved facts: a failed match read', () => {
     const warn = spyOn(console, 'warn').mockImplementation(() => {});
     const stub = {
       getConfig: async () => null,
-      executeRaw: async () => { throw Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }); },
+      matchSavedFacts: async () => { throw Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }); },
     };
     const ctx = { engine: stub, remote: true, sourceId: 'default', emitResponseMeta: () => {} } as unknown as OperationContext;
     const out = await matchingSavedFacts(ctx, {}, 'Orbix renewal seats');

@@ -104,6 +104,7 @@ describe('#3880 structural pins — all-source local_path selections filter arch
     // landing ONLY in an archived tree still throws the deliberate
     // SourceTargetError instead of silently falling through.
     // The statement is the typed listLocalPathSources read (SQL in engine-sql/sources.ts).
+    // test-reads-source-ok[structural]: pins the resolver's call to the typed read and the statement that read runs.
     const src = readFileSync('src/core/source-resolver.ts', 'utf-8');
     expect(src).toContain('engine.listLocalPathSources()');
     expect(readFileSync('src/core/engine-sql/sources.ts', 'utf-8')).toContain('SELECT id, local_path, archived FROM sources WHERE local_path IS NOT NULL');
