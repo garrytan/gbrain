@@ -183,6 +183,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'addJobTokens': OOS.minionJobs, 'delayActiveJob': OOS.minionJobs, 'releaseWatchdogClaim': OOS.minionJobs,
   'markJobWatchdogSuspect': OOS.minionJobs, 'promoteDelayedJobs': OOS.minionJobs, 'cancelJobs': OOS.minionJobs,
   'killTimedOutJobs': OOS.minionJobs, 'killWallClockJobs': OOS.minionJobs, 'pruneJobs': OOS.minionJobs,
+  'listSynthesisCompletionKeys': OOS.minionJobs, 'listRecentSynthesisCompletions': OOS.minionJobs,
   'retryJob': OOS.minionJobs, 'postInboxMessage': OOS.minionJobs, 'readJobInbox': OOS.minionJobs,
   'readChildCompletions': OOS.minionJobs, 'listOpenJobIdsInQueue': OOS.minionJobs,
   'renewPrivateQueueLease': OOS.minionJobs, 'listOwnedPrivateQueues': OOS.minionJobs,

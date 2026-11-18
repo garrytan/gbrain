@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 316/316
+# covered: 318/318
 # lifecycle: 9/9
 # pages: 31/31
 # search: 7/7
@@ -31,7 +31,7 @@
 # import_guards: 9/9
 # cycle_locks: 7/7
 # minion_jobs: 8/8
-# minion_queue: 38/38
+# minion_queue: 40/40
 # cli_reads_ops: 7/7
 # raw_sql: 4/4
 # code_edges: 5/5
@@ -277,7 +277,7 @@ listJobs	minion_jobs	yes	1	no	yes	yes	serves
 claimNextJob	minion_jobs	yes	34	no	yes	yes	serves
 renewJobLease	minion_jobs	yes	1	no	yes	yes	serves
 completeJob	minion_jobs	yes	16	no	yes	yes	serves
-failJob	minion_jobs	yes	10	no	yes	yes	serves
+failJob	minion_jobs	yes	11	no	yes	yes	serves
 reclaimStalledJobs	minion_jobs	yes	1	no	yes	yes	serves
 deleteTerminalJob	minion_queue	yes	1	no	yes	yes	serves
 pauseJob	minion_queue	yes	5	no	yes	yes	serves
@@ -296,6 +296,8 @@ cancelJobs	minion_queue	yes	6	no	yes	yes	serves
 killTimedOutJobs	minion_queue	yes	1	no	yes	yes	serves
 killWallClockJobs	minion_queue	yes	1	no	yes	yes	serves
 pruneJobs	minion_queue	yes	2	no	yes	yes	serves
+listSynthesisCompletionKeys	minion_queue	yes	2	no	yes	yes	serves
+listRecentSynthesisCompletions	minion_queue	yes	1	no	yes	yes	serves
 retryJob	minion_queue	yes	2	no	yes	yes	serves
 postInboxMessage	minion_queue	yes	2	no	yes	yes	serves
 readJobInbox	minion_queue	yes	1	no	yes	yes	serves

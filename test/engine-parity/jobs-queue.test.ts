@@ -1,8 +1,9 @@
 /**
  * BrainEngine parity — minion queue members beyond the job lifecycle (engine-sql/jobs-queue.ts): the single-job writes
  * (delete, pause, resume, parent resolve and fail, detach, progress, tokens, delay, watchdog release and mark), the
- * sweeps (delayed promotion, cancel, the two timeout kills, prune, retry), the inbox, the private-queue recovery
- * reads, the stat and list reads, and job attachments.
+ * sweeps (delayed promotion, cancel, the two timeout kills, prune, retry), the dream synthesis completion archive the
+ * prune keeps and its two reads, the inbox, the private-queue recovery reads, the stat and list reads, and job
+ * attachments.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: the queue's operator writes, sweeps, inbox, private-queue reads, stats and attachments return the same
@@ -13,7 +14,8 @@
  *  - Regression: an engine that drifts on a status guard (pause, resume, retry, delete), the token fence of progress,
  *    token counts, delay, watchdog release and the inbox, the cancel closure (descendants, reason only on requested
  *    roots, `child_done` to a live parent, the owner and actor fence), the two timeout sweeps (drain-lease beacon and
- *    lease guards, the parent notification), the prune cut-off and its dream-synthesis archive, the private-queue
+ *    lease guards, the parent notification), the prune cut-off and its dream-synthesis archive (which rows it keeps,
+ *    under which source, first write wins, and the union and window of the two completion reads), the private-queue
  *    lease (never shrinks) and recovery state, the stat counts and bytewise family order, the page cursor, or the
  *    attachment uniqueness and cascade — the rules that keep a job from running twice or a parent from waiting forever.
  *  - Why existing coverage misses it: test/minions*.test.ts drive `MinionQueue` on PGLite only and reach these
@@ -530,7 +532,7 @@ describe('engine parity: minion queue', () => {
     });
 
   parityTest('pruneJobs counts on a dry run, deletes the named statuses older than the cut-off, and keeps newer and other rows',
-    { methods: ['admitJob', 'claimNextJob', 'completeJob', 'failJob', 'pruneJobs', 'insertJobAttachment', 'listJobAttachmentNames', 'getJob'] }, async (engine) => {
+    { methods: ['admitJob', 'claimNextJob', 'completeJob', 'failJob', 'pruneJobs', 'insertJobAttachment', 'listJobAttachmentNames', 'getJob', 'listSynthesisCompletionKeys'] }, async (engine) => {
       const oldDone = await finished(engine, 'old-done', 'completed');
       const view = rowView(oldDone);
       const oldFailed = await finished(engine, 'old-failed', 'failed');
@@ -554,19 +556,47 @@ describe('engine parity: minion queue', () => {
       const afterCompleted = await Promise.all([oldDone, oldSubagent, oldFailed, newDone].map(async id => view(await engine.getJob(id))?.status ?? null));
       const rest = await engine.pruneJobs({ statuses: all, olderThan: cut });
       const afterRest = await Promise.all([oldFailed, oldWaiting, oldDreamFailed, newDone].map(async id => view(await engine.getJob(id))?.status ?? null));
-      return { dry, dryEmptyStatuses, dryPast, noneDeleted, afterDry, completedOnly, afterCompleted, rest, afterRest, attachments: await engine.listJobAttachmentNames(oldDone), again: await engine.pruneJobs({ statuses: all, olderThan: cut }) };
+      const archived = await engine.listSynthesisCompletionKeys('default', 'dream:synth:');
+      return { dry, dryEmptyStatuses, dryPast, noneDeleted, afterDry, completedOnly, afterCompleted, rest, afterRest, archived, attachments: await engine.listJobAttachmentNames(oldDone), again: await engine.pruneJobs({ statuses: all, olderThan: cut }) };
     });
 
-  // Rust cannot archive a completed dream synthesis key into dream_synthesis_completions: its prune deletes nothing and
-  // refuses (typed), while PGLite and Postgres archive the key and delete.
-  parityTest('pruneJobs archives the key of a completed dream synthesis subagent as it deletes it',
-    { methods: ['admitJob', 'claimNextJob', 'completeJob', 'pruneJobs', 'getJob'] }, async (engine) => {
+  parityTest('pruneJobs archives the key of a completed dream synthesis subagent as it deletes it, and the completion reads still find it',
+    { methods: ['admitJob', 'claimNextJob', 'completeJob', 'failJob', 'pruneJobs', 'getJob', 'listSynthesisCompletionKeys', 'listRecentSynthesisCompletions'] }, async (engine) => {
       const synth = await finished(engine, 'subagent', 'completed', { idempotency_key: 'dream:synth:src:1', data: { source_id: 'src' } });
+      const v2 = await finished(engine, 'subagent', 'completed', { idempotency_key: 'dream:synth-v2:src:2', data: { source_id: 'src' } });
+      // An empty source_id is the default source; a failed synthesis and a non-dream key are not completions.
+      const v2Default = await finished(engine, 'subagent', 'completed', { idempotency_key: 'dream:synth-v2:def:3', data: { source_id: '' } });
+      await finished(engine, 'subagent', 'failed', { idempotency_key: 'dream:synth:src:4', data: { source_id: 'src' } });
+      await finished(engine, 'subagent', 'completed', { idempotency_key: 'other:src:5', data: { source_id: 'src' } });
       const other = await finished(engine, 'work', 'completed');
+      const reads = async () => ({
+        v1: sorted(await engine.listSynthesisCompletionKeys('src', 'dream:synth:')),
+        v2: sorted(await engine.listSynthesisCompletionKeys('src', 'dream:synth-v2:')),
+        v1Default: sorted(await engine.listSynthesisCompletionKeys('default', 'dream:synth:')),
+        v2Default: sorted(await engine.listSynthesisCompletionKeys('default', 'dream:synth-v2:')),
+        recent: (await engine.listRecentSynthesisCompletions('src', 1)).map(r => [r.idempotency_key, r.at instanceof Date]),
+        recentDefault: (await engine.listRecentSynthesisCompletions('default', 1)).map(r => r.idempotency_key),
+      });
+      const live = await reads();
       const cut = new Date(Date.now() + 60_000);
-      const dry = await engine.pruneJobs({ statuses: ['completed'], olderThan: cut, dryRun: true });
-      const pruned = await engine.pruneJobs({ statuses: ['completed'], olderThan: cut });
-      return { dry, pruned, synth: await engine.getJob(synth), other: await engine.getJob(other) };
+      const dry = await engine.pruneJobs({ statuses: ['completed', 'failed'], olderThan: cut, dryRun: true });
+      const afterDry = await reads();
+      const pruned = await engine.pruneJobs({ statuses: ['completed', 'failed'], olderThan: cut });
+      const archived = await reads();
+      const firstAt = (await engine.listRecentSynthesisCompletions('src', 1))[0]?.at.getTime();
+      // The same key completes again: live and archived it reads once as a key and twice as a recent completion.
+      const again = await finished(engine, 'subagent', 'completed', { idempotency_key: 'dream:synth-v2:src:2', data: { source_id: 'src' } });
+      const twice = await reads();
+      // Pruned again, the archive keeps its first row (ON CONFLICT DO NOTHING).
+      const prunedAgain = await engine.pruneJobs({ statuses: ['completed'], olderThan: new Date(Date.now() + 60_000) });
+      const kept = await engine.listRecentSynthesisCompletions('src', 1);
+      await Bun.sleep(50);
+      const outsideWindow = await engine.listRecentSynthesisCompletions('src', 0.00001);
+      return {
+        dry, pruned, live, afterDry, archived, twice, prunedAgain, outsideWindow,
+        keptFirstAt: kept.length === 1 && kept[0]!.at.getTime() === firstAt,
+        gone: await Promise.all([synth, v2, v2Default, other, again].map(async id => (await engine.getJob(id)) === null)),
+      };
     });
 
   parityTest('retryJob requeues a failed or dead job after the policy admits it, and does nothing for any other job or a refused retry',
