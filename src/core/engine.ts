@@ -31,6 +31,8 @@ import type { LedgerSource } from './engine-sql/belief.ts';
 import type { ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, MentionDueQuery, SiblingCandidateQuery, SiblingCandidateRow } from './engine-sql/entity-reads.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
 import type { AdmitJobPolicy, AdmitJobResult, AdmitJobSpec, ClaimJobSpec, JobRow, ListJobsFilter } from './engine-sql/jobs.ts';
+import type { JobInsightRows, JobInsightSpec } from './engine-sql/jobs-insight.ts';
+import type { McpResolvedSpec, PurgeTakesSpec } from './engine-sql/takes-reads.ts';
 import type {
   CancelJobsSpec, DelayActiveJobSpec, JobAttachmentInsert, JobPageSpec, JobStatsRead, JobTokenCounts, PrivateQueueState, PruneJobsSpec,
   SynthesisCompletion, SynthesisCompletionPrefix, JobSourceState,
@@ -3517,6 +3519,26 @@ export interface BrainEngine {
   listFactsAbsorbJobsByKeyPrefix(spec: { prefix: string; keys: readonly string[] }): Promise<FactsAbsorbJobRow[]>;
   /** The dead facts-absorb jobs with a key in `keys` (the dead-write retry's operator controls). */
   listDeadFactsAbsorbJobsByKeys(keys: readonly string[]): Promise<FactsAbsorbJobRow[]>;
+  // Group D (jobs insight): the reads behind `describeJobs`.
+  /** Submitter, queue position, slot holders, live children, blocking locks and foreign-owner tokens of a batch of jobs. */
+  readJobInsight(spec: JobInsightSpec): Promise<JobInsightRows>;
+  // Group D (takes, salience and code-edge reads): the counts and lists doctor, onboarding and repair read.
+  /** Takes more than 0.001 off the 0.05 weight grid, of all takes. */
+  countOffGridTakeWeights(): Promise<{ off_grid: number; total: number }>;
+  /** How many takes the brain holds. */
+  countTakes(): Promise<number>;
+  /** The takes a fact purge removes: consolidated from a purged fact, or echoing the purged claim. */
+  planFactPurgeTakes(spec: PurgeTakesSpec): Promise<Array<{ id: number; page_id: number }>>;
+  /** The page's stored takes, row number to claim. */
+  listTakeRowsForPage(pageId: number): Promise<Array<{ row_num: number; claim: string }>>;
+  /** Resolved takes stamped `mcp:` by the MCP server, in the caller's source and holder scope. */
+  countMcpResolvedTakes(spec: McpResolvedSpec): Promise<number>;
+  /** Live pages of the sources with an inactive or `superseded by #` take, by page id. */
+  listTakeSupersessionCandidates(sourceIds: readonly string[]): Promise<Array<{ id: number; source_id: string; slug: string }>>;
+  /** Pages with an active take and no emotional weight yet, and pages with a weight. */
+  countZeroWeightWithTakes(): Promise<{ zero_weight_with_takes: number; nonzero_weight: number }>;
+  /** Whether the source owns an unresolved (symbol-target) code edge. */
+  hasCodeEdgesSymbol(sourceId: string): Promise<boolean>;
 
   // ============================================================
   // v0.20.0 Cathedral II: code edges (Layer 5 populates, Layer 7 consumes)

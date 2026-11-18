@@ -63,6 +63,7 @@ const OOS = {
   factsRepair: 'out-of-scope:facts-repair (born in engine-sql/facts-repair.ts; pinned by test/engine-parity/facts-repair.test.ts)',
   factsTrust: 'out-of-scope:facts-trust (born in engine-sql/facts-trust.ts; pinned by test/engine-parity/facts-trust.test.ts)',
   minionJobs: 'out-of-scope:minion-jobs (born in engine-sql/jobs.ts and engine-sql/jobs-queue.ts; pinned by test/engine-parity/jobs.test.ts and jobs-queue.test.ts)',
+  takesReads: 'out-of-scope:takes-reads (born in engine-sql/takes-reads.ts; pinned by test/engine-parity/takes.test.ts, code-eval-salience.test.ts and test/engine-sql-takes-reads.test.ts)',
 } as const;
 
 export const DOMAIN_OF: Record<string, string> = {
@@ -325,6 +326,17 @@ export const DOMAIN_OF: Record<string, string> = {
   'countDeadDreamSubmissionRows': OOS.minionJobs,
   'listFactsAbsorbJobsByKeyPrefix': OOS.minionJobs,
   'listDeadFactsAbsorbJobsByKeys': OOS.minionJobs,
+  // group D (jobs insight)
+  'readJobInsight': OOS.minionJobs,
+  // group D (takes, salience and code-edge reads)
+  'countOffGridTakeWeights': OOS.takesReads,
+  'countTakes': OOS.takesReads,
+  'planFactPurgeTakes': OOS.takesReads,
+  'listTakeRowsForPage': OOS.takesReads,
+  'countMcpResolvedTakes': OOS.takesReads,
+  'listTakeSupersessionCandidates': OOS.takesReads,
+  'countZeroWeightWithTakes': OOS.takesReads,
+  'hasCodeEdgesSymbol': OOS.takesReads,
   // cycle locks (retry/direct-pool transport differs per method; the lease statements are pinned by the parity cases)
   'acquireCycleLock': OOS.cycleLocks, 'refreshCycleLock': OOS.cycleLocks, 'releaseCycleLock': OOS.cycleLocks,
   'readCycleLocks': OOS.cycleLocks, 'deleteCycleLock': OOS.cycleLocks, 'deleteCycleLockIfStale': OOS.cycleLocks,

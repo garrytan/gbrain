@@ -554,17 +554,7 @@ async function runSalience(ctx: DoctorContext): Promise<Check[]> {
   // brain-average emotional_weight as an informational signal.
   progress.heartbeat('salience_health');
   try {
-    const result = await engine.executeRaw<{ kind: string; n: string }>(
-      `SELECT 'zero_weight_with_takes' AS kind, COUNT(DISTINCT p.id)::text AS n
-         FROM pages p
-         JOIN takes t ON t.page_id = p.id AND t.active = TRUE
-        WHERE COALESCE(p.emotional_weight, 0) = 0
-       UNION ALL
-       SELECT 'nonzero_weight', COUNT(*)::text FROM pages WHERE COALESCE(emotional_weight, 0) > 0`,
-    );
-    const counts = new Map(result.map(r => [r.kind, Number(r.n)]));
-    const zeroWithTakes = counts.get('zero_weight_with_takes') ?? 0;
-    const nonzero = counts.get('nonzero_weight') ?? 0;
+    const { zero_weight_with_takes: zeroWithTakes, nonzero_weight: nonzero } = await engine.countZeroWeightWithTakes();
     if (zeroWithTakes > 0) {
       checks.push({
         name: 'salience_health',

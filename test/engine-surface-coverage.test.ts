@@ -72,6 +72,11 @@ const INTERFACE_METHODS: readonly string[] = [
   // doctor job checks
   'listStalledEmbedBackfillSources', 'readGlobalMaintenanceDeaths', 'readLastFailedGlobalMaintenanceJob', 'listFactsAbsorbJobsStillDead', 'readLegacyJobAuthority',
   'readQueuedSpendRows', 'listBuildSkewStacktraceLines', 'countDeadDreamSubmissionRows', 'listFactsAbsorbJobsByKeyPrefix', 'listDeadFactsAbsorbJobsByKeys',
+  // group D (jobs insight)
+  'readJobInsight',
+  // group D (takes, salience and code-edge reads)
+  'countOffGridTakeWeights', 'countTakes', 'planFactPurgeTakes',
+  'listTakeRowsForPage', 'countMcpResolvedTakes', 'listTakeSupersessionCandidates', 'countZeroWeightWithTakes', 'hasCodeEdgesSymbol',
   // Lifecycle
   'connect', 'disconnect', 'reconnect', 'initSchema', 'transaction', 'transactionDirect', 'registerBeforeDisconnect', 'withReservedConnection',
   // Pages CRUD

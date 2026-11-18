@@ -6,6 +6,7 @@
 
 mod checks;
 mod health;
+mod insight;
 mod ops;
 mod status;
 

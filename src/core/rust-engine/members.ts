@@ -523,6 +523,17 @@ export const RUST_ENGINE_MEMBERS = {
   countDeadDreamSubmissionRows: 'minion_queue',
   listFactsAbsorbJobsByKeyPrefix: 'minion_queue',
   listDeadFactsAbsorbJobsByKeys: 'minion_queue',
+  // Group D (jobs insight)
+  readJobInsight: 'minion_queue',
+  // Group D (takes, salience and code-edge reads)
+  countOffGridTakeWeights: 'takes',
+  countTakes: 'takes',
+  planFactPurgeTakes: 'takes',
+  listTakeRowsForPage: 'takes',
+  countMcpResolvedTakes: 'takes',
+  listTakeSupersessionCandidates: 'takes',
+  countZeroWeightWithTakes: 'salience',
+  hasCodeEdgesSymbol: 'code_edges',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;

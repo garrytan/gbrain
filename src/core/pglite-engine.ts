@@ -187,6 +187,8 @@ import * as jobsStatus from './engine-sql/jobs-status.ts';
 import type { JobStatusFilter } from './engine-sql/jobs-status.ts';
 import * as jobsChecks from './engine-sql/jobs-checks.ts';
 import type { DeadDreamSubmissionSpec } from './engine-sql/jobs-checks.ts';
+import * as jobsInsight from './engine-sql/jobs-insight.ts';
+import * as takesReads from './engine-sql/takes-reads.ts';
 import type {
   CancelJobsSpec, DelayActiveJobSpec, JobAttachmentInsert, JobPageSpec, JobTokenCounts, PruneJobsSpec, RetryJobPolicy,
   SynthesisCompletionPrefix,
@@ -3365,6 +3367,15 @@ export class PGLiteEngine implements BrainEngine {
   async countDeadDreamSubmissionRows(spec: DeadDreamSubmissionSpec) { return jobsChecks.countDeadDreamSubmissionRows(this, spec); }
   async listFactsAbsorbJobsByKeyPrefix(spec: { prefix: string; keys: readonly string[] }) { return jobsChecks.listFactsAbsorbJobsByKeyPrefix(this, spec); }
   async listDeadFactsAbsorbJobsByKeys(keys: readonly string[]) { return jobsChecks.listDeadFactsAbsorbJobsByKeys(this, keys); }
+  async readJobInsight(spec: jobsInsight.JobInsightSpec) { return jobsInsight.readJobInsight(this, spec); }
+  async countOffGridTakeWeights() { return takesReads.countOffGridTakeWeights(this); }
+  async countTakes() { return takesReads.countTakes(this); }
+  async planFactPurgeTakes(spec: takesReads.PurgeTakesSpec) { return takesReads.planFactPurgeTakes(this, spec); }
+  async listTakeRowsForPage(pageId: number) { return takesReads.listTakeRowsForPage(this, pageId); }
+  async countMcpResolvedTakes(spec: takesReads.McpResolvedSpec) { return takesReads.countMcpResolvedTakes(this, spec); }
+  async listTakeSupersessionCandidates(sourceIds: readonly string[]) { return takesReads.listTakeSupersessionCandidates(this, sourceIds); }
+  async countZeroWeightWithTakes() { return takesReads.countZeroWeightWithTakes(this); }
+  async hasCodeEdgesSymbol(sourceId: string) { return takesReads.hasCodeEdgesSymbol(this, sourceId); }
 
   // ============================================================
   // v0.20.0 Cathedral II: code edges (Layer 1 stubs — filled by Layer 5)

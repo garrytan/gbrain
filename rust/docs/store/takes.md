@@ -55,3 +55,7 @@ Differences from PGLite:
   refuses it with its own error text.
 - Timestamps are kept to the microsecond and cross as ISO strings; the member reads them back through
   `Date#toISOString`, as `takeRowToTake` does.
+
+The eight single-purpose reads of doctor, onboarding, the fact purge, the fence import, the MCP scorecard and the take repair
+(`countTakes`, `countOffGridTakeWeights`, `planFactPurgeTakes`, `listTakeRowsForPage`, `countMcpResolvedTakes`,
+`listTakeSupersessionCandidates`) are in [takes-reads.md](takes-reads.md).

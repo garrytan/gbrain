@@ -255,3 +255,5 @@ export const listActiveTakesForPages: StoreMember<[pageIds: number[], opts?: { t
     for (const take of rows) out.get(take.page_id)?.push(toTake(take));
     return out;
   };
+// The count and list reads of takes, salience and code edges (engine-sql/takes-reads.ts).
+export * from './takes-reads.ts';

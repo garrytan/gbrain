@@ -38,11 +38,11 @@ const missingColumn = (column: string, relation = 'pages') =>
 const missingBareColumn = (column: string) => Object.assign(new Error(`column "${column}" does not exist`), { code: '42703' });
 const missingTable = (table: string) => Object.assign(new Error(`relation "${table}" does not exist`), { code: '42P01' });
 
-/** The real engine, except every SQL read (executeRaw, the raw PGLite handle, the stale-page counter) throws `error`. */
+/** The real engine, except every SQL read (executeRaw, the raw PGLite handle, the stale-page counter, the salience count) throws `error`. */
 function failingEngine(error: Error): BrainEngine {
   return new Proxy(real, {
     get(target, prop, receiver) {
-      if (prop === 'executeRaw' || prop === 'countStalePagesForExtraction' || prop === 'readCycleLocks') return async () => { throw error; };
+      if (prop === 'executeRaw' || prop === 'countStalePagesForExtraction' || prop === 'readCycleLocks' || prop === 'countZeroWeightWithTakes') return async () => { throw error; };
       if (prop === 'db') return { query: async () => { throw error; } };
       const value = Reflect.get(target, prop, receiver);
       return typeof value === 'function' ? value.bind(target) : value;
