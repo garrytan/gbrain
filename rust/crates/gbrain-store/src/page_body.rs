@@ -1134,6 +1134,7 @@ impl Store {
                 ingested_via: meta.ingested_via.clone(),
                 ingested_at_us: meta_ingested(meta).then_some(now),
                 tags: Vec::new(),
+                tag_sources: Default::default(),
             };
             write_page(tx, &record)?;
             let state = BodyState {

@@ -20,7 +20,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Frontmatter keys left out of the content hash (`HASH_EPHEMERAL_FRONTMATTER_KEYS`).
 const HASH_EPHEMERAL_KEYS: &[&str] = &[
@@ -160,6 +160,10 @@ pub(crate) struct PageRecord {
     pub ingested_at_us: Option<i64>,
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Who claimed each tag (`tags.tag_source` of PGLite): `added` for an explicit add,
+    /// `frontmatter` for an import-owned tag. A tag with no entry is a legacy unclaimed row.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tag_sources: BTreeMap<String, String>,
 }
 
 fn opt_iso(us: Option<i64>) -> Value {
@@ -263,6 +267,28 @@ pub struct ReadScope {
     pub source_id: Option<String>,
     pub source_ids: Option<Vec<String>>,
     pub include_deleted: bool,
+}
+
+/// Options of `addTag` and `addPageTagsById`: the page's source and who claims the tags.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct TagOptions {
+    pub source_id: Option<String>,
+    pub tag_source: Option<String>,
+}
+
+impl TagOptions {
+    /// Whether the tags are claimed for the import (`tagSource: 'frontmatter'`); any other named
+    /// claim is refused, as the TypeScript type allows no other.
+    pub fn frontmatter(&self) -> Result<bool> {
+        match self.tag_source.as_deref() {
+            None => Ok(false),
+            Some(TAG_FRONTMATTER) => Ok(true),
+            Some(other) => Err(StoreError::invalid(format!(
+                "tagSource must be 'frontmatter' when it is set, not {other:?}"
+            ))),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -829,6 +855,7 @@ pub(crate) fn put_page_in(
             ingested_via: input.ingested_via.clone(),
             ingested_at_us: provenance.then_some(now),
             tags: Vec::new(),
+            tag_sources: BTreeMap::new(),
         },
         Some(old) => {
             let canonical_changed = old.page_type != input.page_type
@@ -948,6 +975,46 @@ pub(crate) fn rename_page(
         tx.delete(&page_key(&page.source_id, &page.slug))?;
     }
     Ok(moved)
+}
+
+const TAG_ADDED: &str = "added";
+const TAG_FRONTMATTER: &str = "frontmatter";
+
+/// Adds `tags` to the page with PGLite's claim rules: an explicit add claims each tag `added`; a
+/// `frontmatter` claim marks a new tag and adopts only an unclaimed legacy one. A new tag
+/// advances the page revision, as PGLite's `tags_knowledge_revision` trigger does; a claim that
+/// changes alone does not. Writes the page only when something changed.
+fn claim_tags<'a>(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    page: &mut PageRecord,
+    tags: impl IntoIterator<Item = &'a str>,
+    frontmatter: bool,
+) -> Result<()> {
+    let mut added = false;
+    let mut claimed = false;
+    for tag in tags {
+        let tag = clean(tag);
+        if !page.tags.contains(&tag) {
+            page.tags.push(tag.clone());
+            added = true;
+        }
+        let claim = match page.tag_sources.get(&tag) {
+            None if frontmatter => TAG_FRONTMATTER,
+            Some(_) if frontmatter => continue,
+            Some(current) if current == TAG_ADDED => continue,
+            _ => TAG_ADDED,
+        };
+        page.tag_sources.insert(tag, claim.to_string());
+        claimed = true;
+    }
+    if added {
+        tag_change(tx, env, page)
+    } else if claimed {
+        write_page(tx, page)
+    } else {
+        Ok(())
+    }
 }
 
 fn cmp_updated(a: &PageRecord, b: &PageRecord) -> Ordering {
@@ -1197,8 +1264,21 @@ impl Store {
         Ok(tags)
     }
 
-    /// `addTag`: `page_not_found` when the page does not exist. A tag the page has changes nothing.
+    /// `addTag`: `page_not_found` when the page does not exist. An explicit add claims the tag
+    /// (`added`); a `frontmatter` add claims a new tag and adopts only an unclaimed one. A tag the
+    /// page has keeps the page revision.
     pub fn add_tag(&self, slug: &str, tag: &str, source_id: Option<&str>) -> Result<()> {
+        self.add_tag_claimed(slug, tag, source_id, false)
+    }
+
+    /// `addTag(slug, tag, { sourceId?, tagSource? })`: `add_tag` with the claim `tagSource` names.
+    pub fn add_tag_claimed(
+        &self,
+        slug: &str,
+        tag: &str,
+        source_id: Option<&str>,
+        frontmatter: bool,
+    ) -> Result<()> {
         self.write(|tx| {
             let source = source_id.unwrap_or(DEFAULT_SOURCE);
             let Some(mut page) = read_page(&*tx, source, &slug.to_lowercase())? else {
@@ -1207,11 +1287,70 @@ impl Store {
                     format!("addTag failed: page \"{slug}\" (source={source}) not found"),
                 ));
             };
-            if !page.tags.iter().any(|t| t == tag) {
-                page.tags.push(clean(tag));
-                tag_change(tx, &*self.env, &mut page)?;
+            claim_tags(tx, &*self.env, &mut page, [tag], frontmatter)
+        })
+    }
+
+    /// `addPageTagsById(pageId, tags, { tagSource? })`: `add_tag_claimed` for many tags of one
+    /// page named by id. No tags change nothing; `page_not_found` when no page has the id (PGLite
+    /// refuses the insert on its foreign key).
+    pub fn add_page_tags_by_id(
+        &self,
+        page_id: u64,
+        tags: &[String],
+        frontmatter: bool,
+    ) -> Result<()> {
+        if tags.is_empty() {
+            return Ok(());
+        }
+        self.write(|tx| {
+            let Some(mut page) = read_page_by_id(&*tx, page_id)? else {
+                return Err(StoreError::new(
+                    PAGE_NOT_FOUND,
+                    format!("addPageTagsById failed: no page has id {page_id}"),
+                ));
+            };
+            claim_tags(
+                tx,
+                &*self.env,
+                &mut page,
+                tags.iter().map(String::as_str),
+                frontmatter,
+            )
+        })
+    }
+
+    /// `pruneFrontmatterTags(slug, keep, { sourceId? })`: removes the page's `frontmatter` tags
+    /// that are not in `keep`; explicitly added and unclaimed tags stay. No error when the page is
+    /// absent.
+    pub fn prune_frontmatter_tags(
+        &self,
+        slug: &str,
+        keep: &[String],
+        source_id: Option<&str>,
+    ) -> Result<()> {
+        self.write(|tx| {
+            let source = source_id.unwrap_or(DEFAULT_SOURCE);
+            let Some(mut page) = read_page(&*tx, source, &slug.to_lowercase())? else {
+                return Ok(());
+            };
+            let pruned: Vec<String> = page
+                .tags
+                .iter()
+                .filter(|t| {
+                    page.tag_sources.get(*t).map(String::as_str) == Some(TAG_FRONTMATTER)
+                        && !keep.contains(t)
+                })
+                .cloned()
+                .collect();
+            if pruned.is_empty() {
+                return Ok(());
             }
-            Ok(())
+            page.tags.retain(|t| !pruned.contains(t));
+            for tag in &pruned {
+                page.tag_sources.remove(tag);
+            }
+            tag_change(tx, &*self.env, &mut page)
         })
     }
 
@@ -1223,6 +1362,7 @@ impl Store {
                 && page.tags.iter().any(|t| t == tag)
             {
                 page.tags.retain(|t| t != tag);
+                page.tag_sources.remove(tag);
                 tag_change(tx, &*self.env, &mut page)?;
             }
             Ok(())

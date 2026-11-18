@@ -7,8 +7,9 @@
 use napi::Env;
 use napi::bindgen_prelude::Object;
 use napi_derive::napi;
+use serde_json::Value;
 
-use crate::store_binding::Brain;
+use crate::store_binding::{Brain, required};
 
 #[napi]
 impl Brain {
@@ -49,5 +50,17 @@ impl Brain {
     #[napi]
     pub fn get_all_config<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
         self.run(env, |s| s.get_all_config())
+    }
+
+    /// `getConfigValues(keys)`: `{ key, value }[]` of the stored keys, ordered by key.
+    #[napi]
+    pub fn get_config_values<'env>(
+        &self,
+        env: &'env Env,
+        keys: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.get_config_values(&required::<Vec<String>>(keys, "getConfigValues keys")?)
+        })
     }
 }
