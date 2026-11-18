@@ -96,7 +96,7 @@ export async function readJobInsight(tx: Raw, spec: JobInsightSpec): Promise<Job
          LEFT JOIN minion_jobs b ON b.queue = $2 AND b.lock_token = l.acquisition_token::text
          LEFT JOIN minion_jobs h ON (b.data->'drain_lease_beacon'->>'kind') = 'job'
                                 AND h.id::text = (b.data->'drain_lease_beacon'->>'id')
-        WHERE l.id = ANY($1::text[]) AND l.ttl_expires_at > now() ORDER BY l.id`, [spec.lockIds, spec.holderQueue]);
+        WHERE l.id = ANY($1::text[]) AND l.ttl_expires_at > now() ORDER BY l.id COLLATE "C"`, [spec.lockIds, spec.holderQueue]);
     out.locks = rows.map(r => ({
       id: r.id, holder_pid: Number(r.holder_pid), holder_host: r.holder_host, acquired_at: new Date(r.acquired_at),
       ttl_expires_at: new Date(r.ttl_expires_at), beacon: r.beacon ?? null, holder_owner: r.holder_owner,

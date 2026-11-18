@@ -127,7 +127,7 @@ export async function readLegacyJobAuthority(tx: Raw): Promise<LegacyJobAuthorit
     `SELECT status, count(*) AS count FROM minion_jobs
       WHERE submission_authority IS NULL AND idempotency_key IS NOT NULL
         AND status IN ${TERMINAL}
-      GROUP BY status ORDER BY status`);
+      GROUP BY status ORDER BY status COLLATE "C"`);
   return {
     live: live.map(r => ({ id: Number(r.id), status: r.status, submission_authority: r.submission_authority, legacy_authority_is_null: r.legacy_authority_is_null })),
     active_ids: active.map(r => Number(r.id)),

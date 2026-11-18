@@ -75,18 +75,18 @@ export async function readQueueHealthSignals(tx: Raw, spec: QueueHealthSpec): Pr
         AND error_text = 'aborted: watchdog'`,
     [spec.windowHours]);
   const promptTooLong = await tx.executeRaw<{ phase: 'patterns' | 'synthesize' | 'other'; cnt: number | string }>(
-    `SELECT CASE WHEN key LIKE 'dream:patterns:%' THEN 'patterns'
-                 WHEN key LIKE 'dream:synth%' THEN 'synthesize'
-                 ELSE 'other' END AS phase,
-            count(*)::int AS cnt
-       FROM (SELECT COALESCE(idempotency_key, data->>'__released_idempotency_key') AS key
-               FROM minion_jobs
-              WHERE name = 'subagent'
-                AND status = 'dead'
-                AND finished_at > now() - ($1 * interval '1 hour')
-                AND error_text LIKE 'prompt_too_long:%') dead
-      GROUP BY 1
-      ORDER BY 1`,
+    `SELECT phase, count(*)::int AS cnt
+       FROM (SELECT CASE WHEN key LIKE 'dream:patterns:%' THEN 'patterns'
+                         WHEN key LIKE 'dream:synth%' THEN 'synthesize'
+                         ELSE 'other' END AS phase
+               FROM (SELECT COALESCE(idempotency_key, data->>'__released_idempotency_key') AS key
+                       FROM minion_jobs
+                      WHERE name = 'subagent'
+                        AND status = 'dead'
+                        AND finished_at > now() - ($1 * interval '1 hour')
+                        AND error_text LIKE 'prompt_too_long:%') dead) phased
+      GROUP BY phase
+      ORDER BY phase COLLATE "C"`,
     [spec.windowHours]);
   const oldWaiting = await tx.executeRaw<{ name: string; queue: string; depth: number | string; oldest_age_seconds: number | string }>(
     `SELECT name,
