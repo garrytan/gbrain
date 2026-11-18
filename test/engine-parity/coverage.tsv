@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 429/429
+# covered: 440/440
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -34,6 +34,7 @@
 # cycle_locks: 7/7
 # minion_jobs: 8/8
 # minion_queue: 43/43
+# minion_status: 11/11
 # cli_reads_ops: 7/7
 # facts_doctor: 10/10
 # facts_cycle: 11/11
@@ -62,13 +63,13 @@ getPage	pages	yes	48	yes	yes	yes	serves
 readPageSnapshot	pages	yes	9	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	181	yes	yes	yes	serves
+putPage	pages	yes	182	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	5	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	65	yes	yes	yes	serves
+softDeletePage	pages	yes	66	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	8	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -325,13 +326,13 @@ readCycleLocks	cycle_locks	yes	8	no	yes	yes	serves
 deleteCycleLock	cycle_locks	yes	1	no	yes	yes	serves
 deleteCycleLockIfStale	cycle_locks	yes	1	no	yes	yes	serves
 assertCycleLease	cycle_locks	yes	1	no	yes	yes	serves
-admitJob	minion_jobs	yes	49	no	yes	yes	serves
-getJob	minion_jobs	yes	28	no	yes	yes	serves
+admitJob	minion_jobs	yes	60	no	yes	yes	serves
+getJob	minion_jobs	yes	30	no	yes	yes	serves
 listJobs	minion_jobs	yes	1	no	yes	yes	serves
-claimNextJob	minion_jobs	yes	40	no	yes	yes	serves
+claimNextJob	minion_jobs	yes	51	no	yes	yes	serves
 renewJobLease	minion_jobs	yes	1	no	yes	yes	serves
-completeJob	minion_jobs	yes	17	no	yes	yes	serves
-failJob	minion_jobs	yes	17	no	yes	yes	serves
+completeJob	minion_jobs	yes	25	no	yes	yes	serves
+failJob	minion_jobs	yes	24	no	yes	yes	serves
 reclaimStalledJobs	minion_jobs	yes	1	no	yes	yes	serves
 deleteTerminalJob	minion_queue	yes	1	no	yes	yes	serves
 pauseJob	minion_queue	yes	6	no	yes	yes	serves
@@ -346,7 +347,7 @@ delayActiveJob	minion_queue	yes	1	no	yes	yes	serves
 releaseWatchdogClaim	minion_queue	yes	1	no	yes	yes	serves
 markJobWatchdogSuspect	minion_queue	yes	2	no	yes	yes	serves
 promoteDelayedJobs	minion_queue	yes	2	no	yes	yes	serves
-cancelJobs	minion_queue	yes	6	no	yes	yes	serves
+cancelJobs	minion_queue	yes	9	no	yes	yes	serves
 killTimedOutJobs	minion_queue	yes	1	no	yes	yes	serves
 killWallClockJobs	minion_queue	yes	1	no	yes	yes	serves
 pruneJobs	minion_queue	yes	2	no	yes	yes	serves
@@ -376,6 +377,17 @@ insertJobAttachment	minion_queue	yes	3	no	yes	yes	serves
 listJobAttachments	minion_queue	yes	1	no	yes	yes	serves
 getJobAttachment	minion_queue	yes	1	no	yes	yes	serves
 deleteJobAttachment	minion_queue	yes	1	no	yes	yes	serves
+readLastAutopilotCycles	minion_status	yes	1	no	yes	yes	serves
+countJobsByStatus	minion_status	yes	1	no	yes	yes	serves
+readWaitingQueueDepths	minion_status	yes	1	no	yes	yes	serves
+readLastCompletedJobAt	minion_status	yes	1	no	yes	yes	serves
+countTtlCancelledByName	minion_status	yes	1	no	yes	yes	serves
+readWaitingScopeState	minion_status	yes	1	no	yes	yes	serves
+countRecentCompletedJobs	minion_status	yes	1	no	yes	yes	serves
+listRecentFailedJobErrors	minion_status	yes	1	no	yes	yes	serves
+readQueuedPageChars	minion_status	yes	1	no	yes	yes	serves
+readSourceJobCounts	minion_status	yes	1	no	yes	yes	serves
+readEmbedBackfillBySource	minion_status	yes	1	no	yes	yes	serves
 scanExactBatch	cli_reads_ops	yes	4	no	yes	yes	serves
 nextLivePageAfter	cli_reads_ops	yes	1	no	yes	yes	serves
 listExactIdentityCandidates	cli_reads_ops	yes	3	no	yes	yes	serves
