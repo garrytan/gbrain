@@ -5,7 +5,8 @@
  *
  * The keyword members resolve every engine default here (the hard-exclude list, the source-boost map, the slug
  * handles, the dash-run collapse, the date bounds) and send the store only predicates; rust/docs/store/keyword.md
- * lists what each member reads, ignores and refuses.
+ * lists what each member reads, ignores and refuses. `searchKeyword` also serves `excludePrivate` (the page policy of
+ * private-provenance.ts); the other members and `searchTitles` refuse it.
  *
  * Export only BrainEngine members from this file, each a `StoreMember` named after the member it serves (see tags.ts):
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
@@ -32,6 +33,7 @@ import { titleWholeVectorCandidates } from '../../search/title-statement.ts';
 import type { SearchOpts, SearchResult } from '../../types.ts';
 import { rowToSearchResult } from '../../utils.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { storePagePolicy } from './private-provenance.ts';
 
 type FuzzyHit = { slug: string; similarity: number } | null;
 
@@ -62,8 +64,10 @@ const SHARED = new Set([
 ]);
 /** The page filters `searchKeywordChunks` does not apply on PGLite but Postgres does (follow-up pglite-keyword-chunks-page-filters). */
 const PAGE_FILTERS = ['type', 'types', 'where', 'exclude_slugs'] as const;
-/** Visibility options the store cannot apply (private pages, safe chunks, the trust floor). */
-const VISIBILITY = ['excludePrivate', 'requireSafeChunks', 'minTrust', 'suppressFlagged'] as const;
+/** Visibility options the store cannot apply (safe chunks on their own, the trust floor, flag suppression). */
+const VISIBILITY = ['requireSafeChunks', 'minTrust', 'suppressFlagged'] as const;
+/** The one member that serves `excludePrivate` (as the page policy of private-provenance.ts, with the safe-chunks rule it turns on). */
+const PRIVATE_PAGES_MEMBER: Member = 'searchKeyword';
 
 type Member = 'searchKeyword' | 'searchKeywordChunks' | 'countKeywordPages' | 'searchKeywordPages' | 'searchTitles';
 
@@ -86,7 +90,10 @@ function keywordOptions(member: Member, query: string, opts: (SearchOpts & { tim
       if (empty) continue;
       refuseMember(member, `option ${key} (follow-up pglite-keyword-chunks-page-filters)`);
     }
-    if ((VISIBILITY as readonly string[]).includes(key)) {
+    // `excludePrivate` turns on the safe-chunks rule (`requiresSafeChunks`: `requireSafeChunks ?? excludePrivate`), so a
+    // `requireSafeChunks` beside it is the same rule when true, and switches it off when false (read below).
+    if (member === PRIVATE_PAGES_MEMBER && o.excludePrivate && (key === 'excludePrivate' || key === 'requireSafeChunks')) continue;
+    if ((VISIBILITY as readonly string[]).includes(key) || key === 'excludePrivate') {
       if (!value) continue;
       refuseMember(member, `option ${key}`);
     }
@@ -94,6 +101,12 @@ function keywordOptions(member: Member, query: string, opts: (SearchOpts & { tim
   }
 
   const out: Record<string, unknown> = {};
+  if (member === PRIVATE_PAGES_MEMBER && o.excludePrivate) {
+    // `buildVisibilityClause`: the page policy, and the safe-chunks rule unless `requireSafeChunks` says otherwise. A caller
+    // whose policy is wider than the store's refuses (private-provenance.ts).
+    out.excludePrivate = storePagePolicy(member, o.excludePrivate);
+    out.requireSafeChunks = o.requireSafeChunks ?? true;
+  }
   if (o.detail === 'low') out.detailLow = true;
   if (o.language) out.language = String(o.language);
   if (o.symbolKind) out.symbolKind = String(o.symbolKind);

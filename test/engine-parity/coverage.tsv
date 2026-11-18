@@ -73,7 +73,7 @@ listPrefixSampledPages	pages	yes	1	no	yes	yes	refuses:pages
 listCorpusSample	pages	yes	1	no	yes	yes	refuses:pages
 getPageSealState	pages	yes	1	no	yes	yes	refuses:pages
 refreshPageOrigin	pages	yes	1	no	yes	yes	refuses:pages
-searchKeyword	search	yes	9	yes	yes	yes	serves
+searchKeyword	search	yes	10	yes	yes	yes	serves
 countKeywordPages	search	yes	2	no	yes	yes	serves
 searchKeywordPages	search	yes	2	no	yes	yes	serves
 searchTitles	search	yes	5	yes	yes	yes	serves
