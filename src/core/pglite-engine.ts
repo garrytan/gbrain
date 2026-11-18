@@ -183,6 +183,8 @@ import type { AdmitJobPolicy, AdmitJobSpec, ClaimJobSpec, ListJobsFilter } from 
 import * as jobsQueue from './engine-sql/jobs-queue.ts';
 import * as jobsHealth from './engine-sql/jobs-health.ts';
 import type { QueueDivergenceSpec, QueueHealthSpec } from './engine-sql/jobs-health.ts';
+import * as jobsStatus from './engine-sql/jobs-status.ts';
+import type { JobStatusFilter } from './engine-sql/jobs-status.ts';
 import type {
   CancelJobsSpec, DelayActiveJobSpec, JobAttachmentInsert, JobPageSpec, JobTokenCounts, PruneJobsSpec, RetryJobPolicy,
   SynthesisCompletionPrefix,
@@ -3336,6 +3338,19 @@ export class PGLiteEngine implements BrainEngine {
   async readWedgeSignals(queue: string, handlerNames: readonly string[], opts?: { signal?: AbortSignal }) { return jobsHealth.readWedgeSignals(this, queue, handlerNames, opts); }
   async readOldestWaitingAge(queue: string, opts?: { signal?: AbortSignal }) { return jobsHealth.readOldestWaitingAge(this, queue, opts); }
   async listStuckActiveJobsByName() { return jobsHealth.listStuckActiveJobsByName(this); }
+
+  // Job counts and last-run reads for the status surfaces (engine-sql/jobs-status.ts).
+  async readLastAutopilotCycles() { return jobsStatus.readLastAutopilotCycles(this); }
+  async countJobsByStatus(filter?: JobStatusFilter) { return jobsStatus.countJobsByStatus(this, filter); }
+  async readWaitingQueueDepths() { return jobsStatus.readWaitingQueueDepths(this); }
+  async readLastCompletedJobAt() { return jobsStatus.readLastCompletedJobAt(this); }
+  async countTtlCancelledByName(reasonLike: string, withinSeconds: number) { return jobsStatus.countTtlCancelledByName(this, reasonLike, withinSeconds); }
+  async readWaitingScopeState(spec: { name: string; queue: string; jobId: number }) { return jobsStatus.readWaitingScopeState(this, spec); }
+  async countRecentCompletedJobs(name: string, withinSeconds: number) { return jobsStatus.countRecentCompletedJobs(this, name, withinSeconds); }
+  async listRecentFailedJobErrors(withinSeconds: number) { return jobsStatus.listRecentFailedJobErrors(this, withinSeconds); }
+  async readQueuedPageChars(spec: { name: string; queue: string; maxChars: number }) { return jobsStatus.readQueuedPageChars(this, spec); }
+  async readSourceJobCounts(failedWithinSeconds: number) { return jobsStatus.readSourceJobCounts(this, failedWithinSeconds); }
+  async readEmbedBackfillBySource(sourceIds: readonly string[]) { return jobsStatus.readEmbedBackfillBySource(this, sourceIds); }
 
   // ============================================================
   // v0.20.0 Cathedral II: code edges (Layer 1 stubs — filled by Layer 5)

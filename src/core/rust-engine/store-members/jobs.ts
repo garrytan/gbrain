@@ -107,6 +107,8 @@ export const reclaimStalledJobs: StoreMember<[graceMs: number], { requeued: JobR
 // The rest of the queue (engine-sql/jobs-queue.ts).
 export * from './jobs-queue.ts';
 export * from './jobs-health.ts';
+// The status reads (engine-sql/jobs-status.ts).
+export * from './jobs-status.ts';
 
 // ---------------------------------------------------------------- cycle locks
 

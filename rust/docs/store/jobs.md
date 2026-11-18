@@ -9,6 +9,7 @@ records. Timestamps cross the binding as ISO strings; the TypeScript members
 (`src/core/rust-engine/store-members/jobs.ts`) turn them into `Date`s, as PGLite returns them.
 
 The queue health reads (the doctor's queue checks, the advisor's stalled jobs and the submit-time probe) are in [jobs-health.md](jobs-health.md).
+The status reads (counts, last runs, windows) are in [jobs-status.md](jobs-status.md).
 
 Keys, under the family tag `keys::JOBS` (`m`):
 

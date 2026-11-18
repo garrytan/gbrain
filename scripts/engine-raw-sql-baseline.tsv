@@ -163,7 +163,7 @@ src/commands/init.ts	sql_template	2
 src/commands/integrity.ts	execute_raw	1
 src/commands/jobs-watch.ts	execute_raw	2
 src/commands/jobs/smoke.ts	execute_raw	2
-src/commands/jobs/stats.ts	execute_raw	5
+src/commands/jobs/stats.ts	execute_raw	1
 src/commands/jobs/work.ts	execute_raw	1
 src/commands/loops.ts	execute_raw	1
 src/commands/mcp-provision.ts	sql_template	4
@@ -220,7 +220,6 @@ src/commands/sources-sync-enabled.ts	execute_raw	1
 src/commands/sources-trust.ts	execute_raw	2
 src/commands/sources-writers.ts	execute_raw	1
 src/commands/sources.ts	execute_raw	13
-src/commands/status.ts	execute_raw	6
 src/commands/storage.ts	execute_raw	1
 src/commands/sweep.ts	execute_raw	2
 src/commands/sync/full.ts	execute_raw	2
@@ -436,7 +435,6 @@ src/core/facts/conversation-relink-carry.ts	execute_raw	1
 src/core/facts/conversation-relink.ts	execute_raw	7	GBRA-574 F #9674 (opened before this ratchet): +1 the relink --unbacked read of name-tag rows
 src/core/facts/dead-absorb-retry.ts	execute_raw	2
 src/core/facts/derivation-inputs.ts	execute_raw	6
-src/core/facts/drain.ts	execute_raw	2
 src/core/facts/embedding-identity.ts	execute_raw	2
 src/core/facts/facts-home.ts	execute_raw	4
 src/core/facts/fence-fact-append.ts	execute_raw	2
@@ -1059,7 +1057,7 @@ src/core/skillpack/shared-brain-bridge.ts	execute_raw	4
 src/core/slack/slack-source.ts	execute_raw	4
 src/core/source-default-search.ts	execute_raw	1
 src/core/source-delete.ts	execute_raw	2
-src/core/source-health.ts	execute_raw	6
+src/core/source-health.ts	execute_raw	5
 src/core/sources-load.ts	execute_raw	2
 src/core/sources-not-readable.ts	execute_raw	1
 src/core/sources-ops.ts	execute_raw	4	#9634, pre-ratchet: +1 is the INSERT that registers a database-only api source row (imessage); no typed engine method exists yet
@@ -1080,7 +1078,7 @@ src/core/sync-identity-downgrades.ts	execute_raw	8
 src/core/sync-pending.ts	execute_raw	3
 src/core/sync-policy.ts	execute_raw	1
 src/core/sync-rename-identity.ts	execute_raw	4
-src/core/sync-status-report.ts	execute_raw	2
+src/core/sync-status-report.ts	execute_raw	1
 src/core/sync-upstream.ts	execute_raw	2
 src/core/sync.ts	execute_raw	1
 src/core/synopsis-sweep.ts	execute_raw	4

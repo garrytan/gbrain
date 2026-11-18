@@ -500,6 +500,18 @@ export const RUST_ENGINE_MEMBERS = {
   readWedgeSignals: 'minion_queue',
   readOldestWaitingAge: 'minion_queue',
   listStuckActiveJobsByName: 'minion_queue',
+  // Job counts and last-run reads for the status surfaces (engine-sql/jobs-status.ts).
+  readLastAutopilotCycles: 'minion_queue',
+  countJobsByStatus: 'minion_queue',
+  readWaitingQueueDepths: 'minion_queue',
+  readLastCompletedJobAt: 'minion_queue',
+  countTtlCancelledByName: 'minion_queue',
+  readWaitingScopeState: 'minion_queue',
+  countRecentCompletedJobs: 'minion_queue',
+  listRecentFailedJobErrors: 'minion_queue',
+  readQueuedPageChars: 'minion_queue',
+  readSourceJobCounts: 'minion_queue',
+  readEmbedBackfillBySource: 'minion_queue',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;

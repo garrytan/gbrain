@@ -50,6 +50,7 @@ mod inbox;
 mod mutations;
 mod private_queues;
 mod reads;
+mod status;
 mod sweeps;
 mod synthesis_completions;
 
@@ -58,6 +59,7 @@ pub use health::{DivergenceSpec, HealthSpec};
 pub use mutations::{DelayOpts, TokenDelta};
 pub use private_queues::PrivateQueueState;
 pub use reads::{JobPageCursor, JobPageSpec, OverdueSpec};
+pub use status::StatusFilter;
 pub use sweeps::{CancelOpts, PruneOutcome, PruneSpec};
 
 use crate::dream::jsonb;
