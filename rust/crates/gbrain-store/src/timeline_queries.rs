@@ -12,6 +12,10 @@
 //! null), and the row stays. A soft-deleted event page in scope hides the row. An entry whose
 //! event page no longer exists is skipped, as `ON DELETE CASCADE` would have removed it.
 //!
+//! `excludePrivate` carries the page policy the TypeScript member read from the rendered SQL
+//! (`storePagePolicy`). Under it a row drops when the policy hides its depth page or its event
+//! page (`page_hidden` in facts/privacy.rs); see [`joined_entries`].
+//!
 //! Keys: one record kind, the event index that stands in for the Postgres unique index
 //! `idx_timeline_event_dedup` on `(event_page_id, date)`:
 //!
@@ -31,6 +35,7 @@ use std::collections::{BTreeSet, HashMap};
 use crate::Store;
 use crate::env::{iso, parse_iso};
 use crate::error::{INVALID_ARGUMENT, Result, StoreError};
+use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::keys;
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
@@ -134,6 +139,8 @@ pub struct ChronicleOptions {
     pub limit: Option<i64>,
     pub source_id: Option<String>,
     pub source_ids: Option<Vec<String>>,
+    /// `excludePrivate`: the page policy (`facts/privacy.rs` `page_hidden`); null reads every row.
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 /// The options of `getOnThisDay`.
@@ -144,6 +151,8 @@ pub struct OnThisDayOptions {
     pub limit: Option<i64>,
     pub source_id: Option<String>,
     pub source_ids: Option<Vec<String>>,
+    /// `excludePrivate`, as in [`ChronicleOptions`].
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 /// The options of `getLastSeen`.
@@ -153,6 +162,8 @@ pub struct LastSeenOptions {
     pub asof: Option<String>,
     pub source_id: Option<String>,
     pub source_ids: Option<Vec<String>>,
+    /// `excludePrivate`, as in [`ChronicleOptions`].
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 /// One entry with its joined pages, as the chronicle reads see it.
@@ -322,9 +333,15 @@ fn who_names(page: &PageRecord, slug: &str) -> bool {
 
 /// Every timeline entry that passes the shared join and filter of the chronicle reads, and the
 /// `keep` predicate on the entry, in no particular order.
+///
+/// With a `policy` (`excludePrivate`), an entry drops when the policy hides its depth page
+/// (`privatePagesFilterForCaller('p')`) or its event page (`privateTimelineEventFilterForCaller`,
+/// an `EXISTS` on the event page by id: it judges the event page whatever its source or deleted
+/// state, so an event page outside the scope still hides the row).
 fn joined_entries(
     read: &dyn KvRead,
     scope: &Option<BTreeSet<String>>,
+    policy: &Option<PrivacyPolicy>,
     keep: &dyn Fn(&TimelineRecord) -> bool,
 ) -> Result<Vec<Joined>> {
     let mut entries = Vec::new();
@@ -360,11 +377,25 @@ fn joined_entries(
         if !in_scope(scope, &depth) {
             continue;
         }
+        if let Some(policy) = policy
+            && page_hidden(read, &depth, policy)?
+        {
+            continue;
+        }
         let event = match entry.event_page_id {
             None => None,
             Some(id) => match page(id)? {
                 // The cascade would have removed the entry with its event page.
                 None => continue,
+                Some(ep)
+                    if policy
+                        .as_ref()
+                        .map(|p| page_hidden(read, &ep, p))
+                        .transpose()?
+                        == Some(true) =>
+                {
+                    continue;
+                }
                 Some(ep) if !in_scope(scope, &ep) => None,
                 Some(ep) if ep.deleted_at_us.is_some() => continue,
                 Some(ep) => Some(ep),
@@ -414,7 +445,7 @@ impl Store {
         };
         let scope = scope(&options.source_id, &options.source_ids);
         let read = self.read()?;
-        let rows = joined_entries(&*read, &scope, &|e| {
+        let rows = joined_entries(&*read, &scope, &options.exclude_private, &|e| {
             e.date.as_str() >= lower.as_str() && e.date.as_str() <= upper.as_str()
         })?;
         Ok(by_instant(rows, limit))
@@ -427,7 +458,9 @@ impl Store {
         let limit = limit_of(options.limit, 200)?;
         let scope = scope(&options.source_id, &options.source_ids);
         let read = self.read()?;
-        let mut rows = joined_entries(&*read, &scope, &|e| e.date.as_str() >= day.as_str())?;
+        let mut rows = joined_entries(&*read, &scope, &options.exclude_private, &|e| {
+            e.date.as_str() >= day.as_str()
+        })?;
         if let Some(kind) = options.kind.as_deref().filter(|k| !k.is_empty()) {
             rows.retain(|row| {
                 row.event
@@ -447,7 +480,7 @@ impl Store {
         let scope = scope(&options.source_id, &options.source_ids);
         let month_day = target[4..].to_string();
         let read = self.read()?;
-        let mut rows = joined_entries(&*read, &scope, &|e| {
+        let mut rows = joined_entries(&*read, &scope, &options.exclude_private, &|e| {
             e.date[4..] == month_day[..] && e.date.as_str() < target.as_str()
         })?;
         // ORDER BY te.date DESC, te.id ASC.
@@ -467,7 +500,9 @@ impl Store {
         let through = target_day(self, &options.asof)?;
         let scope = scope(&options.source_id, &options.source_ids);
         let read = self.read()?;
-        let rows = joined_entries(&*read, &scope, &|e| e.date.as_str() <= through.as_str())?;
+        let rows = joined_entries(&*read, &scope, &options.exclude_private, &|e| {
+            e.date.as_str() <= through.as_str()
+        })?;
         // ORDER BY te.date DESC, COALESCE(ep.effective_date, te.date) DESC, te.id DESC LIMIT 1.
         let newest = rows
             .iter()
