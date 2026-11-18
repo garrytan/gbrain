@@ -58,7 +58,7 @@ const refusingEngine = new Proxy({}, {
 }) as unknown as BrainEngine;
 
 describe('doctor: a check that catches its own read error still reports a refusal as unknown health', () => {
-  const unknown = { status: 'warn', health: 'unknown', reason: 'engine_capability_missing', capability: 'raw_sql' };
+  const unknown = { status: 'warn' as Check['status'], health: 'unknown', reason: 'engine_capability_missing', capability: 'raw_sql' };
   const view = (c: Check | undefined) => ({ status: c?.status, health: (c?.details as any)?.health, reason: (c?.details as any)?.reason, capability: (c?.details as any)?.capability });
   const run = async (entry: DoctorEntry) => (await entry.run({ ...ctxFor(), engine: refusingEngine } as DoctorContext)) as Check[];
 
