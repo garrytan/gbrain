@@ -6873,6 +6873,7 @@
           "stdioMember?: string | undefined",
           "stdioSurface?: StdioSurfaceState | undefined",
           "subagentId?: number | undefined",
+          "surface?: \"verbs\" | \"starter\" | \"full\" | undefined",
           "surfaceCeiling?: \"verbs\" | \"starter\" | \"full\" | undefined",
           "takesHoldersAllowList?: string[] | undefined",
           "thinClient?: boolean | undefined",

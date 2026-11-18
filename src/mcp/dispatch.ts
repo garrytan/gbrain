@@ -983,7 +983,7 @@ export function buildOperationContext(
     ...(opts.localFederatedSourceIds ? { localFederatedSourceIds: opts.localFederatedSourceIds } : {}),
     ...(opts.localSourceImplicit && opts.remote === false ? { localSourceImplicit: true } : {}),
     ...(opts.explicitReadBinding ? { explicitReadBinding: opts.explicitReadBinding } : {}),
-    ...(opts.surfaceCeiling ? { surfaceCeiling: opts.surfaceCeiling } : {}),
+    ...(opts.surfaceCeiling ? { surfaceCeiling: opts.surfaceCeiling } : {}), ...(opts.surface ? { surface: opts.surface } : {}),
     ...(opts.stdioSurface ? { stdioSurface: opts.stdioSurface } : {}),
     ...(opts.stdioMember !== undefined && opts.transport === 'stdio' && !opts.auth ? { stdioMember: opts.stdioMember } : {}),
     ...(opts.guest && opts.remote !== false ? { guestChannels: opts.guest } : {}),

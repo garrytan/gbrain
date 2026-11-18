@@ -54,7 +54,7 @@ export function listPagesPagination(opts: {
 }
 
 /** Declared list_pages params a continuation call carries over unchanged. */
-const CARRIED_PARAMS = ['type', 'tag', 'sort', 'include_deleted', 'source_id', 'updated_after'] as const;
+const CARRIED_PARAMS = ['type', 'tag', 'sort', 'include_deleted', 'source_id', 'source_ids', 'slug_prefix', 'where', 'updated_after'] as const;
 
 /**
  * The `listing_truncated` notice for a truncated result; null when nothing
