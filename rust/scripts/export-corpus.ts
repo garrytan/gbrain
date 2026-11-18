@@ -21,6 +21,7 @@ import { execFileSync } from 'node:child_process';
 import { createEngine } from '../../src/core/engine-factory.ts';
 import { loadConfig, toEngineConfig } from '../../src/core/config.ts';
 import type { EngineConfig } from '../../src/core/types.ts';
+import { isSegmentedPage } from '../../src/core/page-body/page-shape.ts';
 
 const USAGE = `usage: bun rust/scripts/export-corpus.ts --out <dir> [--database-url <url> | --pglite-dir <dir>] [--queries 1000] [--seed 1] [--allow-in-repo] [--overwrite]`;
 
@@ -102,7 +103,7 @@ try {
   const vectorsFd = open('vectors.f32');
   const queryReservoir: { vector: Float32Array; text: string }[] = [];
 
-  let pageIndex = 0, chunkRow = 0, skippedChunks = 0, skippedPages = 0, dims = 0, seen = 0, maxNormDeviation = 0;
+  let pageIndex = 0, chunkRow = 0, skippedChunks = 0, skippedPages = 0, skippedSegmented = 0, dims = 0, seen = 0, maxNormDeviation = 0;
   const usedSources: string[] = [];
 
   for (const sourceId of sources) {
@@ -113,6 +114,12 @@ try {
       if (batch.length === 0) break;
       for (const page of batch) {
         after = page.slug;
+        // A segmented page's body getters throw page_body_segmented: skip and count it before anything is written for
+        // it, instead of aborting the export after its files were opened.
+        if (isSegmentedPage(page)) {
+          skippedSegmented++;
+          continue;
+        }
         let chunks;
         try {
           chunks = await engine.getChunks(page.slug, { sourceId, includeEmbedding: true });
@@ -120,6 +127,7 @@ try {
           skippedPages++;
           continue;
         }
+        const body = page.timeline && page.timeline.trim() ? `${page.compiled_truth}\n\n${page.timeline}` : page.compiled_truth;
         any = true;
         const embedded = chunks.filter(c => c.embedding && c.embedding.length > 0);
         skippedChunks += chunks.length - embedded.length;
@@ -142,7 +150,6 @@ try {
             if (j < queryCount) queryReservoir[j] = { vector: Float32Array.from(v), text: c.chunk_text.slice(0, 60) };
           }
         }
-        const body = page.timeline && page.timeline.trim() ? `${page.compiled_truth}\n\n${page.timeline}` : page.compiled_truth;
         writeLine(pagesFd, {
           i: pageIndex, source_id: sourceId, slug: page.slug, type: page.type, title: page.title,
           frontmatter: page.frontmatter ?? {}, body, chunk_start: chunkStart, chunk_count: embedded.length,
@@ -167,13 +174,16 @@ try {
     format: 'gbrain-bench-corpus/1', dims, pages: pageIndex, chunks: chunkRow, queries: queryReservoir.length,
     sources: usedSources, origin: `export of a ${engine.kind} gbrain brain (private; never commit or share)`,
     queries_in_corpus: true, skipped_chunks_without_embedding: skippedChunks, skipped_pages_unreadable: skippedPages,
+    skipped_pages_segmented: skippedSegmented,
     max_abs_norm_deviation: Number(maxNormDeviation.toFixed(6)),
   };
   const manifestPath = join(out, 'manifest.json');
   writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n', { mode: 0o600 });
   chmodSync(manifestPath, 0o600);
   console.error(`exported ${pageIndex} pages, ${chunkRow} chunks (${dims} dims), ${queryReservoir.length} queries to ${out}`);
-  if (skippedChunks || skippedPages) console.error(`skipped ${skippedChunks} chunks without an embedding and ${skippedPages} unreadable pages`);
+  if (skippedChunks || skippedPages || skippedSegmented) {
+    console.error(`skipped ${skippedChunks} chunks without an embedding, ${skippedPages} unreadable pages and ${skippedSegmented} segmented pages`);
+  }
 } finally {
   await engine.disconnect();
 }
