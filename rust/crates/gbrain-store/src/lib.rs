@@ -34,6 +34,7 @@ pub mod timeline;
 // so building a family never edits this list.
 pub mod alias_fanout_reads;
 pub mod aliases;
+pub mod chat_usage;
 pub mod chunk_queries;
 pub mod code_edges;
 pub mod contradictions;
@@ -42,6 +43,7 @@ pub mod embeddings;
 pub mod eval_capture;
 pub mod extraction;
 pub mod facts;
+pub mod field_usage;
 pub mod import_members;
 pub mod jobs;
 pub mod keyword;

@@ -259,11 +259,8 @@ export async function prepareRelinkMutation(engine: BrainEngine, row: WriteReque
     for (const c of planned) {
       if (c.action === 'skip') continue;
       const f = byId.get(c.id)!;
-      await tx.executeRaw(`INSERT INTO fact_relink_attempts (source_id, fact_id, outcome, reason, tier, model, target_slug, run_id, attempted_at)
-        VALUES ($1, $2, $3, NULL, $4, $5, $6, $7, now())
-        ON CONFLICT (source_id, fact_id) DO UPDATE SET outcome=EXCLUDED.outcome, reason=NULL, tier=EXCLUDED.tier, model=EXCLUDED.model,
-          target_slug=EXCLUDED.target_slug, run_id=EXCLUDED.run_id, attempted_at=EXCLUDED.attempted_at`,
-      [row.source_id, c.id, c.action === 'link' ? 'linked' : 'deduped', f.tier, f.model, row.slug, intent.run_id]);
+      await tx.upsertFactRelinkAttempt(row.source_id, { factId: c.id, outcome: c.action === 'link' ? 'linked' : 'deduped', reason: null,
+        tier: f.tier, model: f.model, targetSlug: row.slug, runId: intent.run_id });
     }
     if (intent.queue_conflict && outcome.linked.length) {
       const { enqueueRelinked } = await import('../ai/decide/proposals-store.ts');

@@ -264,19 +264,12 @@ async function runModelTier(engine: BrainEngine, opts: RelinkOptions, report: Re
 
 async function modelVerdicts(engine: BrainEngine, sourceId: string, ids: number[]): Promise<Map<number, string>> {
   const memoized = Object.entries(RELINK_REASONS).filter(([, r]) => r.memoized).map(([code]) => code);
-  const rows = await engine.executeRaw<{ fact_id: number | string; outcome: string }>(
-    `SELECT fact_id, outcome FROM fact_relink_attempts WHERE source_id = $1 AND fact_id = ANY($2::bigint[]) AND outcome = ANY($3::text[])`,
-    [sourceId, ids, memoized]);
-  return new Map(rows.map(r => [Number(r.fact_id), r.outcome]));
+  const rows = await engine.listFactRelinkOutcomes(sourceId, ids, memoized);
+  return new Map(rows.map(r => [r.fact_id, r.outcome]));
 }
 
 async function recordModelVerdict(engine: BrainEngine, sourceId: string, factId: number, outcome: string, model: string, runId: string): Promise<void> {
-  await engine.executeRaw(
-    `INSERT INTO fact_relink_attempts (source_id, fact_id, outcome, reason, tier, model, target_slug, run_id, attempted_at)
-     VALUES ($1, $2, $3, $3, 'model', $4, NULL, $5, now())
-     ON CONFLICT (source_id, fact_id) DO UPDATE SET outcome = EXCLUDED.outcome, reason = EXCLUDED.reason, tier = 'model',
-       model = EXCLUDED.model, target_slug = NULL, run_id = EXCLUDED.run_id, attempted_at = EXCLUDED.attempted_at`,
-    [sourceId, factId, outcome, model, runId]);
+  await engine.upsertFactRelinkAttempt(sourceId, { factId, outcome, reason: outcome, tier: 'model', model, targetSlug: null, runId });
 }
 
 async function conflictSlotOn(engine: BrainEngine): Promise<boolean> {

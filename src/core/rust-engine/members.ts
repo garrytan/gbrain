@@ -74,6 +74,8 @@ export const RUST_ENGINE_MEMBERS = {
   listAllPageRefs: 'pages',
   listPrefixSampledPages: 'pages',
   listCorpusSample: 'pages',
+  // schema detect --fields (engine-sql/field-usage.ts; rust/docs/store/field-usage.md).
+  readFieldUsageSamples: 'pages',
   getPageTimestamps: 'pages',
   getEffectiveDates: 'pages',
   getContentFlagsByPageIds: 'pages',
@@ -329,6 +331,11 @@ export const RUST_ENGINE_MEMBERS = {
   listUnlinkedConversationSlugs: 'facts',
   countFactEmbeddingCoverage: 'facts',
 
+  // facts: relink attempts (engine-sql/fact-relink-attempts.ts)
+  upsertFactRelinkAttempt: 'facts',
+  listFactRelinkOutcomes: 'facts',
+  deleteFactRelinkMemos: 'facts',
+
   // facts: command, cycle and fence reads (engine-sql/facts-cycle.ts)
   listActiveFactsForEntity: 'facts',
   listFreshExtractionOutcomes: 'facts',
@@ -428,8 +435,9 @@ export const RUST_ENGINE_MEMBERS = {
   deleteEvalCandidatesBefore: 'eval_capture',
   logEvalCaptureFailure: 'eval_capture',
   listEvalCaptureFailures: 'eval_capture',
-  // telemetry (engine-sql/telemetry.ts): search telemetry, the MCP request log with its retention prune, and the MCP
-  // usage reads; the store serves every member (rust/docs/store/telemetry.md).
+  // telemetry (engine-sql/telemetry.ts, engine-sql/chat-usage.ts): search telemetry, the MCP request log with its
+  // retention prune, the MCP usage reads and the chat usage ledger; the store serves every member
+  // (rust/docs/store/telemetry.md).
   recordSearchTelemetry: 'telemetry',
   readSearchStats: 'telemetry',
   readClientOpUsage: 'telemetry',
@@ -438,6 +446,8 @@ export const RUST_ENGINE_MEMBERS = {
   logMcpRequest: 'telemetry',
   readMcpLogPruneCutoff: 'telemetry',
   pruneMcpRequestLogBatch: 'telemetry',
+  logChatUsage: 'telemetry',
+  readChatUsage: 'telemetry',
   // ingest_log
   logIngest: 'ingest_log',
   getIngestLog: 'ingest_log',

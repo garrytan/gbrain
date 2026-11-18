@@ -6,9 +6,11 @@ Search telemetry (`search_telemetry`): the per-day counters the search telemetry
 (`src/core/search/telemetry.ts`) adds to, read by `gbrain search stats` and the search tune advisor. The MCP
 request log (`mcp_request_log`): one row per MCP request, tools/list, webhook, surface change, access admin action
 and memory setting change, read by `gbrain auth` usage and doctor. Its tally (`mcp_request_log_rollup`): the
-per-token count of the rows the retention prune (`src/core/mcp-request-log-retention.ts`) removed. The
-TypeScript statements are in `src/core/engine-sql/telemetry.ts`; the store module is
-`rust/crates/gbrain-store/src/telemetry.rs`.
+per-token count of the rows the retention prune (`src/core/mcp-request-log-retention.ts`) removed. The chat
+usage ledger (`chat_usage_log`): one row per chat call the gateway sink (`src/core/ai/chat-usage.ts`) records,
+read by `get_usage`. The TypeScript statements are in `src/core/engine-sql/telemetry.ts` and
+`src/core/engine-sql/chat-usage.ts`; the store modules are `rust/crates/gbrain-store/src/telemetry.rs` and
+`rust/crates/gbrain-store/src/chat_usage.rs`.
 
 Keys: every record starts with the family tag `a` (`keys::TELEMETRY`) and the table's sub-tag.
 
@@ -18,6 +20,9 @@ Keys: every record starts with the family tag `a` (`keys::TELEMETRY`) and the ta
   order, ties by id; the id comes from the `next_mcp_request_id` counter, as `SERIAL` does.
 - `a 0x03 <token_name>` holds one tally row. A NULL token counts under `''`, as the prune's
   `COALESCE(token_name, '')` does.
+- `a 0x0B <created_at BE8, sign bit flipped> <id BE8>` holds one chat usage ledger row
+  (`keys::TELEMETRY_CHAT_USAGE`, a reviewed key reservation). Key order is `created_at` order, ties by id; the id
+  comes from the `next_chat_usage_id` counter.
 
 The other sub-tags of `a` (retrieval feedback, budget ledger) have no records yet. No table has a source or
 page column, so page and source deletes never touch them.
@@ -31,6 +36,8 @@ page column, so page and source deletes never touch them.
 | `brain.pruneMcpRequestLogBatch(cutoff, keepOperations, limit)` | `{ deleted, newest }`. In one write, deletes the oldest `limit` rows created before `cutoff` whose operation is not in `keepOperations` and adds them to the tally: `requests` grows by the count, `last_used_at` and `pruned_through` take the newest deleted `created_at` (`GREATEST`, which skips a NULL). `newest` is that time as ISO text, null when nothing was deleted. A null cutoff, a null list or a list holding a null takes nothing (`<> ALL` is never true); a null limit takes every row; a negative or fractional limit is `invalid_argument` | `pruneMcpRequestLogBatch` |
 | `brain.readClientOpUsage(days)` | one `{ token_name, operation, n, last_seen }` row per token and operation over the rows created after `now - days` with a token and status `success`, `success_with_warnings` or `accepted_pending`; `n` is an integer, `last_seen` the newest `created_at` as ISO text. A null day count matches no row | `readClientOpUsage` |
 | `brain.readMcpRollupPrunedBefore()` | `{ pruned_before, now }`: the newest `pruned_through` of the tally (null when nothing was pruned) and the store clock, as ISO text | `readMcpRollupPrunedBefore` |
+| `brain.logChatUsage(row)` | `null`. Appends one ledger row with the next id; `created_at` is ISO text, or null for now. Checks run in Postgres order: a NUL byte is `invalid_argument`, a token count that is not a whole `int4` is `invalid_argument`, a bad `created_at` is `invalid_argument`, then a null `model` or token count is `constraint_violation` (`null value in column "<column>"`) | `logChatUsage` |
+| `brain.readChatUsage(days)` | `{ rows, logged_since }`: one `{ model, phase, calls, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, unpriced_calls }` row per `(model, phase)` over the rows created on or after `now - days`, ordered by summed cost descending (null last), then model and phase in byte order with a null phase first. `cost_usd` is null when no call in the group is priced. `logged_since` is the first `created_at` of the whole ledger as timestamp text (null when empty) | `readChatUsage` |
 | `brain.readMcpLifetimeUsage(tokenNames)` | one `{ token_name, requests, last_used_at }` row per asked token that has log rows or a tally row, in token byte order: `requests` is the token's request log rows (every status and operation) plus its tally `requests`, `last_used_at` the newest of the newest `created_at` and the tally's `last_used_at`, as ISO text. A null list or a null name matches nothing; a NULL-token log row never matches, and the tally's `''` row matches only an asked `''`. A NUL in a name is `invalid_argument`; a sum past `int8` is `invalid_argument` (`integer out of range`) | `readMcpLifetimeUsage` |
 
 The TypeScript members turn each ISO time (`cutoff`, `newest`, `last_seen`, `pruned_before`, `now`, `last_used_at`) into a
@@ -58,6 +65,9 @@ Differences from PGLite:
   missing the tally.
 - `readMcpLifetimeUsage` always adds the tally, for the same reason; the TypeScript statement reads the log alone
   when the tally table is missing. Both return token byte order (`ORDER BY token_name COLLATE "C"`).
+
+- `readChatUsage` token sums are floats in the store; Postgres sums `int4` as `bigint`, which the TypeScript
+  statement reads through `Number()`. The values agree for every sum below 2^53.
 
 ## Known gaps
 

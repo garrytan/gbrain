@@ -1,9 +1,8 @@
 //! Group 5 facts members, doctor checks: one `#[napi] impl Brain` block over `gbrain_store::facts::doctor`.
 //! Group 5 facts reads, doctor checks (src/core/engine-sql/facts-doctor.ts).
 //!
-//! Each method runs one store call on the pool through `Brain::run` and resolves plain JSON. The
-//! TypeScript members (src/core/rust-engine/store-members/facts-doctor.ts) refuse the forms the store
-//! cannot answer (the `fact_relink_attempts` table behind `hasAttempts`) before the call.
+//! Each method runs one store call on the pool through `Brain::run` and resolves plain JSON.
+//! `countFactRelinkOutcomes`, a read of the `fact_relink_attempts` table, is in `fact_relink.rs`.
 
 use napi::Env;
 use napi::bindgen_prelude::Object;

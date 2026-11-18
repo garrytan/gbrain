@@ -31,7 +31,6 @@ import { sha256 } from './digest.ts';
 import { preparationReads } from './group-publish.ts';
 import { importGroupReads, sliceReads } from './import-reads.ts';
 import { PAGE_PURGE_TOMBSTONES_SQL } from './page-purge.ts';
-import { WORKTREE_BINDING_SQL } from './ownership.ts';
 import { SOURCE_TRUST_CONFIG_SQL } from '../trust/channel.ts';
 import { SOURCE_PURGE_EPOCH_SQL } from '../reason-trailers.ts';
 
@@ -187,10 +186,11 @@ export async function buildConvergenceReceipt(engine: BrainEngine, level: Shadow
 }
 
 /**
- * Plain reads every screened preparation repeats beside group-publish.ts's `preparationReads` set: the binding, the owner
- * trust config, the purge tombstones and the source's purge epoch (the key of the pass's reason-trailer scan, GBRA-217).
+ * Plain reads every screened preparation repeats beside group-publish.ts's `preparationReads` set: the owner trust config,
+ * the purge tombstones and the source's purge epoch (the key of the pass's reason-trailer scan, GBRA-217). The binding is
+ * the typed `getWorktreeBinding`, which `preparationReads` always answers once.
  */
-const SCREEN_STABLE_READS = [WORKTREE_BINDING_SQL, SOURCE_TRUST_CONFIG_SQL, PAGE_PURGE_TOMBSTONES_SQL, SOURCE_PURGE_EPOCH_SQL];
+const SCREEN_STABLE_READS = [SOURCE_TRUST_CONFIG_SQL, PAGE_PURGE_TOMBSTONES_SQL, SOURCE_PURGE_EPOCH_SQL];
 
 /**
  * The dry run's read-only `sameContentAtOrigin` (sync-run.ts): prepares each drift path's import as a screening request
