@@ -71,6 +71,26 @@ describe('export-corpus', () => {
     expect(pages.map((p) => p.slug)).toEqual(['notes/inline']);
   }, 60_000);
 
+  test('--overwrite drops the cached ground truth of the corpus it replaces', async () => {
+    const dbPath = join(root, 'brain-overwrite');
+    const config = { engine: 'pglite' as const, database_path: dbPath };
+    const engine = await createEngine(config);
+    await engine.connect(config);
+    try {
+      await engine.initSchema();
+      await engine.putPage('notes/inline', { type: 'note', title: 'Inline', compiled_truth: 'an inline body', timeline: '' });
+    } finally {
+      await engine.disconnect();
+    }
+    const out = join(root, 'corpus-overwrite');
+    mkdirSync(out, { recursive: true });
+    writeFileSync(join(out, 'truth_top10.json'), '[[0,1,2,3,4,5,6,7,8,9]]');
+    const run = Bun.spawnSync(['bun', script, '--out', out, '--pglite-dir', dbPath, '--overwrite'], { stdout: 'pipe', stderr: 'pipe' });
+    expect({ exit: run.exitCode, stderr: run.exitCode === 0 ? '' : run.stderr.toString() }).toEqual({ exit: 0, stderr: '' });
+    expect(existsSync(join(out, 'manifest.json'))).toBe(true);
+    expect(existsSync(join(out, 'truth_top10.json'))).toBe(false);
+  }, 60_000);
+
   describe('the in-repository guard', () => {
     const repo = join(root, 'repo');
     mkdirSync(repo, { recursive: true });

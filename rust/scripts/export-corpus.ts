@@ -15,7 +15,7 @@
  * Queries are sampled from stored chunk vectors, so (unlike the dbpedia corpus) they are IN the corpus: their
  * nearest neighbor is themselves. The manifest says so (`queries_in_corpus: true`).
  */
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, writeSync, writeFileSync, chmodSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, rmSync, writeSync, writeFileSync, chmodSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createEngine } from '../../src/core/engine-factory.ts';
@@ -91,7 +91,7 @@ if (!args.has('allow-in-repo')) {
     fail(`refusing to write private brain text: could not tell whether ${out} is inside a git working tree (${where.detail}); fix git, pick a directory outside any repo, or pass --allow-in-repo`);
   }
 }
-if (existsSync(out) && readdirSync(out).length > 0 && !args.has('overwrite')) fail(`${out} is not empty; pass --overwrite to replace the corpus files in it`);
+if (existsSync(out) && readdirSync(out).length > 0 && !args.has('overwrite')) fail(`${out} is not empty; pass --overwrite to replace the corpus files (and the cached ground truth) in it`);
 
 let config: EngineConfig;
 if (args.has('database-url')) config = { engine: 'postgres', database_url: args.get('database-url') as string, pool_max: 2 };
@@ -109,6 +109,8 @@ console.error([
   '',
 ].join('\n'));
 
+// The exact ground truth cached beside the old corpus files belongs to them, so a re-export starts without it.
+rmSync(join(out, 'truth_top10.json'), { force: true });
 mkdirSync(out, { recursive: true, mode: 0o700 });
 chmodSync(out, 0o700);
 const open = (name: string) => openSync(join(out, name), 'w', 0o600);
