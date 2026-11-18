@@ -170,6 +170,8 @@ import * as beliefImpl from './engine-sql/belief.ts';
 import * as configImpl from './engine-sql/config.ts';
 import * as accessControlImpl from './engine-sql/access-control.ts';
 import * as cycleLocksImpl from './engine-sql/cycle-locks.ts';
+import * as jobsImpl from './engine-sql/jobs.ts';
+import type { AdmitJobPolicy, AdmitJobSpec, ClaimJobSpec, ListJobsFilter } from './engine-sql/jobs.ts';
 import { noteDirectPoolLease } from './direct-pool-profile.ts';
 import * as filesImpl from './engine-sql/files.ts';
 import type { ChunkWindowRequest, ChunkWindowOpts, ChunkWindowPage } from './search/chunk-windows.ts';
@@ -3317,6 +3319,20 @@ export class PostgresEngine implements BrainEngine {
   async readCycleLocks(filter: CycleLockFilter) { return cycleLocksImpl.readCycleLocks(unscopedExecutor(this.engineSql, 'cycle locks: unscoped on master (db-lock selectLockRows)'), filter); }
   async deleteCycleLock(lockId: string, opts: Parameters<BrainEngine['deleteCycleLock']>[1]) { return retryReadOnlyAutocommit(this.sql, c => cycleLocksImpl.deleteCycleLock(this.engineSqlOn(c), lockId, opts)); }
   async deleteCycleLockIfStale(lockId: string, opts: Parameters<BrainEngine['deleteCycleLockIfStale']>[1]) { return retryReadOnlyAutocommit(this.sql, c => cycleLocksImpl.deleteCycleLockIfStale(this.engineSqlOn(c), lockId, opts)); }
+  async assertCycleLease(lockId: string, acquisitionToken: string) { return cycleLocksImpl.assertCycleLease(this, lockId, acquisitionToken); }
+
+  // Minion jobs (engine-sql/jobs.ts): the submission and lifecycle writes run in one transaction each; claim and
+  // renewal run on executeRawDirect; reads run where they are called (a transaction engine reads inside it).
+  async admitJob(spec: AdmitJobSpec, policy: AdmitJobPolicy) { return this.transaction(tx => jobsImpl.admitJob(tx, spec, policy)); }
+  async getJob(id: number) { return jobsImpl.getJob(this, id); }
+  async listJobs(filter?: ListJobsFilter) { return jobsImpl.listJobs(this, filter); }
+  async claimNextJob(spec: ClaimJobSpec) { return jobsImpl.claimNextJob(this, spec); }
+  async renewJobLease(id: number, lockToken: string, lockDurationMs: number, opts?: { signal?: AbortSignal }) { return jobsImpl.renewJobLease(this, id, lockToken, lockDurationMs, opts); }
+  async completeJob(id: number, lockToken: string, result?: Record<string, unknown>) { return this.transaction(tx => jobsImpl.completeJob(tx, id, lockToken, result)); }
+  async failJob(id: number, lockToken: string, errorText: string, newStatus: 'delayed' | 'failed' | 'dead', backoffMs?: number, result?: Record<string, unknown>) {
+    return this.transaction(tx => jobsImpl.failJob(tx, id, lockToken, errorText, newStatus, backoffMs, result));
+  }
+  async reclaimStalledJobs(graceMs: number) { return this.transaction(tx => jobsImpl.reclaimStalledJobs(tx, graceMs)); }
 
   // ============================================================
   // v0.20.0 Cathedral II: code edges (Layer 1 stubs — filled by Layer 5)

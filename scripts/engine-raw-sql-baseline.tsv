@@ -601,7 +601,7 @@ src/core/minions/handlers/subagent-persistence.ts	execute_raw	10
 src/core/minions/handlers/subagent.ts	execute_raw	6
 src/core/minions/handlers/sync-job-drain.ts	execute_raw	1
 src/core/minions/handlers/sync.ts	execute_raw	3
-src/core/minions/idempotency-coalesce.ts	execute_raw	6
+src/core/minions/idempotency-coalesce.ts	execute_raw	1
 src/core/minions/job-context.ts	execute_raw	2
 src/core/minions/job-insight.ts	execute_raw	8
 src/core/minions/job-list-page.ts	execute_raw	1
@@ -609,7 +609,7 @@ src/core/minions/lease-pressure-audit.ts	execute_raw	3
 src/core/minions/legacy-cancel.ts	execute_raw	4
 src/core/minions/legacy-selection.ts	execute_raw	2
 src/core/minions/queue-families.ts	execute_raw	1
-src/core/minions/queue.ts	execute_raw	86
+src/core/minions/queue.ts	execute_raw	46
 src/core/minions/rate-leases.ts	execute_raw	6
 src/core/minions/spend-authorization.ts	execute_raw	5
 src/core/minions/submission-authority.ts	execute_raw	7
@@ -619,7 +619,7 @@ src/core/minions/terminal-events.ts	execute_raw	1
 src/core/minions/terminal-hook.ts	execute_raw	1
 src/core/minions/tools/read-budget.ts	execute_raw	1
 src/core/minions/transcript.ts	execute_raw	2
-src/core/minions/watchdog-attribution.ts	execute_raw	5
+src/core/minions/watchdog-attribution.ts	execute_raw	2
 src/core/minions/worker-shutdown.ts	execute_raw	1
 src/core/minions/worker.ts	execute_raw	7
 src/core/multi-source-drift.ts	execute_raw	1

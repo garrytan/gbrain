@@ -386,6 +386,15 @@ export const RUST_ENGINE_MEMBERS = {
   readCycleLocks: 'minion_queue',
   deleteCycleLock: 'minion_queue',
   deleteCycleLockIfStale: 'minion_queue',
+  assertCycleLease: 'minion_queue',
+  admitJob: 'minion_queue',
+  getJob: 'minion_queue',
+  listJobs: 'minion_queue',
+  claimNextJob: 'minion_queue',
+  renewJobLease: 'minion_queue',
+  completeJob: 'minion_queue',
+  failJob: 'minion_queue',
+  reclaimStalledJobs: 'minion_queue',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;
