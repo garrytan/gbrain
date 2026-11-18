@@ -41,6 +41,7 @@ import * as relations from './relations.ts';
 import * as cliSources from './cli-sources.ts';
 import * as cliReadsImport from './cli-reads-import.ts';
 import * as wantedLinks from './wanted-links.ts';
+import * as persistenceIdentity from './persistence-identity.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
 const initSchema: StoreMember<[], void> = async () => undefined;
@@ -58,6 +59,8 @@ export const STORE_MEMBERS = {
   ...cliSources,
   // Typed reads that CLI paths ran through executeRaw (docs/research/rust-cli-executeraw-map.md).
   ...cliReadsImport,
+  // The persistence brain identity the store already keeps (rust/docs/store/journal.md).
+  ...persistenceIdentity,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;
