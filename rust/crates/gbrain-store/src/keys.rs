@@ -69,6 +69,14 @@ pub const EMBEDDING_STATE: u8 = b'B';
 pub const LOCK_QUEUE: u8 = b'w';
 /// Family `relations` (`relations.rs`).
 pub const RELATION_CATALOG: u8 = b'v';
+/// Family `persistence` (`persistence.rs`): effects, checkpoints, bindings and the page
+/// projection queue. Its write requests stay under `REQUEST` and `REQUEST_ID`, and its local
+/// writers under `WRITER`.
+pub const PERSISTENCE: u8 = b'd';
+/// Family `jobs` (`jobs.rs`).
+pub const JOBS: u8 = b'm';
+/// Family `trust` (`trust.rs`).
+pub const TRUST: u8 = b't';
 
 pub fn text(tag: u8, parts: &[&str]) -> Vec<u8> {
     let mut key = vec![tag];

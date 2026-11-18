@@ -48,6 +48,7 @@ pub(crate) fn add_page_columns(
     crate::aliases::page_columns(read, record, &mut columns)?;
     crate::extraction::page_columns(read, record, &mut columns)?;
     crate::page_body::page_columns(read, record, &mut columns)?;
+    crate::trust::page_columns(read, record, &mut columns)?;
     Ok(())
 }
 
