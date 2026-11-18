@@ -112,6 +112,7 @@ import { assertGuestWriterAtPublication, insertGuestMark, refuseRemoteGuestDelet
 import { skipsGuestNote } from '../guests/derived.ts';
 import { NOT_A_GUEST_WRITE, prepareGuestWrite, type GuestWrite } from '../guests/publication.ts';
 import { clearOwedPurges } from './derived-origin-hold.ts';
+import { versionReadableSql } from '../search/private-visibility.ts';
 
 
 const ownerStatusFix = (sourceId: string): Action => readFix(`Shows source ${sourceId}'s canonical owner with its pending, failed and recovering requests, read-only.`,
@@ -1091,7 +1092,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     let tags = snapshot.tags;
     if (row.operation === 'revert_version') {
       const [version] = await engine.executeRaw<PageVersion>(
-        'SELECT * FROM page_versions WHERE id=$1 AND page_id=$2', [p.version_id, page.id]);
+        `SELECT * FROM page_versions pv WHERE pv.id=$1 AND pv.page_id=$2 AND ${versionReadableSql('pv', false)}`, [p.version_id, page.id]);
       if (!version) throw pageRefusal('not_found', 'Version not found for this page.', row,
         `Version ${String(p.version_id)} is not in the history of page ${row.slug}, so nothing was reverted. List the page's versions (get_versions; CLI: gbrain history) and revert to one of them.`);
       if (version.body_storage === 'segmented' || isSegmentedPage(page)) throw segmentedRevertRefusal(row.slug, p.version_id);

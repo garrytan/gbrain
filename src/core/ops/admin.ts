@@ -351,6 +351,12 @@ const revert_version: Operation = {
     const { pageMutationSource, submitPageMutation } = await import('../persistence/page-mutations.ts');
     pageMutationSource(ctx, p, 'revert_version');
     enforceClientSlugFence(ctx, p.slug as string, 'revert_version');
+    // #9653: a remote writer reverts only to a version its own get_versions lists, so an owner-only one stays closed to it.
+    if (ctx.remote !== false && !(await ctx.engine.getVersions(p.slug as string, { ...(await readPolicyOpts(ctx)), includeBody: false }))
+      .some(v => Number(v.id) === Number(p.version_id))) {
+      throw opError('not_found', `Version ${String(p.version_id)} is not in the history of page ${String(p.slug)} that this caller can read, so nothing was reverted.`,
+        'List the page\'s versions with get_versions and revert to one of them.');
+    }
     if (ctx.dryRun) return { dry_run: true, action: 'revert_version', slug: p.slug, version_id: p.version_id };
     return submitPageMutation(ctx, { operation: 'revert_version', params: p });
   },

@@ -31,6 +31,7 @@ import { syncGit, syncGitPath } from '../persistence/sync-discovery.ts';
 import { readSyncImportProvenances, writeGitHold } from '../persistence/sync-holds.ts';
 import { fileDriftHold } from '../persistence/sync-page-fault.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairScope } from './core.ts';
+import { versionReadableSql } from '../search/private-visibility.ts';
 
 const DOCS = 'docs/guides/repair.md#overwritten-edits';
 const COMMAND = 'gbrain repair overwritten-edits';
@@ -57,7 +58,7 @@ async function scanScope(engine: BrainEngine, scope: RepairScope, slugs: readonl
 /** The archived version's content rendered as `revert_version` renders it, or null when it is no longer the previewed edit. */
 async function versionMarkdown(engine: BrainEngine, edit: Pick<OverwrittenEdit, 'page_id' | 'version_id' | 'lost_digest'>, page: Parameters<typeof serializePageToMarkdown>[0]): Promise<string | null> {
   const [row] = await engine.executeRaw<{ body_storage: string | null; title: string | null; type: string | null; compiled_truth: string | null; timeline: string | null; frontmatter: Record<string, unknown> | null; tags: unknown }>(
-    'SELECT body_storage, title, type, compiled_truth, timeline, frontmatter, tags FROM page_versions WHERE id=$1 AND page_id=$2', [edit.version_id, edit.page_id]);
+    `SELECT body_storage, title, type, compiled_truth, timeline, frontmatter, tags FROM page_versions pv WHERE pv.id=$1 AND pv.page_id=$2 AND ${versionReadableSql('pv', false)}`, [edit.version_id, edit.page_id]);
   const content = row ? overwriteContent(row) : null;
   if (!content || overwriteDigest(content) !== edit.lost_digest) return null;
   return serializePageToMarkdown({ ...page, title: content.title, type: content.type, compiled_truth: content.compiled_truth, timeline: content.timeline, frontmatter: content.frontmatter }, content.tags);

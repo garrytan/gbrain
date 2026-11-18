@@ -20,7 +20,7 @@ import { pageTrustForRead, readQuarantined } from './get-page-projection.ts';
 import { admitsTrust, type TrustTier } from '../trust/tier.ts';
 import { isCalendarDate } from '../link-validity.ts';
 import { replacedBecauseSql } from '../engine-sql/pages.ts';
-import { callerReadersAllowedSql, privacyForCaller, privateLinkOriginFilterFragment, privatePagesFilterForCaller, privatePagesFilterFragment, privateSnapshotFilterFragment, remoteReadFloorSql, resolveExcludePrivatePages, worldOnlyFacts } from '../search/private-visibility.ts';
+import { callerReadersAllowedSql, privacyForCaller, versionReadableSql, privateLinkOriginFilterFragment, privatePagesFilterForCaller, privatePagesFilterFragment, privateSnapshotFilterFragment, remoteReadFloorSql, resolveExcludePrivatePages, worldOnlyFacts } from '../search/private-visibility.ts';
 import { fenceTranscriptText, isQuotedPageType, neutralizeToolCalls, quotesStored } from '../search/transcript-quote.ts';
 import { quotedPageMeta } from './get-page-projection.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
@@ -49,7 +49,7 @@ const AMENDMENTS_CAP = 20;
 
 interface Identity { id: number; source_id: string; slug: string; source_path: string | null; local_path: string | null; world: boolean }
 interface PickRow {
-  version_id: number | null; ord: number; replaced_at: string | null; valid_from: string; valid_until: string | null; visible: boolean;
+  version_id: number | null; ord: number; replaced_at: string | null; valid_from: string; valid_until: string | null; visible: boolean; marked: boolean;
   reason: string | null; successor_pruned: boolean; segmented: boolean; recorded_since: string | null; introduced_because: string | null; chosen: boolean;
   /** GBRA-286 (GST-687): the stored trust tier of this edition and of the write that replaced it (the next row), for the quote fence. */
   tier: string | null; successor_tier: string | null;
@@ -117,15 +117,15 @@ async function pick(tx: BrainEngine, pageId: number, asOf: string, excludePrivat
   const vd = (a: string, key: string) => validDateSql(`${a}.frontmatter->>'${key}'`);
   const [r] = await tx.executeRaw<Record<string, unknown>>(`WITH rows AS (
       SELECT pv.id AS version_id, pv.id::bigint AS ord, pv.snapshot_at AS replaced_at, ${vd('pv', 'valid_from')} AS valid_from, ${vd('pv', 'valid_until')} AS valid_until,
-             ${bodyKey('pv')} AS body_key, (${callerReadersAllowedSql('pv', 'snapshot')} AND ${privacyForCaller('p', privateSnapshotFilterFragment('pv'))}) AS visible,
+             ${bodyKey('pv')} AS body_key, (${callerReadersAllowedSql('pv', 'snapshot')} AND ${privacyForCaller('p', privateSnapshotFilterFragment('pv'))} AND ${versionReadableSql('pv', excludePrivate)}) AS visible,
              ${replacedBecauseSql('pv', excludePrivate)} AS reason, pv.trust_tier AS tier,
              COALESCE(pv.successor_pruned, false) AS successor_pruned, COALESCE(pv.body_storage = 'segmented', false) AS segmented,
              (pv.body_storage IS DISTINCT FROM 'segmented' AND octet_length(COALESCE(pv.compiled_truth, '')) + octet_length(COALESCE(pv.timeline, '')) > $3) AS large,
-             pv.source_path IS NOT NULL AS filed
+             pv.source_path IS NOT NULL AS filed, NOT ${versionReadableSql('pv', false)} AS marked
         FROM page_versions pv JOIN pages p ON p.id = pv.page_id WHERE pv.page_id = $1
       UNION ALL
       SELECT NULL, ${CURRENT_ORD}::bigint, NULL, ${vd('p', 'valid_from')}, ${vd('p', 'valid_until')}, ${bodyKey('p')}, ${privatePagesFilterForCaller('p')}, NULL, p.trust_tier,
-             false, COALESCE(p.body_storage = 'segmented', false), false, p.source_path IS NOT NULL
+             false, COALESCE(p.body_storage = 'segmented', false), false, p.source_path IS NOT NULL, false
         FROM pages p WHERE p.id = $1),
     seq AS (
       SELECT r.*, lag(r.replaced_at) OVER w AS recorded_since, lag(CASE WHEN NOT r.successor_pruned${excludePrivate ? ' AND r.visible' : ''} THEN r.reason END) OVER w AS introduced_because, lead(r.tier) OVER w AS successor_tier,
@@ -137,7 +137,7 @@ async function pick(tx: BrainEngine, pageId: number, asOf: string, excludePrivat
        ORDER BY (s.valid_from <= $2::text) DESC, CASE WHEN s.valid_from <= $2::text THEN s.valid_from END DESC,
                 CASE WHEN s.valid_from > $2::text THEN s.valid_from END ASC, s.ord DESC
        LIMIT 1)
-    SELECT k.version_id, k.ord, k.replaced_at, k.valid_from, k.valid_until, k.visible, k.reason, k.successor_pruned, k.segmented,
+    SELECT k.version_id, k.ord, k.replaced_at, k.valid_from, k.valid_until, k.visible, k.marked, k.reason, k.successor_pruned, k.segmented,
            k.recorded_since, k.introduced_because, k.chosen, k.tier, k.successor_tier,
            (SELECT array_agg(c.ord ORDER BY c.ord) FROM (SELECT s.ord FROM seq s
               WHERE s.valid_from IS NOT NULL AND s.ord <> k.ord AND (
@@ -152,7 +152,7 @@ async function pick(tx: BrainEngine, pageId: number, asOf: string, excludePrivat
       FROM pages p LEFT JOIN pick k ON true WHERE p.id = $1`, [pageId, asOf, PAGE_INLINE_MAX_BYTES, pinOrd]);
   const row: PickRow | null = r && r.ord != null ? {
     version_id: r.version_id == null ? null : Number(r.version_id), ord: Number(r.ord), replaced_at: iso(r.replaced_at), valid_from: String(r.valid_from),
-    valid_until: r.valid_until == null ? null : String(r.valid_until), visible: r.visible === true, reason: (r.reason as string | null) ?? null,
+    valid_until: r.valid_until == null ? null : String(r.valid_until), visible: r.visible === true, marked: r.marked === true, reason: (r.reason as string | null) ?? null,
     successor_pruned: r.successor_pruned === true, segmented: r.segmented === true, recorded_since: iso(r.recorded_since),
     introduced_because: (r.introduced_because as string | null) ?? null, chosen: r.chosen === true,
     tier: (r.tier as string | null) ?? null, successor_tier: (r.successor_tier as string | null) ?? null,
@@ -342,7 +342,7 @@ export async function getPageAsOf(ctx: OperationContext, p: Record<string, unkno
       { fix: askDateFix(identity, snap.page, snap.tags, snap.revision, `When did the current text of ${identity.slug} take effect? (a date, YYYY-MM-DD)`,
         'An as_of read needs a valid_from date on the page; only the user knows when this text took effect.') });
   }
-  if (excludePrivate && !row.visible) throw missing();
+  if ((excludePrivate && !row.visible) || row.marked) throw missing();
   if (!loaded) throw missing();
   // #6259: a quarantined page (now, or in the chosen edition) keeps its body from a remote reader, as the plain read does.
   const quarantined = readQuarantined(ctx, loaded.current.page, false)

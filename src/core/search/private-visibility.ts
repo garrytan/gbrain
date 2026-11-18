@@ -32,7 +32,7 @@ import { ruleCoversSql, validPrefix, validQualifiedRuleId } from '../access/fold
 import { holdingSlugSql } from '../facts-fence.ts';
 import { NAME_KEY_PAGE_DIRS } from '../entities/basename-dirs.ts';
 import { atomMovedOriginPrivateSql, atomOriginSlugsSql } from '../persistence/atom-origin.ts';
-import { ownerOnlyFactSql, ownerOnlyForm, ownerOnlyPageSql, ownerOnlySourcesPresent } from '../access/owner-only.ts';
+import { ownerOnlyFactSql, ownerOnlyForm, ownerOnlyPageSql, ownerOnlySourcesPresent, ownerOnlyVersionSql } from '../access/owner-only.ts';
 
 export const REMOTE_PRIVATE_PAGES_KEY = 'search.remote_private_pages';
 
@@ -129,6 +129,18 @@ export function accessAllowedForAllSql(pageAlias: string, identities: readonly (
  */
 function ownerOnlyAllowedSql(pageAlias: string, access: Pick<CallerAccess, 'owner'>): string {
   return access.owner ? '' : ` AND NOT ${ownerOnlyPageSql(pageAlias, ownerOnlyForm(readSchemaVersion()))}`;
+}
+
+/**
+ * #9653: a retained version (`versionAlias`, a page_versions alias) a read may return, beside its page's own test. A
+ * purge marks each version it hides in needs_rederive (derived_table 'page_versions'), and a rebuilt page's dropped
+ * inputs stay on its versions, so with `forCaller` an owner-only input closes the version to every caller but the owner.
+ * Every reader of retained versions uses it (test/page-version-readers-9653.test.ts keeps the list).
+ */
+export function versionReadableSql(versionAlias: string, forCaller: boolean): string {
+  const unmarked = `NOT EXISTS (SELECT 1 FROM needs_rederive vr_nr WHERE vr_nr.derived_table = 'page_versions' AND vr_nr.derived_id = ${versionAlias}.id::text)`;
+  return forCaller && !currentCallerAccess().owner
+    ? `(${unmarked} AND NOT ${ownerOnlyVersionSql(versionAlias, ownerOnlyForm(readSchemaVersion()))})` : unmarked;
 }
 
 /**

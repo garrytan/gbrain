@@ -43,6 +43,7 @@ import { TAKES_FENCE_BEGIN, TAKES_FENCE_END, parseTakesFence, renderTakesFence, 
 import { setRowTier } from '../trust/page-handlers.ts';
 import { compareTrust, storedTrustTier, type TrustTier } from '../trust/tier.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairScope } from './core.ts';
+import { versionReadableSql } from '../search/private-visibility.ts';
 
 const DOCS = 'docs/guides/repair.md#accepted-takes';
 const COMMAND = 'gbrain repair accepted-takes';
@@ -73,8 +74,8 @@ async function candidates(engine: BrainEngine, sourceIds: readonly string[], pro
 /** The archived fence row the accept should have applied, or why it cannot be read. */
 async function archivedRow(engine: BrainEngine, c: Candidate): Promise<{ version_id: number; row: ParsedTake } | Residual> {
   const [version] = await engine.executeRaw<{ id: number; body_storage: string | null; compiled_truth: string | null; timeline: string | null }>(
-    `SELECT id::int AS id, body_storage, compiled_truth, timeline FROM page_versions
-      WHERE page_id = $1 AND archived_write_request_id::text = $2 ORDER BY id DESC LIMIT 1`, [c.page_id, c.receipt_id]);
+    `SELECT pv.id::int AS id, pv.body_storage, pv.compiled_truth, pv.timeline FROM page_versions pv
+      WHERE pv.page_id = $1 AND pv.archived_write_request_id::text = $2 AND ${versionReadableSql('pv', false)} ORDER BY pv.id DESC LIMIT 1`, [c.page_id, c.receipt_id]);
   if (!version || version.body_storage === 'segmented' || version.compiled_truth === null) return 'version_missing';
   const row = parseTakesFence(`${version.compiled_truth}\n${version.timeline ?? ''}`).takes.find(t => t.rowNum === c.row_num);
   return row ? { version_id: Number(version.id), row } : 'row_not_in_version';

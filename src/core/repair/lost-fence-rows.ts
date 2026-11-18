@@ -41,6 +41,7 @@ import { takesPreparation } from '../takes-write.ts';
 import { setRowTier } from '../trust/page-handlers.ts';
 import { compareTrust, isTrustTier, storedTrustTier, type TrustTier } from '../trust/tier.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairScope } from './core.ts';
+import { versionReadableSql } from '../search/private-visibility.ts';
 
 const DOCS = 'docs/guides/repair.md#lost-fence-rows';
 const COMMAND = 'gbrain repair lost-fence-rows';
@@ -105,7 +106,7 @@ export async function scanLostFenceRows(engine: BrainEngine, sourceIds: readonly
       else {
         const now = (await materializedSnapshot(engine, raw))!.page;
         const versions = await engine.executeRaw<{ id: number; compiled_truth: string; timeline: string | null }>(`SELECT id::int AS id, compiled_truth, timeline
-          FROM page_versions WHERE page_id=$1 AND compiled_truth IS NOT NULL ORDER BY id`, [Number(now.id)]);
+          FROM page_versions pv WHERE pv.page_id=$1 AND pv.compiled_truth IS NOT NULL AND ${versionReadableSql('pv', false)} ORDER BY pv.id`, [Number(now.id)]);
         histories.set(key, [...versions.map(v => ({ ...v, id: Number(v.id) })), { id: null, compiled_truth: now.compiled_truth, timeline: now.timeline ?? null }]);
       }
     }

@@ -24,6 +24,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { PageType } from '../types.ts';
 import { digest } from './digest.ts';
 import { contentCanonical } from './reconcile-merge.ts';
+import { versionReadableSql } from '../search/private-visibility.ts';
 
 /** Candidate versions read per source, newest first. */
 export const OVERWRITE_SCAN_LIMIT = 500;
@@ -94,7 +95,7 @@ export async function scanOverwrittenEdits(engine: Pick<BrainEngine, 'executeRaw
     JOIN page_versions v ON v.page_id = p.id
     JOIN persistence_requests s ON s.id = v.archived_write_request_id
     JOIN persistence_requests w ON w.id = v.write_request_id
-    WHERE p.source_id = $1 AND p.deleted_at IS NULL AND ($3::text[] IS NULL OR p.slug = ANY($3::text[]))
+    WHERE p.source_id = $1 AND p.deleted_at IS NULL AND ($3::text[] IS NULL OR p.slug = ANY($3::text[])) AND ${versionReadableSql('v', false)}
       AND s.state = 'committed' AND s.operation = 'submit_job' AND s.source_id = p.source_id AND ${MANAGED_IMPORT('s')}
       AND w.state = 'committed' AND w.source_id = p.source_id AND NOT (w.operation = 'submit_job' AND COALESCE(w.outcome->>'imported_file', '') = 'true')
       AND (w.outcome->'persistence'->>'mode' = 'database'

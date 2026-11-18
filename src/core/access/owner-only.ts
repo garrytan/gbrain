@@ -110,6 +110,14 @@ export function ownerOnlyPageSql(alias: string, form: OwnerOnlyForm): string {
   return form === 'fn' ? `((SELECT ${OWNER_ONLY_LINEAGE_FN}()) AND ${OWNER_ONLY_LINEAGE_FN}('pages', ${alias}.id))` : ANY_OWNER_ONLY_SQL;
 }
 
+/**
+ * The retained version `alias` (a page_versions row) is owner-only: an input its page dropped when it was rebuilt
+ * (#9653, kept on the version), or a mark a removed origin left, reaches a row in an owner-only source.
+ */
+export function ownerOnlyVersionSql(alias: string, form: OwnerOnlyForm): string {
+  return form === 'fn' ? `((SELECT ${OWNER_ONLY_LINEAGE_FN}()) AND ${OWNER_ONLY_LINEAGE_FN}('page_versions', ${alias}.id))` : ANY_OWNER_ONLY_SQL;
+}
+
 /** The fact row `alias` is owner-only: held in an owner-only source, or derived (by its recorded inputs) from a row there. */
 export function ownerOnlyFactSql(alias: string, form: OwnerOnlyForm): string {
   return form === 'fn' ? `((SELECT ${OWNER_ONLY_LINEAGE_FN}()) AND ${OWNER_ONLY_LINEAGE_FN}('facts', ${alias}.id))` : ANY_OWNER_ONLY_SQL;

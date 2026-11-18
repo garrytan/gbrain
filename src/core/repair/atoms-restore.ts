@@ -33,6 +33,7 @@ import { atomOriginScopeSql, atomRetirementsSql, ATOM_REEXTRACT_RETIRED_BY } fro
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { declareDerivation, deriveTrust, lowerToDerivedTier, recordTaintEdges } from '../trust/taint.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
+import { versionReadableSql } from '../search/private-visibility.ts';
 
 export const ATOMS_RESTORE_INTENT = 'managed_maintenance_restore_reextract_atom';
 
@@ -67,7 +68,7 @@ async function restorableAtoms(db: BrainEngine, sourceIds: string[], atomId?: nu
   const rows = await db.executeRaw<RestorableAtom>(`
     SELECT c.id, c.source_id, (SELECT s.incarnation::text FROM sources s WHERE s.id=c.source_id) AS incarnation,
            a.slug, a.knowledge_revision::text AS revision, c.origin_kind, c.origin, c.origin_page_id, c.hash, c.retired_at,
-           (SELECT v.id FROM page_versions v WHERE v.page_id=a.id AND v.is_deleted=false AND v.frontmatter->>'retired_by' IS NULL
+           (SELECT v.id FROM page_versions v WHERE v.page_id=a.id AND v.is_deleted=false AND v.frontmatter->>'retired_by' IS NULL AND ${versionReadableSql('v', false)}
                AND regexp_replace(COALESCE(v.frontmatter->>'source_hash',''),'^pending:','')=c.hash
              ORDER BY v.id DESC LIMIT 1) AS version_id
       FROM (${atomRetirementsSql(scope)}) c JOIN pages a ON a.id=c.id

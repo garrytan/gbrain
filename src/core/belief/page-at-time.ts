@@ -16,7 +16,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
-import { remoteReadFloorSql } from '../search/private-visibility.ts';
+import { remoteReadFloorSql, versionReadableSql } from '../search/private-visibility.ts';
 import { PAGE_INLINE_MAX_BYTES } from '../page-size-policy.ts';
 import { coverageAt } from './coverage-report.ts';
 
@@ -201,7 +201,8 @@ async function withBodies(engine: BrainEngine, lifetimes: Array<{ lifetime: stri
     const revisions = [...new Set(content.map(d => d.revision).filter((r): r is string => !!r))];
     const versions = pageId != null && bodies && revisions.length ? await engine.executeRaw<Record<string, unknown>>(`SELECT id, knowledge_revision::text AS revision,
         compiled_truth, timeline, title, type, frontmatter, tags, body_storage, trust_tier,
-        COALESCE(body_bytes, octet_length(COALESCE(compiled_truth, '')) + octet_length(COALESCE(timeline, ''))) AS body_bytes
+        COALESCE(body_bytes, octet_length(COALESCE(compiled_truth, '')) + octet_length(COALESCE(timeline, ''))) AS body_bytes,
+        ${versionReadableSql('page_versions', false)} AS readable
       FROM page_versions WHERE page_id = $1 AND knowledge_revision = ANY($2::uuid[]) ORDER BY id`, [pageId, revisions]) : [];
     const pairing = new Map<number, Record<string, unknown>>();
     for (const revision of revisions) {
@@ -225,6 +226,7 @@ async function withBodies(engine: BrainEngine, lifetimes: Array<{ lifetime: stri
       const version = owner ? pairing.get(owner.event.id) : undefined;
       if (!bodies) { out.push({ ...base, ...(owner && revisions.length && pageId != null ? {} : { body_reason: gone ?? 'version_missing' }) }); continue; }
       if (!version) { out.push({ ...base, body_reason: gone ?? (large ? 'pruned' : 'version_missing') }); continue; }
+      if (version.readable !== true) { out.push({ ...base, body_reason: 'purged' }); continue; }
       const segmented = version.body_storage === 'segmented';
       out.push({ ...base, body: segmented ? 'segmented' : 'version', version_id: Number(version.id), page: {
         title: (version.title as string | null) ?? null, type: (version.type as string | null) ?? null, frontmatter: (json(version.frontmatter) as Record<string, unknown>) ?? {},
@@ -272,5 +274,8 @@ function coverageRefusal(c: { code: 'coverage_from' | 'coverage_gap'; from: stri
 export async function remoteMayRead(engine: BrainEngine, pageId: number | null, interval: PageInterval): Promise<boolean> {
   if (pageId == null || interval.event.visibility !== 'world') return false;
   const [row] = await engine.executeRaw<{ visible: boolean }>(`SELECT ${remoteReadFloorSql('p')} AS visible FROM pages p WHERE p.id = $1 AND p.deleted_at IS NULL`, [pageId]);
-  return row?.visible === true;
+  if (row?.visible !== true) return false;
+  if (interval.version_id == null) return true;
+  const [version] = await engine.executeRaw<{ readable: boolean }>(`SELECT ${versionReadableSql('v', true)} AS readable FROM page_versions v WHERE v.id = $1`, [interval.version_id]);
+  return version?.readable === true;
 }

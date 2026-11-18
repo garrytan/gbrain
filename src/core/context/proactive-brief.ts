@@ -19,7 +19,7 @@ import { isConfigTruthy } from '../config.ts';
 import { HALFLIFE_DAYS } from '../facts/decay.ts';
 import { listOpenLoops, type OpenLoopRow } from '../loops/loops-store.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
-import { privateFactFilterForCaller, privatePagesFilterForCaller, privateTimelineEventFilterForCaller, privateTimelineEventFilterFragment, remoteReadFloorSql } from '../search/private-visibility.ts';
+import { privateFactFilterForCaller, privatePagesFilterForCaller, privateTimelineEventFilterForCaller, privateTimelineEventFilterFragment, remoteReadFloorSql, versionReadableSql } from '../search/private-visibility.ts';
 import { pageEligibleSql, projectionEligibleSql } from '../eligibility/sql.ts';
 import type { ReadEligibility } from '../eligibility/policy.ts';
 import { renderTrustedInline, trustFields } from '../eligibility/labels.ts';
@@ -502,7 +502,7 @@ async function editItem(engine: BrainEngine, cp: BriefCounterparty, clock: Brief
     pg.compiled_truth === null ? Promise.resolve([]) : engine.executeRaw<{ id: number; compiled_truth: string | null; timeline: string | null; snapshot_at: string | Date; is_deleted: boolean }>(
       `SELECT v.id, CASE WHEN octet_length(v.compiled_truth) + octet_length(COALESCE(v.timeline, '')) <= $3 THEN v.compiled_truth END AS compiled_truth,
               v.timeline, v.snapshot_at, v.is_deleted
-         FROM page_versions v WHERE v.page_id = $1 AND v.snapshot_at >= $2::timestamptz
+         FROM page_versions v WHERE v.page_id = $1 AND v.snapshot_at >= $2::timestamptz AND ${versionReadableSql('v', opts.forCaller === true)}
         ORDER BY v.id DESC LIMIT ${EDIT_MAX_VERSIONS}`,
       [pg.id, since, EDIT_MAX_PAGE_BYTES],
     ),

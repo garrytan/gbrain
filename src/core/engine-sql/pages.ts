@@ -22,7 +22,7 @@ import { moveSlugBindings, recordRenameAlias } from '../page-state/rename-alias.
 import { segmentedRevertRefusal } from '../page-state/versions.ts';
 import { sanitizeText } from '../batch-rows.ts';
 import { SAFE_FENCE_CHUNKER_VERSION, bodyWriteChunkVersion } from '../search/safe-chunks.ts';
-import { privatePagesFilterFragment, privateSnapshotFilterFragment, privatePagesFilterForCaller, privacyForCaller, callerReadersAllowedSql, currentCallerAccess } from '../search/private-visibility.ts';
+import { privatePagesFilterFragment, privateSnapshotFilterFragment, privatePagesFilterForCaller, privacyForCaller, callerReadersAllowedSql, currentCallerAccess, versionReadableSql } from '../search/private-visibility.ts';
 import { validDateSql } from '../valid-time.ts';
 import { quarantineFilterFragment } from '../quarantine.ts';
 import { rederiveHiddenSql } from '../eligibility/sql.ts';
@@ -1093,7 +1093,7 @@ export async function getVersions<B extends boolean = true>(
         ${trustedSql(VERSION_VALID_TIME_COLUMNS)} FROM page_versions pv
       JOIN pages p ON p.id = pv.page_id
       WHERE p.slug = ${slug} ${scope}
-        ${privacy} AND ${trustedSql(rederiveHiddenSql('pages', 'p'))}
+        ${privacy} AND ${trustedSql(rederiveHiddenSql('pages', 'p'))} AND ${trustedSql(versionReadableSql('pv', opts?.excludePrivate === true))}
       ORDER BY pv.snapshot_at DESC, pv.id DESC
       ${limit}
     `);
@@ -1131,7 +1131,7 @@ export async function revertToVersion(
           updated_at = now()
         FROM page_versions pv
         WHERE pages.slug = ${slug} AND pages.source_id = ${opts.sourceId}
-              AND pv.id = ${versionId} AND pv.page_id = pages.id
+              AND pv.id = ${versionId} AND pv.page_id = pages.id AND ${trustedSql(versionReadableSql('pv', false))}
       `);
       return;
     }
@@ -1142,7 +1142,7 @@ export async function revertToVersion(
           chunker_version = ${trustedSql(bodyWriteChunkVersion('pv.compiled_truth', 'pages.timeline'))},
         updated_at = now()
       FROM page_versions pv
-      WHERE pages.slug = ${slug} AND pv.id = ${versionId} AND pv.page_id = pages.id
+      WHERE pages.slug = ${slug} AND pv.id = ${versionId} AND pv.page_id = pages.id AND ${trustedSql(versionReadableSql('pv', false))}
     `);
   }
 

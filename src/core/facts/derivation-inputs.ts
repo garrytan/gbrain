@@ -31,6 +31,8 @@ function refKey(ref: DerivationRef): { table: string; id: string } {
  * a source is purged. `replacePages` (#9653) is for a deriver that rewrites the
  * whole row from these inputs (a concept narrative): the row's page edges not
  * named now are dropped, so a purge of a former input no longer reaches it.
+ * For a page they move to each of its retained versions first, which were
+ * built from them, so purge and owner-only lineage still reach the history.
  */
 export async function recordDerivationInputs(tx: BrainEngine, row: DerivationRef & { sourceId?: string | null },
   inputs: readonly DerivationRef[], opts: { replacePages?: boolean } = {}): Promise<void> {
@@ -38,8 +40,15 @@ export async function recordDerivationInputs(tx: BrainEngine, row: DerivationRef
   const derived = refKey(row);
   if (inputs.length > DERIVATION_EDGE_LIMIT) throw new RangeError(`A derivation records at most ${DERIVATION_EDGE_LIMIT} inputs.`);
   const edges = inputs.map(refKey);
-  if (opts.replacePages) await tx.executeRaw(`DELETE FROM derivation_inputs WHERE derived_table=$1 AND derived_id=$2 AND input_table='pages'
-    AND NOT (input_id = ANY($3::text[]))`, [derived.table, derived.id, edges.filter(e => e.table === 'pages').map(e => e.id)]);
+  if (opts.replacePages) {
+    const kept = edges.filter(e => e.table === 'pages').map(e => e.id);
+    if (derived.table === 'pages' && /^\d+$/.test(derived.id)) await tx.executeRaw(`INSERT INTO derivation_inputs(derived_table,derived_id,input_table,input_id,source_id)
+      SELECT 'page_versions',v.id::text,d.input_table,d.input_id,d.source_id FROM derivation_inputs d JOIN page_versions v ON v.page_id=$2::integer
+      WHERE d.derived_table='pages' AND d.derived_id=$1 AND d.input_table='pages' AND NOT (d.input_id = ANY($3::text[])) ON CONFLICT DO NOTHING`,
+    [derived.id, Number(derived.id), kept]);
+    await tx.executeRaw(`DELETE FROM derivation_inputs WHERE derived_table=$1 AND derived_id=$2 AND input_table='pages'
+      AND NOT (input_id = ANY($3::text[]))`, [derived.table, derived.id, kept]);
+  }
   await tx.executeRaw(`INSERT INTO derivation_inputs(derived_table,derived_id,input_table,input_id,source_id)
     SELECT $1,$2,e.input_table,e.input_id,$3 FROM jsonb_to_recordset($4::text::jsonb) AS e(input_table text,input_id text)
     ON CONFLICT DO NOTHING`, [derived.table, derived.id, row.sourceId ?? null, JSON.stringify(edges.map(e => ({ input_table: e.table, input_id: e.id })))]);
@@ -87,6 +96,11 @@ export async function derivedRowsFrom(engine: BrainEngine, inputs: readonly Deri
  * Hide each derived row through its table's own inactive state and mark it
  * `needs_rederive`. Facts expire, takes deactivate, pages soft-delete;
  * a table without a known inactive state is only marked (reported unverified).
+ * #9653: a page_versions row has no inactive state, but every reader of
+ * retained versions tests the mark (versionReadableSql), so a marked version
+ * counts as hidden; hiding a page marks each of its versions too, so a
+ * re-derived page never brings back a version built from the purged input.
+ * Nothing re-derives a version: the mark is permanent, and no row is deleted.
  * Returns the rows hidden per table.
  */
 export async function hideDerivedRows(tx: BrainEngine, rows: readonly DerivedRow[], mark: { sourceId: string; requestId: string | null; reason: string }):
@@ -100,7 +114,15 @@ export async function hideDerivedRows(tx: BrainEngine, rows: readonly DerivedRow
     if (table === 'facts') count = (await tx.executeRaw(`UPDATE facts SET expired_at=COALESCE(expired_at,now()) WHERE id=ANY($1::bigint[]) AND source_id=$2 RETURNING id`, [numeric, mark.sourceId])).length;
     else if (table === 'takes') count = (await tx.executeRaw(`UPDATE takes k SET active=false FROM pages p WHERE k.id=ANY($1::bigint[]) AND p.id=k.page_id AND p.source_id=$2 RETURNING k.id`, [numeric, mark.sourceId])).length;
     else if (table === 'pages') count = (await tx.executeRaw(`UPDATE pages SET deleted_at=COALESCE(deleted_at,now()) WHERE id=ANY($1::integer[]) AND source_id=$2 RETURNING id`, [numeric, mark.sourceId])).length;
-    if (count) hidden[table] = count;
+    else if (table === 'page_versions') count = (await tx.executeRaw(`SELECT v.id FROM page_versions v JOIN pages p ON p.id=v.page_id WHERE v.id=ANY($1::bigint[]) AND p.source_id=$2`, [numeric, mark.sourceId])).length;
+    if (table === 'pages') {
+      const versions = await tx.executeRaw<{ id: string }>(`INSERT INTO needs_rederive(derived_table,derived_id,source_id,request_id,reason)
+        SELECT 'page_versions',v.id::text,$2,$3::uuid,$4 FROM page_versions v WHERE v.page_id=ANY($1::integer[])
+        ON CONFLICT (derived_table,derived_id) DO UPDATE SET reason=EXCLUDED.reason,request_id=EXCLUDED.request_id,marked_at=now() RETURNING derived_id AS id`,
+      [numeric, mark.sourceId, mark.requestId, mark.reason]);
+      if (versions.length) hidden.page_versions = (hidden.page_versions ?? 0) + versions.length;
+    }
+    if (count) hidden[table] = (hidden[table] ?? 0) + count;
     if (count < ids.length) markedOnly[table] = ids.length - count;
     await tx.executeRaw(`INSERT INTO needs_rederive(derived_table,derived_id,source_id,request_id,reason)
       SELECT $1,unnest($2::text[]),$3,$4::uuid,$5 ON CONFLICT (derived_table,derived_id) DO UPDATE SET reason=EXCLUDED.reason,request_id=EXCLUDED.request_id,marked_at=now()`,

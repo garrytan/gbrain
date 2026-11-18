@@ -61,6 +61,7 @@ import { OWNER_TIER_FLOOR, compareTrust, effectiveWriteTrust, isTrustTier, minTr
 import { propagateTierLowering } from './propagation.ts';
 import { beliefStreamSlugs, lockedBeliefBatch } from '../belief/writers.ts';
 import { markBeliefCommits } from '../belief/append.ts';
+import { versionReadableSql } from '../search/private-visibility.ts';
 
 /** The journaled operation that publishes an owner page action on a managed brain. */
 export const TRUST_OWNER_PAGE_OPERATION = 'trust_owner_page';
@@ -115,7 +116,7 @@ function versionMarkdown(snapshot: PageSnapshot, version: PageVersion): string {
 
 export async function readPageVersion(engine: BrainEngine, pageId: number, versionId: number): Promise<(PageVersion & { trust_tier: string | null }) | null> {
   const [version] = await engine.executeRaw<PageVersion & { trust_tier: string | null }>(
-    'SELECT * FROM page_versions WHERE id = $1 AND page_id = $2', [versionId, pageId]);
+    `SELECT * FROM page_versions pv WHERE pv.id = $1 AND pv.page_id = $2 AND ${versionReadableSql('pv', false)}`, [versionId, pageId]);
   return version ?? null;
 }
 

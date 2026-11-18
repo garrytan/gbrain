@@ -88,6 +88,40 @@ for (const backend of testBackends()) {
       }, { databaseUrl });
     }, 240_000);
 
+test('purging a former member hides the archived narrative built with it, and revert_version refuses it', async () => {
+      await managedBrain(async ({ engine, ctx, root }) => {
+        await engine.setConfig('models.dream.synthesize', MODEL);
+        for (const i of [0, 1, 2, 3, 4, 5]) await put(ctx, i);
+        await synthesize(engine, root, [0, 1, 2, 3, 4], 'A narrative built from atoms zero to four.');
+        await retire(engine, ctx, 0);
+        await synthesize(engine, root, [1, 2, 3, 4, 5], 'A narrative built from atoms one to five.');
+        const old = (await engine.getVersions(CONCEPT, { sourceId: 'default' })).find(v => String(v.compiled_truth).includes('zero to four'));
+        expect(old).toBeDefined();
+        expect(await purge(engine)).toContain(slugOf(0));
+        expect(await concept(engine)).toEqual({ live: true, rederive: false });
+        expect((await engine.getVersions(CONCEPT, { sourceId: 'default' })).map(v => String(v.compiled_truth)).filter(t => t.includes('zero to four'))).toEqual([]);
+        const snapshot = await engine.readPageSnapshot(CONCEPT, { sourceId: 'default' });
+        const reverted = await submitPageMutation(ctx, { operation: 'revert_version', params: { slug: CONCEPT, version_id: Number(old!.id), expected_revision: snapshot!.revision, request_id: randomUUID() } }).then(() => null, (e: { code?: string }) => e.code ?? 'error');
+        expect(reverted).toBe('not_found');
+        expect((await engine.getPage(CONCEPT, { sourceId: 'default' }))?.compiled_truth).toContain('one to five');
+      }, { databaseUrl });
+    }, 240_000);
+
+    test('purging a current member, then re-deriving the concept, never brings back a narrative built with it', async () => {
+      await managedBrain(async ({ engine, ctx, root }) => {
+        await engine.setConfig('models.dream.synthesize', MODEL);
+        for (const i of [0, 1, 2, 3, 4]) await put(ctx, i);
+        await synthesize(engine, root, [0, 1, 2, 3, 4], 'A narrative built from atoms zero to four.');
+        await synthesize(engine, root, [0, 1, 2, 3, 4], 'A second narrative from atoms zero to four.');
+        await retire(engine, ctx, 3);
+        expect(await purge(engine)).toContain(slugOf(3));
+        expect(await concept(engine)).toEqual({ live: false, rederive: true });
+        await synthesize(engine, root, [0, 1, 2, 4], 'A narrative rebuilt without atom three.');
+        const texts = (await engine.getVersions(CONCEPT, { sourceId: 'default' })).map(v => String(v.compiled_truth));
+        expect(texts.filter(t => t.includes('zero to four'))).toEqual([]);
+      }, { databaseUrl });
+    }, 240_000);
+
     test('doctor counts a concept an older version left with an edge to its retired former member; its purge still hides the concept', async () => {
       await managedBrain(async ({ engine, ctx, root }) => {
         await engine.setConfig('models.dream.synthesize', MODEL);
