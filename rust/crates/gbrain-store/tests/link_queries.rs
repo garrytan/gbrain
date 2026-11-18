@@ -426,3 +426,103 @@ fn relational_chain_hop_orients_edges() {
         .unwrap();
     assert_eq!(strings(&subjects, "to_slug"), vec!["people/emp"]);
 }
+
+#[test]
+fn search_reads_supersede_probe_and_slugs() {
+    let b = Brain::new("lq-supersede");
+    b.source("other");
+    let (stale, _) = b.page("stale", "default", "note");
+    b.page("canon-z", "default", "note");
+    b.page("canon-a", "default", "note");
+    let (gone_to, _) = b.page("gone-to", "default", "note");
+    b.page("gone-from", "default", "note");
+    let (lonely, _) = b.page("lonely", "default", "note");
+    b.page("canon-x", "other", "note");
+    b.link("canon-z", "stale", "cites", "manual");
+    assert!(!b.store.has_supersede_edges().unwrap());
+
+    b.link("canon-z", "stale", "supersedes", "manual");
+    b.link("canon-a", "stale", "supersedes", "manual");
+    b.link("canon-z", "gone-to", "supersedes", "manual");
+    b.link("gone-from", "lonely", "supersedes", "manual");
+    b.link_in(
+        "canon-x",
+        "other",
+        "lonely",
+        "default",
+        "supersedes",
+        "manual",
+    );
+    b.store.soft_delete_page("gone-to", None).unwrap();
+    b.store.soft_delete_page("gone-from", None).unwrap();
+    assert!(b.store.has_supersede_edges().unwrap());
+
+    let open = b
+        .store
+        .superseding_page_slugs(
+            &[gone_to, stale, stale, lonely, 999],
+            &GraphScope::default(),
+        )
+        .unwrap();
+    // Ordered by page id, then slug bytes: `canon-a` is the first row for `stale`. A soft-deleted
+    // target still counts without a policy; a soft-deleted or other-source superseder never does.
+    assert_eq!(
+        open,
+        vec![
+            json!({"to_page_id": stale, "by_slug": "canon-a"}),
+            json!({"to_page_id": stale, "by_slug": "canon-z"}),
+            json!({"to_page_id": gone_to, "by_slug": "canon-z"}),
+        ]
+    );
+    let live = b
+        .store
+        .superseding_page_slugs(
+            &[gone_to, stale],
+            &GraphScope {
+                scoped: true,
+                ..GraphScope::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(strings(&live, "by_slug"), vec!["canon-a", "canon-z"]);
+    let elsewhere = b
+        .store
+        .superseding_page_slugs(
+            &[stale],
+            &GraphScope {
+                source_id: Some("other".into()),
+                scoped: true,
+                ..GraphScope::default()
+            },
+        )
+        .unwrap();
+    assert!(elsewhere.is_empty());
+}
+
+#[test]
+fn search_reads_pages_linking_to() {
+    let b = Brain::new("lq-linking");
+    let (target, _) = b.page("target", "default", "person");
+    let (linker, _) = b.page("linker", "default", "note");
+    let (gone, _) = b.page("gone", "default", "note");
+    let (amender, _) = b.page("amender", "default", "note");
+    let (other, _) = b.page("other", "default", "note");
+    b.link("linker", "target", "mentions", "manual");
+    b.link("gone", "target", "works_at", "manual");
+    b.link("amender", "target", "amends", "manual");
+    b.link("other", "linker", "mentions", "manual");
+    b.store.soft_delete_page("gone", None).unwrap();
+
+    let ids = [other, amender, gone, linker, linker, 999];
+    let mut expected = vec![linker, gone];
+    expected.sort();
+    assert_eq!(b.store.pages_linking_to(&ids, &[target]).unwrap(), expected);
+    assert_eq!(
+        b.store.pages_linking_to(&ids, &[]).unwrap(),
+        Vec::<u64>::new()
+    );
+    assert_eq!(
+        b.store.pages_linking_to(&[], &[target]).unwrap(),
+        Vec::<u64>::new()
+    );
+}

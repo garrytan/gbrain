@@ -5,7 +5,8 @@ Code: `rust/crates/gbrain-store/src/link_queries.rs`, the napi methods in
 `src/core/rust-engine/store-members/link-queries.ts`. The references are `src/core/engine-sql/links.ts`
 (derived-link replacement, `removeLinksByPagesAndSource`, `listLinkSources`, `findOrphanPages`) and
 `src/core/search/read-enrichment.ts` (`readBacklinkCounts`, `readAdjacencyBoosts`, `readRelationalFanout`,
-`readChainHop`).
+`readChainHop`) and `src/core/engine-sql/search-reads.ts` (`hasSupersedeEdges`, `supersedingPageSlugs`,
+`pagesLinkingTo`).
 
 ## Members
 
@@ -21,6 +22,9 @@ Code: `rust/crates/gbrain-store/src/link_queries.rs`, the napi methods in
 | `relationalFanout(seeds, opts?)` | served |
 | `relationalChainHop(frontier, opts)` | served |
 | `findOrphanPages({ sourceId?, sourceIds?, mode?, scopeInbound? })` | served |
+| `hasSupersedeEdges()` | served |
+| `supersedingPageSlugs(ids, policy?)` | served |
+| `pagesLinkingTo(fromIds, toIds)` | served |
 
 ### Refusals (`engine_capability_missing`)
 
@@ -28,18 +32,24 @@ Code: `rust/crates/gbrain-store/src/link_queries.rs`, the napi methods in
   (`temporal`, `wanted`, `lineGrammar`, `temporalBody`). `requireSafeChunks` and `takesHoldersAllowList` are accepted
   where `pageReadFilter` does not read them: they only turn the live filter on in `relationalFanout`, and they are
   ignored by `getBacklinkCounts`, `getAdjacencyBoosts` and `relationalChainHop`, as in the SQL engines.
+  `supersedingPageSlugs` takes the same rule: hybrid search passes its read policy, so a remote search with
+  `excludePrivate: true` refuses there.
 - A derived-link origin with a caller-read `snapshot`. `semanticsPrimed` is ignored: the store has no relation
   semantics to prime.
 - A page id that is not a 32-bit integer (`getBacklinkCounts`, `getAdjacencyBoosts`, `relationalChainHop`): Postgres
   casts the ids into `int[]`. A non-safe-integer id in `getAdjacencyBoosts` throws the same `TypeError` the SQL engines
   throw, before any option is read.
+- A `supersedingPageSlugs` id that is not an integer (Postgres casts into `bigint[]`). Ids below 1 or above the safe
+  integer range match no page and are dropped. A `pagesLinkingTo` id that is not a 32-bit integer (the SQL casts into
+  `int[]`); ids below 1 are dropped.
 - A `relationalFanout` depth or limit, or a `relationalChainHop` `neighborCap`, that is not an integer after the clamp.
 
 ## Keys
 
 None today. Every member reads and writes links through the core links helpers (`put_link`, `delete_link`,
-`out_links`, `in_links`) and reads pages, chunks and sources through their families' readers. The family owns the `q`
-tag; `remove_source_rows` deletes every key under `q <source id> \0` so a later record keyed by source is covered when
+`out_links`, `in_links`) and reads pages, chunks and sources through their families' readers. The `q` tag is shared with
+wanted_links (`wanted_links.rs`): the bytes after `q <source id> \0 W` are wanted_links', and this family keeps the `W`
+sub-tag free. `remove_source_rows` deletes every key under `q <source id> \0`, so it covers both families when
 `cascade.rs` removes a source.
 
 ## The read filter
@@ -86,6 +96,15 @@ error rolls back the whole batch.
   the one with the lowest `(hop, path length, path text)`. `canonical_chunk_id` is the page's lowest-index chunk.
 - `relationalChainHop`: one oriented step from the frontier, collapsed per neighbor, ordered by frontier id and lowest
   link id; the degree saturates at 300 (`CHAIN_DEGREE_SATURATION`).
+- `hasSupersedeEdges`: true when any `supersedes` link exists, in any source, to any page.
+- `supersedingPageSlugs`: `{ to_page_id, by_slug }` rows for `supersedes` links to the listed pages from a page that is
+  not soft-deleted and is in the target's source. With a policy (even `{}`), both pages pass the live read filter and
+  the link origin, when it has one, passes it too; with no policy a soft-deleted target still counts. Rows come out by
+  page id, then slug in byte order, as PGLite's `Unique` over a sort under the C collation emits them, and the member
+  keeps the first row per page, so the smallest slug wins. Postgres may plan a hash `DISTINCT`, so its choice among
+  several superseders of one page is planner-dependent; the parity cases give each page one superseder.
+- `pagesLinkingTo`: the distinct listed linkers with a ranking link (not `amends`) to a listed target, ascending. The SQL
+  reads `links` alone, so a soft-deleted linker or target still counts.
 
 ## Known differences
 
