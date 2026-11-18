@@ -18,18 +18,19 @@ import { resolveBoostMap, resolveHardExcludes } from '../../search/source-boost.
 import type { SearchOpts, SearchResult } from '../../types.ts';
 import { rowToSearchResult } from '../../utils.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { storePagePolicy } from './private-provenance.ts';
 
 /** The `SearchOpts` keys the vector statement reads and the store applies. */
 const VECTOR_FILTERS = [
   'limit', 'offset', 'type', 'types', 'exclude_slugs', 'exclude_slug_prefixes', 'include_slug_prefixes', 'detail',
-  'language', 'symbolKind', 'sourceId', 'sourceIds', 'source_boosts', 'embeddingColumn', 'requireSafeChunks',
+  'language', 'symbolKind', 'sourceId', 'sourceIds', 'source_boosts', 'embeddingColumn', 'requireSafeChunks', 'excludePrivate',
 ] as const;
 
 /**
  * Keys the vector statement never reads, or reads only to steer its HNSW candidate pool (`vectorLegacyGuard`,
  * `hnswIterativeScan`, `onVectorPoolMeta`), which an exact scan does not have. A date bound's `*Inclusive` flag does
- * nothing without the bound. `where`, `afterDate`, `beforeDate`, `excludePrivate`, `minTrust` and `suppressFlagged`
- * are absent: the store applies none of them, so a set one refuses.
+ * nothing without the bound. `where`, `afterDate`, `beforeDate`, `minTrust` and `suppressFlagged` are absent: the store
+ * applies none of them, so a set one refuses. `excludePrivate` is served as the page policy (private-provenance.ts).
  */
 const VECTOR_IGNORED = [
   'onVectorPoolMeta', 'vectorLegacyGuard', 'hnswIterativeScan', 'cjkKeyword', 'onKeywordIncomplete', 'adaptiveReturn',
@@ -114,6 +115,8 @@ export const searchVector: StoreMember<[embedding: Float32Array, opts?: SearchOp
     model,
     source_factors: sourceFactors(o.source_boosts ?? resolveBoostMap(), o.detail),
     require_safe_chunks: requiresSafeChunks(o),
+    // `excludePrivate` is the page policy `buildVisibilityClause` adds; a caller whose policy is wider refuses.
+    exclude_private: storePagePolicy('searchVector', o.excludePrivate) ?? null,
   };
   const query = Array.from(embedding);
   const rows: Record<string, unknown>[] = await storeCall({ member: 'searchVector' }, () => brain.searchVector(query, options));

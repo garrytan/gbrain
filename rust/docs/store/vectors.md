@@ -55,9 +55,17 @@ the shape `searchTakes` returns, with the cosine as `score`.
   answer is `[]` (PGLite fails the same way). The dimension check runs before the model guard.
 - **No candidate pool.** Every admitted vector is scored, so the HNSW pool knobs
   (`vectorLegacyGuard`, `hnswIterativeScan`) change nothing and `onVectorPoolMeta` is never called.
-- **Refused options.** The store applies neither `where`, `afterDate`, `beforeDate`, `excludePrivate`,
-  `minTrust` nor `suppressFlagged`, so a set one refuses with `engine_capability_missing` and nothing
-  runs (an empty `where` object is ignored). `searchTakesVector` refuses `excludePrivate`,
+- **`excludePrivate`.** A truthy one hides the pages the page policy hides, as `facts/privacy.rs`
+  `page_hidden` reads it (`privatePagesFilterForCaller('p')`: private visibility or access, derived pages
+  whose origin is private, the member-access rules). The policy is checked per page before ranking, so a
+  hidden page never takes a result slot and a limit counts only visible pages. The TypeScript member sends the
+  policy (`honorAliases`, `entityPrivacy`) as `exclude_private`; a caller whose policy is wider than the
+  store's refuses (`private-provenance.ts`). `excludePrivate` also turns on the safe-chunk rule, as in
+  PGLite (`requiresSafeChunks`). A page that records no `chunker_version` counts as safe: this store's
+  chunker seals, and `chunk_queries` reads such a page as sealed. Only a recorded version below 4 is unsafe.
+- **Refused options.** The store applies neither `where`, `afterDate`, `beforeDate`, `minTrust` nor
+  `suppressFlagged`, so a set one refuses with `engine_capability_missing` and nothing runs, even beside
+  `excludePrivate` (an empty `where` object is ignored). `searchTakesVector` refuses `excludePrivate`,
   `eligibility.floor` and `eligibility.suppressFlagged` the same way.
 - **One vector column.** The store keeps only the text column `embedding`, as the embedding members do.
   An `embeddingColumn` that names another column (`embedding_image`, a registered column), and a brain

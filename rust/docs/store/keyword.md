@@ -30,7 +30,9 @@ Every keyword member except `findByTitleFuzzy` refuses:
 - a CJK query (`hasCJK`): the SQL engines take a separate CJK path (follow-up `keyword-cjk`);
 - a text search configuration other than `english` (`getFtsLanguage()`);
 - truthy `excludePrivate`, `requireSafeChunks`, `minTrust` or `suppressFlagged`: the store does not record privacy,
-  chunk safety, trust tiers or flags;
+  chunk safety, trust tiers or flags. `hybridSearch` does not hide this refusal: its keyword and title arms rethrow
+  it, so a hybrid search with `excludePrivate` refuses (naming `searchKeyword` or `searchTitles`) instead of
+  answering `[]` where PGLite answers rows. `searchVector` serves `excludePrivate` (`vectors.md`);
 - a date bound (`afterDate`, `beforeDate`) that is not an ISO date or date-time
   (`YYYY-M-D[( |T)H:MM[:SS[.ffffff]][Z|±HH[:MM]]]`), that is outside the calendar, or that has more than six fraction
   digits. Postgres reads more shapes (`Jan 5 2026`); those refuse rather than guess;

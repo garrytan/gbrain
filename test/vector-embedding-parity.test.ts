@@ -63,8 +63,9 @@
  * Rust arm (GBRAIN_TEST_RUST_ARM=1, test/engine-parity/rust-arm.ts): the same
  * fixture through engine methods (the Rust engine has no SQL), and the same
  * expected rows. Differences, each asserted below: a refusal carries the
- * store's `invalid_argument` code with PGLite's message; `excludePrivate`
- * refuses (engine_capability_missing). Cases that set state with SQL (the
+ * store's `invalid_argument` code with PGLite's message; searchVector serves
+ * `excludePrivate` as PGLite does, but a hybrid search with it refuses
+ * (engine_capability_missing: the keyword arm cannot apply it). Cases that set state with SQL (the
  * guard's model and hash edits, embedding reads, stale chunks, state counts)
  * do not run on Rust; the store's unit tests cover the guard's model and hash
  * rules. A brain whose config routes vectors to another column refuses on Rust,
@@ -341,6 +342,10 @@ for (const kind of arms) {
         excludePrefixes: await sv(q, { exclude_slug_prefixes: ['b-', 'c-'] }),
         includePrefixes: await sv(q, { include_slug_prefixes: ['d-'] }),
         excludePrivate: await sv(q, { excludePrivate: true }),
+        excludePrivateOff: await sv(q, { excludePrivate: false }),
+        excludePrivateScoped: await sv(q, { excludePrivate: true, sourceId: 'default' }),
+        excludePrivateOnePage: await sv(q, { excludePrivate: true, limit: 1 }),
+        excludePrivateWithType: await sv(q, { excludePrivate: true, type: 'nonesuch' }),
         detailLow: await sv(q, { detail: 'low' }),
       };
       expect(cases.typePerson).toEqual({ ok: ['e-person#0 -0.0213 default'] });
@@ -356,10 +361,19 @@ for (const kind of arms) {
       expect(cases.excludePrefixes).toEqual({ ok: without('b-', 'c-') });
       // include_slug_prefixes only lifts a default hard exclude; it is not an allow list.
       expect(cases.includePrefixes).toEqual({ ok: ALL });
-      if (rust) expect((cases.excludePrivate as { refused: string }).refused).toBe('engine_capability_missing');
-      else expect(cases.excludePrivate).toEqual({ ok: without('i-private') });
+      expect(cases.excludePrivate).toEqual({ ok: without('i-private') });
+      expect(cases.excludePrivateOff).toEqual({ ok: ALL });
+      expect(cases.excludePrivateScoped).toEqual({ ok: without('i-private', 'f-srcb') });
+      expect(cases.excludePrivateOnePage).toEqual({ ok: without('i-private').slice(0, 1) });
+      expect(cases.excludePrivateWithType).toEqual({ ok: [] });
       // detail low reads compiled_truth chunks only, so the page falls back to its next best chunk.
       expect(cases.detailLow).toEqual({ ok: [...ALL.slice(0, 2), 'f-srcb#0 0.0244 src-b', 'i-private#0 0.0242 default', 'n-timeline#1 -0.0170 default', ...ALL.slice(5)] });
+      if (rust) {
+        // The store keeps no trust tiers and knows no other option: they still refuse beside excludePrivate, never answer without the filter.
+        for (const extra of [{ minTrust: 0.5 }, { suppressFlagged: true }, { notAnOption: true }]) {
+          expect(await sv(q, { excludePrivate: true, ...extra })).toMatchObject({ refused: 'engine_capability_missing' });
+        }
+      }
       record(kind, 'filters', cases);
     });
 
@@ -631,7 +645,7 @@ for (const kind of arms) {
       expect(cases.named).toEqual({ ok: HYBRID_NAMED });
       if (rust) {
         // The arms refuse excludePrivate (engine_capability_missing); hybridSearch must pass the refusal on, not read it as an empty arm.
-        expect(cases.namedPrivate).toMatchObject({ refused: 'engine_capability_missing', message: expect.stringMatching(/search(Keyword|Titles|Vector) \(option excludePrivate\)/) });
+        expect(cases.namedPrivate).toMatchObject({ refused: 'engine_capability_missing', message: expect.stringMatching(/search(Keyword|Titles) \(option excludePrivate\)/) });
       } else {
         expect(cases.namedPrivate).toEqual({ ok: HYBRID_NAMED_PRIVATE });
       }

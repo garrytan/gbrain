@@ -28,6 +28,7 @@ use crate::embeddings::{
     StoredVector, scan_chunk_vectors, scan_take_vectors, text_hash, vector_generation,
 };
 use crate::error::{Result, StoreError};
+use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::kv::{KvRead, KvWrite};
 use crate::pages::{PageRecord, read_page_by_id};
 use crate::sources::read_source;
@@ -86,6 +87,9 @@ pub struct VectorSearchOptions {
     pub source_factors: Vec<(String, f64)>,
     /// `requiresSafeChunks(opts)`: only pages chunked by the safe fence chunker.
     pub require_safe_chunks: bool,
+    /// `excludePrivate`: the page policy `buildVisibilityClause` adds (`privatePagesFilterForCaller('p')`), as
+    /// `facts/privacy.rs` `page_hidden` reads it. `None` hides nothing.
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 /// `searchTakesVector(embedding, opts)`, resolved: `limit` is clamped by the TypeScript member.
@@ -389,11 +393,18 @@ fn page_passes(
             .source_ids
             .as_ref()
             .is_some_and(|ids| !ids.contains(&page.source_id))
+        // A store page that records no version was chunked by this store's chunker, which seals (as
+        // `chunk_queries` reads it); only a recorded version below the safe fence chunker is unsafe.
         || (options.require_safe_chunks
             && page
                 .chunker_version
-                .is_none_or(|v| v < SAFE_FENCE_CHUNKER_VERSION));
+                .is_some_and(|v| v < SAFE_FENCE_CHUNKER_VERSION));
     if hidden {
+        return Ok(false);
+    }
+    if let Some(policy) = &options.exclude_private
+        && page_hidden(read, page, policy)?
+    {
         return Ok(false);
     }
     let is_archived = match archived.get(&page.source_id) {
@@ -1005,14 +1016,107 @@ mod tests {
             .search_vector(&q(&axis(0, 4)), &opts(json!({"detail": "low"})))
             .unwrap();
         assert!(names(&low).contains(&"d-multi#0 0.0000".to_string()));
-        // Pages chunked before the safe fence chunker drop out when safe chunks are required.
-        assert!(top(json!({"require_safe_chunks": true})).is_empty());
+        // A page that records no version was chunked by this store and counts as safe; a page recorded as
+        // chunked before the safe fence chunker drops out when safe chunks are required.
+        assert_eq!(
+            top(json!({"require_safe_chunks": true, "limit": 1})),
+            ["a-exact"]
+        );
+        s.write(|tx| {
+            let mut p = crate::pages::read_page(&*tx, "default", "a-exact")?.unwrap();
+            p.chunker_version = Some(3);
+            crate::pages::write_page(tx, &p)?;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(
+            top(json!({"require_safe_chunks": true, "limit": 1})),
+            ["f-srcb"]
+        );
+        assert_eq!(top(json!({"limit": 1})), ["a-exact"]);
         // The model guard: the named model only; no model reads every vector until a migration starts.
         assert_eq!(top(json!({"model": MODEL, "limit": 1})), ["a-exact"]);
         assert!(top(json!({"model": "other:model"})).is_empty());
         s.set_config(MIGRATION_STATE_KEY, "running").unwrap();
         assert!(top(json!({})).is_empty());
         assert_eq!(top(json!({"model": MODEL, "limit": 1})), ["a-exact"]);
+    }
+
+    /// `excludePrivate` adds the page policy `privatePagesFilterForCaller('p')` before ranking: a hidden page never
+    /// takes a result slot (so a limit counts only visible pages), whatever its score.
+    #[test]
+    fn exclude_private_hides_the_pages_the_page_policy_hides() {
+        let s = corpus();
+        page(
+            &s,
+            "default",
+            "m-visibility",
+            &[axis(0, 4)],
+            json!({"frontmatter": {"visibility": "private"}}),
+        );
+        page(
+            &s,
+            "default",
+            "n-access",
+            &[axis(0, 4)],
+            json!({"frontmatter": {"access": "private"}}),
+        );
+        page(
+            &s,
+            "default",
+            "o-public",
+            &[axis(0, 4)],
+            json!({"frontmatter": {"visibility": "public", "access": "private"}}),
+        );
+        // A derived page (an atom) is private unless it says otherwise.
+        page(
+            &s,
+            "default",
+            "p-atom",
+            &[axis(0, 4)],
+            json!({"type": "atom"}),
+        );
+        let top = |o: Value| -> Vec<String> {
+            let rows = s.search_vector(&q(&axis(0, 4)), &opts(o)).unwrap();
+            rows.iter()
+                .map(|r| r["slug"].as_str().unwrap().to_string())
+                .collect()
+        };
+        let all = ["a-exact", "m-visibility", "n-access", "o-public", "p-atom"];
+        assert_eq!(top(json!({"limit": 5})), all);
+        let policy = json!({"honorAliases": true, "entityPrivacy": true});
+        // The limit counts visible pages only: the hidden pages tie at the top score and take no slot.
+        assert_eq!(
+            top(json!({"limit": 3, "exclude_private": policy})),
+            ["a-exact", "o-public", "d-multi"]
+        );
+        assert_eq!(
+            top(json!({"limit": 2, "exclude_private": policy})),
+            ["a-exact", "o-public"]
+        );
+        assert_eq!(
+            top(json!({"limit": 1, "offset": 1, "exclude_private": policy})),
+            ["o-public"]
+        );
+        // Without the alias keys only `visibility` (and a derived page's default) hides a page.
+        let visibility_only = json!({"honorAliases": false, "entityPrivacy": true});
+        assert_eq!(
+            top(json!({"limit": 3, "exclude_private": visibility_only})),
+            ["a-exact", "n-access", "o-public"]
+        );
+        // With the privacy part of the entity gate relaxed, only the member-access part applies: nothing here is hidden.
+        let relaxed = json!({"honorAliases": true, "entityPrivacy": false});
+        assert_eq!(top(json!({"limit": 5, "exclude_private": relaxed})), all);
+        // `null` (excludePrivate off) hides nothing, and the policy composes with the other filters.
+        assert_eq!(top(json!({"limit": 5, "exclude_private": null})), all);
+        assert_eq!(
+            top(json!({"exclude_private": policy, "type": "atom"})),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            top(json!({"exclude_private": policy, "exclude_slugs": ["a-exact"], "limit": 2})),
+            ["o-public", "d-multi"]
+        );
     }
 
     /// The feeder's guard cases that edit `content_chunks` with SQL: a chunk's model label and its
