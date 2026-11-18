@@ -238,12 +238,6 @@ fn delete_slug_alias(tx: &mut dyn KvWrite, source: &str, alias: &str) -> Result<
     Ok(())
 }
 
-/// Deletes this family's records keyed by a source that is deleted (`cascade::remove_source_rows`).
-/// Nothing to delete yet.
-pub(crate) fn remove_source_rows(_tx: &mut dyn KvWrite, _source_id: &str) -> Result<()> {
-    Ok(())
-}
-
 /// `recordRenameAlias(source, old, new)` on `slug_aliases`: drops the alias spelled like the new
 /// slug (a page owns that slug now), repoints every alias of the old slug at the new one, then
 /// upserts `old -> new` with notes `rename` (an existing row keeps its notes, as `ON CONFLICT DO
