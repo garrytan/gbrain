@@ -1,5 +1,5 @@
 /**
- * BrainEngine parity — catalog probes: the doctor and core reads of Postgres internals (pg_proc, pg_index and planner
+ * Engine parity for the catalog probes: the doctor and core reads of Postgres internals (pg_proc, pg_index and planner
  * statistics, pg_policy, server settings, the relation catalog, to_regclass, the links constraint and pgvector).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
@@ -14,6 +14,9 @@
  *    case caught fails the Rust arm (rust-arm.ts) and the case is fail-first.
  *  - Why existing coverage misses it: raw-sql.test.ts proves executeRaw refuses on Rust; nothing called the probes that
  *    read through it on a Rust brain.
+ *  - Why this file is not under test/engine-parity/: on the Rust engine these probes call no engine member at all (they
+ *    read the capability list), and every case there must name a member it calls on every arm. The cases still run
+ *    through the parity harness, so each arm's answer is compared with PGLite's.
  *  - Seam: none. Real engines; doctor entries run with the minimal context they read (engine and a progress stub).
  *  - Not covered here, because no Rust caller reaches them yet: the set_config sites (each runs inside
  *    `engine.transaction`, which the Rust engine does not serve), the pg_stat_activity read in fence-repair/census.ts
@@ -21,25 +24,25 @@
  *    checks (a Rust brain starts on the current format).
  */
 import { describe, expect } from 'bun:test';
-import { parityArms } from './harness.ts';
-import { testBackends } from '../helpers/test-backends.ts';
-import type { BrainEngine } from '../../src/core/engine.ts';
-import type { Check } from '../../src/commands/doctor.ts';
-import type { DoctorContext, DoctorEntry } from '../../src/commands/doctor/context.ts';
-import { functionSearchPathEntry } from '../../src/commands/doctor/checks/function-search-path.ts';
-import { schemaFunctionBodiesEntry } from '../../src/commands/doctor/checks/schema-function-bodies.ts';
-import { plannerStatsEntry } from '../../src/commands/doctor/checks/planner-stats.ts';
-import { databaseEncodingEntry } from '../../src/commands/doctor/checks/database-encoding.ts';
-import { sessionLaneBudgetEntry } from '../../src/commands/doctor/checks/session-lane.ts';
-import { ownerHostStaleEntry } from '../../src/commands/doctor/checks/owner-host-stale.ts';
-import { embeddingColumnRegistryEntry } from '../../src/commands/doctor/checks/embedding-health.ts';
-import { rlsEntry, rlsEventTriggerEntry } from '../../src/commands/doctor/checks/schema-health.ts';
-import { jsonbIntegrityCheck, pagesUpsertArbiterCheck, pgvectorCheck } from '../../src/commands/doctor/checks/core-health.ts';
-import { checkManagedGuardSchemaDrift } from '../../src/commands/doctor/checks/managed-guard.ts';
-import { requestIndexesCheck } from '../../src/commands/doctor/checks/persistence-requests.ts';
-import { checkBrainstormHealth } from '../../src/commands/doctor/checks/graph-embedding.ts';
-import { readExpressionIndexesWithoutStats } from '../../src/core/planner-stats.ts';
-import { checkLinkSourceCheck } from '../../src/core/link-source-check-repair.ts';
+import { parityArms } from './engine-parity/harness.ts';
+import { testBackends } from './helpers/test-backends.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
+import type { Check } from '../src/commands/doctor.ts';
+import type { DoctorContext, DoctorEntry } from '../src/commands/doctor/context.ts';
+import { functionSearchPathEntry } from '../src/commands/doctor/checks/function-search-path.ts';
+import { schemaFunctionBodiesEntry } from '../src/commands/doctor/checks/schema-function-bodies.ts';
+import { plannerStatsEntry } from '../src/commands/doctor/checks/planner-stats.ts';
+import { databaseEncodingEntry } from '../src/commands/doctor/checks/database-encoding.ts';
+import { sessionLaneBudgetEntry } from '../src/commands/doctor/checks/session-lane.ts';
+import { ownerHostStaleEntry } from '../src/commands/doctor/checks/owner-host-stale.ts';
+import { embeddingColumnRegistryEntry } from '../src/commands/doctor/checks/embedding-health.ts';
+import { rlsEntry, rlsEventTriggerEntry } from '../src/commands/doctor/checks/schema-health.ts';
+import { jsonbIntegrityCheck, pagesUpsertArbiterCheck, pgvectorCheck } from '../src/commands/doctor/checks/core-health.ts';
+import { checkManagedGuardSchemaDrift } from '../src/commands/doctor/checks/managed-guard.ts';
+import { requestIndexesCheck } from '../src/commands/doctor/checks/persistence-requests.ts';
+import { checkBrainstormHealth } from '../src/commands/doctor/checks/graph-embedding.ts';
+import { readExpressionIndexesWithoutStats } from '../src/core/planner-stats.ts';
+import { checkLinkSourceCheck } from '../src/core/link-source-check-repair.ts';
 
 const { parityTest } = parityArms(testBackends());
 
