@@ -61,7 +61,8 @@ connection may widen, and otherwise asks the user, because only the operator wid
 a pinned client. `STARTER_CALLABLE_PARAMS` in `src/mcp/surface.ts` lists the few
 hidden parameters a starter caller may still pass, each with its reason (page
 windows, the shared-skill follower, the thin client's source binding, the
-connection check, `list_pages` paging with `offset`). This confines direct tool calls
+connection check, a delegating client's `submit_agent` `queue`, `model` and
+`allowed_slug_prefixes`, `list_pages` paging with `offset`). This confines direct tool calls
 only: the tools an agent job runs (`submit_agent`) are not confined to the
 submitter's surface yet. Structured fixes never name a parameter the caller's
 surface refuses (`page_not_found` offers a search instead of `include_deleted`);

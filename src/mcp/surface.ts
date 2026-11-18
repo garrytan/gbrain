@@ -295,7 +295,12 @@ export const STARTER_CALLABLE_PARAMS: Readonly<Record<string, Readonly<Record<st
   },
   search: { fields: FULL_ROWS },
   query: { fields: FULL_ROWS },
-  submit_agent: { max_turns: 'May only lower the job\'s turns below the default a call without it gets (STARTER_PARAM_CEILINGS); gbrain\'s connection check passes max_turns: 1.' },
+  submit_agent: {
+    max_turns: 'May only lower the job\'s turns below the default a call without it gets (STARTER_PARAM_CEILINGS); gbrain\'s connection check passes max_turns: 1.',
+    queue: 'Only routes the job to the worker that claims that queue (a delegating client runs its own); the grant\'s concurrency and budget still apply.',
+    model: 'Must name a supported agent tool-loop model or the call is invalid_params; spend stays in the client\'s daily budget, and a finite budget refuses a model with no known price before any call.',
+    allowed_slug_prefixes: 'Only narrows the grant\'s delegated write fence: a prefix outside delegated_slug_prefixes, or any override of a job namespace, is refused.',
+  },
   entity: { source_id: THIN_SOURCE, prefer_source_id: THIN_SOURCE },
   context_pack: { source_id: THIN_SOURCE, prefer_source_id: THIN_SOURCE },
   list_skills: { schema_version: SKILL, cursor: SKILL, source_id: SKILL },

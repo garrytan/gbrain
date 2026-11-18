@@ -314,3 +314,50 @@ describe('rendered fixes never name a parameter the caller surface refuses', () 
     expect(renderAction(window, dispatchRenderContext(stdio('starter'))).mcp).toEqual(window.mcp);
   });
 });
+
+// Captain's condition on the three delegation parameters starter keeps (STARTER_CALLABLE_PARAMS.submit_agent): each is
+// usable and each keeps its bound. The finite-budget rule for a model with no known price is pinned by
+// test/minions/delegated-execution.serial.test.ts ('finite caps refuse unknown prices or absent enforced bounds before IO').
+for (const kind of testBackends()) {
+  describe(`submit_agent delegation parameters on the starter surface (${kind}, repo-less)`, () => {
+    const CLIENT = 'delegating-client-example';
+    let engine: BrainEngine;
+    let close: () => Promise<void>;
+
+    beforeAll(async () => {
+      if (kind === 'postgres') ({ engine, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!));
+      else { engine = new PGLiteEngine(); await engine.connect({ engine: 'pglite' } as never); await engine.initSchema(); close = () => engine.disconnect(); }
+      await engine.executeRaw(`INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, scope, source_id) VALUES ($1, 'x', $1, 'read', 'default')`, [CLIENT]);
+      await engine.executeRaw(`UPDATE oauth_clients SET scope = 'read agent', bound_tools = ARRAY['get_page'], delegated_namespace = 'prefixes',
+        delegated_slug_prefixes = ARRAY['wiki/'], bound_source_id = 'default', federated_read = ARRAY['default'], bound_max_concurrent = 3 WHERE client_id = $1`, [CLIENT]);
+    }, 120_000);
+
+    afterAll(async () => { await close?.(); }, 60_000);
+
+    const submit = (args: Record<string, unknown>) => {
+      const auth = { token: 't', clientId: CLIENT, principal: { kind: 'oauth_client', id: CLIENT }, scopes: ['read', 'agent'], sourceId: 'default' } as AuthInfo;
+      return dispatchToolCall(engine, 'submit_agent', { prompt: 'Summarize the example notes.', dry_run: true, ...args },
+        { remote: true, transport: 'http', surface: 'starter', allowedOps: allowedOpNames(operations, 'starter'), auth, sourceId: 'default' }).then(envelope);
+    };
+
+    test('queue, a supported model and a narrower prefix are accepted', async () => {
+      const env = await submit({ queue: 'delegate-example', model: 'anthropic:claude-sonnet-4-6', allowed_slug_prefixes: ['wiki/notes/'] });
+      expect(env.code).toBeUndefined();
+      expect(env).toMatchObject({ dry_run: true, resolved_model: 'anthropic:claude-sonnet-4-6', resolved_slug_prefixes: ['wiki/notes/*'] });
+    });
+
+    test('allowed_slug_prefixes wider than the grant is refused', async () => {
+      for (const prefixes of [['other/'], ['wiki/', 'other/']]) {
+        const env = await submit({ allowed_slug_prefixes: prefixes });
+        expect(env.code).not.toBe(CODE);
+        expect(JSON.stringify(env)).toContain('delegated_prefixes_invalid');
+      }
+    });
+
+    test('an unsupported model is refused', async () => {
+      const env = await submit({ model: 'custom:unknown-example' });
+      expect(env.code).toBe('invalid_params');
+      expect(String(env.message)).toContain('model must name a supported agent tool-loop model');
+    });
+  });
+}
