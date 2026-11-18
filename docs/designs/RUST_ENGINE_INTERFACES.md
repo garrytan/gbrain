@@ -163,6 +163,28 @@ Reserved tags:
 | persistence (core) | `d` (requests stay under `J` / `j`, local writers under `W`) | `PERSISTENCE` | no |
 | jobs (core) | `m` | `JOBS` | no |
 | trust | `t` | `TRUST` | no (the trust family asks core when it needs the page-delete hook) |
+| telemetry | `a`, one sub-tag per table (below) | `TELEMETRY` | no |
+
+The telemetry family (`telemetry.rs`) holds search telemetry (`src/core/search/telemetry.ts`), MCP usage
+(`src/core/mcp-usage.ts`), retrieval feedback (`src/core/feedback/`) and the budget ledger
+(`src/core/budget/daily-ledger.ts`). The byte after `a` names the table, and the family documents the rest of each key
+in its module header:
+
+| Sub-tag | Constant | Table |
+|---|---|---|
+| `0x01` | `TELEMETRY_SEARCH` | `search_telemetry` |
+| `0x02` | `TELEMETRY_MCP_REQUEST` | `mcp_request_log` |
+| `0x03` | `TELEMETRY_MCP_ROLLUP` | `mcp_request_log_rollup` |
+| `0x04` | `TELEMETRY_RETRIEVAL_EVENT` | `retrieval_events` |
+| `0x05` | `TELEMETRY_RETRIEVAL_EVENT_PAGE` | `retrieval_event_pages` |
+| `0x06` | `TELEMETRY_RETRIEVAL_EVENT_LINK` | `retrieval_event_links` |
+| `0x07` | `TELEMETRY_FEEDBACK` | `retrieval_feedback` |
+| `0x08` | `TELEMETRY_RETRIEVAL_WEIGHT` | `retrieval_weights` |
+| `0x09` | `TELEMETRY_BUDGET_LEDGER` | `budget_ledger` |
+| `0x0A` | `TELEMETRY_BUDGET_RESERVATION` | `budget_reservations` |
+
+`eval_candidates` stays with eval_capture (`Z`). A new telemetry table takes the next unused sub-tag in a reviewed
+change to this table and to `keys.rs`.
 
 The `q` tag is shared. link_queries and wanted_links both key records as `q <source id> 0x00 ...`; the byte after
 `0x00` is `W` for a wanted_links record (`q <origin source id> 0x00 W <origin page id BE8> ...`), and link_queries
@@ -1224,7 +1246,7 @@ the same rows into one member, so the member counts here are smaller than the si
 
 These four sections are design only. No file, tag, constant or list entry below exists yet. The tags are proposed:
 core adds them to the reserved block in `keys.rs` and to the reserved tag table above in one reviewed change, and
-until then no family writes under them. The free lowercase bytes today are `a d f g h i m t x y z`.
+until then no family writes under them. The free lowercase bytes today are `f g h i x y z` (`d`, `m` and `t` are now reserved above, and `a` is telemetry).
 
 | Family | Proposed tag | Proposed constant | Cascade on page delete | Owner |
 |---|---|---|---|---|
