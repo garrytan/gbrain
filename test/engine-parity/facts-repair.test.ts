@@ -10,10 +10,11 @@
  *  - Regression: an engine that answers one of these differently changes what the repair commands classify and
  *    repair, which loops_close retires and which world facts the visibility check flags; the Rust engine has no SQL,
  *    so each read has to exist as a typed method it can implement or refuse. The Rust store serves the four that read
- *    only `facts` and `pages`; the other six read a table it does not hold and refuse (rust/docs/store/facts.md).
+ *    only `facts` and `pages`, and closedLoopWithActiveFact over its open loops; the other five read a table it does
+ *    not hold and refuse (rust/docs/store/facts.md).
  *  - Why existing coverage misses it: these statements ran through `executeRaw`, which the parity cases cannot call
  *    (D18), so no case compared them across engines (docs/research/rust-cli-executeraw-map.md).
- *  - Seam: none. Every fact and page is seeded through the typed members. The tables behind the six refused members
+ *  - Seam: none. Every fact, page and loop is seeded through the typed members. The tables behind the five refused members
  *    (open_loops, fact_withdrawals, persistence_requests, page_purges, derived_generations) have no typed writer on the
  *    engine, so those cases seed the facts the statement joins from and assert the answer an empty table gives; the
  *    Rust arm counts each as a typed refusal. Generated values (ids) are compared by relation, never by value.
@@ -69,6 +70,41 @@ describe('engine parity: group 5 facts repair statements', () => {
     const unscoped = await engine.closedLoopWithActiveFact(null, 1);
     expect({ scoped, unscoped }).toEqual({ scoped: null, unscoped: null });
     return { scoped, unscoped };
+  });
+
+  parityTest('closedLoopWithActiveFact returns a closed loop only while its fact is unexpired, in its own source', {
+    methods: ['insertFact', 'expireFact', 'upsertOpenLoop', 'closeOpenLoop', 'closedLoopWithActiveFact'],
+  }, async (engine) => {
+    const live = await fact(engine, 'send the deck', { kind: 'commitment' });
+    const gone = await fact(engine, 'call back', { kind: 'commitment' });
+    const at = '2026-03-01T10:00:00.000Z';
+    const open = async (dedupKey: string, factId: number | null) => Number((await engine.upsertOpenLoop({ sourceId: 'default', dedupKey,
+      loopType: 'commitment_owed_by_me', counterpartyEmail: 'a@example.com', summary: dedupKey, evidence: [], detector: 'manual',
+      factId, lastActivityAt: at, openedAt: at })).id);
+    const a = await open('a', live);
+    const b = await open('b', gone);
+    const c = await open('c', null);
+    const d = await open('d', live);
+    const stillOpen = await engine.closedLoopWithActiveFact(null, a);
+    await engine.closeOpenLoop('default', a, 'done', 'manual');
+    await engine.closeOpenLoop('default', b, 'dropped', 'manual');
+    await engine.closeOpenLoop('default', c, 'done', 'manual');
+    await engine.closeOpenLoop('default', d, 'stale', 'manual');
+    expect(await engine.expireFact(gone)).toBe(true);
+    const view = (row: Awaited<ReturnType<BrainEngine['closedLoopWithActiveFact']>>) =>
+      row ? { id: Number(row.id) === a ? 'a' : String(row.id), status: row.status, fact: Number(row.fact_id) === live ? 'live' : String(row.fact_id) } : null;
+    const out = {
+      stillOpen: view(stillOpen),
+      scoped: view(await engine.closedLoopWithActiveFact('default', a)),
+      unscoped: view(await engine.closedLoopWithActiveFact(null, a)),
+      otherSource: view(await engine.closedLoopWithActiveFact('other', a)),
+      expiredFact: view(await engine.closedLoopWithActiveFact(null, b)),
+      noFact: view(await engine.closedLoopWithActiveFact(null, c)),
+      stale: view(await engine.closedLoopWithActiveFact(null, d)),
+    };
+    expect(out).toEqual({ stillOpen: null, scoped: { id: 'a', status: 'done', fact: 'live' }, unscoped: { id: 'a', status: 'done', fact: 'live' },
+      otherSource: null, expiredFact: null, noFact: null, stale: null });
+    return out;
   });
 
   parityTest('listSessionFactsForClassification lists the active user-or-unset lane facts by source then id, or only the named ones', {

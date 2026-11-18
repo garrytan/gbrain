@@ -213,7 +213,7 @@ table the store does not hold and refuse with `engine_capability_missing` (they 
 | `listCapturedFactsForClassification` | The same lane facts with their fingerprint and `legit_twin` (another non-expired fact of the source with the same visibility, entity and fingerprint outside the lanes). By (source, id). | Served |
 | `listWorldFactsFromPrivateSources` | Active `world` facts held in, or extracted from, a page that is private by `visibility`, a privacy alias or `readable_by`, with `readable`. By id. | Served |
 | `loopFactDrift` | Closed loops whose commitment fact is still active. | Refused: needs `open_loops` |
-| `closedLoopWithActiveFact` | One closed loop whose commitment fact is still active. | Refused: needs `open_loops` |
+| `closedLoopWithActiveFact` | One closed loop whose commitment fact is still active. | Served from `facts/loops.rs`: a `done` or `dropped` loop whose fact exists with no `expired_at` |
 | `countLabelFacts` | The bounded count of evidenced label facts. | Refused: needs `open_loops` and `fact_withdrawals` (it also matches a regular expression with `~*` over page text) |
 | `listExtractorFactsForClassification` | Expired fenceless extractor facts with page, withdrawal, duplicate, fence and receipt evidence. | Refused: needs `persistence_requests` and `fact_withdrawals` |
 | `countPurgedPageFacts` | The bounded count of facts of a purged page, by class. | Refused: needs `page_purges`, `fact_withdrawals` and `open_loops` |
@@ -275,15 +275,17 @@ provenance page hides the row; then the entity, session, `since` (on `valid_from
 
 ## Open loops (`facts/loops.rs`)
 
-The `open_loops` table, for the three members loops-store.ts calls through the engine. The other loop
-statements (thread auto-close, the staleness pass, mutes and the loop-fact reads) still run through
-`executeRaw`, so they refuse on this engine.
+The `open_loops` table, for the three members loops-store.ts calls through the engine and the
+`loops_close` retry read `closedLoopWithActiveFact`. The other loop statements (thread auto-close,
+the staleness pass, mutes and the other loop-fact reads) still run through `executeRaw`, so they
+refuse on this engine.
 
 | Member | What it does |
 |---|---|
 | `upsertOpenLoop` | Inserts a loop, or updates the row with the same `(source_id, dedup_key)`. The update runs only when the row is open, the new activity is newer, or `closed_by` is `mute_recheck`; and only when `closed_by` is not `muted` or the counterparty email changed. It keeps `thread_id` and `detector`, keeps the old slug, email, page, due time and fact id when the new one is NULL, and keeps the old counterparty source when the new slug is NULL. An open row keeps its earlier `opened_at`; a reopened row takes the new one. Returns `{ id, created, applied }`. |
 | `listOpenLoops` | The rows that pass the source list, status, type, counterparty (slug in the counterparty source, or email) and id filters, by `last_activity_at` descending, then id descending, at most the clamped limit. |
 | `closeOpenLoop` | Closes an open row (in the named source when one is given) with a status, `closed_by` and now. NULL when no open row matches. |
+| `closedLoopWithActiveFact` | `{ id, status, fact_id }` of a `done` or `dropped` row (in the named source when one is given) whose fact exists with no `expired_at`; NULL otherwise, also for a row with no fact. |
 
 - Every upsert takes an id from the counter, also one that lands on an existing row, as `nextval`
   does before `ON CONFLICT`. A refused upsert (a CHECK value, an unknown source) rolls back and takes
