@@ -55,11 +55,18 @@ function makeStub(rowsByPattern: Record<string, unknown[]> = {}): {
   const listLocalPathSources = async () =>
     ((rowsByPattern['SELECT id, local_path FROM sources WHERE local_path'] ?? []) as Array<{ id: string; local_path: string }>)
       .map(r => ({ id: r.id, local_path: r.local_path, archived: false }));
+  // listSourceRecords answers the listed rows as the member does: `default` first, then by id.
+  const listSourceRecords = async () => {
+    const rows = [...((rowsByPattern[DETAIL] ?? []) as Array<{ id: string }>)].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    return [...rows.filter(r => r.id === 'default'), ...rows.filter(r => r.id !== 'default')]
+      .map(r => ({ archived: false, newest_content_at: null, ...r }));
+  };
   const engine = {
     kind: 'pglite' as const,
     executeRaw,
     getSource,
     listLocalPathSources,
+    listSourceRecords,
     // The strict mode reader is a typed method; it answers from the same fake rows as executeRaw.
     readManagedModeRows: () => executeRaw('SELECT enabled FROM persistence_brain WHERE singleton=1'),
     setConfig,
@@ -227,15 +234,21 @@ describe('sources add — #2707 --force flag wiring', () => {
 
 describe('sources list', () => {
   test('orders default source first, then alphabetical', async () => {
+    const row = (id: string) => ({ id, name: id, local_path: null, last_commit: null, last_sync_at: null, config: '{}', created_at: new Date() });
     const { engine, calls } = makeStub({
-      'SELECT id, name, local_path, last_commit, last_sync_at, config, created_at': [
-        { id: 'default', name: 'default', local_path: null, last_commit: null, last_sync_at: null, config: '{"federated":true}', created_at: new Date() },
-      ],
+      'SELECT id, name, local_path, last_commit, last_sync_at, config, created_at': [row('zeta'), row('default'), row('alpha')],
       'COUNT(*)::int AS n FROM pages': [{ n: 0 }],
     });
-    await runSources(engine, ['list']);
-    const select = calls.find(c => c.sql.includes('ORDER BY (id = \'default\') DESC'));
-    expect(select).toBeDefined();
+    const lines: string[] = [];
+    const logSpy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => { lines.push(a.map(String).join(' ')); });
+    try {
+      await runSources(engine, ['list', '--json']);
+    } finally {
+      logSpy.mockRestore();
+    }
+    // The order comes from the typed listSourceRecords read; no raw statement reads the sources table.
+    expect((JSON.parse(lines.join('\n')) as { sources: Array<{ id: string }> }).sources.map(s => s.id)).toEqual(['default', 'alpha', 'zeta']);
+    expect(calls.filter(c => /FROM sources\b/.test(c.sql))).toEqual([]);
   });
 
   test('counts only visible pages', async () => {

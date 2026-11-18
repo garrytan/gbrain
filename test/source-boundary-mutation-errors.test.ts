@@ -32,6 +32,7 @@ import { withEnv } from './helpers/with-env.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { stubSourceMembers } from './helpers/source-members-stub.ts';
 import { PageMissingError } from '../src/core/engine-errors.ts';
 import { dispatchToolCall as dispatchToolCallImpl } from '../src/mcp/dispatch.ts';
 import { runSources } from '../src/commands/sources.ts';
@@ -291,6 +292,7 @@ describe('mutation-time deletion race reclassification (#4109)', () => {
 
   function fakeEngine(pages: StoredPage[], raceDeleteSlug: string) {
     return {
+      ...stubSourceMembers([]), // the typed source and guest reads answer an empty sources table, as the raw stub did
       async getPage(slug: string, opts: { sourceId?: string; sourceIds?: string[] } = {}) {
         const sources = opts.sourceIds ?? (opts.sourceId ? [opts.sourceId] : []);
         const page = pages.find(
@@ -369,6 +371,7 @@ describe('mutation-time deletion race reclassification (#4109)', () => {
     // The engine miss fired, but by the time the reclassifier re-reads, the
     // page is back (delete + restore race): never internal_error.
     const eng = {
+      ...stubSourceMembers([]),
       async getPage(slug: string) {
         return { slug, source_id: WRITE_SRC } as never;
       },

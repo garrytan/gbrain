@@ -36,6 +36,7 @@ const AUDITED: Record<string, Audit> = {
   'src/core/persistence/page-prepare.ts': { calls: { importFromContent: 1 }, disposition: 'held', why: 'put_page, edit_page and capture refuse visibility_not_applied first' },
   'src/core/persistence/sync-prepare.ts': { calls: { importFromContent: 2, screenImportContent: 2 }, disposition: 'held',
     why: 'screenSyncImport screens with the hold first; the two unflagged screens are code files, which carry no frontmatter' },
+  'src/core/rust-engine/owner-ipc/owner-ops.ts': { calls: { importFromContent: 1 }, disposition: 'held', why: 'the owner of a Rust brain runs the call its client made, with the client\'s own options' },
   'src/core/transcripts/ingest.ts': { calls: { importFromContent: 1 }, disposition: 'derived', why: 'render.ts writes fixed keys; other keys come from the stored page' },
   'src/core/transcripts/archive.ts': { calls: { importFromContent: 1 }, disposition: 'derived', why: 'archive-day.ts writes fixed keys; readable_by is the owner (and a verified group) the archive resolves, never source text' },
   'src/core/trust/page-handlers.ts': { calls: { importFromContent: 1 }, disposition: 'derived', why: 'a stored version\'s markdown' },

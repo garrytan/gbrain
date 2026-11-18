@@ -15,6 +15,7 @@
 import { describe, test, expect } from 'bun:test';
 import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { stubSourceMembers } from './helpers/source-members-stub.ts';
 
 interface CapturedCall {
   sql: string;
@@ -30,6 +31,7 @@ function mkEngine(legacyCount: number): { calls: CapturedCall[]; engine: BrainEn
       if (sql.includes('FROM persistence_brain')) return [{ enabled: false }]; // #6482: the strict mode reader needs one well-formed unmanaged row.
       return [];
     },
+    ...stubSourceMembers([]), // the typed source and guest reads answer an empty sources table, as the raw stub did
     async getAllSlugs() { return []; },
     async getPage() { return null; },
     async deleteFactsForPage() { return { deleted: 0 }; },

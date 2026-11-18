@@ -1,10 +1,10 @@
 /**
  * Typed `sources` members for hermetic stub engines. Production code reads `sources` through these BrainEngine members
  * (listAllSources, getSource, listLocalPathSources, listSourceRoutingRows, listSourceRecords, countDefaultSourceSplit,
- * readSourceIncarnation) instead of `executeRaw`, so a stub engine that used to answer SQL text spreads these instead.
+ * readSourceIncarnation, and the guest and company-brain lookups) instead of `executeRaw`, so a stub engine that used to answer SQL text spreads these instead.
  * Each member answers as the engine-sql statement does: the same filters, the same order, the same row shape.
  */
-import type { SourceDetailRow, SourceIncarnationRow, SourceRecordRow, SourceRow } from '../../src/core/engine.ts';
+import type { GuestSourceLookupRow, SourceDetailRow, SourceIncarnationRow, SourceRecordRow, SourceRow } from '../../src/core/engine.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, SourceRoutingRow } from '../../src/core/engine-sql/sources.ts';
 
 export interface StubSourceRow {
@@ -89,6 +89,24 @@ export function stubSourceMembers(sources: readonly StubSourceRow[] | (() => rea
       enter('readSourceIncarnation');
       const r = rows().find(row => row.id === id);
       return r ? { config: r.config, incarnation: r.incarnation } : null;
+    },
+    /** The guest_sources lookup (readGuestSourceRow) for a brain with no guest sources: every source answers "not a guest". */
+    async readGuestSourceRow(_id: string): Promise<GuestSourceLookupRow> {
+      enter('readGuestSourceRow');
+      return { hidden: false, source_id: null, writers: null, trust_ceiling: null };
+    },
+    async listGuestSourceIds(_ids: readonly string[]): Promise<string[]> {
+      enter('listGuestSourceIds');
+      return [];
+    },
+    async hasGuestSource(): Promise<boolean> {
+      enter('hasGuestSource');
+      return false;
+    },
+    /** No source holds a company-brain ingestion receipt. */
+    async hasCompanyBrainReceipt(_id: string): Promise<boolean> {
+      enter('hasCompanyBrainReceipt');
+      return false;
     },
   };
 }

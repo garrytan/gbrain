@@ -89,6 +89,7 @@ function fakeEngine(kind: 'postgres' | 'pglite'): BrainEngine {
     kind,
     ...stubSourceMembers([]),
     executeRaw: async (sql: string) => sql.includes('FROM persistence_brain') ? [{ enabled: false }] : [], // #6482: one well-formed unmanaged row
+    readManagedModeRows: async () => [{ enabled: false }], // the typed managed-mode read import.ts runs
     getConfig: async () => null,
   } as unknown as BrainEngine;
 }
