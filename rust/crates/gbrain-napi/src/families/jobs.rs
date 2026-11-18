@@ -11,6 +11,7 @@ mod ops;
 mod spend;
 mod status;
 mod subagent;
+mod wake;
 
 use gbrain_store::error::StoreError;
 use gbrain_store::jobs::{AdmitSpec, ClaimSpec, ListFilter, LockAcquire, LockFilter, LockHolder};

@@ -46,14 +46,11 @@ export function wakePrincipalKey(p: WakePrincipalRef): string {
 
 export async function termsAccepted(engine: BrainEngine, p: WakePrincipalRef, terms: OperatorTerms | null): Promise<boolean> {
   if (!terms) return false;
-  const rows = await engine.executeRaw('SELECT 1 FROM wake_terms_acceptances WHERE principal_key = $1 AND terms_version = $2', [wakePrincipalKey(p), terms.version]);
-  return rows.length > 0;
+  return engine.hasWakeTermsAcceptance(wakePrincipalKey(p), terms.version);
 }
 
 export async function recordAcceptance(engine: BrainEngine, p: WakePrincipalRef, terms: OperatorTerms): Promise<void> {
-  await engine.executeRaw(
-    'INSERT INTO wake_terms_acceptances (principal_key, terms_version) VALUES ($1, $2) ON CONFLICT (principal_key, terms_version) DO NOTHING',
-    [wakePrincipalKey(p), terms.version]);
+  await engine.recordWakeTermsAcceptance(wakePrincipalKey(p), terms.version);
 }
 
 /** What a watch_* call returns instead of subscribing, until this principal accepts the current terms version. */

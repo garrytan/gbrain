@@ -1562,6 +1562,14 @@ The Minion job queue, cycle locks, spend and rate leases, and wake subscriptions
     `recordSubagentToolExecutions`, `startSubagentToolExecution`, `completeSubagentToolExecution`, `failSubagentToolExecution`, the
     write-outcome, oneshot-ledger and byte-sum reads, and the dream cycle's provenance reads) serve `subagent_messages` and
     `subagent_tool_executions` (`src/core/engine-sql/jobs-subagent.ts`, `rust/docs/store/jobs-subagent.md`). `parity: test/engine-parity/jobs-subagent.test.ts`.
+  - Wake subscriptions. Nineteen members serve the Wakeshift report-back tables (`wake_subscriptions`, `wake_crons`,
+    `wake_cron_runs`, `wake_terms_acceptances`, `wake_forgets`): `openWakeWatch`, `listWakeWatches`, `endWakeWatches`,
+    `countWakeWatches`, `readWakeDoctor`, `countPendingWakeForgets`, `listWakeCrons`, `addWakeCron`, `removeWakeCron`,
+    `hasWakeCron`, `recordWakeCronRun`, `hasWakeTermsAcceptance`, `recordWakeTermsAcceptance` and, for the drainer,
+    `listDueWakeWatches`, `claimWakeWatch`, `settleWakeWatch`, `queueWakeForget`, `claimWakeForgets`,
+    `settleWakeForget` (`src/core/engine-sql/jobs-wake.ts`, `rust/docs/store/jobs-wake.md`). The tables have no
+    foreign keys, so a deleted job, request or member changes nothing. `wakeshift/forget.ts` and `principalLive` stay on
+    `executeRaw`. `parity: test/engine-parity/jobs-wake.test.ts`.
   - Wake. The `minion_job_notify` trigger's `pg_notify` has no store equivalent: a Rust worker uses the short poll,
     which `sync-queue-wake.ts` already chooses when LISTEN is not available.
 - **Depends on:** the transactions family (`w`) for the members a caller runs inside its own transaction.

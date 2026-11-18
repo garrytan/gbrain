@@ -3,6 +3,7 @@ import type * as TrustWithdrawalsSql from './engine-sql/trust-withdrawals.ts';
 import type * as OpenLoopsSql from './engine-sql/open-loops.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
 import type * as TrustWriteGateSql from './engine-sql/trust-write-gate.ts';
+import type * as JobsWake from './engine-sql/jobs-wake.ts';
 import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
 import type { RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
@@ -3972,4 +3973,43 @@ export interface BrainEngine {
   getWriteGateHoldRow(id: number): Promise<TrustWriteGateSql.WriteGateHoldRow | null>;
   /** Mark a held row released or dropped; false when it does not exist or was already decided. */
   decideWriteGateHold(id: number, status: 'released' | 'dropped', decidedBy: string): Promise<boolean>;
+  // Group A (jobs-tables): the Wakeshift report-back tables (engine-sql/jobs-wake.ts).
+  /** Record a watch and return its id; a second open watch of the same Wakeshift subscription keeps its row and takes the new expiry. */
+  openWakeWatch(watch: JobsWake.WakeWatchInsert): Promise<number>;
+  /** One principal's watches, newest first, at most 50: the open ones (and ones updated in the last day), or one target's. */
+  listWakeWatches(filter: JobsWake.WakeWatchFilter): Promise<JobsWake.WakeWatchRow[]>;
+  /** End open watches for a reason (disabled, expired, or one unwatched id); the rows that ended. */
+  endWakeWatches(spec: JobsWake.EndWakeWatches): Promise<JobsWake.EndedWakeWatch[]>;
+  /** Every watch counted by state and last error. */
+  countWakeWatches(): Promise<Array<{ state: string; last_error: string | null; n: number }>>;
+  /** The doctor's wakeshift reads: 7-day watch counts, unregistered cron runs, stale and dead forgets. */
+  readWakeDoctor(): Promise<JobsWake.WakeDoctorRead>;
+  /** Wakeshift forgets still waiting to be sent. */
+  countPendingWakeForgets(): Promise<number>;
+  /** The registered crons by name with each one's last reported run. */
+  listWakeCrons(): Promise<JobsWake.WakeCronRow[]>;
+  /** Register a cron name. */
+  addWakeCron(name: string): Promise<void>;
+  /** Unregister a cron name and end the open watches on it; the watches that ended. */
+  removeWakeCron(name: string): Promise<JobsWake.EndedWakeWatch[]>;
+  /** Whether a cron name is registered. */
+  hasWakeCron(name: string): Promise<boolean>;
+  /** Record one cron run, drop that cron's runs older than 30 days, and say whether the name is registered. */
+  recordWakeCronRun(run: { name: string; status: string; finishedAt: string | null }): Promise<{ registered: boolean }>;
+  /** Whether a principal key accepted a terms version. */
+  hasWakeTermsAcceptance(principalKey: string, termsVersion: string): Promise<boolean>;
+  /** Record a terms acceptance (one already recorded stays). */
+  recordWakeTermsAcceptance(principalKey: string, termsVersion: string): Promise<void>;
+  /** The open, due, unleased watches whose target settled (at most 20), each with the job, write request or cron run it watches. */
+  listDueWakeWatches(spec?: { ids?: readonly number[] }): Promise<JobsWake.WakeRow[]>;
+  /** Lease one due watch; its lease token and attempts, or null when it is not due or leased. */
+  claimWakeWatch(id: number, leaseSeconds: number): Promise<{ lease: string; attempts: number } | null>;
+  /** Settle a leased watch; false when it was ended or re-leased meanwhile. */
+  settleWakeWatch(settle: JobsWake.WakeWatchSettle): Promise<boolean>;
+  /** Queue a Wakeshift forget of a user (once while one is pending); with a member id, only when that member is not removed. */
+  queueWakeForget(wakeUser: string, memberId: string | null): Promise<void>;
+  /** Lease up to `limit` due pending forgets. */
+  claimWakeForgets(spec: { leaseSeconds: number; limit: number }): Promise<JobsWake.WakeForgetClaim[]>;
+  /** Settle a leased forget; false when its lease no longer matches. */
+  settleWakeForget(settle: JobsWake.WakeForgetSettle): Promise<boolean>;
 }

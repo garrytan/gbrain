@@ -665,6 +665,26 @@ export const RUST_ENGINE_MEMBERS = {
   getCodeTraversalCache: 'code_edges',
   putCodeTraversalCache: 'code_edges',
   clearCodeTraversalCache: 'code_edges',
+  // Group A (jobs-tables): the Wakeshift report-back tables (rust/docs/store/jobs-wake.md).
+  openWakeWatch: 'minion_queue',
+  listWakeWatches: 'minion_queue',
+  endWakeWatches: 'minion_queue',
+  countWakeWatches: 'minion_queue',
+  readWakeDoctor: 'minion_queue',
+  countPendingWakeForgets: 'minion_queue',
+  listWakeCrons: 'minion_queue',
+  addWakeCron: 'minion_queue',
+  removeWakeCron: 'minion_queue',
+  hasWakeCron: 'minion_queue',
+  recordWakeCronRun: 'minion_queue',
+  hasWakeTermsAcceptance: 'minion_queue',
+  recordWakeTermsAcceptance: 'minion_queue',
+  listDueWakeWatches: 'minion_queue',
+  claimWakeWatch: 'minion_queue',
+  settleWakeWatch: 'minion_queue',
+  queueWakeForget: 'minion_queue',
+  claimWakeForgets: 'minion_queue',
+  settleWakeForget: 'minion_queue',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;
