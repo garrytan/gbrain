@@ -28,8 +28,6 @@ import { renderTakesFence } from '../src/core/takes-fence.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { registerLocalWriter } from '../src/core/persistence/identity.ts';
-import { storedOwnerWrite } from '../src/core/persistence/page-visibility.ts';
-import type { WriteAuthority } from '../src/core/persistence/model.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { importSegmented, pageContent } from './helpers/segmented-privacy-fixture.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -49,7 +47,7 @@ const HOP_TAKE = 'takehopcanary';
 const OWNER = 'owner-example', BOB = 'bob-example';
 const CALLERS = ['local', 'ownerT', 'ownerC', 'bob', 'bobC', 'unbound', 'channel'] as const;
 type Caller = typeof CALLERS[number] | 'ownerW' | 'bobW' | 'unboundW';
-const EDIT_OLD = 'otterprivoldcanary', EDIT_NEW = 'otterprivnewcanary', EDIT_DEL = 'molefprivdelcanary';
+const EDIT_OLD = 'otterprivoldcanary', EDIT_DEL = 'molefprivdelcanary';
 
 for (const kind of testBackends()) {
   describe('GST-3058 owner-bound remote callers read protected page parts (' + kind + ')', () => {
@@ -181,29 +179,6 @@ for (const kind of testBackends()) {
     const editSeed = async (slug: string) => { await put(slug, page('note', 'Edit Example', [row(1, 'Edit world fact'), row(2, 'Edit secret ' + EDIT_OLD, 'private'), row(3, 'Edit gone ' + EDIT_DEL, 'private')])); };
     const readFor = async (who: Caller, slug: string) => JSON.parse(await call(who, 'get_page', { slug, include_content: true })) as { content: string; revision: string };
     const count = (text: string, needle: string) => text.split(needle).length - 1;
-    const activeFacts = (slug: string) => engine.executeRaw<{ fact: string; visibility: string }>(
-      'SELECT fact, visibility FROM facts WHERE source_id = $1 AND source_markdown_slug = $2 AND expired_at IS NULL ORDER BY id', ['default', slug]);
-    const lastAuthority = async (slug: string) => {
-      const [req] = await engine.executeRaw<{ authority: WriteAuthority | string }>(
-        "SELECT authority FROM persistence_requests WHERE source_id = $1 AND slug = $2 AND operation = 'put_page' ORDER BY created_at DESC LIMIT 1", ['default', slug]);
-      return (typeof req!.authority === 'string' ? JSON.parse(req!.authority) : req!.authority) as WriteAuthority;
-    };
-
-    test('the owner edits and deletes private Facts rows through put_page: one row with the new text, the deleted row gone', async () => {
-      for (const who of ['ownerW', 'ownerC'] as Caller[]) {
-        const slug = 'notes/edit-' + who.toLowerCase() + '-example';
-        await editSeed(slug);
-        const read = await readFor(who, slug);
-        expect({ who, seen: seen(read.content, [EDIT_OLD, EDIT_DEL]) }).toEqual({ who, seen: [EDIT_OLD, EDIT_DEL] });
-        const content = read.content.replace(EDIT_OLD, EDIT_NEW).split('\n').filter(l => !l.includes(EDIT_DEL)).join('\n');
-        await call(who, 'put_page', { slug, content, expected_revision: read.revision, request_id: randomUUID() });
-        const after = (await readFor('local', slug)).content;
-        expect({ who, new: count(after, EDIT_NEW), old: count(after, EDIT_OLD), del: count(after, EDIT_DEL) }).toEqual({ who, new: 1, old: 0, del: 0 });
-        const facts = await activeFacts(slug);
-        expect({ who, facts: facts.filter(f => [EDIT_NEW, EDIT_OLD, EDIT_DEL].some(c => f.fact.includes(c))).map(f => [f.fact, f.visibility]) })
-          .toEqual({ who, facts: [['Edit secret ' + EDIT_NEW, 'private']] });
-      }
-    }, 240_000);
 
     test('a member or unbound writer editing the page keeps the private rows it cannot read, as on master', async () => {
       for (const who of ['bobW', 'unboundW'] as Caller[]) {
@@ -214,33 +189,9 @@ for (const kind of testBackends()) {
         await call(who, 'put_page', { slug, content: read.content.replace('Edit world fact', 'Edit world fact, edited'), expected_revision: read.revision, request_id: randomUUID() });
         const after = (await readFor('local', slug)).content;
         expect({ who, edited: after.includes('Edit world fact, edited'), old: count(after, EDIT_OLD), del: count(after, EDIT_DEL) }).toEqual({ who, edited: true, old: 1, del: 1 });
-        expect({ who, ownerWrite: (await lastAuthority(slug)).ownerWrite ?? null }).toEqual({ who, ownerWrite: null });
       }
     }, 240_000);
 
-    test('a non-owner that sends an owner-looking parameter still gets the private rows restored', async () => {
-      const slug = 'notes/edit-lookalike-example';
-      await editSeed(slug);
-      const read = await readFor('bobW', slug);
-      const auth = await provider().verifyAccessToken(tokens.bobW!) as unknown as AuthInfo & { takesHoldersAllowList?: string[] };
-      __resetPrivateVisibilityCacheForTests();
-      await dispatchToolCall(engine, 'put_page', { slug, content: read.content.replace('Edit world fact', 'Edit world fact, lookalike'), expected_revision: read.revision, request_id: randomUUID(),
-        ownerWrite: 'member:' + OWNER, owner_write: true }, { remote: true, transport: 'http', auth, sourceId: 'default', takesHoldersAllowList: await credentialHolders(engine, auth.takesHoldersAllowList, auth.member?.id) });
-      const after = (await readFor('local', slug)).content;
-      expect({ old: count(after, EDIT_OLD), del: count(after, EDIT_DEL) }).toEqual({ old: 1, del: 1 });
-      const [req] = await engine.executeRaw<{ owner: string | null }>(
-        "SELECT authority->>'ownerWrite' AS owner FROM persistence_requests WHERE source_id = $1 AND slug = $2 ORDER BY created_at DESC LIMIT 1", ['default', slug]);
-      expect(req?.owner ?? null).toBeNull();
-    }, 240_000);
-
-    test('the owner mark on a stored write is checked live: a withdrawn owner binding no longer skips the restore', async () => {
-      const authority = await lastAuthority('notes/edit-ownerw-example');
-      expect(authority.ownerWrite).toBe('member:' + OWNER);
-      expect(await storedOwnerWrite(engine, authority)).toBe(true);
-      await setOwner(engine, BOB);
-      try { expect(await storedOwnerWrite(engine, authority)).toBe(false); } finally { await setOwner(engine, OWNER); }
-      expect(await storedOwnerWrite(engine, authority)).toBe(true);
-    }, 120_000);
     test('windowed reads: the read view is the same text for every caller, the local CLI included; the markdown view carries the private rows for the owner as for the local CLI', async () => {
       const BIG = 'notes/big-example';
       await put(BIG, page('note', 'Big Example', [row(1, 'Big world'), row(2, 'Big secret ' + PRIV, 'private')], '\n## More\n\n' + ('Lorem ipsum dolor sit amet. '.repeat(40) + '\n\n').repeat(300)));
@@ -271,5 +222,32 @@ for (const kind of testBackends()) {
         expect({ who, readView: (await call(who, 'get_page', { slug: SEG, bytes: { offset: 0, length: 100_000 } })).includes(PRIV) }).toEqual({ who, readView: false });
       }
     }, 300_000);
+    test('the owner client reads an inline page with its private rows, puts it back unchanged, and every private row is stored exactly once', async () => {
+      const slug = 'notes/edit-ownerc-example';
+      await editSeed(slug);
+      const read = await readFor('ownerC', slug);
+      expect(seen(read.content, [EDIT_OLD, EDIT_DEL])).toEqual([EDIT_OLD, EDIT_DEL]);
+      await call('ownerC', 'put_page', { slug, content: read.content, expected_revision: read.revision, request_id: randomUUID() });
+      const after = (await readFor('local', slug)).content;
+      expect({ old: count(after, EDIT_OLD), del: count(after, EDIT_DEL) }).toEqual({ old: 1, del: 1 });
+    }, 240_000);
+
+    test('an owner token with a holders list reads a segmented page\'s markdown without the private row, puts it back, and the row is still stored', async () => {
+      const SEG = 'notes/seg-rt-example';
+      await importSegmented(engine, SEG, pageContent('## Facts\n\n' + renderFactsTable([row(1, 'Seg world'), row(2, 'Seg secret ' + PRIV, 'private')] as never) + '\n\n' + ('Seg prose line here. '.repeat(40) + '\n\n').repeat(1400)));
+      const stored = async () => (await call('local', 'get_page', { slug: SEG, body: 'window', view: 'markdown', bytes: { offset: 0, length: 100_000 } })).includes(PRIV);
+      expect(await stored()).toBe(true);
+      let args: Record<string, unknown> = { slug: SEG, body: 'window', view: 'markdown', bytes: { offset: 0, length: 4_000_000 } };
+      let text = '', revision = '';
+      for (let i = 0; i < 200; i++) {
+        const out = JSON.parse(await call('ownerW', 'get_page', args));
+        text += out.window?.text ?? ''; revision = out.revision;
+        if (!out.next) break;
+        args = out.next.arguments;
+      }
+      expect({ read: text.length > 1_000_000, priv: text.includes(PRIV) }).toEqual({ read: true, priv: false });
+      await call('ownerW', 'put_page', { slug: SEG, content: text.replace('Seg world', 'Seg world edited'), expected_revision: revision, request_id: randomUUID() });
+      expect({ edited: (await call('local', 'get_page', { slug: SEG, body: 'window', view: 'markdown', bytes: { offset: 0, length: 100_000 } })).includes('Seg world edited'), kept: await stored() }).toEqual({ edited: true, kept: true });
+    }, 600_000);
   });
 }

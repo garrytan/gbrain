@@ -253,9 +253,10 @@ exception is a credential bound to the brain owner speaking for itself:
 fence as stored when the credential has no holders list (GST-3058). A
 credential with a holders list gets no Takes fence in `get_page` and reads its
 takes through `takes_list`; its graph hops skip evidence pages that hold
-takes. The owner's own `put_page` takes the Facts fence as written, so it can
-edit or delete a private row; every other remote writer still has the rows it
-cannot read restored. The `get_page` read view (windows, lines, bytes, section,
+takes. Known limit: the owner's `put_page`, inline or streamed, still restores
+the private rows as stored for every remote writer, so editing or deleting one
+does not stick yet (the old row stays); use the local CLI for that until
+GST-3064 lands. The `get_page` read view (windows, lines, bytes, section,
 grep) is the same text for every caller, the local CLI included; the owner reads
 the private rows of a large or segmented page through `view: 'markdown'` (a
 segmented page only when the credential has no holders list). History
