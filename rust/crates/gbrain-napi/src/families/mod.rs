@@ -29,6 +29,7 @@ mod write_trust;
 // Planned families: no methods yet (docs/designs/RUST_ENGINE_INTERFACES.md).
 mod alias_fanout_reads;
 mod aliases;
+mod calibration_profiles;
 mod chunk_queries;
 mod code_edges;
 mod contradictions;
