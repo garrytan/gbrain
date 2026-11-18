@@ -16,12 +16,16 @@
  *
  * Bounded: titled candidates come from exact slug-prefix reads
  * (PAIR_SCAN_CAP per brain), one variant read each, one batched link count.
+ *
+ * entity_duplicates (plan autoplan-20261117192252, PR 1): the duplicate finder's groups (core/entities/duplicates.ts)
+ * counted by kind and class, the first few listed by slug; never a key value, never a write.
  */
 import type { Check } from '../../doctor.ts';
 import { NAME_TITLE_TOKENS, hasLeadingTitle, stripLeadingTitles } from '../../../core/entities/name-variants.ts';
 import { resolveNameVariant } from '../../../core/verbs/entity-variants.ts';
 import { retiredPageSql } from '../../../core/entities/resolve.ts';
 import { doctorVerify } from '../check-fix.ts';
+import { DUPLICATE_KINDS, findDuplicateGroups } from '../../../core/entities/duplicates.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 
 export const NAME = 'person_title_duplicates';
@@ -102,3 +106,38 @@ async function runPersonTitleDuplicates(ctx: DoctorContext): Promise<Check[]> {
 }
 
 export const personTitleDuplicatesEntry: DoctorEntry = { name: 'person_title_duplicates', emits: ['person_title_duplicates'], run: runPersonTitleDuplicates };
+
+const DUP_NAME = 'entity_duplicates';
+
+async function runEntityDuplicates(ctx: DoctorContext): Promise<Check[]> {
+  const engine = connectedEngine(ctx);
+  const checks: Check[] = [];
+  ctx.progress.heartbeat(DUP_NAME);
+  try {
+    const { groups, counts } = await findDuplicateGroups(engine, ctx.orphanRatioSourceId ? { sourceId: ctx.orphanRatioSourceId } : {});
+    const shown = groups.slice(0, SHOWN).map(g => ({ id: g.id, kind: g.kind, class: g.class, members: g.members }));
+    if (!groups.length) {
+      checks.push({ name: 'entity_duplicates', status: 'ok', message: `No likely duplicate person or company pages.${counts.crowded_key_values ? ` ${counts.crowded_key_values} key value(s) carried by more than five pages were not used as keys.` : ''}`, details: { counts, groups: [] } });
+      return checks;
+    }
+    const byKind = DUPLICATE_KINDS.map(k => `${k} ${counts.by_kind[k]}`).join(', ');
+    const list = shown.map(g => `${g.id} ${g.kind}/${g.class}: ${g.members.map(m => `${m.source_id}:${m.slug}`).join(' + ')}`).join('; ');
+    checks.push({
+      name: 'entity_duplicates',
+      status: 'warn',
+      message: `${groups.length} group(s) of pages are likely the same person or company (${byKind}; clean ${counts.by_class.clean}). Nothing was changed. ${list}${groups.length > SHOWN ? `; ${groups.length - SHOWN} more with gbrain dedupe --preview` : ''}.`,
+      details: { counts, groups: shown },
+      fix: {
+        ask_user: true, actor: 'user', consent: [], requires_exclusive: false, verify: doctorVerify(DUP_NAME),
+        argv: ['gbrain', 'dedupe', '--preview'],
+        why: 'Each group is evidence, not a decision; only the owner can say whether the pages are one person or company.',
+        user_message: 'Read the groups with `gbrain dedupe --preview`. Nothing is merged or linked yet; a conflict means two different names share a key and needs a look.',
+      },
+    });
+  } catch (err) {
+    checks.push({ name: 'entity_duplicates', status: 'warn', message: `Duplicate person and company pages could not be checked: ${err instanceof Error ? err.message : String(err)}. Health is unknown.` });
+  }
+  return checks;
+}
+
+export const entityDuplicatesEntry: DoctorEntry = { name: 'entity_duplicates', emits: ['entity_duplicates'], run: runEntityDuplicates };

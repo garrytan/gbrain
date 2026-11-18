@@ -55,6 +55,9 @@
       "core": [
         "./commands/core.ts"
       ],
+      "dedupe": [
+        "./commands/dedupe.ts"
+      ],
       "diag": [
         "./commands/diag.ts"
       ],
