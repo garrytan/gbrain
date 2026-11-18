@@ -68,6 +68,31 @@ describe('gate plan', () => {
     expect(plan.shards.flatMap(s => s.items).reduce((n, i) => n + i.count, 0)).toBe(10);
   });
 
+  test('a plan past 256 shards at 12 minutes is re-planned at 25 minutes so GitHub accepts the matrix', () => {
+    const { root, base } = repo({ 'test/a.test.ts': "test('a', () => {});\n" });
+    const files = Array.from({ length: 130 }, (_, i) => `test/n${i}.test.ts`);
+    const head = commit(root, Object.fromEntries(files.map(f => [f, "test('n', () => {});\n"])));
+    const unit = new Map(files.map(f => [f, 100_000] as [string, number]));
+    const plan = isPlan(planGate(root, { event: 'pull_request', baseSha: base, headSha: head }, { ...weights(), unit }));
+    expect(plan.shards.length).toBeLessThanOrEqual(256);
+    expect(plan.shards.some(s => s.estimateMs > 12 * 60_000)).toBe(true);
+    expect(plan.shards.every(s => s.estimateMs <= 25 * 60_000)).toBe(true);
+    expect(plan.shards.flatMap(s => s.items).reduce((n, i) => n + i.count, 0)).toBe(1300);
+  });
+
+  test('a plan still past 256 shards at 25 minutes fails with a named error instead of a matrix GitHub refuses', () => {
+    const { root, base } = repo({ 'test/a.test.ts': "test('a', () => {});\n" });
+    const files = Array.from({ length: 257 }, (_, i) => `test/n${i}.test.ts`);
+    const head = commit(root, Object.fromEntries(files.map(f => [f, "test('n', () => {});\n"])));
+    const unit = new Map(files.map(f => [f, 100_000] as [string, number]));
+    const result = planGate(root, { event: 'pull_request', baseSha: base, headSha: head }, { ...weights(), unit });
+    const { error, why } = result as { error: string; why?: string };
+    expect(error).toContain("GitHub's 256-job matrix limit");
+    expect(error).toContain('Next: split the PR so each part plans 256 shards or fewer');
+    expect(error).not.toContain('stress_files');
+    expect(why).toContain('would let the rest land untested');
+  });
+
   test('a missing merge base fails the plan with the fetch next step', () => {
     const { root } = repo({ 'test/a.test.ts': '' });
     const result = planGate(root, { event: 'merge_group', baseSha: 'f'.repeat(40), headSha: 'HEAD' }, weights());

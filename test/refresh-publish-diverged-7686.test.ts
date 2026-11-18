@@ -35,8 +35,11 @@ import { _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 import { REFRESH_PUBLISH_DIVERGED_KEY, refreshWorktree } from '../src/core/persistence/worktree-refresh.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
-import { withEnv } from './helpers/with-env.ts';
+import { withEnv, envForFile } from './helpers/with-env.ts';
 import { commitFile, git, page, withRefreshFixture, type RefreshFixture } from './helpers/worktree-refresh-fixture.ts';
+
+/** GST-2988: these tests pin the publish refusal, which secrets.on_push refuse keeps. */
+envForFile({ GBRAIN_SECRETS_ON_PUSH: 'refuse' });
 
 const backends = testBackends();
 const engines: BrainEngine[] = [];

@@ -1201,6 +1201,7 @@ async function runFederate(engine: BrainEngine, args: string[], value: boolean):
     return before;
   });
   say(`Source "${id}" is now ${value ? 'federated (appears in cross-source default search)' : 'isolated (only searched when explicitly named)'}.`);
+  if (value && !wasFederated) for (const line of await (await import('../core/grants/shared-exposure.ts')).federateReaderLines(engine, id)) say(line); // GST-2898
   const exposure = await import('../core/access/federation-exposure.ts');
   const exposed = await exposure.remotePagesFederationExposesOrWarn(engine, id, value && id !== 'default' && !wasFederated);
   if (exposed) console.error(exposure.pagesExposedLines(id, exposed).join('\n'));

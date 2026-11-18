@@ -1,7 +1,8 @@
 /**
  * #8651: `runDeadlineRead` (postgres-engine/bounded-statement.ts), the reserved read-only transaction a bounded
  * preparation's engine reads run in. Its deadline covers the wait for a pool connection, a read whose deadline passed is
- * never sent, and a trailing COMMIT that never settles gives back its connection and gauge slot. The real pool-wait case
+ * never sent, a trailing COMMIT that never settles gives back its connection and gauge slot, and the preparation's
+ * signal ends a read stalled on its connection at once, discarding the connection (#8155). The real pool-wait case
  * is test/e2e/persistence-preparation-pool-wait-postgres.test.ts.
  */
 import { expect, test } from 'bun:test';
@@ -73,4 +74,35 @@ test('a COMMIT that settles releases the connection and never discards it', asyn
   await Bun.sleep(150);
   expect(p.counts).toMatchObject({ reserves: 1, releases: 1, discards: 0 });
   expect(p.gauge.snapshot().reserved).toBe(0);
+});
+
+test('an abort after the connection was reserved ends a read that never answers and discards the connection (#8155)', async () => {
+  const p = pool();
+  const controller = new AbortController();
+  const call = runDeadlineRead(p.conn, Date.now() + 60_000, never, p.gauge, 50, controller.signal);
+  setTimeout(() => controller.abort(), 20);
+  const outcome = await Promise.race([call.then(() => 'resolved', error => error), Bun.sleep(1_000).then(() => 'still pending')]);
+  expect(outcome).toMatchObject({ name: 'AbortError' });
+  expect(p.counts).toEqual({ reserves: 1, releases: 0, discards: 1 });
+  expect(p.sent).not.toContain('COMMIT');
+  expect(p.gauge.snapshot().reserved).toBe(0);
+});
+
+test('a read that answers before its signal aborts commits and releases the connection', async () => {
+  const p = pool();
+  const controller = new AbortController();
+  expect(await runDeadlineRead(p.conn, Date.now() + 1_000, async () => 'answer', p.gauge, 50, controller.signal)).toBe('answer');
+  controller.abort();
+  await Bun.sleep(50);
+  expect(p.counts).toMatchObject({ reserves: 1, releases: 1, discards: 0 });
+  expect(p.gauge.snapshot().reserved).toBe(0);
+});
+
+test('a signal that already aborted refuses the read before it reserves a connection', async () => {
+  const p = pool();
+  const controller = new AbortController();
+  controller.abort();
+  const outcome = await runDeadlineRead(p.conn, Date.now() + 1_000, async () => 'answer', p.gauge, 50, controller.signal).catch(error => error);
+  expect(outcome).toMatchObject({ name: 'AbortError' });
+  expect(p.counts.reserves).toBe(0);
 });

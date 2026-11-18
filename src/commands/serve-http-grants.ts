@@ -41,6 +41,10 @@ export function parseAdminGrantRequest(body: Record<string, unknown>, existing?:
     try { patch.scopes = normalizeScopesInput(body.scopes ?? body.scope).split(' '); }
     catch (e) { throw new GrantError('invalid_grant', e instanceof Error ? e.message : 'Invalid scopes'); }
   }
+  if (body.read_shared !== undefined) {
+    if (typeof body.read_shared !== 'boolean') invalid('read_shared', 'true or false');
+    patch.readShared = body.read_shared as boolean;
+  }
   if (body.surface !== undefined) {
     if (body.surface !== null && !['verbs', 'starter', 'full'].includes(String(body.surface))) invalid('surface', 'verbs, starter, full, or null');
     patch.surface = body.surface as GrantPatch['surface'];

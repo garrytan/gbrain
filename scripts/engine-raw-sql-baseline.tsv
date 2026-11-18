@@ -14,6 +14,7 @@ src/commands/agent-register.ts	execute_raw	4
 src/commands/agent-register.ts	sql_template	8
 src/commands/agent.ts	execute_raw	1
 src/commands/auth-client-rows.ts	execute_raw	6
+src/commands/auth-read-shared.ts	execute_raw	2	reads sources (ids that exist and are not archived) and oauth_clients.member_id for the auth CLI read-set lines (GST-2898 read-shared switch, #9590, open before this ratchet landed); no typed engine method exists yet
 src/commands/auth.ts	execute_raw	1
 src/commands/auth.ts	sql_template	6
 src/commands/autopilot-daemon.ts	execute_raw	1
@@ -181,6 +182,7 @@ src/commands/extract.ts	execute_raw	4
 src/commands/files.ts	execute_raw	4
 src/commands/files.ts	sql_template	6
 src/commands/frontmatter-install-hook.ts	execute_raw	3
+src/commands/git.ts	execute_raw	1	GST-2988 PR 2 gbrain git redact-unpushed: reads sources.local_path for --source; branched before the #9641 ratchet; no typed engine method for a source's local path exists yet
 src/commands/google-attachments.ts	execute_raw	3
 src/commands/google-setup-tail.ts	execute_raw	1
 src/commands/google.ts	execute_raw	1
@@ -318,7 +320,7 @@ src/core/belief/coverage-report.ts	execute_raw	13
 src/core/belief/coverage.ts	execute_raw	5
 src/core/belief/history.ts	execute_raw	2
 src/core/belief/identity.ts	execute_raw	2
-src/core/belief/ledger.ts	execute_raw	2
+src/core/belief/ledger.ts	execute_raw	1
 src/core/belief/lifetimes.ts	execute_raw	6
 src/core/belief/page-at-time.ts	execute_raw	8
 src/core/belief/preimages.ts	execute_raw	2
@@ -373,7 +375,7 @@ src/core/context/retrieval-reflex.ts	execute_raw	6
 src/core/context/session-state.ts	execute_raw	7
 src/core/context/volunteer-events.ts	execute_raw	2
 src/core/context/volunteer.ts	execute_raw	1
-src/core/contextual-retrieval-service.ts	execute_raw	4
+src/core/contextual-retrieval-service.ts	execute_raw	3
 src/core/conversation-parser/llm-base.ts	execute_raw	2
 src/core/core-memory.ts	execute_raw	2
 src/core/cycle.ts	execute_raw	2
@@ -415,9 +417,7 @@ src/core/cycle/synthesize-verify-epochs.ts	execute_raw	3
 src/core/cycle/synthesize.ts	execute_raw	6
 src/core/cycle/transcript-discovery.ts	execute_raw	2
 src/core/cycle/unindexed-files.ts	execute_raw	1
-src/core/db-lock.ts	driver_call	10
-src/core/db-lock.ts	execute_raw	3
-src/core/db-lock.ts	sql_template	9
+src/core/db-lock.ts	execute_raw	2
 src/core/db.ts	driver_call	2
 src/core/db.ts	sql_template	4
 src/core/derived-links.ts	execute_raw	10
@@ -535,6 +535,7 @@ src/core/generations/managed.ts	execute_raw	7
 src/core/generations/publish.ts	execute_raw	19
 src/core/generations/repair.ts	execute_raw	6
 src/core/ghost-pages.ts	execute_raw	4
+src/core/git/redact-finish.ts	execute_raw	8	GST-2988 PR 2 publish redaction finish: reads sources.local_path and persistence_host_bindings to find the checkout that owns a pushed root, reads and compare-and-sets sources.last_commit to the rebuilt sha, and lists persistence_effects worktree ids to remap parked effects; branched before the #9641 ratchet; no typed engine method for these source and effect reads exists yet
 src/core/git/untrack-admission.ts	execute_raw	3	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/core/github-source.ts	execute_raw	3
 src/core/google/attachment-backfill.ts	execute_raw	2
@@ -547,15 +548,16 @@ src/core/google/loops-extract.ts	execute_raw	1
 src/core/google/loops-reciprocity.ts	execute_raw	1
 src/core/google/people-calendar-sweep.ts	execute_raw	3
 src/core/google/sweep-shared.ts	execute_raw	2
-src/core/grants/legacy-token.ts	execute_raw	9
+src/core/grants/legacy-token.ts	execute_raw	10	+1: rescope stamps access_tokens.read_shared_revision at the new grant_revision or clears it (GST-2898 read-shared switch, #9590, open before this ratchet landed); no typed engine method exists yet
 src/core/grants/legacy-token.ts	sql_template	3
-src/core/grants/lifecycle.ts	sql_template	7
+src/core/grants/lifecycle.ts	sql_template	8	+1: invalidate-tokens re-stamps oauth_clients.read_shared_revision at the new grant_revision so the switch survives (GST-2898 read-shared switch, #9590, open before this ratchet landed); no typed engine method exists yet
 src/core/grants/migration.ts	execute_raw	1
 src/core/grants/migration.ts	sql_template	5
 src/core/grants/model.ts	execute_raw	1
+src/core/grants/read-shared.ts	sql_template	1	reads sources (the federated, non-guest set a switched key reads) (GST-2898 read-shared switch, #9590, open before this ratchet landed); no typed engine method exists yet
 src/core/grants/rescope.ts	sql_template	7
-src/core/grants/service.ts	sql_template	11
-src/core/grants/shared-exposure.ts	execute_raw	1
+src/core/grants/service.ts	sql_template	12	+1: stampReadShared writes oauth_clients.read_shared_revision beside a client grant write (GST-2898 read-shared switch, #9590, open before this ratchet landed); no typed engine method exists yet
+src/core/grants/shared-exposure.ts	execute_raw	3	+2: reads every live access_tokens and oauth_clients row to list the credentials that read a source through the switch (GST-2898 read-shared switch, #9590, open before this ratchet landed); no typed engine method exists yet
 src/core/guard-ledger-checks.ts	execute_raw	3
 src/core/guests/admission.ts	execute_raw	4
 src/core/guests/marker.ts	execute_raw	2
@@ -570,8 +572,8 @@ src/core/heal-audit.ts	execute_raw	3
 src/core/health-memo.ts	execute_raw	1
 src/core/held-embedding.ts	execute_raw	2
 src/core/imessage/imessage-source.ts	execute_raw	3	#9634, pre-ratchet: reads the source row (incarnation, local_path, config), checks a page slug exists, and stamps sources.last_sync_at/newest_content_at; no typed engine method exists yet
-src/core/import-chunk-reuse.ts	execute_raw	2
-src/core/import-file.ts	execute_raw	7
+src/core/import-chunk-reuse.ts	execute_raw	1
+src/core/import-file.ts	execute_raw	1
 src/core/import-identity.ts	execute_raw	1
 src/core/ingestion/applied-captures.ts	execute_raw	5
 src/core/last-retrieved.ts	execute_raw	1
@@ -592,8 +594,7 @@ src/core/mcp-usage.ts	execute_raw	3
 src/core/meetings/meetings-source.ts	execute_raw	3
 src/core/mentions/coverage.ts	execute_raw	4
 src/core/mentions/newer-mentions.ts	execute_raw	1
-src/core/mentions/pass.ts	execute_raw	37
-src/core/mentions/policy.ts	execute_raw	1
+src/core/mentions/pass.ts	execute_raw	35
 src/core/mentions/referrers.ts	execute_raw	11
 src/core/mentions/siblings.ts	execute_raw	4
 src/core/mentions/stale.ts	execute_raw	2
@@ -627,7 +628,6 @@ src/core/minions/legacy-selection.ts	execute_raw	2
 src/core/minions/queue-families.ts	execute_raw	1
 src/core/minions/queue.ts	execute_raw	86
 src/core/minions/rate-leases.ts	execute_raw	6
-src/core/minions/source-filesystem.ts	execute_raw	1
 src/core/minions/spend-authorization.ts	execute_raw	5
 src/core/minions/submission-authority.ts	execute_raw	7
 src/core/minions/supervisor.ts	execute_raw	2
@@ -649,8 +649,7 @@ src/core/oauth-provider.ts	sql_template	22
 src/core/onboard/checks.ts	execute_raw	5
 src/core/onboard/checks.ts	sql_template	2
 src/core/onboard/impact-capture.ts	execute_raw	3
-src/core/onboard/mcp-onboarding.ts	execute_raw	2
-src/core/onboard/mcp-onboarding.ts	sql_template	3
+src/core/onboard/mcp-onboarding.ts	execute_raw	1
 src/core/op-checkpoint.ts	execute_raw	7
 src/core/ops/admin.ts	execute_raw	4
 src/core/ops/attribution.ts	execute_raw	8
@@ -707,19 +706,17 @@ src/core/page-embedding-budget.ts	execute_raw	13
 src/core/page-embedding-lease.ts	execute_raw	4
 src/core/page-searchability.ts	execute_raw	3
 src/core/page-spend.ts	execute_raw	4
-src/core/page-state/chunk-moves.ts	execute_raw	1
 src/core/page-state/contextual-proof.ts	execute_raw	3
 src/core/page-state/credential-reseal.ts	execute_raw	6
 src/core/page-state/guards.ts	execute_raw	11
 src/core/page-state/image-seal.ts	execute_raw	5
 src/core/page-state/materialize.ts	execute_raw	5
 src/core/page-state/projection-status.ts	execute_raw	1
-src/core/page-state/projections.ts	execute_raw	43
+src/core/page-state/projections.ts	execute_raw	41
 src/core/page-state/rebuild-estimate.ts	execute_raw	1
 src/core/page-state/rename-alias.ts	execute_raw	11
 src/core/page-state/revision-backfill-schema.ts	execute_raw	12
-src/core/page-state/tags.ts	execute_raw	4
-src/core/page-state/text-seal.ts	execute_raw	1
+src/core/page-state/tags.ts	execute_raw	3
 src/core/page-state/versions.ts	execute_raw	9
 src/core/page-window/bounded-lead.ts	execute_raw	2
 src/core/page-window/segmented.ts	execute_raw	5
@@ -753,7 +750,7 @@ src/core/persistence/consumer-diagnostics.ts	execute_raw	3
 src/core/persistence/consumer-heartbeat.ts	execute_raw	4
 src/core/persistence/consumer-lane.ts	execute_raw	2
 src/core/persistence/consumer.ts	execute_raw	6
-src/core/persistence/context.ts	execute_raw	5
+src/core/persistence/context.ts	execute_raw	3
 src/core/persistence/control.ts	execute_raw	2
 src/core/persistence/coordination-lock.ts	execute_raw	2
 src/core/persistence/coordinator.ts	execute_raw	9
@@ -806,7 +803,7 @@ src/core/persistence/head-blocker.ts	execute_raw	2
 src/core/persistence/held-reads.ts	execute_raw	3
 src/core/persistence/hosted-repo.ts	execute_raw	4
 src/core/persistence/housekeeping-turn.ts	execute_raw	2
-src/core/persistence/identity.ts	execute_raw	8
+src/core/persistence/identity.ts	execute_raw	4
 src/core/persistence/import-deferral.ts	execute_raw	1
 src/core/persistence/import-mutations.ts	execute_raw	3
 src/core/persistence/import-prepare.ts	execute_raw	1
@@ -822,7 +819,7 @@ src/core/persistence/links-extraction-holds.ts	execute_raw	2
 src/core/persistence/links-preparation.ts	execute_raw	4
 src/core/persistence/local-edit-adoption.ts	execute_raw	6
 src/core/persistence/loop-fact-retirement.ts	execute_raw	7
-src/core/persistence/maintenance.ts	execute_raw	4
+src/core/persistence/maintenance.ts	execute_raw	3
 src/core/persistence/managed-mode.ts	execute_raw	3
 src/core/persistence/managed-sources.ts	execute_raw	1
 src/core/persistence/managed-sync-orphans.ts	execute_raw	14
@@ -1023,7 +1020,7 @@ src/core/repair/rename-identity.ts	execute_raw	7
 src/core/repair/rotation.ts	execute_raw	3
 src/core/repair/rows-behind.ts	execute_raw	1
 src/core/repair/safe-chunks.ts	execute_raw	1
-src/core/repair/secret-spans.ts	execute_raw	24
+src/core/repair/secret-spans.ts	execute_raw	26	secret-spans --apply also redacts retained page_versions (selects and updates compiled_truth/frontmatter per version); no typed engine method for version redaction exists yet
 src/core/repair/segmented-mirror.ts	execute_raw	5
 src/core/repair/segmented-tiling.ts	execute_raw	7
 src/core/repair/settle.ts	execute_raw	1
@@ -1076,8 +1073,6 @@ src/core/schema-pack/unify-types-handler.ts	execute_raw	1
 src/core/schema-verify.ts	execute_raw	2
 src/core/search-vector-backfill.ts	execute_raw	3
 src/core/search/alias-fanout.ts	execute_raw	4
-src/core/search/collapse.ts	execute_raw	2
-src/core/search/cosine-rescore.ts	execute_raw	1
 src/core/search/dedup.ts	execute_raw	1
 src/core/search/embedding-column.ts	execute_raw	1
 src/core/search/entity-anchor.ts	execute_raw	5
@@ -1089,14 +1084,11 @@ src/core/search/fact-relevance.ts	execute_raw	14	came from master #9627 (held pr
 src/core/search/facts-arm.ts	execute_raw	3
 src/core/search/feedback-boost.ts	execute_raw	1
 src/core/search/frontmatter-where.ts	execute_raw	1
-src/core/search/hybrid.ts	execute_raw	2
-src/core/search/hybrid/alias-resolved.ts	execute_raw	1
 src/core/search/ignored-privacy-labels.ts	execute_raw	3
 src/core/search/image-vector-presence.ts	execute_raw	1
-src/core/search/private-visibility.ts	execute_raw	4
+src/core/search/private-visibility.ts	execute_raw	3
 src/core/search/projection-readiness.ts	execute_raw	2
 src/core/search/projection-statistics.ts	execute_raw	11
-src/core/search/provenance-demotion.ts	execute_raw	3
 src/core/search/query-cache-gate.ts	execute_raw	2
 src/core/search/query-cache.ts	execute_raw	9
 src/core/search/relational-chain.ts	execute_raw	1
@@ -1108,6 +1100,9 @@ src/core/search/slot-history.ts	execute_raw	1	GBRA-574 F #9674 (opened before th
 src/core/search/telemetry.ts	execute_raw	2
 src/core/search/transcript-quote.ts	execute_raw	3
 src/core/search/two-pass.ts	execute_raw	5
+src/core/secret-store/restore.ts	execute_raw	3	secret restore reads the page revision and live knowledge_revision and flips secret_store.status; no typed engine method for the secret store exists yet
+src/core/secret-store/spool.ts	execute_raw	1	GST-2988 PR 2 spool: reads every allowed (restored) key_id and value_mac from secret_store to rebuild allowed.json; branched before the #9641 ratchet; no typed engine method for the secret store exists yet
+src/core/secret-store/store.ts	execute_raw	14	secret_store and secret_store_occurrence inserts and reads (dedupe by value_mac, entry, occurrences, list, key summary); GST-2988 PR 2 adds +5: drain inserts a spooled original by id (exists check, value_mac lookup, insert), the per-rule counts for secrets list, and the allowed value_macs one source restored; branched before the #9641 ratchet; no typed engine method for the secret store exists yet
 src/core/serve-sync-runner.ts	execute_raw	1
 src/core/session-lane.ts	execute_raw	3
 src/core/shared-skills/adopted-packs.ts	execute_raw	1

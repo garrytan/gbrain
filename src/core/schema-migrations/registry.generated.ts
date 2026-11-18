@@ -322,7 +322,10 @@ import { v318 } from './v318-guard-ledgers-fail-closed.ts';
 import { v319 } from './v319-principal-private-facts.ts';
 import { v320 } from './v320-owner-only-lineage.ts';
 import { v321 } from './v321-unbacked-entity-keys-guards.ts';
-import { v322 } from './v322-access-handovers.ts';
+import { v322 } from './v322-owner-only-marks.ts';
+import { v323 } from './v323-token-read-shared.ts';
+import { v324 } from './v324-secret-store.ts';
+import { v325 } from './v325-access-handovers.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -644,4 +647,7 @@ export const MIGRATIONS: Migration[] = [
   v320,
   v321,
   v322,
+  v323,
+  v324,
+  v325,
 ];

@@ -16,16 +16,14 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { SearchResult } from '../types.ts';
-import { cosineByChunkIdsStatement } from '../engine-sql/chunks.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { warnOncePerProcess } from '../utils.ts';
 
 const DEBUG = process.env.GBRAIN_SEARCH_DEBUG === '1';
 
 /** Text-space cosines by chunk id, computed by the database; absent ids did not hydrate. */
-async function sqlCosines(engine: BrainEngine, ids: number[], column: string, query: Float32Array): Promise<Map<number, number>> {
-  const { text, params } = cosineByChunkIdsStatement(ids, column, query);
-  const rows = await engine.executeRaw<{ id: number; cosine: number }>(text, params);
-  return new Map(rows.map(row => [Number(row.id), Number(row.cosine)]));
+function sqlCosines(engine: BrainEngine, ids: number[], column: string, query: Float32Array): Promise<Map<number, number>> {
+  return engine.cosinesByChunkIds(ids, column, query);
 }
 
 /** Text-space cosines by chunk id through the JavaScript path (hydrate, then `cosineSimilarity`). */
@@ -79,6 +77,7 @@ export function startCosineReScore(
         try {
           cosines = await sqlCosines(engine, chunkIds, column, queryEmbedding);
         } catch (err) {
+          rethrowCapabilityRefusal(err);
           const sqlstate = (err as { code?: unknown } | null)?.code;
           warnOncePerProcess('cosine-rescore-sql-fallback',
             `[gbrain] cosine re-score in SQL failed (SQLSTATE ${typeof sqlstate === 'string' ? sqlstate : 'unknown'}); computing it in JavaScript for this process's failing searches.`);
@@ -89,12 +88,14 @@ export function startCosineReScore(
       if (imageSpace && imageChunkIds.length > 0) {
         imageCosines = await jsCosines(engine, imageChunkIds, imageSpace.column, imageSpace.queryEmbedding);
       }
-    } catch {
+    } catch (err) {
+      rethrowCapabilityRefusal(err);
       // DB error is non-fatal: the rows come back without re-scoring
       return null;
     }
     return { cosines, imageCosines };
   })();
+  reads.catch(() => undefined); // a refusal counts as handled until the re-score awaits it
 
   return async (results, attribute = false) => {
     const chunkIds = idsFor(results, false);

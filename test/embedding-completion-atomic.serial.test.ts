@@ -279,9 +279,10 @@ for (const mode of ['none', 'title'] as const) {
       let newer: Awaited<ReturnType<typeof contextState>> | undefined;
       const raced = new Proxy(engine, {
         get(target, key) {
-          if (key === 'executeRaw') return async (sql: string, params?: unknown[]) => {
-            const result = await target.executeRaw(sql, params);
-            if (!intervened && sql.includes('FROM sources WHERE id = $1')) {
+          // The source-row read is the typed `getSource` method; race the page right after it.
+          if (key === 'getSource') return async (id: string) => {
+            const result = await target.getSource(id);
+            if (!intervened) {
               intervened = true;
               await installFixtureChunks(engine, slug, [{ chunk_index: 0, chunk_text: 'Original searchable evidence. Further searchable evidence.',
                 chunk_source: 'compiled_truth', embedding: vector(0.875) }], { sourceId });
