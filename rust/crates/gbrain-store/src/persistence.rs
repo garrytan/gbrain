@@ -40,7 +40,6 @@ use crate::journal::{
     write_request,
 };
 use crate::kv::{KvRead, KvWrite, scan_prefix};
-use crate::sources::read_source;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -1019,8 +1018,8 @@ impl Store {
 
     /// `readSourceMembership(sourceId)`: `{ incarnation, archived }` or `None`.
     pub fn read_source_membership(&self, source_id: &str) -> Result<Option<Value>> {
-        let read = self.read()?;
-        Ok(read_source(&*read, source_id)?
+        Ok(self
+            .read_source_state(source_id)?
             .map(|s| json!({ "incarnation": s.incarnation, "archived": s.archived })))
     }
 }

@@ -97,14 +97,17 @@ function stubEngine(opts: {
   pages?: number;
   sourcesThrow?: boolean;
 } = {}): BrainEngine {
+  const sources = async () => {
+    if (opts.sourcesThrow) throw new Error('sources unreadable');
+    return opts.sources ?? [];
+  };
   return {
     kind: opts.kind ?? 'pglite',
+    // loadAllSources reads the typed member; the page count still runs executeRaw.
+    listSourceRecords: sources,
     executeRaw: async (sql: string) => {
       if (sql.includes('FROM pages')) return [{ n: opts.pages ?? 0 }];
-      if (sql.includes('FROM sources')) {
-        if (opts.sourcesThrow) throw new Error('sources unreadable');
-        return opts.sources ?? [];
-      }
+      if (sql.includes('FROM sources')) return sources();
       return [];
     },
     disconnect: async () => {},

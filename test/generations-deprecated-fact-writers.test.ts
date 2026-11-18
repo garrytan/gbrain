@@ -8,7 +8,11 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 const root = join(import.meta.dir, '..');
-const IMPLEMENTERS = new Set(['src/core/engine.ts', 'src/core/engine-sql/facts.ts', 'src/core/pglite-engine.ts', 'src/core/postgres-engine.ts']);
+const IMPLEMENTERS = new Set([
+  'src/core/engine.ts', 'src/core/engine-sql/facts.ts', 'src/core/pglite-engine.ts', 'src/core/postgres-engine.ts',
+  // The Rust engine's deleteFactsForPage, expireFact and insertFacts members, forwarding to the native store.
+  'src/core/rust-engine/store-members/facts.ts',
+]);
 const CALL = /\.(?:deleteFactsForPage|expireFact)\s*\(|\bdeleteForPageFirst\s*:/g;
 
 function files(directory: string): string[] {

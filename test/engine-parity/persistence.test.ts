@@ -434,6 +434,17 @@ describe('engine parity: write-journal housekeeping', () => {
     return answers;
   });
 
+  parityTest('readCapacityForecastInputs lists the counters in byte order of their keys, whatever the server locale', {
+    methods: ['readCapacityForecastInputs', 'lockPersistenceCounters'],
+  }, async (engine) => {
+    // en_US.utf8 sorts a before B and ignores the punctuation of 'a-b' against 'ab'; byte order puts B first and '-' before 'b'.
+    const keys = ['principal:local_cli:ab', 'principal:local_cli:a', 'principal:local_cli:B', 'principal:local_cli:a-b', 'brain'];
+    await engine.lockPersistenceCounters(keys);
+    const read = (await engine.readCapacityForecastInputs({ light: true })).counters.map(c => c.key);
+    expect(read).toEqual(['brain', 'principal:local_cli:B', 'principal:local_cli:a', 'principal:local_cli:a-b', 'principal:local_cli:ab']);
+    return read;
+  });
+
   parityTest('page writes queue, re-queue and drop projection jobs, and the window read lists them in key order', {
     methods: ['putPage', 'sealChunks', 'softDeletePage', 'deletePage', 'restorePage', 'updateSlug', 'readPageSnapshot', 'readSourceMembership',
       'listPendingSegmentedProjections', 'selectProjectionWindowJobs'],
