@@ -45,6 +45,9 @@ const OOS = {
   importGuards: 'out-of-scope:import-guards (born in engine-sql/persistence-state.ts, transaction-settings.ts, belief.ts, access-control.ts; pinned by test/engine-parity/import-path.test.ts)',
   searchReads: 'out-of-scope:search-reads (born in engine-sql/search-reads.ts; pinned by test/engine-parity/search-reads.test.ts)',
   importWrites: 'out-of-scope:import-writes (born in engine-sql/chunks.ts, tags.ts, pages.ts; pinned by test/engine-parity/import-writes.test.ts)',
+  cliReads: 'out-of-scope:cli-reads (born in engine-sql/cli-reads-ops.ts and cli-reads-import.ts; pinned by test/engine-parity/cli-reads-ops.test.ts and cli-reads-import.test.ts)',
+  wantedLinks: 'out-of-scope:wanted-links (born in engine-sql/wanted-links.ts; pinned by test/engine-parity/wanted-links.test.ts)',
+  journal: 'out-of-scope:persistence-journal (born in engine-sql/persistence-journal.ts; pinned by test/engine-parity/persistence.test.ts and test/persistence-journal-statements.test.ts)',
   pageBody: 'out-of-scope:page-body (Wave B segmented storage, born in engine-sql/page-body.ts; pinned by test/engine-sql-page-body.test.ts)',
   cycleLocks: 'out-of-scope:cycle-locks (gbrain_cycle_locks leases, born in engine-sql/cycle-locks.ts; pinned by test/engine-parity/cycle-locks.test.ts)',
 } as const;
@@ -187,6 +190,32 @@ export const DOMAIN_OF: Record<string, string> = {
   'readManagedModeRows': OOS.importGuards, 'getSourceStrictness': OOS.importGuards, 'readPersistenceBrainId': OOS.importGuards,
   'readLocalWriterRow': OOS.importGuards, 'insertLocalWriterRow': OOS.importGuards, 'readTransactionSettings': OOS.importGuards,
   'applyTransactionSettings': OOS.importGuards, 'readLedgerSource': OOS.importGuards, 'isFolderRestricted': OOS.importGuards,
+  // CLI reads and the wanted-link writes
+  'scanExactBatch': OOS.cliReads,
+  'nextLivePageAfter': OOS.cliReads,
+  'listExactIdentityCandidates': OOS.cliReads,
+  'rankEntities': OOS.cliReads,
+  'listExtractionPendingPages': OOS.cliReads,
+  'listUnattributedFacts': OOS.cliReads,
+  'listWantedPages': OOS.cliReads,
+  'listSourceRecords': OOS.cliReads,
+  'readSourceIncarnation': OOS.cliReads,
+  'hasCompanyBrainReceipt': OOS.cliReads,
+  'readGuestSourceRow': OOS.cliReads,
+  'listGuestSourceIds': OOS.cliReads,
+  'hasGuestSource': OOS.cliReads,
+  'readPageTrustRows': OOS.cliReads,
+  'readDatabaseClock': OOS.cliReads,
+  'listLinkPageMetadata': OOS.cliReads,
+  'listStoredTimelineRows': OOS.cliReads,
+  'filterPagesAtRevision': OOS.cliReads,
+  'lockRegisteredSourceIds': OOS.wantedLinks,
+  'replaceWantedLinkRows': OOS.wantedLinks,
+  'cliReads': OOS.helper,
+  // the write journal (typed admission, claim, completion, limit and hold reads)
+  'readJournalLimitRows': OOS.journal, 'readHeldPageRows': OOS.journal, 'readHeldCoverageRows': OOS.journal,
+  'readWriteRequest': OOS.journal, 'readWriteRequestById': OOS.journal, 'lockPersistenceCounters': OOS.journal,
+  'insertWriteRequest': OOS.journal, 'stampWriteClaim': OOS.journal, 'lockWriteRequest': OOS.journal, 'completeWriteRow': OOS.journal,
   'logIngest': OOS.ingest, 'getIngestLog': OOS.ingest,
   'logEvalCandidate': OOS.eval, 'listEvalCandidates': OOS.eval, 'deleteEvalCandidatesBefore': OOS.eval,
   'logEvalCaptureFailure': OOS.eval, 'listEvalCaptureFailures': OOS.eval,
@@ -304,6 +333,8 @@ const SLUG = 'people/alice-example';
 const SLUG2 = 'companies/acme-example';
 const SRC = 'src-a';
 const SRCS = ['src-a', 'src-b'];
+const JOURNAL_REQUEST = 'b0000000-0000-4000-8000-0000000000b1';
+const JOURNAL_KEYS = ['brain', 'principal:local_cli:writer-1'];
 const EMB = new Float32Array([0.1, 0.2, 0.3]);
 const page = { type: 'person', title: 'Alice Example', compiled_truth: 'Alice Example body.', timeline: '', frontmatter: { tags: [] } };
 const pageRet: Rule = [/^\s*INSERT INTO pages \(source_id, slug/, [PAGE_ROW]];
@@ -880,4 +911,27 @@ export const EXTRA_READ_CASES: SqlCase[] = [
     ['batch', (e) => e.readLedgerSource(SRC, { batch: true })],
   ]),
   ...variants('isFolderRestricted', [['default', (e) => e.isFolderRestricted(SRC, SLUG)]]),
+  ...variants('readJournalLimitRows', [['default', (e) => e.readJournalLimitRows()]]),
+  ...variants('readHeldPageRows', [['default', (e) => e.readHeldPageRows(['1', '2'])]]),
+  ...variants('readHeldCoverageRows', [
+    ['all', (e) => e.readHeldCoverageRows(null)],
+    ['sources', (e) => e.readHeldCoverageRows([SRC])],
+  ]),
+  ...variants('readWriteRequest', [['default', (e) => e.readWriteRequest('local_cli', 'writer-1', JOURNAL_REQUEST)]]),
+  ...variants('readWriteRequestById', [['default', (e) => e.readWriteRequestById(JOURNAL_REQUEST)]]),
+  ...variants('lockPersistenceCounters', [['default', (e) => e.transaction((tx: any) => tx.lockPersistenceCounters(JOURNAL_KEYS))]]),
+  ...variants('insertWriteRequest', [['default', (e) => e.transaction((tx: any) => tx.insertWriteRequest({
+    principalKind: 'local_cli', principalId: 'writer-1', requestId: JOURNAL_REQUEST, operation: 'put_page', sourceId: SRC,
+    sourceIncarnation: JOURNAL_REQUEST, pageId: null, slug: SLUG, worktreeId: null, topologyGeneration: null, digest: 'd'.repeat(64),
+    intent: { kind: 'put_page' }, authority: { scopes: ['write'] }, intentBytes: 100, terminalReservation: 4096, targetKind: 'page',
+    protocolVersion: 1, admitterVersion: 'test', admitterHostId: null, counterKeys: JOURNAL_KEYS, clientRequestId: null, state: 'queued',
+    deferredRefreshId: null,
+  }))]]),
+  ...variants('stampWriteClaim', [['default', (e) => e.transaction((tx: any) => tx.stampWriteClaim(JOURNAL_REQUEST, JOURNAL_REQUEST, 60_000, '{}'))]]),
+  ...variants('lockWriteRequest', [['default', (e) => e.transaction((tx: any) => tx.lockWriteRequest(JOURNAL_REQUEST))]]),
+  ...variants('completeWriteRow', ([false, true] as const).map((probePurges) => [probePurges ? 'purge-probe' : 'default', (e: any) => e.transaction((tx: any) => tx.completeWriteRow({
+    id: JOURNAL_REQUEST, state: 'committed', outcome: { status: 'ok' }, errorCode: null, errorMessage: null, consumerVersion: 'test',
+    consumerHostId: null, errorDetail: null, resultBytes: 10, counterKeys: JOURNAL_KEYS, intentBytes: 100, retainedBytes: 110,
+    terminalReservation: 4096, probePurges,
+  }))])),
 ];

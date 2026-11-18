@@ -49,10 +49,9 @@ test('doctor emits one command per brain-wide key with the largest value any pri
   const counter = (key: string) => ({ key, outstanding_count: '0', intent_bytes: '0', lifetime_ids: '9', terminal_bytes: '0', recovery_bytes: '0' });
   const engine = { executeRaw: async (sql: string, params: unknown[] = []) => {
     if (sql.includes('FROM persistence_counters')) return [counter('principal:local_cli:fast'), counter('principal:local_cli:slow')];
-    if (sql.includes("LIKE 'persistence.limits.%'")) return [{ key: 'persistence.limits.principal_lifetime_ids', value: '10' }];
     if (sql.includes('persistence_requests')) return [{ admissions: 1000, age_seconds: params[1] === 'fast' ? 8640 : 864_000 }];
     return [];
-  } };
+  }, readJournalLimitRows: async () => [{ key: 'persistence.limits.principal_lifetime_ids', value: '10' }, { key: null, value: null }] };
   const check = await checkPersistenceCapacity(engine as never);
   expect(check.status).toBe('warn');
   expect((check.details as { commands: string[] }).commands).toEqual(['gbrain config set persistence.limits.principal_lifetime_ids 3650009']);

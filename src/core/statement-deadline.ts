@@ -27,6 +27,7 @@
  * engine-keyed caches keep one entry per real engine.
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { ReadDeadlineError, withReadDeadline } from './read-deadline.ts';
 
 export interface StatementDeadline {
   startedAt: number;
@@ -85,6 +86,9 @@ function refuse(scope: StatementDeadline): never {
   throw new StatementDeadlineError(Date.now() - scope.startedAt);
 }
 
+/** The write-journal reads (engine-sql/persistence-journal.ts) that replaced statements this wrapper bounded through executeRaw. */
+const JOURNAL_TYPED_READS: ReadonlySet<string> = new Set(['readJournalLimitRows', 'readWriteRequest', 'readWriteRequestById', 'readHeldPageRows', 'readHeldCoverageRows']);
+
 type RawCall = (sql: string, params?: unknown[], opts?: Record<string, unknown> & { signal?: AbortSignal; timeoutMs?: number }) => Promise<unknown[]>;
 
 export function deadlineBoundEngine<E extends object>(engine: E): E {
@@ -114,7 +118,17 @@ export function deadlineBoundEngine<E extends object>(engine: E): E {
     return new Proxy(value as (...a: unknown[]) => unknown, { apply(fn, _self, args) {
       const scope = scopes.getStore();
       if (scope && scope.deadlineAt !== null && Date.now() >= scope.deadlineAt) refuse(scope);
-      return Reflect.apply(fn, target, args);
+      if (!scope || scope.deadlineAt === null || typeof key !== 'string' || !JOURNAL_TYPED_READS.has(key) || (target as { kind?: string }).kind !== 'postgres') {
+        return Reflect.apply(fn, target, args);
+      }
+      // A journal read that replaced an executeRaw statement keeps that statement's bound: the engine ends it at the deadline.
+      const deadlineAt = scope.deadlineAt;
+      return withReadDeadline(deadlineAt, () => Reflect.apply(fn, target, args) as Promise<unknown>)
+        .catch((error: unknown) => {
+          if (error instanceof ReadDeadlineError) refuse(scope);
+          if (cancelled(error) && Date.now() >= deadlineAt - 100) scope.expired = true;
+          throw error;
+        });
     } });
   } });
   wrappers.set(raw, wrapper);

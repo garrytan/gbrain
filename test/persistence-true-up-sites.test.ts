@@ -56,7 +56,8 @@ test('the effect-journal settle helpers are called only under the effect runner'
 
 /** The statements that complete a request: file -> how many. Each sizes terminal_reservation down when no effect is unfinished. */
 const COMPLETIONS: Record<string, number> = {
-  'src/core/persistence/journal.ts': 1, // completeWrite: committed, conflict, failed, cancelled
+  // completeWrite (committed, conflict, failed, cancelled): the plain completion and the one that also probes purges.
+  'src/core/engine-sql/persistence-journal.ts': 2,
   'src/core/persistence/group-publish.ts': 1, // completeGroup: committed
 };
 /** An UPDATE of persistence_requests assigning `state` in its SET list, with the statement text up to the closing backtick. */

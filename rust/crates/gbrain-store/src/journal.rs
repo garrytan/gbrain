@@ -784,6 +784,51 @@ impl Store {
         })
     }
 
+    /// `insertLocalWriterRow`: the `INSERT .. ON CONFLICT DO NOTHING` of PGLite's
+    /// `persistence_local_writers`. True when this call stored the row; false, with nothing
+    /// written, when a row already holds the id or the credential hash (the table's two unique
+    /// keys), whatever that row's lane, revocation or grant. The lane and id checks are the
+    /// table's own constraints, so a bad lane or a non-UUID id is an error, not a false.
+    pub fn insert_local_writer_row(&self, registration: &WriterRegistration) -> Result<bool> {
+        if !is_uuid(&registration.id) {
+            return Err(StoreError::invalid("a local writer id is a UUID"));
+        }
+        if registration.lane != "cli" && registration.lane != "stdio" {
+            return Err(StoreError::invalid("a local writer lane is cli or stdio"));
+        }
+        let id = registration.id.to_lowercase();
+        self.write(|tx| {
+            if get_json::<WriterRecord>(&*tx, &keys::writer(&id))?.is_some() {
+                return Ok(false);
+            }
+            let mut taken = false;
+            scan_prefix(&*tx, &[keys::WRITER], false, &mut |_, v| {
+                if let Ok(other) = serde_json::from_slice::<WriterRecord>(v)
+                    && other.credential_hash == registration.credential_hash
+                {
+                    taken = true;
+                }
+                !taken
+            })?;
+            if taken {
+                return Ok(false);
+            }
+            let record = WriterRecord {
+                id: id.clone(),
+                lane: registration.lane.clone(),
+                credential_hash: registration.credential_hash.clone(),
+                grant_ceiling: registration
+                    .grant_ceiling
+                    .clone()
+                    .unwrap_or_else(|| json!({})),
+                created_at_us: self.env.now_micros(),
+                revoked_at_us: None,
+            };
+            put_json(tx, &keys::writer(&id), &record)?;
+            Ok(true)
+        })
+    }
+
     /// `persistence_local_writers` row of `id`, or `None`.
     pub fn read_local_writer(&self, id: &str) -> Result<Option<Value>> {
         let read = self.read()?;

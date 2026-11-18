@@ -133,6 +133,28 @@
         ],
         "flagOnScopes": []
       },
+      "completeWriteRow#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "completeWriteRow#purge-probe": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "consolidateFact#default": {
         "flagOffLanes": [
           "pool"
@@ -1770,6 +1792,17 @@
         ],
         "flagOnScopes": []
       },
+      "insertWriteRequest#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "invalidateContentDriftEmbeddings#default": {
         "flagOffLanes": [
           "pool",
@@ -2578,6 +2611,28 @@
         ],
         "flagOnScopes": []
       },
+      "lockPersistenceCounters#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "lockWriteRequest#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "markPagesAttendanceBlocked#default": {
         "flagOffLanes": [
           "pool"
@@ -2755,6 +2810,50 @@
           "*"
         ]
       },
+      "readHeldCoverageRows#all": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readHeldCoverageRows#sources": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readHeldPageRows#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readJournalLimitRows#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readLedgerSource#batch": {
         "flagOffLanes": [
           "pool"
@@ -2868,6 +2967,28 @@
         "flagOn": "unscoped",
         "flagOnLanes": [
           "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "readWriteRequest#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readWriteRequestById#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
         ],
         "flagOnScopes": []
       },
@@ -3464,6 +3585,17 @@
         ],
         "flagOnScopes": []
       },
+      "stampWriteClaim#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "stripStaleFrontmatterKeys#default": {
         "flagOffLanes": [
           "pool"
@@ -3878,6 +4010,7 @@
         "batchLoadEmotionalInputs": "none",
         "batchRetry": "none",
         "cliReads": "none",
+        "completeWriteRow": "none",
         "connRetry": "none",
         "connect": "none",
         "connectedDatabaseUrl": "none",
@@ -3982,6 +4115,7 @@
         "insertFact": "none",
         "insertFacts": "none",
         "insertLocalWriterRow": "none",
+        "insertWriteRequest": "none",
         "invalidateContentDriftEmbeddings": "none",
         "invalidateStaleSignatureEmbeddings": "none",
         "isFolderRestricted": "none",
@@ -4026,7 +4160,9 @@
         "livePageIdsAt": "none",
         "loadContradictionsTrend": "none",
         "lockPageKeys": "none",
+        "lockPersistenceCounters": "none",
         "lockRegisteredSourceIds": "none",
+        "lockWriteRequest": "none",
         "logEvalCandidate": "none",
         "logEvalCaptureFailure": "none",
         "logIngest": "none",
@@ -4052,6 +4188,9 @@
         "readDatabaseClock": "none",
         "readEmbeddingStateCounts": "direct",
         "readGuestSourceRow": "none",
+        "readHeldCoverageRows": "none",
+        "readHeldPageRows": "none",
+        "readJournalLimitRows": "none",
         "readLedgerSource": "none",
         "readLocalWriterRow": "none",
         "readManagedModeRows": "none",
@@ -4065,6 +4204,8 @@
         "readSourceIncarnation": "none",
         "readTransaction": "none",
         "readTransactionSettings": "none",
+        "readWriteRequest": "none",
+        "readWriteRequestById": "none",
         "reconnect": "none",
         "refreshCycleLock": "none",
         "refreshPageBody": "none",
@@ -4118,6 +4259,7 @@
         "stageManifestRows": "none",
         "stageSegmentChunks": "none",
         "stageSegmentTexts": "none",
+        "stampWriteClaim": "none",
         "stripStaleFrontmatterKeys": "none",
         "sumStaleChunkChars": "none",
         "supersedeTake": "none",

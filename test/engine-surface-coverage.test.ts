@@ -112,7 +112,12 @@ const INTERFACE_METHODS: readonly string[] = [
   // v0.46.28-34 master waves (classified at the test-gap-wave merge):
   // #3980 bulk config read, #3776 takes-embedding update, #3674 scoped
   // link removal.
-  'getAllConfig', 'getConfigValues', 'readManagedModeRows', 'getSourceStrictness', 'readPersistenceBrainId', 'readLocalWriterRow', 'insertLocalWriterRow', 'readTransactionSettings', 'applyTransactionSettings', 'readLedgerSource', 'isFolderRestricted', 'updateTakeEmbeddings', 'removeLinksByPagesAndSource',
+  'getAllConfig', 'getConfigValues', 'readManagedModeRows', 'getSourceStrictness', 'readPersistenceBrainId', 'readLocalWriterRow', 'insertLocalWriterRow', 'readTransactionSettings', 'applyTransactionSettings', 'readLedgerSource', 'isFolderRestricted', 'readJournalLimitRows', 'readHeldPageRows', 'readHeldCoverageRows', 'readWriteRequest', 'readWriteRequestById', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'lockWriteRequest', 'completeWriteRow', 'updateTakeEmbeddings', 'removeLinksByPagesAndSource',
+  // CLI reads and the wanted-link writes the CLI members merge brought in (engine-sql/cli-reads-ops.ts,
+  // cli-reads-import.ts, wanted-links.ts).
+  'scanExactBatch', 'nextLivePageAfter', 'listExactIdentityCandidates', 'rankEntities', 'listExtractionPendingPages', 'listUnattributedFacts', 'listWantedPages',
+  'listSourceRecords', 'readSourceIncarnation', 'hasCompanyBrainReceipt', 'readGuestSourceRow', 'listGuestSourceIds', 'hasGuestSource', 'readPageTrustRows', 'readDatabaseClock', 'listLinkPageMetadata', 'listStoredTimelineRows', 'filterPagesAtRevision',
+  'lockRegisteredSourceIds', 'replaceWantedLinkRows',
   // Code edges
   'addCodeEdges', 'deleteCodeEdgesForChunks', 'getCallersOf', 'getCalleesOf', 'getEdgesByChunk',
   'searchKeywordChunks',
@@ -155,6 +160,9 @@ const ENGINE_INTERNAL_HELPERS: readonly string[] = [
   'connectWithHeldLock',
   // #9227: whether this engine holds the datastore lock; the PGLite abandoned-claim release rests on it.
   'holdsDatastoreLock',
+  // The unscoped executors the CLI read members run through.
+  'rawRead',
+  'cliReads',
 ];
 
 /**

@@ -18,6 +18,7 @@ import type { SqlEngine } from '../src/core/persistence/model.ts';
 import { managedPersistenceEnabled, readManagedMode, readPersistenceBrain } from '../src/core/persistence/ownership.ts';
 import { inspectPersistenceBrain } from '../src/core/persistence/managed-mode.ts';
 import { readWriterDiagnostics } from '../src/core/persistence/diagnostics.ts';
+import { JOURNAL_LIMITS_SQL } from '../src/core/persistence/limits.ts';
 import { assertUnmanagedCanonicalWriter } from '../src/core/persistence/maintenance.ts';
 import { beginConnectorSync, withConnectorSync } from '../src/core/persistence/connector-sync.ts';
 import { renderCliError } from '../src/core/agent-output.ts';
@@ -27,11 +28,12 @@ const MALFORMED: ReadonlyArray<readonly [string, readonly unknown[]]> = [
   ['numeric enabled', [{ enabled: 1 }]], ['duplicated', [{ enabled: false }, { enabled: true }]],
 ];
 
-type FakeEngine = SqlEngine & Pick<BrainEngine, 'readManagedModeRows' | 'getSourceStrictness'>;
+type FakeEngine = SqlEngine & Pick<BrainEngine, 'readManagedModeRows' | 'readJournalLimitRows' | 'getSourceStrictness'>;
 function fake(rows: readonly unknown[] | Error, seen: string[] = []): FakeEngine {
   const read = async (sql: string) => { seen.push(sql); if (rows instanceof Error) throw rows; return rows as unknown[]; };
   // The typed reads the import guard uses answer the same rows (and the same error) the raw statement does.
-  return { executeRaw: read, readManagedModeRows: () => read('SELECT enabled FROM persistence_brain WHERE singleton=1'), getSourceStrictness: async () => false } as unknown as FakeEngine;
+  return { executeRaw: read, readManagedModeRows: () => read('SELECT enabled FROM persistence_brain WHERE singleton=1'),
+    readJournalLimitRows: () => read(JOURNAL_LIMITS_SQL), getSourceStrictness: async () => false } as unknown as FakeEngine;
 }
 
 describe('readManagedMode', () => {

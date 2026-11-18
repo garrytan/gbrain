@@ -50,6 +50,11 @@ export function managedModeFromRows<T extends { enabled: unknown }>(rows: Readon
 }
 /** Whether the brain is managed: `true` or `false` from a well-formed singleton, `storage_error` otherwise; a query error propagates. */
 export async function readManagedMode(engine: SqlEngine, opts: ManagedModeReadOptions = {}): Promise<boolean> {
+  // A Rust brain has no SQL dialect: it answers through the typed member. Its store runs one writer at a time, so
+  // the row lock a SQL engine takes here has nothing to wait for. SQL engines keep the statement below.
+  if ((engine as { kind?: unknown }).kind === 'rust') {
+    return managedModeFromRows(await (engine as unknown as Pick<BrainEngine, 'readManagedModeRows'>).readManagedModeRows(), opts.refusal).enabled;
+  }
   const sql = opts.lock ? `${MANAGED_MODE_SQL} FOR ${opts.lock.toUpperCase()}` : MANAGED_MODE_SQL;
   const rows = await engine.executeRaw<{ enabled: unknown }>(sql, undefined, opts.signal ? { signal: opts.signal } : undefined);
   return managedModeFromRows(rows, opts.refusal).enabled;

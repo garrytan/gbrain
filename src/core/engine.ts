@@ -19,6 +19,8 @@ import type { EntityTypeFilter } from './schema-pack/entity-types.ts';
 import type { ChunkMove } from './page-state/chunk-moves.ts';
 import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence-state.ts';
+import type { ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, WriteCompletion, WriteRequestInsert } from './engine-sql/persistence-journal.ts';
+import type { WriteRequest } from './persistence/model.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, SourceRoutingRow } from './engine-sql/sources.ts';
 export type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions, PageMutationPrecondition, PageWithdrawal } from './page-state/types.ts';
@@ -2926,6 +2928,28 @@ export interface BrainEngine {
 
   /** Registers a local writer unless its id or credential hash is already registered; true when this call inserted the row. */
   insertLocalWriterRow(row: LocalWriterInsert): Promise<boolean>;
+
+  // Write-journal statements (engine-sql/persistence-journal.ts): the text journal.ts, limits.ts and held-reads.ts sent through executeRaw.
+  /** The journal limit config rows, then one row with a null key: the largest page stored in segments, or 'unindexed'. */
+  readJournalLimitRows(): Promise<Array<{ key: string | null; value: string | null }>>;
+  /** The current-incarnation hold rows (`record`, page `revision`) naming these page ids, in fingerprint order. */
+  readHeldPageRows<R = Record<string, unknown>>(pageIds: string[]): Promise<Array<{ record: R; revision: string | null }>>;
+  /** The held-file summary rows of live sources with at least one held file, in source order; null reads every source. */
+  readHeldCoverageRows(sourceIds: string[] | null): Promise<HeldCoverageRow[]>;
+  /** The request a principal admitted under `requestId` (a uuid), or null. */
+  readWriteRequest(principalKind: string, principalId: string, requestId: string): Promise<WriteRequest | null>;
+  /** The request with journal id `id`, or null; `signal` cancels the read. */
+  readWriteRequestById(id: string, opts?: { signal?: AbortSignal }): Promise<WriteRequest | null>;
+  /** Creates the missing counter rows and locks them all FOR UPDATE in key order; returns the locked rows. */
+  lockPersistenceCounters(keys: readonly string[]): Promise<CounterRow[]>;
+  /** Inserts an admitted request and charges its (already locked) counters; returns the stored row. */
+  insertWriteRequest(row: WriteRequestInsert): Promise<WriteRequest>;
+  /** Stamps a claim (running, token, lease, first phase) on request `id`; null when the refresh barrier refused it. */
+  stampWriteClaim(id: string, token: string, leaseMs: number, phaseJson: string): Promise<ClaimedWriteRow | null>;
+  /** Request `id` locked FOR UPDATE until the transaction ends, or null. */
+  lockWriteRequest(id: string): Promise<WriteRequest | null>;
+  /** Records a request's terminal state and releases its counters; null when the result exceeds its reservation. */
+  completeWriteRow(completion: WriteCompletion): Promise<CompletedWriteRow | null>;
 
   /**
    * The current value of each named transaction-local setting (`current_setting(name, true)`), in `names` order, null

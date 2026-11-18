@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 259/259
+# covered: 269/269
 # lifecycle: 9/9
 # pages: 31/31
 # search: 7/7
@@ -28,6 +28,7 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 9/9
+# persistence_journal: 10/10
 # cycle_locks: 6/6
 # cli_reads_ops: 7/7
 # raw_sql: 4/4
@@ -42,7 +43,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	11	no	yes	yes	refuses:transactions
+transaction	lifecycle	yes	12	no	yes	yes	refuses:transactions
 transactionDirect	lifecycle	yes	1	no	yes	yes	refuses:transactions
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -237,20 +238,30 @@ refreshPageBody	sync_aliases	yes	1	no	yes	yes	refuses:page_body
 updatePageContextualRetrievalState	sync_aliases	yes	1	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
 getConfig	config	yes	4	no	yes	yes	serves
-setConfig	config	yes	10	no	yes	yes	serves
+setConfig	config	yes	11	no	yes	yes	serves
 unsetConfig	config	yes	2	no	yes	yes	serves
 listConfigKeys	config	yes	2	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
 getConfigValues	config	yes	1	no	yes	yes	serves
-readManagedModeRows	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
+readManagedModeRows	import_guards	yes	1	no	yes	yes	serves
 getSourceStrictness	import_guards	yes	2	no	yes	yes	serves
 readPersistenceBrainId	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
-readLocalWriterRow	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
-insertLocalWriterRow	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
+readLocalWriterRow	import_guards	yes	1	no	yes	yes	serves
+insertLocalWriterRow	import_guards	yes	1	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	1	no	yes	yes	refuses:transactions
 applyTransactionSettings	import_guards	yes	1	no	yes	yes	refuses:transactions
-readLedgerSource	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
+readLedgerSource	import_guards	yes	2	no	yes	yes	refuses:persistence_journal
 isFolderRestricted	import_guards	yes	1	no	yes	yes	refuses:access_control
+readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves
+readHeldPageRows	persistence_journal	yes	1	no	yes	yes	serves
+readHeldCoverageRows	persistence_journal	yes	1	no	yes	yes	serves
+readWriteRequest	persistence_journal	yes	1	no	yes	yes	refuses:persistence_journal
+readWriteRequestById	persistence_journal	yes	1	no	yes	yes	refuses:persistence_journal
+lockPersistenceCounters	persistence_journal	yes	1	no	yes	yes	refuses:persistence_journal
+insertWriteRequest	persistence_journal	yes	1	no	yes	yes	refuses:persistence_journal
+stampWriteClaim	persistence_journal	yes	1	no	yes	yes	refuses:persistence_journal
+lockWriteRequest	persistence_journal	yes	1	no	yes	yes	refuses:persistence_journal
+completeWriteRow	persistence_journal	yes	1	no	yes	yes	refuses:persistence_journal
 acquireCycleLock	cycle_locks	yes	8	no	yes	yes	refuses:minion_queue
 refreshCycleLock	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
 releaseCycleLock	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue

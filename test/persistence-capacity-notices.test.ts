@@ -183,7 +183,7 @@ for (const kind of testBackends()) {
       const counted = { ...engine, executeRaw: (sql: string, params?: unknown[]) => {
         if (/FROM persistence_requests/.test(sql)) reads.push(sql);
         return engine.executeRaw(sql, params);
-      } } as unknown as BrainEngine;
+      }, readJournalLimitRows: () => engine.readJournalLimitRows() } as unknown as BrainEngine;
       await oneYearCapacity(counted, 'brain', 'LifetimeIds', 3, 10);
       expect(reads.some(sql => sql.includes('LIMIT 1000'))).toBe(true);
       expect(reads.some(sql => /LIMIT (?!1\b|1000\b)\d+/.test(sql))).toBe(false);

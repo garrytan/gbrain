@@ -20,6 +20,7 @@
  * intent. `light` (the 60 s receipt snapshot) skips the whole-table reclaim
  * read and the table size.
  */
+import type { BrainEngine } from '../engine.ts';
 import type { SqlEngine } from './model.ts';
 import { DEFAULT_JOURNAL_LIMITS, type JournalLimits } from './model.ts';
 import { DEFAULT_RECEIPT_RETENTION_DAYS, journalLimitKey, parseJournalConfigValue, readJournalLimits, RECEIPT_RETENTION_KEY, recommendedLimit, recordForecastRates } from './limits.ts';
@@ -142,7 +143,7 @@ export async function readCapacityThresholds(engine: SqlEngine): Promise<{ warnD
   return { warnDays, failDays };
 }
 
-export async function readCapacityForecast(engine: SqlEngine & { kind?: string }, opts: { limits?: JournalLimits; light?: boolean; config?: Promise<CapacityConfig> } = {}): Promise<CapacityForecast> {
+export async function readCapacityForecast(engine: SqlEngine & Pick<BrainEngine, 'readJournalLimitRows'> & { kind?: string }, opts: { limits?: JournalLimits; light?: boolean; config?: Promise<CapacityConfig> } = {}): Promise<CapacityForecast> {
   // Every read below is independent of the others (the principal walks need only the counters), so they are issued together:
   // one round trip for the lot instead of one each (GBRA-133).
   const counterRead = engine.executeRaw<{ key: string; lifetime_ids: string; terminal_bytes: string }>(
