@@ -116,6 +116,16 @@ counter is `M next_facts_id`.
   whose `row_num` the old page holds are deleted, the ontology duplicates of the page move are
   dropped, and `source_markdown_slug` moves.
 
+## Group 5: doctor checks (`facts/doctor.rs`)
+
+## Group 5: command, cycle and fence reads (`facts/cycle.rs`)
+
+## Group 5: purge, withdrawal, relink and fence repair (`facts/purge.rs`)
+
+## Group 5: repair classifiers and loop retirement (`facts/repair.rs`)
+
+## Group 5: search relevance and trust reads (`facts/trust.rs`)
+
 ## Not modeled
 
 The withdrawal ledger and the insert/update guards that read it, the write-attribution and

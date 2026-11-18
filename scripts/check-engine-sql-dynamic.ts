@@ -53,6 +53,16 @@ const CONSTANT_ALLOWLIST: Record<string, string> = {
 };
 
 const VETTED_BUILDERS: Record<string, string> = {
+  // facts-doctor.ts builders
+
+  // facts-cycle.ts builders
+
+  // facts-purge.ts builders
+
+  // facts-repair.ts builders
+
+  // facts-trust.ts builders
+
   guestSourceSql: 'src/core/guests/note.ts: constant guest-source predicate over caller-given constant aliases (no input)',
   activationSuppressedSql: 'src/core/eligibility/sql.ts: constant activation-suppression predicate over a caller alias; tier ranks and reason families come from constant tables',
   unverifiedExtractionFragment: 'src/core/extraction-review.ts: constant frontmatter predicate over a caller alias; keys and values are module constants',

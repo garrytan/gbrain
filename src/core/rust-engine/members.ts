@@ -227,6 +227,16 @@ export const RUST_ENGINE_MEMBERS = {
   findTrajectory: 'facts',
   getFactsHealth: 'facts',
   migrateFactsToCanonical: 'facts',
+  // facts: doctor checks (engine-sql/facts-doctor.ts)
+
+  // facts: command, cycle and fence reads (engine-sql/facts-cycle.ts)
+
+  // facts: purge, withdrawal, relink and fence repair (engine-sql/facts-purge.ts)
+
+  // facts: repair classifiers and loop retirement (engine-sql/facts-repair.ts)
+
+  // facts: search relevance and trust reads (engine-sql/facts-trust.ts)
+
   // takes
   addTakesBatch: 'takes',
   updateTakeEmbeddings: 'takes',

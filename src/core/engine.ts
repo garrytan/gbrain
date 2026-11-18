@@ -3,6 +3,11 @@ import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
 import type { RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
 import type { ExtractionPendingRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
+import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
+import type * as FactsCycleSql from './engine-sql/facts-cycle.ts';
+import type * as FactsPurgeSql from './engine-sql/facts-purge.ts';
+import type * as FactsRepairSql from './engine-sql/facts-repair.ts';
+import type * as FactsTrustSql from './engine-sql/facts-trust.ts';
 import type { EngineCapabilities } from './engine-capabilities.ts';
 import type { GetVersionsOpts, PageVersionRows } from './page-state/version-types.ts';
 import type { PageSnapshotBatch } from './page-snapshot-batch.ts';
@@ -2914,6 +2919,17 @@ export interface BrainEngine {
   listUnattributedFacts(opts: { sourceIds: string[]; worldOnly: boolean; excludePrivateProvenance: boolean; limit: number; offset: number }): Promise<UnattributedFactRow[]>;
   /** Missing link targets in scope, most-referenced first, with their total; `excludePrivate` drops private origins and private bare-name matches. */
   listWantedPages(opts: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; limit: number; offset: number }): Promise<{ total: number; rows: WantedPageRow[] }>;
+
+  // Facts statements, doctor checks (engine-sql/facts-doctor.ts). Each runs the statement its caller ran through executeRaw.
+
+  // Facts statements, command, cycle and fence reads (engine-sql/facts-cycle.ts). Each runs the statement its caller ran through executeRaw.
+
+  // Facts statements, purge, withdrawal, relink and fence repair (engine-sql/facts-purge.ts). Each runs the statement its caller ran through executeRaw.
+
+  // Facts statements, repair classifiers and loop retirement (engine-sql/facts-repair.ts). Each runs the statement its caller ran through executeRaw.
+
+  // Facts statements, search relevance and trust reads (engine-sql/facts-trust.ts). Each runs the statement its caller ran through executeRaw.
+
 
   /** True when the source's `config.canonical` is `git` (a git-canonical source); false for anything else, including an unknown id. */
   getSourceStrictness(sourceId: string): Promise<boolean>;

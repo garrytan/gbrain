@@ -163,6 +163,11 @@ import * as sourcesImpl from './engine-sql/sources.ts';
 import * as cliReadsImpl from './engine-sql/cli-reads-import.ts';
 import * as persistenceStateImpl from './engine-sql/persistence-state.ts';
 import * as cliReadsOpsImpl from './engine-sql/cli-reads-ops.ts';
+import * as factsDoctorImpl from './engine-sql/facts-doctor.ts';
+import * as factsCycleImpl from './engine-sql/facts-cycle.ts';
+import * as factsPurgeImpl from './engine-sql/facts-purge.ts';
+import * as factsRepairImpl from './engine-sql/facts-repair.ts';
+import * as factsTrustImpl from './engine-sql/facts-trust.ts';
 import type { ExactScanOpts } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts } from './engine-sql/exact-identity.ts';
 import type { RankEntitiesStatementOpts } from './engine-sql/graph-rank.ts';
@@ -1433,6 +1438,17 @@ export class PGLiteEngine implements BrainEngine {
   listExtractionPendingPages(opts: { sourceIds?: string[]; sourceId?: string; limit: number; offset: number }) { return cliReadsOpsImpl.listExtractionPendingPages(this.rawRead, opts); }
   listUnattributedFacts(opts: { sourceIds: string[]; worldOnly: boolean; excludePrivateProvenance: boolean; limit: number; offset: number }) { return cliReadsOpsImpl.listUnattributedFacts(this.rawRead, opts); }
   listWantedPages(opts: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; limit: number; offset: number }) { return cliReadsOpsImpl.listWantedPages(this.rawRead, opts); }
+
+  // Facts statements, doctor checks (engine-sql/facts-doctor.ts), through executeRaw as before.
+
+  // Facts statements, command, cycle and fence reads (engine-sql/facts-cycle.ts), through executeRaw as before.
+
+  // Facts statements, purge, withdrawal, relink and fence repair (engine-sql/facts-purge.ts), through executeRaw as before.
+
+  // Facts statements, repair classifiers and loop retirement (engine-sql/facts-repair.ts), through executeRaw as before.
+
+  // Facts statements, search relevance and trust reads (engine-sql/facts-trust.ts), through executeRaw as before.
+
 
   getSourceStrictness(sourceId: string) { return persistenceStateImpl.getSourceStrictness(unscopedExecutor(this.engineSql, 'persistence: strict-source read ran unscoped through executeRaw'), sourceId); }
   readPersistenceBrainId() { return persistenceStateImpl.readPersistenceBrainId(unscopedExecutor(this.engineSql, 'persistence: brain identity read ran unscoped through executeRaw')); }

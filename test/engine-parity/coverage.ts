@@ -94,6 +94,16 @@ export const FAMILIES: Record<string, readonly string[]> = {
   cycle_locks: ['acquireCycleLock', 'refreshCycleLock', 'releaseCycleLock', 'readCycleLocks', 'deleteCycleLock', 'deleteCycleLockIfStale'],
   cli_reads_ops: ['scanExactBatch', 'nextLivePageAfter', 'listExactIdentityCandidates', 'rankEntities', 'listExtractionPendingPages',
     'listUnattributedFacts', 'listWantedPages'],
+  // facts_doctor: doctor checks
+
+  // facts_cycle: command, cycle and fence reads
+
+  // facts_purge: purge, withdrawal, relink and fence repair
+
+  // facts_repair: repair classifiers and loop retirement
+
+  // facts_trust: search relevance and trust reads
+
   raw_sql: ['runMigration', 'executeRaw', 'executeRawDirect', 'keywordBoundedRead'],
   code_edges: ['addCodeEdges', 'deleteCodeEdgesForChunks', 'getCallersOf', 'getCalleesOf', 'getEdgesByChunk'],
   eval_capture: ['logEvalCandidate', 'listEvalCandidates', 'deleteEvalCandidatesBefore', 'logEvalCaptureFailure',
