@@ -352,6 +352,7 @@
   "test/repair-fences.test.ts": 19599,
   "test/repair-file-drift-deleted-6712.test.ts": 11424,
   "test/repair-file-drift-held-6712.test.ts": 5130,
+  "test/repair-file-drift-whole-class.test.ts": 20040,
   "test/repair-frontmatter-keys-sweep-6454.test.ts": 7459,
   "test/repair-frontmatter.test.ts": 12782,
   "test/repair-receipt-compaction.test.ts": 10136,

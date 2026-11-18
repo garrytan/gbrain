@@ -452,6 +452,9 @@ src/core/git/commit-ledger.ts	spawn_import	1	W7: process-wide effects move to sr
 src/core/git/commit-push.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/git/commit-push.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/git/commit-push.ts	process_env	6	W6: settings plane out of the core
+src/core/git/push-credential.ts	fs_import	1	W7: filesystem boundary moves to the local app; GST-2961 reads and writes the 0600 push-refusal record under the checkout git dir, like commit-push.ts conflict state
+src/core/git/push-credential.ts	process_env	2	W6: settings plane out of the core; GST-2961 reads GIT_ASKPASS only to say an askpass program may have answered, shown by its shape-checked program name, never its value
+src/core/git/push-credential.ts	spawn_import	1	W7: process-wide effects move to src/cli; GST-2961 runs git credential fill under GIT_TRACE once after a refused push to name the helper that answered (stdout password dropped in place)
 src/core/git/git-run.ts	spawn_import	1	W7: process-wide effects move to src/cli; GST-2767 moved commit-push's git runner here unchanged
 src/core/git/range-secret-scan.ts	fs_import	1	W7: filesystem boundary moves to the local app (the publish scan streams git output through a private temp file)
 src/core/git/range-secret-scan.ts	spawn_import	1	W7: process-wide effects move to src/cli (the publish scan runs git plumbing)
@@ -887,6 +890,7 @@ src/core/remote-token-cache.ts	fs_import	1	W7: filesystem boundary moves to the 
 src/core/repair/agent-session-facts.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/repair/captured-facts.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/repair/fences.ts	process_env	2	W6: settings plane out of the core
+src/core/repair/file-drift-class.ts	fs_import	1	W7: filesystem boundary moves to the local app (class manifest under the config dir)
 src/core/repair/file-drift-compare.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/repair/file-drift.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/repair/frontmatter.ts	fs_import	1	W7: filesystem boundary moves to the local app
@@ -918,6 +922,8 @@ src/core/retry.ts	process_env	1	W6: settings plane out of the core
 src/core/routing-eval.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/runtime-build.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/runtime-version.ts	process_global	2	W7: process-wide effects move to src/cli
+src/core/rust-engine/addon-loader.ts	fs_import	1	Rust engine addon: reads the cached manifest and checks the cached addon file under GBRAIN_HOME/engines/rust (writes nothing); stays until the Rust engine's own storage settles (plan PR 8)
+src/core/rust-engine/addon-loader.ts	process_env	1	Rust engine addon: the default deps read GBRAIN_RUST_ENGINE_ADDON once; every other path takes env from the deps; stays until the Rust engine's own storage settles (plan PR 8)
 src/core/schema-events.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/schema-migration-lock.ts	als_store	1	stays: GBRA-467 reentrancy scope of the schema migration lock held by this process (coordination state, not a setting)
 src/core/schema-migration-lock.ts	module_collection	1	stays: GBRA-467 per-engine in-process queue for engines without a cross-process schema lock (PGLite); coordination state, not a setting

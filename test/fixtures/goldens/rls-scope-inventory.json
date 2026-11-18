@@ -1913,6 +1913,28 @@
         ],
         "flagOnScopes": []
       },
+      "listEntityKeyRows#after": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listEntityKeyRows#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listFactsByEntity#allFilters": {
         "flagOffLanes": [
           "pool"
@@ -2945,6 +2967,34 @@
         ],
         "flagOnScopes": []
       },
+      "sealChunks#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "scoped",
+        "flagOnLanes": [
+          "tx",
+          "tx>sp"
+        ],
+        "flagOnScopes": [
+          "default"
+        ]
+      },
+      "sealChunks#expectedRevision": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "scoped",
+        "flagOnLanes": [
+          "tx",
+          "tx>sp"
+        ],
+        "flagOnScopes": [
+          "src-a"
+        ]
+      },
       "searchKeyword#cjk": {
         "flagOffLanes": [
           "pool",
@@ -3756,6 +3806,7 @@
         "listCorpusSample": "direct",
         "listEmbeddingStateRows": "direct",
         "listEnrichCandidates": "none",
+        "listEntityKeyRows": "none",
         "listEvalCandidates": "none",
         "listEvalCaptureFailures": "none",
         "listFactsByEntity": "none",
@@ -3783,6 +3834,7 @@
         "migrateFactsToCanonical": "none",
         "onCheckout": "none",
         "openBodyStaging": "none",
+        "ownerOnlyMarkTriggers": "none",
         "purgeDeletedPages": "none",
         "putContradictionCacheEntry": "none",
         "putDreamVerdict": "none",
@@ -3820,6 +3872,7 @@
         "runMigration": "none",
         "runUnsafe": "none",
         "runVectorAttempt": "direct",
+        "sealChunks": "none",
         "searchKeyword": "direct",
         "searchKeywordChunks": "direct",
         "searchKeywordPages": "direct",

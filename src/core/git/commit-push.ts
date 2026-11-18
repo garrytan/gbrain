@@ -38,6 +38,7 @@ import { canonicalFilesystemPath } from '../persistence/root-registry.ts';
 import { assertManagedFilesystemWrite, hasFilesystemPublication, managedFilesystemRootFor, type ManagedFilesystemRoot } from '../persistence/filesystem-guard.ts';
 import { acquireNativeLock, acquireNativeLockSync, type NativeLockSyncHandle } from '../persistence/native-lock.ts';
 import { pushableHead, recordCommit, recordIntent } from './commit-ledger.ts';
+import { CREDENTIAL_STATE_NAME, credentialRefusal, pushCredentialRefusedError, readCredentialRefusalFile, recordCredentialRefusalFile, type CredentialRefusalState } from './push-credential.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { shellQuote, type Action, type Notice } from '../agent-output.ts';
 import { onPushMode, redactUnpushed, spoolSealer, type RedactOutcome } from './redact-unpushed.ts';
@@ -1206,6 +1207,8 @@ function publish(ctx: Ctx, start: string, resolutions: Map<string, Resolution> |
       if (push?.code === 0) return { sha: candidate, integrated, confirmed: 'push', ...notes() };
       if (push) lastError = push.stderr.trim();
       if (remoteContains(ctx, candidate)) return onRemote();
+      const refused = push ? credentialRefusal(push.stderr) : null;
+      if (refused) throw pushCredentialRefusedError(ctx.root, ctx.remote, ctx.mergeRef.replace(/^refs\/heads\//, ''), refused, candidate);
       remoteTip = fetchTracking(ctx);
       if (!remoteTip) break;
       scannedBase = pushBase(ctx, remoteTip, candidate);
@@ -1336,6 +1339,24 @@ export function readIntegrateConflict(repo: string): IntegrateConflictState | nu
     const root = checkoutRoot(repo);
     const p = absGitPath(root, CONFLICT_STATE_NAME);
     return existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) as IntegrateConflictState : null;
+  } catch {
+    return null;
+  }
+}
+
+/** GST-2961: the push refusal for the credential git used, recorded for this checkout until a push lands (by any route: when the remote pushes to the one URL it fetches from, a refused commit already on the remote-tracking ref is past), if any. */
+export function readCredentialRefusal(repo: string): CredentialRefusalState | null {
+  try {
+    const root = checkoutRoot(repo);
+    const state = readCredentialRefusalFile(absGitPath(root, CREDENTIAL_STATE_NAME));
+    const pushesWhereItFetches = () => {
+      const push = git(root, ['remote', 'get-url', '--push', '--all', '--', state!.remote]);
+      const fetch = git(root, ['remote', 'get-url', '--', state!.remote]);
+      const urls = push.stdout.trim().split('\n');
+      return push.code === 0 && fetch.code === 0 && urls.length === 1 && urls[0] === fetch.stdout.trim();
+    };
+    if (state?.commit && state.remote && state.branch && pushesWhereItFetches() && isAncestor(root, state.commit, `refs/remotes/${state.remote}/${state.branch}`)) return null;
+    return state;
   } catch {
     return null;
   }
@@ -1504,10 +1525,12 @@ export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
         published = publish(ctx, target, resolutions, expectRemote, cwd);
       }
       if (!elsewhere) rmSync(absGitPath(root, CONFLICT_STATE_NAME), { force: true });
+      rmSync(absGitPath(root, CREDENTIAL_STATE_NAME), { force: true });
       const moved = published.sha === head || elsewhere || opts.keepCheckout ? { checkout: 'unchanged' as const } : advanceWithLock(root, published.sha, head, onlyWhenClean, opts.lockWaitMs);
       return { published, moved };
     } catch (e) {
       if ((e as { code?: string }).code === 'integrate_conflict' && !elsewhere) recordConflict(root, ctx.branch, e);
+      if ((e as { code?: string }).code === 'push_credential_refused') recordCredentialRefusalFile(absGitPath(root, CREDENTIAL_STATE_NAME), e);
       if (requested) writeFileSync(requestPath, `${process.pid}\n`);
       throw e;
     }

@@ -26,7 +26,7 @@ import { managedSyncWriteDiagnostic } from './sync-write-diagnostic.ts';
 import { abortStop, recordedStop, replaysUnchangedRefusal, resumableRowStop } from './sync-stop-class.ts';
 import { adoptLegacyPage, incomingId, partialCloneTreeRefusal, syncExcludePatterns, syncGit, type LegacyIdentity, type ManagedSyncContext, type SyncDiscovery, type SyncEntry, type SyncFileRefusal, type SyncSlugCollision } from './sync-discovery.ts';
 import { assertSyncDispatchActive, type SyncAuthority, type SyncProcessingOptions } from './sync-authority.ts';
-import { recordPassFenceTrend, type PassStamp, type SyncCursorOptions, type SyncIntent } from './sync-prepare.ts';
+import { readFenceTrendPrefix, recordPassFenceTrend, type PassStamp, type SyncCursorOptions, type SyncIntent } from './sync-prepare.ts';
 import { OPEN_AT_STAMP_CAP, passFingerprint, readPassRow, SYNC_ORIGIN_DELETED_OP, transientEnding, writePassRow, type ManagedSyncPassValue, type PassEpisode,
   type PassKind, type PassOutcome, type SyncSelection } from './sync-pass-row.ts';
 import { readSyncAdmission, type SyncAdmission } from './sync-admission.ts';
@@ -605,13 +605,14 @@ async function stampUnchangedPass(engine: BrainEngine, input: SyncPassInput, rou
   const { sourceId, incarnation } = context;
   const { value, level, head, kind, converged, parserFp, pack, selectionFp, passId, startedAt, started, counts, applied } = round;
   const at = new Date().toISOString();
+  const trend = await readFenceTrendPrefix(engine, { worktreeId: context.binding.worktree_id, sourceId, incarnation });
   await engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], async () => {
     assertActive();
     await assertDrainLease(tx, sourceId);
     await tx.executeRaw('UPDATE sources SET last_sync_at=now() WHERE id=$1 AND incarnation=$2::uuid', [sourceId, incarnation]);
     // Holds on paths that left the level go with it here too, as a stamp releases them.
     for (const path of [...level.releasableHolds, ...await settledDeletionHolds(tx, sourceId, level.deletionCandidates)]) await clearGitHold(tx, { sourceId, incarnation, path, observedAt: startedAt });
-    await recordPassFenceTrend(tx, { worktreeId: context.binding.worktree_id, sourceId, passId, since: converged?.request_hwm ?? null });
+    await recordPassFenceTrend(tx, { worktreeId: context.binding.worktree_id, sourceId, passId, since: converged?.request_hwm ?? null, prefix: trend });
     const watermark = await readConvergedWatermark(tx, { worktreeId: context.binding.worktree_id, sourceId, incarnation }, null, OPEN_AT_STAMP_CAP, { prior: converged?.writeback });
     value.obligations.converged = { target: head, at, ...watermark, parser_fp: parserFp, pack, selection_fp: selectionFp,
       last_full_at: kind === 'full' || !converged ? at : converged.last_full_at, passes_since_full: kind === 'full' || !converged ? 0 : converged.passes_since_full + 1 };

@@ -216,6 +216,8 @@
     "listEnrichCandidates#default": {},
     "listEnrichCandidates#sourceId": {},
     "listEnrichCandidates#sourceIds+reenrich": {},
+    "listEntityKeyRows#after": {},
+    "listEntityKeyRows#default": {},
     "listFactsByEntity#allFilters": {},
     "listFactsByEntity#default": {},
     "listFactsBySession#allFilters": {},
@@ -351,6 +353,14 @@
     },
     "revertToVersion#default": {},
     "revertToVersion#sourceId": {},
+    "sealChunks#default": {
+      "raw": 5,
+      "tx": 1
+    },
+    "sealChunks#expectedRevision": {
+      "raw": 5,
+      "tx": 1
+    },
     "searchKeyword#cjk": {
       "raw": 2,
       "tx": 1

@@ -128,6 +128,7 @@ const ROWS: readonly Row[] = [
   ['op_checkpoint_paths', 'out_of_scope', 'no_memory_text', 'op fingerprint path'],
   ['op_checkpoints', 'out_of_scope', 'no_memory_text', 'op fingerprint completed_keys'],
   ['open_loops', 'swept', 'open_loops', 'source_id dedup_key loop_type counterparty_slug counterparty_source_id counterparty_email summary evidence thread_id page_slug status detector closed_by'],
+  ['owner_only_marks', 'out_of_scope', 'text_free_ledger', 'row_table row_id'],
   ['page_aliases', 'swept', 'page_aliases', 'source_id alias_norm slug origin alias_text'],
   ['page_body_manifest', 'swept', 'segment_manifest', 'region source_id sha256 cut_kind entry_state protected_regions facts_slots outline hash_state'],
   ['page_body_staging_parts', 'swept', 'body_stagings', 'sha256 body', 'body'],

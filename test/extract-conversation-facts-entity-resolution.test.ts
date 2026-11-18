@@ -160,12 +160,14 @@ describe('conversation backfill entity resolution', () => {
         extractor: extractorFor(extractedFacts),
       });
 
+      // GBRA-574: the unresolved full name keeps its name key (facts.unbacked_entity_keys, on by default).
       expect(await dataEntities()).toEqual([
         'people/brian-example',
-        null,
+        'unlisted-person',
         null,
       ]);
       expect(result.fallback_slugify_count).toBe(1);
+      expect(result.unbacked_keys).toBe(1);
       expect(result.resolution_errors).toBe(0);
       expect(result.facts_inserted).toBe(3);
       expect(await terminalCount()).toBe(1);

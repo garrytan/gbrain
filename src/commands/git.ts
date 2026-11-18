@@ -19,6 +19,7 @@ import { isAbsolute, join, relative, sep } from 'node:path';
 import { commitAndPush, checkoutRoot, previewPaths, previewUntrack, pullShared, scopePaths, COMMIT_LOCK_NAME, SOURCE_ROOT_CONFIG, type Resolution } from '../core/git/commit-push.ts';
 import { readUntrackPageVerdict, UNTRACK_PAGE_READ_TIMEOUT_MS, type UntrackPageVerdict } from '../core/git/untrack-admission.ts';
 import type { BrainEngine } from '../core/engine.ts';
+import { capabilitiesForEngineKind } from '../core/engine-capabilities.ts';
 import type { ManagedFilesystemRoot } from '../core/persistence/filesystem-guard.ts';
 import { guardStatus, installGuard, uninstallGuard } from '../core/git/commit-guard.ts';
 import { appendPushLog } from '../core/brain-repo-durability.ts';
@@ -283,7 +284,7 @@ async function withLocalBrain<T>(fn: (engine: BrainEngine) => Promise<T>, timeou
   if (!config || (isThinClient(config) && !config.database_url)) return null;
   let engine: BrainEngine | null = null, timer: ReturnType<typeof setTimeout> | undefined;
   const work = (async () => {
-    const engineConfig = config.engine === 'pglite' ? { ...toEngineConfig(config), pglite_shared_buffers: '32MB' } : { ...toEngineConfig(config), pool_max: 1 };
+    const engineConfig = capabilitiesForEngineKind(config.engine).has('single_owner') ? { ...toEngineConfig(config), pglite_shared_buffers: '32MB' } : { ...toEngineConfig(config), pool_max: 1 };
     engine = await createEngine(engineConfig);
     await engine.connect(engineConfig);
     return fn(engine);
@@ -455,11 +456,15 @@ export async function runGit(args: string[]): Promise<number> {
       } catch { /* best-effort */ }
     }
     if (failed.code === 'push_unconfirmed' || failed.code === 'integrate_conflict' || failed.code === 'commit_outside_source_root'
-      || failed.code === 'publish_secret_found' || failed.code === 'publish_scan_unreadable') {
+      || failed.code === 'publish_secret_found' || failed.code === 'publish_scan_unreadable' || failed.code === 'push_credential_refused') {
       try {
         const bi = args.indexOf('--branch');
         const branch = bi !== -1 && args[bi + 1] ? args[bi + 1].replace(/^refs\/heads\//, '') : currentBranchOf(args);
-        if (failed.code.startsWith('publish_')) appendPushLog('refused', branch, '', failed.code);
+        if (failed.code === 'push_credential_refused') {
+          const d = JSON.parse(String(failed.detail ?? '{}')) as { commit?: string; kind?: string; username?: string | null; helpers?: Array<{ helper: string; answered: boolean }> };
+          const answered = d.helpers?.find(h => h.answered);
+          appendPushLog('refused', branch, d.commit ?? '', `push_credential_refused: the host refused the credential git used (${d.kind === 'not_found' ? 'repository not found, HTTP 404' : 'HTTP 403'}${answered ? `, from ${answered.helper}${d.username ? ` for ${d.username}` : ''}` : ''})`);
+        } else if (failed.code.startsWith('publish_')) appendPushLog('refused', branch, '', failed.code);
         else appendPushLog(failed.code === 'integrate_conflict' ? 'conflict' : 'local-only', branch, failed.detail ?? '');
       } catch { /* best-effort */ }
     }

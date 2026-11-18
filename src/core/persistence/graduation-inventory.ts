@@ -11,11 +11,13 @@ import { LATEST_VERSION } from '../migrate.ts';
 import type { ColumnTransform, Inventory, InventoryClass, InventoryEntry, LossKind } from './engine-graduation.types.ts';
 
 type EngineKind = 'pglite' | 'postgres';
+type InventoryEngines = InventoryEntry['engines'];
 
-const BOTH = { pglite: true, postgres: true } as const;
+// The Rust engine stores no relation yet, so every row says rust: false; a row that names its engines names all three.
+const BOTH: InventoryEngines = { pglite: true, postgres: true, rust: false };
 
 function entry(relation: string, cls: InventoryClass, lossKind: LossKind, reason: string,
-  extra: { kind?: 'table' | 'view'; engines?: { pglite: boolean; postgres: boolean }; transforms?: ColumnTransform[]; rowFilter?: string } = {}): InventoryEntry {
+  extra: { kind?: 'table' | 'view'; engines?: InventoryEngines; transforms?: ColumnTransform[]; rowFilter?: string } = {}): InventoryEntry {
   return {
     relation, kind: extra.kind ?? 'table', class: cls, engines: extra.engines ?? BOTH, lossKind,
     transforms: extra.transforms ?? [], ...(extra.rowFilter ? { rowFilter: extra.rowFilter } : {}), reason,
@@ -129,6 +131,7 @@ export const GRADUATION_INVENTORY: Inventory = {
     carry('op_checkpoint_paths', 'operational', 'Resumable operation checkpoints.'),
     carry('op_checkpoints', 'operational', 'Resumable operation checkpoints.'),
     carry('open_loops', 'user_data', 'Open loops and their status.'),
+    carry('owner_only_marks', 'security', 'Rows derived from a removed owner-only origin (GST-3032); dropping them would reopen those rows to other members.'),
     carry('page_aliases', 'user_data', 'Page aliases.'),
     carry('page_body_manifest', 'user_data', 'Segmented page bodies: which segment texts make each body generation, in order; without it a large page has no body.'),
     carry('page_body_staging_parts', 'operational', 'Raw parts of open upload sessions; without them a client resuming an upload starts over.'),
@@ -234,8 +237,8 @@ export const GRADUATION_INVENTORY: Inventory = {
     entry('code_traversal_cache', 'rebuild', 'operational', 'Code traversal cache; regenerated on the target.'),
     entry('page_view_digests', 'rebuild', 'operational', 'get_page view sizes and sha256 of segmented pages per revision; recomputed by the next read on the target.'),
 
-    entry('planner_stats_deltas', 'discard', 'operational', 'PGLite-only planner accounting.', { engines: { pglite: true, postgres: false } }),
-    entry('planner_stats_state', 'discard', 'operational', 'PGLite-only planner accounting.', { engines: { pglite: true, postgres: false } }),
+    entry('planner_stats_deltas', 'discard', 'operational', 'PGLite-only planner accounting.', { engines: { pglite: true, postgres: false, rust: false } }),
+    entry('planner_stats_state', 'discard', 'operational', 'PGLite-only planner accounting.', { engines: { pglite: true, postgres: false, rust: false } }),
     entry('gbrain_cycle_locks', 'discard', 'operational', 'TTL run locks; every row is an orphan under the kernel lock.'),
     entry('budget_reservations', 'discard', 'operational', 'Daily-ledger holds (src/core/budget/daily-ledger.ts) that expire within minutes; budget_ledger carries the day\'s totals, so a hold dropped mid-graduation stays counted as reserved until its UTC day ends (only tightening that day\'s cap).'),
     entry('subagent_rate_leases', 'discard', 'operational', 'Job-owned concurrency leases that expire.'),
@@ -245,7 +248,7 @@ export const GRADUATION_INVENTORY: Inventory = {
     entry('oauth_codes', 'discard', 'security', 'One-time authorization codes; an in-flight OAuth handshake restarts.'),
 
     entry('page_links', 'schema_owned', 'operational', 'View over links; each engine\'s schema defines it.', { kind: 'view' }),
-    entry('file_migration_ledger', 'schema_owned', 'operational', 'Postgres-only file storage migration ledger written by the target initSchema.', { engines: { pglite: false, postgres: true } }),
+    entry('file_migration_ledger', 'schema_owned', 'operational', 'Postgres-only file storage migration ledger written by the target initSchema.', { engines: { pglite: false, postgres: true, rust: false } }),
     entry('trust_policy_state', 'schema_owned', 'operational', 'Each engine\'s own trust policy generation counter (#5575 ENG-11), seeded by its migration; caches compare it per engine, so it is never copied or compared.'),
     entry('persistence_graduation', 'schema_owned', 'operational', 'Each engine\'s own graduation custody row (source: quiesced/cutover; target: copying..authoritative); never copied, digested or compared.'),
   ],

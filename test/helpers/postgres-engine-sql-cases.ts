@@ -43,6 +43,7 @@ const OOS = {
   raw: 'out-of-scope:raw-data',
   stub: 'out-of-scope:no-sql-stub',
   pageBody: 'out-of-scope:page-body (Wave B segmented storage, born in engine-sql/page-body.ts; pinned by test/engine-sql-page-body.test.ts)',
+  ownerOnly: 'out-of-scope:owner-only-marks (catalog and trigger DDL, born in engine-sql/owner-only-marks.ts; pinned by test/engine-parity/owner-only-marks.test.ts)',
 } as const;
 
 export const DOMAIN_OF: Record<string, string> = {
@@ -61,6 +62,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'disconnectInternal': OOS.helper,
   'initSchema': OOS.lifecycle,
   'holdSchemaMigrationLock': OOS.lifecycle,
+  'ownerOnlyMarkTriggers': OOS.ownerOnly,
   'applyForwardReferenceBootstrap': OOS.helper,
   'transaction': OOS.lifecycle,
   'transactionDirect': OOS.lifecycle,
@@ -91,7 +93,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'softDeletePage': 'pages', 'softDeletePages': 'pages', 'restorePage': 'pages', 'purgeDeletedPages': 'pages',
   'refreshPageBody': 'pages', 'updatePageContextualRetrievalState': 'pages', 'listPages': 'pages',
   'findPages': 'pages', 'countPagesBy': 'pages',
-  'getAllSlugs': 'pages', 'listAllPageRefs': 'pages', 'listPrefixSampledPages': 'pages', 'listCorpusSample': 'pages',
+  'getAllSlugs': 'pages', 'listAllPageRefs': 'pages', 'listEntityKeyRows': 'pages', 'listPrefixSampledPages': 'pages', 'listCorpusSample': 'pages',
   'resolveSlugs': 'pages', 'findByTitleFuzzy': 'pages', 'getPageTimestamps': 'pages',
   'createVersion': 'pages', 'getVersions': 'pages', 'revertToVersion': 'pages', 'updateSlug': 'pages',
   'resolveSlugWithAlias': 'pages', 'resolveSlugWithAliasDetailed': 'pages', 'setPageAliases': 'pages',
@@ -114,7 +116,7 @@ export const DOMAIN_OF: Record<string, string> = {
   // files
   'upsertFile': 'files', 'getFile': 'files', 'listFilesForPage': 'files',
   // chunks
-  'upsertChunks': 'chunks', 'getChunks': 'chunks', 'getChunkPage': 'chunks', 'getChunkWindows': 'chunks', 'countStaleChunks': 'chunks', 'sumStaleChunkChars': 'chunks',
+  'upsertChunks': 'chunks', 'sealChunks': 'chunks', 'getChunks': 'chunks', 'getChunkPage': 'chunks', 'getChunkWindows': 'chunks', 'countStaleChunks': 'chunks', 'sumStaleChunkChars': 'chunks',
   'setPageEmbeddingSignature': 'chunks', 'invalidateStaleSignatureEmbeddings': 'chunks',
   'invalidateContentDriftEmbeddings': 'chunks', 'listStaleChunks': 'chunks',
   'countChunklessPagesWithContent': 'chunks', 'listChunklessPagesWithContent': 'chunks', 'deleteChunks': 'chunks',
@@ -272,6 +274,8 @@ const EMB = new Float32Array([0.1, 0.2, 0.3]);
 const page = { type: 'person', title: 'Alice Example', compiled_truth: 'Alice Example body.', timeline: '', frontmatter: { tags: [] } };
 const pageRet: Rule = [/^\s*INSERT INTO pages \(source_id, slug/, [PAGE_ROW]];
 const pageId: Rule = [/SELECT id FROM pages/i, [{ id: 1 }]];
+/** The sealing chunk insert stamps the page's chunker version and needs the page row back. */
+const sealedPage: Rule = [/UPDATE pages SET chunker_version/, [{ id: 1 }]];
 
 function variants(method: string, list: Array<[string, (e: any) => Promise<unknown>, Rule[]?]>): SqlCase[] {
   return list.map(([variant, run, rows]) => ({ method, variant, run, rows }));
@@ -352,6 +356,10 @@ export const SQL_CASES: SqlCase[] = [
     ['sourceId', (e) => e.getAllSlugs({ sourceId: SRC })],
   ]),
   ...variants('listAllPageRefs', [['default', (e) => e.listAllPageRefs()]]),
+  ...variants('listEntityKeyRows', [
+    ['default', (e) => e.listEntityKeyRows({ types: ['person', 'company'], keys: ['email'], limit: 10 })],
+    ['after', (e) => e.listEntityKeyRows({ types: ['person'], keys: ['email', 'external_id'], after: { source_id: SRC, slug: 'people/alice-example' }, limit: 10 })],
+  ]),
   ...variants('listPrefixSampledPages', [
     ['default', (e) => e.listPrefixSampledPages({ prefixes: ['people/alice-example'] })],
     ['sourceIds', (e) => e.listPrefixSampledPages({ prefixes: ['people/alice-example'], sourceIds: SRCS, staleBias: true })],
@@ -541,6 +549,10 @@ export const SQL_CASES: SqlCase[] = [
     ['empty', (e) => e.upsertChunks(SLUG, []), [pageId]],
     ['expectedRevision', (e) => e.upsertChunks(SLUG, [{ chunk_index: 0, chunk_text: 'x', chunk_source: 'compiled_truth' }], { sourceId: SRC, expectedRevision: REVISION }), [pageId]],
     ['embeddingColumn', (e) => e.upsertChunks(SLUG, [{ chunk_index: 0, chunk_text: 'x', chunk_source: 'compiled_truth', embedding: EMB }], { embeddingColumn: { name: 'embedding_voyage', dimensions: 3, embeddingModel: 'voyage-test', vectorType: 'halfvec' } }), [pageId]],
+  ]),
+  ...variants('sealChunks', [
+    ['default', (e) => e.sealChunks(SLUG, [{ chunk_index: 0, chunk_text: 'Alice Example body.', chunk_source: 'compiled_truth' }]), [pageId, sealedPage]],
+    ['expectedRevision', (e) => e.sealChunks(SLUG, [], { sourceId: SRC, expectedRevision: REVISION }), [pageId, sealedPage]],
   ]),
   ...variants('getChunks', [
     ['default', (e) => e.getChunks(SLUG)],

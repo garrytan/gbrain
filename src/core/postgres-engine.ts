@@ -1,4 +1,5 @@
 import { tryAcquirePoolLongHold, PoolCapacityError } from './pool-budget.ts';
+import { capabilitiesForEngineKind, type EngineCapabilities } from './engine-capabilities.ts';
 import { noteRequestConfigWrite, requestConfigRows, requestConfigValue } from './config-snapshot.ts';
 import { replaceDerivedLinks, replaceDerivedLinksBatch, type DerivedLinkBatchItem, type DerivedLinkOrigin, type DerivedLinkReplacementOptions } from './derived-links.ts';
 import { mutatePageTag } from './page-state/tags.ts';
@@ -147,6 +148,8 @@ import type { PageCountQuery, PageCounts, TypeGrouper } from './page-counts.ts';
 import * as healthImpl from './engine-sql/health.ts';
 import { resolveEntityTypes } from './schema-pack/entity-types.ts';
 import * as pagesImpl from './engine-sql/pages.ts';
+import * as entityKeysImpl from './engine-sql/entity-keys.ts';
+import type { EntityKeyRow, EntityKeyRowsOpts } from './engine-sql/entity-keys.ts';
 import * as tagsImpl from './engine-sql/tags.ts';
 import * as linksImpl from './engine-sql/links.ts';
 import * as timelineImpl from './engine-sql/timeline.ts';
@@ -157,6 +160,8 @@ import type { KeywordPageWindow } from './search/keyword-statement.ts';
 import { frontmatterWhereSql } from './search/frontmatter-where.ts';
 import type { EmbeddingState, EmbeddingStateCounts, EmbeddingStateRow } from './embedding-state.ts';
 import * as chunksImpl from './engine-sql/chunks.ts';
+import * as ownerOnlyMarksImpl from './engine-sql/owner-only-marks.ts';
+import type { OwnerOnlyTriggerState } from './access/owner-only-marks.ts';
 import * as pageBodyImpl from './engine-sql/page-body.ts';
 import type { BodyFlipInput, BodyFlipResult, BodyRegion, BodyStagingInput, BodyStagingState, ManifestRow, ManifestRowInput, SegmentChunkInput,
   SegmentedPageMeta, SegmentSweepOptions, SegmentSweepResult, SegmentTextInput } from './page-body/types.ts';
@@ -224,6 +229,7 @@ export class PostgresEngine implements BrainEngine {
   /** Transaction clones keep chunk invalidation and replacement atomic. */
   private _chunkWritesInTransaction = false;
   readonly kind = 'postgres' as const;
+  readonly capabilities: EngineCapabilities = capabilitiesForEngineKind('postgres');
   private readonly _beforeDisconnect = new Set<() => Promise<void>>();
   private _disconnectPromise: Promise<void> | null = null;
 
@@ -1023,6 +1029,10 @@ export class PostgresEngine implements BrainEngine {
     return pagesImpl.listAllPageRefs(unscopedExecutor(this.engineSql, 'pages: unscoped on master (EO4 inventory)'));
   }
 
+  async listEntityKeyRows(opts: EntityKeyRowsOpts): Promise<EntityKeyRow[]> {
+    return entityKeysImpl.listEntityKeyRows(unscopedExecutor(this.engineSql, 'duplicate finder: brain-wide entity keys, trusted local only'), opts);
+  }
+
   // Sources SQL lives once in ./engine-sql/sources.ts (refactor wave 1, W1-extended).
   async listAllSources(opts?: { includeArchived?: boolean; localPathOnly?: boolean }): Promise<SourceRow[]> {
     return sourcesImpl.listAllSources(unscopedExecutor(this.engineSql, 'sources: unscoped on master (EO4 inventory)'), opts);
@@ -1718,6 +1728,14 @@ export class PostgresEngine implements BrainEngine {
   async listEmbeddingStateRows(opts: { sourceIds?: string[]; slugs?: string[]; states: readonly EmbeddingState[]; limit: number; purgeWindowHours: number }): Promise<EmbeddingStateRow[]> {
     const column = (await resolveActiveEmbeddingColumnFromEngine(this, { fallbackToLegacy: true })).name;
     return this.withScopedReadTransaction(opts.sourceIds, undefined, tx => chunksImpl.listEmbeddingStateRows(scopedRead(this.engineSqlOn(tx)), column, opts));
+  }
+
+  async sealChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; expectedRevision?: string }): Promise<void> {
+    await this.transaction(tx => { const e = tx as PostgresEngine; return chunksImpl.sealChunks(e.engineSql, e, slug, chunks, opts); });
+  }
+
+  async ownerOnlyMarkTriggers(opts?: { ensure?: boolean; installing?: boolean }): Promise<OwnerOnlyTriggerState> {
+    return ownerOnlyMarksImpl.ownerOnlyMarkTriggers(this.engineSql, opts);
   }
 
   async deleteChunks(slug: string, opts?: { sourceId?: string }): Promise<void> {

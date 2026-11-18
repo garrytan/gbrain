@@ -52,11 +52,11 @@ const INTERFACE_METHODS: readonly string[] = [
   // Pages CRUD
   'getPage', 'readPageSnapshot', 'readPageSnapshotsBatch', 'lockPageKeys', 'putPage', 'findDuplicatePage', 'findDuplicatePages', 'deletePage', 'deletePages', 'resolveSlugsByPaths',
   'softDeletePage', 'softDeletePages', 'restorePage', 'purgeDeletedPages', 'listPages', 'findPages', 'countPagesBy', 'resolveSlugs', 'getAllSlugs',
-  'listAllPageRefs', 'listAllSources', 'updateSourceConfig', 'listPrefixSampledPages', 'listCorpusSample',
+  'listAllPageRefs', 'listEntityKeyRows', 'listAllSources', 'updateSourceConfig', 'listPrefixSampledPages', 'listCorpusSample',
   // Search
   'searchKeyword', 'countKeywordPages', 'searchKeywordPages', 'searchTitles', 'searchVector', 'getEmbeddingsByChunkIds',
   // Chunks
-  'upsertChunks', 'getChunks', 'getChunkPage', 'getChunkWindows', 'countStaleChunks', 'sumStaleChunkChars', 'setPageEmbeddingSignature',
+  'upsertChunks', 'sealChunks', 'getChunks', 'getChunkPage', 'getChunkWindows', 'countStaleChunks', 'sumStaleChunkChars', 'setPageEmbeddingSignature',
   'invalidateStaleSignatureEmbeddings', 'invalidateContentDriftEmbeddings', 'listStaleChunks',
   'countChunklessPagesWithContent', 'listChunklessPagesWithContent', 'readEmbeddingStateCounts', 'listEmbeddingStateRows', 'deleteChunks',
   // Extraction watermark
@@ -119,6 +119,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'createSegmentedPageShell', 'flipBodyGeneration', 'openBodyStaging', 'setBodyStagingState', 'sweepSegments',
   // Wave B PR 4 per-segment derivation rows (same SQL module; covered by test/engine-sql-segment-derivations.test.ts and its Postgres arm)
   'readSegmentDerivations', 'upsertSegmentDerivations', 'retireSegmentDerivations',
+  // GST-3032 owner-only delete triggers (src/core/engine-sql/owner-only-marks.ts; covered by test/owner-only-removal-lineage.test.ts)
+  'ownerOnlyMarkTriggers',
 ];
 
 /**
@@ -163,10 +165,11 @@ const ENGINE_INTERNAL_HELPERS: readonly string[] = [
  *     list in refactor wave 1 W0: the Postgres SQL-text goldens
  *     (test/helpers/postgres-engine-sql-cases.ts) call them. Their PGLite
  *     smokes stay below, unchanged, as ex-UNCALLED shape pins.
+ *   - rewriteLinks left the list when the BrainEngine parity suite
+ *     (test/engine-parity/sync-aliases.test.ts) began calling it on every
+ *     engine arm. Its PGLite smoke stays below as an ex-UNCALLED shape pin.
  */
-const UNCALLED: readonly string[] = [
-  'rewriteLinks',           // documented no-op stub; callers exist (migrate.ts, cycle/phantom-redirect.ts)
-];
+const UNCALLED: readonly string[] = [];
 
 function methodNames(): string[] {
   return Object.getOwnPropertyNames(PGLiteEngine.prototype).filter((n) => n !== 'constructor');
@@ -303,10 +306,8 @@ const EX_UNCALLED_SHAPE_PINS: Record<string, () => Promise<void>> = {
     // Empty input short-circuits to an empty map.
     expect((await engine.getPageTimestamps([])).size).toBe(0);
   },
-};
-
-const SMOKES: Record<string, () => Promise<void>> = {
   rewriteLinks: async () => {
+    // Ex-UNCALLED: test/engine-parity/sync-aliases.test.ts calls it on every arm.
     // Documented no-op stub on PGLite: links key on integer page_id FKs, so
     // they are already correct after updateSlug. Pin the no-op contract —
     // resolves undefined and leaves the link table untouched.
@@ -318,6 +319,8 @@ const SMOKES: Record<string, () => Promise<void>> = {
     expect(after.map((l) => l.to_slug)).toEqual(before.map((l) => l.to_slug));
   },
 };
+
+const SMOKES: Record<string, () => Promise<void>> = {};
 
 describe('uncovered-method smokes (seeded PGLite)', () => {
   beforeAll(async () => {

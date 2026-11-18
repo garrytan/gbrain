@@ -250,6 +250,13 @@ export async function commitPolicyFile(root: string, relPath: string, edit: (cur
         if (e instanceof OperationError && (e.code === 'push_unconfirmed' || (e as { canonical?: string }).canonical === 'push_unconfirmed') && e.detail) {
           return { outcome: 'committed_not_pushed', commit: String(e.detail), path: relPath, note: 'Committed locally; the push is unconfirmed. Rerun gbrain git commit-push --push-only --scan-secrets to publish it.' };
         }
+        if (e instanceof OperationError && e.code === 'push_credential_refused' && gitShow(root, 'HEAD', relPath) === next) {
+          let commit: string | null = null;
+          try { commit = String(JSON.parse(String(e.detail ?? '{}')).commit ?? '') || null; } catch { /* fall back to HEAD */ }
+          commit ??= spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8', env: gitChildEnv() }).stdout.trim() || null;
+          return { outcome: 'committed_not_pushed', commit, path: relPath,
+            note: `Committed locally; nothing was pushed. ${e.code}: ${e.message} Fix: ${e.suggestion}` };
+        }
         if (e instanceof OperationError && (e.code === 'publish_secret_found' || e.code === 'publish_scan_unreadable') && gitShow(root, 'HEAD', relPath) === next) {
           const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8', env: gitChildEnv() }).stdout.trim();
           return { outcome: 'committed_not_pushed', commit: head || null, path: relPath,

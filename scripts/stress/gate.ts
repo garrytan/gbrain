@@ -33,7 +33,11 @@ import {
 } from './plan.ts';
 
 const ROOT = resolve(import.meta.dir, '..', '..');
-export const GATE_SHARD_BUDGET_MS = 25 * 60_000;
+export const GATE_SHARD_BUDGET_MS = 12 * 60_000;
+export const GATE_UNMEASURED_QUANTILE = 0.95;
+/** GitHub refuses a job matrix over 256 entries; past it the gate re-plans at the old 25-minute budget. */
+export const GATE_MAX_SHARDS = 256;
+export const GATE_FALLBACK_SHARD_BUDGET_MS = 25 * 60_000;
 export const RACE_SHARD_BUDGET_MS = 55 * 60_000;
 export const RACE_BASE_SHARDS = 6;
 export const RACE_MAX_SHARDS = 12;
@@ -63,7 +67,7 @@ function liveKeyOnly(root: string): Set<string> {
   return new Set(existsSync(path) ? readFileSync(path, 'utf8').split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#')) : []);
 }
 
-function classify(root: string, files: string[], weights: Weights): { stress: Array<PlanFile & { perIterationMs: number; setupMs: number }>; notStressed: NotStressed[] } {
+function classify(root: string, files: string[], weights: Weights, unmeasured = 0.75): { stress: Array<PlanFile & { perIterationMs: number; setupMs: number }>; notStressed: NotStressed[] } {
   const live = liveKeyOnly(root);
   const stress: Array<PlanFile & { perIterationMs: number; setupMs: number }> = [];
   const notStressed: NotStressed[] = [];
@@ -72,7 +76,7 @@ function classify(root: string, files: string[], weights: Weights): { stress: Ar
     const reason = notStressedReason(file, live);
     if (reason) { notStressed.push({ file, reason }); continue; }
     const profile = profileFor(file, { armed: armMode(root, file).armed, postgres: true });
-    const perIterationMs = iterationEstimateMs(file, profile.name, weights);
+    const perIterationMs = iterationEstimateMs(file, profile.name, weights, unmeasured);
     stress.push({ file, profile: profile.name, iterations: DEFAULT_ITERATIONS, estimateMs: 0, perIterationMs, setupMs: profile.prereq ? 180_000 : 0 });
   }
   return { stress, notStressed };
@@ -81,7 +85,7 @@ function classify(root: string, files: string[], weights: Weights): { stress: Ar
 export interface GatePlanInput { event: string; baseSha?: string; headSha?: string; stressFiles?: string; stressBase?: string; stressHead?: string }
 
 /** The PR gate: every changed test file plus helper importers, ten iterations, shards under the budget. */
-export function planGate(root: string, input: GatePlanInput, weights = loadWeights(root)): Plan | { error: string } {
+export function planGate(root: string, input: GatePlanInput, weights = loadWeights(root)): Plan | { error: string; why?: string } {
   let files: string[];
   let helpers: HelperExpansion[] = [];
   let base = input.baseSha ?? '';
@@ -115,8 +119,11 @@ export function planGate(root: string, input: GatePlanInput, weights = loadWeigh
     return emptyPlan('gate', 'not a PR event');
   }
   files = withWrappers(root, files);
-  const { stress, notStressed } = classify(root, files, weights);
-  const shards = planShards(stress, DEFAULT_ITERATIONS, GATE_SHARD_BUDGET_MS);
+  const { stress, notStressed } = classify(root, files, weights, GATE_UNMEASURED_QUANTILE);
+  let shards = planShards(stress, DEFAULT_ITERATIONS, GATE_SHARD_BUDGET_MS);
+  if (shards.length > GATE_MAX_SHARDS) shards = planShards(stress, DEFAULT_ITERATIONS, GATE_FALLBACK_SHARD_BUDGET_MS);
+  if (shards.length > GATE_MAX_SHARDS) return { error: `the plan needs ${shards.length} shards of up to ${GATE_FALLBACK_SHARD_BUDGET_MS / 60_000} minutes, past GitHub's ${GATE_MAX_SHARDS}-job matrix limit. Next: split the PR so each part plans ${GATE_MAX_SHARDS} shards or fewer; this head's stress check stays red until then`,
+    why: `GitHub refuses a matrix over ${GATE_MAX_SHARDS} jobs, and stressing only part of the changed files would let the rest land untested` };
   return {
     ...emptyPlan('gate', stress.length ? `${stress.length} file(s) × ${DEFAULT_ITERATIONS} iterations` : 'no changed test files to stress'),
     run: stress.length > 0, diagnostic, base, head, helpers, notStressed, shards,
@@ -435,7 +442,7 @@ async function main(argv: string[]): Promise<number> {
     if (mode === 'gate') {
       const result = planGate(ROOT, { event: env.EVENT ?? '', baseSha: env.BASE_SHA, headSha: env.HEAD_SHA, stressFiles: env.STRESS_FILES, stressBase: env.STRESS_BASE, stressHead: env.STRESS_HEAD });
       if ('error' in result) {
-        console.error(`::error::stress gate: the changed-file list could not be computed: ${result.error}. Why: the gate stresses every test file the diff touches, so a guessed list could skip one. Docs: ${STRESS_DOCS}`);
+        console.error(`::error::stress gate: the plan could not be computed: ${result.error}. Why: ${result.why ?? 'the gate stresses every test file the diff touches, so a guessed list could skip one'}. Docs: ${STRESS_DOCS}`);
         return 1;
       }
       plan = result;

@@ -1,6 +1,9 @@
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
+import type { EngineCapabilities } from './engine-capabilities.ts';
+import type { OwnerOnlyTriggerState } from './access/owner-only-marks.ts';
 import type { GetVersionsOpts, PageVersionRows } from './page-state/version-types.ts';
 import type { PageSnapshotBatch } from './page-snapshot-batch.ts';
+import type { EntityKeyRow, EntityKeyRowsOpts } from './engine-sql/entity-keys.ts';
 import type { LinkReadScope } from './link-validity.ts';
 import type { ChunkWindowRequest, ChunkWindowOpts, ChunkWindowPage } from './search/chunk-windows.ts';
 import type { KeywordPageWindow } from './search/keyword-statement.ts';
@@ -832,6 +835,7 @@ export function clampSearchLimit(limit: number | undefined, defaultLimit = 20, c
 export interface BrainEngine {
   /** Discriminator: lets migrations and other consumers branch on engine kind without instanceof + dynamic imports. */
   readonly kind: 'postgres' | 'pglite';
+  readonly capabilities: EngineCapabilities; // what this engine can do, by name (engine-capabilities.ts); ask it instead of branching on kind
 
   // Lifecycle
   connect(config: EngineConfig): Promise<void>;
@@ -1109,6 +1113,9 @@ export interface BrainEngine {
    */
   getAllSlugs(opts?: { sourceId?: string }): Promise<Set<string>>;
 
+  /** Duplicate finder: live, unretired pages of these types in unarchived sources with only the named frontmatter keys, keyset-paged by (source_id, slug) (SQL in engine-sql/entity-keys.ts). */
+  listEntityKeyRows(opts: EntityKeyRowsOpts): Promise<EntityKeyRow[]>;
+
   /**
    * v0.32.8: cross-source page enumeration. Returns one row per (slug,
    * source_id) pair across the brain, ordered by (source_id, slug) for
@@ -1269,6 +1276,18 @@ export interface BrainEngine {
    * insert are sent together and the seal's page is checked against it (`deferSeal`: by the caller, sealImportedPage).
    */
   upsertChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; sealChunkerVersion?: number; pageId?: number; deferSeal?: true } & BatchOpts): Promise<void>;
+  /**
+   * Replace a page's chunks and seal its text projection at its current revision in one transaction, so search and
+   * `getChunks` serve them (upsertChunks alone leaves the projection unsealed). Refuses a missing, deleted or
+   * segmented page, an archived source and a stale `expectedRevision` (SQL in engine-sql/chunks.ts).
+   */
+  sealChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; expectedRevision?: string }): Promise<void>;
+  /**
+   * GST-3032: the owner-only delete triggers (migration v322) that are missing or disabled, with each table's owner. With
+   * `ensure`, on a brain holding an owner-only source or a mark, sets the unguarded mark that reads owner-only lineage
+   * closed (a gap; not while `installing`), then re-creates each one on a table the current role owns (SQL in engine-sql/owner-only-marks.ts).
+   */
+  ownerOnlyMarkTriggers(opts?: { ensure?: boolean; installing?: boolean }): Promise<OwnerOnlyTriggerState>;
   /**
    * Read every chunk for a page. Scope precedence mirrors getPage (#2555):
    * a federated grant (`sourceIds[]`) wins over scalar `sourceId`; with
