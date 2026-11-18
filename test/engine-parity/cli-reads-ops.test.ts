@@ -140,6 +140,43 @@ describe('engine parity: read-command statements', () => {
     return { all, world: await read(true), paged: await read(false, 1, 1) };
   });
 
+  parityTest('listUnattributedFacts drops expired facts, facts of a deleted page and, with excludePrivateProvenance, facts of a private page', {
+    methods: ['putPage', 'softDeletePage', 'insertFact', 'insertFacts', 'expireFact', 'listUnattributedFacts'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    await engine.putPage('notes/open-origin', note('Open', 'an open origin'));
+    await engine.putPage('notes/private-origin', note('Private', 'a private origin', { visibility: 'private' }));
+    await engine.putPage('notes/gone-origin', note('Gone', 'a deleted origin'));
+    await engine.insertFacts([
+      { fact: 'from the open page', entity_slug: null, source_markdown_slug: 'notes/open-origin', row_num: 1, kind: 'preference', visibility: 'world', source: 'fence' },
+      { fact: 'from the private page', entity_slug: null, source_markdown_slug: 'notes/private-origin', row_num: 1, kind: 'fact', visibility: 'world', source: 'fence' },
+      { fact: 'from the deleted page', entity_slug: null, source_markdown_slug: 'notes/gone-origin', row_num: 1, kind: 'fact', visibility: 'world', source: 'fence' },
+    ] as never, { source_id: 'default' });
+    await engine.softDeletePage('notes/gone-origin');
+    const loose = (fact: string, extra: Record<string, unknown> = {}, source_id = 'default') =>
+      engine.insertFact({ fact, entity_slug: null, visibility: 'world', source: 'mcp:remember', embedding: null, ...extra } as never, { source_id });
+    const expired = await loose('an expired fact');
+    expect(await engine.expireFact(expired.id)).toBe(true);
+    await loose('a fact past its valid_until', { valid_until: new Date('2020-01-01T00:00:00Z') });
+    await loose('a fact from the cli', { source: 'cli' });
+    await loose('a fact in another source', {}, 'other');
+    const read = async (opts: { sourceIds: string[]; excludePrivateProvenance: boolean }) => {
+      const rows = await engine.listUnattributedFacts({ worldOnly: false, limit: 10, offset: 0, ...opts });
+      return rows.map(({ id, created_at, ...r }) => {
+        // PGLite returns created_at as timestamptz::text (`2026-01-02 03:04:05.678+00`) and id as a number.
+        expect(created_at).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d{1,6})?\+00$/);
+        return { ...r, idType: typeof id };
+      });
+    };
+    const all = await read({ sourceIds: ['default'], excludePrivateProvenance: false });
+    const open = await read({ sourceIds: ['default'], excludePrivateProvenance: true });
+    const federated = await read({ sourceIds: ['default', 'other'], excludePrivateProvenance: true });
+    expect(all.map(r => r.fact)).toEqual(['a fact from the cli', 'from the private page', 'from the open page']);
+    expect(open.map(r => r.fact)).toEqual(['a fact from the cli', 'from the open page']);
+    expect(federated.map(r => r.fact)).toEqual(['a fact in another source', 'a fact from the cli', 'from the open page']);
+    return { all, open, federated };
+  });
+
   parityTest('listWantedPages counts missing link targets in scope, most referenced first', { methods: ['listWantedPages', 'replaceWantedLinkRows'] }, async (engine) => {
     await engine.putPage('notes/a', note('A', 'links to missing pages'));
     await engine.putPage('notes/b', note('B', 'links too'));
