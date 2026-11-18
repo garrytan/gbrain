@@ -23,6 +23,11 @@
     "<!-- gbrain-template-stamp: {version} -->",
     "<!-- gbrain-runbook-stamp: {version} -->"
   ],
-  "review_exclude_paths": ["docs/**", "test/fixtures/goldens/**"],
+  "review_exclude_paths": [
+    "docs/**", "test/fixtures/goldens/**",
+    "rust/crates/gbrain-store/tests/fixtures/english_stem.tsv",
+    "rust/crates/gbrain-store/tests/fixtures/ts_parse.json",
+    "rust/crates/gbrain-store/tests/fixtures/tsearch.json"
+  ],
   "migrations": { "dir": "src/core/schema-migrations", "id": "^v(\\d+)-" }
 }

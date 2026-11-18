@@ -366,7 +366,7 @@ const synthesize: Operation = {
   verb: true,
   annotations: { title: 'synthesize (slow, costly — LLM-backed)', readOnlyHint: true },
   handler: async (ctx, p) => {
-    const [{ verbError }, { sourceScopeOpts }] = await Promise.all([import('./ops/contract.ts'), import('./ops/context.ts')]);
+    const [{ verbError }, { sourceScopeOpts, readHolders }] = await Promise.all([import('./ops/contract.ts'), import('./ops/context.ts')]);
     const question = typeof p.question === 'string' ? p.question.trim() : '';
     if (!question) {
       throw verbError(
@@ -384,7 +384,7 @@ const synthesize: Operation = {
       question,
       since: p.since ? String(p.since) : undefined,
       until: p.until ? String(p.until) : undefined,
-      takesHoldersAllowList: ctx.takesHoldersAllowList,
+      takesHoldersAllowList: readHolders(ctx),
       ...(scope.sourceId !== undefined ? { sourceId: scope.sourceId } : {}),
       ...(scope.sourceIds !== undefined ? { allowedSources: scope.sourceIds } : {}),
       // Fail-closed: only a context that explicitly says local gets local.

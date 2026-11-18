@@ -1448,7 +1448,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 189 table(s) the applied migrations create exist.",
+            "message": "All 190 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -2268,6 +2268,17 @@
             "elapsed_ms": "<volatile>",
             "message": "No atom retired by an empty re-extraction is waiting to be restored.",
             "name": "atom_retirements_restorable",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "count": 0,
+              "edges": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No live concept holds an input edge to a deleted page that is no longer one of its members.",
+            "name": "concept_stale_inputs",
             "status": "ok"
           },
           {
@@ -6957,7 +6968,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 189 table(s) the applied migrations create exist.",
+            "message": "All 190 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -7777,6 +7788,17 @@
             "elapsed_ms": "<volatile>",
             "message": "No atom retired by an empty re-extraction is waiting to be restored.",
             "name": "atom_retirements_restorable",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "count": 0,
+              "edges": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No live concept holds an input edge to a deleted page that is no longer one of its members.",
+            "name": "concept_stale_inputs",
             "status": "ok"
           },
           {
