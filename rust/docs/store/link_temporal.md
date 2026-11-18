@@ -34,6 +34,9 @@ writes the rows the builder returns.
 - The privacy policy of the world scope (`originPolicy`, `excludePrivate`) uses the store's page privacy rules
   (`facts::page_hidden`), the same rules `privatePagesFilterFragment` composes in SQL.
 - A repeated refresh over unchanged evidence writes nothing and returns 0.
+- `applyLinkTemporalRows` replaces the origin's derived transitions: the old rows go before the new rows are written. On
+  Postgres the SQL statements are pipelined, which keeps their order only on one connection, so the Postgres member opens a
+  transaction when its caller has none (`test/e2e/link-temporal-apply-order-postgres.test.ts`).
 
 ## The call sites and what they run on the Rust engine
 

@@ -1771,7 +1771,10 @@ export class PostgresEngine implements BrainEngine {
   linkRelationshipKeysForPages(pageIds: readonly number[]) { return linkTemporalImpl.linkRelationshipKeysForPages(this.linkTemporal, pageIds); }
   staleLinkRelationshipKeys(limit: number) { return linkTemporalImpl.staleLinkRelationshipKeys(this.linkTemporal, limit); }
   linkRelationshipKeysForOrigin(pageId: number) { return linkTemporalImpl.linkRelationshipKeysForOrigin(this.linkTemporal, pageId); }
-  applyLinkTemporalRows(input: linkTemporalImpl.LinkTemporalRows) { return linkTemporalImpl.applyLinkTemporalRows(this.linkTemporal, input); }
+  // The rows are pipelined, which keeps their order only on one connection: a call outside a transaction opens one.
+  applyLinkTemporalRows(input: linkTemporalImpl.LinkTemporalRows): Promise<linkTemporalImpl.LinkTemporalApplied> {
+    return this._pageTransaction ? linkTemporalImpl.applyLinkTemporalRows(this.linkTemporal, input) : this.transaction(tx => tx.applyLinkTemporalRows(input));
+  }
   writeManualLinkTransitions(rel: linkTemporalImpl.ManualLinkRelationship, rows: ReadonlyArray<{ kind: 'start' | 'end'; occurred_on: string }>) { return linkTemporalImpl.writeManualLinkTransitions(this.linkTemporal, rel, rows); }
   removeManualLinkTransitions(rel: { from: string; to: string; linkType?: string; sourceId: string; databaseOnly?: boolean }) { return linkTemporalImpl.removeManualLinkTransitions(this.linkTemporal, rel); }
   listRelationshipNoteRows(subjects: ReadonlyArray<{ slug: string; source_id: string }>, opts: { excludePrivate: boolean }) { return linkTemporalImpl.listRelationshipNoteRows(this.linkTemporal, subjects, opts); }

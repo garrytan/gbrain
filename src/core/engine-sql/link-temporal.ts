@@ -13,6 +13,7 @@
  * a refused capability is never swallowed (engine-capability-refusal.ts).
  */
 import { executeRawJsonb } from '../sql-query.ts';
+import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 import {
   privateLinkOriginFilterForCaller, privatePagesFilterForCaller, privatePagesFilterFragment,
 } from '../search/private-visibility.ts';
@@ -37,32 +38,40 @@ export const DERIVED_TRANSITION_PRODUCERS = ['timeline', 'explicit', 'frontmatte
 // Relationship state (link-relationships.ts refreshRelationships)
 // ---------------------------------------------------------------------------------------------------------------------
 
+/** Render `fragment`, whose only bound value is one JSONB document, and run it through executeRawJsonb (master's path). */
+function jsonbRows<R>(exec: Exec, fragment: SqlFragment): Promise<R[]> {
+  const { text, params } = renderFragment(fragment);
+  return executeRawJsonb<R>(exec, text, [], params);
+}
+
+/** Render `fragment` and run it on master's raw path, unscoped. */
+function rows<R>(exec: Exec, fragment: SqlFragment): Promise<R[]> {
+  const { text, params } = renderFragment(fragment);
+  return exec.executeRaw<R>(text, params);
+}
+
 /** The assertions, transitions and existing state rows of `keys` (already deduped temporal keys). */
 export async function readLinkRelationshipEvidence(exec: Exec, keys: readonly RelationshipKey[]): Promise<RelationshipEvidence> {
   if (!keys.length) return { assertions: [], transitions: [], existing: [] };
   const payload = { rows: keys };
-  const assertions = await executeRawJsonb<AssertionRow>(exec,
-    `SELECT v.from_page_id, v.to_page_id, v.link_type,
+  const assertions = await jsonbRows<AssertionRow>(exec, sqlFragment`SELECT v.from_page_id, v.to_page_id, v.link_type,
             COALESCE(l.origin_page_id, l.from_page_id) AS origin_id,
             COALESCE(l.assertion_tense, 'present') AS tense, l.created_at, f.source_id,
-            (${privatePagesFilterFragment('o')}) AS origin_public
-       FROM jsonb_to_recordset(($1::jsonb)->'rows') AS v(from_page_id int, to_page_id int, link_type text)
+            (${trustedSql(privatePagesFilterFragment('o'))}) AS origin_public
+       FROM jsonb_to_recordset((${payload}::jsonb)->'rows') AS v(from_page_id int, to_page_id int, link_type text)
        JOIN links l ON l.from_page_id = v.from_page_id AND l.to_page_id = v.to_page_id AND l.link_type = v.link_type
        JOIN pages f ON f.id = l.from_page_id AND f.deleted_at IS NULL
        JOIN pages t ON t.id = l.to_page_id AND t.deleted_at IS NULL
-       JOIN pages o ON o.id = COALESCE(l.origin_page_id, l.from_page_id) AND o.deleted_at IS NULL AND o.source_id = f.source_id`,
-    [], [payload]);
-  const transitions = await executeRawJsonb<TransitionRow>(exec,
-    `SELECT v.from_page_id, v.to_page_id, v.link_type, lt.origin_page_id AS origin_id, lt.kind,
+       JOIN pages o ON o.id = COALESCE(l.origin_page_id, l.from_page_id) AND o.deleted_at IS NULL AND o.source_id = f.source_id`);
+  const transitions = await jsonbRows<TransitionRow>(exec, sqlFragment`SELECT v.from_page_id, v.to_page_id, v.link_type, lt.origin_page_id AS origin_id, lt.kind,
             lt.occurred_on::text AS occurred_on, lt.producer, lt.created_at, f.source_id,
-            (o.id IS NULL OR ${privatePagesFilterFragment('o')}) AS origin_public
-       FROM jsonb_to_recordset(($1::jsonb)->'rows') AS v(from_page_id int, to_page_id int, link_type text)
+            (o.id IS NULL OR ${trustedSql(privatePagesFilterFragment('o'))}) AS origin_public
+       FROM jsonb_to_recordset((${payload}::jsonb)->'rows') AS v(from_page_id int, to_page_id int, link_type text)
        JOIN link_transitions lt ON lt.from_page_id = v.from_page_id AND lt.to_page_id = v.to_page_id AND lt.link_type = v.link_type
        JOIN pages f ON f.id = lt.from_page_id AND f.deleted_at IS NULL
        JOIN pages t ON t.id = lt.to_page_id AND t.deleted_at IS NULL
        LEFT JOIN pages o ON o.id = lt.origin_page_id
-      WHERE lt.origin_page_id IS NULL OR (o.deleted_at IS NULL AND o.source_id = f.source_id)`,
-    [], [payload]);
+      WHERE lt.origin_page_id IS NULL OR (o.deleted_at IS NULL AND o.source_id = f.source_id)`);
   const existing = await executeRawJsonb<ExistingRow>(exec,
     `SELECT lr.from_page_id, lr.to_page_id, lr.link_type, lr.scope, lr.recorded_at, lr.retired_at, lr.evidence_hash
        FROM jsonb_to_recordset(($1::jsonb)->'rows') AS v(from_page_id int, to_page_id int, link_type text)
@@ -216,7 +225,8 @@ export interface LinkTemporalApplied {
 
 /**
  * Stamp the origin's tense, replace its derived transitions, check its explicit targets and read its keys after,
- * sent together in this order. The caller refreshes the relationship state.
+ * sent together in this order. The caller refreshes the relationship state. On Postgres the statements are pipelined,
+ * which keeps their order only on one connection, so the caller holds a transaction (the engine member opens one).
  */
 export async function applyLinkTemporalRows(exec: Exec & Pick<SqlExecutor, 'dialect'>, input: LinkTemporalRows): Promise<LinkTemporalApplied> {
   const { pageId, sourceId, tenseRows, transitions, explicitTargets } = input;
@@ -301,24 +311,23 @@ export interface RelationshipNoteRow {
 export async function listRelationshipNoteRows(exec: Exec, subjects: ReadonlyArray<{ slug: string; source_id: string }>,
   opts: { excludePrivate: boolean }): Promise<RelationshipNoteRow[]> {
   if (!subjects.length) return [];
-  const privacy = opts.excludePrivate ? ` AND ${privatePagesFilterForCaller('t')} AND ${privateLinkOriginFilterForCaller('l')}` : '';
+  const privacy = opts.excludePrivate
+    ? sqlFragment` AND ${trustedSql(privatePagesFilterForCaller('t'))} AND ${trustedSql(privateLinkOriginFilterForCaller('l'))}` : sqlFragment``;
+  const endPrivacy = opts.excludePrivate ? sqlFragment` AND ${trustedSql(privatePagesFilterForCaller('xo'))}` : sqlFragment``;
   // The evidence the relationship projection counts for this scope (link-relationships.ts): an origin that is gone or in
   // another source never counts, and a private origin does not count toward the world scope.
-  const endBy = (producer: string) => `EXISTS (SELECT 1 FROM link_transitions x LEFT JOIN pages xo ON xo.id = x.origin_page_id
+  const endBy = (dream: boolean) => sqlFragment`EXISTS (SELECT 1 FROM link_transitions x LEFT JOIN pages xo ON xo.id = x.origin_page_id
         WHERE x.from_page_id = l.from_page_id AND x.to_page_id = l.to_page_id AND x.link_type = l.link_type AND x.kind = 'end'
-        AND x.occurred_on = lr_t.last_end AND x.producer ${producer}
-        AND (x.origin_page_id IS NULL OR xo.deleted_at IS NULL AND xo.source_id = f.source_id${opts.excludePrivate ? ` AND ${privatePagesFilterForCaller('xo')}` : ''}))`;
-  return exec.executeRaw<RelationshipNoteRow>(
-    `SELECT f.slug AS from_slug, f.source_id, t.slug AS to_slug, t.title AS to_title, l.link_type, lr_t.last_end::text AS last_end,
-        (${endBy("= 'dream'")} AND NOT ${endBy("<> 'dream'")}) AS end_upper_bound${TEMPORAL_LINK_SELECT_SQL}
+        AND x.occurred_on = lr_t.last_end AND x.producer ${dream ? trustedSql("= 'dream'") : trustedSql("<> 'dream'")}
+        AND (x.origin_page_id IS NULL OR xo.deleted_at IS NULL AND xo.source_id = f.source_id${endPrivacy}))`;
+  return rows<RelationshipNoteRow>(exec, sqlFragment`SELECT f.slug AS from_slug, f.source_id, t.slug AS to_slug, t.title AS to_title, l.link_type, lr_t.last_end::text AS last_end,
+        (${endBy(true)} AND NOT ${endBy(false)}) AS end_upper_bound${trustedSql(TEMPORAL_LINK_SELECT_SQL)}
        FROM links l
        JOIN pages f ON f.id = l.from_page_id
        JOIN pages t ON t.id = l.to_page_id
-       ${temporalLinkJoinSql('l', opts.excludePrivate)}
-      WHERE (f.source_id, f.slug) IN (SELECT s.source_id, s.slug FROM unnest($1::text[], $2::text[]) AS s(source_id, slug))
-        AND lr_t.semantics = 'state' AND t.deleted_at IS NULL${privacy}`,
-    [subjects.map(s => s.source_id), subjects.map(s => s.slug)],
-  );
+       ${trustedSql(temporalLinkJoinSql('l', opts.excludePrivate))}
+      WHERE (f.source_id, f.slug) IN (SELECT s.source_id, s.slug FROM unnest(${subjects.map(s => s.source_id)}::text[], ${subjects.map(s => s.slug)}::text[]) AS s(source_id, slug))
+        AND lr_t.semantics = 'state' AND t.deleted_at IS NULL${privacy}`);
 }
 
 /** What doctor's edge_validity counts, before the lag and settings it reads itself. */
@@ -334,23 +343,23 @@ export async function edgeValidityCounts(exec: Exec, opts: { sourceIds?: readonl
   const present = !!(await exec.executeRaw<{ lr: string | null }>(`SELECT to_regclass('link_relationships')::text AS lr`))[0]?.lr;
   if (!present) return null;
   const scope = opts.sourceIds?.length ? [...opts.sourceIds] : null;
-  const byStatus = await exec.executeRaw<{ status: string; n: number }>(
-    `SELECT CASE WHEN semantics = 'event' THEN 'event' WHEN disputed THEN 'disputed' ELSE status_now END AS status, COUNT(*)::int AS n
-       FROM link_relationships WHERE scope = 'all' AND ($1::text[] IS NULL OR source_id = ANY($1::text[])) GROUP BY 1`, [scope]);
-  const stale = await exec.executeRaw<{ slug: string; target: string; link_type: string; ended: string | null }>(
-    `SELECT f.slug, t.slug AS target, lr.link_type, lr.last_end::text AS ended
+  const byStatus = await rows<{ status: string; n: number }>(exec,
+    sqlFragment`SELECT CASE WHEN semantics = 'event' THEN 'event' WHEN disputed THEN 'disputed' ELSE status_now END AS status, COUNT(*)::int AS n
+       FROM link_relationships WHERE scope = 'all' AND (${scope}::text[] IS NULL OR source_id = ANY(${scope}::text[])) GROUP BY 1`);
+  const stale = await rows<{ slug: string; target: string; link_type: string; ended: string | null }>(exec,
+    sqlFragment`SELECT f.slug, t.slug AS target, lr.link_type, lr.last_end::text AS ended
        FROM link_relationships lr JOIN pages f ON f.id = lr.from_page_id JOIN pages t ON t.id = lr.to_page_id
       WHERE lr.scope = 'all' AND lr.semantics = 'state' AND lr.last_end IS NOT NULL AND lr.undated_present > 0
         AND NOT (lr.valid_ranges @> (now() AT TIME ZONE 'UTC')::date)
-        AND ($1::text[] IS NULL OR lr.source_id = ANY($1::text[]))
+        AND (${scope}::text[] IS NULL OR lr.source_id = ANY(${scope}::text[]))
         AND EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = lr.from_page_id AND l.to_page_id = lr.to_page_id
           AND l.link_type = lr.link_type AND COALESCE(l.origin_page_id, l.from_page_id) = lr.from_page_id
           AND COALESCE(l.assertion_tense, 'present') = 'present')
-      ORDER BY lr.last_end DESC LIMIT ${Math.trunc(opts.staleLimit)}`, [scope]);
-  const [p] = await exec.executeRaw<{ proposed: number; undated: number; applied: number }>(
-    `SELECT COUNT(*) FILTER (WHERE status = 'proposed')::int AS proposed, COUNT(*) FILTER (WHERE status = 'undated_unresolved')::int AS undated,
+      ORDER BY lr.last_end DESC LIMIT ${Math.trunc(opts.staleLimit)}`);
+  const [p] = await rows<{ proposed: number; undated: number; applied: number }>(exec,
+    sqlFragment`SELECT COUNT(*) FILTER (WHERE status = 'proposed')::int AS proposed, COUNT(*) FILTER (WHERE status = 'undated_unresolved')::int AS undated,
             COUNT(*) FILTER (WHERE status = 'applied')::int AS applied
-       FROM link_edge_proposals WHERE $1::text[] IS NULL OR source_id = ANY($1::text[])`, [scope]);
+       FROM link_edge_proposals WHERE ${scope}::text[] IS NULL OR source_id = ANY(${scope}::text[])`);
   return {
     byStatus: byStatus.map(r => ({ status: r.status, n: Number(r.n) })),
     stale,
@@ -362,13 +371,11 @@ export async function edgeValidityCounts(exec: Exec, opts: { sourceIds?: readonl
 export async function listPageStatusByRef(exec: Exec, refs: ReadonlyArray<{ source_id: string; slug: string }>,
   scope: { excludePrivate: boolean; includeQuarantined?: boolean }): Promise<Array<{ source_id: string; slug: string; status: unknown }>> {
   if (!refs.length) return [];
-  const priv = scope.excludePrivate ? ` AND ${privatePagesFilterForCaller('p')}` : '';
-  const quarantine = scope.includeQuarantined ? '' : ` AND ${quarantineFilterFragment('p')}`;
-  return exec.executeRaw<{ source_id: string; slug: string; status: unknown }>(
-    `SELECT p.source_id, p.slug, p.frontmatter->'status' AS status
-       FROM pages p JOIN unnest($1::text[], $2::text[]) AS u(s, g) ON p.source_id = u.s AND p.slug = u.g
-      WHERE p.deleted_at IS NULL AND p.frontmatter ? 'status'${priv}${quarantine}`,
-    [refs.map(r => r.source_id), refs.map(r => r.slug)]);
+  const priv = scope.excludePrivate ? sqlFragment` AND ${trustedSql(privatePagesFilterForCaller('p'))}` : sqlFragment``;
+  const quarantine = scope.includeQuarantined ? sqlFragment`` : sqlFragment` AND ${trustedSql(quarantineFilterFragment('p'))}`;
+  return rows<{ source_id: string; slug: string; status: unknown }>(exec, sqlFragment`SELECT p.source_id, p.slug, p.frontmatter->'status' AS status
+       FROM pages p JOIN unnest(${refs.map(r => r.source_id)}::text[], ${refs.map(r => r.slug)}::text[]) AS u(s, g) ON p.source_id = u.s AND p.slug = u.g
+      WHERE p.deleted_at IS NULL AND p.frontmatter ? 'status'${priv}${quarantine}`);
 }
 
 /** The raw rows of referring pages' record metadata: frontmatter `status` by id, and their amends / supersedes links. */
@@ -385,19 +392,19 @@ export interface RecordMetadataRows {
 export async function listRecordMetadataRows(exec: Exec, pageIds: readonly number[],
   scope: { referrerSources: readonly string[]; excludePrivate: boolean; includeQuarantined?: boolean }): Promise<RecordMetadataRows> {
   if (!pageIds.length) return { status: [], links: [] };
-  const linkPriv = scope.excludePrivate ? ` AND ${privateLinkOriginFilterForCaller('l')}` : '';
-  const targetPriv = scope.excludePrivate ? ` AND ${privatePagesFilterForCaller('t')}` : '';
-  const targetQuarantine = scope.includeQuarantined ? '' : ` AND ${quarantineFilterFragment('t')}`;
+  const linkPriv = scope.excludePrivate ? sqlFragment` AND ${trustedSql(privateLinkOriginFilterForCaller('l'))}` : sqlFragment``;
+  const targetPriv = scope.excludePrivate ? sqlFragment` AND ${trustedSql(privatePagesFilterForCaller('t'))}` : sqlFragment``;
+  const targetQuarantine = scope.includeQuarantined ? sqlFragment`` : sqlFragment` AND ${trustedSql(quarantineFilterFragment('t'))}`;
   const [status, links] = await Promise.all([
     exec.executeRaw<{ id: number; status: unknown }>(`SELECT id, frontmatter->'status' AS status FROM pages WHERE id = ANY($1::int[])`, [[...pageIds]]),
-    exec.executeRaw<{ from_id: number; slug: string; link_type: string; since: string | null }>(
-      `SELECT DISTINCT l.from_page_id AS from_id, t.slug, l.link_type,
+    rows<{ from_id: number; slug: string; link_type: string; since: string | null }>(exec,
+      sqlFragment`SELECT DISTINCT l.from_page_id AS from_id, t.slug, l.link_type,
               CASE WHEN l.link_type = 'amends' THEN to_char(r.first_start, 'YYYY-MM-DD') END AS since
-         FROM links l JOIN pages t ON t.id = l.to_page_id AND t.deleted_at IS NULL AND t.source_id = ANY($3::text[])${targetPriv}${targetQuarantine}
+         FROM links l JOIN pages t ON t.id = l.to_page_id AND t.deleted_at IS NULL AND t.source_id = ANY(${[...scope.referrerSources]}::text[])${targetPriv}${targetQuarantine}
          LEFT JOIN link_relationships r ON r.from_page_id = l.from_page_id AND r.to_page_id = l.to_page_id
-              AND r.link_type = l.link_type AND r.scope = $2
-        WHERE l.from_page_id = ANY($1::int[]) AND l.link_type IN ('amends', 'supersedes')${linkPriv}
-        ORDER BY l.from_page_id, t.slug`, [[...pageIds], scope.excludePrivate ? 'world' : 'all', [...scope.referrerSources]]).catch(() => []),
+              AND r.link_type = l.link_type AND r.scope = ${scope.excludePrivate ? 'world' : 'all'}
+        WHERE l.from_page_id = ANY(${[...pageIds]}::int[]) AND l.link_type IN ('amends', 'supersedes')${linkPriv}
+        ORDER BY l.from_page_id, t.slug`).catch(() => []),
   ]);
   return { status, links };
 }

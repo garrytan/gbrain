@@ -40,6 +40,7 @@ import { LINK_EXTRACTION_GENERATION_KEY } from '../../src/core/line-grammar.ts';
 import { resetFtsLanguageCache } from '../../src/core/fts-language.ts';
 import { parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { withEnv } from '../helpers/with-env.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -325,24 +326,23 @@ describe('engine parity: link temporal state', () => {
     { methods: ['putPage', 'softDeletePage', 'countSearchVectorRows', 'replaceSearchVectorTriggerFunction', 'backfillSearchVectors',
       'ensureFactsKeywordIndex', 'getConfig', 'setConfig', 'unsetConfig'] },
     async (engine) => {
-      const before = process.env.GBRAIN_FTS_LANGUAGE;
-      delete process.env.GBRAIN_FTS_LANGUAGE;
-      resetFtsLanguageCache();
-      try {
-        await engine.putPage(ALICE, page('Alice', { type: 'person' }));
-        await engine.putPage(ACME, page('Acme', { type: 'company' }));
-        await engine.putPage('notes/gone', page('Gone'));
-        await engine.softDeletePage('notes/gone');
-        const strip = ({ durationMs, ...rest }: Awaited<ReturnType<typeof runReindexSearchVector>>) => ({ ...rest, durationMs: typeof durationMs });
-        const dry = strip(await runReindexSearchVector(engine, { dryRun: true, json: true }));
-        const run = strip(await runReindexSearchVector(engine, { yes: true, json: true, args: ['--yes'] }));
-        const marker = await engine.getConfig('search.fts_reindex_in_progress');
-        expect(run.status).toBe('ok');
-        return { dry, run, marker };
-      } finally {
-        if (before === undefined) delete process.env.GBRAIN_FTS_LANGUAGE; else process.env.GBRAIN_FTS_LANGUAGE = before;
+      return withEnv({ GBRAIN_FTS_LANGUAGE: undefined }, async () => {
         resetFtsLanguageCache();
-      }
+        try {
+          await engine.putPage(ALICE, page('Alice', { type: 'person' }));
+          await engine.putPage(ACME, page('Acme', { type: 'company' }));
+          await engine.putPage('notes/gone', page('Gone'));
+          await engine.softDeletePage('notes/gone');
+          const strip = ({ durationMs, ...rest }: Awaited<ReturnType<typeof runReindexSearchVector>>) => ({ ...rest, durationMs: typeof durationMs });
+          const dry = strip(await runReindexSearchVector(engine, { dryRun: true, json: true }));
+          const run = strip(await runReindexSearchVector(engine, { yes: true, json: true, args: ['--yes'] }));
+          const marker = await engine.getConfig('search.fts_reindex_in_progress');
+          expect(run.status).toBe('ok');
+          return { dry, run, marker };
+        } finally {
+          resetFtsLanguageCache();
+        }
+      });
     },
   );
 });

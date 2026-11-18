@@ -20,7 +20,7 @@ export async function countSearchVectorRows(exec: Exec): Promise<{ pages: number
   const counts = await exec.executeRaw<{ pages: number; chunks: number }>(
     `SELECT
        (SELECT COUNT(*)::int FROM pages WHERE search_vector IS NOT NULL) AS pages,
-       (SELECT COUNT(*)::int FROM content_chunks WHERE search_vector IS NOT NULL) AS chunks`
+       (SELECT COUNT(*)::int FROM content_chunks WHERE search_vector IS NOT NULL) AS chunks -- chunk-visibility-ok: the rebuild re-tokenizes every stored chunk row, staged and retired included`
   );
   return { pages: counts[0]?.pages ?? 0, chunks: counts[0]?.chunks ?? 0 };
 }
