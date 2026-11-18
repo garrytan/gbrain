@@ -7,7 +7,8 @@
  * other's says `engine: 'rust'` (the opt-in engine value). Then every read command below runs with `--json` on both
  * brains, and the parsed JSON is compared after what no two runs can share is normalised: time stamps, UUIDs, row ids
  * timings, clock-derived values and each brain's temp path (the rules of test/rust-engine-differential.test.ts),
- * and fractions agree to one part in a million (clock-decayed scores move between runs milliseconds apart).
+ * and fractions agree to one part in a million (clock-decayed scores move between runs milliseconds apart). A score
+ * that decays with a page's age is compared without its clock term (withAgeDecayCompared).
  *
  * When a setup write is refused on the Rust brain (the typed refusal), the Rust brain does not hold the fixture, and
  * comparing its reads with the full PGLite brain would only report the missing pages. A third brain, the mirror,
@@ -151,6 +152,30 @@ function same(a: unknown, b: unknown): boolean {
     return ka.length === kb.length && ka.every((k, i) => k === kb[i] && same((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));
   }
   return a === b;
+}
+
+/**
+ * Scores that decay with a page's age. The two brains are written by two processes that finish seconds apart, and each
+ * read runs in its own process, so the same page has two write times and two read times, and salience's flat recency
+ * term (`1 / (1 + age in days)`, the default `buildRecencyComponentSql` branch) differs by those gaps alone. Run on one
+ * fixed clock, both engines print the same score. Here the recency term is taken off each row with that row's own write
+ * time and one shared read time, and the clock-free rest (`emotional_weight * 5 + ln(1 + take_count)`) must agree to
+ * 1e-4, about eight seconds of read-time gap. When it does, the Rust row takes the reference row's score; when it does
+ * not, the row is left as printed and fails the comparison. Rows pair by position and must name the same page.
+ */
+const AGE_DECAYED = new Set(['salience']);
+function withAgeDecayCompared(args: string[], ref: unknown, rust: unknown): unknown {
+  if (!AGE_DECAYED.has(args[0]) || !Array.isArray(ref) || !Array.isArray(rust)) return rust;
+  const now = Date.now();
+  const clockFree = (row: Record<string, unknown>) => (row.score as number) - 1 / (1 + (now - Date.parse(String(row.updated_at))) / 86_400_000);
+  return rust.map((row, i) => {
+    const want = ref[i] as Record<string, unknown> | undefined;
+    const r = row as Record<string, unknown>;
+    if (!want || r.slug !== want.slug || r.source_id !== want.source_id) return row;
+    if (typeof r.score !== 'number' || typeof want.score !== 'number') return row;
+    if (typeof r.updated_at !== 'string' || typeof want.updated_at !== 'string') return row;
+    return Math.abs(clockFree(r) - clockFree(want)) <= 1e-4 ? { ...r, score: want.score } : row;
+  });
 }
 
 /** stdout parsed as JSON, or undefined when it is not JSON. */
@@ -301,12 +326,12 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       }
       const ref = useMirror ? await cli(brains.mirror, args) : pg;
       const refBrain = useMirror ? brains.mirror : brains.pglite;
-      const asJson = (run: Run, brain: Brain) => {
-        const json = parseJson(run.stdout);
-        return normalize(json === undefined ? `${run.stdout}\n${run.stderr}` : json, pathsOf(brain));
-      };
-      const want = { exitCode: ref.exitCode, json: asJson(ref, refBrain) };
-      const got = { exitCode: rust.exitCode, json: asJson(rust, brains.rust) };
+      const asJson = (run: Run, brain: Brain, json = parseJson(run.stdout)) =>
+        normalize(json === undefined ? `${run.stdout}\n${run.stderr}` : json, pathsOf(brain));
+      const refJson = parseJson(ref.stdout);
+      const rustJson = parseJson(rust.stdout);
+      const want = { exitCode: ref.exitCode, json: asJson(ref, refBrain, refJson) };
+      const got = { exitCode: rust.exitCode, json: asJson(rust, brains.rust, rustJson === undefined ? undefined : withAgeDecayCompared(args, refJson, rustJson)) };
       const equal = got.exitCode === want.exitCode && same(got.json, want.json);
       const notes = [useMirror ? 'vs mirror' : '', equal && ref.exitCode !== 0 ? `both exit ${ref.exitCode}` : '', equal ? '' : `exit ${rust.exitCode}`].filter(Boolean);
       table.push({ command: label(args), state: equal ? 'equal' : 'diverged', note: notes.join(', ') });
@@ -334,8 +359,10 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
   // The contract here is that doctor runs on a Rust brain: it finishes, fails nothing, never falls back to the
   // filesystem-only checks, and says why for each check it could not run. The lists below pin every difference
   // from PGLite that is not a typed refusal, so a new one fails this test until it is reviewed and listed.
+  // The reference is the mirror: PGLite holding exactly the writes the Rust brain completed (a recorded write above
+  // adds a page to the PGLite brain only), so a warning that counts pages or chunks compares on the same data.
   test('doctor --json on a Rust brain runs every check and names the cause of each warning', async () => {
-    const [pg, rust] = await Promise.all([cli(brains.pglite, ['doctor', '--json']), rustArm === 'on' ? cli(brains.rust, ['doctor', '--json']) : Promise.resolve(null)]);
+    const [pg, rust] = await Promise.all([cli(brains.mirror, ['doctor', '--json']), rustArm === 'on' ? cli(brains.rust, ['doctor', '--json']) : Promise.resolve(null)]);
     type Check = { name: string; status: string; message: string };
     const pgReport = parseJson(pg.stdout) as { checks?: Check[] } | undefined;
     expect({ exitCode: pg.exitCode, checks: Array.isArray(pgReport?.checks) }).toEqual({ exitCode: 0, checks: true });
@@ -345,6 +372,8 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
     expect(`${rust.stdout}\n${rust.stderr}`).not.toMatch(/DB-backed doctor run failed|filesystem-only/);
     const checks = report!.checks!;
     const pgNames = new Set(pgReport!.checks!.map((c) => c.name));
+    const pgByName = new Map(pgReport!.checks!.map((c) => [c.name, c]));
+    const likePglite = (c: Check) => pgByName.get(c.name)?.status === c.status && pgByName.get(c.name)?.message === c.message;
     const names = new Set(checks.map((c) => c.name));
     const TYPED = /does not support \w+ yet \(it needs the \w+ capability\)/;
     const sorted = (xs: Iterable<string>) => [...xs].sort();
@@ -353,8 +382,11 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // Engine-specific checks: PGLite-only (scale, local path, file scans) and the managed-sync checks PGLite skips.
       onlyPglite: sorted([...pgNames].filter((n) => !names.has(n))),
       onlyRust: sorted([...names].filter((n) => !pgNames.has(n))),
-      // Warnings that do not quote the typed refusal: each one is a refused read the check reports in its own words.
-      untypedWarnings: sorted(checks.filter((c) => c.status !== 'ok' && !TYPED.test(c.message)).map((c) => c.name)),
+      // Warnings that do not quote the typed refusal and differ from PGLite: each one is a refused read the check
+      // reports in its own words.
+      untypedWarnings: sorted(checks.filter((c) => c.status !== 'ok' && !TYPED.test(c.message) && !likePglite(c)).map((c) => c.name)),
+      // Warnings with the same status and message as PGLite on the same data: the brain itself warrants them.
+      warnLikePglite: sorted(checks.filter((c) => c.status !== 'ok' && !TYPED.test(c.message) && likePglite(c)).map((c) => c.name)),
       // Checks that report ok although a refused read stopped them: none. A refused check warns, health unknown.
       okWhileRefused: sorted(checks.filter((c) => c.status === 'ok' && TYPED.test(c.message)).map((c) => c.name)),
     }).toEqual({
@@ -365,11 +397,14 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       onlyRust: ['canonical_content_writes', 'checkout_lagging', 'commits_outside_source_root', 'dirty_age', 'git_convergence',
         'quarantined_changes', 'shared_skills_sources', 'sync_failures', 'tracked_ownership_marker',
         'transcript_secret_exposure'],
-      untypedWarnings: ['backup_coverage', 'canonical_content_writes', 'child_table_orphans', 'embedding_provider',
+      untypedWarnings: ['backup_coverage', 'canonical_content_writes', 'child_table_orphans',
         'entity_link_coverage', 'extract_atoms_backlog', 'fact_take_vectors', 'graph_coverage', 'orphan_ratio',
-        // pack_upgrade_available warns with the same message as PGLite: the pack reads are served.
-        'pack_upgrade_available', 'raw_provenance', 'retrieval_reflex_health', 'sync_failures', 'text_projection_readiness',
+        'raw_provenance', 'retrieval_reflex_health', 'sync_failures', 'text_projection_readiness',
         'timeline_coverage'],
+      // The imported fixture has no embeddings, so both engines score it below 100 and count its chunks stale; the pack
+      // reads are served, so the successor notice is the same. embeddings is not here: Rust cannot read the backlog
+      // age, so it warns with that typed refusal where PGLite reads the age and passes.
+      warnLikePglite: ['brain_score', 'embed_staleness', 'embedding_provider', 'pack_upgrade_available'],
       okWhileRefused: [],
     });
     const count = (s: string) => checks.filter((c) => c.status === s).length;

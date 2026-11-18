@@ -14,7 +14,9 @@
 //! keep each page's best chunk (highest score, then lowest chunk id), apply the keyset
 //! `score < s OR (score = s AND page_id > p)`, order by score descending and page id, and take
 //! `LIMIT $limit OFFSET $offset` without clamping. The query is the raw one (no dash-run
-//! collapse), and `stale` is always false. With `handlesOnly` only the handle arm runs
+//! collapse). `stale` is true when the page's newest timeline entry is newer than the page
+//! (`p.updated_at < MAX(te.created_at)`), read in the same snapshot as the match. With
+//! `handlesOnly` only the handle arm runs
 //! (`searchHandlePages`, the keyword arm's rows for the pages a slug handle names).
 
 use std::collections::BTreeMap;
@@ -28,6 +30,7 @@ use crate::Store;
 use crate::chunks::{ChunkRecord, read_chunks, read_segment_view};
 use crate::error::{Result, StoreError};
 use crate::pages::{PageRecord, all_pages};
+use crate::timeline::latest_entry_micros;
 use serde_json::Value;
 
 /// `KEYWORD_COUNT_CAP` (search/keyword-statement.ts).
@@ -36,10 +39,11 @@ const KEYWORD_COUNT_CAP: usize = 10_000;
 /// `KEYWORD_PHRASE_FACTOR` (search/sql-ranking.ts).
 const KEYWORD_PHRASE_FACTOR: f64 = 2.0;
 
-/// A page's best matching chunk.
+/// A page's best matching chunk, and whether the page is stale (only read when asked for).
 struct Best {
     score: f64,
     chunk: ChunkRecord,
+    stale: bool,
 }
 
 struct Matcher {
@@ -49,10 +53,12 @@ struct Matcher {
 
 impl Store {
     /// Visits every page that matches with its best chunk; `visit` returns false to stop.
+    /// `with_stale` reads each matched page's newest timeline entry for `Best::stale`.
     fn keyword_pages(
         &self,
         query: &str,
         options: &KeywordOptions,
+        with_stale: bool,
         mut visit: impl FnMut(PageRecord, Best) -> bool,
     ) -> Result<()> {
         if query.trim().is_empty() {
@@ -108,13 +114,21 @@ impl Store {
                     .as_ref()
                     .is_none_or(|b| score > b.score || (score == b.score && chunk.id < b.chunk.id));
                 if better {
-                    best = Some(Best { score, chunk });
+                    best = Some(Best {
+                        score,
+                        chunk,
+                        stale: false,
+                    });
                 }
             }
-            if let Some(best) = best
-                && !visit(page, best)
-            {
-                break;
+            if let Some(mut best) = best {
+                if with_stale {
+                    best.stale = latest_entry_micros(&*read, page.id)?
+                        .is_some_and(|latest| page.updated_at_us < latest);
+                }
+                if !visit(page, best) {
+                    break;
+                }
             }
         }
         Ok(())
@@ -123,7 +137,7 @@ impl Store {
     /// `countKeywordPages`: the matching pages, at most `KEYWORD_COUNT_CAP + 1`.
     pub fn count_keyword_pages(&self, query: &str, options: &KeywordOptions) -> Result<u64> {
         let mut n = 0usize;
-        self.keyword_pages(query, options, |_, _| {
+        self.keyword_pages(query, options, false, |_, _| {
             n += 1;
             n <= KEYWORD_COUNT_CAP
         })?;
@@ -152,7 +166,7 @@ impl Store {
         // Keyed by (score descending, page id) so the walk is the final order.
         let mut kept: BTreeMap<(std::cmp::Reverse<OrdF64>, u64), (PageRecord, Best)> =
             BTreeMap::new();
-        self.keyword_pages(query, options, |page, best| {
+        self.keyword_pages(query, options, true, |page, best| {
             let passes = after
                 .is_none_or(|(s, p)| best.score < s || (best.score == s && (page.id as f64) > p));
             if passes {
@@ -167,7 +181,7 @@ impl Store {
             .into_values()
             .skip(offset)
             .take(limit.unwrap_or(usize::MAX))
-            .map(|(page, best)| result_row(&page, &best.chunk, best.score, false))
+            .map(|(page, best)| result_row(&page, &best.chunk, best.score, best.stale))
             .collect())
     }
 }
@@ -313,5 +327,46 @@ mod tests {
             score(&plain, "notes/one") * 2.0
         );
         assert_eq!(score(&phrased, "notes/three"), score(&plain, "notes/three"));
+    }
+
+    #[test]
+    fn a_page_with_a_timeline_entry_newer_than_the_page_is_stale_on_both_arms() {
+        let store = seed();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let entry = crate::timeline::TimelineInput {
+            date: Some("2026-01-02".into()),
+            summary: Some("met".into()),
+            ..crate::timeline::TimelineInput::default()
+        };
+        store
+            .add_timeline_entry(
+                "notes/two",
+                &entry,
+                &crate::timeline::AddTimelineOptions::default(),
+            )
+            .unwrap();
+        let stale = |rows: &[Value]| {
+            rows.iter()
+                .map(|r| (r["slug"].as_str().unwrap().to_string(), r["stale"].clone()))
+                .collect::<Vec<_>>()
+        };
+        let text = store
+            .search_keyword_pages("red apple", &opts(json!({})))
+            .unwrap();
+        assert_eq!(
+            stale(&text),
+            [
+                ("notes/two".to_string(), json!(true)),
+                ("notes/one".to_string(), json!(false)),
+                ("notes/three".to_string(), json!(false)),
+            ]
+        );
+        let handles = store
+            .search_keyword_pages(
+                "two",
+                &opts(json!({ "handles": ["two"], "handlesOnly": true })),
+            )
+            .unwrap();
+        assert_eq!(stale(&handles), [("notes/two".to_string(), json!(true))]);
     }
 }

@@ -28,7 +28,34 @@ settings on the open store. It writes no records and has no keys.
   or unset tier is an undeclared writer (`unknown`). The opened ids are the pieces of the comma list that are the
   canonical text of an id: `f.id::text = ANY(string_to_array(setting, ','))` compares text, so `007`, ` 7` and `x`
   open nothing.
-- `write_trust()` (crate-only): the `WriteTrust` that `trust::stamp` takes. No writer calls it yet (lane 4).
+- `write_trust()` (crate-only): the `WriteTrust` that `trust::stamp` takes. `Store::write` opens it as the
+  stamp context (`stamp_context::open`) on the bound path and the unbound path, and `pages::write_page` reads it
+  with `stamp_context::current()`. A store write with no declared writer stamps `unknown` and no origin. A page write
+  with no context open at all (a writer on a bare transaction) refuses with `invalid_argument`, "a page write ran
+  outside a store write transaction", as the projection queue's clock read does.
+
+## Page stamping
+
+Every page write stamps the page's `trust_tier` and `write_origin` the way the PGLite page trigger does
+(`trust::stamp`):
+
+- An insert takes the tier of the writer. An undeclared writer stores `unknown` (kept as no tier) and no origin.
+- An update starts from the stored tier and origin. The record's own trust fields are ignored, because no store
+  writer sets them, so a record read before the write cannot lower the tier.
+- An update changes the tier and origin only when the content changes: source, slug, type, kind, title, compiled
+  truth, timeline, the deleted time, or the frontmatter without its ephemeral keys (`page_frontmatter_content`). A
+  rewrite of only an ephemeral key, such as `captured_at`, keeps both.
+- A writer that claims a tier it may not set (for example `user_confirmed`) is refused with
+  `trust_raise_refused`, and nothing is written.
+
+- A tag change rewrites the page with a new knowledge revision only, as PGLite's tag trigger runs `UPDATE pages`.
+  The content is unchanged, so the tier and origin stay, and a writer that may not declare its tier still refuses,
+  as the PGLite page trigger refuses that `UPDATE`.
+- A version snapshot copies the page's tier and origin (`snapshot_version_trust`), whatever the snapshot writer
+  declares.
+
+`readPageTrustRows` returns the stamped tier and origin ([`cli-reads-import.md`](cli-reads-import.md)), and the
+retrieval coverage reads apply a trust floor and the flagged-page filter to them.
 
 ## Lifetime
 

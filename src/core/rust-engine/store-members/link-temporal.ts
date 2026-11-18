@@ -133,14 +133,12 @@ export const ensureFactsKeywordIndex: StoreMember<[lang: string, notice?: (line:
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Retrieval coverage. The store keeps no embedding budget, so no page is held. The other reads send the scope with the
-// store's private-page policy; a trust floor or flagged-page filter refuses (the store keeps no trust tiers), and
-// `requireSafeChunks` changes nothing because these reads count pages, not chunks.
+// store's private-page policy, the trust floor and the flagged-page filter (the store reads each page's stamped tier and
+// write-gate receipts), and `requireSafeChunks` changes nothing because these reads count pages, not chunks.
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** `ProjectionReadinessScope` as the store reads it. */
 function coverageScope(member: string, scope: ProjectionReadinessScope = {}) {
-  if (scope.minTrust !== undefined) refuseMember(member, 'minTrust (the store keeps no trust tiers)');
-  if (scope.suppressFlagged === true) refuseMember(member, 'suppressFlagged (the store keeps no gate flags)');
   return {
     sourceId: scope.sourceId ?? null,
     sourceIds: scope.sourceIds ? [...scope.sourceIds] : null,
@@ -148,6 +146,8 @@ function coverageScope(member: string, scope: ProjectionReadinessScope = {}) {
     pageKind: scope.pageKind ?? null,
     types: scope.types ? [...scope.types] : null,
     excludeSlugPrefixes: [...(scope.excludeSlugPrefixes ?? [])],
+    minTrust: scope.minTrust || null,
+    suppressFlagged: scope.suppressFlagged === true,
   };
 }
 
