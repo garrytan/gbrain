@@ -226,7 +226,7 @@ export const findAnomalies: StoreMember<[opts: AnomaliesOpts], AnomalyResult[]> 
   // PGLite reads only excludePrivate of the read scope here: minTrust, suppressFlagged and requireSafeChunks change nothing.
   const o = takeOptions('findAnomalies', opts, ['sourceId', 'sourceIds', 'since', 'lookback_days', 'sigma', 'excludePrivate'],
     ['minTrust', 'suppressFlagged', 'requireSafeChunks']);
-  const excludePrivate = storePagePolicy('findAnomalies', o.excludePrivate);
+  const excludePrivate = storePagePolicy('findAnomalies', o.excludePrivate, { callerReaders: true });
   const sigma = (o.sigma as number | undefined) ?? 3.0;
   const lookbackDays = Math.max(1, (o.lookback_days as number | undefined) ?? 30);
   const sinceIso = (o.since as string | undefined) ?? new Date().toISOString().slice(0, 10);
