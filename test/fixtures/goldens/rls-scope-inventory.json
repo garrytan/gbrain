@@ -229,6 +229,28 @@
         ],
         "flagOnScopes": []
       },
+      "countSourcePages#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "countSourcePages#includeDeleted": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "countStaleChunks#default": {
         "flagOffLanes": [
           "pool"
@@ -1815,6 +1837,17 @@
         "flagOnScopes": []
       },
       "insertLocalWriterRow#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "insertSource#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -4088,6 +4121,7 @@
         "countPurgedPageFacts": "none",
         "countRedactedFacts": "none",
         "countRelinkCandidates": "none",
+        "countSourcePages": "none",
         "countStaleChunks": "direct",
         "countStaleFrontmatterKeyPages": "direct",
         "countStalePagesForExtraction": "direct",
@@ -4199,6 +4233,7 @@
         "insertFact": "none",
         "insertFacts": "none",
         "insertLocalWriterRow": "none",
+        "insertSource": "none",
         "invalidateContentDriftEmbeddings": "none",
         "invalidateStaleSignatureEmbeddings": "none",
         "isFolderRestricted": "none",

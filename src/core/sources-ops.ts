@@ -302,21 +302,6 @@ async function fetchSourceRow(engine: BrainEngine, id: string): Promise<SourceRo
   return { id: r.id, name: r.name, local_path: r.local_path, last_commit: r.last_commit, last_sync_at: r.last_sync_at, created_at: r.created_at, config: parseConfig(r.config) };
 }
 
-async function countAllPages(engine: BrainEngine, id: string): Promise<number> {
-  const rows = await engine.executeRaw<{ n: number }>(
-    `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1`,
-    [id],
-  );
-  return rows[0]?.n ?? 0;
-}
-
-async function countVisiblePages(engine: BrainEngine, id: string): Promise<number> {
-  const rows = await engine.executeRaw<{ n: number }>(
-    `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1 AND deleted_at IS NULL`,
-    [id],
-  );
-  return rows[0]?.n ?? 0;
-}
 
 /** Temp clone dir under $GBRAIN_HOME/clones/.tmp/<id>-<rand>/ */
 function makeTempCloneDir(id: string): string {
@@ -427,8 +412,8 @@ export async function assertNoOverlappingPath(
 async function insertApiSource(engine: BrainEngine, opts: AddSourceOpts, kind: 'meetings' | 'slack' | 'imessage'): Promise<void> {
   if (kind === 'imessage') {
     const { imessageSourceConfig } = await import('./imessage/source-add.ts');
-    await engine.executeRaw('INSERT INTO sources (id, name, local_path, config) VALUES ($1, $2, NULL, $3::text::jsonb)',
-      [opts.id, opts.name ?? opts.id, JSON.stringify(imessageSourceConfig(opts.imessage!, opts.federated))]);
+    await engine.insertSource({ id: opts.id, name: opts.name ?? opts.id, local_path: null,
+      config: imessageSourceConfig(opts.imessage!, opts.federated) });
     return;
   }
   const { chooseMeetingsRecord, meetingsSourceConfig } = await import('./meetings/source-add.ts');
@@ -442,12 +427,9 @@ async function insertApiSource(engine: BrainEngine, opts: AddSourceOpts, kind: '
       `${choice.dir} overlaps source "${overlap.id}" at ${overlap.local_path}; its pages would be imported by both sources. Choose a directory no other source covers.`);
     mkdirPrivate(choice.dir);
   }
-  await engine.executeRaw(
-    `INSERT INTO sources (id, name, local_path, config)
-         VALUES ($1, $2, $3, $4::text::jsonb)`,
-    [opts.id, opts.name ?? opts.id, choice.dir, JSON.stringify(kind === 'slack' ? slackSourceConfig(opts.slack!, choice, opts.federated, false)
-      : meetingsSourceConfig(opts.meetings!, choice, opts.federated, false))],
-  );
+  await engine.insertSource({ id: opts.id, name: opts.name ?? opts.id, local_path: choice.dir ?? null,
+    config: (kind === 'slack' ? slackSourceConfig(opts.slack!, choice, opts.federated, false)
+      : meetingsSourceConfig(opts.meetings!, choice, opts.federated, false)) });
 }
 
 export async function addSource(
@@ -574,11 +556,7 @@ export async function addSource(
     const displayName = opts.name ?? opts.id;
 
     try {
-      await engine.executeRaw(
-        `INSERT INTO sources (id, name, local_path, config)
-             VALUES ($1, $2, $3, $4::text::jsonb)`,
-        [opts.id, displayName, finalPath, JSON.stringify(config)],
-      );
+      await engine.insertSource({ id: opts.id, name: displayName, local_path: finalPath, config });
     } catch (e) {
       rmSync(tempDir, { recursive: true, force: true });
       throw new SourceOpError(
@@ -646,11 +624,7 @@ export async function addSource(
       }
     }
     const displayName = opts.name ?? opts.id;
-    await engine.executeRaw(
-      `INSERT INTO sources (id, name, local_path, config)
-           VALUES ($1, $2, $3, $4::text::jsonb)`,
-      [opts.id, displayName, finalPath, JSON.stringify(config)],
-    );
+    await engine.insertSource({ id: opts.id, name: displayName, local_path: finalPath, config });
   } else if (opts.google) {
     // ── Path D: --kind google (v0.47) ─────────────────────────────────────
     // API-backed source: no git repo, no clone. Credentials live in the
@@ -682,11 +656,7 @@ export async function addSource(
       federated: opts.federated ?? true,
     };
     const displayName = opts.name ?? opts.id;
-    await engine.executeRaw(
-      `INSERT INTO sources (id, name, local_path, config)
-           VALUES ($1, $2, $3, $4::text::jsonb)`,
-      [opts.id, displayName, finalPath, JSON.stringify(config)],
-    );
+    await engine.insertSource({ id: opts.id, name: displayName, local_path: finalPath, config });
   } else if (opts.meetings || opts.slack || opts.imessage) {
     await insertApiSource(engine, opts, opts.imessage ? 'imessage' : opts.slack ? 'slack' : 'meetings');
   } else {
@@ -747,11 +717,7 @@ export async function addSource(
         config.federated = opts.federated;
       }
       const displayName = opts.name ?? opts.id;
-      await engine.executeRaw(
-        `INSERT INTO sources (id, name, local_path, config)
-             VALUES ($1, $2, $3, $4::text::jsonb)`,
-        [opts.id, displayName, finalPath, JSON.stringify(config)],
-      );
+      await engine.insertSource({ id: opts.id, name: displayName, local_path: finalPath, config });
     }
   }
 
@@ -888,7 +854,7 @@ export async function listSources(
       remote_url: typeof cfg.remote_url === 'string' ? cfg.remote_url : null,
       federated: cfg.federated === true,
       strategy: isSyncStrategy(cfg.strategy) ? cfg.strategy : null,
-      page_count: await countVisiblePages(engine, r.id),
+      page_count: await engine.countSourcePages(r.id),
       last_sync_at: r.last_sync_at ? new Date(r.last_sync_at).toISOString() : null,
     });
   }
@@ -945,7 +911,7 @@ export async function removeSource(
     throw new SourceOpError('not_found', `Source "${opts.id}" not found.`);
   }
 
-  const pageCount = await countAllPages(engine, opts.id);
+  const pageCount = await engine.countSourcePages(opts.id, { includeDeleted: true });
 
   if (opts.dryRun) {
     return {
@@ -1066,7 +1032,7 @@ export async function getSourceStatus(
     local_path: src.local_path,
     remote_url: remoteUrl,
     federated: isFederated(src.config),
-    page_count: await countVisiblePages(engine, id),
+    page_count: await engine.countSourcePages(id),
     last_sync_at: src.last_sync_at ? new Date(src.last_sync_at).toISOString() : null,
     last_commit: src.last_commit,
     archived,

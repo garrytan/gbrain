@@ -265,6 +265,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listAllSources': 'sources', 'listSourceLocalPaths': 'sources', 'updateSourceConfig': 'sources',
   'listLocalPathSources': 'sources', 'listSourceRoutingRows': 'sources', 'countDefaultSourceSplit': 'sources', 'getSource': 'sources',
   'listStaleSyncSourceIds': 'sources', 'readSourceRow': 'sources', 'lockSourceRow': 'sources', 'readSourceChunkerVersion': 'sources',
+  'countSourcePages': 'sources', 'insertSource': 'sources',
   // files
   'upsertFile': 'files', 'getFile': 'files', 'listFilesForPage': 'files',
   // chunks
@@ -698,6 +699,8 @@ export const SQL_CASES: SqlCase[] = [
   ...variants('readSourceRow', [['default', (e) => e.readSourceRow(SRC)]]),
   ...variants('lockSourceRow', [['default', (e) => e.lockSourceRow(SRC)]]),
   ...variants('readSourceChunkerVersion', [['default', (e) => e.readSourceChunkerVersion(SRC)]]),
+  ...variants('countSourcePages', [['default', (e) => e.countSourcePages(SRC)], ['includeDeleted', (e) => e.countSourcePages(SRC, { includeDeleted: true })]]),
+  ...variants('insertSource', [['default', (e) => e.insertSource({ id: SRC, name: SRC, local_path: '/srv/brain/src', config: { federated: true } })]]),
 
   // ── files ──
   ...variants('upsertFile', [

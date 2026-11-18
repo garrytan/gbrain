@@ -135,10 +135,6 @@ async function fetchSource(engine: BrainEngine, id: string): Promise<SourceRow |
   return { id: row.id, name, local_path, last_commit, last_sync_at, config, created_at };
 }
 
-async function countPages(engine: BrainEngine, sourceId: string): Promise<number> {
-  // sourceIds, not sourceId: an empty id must count nothing, never every source.
-  return Number((await engine.getStats({ sourceIds: [sourceId] })).page_count);
-}
 
 // ── Subcommand: add ─────────────────────────────────────────
 
@@ -733,7 +729,7 @@ async function runList(engine: BrainEngine, args: string[]): Promise<void> {
 
   const entries: SourceListEntry[] = [];
   for (const r of rows) {
-    const pageCount = await countPages(engine, r.id);
+    const pageCount = await engine.countSourcePages(r.id);
     entries.push({
       id: r.id,
       name: r.name,
