@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 269/269
+# covered: 279/279
 # lifecycle: 9/9
 # pages: 31/31
 # search: 7/7
@@ -37,6 +37,7 @@
 # salience_enrich: 5/5
 # cli_reads_import: 11/11
 # wanted_links: 2/2
+# write_misc: 10/10
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
 connect	lifecycle	yes	1	yes	yes	yes	serves
 disconnect	lifecycle	yes	1	yes	yes	yes	serves
@@ -307,3 +308,13 @@ listStoredTimelineRows	cli_reads_import	yes	1	no	yes	yes	serves
 filterPagesAtRevision	cli_reads_import	yes	1	no	yes	yes	serves
 lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	serves
 replaceWantedLinkRows	wanted_links	yes	6	no	yes	yes	serves
+readSourceState	write_misc	yes	1	no	yes	yes	serves
+readAdmissionSource	write_misc	yes	1	no	yes	yes	serves
+listLinkEndpointPages	write_misc	yes	1	no	yes	yes	serves
+sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
+listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
+hasExtractedEvents	write_misc	yes	1	no	yes	yes	serves
+listActiveAccessMembers	write_misc	yes	1	no	yes	yes	serves
+expireMemoryProposals	write_misc	yes	1	no	yes	yes	serves
+listAwaitingMemoryProposals	write_misc	yes	1	no	yes	yes	serves
+purgeMemoryProposals	write_misc	yes	1	no	yes	yes	serves

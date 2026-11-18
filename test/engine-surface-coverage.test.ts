@@ -118,6 +118,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'scanExactBatch', 'nextLivePageAfter', 'listExactIdentityCandidates', 'rankEntities', 'listExtractionPendingPages', 'listUnattributedFacts', 'listWantedPages',
   'listSourceRecords', 'readSourceIncarnation', 'hasCompanyBrainReceipt', 'readGuestSourceRow', 'listGuestSourceIds', 'hasGuestSource', 'readPageTrustRows', 'readDatabaseClock', 'listLinkPageMetadata', 'listStoredTimelineRows', 'filterPagesAtRevision',
   'lockRegisteredSourceIds', 'replaceWantedLinkRows',
+  // The page-write reads and upkeep that belong to no other domain (engine-sql/write-misc.ts).
+  'readSourceState', 'readAdmissionSource', 'listLinkEndpointPages', 'sharedSkillPackTablePresent', 'listSharedSkillPackRoots', 'hasExtractedEvents', 'listActiveAccessMembers', 'expireMemoryProposals', 'listAwaitingMemoryProposals', 'purgeMemoryProposals',
   // Code edges
   'addCodeEdges', 'deleteCodeEdgesForChunks', 'getCallersOf', 'getCalleesOf', 'getEdgesByChunk',
   'searchKeywordChunks',
@@ -163,6 +165,8 @@ const ENGINE_INTERNAL_HELPERS: readonly string[] = [
   // The unscoped executors the CLI read members run through.
   'rawRead',
   'cliReads',
+  // The unscoped executor the write-misc members run through (engine-sql/write-misc.ts).
+  'writeMiscReads',
 ];
 
 /**
