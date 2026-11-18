@@ -841,7 +841,7 @@ src/core/persistence/page-append.ts	execute_raw	3
 src/core/persistence/page-batch.ts	execute_raw	2
 src/core/persistence/page-mutations.ts	execute_raw	6
 src/core/persistence/page-prepare.ts	execute_raw	11
-src/core/persistence/page-purge.ts	execute_raw	30
+src/core/persistence/page-purge.ts	execute_raw	31	+1 #9743: claim sweep lists unreferenced texts before the chunked delete
 src/core/persistence/page-upload.ts	execute_raw	16
 src/core/persistence/page-visibility.ts	execute_raw	14
 src/core/persistence/parked-groups.ts	execute_raw	1
