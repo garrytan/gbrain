@@ -15,7 +15,6 @@
  *    would make.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -138,12 +137,12 @@ for (const kind of testBackends()) {
   });
 }
 
+// The one remote_agent constructor is prepareRemoteAgent and its one caller is submit_agent; the suites above prove at
+// runtime that submit_agent records the dispatch surface over HTTP (starter and full) and that stdio cannot submit.
+// This census fails when a second producer appears, so it cannot leave grant.surface unset unseen.
 test('every path that creates a remote_agent job records the submitter\'s surface', () => {
-  const src = (p: string) => readFileSync(join(import.meta.dir, '..', 'src', p), 'utf8');
-  const authority = src('core/minions/submission-authority.ts');
-  expect(authority.match(/kind: 'remote_agent', principal/g)?.length).toBe(1);
-  expect(authority).toMatch(/kind: 'remote_agent', principal[^]*?surface: ctx\.surface \?\? 'full' \}/);
   const grep = Bun.spawnSync(['git', 'grep', '-l', '-E', "prepareRemoteAgent\\(|kind: 'remote_agent'", '--', 'src'], { cwd: join(import.meta.dir, '..') });
   expect(grep.stdout.toString().trim().split('\n').sort()).toEqual(['src/core/minions/submission-authority.ts', 'src/core/ops/jobs.ts']);
-  expect(src('mcp/dispatch.ts')).toContain("...(opts.surface ? { surface: opts.surface } : {})");
+  const calls = Bun.spawnSync(['git', 'grep', '-c', '-E', 'prepareRemoteAgent\\(', '--', 'src/core/ops/jobs.ts'], { cwd: join(import.meta.dir, '..') });
+  expect(calls.stdout.toString().trim()).toBe('src/core/ops/jobs.ts:1');
 });
