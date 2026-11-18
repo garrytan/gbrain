@@ -76,16 +76,12 @@ const RECEIPT_COLUMNS = [
   ['remote', 'boolean'], ['run_meta', 'text'],
 ] as const;
 
-const SPEND_COLUMNS = [
-  ['request_id', 'text'], ['source_id', 'text'], ['slot', 'text'], ['provider', 'text'], ['model_resolved', 'text'],
-  ['lane', 'text'], ['remote', 'boolean'], ['input_tokens', 'int'], ['cost_usd', 'float8'], ['outcome', 'text'],
-] as const;
-
 /**
  * Multi-row insert via unnest of one array per column (fixed param count).
  * Every column binds as text[] and casts server-side: postgres.js cannot
  * serialize boolean/number arrays for a typed array cast, PGLite can; text
- * arrays behave the same on both engines.
+ * arrays behave the same on both engines. (Receipts only: the spend ledger
+ * goes through engine.insertDecideSpend.)
  */
 async function insertRows(engine: BrainEngine, table: string, columns: readonly (readonly [string, string])[], rows: readonly object[], conflict = ''): Promise<void> {
   if (rows.length === 0) return;
@@ -155,7 +151,7 @@ class BufferedWriter<T extends object> {
 }
 
 const receipts = new BufferedWriter<ReceiptRow>((engine, rows) => insertRows(engine, 'decision_receipts', RECEIPT_COLUMNS, rows));
-const spend = new BufferedWriter<SpendRow>((engine, rows) => insertRows(engine, 'decide_spend', SPEND_COLUMNS, rows, 'ON CONFLICT (request_id) DO NOTHING'));
+const spend = new BufferedWriter<SpendRow>((engine, rows) => engine.insertDecideSpend(rows));
 
 /** Buffer receipts. Throws on an outcome outside the canonical vocabulary (a code bug, caught by tests). */
 export function recordReceipts(engine: BrainEngine, rows: readonly ReceiptRow[]): void {
@@ -265,12 +261,8 @@ export async function dailySpend(engine: BrainEngine, now = Date.now()): Promise
   const day = utcDay(now);
   const cached = spendCache.get(engineKey(engine));
   if (cached && cached.day === day && now - cached.at < SPEND_CACHE_MS) return { total: cached.total, remote: cached.remote };
-  const rows = await engine.executeRaw<{ total: number | string | null; remote: number | string | null }>(
-    `SELECT COALESCE(SUM(cost_usd), 0) AS total, COALESCE(SUM(CASE WHEN remote THEN cost_usd ELSE 0 END), 0) AS remote
-       FROM decide_spend WHERE created_at >= $1::timestamptz AND provider LIKE 'typesafe:%'`,
-    [`${day}T00:00:00Z`],
-  );
-  const entry = { day, at: now, total: Number(rows[0]?.total ?? 0), remote: Number(rows[0]?.remote ?? 0) };
+  const sums = await engine.dailyDecideSpend(new Date(`${day}T00:00:00Z`));
+  const entry = { day, at: now, total: sums.total, remote: sums.remote };
   spendCache.set(engineKey(engine), entry);
   return { total: entry.total, remote: entry.remote };
 }

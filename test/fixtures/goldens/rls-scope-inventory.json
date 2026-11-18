@@ -6934,6 +6934,7 @@
         "createSegmentedPageShell": "none",
         "createVersion": "none",
         "currentCodeChunksExist": "none",
+        "dailyDecideSpend": "none",
         "decideWriteGateHold": "none",
         "declarePersistence": "none",
         "delayActiveJob": "none",

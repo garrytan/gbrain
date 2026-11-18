@@ -271,7 +271,10 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'forgetWakeCredential',
   ],
   // decide_store: the decide state, spend, receipt and calibration tables (engine-sql/decide-store.ts)
-  decide_store: ['readDecideState', 'upsertDecideState', 'deleteDecideState', 'ensureDecideState'],
+  decide_store: [
+    'readDecideState', 'upsertDecideState', 'deleteDecideState', 'ensureDecideState',
+    'insertDecideSpend', 'dailyDecideSpend', 'listDecideSpendBySlot',
+  ],
 };
 
 /** Callable members of `interface BrainEngine`, in declaration order (`kind` excluded). */

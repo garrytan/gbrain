@@ -218,6 +218,7 @@
       "createSegmentedPageShell": "out-of-scope:page-body (Wave B segmented storage, born in engine-sql/page-body.ts; pinned by test/engine-sql-page-body.test.ts)",
       "createVersion": "pages",
       "currentCodeChunksExist": "out-of-scope:chunk-reads (born in engine-sql/chunk-reads.ts; pinned by test/engine-parity/chunk-reads.test.ts)",
+      "dailyDecideSpend": "out-of-scope:decide-store (born in engine-sql/decide-store.ts; pinned by test/engine-parity/decide-store.test.ts)",
       "decideWriteGateHold": "out-of-scope:trust-write-gate (born in engine-sql/trust-write-gate.ts; pinned by test/engine-parity/trust-write-gate.test.ts)",
       "declarePersistence": "out-of-scope:persistence-declaration (born in engine-sql/persistence-declaration.ts; pinned by test/engine-parity/persistence-declaration.test.ts and, for requireSynchronousCommit, test/engine-parity/persistence.test.ts)",
       "delayActiveJob": "out-of-scope:minion-jobs (born in engine-sql/jobs.ts and engine-sql/jobs-queue.ts; pinned by test/engine-parity/jobs.test.ts and jobs-queue.test.ts)",
