@@ -491,6 +491,17 @@ export const RUST_ENGINE_MEMBERS = {
   listJobAttachments: 'minion_queue',
   getJobAttachment: 'minion_queue',
   deleteJobAttachment: 'minion_queue',
+  // Group C: the queue reads of the doctor checks and the dream breaker.
+  listStalledEmbedBackfillSources: 'minion_queue',
+  readGlobalMaintenanceDeaths: 'minion_queue',
+  readLastFailedGlobalMaintenanceJob: 'minion_queue',
+  listFactsAbsorbJobsStillDead: 'minion_queue',
+  readLegacyJobAuthority: 'minion_queue',
+  readQueuedSpendRows: 'minion_queue',
+  listBuildSkewStacktraceLines: 'minion_queue',
+  countDeadDreamSubmissionRows: 'minion_queue',
+  listFactsAbsorbJobsByKeyPrefix: 'minion_queue',
+  listDeadFactsAbsorbJobsByKeys: 'minion_queue',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;

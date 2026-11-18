@@ -36,6 +36,10 @@ import type {
   SynthesisCompletion, SynthesisCompletionPrefix, JobSourceState,
   QueueFamilyRow, RetryJobPolicy,
 } from './engine-sql/jobs-queue.ts';
+import type {
+  DeadDreamSubmissionSpec, FactsAbsorbJobRow, FactsAbsorbStillDead, GlobalMaintenanceDeaths, LastFailedGlobalMaintenanceJob,
+  LegacyJobAuthorityRead, QueuedSpendRows,
+} from './engine-sql/jobs-checks.ts';
 import type { JunkEntityHubRow, LinkEndpointPage, LivePageSummary, TitledPage } from './engine-sql/link-reads.ts';
 import type { CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuery, ContextualModeCandidate, FrozenHitKey, FrozenHitRow, WithdrawalChunkKey, WithdrawalChunkRow } from './engine-sql/chunk-reads.ts';
 import type { EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRow, PageTimelineRow, SegmentedTimelinePages, TimelineOrphanPage, TimelineRowDeletion } from './engine-sql/timeline-reads.ts';
@@ -3444,6 +3448,28 @@ export interface BrainEngine {
   getJobAttachment(jobId: number, filename: string): Promise<JobRow | null>;
   /** Delete one attachment; false when there was none. */
   deleteJobAttachment(jobId: number, filename: string): Promise<boolean>;
+
+  // Group C: the queue reads the doctor checks and the dream breaker make (engine-sql/jobs-checks.ts).
+  /** The distinct `sourceId` of embed-backfill jobs that ended failed or dead with a stall record in their progress (null: a job without a source). */
+  listStalledEmbedBackfillSources(): Promise<Array<string | null>>;
+  /** How the last `deaths` brain-wide maintenance jobs and each dream phase's last `deaths` children died (the `global_maintenance_timeouts` check). */
+  readGlobalMaintenanceDeaths(spec: { deaths: number }): Promise<GlobalMaintenanceDeaths>;
+  /** The newest brain-wide maintenance job that ended without completing after `since` (a timestamp text, or null for all), with the count and earliest finish of them all. */
+  readLastFailedGlobalMaintenanceJob(since: string | null): Promise<LastFailedGlobalMaintenanceJob | null>;
+  /** Facts-absorb jobs dead or failed inside `hours` that no later job for the same page completed: the total and the newest `limit` (the `facts_extraction_health` check). */
+  listFactsAbsorbJobsStillDead(spec: { hours: number; limit: number }): Promise<FactsAbsorbStillDead>;
+  /** The claim gate's population and the terminal keyed rows with SQL NULL authority (the `legacy_job_authority` check). */
+  readLegacyJobAuthority(): Promise<LegacyJobAuthorityRead>;
+  /** Queued jobs by name and spend basis, and the spend-authorized rows waiting longer than `waitMs` (the `legacy_job_authority` spend census). */
+  readQueuedSpendRows(spec: { legacyPrefixes: Readonly<Record<string, readonly string[]>>; waitMs: number }): Promise<QueuedSpendRows>;
+  /** The stacktrace lines starting with `prefix` of the newest `scanJobs` recently updated jobs (the `runtime_build_skew` check). */
+  listBuildSkewStacktraceLines(spec: { prefix: string; windowHours: number; scanJobs: number }): Promise<Array<{ id: number; line: string }>>;
+  /** Dead dream submissions per base key inside the window, resets applied (the dream breaker's counting rule). */
+  countDeadDreamSubmissionRows(spec: DeadDreamSubmissionSpec): Promise<Array<{ base_key: string; dead_submissions: number; last_dead_at: string }>>;
+  /** Facts-absorb jobs whose key starts with `prefix` that are dead or whose key is in `keys` (the dead-write retry's reconcile). */
+  listFactsAbsorbJobsByKeyPrefix(spec: { prefix: string; keys: readonly string[] }): Promise<FactsAbsorbJobRow[]>;
+  /** The dead facts-absorb jobs with a key in `keys` (the dead-write retry's operator controls). */
+  listDeadFactsAbsorbJobsByKeys(keys: readonly string[]): Promise<FactsAbsorbJobRow[]>;
 
   // ============================================================
   // v0.20.0 Cathedral II: code edges (Layer 5 populates, Layer 7 consumes)

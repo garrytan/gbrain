@@ -181,6 +181,8 @@ import * as cycleLocksImpl from './engine-sql/cycle-locks.ts';
 import * as jobsImpl from './engine-sql/jobs.ts';
 import type { AdmitJobPolicy, AdmitJobSpec, ClaimJobSpec, ListJobsFilter } from './engine-sql/jobs.ts';
 import * as jobsQueue from './engine-sql/jobs-queue.ts';
+import * as jobsChecks from './engine-sql/jobs-checks.ts';
+import type { DeadDreamSubmissionSpec } from './engine-sql/jobs-checks.ts';
 import type {
   CancelJobsSpec, DelayActiveJobSpec, JobAttachmentInsert, JobPageSpec, JobTokenCounts, PruneJobsSpec, RetryJobPolicy,
   SynthesisCompletionPrefix,
@@ -3325,6 +3327,18 @@ export class PGLiteEngine implements BrainEngine {
   async listJobAttachments(jobId: number) { return jobsQueue.listJobAttachments(this, jobId); }
   async getJobAttachment(jobId: number, filename: string) { return jobsQueue.getJobAttachment(this, jobId, filename); }
   async deleteJobAttachment(jobId: number, filename: string) { return jobsQueue.deleteJobAttachment(this, jobId, filename); }
+
+  // Group C: the queue reads the doctor checks and the dream breaker make (engine-sql/jobs-checks.ts).
+  async listStalledEmbedBackfillSources() { return jobsChecks.listStalledEmbedBackfillSources(this); }
+  async readGlobalMaintenanceDeaths(spec: { deaths: number }) { return jobsChecks.readGlobalMaintenanceDeaths(this, spec); }
+  async readLastFailedGlobalMaintenanceJob(since: string | null) { return jobsChecks.readLastFailedGlobalMaintenanceJob(this, since); }
+  async listFactsAbsorbJobsStillDead(spec: { hours: number; limit: number }) { return jobsChecks.listFactsAbsorbJobsStillDead(this, spec); }
+  async readLegacyJobAuthority() { return jobsChecks.readLegacyJobAuthority(this); }
+  async readQueuedSpendRows(spec: { legacyPrefixes: Readonly<Record<string, readonly string[]>>; waitMs: number }) { return jobsChecks.readQueuedSpendRows(this, spec); }
+  async listBuildSkewStacktraceLines(spec: { prefix: string; windowHours: number; scanJobs: number }) { return jobsChecks.listBuildSkewStacktraceLines(this, spec); }
+  async countDeadDreamSubmissionRows(spec: DeadDreamSubmissionSpec) { return jobsChecks.countDeadDreamSubmissionRows(this, spec); }
+  async listFactsAbsorbJobsByKeyPrefix(spec: { prefix: string; keys: readonly string[] }) { return jobsChecks.listFactsAbsorbJobsByKeyPrefix(this, spec); }
+  async listDeadFactsAbsorbJobsByKeys(keys: readonly string[]) { return jobsChecks.listDeadFactsAbsorbJobsByKeys(this, keys); }
 
   // ============================================================
   // v0.20.0 Cathedral II: code edges (Layer 1 stubs — filled by Layer 5)

@@ -142,6 +142,7 @@ test/engine-parity/facts.test.ts
 test/engine-parity/import-members.test.ts
 test/engine-parity/import-path.test.ts
 test/engine-parity/import-writes.test.ts
+test/engine-parity/jobs-checks.test.ts
 test/engine-parity/jobs-queue.test.ts
 test/engine-parity/jobs.test.ts
 test/engine-parity/lifecycle.test.ts
