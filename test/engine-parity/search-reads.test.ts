@@ -23,6 +23,7 @@ import { afterAll, describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { archiveSource, basisEmbedding, createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { chunk, seedPage } from './chunk-fixtures.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -152,6 +153,32 @@ describe('engine parity: search reads', () => {
       expect(archivedOpen).toEqual(open);
       expect(archivedLive).toEqual([]);
       return { types, open, live, hidden, bag, federated, archivedOpen, archivedLive };
+    },
+  );
+
+  parityTest(
+    'aliasCanonicalRefs under excludePrivate applies a caller\'s reader identity and private-readable grant',
+    { methods: ['putPage', 'updateSlug', 'aliasCanonicalRefs'] },
+    async (engine) => {
+      const pages: Array<[string, Record<string, unknown>]> = [
+        ['c/open', {}], ['c/private', { visibility: 'private' }], ['c/readers', { readable_by: ['alice-example'] }],
+        ['c/team', { readable_by: 'group:team-a' }], ['c/bob-only', { readable_by: ['bob-example'] }],
+        ['c/pinned', { visibility: 'private', pinned_question: true }],
+      ];
+      for (const [slug, frontmatter] of pages) {
+        await put(engine, `${slug}-old`, { frontmatter });
+        await engine.updateSlug(`${slug}-old`, slug);
+      }
+      const refs = pages.map(([slug]) => ({ slug, source_id: 'default' }));
+      const read = (access: Parameters<typeof withCallerAccess>[0]) => withCallerAccess(access, async () =>
+        sorted((await engine.aliasCanonicalRefs(refs, { excludePrivate: true })).map(r => r.canonical_slug)));
+      const member = await read({ identity: ['member:alice-example', 'group:team-a'], hidePrivate: true });
+      const granted = await read({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true });
+      const stranger = await read({ identity: ['member:carol-example'], hidePrivate: true });
+      expect(stranger).toEqual(['c/open']);
+      expect(member).toEqual(['c/open', 'c/readers', 'c/team']);
+      expect(granted).toEqual(['c/open', 'c/private', 'c/readers']);
+      return { member, granted, stranger };
     },
   );
 
