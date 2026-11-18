@@ -5,14 +5,21 @@
 //! `relationalChainHop`) and orphan detection (`findOrphanPages`). `rewriteLinks` is a no-op in
 //! the SQL engines and in the TypeScript member, so the store has nothing for it.
 //!
+//! It also serves the three link reads of hybrid search's ranking stage
+//! (src/core/engine-sql/search-reads.ts): `hasSupersedeEdges`, `supersedingPageSlugs` and
+//! `pagesLinkingTo`.
+//!
 //! Members: replaceDerivedLinks, replaceDerivedLinksBatch, removeLinksByPagesAndSource,
 //! listLinkSources, getBacklinkCounts, rewriteLinks, relationalFanout, relationalChainHop,
-//! getAdjacencyBoosts, findOrphanPages.
+//! getAdjacencyBoosts, findOrphanPages, hasSupersedeEdges, supersedingPageSlugs, pagesLinkingTo.
 //!
 //! Reads and writes go through the core links helpers (`put_link`, `delete_link`, `out_links`,
-//! `in_links`) and the page and source readers. Keys: this family keeps no records of its own
-//! today, so no key starts with `keys::LINK_QUERIES` (`q`); `remove_source_rows` still deletes
-//! everything under `q source \0` so a later record keyed by source is covered.
+//! `in_links`) and the page and source readers.
+//!
+//! Keys: the `q` tag (`keys::LINK_QUERIES`) is shared with wanted_links (`wanted_links.rs`).
+//! The bytes after `q <source> \0 W` are wanted_links' bytes; this family keeps the `W` sub-tag
+//! free. This family keeps no records of its own today. `remove_source_rows` deletes everything
+//! under `q <source> \0`, so a source delete removes the records of both families.
 //!
 //! The read policy of `src/core/search/read-policy-sql.ts` (`pageReadFilter`) is modelled for the
 //! source filter and the live test (not soft-deleted, not quarantined, source not archived).
@@ -40,6 +47,8 @@ use std::rc::Rc;
 const QUARANTINE_KEY: &str = "quarantine";
 /// `NON_RANKING_LINK_TYPES` of `src/core/link-ranking-policy.ts`.
 const NON_RANKING_LINK_TYPES: &[&str] = &["amends"];
+/// The `link_type` of a supersede edge (`A supersedes B`: from A, the canon, to B, the stale page).
+const SUPERSEDES: &str = "supersedes";
 /// `CHAIN_DEGREE_SATURATION` of `src/core/search/read-enrichment.ts`.
 const CHAIN_DEGREE_SATURATION: usize = 300;
 /// The meta counter the core links family allocates link ids from.
@@ -977,6 +986,84 @@ impl Store {
                 from.insert(link.from_page_id);
             }
             out.push(json!({"page_id": page.id, "cnt": from.len()}));
+        }
+        Ok(out)
+    }
+
+    /// `hasSupersedeEdges()`: whether any link has `link_type = 'supersedes'`, on any page in
+    /// any source (the SQL probe reads `links` alone).
+    pub fn has_supersede_edges(&self) -> Result<bool> {
+        let read = self.read()?;
+        let mut found = false;
+        let mut failed = None;
+        scan_prefix(&*read, &[keys::LINK], false, &mut |_, v| {
+            match serde_json::from_slice::<LinkRecord>(v) {
+                Ok(link) => found = link.link_type == SUPERSEDES,
+                Err(e) => failed = Some(StoreError::from(e)),
+            }
+            !found && failed.is_none()
+        })?;
+        match failed {
+            Some(e) => Err(e),
+            None => Ok(found),
+        }
+    }
+
+    /// `supersedingPageSlugs(ids, policy?)`: the distinct `[{ to_page_id, by_slug }]` rows of
+    /// the SQL, ordered by page id, then slug in byte order (PGLite's `Unique` over a sort, under
+    /// the C collation). A row is a `supersedes` link to a listed page from a page that is not
+    /// soft-deleted and is in the same source. With a policy (`scope.scoped`), both pages pass the
+    /// live read filter and the link's origin page, when it has one, passes it too. The
+    /// TypeScript member keeps the first row per page.
+    pub fn superseding_page_slugs(&self, ids: &[u64], scope: &GraphScope) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let mut pages = Pages::new(&*read);
+        let mut rows: BTreeSet<(u64, String)> = BTreeSet::new();
+        let targets: BTreeSet<u64> = ids.iter().copied().collect();
+        for &to_id in &targets {
+            let Some(to) = pages.readable(to_id, scope, scope.scoped)? else {
+                continue;
+            };
+            for link in in_links(&*read, to.id)? {
+                if link.link_type != SUPERSEDES {
+                    continue;
+                }
+                let Some(from) = pages.readable(link.from_page_id, scope, scope.scoped)? else {
+                    continue;
+                };
+                if from.deleted_at_us.is_some() || from.source_id != to.source_id {
+                    continue;
+                }
+                if scope.scoped && !pages.origin_ok(&link, scope)? {
+                    continue;
+                }
+                rows.insert((to.id, from.slug.clone()));
+            }
+        }
+        Ok(rows
+            .into_iter()
+            .map(|(to, slug)| json!({"to_page_id": to, "by_slug": slug}))
+            .collect())
+    }
+
+    /// `pagesLinkingTo(fromIds, toIds)`: the distinct ids among `fromIds` with a ranking link
+    /// (`rankingLinkSql`) to a page in `toIds`, ascending (PGLite's `Unique` over the
+    /// `(from_page_id, to_page_id, ..)` index). The SQL reads `links` alone: no page filter.
+    pub fn pages_linking_to(&self, from_ids: &[u64], to_ids: &[u64]) -> Result<Vec<u64>> {
+        let read = self.read()?;
+        let targets: HashSet<u64> = to_ids.iter().copied().collect();
+        let sources: BTreeSet<u64> = from_ids.iter().copied().collect();
+        let mut out = Vec::new();
+        if targets.is_empty() {
+            return Ok(out);
+        }
+        for from_id in sources {
+            if out_links(&*read, from_id)?
+                .iter()
+                .any(|link| targets.contains(&link.to_page_id) && ranks(link))
+            {
+                out.push(from_id);
+            }
         }
         Ok(out)
     }

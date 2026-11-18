@@ -306,4 +306,73 @@ describe('engine parity: search reads', () => {
       return counts;
     },
   );
+  parityTest(
+    'supersedingPageSlugs: a policy adds the live filter on both pages and the origin page; the source rule always holds',
+    { methods: ['putPage', 'addLink', 'softDeletePage', 'supersedingPageSlugs'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      await createSource(engine, backend, 'old');
+      const pages = [
+        await put(engine, 'notes/stale'), await put(engine, 'notes/canon'),
+        await put(engine, 'notes/stale-deleted'), await put(engine, 'notes/stale-quarantined'),
+        await put(engine, 'notes/canon-quarantined', { frontmatter: { quarantine: { reason: 'test' } } }),
+        await put(engine, 'notes/stale-origin'), await put(engine, 'notes/origin-gone'),
+        await put(engine, 'notes/stale-cross'),
+        await put(engine, 'notes/old-stale', {}, { sourceId: 'old' }), await put(engine, 'notes/old-canon', {}, { sourceId: 'old' }),
+      ];
+      await put(engine, 'notes/canon', {}, { sourceId: 'other' });
+      await engine.addLink('notes/canon', 'notes/stale', '', 'supersedes', 'manual');
+      await engine.addLink('notes/canon', 'notes/stale-deleted', '', 'supersedes', 'manual');
+      await engine.addLink('notes/canon-quarantined', 'notes/stale-quarantined', '', 'supersedes', 'manual');
+      await engine.addLink('notes/canon', 'notes/stale-origin', '', 'supersedes', 'frontmatter', 'notes/origin-gone', 'supersedes');
+      await engine.addLink('notes/canon', 'notes/stale-cross', '', 'supersedes', 'manual', undefined, undefined, { fromSourceId: 'other' });
+      await engine.addLink('notes/old-canon', 'notes/old-stale', '', 'supersedes', 'manual', undefined, undefined, { fromSourceId: 'old', toSourceId: 'old' });
+      await engine.softDeletePage('notes/stale-deleted');
+      await engine.softDeletePage('notes/origin-gone');
+      await archiveSource(engine, backend, 'old');
+      const name = slugsOf(pages);
+      const ids = pages.map(p => p.id);
+      const view = (m: Map<number, string>) => sorted([...m].map(([id, by]) => `${name([id])[0]}<${by}`));
+      const open = view(await engine.supersedingPageSlugs(ids));
+      const live = view(await engine.supersedingPageSlugs(ids, {}));
+      const scoped = view(await engine.supersedingPageSlugs(ids, { sourceIds: ['old'] }));
+      const unread = view(await engine.supersedingPageSlugs(ids, { takesHoldersAllowList: [], requireSafeChunks: true }));
+      expect(open).toEqual(['notes/old-stale<notes/old-canon', 'notes/stale-deleted<notes/canon', 'notes/stale-origin<notes/canon',
+        'notes/stale-quarantined<notes/canon-quarantined', 'notes/stale<notes/canon']);
+      expect(live).toEqual(['notes/stale<notes/canon']);
+      expect(scoped).toEqual([]);
+      expect(unread).toEqual(live);
+      return { open, live, scoped, unread };
+    },
+  );
+
+  parityTest(
+    'pagesLinkingTo: ranking links from the listed pages to the targets, deleted linkers included, amends excluded',
+    { methods: ['putPage', 'addLink', 'softDeletePage', 'pagesLinkingTo'] },
+    async (engine) => {
+      const pages = [
+        await put(engine, 'people/alice-example'), await put(engine, 'companies/acme-example'),
+        await put(engine, 'notes/linker'), await put(engine, 'notes/gone-linker'), await put(engine, 'notes/amender'),
+        await put(engine, 'notes/elsewhere'), await put(engine, 'notes/unlisted'), await put(engine, 'notes/both'),
+      ];
+      await engine.addLink('notes/linker', 'people/alice-example', '', 'mentions', 'manual');
+      await engine.addLink('notes/gone-linker', 'companies/acme-example', '', 'works_at', 'manual');
+      await engine.addLink('notes/amender', 'people/alice-example', '', 'amends', 'manual');
+      await engine.addLink('notes/elsewhere', 'notes/linker', '', 'mentions', 'manual');
+      await engine.addLink('notes/unlisted', 'people/alice-example', '', 'mentions', 'manual');
+      await engine.addLink('notes/both', 'people/alice-example', '', 'mentions', 'manual');
+      await engine.addLink('notes/both', 'companies/acme-example', '', 'mentions', 'manual');
+      await engine.softDeletePage('notes/gone-linker');
+      const name = slugsOf(pages);
+      const id = (slug: string) => pages.find(p => p.slug === slug)!.id;
+      const from = pages.filter(p => p.slug !== 'notes/unlisted').map(p => p.id);
+      const targets = [id('people/alice-example'), id('companies/acme-example')];
+      const linking = name(await engine.pagesLinkingTo(from, targets));
+      const noTargets = await engine.pagesLinkingTo(from, []);
+      const noSources = await engine.pagesLinkingTo([], targets);
+      const self = name(await engine.pagesLinkingTo([id('notes/linker')], [id('notes/linker'), id('people/alice-example')]));
+      expect(linking).toEqual(['notes/both', 'notes/gone-linker', 'notes/linker']);
+      return { linking, noTargets, noSources, self };
+    },
+  );
 });
