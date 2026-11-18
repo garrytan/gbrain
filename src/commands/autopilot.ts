@@ -422,8 +422,8 @@ export function guardAutopilotEngine(engine: BrainEngine, state: OwnerProcessing
   return guarded;
 }
 
-/** Engine members that write in their own `this.transaction` (engine-sql/jobs.ts). */
-const SELF_TRANSACTING_MEMBERS: ReadonlySet<string | symbol> = new Set(['admitJob', 'completeJob', 'failJob', 'reclaimStalledJobs']);
+/** Engine members that write in their own `this.transaction` (engine-sql/jobs.ts, engine-sql/jobs-queue.ts). */
+const SELF_TRANSACTING_MEMBERS: ReadonlySet<string | symbol> = new Set(['admitJob', 'completeJob', 'failJob', 'reclaimStalledJobs', 'cancelJobs', 'killTimedOutJobs', 'killWallClockJobs', 'retryJob']);
 
 /**
  * The autopilot silent self-upgrade channel. Opt-in (`self_upgrade.mode=auto`).

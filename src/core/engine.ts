@@ -22,6 +22,10 @@ import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, SourceRoutingRow } from './engine-sql/sources.ts';
 import type { AdmitJobPolicy, AdmitJobResult, AdmitJobSpec, ClaimJobSpec, JobRow, ListJobsFilter } from './engine-sql/jobs.ts';
+import type {
+  CancelJobsSpec, DelayActiveJobSpec, JobAttachmentInsert, JobPageSpec, JobStatsRead, JobTokenCounts, PrivateQueueState, PruneJobsSpec,
+  QueueFamilyRow, RetryJobPolicy,
+} from './engine-sql/jobs-queue.ts';
 import type { JunkEntityHubRow, LinkEndpointPage, LivePageSummary, TitledPage } from './engine-sql/link-reads.ts';
 export type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions, PageMutationPrecondition, PageWithdrawal } from './page-state/types.ts';
 import type {
@@ -3124,6 +3128,88 @@ export interface BrainEngine {
    * co-runners marked, no stall counted) or go `dead` at `max_stalled`, notifying and waking their parents.
    */
   reclaimStalledJobs(graceMs: number): Promise<{ requeued: JobRow[]; dead: JobRow[] }>;
+
+  // Minion queue statements beyond the lifecycle (engine-sql/jobs-queue.ts): operator writes, sweeps, inbox, private
+  // queues, stats and attachments. The queue keeps the policy (validation, the unreviewed-job gate, authorization).
+  /** Delete a terminal job (its inbox and attachments go with it); false when it is missing or still live. */
+  deleteTerminalJob(id: number): Promise<boolean>;
+  /** Pause a waiting, active or delayed job, clearing its lock. Null when the job is in no such status. */
+  pauseJob(id: number): Promise<JobRow | null>;
+  /** Return a paused job to waiting. Null when it is not paused. */
+  resumeJob(id: number): Promise<JobRow | null>;
+  /** Fail a parent waiting on its children with `errorText`. Null when it is not waiting on children. */
+  failParentJob(parentId: number, errorText: string): Promise<JobRow | null>;
+  /** Return a parent waiting on its children to waiting when none of them is live. */
+  resolveParentJob(parentId: number): Promise<JobRow | null>;
+  /** Wake every parent waiting on children with no live child; the count woken. */
+  resolveStrandedParents(): Promise<number>;
+  /** Remove a child's dependency on its parent. */
+  detachChildJob(childId: number): Promise<void>;
+  /** Replace the progress of an active job this token holds; false when the claim moved on. */
+  updateJobProgress(id: number, lockToken: string, progress: unknown): Promise<boolean>;
+  /** Add to the token counts of an active job this token holds; false when the claim moved on. */
+  addJobTokens(id: number, lockToken: string, tokens: JobTokenCounts): Promise<boolean>;
+  /**
+   * Return an active job this token holds to `delayed` without counting an attempt (a lease-full bounce, a deferral,
+   * a configuration release). Null when the claim moved on. Postgres cancels the statement when `signal` aborts.
+   */
+  delayActiveJob(id: number, lockToken: string, spec: DelayActiveJobSpec, opts?: { signal?: AbortSignal }): Promise<JobRow | null>;
+  /** Requeue a co-runner of a watchdog drain with the suspect mark, no attempt counted; false when the claim moved on. */
+  releaseWatchdogClaim(id: number, lockToken: string, errorText: string): Promise<boolean>;
+  /** Append the watchdog suspect mark once to a job's stacktrace (any status, `updated_at` untouched). */
+  markJobWatchdogSuspect(id: number): Promise<void>;
+  /** Move delayed jobs whose delay passed back to waiting. */
+  promoteDelayedJobs(): Promise<JobRow[]>;
+  /** Cancel the live roots in `ids` and their descendants in one transaction, notifying and waking their parents. */
+  cancelJobs(ids: readonly number[], spec?: CancelJobsSpec): Promise<JobRow[]>;
+  /** Dead-letter active jobs past `timeout_at` that still hold a lease, notifying and waking their parents. */
+  killTimedOutJobs(): Promise<JobRow[]>;
+  /** Dead-letter active jobs past their wall-clock threshold, notifying and waking their parents. */
+  killWallClockJobs(lockDurationMs: number): Promise<JobRow[]>;
+  /** Delete (or count, on `dryRun`) jobs in `statuses` last updated before `olderThan`; the count. */
+  pruneJobs(spec: PruneJobsSpec): Promise<number>;
+  /** Re-queue a failed or dead job fresh after `policy.admit` passes, in one transaction. Null when not retried. */
+  retryJob(id: number, policy: RetryJobPolicy): Promise<JobRow | null>;
+  /** Insert one inbox message for a job. */
+  postInboxMessage(jobId: number, sender: string, payload: unknown): Promise<JobRow>;
+  /** Mark and return the unread messages of an active job this token holds; [] when the claim moved on. */
+  readJobInbox(jobId: number, lockToken: string): Promise<JobRow[]>;
+  /** The `child_done` payloads in an active parent's inbox (after `since`), oldest first; [] unless this token holds it. */
+  readChildCompletions(parentId: number, lockToken: string, since?: Date | null): Promise<unknown[]>;
+  /** Ids of the live jobs in one queue, ascending. */
+  listOpenJobIdsInQueue(queue: string): Promise<number[]>;
+  /** Extend the owner lease of a private queue's live jobs this owner token holds; the count renewed. */
+  renewPrivateQueueLease(queue: string, ownerToken: string, leaseMs: number): Promise<number>;
+  /** Private queues with live jobs and owner metadata, oldest first, at most `maxQueues`. */
+  listOwnedPrivateQueues(maxQueues: number): Promise<string[]>;
+  /** The recovery verdict's inputs for one private queue. */
+  readPrivateQueueState(queue: string): Promise<PrivateQueueState>;
+  /** Ids of jobs of `name` waiting since before `hours` ago, oldest first, at most `limit`. */
+  listStaleWaitingJobIds(name: string, hours: number, limit: number): Promise<number[]>;
+  /** How many jobs of `name` have waited since before `hours` ago. */
+  countTtlExpiredWaiting(name: string, hours: number): Promise<number>;
+  /** The raw counts behind the queue statistics, with the wedge signature of `queue`. */
+  readJobStats(since: Date, queue: string): Promise<JobStatsRead>;
+  /** Per queue family: live counts now and intake since `since`, families in byte order. */
+  readQueueFamilyStats(since: Date): Promise<QueueFamilyRow[]>;
+  /** Whether a waiting, authorized, marked job of `names` in `queue` has waited `waitMs` since its requeue. */
+  hasOverdueWatchdogSuspect(queue: string, names: readonly string[], waitMs: number): Promise<boolean>;
+  /** Live jobs whose authority is not exactly the application authority, by id. */
+  listUnreviewedJobs(): Promise<Array<{ id: number; submission_authority: unknown }>>;
+  /** The name and data of a failed or dead job, or null. */
+  getFailedJobForRetry(id: number): Promise<{ name: string; data: Record<string, unknown> } | null>;
+  /** One `list_jobs` page, newest first on `(created_at, id)`, each row with `created_us` for the next cursor. */
+  listJobPage(spec: JobPageSpec): Promise<JobRow[]>;
+  /** The attachment filenames of a job, or null when the job does not exist. */
+  listJobAttachmentNames(jobId: number): Promise<string[] | null>;
+  /** Store one attachment; its metadata. A duplicate filename violates `uniq_minion_attachments_job_filename`. */
+  insertJobAttachment(jobId: number, attachment: JobAttachmentInsert): Promise<JobRow>;
+  /** The attachment metadata of a job, oldest first. */
+  listJobAttachments(jobId: number): Promise<JobRow[]>;
+  /** One attachment with its `content` bytes, or null. */
+  getJobAttachment(jobId: number, filename: string): Promise<JobRow | null>;
+  /** Delete one attachment; false when there was none. */
+  deleteJobAttachment(jobId: number, filename: string): Promise<boolean>;
 
   // ============================================================
   // v0.20.0 Cathedral II: code edges (Layer 5 populates, Layer 7 consumes)
