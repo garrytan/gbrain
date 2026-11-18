@@ -14,14 +14,38 @@
 //! `TRGM_SIMILARITY_THRESHOLD` (0.3), `TRGM_WORD_SIMILARITY_THRESHOLD` (0.6),
 //! `TRGM_STRICT_WORD_SIMILARITY_THRESHOLD` (0.5).
 //!
+//! Built: PostgreSQL full-text search for the `english` configuration (`keyword/tsearch.rs`) and
+//! the `ts_rank` / `ts_rank_cd` rankers (`keyword/rank.rs`, design D5), ported from the PG 18 C
+//! sources and checked against PGLite. The facts keyword arm (findCandidateDuplicates) and the
+//! members here use them. Stable signatures:
+//! `to_tsvector(&str) -> Result<TsVector>`, `setweight(TsVector, Weight) -> TsVector`,
+//! `concat(&TsVector, &TsVector) -> Result<TsVector>`, `fts_input(&str) -> String`
+//! (`gbrain_fts_input`), `plainto_tsquery` / `phraseto_tsquery` / `websearch_to_tsquery`
+//! `(&str) -> Result<TsQuery>`, `or_of_lexemes(&TsQuery) -> Option<TsQuery>` (the facts
+//! `replace(plainto::text, ' & ', ' | ')` query), `ts_matches(&TsVector, &TsQuery) -> bool` (`@@`),
+//! `ts_rank(&TsVector, &TsQuery) -> f32`, `ts_rank_cd(&TsVector, &TsQuery) -> f32`, and
+//! `to_text()` on both types. The core keyword postings (`keys::POSTING`, `T`) are unstemmed and
+//! carry no positions or weights, so they can only narrow candidates; scores come from a
+//! `TsVector` built from the row's text.
+//!
 //! Keys: every record of this family starts with `keys::TRIGRAM` (`R`). The bytes after the tag are
 //! this file's to define; document them here. None are written yet.
 //!
 //! See docs/designs/RUST_ENGINE_INTERFACES.md.
 
 mod parser;
+mod rank;
 mod stem;
 mod trgm;
+mod tsearch;
+
+#[allow(unused_imports)]
+pub(crate) use rank::{ts_rank, ts_rank_cd};
+#[allow(unused_imports)]
+pub(crate) use tsearch::{
+    TsQuery, TsVector, Weight, concat, fts_input, or_of_lexemes, phraseto_tsquery, plainto_tsquery,
+    setweight, to_tsvector, ts_matches, websearch_to_tsquery,
+};
 
 #[allow(unused_imports)]
 pub(crate) use trgm::{
