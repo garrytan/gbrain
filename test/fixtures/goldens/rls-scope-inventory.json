@@ -4007,6 +4007,28 @@
           "src-a"
         ]
       },
+      "selectClaimableEffect#dead": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "selectClaimableEffect#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "selectProjectionWindowJobs#default": {
         "flagOffLanes": [
           "pool"
@@ -5102,6 +5124,7 @@
         "searchTakesVector": "none",
         "searchTitles": "direct",
         "searchVector": "direct",
+        "selectClaimableEffect": "none",
         "selectProjectionWindowJobs": "none",
         "setBodyStagingState": "none",
         "setChunkerVersion": "none",

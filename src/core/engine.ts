@@ -3367,6 +3367,12 @@ export interface BrainEngine {
    * the start when null) (`selectEffectRecoveries`). A non-uuid host, a non-bigint `after` or a negative limit refuses.
    */
   listEffectRecoveries<R = Record<string, unknown>>(hostId: string, after: string | null, limit: number): Promise<R[]>;
+  /**
+   * The next effect host `hostId` may claim, row-locked for the current transaction (rows another transaction holds are
+   * skipped), or null; `deadOwners` are owner keys whose running effects are claimable now (`claimPersistenceEffect`).
+   * A non-uuid host id refuses.
+   */
+  selectClaimableEffect<R = Record<string, unknown>>(hostId: string, deadOwners: readonly string[]): Promise<R | null>;
 
   /**
    * The current value of each named transaction-local setting (`current_setting(name, true)`), in `names` order, null

@@ -361,6 +361,17 @@ impl Brain {
         })
     }
 
+    /// `selectClaimableEffect(hostId)`: the next effect to claim; `null` (no effect is recorded
+    /// here).
+    #[napi]
+    pub fn select_claimable_effect<'env>(
+        &self,
+        env: &'env Env,
+        host_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.select_claimable_effect(&host_id))
+    }
+
     #[napi]
     pub fn list_compactable_receipts<'env>(
         &self,
