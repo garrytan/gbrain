@@ -5,7 +5,8 @@
 //!        p.updated_at < (SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id) AS stale
 //! FROM content_chunks cc JOIN pages p ON p.id = cc.page_id JOIN sources s ON s.id = p.source_id
 //! WHERE cc.search_vector @@ websearch_to_tsquery('english', $q)
-//!   <detail low> <language> <symbolKind> <afterDate> <beforeDate> <sources> <hard excludes> <visibility>
+//!   <type> <types> <where> <exclude_slugs> <detail low> <language> <symbolKind> <afterDate> <beforeDate>
+//!   <sources> <hard excludes> <visibility>
 //! ORDER BY score DESC, page_id ASC, chunk_id ASC LIMIT $limit OFFSET $offset
 //! ```
 //!

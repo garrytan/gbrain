@@ -8,7 +8,7 @@
 //! `pageReadFilter` (not soft-deleted, not quarantined, source present and not archived), the page
 //! kind, the types and the excluded slug prefixes, and `pageEligibleSql`: the trust floor
 //! (`minTrust`, the page's stamped tier at or above it) and the flagged-page filter (`suppressFlagged`,
-//! no `activationSuppressedSql` receipt, `trust::activation_suppressed`).
+//! no `activationSuppressedSql` receipt), both through `trust::TrustPolicy`.
 //!
 //! A page is served when its text projection is its knowledge revision or the pre-activation marker
 //! (`servedTextProjectionFilter`); otherwise it waits. Its class is `projectionClassSql`: `archived`
@@ -22,14 +22,14 @@
 
 use crate::Store;
 use crate::cli_reads::pg_text::pg_lower;
-use crate::error::{Result, StoreError};
+use crate::error::Result;
 use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::keyword::parser::is_alnum_char;
 use crate::kv::KvRead;
 use crate::pages::{PageRecord, all_pages, read_page_by_id};
 use crate::persistence::activation_started_us;
 use crate::sources::read_source;
-use crate::trust::{TrustTier, activation_suppressed};
+use crate::trust::{TrustPolicy, TrustTier};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -216,24 +216,13 @@ fn in_scope(
     {
         return Ok(false);
     }
-    let tier = TrustTier::stored(page.trust_tier.as_deref());
-    if let Some(floor) = min_trust(scope)?
-        && tier.rank() < floor.rank()
-    {
-        return Ok(false);
-    }
-    Ok(!(scope.suppress_flagged && activation_suppressed(read, "pages", page.id, tier)?))
-}
-
-/// The scope's trust floor (`trustFloorSql`): none when unset or empty, and a refusal for a name
-/// that is no tier.
-fn min_trust(scope: &CoverageScope) -> Result<Option<TrustTier>> {
-    match scope.min_trust.as_deref() {
-        None | Some("") => Ok(None),
-        Some(name) => TrustTier::parse(name).map(Some).ok_or_else(|| {
-            StoreError::invalid(format!("minTrust: \"{name}\" names no trust tier"))
-        }),
-    }
+    // `pageEligibleSql`: the trust floor and the flagged-page filter (`trust::TrustPolicy`).
+    TrustPolicy::parse(scope.min_trust.as_deref(), scope.suppress_flagged)?.admits(
+        read,
+        "pages",
+        page.id,
+        TrustTier::stored(page.trust_tier.as_deref()),
+    )
 }
 
 /// `haystack ~ '(^|[^[:alnum:]])<term>([^[:alnum:]]|$)'`: `term` occurs with no alphanumeric character

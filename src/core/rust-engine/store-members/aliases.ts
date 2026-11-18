@@ -4,9 +4,9 @@
  * updatePageContextualRetrievalState, aliasCanonicalRefs).
  *
  * aliasCanonicalRefs reads its policy as `pageReadFilter('p', policy, !!policy)` does: the source clause, the live test
- * and `excludePrivate` through the page policy (private-provenance.ts `storePagePolicy`); a trust floor or flag
- * suppression refuses, as the store keeps no trust tiers. Elsewhere a privacy, trust or flag filter refuses with
- * `engine_capability_missing`. A
+ * and `excludePrivate` through the page policy (private-provenance.ts `storePagePolicy`), and `minTrust` and
+ * `suppressFlagged` over the page's stamped trust tier and its write-gate receipts. resolveAliases refuses a privacy,
+ * trust or flag filter with `engine_capability_missing`: it must also filter the title shadow check. A
  * rename moves fact bindings only once the facts family fills its rename hook, and the `none` contextual retrieval
  * tier keeps no vectors to reset (rust/docs/store/aliases.md).
  */
@@ -95,8 +95,6 @@ export const updatePageContextualRetrievalState: StoreMember<[slug: string, sour
 export const aliasCanonicalRefs: StoreMember<[refs: AliasRef[], policy?: PageReadPolicy], Array<{ source_id: string; canonical_slug: string }>> =
   async (brain, refs, policy) => {
     if (refs.length === 0) return [];
-    if (policy?.minTrust) refuseMember('aliasCanonicalRefs', 'option minTrust');
-    if (policy?.suppressFlagged) refuseMember('aliasCanonicalRefs', 'option suppressFlagged');
     const sourceIds = policy?.sourceIds?.length ? [...policy.sourceIds] : policy?.sourceId ? [policy.sourceId] : null;
     const excludePrivate = storePagePolicy('aliasCanonicalRefs', policy?.excludePrivate);
     return storeCall({ member: 'aliasCanonicalRefs' }, () => brain.aliasCanonicalRefs({
@@ -104,5 +102,7 @@ export const aliasCanonicalRefs: StoreMember<[refs: AliasRef[], policy?: PageRea
       source_ids: sourceIds,
       live: !!policy,
       exclude_private: excludePrivate ?? null,
+      min_trust: policy?.minTrust || null,
+      suppress_flagged: policy?.suppressFlagged === true,
     }));
   };

@@ -8,9 +8,10 @@
 //!
 //! Each member reads the rows its statement reads, through the indexes `facts.rs` keeps, and returns the columns the
 //! statement selects. A statement with no `ORDER BY` returns its rows in key order here (the TypeScript callers do
-//! not depend on an order). The facts store keeps no `trust_tier`, `write_gate_receipts` or `needs_rederive` state
-//! (`takes.rs` reads the last as empty), and no folder rule or `page_readers` column (`privacy.rs`): a page names
-//! readers here only through a `readable_by` key. rust/docs/store/facts.md, "Group 5", lists what each member answers.
+//! not depend on an order). Each fact row keeps its stamped `trust_tier`, and the write gate keeps its receipts
+//! (`trust/write_gate.rs`), so `countWorldFacts` applies the read eligibility (`trust::TrustPolicy`). The facts store
+//! keeps no `needs_rederive` state (`takes.rs` reads it as empty), and no folder rule or `page_readers` column
+//! (`privacy.rs`): a page names readers here only through a `readable_by` key. rust/docs/store/facts.md, "Group 5", lists what each member answers.
 
 use super::{
     FactRecord, PrivacyPolicy, ROW, bigint, count_arg, fact_by_number, hidden_by_deleted_page,
@@ -23,6 +24,7 @@ use crate::kv::{KvRead, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::read_page;
 use crate::sources::{all_sources, read_source};
+use crate::trust::TrustPolicy;
 use crate::{StoreError, keys};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -125,6 +127,10 @@ pub struct WorldFactCount {
     pub world_only: bool,
     /// `privateFactFilterForReader('facts')` (`facts/privacy.rs`), when the card asks for it.
     pub exclude_private: Option<PrivacyPolicy>,
+    /// `eligibility.floor`: `trustFloorSql` over the fact's stored tier; null sets none.
+    pub min_trust: Option<String>,
+    /// `eligibility.suppressFlagged`: drop a fact `activationSuppressedSql('facts')` flags.
+    pub suppress_flagged: bool,
 }
 
 /// A date token of `fact` starts at `at`: `YYYY-MM-DD` with no digit right after it.
@@ -492,6 +498,7 @@ impl Store {
         const OP: &str = "countWorldFacts";
         no_nul(OP, &[("sourceId", &q.source_id)])?;
         let slugs = distinct(OP, "entitySlugs", &q.entity_slugs)?;
+        let trust = TrustPolicy::parse(q.min_trust.as_deref(), q.suppress_flagged)?;
         let read = self.read()?;
         let mut count = 0;
         for slug in slugs {
@@ -501,6 +508,7 @@ impl Store {
                     && !hidden_by_policy(&*read, &row, &q.exclude_private)?
                     && !hidden_by_deleted_page(&*read, &row)?
                     && !hidden_by_quarantine(&*read, &row)?
+                    && trust.admits(&*read, "facts", row.id, row.tier())?
                 {
                     count += 1;
                 }

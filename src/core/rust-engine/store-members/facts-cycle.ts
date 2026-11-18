@@ -2,10 +2,11 @@
  * Group 5 facts members, command, cycle and fence reads (src/core/engine-sql/facts-cycle.ts), served from the facts store
  * (rust/crates/gbrain-store/src/facts/cycle.rs). A member not exported here refuses with `engine_capability_missing`.
  *
- * Each member makes one store call with the arguments of its statement. What the store cannot answer exactly refuses:
- * `countWorldFacts` under a trust floor or a flag-suppressing eligibility (the store keeps no `trust_tier` or
- * `write_gate_receipts`) and `excludePrivate` for a caller whose rendering is not the store's policy
- * (private-provenance.ts); `findBulkFactDays` under a rule whose count thresholds are not integers (`$2::int`).
+ * Each member makes one store call with the arguments of its statement. `countWorldFacts` sends its read eligibility
+ * (the trust floor and flag suppression), which the store applies over each fact's stamped `trust_tier` and its
+ * write-gate receipts. What the store cannot answer exactly refuses: `excludePrivate` for a caller whose rendering is
+ * not the store's policy (private-provenance.ts); `findBulkFactDays` under a rule whose count thresholds are not
+ * integers (`$2::int`).
  * `listFactsForPage` turns the times the store returns as text into `Date`s, as PGLite returns them.
  */
 import { privateFactFilterForReader } from '../../search/private-visibility.ts';
@@ -60,11 +61,11 @@ export const listStoredFenceFactRows: Member<'listStoredFenceFactRows'> = (brain
 
 export const countWorldFacts: Member<'countWorldFacts'> = async (brain, opts) => {
   const member = 'countWorldFacts';
-  if (opts.eligibility?.floor) refuseMember(member, 'a trust floor: the store keeps no trust_tier');
-  if (opts.eligibility?.suppressFlagged) refuseMember(member, 'flag suppression: the store keeps no write_gate_receipts');
   return storeCall({ member }, () => brain.countWorldFacts({
     sourceId: opts.sourceId, entitySlugs: opts.entitySlugs, worldOnly: opts.worldOnly,
     // entity-card.ts: `privateFactFilterForReader('facts')`.
     excludePrivate: storePrivacyPolicy(member, opts.excludePrivate, () => privateFactFilterForReader('facts')),
+    minTrust: opts.eligibility?.floor || null,
+    suppressFlagged: opts.eligibility?.suppressFlagged === true,
   }));
 };
