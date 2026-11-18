@@ -19,7 +19,10 @@
 import type { Action, McpCall } from '../core/agent-output.ts';
 import type { Operation, OperationMeta } from '../core/ops/contract.ts';
 import { cliEquivalent } from '../core/ops/cli-equivalent.ts';
-import { clampSurface, filterOpsForSurface, isReadOnlyOperation, surfaceWiderThan, type McpSurface } from './surface.ts';
+import { opError, type OperationError } from '../core/ops/contract.ts';
+import { clampSurface, filterOpsForSurface, isReadOnlyOperation, paramCallable, paramCeiling, surfaceWiderThan, type McpSurface } from './surface.ts';
+
+export { paramCallable };
 
 const PERSISTENT_ROUTE = 'To keep the full surface for new sessions, set GBRAIN_SURFACE=full in the env of this harness\'s MCP server entry for gbrain '
   + '(`claude mcp add gbrain -e GBRAIN_SURFACE=full -- …`, the env table of the Codex server entry, or the plugin\'s GBRAIN_SURFACE setting on launcher installs), '
@@ -132,4 +135,45 @@ export function hiddenToolNext(op: Operation, call: McpCall, route: HiddenToolRo
       user_message: `This gbrain connection cannot list ${what}. You can run \`${argv.join(' ')}\` on the brain host.` };
   }
   return hostFix;
+}
+
+/** #9669: the refusal code for a parameter, or a parameter value, a remote caller's tool surface does not take. */
+export const PARAM_NOT_ON_SURFACE_CODE = 'param_not_on_surface';
+
+/**
+ * #9669: the refusal for the first parameter in `params` that this connection's surface leaves out, or passes above the
+ * surface's ceiling (STARTER_PARAM_CEILINGS), or null. A surface
+ * confines parameters as well as tools, so dispatch refuses before validation and the handler. The fix widens with
+ * request_tools when this connection may (as for a hidden tool); otherwise it asks the user, since only the brain
+ * operator widens a pinned connection.
+ */
+export function paramNotOnSurface(op: Operation, params: Record<string, unknown>, conn: ToolConnection, protocolVersion?: number): OperationError | null {
+  const surface = conn.surface ?? 'full';
+  const above = (key: string, on: McpSurface) => {
+    const cap = paramCeiling(op, key, on);
+    return cap !== undefined && typeof params[key] === 'number' && params[key] > cap ? cap : undefined;
+  };
+  const param = Object.keys(params).find(key => !paramCallable(op, key, surface) || above(key, surface) !== undefined);
+  if (param === undefined) return null;
+  const cap = above(param, surface);
+  const target = clampSurface(conn.ceiling ?? 'full', () => {});
+  const widen = conn.canWiden && !(conn.readOnly && !isReadOnlyOperation(op)) && surfaceWiderThan(target, surface)
+    && paramCallable(op, param, target) && above(param, target) === undefined;
+  const what = cap === undefined ? `parameter ${param} is not on` : `${param} above ${cap} is not on`;
+  const message = `${op.name}: ${what} this connection's ${surface} tool surface; nothing was ${op.mutating ? 'written' : 'read'}.`;
+  const why = 'The tool surface the brain operator set for this connection limits the parameters it may pass, as well as the tools it may call.';
+  const retry = cap === undefined ? `Repeat the call without ${param}` : `Repeat the call with ${param} at most ${cap}`;
+  const scope = conn.transport === 'stdio' ? 'this session (nothing is written)' : 'this client\'s own surface, within the server ceiling';
+  const refusal = widen
+    ? opError(PARAM_NOT_ON_SURFACE_CODE, message, `${retry}, or call request_tools {"surface":"${target}"} to widen ${scope}, then repeat it.`, {
+      why, fix: { mcp: { tool: 'request_tools', arguments: { surface: target } }, consent: [], actor: 'agent', requires_exclusive: false,
+        why: `Widens ${scope} to the ${target} surface, which takes ${param}; then repeat the ${op.name} call.` } })
+    : opError(PARAM_NOT_ON_SURFACE_CODE, message, `${retry}. Only the brain's operator can widen this connection's tool surface.`, {
+      why, fix: { ask_user: true, consent: [], actor: conn.transport === 'stdio' ? 'user' : 'host_admin', requires_exclusive: false,
+        why: 'This connection cannot widen its own tool surface.',
+        user_message: cap === undefined
+          ? `This gbrain connection serves the ${surface} tool surface, which does not take the ${param} parameter of ${op.name}. Widening it is the brain operator's decision; the call works without ${param}.`
+          : `This gbrain connection serves the ${surface} tool surface, which caps ${param} of ${op.name} at ${cap}. Widening it is the brain operator's decision; the call works with ${param} at most ${cap}.` } });
+  if (protocolVersion !== undefined) refusal.protocolVersion = protocolVersion;
+  return refusal;
 }
