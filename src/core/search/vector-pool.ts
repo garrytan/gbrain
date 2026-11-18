@@ -32,7 +32,8 @@ export interface VectorPoolAttempt {
 export const INDEX_WALK_ESCALATIONS = 2;
 
 /**
- * Runs the statement's index walk, then its scope scan (each when present),
+ * Runs the statement's index walk and scope scan (each when present),
+ * preferring the exact scan for small scopes marked scopeScanFirst,
  * before the pool. Walk rows answer the search when its window is full and
  * they fill the limit; a full window whose fresh chunks could fill the limit
  * but whose pages fall short widens (INDEX_WALK_ESCALATIONS). Scope-scan rows
@@ -42,7 +43,7 @@ export const INDEX_WALK_ESCALATIONS = 2;
  * over-fetched window, so its tuple budget covers it.
  */
 export async function searchIndexWalk(
-  stmt: Pick<VectorSearchStatement, 'indexWalkSql' | 'scopeScanSql' | 'innerLimit' | 'indexWalkOverfetch'>,
+  stmt: Pick<VectorSearchStatement, 'indexWalkSql' | 'scopeScanSql' | 'scopeScanFirst' | 'innerLimit' | 'indexWalkOverfetch'>,
   limit: number,
   run: (attempt: VectorPoolAttempt) => Promise<VectorPoolBatch>,
 ): Promise<Record<string, unknown>[] | null> {
@@ -54,6 +55,15 @@ export async function searchIndexWalk(
       throw error;
     }
   };
+  const scan = async () => {
+    if (!stmt.scopeScanSql) return null;
+    const batch = await attempt({ scopeScan: true });
+    return batch && (batch.rows.length >= limit || batch.candidatePool < stmt.innerLimit) ? batch.rows : null;
+  };
+  if (stmt.scopeScanFirst) {
+    const rows = await scan();
+    if (rows) return rows;
+  }
   if (stmt.indexWalkSql) {
     for (let innerLimit = stmt.innerLimit, escalations = 0; ; innerLimit *= 4, escalations++) {
       const batch = await attempt({ indexWalk: true }, innerLimit);
@@ -62,11 +72,7 @@ export async function searchIndexWalk(
       if ((batch.eligiblePool ?? batch.candidatePool) < limit || escalations >= INDEX_WALK_ESCALATIONS) break;
     }
   }
-  if (stmt.scopeScanSql) {
-    const batch = await attempt({ scopeScan: true });
-    if (batch && (batch.rows.length >= limit || batch.candidatePool < stmt.innerLimit)) return batch.rows;
-  }
-  return null;
+  return stmt.scopeScanFirst ? null : scan();
 }
 
 /**
