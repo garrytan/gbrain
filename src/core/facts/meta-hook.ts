@@ -38,6 +38,7 @@
 import type { OperationContext } from './../operations.ts';
 import type { BrainEngine, FactRow } from './../engine.ts';
 import { effectiveConfidence } from './decay.ts';
+import { readHolders } from '../ops/context.ts';
 import { collapseHotFacts } from './capture-dedup.ts';
 import { proactiveEligibility } from '../eligibility/registry.ts';
 import { partitionForActivation, suppressionSummary } from '../eligibility/activation.ts';
@@ -150,7 +151,7 @@ export async function getBrainHotMemoryMeta(
   const sessionId = ctx.sessionId
     ?? (ctx as { source_session?: string }).source_session
     ?? null;
-  const allowListHash = hashAllowList(ctx.takesHoldersAllowList);
+  const allowListHash = hashAllowList(readHolders(ctx));
   // v0.45.7 (ambient-recall adversarial review, P1): the visibility TIER is part
   // of the key. Without it, a trusted-local call (remote:false → all rows,
   // private included) warms the cache and a later remote/world-only call with

@@ -186,7 +186,7 @@ export interface BuildBrainToolsOpts {
    */
   sourceId?: string;
   /** Current remote owner grant; never populated from caller tool arguments. */
-  delegatedAuth?: Pick<AuthInfo, 'clientId' | 'scopes' | 'sourceId' | 'allowedSources' | 'allowedOperations'>;
+  delegatedAuth?: Pick<AuthInfo, 'clientId' | 'scopes' | 'sourceId' | 'allowedSources' | 'allowedOperations' | 'takesHoldersAllowList'>;
   /** #6297: byte budget on this job's get_page results (SubagentHandlerData.read_budget_bytes); unset = none. */
   readBudgetBytes?: number;
   /** GBRA-60: put_page stages its page in the tool-execution ledger instead of writing it (SubagentHandlerData.stage_writes). */
@@ -223,6 +223,8 @@ function buildOpContext(deps: OpContextDeps): OperationContext {
     // fences or requiring direct read/write scopes for agent-only grants.
     ...(deps.delegatedAuth ? { auth: { token: '', ...deps.delegatedAuth,
       principal: { kind: 'oauth_client' as const, id: deps.delegatedAuth.clientId } } } : {}),
+    // GST-3058: a job reads the client's stored takes holders list (readHolders gives ['world'] without one).
+    ...(deps.delegatedAuth?.takesHoldersAllowList ? { takesHoldersAllowList: [...deps.delegatedAuth.takesHoldersAllowList] } : {}),
     jobId: deps.jobId,
     subagentId: deps.subagentId,
     viaSubagent: true,           // FAIL-CLOSED: put_page etc. enforce namespace
