@@ -11,8 +11,9 @@
  *    deadline as a read deadline (read-deadline.ts), which the Postgres engine applies to its typed reads; PGLite and
  *    Rust have no statement deadline either way. A read the deadline ends marks the scope expired, as executeRaw's
  *    deadline wrapper does.
- *  - An abort signal: a read whose signal already fired is not started. A config read is one indexed row lookup, so it
- *    is not cancelled once it runs.
+ *  - An abort signal: a read whose signal already fired is not started, and the caller stops waiting when the signal
+ *    fires during the read. The typed read takes no signal, so the read itself is not cancelled; a stalled round trip
+ *    no longer holds the caller past its phase deadline (#6278), as the replaced executeRaw did not.
  *
  * A handle without the typed read (a narrow `executeRaw`-only wrapper) runs the typed read's own statement.
  */
@@ -31,7 +32,7 @@ export async function readConfigRows(engine: ConfigReader | Pick<BrainEngine, 'g
   opts.signal?.throwIfAborted();
   const typed = (engine as Partial<Pick<BrainEngine, 'getConfigValues'>>).getConfigValues;
   const read = typed
-    ? () => typed.call(engine, keys)
+    ? () => untilAborted(typed.call(engine, keys), opts.signal)
     : () => (engine as ConfigReader).executeRaw<{ key: string; value: string }>(CONFIG_VALUES_SQL, [[...keys]], { signal: opts.signal });
   const scope = currentStatementDeadline();
   if (!typed || !scope || scope.deadlineAt === null) return read();
@@ -45,6 +46,20 @@ export async function readConfigRows(engine: ConfigReader | Pick<BrainEngine, 'g
     if (deadlineFailure(error) && Date.now() >= scope.deadlineAt - 100) scope.expired = true;
     throw error;
   }
+}
+
+/** `read`, or the signal's reason when the signal fires first. The read keeps running; only the wait ends. */
+function untilAborted<T>(read: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return read;
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    if (signal.aborted) { abort(); return; }
+    signal.addEventListener('abort', abort, { once: true });
+    read.then(
+      (value) => { signal.removeEventListener('abort', abort); resolve(value); },
+      (error) => { signal.removeEventListener('abort', abort); reject(error); },
+    );
+  });
 }
 
 function refuse(scope: NonNullable<ReturnType<typeof currentStatementDeadline>>): never {

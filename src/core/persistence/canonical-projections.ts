@@ -1,4 +1,5 @@
 import type { BrainEngine } from '../engine.ts';
+import { STORED_TIMELINE_SQL } from '../engine-sql/timeline-reads.ts';
 import { isQuarantined } from '../quarantine.ts';
 import type { ParsedPage } from '../import-file.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
@@ -444,11 +445,11 @@ export const TAKE_COLLISIONS_SQL = `SELECT k.row_num FROM takes k
     JOIN jsonb_to_recordset($2::text::jsonb) AS n(row_num integer,claim text,kind text,holder text) ON n.row_num=k.row_num
     WHERE k.page_id=$1 AND (k.claim,k.kind,k.holder) IS DISTINCT FROM (n.claim,n.kind,n.holder) ORDER BY k.row_num LIMIT $3`;
 
-/** A page's own (non-event) timeline rows, in date order. */
-export const STORED_TIMELINE_SQL = 'SELECT id,date::text AS date,source,summary,detail FROM timeline_entries WHERE page_id=$1 AND event_page_id IS NULL ORDER BY date,id';
+/** A page's own (non-event) timeline rows, in date order (the statement lives in engine-sql/timeline-reads.ts). */
+export { STORED_TIMELINE_SQL };
 
 function storedTimeline(engine: BrainEngine, pageId: number): Promise<StoredTimelineRow[]> {
-  return engine.executeRaw<StoredTimelineRow>(STORED_TIMELINE_SQL, [pageId]);
+  return engine.listStoredTimelineRowsOrdered(pageId);
 }
 
 /**
@@ -722,7 +723,7 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
     // W1 #6783 §12 (a): a timeline row or take more trusted than the writer is never deleted, replaced or deactivated by
     // it. It stays as it is and a `forget` proposal asks the owner (trust/fence-guard.ts), decided before any statement runs.
     const heldTimeline = await heldRows(tx, 'timeline_entries', [...deletionRows, ...refreshRows].map(row => Number(row.id)));
-    const deletions = JSON.stringify(deletionRows.filter(row => !heldTimeline.has(Number(row.id))));
+    const deletions = deletionRows.filter(row => !heldTimeline.has(Number(row.id)));
     const refreshes = JSON.stringify(refreshRows.filter(row => !heldTimeline.has(Number(row.id))));
     const heldTakes = projectFences ? await guardFenceTakes(tx, id, takes, takeRowsGone) : [];
     const heldRowNums = new Set(heldTakes.map(row => row.row_num));
@@ -793,9 +794,7 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
     // Event-page references have a different canonical origin and remain intact;
     // new rows carry their Markdown detail on insert, pinned rows refresh only from their preimage.
     const timelineRows = [
-      () => tx.executeRaw<{ date: string; removed: boolean }>(`DELETE FROM timeline_entries t USING jsonb_to_recordset($2::text::jsonb) AS d(id integer,date date,source text,summary text,detail text,removed boolean)
-        WHERE t.page_id=$1 AND t.event_page_id IS NULL AND t.id=d.id AND t.date=d.date AND t.source=d.source
-          AND t.summary=d.summary AND t.detail=d.detail RETURNING t.date::text AS date, d.removed`, [id, deletions])
+      () => tx.deleteTimelineRows(id, deletions)
         .then(rows => { for (const row of rows) if (row.removed) removedDates.push(row.date); return rows; }),
       ...timelineChunks(timeline).map(rows => () => insertCanonicalTimeline(tx, id, rows)),
       () => tx.executeRaw(`UPDATE timeline_entries t SET detail=r.next FROM jsonb_to_recordset($2::text::jsonb) AS r(id integer,detail text,next text)

@@ -163,6 +163,28 @@ Reserved tags:
 | persistence (core) | `d` (requests stay under `J` / `j`, local writers under `W`) | `PERSISTENCE` | no |
 | jobs (core) | `m` | `JOBS` | no |
 | trust | `t` | `TRUST` | no (the trust family asks core when it needs the page-delete hook) |
+| telemetry | `a`, one sub-tag per table (below) | `TELEMETRY` | no |
+
+The telemetry family (`telemetry.rs`) holds search telemetry (`src/core/search/telemetry.ts`), MCP usage
+(`src/core/mcp-usage.ts`), retrieval feedback (`src/core/feedback/`) and the budget ledger
+(`src/core/budget/daily-ledger.ts`). The byte after `a` names the table, and the family documents the rest of each key
+in its module header:
+
+| Sub-tag | Constant | Table |
+|---|---|---|
+| `0x01` | `TELEMETRY_SEARCH` | `search_telemetry` |
+| `0x02` | `TELEMETRY_MCP_REQUEST` | `mcp_request_log` |
+| `0x03` | `TELEMETRY_MCP_ROLLUP` | `mcp_request_log_rollup` |
+| `0x04` | `TELEMETRY_RETRIEVAL_EVENT` | `retrieval_events` |
+| `0x05` | `TELEMETRY_RETRIEVAL_EVENT_PAGE` | `retrieval_event_pages` |
+| `0x06` | `TELEMETRY_RETRIEVAL_EVENT_LINK` | `retrieval_event_links` |
+| `0x07` | `TELEMETRY_FEEDBACK` | `retrieval_feedback` |
+| `0x08` | `TELEMETRY_RETRIEVAL_WEIGHT` | `retrieval_weights` |
+| `0x09` | `TELEMETRY_BUDGET_LEDGER` | `budget_ledger` |
+| `0x0A` | `TELEMETRY_BUDGET_RESERVATION` | `budget_reservations` |
+
+`eval_candidates` stays with eval_capture (`Z`). A new telemetry table takes the next unused sub-tag in a reviewed
+change to this table and to `keys.rs`.
 
 The `q` tag is shared. link_queries and wanted_links both key records as `q <source id> 0x00 ...`; the byte after
 `0x00` is `W` for a wanted_links record (`q <origin source id> 0x00 W <origin page id BE8> ...`), and link_queries
@@ -586,7 +608,7 @@ carries its output to the store.
   PGLite's `trg_pages_search_vector` (`BEFORE INSERT OR UPDATE OF title, timeline`) puts the trigger form back on
   every write whose `SET` list names either column, also with an unchanged value. `put_page_in` calls it on every
   `putPage`; `write_page` calls it when the title or timeline changed. The page_body family calls it from
-  `refresh_page_body` and the body generation flip. `rust/docs/store/pages.md` ("Search timeline") lists each PGLite
+  `refresh_page_body` and the body generation flip, and `seal_segmented_page` calls `record_search_timeline`. `rust/docs/store/pages.md` ("Search timeline") lists each PGLite
   statement.
 - **Delete.** `remove_page` deletes it on a hard delete. A soft delete keeps it.
 - **Other writers.** A family that seals a page by another path and has the sanitized text from TypeScript calls
@@ -790,18 +812,19 @@ Segmented page bodies: segment texts, manifests, staging and derivations.
 
 - **Files:** `gbrain-store/src/page_body.rs`, `gbrain-napi/src/families/page_body.rs`, `store-members/page-body.ts`.
 - **Tag:** `b` (`PAGE_BODY`). Cascade on page delete: yes.
-- **Members (15), capability:** `page_body` (15).
-- **Store and binding:** `allocateBodyOccurrenceIds` (`allocate_body_occurrence_ids`), `stageSegmentTexts` (`stage_segment_texts`), `readSegmentTexts` (`read_segment_texts`), `stageManifestRows` (`stage_manifest_rows`), `readManifest` (`read_manifest`), `stageSegmentChunks` (`stage_segment_chunks`), `createSegmentedPageShell` (`create_segmented_page_shell`), `flipBodyGeneration` (`flip_body_generation`), `openBodyStaging` (`open_body_staging`), `setBodyStagingState` (`set_body_staging_state`), `sweepSegments` (`sweep_segments`), `readSegmentDerivations` (`read_segment_derivations`), `upsertSegmentDerivations` (`upsert_segment_derivations`), `retireSegmentDerivations` (`retire_segment_derivations`), `refreshPageBody` (`refresh_page_body`).
+- **Members (16), capability:** `page_body` (16).
+- **Store and binding:** `allocateBodyOccurrenceIds` (`allocate_body_occurrence_ids`), `stageSegmentTexts` (`stage_segment_texts`), `readSegmentTexts` (`read_segment_texts`), `stageManifestRows` (`stage_manifest_rows`), `readManifest` (`read_manifest`), `stageSegmentChunks` (`stage_segment_chunks`), `createSegmentedPageShell` (`create_segmented_page_shell`), `flipBodyGeneration` (`flip_body_generation`), `sealSegmentedPage` (`read_segmented_seal_lead`, `seal_segmented_page`), `openBodyStaging` (`open_body_staging`), `setBodyStagingState` (`set_body_staging_state`), `sweepSegments` (`sweep_segments`), `readSegmentDerivations` (`read_segment_derivations`), `upsertSegmentDerivations` (`upsert_segment_derivations`), `retireSegmentDerivations` (`retire_segment_derivations`), `refreshPageBody` (`refresh_page_body`).
 - **Postgres tables:** `page_segment_texts`, `page_body_manifest`, `page_body_stagings`, `page_segment_derivations`, `page_derivation_spend`.
 - **Keys:** `b 0x01 <source> 0x00 <sha256>` segment text; `b 0x02 <page id> <occurrence id> <gen_from> <staging id>` manifest row (ids big-endian); `b 0x03 <staging id>` staging; `b 0x04 <page id> ...` derivations; `M next_body_occurrence_id` for occurrence ids. Page-keyed rows go in `remove_page_rows`; segment texts are kept until `sweepSegments`, as in PGLite.
-- **Depends on:** Core page helpers for `createSegmentedPageShell`, `flipBodyGeneration` and `refreshPageBody` (page record writes go through `write_page`). `stageSegmentChunks` writes chunk rows through the core segment chunk helpers (built; "Segment chunks"), and refuses any input that carries vectors until the embeddings family lands. The flip publishes the view generation (`publish_segment_chunks`) and retires chunks with the segment chunk deletes. The generation-1 parity case also needs the transactions family.
+- **Depends on:** Core page helpers for `createSegmentedPageShell`, `flipBodyGeneration`, `sealSegmentedPage` and `refreshPageBody` (page record writes go through `write_page`; the seal records the sanitized lead with `record_search_timeline`). `stageSegmentChunks` writes chunk rows through the core segment chunk helpers (built; "Segment chunks"), and refuses any input that carries vectors until the embeddings family lands. The flip publishes the view generation (`publish_segment_chunks`) and retires chunks with the segment chunk deletes. The generation-1 parity case also needs the transactions family.
 - **Estimate:** about 7 to 8 days: texts and manifest 1 to 2, flip and staging 3, sweep 2, derivations 1.
 - **Notes:** Segment bodies are bytes; sha256 and bodies cross the binding as hex or `Buffer`. `flipBodyGeneration` and `sweepSegments` are each one store write.
-- **Parity cases (5, in `segmented-body.test.ts`, `sync-aliases.test.ts`):**
+- **Parity cases (6, in `segmented-body.test.ts`, `sync-aliases.test.ts`):**
   - `segmented-body.test.ts`: a segmented page publishes generation 1 from staged texts and manifest rows
   - `segmented-body.test.ts`: a replace flips to generation 2, closes retired rows and refuses a stale generation
   - `segmented-body.test.ts`: sweepSegments deletes closed rows and unreferenced texts and expires stale stagings
   - `segmented-body.test.ts`: segment derivations upsert by (page, kind, occurrence), read in order and retire dead occurrences
+  - `segmented-body.test.ts`: sealing a segmented page shows its chunks at the current revision, again after a replace that keeps older chunks
   - `sync-aliases.test.ts`: refreshPageBody rewrites body, timeline and content hash; skips soft-deleted pages and other sources
 
 ### facts
@@ -1223,7 +1246,7 @@ the same rows into one member, so the member counts here are smaller than the si
 
 These four sections are design only. No file, tag, constant or list entry below exists yet. The tags are proposed:
 core adds them to the reserved block in `keys.rs` and to the reserved tag table above in one reviewed change, and
-until then no family writes under them. The free lowercase bytes today are `a d f g h i m t x y z`.
+until then no family writes under them. The free lowercase bytes today are `f g h i x y z` (`d`, `m` and `t` are now reserved above, and `a` is telemetry).
 
 | Family | Proposed tag | Proposed constant | Cascade on page delete | Owner |
 |---|---|---|---|---|

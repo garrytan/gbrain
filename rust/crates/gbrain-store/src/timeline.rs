@@ -205,7 +205,9 @@ pub(crate) fn read_entry(
 /// Writes `new`, replacing `old` (the same entry as it was stored before) when given. Removes
 /// `old`'s `E` key and its `D` key when that `D` key still points at `old.id`. Refuses with
 /// `constraint_violation` when `new`'s `D` key points at another entry (the dedup unique index).
-/// Writes `new`'s `E` and `D` keys and raises `G` of `new.page_id`; `G` is never lowered. On a
+/// Writes `new`'s `E` and `D` keys and raises `G` of `new.page_id`; this path never lowers `G`.
+/// One exception lowers it: `deleteTimelineRows` (timeline_queries/site_reads.rs `reset_latest`)
+/// resets `G` to the newest `created_at` of the rows left, or deletes it when no row is left. On a
 /// refusal the caller returns the error, so the write transaction keeps nothing.
 // timeline_queries (upsertEventProjection) is the first caller.
 #[cfg_attr(not(test), allow(dead_code))]

@@ -35,8 +35,7 @@
 //!   reads the entries that exist when the page row is written; the store keeps the entries
 //!   created no later than the page's `updated_at`. A NULL timeline (a segmented page) reads
 //!   the page's `timeline_lead`, as the trigger does (`coalesce(timeline, timeline_lead, '')`).
-//!   The page_body family keeps the lead in its private body state; [`timeline_lead`] reads
-//!   NULL until page_body exposes a `pub(crate)` reader (follow-up `title-vector-segmented-lead`).
+//!   The page_body family keeps the lead in its body state; [`timeline_lead`] reads it there.
 //!
 //! A sealed segmented page takes the sealed form: PGLite's `sealSegmentedPage` writes the title
 //! plus the sanitized lead (withdrawals and purges overlaid), which only TypeScript computes, so
@@ -110,11 +109,10 @@ fn weighted(text: &str, weight: Weight) -> Result<TsVector> {
     Ok(setweight(to_tsvector(&fts_input(text))?, weight))
 }
 
-/// The `timeline_lead` of a segmented page (NULL for an inline page). The page_body family keeps
-/// it in its private body state; until it exposes a `pub(crate)` reader, this reads NULL (follow-up
-/// `title-vector-segmented-lead`), so a segmented page's trigger form holds the title and entries.
-fn timeline_lead(_read: &dyn KvRead, _page: &PageRecord) -> Result<Option<String>> {
-    Ok(None)
+/// The `timeline_lead` of a segmented page: the lead its last flip published, NULL for an inline
+/// page or a shell no flip has published (`page_body::timeline_lead`).
+fn timeline_lead(read: &dyn KvRead, page: &PageRecord) -> Result<Option<String>> {
+    crate::page_body::timeline_lead(read, page.id)
 }
 
 /// The trigger's timeline text: `coalesce(timeline, timeline_lead, '')`, the lead read only for a
@@ -463,6 +461,80 @@ mod tests {
             "raw"
         );
         assert_eq!(trigger_timeline(None, || Ok(None)).unwrap(), "");
+    }
+
+    /// A segmented page published from one segment with `lead` as its timeline lead.
+    fn segmented(store: &Store, slug: &str, title: &str, lead: &str) {
+        use sha2::{Digest, Sha256};
+        let staging = "66666666-6666-4666-8666-666666666666";
+        let body = "one\n";
+        let sha: String = Sha256::digest(body.as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let shell: crate::page_body::ShellOptions =
+            serde_json::from_value(json!({"sourceId": "default"})).unwrap();
+        let id = store
+            .create_segmented_page_shell(
+                slug,
+                &serde_json::from_value(json!({"type": "note", "title": "Shell"})).unwrap(),
+                &shell,
+            )
+            .unwrap()["id"]
+            .clone();
+        store
+            .open_body_staging(
+                &serde_json::from_value(json!({
+                    "id": staging, "kind": "put", "principalKind": "local", "principalId": "cli",
+                    "clientRequestId": "77777777-7777-4777-8777-777777777777", "sourceId": "default",
+                    "sourceIncarnation": "33333333-3333-4333-8333-333333333333", "slug": slug,
+                    "pageId": id, "mode": "replace", "declaredBytes": 1, "reservedBytes": 1,
+                    "idleExpiresAt": "2099-01-01T00:00:00Z", "hardExpiresAt": "2099-01-02T00:00:00Z",
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        let text: crate::page_body::SegmentTextInput = serde_json::from_value(json!({
+            "sha256": sha, "body": "6f6e650a", "lineCount": 1,
+        }))
+        .unwrap();
+        let options: crate::page_body::StageTextsOptions =
+            serde_json::from_value(json!({"stagingId": staging})).unwrap();
+        store
+            .stage_segment_texts("default", &[text], &options)
+            .unwrap();
+        let row: crate::page_body::ManifestRow = serde_json::from_value(json!({
+            "pageId": id, "occurrenceId": 1, "genFrom": 1, "seq": 0, "region": "truth",
+            "sourceId": "default", "sha256": sha, "byteStart": 0, "byteLen": 4, "lineStart": 0,
+            "lineCount": 1, "cutKind": "heading", "entryState": {"depth": 0}, "protectedRegions": [],
+            "factsSlots": [], "outline": [], "staticProjBytes": 4, "staticProjLines": 1,
+            "hashState": sha, "stagingId": staging,
+        }))
+        .unwrap();
+        store.stage_manifest_rows(&[row]).unwrap();
+        let flip: crate::page_body::BodyFlipInput = serde_json::from_value(json!({
+            "pageId": id, "expectedGeneration": 0, "newGeneration": 1, "stagingId": staging,
+            "retireMaxRows": 1000,
+            "body": {
+                "content_hash": "h", "body_bytes": 4, "truth_bytes": 4, "body_lines": 1,
+                "segment_count": 1, "segmenter_version": 1, "truth_lead": "",
+                "timeline_lead": lead, "body_flags": {},
+            },
+            "meta": {"type": "note", "title": title},
+        }))
+        .unwrap();
+        store.flip_body_generation(&flip).unwrap();
+    }
+
+    #[test]
+    fn a_segmented_page_without_a_seal_reads_its_published_timeline_lead_at_weight_c() {
+        let store = crate::test_support::store();
+        segmented(&store, "notes/seg", "Alpha Nebula", "zephyrwinds lead");
+        // No seal record: the trigger form, whose NULL timeline reads the flip's lead.
+        assert_eq!(
+            vector_of(&store),
+            "'alpha':1A 'lead':4C 'nebula':2A 'zephyrwind':3C"
+        );
     }
 
     #[test]

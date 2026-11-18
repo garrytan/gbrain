@@ -477,23 +477,7 @@ async function runEffectiveDate(ctx: DoctorContext): Promise<Check[]> {
   // reindex-frontmatter` uses) to confirm a real date was missed.
   progress.heartbeat('effective_date_health');
   try {
-    const result = await engine.executeRaw<{ kind: string; count: string }>(
-      `WITH sample AS (
-         SELECT effective_date, effective_date_source
-           FROM pages
-          ORDER BY id DESC
-          LIMIT 1000
-       )
-       SELECT 'future_dated' AS kind, COUNT(*)::text AS count FROM sample
-        WHERE effective_date IS NOT NULL AND effective_date > NOW() + INTERVAL '1 year'
-       UNION ALL
-       SELECT 'pre_1990', COUNT(*)::text FROM sample
-        WHERE effective_date IS NOT NULL AND effective_date < TIMESTAMPTZ '1990-01-01'
-          AND COALESCE(effective_date_source, '') NOT IN ('event_date', 'date', 'published', 'created')`,
-    );
-    const counts = new Map(result.map(r => [r.kind, Number(r.count)]));
-    const future = counts.get('future_dated') ?? 0;
-    const pre1990 = counts.get('pre_1990') ?? 0;
+    const { future_dated: future, pre_1990: pre1990 } = await engine.sampleEffectiveDates();
 
     // `frontmatter ? 'date'` (JSONB key-existence) only proves the key is
     // present — an empty string, null, or unparseable value still passes
@@ -510,23 +494,7 @@ async function runEffectiveDate(ctx: DoctorContext): Promise<Check[]> {
     // can drift by a row or two under concurrent writes — acceptable for a
     // sampled health check that already says "sample of last 1000 pages"
     // in its message.
-    const candidates = await engine.executeRaw<{
-      slug: string;
-      frontmatter: unknown;
-      created_at: string;
-      updated_at: string;
-    }>(
-      `WITH sample AS (
-         SELECT slug, frontmatter, effective_date_source, created_at, updated_at
-           FROM pages
-          ORDER BY id DESC
-          LIMIT 1000
-       )
-       SELECT slug, frontmatter, created_at, updated_at
-         FROM sample
-        WHERE effective_date_source = 'fallback'
-          AND (frontmatter ? 'event_date' OR frontmatter ? 'date' OR frontmatter ? 'published')`,
-    );
+    const candidates = await engine.sampleEffectiveDateSources();
     let fallbackWithFm = 0;
     for (const row of candidates) {
       // filename: null — this arm asks "does the frontmatter ALONE have a
