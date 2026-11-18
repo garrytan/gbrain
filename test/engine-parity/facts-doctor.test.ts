@@ -12,16 +12,20 @@
  *    can implement or refuse.
  *  - Why existing coverage misses it: these statements ran through `executeRaw`, which the parity cases cannot call
  *    (D18), so no case compared them across engines (docs/research/rust-cli-executeraw-map.md).
- *  - Seam: none for the facts, pages, takes and links, which are seeded through typed methods on every arm. Two members
- *    read tables that have no typed writer (`write_gate_holds` and `fact_relink_attempts`): their cases seed nothing and
- *    compare the empty answer, so they pin the statement's validity, not its filters. The 7-day cutoff of
- *    countUnlinkedFactStats has no case either, because a fact's `created_at` cannot be set through a typed method.
+ *  - Seam: none for the facts, pages, takes, links and relink attempts, which are seeded through typed methods on every
+ *    arm (the attempts through upsertFactRelinkAttempt). listUnpreviewedTrustFacts reads `write_gate_holds`, which has no
+ *    typed writer: its case seeds nothing and compares the empty answer, so it pins the statement's validity, not its
+ *    filters. The 7-day cutoffs of countFactRelinkOutcomes and
+ *    countUnlinkedFactStats have no case either, because neither an attempt's `attempted_at` nor a fact's
+ *    `created_at` can be set through a typed method. countFactRelinkOutcomes' cutoff is pinned per engine instead:
+ *    test/engine-sql-fact-relink-attempts.test.ts (SQL) and the store's tests/facts_doctor.rs (Rust).
  *    Generated values (ids, timestamps) are never returned.
  */
 import { describe, expect } from 'bun:test';
 import { archiveSource, basisEmbedding, createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine, NewFact } from '../../src/core/engine.ts';
+import { REARMED_REASONS } from '../../src/core/facts/conversation-memo.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -147,25 +151,48 @@ describe('engine parity: doctor-check facts statements', () => {
     return rows;
   });
 
-  /** Fixture for the window reads: oldest first, one insert per call so `created_at` orders them. */
-  async function seedWindow(engine: BrainEngine, backend: Parameters<typeof createSource>[1]): Promise<void> {
+  /** Fixture for the window reads: oldest first, one insert per call so `created_at` orders them. Returns the ids the memo cases name. */
+  async function seedWindow(engine: BrainEngine, backend: Parameters<typeof createSource>[1]): Promise<Record<'c1' | 'c2' | 'c3' | 'plain', number>> {
     await createSource(engine, backend, 'other');
     await pageFact(engine, 'conv/old', 'old', { source: CONVERSATION });
     await pageFact(engine, 'conv/a', 'linked', { source: CONVERSATION, entity_slug: 'people/a' });
-    await pageFact(engine, 'conv/b', 'c1', { source: CONVERSATION });
-    await pageFact(engine, 'conv/b', 'c2', { source: CONVERSATION });
-    await pageFact(engine, 'conv/c', 'c3', { source: CONVERSATION });
+    const c1 = await pageFact(engine, 'conv/b', 'c1', { source: CONVERSATION });
+    const c2 = await pageFact(engine, 'conv/b', 'c2', { source: CONVERSATION });
+    const c3 = await pageFact(engine, 'conv/c', 'c3', { source: CONVERSATION });
     await pageFact(engine, 'notes/f', 'fence', { source: 'chat', row_num: 1 });
     await pageFact(engine, 'conv/z', 'audit', { source: TERMINAL });
-    await fact(engine, 'plain');
+    const plain = await fact(engine, 'plain');
     await fact(engine, 'assistant said', { attributed_to: 'assistant' });
     await fact(engine, 'put page', { source: 'mcp:put_page' });
     await fact(engine, 'hooked', { source: 'hook:capture' });
     await fact(engine, 'o', {}, 'other');
+    return { c1, c2, c3, plain };
+  }
+
+  const attempt = (engine: BrainEngine, factId: number, outcome: string, reason: string | null, tier: string | null, targetSlug: string | null = null) =>
+    engine.upsertFactRelinkAttempt('default', { factId, outcome, reason, tier, model: null, targetSlug, runId: null });
+
+  /**
+   * The free-relink memos of the window fixture: c1's miss is memoized (`ambiguous`), c2's re-armed (`no_mention`), c3's
+   * NULL; `plain` has no subject. `page()` then creates conv/b, which re-arms c2 and c3, and `paid(hash)` records a paid
+   * re-extraction of conv/b (on a negative id, which no fact has) with the given content hash.
+   */
+  async function seedMemos(engine: BrainEngine, ids: Awaited<ReturnType<typeof seedWindow>>) {
+    expect([REARMED_REASONS.includes('no_mention'), REARMED_REASONS.includes('ambiguous')]).toEqual([true, false]);
+    await attempt(engine, ids.c1, 'conversation_unresolved', 'ambiguous', 'mention');
+    await attempt(engine, ids.c2, 'conversation_unresolved', 'no_mention', 'mention');
+    await attempt(engine, ids.c3, 'conversation_unresolved', null, 'mention');
+    await attempt(engine, ids.plain, 'no_subject', 'no_subject', 'model');
+    return {
+      page: async () => { await engine.putPage('conv/b', note('b')); return (await engine.getPage('conv/b'))?.content_hash ?? ''; },
+      paid: (hash: string, factId = -1) => attempt(engine, factId, 'paid_reextract', hash, 'paid_reextract', 'conv/b'),
+    };
   }
 
   const originOpts = (windowPerSource: number, sourceIds = ['default', 'other']) =>
     ({ sourceIds, auditSources: [TERMINAL], windowPerSource, hasAttempts: false });
+  const memoCounts = (rows: Array<{ origin: string; conversation_tried: number; conversation_paid: number }>) =>
+    rows.filter(r => r.origin === 'conversation').map(r => [r.conversation_tried, r.conversation_paid]);
 
   parityTest('countUnlinkedFactsByOrigin counts each source\'s newest window of active facts by origin', { methods: ['countUnlinkedFactsByOrigin'] }, async (engine, backend) => {
     await seedWindow(engine, backend);
@@ -189,10 +216,22 @@ describe('engine parity: doctor-check facts statements', () => {
     return { wide, narrow, none, twice };
   });
 
-  parityTest('countUnlinkedFactsByOrigin with hasAttempts reads the relink-attempt memos', { methods: ['countUnlinkedFactsByOrigin'] }, async (engine, backend) => {
-    await seedWindow(engine, backend);
-    const rows = await engine.countUnlinkedFactsByOrigin({ ...originOpts(100, ['default']), hasAttempts: true });
-    return sorted(rows, r => `${r.source_id}:${r.origin}`);
+  parityTest('countUnlinkedFactsByOrigin with hasAttempts counts the tried and paid conversation rows', { methods: ['countUnlinkedFactsByOrigin', 'upsertFactRelinkAttempt', 'putPage'] }, async (engine, backend) => {
+    const memo = await seedMemos(engine, await seedWindow(engine, backend));
+    const read = async () => sorted(await engine.countUnlinkedFactsByOrigin({ ...originOpts(100, ['default']), hasAttempts: true }), r => `${r.source_id}:${r.origin}`);
+    const unpaged = await read();
+    const hash = await memo.page();
+    const rearmed = await read();
+    await memo.paid('stale');
+    const stale = await read();
+    await memo.paid(hash, -2);
+    const paid = await read();
+    const without = sorted(await engine.countUnlinkedFactsByOrigin(originOpts(100, ['default'])), r => `${r.source_id}:${r.origin}`);
+    // No page yet: c1, c2 and c3 are tried. conv/b re-arms c2 (a re-armed reason) and c3 (a NULL reason); only the
+    // current content hash covers c1's page.
+    expect([memoCounts(unpaged), memoCounts(rearmed), memoCounts(stale), memoCounts(paid), memoCounts(without)])
+      .toEqual([[[3, 0]], [[1, 0]], [[1, 0]], [[1, 1]], [[0, 0]]]);
+    return { unpaged, rearmed, stale, paid, without };
   });
 
   parityTest('countUnlinkedFactStats counts the last 7 days of active facts and the inferred tiers', { methods: ['countUnlinkedFactStats'] }, async (engine) => {
@@ -214,17 +253,38 @@ describe('engine parity: doctor-check facts statements', () => {
     return { stats, none };
   });
 
-  parityTest('countUnlinkedFactStats with hasAttempts reads the relink-attempt memos', { methods: ['countUnlinkedFactStats'] }, async (engine) => {
-    await fact(engine, 'plain');
-    return engine.countUnlinkedFactStats({ sourceIds: ['default'], auditSources: [TERMINAL], hasAttempts: true });
+  parityTest('countUnlinkedFactStats with hasAttempts counts the no-subject and unresolved rows', { methods: ['countUnlinkedFactStats', 'upsertFactRelinkAttempt', 'putPage'] }, async (engine, backend) => {
+    const memo = await seedMemos(engine, await seedWindow(engine, backend));
+    const opts = { sourceIds: ['default'], auditSources: [TERMINAL], hasAttempts: true };
+    const unpaged = await engine.countUnlinkedFactStats(opts);
+    await memo.page();
+    const rearmed = await engine.countUnlinkedFactStats(opts);
+    const without = await engine.countUnlinkedFactStats({ ...opts, hasAttempts: false });
+    expect([unpaged, rearmed, without].map(s => [s?.no_subject, s?.conversation_unresolved])).toEqual([[1, 3], [1, 1], [0, 0]]);
+    return { unpaged, rearmed, without };
   });
 
-  parityTest('countFactRelinkOutcomes reads the relink attempts', { methods: ['countFactRelinkOutcomes'] }, async (engine) => {
-    // No typed writer exists for fact_relink_attempts, so only the empty answer is compared.
-    await fact(engine, 'plain');
-    const rows = await engine.countFactRelinkOutcomes(['default']);
-    expect(rows).toEqual([]);
-    return rows;
+  parityTest('countFactRelinkOutcomes counts the no-subject and recently linked attempts by outcome and tier', { methods: ['countFactRelinkOutcomes', 'upsertFactRelinkAttempt'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const put = (sourceId: string, factId: number, outcome: string, tier: string | null) =>
+      engine.upsertFactRelinkAttempt(sourceId, { factId, outcome, reason: null, tier, model: null, targetSlug: null, runId: null });
+    await put('default', 1, 'no_subject', 'model');
+    await put('default', 2, 'linked', 'mention');
+    await put('default', 3, 'linked', 'mention');
+    await put('default', 4, 'linked', null);
+    await put('default', 5, 'deduped', 'model');
+    await put('default', 6, 'conversation_unresolved', 'mention');
+    await put('other', 1, 'linked', 'page');
+    const key = (r: { outcome: string; tier: string | null }) => `${r.outcome}:${r.tier ?? '~'}`;
+    const one = sorted(await engine.countFactRelinkOutcomes(['default']), key);
+    const both = sorted(await engine.countFactRelinkOutcomes(['default', 'other', 'default']), key);
+    const none = await engine.countFactRelinkOutcomes([]);
+    expect(one).toEqual([
+      { outcome: 'linked', tier: 'mention', n: 2 }, { outcome: 'linked', tier: null, n: 1 }, { outcome: 'no_subject', tier: 'model', n: 1 },
+    ]);
+    expect(both.map(key)).toEqual(['linked:mention', 'linked:page', 'linked:~', 'no_subject:model']);
+    expect(none).toEqual([]);
+    return { one, both, none };
   });
 
   const slugOpts = (fix: 'relink' | 'reextract' | 'manual', windowPerSource: number, hasAttempts = false) =>
@@ -244,9 +304,24 @@ describe('engine parity: doctor-check facts statements', () => {
     return { relink, reextract, manual, w5, w7 };
   });
 
-  parityTest('listUnlinkedConversationSlugs with hasAttempts reads the relink-attempt memos', { methods: ['listUnlinkedConversationSlugs'] }, async (engine, backend) => {
-    await seedWindow(engine, backend);
-    return engine.listUnlinkedConversationSlugs(slugOpts('relink', 100, true));
+  parityTest('listUnlinkedConversationSlugs with hasAttempts targets each fix from the relink-attempt memos', { methods: ['listUnlinkedConversationSlugs', 'upsertFactRelinkAttempt', 'putPage'] }, async (engine, backend) => {
+    const memo = await seedMemos(engine, await seedWindow(engine, backend));
+    const read = async () => {
+      const out: Record<string, string[]> = {};
+      for (const fix of ['relink', 'reextract', 'manual'] as const) {
+        out[fix] = (await engine.listUnlinkedConversationSlugs(slugOpts(fix, 100, true))).map(r => r.slug);
+      }
+      return out;
+    };
+    const unpaged = await read();
+    const hash = await memo.page();
+    const rearmed = await read();
+    await memo.paid(hash);
+    const paid = await read();
+    expect(unpaged).toEqual({ relink: ['conv/old'], reextract: ['conv/b', 'conv/c'], manual: [] });
+    expect(rearmed).toEqual({ relink: ['conv/b', 'conv/c', 'conv/old'], reextract: ['conv/b'], manual: [] });
+    expect(paid).toEqual({ relink: ['conv/b', 'conv/c', 'conv/old'], reextract: [], manual: ['conv/b'] });
+    return { unpaged, rearmed, paid };
   });
 
   parityTest('countFactEmbeddingCoverage counts missing, stale and partially embedded facts of each live source', { methods: ['countFactEmbeddingCoverage'] }, async (engine, backend) => {

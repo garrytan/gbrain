@@ -1,4 +1,4 @@
-//! Search telemetry and the MCP request log (rust/docs/store/telemetry.md).
+//! Search telemetry, the MCP request log and the chat usage ledger (rust/docs/store/telemetry.md).
 //!
 //! Each method decodes its arguments, runs one `Store` call on the pool through `Brain::run`, and
 //! resolves plain JSON.
@@ -106,5 +106,26 @@ impl Brain {
         self.run(env, move |s| {
             s.read_mcp_lifetime_usage(token_names.as_deref())
         })
+    }
+
+    /// `logChatUsage(row)`: appends one chat usage ledger row (`created_at` ISO text or null for
+    /// now); resolves null.
+    #[napi]
+    pub fn log_chat_usage<'env>(&self, env: &'env Env, row: Value) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let row: gbrain_store::chat_usage::ChatUsageInput = required(row, "logChatUsage row")?;
+            s.log_chat_usage(&row)
+        })
+    }
+
+    /// `readChatUsage(days)`: `{ rows, logged_since }`, the window sums per `(model, phase)` in cost
+    /// order and the first logged time as timestamp text.
+    #[napi]
+    pub fn read_chat_usage<'env>(
+        &self,
+        env: &'env Env,
+        days: Option<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_chat_usage(days))
     }
 }

@@ -123,12 +123,19 @@ const ORIGINS: [&str; 3] = [FRONTMATTER, "declared", "subject"];
 const DERIVED: [&str; 2] = ["declared", "subject"];
 
 /// The scope of `resolveAliases` (`PageReadScope`): a non-empty `sourceIds` wins, then a
-/// non-empty `sourceId`, else every source.
+/// non-empty `sourceId`, else every source. `exclude_private` is the page policy of
+/// `excludePrivate` (`facts/privacy.rs` `page_hidden`), and `min_trust` and `suppress_flagged`
+/// are `pageEligibleSql`'s trust floor and flagged-page filter (`trust::TrustPolicy`). As in
+/// `readAliases`, they apply both to the page an alias row names and to the page whose title
+/// shadows a derived alias.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AliasScope {
     pub source_id: Option<String>,
     pub source_ids: Option<Vec<String>>,
+    pub exclude_private: Option<PrivacyPolicy>,
+    pub min_trust: Option<String>,
+    pub suppress_flagged: bool,
 }
 
 /// One page an alias resolves to.
@@ -687,9 +694,11 @@ impl Store {
     }
 
     /// `resolveAliases(aliasNorms, scope)`: each alias that names a live page in the scope, with
-    /// the pages it names, aliases in byte order and pages by source then slug. Within a source
-    /// only the best origin answers, and a derived alias yields to another live page whose
-    /// lower-cased title is the alias.
+    /// the pages it names, aliases in byte order and pages by source then slug. Under the scope's
+    /// privacy policy, trust floor and flagged-page filter a page they drop names nothing. Within
+    /// a source only the best origin of the remaining rows answers, and a derived alias yields to
+    /// another live page the scope may read whose lower-cased title is the alias. A trust tier
+    /// name that is no tier refuses with `invalid_argument`.
     pub fn resolve_aliases(
         &self,
         alias_norms: &[String],
@@ -699,6 +708,16 @@ impl Store {
             return Ok(Vec::new());
         }
         let read = self.read()?;
+        let trust = TrustPolicy::parse(scope.min_trust.as_deref(), scope.suppress_flagged)?;
+        let readable = |page: &PageRecord| -> Result<bool> {
+            if let Some(policy) = &scope.exclude_private
+                && page_hidden(&*read, page, policy)?
+            {
+                return Ok(false);
+            }
+            let tier = TrustTier::stored(page.trust_tier.as_deref());
+            trust.admits(&*read, "pages", page.id, tier)
+        };
         let sources: BTreeSet<String> = scope_sources(&*read, &scope.source_id, &scope.source_ids)?
             .into_iter()
             .collect();
@@ -707,7 +726,8 @@ impl Store {
             .map(String::as_str)
             .filter(|a| !a.contains('\0'))
             .collect();
-        // Titles of live pages per source, read only when a derived row needs them.
+        // Titles of the live pages the scope may read, per source, read only when a derived row
+        // needs them.
         let mut titles: Option<BTreeMap<String, Vec<(String, String)>>> = None;
         let mut out = Vec::new();
         for alias in aliases {
@@ -722,14 +742,17 @@ impl Store {
                     let [slug, origin] = parts.as_slice() else {
                         continue;
                     };
-                    if live_page(&*read, source, slug)?.is_none() {
+                    let Some(page) = live_page(&*read, source, slug)? else {
+                        continue;
+                    };
+                    if !readable(&page)? {
                         continue;
                     }
                     let rank = origin_rank(origin);
                     if rank > 0 {
                         let titles = match &mut titles {
                             Some(t) => t,
-                            None => titles.insert(live_titles(&*read)?),
+                            None => titles.insert(live_titles(&*read, &readable)?),
                         };
                         let shadowed = titles.get(source).is_some_and(|pages| {
                             pages.iter().any(|(s, title)| title == alias && s != slug)
@@ -913,8 +936,11 @@ impl Store {
     }
 }
 
-/// `(slug, lower(title))` of every live page, per source.
-fn live_titles(read: &dyn KvRead) -> Result<BTreeMap<String, Vec<(String, String)>>> {
+/// `(slug, lower(title))` of every live page `readable` admits, per source.
+fn live_titles(
+    read: &dyn KvRead,
+    readable: &dyn Fn(&PageRecord) -> Result<bool>,
+) -> Result<BTreeMap<String, Vec<(String, String)>>> {
     let mut out: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
     let mut archived: BTreeMap<String, bool> = BTreeMap::new();
     for page in all_pages(read)? {
@@ -929,7 +955,7 @@ fn live_titles(read: &dyn KvRead) -> Result<BTreeMap<String, Vec<(String, String
                 gone
             }
         };
-        if !gone {
+        if !gone && readable(&page)? {
             out.entry(page.source_id.clone())
                 .or_default()
                 .push((page.slug.clone(), page.title.to_lowercase()));
