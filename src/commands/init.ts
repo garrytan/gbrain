@@ -565,7 +565,7 @@ export async function groupReadyByProvider(
 export async function findEnvKeyTypos(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<Array<{ userSet: string; suggested: string }>> {
-  const { suggestNearest } = await import('../core/levenshtein.ts');
+  const { suggestNearest, editDistance } = await import('../core/levenshtein.ts');
   const { listRecipes } = await import('../core/ai/recipes/index.ts');
   // Build the canonical name set from every recipe's auth_env.required.
   const canonical = new Set<string>();
@@ -580,7 +580,11 @@ export async function findEnvKeyTypos(
     if (canonical.has(userKey)) continue;        // exact match, not a typo
     if (!env[userKey]) continue;                  // empty string, skip
     const suggestion = suggestNearest(userKey, [...canonical], /* maxDistance */ 3);
-    if (suggestion && suggestion !== userKey) {
+    // A typo keeps most of the provider name. EXA_API_KEY is 3 edits from
+    // NAN_API_KEY, but it names another service, so the edits must be at most
+    // half the canonical provider name ("NAN" allows 1, "OPENAI" allows 3).
+    if (suggestion && suggestion !== userKey
+      && editDistance(userKey, suggestion) * 2 <= suggestion.replace(/_(API_)?KEY$/, '').length) {
       // False-positive guard (per plan D13): suggested canonical not ALSO set.
       if (!env[suggestion]) {
         out.push({ userSet: userKey, suggested: suggestion });
