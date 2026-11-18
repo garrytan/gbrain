@@ -420,6 +420,20 @@ describe('with a repository', () => {
     expect((await rows()).decisions.map(d => d.decision_id)).toEqual([decisionId(good)]);
   });
 
+  test('a committed decision file whose YAML aliases expand past the bound is refused as invalid, not parsed', async () => {
+    const members = [{ source_id: 'default', slug: 'people/bob-sample' }, { source_id: 'source-b', slug: 'people/bob-sample' }];
+    const bomb = ['a: &a ["' + 'x'.repeat(64) + '"]', ...Array.from({ length: 12 }, (_, i) => `${String.fromCharCode(98 + i)}: &${String.fromCharCode(98 + i)} [${Array(8).fill('*' + String.fromCharCode(97 + i)).join(', ')}]`)];
+    const text = ['---', 'verdict: different', 'members:', ...members.flatMap(m => [`  - source_id: ${m.source_id}`, `    slug: ${m.slug}`]),
+      'decided_by: owner', 'notes:', ...bomb.map(l => '  ' + l), '---', ''].join('\n');
+    mkdirSync(join(root, IDENTITY_DIR), { recursive: true });
+    writeFileSync(join(root, IDENTITY_DIR, `${decisionId(members)}.md`), text);
+    git(root, 'add', '-A');
+    git(root, 'commit', '-qm', 'decision');
+    const r = await projectIdentityDecisions(engine, (await identityHome(engine))!);
+    expect(r.invalid).toEqual([`${IDENTITY_DIR}/${decisionId(members)}.md`]);
+    expect((await rows()).decisions).toEqual([]);
+  });
+
   test('confirm and reject refuse a group with a page in an owner-only source when decisions go to git', async () => {
     const alice = await groupOf('people/alice-example');
     const bob = await groupOf('people/bob-sample');

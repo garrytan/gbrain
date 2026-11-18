@@ -24,7 +24,8 @@ import { isOwnerOnlySourceConfig } from '../access/owner-only.ts';
 import { DEFAULT_SOURCE_ID } from '../sync-failure-ledger.ts';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import yaml from 'js-yaml';
+import { dump, JSON_SCHEMA } from 'js-yaml';
+import { loadBoundedYaml } from '../data-frontmatter.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { ApplyIdentityDecisionsResult, IdentityDecision, IdentityDecisionsRead, IdentityMemberRef, IdentityVerdict, PendingIdentityMember } from '../engine-sql/identity-decisions.ts';
 import { opError, OperationError } from '../ops/contract.ts';
@@ -64,7 +65,7 @@ export function serializeDecision(d: DecisionInput & { decided_at: string }): st
   if (d.canonical) fm.canonical = { source_id: d.canonical.source_id, slug: d.canonical.slug };
   fm.decided_by = d.decided_by;
   fm.decided_at = d.decided_at;
-  return `---\n${yaml.dump(fm, { lineWidth: -1, noRefs: true })}---\n`;
+  return `---\n${dump(fm, { lineWidth: -1, noRefs: true })}---\n`;
 }
 
 const isRef = (v: unknown): v is IdentityMemberRef => !!v && typeof v === 'object'
@@ -75,7 +76,7 @@ export function parseDecisionFile(text: string, id: string): (DecisionInput & { 
   const m = /^---\r?\n([\s\S]*?)\r?\n?---\s*$/.exec(text);
   if (!m) return null;
   let fm: unknown;
-  try { fm = yaml.load(m[1]!, { schema: yaml.JSON_SCHEMA }); } catch { return null; }
+  try { fm = loadBoundedYaml(m[1]!, { schema: JSON_SCHEMA }); } catch { return null; }
   if (!fm || typeof fm !== 'object') return null;
   const f = fm as Record<string, unknown>;
   const verdict = f.verdict;

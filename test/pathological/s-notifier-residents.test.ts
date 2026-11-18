@@ -46,8 +46,8 @@ function recordingStore(engine: BrainEngine, claims: Claim[], opts: { dropReleas
   };
 }
 
-function resident(engine: BrainEngine, kind: 'serve' | 'jobs-worker', store: NotifierStore, lines: string[]) {
-  return startCommitNotifier(residentNotifierOptions(engine, { resident: kind, log: l => lines.push(l), hostId: HOST, heartbeatMs: 200, pollMs: 200,
+function resident(engine: BrainEngine, kind: 'serve' | 'jobs-worker', store: NotifierStore, lines: string[], heartbeatMs = 200) {
+  return startCommitNotifier(residentNotifierOptions(engine, { resident: kind, log: l => lines.push(l), hostId: HOST, heartbeatMs, pollMs: 200,
     store, listSources: async () => [], readFlag: async () => false }));
 }
 async function until(what: string, fn: () => boolean | Promise<boolean>, lines: string[], timeoutMs = 30_000) {
@@ -61,7 +61,9 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       test('one owner per host; a clean stop hands over at the standby\'s first claim afterwards', async () => {
         await brain(databaseUrl, async engine => {
           const lines: string[] = []; const aClaims: Claim[] = []; const bClaims: Claim[] = [];
-          const a = resident(engine, 'serve', recordingStore(engine, aClaims), lines);
+          // The owner's lease (twice its heartbeat) outlives the test, so a late renewal on a loaded runner cannot hand
+          // it over: only the clean stop does.
+          const a = resident(engine, 'serve', recordingStore(engine, aClaims), lines, 60_000);
           await until('the first owner', () => a.owner, lines);
           const b = resident(engine, 'jobs-worker', recordingStore(engine, bClaims), lines);
           await until('the standby to claim twice', () => bClaims.length >= 2, lines);
