@@ -814,4 +814,56 @@ mod tests {
             assert_eq!(quasar_slugs(&store, kind), ["notes/ok"], "{kind:?}");
         }
     }
+
+    /// Slugs of the pages one title attempt over `text` finds.
+    fn found(store: &Store, text: &str) -> Vec<String> {
+        let out = store
+            .search_titles_attempts(
+                &[attempt(&[text], TitleAttemptKind::Whole, 10.0)],
+                "",
+                10.0,
+                &KeywordOptions::default(),
+            )
+            .unwrap();
+        slugs(&out[0])
+    }
+
+    /// `trg_pages_search_vector` fires for every statement that SETs the title or timeline, also with the values they
+    /// already hold, and rebuilds the vector with the timeline entries the page has by then. A page whose title
+    /// fits the cap alone but not beside a timeline entry added later is therefore refused by the next putPage, with
+    /// no change: before, the check ran only for a changed title or timeline, the write was accepted, and the
+    /// updated timestamp brought the entry into the vector the searches read, so the page was silently skipped.
+    #[test]
+    fn a_putpage_with_unchanged_values_refuses_a_vector_a_timeline_entry_made_too_big() {
+        let store = crate::test_support::store();
+        put(&store, "notes/full", &full_title(), "");
+        assert_eq!(found(&store, "n00005"), ["notes/full"]);
+        let entry: crate::timeline::TimelineInput = serde_json::from_value(
+            json!({ "date": "2026-01-02", "summary": "extra", "detail": "" }),
+        )
+        .unwrap();
+        store
+            .add_timeline_entry(
+                "notes/full",
+                &entry,
+                &crate::timeline::AddTimelineOptions::default(),
+            )
+            .unwrap();
+        let input: crate::pages::PageInput = serde_json::from_value(
+            json!({ "type": "note", "title": full_title(), "compiled_truth": "body text", "timeline": "" }),
+        )
+        .unwrap();
+        for index in [json!({}), json!({ "index": false })] {
+            let options: crate::pages::PutPageOptions = serde_json::from_value(index).unwrap();
+            let err = store
+                .put_page("notes/full", &input, &options)
+                .expect_err("the unchanged putPage must be refused");
+            assert!(
+                err.message.starts_with("string is too long for tsvector ("),
+                "{}",
+                err.message
+            );
+        }
+        assert_eq!(found(&store, "n00005"), ["notes/full"]);
+    }
 }

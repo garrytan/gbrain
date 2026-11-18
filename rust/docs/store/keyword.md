@@ -150,9 +150,11 @@ SQL behavior to compare that read with, so it is covered by Rust unit tests only
 `pages`' `trg_pages_search_vector` (`BEFORE INSERT OR UPDATE OF title, timeline`) builds the page vector before the row is
 stored, and the same \"string is too long for tsvector\" error aborts the `putPage`. The title is unbounded (the timeline
 and the entries are cut to 65,536 and 32,768 characters), so a title of about 100,000 distinct tokens is enough. The store
-builds the trigger-form vector in `pages::write_page` whenever the page is new or its title or timeline changed
-(`keyword::check_page_vector`, which also warms the vector cache), so every write path that sets them refuses with the
-same message and stores nothing, with or without chunking (`index: false`). A seal that sends a search timeline
+builds the trigger-form vector in `pages::write_page` whenever the page is new or its title or timeline changed, and in
+`pages::write_page_setting_vector` on every call (`keyword::check_page_vector`, which also warms the vector cache). The
+second form is for the statements that SET `title` and `timeline` whatever their values (`putPage`, the body refresh): the trigger fires with unchanged values too, and the vector can have grown since (a timeline entry
+added, a lead published), so a repeated `putPage` is refused when the page no longer fits. Every write path that sets
+them refuses with the same message and stores nothing, with or without chunking (`index: false`). A seal that sends a search timeline
 (`pages::record_search_timeline`, from `upsertChunks` with `seal` and from the segmented seal) builds the sealed-form
 vector (`keyword::check_sealed_page_vector`) and refuses the same way, since `pageSearchVectorSql` builds it in the
 seal's statement.
@@ -160,7 +162,9 @@ seal's statement.
 A store written before those checks may hold a page SQL can never hold. `searchTitles` treats its vector as matching
 nothing (`titles::readable_page_vector`, which skips only the size error) rather than failing every search in its
 scope. The refusal is a parity case (`test/engine-parity/page-vector-overflow.test.ts`; the arm's `putPage` always writes
-with `index: false`); the chunking path and the stored page are Rust unit tests in `keyword/titles.rs`.
+with `index: false`); the chunking path, the repeated `putPage` that no longer fits and the stored page are Rust unit tests in
+`keyword/titles.rs` (the SQL engines cannot hold a title that large: `idx_pages_source_title_lower` refuses a title of
+about 8 KB first).
 
 ## The page filter
 

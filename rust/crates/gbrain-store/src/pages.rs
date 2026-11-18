@@ -494,12 +494,26 @@ pub(crate) fn read_page_by_id(read: &dyn KvRead, id: u64) -> Result<Option<PageR
 /// page index hook (`page_index::reindex_page`) and the page projection hook
 /// (`page_projection::queue_page_projection`) with the record as stored before and after.
 pub(crate) fn write_page(tx: &mut dyn KvWrite, record: &PageRecord) -> Result<()> {
+    write_page_as(tx, record, false)
+}
+
+/// `write_page` for a statement that SETs `title` and `timeline` whatever their values: PGLite's search vector trigger
+/// (`BEFORE INSERT OR UPDATE OF title, timeline`) then fires also when they are unchanged, and the vector it builds can
+/// have grown since (a timeline entry added, an entry's cutoff passed, a lead published), so the check and the
+/// sealed search timeline's forgetting run every time.
+pub(crate) fn write_page_setting_vector(tx: &mut dyn KvWrite, record: &PageRecord) -> Result<()> {
+    write_page_as(tx, record, true)
+}
+
+fn write_page_as(tx: &mut dyn KvWrite, record: &PageRecord, sets_vector: bool) -> Result<()> {
     let before = read_page_by_id(&*tx, record.id)?;
-    // A write that changes the title or timeline sets them, so PGLite's search vector trigger fires. It builds the
-    // vector before the row is stored, and its error ("string is too long for tsvector") aborts the write.
-    if before
-        .as_ref()
-        .is_none_or(|b| b.title != record.title || b.timeline != record.timeline)
+    // A write that sets the title or timeline fires PGLite's search vector trigger. It builds the vector before the
+    // row is stored, and its error ("string is too long for tsvector") aborts the write. A write that does not set
+    // them fires it only when they changed.
+    if sets_vector
+        || before
+            .as_ref()
+            .is_none_or(|b| b.title != record.title || b.timeline != record.timeline)
     {
         crate::keyword::check_page_vector(&*tx, record)?;
         if before.is_some() {
@@ -914,8 +928,7 @@ pub(crate) fn put_page_in(
     };
     // PGLite's `trg_pages_search_vector` (BEFORE INSERT OR UPDATE OF title, timeline) rewrites the
     // page keyword vector on every `putPage`, also when the values are unchanged.
-    forget_search_timeline(tx, record.id)?;
-    write_page(tx, &record)?;
+    write_page_setting_vector(tx, &record)?;
     let mut record = record;
     if options.index == Some(false) {
         return Ok(record);

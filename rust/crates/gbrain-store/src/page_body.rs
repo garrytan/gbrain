@@ -1842,10 +1842,9 @@ impl Store {
             page.timeline = timeline.into();
             page.content_hash = Some(content_hash.to_string());
             page.updated_at_us = now;
-            write_page(tx, &page)?;
             // The statement sets the timeline, so PGLite's search vector trigger fires, also when
-            // the text is unchanged: the sealed search timeline goes.
-            crate::pages::forget_search_timeline(tx, page.id)
+            // the text is unchanged: the vector is checked again and the sealed search timeline goes.
+            crate::pages::write_page_setting_vector(tx, &page)
         })
     }
 }
