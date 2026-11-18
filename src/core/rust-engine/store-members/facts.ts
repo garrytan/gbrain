@@ -42,9 +42,12 @@ const vectorLiteral = (v: Float32Array | number[]): string => '[' + Array.from(v
 const LIST_OPTIONS = ['activeOnly', 'unconsolidatedOnly', 'limit', 'offset', 'kinds', 'visibility', 'grep', 'sessionId',
   'eventTime', 'excludeAuditRows', 'fingerprint', 'excludePrivate'] as const;
 
-/** `privacyClause` (engine-sql/facts.ts): the policy as the store reads it, or undefined without `excludePrivate`. */
+/**
+ * `privacyClause` (engine-sql/facts.ts): the policy as the store reads it, or undefined without `excludePrivate`. A
+ * caller with a reader identity and a private-readable grant is served (`callerReaders`).
+ */
 const factPolicy = (member: string, excludePrivate: unknown) =>
-  storePrivacyPolicy(member, excludePrivate, () => privateProvenanceFilterUnderPolicy('facts'));
+  storePrivacyPolicy(member, excludePrivate, () => privateProvenanceFilterUnderPolicy('facts'), { callerReaders: true });
 const RECALL_OPTIONS = [...LIST_OPTIONS, 'entitySlug', 'sourceMarkdownSlug'] as const;
 
 /** A string the SQL path binds inside a JSONB document: a lone surrogate becomes U+FFFD. */
