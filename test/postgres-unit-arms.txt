@@ -83,6 +83,7 @@ test/company-brain-runtime.test.ts
 test/concept-inputs-refresh-9653.test.ts
 test/concept-purge-former-member-9653.test.ts
 test/concept-rename-history-gst2687.test.ts
+test/concept-versions-owner-only-9653.test.ts
 test/consolidate-fenced-close-reimport.test.ts
 test/consolidate-same-instant-6023.test.ts
 test/contact-rows-drift-8109.test.ts
@@ -451,6 +452,7 @@ test/page-purge-batch-sweep-6884.test.ts
 test/page-purge-journal-timeout-6511.test.ts
 test/page-spend-reservation.test.ts
 test/page-state-engine.test.ts
+test/page-version-purge-mark-readers-9653.test.ts
 test/pages-source-created-idx-7379.test.ts
 test/pages-status-7179.test.ts
 test/parallel-projection-drain-9192.test.ts

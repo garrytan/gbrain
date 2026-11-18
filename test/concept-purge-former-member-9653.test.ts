@@ -88,7 +88,7 @@ for (const backend of testBackends()) {
       }, { databaseUrl });
     }, 240_000);
 
-test('purging a former member hides the archived narrative built with it, and revert_version refuses it', async () => {
+    test('purging a former member hides the archived narrative built with it, and revert_version refuses it', async () => {
       await managedBrain(async ({ engine, ctx, root }) => {
         await engine.setConfig('models.dream.synthesize', MODEL);
         for (const i of [0, 1, 2, 3, 4, 5]) await put(ctx, i);
