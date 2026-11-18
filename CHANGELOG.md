@@ -10,6 +10,56 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.740.0] - 2026-11-18
+
+**An agent job a starter client submits is now confined to the starter tool surface, so its tool calls cannot read soft-deleted pages either.**
+
+<!-- behavior-change: agent_job_surface_confined_9669 -->
+
+### Fixed
+- An agent job (`submit_agent`) ran its brain tools on the full tool registry, whatever surface its submitter was served. So a starter client with the `agent` scope could have a job call `get_page` with `include_deleted` and read a soft-deleted page that its own direct calls are refused (#9669). Each new job now records the surface of the connection that submitted it, and every tool call the job makes is refused exactly as MCP dispatch refuses that connection. A hidden parameter gets `param_not_on_surface`, with the same reviewed exceptions, and a hidden tool gets `unknown_tool`. The job's tool call fails with that refusal and nothing runs. Jobs from full-surface clients and local jobs are unchanged. Jobs already queued when you upgrade keep the full surface they were accepted under until they finish.
+- `request_tools {tools}` on a narrower surface describes only the parameters that surface may pass, instead of every registry parameter.
+- The `list_pages` `listing_truncated` fix now carries `slug_prefix`, `where` and `source_ids`, so the next-page call continues the filtered listing instead of the unfiltered one.
+
+**A remote MCP client on the starter tool surface can no longer pass parameters its tool list leaves out, so its direct tool calls cannot read soft-deleted pages; connector imports now write their trust marker into each new page.**
+
+<!-- behavior-change: starter_hidden_params_refused_9669 -->
+
+### Fixed
+- A remote client on the starter surface could pass any parameter its tool schema hides, and the server honoured it. A read-only client pinned to starter could pass `include_deleted: true` to `get_page` or `list_pages` and read soft-deleted pages, and `page_not_found` told it to (#9669). Dispatch now refuses such a parameter with `param_not_on_surface` before anything runs. Its fix widens the surface with `request_tools` where the connection may widen itself, and otherwise asks the user, because only the operator widens a pinned client. A short reviewed list of hidden parameters that gbrain's own clients and fixes send stays usable on starter, each with its reason (`STARTER_CALLABLE_PARAMS` in `src/mcp/surface.ts`). Agent jobs follow the same rule (see the agent-job entry). The local CLI and full-surface callers are unchanged.
+- Structured fixes no longer name a parameter the caller's surface refuses. A rendered fix drops an MCP call that would be refused, and `page_not_found` on starter offers a search instead of `include_deleted`. Plain-text suggestions may still name a refused parameter.
+- A connector import stored each new page as `external_untrusted` but wrote no `trust_tier` marker into the page's frontmatter, so a re-read of its file could place it above its stored tier and doctor's `provenance_stamp_drift` count grew with every import (#9676). Every connector import now writes the marker, on new pages and on re-renders of pages stored without it. A stored marker never raises a page, because the import writes the less trusted of the stored marker and its own tier. Pages imported before this change still need `gbrain repair provenance --apply` once.
+
+**Code callers, callees and chunk edges now come back in a fixed order on PGLite and Postgres.**
+
+### Fixed
+- `gbrain code-callers` and `gbrain code-callees` listed edges in the order the database happened to store them, so a limited list could drop a different edge after an edit. Resolved edges now come first, then unresolved ones, each in the order they were added.
+- The edges of one code chunk came back in storage order. They now come in the order they were added, before each table's limit.
+
+**The ingest log and the eval capture failure list now return rows written in the same millisecond newest first on every engine.**
+
+### Fixed
+- `gbrain` read the ingest log and the eval capture failure list by timestamp only. On the embedded engine (PGLite), the clock ticks in whole milliseconds, so rows written close together could come back oldest first. Both lists now break ties by row id, newest first, on PGLite and Postgres.
+
+**Ontology conflicts, raw enrichment data and page files now come back in a fixed order on PGLite and Postgres.**
+
+### Fixed
+- An ontology conflict listed its competing values in the order the database happened to store them, so the list could change after an edit. The values now come in the order they were recorded.
+- Raw enrichment data for a page came back in storage order. It now sorts by source, then by the enrichment provider name.
+- Files attached to a page at the same moment came back in storage order. They now sort by upload time, then by the order they were added.
+
+**`gbrain salience` now lists pages with the same score in a fixed order: by source, then by slug.**
+
+### Fixed
+- When two pages had the same salience score, the order of those pages depended on where the database stored their rows, so it could change after an edit. Tied pages now sort by source, then by slug, on PGLite and Postgres.
+
+**Importing a file, hybrid search and the background-cycle lock now reach the database through named engine methods instead of raw SQL, with the same results on PGLite and Postgres.**
+
+### Changed
+- `gbrain import`, `gbrain sync` and `put_page` on the default import path, the ranking reads of hybrid search (`gbrain query`), the page and chunk counts that MCP onboarding shows, and the lock that keeps two background cycles from running at once now call methods that both engines implement, with the SQL in one shared place per engine. What you see does not change. The same pages import, results with equal scores now come back in one stable order, and the lock behaves the same way.
+- These paths keep two protections they had before. On a Postgres database whose sessions start read-only (for example behind a pooler that sets `default_transaction_read_only=on`), a refused import write still retries once inside an explicit read-write transaction. Import reads that run before a write still stop at the preparation read deadline instead of waiting without a limit.
+- Contributor-facing: a new test proves the default import and hybrid search reach raw SQL from only four recorded call sites, in three files.
+
 ## [0.60.739.0] - 2026-11-18
 
 **The company-brain, multi-source, access and admin guides now explain how a member's key reads every shared source with `--read-shared on`, and the recall reference documents `merged_sources`.**
