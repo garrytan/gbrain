@@ -1,8 +1,13 @@
-/** Link members (BrainEngine addLink, addLinksBatch, removeLink, getLinks, getBacklinks). */
+/**
+ * Link members (BrainEngine addLink, addLinksBatch, removeLink, getLinks, getBacklinks). A write that adds or removes a
+ * temporal link refreshes the relationship state it touches, as engine-sql/links.ts does, through the shared builder
+ * (link-relationships.ts) after the store call: the keys a delete can change are read before it.
+ */
 import type { LinkBatchInput } from '../../engine.ts';
-import type { LinkReadScope } from '../../link-validity.ts';
+import { isTemporalLinkType, type LinkReadScope } from '../../link-validity.ts';
 import type { Link } from '../../types.ts';
 import { storeCall, takeOptions, throwIfAborted, type StoreMember } from './common.ts';
+import { linkRelationshipKeysTouching, refreshOnStore } from './link-refresh.ts';
 
 type EndpointSources = { fromSourceId?: string; toSourceId?: string; originSourceId?: string };
 
@@ -12,6 +17,10 @@ export const addLink: StoreMember<[from: string, to: string, context?: string, l
     const sources = takeOptions('addLink', opts, ['fromSourceId', 'toSourceId', 'originSourceId']);
     await storeCall({ member: 'addLink', slug: from }, () =>
       brain.addLink(from, to, { context, linkType, linkSource, originSlug, originField, ...sources }));
+    if (isTemporalLinkType(linkType)) {
+      await refreshOnStore(brain, await linkRelationshipKeysTouching(brain, 'addLink', { pairs: [{ from_slug: from,
+        from_source_id: opts?.fromSourceId ?? 'default', to_slug: to, to_source_id: opts?.toSourceId ?? 'default' }] }));
+    }
   };
 
 const BATCH_FIELDS = ['from_slug', 'to_slug', 'link_type', 'context', 'link_source', 'origin_slug', 'origin_field',
@@ -22,14 +31,22 @@ export const addLinksBatch: StoreMember<[links: LinkBatchInput[], opts?: { audit
   throwIfAborted(opts?.signal);
   // `link_kind` and `resolution_type` are stored beside a link and are not part of what the store keeps today.
   for (const link of links) takeOptions('addLinksBatch', link, BATCH_FIELDS);
-  return storeCall({ member: 'addLinksBatch' }, () => brain.addLinksBatch(links));
+  const written: number = await storeCall({ member: 'addLinksBatch' }, () => brain.addLinksBatch(links));
+  const pairs = links.filter(l => isTemporalLinkType(l.link_type)).map(l => ({ from_slug: l.from_slug,
+    from_source_id: l.from_source_id ?? 'default', to_slug: l.to_slug, to_source_id: l.to_source_id ?? 'default' }));
+  await refreshOnStore(brain, await linkRelationshipKeysTouching(brain, 'addLinksBatch', { pairs }));
+  return written;
 };
 
 export const removeLink: StoreMember<[from: string, to: string, linkType?: string, linkSource?: string,
   opts?: { fromSourceId?: string; toSourceId?: string }], number> =
   async (brain, from, to, linkType, linkSource, opts) => {
     const sources = takeOptions('removeLink', opts, ['fromSourceId', 'toSourceId']);
-    return storeCall({ member: 'removeLink', slug: from }, () => brain.removeLink(from, to, { linkType, linkSource, ...sources }));
+    const before = linkType === undefined || isTemporalLinkType(linkType) ? await linkRelationshipKeysTouching(brain, 'removeLink', {
+      pairs: [{ from_slug: from, from_source_id: opts?.fromSourceId ?? 'default', to_slug: to, to_source_id: opts?.toSourceId ?? 'default' }] }) : [];
+    const removed: number = await storeCall({ member: 'removeLink', slug: from }, () => brain.removeLink(from, to, { linkType, linkSource, ...sources }));
+    if (removed) await refreshOnStore(brain, before);
+    return removed;
   };
 
 export const getLinks: StoreMember<[slug: string, opts?: LinkReadScope], Link[]> = (brain, slug, opts) =>

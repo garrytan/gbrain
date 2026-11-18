@@ -22,7 +22,8 @@ import { QUARANTINE_FILTER_FRAGMENT } from '../quarantine.ts';
 import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead, ScopedRead } from './brands.ts';
 import { sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
-import { refreshRelationships, type RelationshipKey } from '../link-relationships.ts';
+import type { RelationshipKey } from '../link-relationships.ts';
+import { refreshRelationshipsSql } from './link-temporal.ts';
 import { isTemporalLinkType, relationshipFilterSql, temporalLinkJoinSql, TEMPORAL_LINK_SELECT_SQL, annotateTemporalRow } from '../link-validity.ts';
 import type { LinkReadScope } from '../link-validity.ts';
 
@@ -151,7 +152,7 @@ export async function addLink(
     if (!result?.from_exists) throw new PageMissingError('addLink', 'from', from, fromSrc);
     if (!result.to_exists) throw new PageMissingError('addLink', 'to', to, toSrc);
     if (isTemporalLinkType(linkType)) {
-      await refreshRelationships(exec, [{ from_page_id: Number(result.from_id), to_page_id: Number(result.to_id), link_type: linkType! }]);
+      await refreshRelationshipsSql(exec, [{ from_page_id: Number(result.from_id), to_page_id: Number(result.to_id), link_type: linkType! }]);
     }
   }
 
@@ -209,7 +210,7 @@ export async function addCodeReferenceLinks(exec: Pick<SqlExecutor, 'executeRaw'
     [sourceId, slug],
     [{ rows }],
   );
-  await refreshRelationships(exec, written);
+  await refreshRelationshipsSql(exec, written);
   return written.length;
 }
 
@@ -246,7 +247,7 @@ export async function addLinksBatch(exec: SqlExecutor, links: LinkBatchInput[]):
     if (!rows.some(r => isTemporalLinkType(r.link_type))) return (await insert(exec)).length;
     return exec.transaction(async tx => {
       const inserted = await insert(tx);
-      await refreshRelationships(tx, inserted);
+      await refreshRelationshipsSql(tx, inserted);
       return inserted.length;
     });
   }
@@ -298,7 +299,7 @@ export async function removeLinksByPagesAndSource(
       [opts.linkSource],
       [payload],
     ) as RelationshipKey[];
-    await refreshRelationships(exec, rows);
+    await refreshRelationshipsSql(exec, rows);
     return rows.length;
   }
 
@@ -328,7 +329,7 @@ export async function removeLink(
           AND link_source IS NOT DISTINCT FROM ${linkSource}
         RETURNING from_page_id, to_page_id, link_type
       `)).rows as unknown as RelationshipKey[];
-      await refreshRelationships(exec, rows);
+      await refreshRelationshipsSql(exec, rows);
       return rows.length;
     } else if (linkType !== undefined) {
       const rows = (await exec.run(sqlFragment`
@@ -338,7 +339,7 @@ export async function removeLink(
           AND link_type = ${linkType}
         RETURNING from_page_id, to_page_id, link_type
       `)).rows as unknown as RelationshipKey[];
-      await refreshRelationships(exec, rows);
+      await refreshRelationshipsSql(exec, rows);
       return rows.length;
     } else if (linkSource !== undefined) {
       const rows = (await exec.run(sqlFragment`
@@ -348,7 +349,7 @@ export async function removeLink(
           AND link_source IS NOT DISTINCT FROM ${linkSource}
         RETURNING from_page_id, to_page_id, link_type
       `)).rows as unknown as RelationshipKey[];
-      await refreshRelationships(exec, rows);
+      await refreshRelationshipsSql(exec, rows);
       return rows.length;
     } else {
       const rows = (await exec.run(sqlFragment`
@@ -357,7 +358,7 @@ export async function removeLink(
           AND to_page_id = (SELECT id FROM pages WHERE slug = ${to} AND source_id = ${toSrc})
         RETURNING from_page_id, to_page_id, link_type
       `)).rows as unknown as RelationshipKey[];
-      await refreshRelationships(exec, rows);
+      await refreshRelationshipsSql(exec, rows);
       return rows.length;
     }
   }

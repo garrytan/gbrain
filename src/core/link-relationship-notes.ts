@@ -12,13 +12,14 @@
  */
 
 import {
-  annotateTemporalRow, temporalLinkJoinSql, TEMPORAL_LINK_SELECT_SQL, type RelationshipStatus,
+  annotateTemporalRow, type RelationshipStatus,
 } from './link-validity.ts';
-import { privatePagesFilterForCaller, privateLinkOriginFilterForCaller } from './search/private-visibility.ts';
+import type { BrainEngine } from './engine.ts';
+import { rethrowCapabilityRefusal } from './engine-capability-refusal.ts';
 
 const NOTE_ENDED_CAP = 3;
 
-type RawExec = { executeRaw<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<R[]> };
+type NoteReader = Pick<BrainEngine, 'listRelationshipNoteRows'>;
 
 export interface NoteSubject { slug: string; source_id: string; summary?: string | null }
 
@@ -49,33 +50,17 @@ function renderNote(summary: string, edges: NoteEdge[]): string | undefined {
 /**
  * Notes keyed by `relationshipNoteKey(source_id, slug)`; subjects without an
  * ended relationship are absent. `excludePrivate` reads the world-scope state
- * and hides private targets and private-origin links, like remote graph reads.
+ * and hides private targets and private-origin links, like remote graph reads
+ * (BrainEngine listRelationshipNoteRows).
  */
 export async function loadRelationshipNotes(
-  engine: RawExec,
+  engine: NoteReader,
   subjects: readonly NoteSubject[],
   opts: { excludePrivate: boolean },
 ): Promise<Map<string, string>> {
   const notes = new Map<string, string>();
   if (subjects.length === 0) return notes;
-  const privacy = opts.excludePrivate ? ` AND ${privatePagesFilterForCaller('t')} AND ${privateLinkOriginFilterForCaller('l')}` : '';
-  // The evidence the relationship projection counts for this scope (link-relationships.ts): an origin that is gone or in
-  // another source never counts, and a private origin does not count toward the world scope.
-  const endBy = (producer: string) => `EXISTS (SELECT 1 FROM link_transitions x LEFT JOIN pages xo ON xo.id = x.origin_page_id
-        WHERE x.from_page_id = l.from_page_id AND x.to_page_id = l.to_page_id AND x.link_type = l.link_type AND x.kind = 'end'
-        AND x.occurred_on = lr_t.last_end AND x.producer ${producer}
-        AND (x.origin_page_id IS NULL OR xo.deleted_at IS NULL AND xo.source_id = f.source_id${opts.excludePrivate ? ` AND ${privatePagesFilterForCaller('xo')}` : ''}))`;
-  const rows = await engine.executeRaw<{ from_slug: string; source_id: string; to_slug: string; to_title: string | null; link_type: string; last_end: string | null; end_upper_bound: boolean | null }>(
-    `SELECT f.slug AS from_slug, f.source_id, t.slug AS to_slug, t.title AS to_title, l.link_type, lr_t.last_end::text AS last_end,
-        (${endBy("= 'dream'")} AND NOT ${endBy("<> 'dream'")}) AS end_upper_bound${TEMPORAL_LINK_SELECT_SQL}
-       FROM links l
-       JOIN pages f ON f.id = l.from_page_id
-       JOIN pages t ON t.id = l.to_page_id
-       ${temporalLinkJoinSql('l', opts.excludePrivate)}
-      WHERE (f.source_id, f.slug) IN (SELECT s.source_id, s.slug FROM unnest($1::text[], $2::text[]) AS s(source_id, slug))
-        AND lr_t.semantics = 'state' AND t.deleted_at IS NULL${privacy}`,
-    [subjects.map(s => s.source_id), subjects.map(s => s.slug)],
-  );
+  const rows = await engine.listRelationshipNoteRows(subjects.map(s => ({ slug: s.slug, source_id: s.source_id })), opts);
   const bySubject = new Map<string, Map<string, NoteEdge>>();
   for (const raw of rows) {
     const r = annotateTemporalRow(raw);
@@ -101,15 +86,15 @@ export async function loadRelationshipNotes(
 /**
  * Ambient turn context: fold each page's note into its synopsis (world scope),
  * so the budget trimmer prices the rendered line. Fail-soft: an error leaves
- * the synopses unchanged.
+ * the synopses unchanged; a refused engine capability still throws.
  */
 export async function appendRelationshipNotes(
-  engine: RawExec,
+  engine: NoteReader,
   items: Array<{ slug: string; source_id: string; synopsis: string }>,
 ): Promise<void> {
   if (items.length === 0) return;
   const notes = await loadRelationshipNotes(engine, items.map(i => ({ slug: i.slug, source_id: i.source_id, summary: i.synopsis })), { excludePrivate: true })
-    .catch(() => new Map<string, string>());
+    .catch((e: unknown) => { rethrowCapabilityRefusal(e); return new Map<string, string>(); });
   for (const item of items) {
     const note = notes.get(relationshipNoteKey(item.source_id, item.slug));
     if (note) item.synopsis = item.synopsis ? `${item.synopsis} [${note}]` : `[${note}]`;

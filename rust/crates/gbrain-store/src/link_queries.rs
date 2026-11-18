@@ -21,12 +21,13 @@
 //!
 //! Keys: the `q` tag (`keys::LINK_QUERIES`) is shared with wanted_links (`wanted_links.rs`).
 //! The bytes after `q <source> \0 W` are wanted_links' bytes; this family keeps the `W` sub-tag
-//! free. This family keeps no records of its own today. `remove_source_rows` deletes everything
-//! under `q <source> \0`, so a source delete removes the records of both families.
+//! free. The link temporal records (relationship state under `R`, transitions under `T`) live in
+//! `link_temporal.rs`. `remove_source_rows` deletes everything under `q <source> \0`, so a source
+//! delete removes the records of all three.
 //!
 //! The read policy of `src/core/search/read-policy-sql.ts` (`pageReadFilter`) is modelled for the
 //! source filter and the live test (not soft-deleted, not quarantined, source not archived).
-//! Privacy, trust, safe-chunk and temporal filters are refused by the TypeScript members. The
+//! Privacy, trust and safe-chunk filters are refused by the TypeScript members. The
 //! store keeps every chunk inline, so a page's canonical chunk is its lowest `chunk_index`
 //! chunk. See rust/docs/store/link_queries.md.
 
@@ -47,6 +48,14 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
+pub(crate) mod link_temporal;
+pub use link_temporal::{
+    ApplyTemporalInput, ApplyTemporalResult, EdgeValidityCounts, EdgeValidityInput, EvidenceInput,
+    KeysForOriginInput, KeysForPagesInput, KeysTouchingInput, ManualRelationship, ManualWriteInput,
+    ManualWriteResult, NoteRow, NoteRowsInput, PageStatusInput, PageStatusRow, RecordMetadataInput,
+    RecordMetadataRows, RelationshipEvidence, RelationshipKey, SearchVectorCounts, StaleKeysInput,
+    StateWrite,
+};
 mod site_reads;
 pub use site_reads::{
     EndpointsInput, EntityPagesInput, ForeignEdgesInput, InboundCountInput, InboundCoverageInput,
@@ -464,6 +473,7 @@ fn insert_row(tx: &mut dyn KvWrite, link: &LinkBatchInput, now: i64) -> Result<b
         origin_field: text(&link.origin_field),
         resolution_type: link.resolution_type.clone(),
         created_at_us: now,
+        assertion_tense: None,
     };
     check_link(&record)?;
     if tx.get(&record.unique_key())?.is_some() {
