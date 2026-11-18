@@ -17,7 +17,7 @@
  */
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, writeSync, writeFileSync, chmodSync } from 'node:fs';
 import { resolve, join } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { createEngine } from '../../src/core/engine-factory.ts';
 import { loadConfig, toEngineConfig } from '../../src/core/config.ts';
 import type { EngineConfig } from '../../src/core/types.ts';
@@ -59,17 +59,33 @@ const rand = () => { // mulberry32
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 };
 
-function insideGitWorkTree(dir: string): boolean {
+/**
+ * Where `dir` sits relative to git. Only a probe that git itself answers with "not a git repository" counts as
+ * outside: a missing git, unsafe ownership or any other probe failure is 'unknown', which the caller refuses like
+ * 'inside'. Inherited GIT_* settings are dropped so a stray GIT_DIR cannot point the probe somewhere else.
+ */
+function gitWorkTreeStatus(dir: string): { status: 'inside' | 'outside' | 'unknown'; detail: string } {
   let probe = dir;
   while (!existsSync(probe)) probe = resolve(probe, '..');
-  try {
-    execFileSync('git', ['-C', probe, 'rev-parse', '--is-inside-work-tree'], { stdio: ['ignore', 'pipe', 'ignore'] });
-    return true;
-  } catch { return false; }
+  const env: Record<string, string> = { LC_ALL: 'C' };
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined && !key.startsWith('GIT_') && key !== 'LC_ALL' && key !== 'LANG') env[key] = value;
+  }
+  const run = spawnSync('git', ['-C', probe, 'rev-parse', '--is-inside-work-tree'], { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  if (run.status === 0) return { status: 'inside', detail: '' };
+  if (run.status === 128 && /not a git repository/i.test(run.stderr ?? '')) return { status: 'outside', detail: '' };
+  const detail = run.error ? run.error.message : (run.stderr ?? '').trim() || `git exited ${run.status}`;
+  return { status: 'unknown', detail };
 }
 
-if (insideGitWorkTree(out) && !args.has('allow-in-repo')) {
-  fail(`refusing to write private brain text inside a git working tree (${out}); pick a directory outside any repo, or pass --allow-in-repo`);
+if (!args.has('allow-in-repo')) {
+  const where = gitWorkTreeStatus(out);
+  if (where.status === 'inside') {
+    fail(`refusing to write private brain text inside a git working tree (${out}); pick a directory outside any repo, or pass --allow-in-repo`);
+  }
+  if (where.status === 'unknown') {
+    fail(`refusing to write private brain text: could not tell whether ${out} is inside a git working tree (${where.detail}); fix git, pick a directory outside any repo, or pass --allow-in-repo`);
+  }
 }
 if (existsSync(out) && readdirSync(out).length > 0 && !args.has('overwrite')) fail(`${out} is not empty; pass --overwrite to replace the corpus files in it`);
 
