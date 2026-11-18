@@ -1,5 +1,9 @@
 # TODOS
 
+## Rust engine relink lane follow-ups (filed 2026-11-18)
+
+- [ ] **P3 — timeline-row-delete-dedupe: one SQL helper for the two timeline row deletes.** **What:** `deleteTimelineRows` (`src/core/engine-sql/timeline-reads.ts`) and `removeTimelineRows` (`src/core/engine-sql/timeline.ts`) run the same guarded `DELETE FROM timeline_entries` (a page's non-event rows that still match on id, date, source, summary and detail, returning each date and its `removed` mark) as two copies. **Fix:** make both members call one shared SQL helper, with no change in output on any engine (the parity and engine-sql cases of both members stay green unchanged). **Effort:** S. **Priority:** P3.
+
 ## Rust engine lane 5 follow-ups (filed 2026-11-18)
 
 - [ ] **P3 — doctor-prefix-literal: match the doctor's job key prefixes literally.** **What:** `readQueuedSpendRows`, `listBuildSkewStacktraceLines` and `listFactsAbsorbJobsByKeyPrefix` (`src/core/engine-sql/jobs-checks.ts`) read their prefix as a `LIKE` pattern, so the `_` in `job_build_skew:` matches any character (a line starting `jobXbuildXskew:` counts as build skew). **Fix:** compare with `left(col, length($1)) = $1` on the SQL engines and `starts_with` in the store (`rust/crates/gbrain-store/src/jobs/checks.rs`), with a parity case that a wildcard character in a prefix no longer matches. **Effort:** S. **Priority:** P3.
