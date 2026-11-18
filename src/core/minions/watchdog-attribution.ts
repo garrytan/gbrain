@@ -44,15 +44,8 @@ export function unmarkedJobSql(param: string): string {
 }
 
 /** A co-runner of a watchdog drain back to `waiting`, token-fenced, marked, no attempt burned. False when the claim moved on. */
-export async function releaseWatchdogClaim(engine: BrainEngine, id: number, lockToken: string, errorText: string): Promise<boolean> {
-  const rows = await engine.executeRaw<{ id: number }>(
-    `UPDATE minion_jobs SET status = 'waiting', error_text = $3, stacktrace = ${appendSuspectMarkSql('$4')},
-       started_at = NULL, timeout_at = NULL, lock_token = NULL, lock_until = NULL, updated_at = now()
-     WHERE id = $1 AND status = 'active' AND lock_token = $2
-     RETURNING id`,
-    [id, lockToken, errorText, WATCHDOG_SUSPECT_MARK],
-  );
-  return rows.length > 0;
+export function releaseWatchdogClaim(engine: BrainEngine, id: number, lockToken: string, errorText: string): Promise<boolean> {
+  return engine.releaseWatchdogClaim(id, lockToken, errorText);
 }
 
 /**
@@ -72,7 +65,7 @@ export async function settleWatchdogAbort(queue: Pick<MinionQueue, 'releaseWatch
 /** Keeps a job charged for a solo trip marked, so its retry runs alone too. Best-effort: the charge does not depend on it. */
 async function markWatchdogSuspect(engine: BrainEngine, id: number): Promise<void> {
   try {
-    await engine.executeRaw(`UPDATE minion_jobs SET stacktrace = ${appendSuspectMarkSql('$2')} WHERE id = $1`, [id, WATCHDOG_SUSPECT_MARK]);
+    await engine.markJobWatchdogSuspect(id);
   } catch (e) {
     console.error(`[worker] could not mark job ${id} to run alone after its RSS watchdog trip: ${e instanceof Error ? e.message : String(e)}`);
   }

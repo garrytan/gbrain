@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 365/365
+# covered: 403/403
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -32,6 +32,7 @@
 # entity_reads: 6/6
 # cycle_locks: 7/7
 # minion_jobs: 8/8
+# minion_queue: 38/38
 # cli_reads_ops: 7/7
 # facts_doctor: 10/10
 # facts_cycle: 11/11
@@ -311,14 +312,52 @@ readCycleLocks	cycle_locks	yes	8	no	yes	yes	serves
 deleteCycleLock	cycle_locks	yes	1	no	yes	yes	serves
 deleteCycleLockIfStale	cycle_locks	yes	1	no	yes	yes	serves
 assertCycleLease	cycle_locks	yes	1	no	yes	yes	serves
-admitJob	minion_jobs	yes	14	no	yes	yes	serves
-getJob	minion_jobs	yes	7	no	yes	yes	serves
+admitJob	minion_jobs	yes	42	no	yes	yes	serves
+getJob	minion_jobs	yes	23	no	yes	yes	serves
 listJobs	minion_jobs	yes	1	no	yes	yes	serves
-claimNextJob	minion_jobs	yes	10	no	yes	yes	serves
+claimNextJob	minion_jobs	yes	34	no	yes	yes	serves
 renewJobLease	minion_jobs	yes	1	no	yes	yes	serves
-completeJob	minion_jobs	yes	3	no	yes	yes	serves
-failJob	minion_jobs	yes	2	no	yes	yes	serves
+completeJob	minion_jobs	yes	16	no	yes	yes	serves
+failJob	minion_jobs	yes	10	no	yes	yes	serves
 reclaimStalledJobs	minion_jobs	yes	1	no	yes	yes	serves
+deleteTerminalJob	minion_queue	yes	1	no	yes	yes	serves
+pauseJob	minion_queue	yes	5	no	yes	yes	serves
+resumeJob	minion_queue	yes	2	no	yes	yes	serves
+failParentJob	minion_queue	yes	3	no	yes	yes	serves
+resolveParentJob	minion_queue	yes	1	no	yes	yes	serves
+resolveStrandedParents	minion_queue	yes	1	no	yes	yes	serves
+detachChildJob	minion_queue	yes	1	no	yes	yes	serves
+updateJobProgress	minion_queue	yes	1	no	yes	yes	serves
+addJobTokens	minion_queue	yes	1	no	yes	yes	serves
+delayActiveJob	minion_queue	yes	1	no	yes	yes	serves
+releaseWatchdogClaim	minion_queue	yes	1	no	yes	yes	serves
+markJobWatchdogSuspect	minion_queue	yes	2	no	yes	yes	serves
+promoteDelayedJobs	minion_queue	yes	2	no	yes	yes	serves
+cancelJobs	minion_queue	yes	6	no	yes	yes	serves
+killTimedOutJobs	minion_queue	yes	1	no	yes	yes	serves
+killWallClockJobs	minion_queue	yes	1	no	yes	yes	serves
+pruneJobs	minion_queue	yes	2	no	yes	yes	serves
+retryJob	minion_queue	yes	2	no	yes	yes	serves
+postInboxMessage	minion_queue	yes	2	no	yes	yes	serves
+readJobInbox	minion_queue	yes	1	no	yes	yes	serves
+readChildCompletions	minion_queue	yes	4	no	yes	yes	serves
+listOpenJobIdsInQueue	minion_queue	yes	1	no	yes	yes	serves
+renewPrivateQueueLease	minion_queue	yes	1	no	yes	yes	serves
+listOwnedPrivateQueues	minion_queue	yes	1	no	yes	yes	serves
+readPrivateQueueState	minion_queue	yes	1	no	yes	yes	serves
+listStaleWaitingJobIds	minion_queue	yes	1	no	yes	yes	serves
+countTtlExpiredWaiting	minion_queue	yes	1	no	yes	yes	serves
+readJobStats	minion_queue	yes	1	no	yes	yes	serves
+readQueueFamilyStats	minion_queue	yes	1	no	yes	yes	serves
+hasOverdueWatchdogSuspect	minion_queue	yes	1	no	yes	yes	serves
+listUnreviewedJobs	minion_queue	yes	1	no	yes	yes	serves
+getFailedJobForRetry	minion_queue	yes	2	no	yes	yes	serves
+listJobPage	minion_queue	yes	1	no	yes	yes	serves
+listJobAttachmentNames	minion_queue	yes	3	no	yes	yes	serves
+insertJobAttachment	minion_queue	yes	3	no	yes	yes	serves
+listJobAttachments	minion_queue	yes	1	no	yes	yes	serves
+getJobAttachment	minion_queue	yes	1	no	yes	yes	serves
+deleteJobAttachment	minion_queue	yes	1	no	yes	yes	serves
 scanExactBatch	cli_reads_ops	yes	4	no	yes	yes	serves
 nextLivePageAfter	cli_reads_ops	yes	1	no	yes	yes	serves
 listExactIdentityCandidates	cli_reads_ops	yes	3	no	yes	yes	serves

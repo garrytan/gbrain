@@ -20,6 +20,7 @@ import {
   computeWedgedQueueCheck,
 } from '../src/commands/doctor.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { withQueueMembers } from './helpers/queue-engine-members.ts';
 
 let base: PGLiteEngine;
 let pgLike: BrainEngine;
@@ -29,10 +30,10 @@ beforeAll(async () => {
   await base.connect({});
   await base.initSchema();
   // computeWedgedQueueCheck only reads .kind + .executeRaw.
-  pgLike = {
+  pgLike = withQueueMembers({
     kind: 'postgres',
     executeRaw: base.executeRaw.bind(base),
-  } as unknown as BrainEngine;
+  }) as unknown as BrainEngine;
 });
 
 afterAll(async () => {

@@ -4,6 +4,8 @@
 //! resolves plain JSON. Job rows carry timestamps as ISO strings; the shell makes them `Date`s
 //! (rust/docs/store/jobs.md).
 
+mod ops;
+
 use gbrain_store::error::StoreError;
 use gbrain_store::jobs::{AdmitSpec, ClaimSpec, ListFilter, LockAcquire, LockFilter, LockHolder};
 use napi::Env;
@@ -14,7 +16,7 @@ use serde_json::Value;
 use crate::store_binding::{Brain, arg, required};
 
 /// A job id from JavaScript: a whole number, as the `bigint` column takes.
-fn job_id(id: f64, what: &str) -> Result<i64, StoreError> {
+pub(super) fn job_id(id: f64, what: &str) -> Result<i64, StoreError> {
     if id.fract() != 0.0 || !id.is_finite() || id.abs() > 9_007_199_254_740_991.0 {
         return Err(StoreError::invalid(format!(
             "{what}: id {id} is not a whole number"

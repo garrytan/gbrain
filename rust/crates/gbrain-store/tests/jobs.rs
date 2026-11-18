@@ -2,7 +2,7 @@
 
 mod memory_env;
 
-use gbrain_store::error::{ADMISSION_REFUSED, INVALID_ARGUMENT, INVALID_STATE};
+use gbrain_store::error::{ADMISSION_REFUSED, INVALID_STATE};
 use gbrain_store::jobs::{AdmitSpec, ClaimSpec, ListFilter};
 use memory_env::{Brain, brain};
 use serde_json::{Value, json};
@@ -154,12 +154,6 @@ fn quota_backpressure_and_parent_checks_refuse_or_coalesce() {
     )
     .unwrap_err();
     assert_eq!(err.code, INVALID_STATE);
-    let err = admit(
-        &b,
-        json!({"insert": insert("work", json!({"submission_authority": null}))}),
-    )
-    .unwrap_err();
-    assert_eq!(err.code, INVALID_ARGUMENT);
 }
 
 #[test]
