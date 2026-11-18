@@ -3,7 +3,7 @@
 //! `pages.contextual_retrieval_mode` / `pages.corpus_generation` columns.
 //!
 //! Members: updateSlug, resolveSlugWithAlias, resolveSlugWithAliasDetailed, resolveAliases,
-//! setPageAliases, updatePageContextualRetrievalState, aliasCanonicalRefs.
+//! setPageAliases, replaceDerivedAliases, updatePageContextualRetrievalState, aliasCanonicalRefs.
 //!
 //! Keys (every record starts with `keys::ALIAS`, `k`; text parts are joined with `0x00`):
 //!
@@ -13,8 +13,10 @@
 //!   every alias of the old slug at the new one.
 //! - `k 0x02 source \0 alias_norm \0 slug \0 origin` is empty: one `page_aliases` row, unique on
 //!   `(source_id, alias_norm, slug, origin)` as in PGLite.
-//! - `k 0x03 source \0 slug \0 alias_norm \0 origin` is empty: the same row seen from its page, for
-//!   `setPageAliases` and the rename move.
+//! - `k 0x03 source \0 slug \0 alias_norm \0 origin` is the same row seen from its page, for
+//!   `setPageAliases`, `replaceDerivedAliases` and the rename move. A derived row holds its
+//!   [`DerivedAliasValue`] (`case_sensitive`, `alias_text`); a frontmatter row is empty, the
+//!   column defaults (`false`, NULL). The rename move keeps the value.
 //! - `k 0x04 page_id` (8 big-endian bytes) holds the page's [`CrState`].
 //! - `k 0x06 source \0 old_slug \0 new_slug` is empty: one `slug_rename_history` row, unique on
 //!   `(source_id, old_slug, new_slug)` as in PGLite (migration v285). `created_at` is not kept;
@@ -34,14 +36,13 @@
 //! All three tables cascade from `sources`: [`remove_source_rows`] removes every row of a deleted
 //! source.
 //!
-//! Only `setPageAliases` writes page aliases here, so every row has origin `frontmatter`; the
-//! `declared` and `subject` rows of the mention pass have no typed writer. `resolveAliases` still
-//! applies PGLite's precedence (frontmatter, then declared, then subject, and a derived alias
-//! yields to another page's exact title), so a later writer needs no reader change. Only
+//! `setPageAliases` writes the `frontmatter` rows and `replaceDerivedAliases` the `declared` and
+//! `subject` rows of the mention pass. `resolveAliases` applies PGLite's precedence (frontmatter,
+//! then declared, then subject, and a derived alias yields to another page's exact title). Only
 //! `updateSlug` writes slug aliases and rename history. The private-provenance policy
 //! (`facts/privacy.rs`) reads both through [`read_slug_alias`] and [`renamed_to`].
 
-use crate::error::{INVALID_ARGUMENT, Result, StoreError};
+use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
 use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::page_columns::PageColumns;
@@ -84,6 +85,32 @@ pub(crate) struct CrState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub corpus_generation: Option<String>,
 }
+
+/// One row of `replaceDerivedAliases` (`DerivedAliasRow` of `engine-sql/pages.ts`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct DerivedAliasRow {
+    pub alias_norm: String,
+    pub origin: String,
+    #[serde(default)]
+    pub case_sensitive: bool,
+    #[serde(default)]
+    pub alias_text: Option<String>,
+}
+
+/// The columns of a derived `page_aliases` row the key does not hold, stored on its `0x03` key.
+/// No typed read returns them yet; the mention pass reads them through SQL.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct DerivedAliasValue {
+    #[serde(rename = "c")]
+    pub case_sensitive: bool,
+    #[serde(rename = "t", default, skip_serializing_if = "Option::is_none")]
+    pub alias_text: Option<String>,
+}
+
+/// The origins `page_aliases_origin_check` admits.
+const ORIGINS: [&str; 3] = [FRONTMATTER, "declared", "subject"];
+/// The origins `replaceDerivedAliases` replaces.
+const DERIVED: [&str; 2] = ["declared", "subject"];
 
 /// The scope of `resolveAliases` (`PageReadScope`): a non-empty `sourceIds` wins, then a
 /// non-empty `sourceId`, else every source.
@@ -415,14 +442,28 @@ fn move_page_aliases(tx: &mut dyn KvWrite, source: &str, old: &str, new: &str) -
         return Ok(());
     }
     for (alias, origin) in page_alias_rows(&*tx, source, old)? {
+        let value = tx
+            .get(&key(PAGE_ALIAS_BY_SLUG, &[source, old, &alias, &origin]))?
+            .unwrap_or_default();
         delete_page_alias(tx, source, &alias, old, &origin)?;
         put_page_alias(tx, source, &alias, new, &origin)?;
+        if !value.is_empty() {
+            tx.put(
+                &key(PAGE_ALIAS_BY_SLUG, &[source, new, &alias, &origin]),
+                &value,
+            )?;
+        }
     }
     Ok(())
 }
 
 fn read_cr(read: &dyn KvRead, page_id: u64) -> Result<Option<CrState>> {
     get_json(read, &cr_key(page_id))
+}
+
+/// The page's `contextual_retrieval_mode` column: `None` when it has no state (NULL).
+pub(crate) fn contextual_retrieval_mode(read: &dyn KvRead, page_id: u64) -> Result<Option<String>> {
+    Ok(read_cr(read, page_id)?.map(|state| state.mode))
 }
 
 /// Deletes this family's records of a page that is deleted for good (`cascade::remove_page_rows`):
@@ -495,6 +536,54 @@ fn live_page(read: &dyn KvRead, source: &str, slug: &str) -> Result<Option<PageR
     Ok((!archived).then_some(page))
 }
 
+/// [`Store::replace_derived_aliases`] in the caller's write transaction.
+pub(crate) fn replace_derived_aliases_in(
+    tx: &mut dyn KvWrite,
+    slug: &str,
+    source_id: &str,
+    aliases: &[DerivedAliasRow],
+) -> Result<()> {
+    const MEMBER: &str = "replaceDerivedAliases";
+    refuse_nul(MEMBER, &[slug, source_id])?;
+    for row in aliases {
+        refuse_nul(MEMBER, &[&row.alias_norm, &row.origin])?;
+        refuse_nul(MEMBER, &[row.alias_text.as_deref().unwrap_or("")])?;
+        if !ORIGINS.contains(&row.origin.as_str()) {
+            return Err(StoreError::new(
+                CONSTRAINT_VIOLATION,
+                "new row for relation \"page_aliases\" violates check constraint \"page_aliases_origin_check\"",
+            ));
+        }
+    }
+    for (alias, origin) in page_alias_rows(&*tx, source_id, slug)? {
+        if DERIVED.contains(&origin.as_str()) {
+            delete_page_alias(tx, source_id, &alias, slug, &origin)?;
+        }
+    }
+    if aliases.is_empty() {
+        return Ok(());
+    }
+    require_source(&*tx, source_id)?;
+    for row in aliases {
+        let by_slug = key(
+            PAGE_ALIAS_BY_SLUG,
+            &[source_id, slug, &row.alias_norm, &row.origin],
+        );
+        if tx.get(&by_slug)?.is_some() {
+            continue;
+        }
+        put_page_alias(tx, source_id, &row.alias_norm, slug, &row.origin)?;
+        if row.origin != FRONTMATTER {
+            let value = DerivedAliasValue {
+                case_sensitive: row.case_sensitive,
+                alias_text: row.alias_text.clone(),
+            };
+            put_json(tx, &by_slug, &value)?;
+        }
+    }
+    Ok(())
+}
+
 impl Store {
     /// `setPageAliases(slug, sourceId, aliasNorms)`: replaces the page's `frontmatter` alias rows
     /// with the non-empty, distinct `aliasNorms`. Derived rows stay. The page need not exist; the
@@ -527,6 +616,22 @@ impl Store {
             }
             Ok(())
         })
+    }
+
+    /// `replaceDerivedAliases(slug, sourceId, aliases)`: deletes the page's `declared` and
+    /// `subject` rows, then inserts `aliases` in order; a row whose `(alias_norm, origin)` the page
+    /// already holds is skipped (`ON CONFLICT DO NOTHING`), so the first of two equal rows wins
+    /// and a `frontmatter` row keeps its own. An empty list only deletes. Refusals: NUL in any text
+    /// (`invalid_argument`), an origin `page_aliases_origin_check` does not admit
+    /// (`constraint_violation`) and, when there is a row to insert, a missing source
+    /// (`source_not_found`, the foreign key). Nothing is written on a refusal.
+    pub fn replace_derived_aliases(
+        &self,
+        slug: &str,
+        source_id: &str,
+        aliases: &[DerivedAliasRow],
+    ) -> Result<()> {
+        self.write(|tx| replace_derived_aliases_in(tx, slug, source_id, aliases))
     }
 
     /// `resolveAliases(aliasNorms, scope)`: each alias that names a live page in the scope, with
@@ -849,6 +954,105 @@ mod tests {
             })
             .unwrap();
         assert_eq!(family_keys(&store), kept);
+    }
+
+    fn derived(alias: &str, origin: &str, case_sensitive: bool, text: &str) -> DerivedAliasRow {
+        DerivedAliasRow {
+            alias_norm: alias.into(),
+            origin: origin.into(),
+            case_sensitive,
+            alias_text: Some(text.into()),
+        }
+    }
+
+    /// `(alias, origin, value)` of every row of the page, sorted.
+    fn rows_with_values(
+        store: &Store,
+        slug: &str,
+    ) -> Vec<(String, String, Option<DerivedAliasValue>)> {
+        let read = store.read().unwrap();
+        let mut rows: Vec<_> = page_alias_rows(&*read, "default", slug)
+            .unwrap()
+            .into_iter()
+            .map(|(alias, origin)| {
+                let value: Option<DerivedAliasValue> = get_json(
+                    &*read,
+                    &key(PAGE_ALIAS_BY_SLUG, &["default", slug, &alias, &origin]),
+                )
+                .unwrap_or(None);
+                (alias, origin, value)
+            })
+            .collect();
+        rows.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
+        rows
+    }
+
+    #[test]
+    fn derived_aliases_replace_only_the_derived_rows_and_the_first_row_wins() {
+        let store = crate::test_support::store();
+        store
+            .set_page_aliases("a", "default", &["fm".to_string()])
+            .unwrap();
+        store
+            .replace_derived_aliases(
+                "a",
+                "default",
+                &[
+                    derived("x", "declared", true, "X1"),
+                    derived("x", "declared", false, "X2"),
+                    derived("fm", FRONTMATTER, false, "F"),
+                    derived("", "subject", false, ""),
+                ],
+            )
+            .unwrap();
+        let value = |c: bool, t: &str| {
+            Some(DerivedAliasValue {
+                case_sensitive: c,
+                alias_text: Some(t.into()),
+            })
+        };
+        assert_eq!(
+            rows_with_values(&store, "a"),
+            vec![
+                ("".into(), "subject".into(), value(false, "")),
+                ("fm".into(), FRONTMATTER.into(), None),
+                ("x".into(), "declared".into(), value(true, "X1")),
+            ]
+        );
+        let bad = store
+            .replace_derived_aliases("a", "default", &[derived("y", "weird", false, "Y")])
+            .unwrap_err();
+        assert_eq!(bad.code, CONSTRAINT_VIOLATION);
+        assert_eq!(
+            rows_with_values(&store, "a").len(),
+            3,
+            "a refusal writes nothing"
+        );
+        let missing = store
+            .replace_derived_aliases("a", "nosrc", &[derived("y", "declared", false, "Y")])
+            .unwrap_err();
+        assert_eq!(missing.code, crate::error::SOURCE_NOT_FOUND);
+        store.replace_derived_aliases("a", "nosrc", &[]).unwrap();
+        // A rename carries the derived row's columns with it.
+        let input = crate::pages::PageInput {
+            page_type: "note".into(),
+            title: "A".into(),
+            compiled_truth: "body".into(),
+            ..crate::pages::PageInput::default()
+        };
+        store
+            .put_page("a", &input, &crate::pages::PutPageOptions::default())
+            .unwrap();
+        assert_eq!(store.update_slug("a", "b", None).unwrap(), 1);
+        assert_eq!(
+            rows_with_values(&store, "b")[2],
+            ("x".into(), "declared".into(), value(true, "X1"))
+        );
+        store.replace_derived_aliases("b", "default", &[]).unwrap();
+        assert_eq!(
+            rows_with_values(&store, "b"),
+            vec![("fm".into(), FRONTMATTER.into(), None)]
+        );
     }
 
     #[test]

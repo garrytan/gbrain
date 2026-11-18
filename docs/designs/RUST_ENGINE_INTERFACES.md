@@ -537,7 +537,7 @@ PGLite lets four `pages` columns hold NULL. The page record holds NULL in the sa
 | --- | --- | --- | --- |
 | `compiled_truth`, `timeline` | `PageText` | a segmented shell page: its body lives in segment texts. PGLite's `pages_body_storage_chk` makes both NULL exactly when `body_storage = 'segmented'`; an inline page holds a string (`''` when empty) | the page_body family (`createSegmentedPageShell`, a generation flip); never `putPage` |
 | `content_hash` | `Option<String>` | a shell page whose body is not published yet, as `createSegmentedPageShell` leaves it | the page_body family; `putPage` always sets a hash |
-| `chunker_version` | `Option<i16>` | the store has not recorded one. `putPage` keeps the stored value and sets none on a new page | the page_body family; not part of the page JSON (PGLite's `rowToPage` leaves it out) |
+| `chunker_version` | `Option<i16>` | a record written before the store recorded one. `putPage` writes PGLite's value (`rust/docs/store/pages.md`) and a seal writes the safe fence version | nothing new; not part of the page JSON (PGLite's `rowToPage` leaves it out) |
 
 - **Reading in Rust.** A NULL body reads as `""` through `&str` (`Deref`), so inline readers (`auto_chunks`, sizes,
   text matching) see an empty body. Use `is_null` or `as_deref` where NULL and `""` differ.
