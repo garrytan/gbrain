@@ -373,6 +373,49 @@ export async function pruneJobs(tx: Raw, spec: PruneJobsSpec): Promise<number> {
   return parseInt(rows[0]?.count ?? '0', 10);
 }
 
+/** The key families a dream synthesis completion carries (`dream:synth:<hash>`, `dream:synth-v2:<hash>...`). */
+export type SynthesisCompletionPrefix = 'dream:synth:' | 'dream:synth-v2:';
+
+/** One recent synth-v2 completion: its idempotency key and when it finished. */
+export interface SynthesisCompletion { idempotency_key: string; at: Date }
+
+/**
+ * The idempotency keys starting with `keyPrefix` of the source's completed dream synthesis children: the completed
+ * `subagent` jobs and the `dream_synthesis_completions` archive `pruneJobs` keeps, each key once, in no set order.
+ */
+export async function listSynthesisCompletionKeys(tx: Raw, sourceId: string, keyPrefix: SynthesisCompletionPrefix): Promise<string[]> {
+  const rows = await tx.executeRaw<{ idempotency_key: string }>(
+    `SELECT idempotency_key
+       FROM minion_jobs
+      WHERE name = 'subagent'
+        AND status = 'completed'
+        AND COALESCE(NULLIF(data->>'source_id', ''), 'default') = $1
+        AND idempotency_key LIKE $2
+     UNION
+     SELECT idempotency_key FROM dream_synthesis_completions
+      WHERE source_id = $1 AND idempotency_key LIKE $2`,
+    [sourceId, `${keyPrefix}%`],
+  );
+  return rows.map(row => row.idempotency_key);
+}
+
+/**
+ * The source's `dream:synth-v2:` completions within the last `hours`, with when each finished: completed `subagent`
+ * jobs, then archive rows, every row kept (a key both live and archived reads twice).
+ */
+export async function listRecentSynthesisCompletions(tx: Raw, sourceId: string, hours: number): Promise<SynthesisCompletion[]> {
+  const rows = await tx.executeRaw<{ idempotency_key: string; at: string | Date }>(
+    `SELECT idempotency_key, finished_at AS at FROM minion_jobs
+      WHERE name = 'subagent' AND status = 'completed' AND finished_at > now() - ($3 || ' hours')::interval
+        AND COALESCE(NULLIF(data->>'source_id', ''), 'default') = $1 AND idempotency_key LIKE $2
+     UNION ALL
+     SELECT idempotency_key, completed_at FROM dream_synthesis_completions
+      WHERE source_id = $1 AND idempotency_key LIKE $2 AND completed_at > now() - ($3 || ' hours')::interval`,
+    [sourceId, 'dream:synth-v2:%', String(hours)],
+  );
+  return rows.map(row => ({ idempotency_key: row.idempotency_key, at: new Date(row.at) }));
+}
+
 /** The checks `retryJob` runs on the prior row, in the retry's transaction, before the update. */
 export interface RetryJobPolicy {
   /** False skips the retry (another retry won); a throw refuses it. */
@@ -696,6 +739,27 @@ export async function getFailedJobForRetry(tx: Raw, id: number): Promise<{ name:
   const [row] = await tx.executeRaw<{ name: string; data: Record<string, unknown> }>(
     "SELECT name,data FROM minion_jobs WHERE id=$1 AND status IN ('failed','dead')", [id]);
   return row ?? null;
+}
+
+/**
+ * A delegated client's open `subagent` jobs: every queue and every non-terminal status, matched on
+ * `data->>'__owner_client_id'`. Coalesced existing work adds no row, so it adds no slot.
+ */
+export async function countOpenJobsByOwner(tx: Raw, clientId: string): Promise<number> {
+  const counts = await tx.executeRaw<{ n: number }>(
+    `SELECT count(*)::int AS n FROM minion_jobs
+     WHERE name = 'subagent' AND status IN ('waiting','active','delayed','waiting-children','paused')
+       AND data->>'__owner_client_id' = $1`, [clientId],
+  );
+  return Number(counts[0]?.n ?? 0);
+}
+
+/**
+ * Locks a delegated client's `oauth_clients` row until the caller's transaction ends, so its grant check, capacity
+ * count and insert run as one admission. A missing client locks nothing; the grant read that follows refuses it.
+ */
+export async function lockOAuthClient(tx: Raw, clientId: string): Promise<void> {
+  await tx.executeRaw('SELECT client_id FROM oauth_clients WHERE client_id = $1 FOR UPDATE', [clientId]);
 }
 
 /** One `list_jobs` page request. Empty filters are dropped by the caller. */

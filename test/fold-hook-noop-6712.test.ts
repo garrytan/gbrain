@@ -24,7 +24,9 @@
  * (`gbrain.write_open_facts`, trust/fence-guard.ts) to the fence guard's two fact reads; same statements, same order.
  * The typed engine methods of the import path rewrite three statement texts one-for-one: the config read
  * (getConfigValues, `key = ANY($1::text[])`), the write-settings set_config (applyTransactionSettings, one unnest)
- * and the managed-rows coverage read (parameters renumbered); same statements, same order.
+ * and the managed-rows coverage read (parameters renumbered); same statements, same order. The page write guards
+ * (engine-sql/write-guards.ts) rewrite three more: the origin check's source read is getSource's statement, and the
+ * origin bind and the import seal are composed fragments, so their placeholders are numbered in order.
  * CAPTURE_FOLD_NOOP=1 rewrites the fixture for the engine under test (only ever from the pre-hook commit).
  */
 import { describe, expect, test } from 'bun:test';

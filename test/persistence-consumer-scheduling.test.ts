@@ -888,11 +888,14 @@ function countingProxy(target: PGLiteEngine, onRead?: (sql: string, params?: unk
   const proxy = new Proxy(target, { get(base, key) {
     if (key === 'executeRaw') return async (sql: string, params?: unknown[], opts?: unknown) => {
       if (sql === WRITE_PROGRESS_SQL) counts.progress++;
-      // Only the waiter's own reads count; publication itself reads its receipt (clearResolvedRecovery).
-      if (sql === 'SELECT * FROM persistence_requests WHERE id=$1::uuid' && new Error().stack?.includes('awaitWrite')) counts.full++;
       const replaced = onRead?.(sql, params);
       if (replaced !== undefined) return replaced;
       return base.executeRaw(sql, params as unknown[], opts as never);
+    };
+    // The full receipt read (the typed readWriteRequestById). Only the waiter's own reads count; publication reads its receipt too.
+    if (key === 'readWriteRequestById') return (id: string, opts?: { signal?: AbortSignal }) => {
+      if (new Error().stack?.includes('awaitWrite')) counts.full++;
+      return base.readWriteRequestById(id, opts);
     };
     const value = Reflect.get(base, key);
     return typeof value === 'function' ? value.bind(base) : value;

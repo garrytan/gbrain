@@ -42,11 +42,21 @@ async function recordStatements<T>(engine: BrainEngine, fn: () => Promise<T>): P
     statements.push(`getConfigValues FROM config ${JSON.stringify(args[0])}`);
     return originalConfig.apply(this, args).finally(() => { inFlight--; });
   };
+  // The journal limits read is a typed member too (readJournalLimitRows, engine-sql/persistence-journal.ts): it reads
+  // the config table in one statement.
+  const originalLimits = target.readJournalLimitRows!;
+  target.readJournalLimitRows = function (this: unknown, ...args: unknown[]) {
+    if (inFlight === 0) waves++;
+    inFlight++;
+    statements.push('readJournalLimitRows FROM config');
+    return originalLimits.apply(this, args).finally(() => { inFlight--; });
+  };
   try {
     return { result: await fn(), waves, statements };
   } finally {
     delete target.executeRaw;
     delete target.getConfigValues;
+    delete target.readJournalLimitRows;
   }
 }
 

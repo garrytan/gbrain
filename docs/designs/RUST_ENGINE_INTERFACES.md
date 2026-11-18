@@ -165,6 +165,7 @@ Reserved tags:
 | jobs (core) | `m` | `JOBS` | no |
 | trust | `t` | `TRUST` | no (the trust family asks core when it needs the page-delete hook) |
 | telemetry | `a`, one sub-tag per table (below) | `TELEMETRY` | no |
+| jobs, the `dream_synthesis_completions` archive | `f` | `DREAM_SYNTHESIS_COMPLETION` | no |
 
 The telemetry family (`telemetry.rs`) holds search telemetry (`src/core/search/telemetry.ts`), MCP usage
 (`src/core/mcp-usage.ts`), retrieval feedback (`src/core/feedback/`) and the budget ledger
@@ -518,6 +519,11 @@ store keeps the same rule in `pages.rs`.
   `store-members/pages.ts` refuses `putPage` with a `source_path` for such a source.
 - **Advisory locks.** PGLite takes a lock per origin so that two writers serialize. The store has one writer at a
   time, so it needs none.
+- **Write guards.** The origin check, the origin bind, the ingest stamp, the import seal and the valid-time body
+  read are typed engine members (`readPageOrigin`, `listOriginClaims`, `bindPageOrigin`, `stampPageIngest`,
+  `sealImportedPage`, `readLivePageBody`; SQL in `engine-sql/write-guards.ts`). The store answers them in
+  `write_guards.rs`, and `bindPageOrigin` runs the same origin check as `putPage`. See
+  [`rust/docs/store/write-guards.md`](../../rust/docs/store/write-guards.md).
 - **Parity case:** `pages.test.ts`: putPage records source_path and refuses a second live page of the same file.
 
 #### Nullable page fields (`PageText` in `pages.rs`)
@@ -529,7 +535,7 @@ PGLite lets four `pages` columns hold NULL. The page record holds NULL in the sa
 | --- | --- | --- | --- |
 | `compiled_truth`, `timeline` | `PageText` | a segmented shell page: its body lives in segment texts. PGLite's `pages_body_storage_chk` makes both NULL exactly when `body_storage = 'segmented'`; an inline page holds a string (`''` when empty) | the page_body family (`createSegmentedPageShell`, a generation flip); never `putPage` |
 | `content_hash` | `Option<String>` | a shell page whose body is not published yet, as `createSegmentedPageShell` leaves it | the page_body family; `putPage` always sets a hash |
-| `chunker_version` | `Option<i16>` | the store has not recorded one. `putPage` keeps the stored value and sets none on a new page | the page_body family; not part of the page JSON (PGLite's `rowToPage` leaves it out) |
+| `chunker_version` | `Option<i16>` | a record written before the store recorded one. `putPage` writes PGLite's value (`rust/docs/store/pages.md`) and a seal writes the safe fence version | nothing new; not part of the page JSON (PGLite's `rowToPage` leaves it out) |
 
 - **Reading in Rust.** A NULL body reads as `""` through `&str` (`Deref`), so inline readers (`auto_chunks`, sizes,
   text matching) see an empty body. Use `is_null` or `as_deref` where NULL and `""` differ.
@@ -821,6 +827,7 @@ Segmented page bodies: segment texts, manifests, staging and derivations.
 - **Depends on:** Core page helpers for `createSegmentedPageShell`, `flipBodyGeneration`, `sealSegmentedPage` and `refreshPageBody` (page record writes go through `write_page`; the seal records the sanitized lead with `record_search_timeline`). `stageSegmentChunks` writes chunk rows through the core segment chunk helpers (built; "Segment chunks"), and refuses any input that carries vectors until the embeddings family lands. The flip publishes the view generation (`publish_segment_chunks`) and retires chunks with the segment chunk deletes. The generation-1 parity case also needs the transactions family.
 - **Estimate:** about 7 to 8 days: texts and manifest 1 to 2, flip and staging 3, sweep 2, derivations 1.
 - **Notes:** Segment bodies are bytes; sha256 and bodies cross the binding as hex or `Buffer`. `flipBodyGeneration` and `sweepSegments` are each one store write.
+- **Segment storage probe:** `hasSegmentStorage` (capability `page_body`, in `write_guards.rs`) is true when any segment text (`b 0x01`) or body staging (`b 0x03`) exists. The journal reads it before it looks for segmented pages.
 - **Parity cases (6, in `segmented-body.test.ts`, `sync-aliases.test.ts`):**
   - `segmented-body.test.ts`: a segmented page publishes generation 1 from staged texts and manifest rows
   - `segmented-body.test.ts`: a replace flips to generation 2, closes retired rows and refuses a stale generation
@@ -1260,7 +1267,7 @@ the same rows into one member, so the member counts here are smaller than the si
 
 These four sections are design only. No file, tag, constant or list entry below exists yet. The tags are proposed:
 core adds them to the reserved block in `keys.rs` and to the reserved tag table above in one reviewed change, and
-until then no family writes under them. The free lowercase bytes today are `f g h i x y z` (`d`, `m` and `t` are now reserved above, and `a` is telemetry).
+until then no family writes under them. The free lowercase bytes today are `g h i x y z` (`d`, `m` and `t` are now reserved above, `a` is telemetry and `f` is the dream synthesis completion archive).
 
 | Family | Proposed tag | Proposed constant | Cascade on page delete | Owner |
 |---|---|---|---|---|
@@ -1574,6 +1581,38 @@ Trust tiers, the write gate, trust review, fact withdrawal and the belief ledger
   tier; lowering never raises; a withdrawn fact reads as withdrawn; a second withdrawal is refused; gate receipts
   clear when stale; a belief lifetime opens and resolves.
 
+#### trust: what is built
+
+The design above is the whole family. This part is built on the trust family's branch (caa958bbd3): trust tiers
+and write provenance on content rows, and the trust records.
+
+- **Files:** `gbrain-store/src/trust.rs` and `gbrain-store/src/trust/stamp.rs`, then the napi and TypeScript files of
+  each trust member.
+- **Tag:** `t` (`TRUST`). Cascade on page delete: not yet. The design above asks for it; the trust family asks core
+  for the page-delete hook when it needs one.
+- **Build order:** page `trust_tier` and `write_origin` first (returned through the page-columns hook), then
+  `fact_withdrawals`, then `write_gate_holds` and `write_gate_receipts`.
+- **`trust::stamp`:** `stamp(ctx: &WriteTrust, table: TrustTable, row: StampRow) -> Result<Stamped>` gives the
+  tier and origin of one row, with the rules of the PGLite trigger `gbrain_stamp_trust_tier`
+  (`src/core/trust/schema.ts`):
+  - an insert gets the writer's tier, or `unknown` without one; a supplied tier counts only under backfill;
+  - a content change by an owner-tier writer restamps the row; a lower writer sets the minimum of the stored tier
+    and its own; a table in the keep list keeps its stored tier, and can still lower it;
+  - a raise needs a promotion ceiling that covers it (or backfill from `unknown` to a tier below
+    `user_confirmed`), and is otherwise refused with `trust_raise_refused`.
+  - `WriteTrust` holds the writer tier, the origin, the promotion ceiling, the backfill flag and the keep list.
+    `StampRow` is an insert with the supplied tier, or an update with the old and new tier, whether content changed
+    and whether the origin was set. `Stamped` holds the tier and the origin (keep, or set).
+  - The guest-source rules of the trigger are not in `stamp`: the store has no `guest_sources` records yet.
+- **Trust hook (persistence owns it):** a typed `setWriteContext` member holds the attribution and trust settings of
+  the open store write. The attribution seam (`persistence/context.ts`, the `set_config` calls) calls it on a Rust
+  brain in place of `executeRaw`. `write_page` and the facts insert build a `WriteTrust` from it and call
+  `trust::stamp`. A page version snapshot copies the page's tier and origin. The takes and timeline families call
+  `stamp` when they write their rows. The statements are in
+  [the put write path map](../research/rust-put-write-path.md#trust-hook).
+- **Depends on:** the transactions family for the settings of an open store write; until then a write outside a
+  transaction stamps with no writer, which is `unknown`.
+
 ### catalog probes (core)
 
 Doctor checks, migration probes and session settings that ask Postgres about itself. They keep no records, so this
@@ -1674,8 +1713,8 @@ member lands. Within a group, build in the order shown.
 | 6. Graph and search reads | timeline_queries, chunk_queries, link_queries, keyword | yes | about 11 days | keyword writes the `ts_rank` compatibility ranker itself; two chunk cases need embeddings |
 
 Groups 1 and 2 share the `pages` capability: `pages` is reported only when page_ops, extraction and aliases are all
-done. Groups 6 and 2 are the longest (about 11 and 10 days) and set the critical path. If time runs short, the candidate to leave refused for
-Dec 1 is `sweepSegments`; it is a single member that refuses cleanly, so the rest of its family still ships.
+done. Groups 6 and 2 are the longest (about 11 and 10 days) and set the critical path. `sweepSegments` is served: it reads the version and journal
+roots through narrow helpers of those families (rust/docs/store/page_body.md, "The sweep").
 `purgeDeletedPages` and `getHealth` are served.
 
 The estimates are judgments from the size of the PGLite code each member reproduces, not measurements.

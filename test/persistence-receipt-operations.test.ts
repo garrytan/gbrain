@@ -238,10 +238,11 @@ describe('own-principal write receipt operations', () => {
   test('cancellation rechecks its own operation grant after preflight under the transaction lock', async () => {
     const row = await accept();
     let narrowed = false;
+    // The preflight receipt read is the typed readWriteRequest; narrow the grant right after it.
     const proxy = new Proxy(engine, { get(target, property) {
-      if (property === 'executeRaw') return async (sql: string, params?: unknown[]) => {
-        const result = await target.executeRaw(sql, params);
-        if (!narrowed && sql.startsWith('SELECT * FROM persistence_requests WHERE principal_kind=')) {
+      if (property === 'readWriteRequest') return async (...args: Parameters<typeof engine.readWriteRequest>) => {
+        const result = await target.readWriteRequest(...args);
+        if (!narrowed) {
           narrowed = true;
           await setGrant(owner, { operations: ['put_page', 'get_write_request', 'list_write_requests'] });
         }

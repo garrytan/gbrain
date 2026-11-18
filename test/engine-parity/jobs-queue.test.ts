@@ -1,8 +1,9 @@
 /**
  * BrainEngine parity — minion queue members beyond the job lifecycle (engine-sql/jobs-queue.ts): the single-job writes
  * (delete, pause, resume, parent resolve and fail, detach, progress, tokens, delay, watchdog release and mark), the
- * sweeps (delayed promotion, cancel, the two timeout kills, prune, retry), the inbox, the private-queue recovery
- * reads, the stat and list reads, and job attachments.
+ * sweeps (delayed promotion, cancel, the two timeout kills, prune, retry), the dream synthesis completion archive the
+ * prune keeps and its two reads, the inbox, the private-queue recovery reads, the stat and list reads, and job
+ * attachments.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: the queue's operator writes, sweeps, inbox, private-queue reads, stats and attachments return the same
@@ -13,7 +14,8 @@
  *  - Regression: an engine that drifts on a status guard (pause, resume, retry, delete), the token fence of progress,
  *    token counts, delay, watchdog release and the inbox, the cancel closure (descendants, reason only on requested
  *    roots, `child_done` to a live parent, the owner and actor fence), the two timeout sweeps (drain-lease beacon and
- *    lease guards, the parent notification), the prune cut-off and its dream-synthesis archive, the private-queue
+ *    lease guards, the parent notification), the prune cut-off and its dream-synthesis archive (which rows it keeps,
+ *    under which source, first write wins, and the union and window of the two completion reads), the private-queue
  *    lease (never shrinks) and recovery state, the stat counts and bytewise family order, the page cursor, or the
  *    attachment uniqueness and cascade — the rules that keep a job from running twice or a parent from waiting forever.
  *  - Why existing coverage misses it: test/minions*.test.ts drive `MinionQueue` on PGLite only and reach these
@@ -30,6 +32,7 @@ import type { AdmitJobPolicy, AdmitJobSpec, ClaimJobSpec, JobInsertValues, JobRo
 import type { JobAttachmentInsert, JobStatsRead, RetryJobPolicy } from '../../src/core/engine-sql/jobs-queue.ts';
 import { APPLICATION_AUTHORITY, coalesceDecision, parseSubmissionAuthority, type SubmissionAuthority } from '../../src/core/minions/submission-authority.ts';
 import { WATCHDOG_SUSPECT_MARK } from '../../src/core/minions/watchdog-attribution.ts';
+import { admitDelegatedRetry, checkDelegatedCapacity } from '../../src/core/minions/delegated-admission.ts';
 import { parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
@@ -104,6 +107,17 @@ async function thrown(run: () => Promise<unknown>) {
     await run();
     return null;
   } catch (error) {
+    return refusal(error);
+  }
+}
+
+/** Like `thrown`, but a typed refusal propagates, so the Rust arm counts it as refused instead of comparing it. */
+async function denied(run: () => Promise<unknown>) {
+  try {
+    await run();
+    return null;
+  } catch (error) {
+    if ((error as { code?: unknown } | null)?.code === 'engine_capability_missing') throw error;
     return refusal(error);
   }
 }
@@ -530,7 +544,7 @@ describe('engine parity: minion queue', () => {
     });
 
   parityTest('pruneJobs counts on a dry run, deletes the named statuses older than the cut-off, and keeps newer and other rows',
-    { methods: ['admitJob', 'claimNextJob', 'completeJob', 'failJob', 'pruneJobs', 'insertJobAttachment', 'listJobAttachmentNames', 'getJob'] }, async (engine) => {
+    { methods: ['admitJob', 'claimNextJob', 'completeJob', 'failJob', 'pruneJobs', 'insertJobAttachment', 'listJobAttachmentNames', 'getJob', 'listSynthesisCompletionKeys'] }, async (engine) => {
       const oldDone = await finished(engine, 'old-done', 'completed');
       const view = rowView(oldDone);
       const oldFailed = await finished(engine, 'old-failed', 'failed');
@@ -554,19 +568,47 @@ describe('engine parity: minion queue', () => {
       const afterCompleted = await Promise.all([oldDone, oldSubagent, oldFailed, newDone].map(async id => view(await engine.getJob(id))?.status ?? null));
       const rest = await engine.pruneJobs({ statuses: all, olderThan: cut });
       const afterRest = await Promise.all([oldFailed, oldWaiting, oldDreamFailed, newDone].map(async id => view(await engine.getJob(id))?.status ?? null));
-      return { dry, dryEmptyStatuses, dryPast, noneDeleted, afterDry, completedOnly, afterCompleted, rest, afterRest, attachments: await engine.listJobAttachmentNames(oldDone), again: await engine.pruneJobs({ statuses: all, olderThan: cut }) };
+      const archived = await engine.listSynthesisCompletionKeys('default', 'dream:synth:');
+      return { dry, dryEmptyStatuses, dryPast, noneDeleted, afterDry, completedOnly, afterCompleted, rest, afterRest, archived, attachments: await engine.listJobAttachmentNames(oldDone), again: await engine.pruneJobs({ statuses: all, olderThan: cut }) };
     });
 
-  // Rust cannot archive a completed dream synthesis key into dream_synthesis_completions: its prune deletes nothing and
-  // refuses (typed), while PGLite and Postgres archive the key and delete.
-  parityTest('pruneJobs archives the key of a completed dream synthesis subagent as it deletes it',
-    { methods: ['admitJob', 'claimNextJob', 'completeJob', 'pruneJobs', 'getJob'] }, async (engine) => {
+  parityTest('pruneJobs archives the key of a completed dream synthesis subagent as it deletes it, and the completion reads still find it',
+    { methods: ['admitJob', 'claimNextJob', 'completeJob', 'failJob', 'pruneJobs', 'getJob', 'listSynthesisCompletionKeys', 'listRecentSynthesisCompletions'] }, async (engine) => {
       const synth = await finished(engine, 'subagent', 'completed', { idempotency_key: 'dream:synth:src:1', data: { source_id: 'src' } });
+      const v2 = await finished(engine, 'subagent', 'completed', { idempotency_key: 'dream:synth-v2:src:2', data: { source_id: 'src' } });
+      // An empty source_id is the default source; a failed synthesis and a non-dream key are not completions.
+      const v2Default = await finished(engine, 'subagent', 'completed', { idempotency_key: 'dream:synth-v2:def:3', data: { source_id: '' } });
+      await finished(engine, 'subagent', 'failed', { idempotency_key: 'dream:synth:src:4', data: { source_id: 'src' } });
+      await finished(engine, 'subagent', 'completed', { idempotency_key: 'other:src:5', data: { source_id: 'src' } });
       const other = await finished(engine, 'work', 'completed');
+      const reads = async () => ({
+        v1: sorted(await engine.listSynthesisCompletionKeys('src', 'dream:synth:')),
+        v2: sorted(await engine.listSynthesisCompletionKeys('src', 'dream:synth-v2:')),
+        v1Default: sorted(await engine.listSynthesisCompletionKeys('default', 'dream:synth:')),
+        v2Default: sorted(await engine.listSynthesisCompletionKeys('default', 'dream:synth-v2:')),
+        recent: (await engine.listRecentSynthesisCompletions('src', 1)).map(r => [r.idempotency_key, r.at instanceof Date]),
+        recentDefault: (await engine.listRecentSynthesisCompletions('default', 1)).map(r => r.idempotency_key),
+      });
+      const live = await reads();
       const cut = new Date(Date.now() + 60_000);
-      const dry = await engine.pruneJobs({ statuses: ['completed'], olderThan: cut, dryRun: true });
-      const pruned = await engine.pruneJobs({ statuses: ['completed'], olderThan: cut });
-      return { dry, pruned, synth: await engine.getJob(synth), other: await engine.getJob(other) };
+      const dry = await engine.pruneJobs({ statuses: ['completed', 'failed'], olderThan: cut, dryRun: true });
+      const afterDry = await reads();
+      const pruned = await engine.pruneJobs({ statuses: ['completed', 'failed'], olderThan: cut });
+      const archived = await reads();
+      const firstAt = (await engine.listRecentSynthesisCompletions('src', 1))[0]?.at.getTime();
+      // The same key completes again: live and archived it reads once as a key and twice as a recent completion.
+      const again = await finished(engine, 'subagent', 'completed', { idempotency_key: 'dream:synth-v2:src:2', data: { source_id: 'src' } });
+      const twice = await reads();
+      // Pruned again, the archive keeps its first row (ON CONFLICT DO NOTHING).
+      const prunedAgain = await engine.pruneJobs({ statuses: ['completed'], olderThan: new Date(Date.now() + 60_000) });
+      const kept = await engine.listRecentSynthesisCompletions('src', 1);
+      await Bun.sleep(50);
+      const outsideWindow = await engine.listRecentSynthesisCompletions('src', 0.00001);
+      return {
+        dry, pruned, live, afterDry, archived, twice, prunedAgain, outsideWindow,
+        keptFirstAt: kept.length === 1 && kept[0]!.at.getTime() === firstAt,
+        gone: await Promise.all([synth, v2, v2Default, other, again].map(async id => (await engine.getJob(id)) === null)),
+      };
     });
 
   parityTest('retryJob requeues a failed or dead job after the policy admits it, and does nothing for any other job or a refused retry',
@@ -602,13 +644,45 @@ describe('engine parity: minion queue', () => {
       };
     });
 
-  // A delegated client's retry locks the client and checks its capacity through the transaction; the Rust arm lets the
-  // retry policy read only the job, so it stops on the typed refusal (follow-up: jobs-delegation-grants).
+  // The retry policy runs on a handle that serves the job reads and the open-job count; any other read, like this
+  // listJobs, makes the Rust arm stop on the typed refusal before the store writes.
   parityTest('retryJob runs a delegated client\'s retry policy through the retry transaction',
     { methods: ['admitJob', 'claimNextJob', 'failJob', 'retryJob'] }, async (engine) => {
       const id = await finished(engine, 'failed', 'failed');
       const out = await engine.retryJob(id, { admit: async (tx) => { await tx.listJobs({ limit: 1 }); return true; } });
       return { status: out?.status ?? null };
+    });
+
+  // The queue's own retry policy (MinionQueue.retryJob's admitDelegatedRetry). A job with no delegated owner needs no
+  // client lock, so every arm re-queues it.
+  parityTest('retryJob with the delegated retry policy re-queues a failed job that has no delegated owner',
+    { methods: ['admitJob', 'claimNextJob', 'failJob', 'retryJob'] }, async (engine) => {
+      const id = await finished(engine, 'subagent', 'failed', { data: { task: 'mine' } });
+      const out = await engine.retryJob(id, { admit: (tx) => admitDelegatedRetry(tx, id) });
+      return { status: out?.status ?? null, again: await engine.retryJob(id, { admit: (tx) => admitDelegatedRetry(tx, id) }) };
+    });
+
+  // A legacy delegated job (an owner but no frozen grant snapshot) is never replayed: the policy refuses it before any
+  // client lock or grant read, so every arm returns the same refusal and the job stays failed.
+  parityTest('retryJob with the delegated retry policy refuses a legacy delegated job that has no frozen grant snapshot',
+    { methods: ['admitJob', 'claimNextJob', 'failJob', 'retryJob', 'getJob'] }, async (engine) => {
+      const id = await finished(engine, 'subagent', 'failed', { data: { __owner_client_id: 'gone-client', allowed_tools: ['search'], source_id: 'default' } });
+      const out = await thrown(() => engine.retryJob(id, { admit: (tx) => admitDelegatedRetry(tx, id) }));
+      return { out, status: (await engine.getJob(id))?.status };
+    });
+
+  // A delegated job with a frozen grant snapshot: the policy locks the client (lockOAuthClient) and reads the client's
+  // grant. PGLite and Postgres find no OAuth row and refuse the retry (client_deleted); the Rust store keeps no OAuth
+  // rows, so the Rust arm stops on the typed refusal at the grant read, before anything is written.
+  parityTest('retryJob with the delegated retry policy refuses a delegated job whose OAuth client is gone',
+    { methods: ['admitJob', 'claimNextJob', 'failJob', 'retryJob', 'getJob'] }, async (engine) => {
+      const grant = {
+        clientId: 'gone-client', sourceId: 'default', brainId: null, namespace: 'job', tools: ['search'], allowedOperations: null,
+        slugPrefixes: ['wiki/agents/{job_id}/*'], readSources: ['default'], scopes: ['read', 'write', 'agent'], maxConcurrent: 2, budgetUsdPerDay: null,
+      };
+      const id = await finished(engine, 'subagent', 'failed', { data: { __owner_client_id: 'gone-client', __delegation_grant: grant } });
+      const out = await denied(() => engine.retryJob(id, { admit: (tx) => admitDelegatedRetry(tx, id) }));
+      return { out, status: (await engine.getJob(id))?.status };
     });
 
   // ------------------------------------------------------------ inbox
@@ -841,6 +915,43 @@ describe('engine parity: minion queue', () => {
         waiting: await engine.getFailedJobForRetry(waiting), missing: await engine.getFailedJobForRetry(failed + 100_000),
       };
     });
+
+  // The delegated client's slot count (checkDelegatedCapacity). Owner matching is on the text of `__owner_client_id`, so a
+  // number owner matches its digits and a null owner matches nothing.
+  parityTest('countOpenJobsByOwner counts a delegated client\'s subagent jobs in every queue and non-terminal status',
+    { methods: ['admitJob', 'claimNextJob', 'completeJob', 'failJob', 'pauseJob', 'getJob', 'countOpenJobsByOwner'] }, async (engine) => {
+      const owned = (owner: unknown, extra: Partial<JobInsertValues> = {}) => ({ data: { __owner_client_id: owner, task: 't' }, ...extra });
+      const claimed = await active(engine, 'subagent', 'w1:a', owned('c1'), { names: ['subagent'] });
+      await finished(engine, 'subagent', 'completed', owned('c1'));
+      await finished(engine, 'subagent', 'failed', owned('c1'));
+      const waiting = await add(engine, 'subagent', owned('c1'));
+      const paused = await add(engine, 'subagent', owned('c1'));
+      await engine.pauseJob(paused);
+      await add(engine, 'subagent', owned('c1', { queue: 'side' }));
+      await add(engine, 'subagent', owned('c1', { status: 'delayed', delay_until: FAR }));
+      await add(engine, 'work', owned('c1'));
+      await add(engine, 'subagent', owned('c2'));
+      await add(engine, 'subagent', owned(7));
+      await add(engine, 'subagent', owned(null));
+      await add(engine, 'subagent', { data: { task: 'unowned' } });
+      const count = (c: string) => engine.countOpenJobsByOwner(c);
+      const before = { c1: await count('c1'), c2: await count('c2'), seven: await count('7'), nul: await count('null'), nobody: await count('nobody-example') };
+      await engine.completeJob(claimed, 'w1:a');
+      return { before, afterComplete: await count('c1'), statuses: [(await engine.getJob(waiting))?.status, (await engine.getJob(paused))?.status] };
+    });
+
+  parityTest('checkDelegatedCapacity refuses a delegated client at its limit and counts nothing without a limit',
+    { methods: ['admitJob', 'countOpenJobsByOwner'] }, async (engine) => {
+      await add(engine, 'subagent', { data: { __owner_client_id: 'c1' } });
+      await add(engine, 'subagent', { data: { __owner_client_id: 'c1' }, queue: 'side' });
+      const outcome = (limit: number | null) => checkDelegatedCapacity(engine, 'c1', limit).then(() => 'admitted', refusal);
+      return { atLimit: await outcome(2), under: await outcome(3), unlimited: await outcome(null) };
+    });
+
+  // PGLite and Postgres lock the client's oauth_clients row (none here, so nothing is locked); the Rust store keeps no
+  // OAuth rows and does not serve the member, so the Rust arm stops on the typed refusal.
+  parityTest('lockOAuthClient resolves for a client with no OAuth row',
+    { methods: ['lockOAuthClient'] }, async (engine) => ({ locked: (await engine.lockOAuthClient('nobody-example')) ?? null }));
 
   parityTest('listJobPage filters by status, queue, name and the owner fence, newest first, and pages on the (created_at, id) cursor',
     { methods: ['admitJob', 'claimNextJob', 'listJobPage'] }, async (engine) => {

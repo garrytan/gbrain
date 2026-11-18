@@ -157,14 +157,16 @@ for (const phase of ['admitted', 'complete']) for (const caller of ['explicit', 
     const fetcher = spyOn(globalThis, 'fetch').mockImplementation((async () => {
       networkCalls++; throw new Error('Unexpected network call in company cancellation fixture');
     }) as unknown as typeof fetch);
-    engine.executeRaw = async function(this: BrainEngine, sql, params) {
-      const rows = await execute.call(this, sql, params);
-      if (!observed && sql === 'SELECT config,incarnation FROM sources WHERE id=$1' && params?.[0] === f.sourceId) {
-        expect((rows[0] as { config: { company_brain: unknown } }).config.company_brain).toBeDefined();
+    // The company profile read is the typed readSourceIncarnation member; cancel right after it answers.
+    const readSource = engine.readSourceIncarnation;
+    engine.readSourceIncarnation = async function(this: BrainEngine, sourceId) {
+      const row = await readSource.call(this, sourceId);
+      if (!observed && sourceId === f.sourceId) {
+        expect((row as { config: { company_brain: unknown } }).config.company_brain).toBeDefined();
         observed = true; controller.abort(new Error('company profile fixture cancelled'));
       }
-      return rows;
-    } as BrainEngine['executeRaw'];
+      return row;
+    } as BrainEngine['readSourceIncarnation'];
     try {
       if (caller === 'job') {
         await expect(withSubmissionAuthority(APPLICATION_AUTHORITY, () => performSync(engine, { sourceId: f.sourceId }), controller.signal))
@@ -174,7 +176,7 @@ for (const phase of ['admitted', 'complete']) for (const caller of ['explicit', 
       expect(observed).toBe(true);
       expect(networkCalls).toBe(0);
       expect(await snapshot()).toEqual(before);
-    } finally { engine.executeRaw = execute; fetcher.mockRestore(); await disposePersistenceConsumer(engine); }
+    } finally { engine.readSourceIncarnation = readSource; fetcher.mockRestore(); await disposePersistenceConsumer(engine); }
   });
 }
 

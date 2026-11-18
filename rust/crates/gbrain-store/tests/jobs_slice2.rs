@@ -564,7 +564,7 @@ fn the_lease_beacon_queue_is_never_killed() {
 }
 
 #[test]
-fn prune_deletes_old_rows_dry_runs_and_refuses_dream_synthesis() {
+fn prune_deletes_old_rows_dry_runs_and_archives_dream_synthesis() {
     let b = brain("s2-prune");
     let old: Vec<i64> = (0..3).map(|_| add(&b, "work", json!({}))).collect();
     for (i, _) in old.iter().enumerate() {
@@ -583,55 +583,144 @@ fn prune_deletes_old_rows_dry_runs_and_refuses_dream_synthesis() {
         .unwrap()
     };
     let dry = b.prune_jobs(&spec(true)).unwrap();
-    assert_eq!((dry.count, dry.needs_archive), (3, false));
+    assert_eq!(dry.count, 3);
     assert_eq!(b.list_job_attachment_names(old[0]).unwrap(), Some(vec![]));
     let done = b.prune_jobs(&spec(false)).unwrap();
-    assert_eq!((done.count, done.needs_archive), (3, false));
+    assert_eq!(done.count, 3);
     for id in &old {
         assert!(b.get_job(*id).unwrap().is_none());
     }
     assert!(b.get_job(fresh).unwrap().is_some());
 
-    // a completed dream-synthesis subagent needs its archive first: nothing is deleted
-    let synth = add(
-        &b,
-        "subagent",
-        json!({"idempotency_key": "dream:synth:abc", "queue": "q2"}),
-    );
-    let plain = add(&b, "work", json!({"queue": "q2"}));
-    for (n, _) in ["subagent", "work"].iter().enumerate() {
-        b.claim_next_job(&claim_spec(
-            &format!("s:{n}"),
-            "q2",
-            &["subagent", "work"],
-            json!({}),
-        ))
-        .unwrap()
-        .unwrap();
-    }
-    for (n, id) in [synth, plain].iter().enumerate() {
-        b.complete_job(*id, &format!("s:{n}"), None)
+    // a completed dream-synthesis subagent's key moves to the archive as the row goes
+    let finish = |b: &Brain, rows: &[(&str, Value)]| -> Vec<i64> {
+        let ids: Vec<i64> = rows.iter().map(|(n, x)| add(b, n, x.clone())).collect();
+        for (n, (name, x)) in rows.iter().enumerate() {
+            b.claim_next_job(&claim_spec(
+                &format!("s:{n}"),
+                x["queue"].as_str().unwrap(),
+                &[name],
+                json!({}),
+            ))
             .unwrap()
             .unwrap();
+        }
+        for (n, id) in ids.iter().enumerate() {
+            b.complete_job(*id, &format!("s:{n}"), None)
+                .unwrap()
+                .unwrap();
+        }
+        ids
+    };
+    let synth_ids = finish(
+        &b,
+        &[
+            (
+                "subagent",
+                json!({"idempotency_key": "dream:synth:abc", "queue": "q2", "data": {"source_id": "src"}}),
+            ),
+            (
+                "subagent",
+                json!({"idempotency_key": "dream:synth-v2:def", "queue": "q3", "data": {"source_id": ""}}),
+            ),
+            (
+                "subagent",
+                json!({"idempotency_key": "other:ghi", "queue": "q4"}),
+            ),
+            ("work", json!({"queue": "q5"})),
+        ],
+    );
+    let failed_synth = add(
+        &b,
+        "subagent",
+        json!({"idempotency_key": "dream:synth:failed", "queue": "q6", "status": "failed"}),
+    );
+    b.clock.advance(60 * SEC);
+    let spec = |dry: bool| -> PruneSpec {
+        serde_json::from_value(json!({"statuses": ["completed", "failed"],
+            "olderThan": "2027-01-15T09:00:00Z", "dryRun": dry}))
+        .unwrap()
+    };
+    let dry = b.prune_jobs(&spec(true)).unwrap();
+    assert_eq!(dry.count, 5);
+    // live completed rows answer the reads before the prune; a dry run archives nothing
+    assert_eq!(
+        b.list_synthesis_completion_keys("src", "dream:synth:")
+            .unwrap(),
+        vec!["dream:synth:abc".to_string()]
+    );
+    let done = b.prune_jobs(&spec(false)).unwrap();
+    assert_eq!(serde_json::to_value(&done).unwrap(), json!({"count": 5}));
+    for id in synth_ids.iter().chain([&failed_synth]) {
+        assert!(b.get_job(*id).unwrap().is_none());
     }
+    assert_eq!(
+        b.list_synthesis_completion_keys("src", "dream:synth:")
+            .unwrap(),
+        vec!["dream:synth:abc".to_string()]
+    );
+    // an empty source_id is the default source; a v1 prefix does not match v2 keys
+    assert_eq!(
+        b.list_synthesis_completion_keys("default", "dream:synth-v2:")
+            .unwrap(),
+        vec!["dream:synth-v2:def".to_string()]
+    );
+    assert!(
+        b.list_synthesis_completion_keys("default", "dream:synth:")
+            .unwrap()
+            .is_empty()
+    );
+    let recent = b.list_recent_synthesis_completions("default", 1.0).unwrap();
+    assert_eq!(recent.len(), 1);
+    assert_eq!(recent[0]["idempotency_key"], "dream:synth-v2:def");
+    assert!(
+        b.list_recent_synthesis_completions("src", 1.0)
+            .unwrap()
+            .is_empty()
+    );
+    let first_at = recent[0]["at"].clone();
+    // the same key completes again and is pruned again: the archive keeps its first row
+    b.clock.advance(60 * SEC);
+    let again = finish(
+        &b,
+        &[(
+            "subagent",
+            json!({"idempotency_key": "dream:synth-v2:def", "queue": "q7"}),
+        )],
+    );
+    // a live completed job and its archived twin read once (UNION) or twice (UNION ALL)
+    assert_eq!(
+        b.list_synthesis_completion_keys("default", "dream:synth-v2:")
+            .unwrap(),
+        vec!["dream:synth-v2:def".to_string()]
+    );
+    assert_eq!(
+        b.list_recent_synthesis_completions("default", 1.0)
+            .unwrap()
+            .len(),
+        2
+    );
     b.clock.advance(60 * SEC);
     let spec: PruneSpec = serde_json::from_value(json!({"statuses": ["completed"],
-        "olderThan": "2027-01-15T09:00:00Z"}))
+        "olderThan": "2027-01-15T10:00:00Z"}))
     .unwrap();
-    let refused = b.prune_jobs(&spec).unwrap();
-    assert_eq!((refused.count, refused.needs_archive), (0, true));
-    assert!(b.get_job(synth).unwrap().is_some());
-    assert!(b.get_job(plain).unwrap().is_some());
-    assert_eq!(
-        serde_json::to_value(&refused).unwrap(),
-        json!({"count": 0, "needsArchive": true})
+    assert_eq!(b.prune_jobs(&spec).unwrap().count, 1);
+    assert!(b.get_job(again[0]).unwrap().is_none());
+    let recent = b.list_recent_synthesis_completions("default", 1.0).unwrap();
+    assert_eq!(recent.len(), 1);
+    assert_eq!(recent[0]["at"], first_at);
+    // past the window nothing is recent; the keys stay
+    assert!(
+        b.list_recent_synthesis_completions("default", 0.0001)
+            .unwrap()
+            .is_empty()
     );
-    // dry-run reports the count without the refusal
-    let spec: PruneSpec = serde_json::from_value(json!({"statuses": ["completed"],
-        "olderThan": "2027-01-15T09:00:00Z", "dryRun": true}))
-    .unwrap();
-    let dry = b.prune_jobs(&spec).unwrap();
-    assert_eq!((dry.count, dry.needs_archive), (2, false));
+    assert_eq!(
+        b.list_synthesis_completion_keys("default", "dream:synth-v2:")
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 // ------------------------------------------------------------------ inbox
@@ -1252,4 +1341,56 @@ fn attachments_are_unique_per_job_and_filename() {
     assert!(b.get_job_attachment(id, "a.txt").unwrap().is_none());
     assert!(b.get_job_attachment(id2, "a.txt").unwrap().is_some());
     b.insert_job_attachment(id, &input("a.txt", 5)).unwrap();
+}
+
+#[test]
+fn open_jobs_are_counted_per_delegated_owner_across_live_statuses() {
+    let b = brain("s2-owner-count");
+    let owned = |c: Value| json!({ "data": { "__owner_client_id": c } });
+    let waiting = add(&b, "subagent", owned(json!("c1")));
+    let paused = add(&b, "subagent", owned(json!("c1")));
+    b.pause_job(paused).unwrap().unwrap();
+    add(
+        &b,
+        "subagent",
+        json!({ "queue": "other", "data": { "__owner_client_id": "c1" } }),
+    );
+    add(&b, "work", owned(json!("c1")));
+    add(&b, "subagent", owned(json!("c2")));
+    add(&b, "subagent", owned(json!(7)));
+    add(&b, "subagent", owned(Value::Null));
+    assert_eq!(
+        b.count_open_jobs_by_owner("c1").unwrap(),
+        3,
+        "waiting, paused, other queue"
+    );
+    assert_eq!(
+        b.count_open_jobs_by_owner("7").unwrap(),
+        1,
+        "a number owner matches its text"
+    );
+    assert_eq!(
+        b.count_open_jobs_by_owner("null").unwrap(),
+        0,
+        "a null owner never matches"
+    );
+    assert_eq!(b.count_open_jobs_by_owner("nobody").unwrap(), 0);
+
+    let claimed = claim_named(&b, "w:1", "subagent");
+    assert_eq!(
+        claimed["id"].as_i64(),
+        Some(waiting),
+        "the oldest waiting subagent"
+    );
+    assert_eq!(
+        b.count_open_jobs_by_owner("c1").unwrap(),
+        3,
+        "active still holds a slot"
+    );
+    b.complete_job(waiting, "w:1", None).unwrap().unwrap();
+    assert_eq!(
+        b.count_open_jobs_by_owner("c1").unwrap(),
+        2,
+        "a completed row frees its slot"
+    );
 }

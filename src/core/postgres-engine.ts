@@ -156,6 +156,8 @@ import * as timelineImpl from './engine-sql/timeline.ts';
 import * as sourcesImpl from './engine-sql/sources.ts';
 import * as cliReadsImpl from './engine-sql/cli-reads-import.ts';
 import * as persistenceStateImpl from './engine-sql/persistence-state.ts';
+import * as persistenceJournalImpl from './engine-sql/persistence-journal.ts';
+import * as writeGuardsImpl from './engine-sql/write-guards.ts';
 import * as cliReadsOpsImpl from './engine-sql/cli-reads-ops.ts';
 import * as factsDoctorImpl from './engine-sql/facts-doctor.ts';
 import * as factsCycleImpl from './engine-sql/facts-cycle.ts';
@@ -175,6 +177,7 @@ import type { AdmitJobPolicy, AdmitJobSpec, ClaimJobSpec, ListJobsFilter } from 
 import * as jobsQueue from './engine-sql/jobs-queue.ts';
 import type {
   CancelJobsSpec, DelayActiveJobSpec, JobAttachmentInsert, JobPageSpec, JobTokenCounts, PruneJobsSpec, RetryJobPolicy,
+  SynthesisCompletionPrefix,
 } from './engine-sql/jobs-queue.ts';
 import { noteDirectPoolLease } from './direct-pool-profile.ts';
 import * as filesImpl from './engine-sql/files.ts';
@@ -1181,6 +1184,16 @@ export class PostgresEngine implements BrainEngine {
   readPersistenceBrainId() { return this.preparationRead(exec => persistenceStateImpl.readPersistenceBrainId(unscopedExecutor(exec, 'persistence: brain identity read ran unscoped through executeRaw'))); }
   readLocalWriterRow(id: string, opts?: { lock?: boolean }) { return this.preparationRead(exec => persistenceStateImpl.readLocalWriterRow(unscopedExecutor(exec, 'persistence: local writer read ran unscoped through executeRaw'), id, opts), opts?.lock); }
   insertLocalWriterRow(row: persistenceStateImpl.LocalWriterInsert) { return persistenceStateImpl.insertLocalWriterRow(this.autocommitSql, row); }
+  readJournalLimitRows() { return this.preparationRead(exec => persistenceJournalImpl.readJournalLimitRows(unscopedExecutor(exec, 'persistence: journal limit read ran unscoped through executeRaw'))); }
+  readHeldPageRows<R = Record<string, unknown>>(pageIds: string[]) { return this.preparationRead(exec => persistenceJournalImpl.readHeldPageRows<R>(unscopedExecutor(exec, 'persistence: hold read ran unscoped through executeRaw'), pageIds)); }
+  readHeldCoverageRows(sourceIds: string[] | null) { return this.preparationRead(exec => persistenceJournalImpl.readHeldCoverageRows(unscopedExecutor(exec, 'persistence: hold summary read ran unscoped through executeRaw'), sourceIds)); }
+  readWriteRequest(principalKind: string, principalId: string, requestId: string) { return this.preparationRead(exec => persistenceJournalImpl.readWriteRequest(unscopedExecutor(exec, 'persistence: request read ran unscoped through executeRaw'), principalKind, principalId, requestId)); }
+  readWriteRequestById(id: string, opts?: { signal?: AbortSignal }) { return this.preparationRead(exec => persistenceJournalImpl.readWriteRequestById(unscopedExecutor(exec, 'persistence: request read ran unscoped through executeRaw'), id, opts)); }
+  lockPersistenceCounters(keys: readonly string[]) { return persistenceJournalImpl.lockPersistenceCounters(this.autocommitSql, keys); }
+  insertWriteRequest(row: persistenceJournalImpl.WriteRequestInsert) { return persistenceJournalImpl.insertWriteRequest(this.autocommitSql, row); }
+  stampWriteClaim(id: string, token: string, leaseMs: number, phaseJson: string) { return persistenceJournalImpl.stampWriteClaim(this.autocommitSql, id, token, leaseMs, phaseJson); }
+  lockWriteRequest(id: string) { return persistenceJournalImpl.lockWriteRequest(this.autocommitSql, id); }
+  completeWriteRow(completion: persistenceJournalImpl.WriteCompletion) { return persistenceJournalImpl.completeWriteRow(this.autocommitSql, completion); }
   readTransactionSettings(names: readonly string[]) { return transactionSettingsImpl.readTransactionSettings(unscopedExecutor(this.engineSql, 'transaction settings: read ran through the transaction executeRaw'), names); }
   applyTransactionSettings(names: readonly string[], values: readonly string[]) { return transactionSettingsImpl.applyTransactionSettings(this.autocommitSql, names, values); }
   readLedgerSource(sourceId: string, opts?: { batch?: boolean }) { return this.preparationRead(exec => beliefImpl.readLedgerSource(unscopedExecutor(exec, 'belief: ledger source probe ran unscoped through executeRaw'), sourceId, opts), opts?.batch); }
@@ -2718,6 +2731,7 @@ export class PostgresEngine implements BrainEngine {
   async openBodyStaging(input: BodyStagingInput): Promise<void> { return pageBodyImpl.openBodyStaging(this.engineSql, input); }
   async setBodyStagingState(id: string, state: BodyStagingState, opts?: { commitRequestId?: string | null }): Promise<void> { return pageBodyImpl.setBodyStagingState(this.engineSql, id, state, opts); }
   async sweepSegments(opts?: SegmentSweepOptions): Promise<SegmentSweepResult> { return pageBodyImpl.sweepSegments(this.engineSql, opts); }
+  hasSegmentStorage() { return this.preparationRead(exec => writeGuardsImpl.hasSegmentStorage(unscopedExecutor(exec, 'page body: segment storage probe ran unscoped through executeRaw'))); }
   async readSegmentDerivations(pageId: number, opts?: { kind?: SegmentDerivationKind; occurrenceIds?: readonly number[] }): Promise<SegmentDerivationRow[]> {
     return pageBodyImpl.readSegmentDerivations(unscopedExecutor(this.engineSql, 'page-body: page-id keyed internal read'), pageId, opts);
   }
@@ -3044,6 +3058,12 @@ export class PostgresEngine implements BrainEngine {
   async refreshPageOrigin(slug: string, opts: { sourceId: string; sourcePath: string; sourceUri?: string | null }): Promise<void> {
     return pagesImpl.refreshPageOrigin(this.autocommitSql, slug, opts);
   }
+  readPageOrigin(target: writeGuardsImpl.PageOriginTarget) { return this.preparationRead(exec => writeGuardsImpl.readPageOrigin(unscopedExecutor(exec, 'origin guard: page read ran unscoped through executeRaw'), target)); }
+  listOriginClaims(sourceId: string, spellings: readonly string[], opts: { lockKeys: readonly string[]; excludePageId?: number | null }) { return writeGuardsImpl.listOriginClaims(this.autocommitSql, sourceId, spellings, opts); }
+  bindPageOrigin(target: writeGuardsImpl.PageOriginTarget & { sourcePath: string; onlyIfUnset?: boolean; liveOnly?: boolean }) { return writeGuardsImpl.bindPageOrigin(this.autocommitSql, target); }
+  stampPageIngest(slug: string, stamp: writeGuardsImpl.PageIngestStamp) { return writeGuardsImpl.stampPageIngest(this.autocommitSql, slug, stamp); }
+  sealImportedPage(slug: string, seal: writeGuardsImpl.ImportedPageSeal) { return writeGuardsImpl.sealImportedPage(this.autocommitSql, slug, seal); }
+  readLivePageBody(slug: string, opts: { sourceId: string }) { return this.preparationRead(exec => writeGuardsImpl.readLivePageBody(unscopedExecutor(exec, 'valid-time advisory: page body read ran unscoped through executeRaw'), slug, opts)); }
 
   // Config
 
@@ -3425,6 +3445,8 @@ export class PostgresEngine implements BrainEngine {
   async killTimedOutJobs() { return this.transaction(tx => jobsQueue.killTimedOutJobs(tx)); }
   async killWallClockJobs(lockDurationMs: number) { return this.transaction(tx => jobsQueue.killWallClockJobs(tx, lockDurationMs)); }
   async pruneJobs(spec: PruneJobsSpec) { return jobsQueue.pruneJobs(this, spec); }
+  async listSynthesisCompletionKeys(sourceId: string, keyPrefix: SynthesisCompletionPrefix) { return jobsQueue.listSynthesisCompletionKeys(this, sourceId, keyPrefix); }
+  async listRecentSynthesisCompletions(sourceId: string, hours: number) { return jobsQueue.listRecentSynthesisCompletions(this, sourceId, hours); }
   async retryJob(id: number, policy: RetryJobPolicy) { return this.transaction(tx => jobsQueue.retryJob(tx, id, policy)); }
   async postInboxMessage(jobId: number, sender: string, payload: unknown) { return jobsQueue.postInboxMessage(this, jobId, sender, payload); }
   async readJobInbox(jobId: number, lockToken: string) { return jobsQueue.readJobInbox(this, jobId, lockToken); }
@@ -3440,6 +3462,8 @@ export class PostgresEngine implements BrainEngine {
   async hasOverdueWatchdogSuspect(queue: string, names: readonly string[], waitMs: number) { return jobsQueue.hasOverdueWatchdogSuspect(this, queue, names, waitMs); }
   async listUnreviewedJobs() { return jobsQueue.listUnreviewedJobs(this); }
   async getFailedJobForRetry(id: number) { return jobsQueue.getFailedJobForRetry(this, id); }
+  async countOpenJobsByOwner(clientId: string) { return jobsQueue.countOpenJobsByOwner(this, clientId); }
+  async lockOAuthClient(clientId: string) { return jobsQueue.lockOAuthClient(this, clientId); }
   async listJobPage(spec: JobPageSpec) { return jobsQueue.listJobPage(this, spec); }
   async listJobAttachmentNames(jobId: number) { return jobsQueue.listJobAttachmentNames(this, jobId); }
   async insertJobAttachment(jobId: number, attachment: JobAttachmentInsert) { return jobsQueue.insertJobAttachment(this, jobId, attachment); }

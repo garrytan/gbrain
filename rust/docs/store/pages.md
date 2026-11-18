@@ -26,7 +26,7 @@ secondary indexes yet.
 | `brain.getTags(slug, { sourceId?, sourceIds? }?)` | sorted `string[]` | `getTags` |
 | `brain.addTag(slug, tag, { sourceId? }?)` | `null`; `page_not_found` for a missing page | `addTag` |
 | `brain.removeTag(slug, tag, { sourceId? }?)` | `null`; no error when the page or tag is absent | `removeTag` |
-| `brain.createVersion(slug, { sourceId? }?)` | the version row; `page_not_found` for a missing page | `createVersion` |
+| `brain.createVersion(slug, { sourceId? }?)` | the version row; `page_not_found` for a missing page. A segmented page's snapshot references its body generation (page_body.md, "The sweep") | `createVersion` |
 | `brain.getVersions(slug, { sourceId?, sourceIds?, limit?, includeBody? }?)` | version rows, newest first; `includeBody: false` leaves out `compiled_truth` and `timeline` | `getVersions` |
 
 `putPage` follows PGLite:
@@ -45,6 +45,11 @@ secondary indexes yet.
   page rejects `revision_required`. `force: true` skips the check and cannot be combined with
   `expectedRevision`. The check sees soft-deleted pages.
 - Tags are not part of `putPage`; `addTag` and `removeTag` change them, as in PGLite.
+- `chunker_version` follows PGLite's `bodyWriteChunkVersion`. A new page stores `LEAST(chunker_version ?? 0, 3)`
+  (3 is one below the safe fence version 4) and refuses what the smallint cast refuses. An update with the same
+  `compiled_truth` and `timeline` keeps the stored value. A changed body is -1 when the stored value is negative or
+  the old or new body holds a facts or takes fence marker, else `LEAST(stored, 3)`, so old chunks are never certified.
+  A seal (`sealChunks`, and the store's own indexing) writes 4.
 
 ## Nullable page fields
 
@@ -55,7 +60,7 @@ PGLite lets four `pages` columns hold NULL, and the page record holds NULL in th
 | --- | --- | --- |
 | `compiled_truth`, `timeline` | a segmented shell page: its body lives in segment texts. PGLite's `pages_body_storage_chk` makes both NULL exactly when `body_storage = 'segmented'`; an inline page holds a string (`''` when empty) | the page_body family (`createSegmentedPageShell`, a generation flip); never `putPage` |
 | `content_hash` | a shell page whose body is not published yet, as `createSegmentedPageShell` leaves it | the page_body family; `putPage` always sets a hash |
-| `chunker_version` | the store has not recorded one. `putPage` keeps the stored value and sets none on a new page | the page_body family sets it; not part of the page JSON (PGLite's `rowToPage` leaves it out) |
+| `chunker_version` | a record written before the store recorded one; the seal state reads it as 0 | nothing new: `putPage` and a seal always set it (see `putPage` above); not part of the page JSON (PGLite's `rowToPage` leaves it out) |
 
 - The page JSON (`getPage`, `readPageSnapshot`, `listPages`) and version rows send each NULL as `null`. The
   TypeScript codec turns a `null` body into PGLite's segmented page: `compiled_truth` and `timeline` read as `''`

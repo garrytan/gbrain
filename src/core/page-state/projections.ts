@@ -12,7 +12,7 @@ import { assertPageRevision, PageRevisionConflictError, type PageSnapshot } from
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { digest } from '../persistence/digest.ts';
 import { quoteIdentifier, resolveWriteColumnFromConfigRows, vectorCastSuffix } from '../search/embedding-column.ts';
-import { getFtsLanguage, pageSearchVectorSql } from '../fts-language.ts';
+import { getFtsLanguage } from '../fts-language.ts';
 import { getEmbeddingModel } from '../ai/gateway.ts';
 import { jsonRowBatches } from '../batch-rows.ts';
 import { refreshProjectionStatistics } from '../search/projection-statistics.ts';
@@ -41,13 +41,9 @@ import { sealPageTextProjection } from './text-seal.ts';
  */
 export async function sealImportedPage(engine: BrainEngine, slug: string, sourceId: string, live: PageSnapshot | null,
   chunkerSeal: number, pageId?: number): Promise<void> {
-  const rows = await engine.executeRaw<{ id: number }>(`UPDATE pages SET chunker_version=$5,
-    text_projection_revision=CASE WHEN knowledge_revision=$4::uuid THEN knowledge_revision ELSE text_projection_revision END,
-    search_vector=CASE WHEN knowledge_revision=$4::uuid THEN ${pageSearchVectorSql('title', '$3')} ELSE search_vector END
-    WHERE source_id=$1 AND slug=$2 RETURNING id`,
-  [sourceId, slug, live ? sanitizeRemoteBody(live.page.timeline) : '', live?.revision ?? null, chunkerSeal]);
-  if (rows.length === 0) throw new Error(`Page not found: ${slug} (source=${sourceId})`);
-  if (pageId !== undefined && Number(rows[0]!.id) !== Number(pageId)) throw new Error(`Page ${slug} (source=${sourceId}) is not the page this transaction wrote`);
+  const sealed = await engine.sealImportedPage(slug, { sourceId, revision: live?.revision ?? null, timelineText: live ? sanitizeRemoteBody(live.page.timeline) : '', chunkerVersion: chunkerSeal });
+  if (!sealed) throw new Error(`Page not found: ${slug} (source=${sourceId})`);
+  if (pageId !== undefined && sealed.id !== Number(pageId)) throw new Error(`Page ${slug} (source=${sourceId}) is not the page this transaction wrote`);
 }
 
 export interface ProjectionSnapshot {

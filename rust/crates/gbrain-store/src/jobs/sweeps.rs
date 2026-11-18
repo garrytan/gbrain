@@ -2,6 +2,7 @@
 //! kills and the prune.
 
 use super::reads::actor_matches;
+use super::synthesis_completions;
 use super::*;
 
 /// `cancelJobs` options (`queue.ts` `cancelJobs`).
@@ -30,13 +31,11 @@ pub struct PruneSpec {
     pub dry_run: bool,
 }
 
-/// `needs_archive`: a pruned row needs the `dream_synthesis_completions` archive, which this
-/// store does not keep; nothing was deleted.
+/// `count`: the rows a dry run counts or a prune deletes.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PruneOutcome {
     pub count: usize,
-    pub needs_archive: bool,
 }
 
 /// The depth cap of the cancel cascade (`descendants.d < 100`).
@@ -200,9 +199,9 @@ impl Store {
     }
 
     /// `prune`: rows in `statuses` last updated before `olderThan`. `dryRun` only counts. A
-    /// completed dream-synthesis child (`subagent`, `dream:synth%` key) is archived before it goes
-    /// on the SQL engines; this store has no archive, so such a match deletes nothing and returns
-    /// `needsArchive`.
+    /// completed dream-synthesis child (`subagent`, `dream:synth%` key) goes into the
+    /// `dream_synthesis_completions` archive (`synthesis_completions.rs`) in the delete's
+    /// transaction, as the SQL engines' `archived` CTE does.
     pub fn prune_jobs(&self, spec: &PruneSpec) -> Result<PruneOutcome> {
         let older = crate::env::parse_iso(&spec.older_than).ok_or_else(|| {
             StoreError::invalid(format!(
@@ -225,23 +224,13 @@ impl Store {
         if spec.dry_run {
             return Ok(PruneOutcome {
                 count: pick(&*self.read()?)?.len(),
-                needs_archive: false,
             });
         }
         self.write(|tx| {
+            let now = self.env.now_micros();
             let rows = pick(&*tx)?;
-            let needs_archive = rows.iter().any(|r| {
-                r.name == "subagent"
-                    && r.status == "completed"
-                    && r.idempotency_key
-                        .as_deref()
-                        .is_some_and(|k| k.starts_with("dream:synth"))
-            });
-            if needs_archive {
-                return Ok(PruneOutcome {
-                    count: 0,
-                    needs_archive: true,
-                });
+            for row in &rows {
+                synthesis_completions::archive_pruned(tx, row, now)?;
             }
             for row in &rows {
                 // An earlier delete of this batch may have changed this row (a SET NULL): reload.
@@ -249,10 +238,7 @@ impl Store {
                     delete_row(tx, &current)?;
                 }
             }
-            Ok(PruneOutcome {
-                count: rows.len(),
-                needs_archive: false,
-            })
+            Ok(PruneOutcome { count: rows.len() })
         })
     }
 }

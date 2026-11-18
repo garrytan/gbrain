@@ -28,8 +28,27 @@ states a receipt reader may meet but nothing here enters them.
 | `brain.getBrainIdentity()` | `{ brain_id }` | `readBrainIdentity` |
 | `brain.registerLocalWriter({ id, lane, credentialHash, grantCeiling? })` | the writer row `{ id, lane, credential_hash, grant_ceiling, created_at, revoked_at }`. Idempotent; `writer_rejected` for a revoked row, another lane or credential under the id, or a credential registered under another id | `registerLocalWriterValue` |
 | `brain.readLocalWriter(id)` | the writer row or `null` | `verifyLocalWriter` read |
+| `brain.insertLocalWriterRow({ id, lane, credentialHash, grantCeiling? })` | `true` when this call stored the row; `false`, with nothing written, when a row already holds the id or the credential hash, whatever that row's lane, revocation or grant. A non-UUID id or a lane other than `cli` or `stdio` rejects with `invalid_argument` | the `INSERT .. ON CONFLICT DO NOTHING` of `insertLocalWriterRow` |
 | `brain.revokeLocalWriter(id)` | `true` when the registration exists | `revokeLocalWriter` |
 
 The credential itself never reaches the store: callers pass its SHA-256. `write_error_message` and
 `journalOutstanding` are additions; the TypeScript receipt keeps a separate failure detail row that
 this engine does not have.
+
+## TypeScript journal members
+
+`src/core/rust-engine/store-members/persistence.ts` answers these BrainEngine members on a Rust brain.
+Each returns what PGLite returns for a brain with the same contents.
+
+| Member | Answer | Why |
+| --- | --- | --- |
+| `readManagedModeRows()` | `[{ enabled: false }]` | The store keeps no managed brains, so a brain here is always unmanaged. |
+| `readLocalWriterRow(id, opts?)` | the row from `brain.readLocalWriter`, with `revoked_at` as a `Date`, or `undefined` | `lock` changes nothing: one write transaction runs at a time, so a read never overlaps a revocation. |
+| `insertLocalWriterRow(row)` | `brain.insertLocalWriterRow` | The same two unique keys as PGLite's table. |
+| `readJournalLimitRows()` | the config keys that start with `persistence.limits.`, the page-body keys, then `{ key: null, value: null }` | The store keeps no segmented pages, so the largest one has no size. |
+| `readHeldPageRows(pageIds)`, `readHeldCoverageRows(sourceIds)` | `[]` | The store holds no files from a sync, so nothing is held. |
+
+The other journal members (`readWriteRequest`, `readWriteRequestById`, `lockPersistenceCounters`,
+`insertWriteRequest`, `stampWriteClaim`, `lockWriteRequest`, `completeWriteRow`) run inside
+`transaction`. This engine does not serve `transaction` yet, so they refuse with
+`engine_capability_missing` there.
