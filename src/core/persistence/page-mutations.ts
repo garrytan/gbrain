@@ -30,7 +30,7 @@ import { contentSizeHold, frontmatterBodyOffset, parseMarkdownHead } from '../ma
 import { dataFrontmatter, dumpFrontmatterYaml } from '../data-frontmatter.ts';
 import { throwIfHeld } from '../trust/gate-outcomes.ts';
 import { admitWrite, assertPageRequestIdentity, assertReplayIntent, getWriteRequest, intentDigest, type WriteAdmission } from './journal.ts';
-import { submissionAuthority, authorizeStoredRequest } from './authority.ts';
+import { submissionAuthority, authorizeStoredRequest, sharedWriterRow } from './authority.ts';
 import { currentVerifiedLocalWriter, hostIdFor, readLocalWriter, registerLocalWriter, withVerifiedLocalRegistration } from './identity.ts';
 import type { BrainEngine } from '../engine.ts';
 import { claimWorktree, getWorktreeBinding } from './ownership.ts';
@@ -112,6 +112,7 @@ export function batchSharedReads(engine: BrainEngine, extra?: ReadonlySet<string
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) =>
       BATCH_SHARED_READS.has(flatSql(sql)) || extra?.has(flatSql(sql)) ? once(JSON.stringify([flatSql(sql), params ?? null]), () => target.executeRaw(sql, params, opts)) : target.executeRaw(sql, params, opts);
     if (key === 'getConfig') return (name: string) => once(`config:${name}`, () => target.getConfig(name));
+    if (key === 'readLocalWriterRow') return sharedWriterRow(target, reads, once);
     if (key === 'readSourceIncarnation' || key === 'hasCompanyBrainReceipt') // the typed company-profile reads
       return (sourceId: string) => once<unknown>(JSON.stringify([key, sourceId]), () => target[key](sourceId));
     if (key === 'getConfigValues') return (keys: readonly string[]) =>

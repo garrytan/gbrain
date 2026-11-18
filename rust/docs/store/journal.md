@@ -68,7 +68,8 @@ engine serves both members, so its connect is unchanged. An engine or test fake 
 does not serve these members now stops at connect. Refusing is the safer answer: a guessed "no row" could admit a
 connect during a graduation.
 
-The other journal members (`readWriteRequest`, `readWriteRequestById`, `lockPersistenceCounters`,
-`insertWriteRequest`, `stampWriteClaim`, `lockWriteRequest`, `completeWriteRow`) run inside
-`transaction`. This engine does not serve `transaction` yet, so they refuse with
-`engine_capability_missing` there.
+The request members (`readWriteRequest`, `readWriteRequestById`, `lockPersistenceCounters`,
+`insertWriteRequest`, `stampWriteClaim`, `lockWriteRequest`, `completeWriteRow`), the claim upkeep
+(`renewWriteClaim`, `expireStaleWriteClaims`, `hasClaimableWrite`) and the admission reads
+(`readSourceMembership`, `findTopologyChanges`, `readLedgerSource`) are served from the persistence
+rows in [persistence.md](persistence.md). The journal calls most of them inside `transaction`.

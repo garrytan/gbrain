@@ -10,12 +10,35 @@
  * 3. Existing coverage: the journal tests check behavior on today's text; none compares the written-out copy with
  *    the fragments, and a changed fragment can keep those tests green.
  * 4. Production seam: none.
+ *
+ * The claim upkeep statements in src/core/engine-sql/persistence-claims.ts follow the same rule: the claimable-row
+ * test, the renewal, the expiry and the protocol predicate are pinned below against the journal, consumer and
+ * claim-phase fragments they copy.
+ *
+ * The housekeeping statements in src/core/engine-sql/persistence-housekeeping.ts and the lifecycle receipt statements in
+ * persistence-claims.ts follow it too: the compaction listing's refusal and sync exclusions, the effect sizing of the
+ * true-up and the capacity reads, the compacted-byte sizing, and the projection queue's probes are pinned below.
  */
 import { describe, expect, test } from 'bun:test';
 import { CLAIM_STAMP_SQL, COMPLETE_WRITE_PURGE_PROBE_SQL, COMPLETE_WRITE_SQL } from '../src/core/engine-sql/persistence-journal.ts';
 import { REFRESH_BARRIER_CLAIM_PREDICATE, SYNC_KIND } from '../src/core/persistence/journal.ts';
 import { EFFECT_BYTES_SQL, TRUE_UP_CLAMP_SQL } from '../src/core/persistence/receipt-bytes.ts';
 import { PURGE_PRESENCE_COLUMNS } from '../src/core/persistence/purged-intent.ts';
+import { claimableWriteFragment, EXPIRE_CLAIMS_SQL, foregroundPriorityText, hasClaimableWriteFragment, PROTOCOL_PREDICATE_SQL,
+  RENEW_CLAIM_SQL } from '../src/core/engine-sql/persistence-claims.ts';
+import { renderFragment } from '../src/core/engine-sql/fragment.ts';
+import { withEnv } from './helpers/with-env.ts';
+import { claimableWriteSql, foregroundPrioritySql } from '../src/core/persistence/journal.ts';
+import { PERSISTENCE_PROTOCOL_PREDICATE } from '../src/core/persistence/protocol.ts';
+import { EXPIRED_PREPARING_CHARGE_SQL } from '../src/core/persistence/claim-phase.ts';
+import { CAPACITY_PRINCIPAL_DAYS_SQL, CAPACITY_RECLAIM_SQL, COMPACTABLE_RECEIPTS_SQL, PROJECTION_RETRY_READY_TEXT, SEGMENTED_JOB_PROBES_SQL,
+  SEGMENTED_PROJECTION_CLAIMED_TEXT, TRUE_UP_REQUESTS_SQL, projectionWindowFragment } from '../src/core/engine-sql/persistence-housekeeping.ts';
+import { residentWindowCtes, type ProjectionScanCursor } from '../src/core/page-state/projection-window.ts';
+import { INSERT_TOPOLOGY_CHANGE_SQL, TOPOLOGY_CHANGE_SQL } from '../src/core/engine-sql/persistence-claims.ts';
+import { NEWEST_SYNC_RECEIPT_EXCLUSION, OPEN_SYNC_CURSOR_EXCLUSION } from '../src/core/persistence/journal.ts';
+import { UNRESOLVED_CALLER_REFUSAL_SQL } from '../src/core/persistence/terminal-classify.ts';
+import { COMPACTED_RECEIPT_BYTES_SQL } from '../src/core/persistence/receipt-bytes.ts';
+import { PROJECTION_RETRY_READY_SQL, SEGMENTED_JOB_PROBES, SEGMENTED_PROJECTION_CLAIMED_SQL } from '../src/core/page-state/projections.ts';
 
 const completion = (purgeColumns: string) => `WITH effects AS (SELECT COALESCE(SUM(${EFFECT_BYTES_SQL}),0) AS bytes,
       COALESCE(bool_or(state<>'committed'),false) AS unfinished FROM persistence_effects WHERE request_id=$1::uuid),
@@ -48,5 +71,74 @@ describe('written-out write-journal statements', () => {
   test('the completion uses the shared effect sizing, true-up clamp and purge columns', () => {
     expect(COMPLETE_WRITE_SQL).toBe(completion(''));
     expect(COMPLETE_WRITE_PURGE_PROBE_SQL).toBe(completion(`, ${PURGE_PRESENCE_COLUMNS}`));
+  });
+
+  test('the claim upkeep copies the journal\'s claimable test, renewal, protocol predicate and expiry', async () => {
+    expect(PROTOCOL_PREDICATE_SQL).toBe(PERSISTENCE_PROTOCOL_PREDICATE);
+    for (const priority of [true, false, null]) {
+      const claimable = renderFragment(claimableWriteFragment(priority, 'host', ['root']));
+      expect(claimable.text).toBe(claimableWriteSql(foregroundPriorityText(priority)));
+      expect(claimable.params).toEqual(['host', ['root']]);
+      expect(renderFragment(hasClaimableWriteFragment(priority, 'host', [])).text).toBe(`SELECT EXISTS (SELECT 1 FROM persistence_requests r
+      LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id WHERE ${claimableWriteSql(foregroundPriorityText(priority))} LIMIT 1) AS claimable`);
+    }
+    await withEnv({ GBRAIN_SYNC_FOREGROUND_PRIORITY: undefined }, () => {
+      expect(foregroundPriorityText(null)).toBe(foregroundPrioritySql());
+    });
+    for (const [env, priority] of [['1', true], ['false', false]] as const) {
+      await withEnv({ GBRAIN_SYNC_FOREGROUND_PRIORITY: env }, () => {
+        expect(foregroundPriorityText(priority)).toBe(foregroundPrioritySql());
+      });
+    }
+    expect(RENEW_CLAIM_SQL).toBe(`UPDATE persistence_requests SET
+    claim_expires_at=now()+($3::double precision*interval '1 millisecond'),updated_at=now(),claim_phase=COALESCE($4::text::jsonb,claim_phase)
+    WHERE id=$1::uuid AND execution_token=$2::uuid AND state='running' AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING id`);
+    expect(EXPIRE_CLAIMS_SQL).toContain(`CASE WHEN $2::boolean THEN ${EXPIRED_PREPARING_CHARGE_SQL('r')} ELSE 0 END`);
+    expect(EXPIRE_CLAIMS_SQL).toContain(`AND r.publication_started=false AND ${PERSISTENCE_PROTOCOL_PREDICATE}`);
+  });
+
+  test('the housekeeping reads copy the compaction exclusions, the effect and compacted-byte sizing and the projection probes', () => {
+    expect(COMPACTABLE_RECEIPTS_SQL).toBe(`SELECT * FROM persistence_requests r
+    WHERE state IN ('committed','conflict','failed','cancelled') AND recovery IS NULL AND NOT compacted
+    AND completed_at < now()-($1::double precision*interval '1 day')
+    AND NOT EXISTS (SELECT 1 FROM persistence_effects e WHERE e.request_id=r.id AND e.state<>'committed')
+    AND NOT COALESCE(${UNRESOLVED_CALLER_REFUSAL_SQL('r')}, false)
+    ${OPEN_SYNC_CURSOR_EXCLUSION('r')}
+    ${NEWEST_SYNC_RECEIPT_EXCLUSION('r')}
+    ORDER BY sequence LIMIT 100`);
+    expect(TRUE_UP_REQUESTS_SQL).toBe(`SELECT r.id,r.intent,r.authority,r.outcome,r.error_message,r.error_detail,r.client_request_id,
+      r.terminal_reservation,r.principal_kind,r.principal_id,r.compacted,
+      COALESCE((SELECT SUM(${EFFECT_BYTES_SQL}) FROM persistence_effects e WHERE e.request_id=r.id),0)::text AS effect_bytes,
+      EXISTS(SELECT 1 FROM persistence_effects e WHERE e.request_id=r.id AND e.state IN ('queued','running')) AS unfinished
+    FROM persistence_requests r WHERE r.id=ANY($1::uuid[]) AND r.state IN ('committed','failed','conflict','cancelled')`);
+    const principalNet = COMPACTED_RECEIPT_BYTES_SQL('w', 'e');
+    expect(CAPACITY_PRINCIPAL_DAYS_SQL).toContain(`e AS (SELECT request_id,SUM(${EFFECT_BYTES_SQL}) AS bytes FROM persistence_effects`);
+    expect(CAPACITY_PRINCIPAL_DAYS_SQL).toContain(`COALESCE(SUM(${principalNet}),0)::text AS net`);
+    expect(CAPACITY_PRINCIPAL_DAYS_SQL).toContain(`COALESCE(SUM(${principalNet}) FILTER (WHERE w.created_at>now()-interval '1 day'),0)::text AS recent_net`);
+    expect(CAPACITY_RECLAIM_SQL).toContain(`e AS (SELECT request_id,SUM(${EFFECT_BYTES_SQL}) AS bytes,`);
+    expect(CAPACITY_RECLAIM_SQL).toContain(`COALESCE(SUM(r.terminal_reservation-${COMPACTED_RECEIPT_BYTES_SQL('r', 'e')}) FILTER (WHERE NOT COALESCE(e.unfinished,false)),0)::text AS bytes`);
+    expect(SEGMENTED_JOB_PROBES_SQL).toBe(SEGMENTED_JOB_PROBES);
+    expect(SEGMENTED_PROJECTION_CLAIMED_TEXT).toBe(SEGMENTED_PROJECTION_CLAIMED_SQL);
+    expect(PROJECTION_RETRY_READY_TEXT).toBe(PROJECTION_RETRY_READY_SQL);
+  });
+
+  test('the resident window copies residentWindowCtes, its row budgets and its parameter order', () => {
+    const cursor = { after: { source_incarnation: '00000000-0000-0000-0000-000000000001', slug: 'a/b' }, highWater: '2026-01-01T00:00:00Z' };
+    for (const retryCooldown of [true, false]) {
+      const params: unknown[] = [];
+      const ctes = residentWindowCtes(cursor as ProjectionScanCursor, params, retryCooldown ? PROJECTION_RETRY_READY_SQL : 'TRUE');
+      const rendered = renderFragment(projectionWindowFragment(cursor, retryCooldown));
+      // The written-out copy numbers each use of a value; the builder reuses $n. Compare the text with each placeholder
+      // replaced by the value it binds.
+      const bind = (text: string, values: readonly unknown[]) => text.replace(/\$(\d+)/g, (_, n) => `<${String(values[Number(n) - 1])}>`);
+      expect(bind(rendered.text, rendered.params).startsWith(`WITH ${bind(ctes, params)}\n    SELECT r.lane,r.ord,`)).toBe(true);
+    }
+  });
+
+  test('the lifecycle receipt insert binds its jsonb columns as text, so postgres.js does not double-encode them', () => {
+    expect(TOPOLOGY_CHANGE_SQL).toBe('SELECT * FROM persistence_topology_changes WHERE principal_id=$1::uuid AND request_id=$2::uuid');
+    expect(INSERT_TOPOLOGY_CHANGE_SQL).toContain('$9::text::jsonb');
+    expect(INSERT_TOPOLOGY_CHANGE_SQL).toContain('$12::text::jsonb');
+    expect(INSERT_TOPOLOGY_CHANGE_SQL).toContain('RETURNING *');
   });
 });

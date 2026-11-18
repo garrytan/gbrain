@@ -90,6 +90,18 @@ export async function preadmitReads(engine: BrainEngine, now: () => number = Dat
       const text = flat(sql);
       return text === BRAIN_SQL || text === ADMISSION_SOURCE_SQL || text === BINDING_SQL || WRITER_SQL.has(text) ? read(text, params, opts) : target.executeRaw(sql, params, opts);
     };
+    // The authorization's plain local writer read is the typed readLocalWriterRow member; a live row is kept like the
+    // writer statements above. A locking read is never answered here.
+    if (key === 'readLocalWriterRow') return async (id: string, opts?: { lock?: boolean }) => {
+      if (opts?.lock || caches.get(engine) !== held || !held.brainId) return target.readLocalWriterRow(id, opts);
+      const memo = JSON.stringify([held.brainId.id, 'readLocalWriterRow', id]);
+      const hit = held.reads.get(memo);
+      if (hit && now() - hit.at < PREADMIT_TTL_MS) return { ...(hit.rows[0] as object) } as Awaited<ReturnType<BrainEngine['readLocalWriterRow']>>;
+      const row = await target.readLocalWriterRow(id);
+      if (row && row.revoked_at == null && caches.get(engine) === held) held.reads.set(memo, { at: now(), rows: [{ ...row }] });
+      else held.reads.delete(memo);
+      return row;
+    };
     const value = Reflect.get(target, key, target);
     return typeof value === 'function' ? value.bind(target) : value;
   } }), engine);

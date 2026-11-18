@@ -51,6 +51,11 @@ function counting(target: PGLiteEngine) {
       statements.push('hasSegmentStorage');
       return obj.hasSegmentStorage();
     };
+    // The housekeeping receipt reads are typed members (engine-sql/persistence-housekeeping.ts) that run one statement each.
+    if (key === 'readReceiptBudget' || key === 'listCompactableReceipts') return (...args: unknown[]) => {
+      statements.push(key);
+      return (Reflect.get(obj, key) as (...a: unknown[]) => Promise<unknown>).apply(obj, args);
+    };
     const value = Reflect.get(obj, key);
     return typeof value === 'function' ? value.bind(obj) : value;
   } });

@@ -54,6 +54,7 @@ import * as factsPurge from './facts-purge.ts';
 import * as factsRepair from './facts-repair.ts';
 import * as factsTrust from './facts-trust.ts';
 import * as jobs from './jobs.ts';
+import * as housekeeping from './housekeeping.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeGuards from './write-guards.ts';
 import * as trustFence from './trust-fence.ts';
@@ -84,7 +85,7 @@ export const STORE_MEMBERS = {
   ...factsDoctor, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust,
   // The persistence brain identity the store already keeps (rust/docs/store/journal.md).
   ...persistenceIdentity,
-  ...persistence,
+  ...persistence, ...housekeeping,
   // The page write guards a page write runs around the page row (rust/docs/store/write-guards.md).
   ...writeGuards, ...trustFence,
   // The connect gate's persistence reads, answered from the unmanaged brain the store keeps (rust/docs/store/journal.md).

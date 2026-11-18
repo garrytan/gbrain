@@ -121,8 +121,10 @@ for (const kind of testBackends()) {
       await engine.executeRaw(`INSERT INTO config(key,value) VALUES ('persistence.capacity.warn_days','11'),('persistence.capacity.fail_days','3'),
         ('persistence.receipt_retention_days','9'),('persistence.capacity.background_pause_pct','60')
         ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`);
+      // The config keys and the journal limits are typed engine reads (getConfigValues, readJournalLimitRows): one statement
+      // each, and none through executeRaw.
       const { result, statements } = await recordStatements(engine, () => cachedCapacitySnapshot(engine, Date.now() + 1e9));
-      expect(configReads(statements)).toHaveLength(2);
+      expect(configReads(statements).map(s => s.split(' ')[0]).sort()).toEqual(['getConfigValues', 'readJournalLimitRows']);
       expect(result.status).toBe('ok');
       expect(result.pause_pct).toBe(60);
       const forecast = await readCapacityForecast(engine, { light: true });

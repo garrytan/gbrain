@@ -22,7 +22,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import type { SearchTelemetryBucket } from '../../src/core/engine-sql/telemetry.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { RUST_ENGINE_MEMBERS } from '../../src/core/rust-engine/members.ts';
-import { servedCapabilities } from '../../src/core/rust-engine/store-capabilities.ts';
+import { HELD_FOR_CALLERS, servedCapabilities } from '../../src/core/rust-engine/store-capabilities.ts';
 import { STORE_MEMBERS } from '../../src/core/rust-engine/store-members/index.ts';
 import { parityArms, sorted, type ParityBackend } from './harness.ts';
 
@@ -181,7 +181,7 @@ describe('engine parity: telemetry', () => {
     for (const [member, cls] of Object.entries(RUST_ENGINE_MEMBERS)) {
       if (cls === 'implemented' || cls === 'telemetry') continue;
       withoutTelemetry.add(cls);
-      if (!(member in STORE_MEMBERS)) refusing.add(cls);
+      if (!(member in STORE_MEMBERS) || cls in HELD_FOR_CALLERS) refusing.add(cls);
     }
     const expected = [...withoutTelemetry].filter((c) => !refusing.has(c)).sort();
     expect([...reported].filter((c) => c !== 'telemetry').map(String).sort()).toEqual(expected);
