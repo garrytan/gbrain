@@ -684,7 +684,7 @@ export interface OperationContext {
    * callable. Unset on local and in-process callers. Shape only, never
    * authority: dispatch enforces callability itself.
    */
-  isCallable?: (opName: string) => boolean;
+  isCallable?: (opName: string, args?: Record<string, unknown>) => boolean;
   /**
    * Resolved global CLI options (--quiet / --progress-json / --progress-interval).
    * CLI callers populate this from `getCliOptions()`. MCP / library callers

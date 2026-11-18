@@ -52,6 +52,18 @@ that `starter` lacks, with their CLI equivalents:
 
 A call to either on a starter session gets the hidden-tool hint below.
 
+**Parameters follow the surface.** A narrower surface hides some parameters of the
+tools it lists (to keep the starter list small), and dispatch refuses them too: a
+starter caller that passes one, such as `include_deleted` on `get_page` or
+`list_pages`, gets `param_not_on_surface` and nothing runs. Its fix is the same
+widen as for a hidden tool (`request_tools {"surface":"full"}`) where the
+connection may widen, and otherwise asks the user, because only the operator widens
+a pinned client. `STARTER_CALLABLE_PARAMS` in `src/mcp/surface.ts` lists the few
+hidden parameters a starter caller may still pass, each with its reason (page
+windows, the shared-skill follower, the thin client's source binding, the
+connection check). Fixes and hints never name a parameter the caller's surface
+refuses: `page_not_found` offers a search instead of `include_deleted`.
+
 **Session widening.** On the owner's stdio pipe, `request_tools {surface}`
 widens this session's tool set (never past `--access read-only` or
 `GBRAIN_MCP_FORCE_SURFACE`), sends `tools/list_changed`, and returns the new

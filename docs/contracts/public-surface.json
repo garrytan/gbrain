@@ -2794,6 +2794,7 @@
     "page_projection_stale": 1,
     "page_shrink_refused": 1,
     "page_too_large_for_inline": 1,
+    "param_not_on_surface": 1,
     "parse_error": 1,
     "parser_regression": 1,
     "part_splits_code_point": 1,

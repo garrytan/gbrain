@@ -40,7 +40,7 @@ import { emptyRead, hiddenTakesNotice, localTranscriptsNotice, recallInteropNoti
 import { degradedStampFor, degradedStampLine, type DegradedStamp } from '../core/degraded-stamp.ts';
 import { assertUnscopedReadReachesPages } from '../core/sources-not-readable.ts';
 import { accessPolicyNotices } from '../core/access/policy-notice.ts';
-import { hiddenToolHint, hiddenToolNext, hiddenToolRoute, type ToolConnection } from './hidden-tool-hint.ts';
+import { hiddenToolHint, hiddenToolNext, hiddenToolRoute, paramCallable, paramNotOnSurface, type ToolConnection } from './hidden-tool-hint.ts';
 import { opAllowedForBoundClient } from '../core/ops/context.ts';
 import { takePostUpgradeMcpNotice } from '../core/post-upgrade-notice.ts';
 import { takeHttpBehaviorNotice, takeLocalBehaviorNotice } from '../core/behavior-change-notice.ts';
@@ -668,11 +668,11 @@ export function dispatchRenderContext(opts: DispatchOpts): RenderContext {
     routing,
     transport,
     surface,
-    isCallable: (opName: string) => {
+    isCallable: (opName: string, args?: Record<string, unknown>) => {
       const op = byName.get(opName);
       return !!op && isCallable(op, {
         transport, surface, scopes: opts.auth?.scopes ?? [], publishGates: {}, allowedOps: opts.allowedOps,
-      }) && (transport === 'cli' || opAllowedForBoundClient(opts.auth, op));
+      }) && (transport === 'cli' || (opAllowedForBoundClient(opts.auth, op) && Object.keys(args ?? {}).every(key => paramCallable(op, key, surface))));
     },
     preapproved: () => false,
     ...(opts.auth?.clientId ? { principal: opts.auth.clientId } : {}),
@@ -994,7 +994,7 @@ export function buildOperationContext(
     ...(opts.resultRows ? { resultRows: opts.resultRows } : {}),
     ...(opts.thinClient ? { thinClient: true } : {}),
     ...(opts.mcpCaller ? { mcpCaller: opts.mcpCaller } : {}),
-    isCallable: (opName: string) => (render ??= dispatchRenderContext(opts)).isCallable(opName),
+    isCallable: (opName: string, args?: Record<string, unknown>) => (render ??= dispatchRenderContext(opts)).isCallable(opName, args),
     auth: opts.auth,
   };
 }
@@ -1285,6 +1285,7 @@ async function dispatchResolvedCall(
   }
 
   const safeParams = normalizeOptionalParams(op, params || {});
+  const offSurface = opts.remote === false ? null : paramNotOnSurface(op, safeParams, toolConnection(opts), isVerb ? MEMORY_VERBS_VERSION : undefined); if (offSurface) { logVerb(false); return errorResult(offSurface, opts, { op: name }); } // #9669
   const validationFailure = findInvalidParam(op, safeParams);
   if (validationFailure) {
     logVerb(false);

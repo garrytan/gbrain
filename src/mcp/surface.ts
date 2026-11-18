@@ -259,6 +259,56 @@ function starterParams<T extends OperationMeta>(op: T): T {
   return { ...op, params: Object.fromEntries(params.filter(keep)) };
 }
 
+const WINDOW = 'A window or part of the same page body that get_page already returns whole; gbrain\'s own large-page reads, next calls and refusals name it.';
+const SKILL = 'Sent by gbrain\'s shared-skill follower and named in its fixes; catalog reads stay confined to the grant.';
+const NARROW = 'Only narrows the read to sources the grant already reads, as search\'s listed source_ids does.';
+const LIST_FILTER = 'The starter list_pages description names it; it only filters pages the caller can already list.';
+const FULL_ROWS = 'The starter tool description and the lean-row contract name fields: "full" to restore every row field.';
+const THIN_SOURCE = 'gbrain\'s thin client maps GBRAIN_SOURCE, .gbrain-source or --source onto it; a source outside the grant is refused.';
+
+/**
+ * #9669: parameters a starter caller may still pass although its tool schema leaves them out (to stay inside the starter
+ * list's size budget). Every other hidden parameter is refused at dispatch (param_not_on_surface). Each entry is sent
+ * by gbrain's own clients or named in its own fixes and reads nothing the starter schema cannot already reach.
+ */
+export const STARTER_CALLABLE_PARAMS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  get_page: {
+    body: WINDOW, lines: WINDOW, bytes: WINDOW, around_chunk_id: WINDOW, context_lines: WINDOW, cursor: WINDOW, max_bytes: WINDOW,
+    view: WINDOW, outline_from: WINDOW, section: WINDOW, grep: WINDOW, context: WINDOW,
+    grammar_diagnostics: 'The line-grammar findings for the page being read; put_page and capture receipts on starter point at it.',
+  },
+  edit_page: { within: 'Narrows an edit to the byte range a get_page window hands back as edit_target.' },
+  put_page: { drop_timeline: 'Confirms a timeline removal the starter schema already allows by omitting the section; put_page\'s own refusal names it.' },
+  remember: {
+    visibility: 'Already accepted per item in items, which starter lists; the segmented-entity refusal and the connection check pass it.',
+    infer_entity: 'false only turns entity inference off; the segmented-entity refusal\'s retry names it.',
+  },
+  recall: {
+    grep: 'A substring filter that only narrows the facts returned; gbrain\'s connection check passes it.',
+    limit: 'Caps rows per arm at 100; gbrain\'s connection check passes it.',
+    source_ids: NARROW,
+  },
+  list_pages: { source_ids: NARROW, slug_prefix: LIST_FILTER, where: LIST_FILTER },
+  search: { fields: FULL_ROWS },
+  query: { fields: FULL_ROWS },
+  submit_agent: { max_turns: 'Caps the job\'s turns (at most 100) under the same grant; gbrain\'s connection check passes max_turns: 1.' },
+  entity: { source_id: THIN_SOURCE, prefer_source_id: THIN_SOURCE },
+  context_pack: { source_id: THIN_SOURCE, prefer_source_id: THIN_SOURCE },
+  list_skills: { schema_version: SKILL, cursor: SKILL, source_id: SKILL },
+  get_skill: { schema_version: SKILL, qualified_id: SKILL, expected_brain_id: SKILL, source_incarnation: SKILL, pack_id: SKILL, revision: SKILL },
+  get_skill_asset: { source_incarnation: SKILL, pack_id: SKILL, qualified_id: SKILL, expected_brain_id: SKILL },
+};
+
+/**
+ * #9669: whether a caller on `surface` may pass `param` to `op`: the surface lists it, or STARTER_CALLABLE_PARAMS does.
+ * An undeclared name or an op the surface does not list is left to unknown-parameter and unknown-tool handling.
+ */
+export function paramCallable(op: OperationMeta, param: string, surface: McpSurface): boolean {
+  if (surface === 'full' || !(param in op.params)) return true;
+  const listed = filterOpsForSurface([op], surface)[0];
+  return !listed || param in listed.params || STARTER_CALLABLE_PARAMS[op.name]?.[param] !== undefined;
+}
+
 /** The fail-closed allow-set handed to dispatchToolCall. */
 export function allowedOpNames(ops: OperationMeta[], surface: McpSurface): ReadonlySet<string> {
   return new Set(filterOpsForSurface(ops, surface).map(o => o.name));
