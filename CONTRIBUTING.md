@@ -801,10 +801,13 @@ gstack reads both from master, so a branch's edits take effect after it merges.
   to decide whether a head is the same tree that passed the gate, plus
   `min_gstack_version` (1.98.0.0, the gstack this policy was checked
   against; an older one refuses with an upgrade fix).
-  `review_exclude_paths: ["docs/**", "test/fixtures/goldens/**"]` (gstack
-  1.93.33.0 or newer, read from master only) keeps docs and generated goldens
-  out of /ship's reviewer diffs, so a large wave stays under the reviewers'
-  2 MB ceiling. Those files stay covered by the privacy, gitleaks and doc
+  `review_exclude_paths` (gstack 1.93.33.0 or newer, read from master only)
+  keeps docs and generated goldens out of /ship's reviewer diffs, so a large
+  wave stays under the reviewers' 2 MB ceiling: `docs/**`,
+  `test/fixtures/goldens/**`, and the three PostgreSQL search goldens of the
+  Rust store (`english_stem.tsv`, `ts_parse.json` and `tsearch.json` in
+  `rust/crates/gbrain-store/tests/fixtures/`, which
+  `regen-search-goldens.ts` there checks against PostgreSQL 18.6). Those files stay covered by the privacy, gitleaks and doc
   checks, and every code, test and config line is still reviewed.
 
 ### How an outside pull request is handled
