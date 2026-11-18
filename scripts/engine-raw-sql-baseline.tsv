@@ -40,7 +40,7 @@ src/commands/doctor/checks/connectors.ts	execute_raw	1
 src/commands/doctor/checks/consolidation-cycle.ts	execute_raw	2
 src/commands/doctor/checks/content-quality.ts	execute_raw	8
 src/commands/doctor/checks/coordination-lock.ts	execute_raw	1
-src/commands/doctor/checks/core-health.ts	execute_raw	9
+src/commands/doctor/checks/core-health.ts	execute_raw	8
 src/commands/doctor/checks/core-memory.ts	execute_raw	1
 src/commands/doctor/checks/data-integrity.ts	execute_raw	4
 src/commands/doctor/checks/database-encoding.ts	execute_raw	1
@@ -74,7 +74,7 @@ src/commands/doctor/checks/graph-embedding.ts	execute_raw	2
 src/commands/doctor/checks/guest-source.ts	execute_raw	4
 src/commands/doctor/checks/image-embedding-coverage.ts	execute_raw	1
 src/commands/doctor/checks/keyword-plan.ts	execute_raw	3
-src/commands/doctor/checks/knowledge-health.ts	execute_raw	5
+src/commands/doctor/checks/knowledge-health.ts	execute_raw	4
 src/commands/doctor/checks/landing-gaps.ts	execute_raw	1
 src/commands/doctor/checks/legacy-job-authority.ts	execute_raw	5
 src/commands/doctor/checks/legacy-token-grants.ts	execute_raw	1
@@ -310,7 +310,7 @@ src/core/chronicle/execute.ts	execute_raw	9
 src/core/chronicle/ledger-stats.ts	execute_raw	5
 src/core/chronicle/ledger.ts	execute_raw	10
 src/core/chronicle/publish.ts	execute_raw	4
-src/core/chunkers/symbol-resolver.ts	execute_raw	8
+src/core/chunkers/symbol-resolver.ts	execute_raw	7
 src/core/claw-test/seed-pglite.ts	driver_call	1
 src/core/code-chunks.ts	execute_raw	3
 src/core/code-graph-readiness.ts	execute_raw	1
@@ -455,7 +455,7 @@ src/core/facts/proposal-supersede.ts	execute_raw	4
 src/core/facts/purge-overlay.ts	execute_raw	3
 src/core/facts/purge-reasons.ts	execute_raw	8
 src/core/facts/purge-verify.ts	execute_raw	20
-src/core/facts/purge.ts	execute_raw	38	GBRA-574 F #9674 (opened before this ratchet): +1 the purge plan reads whether a fact sits on an unbacked name tag
+src/core/facts/purge.ts	execute_raw	37	GBRA-574 F #9674 (opened before this ratchet): +1 the purge plan reads whether a fact sits on an unbacked name tag
 src/core/facts/question-recall.ts	execute_raw	1
 src/core/facts/reconcile-watermark.ts	execute_raw	4
 src/core/facts/relink-publish.ts	execute_raw	8
@@ -474,7 +474,6 @@ src/core/fence-repair/attempts.ts	execute_raw	3
 src/core/fence-repair/census-store.ts	execute_raw	9
 src/core/fence-repair/census.ts	execute_raw	6
 src/core/fence-repair/hold-fix.ts	execute_raw	2
-src/core/fence-repair/import-step.ts	execute_raw	1
 src/core/fence-repair/repair-io.ts	execute_raw	1
 src/core/fence-repair/uncommitted.ts	execute_raw	3
 src/core/forecast-journal.ts	execute_raw	3
@@ -625,7 +624,6 @@ src/core/ops/search-type-filter.ts	execute_raw	1
 src/core/ops/search.ts	execute_raw	2
 src/core/ops/storage-manifest.ts	execute_raw	1
 src/core/ops/tags.ts	execute_raw	1
-src/core/ops/takes.ts	execute_raw	1
 src/core/ops/trust.ts	execute_raw	1
 src/core/ops/usage.ts	execute_raw	2
 src/core/ops/valid-time-read.ts	execute_raw	6
@@ -968,7 +966,7 @@ src/core/repair/slug-autoheal.ts	execute_raw	1
 src/core/repair/slug-conflicts.ts	execute_raw	5
 src/core/repair/split-facts.ts	execute_raw	3
 src/core/repair/stale-atoms.ts	execute_raw	3
-src/core/repair/take-supersession.ts	execute_raw	4
+src/core/repair/take-supersession.ts	execute_raw	3
 src/core/repair/timeline-comments.ts	execute_raw	5
 src/core/repair/timeline-order.ts	execute_raw	4
 src/core/repair/timeline.ts	execute_raw	2

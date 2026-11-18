@@ -64,6 +64,9 @@ const INTERFACE_METHODS: readonly string[] = [
   'listJobAttachmentNames', 'insertJobAttachment', 'listJobAttachments', 'getJobAttachment', 'deleteJobAttachment',
   // group D (jobs insight)
   'readJobInsight',
+  // group D (takes, salience and code-edge reads)
+  'countOffGridTakeWeights', 'countTakes', 'planFactPurgeTakes',
+  'listTakeRowsForPage', 'countMcpResolvedTakes', 'listTakeSupersessionCandidates', 'countZeroWeightWithTakes', 'hasCodeEdgesSymbol',
   // Lifecycle
   'connect', 'disconnect', 'reconnect', 'initSchema', 'transaction', 'transactionDirect', 'registerBeforeDisconnect', 'withReservedConnection',
   // Pages CRUD
