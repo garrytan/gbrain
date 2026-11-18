@@ -77,6 +77,13 @@ write between them reuse one decoded index. The cache is fed only from committed
 Chunk vectors are written by the chunk writes (`upsertChunks` / `sealChunks` with an `embedding`), take
 vectors by `updateTakeEmbeddings`; both raise the vector generation. The parity test
 (`test/vector-embedding-parity.test.ts`, Rust arm) seeds its fixture through those writes and runs every
-`searchVector` case. Its `hybridSearch` case expects every hybrid query to refuse with
-`engine_capability_missing` naming `cosinesByChunkIds`: the pipeline rescores the vector arm's candidates
-with that search-reads member, which the Rust engine does not serve yet.
+`searchVector` case. Its `hybridSearch` cases rank the same on the Rust arm as on PGLite.
+
+## `cosinesByChunkIds`
+
+The hybrid pipeline rescores the vector arm's candidates with `cosinesByChunkIds(ids, column, query)`, which the
+store serves as an exact scan (`Store::cosines_by_chunk_ids`): one `{ id, cosine }` row per chunk that is
+visible to `getEmbeddingsByChunkIds` and has a vector, and no row for an id that is missing, deleted or has no
+vector. The score is the text-space cosine, and it is `0` when the stored vector has another dimension count
+or either norm is zero. The TypeScript member returns a map of chunk id to cosine. A query pgvector cannot parse refuses `invalid_argument`. The TypeScript member refuses a
+`column` other than `embedding` with `engine_capability_missing`, since the store keeps one vector column.
