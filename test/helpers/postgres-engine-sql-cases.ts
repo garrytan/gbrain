@@ -444,7 +444,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readMentionLastPass': OOS.entityReads, 'countPagesDueForMentions': OOS.entityReads, 'readIdentitySiblingCandidates': OOS.entityReads,
   'findExactSlug': OOS.entityReads, 'readExtractionLagCounts': OOS.entityReads, 'readIgnoredPrivacyLabelPages': OOS.entityReads,
   'readSourceMembership': OOS.journal, 'findTopologyChanges': OOS.journal, 'renewWriteClaim': OOS.journal, 'expireStaleWriteClaims': OOS.journal,
-  'hasClaimableWrite': OOS.journal, 'directRawSql': OOS.helper,
+  'hasClaimableWrite': OOS.journal, 'directRawSql': OOS.helper, 'declarePersistence': OOS.journal,
   'readTopologyChange': OOS.journal, 'insertTopologyChange': OOS.journal,
   'claimHousekeepingTurn': OOS.journal, 'completeHousekeepingTurn': OOS.journal, 'readReceiptBudget': OOS.journal,
   'listCompactableReceipts': OOS.journal, 'listReservationsAfter': OOS.journal, 'listTrueUpRequests': OOS.journal,
