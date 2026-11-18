@@ -306,7 +306,7 @@ async function runConfirm(engine: BrainEngine, args: string[]): Promise<void> {
           { fix: { argv: ['gbrain', 'entity-identity-list', '--json'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Lists identity groups and their members; changes nothing.' } });
       }
     }
-    if (f.join) {
+    if (f.join && chosen.length) {
       const joined = [...(await listEntityIdentities(engine, { entityId: f.join })).map(m => memberText(m)), ...chosen.flatMap(g => g.members.map(memberText))];
       const rejected = read.decisions.find(d => d.verdict === 'different' && d.members.filter(m => joined.includes(memberText(m))).length > 1);
       if (rejected) {
