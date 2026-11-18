@@ -217,6 +217,7 @@
   "test/fts-language.serial.test.ts": 0,
   "test/gateway-reconfigure-clobber.serial.test.ts": 0,
   "test/git-commit-push-6530.serial.test.ts": 18,
+  "test/git-commit-push-credential-refused-gst2961.serial.test.ts": 12,
   "test/git-listing-memo.serial.test.ts": 0,
   "test/git-remote-durable.serial.test.ts": 0,
   "test/git-remote-pull-file-transport.serial.test.ts": 0,
