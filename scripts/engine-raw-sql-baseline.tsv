@@ -371,7 +371,7 @@ src/core/cycle/phases/consolidate.ts	execute_raw	9
 src/core/cycle/propose-takes-failures.ts	execute_raw	5
 src/core/cycle/propose-takes.ts	execute_raw	5
 src/core/cycle/source-window.ts	execute_raw	4
-src/core/cycle/synthesize-completion.ts	execute_raw	4
+src/core/cycle/synthesize-completion.ts	execute_raw	2
 src/core/cycle/synthesize-concepts.ts	execute_raw	1
 src/core/cycle/synthesize-generations.ts	execute_raw	1
 src/core/cycle/synthesize-postprocess.ts	execute_raw	3
@@ -558,8 +558,6 @@ src/core/migration-preludes.ts	execute_raw	12
 src/core/minions/authorize-legacy.ts	execute_raw	7
 src/core/minions/budget-meter.ts	sql_template	14
 src/core/minions/db-probe.ts	execute_raw	2
-src/core/minions/delegated-admission.ts	execute_raw	2
-src/core/minions/delegated-policy.ts	execute_raw	1
 src/core/minions/delegated-spend.ts	execute_raw	1
 src/core/minions/global-maintenance-stall.ts	execute_raw	1
 src/core/minions/handlers/autopilot-cycle.ts	execute_raw	1
