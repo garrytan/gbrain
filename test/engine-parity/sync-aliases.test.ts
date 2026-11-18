@@ -199,6 +199,39 @@ describe('engine parity: sync + aliases', () => {
   );
 
   parityTest(
+    'putPage stamps the contextual retrieval mode it is given with the page; a none stamp or no stamp keeps the stored mode',
+    { methods: ['putPage', 'getPage', 'softDeletePage', 'transaction'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'cr-put-other');
+      const page = (body: string) => ({ type: 'note' as const, title: 'CR put', compiled_truth: body, timeline: '' });
+      const mode = async (slug: string, opts?: { sourceId?: string; includeDeleted?: boolean }) =>
+        (await engine.getPage(slug, opts))?.contextual_retrieval_mode ?? 'no page';
+      await engine.putPage('notes/cr-put', page('One.'), { contextualRetrieval: { mode: 'title', corpusGeneration: 'gen-1' } });
+      const fresh = await mode('notes/cr-put');
+      await engine.putPage('notes/cr-put', page('Two.'));
+      const unstamped = await mode('notes/cr-put');
+      await engine.putPage('notes/cr-put', page('Three.'), { contextualRetrieval: { mode: 'none', corpusGeneration: null } });
+      const noneStamp = await mode('notes/cr-put');
+      await engine.putPage('notes/cr-put', page('Four.'), { contextualRetrieval: { mode: 'per_chunk_synopsis', corpusGeneration: null } });
+      const changed = await mode('notes/cr-put');
+      await engine.putPage('notes/cr-put', page('Other.'), { sourceId: 'cr-put-other', contextualRetrieval: { mode: 'title', corpusGeneration: 'gen-2' } });
+      const otherSource = await mode('notes/cr-put', { sourceId: 'cr-put-other' });
+      const sameAfterOther = await mode('notes/cr-put');
+      await engine.putPage('notes/cr-put-plain', page('Plain.'));
+      const plain = await mode('notes/cr-put-plain');
+      await engine.transaction(async (tx) => {
+        await tx.putPage('notes/cr-put-tx', page('In a transaction.'), { contextualRetrieval: { mode: 'title', corpusGeneration: 'gen-tx' } });
+      });
+      const inTransaction = await mode('notes/cr-put-tx');
+      await engine.softDeletePage('notes/cr-put-plain');
+      await engine.putPage('notes/cr-put-plain', page('Back.'), { contextualRetrieval: { mode: 'title', corpusGeneration: 'gen-3' } });
+      const restored = await mode('notes/cr-put-plain');
+      const body = (await engine.getPage('notes/cr-put'))?.compiled_truth;
+      return { fresh, unstamped, noneStamp, changed, otherSource, sameAfterOther, plain, inTransaction, restored, body };
+    },
+  );
+
+  parityTest(
     'migrateFactsToCanonical moves active phantom facts, leaves expired ones, and is idempotent',
     { methods: ['putPage', 'insertFacts', 'migrateFactsToCanonical', 'listFactsByEntity'] },
     async (engine) => {
