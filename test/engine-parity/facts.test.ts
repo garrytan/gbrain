@@ -1159,7 +1159,49 @@ describe('engine parity: facts', () => {
       );
     },
   );
+
+  parityTest(
+    'deletePages drops the aliases and rename history of a purged page, so excludePrivate stops following them',
+    { methods: ['putPage', 'updateSlug', 'setPageAliases', 'resolveAliases', 'deletePages', 'insertFacts', 'listFactsSince'] },
+    (engine) => purgedAliasCase(engine, () => engine.deletePages(['notes/p'], { sourceId: SRC })),
+  );
+
+  parityTest(
+    'purgeDeletedPages drops the aliases and rename history of a purged page, so excludePrivate stops following them',
+    { methods: ['putPage', 'updateSlug', 'setPageAliases', 'resolveAliases', 'softDeletePage', 'purgeDeletedPages', 'insertFacts', 'listFactsSince'] },
+    (engine) => purgedAliasCase(engine, async () => {
+      await engine.softDeletePage('notes/p');
+      // purgeDeletedPages(0) takes tombstones strictly older than the statement clock; let the clock move past it.
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return (await engine.purgeDeletedPages(0)).slugs;
+    }),
+  );
 });
+
+// A purge drops the page aliases of a purged slug, the slug aliases that resolve to it and the rename rows that end at it
+// (scrubPurgedSlugStores, src/core/persistence/purge-slug-stores.ts). A private page then created at the purged slug is
+// no longer the origin of an atom that named the page's old slug; the same rows of a page not purged stay.
+async function purgedAliasCase(engine: BrainEngine, purge: () => Promise<string[]>) {
+  await putRenamePages(engine, [
+    ['notes/old-p', 'note', { visibility: 'private' }],
+    ['notes/old-q', 'note', { visibility: 'private' }],
+    ['atoms/purged-origin', 'atom', { visibility: 'world', source_slug: 'notes/old-p' }],
+    ['atoms/kept-origin', 'atom', { visibility: 'world', source_slug: 'notes/old-q' }],
+  ]);
+  expect(await engine.updateSlug('notes/old-p', 'notes/p')).toBe(1);
+  expect(await engine.updateSlug('notes/old-q', 'notes/q')).toBe(1);
+  await engine.setPageAliases('notes/p', SRC, ['purged alias']);
+  await engine.setPageAliases('notes/q', SRC, ['kept alias']);
+  const purged = await purge();
+  expect(purged).toEqual(['notes/p']);
+  await putRenamePages(engine, [['notes/p', 'note', { visibility: 'private' }]]);
+  const flat = (m: Map<string, Array<{ slug: string; source_id: string }>>) =>
+    Object.fromEntries([...m.entries()].sort(([x], [y]) => (x < y ? -1 : 1)).map(([k, v]) => [k, sorted(v.map((r) => `${r.source_id}:${r.slug}`))]));
+  const aliases = flat(await engine.resolveAliases(['purged alias', 'kept alias'], { sourceId: SRC }));
+  expect(aliases).toEqual({ 'kept alias': ['default:notes/q'] });
+  const facts = await renameFacts(engine, ['atoms/purged-origin', 'atoms/kept-origin'], ['page:atoms/purged-origin']);
+  return { purged, aliases, ...facts };
+}
 
 async function putRenamePages(engine: BrainEngine, pages: Array<[string, string, Record<string, unknown>]>) {
   for (const [slug, type, frontmatter] of pages) {

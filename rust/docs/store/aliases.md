@@ -21,10 +21,17 @@ The alias rows are keyed by `(source, slug)`, not by page id as the sketch in
 `docs/designs/RUST_ENGINE_INTERFACES.md` has it. Neither PGLite table has a foreign key to `pages`,
 so a row outlives a hard delete of its page and answers again for a page created later at the same
 slug; a page id key would lose that. `slug_rename_history` has no foreign key to `pages` either, and
-PGLite's single `deletePage` is a plain `DELETE FROM pages`, so a rename row outlives it too. The
-batch purges (`deletePages`, `purgeDeletedPages`) run `scrubPurgedSlugStores`, which drops the rows
-that end at a purged slug; `scrub_purged_rename_history` is that step for their Rust caller, which
-is not served yet. A page deleted for good (`cascade::remove_page_rows`) loses
+PGLite's single `deletePage` is a plain `DELETE FROM pages`, so a rename row outlives it too.
+
+The batch purges (`deletePages`, `purgeDeletedPages`) differ: in their transaction, after the pages
+are gone, PGLite runs `scrubPurgedSlugStores` (src/core/engine-sql/pages.ts:237 and :397). Its
+`SLUG_STORES` list (src/core/persistence/purge-slug-stores.ts:6) names three stores of this family,
+in this order: `page_aliases` by `slug`, `slug_aliases` by `canonical_slug` and
+`slug_rename_history` by `new_slug`. `scrub_purged_slug_stores` deletes the same rows in the same
+order, called from `page_ops::scrub_purged_slugs`. An alias spelled like a purged slug that names
+another page, and a rename row from a purged slug to another page, stay.
+
+A page deleted for good (`cascade::remove_page_rows`) loses
 only its contextual retrieval state, which is a column of the page row. `getPage` shows
 `contextual_retrieval_mode` through the family's `page_columns` hook when the page has a state, and
 `null` (`PAGE_ROW_DEFAULTS`) when it has none. The state is keyed by page id, so it survives
