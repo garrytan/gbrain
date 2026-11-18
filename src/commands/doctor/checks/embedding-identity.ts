@@ -14,6 +14,7 @@ import type { Check } from '../../doctor.ts';
 import type { Action } from '../../../core/agent-output.ts';
 import { checkError, doctorVerify } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { readConfigValue } from '../../../core/config-values.ts';
 
 const NAME = 'embedding_identity_unqualified';
 const QUALIFIED = /^[^\s:]+:[^\s]+$/;
@@ -36,8 +37,7 @@ async function runEmbeddingIdentity(ctx: DoctorContext): Promise<Check[]> {
   const checks: Check[] = [];
   ctx.progress.heartbeat(NAME);
   try {
-    const [row] = await engine.executeRaw<{ value: string }>(`SELECT value FROM config WHERE key = 'embedding_model'`);
-    const stored = row?.value?.trim() ?? '';
+    const stored = (await readConfigValue(engine, 'embedding_model'))?.trim() ?? '';
     if (!stored || /[:/]/.test(stored)) {
       checks.push({ name: 'embedding_identity_unqualified', status: 'ok', message: stored ? `The brain records its embedding model with its provider (${stored}).` : 'The brain records no embedding_model row.' });
       return checks;

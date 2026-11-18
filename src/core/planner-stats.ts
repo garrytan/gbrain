@@ -27,6 +27,7 @@
  * and an operator runs `gbrain repair planner-stats --apply`.
  */
 import type { BrainEngine } from './engine.ts';
+import { answersFromCatalog } from './rust-engine/store-members/catalog.ts';
 import { lockTableForAnalyze } from './analyze-lock.ts';
 import { PLANNER_STATS_TABLES, type PlannerStatsTable } from './planner-stats-schema.ts';
 
@@ -150,6 +151,8 @@ export interface ExpressionIndexGap { index: string; table: PlannerStatsTable }
  * repair only, never a search's first read.
  */
 export async function readExpressionIndexesWithoutStats(engine: BrainEngine): Promise<ExpressionIndexGap[]> {
+  // Rust: the store has no planner and no expression indexes, so nothing lacks statistics.
+  if (answersFromCatalog(engine)) return [];
   const rows = await engine.executeRaw<{ index_name: string; table_name: PlannerStatsTable }>(
     `SELECT ix.relname AS index_name, t.relname AS table_name
        FROM pg_index i

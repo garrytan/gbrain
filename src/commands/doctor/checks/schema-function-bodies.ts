@@ -16,6 +16,7 @@ import type { Check } from '../../doctor.ts';
 import { LATEST_VERSION } from '../../../core/migrate.ts';
 import { agentFix, checkError } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { answersFromCatalog, catalogSkipCheck } from '../../../core/rust-engine/store-members/catalog.ts';
 
 export type FunctionBodyDrift = { status: 'checked'; checked: number; differing: string[] }
   | { status: 'skipped'; reason: 'client_behind' | 'migrations_pending'; version: number; latest: number };
@@ -45,6 +46,7 @@ async function runSchemaFunctionBodies(ctx: DoctorContext): Promise<Check[]> {
   const engine = connectedEngine(ctx);
   const checks: Check[] = [];
   ctx.progress.heartbeat('schema_function_bodies');
+  if (answersFromCatalog(engine)) return [catalogSkipCheck('schema_function_bodies', 'no_sql_functions')];
   try {
     const drift = await schemaFunctionBodyDrift(engine);
     if (drift.status === 'skipped') {

@@ -7,6 +7,7 @@
 import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { checkError } from '../check-fix.ts';
+import { answersFromCatalog, catalogSkipCheck } from '../../../core/rust-engine/store-members/catalog.ts';
 
 async function runDatabaseEncoding(ctx: DoctorContext): Promise<Check[]> {
   const engine = connectedEngine(ctx);
@@ -16,6 +17,7 @@ async function runDatabaseEncoding(ctx: DoctorContext): Promise<Check[]> {
     checks.push({ name: 'database_encoding', status: 'ok', message: 'Skipped (PGLite is always UTF8)' });
     return checks;
   }
+  if (answersFromCatalog(engine)) return [catalogSkipCheck('database_encoding', 'utf8_store')];
   try {
     const [row] = await engine.executeRaw<{ server_encoding: string }>('SHOW server_encoding');
     const encoding = row?.server_encoding ?? 'unknown';
