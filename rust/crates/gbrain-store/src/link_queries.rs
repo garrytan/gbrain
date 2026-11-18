@@ -7,11 +7,14 @@
 //!
 //! It also serves the three link reads of hybrid search's ranking stage
 //! (src/core/engine-sql/search-reads.ts): `hasSupersedeEdges`, `supersedingPageSlugs` and
-//! `pagesLinkingTo`.
+//! `pagesLinkingTo`, and in `site_reads` the link reads of src/core/engine-sql/link-reads.ts.
 //!
 //! Members: replaceDerivedLinks, replaceDerivedLinksBatch, removeLinksByPagesAndSource,
 //! listLinkSources, getBacklinkCounts, rewriteLinks, relationalFanout, relationalChainHop,
-//! getAdjacencyBoosts, findOrphanPages, hasSupersedeEdges, supersedingPageSlugs, pagesLinkingTo.
+//! getAdjacencyBoosts, findOrphanPages, hasSupersedeEdges, supersedingPageSlugs, pagesLinkingTo;
+//! site_reads: inboundLinkCoverage, listJunkEntityHubs, countEntityPages, entityGraphCoverage,
+//! countForeignEdges, listLivePageSummaries, countInboundLinks, listLinkEndpointPages,
+//! listPagesTitledIn, wordLexemes.
 //!
 //! Reads and writes go through the core links helpers (`put_link`, `delete_link`, `out_links`,
 //! `in_links`) and the page and source readers.
@@ -43,6 +46,12 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
+
+mod site_reads;
+pub use site_reads::{
+    EndpointsInput, EntityPagesInput, ForeignEdgesInput, InboundCountInput, InboundCoverageInput,
+    JunkHubsInput, TitledInput,
+};
 
 /// The frontmatter key that hides a page (`quarantineFilterFragment`).
 const QUARANTINE_KEY: &str = "quarantine";

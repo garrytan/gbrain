@@ -47,11 +47,23 @@ const OOS = {
   importWrites: 'out-of-scope:import-writes (born in engine-sql/chunks.ts, tags.ts, pages.ts; pinned by test/engine-parity/import-writes.test.ts)',
   pageBody: 'out-of-scope:page-body (Wave B segmented storage, born in engine-sql/page-body.ts; pinned by test/engine-sql-page-body.test.ts)',
   cycleLocks: 'out-of-scope:cycle-locks (gbrain_cycle_locks leases, born in engine-sql/cycle-locks.ts; pinned by test/engine-parity/cycle-locks.test.ts)',
+  linkReads: 'out-of-scope:link-reads (born in engine-sql/link-reads.ts; pinned by test/engine-parity/link-reads.test.ts)',
 } as const;
 
 export const DOMAIN_OF: Record<string, string> = {
   'searchRead': OOS.helper,
   'countOnboardSignal': OOS.stats,
+  'linkRead': OOS.helper,
+  'inboundLinkCoverage': OOS.linkReads,
+  'countEntityPages': OOS.linkReads,
+  'entityGraphCoverage': OOS.linkReads,
+  'listJunkEntityHubs': OOS.linkReads,
+  'countForeignEdges': OOS.linkReads,
+  'listLivePageSummaries': OOS.linkReads,
+  'countInboundLinks': OOS.linkReads,
+  'listLinkEndpointPages': OOS.linkReads,
+  'listPagesTitledIn': OOS.linkReads,
+  'wordLexemes': OOS.linkReads,
   'cosinesByChunkIds': OOS.searchReads,
   'hasSupersedeEdges': OOS.searchReads,
   'supersedingPageSlugs': OOS.searchReads,

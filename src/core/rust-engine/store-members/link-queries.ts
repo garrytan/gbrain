@@ -4,7 +4,9 @@
  * (listLinkSources), the ranking signals (getBacklinkCounts, getAdjacencyBoosts), the relational walks
  * (relationalFanout, relationalChainHop), orphan detection (findOrphanPages), rewriteLinks (a no-op on every engine)
  * and the link reads of hybrid search's ranking stage (hasSupersedeEdges, supersedingPageSlugs, pagesLinkingTo; the
- * SQL is src/core/engine-sql/search-reads.ts).
+ * SQL is src/core/engine-sql/search-reads.ts), and the link reads of src/core/engine-sql/link-reads.ts (inboundLinkCoverage,
+ * listJunkEntityHubs, countEntityPages, entityGraphCoverage, countForeignEdges, listLivePageSummaries, countInboundLinks,
+ * listLinkEndpointPages, listPagesTitledIn, wordLexemes).
  *
  * Export only BrainEngine members from this file, each a `StoreMember` named after the member it serves (see tags.ts):
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
@@ -24,6 +26,10 @@ import { PageRevisionConflictError } from '../../page-state/types.ts';
 import type {
   AdjacencyRow, ChainHopEdge, ChainHopOpts, PageReadPolicy, PageReadScope, RelationalFanoutOpts, RelationalFanoutRow,
 } from '../../types.ts';
+import type { JunkEntityHubRow, LinkEndpointPage, LivePageSummary, TitledPage } from '../../engine-sql/link-reads.ts';
+import { getFtsLanguage } from '../../fts-language.ts';
+import { CONNECTOR_SOURCE_KINDS } from '../../persistence/connector-kinds.ts';
+import type { EntityTypeFilter } from '../../schema-pack/entity-types.ts';
 import { mapStoreError, storeErrorCode } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
@@ -300,4 +306,85 @@ export const pagesLinkingTo: StoreMember<[fromIds: number[], toIds: number[]], n
     const to = pageIdsOnly(int32Ids('pagesLinkingTo', toIds));
     const rows: number[] = await storeCall({ member: 'pagesLinkingTo' }, () => brain.pagesLinkingTo(from, to));
     return rows.map(Number);
+  };
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Link reads (src/core/engine-sql/link-reads.ts)
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** Live pages, and live pages some link points at; `sourceIds` (even empty) filters both. */
+export const inboundLinkCoverage: StoreMember<[opts?: { sourceIds?: string[] }], { livePages: number; linkedPages: number }> =
+  async (brain, opts) => {
+    const r: { livePages: number; linkedPages: number } = await storeCall({ member: 'inboundLinkCoverage' },
+      () => brain.inboundLinkCoverage({ sourceIds: opts?.sourceIds ?? null }));
+    return { livePages: Number(r.livePages), linkedPages: Number(r.linkedPages) };
+  };
+
+/** High-degree, low-content live pages (doctor junk_entity_hubs); the connector kinds are CONNECTOR_SOURCE_KINDS. */
+export const listJunkEntityHubs: StoreMember<[opts: { edgeThreshold: number; maxChunks: number; limit: number }], JunkEntityHubRow[]> =
+  async (brain, opts) => {
+    for (const [key, value] of Object.entries(opts)) {
+      if (!Number.isSafeInteger(value)) refuseMember('listJunkEntityHubs', `a ${key} that is not an integer`);
+    }
+    if (opts.limit < 0) refuseMember('listJunkEntityHubs', 'a negative limit');
+    const rows: JunkEntityHubRow[] = await storeCall({ member: 'listJunkEntityHubs' },
+      () => brain.listJunkEntityHubs({ ...opts, connectorKinds: [...CONNECTOR_SOURCE_KINDS] }));
+    return rows.map(r => ({ ...r, edges: Number(r.edges), chunks: Number(r.chunks) }));
+  };
+
+/** Live entity pages: unquarantined ones with `excludeQuarantined` (which ignores `sourceId`, as the SQL does). */
+export const countEntityPages: StoreMember<[filter: EntityTypeFilter, opts?: { sourceId?: string; excludeQuarantined?: boolean }], number> =
+  async (brain, filter, opts) => Number(await storeCall({ member: 'countEntityPages' },
+    () => brain.countEntityPages({ filter, sourceId: opts?.sourceId || null, excludeQuarantined: !!opts?.excludeQuarantined })));
+
+/** Entity graph coverage over the eligible entity pages; the store always has the one row. */
+export const entityGraphCoverage: StoreMember<[filter: EntityTypeFilter], { entities: number; connected: number; withTimeline: number } | null> =
+  async (brain, filter) => {
+    const r: { entities: number; connected: number; withTimeline: number } = await storeCall({ member: 'entityGraphCoverage' },
+      () => brain.entityGraphCoverage({ filter }));
+    return { entities: Number(r.entities), connected: Number(r.connected), withTimeline: Number(r.withTimeline) };
+  };
+
+/** Links of the page whose other end is in another source. */
+export const countForeignEdges: StoreMember<[slug: string, sourceId: string, direction: 'in' | 'out' | 'both'], number> =
+  async (brain, slug, sourceId, direction) => Number(await storeCall({ member: 'countForeignEdges' },
+    () => brain.countForeignEdges({ slug, sourceId, direction })));
+
+/** Every page that is not soft-deleted and `scope` reads; the store returns them in page id order. */
+export const listLivePageSummaries: StoreMember<[scope?: PageReadScope], LivePageSummary[]> =
+  async (brain, scope) => {
+    const options = takeOptions('listLivePageSummaries', scope, POLICY_SCOPE_KEYS, UNREAD_BY_FILTER);
+    const rows: LivePageSummary[] = await storeCall({ member: 'listLivePageSummaries' },
+      () => brain.listLivePageSummaries({ ...scopeOf('listLivePageSummaries', options), scoped: true }));
+    return rows.map(r => ({ slug: r.slug, type: r.type, quarantined: !!r.quarantined }));
+  };
+
+/** The entity card's backlink count; `excludePrivate` is the page policy (storePagePolicy). */
+export const countInboundLinks: StoreMember<[slug: string, sourceId: string, opts: { excludePrivate: boolean; originSameSource: boolean }], number> =
+  async (brain, slug, sourceId, opts) => {
+    const excludePrivate = storePagePolicy('countInboundLinks', opts.excludePrivate) ?? null;
+    return Number(await storeCall({ member: 'countInboundLinks' },
+      () => brain.countInboundLinks({ slug, sourceId, excludePrivate, originSameSource: !!opts.originSameSource })));
+  };
+
+/** Automatic link preparation's endpoint pages: the origin source's rows first. */
+export const listLinkEndpointPages: StoreMember<[sourceId: string, slugs: string[], crossSourceSlugs: string[]], LinkEndpointPage[]> =
+  async (brain, sourceId, slugs, crossSourceSlugs) => storeCall({ member: 'listLinkEndpointPages' },
+    () => brain.listLinkEndpointPages({ sourceId, slugs, crossSourceSlugs }));
+
+/** The entity anchor's titled pages: by source id and slug, at most 50. */
+export const listPagesTitledIn: StoreMember<[queryLower: string, scope: PageReadScope], TitledPage[]> =
+  async (brain, queryLower, scope) => {
+    const options = takeOptions('listPagesTitledIn', scope, POLICY_SCOPE_KEYS, UNREAD_BY_FILTER);
+    const rows: TitledPage[] = await storeCall({ member: 'listPagesTitledIn' },
+      () => brain.listPagesTitledIn({ queryLower, scope: { ...scopeOf('listPagesTitledIn', options), scoped: true } }));
+    return rows.map(r => ({ ...r, id: Number(r.id) }));
+  };
+
+/** Each word to its English lexemes; another full-text configuration refuses (the store has only English). */
+export const wordLexemes: StoreMember<[words: string[]], Map<string, string[]>> =
+  async (brain, words) => {
+    if (getFtsLanguage() !== 'english') refuseMember('wordLexemes', `the ${getFtsLanguage()} text search configuration`);
+    const rows: Array<{ w: string; lexemes: string[] }> = await storeCall({ member: 'wordLexemes' }, () => brain.wordLexemes(words));
+    return new Map(rows.map(r => [r.w, r.lexemes]));
   };

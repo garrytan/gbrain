@@ -5,8 +5,9 @@ Code: `rust/crates/gbrain-store/src/link_queries.rs`, the napi methods in
 `src/core/rust-engine/store-members/link-queries.ts`. The references are `src/core/engine-sql/links.ts`
 (derived-link replacement, `removeLinksByPagesAndSource`, `listLinkSources`, `findOrphanPages`) and
 `src/core/search/read-enrichment.ts` (`readBacklinkCounts`, `readAdjacencyBoosts`, `readRelationalFanout`,
-`readChainHop`) and `src/core/engine-sql/search-reads.ts` (`hasSupersedeEdges`, `supersedingPageSlugs`,
-`pagesLinkingTo`).
+`readChainHop`), `src/core/engine-sql/search-reads.ts` (`hasSupersedeEdges`, `supersedingPageSlugs`,
+`pagesLinkingTo`) and `src/core/engine-sql/link-reads.ts` (the site reads below, in
+`rust/crates/gbrain-store/src/link_queries/site_reads.rs`).
 
 ## Members
 
@@ -25,6 +26,16 @@ Code: `rust/crates/gbrain-store/src/link_queries.rs`, the napi methods in
 | `hasSupersedeEdges()` | served |
 | `supersedingPageSlugs(ids, policy?)` | served |
 | `pagesLinkingTo(fromIds, toIds)` | served |
+| `inboundLinkCoverage({ sourceIds? })` | served |
+| `listJunkEntityHubs({ edgeThreshold, maxChunks, limit })` | served |
+| `countEntityPages(filter, { sourceId?, excludeQuarantined? })` | served |
+| `entityGraphCoverage(filter)` | served |
+| `countForeignEdges(slug, sourceId, direction)` | served |
+| `listLivePageSummaries(scope?)` | served |
+| `countInboundLinks(slug, sourceId, { excludePrivate, originSameSource })` | served |
+| `listLinkEndpointPages(sourceId, slugs, crossSourceSlugs)` | served |
+| `listPagesTitledIn(queryLower, scope)` | served |
+| `wordLexemes(words)` | served under the English text search configuration |
 
 ### Refusals (`engine_capability_missing`)
 
@@ -41,6 +52,8 @@ Code: `rust/crates/gbrain-store/src/link_queries.rs`, the napi methods in
   integer range match no page and are dropped. A `pagesLinkingTo` id that is not a 32-bit integer (the SQL casts into
   `int[]`); ids below 1 are dropped.
 - A `relationalFanout` depth or limit, or a `relationalChainHop` `neighborCap`, that is not an integer after the clamp.
+- A `listJunkEntityHubs` threshold, chunk cap or limit that is not a safe integer, or a negative limit.
+- `wordLexemes` under any text search configuration other than English: the store has only the English stemmer.
 
 ## Keys
 
@@ -107,6 +120,34 @@ error rolls back the whole batch.
   several superseders of one page is planner-dependent; the parity cases give each page one superseder.
 - `pagesLinkingTo`: the distinct listed linkers with a ranking link (not `amends`) to a listed target, ascending. The SQL
   reads `links` alone, so a soft-deleted linker or target still counts.
+
+### Site reads (`link-reads.ts`)
+
+These replace `engine.executeRaw` statements in doctor, orphans, graph-query, the entity card, automatic link
+preparation, entity anchoring and fact relevance. Each keeps its statement's tests: "live" is `deleted_at IS NULL`
+alone unless the statement also applies `pageReadFilter(.., live)`.
+
+- `inboundLinkCoverage`: `{ livePages, linkedPages }`; a linked page is the target of any link. `sourceIds`, when
+  present (even empty), filters the pages.
+- `listJunkEntityHubs`: live pages with more than `edgeThreshold` link ends (a self-link counts twice), at most
+  `maxChunks` chunks and no `junk_hub_exempt: true`, with their connector-source mark and canonical twin, most edges
+  first. The SQL leaves equal edge counts to the plan; the store breaks them by page id.
+- `countEntityPages`: live entity pages. With `excludeQuarantined` it counts the unquarantined ones in every source
+  (the SQL ignores `sourceId` there); otherwise a non-empty `sourceId` filters.
+- `entityGraphCoverage`: `{ entities, connected, withTimeline }` over live, unquarantined entity pages that are not test
+  fixtures (`tools/gbrain/test/`) or the person template. `withTimeline` counts pages with a timeline row.
+- `countForeignEdges`: links of one page, whose other end is in another source; `in`, `out` or `both` (each link once).
+- `listLivePageSummaries`: `{ slug, type, quarantined }` for pages that are not soft-deleted and pass
+  `pageReadFilter(.., scope)`, in page id order.
+- `countInboundLinks`: inbound links from live pages of the same source, `mentions` left out. With `excludePrivate`
+  the referrer and the link origin must be readable; with `originSameSource` an origin must be live and in the source.
+- `listLinkEndpointPages`: the live pages of `sourceId` named in `slugs` (by slug), then, for slugs in
+  `crossSourceSlugs` or with no row in `sourceId`, the live pages of other sources (source order, then slug). The SQL
+  leaves the row order to the plan.
+- `listPagesTitledIn`: pages whose lowercased title (three characters or more) occurs in `queryLower` and that pass
+  `pageReadFilter(.., scope, live)`, by source then slug in byte order, at most 50.
+- `wordLexemes`: each word's `tsvector_to_array(to_tsvector('english', w))`, in tsvector order. The member returns a
+  `Map` from word to lexemes.
 
 ## Known differences
 
