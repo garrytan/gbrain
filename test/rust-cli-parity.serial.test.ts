@@ -330,8 +330,10 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
     }).toEqual({
       fail: [],
       onlyPglite: ['default_source_local_path', 'frontmatter_repairable', 'image_assets', 'pglite_scale'],
+      // multi_source_drift is gone from this list: it reads listSourceRecords, which Rust serves, so on this
+      // one-source brain it skips exactly as PGLite does instead of warning with the executeRaw refusal.
       onlyRust: ['canonical_content_writes', 'checkout_lagging', 'commits_outside_source_root', 'dirty_age', 'git_convergence',
-        'multi_source_drift', 'quarantined_changes', 'shared_skills_sources', 'sync_failures', 'tracked_ownership_marker',
+        'quarantined_changes', 'shared_skills_sources', 'sync_failures', 'tracked_ownership_marker',
         'transcript_secret_exposure'],
       untypedWarnings: ['backup_coverage', 'canonical_content_writes', 'child_table_orphans', 'embedding_provider',
         'entity_link_coverage', 'extract_atoms_backlog', 'fact_take_vectors', 'graph_coverage', 'orphan_ratio', 'raw_provenance',
