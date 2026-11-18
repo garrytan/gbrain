@@ -968,8 +968,9 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       }
       this.lastPhaseError = name; this.lastPhaseTiming = this.timingText(observation, startedAt);
       // #6278: past the phase deadline, the client-side discard of a round-trip a pooler never completed is the
-      // deadline itself: the tick moves on instead of reporting storage_error.
-      if (observation.deadline_exceeded && isPhaseDeadlineOutcome(cancelled)) throw new PhaseDeadlineError(name, error);
+      // deadline itself: the tick moves on instead of reporting storage_error. A read that stopped waiting when the
+      // phase signal fired (a typed config read, config-values.ts) rejects with the signal's own reason.
+      if (observation.deadline_exceeded && (error === abort.signal.reason || isPhaseDeadlineOutcome(cancelled))) throw new PhaseDeadlineError(name, error);
       throw error;
     }
     finally { clearTimeout(timer); this.abort.signal.removeEventListener('abort', stop); this.phaseObservation = undefined; }
