@@ -23,14 +23,15 @@ describe('findByTitleFuzzy with a wildcard-heavy dirPrefix', () => {
     async (engine) => {
       const input = { type: 'note' as const, title: 'Quasar Ledger', compiled_truth: 'body', timeline: '' };
       await engine.putPage(`${'a'.repeat(36)}/p`, input);
-      await engine.putPage(`${'a'.repeat(64)}/x`, input);
+      await engine.putPage(`${'a'.repeat(36)}/q`, input);
       const find = (prefix: string) => engine.findByTitleFuzzy('Quasar Ledger', prefix, 0.5);
       const started = Date.now();
       const results = {
         // The final `b` is in no slug: no split of the text can match.
         noMatchShort: (await find(`${'%a'.repeat(18)}b`))?.slug ?? null,
         noMatchLong: (await find(`${'%a'.repeat(24)}b`))?.slug ?? null,
-        // Every `%a` group fits in the 36 a's, and in the 64: both slugs match, the lower one wins.
+        // Every `%a` group fits in the 36 a's of both slugs: both match, and the lower slug wins. The two differ only in
+        // their last letter, so the order does not depend on the database collation (a Postgres database sorts `/` away).
         match: (await find('%a'.repeat(18)))?.slug ?? null,
         // `_` and an escaped `%` in the prefix.
         underscores: (await find('_'.repeat(36)))?.slug ?? null,
