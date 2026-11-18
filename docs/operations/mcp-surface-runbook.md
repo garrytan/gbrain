@@ -52,6 +52,25 @@ that `starter` lacks, with their CLI equivalents:
 
 A call to either on a starter session gets the hidden-tool hint below.
 
+**Parameters follow the surface.** A narrower surface hides some parameters of the
+tools it lists (to keep the starter list small), and dispatch refuses them too: a
+starter caller that passes one, such as `include_deleted` on `get_page` or
+`list_pages`, gets `param_not_on_surface` and nothing runs. Its fix is the same
+widen as for a hidden tool (`request_tools {"surface":"full"}`) where the
+connection may widen, and otherwise asks the user, because only the operator widens
+a pinned client. `STARTER_CALLABLE_PARAMS` in `src/mcp/surface.ts` lists the few
+hidden parameters a starter caller may still pass, each with its reason (page
+windows, the shared-skill follower, the thin client's source binding, the
+connection check, a delegating client's `submit_agent` `queue`, `model` and
+`allowed_slug_prefixes`, `list_pages` paging with `offset`). An agent job (`submit_agent`)
+records the surface of the connection that submitted it, and its tool calls are refused
+the same way; a job queued before the surface was recorded keeps the full surface until
+it finishes. A queued or running job keeps the surface it was submitted under even if the
+operator later narrows the client; cancelling the job or withdrawing the grant stops it. `request_tools {tools}` describes only the parameters the caller's surface
+may pass. Structured fixes never name a parameter the caller's
+surface refuses (`page_not_found` offers a search instead of `include_deleted`);
+plain-text suggestions may still name one.
+
 **Session widening.** On the owner's stdio pipe, `request_tools {surface}`
 widens this session's tool set (never past `--access read-only` or
 `GBRAIN_MCP_FORCE_SURFACE`), sends `tools/list_changed`, and returns the new

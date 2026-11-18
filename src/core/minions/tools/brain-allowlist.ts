@@ -42,6 +42,9 @@ import { attestedReadMode, scopeReadAccess, withReadMode } from '../../access/sc
 import { attestedReadScope } from '../../access/member-sources.ts';
 import type { AudiencePrincipal } from '../../access/audience.ts';
 import { currentSubmissionAuthority } from '../submission-authority.ts';
+import { allowedOpNames } from '../../../mcp/surface.ts';
+import { paramNotOnSurface } from '../../../mcp/hidden-tool-hint.ts';
+import { opError } from '../../ops/contract.ts';
 
 // The allow-list itself lives in a handler-free module so the MCP surface
 // tiers (src/mcp/surface.ts) can read it without this module's operations import.
@@ -307,6 +310,17 @@ function brainTool(op: Operation, opts: BuildBrainToolsOpts): ToolDef {
       // model instead of crashing inside the handler, and `since: ""` never
       // reaches a handler raw.
       const params = normalizeOptionalParams(op, raw);
+      const submitted = currentSubmissionAuthority();
+      const agent = submitted?.kind === 'remote_agent' ? submitted : undefined;
+      // #9669: a remote agent job calls tools as the connection that submitted it: a tool or parameter its surface
+      // leaves out is refused exactly as MCP dispatch refuses it, before validation and the handler.
+      const surface = agent?.grant.surface ?? 'full';
+      if (surface !== 'full' && !allowedOpNames(operations, surface).has(op.name)) {
+        throw opError('unknown_tool', `${op.name} is not on the ${surface} tool surface of the connection that submitted this job; nothing ran.`,
+          'Use a tool this job lists. Only the brain operator can widen the submitting client\'s surface.');
+      }
+      const surfaceRefusal = paramNotOnSurface(op, params, { transport: 'http', surface, ceiling: surface, canWiden: false, isCallable: () => false });
+      if (surfaceRefusal) throw surfaceRefusal;
       // #6297: a subagent's full-content read returns the round-trip fields only, not the body twice.
       if (op.name === 'get_page' && params.include_content === true) params.content_only = true;
       const validationError = validateParams(op, params);
@@ -318,10 +332,8 @@ function brainTool(op: Operation, opts: BuildBrainToolsOpts): ToolDef {
       // GBRA-218: a remote-owned job reads as its client's member, looked up live on every call (a disabled member or
       // removed binding takes effect at the next tool call); never a GBRA-156 private-pages grant.
       // GBRA-231: a job a shared agent submitted for an audience reads as that audience, re-checked the same way.
-      const submitted = currentSubmissionAuthority();
-      const actingFor = submitted?.kind === 'remote_agent' ? submitted.grant.actingFor as AudiencePrincipal[] | undefined : undefined;
+      const actingFor = agent?.grant.actingFor as AudiencePrincipal[] | undefined;
       // GST-359 C1: a job submitted for an attested actor reads as that member only while actorCoverage still covers it.
-      const agent = submitted?.kind === 'remote_agent' ? submitted : undefined;
       const actor = agent?.grant.actor;
       // GST-1158 E1: and a job tool call that names sources reads them as the scope, exactly as the same call through MCP dispatch.
       const output = agent && actor
