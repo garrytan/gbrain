@@ -36,6 +36,10 @@ import type {
   SynthesisCompletion, SynthesisCompletionPrefix, JobSourceState,
   QueueFamilyRow, RetryJobPolicy,
 } from './engine-sql/jobs-queue.ts';
+import type {
+  EmbedBackfillState, FailedJobError, JobStatusCount, JobStatusFilter, LastAutopilotCycles, QueueDepth, SourceJobCounts, TtlCancelledCount,
+  WaitingScopeState,
+} from './engine-sql/jobs-status.ts';
 import type { JunkEntityHubRow, LinkEndpointPage, LivePageSummary, TitledPage } from './engine-sql/link-reads.ts';
 import type { CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuery, ContextualModeCandidate, FrozenHitKey, FrozenHitRow, WithdrawalChunkKey, WithdrawalChunkRow } from './engine-sql/chunk-reads.ts';
 import type { EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRow, PageTimelineRow, SegmentedTimelinePages, TimelineOrphanPage, TimelineRowDeletion } from './engine-sql/timeline-reads.ts';
@@ -3444,6 +3448,31 @@ export interface BrainEngine {
   getJobAttachment(jobId: number, filename: string): Promise<JobRow | null>;
   /** Delete one attachment; false when there was none. */
   deleteJobAttachment(jobId: number, filename: string): Promise<boolean>;
+
+  // Minion job counts and last-run reads for the status surfaces (engine-sql/jobs-status.ts): `gbrain status`, `jobs stats`,
+  // the facts drain backlog, source health and the sync status report. Windows are seconds.
+  /** The newest completed `autopilot-cycle` job and the newest completed `autopilot-*` job (finished-at order), or null each. */
+  readLastAutopilotCycles(): Promise<LastAutopilotCycles>;
+  /** Job counts by status, in status order, over the jobs a filter (name, queue, statuses) matches; no filter counts all. */
+  countJobsByStatus(filter?: JobStatusFilter): Promise<JobStatusCount[]>;
+  /** Waiting depth and oldest-waiting age in seconds per queue with waiting work, deepest first. */
+  readWaitingQueueDepths(): Promise<QueueDepth[]>;
+  /** The freshest `updated_at` among completed jobs, or null. */
+  readLastCompletedJobAt(): Promise<Date | null>;
+  /** Cancelled jobs whose `error_text` matches the LIKE pattern and that finished in the last `withinSeconds`, counted by name. */
+  countTtlCancelledByName(reasonLike: string, withinSeconds: number): Promise<TtlCancelledCount[]>;
+  /** The waiting jobs sharing a returned job's source scope, plus its id and age in minutes while it is active with a live lease. */
+  readWaitingScopeState(spec: { name: string; queue: string; jobId: number }): Promise<WaitingScopeState>;
+  /** Jobs of a name that completed within the last `withinSeconds`. */
+  countRecentCompletedJobs(name: string, withinSeconds: number): Promise<number>;
+  /** The id and failure text of dead or failed jobs updated within the last `withinSeconds`, by id. */
+  listRecentFailedJobErrors(withinSeconds: number): Promise<FailedJobError[]>;
+  /** The average page text length (capped at `maxChars`) of the pages queued jobs of a name and queue point at, or null. */
+  readQueuedPageChars(spec: { name: string; queue: string; maxChars: number }): Promise<number | null>;
+  /** Per-source failure, queue and embed-backfill counts over the `sync` and `embed-backfill` jobs. */
+  readSourceJobCounts(failedWithinSeconds: number): Promise<SourceJobCounts[]>;
+  /** The embed-backfill jobs of each named source: queued, active and last completion. */
+  readEmbedBackfillBySource(sourceIds: readonly string[]): Promise<EmbedBackfillState[]>;
 
   // ============================================================
   // v0.20.0 Cathedral II: code edges (Layer 5 populates, Layer 7 consumes)

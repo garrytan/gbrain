@@ -295,6 +295,18 @@ export const DOMAIN_OF: Record<string, string> = {
   'getFailedJobForRetry': OOS.minionJobs, 'countOpenJobsByOwner': OOS.minionJobs, 'readJobSourceState': OOS.minionJobs, 'lockOAuthClient': OOS.minionJobs, 'listJobPage': OOS.minionJobs, 'listJobAttachmentNames': OOS.minionJobs,
   'insertJobAttachment': OOS.minionJobs, 'listJobAttachments': OOS.minionJobs, 'getJobAttachment': OOS.minionJobs,
   'deleteJobAttachment': OOS.minionJobs,
+  // job counts and last-run reads for the status surfaces (lane L5 group B, engine-sql/jobs-status.ts)
+  'readLastAutopilotCycles': OOS.minionJobs,
+  'countJobsByStatus': OOS.minionJobs,
+  'readWaitingQueueDepths': OOS.minionJobs,
+  'readLastCompletedJobAt': OOS.minionJobs,
+  'countTtlCancelledByName': OOS.minionJobs,
+  'readWaitingScopeState': OOS.minionJobs,
+  'countRecentCompletedJobs': OOS.minionJobs,
+  'listRecentFailedJobErrors': OOS.minionJobs,
+  'readQueuedPageChars': OOS.minionJobs,
+  'readSourceJobCounts': OOS.minionJobs,
+  'readEmbedBackfillBySource': OOS.minionJobs,
   // cycle locks (retry/direct-pool transport differs per method; the lease statements are pinned by the parity cases)
   'acquireCycleLock': OOS.cycleLocks, 'refreshCycleLock': OOS.cycleLocks, 'releaseCycleLock': OOS.cycleLocks,
   'readCycleLocks': OOS.cycleLocks, 'deleteCycleLock': OOS.cycleLocks, 'deleteCycleLockIfStale': OOS.cycleLocks,
