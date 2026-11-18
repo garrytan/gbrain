@@ -276,13 +276,13 @@ export function projectionWindowFragment(cursor: Pick<ProjectionScanCursor, 'aft
   return sqlFragment`WITH mark AS (SELECT COALESCE(${cursor.highWater}::text::timestamptz,(SELECT max(updated_at) FROM page_projection_jobs)) AS at),
     recent AS (SELECT ${cols},'recent'::text AS lane,0 AS ord FROM page_projection_jobs j, mark
       WHERE j.updated_at > mark.at - interval '10 minutes' AND ${filter} ORDER BY j.updated_at DESC LIMIT 100),
-    fwd AS (SELECT ${cols} FROM page_projection_jobs j WHERE (j.source_incarnation,j.slug) > (${inc}::uuid,${slug}) AND ${filter}
-      ORDER BY j.source_incarnation,j.slug LIMIT 400),
-    wrap AS (SELECT ${cols} FROM page_projection_jobs j WHERE (j.source_incarnation,j.slug) <= (${inc}::uuid,${slug}) AND ${filter}
-      ORDER BY j.source_incarnation,j.slug LIMIT 400),
-    win AS (SELECT *,'window'::text AS lane,(row_number() OVER (ORDER BY part,source_incarnation,slug))::int AS ord FROM (
-      (SELECT *,0 AS part FROM fwd ORDER BY source_incarnation,slug) UNION ALL (SELECT *,1 AS part FROM wrap ORDER BY source_incarnation,slug)
-      ORDER BY part,source_incarnation,slug LIMIT 400) w),
+    fwd AS (SELECT ${cols} FROM page_projection_jobs j WHERE (j.source_incarnation,j.slug COLLATE "C") > (${inc}::uuid,${slug} COLLATE "C") AND ${filter}
+      ORDER BY j.source_incarnation,j.slug COLLATE "C" LIMIT 400),
+    wrap AS (SELECT ${cols} FROM page_projection_jobs j WHERE (j.source_incarnation,j.slug COLLATE "C") <= (${inc}::uuid,${slug} COLLATE "C") AND ${filter}
+      ORDER BY j.source_incarnation,j.slug COLLATE "C" LIMIT 400),
+    win AS (SELECT *,'window'::text AS lane,(row_number() OVER (ORDER BY part,source_incarnation,slug COLLATE "C"))::int AS ord FROM (
+      SELECT * FROM ((SELECT *,0 AS part FROM fwd ORDER BY source_incarnation,slug COLLATE "C") UNION ALL (SELECT *,1 AS part FROM wrap ORDER BY source_incarnation,slug COLLATE "C")) u
+      ORDER BY part,source_incarnation,slug COLLATE "C" LIMIT 400) w),
     high_water AS (SELECT max(updated_at)::text AS at FROM page_projection_jobs)
     SELECT r.lane,r.ord,r.source_incarnation::text AS source_incarnation,r.slug,r.revision::text AS revision,h.at AS high_water
     FROM high_water h LEFT JOIN (SELECT source_incarnation,slug,revision,updated_at,lane,ord FROM recent
