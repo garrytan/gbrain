@@ -256,7 +256,9 @@ relaxations above widens it: `--private-pages granted-sources`, `--private-facts
 `search.remote_private_pages`, `access.members_read_lineage`, `access.owner_reads_restricted` and
 `visibility.honor_aliases` leave it in place, and so do shared-room audiences, guests and attested calls. A remote
 write into an owner-only source from any credential but the owner's is refused the same way. The rule is worked out
-at read time from the source, so nothing is stored per page and a repo-less brain works the same.
+at read time from the source and works the same on a repo-less brain. Only a delete stores anything: when an owner-only
+source or one of its rows goes, a trigger records the rows derived from it in `owner_only_marks`, so they stay
+owner-only ([owner-only delete triggers](../ENGINES.md#owner-only-delete-triggers)).
 
 ### Audience members (`gbrain access member kind`)
 
