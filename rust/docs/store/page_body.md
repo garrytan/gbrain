@@ -58,6 +58,14 @@ family, shared item 11). The `page_columns` hook adds `body_storage:
 'segmented'` and `body_bytes` to a segmented page, so `getPage` shows them as PGLite's `rowToPage`
 does; an inline page has neither.
 
+## Crate helpers
+
+- `page_body::timeline_lead(read, page_id)` returns the page's stored `timeline_lead`: the lead the
+  last flip published (NUL removed, possibly empty), or `None` for an inline page, a shell that no
+  flip has published, or a missing page, where PGLite's column is NULL. A segmented page's row has a
+  NULL `timeline`, so the keyword family reads this lead in its place, as PGLite's
+  `update_page_search_vector` does with `coalesce(timeline, timeline_lead, '')`.
+
 ## The flip
 
 `flipBodyGeneration` runs as one store write and changes nothing when it refuses:

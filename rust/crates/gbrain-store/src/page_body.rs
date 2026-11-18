@@ -621,6 +621,16 @@ fn read_body_state(read: &dyn KvRead, page_id: u64) -> Result<Option<BodyState>>
     get_json(read, &body_key(page_id))
 }
 
+/// The stored `timeline_lead` of page `page_id`: the lead a flip published, or `None` for an inline
+/// page, a shell no flip has published, or a missing page (PGLite's NULL column). A page with a
+/// NULL timeline (a segmented page) takes it for its keyword vector, as PGLite's
+/// `update_page_search_vector` does with `coalesce(timeline, timeline_lead, '')`.
+// The keyword family (`searchTitles`) is the first caller.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn timeline_lead(read: &dyn KvRead, page_id: u64) -> Result<Option<String>> {
+    Ok(read_body_state(read, page_id)?.and_then(|state| state.timeline_lead))
+}
+
 fn is_segmented(state: Option<&BodyState>) -> bool {
     state.is_some_and(|s| s.body_storage == "segmented")
 }
@@ -2315,6 +2325,56 @@ mod segment_chunk_tests {
             vec![2]
         );
         assert_eq!(visible(&store, id), vec!["one a", "one b", "two"]);
+    }
+
+    fn lead(store: &Store, id: i64) -> Option<String> {
+        timeline_lead(&*store.read().unwrap(), id as u64).unwrap()
+    }
+
+    #[test]
+    fn the_timeline_lead_is_the_one_a_flip_published_and_none_otherwise() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        // The fixture flips with an empty lead: a published lead is never NULL.
+        assert_eq!(lead(&store, id), Some(String::new()));
+        second_generation(&store, id);
+        let mut input = flip(id, 1, STAGING_2, 9, json!({"closeOccurrences": [2]}));
+        input.body.timeline_lead = "- 2026-01-02: lead\0 entry".into();
+        store.flip_body_generation(&input).unwrap();
+        // NUL goes, as with every stored body column.
+        assert_eq!(
+            lead(&store, id).as_deref(),
+            Some("- 2026-01-02: lead entry")
+        );
+
+        // A shell no flip has published, an inline page and a missing page have none.
+        let shell = store
+            .create_segmented_page_shell(
+                "notes/shell",
+                &serde_json::from_value(json!({"type": "note", "title": "S"})).unwrap(),
+                &ShellOptions {
+                    source_id: Some("default".into()),
+                },
+            )
+            .unwrap()["id"]
+            .as_i64()
+            .unwrap();
+        assert_eq!(lead(&store, shell), None);
+        let inline = store
+            .put_page(
+                "notes/inline",
+                &crate::pages::PageInput {
+                    page_type: "note".into(),
+                    title: "Inline".into(),
+                    compiled_truth: "body".into(),
+                    timeline: Some("- 2026-01-02: entry".into()),
+                    ..crate::pages::PageInput::default()
+                },
+                &crate::pages::PutPageOptions::default(),
+            )
+            .unwrap();
+        assert_eq!(lead(&store, inline["id"].as_i64().unwrap()), None);
+        assert_eq!(lead(&store, 999_999), None);
     }
 
     #[test]
