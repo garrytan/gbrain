@@ -29,7 +29,7 @@ use std::collections::BTreeSet;
 use serde_json::{Value, json};
 
 use super::filters::{
-    KeywordOptions, PageFilter, chunk_vector, result_row, row_count, served, source_factor,
+    KeywordOptions, PageFilter, readable_chunk_vector, result_row, row_count, served, source_factor,
 };
 use super::rank::ts_rank;
 use super::tsearch::{phraseto_tsquery, ts_matches, websearch_to_tsquery};
@@ -90,7 +90,9 @@ impl Store {
                 {
                     continue;
                 }
-                let vector = chunk_vector(&chunk)?;
+                let Some(vector) = readable_chunk_vector(&chunk) else {
+                    continue;
+                };
                 if !ts_matches(&vector, &matcher) {
                     continue;
                 }
@@ -156,7 +158,9 @@ impl Store {
                 if !chunk.visible_at(generation) || chunk.modality != "text" {
                     continue;
                 }
-                let vector = chunk_vector(&chunk)?;
+                let Some(vector) = readable_chunk_vector(&chunk) else {
+                    continue;
+                };
                 for (i, q) in queries.iter().enumerate() {
                     if q.items.is_empty() || counts[i] > cap || !ts_matches(&vector, q) {
                         continue;
@@ -432,10 +436,68 @@ mod tests {
         );
     }
 
-    /// `requiresSafeChunks`: a page whose recorded chunker version is below the safe fence chunker is hidden; a page
-    /// with no recorded version (this store's own chunker) and a page at the safe version are kept.
+    /// The chunks `put_page` makes itself are raw splits of the body: nothing removed the protected facts / takes fences
+    /// from them, so they are not certified by the safe-fence stamp (only a `sealChunks` of sanitized chunks is). A
+    /// world-readable note with a secret inside a takes fence, written through the default path, must not come back
+    /// from a `requireSafeChunks` search, while the same search without the rule still finds it and a later explicit
+    /// seal makes the page safe again.
     #[test]
-    fn require_safe_chunks_drops_only_a_page_recorded_below_the_safe_chunker() {
+    fn chunks_made_by_put_page_are_not_safe_until_an_explicit_seal() {
+        let store = crate::test_support::store();
+        let secret = "<!--- gbrain:takes:begin -->\n| 1 | heron owns the vault, code ZEPHYR-9 | fact | 1 | 2026 |\n<!--- gbrain:takes:end -->";
+        put(
+            &store,
+            "notes/world",
+            &format!("heron overview\n\n{secret}"),
+        );
+        let hits = |o: Value| {
+            slugs(
+                &store
+                    .search_keyword_arm("heron", "heron", &opts(o))
+                    .unwrap(),
+            )
+        };
+        assert_eq!(hits(json!({ "limit": 20.0 })), ["notes/world"]);
+        assert!(hits(json!({ "limit": 20.0, "requireSafeChunks": true })).is_empty());
+        let version = |store: &Store| {
+            crate::pages::read_page(
+                &*store.read().unwrap(),
+                crate::sources::DEFAULT_SOURCE,
+                "notes/world",
+            )
+            .unwrap()
+            .unwrap()
+            .chunker_version
+        };
+        assert!(version(&store).is_none_or(|v| v < crate::chunks::SAFE_FENCE_CHUNKER_VERSION));
+        // The explicit seal of sanitized chunks certifies the page.
+        let clean = crate::chunks::ChunkInput {
+            chunk_text: "heron overview".into(),
+            ..crate::chunks::ChunkInput::default()
+        };
+        let seal = crate::chunks::UpsertChunksOptions {
+            seal: true,
+            ..crate::chunks::UpsertChunksOptions::default()
+        };
+        store.upsert_chunks("notes/world", &[clean], &seal).unwrap();
+        assert_eq!(
+            version(&store),
+            Some(crate::chunks::SAFE_FENCE_CHUNKER_VERSION)
+        );
+        assert_eq!(
+            hits(json!({ "limit": 20.0, "requireSafeChunks": true })),
+            ["notes/world"]
+        );
+        // A rewrite through the default path takes the safe stamp away again.
+        put(&store, "notes/world", &format!("heron changed\n\n{secret}"));
+        assert!(version(&store).is_some_and(|v| v < crate::chunks::SAFE_FENCE_CHUNKER_VERSION));
+        assert!(hits(json!({ "limit": 20.0, "requireSafeChunks": true })).is_empty());
+    }
+
+    /// `requiresSafeChunks` (`chunker_version >= 4`): a page whose recorded chunker version is below the safe fence
+    /// chunker, or that records none (the comparison is NULL), is hidden; only a page at the safe version is kept.
+    #[test]
+    fn require_safe_chunks_keeps_only_a_page_recorded_at_the_safe_chunker() {
         let store = crate::test_support::store();
         put(&store, "notes/none", "heron");
         put(&store, "notes/three", "heron");
@@ -466,13 +528,95 @@ mod tests {
             v
         };
         assert_eq!(top(json!({})), ["notes/four", "notes/none", "notes/three"]);
-        assert_eq!(
-            top(json!({ "requireSafeChunks": true })),
-            ["notes/four", "notes/none"]
-        );
+        assert_eq!(top(json!({ "requireSafeChunks": true })), ["notes/four"]);
         assert_eq!(
             top(json!({ "requireSafeChunks": false })),
             ["notes/four", "notes/none", "notes/three"]
+        );
+    }
+
+    /// Distinct tokens whose tsvector is past the 1,048,575-byte cap.
+    fn oversized_text() -> String {
+        (0..200_000)
+            .map(|i| format!("token{i:x}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// A chunk stored with a vector too big for a tsvector (written before `write_chunk` checked it) matches nothing and
+    /// fails no search: every member that builds chunk vectors skips it and answers from the other chunks.
+    #[test]
+    fn a_stored_chunk_that_cannot_be_vectored_is_skipped_by_every_search() {
+        let store = crate::test_support::store();
+        put(&store, "notes/ok", "heron wades");
+        put(&store, "notes/bad", "heron stalks");
+        store
+            .write(|tx| {
+                let page =
+                    crate::pages::read_page(&*tx, crate::sources::DEFAULT_SOURCE, "notes/bad")?
+                        .unwrap();
+                for mut chunk in crate::chunks::read_chunks(&*tx, page.id)? {
+                    chunk.chunk_text = format!("heron {}", oversized_text());
+                    crate::put_json(tx, &crate::keys::chunk(page.id, chunk.chunk_index), &chunk)?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        let o = opts(json!({ "limit": 20.0 }));
+        assert_eq!(
+            slugs(&store.search_keyword_arm("heron", "heron", &o).unwrap()),
+            ["notes/ok"]
+        );
+        assert_eq!(
+            slugs(&store.search_keyword_chunks("heron", &o).unwrap()),
+            ["notes/ok"]
+        );
+        assert_eq!(
+            slugs(&store.search_keyword_pages("heron", &o).unwrap()),
+            ["notes/ok"]
+        );
+        assert_eq!(store.count_keyword_pages("heron", &o).unwrap(), 1);
+        let rare = store
+            .keyword_rare_term_pages(&["heron".to_string()], 10.0)
+            .unwrap();
+        assert_eq!(rare.len(), 1);
+    }
+
+    /// `chunk_search_vector_trigger` raises in the write: a chunk that cannot be vectored is refused with the SQL text and
+    /// nothing of the batch is stored.
+    #[test]
+    fn a_chunk_that_cannot_be_vectored_is_refused_at_write() {
+        let store = crate::test_support::store();
+        put(&store, "notes/ok", "heron wades");
+        let before = store.count_chunks().unwrap();
+        let big = || crate::chunks::ChunkInput {
+            chunk_index: 1,
+            chunk_text: oversized_text(),
+            ..crate::chunks::ChunkInput::default()
+        };
+        let err = store
+            .upsert_chunks(
+                "notes/ok",
+                &[
+                    crate::chunks::ChunkInput {
+                        chunk_text: "heron edited".into(),
+                        ..crate::chunks::ChunkInput::default()
+                    },
+                    big(),
+                ],
+                &crate::chunks::UpsertChunksOptions::default(),
+            )
+            .unwrap_err();
+        assert!(
+            err.message.starts_with("string is too long for tsvector ("),
+            "{}",
+            err.message
+        );
+        assert_eq!(store.count_chunks().unwrap(), before);
+        let o = opts(json!({ "limit": 20.0 }));
+        assert_eq!(
+            slugs(&store.search_keyword_arm("heron", "heron", &o).unwrap()),
+            ["notes/ok"]
         );
     }
 }

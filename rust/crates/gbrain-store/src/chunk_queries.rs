@@ -12,14 +12,16 @@
 //!
 //! A segmented page is one whose body columns are NULL (`PageText::is_null`), the shell PGLite's
 //! `createSegmentedPageShell` leaves. Its `body_bytes` lives in the page_body family's private
-//! body state (lane 3), which this family does not read yet (follow-up
-//! `chunkless-segmented-body-bytes`); until then it reads as NULL, and a NULL `body_bytes` fails
-//! `body_bytes > 0` as it does in SQL. A page's chunks are served when its
+//! body state, which this family reads through `page_body::segmented_body_bytes`; a NULL
+//! `body_bytes` fails `body_bytes > 0` as it does in SQL. A page's chunks are served when its
 //! `text_projection_revision` equals its `knowledge_revision`, the same test the SQL engines'
 //! served-projection filter makes. See rust/docs/store/chunk_queries.md.
 
 use crate::Store;
-use crate::chunks::{ChunkRecord, read_chunks};
+use crate::chunks::{
+    ChunkRecord, SAFE_FENCE_CHUNKER_VERSION, SegmentView, read_chunks, read_segment_view,
+    visible_chunks,
+};
 use crate::error::Result;
 use crate::kv::KvRead;
 use crate::pages::{PageRecord, all_pages, find_in_scope, read_page_by_id};
@@ -34,20 +36,15 @@ const DEFAULT_CHUNKLESS_BATCH: u64 = 50;
 const QUARANTINE_KEY: &str = "quarantine";
 /// The frontmatter key that marks a page whose chunks get no vectors.
 const EMBED_SKIP_KEY: &str = "embed_skip";
-/// `SAFE_FENCE_CHUNKER_VERSION` (`src/core/search/safe-chunks.ts`): a page chunked at this version
-/// or later has sealed chunks.
-const SAFE_FENCE_CHUNKER_VERSION: i16 = 4;
 
 /// True for a segmented shell page: its body columns are NULL.
 fn segmented(page: &PageRecord) -> bool {
     page.compiled_truth.is_null() && page.timeline.is_null()
 }
 
-/// The page's `body_bytes`. The page_body family keeps it in its private body state; follow-up
-/// `chunkless-segmented-body-bytes` reads it through a `pub(crate)` page_body accessor once core
-/// lands the combined branch. Until then it is NULL.
-fn body_bytes(_read: &dyn KvRead, _page: &PageRecord) -> Result<Option<i64>> {
-    Ok(None)
+/// The page's `body_bytes`. The page_body family keeps it in its private body state.
+fn body_bytes(read: &dyn KvRead, page: &PageRecord) -> Result<Option<i64>> {
+    crate::page_body::segmented_body_bytes(read, page.id)
 }
 
 /// The `chunklessPagesWhere` body test: `compiled_truth <> '' OR timeline <> '' OR
@@ -148,6 +145,20 @@ fn chunkless_row(page: &PageRecord) -> Value {
     })
 }
 
+/// `chunkGenerationFilter`: a chunk of the page's live body. An inline chunk belongs to a page that is not segmented; a
+/// segmented chunk is at or below the page's generation and its occurrence has a live manifest row (the segment view
+/// keeps one offset per live occurrence). A staged chunk, one of a retired occurrence and an inline chunk left on a
+/// segmented page are not.
+fn in_live_body(chunk: &ChunkRecord, segmented_page: bool, view: &SegmentView) -> bool {
+    match chunk.segment {
+        None => !segmented_page,
+        Some(place) => {
+            place.body_generation <= view.generation
+                && view.offsets.contains_key(&place.occurrence_id)
+        }
+    }
+}
+
 fn chunk_window_row(chunk: &ChunkRecord, prio: i64) -> Value {
     json!({
         "kind": "chunk",
@@ -159,7 +170,8 @@ fn chunk_window_row(chunk: &ChunkRecord, prio: i64) -> Value {
         "chunk_source": chunk.chunk_source,
         "projected_byte_start": chunk.meta.get("projected_byte_start").cloned().unwrap_or(Value::Null),
         "projected_byte_end": chunk.meta.get("projected_byte_end").cloned().unwrap_or(Value::Null),
-        "occurrence_id": Value::Null,
+        // The manifest occurrence of a segmented chunk; an inline chunk has none.
+        "occurrence_id": chunk.segment.map_or(Value::Null, |place| json!(place.occurrence_id)),
     })
 }
 
@@ -179,18 +191,30 @@ impl Store {
         if !sealed(&page) {
             return Ok(empty);
         }
-        let mut chunks = read_chunks(&*read, page.id)?;
-        chunks.sort_by_key(|c| c.chunk_index);
+        // `chunkVisibleFilter` and `chunkDocumentOrder`: the chunks of the live generation in document order. A segmented
+        // page's `chunk_index` is an insertion sequence (retired chunks leave gaps, an insertion lands last), so its range
+        // is over positions in that order and its max index is the visible count less one; an inline page's is the index.
+        let chunks = visible_chunks(&*read, page.id)?;
         let total = chunks.len();
-        let max = chunks.iter().map(|c| c.chunk_index).max();
+        let by_position = chunks.iter().any(|c| c.segment.is_some());
+        let max = if by_position {
+            total.checked_sub(1).map(|last| last as u32)
+        } else {
+            chunks.iter().map(|c| c.chunk_index).max()
+        };
         let to = options.from_index + options.limit;
         let page_chunks: Vec<Value> = chunks
             .iter()
-            .filter(|c| {
-                let index = f64::from(c.chunk_index);
-                index >= options.from_index && index < to
+            .enumerate()
+            .filter(|(position, c)| {
+                let at = if by_position {
+                    *position as f64
+                } else {
+                    f64::from(c.chunk_index)
+                };
+                at >= options.from_index && at < to
             })
-            .map(|c| c.to_chunk(None))
+            .map(|(_, c)| c.to_chunk(None))
             .collect();
         Ok(json!({ "chunks": page_chunks, "total_chunks": total, "max_chunk_index": max }))
     }
@@ -245,14 +269,15 @@ impl Store {
             {
                 continue;
             }
-            // `sealed`: `COALESCE(chunker_version, 0) >= SAFE_FENCE_CHUNKER_VERSION`. A store page
-            // with no recorded version was chunked by this store's chunker, which seals; a segmented
-            // shell records the version PGLite caps below the safe one. Only a sealed page gives
-            // chunk rows.
-            let page_sealed = page
-                .chunker_version
-                .is_none_or(|v| v >= SAFE_FENCE_CHUNKER_VERSION);
-            let chunks = read_chunks(&*read, page.id)?;
+            // `sealed`: `COALESCE(chunker_version, 0) >= SAFE_FENCE_CHUNKER_VERSION`: a page that records no version is
+            // not sealed. Only a sealed page gives chunk rows.
+            let page_sealed = page.chunker_version.unwrap_or(0) >= SAFE_FENCE_CHUNKER_VERSION;
+            // `chunkGenerationFilter`: only the live body's chunks answer, and bound the page's max index.
+            let view = read_segment_view(&*read, page.id)?;
+            let chunks: Vec<ChunkRecord> = read_chunks(&*read, page.id)?
+                .into_iter()
+                .filter(|c| in_live_body(c, segmented(&page), &view))
+                .collect();
             let max = chunks.iter().map(|c| c.chunk_index).max();
             for chunk in &chunks {
                 let index = i64::from(chunk.chunk_index);
@@ -365,8 +390,9 @@ mod tests {
         assert!(has_body(&shell, Some(10)));
         assert!(!has_body(&shell, Some(0)), "a fresh shell has body_bytes 0");
         assert!(!has_body(&shell, None), "NULL > 0 is not true");
-        // body_bytes is not read yet (chunkless-segmented-body-bytes), so the shell is not chunkless-with-content today, as a
-        // PGLite shell with body_bytes 0 is not.
+        // This shell has no body state (`make_shell` only nulls the columns), so its body_bytes is NULL and it is not
+        // chunkless-with-content. A published body reads through `page_body::segmented_body_bytes`
+        // (test/engine-parity/chunk-page-segmented.test.ts).
         let options = ChunklessOptions::default();
         assert_eq!(
             store.count_chunkless_pages_with_content(&options).unwrap(),

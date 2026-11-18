@@ -61,12 +61,20 @@ The policy carries a third setting, `ownerOnly`, read from the same no-caller te
 brain at schema v320 or above, which is how the store reports itself) hides a page held in an owner-only source
 (`sources.config` with `owner_only` true, or kind `imessage`) and a concept or question with a `concept-provenance`
 input page in one; `closed` (a call outside an engine scope, or a brain below v320) hides every page while the brain
-holds an owner-only source. A text that holds neither form refuses. `entityPrivacy: false` does not drop it. The store
-keeps no `derivation_inputs` or `owner_only_marks`, so a page that only those tables tie to an owner-only row, and a page
-derived from a source that was removed, are not hidden by it.
+holds an owner-only source. A text that holds neither form refuses. `entityPrivacy: false` does not drop it. Under `lineage`
+a page named in `owner_only_marks` is hidden too, and under either form a mark keeps the guard on after the last
+owner-only source is gone. `remove_page` writes the marks the SQL delete trigger writes (v322): when the page being
+deleted is itself owner-only lineage (strict form), it marks that page and each concept or question that names it as a
+`concept-provenance` `synthesized_from` input, so a derivative stays hidden after its owner-only input is deleted for
+good, even when the source is later flipped off. The marks live under `M owner_only_mark/pages/<page id>`. Removing
+only the provenance link, or turning the owner-only flag off with nothing deleted, records no mark, as in SQL. The
+store keeps no `derivation_inputs`, so a page that only that table ties to an owner-only row is not hidden by it. The
+engine serves no source delete, `deletePages` or `purgeDeletedPages` yet (they refuse with `engine_capability_missing`),
+so `deletePage` is the one path that deletes an owner-only page here.
 
-The safe-chunks rule drops a page whose recorded `chunker_version` is below the safe fence chunker (4). A page with no
-recorded version was chunked by this store's chunker, which seals, so it is kept (as `chunk_queries.md` reads it).
+The safe-chunks rule keeps a page only when its recorded `chunker_version` is at least the safe fence chunker (4), as
+SQL's `chunker_version >= 4`: a page with no recorded version is dropped too (the comparison is NULL). The store stamps
+4 when `sealChunks` seals a page's chunks (a put's own chunks are not certified and never stamp 4) and -1 when a later `upsertChunks` changes them (`chunk_queries.md`).
 
 The origin checks of the policy follow slug aliases and rename history as PGLite does (`facts/privacy.rs` reads them
 through `aliases.rs`), so an origin that a rename moved still reaches its page.
@@ -105,6 +113,58 @@ vectors go into a process-wide cache (`keyword/vector_cache.rs`):
   cache, every query took 365-390 ms, of which reading pages and chunks was about 10 ms and `to_tsvector` the rest.
   With the cache, the first query takes about 340 ms (it fills the cache) and later queries take 16-22 ms. The cache
   holds about 19 MB for these 4,000 chunks.
+
+## Query size and recursion depth
+
+PostgreSQL walks a tsquery recursively and calls `check_stack_depth()`, so a query of enough operands fails with
+`stack depth limit exceeded` (54001). The port's parser cleanup, `@@` executor, `ts_rank_cd` cover search and the
+facts OR builder recurse the same way, once per item, and the stack of the thread that calls them is not ours to size.
+
+- A query with more than 1,024 items runs those walks on a scoped thread with a 256 MiB stack (address space is reserved,
+  not committed). Smaller queries run in place.
+- A query is refused with `invalid_argument` ("stack depth limit exceeded: a tsquery holds at most 131072 items") when
+  the parser holds more than 131,072 items, counted before stopword cleanup. Repeated stopwords count, because a
+  stopword placeholder carries no lexeme bytes and so never reaches the `MAXSTRPOS` check ("value is too big in
+  tsquery"). The bound is at the parser, so every keyword member (chunk, page, title and facts arms) has it.
+- `searchTitlesAttempts` ORs the texts of one attempt (`tsquery_or_all`, the left fold of `||`). The same item bound holds
+  for the whole chain, counting an operator per join: an attempt whose texts add up past 131,072 items is refused with
+  the same error, checked while the texts parse, so the work stays linear in the texts. The chain is laid out once
+  rather than copied at each `||`.
+- PGLite 0.5.16 answers a query like `quokka the ` x 20,000 (about 80,000 items) through `@@`, and runs out of its 2 MB
+  stack for the whole `searchKeyword` statement at a few thousand repeats, where it returns an empty result with no
+  error (the limit is not a fixed number: 4,000 repeats failed and 4,500 passed in one run). The Rust engine answers
+  every query up to the bound and throws past it. A test of the thrown error cannot be a parity case, because the
+  expected-divergence rows cover only an answer that differs from PGLite's, never a thrown error.
+
+## A chunk whose vector does not fit
+
+`content_chunks`' `chunk_search_vector_trigger` builds the weighted vector (doc comment and qualified symbol name at A,
+text at B) before the row is stored, and `to_tsvector` / `||` raise "string is too long for tsvector (N bytes, max
+1048575 bytes)" (54000) past the cap. The error aborts the whole `upsertChunks` / `sealChunks` statement. The store
+builds the same vector in `chunks::write_chunk` (`keyword::check_chunk_vector`, which also warms the vector cache)
+and refuses the write with the same message, in the same transaction, so no chunk of the batch is stored.
+
+A store written before that check may hold such a chunk, which SQL can never hold. Every member that reads chunk
+vectors (`searchKeyword` arms, chunk-grain and page-grain search, the page count and the rare-term arm) treats it as
+matching nothing (`filters::readable_chunk_vector`) rather than failing the search that passes over it. There is no
+SQL behavior to compare that read with, so it is covered by Rust unit tests only.
+
+## A page whose vector does not fit
+
+`pages`' `trg_pages_search_vector` (`BEFORE INSERT OR UPDATE OF title, timeline`) builds the page vector before the row is
+stored, and the same \"string is too long for tsvector\" error aborts the `putPage`. The title is unbounded (the timeline
+and the entries are cut to 65,536 and 32,768 characters), so a title of about 100,000 distinct tokens is enough. The store
+builds the trigger-form vector in `pages::write_page` whenever the page is new or its title or timeline changed
+(`keyword::check_page_vector`, which also warms the vector cache), so every write path that sets them refuses with the
+same message and stores nothing, with or without chunking (`index: false`). A seal that sends a search timeline
+(`pages::record_search_timeline`, from `upsertChunks` with `seal` and from the segmented seal) builds the sealed-form
+vector (`keyword::check_sealed_page_vector`) and refuses the same way, since `pageSearchVectorSql` builds it in the
+seal's statement.
+
+A store written before those checks may hold a page SQL can never hold. `searchTitles` treats its vector as matching
+nothing (`titles::readable_page_vector`, which skips only the size error) rather than failing every search in its
+scope. The refusal is a parity case (`test/engine-parity/page-vector-overflow.test.ts`; the arm's `putPage` always writes
+with `index: false`); the chunking path and the stored page are Rust unit tests in `keyword/titles.rs`.
 
 ## The page filter
 
@@ -193,6 +253,9 @@ The page vector is not stored; `keyword/titles.rs` rebuilds the one PGLite last 
 - `findByTitleFuzzy` without a `sourceId` reads soft-deleted pages too, as the SQL does (follow-up
   `fuzzy-title-unscoped-deleted`). PGLite types `$minSimilarity` as `real`; Postgres may bind it as `float8`, which
   would compare in f64 (not verified).
+- `findByTitleFuzzy`'s `dirPrefix` is a LIKE pattern (`sql_like`): `%`, `_` and `\\` escapes as PostgreSQL reads them. The
+  matcher is iterative with one backtrack point (the last `%`), so its work is bounded by the text length times the
+  pattern length; a prefix of many `%` groups answers at once (`title-fuzzy-like-bound.test.ts`).
 
 ## Follow-ups
 

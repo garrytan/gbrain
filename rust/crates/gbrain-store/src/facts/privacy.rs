@@ -20,8 +20,9 @@
 //!
 //! The owner-only rule is the one part of the member-access test the store can answer for a page: a page of an
 //! owner-only source, and a concept or question synthesized from one, is hidden (`OwnerOnly::Lineage`), or every page
-//! is while the brain holds an owner-only source (`OwnerOnly::Closed`). The store keeps no `derivation_inputs` or
-//! `owner_only_marks`, so a page derived from an owner-only row by those tables alone is not hidden here.
+//! is while the brain holds an owner-only source (`OwnerOnly::Closed`). `owner_only_marks` (`owner_only_marks.rs`) keeps a
+//! page hidden after its owner-only input is deleted for good, as SQL's delete trigger does. The store keeps no
+//! `derivation_inputs`, so a page derived from an owner-only row by that table alone is not hidden here.
 //!
 //! The owner-only sources are read once per read, on the first page it judges ([`OwnerOnlyCache`]): the page reads
 //! (`searchVector`, the link, alias, salience and page-read members) each keep one, so a read of many pages does not
@@ -34,6 +35,7 @@ use crate::Result;
 use crate::aliases::{read_slug_alias, renamed_to};
 use crate::kv::KvRead;
 use crate::links::out_links;
+use crate::owner_only_marks::{any_marked, is_marked};
 use crate::pages::{PageRecord, read_page, read_page_by_id};
 use crate::sources::all_sources;
 use crate::timeline_queries::jsonb_field_text;
@@ -60,8 +62,9 @@ pub struct PrivacyPolicy {
 #[serde(rename_all = "camelCase")]
 pub enum OwnerOnly {
     /// `gbrain_owner_only_lineage('pages', id)` behind its guard (schema v320 and above): a page held in an owner-only
-    /// source is hidden, and so is a concept or question with a `concept-provenance` input page in one. The rows
-    /// `derivation_inputs` and `owner_only_marks` name are not here: this store keeps neither table.
+    /// source is hidden, and so is a concept or question with a `concept-provenance` input page in one, and a page
+    /// `owner_only_marks` names (`owner_only_marks.rs`). The rows `derivation_inputs` names are not here: this store
+    /// keeps no such table.
     Lineage,
     /// `ANY_OWNER_ONLY_SQL` (a brain below v320, or a call outside an engine scope): any owner-only source in the
     /// brain hides every page.
@@ -70,7 +73,11 @@ pub enum OwnerOnly {
 
 /// The ids of the owner-only sources (`isOwnerOnlySourceConfig`: kind `imessage`, or `owner_only` true), read once
 /// per query and passed to [`page_hidden`].
-pub(crate) struct OwnerOnlySources(HashSet<String>);
+pub(crate) struct OwnerOnlySources {
+    ids: HashSet<String>,
+    /// A row was marked owner-only when its origin was deleted (`owner_only_marks`), so the guard stays on.
+    marked: bool,
+}
 
 impl OwnerOnlySources {
     pub(crate) fn read(read: &dyn KvRead) -> Result<Self> {
@@ -83,18 +90,42 @@ impl OwnerOnlySources {
                 ids.insert(source.id);
             }
         }
-        Ok(Self(ids))
+        Ok(Self {
+            ids,
+            marked: any_marked(read)?,
+        })
     }
 
     fn holds(&self, source_id: &str) -> bool {
-        self.0.contains(source_id)
+        self.ids.contains(source_id)
+    }
+
+    /// `gbrain_owner_only_lineage()`: the brain holds an owner-only source or a mark, so the per-row test runs at all.
+    pub(crate) fn guarded(&self) -> bool {
+        !self.ids.is_empty() || self.marked
+    }
+
+    /// `gbrain_owner_only_lineage_strict('pages', id)`: marked, held in an owner-only source, or a concept or question with an
+    /// input page in one. The `derivation_inputs` walk has no table here.
+    pub(crate) fn lineage_strict(&self, read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
+        if is_marked(read, page.id)? || self.holds(&page.source_id) {
+            return Ok(true);
+        }
+        if matches!(page.page_type.as_str(), "concept" | "question") {
+            for input in concept_inputs(read, page)? {
+                if self.holds(&input.source_id) {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
     }
 
     /// `ownerOnlyFactSql(facts, form)` for the no-caller baseline: a fact held in an owner-only source is hidden, or
     /// every fact is while the brain holds an owner-only source (the closed form). The rows `derivation_inputs` and
-    /// `owner_only_marks` name are not here: this store keeps neither table.
+    /// `owner_only_marks` name are not here: this store keeps no `derivation_inputs`, and its marks name pages only.
     fn fact_hidden(&self, form: OwnerOnly, source_id: &str) -> bool {
-        !self.0.is_empty() && (form == OwnerOnly::Closed || self.holds(source_id))
+        !self.ids.is_empty() && (form == OwnerOnly::Closed || self.holds(source_id))
     }
 }
 
@@ -201,21 +232,11 @@ fn owner_only_hidden(
     form: OwnerOnly,
     sources: &OwnerOnlySources,
 ) -> Result<bool> {
-    if sources.0.is_empty() {
-        return Ok(false);
+    if form == OwnerOnly::Closed {
+        // `ANY_OWNER_ONLY_SQL` reads sources only: no mark is read in a brain below v320.
+        return Ok(!sources.ids.is_empty());
     }
-    if form == OwnerOnly::Closed || sources.holds(&page.source_id) {
-        return Ok(true);
-    }
-    // `gbrain_owner_only_lineage_strict`: a concept or question with an input page in an owner-only source.
-    if matches!(page.page_type.as_str(), "concept" | "question") {
-        for input in concept_inputs(read, page)? {
-            if sources.holds(&input.source_id) {
-                return Ok(true);
-            }
-        }
-    }
-    Ok(false)
+    Ok(sources.guarded() && sources.lineage_strict(read, page)?)
 }
 
 /// `frontmatter ->> key`.

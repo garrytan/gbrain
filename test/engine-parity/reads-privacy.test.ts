@@ -49,8 +49,8 @@ const SYNTH = { synthesized_by: 'dream', visibility: 'world' };
  * The main pages. Each carries the markers the page-marker reads look for, an effective date and an alias. The pages the
  * policy leaves visible are `notes/open`, `notes/open-moved`, `notes/other`, `concepts/from-open` and the three atoms
  * (written `visibility: world`; an atom with no visibility is private); every other main page is hidden for one rule.
- * No owner-only rule reads an atom's origin: the store keeps no `derivation_inputs` or `owner_only_marks`, and PGLite
- * leaves these atoms visible too.
+ * No owner-only rule reads an atom's origin: the store keeps no `derivation_inputs`, and PGLite leaves these atoms visible
+ * too. The store's `owner_only_marks` (a hard delete of an owner-only page) are read: see `markedCase`.
  */
 const MAIN: readonly Fixture[] = [
   { source: 'default', slug: 'notes/open' },
@@ -253,6 +253,24 @@ const openedCase = (r: Reader) => async (engine: BrainEngine, backend: ParityBac
   return view;
 };
 
+/**
+ * The owner-only page `vault:notes/vault` is hard-deleted while its source is owner-only, then the source stops being
+ * owner-only: the concept synthesized from it stays hidden, because the delete recorded it in `owner_only_marks`
+ * (`owner_only_marks.rs`) before the page's `concept-provenance` link went. Every other open page keeps reading.
+ */
+const markedCase = (r: Reader) => async (engine: BrainEngine, backend: ParityBackend) => {
+  const seeded = await seedBrain(engine, backend);
+  await engine.deletePage('notes/vault', { sourceId: 'vault' });
+  await engine.updateSourceConfig('vault', { owner_only: false });
+  const view = await inBrainScope(backend, () => r.run(engine, seeded, { excludePrivate: true }));
+  const concept = 'default:concepts/from-vault';
+  // A member that names the concept must not return it; a member that names the open page must still return it, so the
+  // case never passes on a read that refuses everything.
+  if (r.universe.includes(concept)) expect(view).not.toContain(concept);
+  if (r.universe.includes('default:notes/open')) expect(view.some((v) => v.startsWith('default:notes/open'))).toBe(true);
+  return view;
+};
+
 describe('private pages, owner-only pages and other sources across the reads and embeddings members', () => {
   // Each case names its member as a literal: the coverage list reads the declarations from the source.
   parityTest('searchVector: without excludePrivate it reads the private, owner-only and other-source pages alike', { methods: ['searchVector'] }, plainCase(reader('searchVector')));
@@ -295,6 +313,17 @@ describe('private pages, owner-only pages and other sources across the reads and
   parityTest('getEffectiveDates: excludePrivate in a served brain hides the private, owner-only and derived pages and keeps the other source', { methods: ['getEffectiveDates'] }, servedCase(reader('getEffectiveDates')));
   parityTest('getEffectiveDates: excludePrivate outside an engine scope hides every page of a brain that holds an owner-only source', { methods: ['getEffectiveDates'] }, closedCase(reader('getEffectiveDates')));
   parityTest('getEffectiveDates: excludePrivate in a brain whose owner-only source was opened hides the private pages and nothing else', { methods: ['getEffectiveDates'] }, openedCase(reader('getEffectiveDates')));
+
+  parityTest('searchVector: a concept stays hidden after its owner-only input page is hard-deleted and its source is opened', { methods: ['searchVector', 'deletePage', 'updateSourceConfig'] }, markedCase(reader('searchVector')));
+  parityTest('getBacklinkCounts: a concept stays hidden after its owner-only input page is hard-deleted and its source is opened', { methods: ['getBacklinkCounts', 'deletePage', 'updateSourceConfig'] }, markedCase(reader('getBacklinkCounts')));
+  parityTest('getAdjacencyBoosts: a concept stays hidden after its owner-only input page is hard-deleted and its source is opened', { methods: ['getAdjacencyBoosts', 'deletePage', 'updateSourceConfig'] }, markedCase(reader('getAdjacencyBoosts')));
+  parityTest('supersedingPageSlugs: a concept stays hidden after its owner-only input page is hard-deleted and its source is opened', { methods: ['supersedingPageSlugs', 'deletePage', 'updateSourceConfig'] }, markedCase(reader('supersedingPageSlugs')));
+  parityTest('resolveAliases: a concept stays hidden after its owner-only input page is hard-deleted and its source is opened', { methods: ['resolveAliases', 'deletePage', 'updateSourceConfig'] }, markedCase(reader('resolveAliases')));
+  parityTest('aliasCanonicalRefs: a concept stays hidden after its owner-only input page is hard-deleted and its source is opened', { methods: ['aliasCanonicalRefs', 'deletePage', 'updateSourceConfig'] }, markedCase(reader('aliasCanonicalRefs')));
+  parityTest('getSalienceScores: a concept stays hidden after its owner-only input page is hard-deleted and its source is opened', { methods: ['getSalienceScores', 'deletePage', 'updateSourceConfig'] }, markedCase(reader('getSalienceScores')));
+  parityTest('getContentFlagsByPageIds: a concept stays hidden after its owner-only input page is hard-deleted and its source is opened', { methods: ['getContentFlagsByPageIds', 'deletePage', 'updateSourceConfig'] }, markedCase(reader('getContentFlagsByPageIds')));
+  parityTest('getUnverifiedExtractionPageIds: a concept stays hidden after its owner-only input page is hard-deleted and its source is opened', { methods: ['getUnverifiedExtractionPageIds', 'deletePage', 'updateSourceConfig'] }, markedCase(reader('getUnverifiedExtractionPageIds')));
+  parityTest('getEffectiveDates: a concept stays hidden after its owner-only input page is hard-deleted and its source is opened', { methods: ['getEffectiveDates', 'deletePage', 'updateSourceConfig'] }, markedCase(reader('getEffectiveDates')));
 
   // The owner-only rule follows a page by id and source, not by slug: a rename or an alias does not move a vault page out of it.
   parityTest(
