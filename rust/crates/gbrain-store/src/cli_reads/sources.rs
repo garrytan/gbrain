@@ -47,25 +47,38 @@ struct PageLiveness {
 }
 
 /// Calls `f` with the source of each live page under `prefix` until it returns false.
-fn scan_live_pages(read: &dyn KvRead, prefix: &[u8], f: &mut dyn FnMut(&str) -> bool) -> Result<()> {
+fn scan_live_pages(
+    read: &dyn KvRead,
+    prefix: &[u8],
+    f: &mut dyn FnMut(&str) -> bool,
+) -> Result<()> {
     let mut failure = None;
-    scan_prefix(read, prefix, false, &mut |_, v| match serde_json::from_slice::<PageLiveness>(v) {
-        Ok(page) if page.deleted_at_us.is_none() => f(&page.source_id),
-        Ok(_) => true,
-        Err(e) => {
-            failure = Some(e.into());
-            false
-        }
-    })?;
+    scan_prefix(
+        read,
+        prefix,
+        false,
+        &mut |_, v| match serde_json::from_slice::<PageLiveness>(v) {
+            Ok(page) if page.deleted_at_us.is_none() => f(&page.source_id),
+            Ok(_) => true,
+            Err(e) => {
+                failure = Some(e.into());
+                false
+            }
+        },
+    )?;
     failure.map_or(Ok(()), Err)
 }
 
 fn default_has_live_pages(read: &dyn KvRead) -> Result<bool> {
     let mut found = false;
-    scan_live_pages(read, &keys::text(keys::PAGE, &[DEFAULT_SOURCE, ""]), &mut |_| {
-        found = true;
-        false
-    })?;
+    scan_live_pages(
+        read,
+        &keys::text(keys::PAGE, &[DEFAULT_SOURCE, ""]),
+        &mut |_| {
+            found = true;
+            false
+        },
+    )?;
     Ok(found)
 }
 

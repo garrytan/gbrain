@@ -20,7 +20,8 @@ fn source(store: &Store, id: &str, local_path: Option<&str>, config: serde_json:
 
 fn page(store: &Store, source_id: &str, slug: &str) {
     let input: PageInput =
-        serde_json::from_value(json!({"type": "note", "title": slug, "compiled_truth": "body"})).unwrap();
+        serde_json::from_value(json!({"type": "note", "title": slug, "compiled_truth": "body"}))
+            .unwrap();
     let options: PutPageOptions = serde_json::from_value(json!({"sourceId": source_id})).unwrap();
     store.put_page(slug, &input, &options).unwrap();
 }
@@ -43,7 +44,10 @@ fn an_empty_brain_has_no_local_paths_one_routing_row_and_no_pages() {
     assert_eq!(rows[0].id, "default");
     assert_eq!(rows[0].local_path, None);
     assert!(!rows[0].archived);
-    assert_eq!(serde_json::to_value(&rows[0].config).unwrap(), json!({"federated": true}));
+    assert_eq!(
+        serde_json::to_value(&rows[0].config).unwrap(),
+        json!({"federated": true})
+    );
     assert!(!rows[0].default_has_pages);
     assert_eq!(store.count_default_source_split().unwrap(), split(0, 0, 0));
 }
@@ -70,7 +74,12 @@ fn local_path_sources_keep_archived_rows_and_skip_sources_without_a_path() {
 fn routing_rows_carry_config_archived_and_whether_default_has_a_live_page() {
     let dir = TempDir::new("cli-src-routing");
     let store = open(&dir);
-    source(&store, "wiki", Some("/w/wiki"), json!({"role": "storage_manifest"}));
+    source(
+        &store,
+        "wiki",
+        Some("/w/wiki"),
+        json!({"role": "storage_manifest"}),
+    );
     source(&store, "old", None, json!({}));
     assert!(store.set_source_archived("old", true).unwrap());
     page(&store, "wiki", "notes/a");
@@ -84,10 +93,22 @@ fn routing_rows_carry_config_archived_and_whether_default_has_a_live_page() {
         ])
     );
     page(&store, "default", "notes/d");
-    assert!(store.list_source_routing_rows().unwrap().iter().all(|r| r.default_has_pages));
+    assert!(
+        store
+            .list_source_routing_rows()
+            .unwrap()
+            .iter()
+            .all(|r| r.default_has_pages)
+    );
     // A soft-deleted page is not live.
     store.soft_delete_page("notes/d", Some("default")).unwrap();
-    assert!(store.list_source_routing_rows().unwrap().iter().all(|r| !r.default_has_pages));
+    assert!(
+        store
+            .list_source_routing_rows()
+            .unwrap()
+            .iter()
+            .all(|r| !r.default_has_pages)
+    );
 }
 
 #[test]

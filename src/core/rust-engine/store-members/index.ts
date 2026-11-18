@@ -40,6 +40,8 @@ import * as transactions from './transactions.ts';
 import * as relations from './relations.ts';
 import * as cliSources from './cli-sources.ts';
 import * as cliReadsImport from './cli-reads-import.ts';
+import * as cliReadsOps from './cli-reads-ops.ts';
+import * as cliReadsSearchPages from './cli-reads-search-pages.ts';
 import * as wantedLinks from './wanted-links.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 
@@ -58,7 +60,7 @@ export const STORE_MEMBERS = {
   // Typed reads that replace raw SQL in CLI paths (rust/crates/gbrain-store/src/cli_reads/).
   ...cliSources,
   // Typed reads that CLI paths ran through executeRaw (docs/research/rust-cli-executeraw-map.md).
-  ...cliReadsImport,
+  ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages,
   // The persistence brain identity the store already keeps (rust/docs/store/journal.md).
   ...persistenceIdentity,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
