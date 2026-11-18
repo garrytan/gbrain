@@ -73,6 +73,10 @@ const INTERFACE_METHODS: readonly string[] = [
   // Graph and doctor link reads (engine-sql/link-reads.ts)
   'inboundLinkCoverage', 'listJunkEntityHubs', 'countEntityPages', 'entityGraphCoverage', 'countForeignEdges',
   'listLivePageSummaries', 'countInboundLinks', 'listLinkEndpointPages', 'listPagesTitledIn', 'wordLexemes',
+  // Link temporal state, search-vector maintenance and retrieval coverage (engine-sql/link-temporal.ts, search-vector.ts, retrieval-coverage.ts).
+  'readLinkRelationshipEvidence', 'writeLinkRelationshipState', 'linkRelationshipKeysForPages', 'staleLinkRelationshipKeys', 'linkRelationshipKeysForOrigin', 'applyLinkTemporalRows',
+  'writeManualLinkTransitions', 'removeManualLinkTransitions', 'listRelationshipNoteRows', 'edgeValidityCounts', 'listPageStatusByRef', 'listRecordMetadataRows',
+  'countSearchVectorRows', 'replaceSearchVectorTriggerFunction', 'backfillSearchVectors', 'ensureFactsKeywordIndex', 'countPendingProjectionPages', 'countEmbeddingHeldPages', 'projectionRebuildProgress',
   // Code, doctor, withdrawal, repair and evidence chunk reads (engine-sql/chunk-reads.ts)
   'findCodeDefinitions', 'listSymbolTypesForName', 'findCodeRefChunks', 'countOversizedEmbedSkips', 'countOrphanChunks',
   'countCodeChunkPages', 'codeChunksExist', 'currentCodeChunksExist', 'listQualifiedSymbolNames', 'listWithdrawalChunks',
@@ -200,6 +204,8 @@ const ENGINE_INTERNAL_HELPERS: readonly string[] = [
   'searchRead',
   // Graph and doctor link reads: the unscoped engine-sql executor the link-read methods run through.
   'linkRead',
+  // Link temporal state, search-vector and retrieval-coverage members: the unscoped engine-sql executor they run through.
+  'linkTemporal',
   // Code, doctor, withdrawal, repair and evidence chunk reads: the unscoped engine-sql executor they run through.
   'chunkRead',
   // Timeline site reads: the unscoped engine-sql executor they run through.

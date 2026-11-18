@@ -358,13 +358,7 @@ export async function readPageStatusByRef(engine: BrainEngine, refs: Array<{ sou
   scope: { excludePrivate: boolean; includeQuarantined?: boolean }): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   if (!refs.length) return out;
-  const priv = scope.excludePrivate ? ` AND ${privatePagesFilterForCaller('p')}` : '';
-  const quarantine = scope.includeQuarantined ? '' : ` AND ${quarantineFilterFragment('p')}`;
-  const rows = await engine.executeRaw<{ source_id: string; slug: string; status: unknown }>(
-    `SELECT p.source_id, p.slug, p.frontmatter->'status' AS status
-       FROM pages p JOIN unnest($1::text[], $2::text[]) AS u(s, g) ON p.source_id = u.s AND p.slug = u.g
-      WHERE p.deleted_at IS NULL AND p.frontmatter ? 'status'${priv}${quarantine}`,
-    [refs.map(r => r.source_id), refs.map(r => r.slug)]);
+  const rows = await engine.listPageStatusByRef(refs, scope);
   for (const row of rows) {
     const value = pageStatusValue(row.status);
     if (value) out.set(`${row.source_id}:${row.slug}`, value);
@@ -385,20 +379,9 @@ export async function readRecordMetadata(engine: BrainEngine, pageIds: number[],
   scope: Pick<ReferrerScope, 'referrerSources' | 'excludePrivate' | 'includeQuarantined'>): Promise<Map<number, RecordMetadata>> {
   const out = new Map<number, RecordMetadata>();
   if (!pageIds.length) return out;
-  const linkPriv = scope.excludePrivate ? ` AND ${privateLinkOriginFilterForCaller('l')}` : '';
-  const targetPriv = scope.excludePrivate ? ` AND ${privatePagesFilterForCaller('t')}` : '';
-  const targetQuarantine = scope.includeQuarantined ? '' : ` AND ${quarantineFilterFragment('t')}`;
-  const [status, links] = await Promise.all([
-    engine.executeRaw<{ id: number; status: unknown }>(`SELECT id, frontmatter->'status' AS status FROM pages WHERE id = ANY($1::int[])`, [pageIds]),
-    engine.executeRaw<{ from_id: number; slug: string; link_type: string; since: string | null }>(
-      `SELECT DISTINCT l.from_page_id AS from_id, t.slug, l.link_type,
-              CASE WHEN l.link_type = 'amends' THEN to_char(r.first_start, 'YYYY-MM-DD') END AS since
-         FROM links l JOIN pages t ON t.id = l.to_page_id AND t.deleted_at IS NULL AND t.source_id = ANY($3::text[])${targetPriv}${targetQuarantine}
-         LEFT JOIN link_relationships r ON r.from_page_id = l.from_page_id AND r.to_page_id = l.to_page_id
-              AND r.link_type = l.link_type AND r.scope = $2
-        WHERE l.from_page_id = ANY($1::int[]) AND l.link_type IN ('amends', 'supersedes')${linkPriv}
-        ORDER BY l.from_page_id, t.slug`, [pageIds, scope.excludePrivate ? 'world' : 'all', scope.referrerSources]).catch(() => []),
-  ]);
+  const { status, links } = await engine.listRecordMetadataRows(pageIds, {
+    referrerSources: scope.referrerSources, excludePrivate: scope.excludePrivate, includeQuarantined: scope.includeQuarantined,
+  });
   for (const row of status) {
     const value = pageStatusValue(row.status);
     if (value) out.set(Number(row.id), { page_status: value });

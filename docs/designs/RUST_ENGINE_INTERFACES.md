@@ -153,6 +153,7 @@ Reserved tags:
 | raw_files | `r` | `RAW_FILES` | yes |
 | link_queries | `q` | `LINK_QUERIES` | no |
 | wanted_links | `q`, sub-tag `W` (shared with link_queries) | `LINK_QUERIES` | yes |
+| link_temporal | `q`, sub-tags `R` and `T` (shared with link_queries) | `LINK_QUERIES` | yes |
 | timeline_queries | `u` | `TIMELINE_QUERIES` | no |
 | keyword | `R` | `TRIGRAM` | no |
 | chunk_queries | `c` | `CHUNK_QUERIES` | no |
@@ -187,8 +188,9 @@ in its module header:
 change to this table and to `keys.rs`.
 
 The `q` tag is shared. link_queries and wanted_links both key records as `q <source id> 0x00 ...`; the byte after
-`0x00` is `W` for a wanted_links record (`q <origin source id> 0x00 W <origin page id BE8> ...`), and link_queries
-uses any other byte. `keys::LINK_QUERIES` stays the one constant for both; neither family adds a tag.
+`0x00` is `W` for a wanted_links record (`q <origin source id> 0x00 W <origin page id BE8> ...`), `R` for a
+link_temporal relationship state row and `T` for a link_temporal transition row, and link_queries uses any other byte.
+`keys::LINK_QUERIES` stays the one constant for all three; no family adds a tag.
 
 code_edges keeps a chunk index under its own tag `H`, after its row sub-tags `0x01` to `0x06`, because the chunk
 store keys chunks by page and index, not by id:
@@ -1082,6 +1084,18 @@ engine refuses.
 - **Source delete:** no hook of its own. `link_queries::remove_source_rows` deletes the whole `q <source> 0x00`
   prefix, these records included.
 - **Postgres tables:** `wanted_links`.
+
+### link_temporal
+
+Link temporal state: the `link_transitions` and `link_relationships` rows of temporal link types, the keyword index
+rebuild counts and the retrieval coverage counts. Detail: `rust/docs/store/link_temporal.md`.
+
+- **Files:** `gbrain-store/src/link_queries/link_temporal.rs`, `gbrain-napi/src/families/link_temporal.rs`, `store-members/link-temporal.ts`, `store-members/link-refresh.ts`.
+- **Tag:** `q` (`LINK_QUERIES`), sub-tags `R` and `T`, shared with link_queries. Cascade on page delete: yes (`remove_page_rows` drops the rows whose from, to or origin page it is).
+- **Keys:** `q <source> 0x00 R <from BE8> <to BE8> <link_type> 0x00 <scope>` (state row) and `q <source> 0x00 T <from BE8> <to BE8> <link_type> 0x00 <id BE8>` (transition); counter `M link_transition_id`.
+- **Members (19), capability:** `links` (12), `keyword_search` (4, a no-op under `english`), `health` (3; `countPendingProjectionPages` and `projectionRebuildProgress` refuse).
+- **Postgres tables:** `link_transitions`, `link_relationships`, `links.assertion_tense`; SQL in `src/core/engine-sql/link-temporal.ts`, `search-vector.ts`, `retrieval-coverage.ts`.
+- **Parity cases:** `test/engine-parity/link-temporal.test.ts`.
 
 ### timeline_queries
 

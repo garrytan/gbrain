@@ -13,16 +13,22 @@
  * unexported.
  *
  * The store models the source filter and the live test of the read policy (src/core/search/read-policy-sql.ts). A
- * privacy, trust, flag, safe-chunk or temporal policy refuses with `engine_capability_missing`, as does a derived-link
- * option that needs state the store does not keep (wanted pages, line-grammar ranges, temporal evidence). See
- * rust/docs/store/link_queries.md.
+ * privacy, trust, flag, safe-chunk or temporal policy refuses with `engine_capability_missing`. A derived-link
+ * replacement serves every option PGLite takes: the origin snapshot and the line-grammar generation are checked before
+ * the store call, and the wanted pages and the origin's temporal evidence (link-temporal-apply.ts) are written after it,
+ * as separate store calls. See rust/docs/store/link_queries.md and rust/docs/store/link_temporal.md.
  */
 import {
-  DerivedLinkEndpointChangedError, DerivedLinkRepairRequiredError,
+  DerivedLinkEndpointChangedError, DerivedLinkRepairRequiredError, DerivedLinkSettingsChangedError,
   type DerivedLinkBatchItem, type DerivedLinkOrigin, type DerivedLinkReplacementOptions,
 } from '../../derived-links.ts';
+import { sanitizeForJsonb } from '../../batch-rows.ts';
+import { effectiveRangesEnabled, LINK_EXTRACTION_GENERATION_KEY } from '../../line-grammar.ts';
+import type { RelationshipKey } from '../../link-relationships.ts';
+import { applyTemporalEvidence } from '../../link-temporal-apply.ts';
+import { possibleWantedRows } from '../../wanted-links-store.ts';
 import type { LinkBatchInput } from '../../engine.ts';
-import { PageRevisionConflictError } from '../../page-state/types.ts';
+import { assertPageRevision, PageRevisionConflictError, type PageSnapshot } from '../../page-state/types.ts';
 import type {
   AdjacencyRow, ChainHopEdge, ChainHopOpts, PageReadPolicy, PageReadScope, RelationalFanoutOpts, RelationalFanoutRow,
 } from '../../types.ts';
@@ -33,6 +39,10 @@ import type { EntityTypeFilter } from '../../schema-pack/entity-types.ts';
 import { mapStoreError, storeErrorCode } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { getConfig } from './config.ts';
+import { linkRelationshipKeysTouching, refreshOnStore, temporalStore } from './link-refresh.ts';
+import { readPageSnapshot } from './pages.ts';
+import { lockRegisteredSourceIds, replaceWantedLinkRows } from './wanted-links.ts';
 import { storePagePolicy } from './private-provenance.ts';
 
 /** The read-policy keys the store models: the source filter. */
@@ -109,11 +119,14 @@ function derivedLinkRows(origin: DerivedLinkOrigin, links: LinkBatchInput[], opt
   return { producers, rows: [...unique.values()] };
 }
 
-/** One origin as the store reads it, after the options the store cannot honour refused. */
+/**
+ * One origin as the store reads it. `lineGrammar`, `wanted` and `temporalBody` are applied around the store call
+ * (prepareDerived, finishDerived); `semanticsPrimed` changes nothing here, since the relation semantics live in this
+ * process.
+ */
 function derivedItem(member: string, origin: DerivedLinkOrigin, links: LinkBatchInput[], opts: DerivedLinkReplacementOptions | undefined) {
-  const options = takeOptions(member, opts, ['includeFrontmatter', 'preserveExisting', 'includeLegacyNullProducer', 'expectedEndpoints'],
-    ['semanticsPrimed']) as DerivedLinkReplacementOptions;
-  if (origin.snapshot !== undefined) refuseMember(member, 'a caller-read origin snapshot');
+  const options = takeOptions(member, opts, ['includeFrontmatter', 'preserveExisting', 'includeLegacyNullProducer', 'expectedEndpoints',
+    'lineGrammar', 'wanted', 'temporalBody'], ['semanticsPrimed']) as DerivedLinkReplacementOptions;
   const { producers, rows } = derivedLinkRows(origin, links, opts ?? {});
   return {
     origin: { slug: origin.slug, sourceId: origin.sourceId, expectedRevision: origin.expectedRevision ?? undefined, sourceIncarnation: origin.sourceIncarnation },
@@ -140,6 +153,50 @@ const DERIVED_ERRORS: Record<string, () => Error> = {
 
 type Counts = { created: number; removed: number };
 
+/** The origin read and its relationship keys, taken before the store call; null when there is no origin to publish. */
+type Prepared = { snapshot: PageSnapshot; keysBefore: RelationshipKey[] };
+
+/**
+ * The checks PGLite runs under its guards before publishing (derived-links.ts): the line-grammar generation, then the
+ * origin read (the caller's snapshot or a fresh one) against the expected revision and incarnation. The store checks
+ * the origin again inside its call. Also reads the origin's relationship keys before the write.
+ */
+async function prepareDerived(brain: StoreBrain, origins: DerivedLinkOrigin[], opts: Array<DerivedLinkReplacementOptions | undefined>): Promise<Prepared[]> {
+  if (opts.some(o => o?.lineGrammar)) {
+    const generation = await getConfig(brain, LINK_EXTRACTION_GENERATION_KEY);
+    if (opts.some(o => o?.lineGrammar && o.lineGrammar.generation !== (generation ?? null))) throw new DerivedLinkSettingsChangedError();
+  }
+  const temporal = temporalStore(brain);
+  const prepared: Prepared[] = [];
+  for (const origin of origins) {
+    const snapshot = origin.snapshot !== undefined ? origin.snapshot : await readPageSnapshot(brain, origin.slug, { sourceId: origin.sourceId });
+    assertPageRevision(snapshot, { expectedRevision: origin.expectedRevision });
+    if (!snapshot || snapshot.sourceIncarnation !== origin.sourceIncarnation || snapshot.page.deleted_at) {
+      throw new Error('Derived link origin changed or was deleted');
+    }
+    prepared.push({ snapshot, keysBefore: await temporal.linkRelationshipKeysForOrigin(Number(snapshot.page.id)) });
+  }
+  return prepared;
+}
+
+/** After the store call: the origin's wanted pages, then its temporal evidence and relationship state. */
+async function finishDerived(brain: StoreBrain, prepared: Prepared, item: ReturnType<typeof derivedItem>, opts: DerivedLinkReplacementOptions | undefined): Promise<void> {
+  const { snapshot, keysBefore } = prepared;
+  const pageId = Number(snapshot.page.id);
+  const sourceId = item.origin.sourceId;
+  const wanted = opts?.wanted;
+  if (wanted?.producers.length) {
+    if (!wanted.readAt && wanted.rows.some(row => row.ref_kind === 'name')) {
+      throw new Error('replaceWantedLinks: name rows need the readAt taken before the extraction read');
+    }
+    const rows = (await possibleWantedRows({ lockRegisteredSourceIds: ids => lockRegisteredSourceIds(brain, ids) }, sourceId,
+      wanted.rows.filter(row => wanted.producers.includes(row.producer)))).map(row => ({ ...row, context: sanitizeForJsonb(row.context) }));
+    await replaceWantedLinkRows(brain, { pageId, sourceId }, { rows, producers: wanted.producers, readAt: wanted.readAt });
+  }
+  const inlineRanges = opts?.lineGrammar ? opts.lineGrammar.effectiveRanges : await effectiveRangesEnabled({ getConfig: key => getConfig(brain, key) });
+  await applyTemporalEvidence(temporalStore(brain), snapshot.page, item.rows, keysBefore, { inlineRanges, body: opts?.temporalBody });
+}
+
 /** One store call for every origin (one transaction); a rejection maps onto the error the SQL engines throw. */
 async function publish(brain: StoreBrain, member: string, origins: DerivedLinkOrigin[], items: ReturnType<typeof derivedItem>[]): Promise<Counts[]> {
   try {
@@ -165,7 +222,9 @@ async function publish(brain: StoreBrain, member: string, origins: DerivedLinkOr
 export const replaceDerivedLinks: StoreMember<[origin: DerivedLinkOrigin, links: LinkBatchInput[], opts?: DerivedLinkReplacementOptions], Counts> =
   async (brain, origin, links, opts) => {
     const item = derivedItem('replaceDerivedLinks', origin, links, opts);
+    const [prepared] = await prepareDerived(brain, [origin], [opts]);
     const [result] = await publish(brain, 'replaceDerivedLinks', [origin], [item]);
+    await finishDerived(brain, prepared!, item, opts);
     return result!;
   };
 
@@ -173,7 +232,10 @@ export const replaceDerivedLinksBatch: StoreMember<[items: readonly DerivedLinkB
   async (brain, items) => {
     const wire = items.map(item => derivedItem('replaceDerivedLinksBatch', item.origin, item.links, item.opts));
     if (!wire.length) return [];
-    return publish(brain, 'replaceDerivedLinksBatch', items.map(item => item.origin), wire);
+    const prepared = await prepareDerived(brain, items.map(item => item.origin), items.map(item => item.opts));
+    const results = await publish(brain, 'replaceDerivedLinksBatch', items.map(item => item.origin), wire);
+    for (const [i, item] of items.entries()) await finishDerived(brain, prepared[i]!, wire[i]!, item.opts);
+    return results;
   };
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -187,7 +249,10 @@ export const removeLinksByPagesAndSource: StoreMember<[pages: Array<{ slug: stri
     if (pages.length === 0) return 0;
     const options = takeOptions('removeLinksByPagesAndSource', opts, ['linkSource', 'keepTypedNerPairs']);
     const wire = pages.map(p => ({ slug: p.slug, source_id: p.source_id }));
-    return storeCall({ member: 'removeLinksByPagesAndSource' }, () => brain.removeLinksByPagesAndSource(wire, options));
+    const before = await linkRelationshipKeysTouching(brain, 'removeLinksByPagesAndSource', { fromPages: wire });
+    const removed: number = await storeCall({ member: 'removeLinksByPagesAndSource' }, () => brain.removeLinksByPagesAndSource(wire, options));
+    if (removed) await refreshOnStore(brain, before);
+    return removed;
   };
 
 export const listLinkSources: StoreMember<[opts?: { sourceId?: string; sourceIds?: string[] }], Array<{ link_source: string | null; count: number }>> =
