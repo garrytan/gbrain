@@ -565,6 +565,34 @@ describe('engine parity: search', () => {
   );
 
   parityTest(
+    'searchKeywordChunks ignores keywordPhrase, as both SQL engines do, while searchKeyword ranks by it',
+    { methods: ['searchKeyword', 'searchKeywordChunks'] },
+    async (engine) => {
+      await seedPage(engine, {
+        slug: 'notes/comet-tail',
+        input: { type: 'note', title: 'Comet tail', compiled_truth: 'x', timeline: '' },
+        chunks: [chunk(0, 'tail of the bright comet, then the tail again and the tail once more')],
+      });
+      await seedPage(engine, {
+        slug: 'notes/comet-phrase',
+        input: { type: 'note', title: 'Comet phrase', compiled_truth: 'x', timeline: '' },
+        chunks: [chunk(0, 'the comet tail glowed')],
+      });
+      const view = (rows: SearchResult[]) => rows.map((r) => ({ slug: r.slug, chunk_index: r.chunk_index, score: round(r.score) }));
+      const q = 'comet tail';
+      const out = {
+        chunks: view(await engine.searchKeywordChunks(q, { limit: 10 })),
+        chunksPhrase: view(await engine.searchKeywordChunks(q, { limit: 10, keywordPhrase: true })),
+        keyword: view(await engine.searchKeyword(q, { limit: 10 })),
+        keywordPhrase: view(await engine.searchKeyword(q, { limit: 10, keywordPhrase: true })),
+      };
+      expect(out.chunksPhrase).toEqual(out.chunks);
+      expect(out.keywordPhrase).not.toEqual(out.keyword);
+      return out;
+    },
+  );
+
+  parityTest(
     'searchKeywordChunks applies the page filters type, types, where and exclude_slugs, as Postgres does',
     { methods: ['searchKeywordChunks'] },
     async (engine) => {

@@ -85,7 +85,8 @@ function keywordOptions(member: Member, query: string, opts: (SearchOpts & { tim
     if (key === 'limit' || key === 'offset') continue;
     if ((VISIBILITY as readonly string[]).includes(key)) continue;
     if (key === 'timeoutMs' && member === 'countKeywordPages') continue;
-    if ((PAGE_FILTERS as readonly string[]).includes(key) || (pageGrain && key === 'keywordPhrase')) continue;
+    // keywordPhrase: searchKeywordChunks ignores it, as both SQL statements rank without the phrase factor.
+    if ((PAGE_FILTERS as readonly string[]).includes(key) || key === 'keywordPhrase') continue;
     refuseMember(member, `option ${key}`);
   }
 

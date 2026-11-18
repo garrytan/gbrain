@@ -34,7 +34,7 @@ test/engine-parity/private-page-reads.test.ts	4	0
 test/engine-parity/raw-sql.test.ts	0	4
 test/engine-parity/retrieval-coverage.test.ts	10	1
 test/engine-parity/search-reads.test.ts	12	2
-test/engine-parity/search.test.ts	15	2
+test/engine-parity/search.test.ts	16	2
 test/engine-parity/segmented-body.test.ts	15	0
 test/engine-parity/source-resolver-reads.test.ts	11	0
 test/engine-parity/stats-vectors.test.ts	2	0
