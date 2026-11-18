@@ -16,8 +16,8 @@ use crate::Store;
 use crate::env::{iso, parse_iso};
 use crate::error::{INVALID_ARGUMENT, Result, StoreError};
 use crate::facts::{
-    COUNTER, FactRecord, check_row, entity_rows, hidden_by_deleted_page, real, require_fact_source,
-    source_rows, stint_holder, write_fact,
+    COUNTER, FactRecord, PrivacyPolicy, check_row, entity_rows, hidden_by_deleted_page,
+    hidden_by_policy, real, require_fact_source, source_rows, stint_holder, write_fact,
 };
 use crate::kv::{KvRead, KvWrite};
 use crate::links::no_nul;
@@ -62,6 +62,9 @@ pub struct OntologyQuery {
     pub include_quarantined: bool,
     pub visibility: Option<Vec<String>>,
     pub exclude_diary: bool,
+    /// `excludePrivate`: `privateFactFilterForReader('facts')`, which is the facts policy
+    /// (`facts/privacy.rs`) for the callers the TypeScript member serves.
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 fn invalid(message: String) -> StoreError {
@@ -124,8 +127,9 @@ impl OntologyQuery {
     }
 
     /// The page gates and filters getOntology and findOntologyConflicts share: a soft-deleted
-    /// provenance or entity page, a `life/diary/` provenance under `exclude_diary`, the visibility
-    /// list and the confidence floor.
+    /// provenance or entity page, the private-provenance policy under `exclude_private`, a
+    /// `life/diary/` provenance under `exclude_diary`, the visibility list and the confidence
+    /// floor.
     fn admits(&self, read: &dyn KvRead, r: &FactRecord) -> Result<bool> {
         if f64::from(r.confidence) < self.min_confidence || self.min_confidence.is_nan() {
             return Ok(false);
@@ -145,7 +149,7 @@ impl OntologyQuery {
         {
             return Ok(false);
         }
-        Ok(!hidden_by_deleted_page(read, r)?)
+        Ok(!hidden_by_deleted_page(read, r)? && !hidden_by_policy(read, r, &self.exclude_private)?)
     }
 }
 

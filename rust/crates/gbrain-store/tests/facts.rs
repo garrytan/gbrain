@@ -659,3 +659,86 @@ fn unattributed_facts_list_active_rows_with_no_entity_newest_first() {
     assert_eq!(facts(&list(false, 1.0, 1.0).unwrap()), ["u-private"]);
     assert_eq!(list(false, -1.0, 0.0).unwrap_err().code, INVALID_ARGUMENT);
 }
+
+#[test]
+fn exclude_private_hides_rows_the_private_provenance_policy_hides() {
+    let b = brain("facts-private-provenance");
+    let pages = [
+        ("notes/open", "note", json!({})),
+        ("notes/private", "note", json!({ "visibility": "private" })),
+        (
+            "notes/readers",
+            "note",
+            json!({ "readable_by": ["alice-example"] }),
+        ),
+        (
+            "notes/alias",
+            "note",
+            json!({ "confidentiality": " Secret\t" }),
+        ),
+        (
+            "atoms/origin-private",
+            "atom",
+            json!({ "visibility": "world", "source_slug": "notes/private" }),
+        ),
+        (
+            "notes/lineage",
+            "note",
+            json!({ "derived_from": "notes/private.md" }),
+        ),
+        (
+            "people/private-entity",
+            "person",
+            json!({ "visibility": "private" }),
+        ),
+    ];
+    for (slug, kind, frontmatter) in pages {
+        let page: gbrain_store::pages::PageInput = args(json!({
+            "type": kind, "title": slug, "compiled_truth": "x", "frontmatter": frontmatter }));
+        b.put_page(slug, &page, &args(json!({}))).unwrap();
+    }
+    let rows: Vec<Value> = pages_rows(&[
+        ("notes/open", "subject"),
+        ("notes/private", "subject"),
+        ("notes/readers", "subject"),
+        ("notes/alias", "subject"),
+        ("atoms/origin-private", "subject"),
+        ("notes/lineage", "subject"),
+        ("notes/no-page", "subject"),
+        ("notes/open", "people/private-entity"),
+    ]);
+    batch(&b, Value::Array(rows));
+    let all = by_entity(&b, "subject", json!({}));
+    assert_eq!(all.len(), 7);
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true });
+    let kept = by_entity(&b, "subject", json!({ "excludePrivate": policy }));
+    let mut kept = facts(&kept);
+    kept.sort_unstable();
+    assert_eq!(kept, ["notes/no-page", "notes/open"]);
+    let no_alias = by_entity(
+        &b,
+        "subject",
+        json!({ "excludePrivate": { "honorAliases": false, "entityPrivacy": true } }),
+    );
+    assert!(facts(&no_alias).contains(&"notes/alias"));
+    let entity = |entity_privacy: bool| {
+        facts(&by_entity(
+            &b,
+            "people/private-entity",
+            json!({ "excludePrivate": { "honorAliases": true, "entityPrivacy": entity_privacy } }),
+        ))
+        .len()
+    };
+    assert_eq!(entity(true), 0);
+    assert_eq!(entity(false), 1);
+}
+
+fn pages_rows(rows: &[(&str, &str)]) -> Vec<Value> {
+    rows.iter()
+        .enumerate()
+        .map(|(i, (slug, entity))| {
+            json!({ "row_num": i + 1, "source_markdown_slug": slug, "fact": slug,
+                    "entity_slug": entity, "source": "fence", "visibility": "world" })
+        })
+        .collect()
+}

@@ -5,8 +5,9 @@
  * Each member applies the defaults of src/core/pglite-engine.ts, then makes one store call. mergeOntologyFact
  * normalises the dimension, computes the value hash, the default status and the fact text here, with the helpers
  * PGLite uses (src/core/chronicle/ontology.ts). Times go to the store as ISO text. What the store cannot answer exactly
- * refuses with `engine_capability_missing`: `excludePrivate` (the private-page reader filter) and a time in a text
- * form other than an ISO date or date-time, which Postgres would read by its own rules.
+ * refuses with `engine_capability_missing`: `excludePrivate` for a caller other than the one the store's policy models
+ * (private-provenance.ts) and a time in a text form other than an ISO date or date-time, which Postgres would read by
+ * its own rules.
  *
  * Export only BrainEngine members from this file, each a `StoreMember` named after the member it serves (see tags.ts):
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served.
@@ -16,6 +17,8 @@ import type { OntologyReadOpts } from '../../types.ts';
 import { isNovelDimension, normalizeDimension, valueHash } from '../../chronicle/ontology.ts';
 import { ensureWellFormed } from '../../text-safe.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { storePrivacyPolicy } from './private-provenance.ts';
+import { privateFactFilterForReader } from '../../search/private-visibility.ts';
 import { withDates } from '../store-codec.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
@@ -69,14 +72,15 @@ function scopeOf(o: { sourceId?: string; sourceIds?: string[] }): string[] | und
   return o.sourceId == null ? undefined : [o.sourceId];
 }
 
-/** The page gates, visibility list and confidence floor getOntology and findOntologyConflicts share. */
+/** The page gates, private-provenance policy, visibility list and confidence floor getOntology and findOntologyConflicts share. */
 function readFilters(member: string, o: OntologyReadOpts): Record<string, unknown> {
-  if (o.excludePrivate === true) refuseMember(member, 'excludePrivate');
   return {
     sourceIds: scopeOf(o),
     minConfidence: floor(o.minConfidence ?? 0),
     visibility: o.visibility == null ? undefined : [...o.visibility],
     excludeDiary: o.excludeDiary === true,
+    // pglite-engine.ts getOntology / findOntologyConflicts: `privateFactFilterForReader('facts')`.
+    excludePrivate: storePrivacyPolicy(member, o.excludePrivate, () => privateFactFilterForReader('facts')),
   };
 }
 
