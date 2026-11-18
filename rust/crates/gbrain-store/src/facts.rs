@@ -3,7 +3,9 @@
 //! Members: insertFact, insertFacts, deleteFactsForPage, expireFact, listFactsByEntity,
 //! listFactsSince, listFactsKeyset, listFactsBySession, listSupersessions,
 //! countUnconsolidatedFacts, findCandidateDuplicates, consolidateFact, findTrajectory,
-//! getFactsHealth, migrateFactsToCanonical, and the `listUnattributedFacts` review-list read. Other families read the rows through `fact_exists`
+//! getFactsHealth, migrateFactsToCanonical, the `listUnattributedFacts` review-list read and
+//! the `pageCollapseFacts` search read (`facts/collapse.rs`). Other families read the rows
+//! through `fact_exists`
 //! (eval capture) and write them through `write_fact` / `delete_fact` (ontology).
 //!
 //! Keys (every one starts with `keys::FACT`, `F`; a text part ends with a NUL byte, and no text
@@ -31,6 +33,7 @@
 //! Text: `ILIKE` and `gbrain_fact_normalize` lower-case with `pg_lower` (Postgres `lower()` on a
 //! UTF-8 database); `ILIKE` and `LIKE` read `\` as the escape character.
 
+mod collapse;
 mod embedding;
 mod privacy;
 

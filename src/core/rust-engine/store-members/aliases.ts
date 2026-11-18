@@ -1,16 +1,20 @@
 /**
  * Slug renames, slug aliases, page aliases and contextual retrieval state (BrainEngine updateSlug,
  * resolveSlugWithAlias, resolveSlugWithAliasDetailed, resolveAliases, setPageAliases,
- * updatePageContextualRetrievalState).
+ * updatePageContextualRetrievalState, aliasCanonicalRefs).
  *
- * A privacy, trust or flag filter refuses with `engine_capability_missing`: the store keeps no page visibility. A
+ * aliasCanonicalRefs reads its policy as `pageReadFilter('p', policy, !!policy)` does: the source clause, the live test
+ * and `excludePrivate` through the page policy (private-provenance.ts `storePagePolicy`); a trust floor or flag
+ * suppression refuses, as the store keeps no trust tiers. Elsewhere a privacy, trust or flag filter refuses with
+ * `engine_capability_missing`. A
  * rename moves fact bindings only once the facts family fills its rename hook, and the `none` contextual retrieval
  * tier keeps no vectors to reset (rust/docs/store/aliases.md).
  */
-import type { PageReadScope } from '../../types.ts';
+import type { PageReadPolicy, PageReadScope } from '../../types.ts';
 import { validateSlug, warnOncePerProcess } from '../../utils.ts';
 import type { StoreBrain } from '../store.ts';
-import { storeCall, takeOptions, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { storePagePolicy } from './private-provenance.ts';
 
 type AliasRef = { slug: string; source_id: string };
 type SlugAliasMatch = { canonical_slug: string; source_id: string; matches: number };
@@ -69,4 +73,24 @@ export const updatePageContextualRetrievalState: StoreMember<[slug: string, sour
   async (brain, slug, sourceId, mode, corpusGeneration) => {
     await storeCall({ member: 'updatePageContextualRetrievalState', slug, sourceId }, () =>
       brain.updatePageContextualRetrievalState(slug, sourceId, mode, corpusGeneration ?? null));
+  };
+
+/**
+ * `aliasCanonicalRefs` (engine-sql/search-reads.ts): the refs that are the canonical slug of a `slug_aliases` row and
+ * whose page the policy may read. Hybrid search passes its whole option bag as the policy; the SQL reads only the keys
+ * below of it, so the rest change nothing.
+ */
+export const aliasCanonicalRefs: StoreMember<[refs: AliasRef[], policy?: PageReadPolicy], Array<{ source_id: string; canonical_slug: string }>> =
+  async (brain, refs, policy) => {
+    if (refs.length === 0) return [];
+    if (policy?.minTrust) refuseMember('aliasCanonicalRefs', 'option minTrust');
+    if (policy?.suppressFlagged) refuseMember('aliasCanonicalRefs', 'option suppressFlagged');
+    const sourceIds = policy?.sourceIds?.length ? [...policy.sourceIds] : policy?.sourceId ? [policy.sourceId] : null;
+    const excludePrivate = storePagePolicy('aliasCanonicalRefs', policy?.excludePrivate);
+    return storeCall({ member: 'aliasCanonicalRefs' }, () => brain.aliasCanonicalRefs({
+      refs: refs.map((r) => ({ slug: r.slug, source_id: r.source_id })),
+      source_ids: sourceIds,
+      live: !!policy,
+      exclude_private: excludePrivate ?? null,
+    }));
   };

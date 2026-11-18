@@ -50,13 +50,13 @@ getPage	pages	yes	29	yes	yes	yes	serves
 readPageSnapshot	pages	yes	7	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	127	yes	yes	yes	serves
+putPage	pages	yes	129	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	4	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	34	yes	yes	yes	serves
+softDeletePage	pages	yes	36	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	6	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -87,8 +87,8 @@ searchKeywordChunks	search	yes	1	yes	yes	yes	refuses:keyword_search
 cosinesByChunkIds	search_reads	yes	1	no	yes	yes	refuses:vector_search
 hasSupersedeEdges	search_reads	yes	1	no	yes	yes	refuses:links
 supersedingPageSlugs	search_reads	yes	1	no	yes	yes	refuses:links
-aliasCanonicalRefs	search_reads	yes	1	no	yes	yes	refuses:pages
-pageCollapseFacts	search_reads	yes	1	no	yes	yes	refuses:facts
+aliasCanonicalRefs	search_reads	yes	2	no	yes	yes	serves
+pageCollapseFacts	search_reads	yes	2	no	yes	yes	serves
 slugsEndingIn	search_reads	yes	1	no	yes	yes	refuses:pages
 generatedPagesIn	search_reads	yes	1	no	yes	yes	refuses:pages
 livePageIdsAt	search_reads	yes	1	no	yes	yes	refuses:pages
@@ -226,7 +226,7 @@ getStats	stats_ingest	yes	4	yes	yes	yes	serves
 getHealth	stats_ingest	yes	5	yes	yes	yes	serves
 logIngest	stats_ingest	yes	2	no	yes	yes	serves
 getIngestLog	stats_ingest	yes	2	no	yes	yes	serves
-updateSlug	sync_aliases	yes	9	no	yes	yes	serves
+updateSlug	sync_aliases	yes	10	no	yes	yes	serves
 rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
 resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves

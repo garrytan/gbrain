@@ -3,7 +3,7 @@
 //! `pages.contextual_retrieval_mode` / `pages.corpus_generation` columns.
 //!
 //! Members: updateSlug, resolveSlugWithAlias, resolveSlugWithAliasDetailed, resolveAliases,
-//! setPageAliases, updatePageContextualRetrievalState.
+//! setPageAliases, updatePageContextualRetrievalState, aliasCanonicalRefs.
 //!
 //! Keys (every record starts with `keys::ALIAS`, `k`; text parts are joined with `0x00`):
 //!
@@ -42,6 +42,7 @@
 //! (`facts/privacy.rs`) reads both through [`read_slug_alias`] and [`renamed_to`].
 
 use crate::error::{INVALID_ARGUMENT, Result, StoreError};
+use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::page_columns::PageColumns;
 use crate::pages::{
@@ -94,7 +95,7 @@ pub struct AliasScope {
 }
 
 /// One page an alias resolves to.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AliasRef {
     pub slug: String,
     pub source_id: String,
@@ -107,6 +108,19 @@ pub struct SlugAliasMatch {
     pub canonical_slug: String,
     pub source_id: String,
     pub matches: usize,
+}
+
+/// `aliasCanonicalRefs(refs, policy)`. The TypeScript member reads the policy as
+/// `pageReadFilter('p', policy, !!policy)` does: `source_ids` is its source clause (a non-empty
+/// `sourceIds`, else a non-empty `sourceId`, else none), `live` is `!!policy`, and
+/// `exclude_private` is the page policy of `excludePrivate` (`facts/privacy.rs` `page_hidden`).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AliasCanonicalQuery {
+    pub refs: Vec<AliasRef>,
+    pub source_ids: Option<Vec<String>>,
+    pub live: bool,
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 fn key(sub: u8, parts: &[&str]) -> Vec<u8> {
@@ -585,6 +599,60 @@ impl Store {
             if !refs.is_empty() {
                 out.push((alias.to_string(), refs));
             }
+        }
+        Ok(out)
+    }
+
+    /// `aliasCanonicalRefs(refs, policy)` (engine-sql/search-reads.ts): each distinct ref that is
+    /// the `canonical_slug` of some `slug_aliases` row in its source and names a page there, as
+    /// `{ source_id, canonical_slug }`, by source then slug in byte order. With no policy any page
+    /// row answers, soft-deleted ones too, as the SQL's join does; under a policy the page must be
+    /// in the source list, live (not soft-deleted, not quarantined, its source not archived) and,
+    /// under `exclude_private`, pass the page policy. A ref holding a NUL byte names nothing.
+    pub fn alias_canonical_refs(&self, query: &AliasCanonicalQuery) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let refs: BTreeSet<(&str, &str)> = query
+            .refs
+            .iter()
+            .map(|r| (r.source_id.as_str(), r.slug.as_str()))
+            .filter(|(source, slug)| !has_nul(&[source, slug]))
+            .collect();
+        let mut out = Vec::new();
+        for (source, slug) in refs {
+            let mut aliased = false;
+            scan_prefix(
+                &*read,
+                &prefix(SLUG_ALIAS_BY_CANONICAL, &[source, slug]),
+                false,
+                &mut |_, _| {
+                    aliased = true;
+                    false
+                },
+            )?;
+            if !aliased {
+                continue;
+            }
+            let page = if query.live {
+                live_page(&*read, source, slug)?
+            } else {
+                read_page(&*read, source, slug)?
+            };
+            let Some(page) = page else {
+                continue;
+            };
+            if query
+                .source_ids
+                .as_ref()
+                .is_some_and(|ids| !ids.iter().any(|id| id == source))
+            {
+                continue;
+            }
+            if let Some(policy) = &query.exclude_private
+                && page_hidden(&*read, &page, policy)?
+            {
+                continue;
+            }
+            out.push(serde_json::json!({"source_id": source, "canonical_slug": slug}));
         }
         Ok(out)
     }

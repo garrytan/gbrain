@@ -57,6 +57,21 @@ impl Brain {
         })
     }
 
+    /// `aliasCanonicalRefs(refs, policy)`: resolves the `{ source_id, canonical_slug }` refs a
+    /// `slug_aliases` row names (`AliasCanonicalQuery`).
+    #[napi]
+    pub fn alias_canonical_refs<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let q: gbrain_store::aliases::AliasCanonicalQuery =
+                required(query, "aliasCanonicalRefs query")?;
+            s.alias_canonical_refs(&q)
+        })
+    }
+
     /// `setPageAliases(slug, sourceId, aliasNorms)`: replaces the page's frontmatter aliases.
     #[napi]
     pub fn set_page_aliases<'env>(
