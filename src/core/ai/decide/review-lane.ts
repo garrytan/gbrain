@@ -47,7 +47,6 @@ export const REVIEW_CONFIG_KEYS: Readonly<Record<ReviewKind, string>> = {
 };
 /** Anchors (or pairs) judged per kind per run, so one kind never starves another. */
 export const REVIEW_BUDGET_PER_RUN = 50;
-const REVIEW_MAX_ATTEMPTS = 5;
 const REVIEW_REQUEST_DEADLINE_MS = 30_000;
 const PAGE_TEXT_LIMIT = 2_000;
 const PERMANENT_FAILURES = new Set(['egress', 'payload_too_large']);
@@ -100,8 +99,7 @@ export interface ReviewCandidate {
 /** Queue a candidate pair for review; call inside the transaction that discovered it. Idempotent per pair. */
 export async function enqueueReviewCandidate(tx: BrainEngine, c: ReviewCandidate): Promise<void> {
   const [a, b] = c.a_ref <= c.b_ref ? [c.a_ref, c.b_ref] : [c.b_ref, c.a_ref];
-  await tx.executeRaw(`INSERT INTO decide_review_queue(kind,source_id,a_ref,b_ref,evidence) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
-    [c.kind, c.source_id, a, b, c.evidence ?? null]);
+  await tx.applyDecideReviewQueue({ op: 'enqueue', kind: c.kind, source_id: c.source_id, a_ref: a, b_ref: b, evidence: c.evidence ?? null });
 }
 
 export interface ReviewProposalRow {
@@ -137,21 +135,15 @@ export function reviewAcceptHandler(kind: ReviewKind): ReviewAcceptHandler | und
 interface QueueRow { kind: ReviewKind; source_id: string; a_ref: string; b_ref: string; attempts: number }
 
 async function dueQueue(engine: BrainEngine, kind: ReviewKind, sourceId: string, limit: number): Promise<QueueRow[]> {
-  const rows = await engine.executeRaw<QueueRow>(
-    `SELECT kind, source_id, a_ref, b_ref, attempts FROM decide_review_queue
-      WHERE kind = $1 AND source_id = $2 AND attempts < $3 AND next_attempt_at <= now()
-      ORDER BY next_attempt_at, created_at, a_ref, b_ref LIMIT $4`, [kind, sourceId, REVIEW_MAX_ATTEMPTS, limit]);
-  return rows.map(r => ({ ...r, attempts: Number(r.attempts) }));
+  return (await engine.listDueDecideReviewQueue(kind, sourceId, limit)) as QueueRow[];
 }
 
 async function clearQueue(engine: BrainEngine, row: QueueRow): Promise<void> {
-  await engine.executeRaw('DELETE FROM decide_review_queue WHERE kind=$1 AND source_id=$2 AND a_ref=$3 AND b_ref=$4', [row.kind, row.source_id, row.a_ref, row.b_ref]);
+  await engine.applyDecideReviewQueue({ op: 'clear', kind: row.kind, source_id: row.source_id, a_ref: row.a_ref, b_ref: row.b_ref });
 }
 
 async function deferQueue(engine: BrainEngine, row: QueueRow, reason: string): Promise<void> {
-  await engine.executeRaw(`UPDATE decide_review_queue SET attempts = attempts + 1, reason = $5,
-      next_attempt_at = now() + ((attempts + 1) * interval '10 minutes')
-    WHERE kind=$1 AND source_id=$2 AND a_ref=$3 AND b_ref=$4`, [row.kind, row.source_id, row.a_ref, row.b_ref, reason]);
+  await engine.applyDecideReviewQueue({ op: 'defer', kind: row.kind, source_id: row.source_id, a_ref: row.a_ref, b_ref: row.b_ref, reason });
 }
 
 /**
@@ -340,12 +332,12 @@ export async function runReviewLane(engine: BrainEngine, opts: { kind: ReviewKin
       if (!act) { outcomes[`review:${i}`] = 'independent'; result.independents++; continue; }
       outcomes[`review:${i}`] = 'proposal';
       if (mode !== 'on') { result.shadow_proposals++; continue; }
-      const inserted = await engine.executeRaw<{ id: number }>(
-        `INSERT INTO decide_review_proposals (kind, source_id, sweep_id, a_ref, b_ref, subject, visibility, p_action, threshold, model_resolved, question_version, receipt)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT DO NOTHING RETURNING id`,
-        [kind, sourceId, sweepId, built.a_ref, pair.b_ref, built.subject, built.visibility, p, policy.threshold ?? null, r.model_resolved || null,
-          String(REVIEW_QUESTION_VERSION), JSON.stringify({ candidate_hash: pair.candidateHash ?? null, call_site: callSite })]);
-      if (inserted.length) result.proposals++;
+      const inserted = await engine.insertDecideReviewProposal({
+        kind, source_id: sourceId, sweep_id: sweepId, a_ref: built.a_ref, b_ref: pair.b_ref, subject: built.subject, visibility: built.visibility,
+        p_action: p, threshold: policy.threshold ?? null, model_resolved: r.model_resolved || null, question_version: String(REVIEW_QUESTION_VERSION),
+        receipt: JSON.stringify({ candidate_hash: pair.candidateHash ?? null, call_site: callSite }),
+      });
+      if (inserted !== null) result.proposals++;
     }
     receipts.push(writeReceipts(engine, { ...base, mode, provider: policy.provider, policy, result: r, questions, outcomes, fallbackOutcome: 'skipped' }));
     await clearQueue(engine, row);
@@ -372,32 +364,19 @@ export async function runReviewLanes(engine: BrainEngine, sourceId: string, sign
 export const REVIEW_PROPOSAL_STATUSES = ['pending', 'accepting', 'accepted', 'rejected', 'stale', 'accepted_no_action'] as const;
 
 export async function listReviewProposals(engine: BrainEngine, filter: { status?: string | 'all' } = {}): Promise<ReviewProposalRow[]> {
-  const status = filter.status ?? 'pending';
-  const rows = await engine.executeRaw<ReviewProposalRow>(
-    `SELECT id, kind, source_id, sweep_id, a_ref, b_ref, subject, visibility, p_action, threshold, model_resolved, status,
-            created_at::text, decided_at::text, receipt
-       FROM decide_review_proposals WHERE ($1 = 'all' OR status = $1) ORDER BY id`, [status]);
-  return rows.map(r => ({ ...r, id: Number(r.id), p_action: Number(r.p_action), threshold: r.threshold === null ? null : Number(r.threshold) }));
+  return (await engine.listDecideReviewProposals(filter.status ?? 'pending')) as ReviewProposalRow[];
 }
 
 export async function getReviewProposal(engine: BrainEngine, id: number, lock = false): Promise<ReviewProposalRow | null> {
-  const rows = await engine.executeRaw<ReviewProposalRow>(
-    `SELECT id, kind, source_id, sweep_id, a_ref, b_ref, subject, visibility, p_action, threshold, model_resolved, status,
-            created_at::text, decided_at::text, receipt FROM decide_review_proposals WHERE id = $1${lock ? ' FOR UPDATE' : ''}`, [id]);
-  const r = rows[0];
-  return r ? { ...r, id: Number(r.id), p_action: Number(r.p_action), threshold: r.threshold === null ? null : Number(r.threshold) } : null;
+  return (await engine.getDecideReviewProposal(id, lock)) as ReviewProposalRow | null;
 }
 
 export async function transitionReviewProposal(engine: BrainEngine, id: number, from: string, to: string): Promise<boolean> {
-  const rows = await engine.executeRaw(`UPDATE decide_review_proposals SET status = $3, decided_at = now() WHERE id = $1 AND status = $2 RETURNING id`, [id, from, to]);
-  return rows.length > 0;
+  return engine.transitionDecideReviewProposal(id, from, to);
 }
 
 export async function reviewProposalIdsFromSweep(engine: BrainEngine, sweepId: string, opts: { includeWithdrawals: boolean }): Promise<number[]> {
-  const rows = await engine.executeRaw<{ id: number | string }>(
-    `SELECT id FROM decide_review_proposals WHERE sweep_id = $1 AND status = 'pending' AND ($2::boolean OR kind <> 'withdraw') ORDER BY id`,
-    [sweepId, opts.includeWithdrawals]);
-  return rows.map(r => Number(r.id));
+  return engine.listDecideReviewProposalIds(sweepId, opts.includeWithdrawals);
 }
 
 export interface ProposalReviewRate {
@@ -412,16 +391,7 @@ export interface ProposalReviewRate {
 /** Whether owners act on proposals: pending backlog and 30-day decisions per kind (supersede proposals and each review kind). */
 export async function proposalReviewRates(engine: BrainEngine): Promise<ProposalReviewRate[]> {
   const snapshot = await loadConfigSnapshot(engine);
-  const sql = (table: string, kindExpr: string) => `SELECT ${kindExpr} AS kind,
-      count(*) FILTER (WHERE status = 'pending')::int AS pending,
-      EXTRACT(EPOCH FROM (now() - min(created_at) FILTER (WHERE status = 'pending'))) / 86400.0 AS oldest,
-      count(*) FILTER (WHERE status IN ('accepted', 'accepted_no_action') AND decided_at > now() - interval '30 days')::int AS accepted,
-      count(*) FILTER (WHERE status = 'rejected' AND decided_at > now() - interval '30 days')::int AS rejected
-    FROM ${table} GROUP BY 1`;
-  const rows = [
-    ...await engine.executeRaw<{ kind: string; pending: number; oldest: number | null; accepted: number; rejected: number }>(sql('decide_proposals', `'supersede'`)),
-    ...await engine.executeRaw<{ kind: string; pending: number; oldest: number | null; accepted: number; rejected: number }>(sql('decide_review_proposals', 'kind')),
-  ];
+  const rows = await engine.readProposalReviewRates();
   return (['supersede', ...REVIEW_KINDS] as const).map((kind) => {
     const r = rows.find(x => x.kind === kind);
     return { kind, enabled: kind === 'supersede' || reviewKindEnabled(snapshot, kind), pending: Number(r?.pending ?? 0),
