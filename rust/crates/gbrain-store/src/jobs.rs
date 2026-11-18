@@ -13,7 +13,8 @@
 //! `private_queues`, `reads` (stats and lists) and `attachments`. `synthesis_completions` keeps the
 //! `dream_synthesis_completions` archive the prune writes, under its own tag `f`, with the two
 //! dream-cycle reads of it (listSynthesisCompletionKeys, listRecentSynthesisCompletions). `insight`
-//! is the one read behind `describeJobs` (readJobInsight).
+//! is the one read behind `describeJobs` (readJobInsight). `subagent` holds the transcript and tool
+//! ledger of a subagent job (17 members, rust/docs/store/jobs-subagent.md).
 //!
 //! See docs/designs/RUST_ENGINE_INTERFACES.md ("jobs (core)") and rust/docs/store/jobs.md.
 //!
@@ -29,6 +30,7 @@
 //! - `m 0x07 lock_id -> LockRecord`: one cycle lock lease.
 //! - `m 0x08 job id -> AttachmentRecord`: the `minion_attachments` rows of a job (sequence `attachment`).
 //! - `m 0x09 owner id`: the rows whose `private_queue_owner_job_id` is that owner (the `ON DELETE SET NULL`).
+//! - `m 0x18..=0x1C`: the subagent messages, tool rows and their three indexes (see `subagent.rs`).
 //!
 //! Integers are big-endian; a signed one has its sign bit flipped so byte order is numeric order.
 //!
@@ -43,7 +45,8 @@
 //! children's `parent_job_id` becomes NULL (`ON DELETE SET NULL`). The other two self-references
 //! (`private_queue_owner_job_id`, `budget_owner_job_id`): a row that names the deleted job as its
 //! private-queue owner has it set to NULL (`updated_at` untouched); nothing here writes a budget
-//! owner. A job's attachments go with it (`ON DELETE CASCADE`).
+//! owner. A job's attachments, subagent messages and subagent tool rows go with it
+//! (`ON DELETE CASCADE`).
 
 mod attachments;
 mod checks;

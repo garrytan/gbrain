@@ -1099,4 +1099,69 @@ mod tests {
         assert_eq!(input_field(&json!("\"just text\""), "slug").unwrap(), None);
         assert!(input_field(&json!("not json"), "slug").is_err());
     }
+
+    #[test]
+    fn deleting_a_job_leaves_no_record_or_index_key_behind() {
+        let store = crate::test_support::store();
+        let insert = json!({
+            "name": "n", "queue": "default", "status": "waiting", "priority": 0, "data": {},
+            "max_attempts": 3, "backoff_type": "exponential", "backoff_delay": 1000,
+            "backoff_jitter": 0.2, "on_child_fail": "fail_parent", "remove_on_complete": false,
+            "remove_on_fail": false, "submission_authority": {"version": 1, "kind": "application"},
+        });
+        let spec: AdmitSpec =
+            serde_json::from_value(json!({"insert": insert, "maxSpawnDepth": 5})).unwrap();
+        let job = store.admit_job(&spec).unwrap().row["id"].as_i64().unwrap();
+        let row = |idx: i64, ordinal: Option<i64>, id: &str| ToolInsert {
+            message_idx: idx,
+            ordinal,
+            tool_use_id: id.into(),
+            tool_name: "brain_get_page".into(),
+            input: "{}".into(),
+            status: "pending".into(),
+        };
+        store
+            .insert_subagent_message(
+                job,
+                &MessageInsert {
+                    message_idx: 0,
+                    role: "user".into(),
+                    content_blocks: "[]".into(),
+                    tokens_in: None,
+                    tokens_out: None,
+                    tokens_cache_read: None,
+                    tokens_cache_create: None,
+                    model: None,
+                },
+            )
+            .unwrap();
+        store
+            .record_subagent_tool_executions(job, &[row(1, Some(0), "a"), row(1, None, "b")], false)
+            .unwrap();
+        store
+            .start_subagent_tool_execution(
+                job,
+                &ToolStart {
+                    message_idx: 2,
+                    ordinal: 0,
+                    tool_use_id: "c".into(),
+                    tool_name: "brain_get_page".into(),
+                    input: "{}".into(),
+                    gbrain_tool_use_id: "0190a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b".into(),
+                    provider_id: "anthropic".into(),
+                },
+            )
+            .unwrap();
+        let count = |store: &Store| -> usize {
+            let read = store.read().unwrap();
+            [MSG, TOOL, POSITION, STABLE, LEGACY]
+                .iter()
+                .map(|tag| keys_under(&*read, &[keys::JOBS, *tag]).unwrap().len())
+                .sum()
+        };
+        assert_eq!(count(&store), 1 + 3 + 2 + 1 + 1);
+        store.cancel_jobs(&[job], &Default::default()).unwrap();
+        assert!(store.delete_terminal_job(job).unwrap());
+        assert_eq!(count(&store), 0);
+    }
 }
