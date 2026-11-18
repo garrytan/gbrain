@@ -4,9 +4,10 @@
  * shell does what the shared SQL does before its statement runs (window boundary, limit clamp, briefings rule, recency
  * map), so both engines rank the same pages.
  *
- * Read policy: source scope and `takesHoldersAllowList` are honoured. `excludePrivate` refuses (the caller's privacy
- * filter is not on the store). On getSalienceScores a trust floor or flag suppression refuses too, as its SQL reads
- * them; getRecentSalience's SQL never reads them, so they change nothing there.
+ * Read policy: source scope and `takesHoldersAllowList` are honoured. `excludePrivate` applies the page policy
+ * (private-provenance.ts `storePagePolicy`), and refuses for a caller whose members, grants or lineage change it. On
+ * getSalienceScores a trust floor or flag suppression refuses, as its SQL reads them; getRecentSalience's SQL never
+ * reads them, so they change nothing there.
  */
 import { clampSearchLimit } from '../../engine.ts';
 import { resolveRecencyDecayMap, DEFAULT_FALLBACK, type RecencyDecayConfig, type RecencyDecayMap } from '../../search/recency-decay.ts';
@@ -14,6 +15,7 @@ import type {
   EmotionalWeightInputRow, EmotionalWeightWriteRow, PageReadPolicy, SalienceOpts, SalienceResult,
 } from '../../types.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { storePagePolicy } from './private-provenance.ts';
 
 /** `SearchOpts` keys hybrid search passes along with its read policy; readSalienceScores never reads them. */
 const SEARCH_KEYS = [
@@ -69,8 +71,9 @@ type RecentRow = Omit<SalienceResult, 'updated_at'> & { updated_at: string };
 
 export const getRecentSalience: StoreMember<[opts: SalienceOpts], SalienceResult[]> = async (brain, opts) => {
   const o = takeOptions('getRecentSalience', opts,
-    ['sourceId', 'sourceIds', 'days', 'limit', 'slugPrefix', 'recency_bias', 'takesHoldersAllowList'],
+    ['sourceId', 'sourceIds', 'days', 'limit', 'slugPrefix', 'recency_bias', 'takesHoldersAllowList', 'excludePrivate'],
     ['minTrust', 'suppressFlagged', 'requireSafeChunks']);
+  const excludePrivate = storePagePolicy('getRecentSalience', o.excludePrivate);
   const days = Math.max(0, (o.days as number | undefined) ?? 14);
   const limit = clampSearchLimit(o.limit as number | undefined, 20, 100);
   const slugPrefix = o.slugPrefix as string | undefined;
@@ -87,19 +90,22 @@ export const getRecentSalience: StoreMember<[opts: SalienceOpts], SalienceResult
     recency: bias === 'on'
       ? recency(resolveRecencyDecayMap(), DEFAULT_FALLBACK, true)
       : recency({}, { halflifeDays: 1, coefficient: 1.0 }, false),
+    exclude_private: excludePrivate ?? null,
   }))) as RecentRow[];
   return rows.map((r) => ({ ...r, updated_at: new Date(r.updated_at) }));
 };
 
 export const getSalienceScores: StoreMember<[refs: Array<{ slug: string; source_id: string }>, opts?: PageReadPolicy], Map<string, number>> = async (brain, refs, opts) => {
   if (!refs.length) return new Map();
-  const o = takeOptions('getSalienceScores', opts, ['sourceId', 'sourceIds', 'takesHoldersAllowList'],
+  const o = takeOptions('getSalienceScores', opts, ['sourceId', 'sourceIds', 'takesHoldersAllowList', 'excludePrivate'],
     ['requireSafeChunks', ...SEARCH_KEYS]);
+  const excludePrivate = storePagePolicy('getSalienceScores', o.excludePrivate);
   const rows = (await storeCall({ member: 'getSalienceScores' }, () => brain.getSalienceScores({
     refs: refs.map((r) => ({ slug: r.slug, source_id: r.source_id })),
     source_ids: sourceScope(o),
     holders: holders(o),
     live: !!opts,
+    exclude_private: excludePrivate ?? null,
   }))) as Array<{ slug: string; source_id: string; score: number }>;
   return new Map(rows.map((r) => [`${r.source_id}::${r.slug}`, r.score]));
 };
