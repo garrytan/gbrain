@@ -143,6 +143,11 @@ function stubEngine(opts: {
     },
     // loadAllSources reads the sources table through the typed member; it counts as one call, as the raw read did.
     listSourceRecords: async () => { opts.onCall?.(); return opts.sources ?? []; },
+    // The writer-binding read is a typed member too: one call, a row only for a bound source.
+    getWorktreeBinding: async (sourceId: string) => {
+      opts.onCall?.();
+      return (opts.bound ?? []).includes(sourceId) ? { source_id: sourceId, worktree_id: 'wt-example' } : null;
+    },
   } as unknown as BrainEngine;
 }
 
