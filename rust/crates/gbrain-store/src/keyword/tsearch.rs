@@ -990,25 +990,44 @@ pub(crate) fn or_of_lexemes(q: &TsQuery) -> Option<TsQuery> {
     b.finish().ok()
 }
 
-/// `a || b` on tsqueries (`tsquery_or`): `b` when `a` is empty, `a` when `b` is empty, else an OR
-/// whose left operand is `a` and right operand `b`. `join_tsqueries` puts `b` in `child[0]` and
-/// `QTN2QT` writes the operator, then `child[0]` (the right operand), then `child[1]`.
-pub(crate) fn tsquery_or(a: TsQuery, b: TsQuery) -> TsQuery {
-    if a.items.is_empty() {
-        return b;
+/// The item bound on the whole of `items` items of a query that grows by whole queries (`tsquery_or_all`): the error
+/// `check_items` raises while one query is parsed.
+pub(super) fn check_query_items(items: usize) -> Result<()> {
+    if items > MAX_QUERY_ITEMS {
+        return Err(too_deep());
     }
-    if b.items.is_empty() {
-        return a;
+    Ok(())
+}
+
+/// `q1 || q2 || ... || qn` on tsqueries (`tsquery_or`, folded from the left): an empty query is skipped (`b` when `a`
+/// is empty, `a` when `b` is empty), else an OR whose left operand is what came before and whose right operand is the
+/// next query. `join_tsqueries` puts `b` in `child[0]` and `QTN2QT` writes the operator, then `child[0]` (the right
+/// operand), then `child[1]`, so the items run last operator, last query, ..., first query. They are laid out once,
+/// not copied for every `||`, and the whole is held to the item bound of a single query.
+pub(crate) fn tsquery_or_all(queries: Vec<TsQuery>) -> Result<TsQuery> {
+    let queries: Vec<TsQuery> = queries
+        .into_iter()
+        .filter(|q| !q.items.is_empty())
+        .collect();
+    let total =
+        queries.iter().map(|q| q.items.len()).sum::<usize>() + queries.len().saturating_sub(1);
+    check_query_items(total)?;
+    let mut items = Vec::with_capacity(total);
+    let mut left_len = total;
+    for next in queries.into_iter().rev() {
+        left_len -= next.items.len();
+        if left_len > 0 {
+            // `left_len` items remain after `next`: the operator joins them, and `next` sits between.
+            left_len -= 1;
+            items.push(QItem::Opr {
+                op: Op::Or,
+                distance: 0,
+                left: 1 + next.items.len() as u32,
+            });
+        }
+        items.extend(next.items);
     }
-    let mut items = Vec::with_capacity(1 + a.items.len() + b.items.len());
-    items.push(QItem::Opr {
-        op: Op::Or,
-        distance: 0,
-        left: 1 + b.items.len() as u32,
-    });
-    items.extend(b.items);
-    items.extend(a.items);
-    TsQuery { items }
+    Ok(TsQuery { items })
 }
 
 /// `ts_filter(v, weights)` (`tsvector_filter`): each lexeme keeps its positions whose weight is

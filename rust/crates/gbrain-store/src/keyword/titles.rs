@@ -16,7 +16,7 @@
 //! ```
 //!
 //! `$tsq` is `websearch_to_tsquery(gbrain_fts_input(t))` of each text, joined by `||`
-//! (`tsquery_or`) from the left. `'whole'` and `'complete'` match and rank the whole page vector;
+//! (`tsquery_or`) from the left. The chain holds at most one query's item bound in all. `'whole'` and `'complete'` match and rank the whole page vector;
 //! `'title'` matches and ranks `ts_filter(vector, '{a}')`, the title lexemes. A `'complete'`
 //! attempt whose matches do not fit the cap returns no rows and `cut`.
 //!
@@ -53,8 +53,8 @@ use super::filters::{KeywordOptions, PageFilter, row_count, source_factor};
 use super::rank::ts_rank_cd;
 use super::stem::pg_lower;
 use super::tsearch::{
-    TsQuery, TsVector, Weight, concat, fts_input, is_vector_overflow, setweight, to_tsvector,
-    ts_filter, ts_matches, tsquery_or, websearch_to_tsquery,
+    TsQuery, TsVector, Weight, check_query_items, concat, fts_input, is_vector_overflow, setweight,
+    to_tsvector, ts_filter, ts_matches, tsquery_or_all, websearch_to_tsquery,
 };
 use super::vector_cache::{VectorKind, cached};
 use crate::Store;
@@ -211,15 +211,16 @@ pub(crate) fn check_sealed_page_vector(title: &str, timeline: &str) -> Result<()
 
 /// `$tsq`: each text's `websearch_to_tsquery(gbrain_fts_input(t))`, ORed from the left.
 fn title_query(texts: &[String]) -> Result<TsQuery> {
-    let mut query: Option<TsQuery> = None;
+    let mut queries = Vec::with_capacity(texts.len());
+    let mut items = 0usize;
     for text in texts {
         let next = websearch_to_tsquery(&fts_input(text))?;
-        query = Some(match query {
-            None => next,
-            Some(q) => tsquery_or(q, next),
-        });
+        // The bound holds for the whole `||` chain, not just each text, so it stops the parsing as well as the join.
+        items += next.items.len() + 1;
+        check_query_items(items)?;
+        queries.push(next);
     }
-    Ok(query.unwrap_or_default())
+    tsquery_or_all(queries)
 }
 
 /// `lower(btrim(title, ' "''' || chr(160)))`.
@@ -424,17 +425,33 @@ mod tests {
             ts_filter(&v, &[Weight::A]).to_text(),
             "'alpha':1A 'beta':2A"
         );
-        let q = tsquery_or(
-            websearch_to_tsquery("alpha").unwrap(),
-            websearch_to_tsquery("beta gamma").unwrap(),
-        );
+        let parts = |texts: &[&str]| {
+            tsquery_or_all(
+                texts
+                    .iter()
+                    .map(|t| websearch_to_tsquery(t).unwrap())
+                    .collect(),
+            )
+            .unwrap()
+        };
+        let q = parts(&["alpha", "beta gamma"]);
         assert_eq!(q.to_text(), "'alpha' | 'beta' & 'gamma'");
         // PGLite: ts_rank_cd('alpha beta', 'alpha' | 'beta' & 'gamma') = 0.10000000149011612.
         let doc = to_tsvector("alpha beta").unwrap();
         assert_eq!(f64::from(ts_rank_cd(&doc, &q)), 0.10000000149011612);
-        let empty = websearch_to_tsquery("the").unwrap();
-        assert_eq!(tsquery_or(empty.clone(), q.clone()), q);
-        assert_eq!(tsquery_or(q.clone(), empty), q);
+        // An empty query (all stopwords) is skipped wherever it stands; three queries fold from the left.
+        assert_eq!(parts(&["the", "alpha", "beta gamma"]), q);
+        assert_eq!(parts(&["alpha", "the", "beta gamma", "the"]), q);
+        assert_eq!(parts(&["alpha", "beta gamma", "the"]), q);
+        assert!(parts(&["the"]).items.is_empty());
+        assert_eq!(
+            parts(&["alpha", "beta", "gamma"]).to_text(),
+            "'alpha' | 'beta' | 'gamma'"
+        );
+        assert_eq!(
+            parts(&["alpha beta", "gamma delta", "epsilon"]).to_text(),
+            "'alpha' & 'beta' | 'gamma' & 'delta' | 'epsilon'"
+        );
     }
 
     #[test]
@@ -594,6 +611,38 @@ mod tests {
         // Representative chunk defaults for a page without chunks.
         let row = &out[0]["rows"][0];
         assert_eq!(row["chunk_source"], "compiled_truth");
+    }
+
+    /// `searchTitlesAttempts` takes the `||` chain of an attempt's texts from the caller. Each text is one small query,
+    /// but the chain holds the item bound of a single query in all: past it the attempt is refused (PostgreSQL answers
+    /// `stack depth limit exceeded` for a query it would walk that deep) instead of building a huge query, and a chain
+    /// at the bound is still answered.
+    #[test]
+    fn a_chain_of_texts_past_the_query_item_bound_is_refused() {
+        let store = crate::test_support::store();
+        put(&store, "notes/a", "Quasar Notes", "");
+        let opts = KeywordOptions::default();
+        let run = |count: usize| {
+            let texts = vec!["quasar"; count];
+            store.search_titles_attempts(
+                &[attempt(&texts, TitleAttemptKind::Whole, 10.0)],
+                "",
+                5000.0,
+                &opts,
+            )
+        };
+        // 40,000 one-item queries and their 39,999 operators are 79,999 items: under the bound of 131,072.
+        let ok = run(40_000).unwrap();
+        assert_eq!(slugs(&ok[0]), ["notes/a"]);
+        // 70,000 of them are 139,999 items.
+        let started = std::time::Instant::now();
+        let e = run(70_000).unwrap_err();
+        assert!(
+            e.message.starts_with("stack depth limit exceeded"),
+            "{}",
+            e.message
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(20));
     }
 
     #[test]

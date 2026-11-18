@@ -122,6 +122,10 @@ facts OR builder recurse the same way, once per item, and the stack of the threa
   the parser holds more than 131,072 items, counted before stopword cleanup. Repeated stopwords count, because a
   stopword placeholder carries no lexeme bytes and so never reaches the `MAXSTRPOS` check ("value is too big in
   tsquery"). The bound is at the parser, so every keyword member (chunk, page, title and facts arms) has it.
+- `searchTitlesAttempts` ORs the texts of one attempt (`tsquery_or_all`, the left fold of `||`). The same item bound holds
+  for the whole chain, counting an operator per join: an attempt whose texts add up past 131,072 items is refused with
+  the same error, checked while the texts parse, so the work stays linear in the texts. The chain is laid out once
+  rather than copied at each `||`.
 - PGLite 0.5.16 answers a query like `quokka the ` x 20,000 (about 80,000 items) through `@@`, and runs out of its 2 MB
   stack for the whole `searchKeyword` statement at a few thousand repeats, where it returns an empty result with no
   error (the limit is not a fixed number: 4,000 repeats failed and 4,500 passed in one run). The Rust engine answers
