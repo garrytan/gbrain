@@ -1392,7 +1392,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "RLS enabled on 186/186 public tables",
+            "message": "RLS enabled on 188/188 public tables",
             "name": "rls",
             "status": "ok"
           },
@@ -1451,7 +1451,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 186 table(s) the applied migrations create exist.",
+            "message": "All 188 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -6901,7 +6901,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "RLS enabled on 186/186 public tables",
+            "message": "RLS enabled on 188/188 public tables",
             "name": "rls",
             "status": "ok"
           },
@@ -6960,7 +6960,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 186 table(s) the applied migrations create exist.",
+            "message": "All 188 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },

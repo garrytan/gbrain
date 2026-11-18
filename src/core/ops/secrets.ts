@@ -29,6 +29,7 @@ const reveal_secret: Operation = {
     id: { type: 'string', required: true, description: 'Entry id from the marker (ss_ followed by 12 hex).' },
   },
   scope: 'read',
+  mutating: false,
   handler: async (ctx, p) => {
     const id = String(p.id ?? '');
     const { entryRow, occurrencesOf, reveal } = await import('../secret-store/store.ts');

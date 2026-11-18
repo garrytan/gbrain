@@ -560,9 +560,12 @@ function rebuild(p: Plan, sealer: Sealer, deadline: number): RedactOutcome {
   if (p.held.size) {
     const tipTree = rewrite(p.commits.find(c => c.sha === p.head)!.tree);
     const heldTree = edit(path => headEntries.get(path) ?? null, p.held.keys())(tipTree);
-    const ident = (name: string) => text(run(p.root, ['var', name], deadline));
+    const headRaw = p.commits.find(c => c.sha === p.head)!.raw;
+    const headLines = headRaw.subarray(0, headRaw.indexOf('\n\n')).toString('latin1').split('\n');
+    const people = ['author ', 'committer '].map(field => headLines.find(line => line.startsWith(field))!).join('\n');
     const list = [...p.held].map(([path, reason]) => `  ${path} (${reason})`).join('\n');
-    const body = Buffer.from(`tree ${heldTree}\nparent ${tip}\nauthor ${ident('GIT_AUTHOR_IDENT')}\ncommitter ${ident('GIT_COMMITTER_IDENT')}\n\ngbrain: files held back from publish\n\nThese files stay on this machine; the published commits keep the remote's version:\n${list}\nSee ${DOCS}#publish_secret_held_back\n\n${HELD_TRAILER}: ${backupRef}\n`, 'utf8');
+    const body = Buffer.concat([Buffer.from(`tree ${heldTree}\nparent ${tip}\n`, 'utf8'), Buffer.from(`${people}\n`, 'latin1'),
+      Buffer.from(`\ngbrain: files held back from publish\n\nThese files stay on this machine; the published commits keep the remote's version:\n${list}\nSee ${DOCS}#publish_secret_held_back\n\n${HELD_TRAILER}: ${backupRef}\n`, 'utf8')]);
     heldCommit = objectId('commit', body);
     written.commit.set(heldCommit, body);
     newHead = heldCommit;

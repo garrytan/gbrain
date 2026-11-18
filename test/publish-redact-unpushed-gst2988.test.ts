@@ -164,6 +164,34 @@ describe('GST-2988 a publish redacts unpushed secrets', () => {
     expectRemoteClean(r);
   }, 90_000);
 
+  test('with no git identity configured anywhere, a held-back publish still pushes and every rebuilt commit keeps its original author and committer', async () => {
+    const r = repo();
+    git(r.root, 'config', 'user.useConfigOnly', 'true');
+    const empty = join(dir, `${r.root.split('/').pop()}-nohome`);
+    mkdirSync(empty);
+    const noIdentity: Record<string, string | undefined> = { HOME: empty, XDG_CONFIG_HOME: empty, GIT_CONFIG_NOSYSTEM: '1', EMAIL: undefined,
+      GIT_AUTHOR_NAME: undefined, GIT_AUTHOR_EMAIL: undefined, GIT_COMMITTER_NAME: undefined, GIT_COMMITTER_EMAIL: undefined };
+    const who = (rev: string) => git(r.root, 'log', '-1', '--format=%an|%ae|%ad|%cn|%ce|%cd', '--date=raw', rev);
+    const as = (name: string, email: string, when: string) => ({ ...process.env, GIT_AUTHOR_NAME: name, GIT_AUTHOR_EMAIL: email, GIT_AUTHOR_DATE: when,
+      GIT_COMMITTER_NAME: `${name} Committer`, GIT_COMMITTER_EMAIL: `c-${email}`, GIT_COMMITTER_DATE: when });
+    const commitAs = (path: string, data: string | Buffer, env: NodeJS.ProcessEnv) => {
+      writeFileSync(join(r.root, path), data);
+      execFileSync('git', ['-C', r.root, 'add', path]);
+      execFileSync('git', ['-C', r.root, '-c', 'commit.gpgsign=false', 'commit', '-qm', path], { env });
+    };
+    commitAs('notes.md', `token ${token}\n`, as('Alice Example', 'alice@example.invalid', '1700000000 +0100'));
+    commitAs('legacy.txt', Buffer.concat([Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x20]), Buffer.from(`key ${token}\n`)]), as('Bob Example', 'bob@example.invalid', '1700000100 -0500'));
+    const before = [who('HEAD~1'), who('HEAD')];
+    const bare = Object.fromEntries(Object.entries({ ...process.env, ...noIdentity }).filter(([, v]) => v !== undefined)) as NodeJS.ProcessEnv;
+    expect(spawnSync('git', ['-C', r.root, 'var', 'GIT_AUTHOR_IDENT'], { env: bare }).status).not.toBe(0);
+    const result = await inHome(r, () => commitAndPush({ repo: r.root, cwd: r.root, paths: [], pushOnly: true }), noIdentity);
+    expect(result.outcome).toBe('pushed');
+    expect(result.redaction!.held).toEqual([{ path: 'legacy.txt', reason: 'not_utf8' }]);
+    expect([who('HEAD~2'), who('HEAD~1')]).toEqual(before);
+    expect(who('HEAD')).toBe(before[1]!);
+    expectRemoteClean(r);
+  }, 90_000);
+
   test('a .gbrain-scan-allow change is held back and the push is scanned with the remote allowlist', async () => {
     const r = repo();
     const fingerprint = scanText(`Deploy token ${token}\n`)[0]!.fingerprint;

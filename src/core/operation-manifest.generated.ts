@@ -4116,6 +4116,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       }
     },
     "scope": "read",
+    "mutating": false,
     "area": "secrets",
     "cliHints": {
       "name": "reveal-secret",
