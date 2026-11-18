@@ -342,6 +342,18 @@ describe('phone numbers', () => {
   });
 });
 
+describe('GitHub URLs', () => {
+  test('a URL under a path GitHub reserves (orgs, sponsors, settings and the like) names no login and gives no key', async () => {
+    await page('people/alice-example', 'person', 'Alice Example', { github: 'https://github.com/orgs/acme-example' });
+    await page('people/alice-example', 'person', 'Alice Example', { github: 'github.com/orgs/acme-example/people' }, 'source-b');
+    await page('people/bob-example', 'person', 'Bob Example', { github: 'https://github.com/sponsors/bob-example' });
+    await page('people/bob-example', 'person', 'Bob Example', { github: 'https://github.com/settings/profile' }, 'source-b');
+    const found = await groups('cross_source');
+    expect(found.map(g => g.class)).toEqual(['weak', 'weak']);
+    for (const g of found) expect(g.evidence.filter(e => e.key === 'github')).toEqual([]);
+  });
+});
+
 describe('company domains', () => {
   test('a company website or domain is a contact key; a free-mail domain never is', async () => {
     await page('companies/acme-example', 'company', 'Acme Example', { website: 'https://www.Acme-Example.com/about' });
@@ -373,6 +385,20 @@ describe('company domains', () => {
 });
 
 describe('LinkedIn profile URLs', () => {
+  test('a malformed profile path with an empty id gives no key, so two pages carrying it never match on it', async () => {
+    for (const [slug, type, title, url] of [
+      ['people/alice-example', 'person', 'Alice Example', 'https://www.linkedin.com/in//x'],
+      ['people/bob-example', 'person', 'Bob Example', 'linkedin.com/pub//'],
+      ['companies/acme-example', 'company', 'Acme Example', 'https://linkedin.com/company//x'],
+    ] as const) {
+      await page(slug, type, title, { linkedin: url });
+      await page(slug, type, title, { linkedin_url: url }, 'source-b');
+    }
+    const found = await groups('cross_source');
+    expect(found.map(g => g.class)).toEqual(['weak', 'weak', 'weak']);
+    for (const g of found) expect(g.evidence.filter(e => e.key === 'linkedin')).toEqual([]);
+  });
+
   test('two legacy /pub/ profiles with one name but different ids are different keys, never clean', async () => {
     await page('people/alice-example', 'person', 'Alice Example', { linkedin: 'https://www.linkedin.com/pub/alice-example/12/345/678' });
     await page('people/alice-example', 'person', 'Alice Example', { linkedin: 'https://www.linkedin.com/pub/alice-example/98/765/432/' }, 'source-b');

@@ -102,6 +102,12 @@ export const FREE_MAIL_DOMAINS: ReadonlySet<string> = new Set(['gmail.com', 'goo
   'yahoo.com', 'ymail.com', 'icloud.com', 'me.com', 'mac.com', 'aol.com', 'proton.me', 'protonmail.com', 'gmx.com', 'gmx.de', 'web.de', 'mail.com',
   'yandex.com', 'yandex.ru', 'qq.com', '163.com', '126.com', 'zoho.com', 'fastmail.com', 'hey.com']);
 
+/** First path segments github.com keeps for itself: a URL under one names no user, and no account can take the name. */
+const GITHUB_RESERVED: ReadonlySet<string> = new Set(['orgs', 'organizations', 'users', 'sponsors', 'settings', 'marketplace', 'features',
+  'topics', 'collections', 'explore', 'trending', 'about', 'pricing', 'enterprise', 'login', 'logout', 'join', 'signup', 'notifications',
+  'issues', 'pulls', 'search', 'apps', 'security', 'site', 'contact', 'readme', 'events', 'codespaces', 'new', 'dashboard', 'home',
+  'stars', 'watching', 'account', 'customer-stories', 'team', 'teams', 'blog', 'discussions']);
+
 interface KeySpec { key: KeyType; field: string; key_class: KeyClass; fields: readonly string[]; kinds: readonly EntityKind[]; norm: (raw: string, kind: EntityKind) => string | null }
 const BOTH: readonly EntityKind[] = ['person', 'company'];
 
@@ -115,14 +121,14 @@ const KEY_SPECS: readonly KeySpec[] = [
   { key: 'x_handle', field: 'x_handle', key_class: 'handle', fields: HANDLE_FRONTMATTER_KEYS, kinds: BOTH, norm: raw => frontmatterHandle(raw) },
   { key: 'linkedin', field: 'linkedin', key_class: 'exclusive', fields: ['linkedin', 'linkedin_url'], kinds: BOTH, norm: (raw, kind) => {
     const v = raw.toLowerCase();
-    const m = /(?:^|\/)(in|company|pub)\/([^?#\s]+)/.exec(v);
+    const m = /(?:^|\/)(in|company|pub)\/([^/?#\s][^?#\s]*)/.exec(v);
     if (m) return `${m[1]}/${m[1] === 'pub' ? m[2]!.replace(/\/+$/, '') : m[2]!.split('/')[0]}`;
     return /^[a-z0-9][a-z0-9_%-]*$/.test(v) ? `${kind === 'company' ? 'company' : 'in'}/${v}` : null;
   } },
   { key: 'github', field: 'github', key_class: 'exclusive', fields: ['github'], kinds: BOTH, norm: raw => {
     const v = raw.toLowerCase().replace(/^@/, '');
     const login = /^(?:https?:\/\/)?(?:www\.)?github\.com\/([^/?#\s]+)/.exec(v)?.[1] ?? v;
-    return /^[a-z0-9][a-z0-9-]{0,38}$/.test(login) ? login : null;
+    return /^[a-z0-9][a-z0-9-]{0,38}$/.test(login) && !GITHUB_RESERVED.has(login) ? login : null;
   } },
   { key: 'domain', field: 'domain', key_class: 'contact', fields: ['domain', 'website'], kinds: ['company'], norm: raw => {
     const host = raw.toLowerCase().replace(/^[a-z][a-z0-9+.-]*:\/\//, '').split(/[/?#:]/)[0]!.replace(/^www\./, '');
