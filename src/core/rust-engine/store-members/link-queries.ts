@@ -27,18 +27,21 @@ import type {
 import { mapStoreError, storeErrorCode } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { storePagePolicy } from './private-provenance.ts';
 
 /** The read-policy keys the store models: the source filter. */
 const SCOPE_KEYS = ['sourceId', 'sourceIds'] as const;
+/** The source filter plus `excludePrivate`, the page policy `privatePagesFilterForCaller` (storePagePolicy). */
+const POLICY_SCOPE_KEYS = [...SCOPE_KEYS, 'excludePrivate'] as const;
 /** Keys `pageReadFilter` never reads: the SQL engines ignore them in these statements, so the store does too. */
 const UNREAD_BY_FILTER = ['requireSafeChunks', 'takesHoldersAllowList'] as const;
 /** For relationalFanout the unread keys still turn the live filter on, through `hasReadPolicy`. */
-const POLICY_KEYS = [...SCOPE_KEYS, ...UNREAD_BY_FILTER] as const;
+const POLICY_KEYS = [...POLICY_SCOPE_KEYS, ...UNREAD_BY_FILTER] as const;
 const INT32_MAX = 2 ** 31 - 1;
 
 /** `hasReadPolicy` of read-policy-sql.ts over the options takeOptions kept (the refused keys are absent or false). */
 function hasReadPolicy(opts: Record<string, unknown>): boolean {
-  return !!((opts.sourceIds as unknown[] | undefined)?.length || opts.sourceId || opts.requireSafeChunks
+  return !!((opts.sourceIds as unknown[] | undefined)?.length || opts.sourceId || opts.excludePrivate || opts.requireSafeChunks
     || opts.takesHoldersAllowList !== undefined);
 }
 
@@ -51,7 +54,9 @@ function int32Ids(member: string, ids: readonly number[], label?: string): numbe
   return ids as number[];
 }
 
-const scopeOf = (o: Record<string, unknown>) => ({ sourceId: o.sourceId, sourceIds: o.sourceIds });
+/** The wire scope: the source filter and, under `excludePrivate`, the store page policy (null otherwise). */
+const scopeOf = (member: string, o: Record<string, unknown>) =>
+  ({ sourceId: o.sourceId, sourceIds: o.sourceIds, excludePrivate: storePagePolicy(member, o.excludePrivate) ?? null });
 
 /**
  * Ids the SQL engines cast to `bigint[]`: a non-integer is refused (the cast fails there). An id below 1 or past
@@ -197,10 +202,10 @@ export const getBacklinkCounts: StoreMember<[pageIds: number[], opts?: PageReadS
   async (brain, pageIds, opts) => {
     const result = new Map(pageIds.map(id => [id, 0]));
     if (!pageIds.length) return result;
-    const options = takeOptions('getBacklinkCounts', opts, SCOPE_KEYS, UNREAD_BY_FILTER);
+    const options = takeOptions('getBacklinkCounts', opts, POLICY_SCOPE_KEYS, UNREAD_BY_FILTER);
     int32Ids('getBacklinkCounts', pageIds);
     const rows: Array<{ page_id: number; cnt: number }> = await storeCall({ member: 'getBacklinkCounts' },
-      () => brain.getBacklinkCounts(pageIds, { ...scopeOf(options), scoped: !!opts }));
+      () => brain.getBacklinkCounts(pageIds, { ...scopeOf('getBacklinkCounts', options), scoped: !!opts }));
     for (const row of rows) result.set(Number(row.page_id), Number(row.cnt));
     return result;
   };
@@ -209,9 +214,9 @@ export const getAdjacencyBoosts: StoreMember<[pageIds: number[], opts?: PageRead
   async (brain, pageIds, opts) => {
     if (!pageIds.length) return new Map();
     int32Ids('getAdjacencyBoosts', pageIds, 'readAdjacencyBoosts');
-    const options = takeOptions('getAdjacencyBoosts', opts, SCOPE_KEYS, UNREAD_BY_FILTER);
+    const options = takeOptions('getAdjacencyBoosts', opts, POLICY_SCOPE_KEYS, UNREAD_BY_FILTER);
     const rows: Array<{ to_page_id: number; hits: number; cross_source_hits: number }> = await storeCall({ member: 'getAdjacencyBoosts' },
-      () => brain.getAdjacencyBoosts(pageIds, { ...scopeOf(options), scoped: !!opts }));
+      () => brain.getAdjacencyBoosts(pageIds, { ...scopeOf('getAdjacencyBoosts', options), scoped: !!opts }));
     return new Map(rows.map(row => [Number(row.to_page_id), { hits: Number(row.hits), cross_source_hits: Number(row.cross_source_hits) }]));
   };
 
@@ -225,7 +230,7 @@ export const relationalFanout: StoreMember<[seeds: string[], opts?: RelationalFa
     // The SQL engines bind both into integer comparisons; a fraction or NaN is not guessed at.
     if (!Number.isInteger(depth) || !Number.isInteger(limit)) refuseMember('relationalFanout', 'a depth or limit that is not an integer');
     const wire = {
-      ...scopeOf(options),
+      ...scopeOf('relationalFanout', options),
       scoped: hasReadPolicy(options),
       seedRefs: opts?.seedRefs?.map(ref => ({ source_id: ref.source_id, slug: ref.slug })),
       linkTypes: opts?.linkTypes ?? undefined,
@@ -242,11 +247,11 @@ export const relationalChainHop: StoreMember<[frontierPageIds: number[], opts: C
     if (!frontierPageIds.length || !opts.linkTypes.length) return [];
     const ids = int32Ids('relationalChainHop', [...new Set(frontierPageIds)], 'readChainHop');
     const options = takeOptions('relationalChainHop', opts,
-      [...SCOPE_KEYS, 'linkTypes', 'toward', 'subjectTypes', 'objectTypes', 'degreeLinkTypes', 'neighborCap'], UNREAD_BY_FILTER);
+      [...POLICY_SCOPE_KEYS, 'linkTypes', 'toward', 'subjectTypes', 'objectTypes', 'degreeLinkTypes', 'neighborCap'], UNREAD_BY_FILTER);
     const cap = Math.max(1, Math.min(opts.neighborCap, 1000));
     if (!Number.isInteger(cap)) refuseMember('relationalChainHop', 'a neighborCap that is not an integer');
     const wire = {
-      ...scopeOf(options),
+      ...scopeOf('relationalChainHop', options),
       linkTypes: opts.linkTypes, toward: opts.toward, subjectTypes: opts.subjectTypes, objectTypes: opts.objectTypes,
       degreeLinkTypes: opts.degreeLinkTypes, neighborCap: cap,
     };
@@ -257,8 +262,9 @@ type OrphanRow = { slug: string; title: string; domain: string | null; type?: st
 
 export const findOrphanPages: StoreMember<[opts?: PageReadScope & { mode?: 'inbound' | 'islanded'; scopeInbound?: boolean }], OrphanRow[]> =
   (brain, opts) => {
-    const options = takeOptions('findOrphanPages', opts, [...SCOPE_KEYS, 'mode', 'scopeInbound']);
-    return storeCall({ member: 'findOrphanPages' }, () => brain.findOrphanPages(options));
+    const options = takeOptions('findOrphanPages', opts, [...POLICY_SCOPE_KEYS, 'mode', 'scopeInbound']);
+    const wire = { ...options, excludePrivate: storePagePolicy('findOrphanPages', options.excludePrivate) ?? null };
+    return storeCall({ member: 'findOrphanPages' }, () => brain.findOrphanPages(wire));
   };
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -276,10 +282,10 @@ export const supersedingPageSlugs: StoreMember<[pageIds: number[], policy?: Page
   async (brain, pageIds, policy) => {
     const result = new Map<number, string>();
     if (pageIds.length === 0) return result;
-    const options = takeOptions('supersedingPageSlugs', policy, SCOPE_KEYS, UNREAD_BY_FILTER);
+    const options = takeOptions('supersedingPageSlugs', policy, POLICY_SCOPE_KEYS, UNREAD_BY_FILTER);
     const ids = bigintIds('supersedingPageSlugs', pageIds);
     const rows: Array<{ to_page_id: number; by_slug: string }> = await storeCall({ member: 'supersedingPageSlugs' },
-      () => brain.supersedingPageSlugs(ids, { ...scopeOf(options), scoped: !!policy }));
+      () => brain.supersedingPageSlugs(ids, { ...scopeOf('supersedingPageSlugs', options), scoped: !!policy }));
     for (const row of rows) {
       const id = Number(row.to_page_id);
       if (!result.has(id)) result.set(id, row.by_slug);

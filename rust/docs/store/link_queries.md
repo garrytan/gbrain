@@ -28,12 +28,10 @@ Code: `rust/crates/gbrain-store/src/link_queries.rs`, the napi methods in
 
 ### Refusals (`engine_capability_missing`)
 
-- Read policy the store does not record: `excludePrivate`, `minTrust`, `suppressFlagged` and any temporal option
-  (`temporal`, `wanted`, `lineGrammar`, `temporalBody`). `requireSafeChunks` and `takesHoldersAllowList` are accepted
-  where `pageReadFilter` does not read them: they only turn the live filter on in `relationalFanout`, and they are
-  ignored by `getBacklinkCounts`, `getAdjacencyBoosts` and `relationalChainHop`, as in the SQL engines.
-  `supersedingPageSlugs` takes the same rule: hybrid search passes its read policy, so a remote search with
-  `excludePrivate: true` refuses there.
+- Read policy the store does not record: `minTrust`, `suppressFlagged` and any temporal option (`temporal`, `wanted`,
+  `lineGrammar`, `temporalBody`). `requireSafeChunks` and `takesHoldersAllowList` are accepted where `pageReadFilter`
+  does not read them: they only turn the live filter on in `relationalFanout`, and they are ignored by
+  `getBacklinkCounts`, `getAdjacencyBoosts` and `relationalChainHop`, as in the SQL engines.
 - A derived-link origin with a caller-read `snapshot`. `semanticsPrimed` is ignored: the store has no relation
   semantics to prime.
 - A page id that is not a 32-bit integer (`getBacklinkCounts`, `getAdjacencyBoosts`, `relationalChainHop`): Postgres
@@ -56,7 +54,11 @@ sub-tag free. `remove_source_rows` deletes every key under `q <source id> \0`, s
 
 `pageReadFilter(alias, scope, params, live)` is modelled for the source clause (`sourceIds` when not empty, else a
 non-empty `sourceId`) and the live clause: not soft-deleted, no `quarantine` frontmatter key, and the source exists and
-is not archived. The origin clause (`originFilter`) passes a link with no origin, or one whose origin page passes the
+is not archived. Under `excludePrivate` (the store page policy of `private-provenance.ts`, `page_hidden`), a page the
+policy hides fails the filter, live or not, in `getBacklinkCounts`, `getAdjacencyBoosts`, `relationalFanout`,
+`relationalChainHop` and `supersedingPageSlugs`. `findOrphanPages` drops a hidden candidate and ignores an inbound link
+from a hidden page or with a hidden origin (`privateLinkOriginFilterForCaller` tests the origin's privacy only, not
+whether it is live). The origin clause (`originFilter`) passes a link with no origin, or one whose origin page passes the
 live filter.
 
 ## Derived-link replacement
