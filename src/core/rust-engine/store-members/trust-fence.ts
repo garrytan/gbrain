@@ -2,9 +2,10 @@
  * The fence guard's read of a page's fact rows with their trust tier (BrainEngine listFenceFactRows;
  * engine-sql/trust-fence.ts on the SQL engines).
  *
- * The store answers in the default write context: no declared writer tier (read as `unknown`) and no opened fact ids,
- * because the Rust engine has no transaction settings to read them from. Every stored fact reads as `unknown`, which is
- * not above `unknown`, so the answer is empty until the write context reaches the store. What the read answers and why:
+ * The store reads the writer's tier and the opened fact ids from its write trust context (rust/docs/store/write_trust.md),
+ * which the engine's transaction sets in place of `gbrain.write_trust_tier` and `gbrain.write_open_facts`; with none set,
+ * the writer is undeclared (`unknown`) and nothing is opened. Every stored fact reads as `unknown` (Rust facts store no
+ * tier yet), so only an opened row, or a writer below `unknown`, lists a row. What the read answers and why:
  * rust/docs/store/facts.md, "The fence guard's reads".
  */
 import type { FenceFactRow } from '../../engine-sql/trust-fence.ts';
