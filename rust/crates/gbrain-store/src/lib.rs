@@ -18,10 +18,15 @@ pub mod journal;
 pub mod keys;
 pub mod kv;
 pub mod links;
+mod page_columns;
+mod page_index;
+mod page_projection;
 pub mod pages;
 pub mod redb_kv;
 pub mod search;
 pub mod sources;
+#[cfg(test)]
+mod test_support;
 pub mod timeline;
 
 // One module per planned family (docs/designs/RUST_ENGINE_INTERFACES.md). Each is listed once, here,
@@ -35,11 +40,13 @@ pub mod embeddings;
 pub mod eval_capture;
 pub mod extraction;
 pub mod facts;
+pub mod jobs;
 pub mod keyword;
 pub mod link_queries;
 pub mod ontology;
 pub mod page_body;
 pub mod page_ops;
+pub mod persistence;
 pub mod raw_files;
 pub mod relations;
 pub mod salience;
@@ -47,7 +54,9 @@ pub mod stats;
 pub mod takes;
 pub mod timeline_queries;
 pub mod transactions;
+pub mod trust;
 pub mod vectors;
+pub mod wanted_links;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -101,6 +110,10 @@ pub struct StoreInfo {
 pub struct Store {
     pub(crate) kv: Arc<dyn Kv>,
     pub(crate) env: Arc<dyn Env>,
+    /// Decoded vectors, kept across reads (`vectors.rs`). It is fed from committed snapshots
+    /// only.
+    #[allow(dead_code)] // the vector search family reads it
+    pub(crate) vectors: vectors::VectorCache,
     info: StoreInfo,
 }
 
@@ -182,6 +195,7 @@ impl Store {
         Ok(Store {
             kv,
             env,
+            vectors: vectors::VectorCache::default(),
             info: StoreInfo {
                 brain_id: stored.brain_id,
                 format_version: stored.format_version,

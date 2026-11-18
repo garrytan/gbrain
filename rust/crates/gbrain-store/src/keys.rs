@@ -20,6 +20,7 @@ pub const LINK_ORIGIN: u8 = b'O';
 pub const TIMELINE: u8 = b'E';
 pub const TIMELINE_DEDUP: u8 = b'D';
 pub const TIMELINE_LATEST: u8 = b'G';
+pub const PAGE_ORIGIN: u8 = b'o';
 
 // Reserved, one byte per planned family (docs/designs/RUST_ENGINE_INTERFACES.md, "Key layout").
 // The family's module owns every byte after its tag. Never reuse, reorder or repurpose a byte;
@@ -68,6 +69,14 @@ pub const EMBEDDING_STATE: u8 = b'B';
 pub const LOCK_QUEUE: u8 = b'w';
 /// Family `relations` (`relations.rs`).
 pub const RELATION_CATALOG: u8 = b'v';
+/// Family `persistence` (`persistence.rs`): effects, checkpoints, bindings and the page
+/// projection queue. Its write requests stay under `REQUEST` and `REQUEST_ID`, and its local
+/// writers under `WRITER`.
+pub const PERSISTENCE: u8 = b'd';
+/// Family `jobs` (`jobs.rs`).
+pub const JOBS: u8 = b'm';
+/// Family `trust` (`trust.rs`).
+pub const TRUST: u8 = b't';
 
 pub fn text(tag: u8, parts: &[&str]) -> Vec<u8> {
     let mut key = vec![tag];
@@ -183,6 +192,21 @@ pub fn link_to(to_page_id: u64, link_id: u64) -> Vec<u8> {
 
 pub fn link_to_prefix(to_page_id: u64) -> Vec<u8> {
     id_key(LINK_TO, &[to_page_id])
+}
+
+/// `o source \0 origin \0 page_id` -> empty: the live pages of a source that record an origin
+/// (`source_path`), as the partial unique index `pages_live_origin_key` holds them. `origin` is
+/// the compared form (`pages::origin_key`) and holds no NUL.
+pub fn page_origin(source_id: &str, origin: &str, page_id: u64) -> Vec<u8> {
+    let mut key = page_origin_prefix(source_id, origin);
+    key.extend_from_slice(&page_id.to_be_bytes());
+    key
+}
+
+pub fn page_origin_prefix(source_id: &str, origin: &str) -> Vec<u8> {
+    let mut key = text(PAGE_ORIGIN, &[source_id, origin]);
+    key.push(0);
+    key
 }
 
 /// `O origin_page_id link_id` -> `from_page_id`: the links a page authored.

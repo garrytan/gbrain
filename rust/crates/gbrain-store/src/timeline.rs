@@ -12,12 +12,12 @@
 //! rest with `invalid_argument`. A date that does not exist (`2026-02-30`) is refused too.
 
 use crate::env::iso;
-use crate::error::{INVALID_ARGUMENT, Result, StoreError};
+use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
 use crate::kv::{KvRead, KvWrite, prefix_end, scan_prefix};
 use crate::links::{missing, no_nul};
 use crate::pages::{clean, next_id, read_page, scope_sources};
 use crate::sources::DEFAULT_SOURCE;
-use crate::{Store, keys, put_json};
+use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -166,15 +166,74 @@ fn insert_entry(tx: &mut dyn KvWrite, mut record: TimelineRecord) -> Result<bool
         &record,
     )?;
     tx.put(&dedup, &record.id.to_be_bytes())?;
-    let latest = keys::timeline_latest(record.page_id);
+    raise_latest(tx, record.page_id, record.created_at_us)?;
+    Ok(true)
+}
+
+/// Raises `G page_id` to `created_at_us` when it is newer than what `G` holds.
+fn raise_latest(tx: &mut dyn KvWrite, page_id: u64, created_at_us: i64) -> Result<()> {
+    let latest = keys::timeline_latest(page_id);
     let newer = match tx.get(&latest)? {
-        Some(bytes) => latest_micros(&bytes).is_none_or(|old| record.created_at_us > old),
+        Some(bytes) => latest_micros(&bytes).is_none_or(|old| created_at_us > old),
         None => true,
     };
     if newer {
-        tx.put(&latest, &record.created_at_us.to_be_bytes())?;
+        tx.put(&latest, &created_at_us.to_be_bytes())?;
     }
-    Ok(true)
+    Ok(())
+}
+
+/// The next timeline entry id, from the same counter `addTimelineEntry` uses (the `serial`).
+// timeline_queries (upsertEventProjection) is the first caller.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn next_entry_id(tx: &mut dyn KvWrite) -> Result<u64> {
+    next_id(tx, NEXT_TIMELINE_ID)
+}
+
+/// The entry at `E page_id date id`, if there is one.
+// timeline_queries (upsertEventProjection) is the first caller.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn read_entry(
+    read: &dyn KvRead,
+    page_id: u64,
+    date: &str,
+    id: u64,
+) -> Result<Option<TimelineRecord>> {
+    get_json(read, &keys::timeline(page_id, date, id))
+}
+
+/// Writes `new`, replacing `old` (the same entry as it was stored before) when given. Removes
+/// `old`'s `E` key and its `D` key when that `D` key still points at `old.id`. Refuses with
+/// `constraint_violation` when `new`'s `D` key points at another entry (the dedup unique index).
+/// Writes `new`'s `E` and `D` keys and raises `G` of `new.page_id`; `G` is never lowered. On a
+/// refusal the caller returns the error, so the write transaction keeps nothing.
+// timeline_queries (upsertEventProjection) is the first caller.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn put_entry(
+    tx: &mut dyn KvWrite,
+    old: Option<&TimelineRecord>,
+    new: &TimelineRecord,
+) -> Result<()> {
+    if let Some(old) = old {
+        tx.delete(&keys::timeline(old.page_id, &old.date, old.id))?;
+        let dedup = old.dedup_key();
+        if tx.get(&dedup)?.and_then(|b| keys::be8(&b)) == Some(old.id) {
+            tx.delete(&dedup)?;
+        }
+    }
+    let dedup = new.dedup_key();
+    if tx
+        .get(&dedup)?
+        .is_some_and(|bytes| keys::be8(&bytes) != Some(new.id))
+    {
+        return Err(StoreError::new(
+            CONSTRAINT_VIOLATION,
+            "duplicate key value violates unique constraint on timeline_entries (page_id, date, summary, source)",
+        ));
+    }
+    put_json(tx, &keys::timeline(new.page_id, &new.date, new.id), new)?;
+    tx.put(&dedup, &new.id.to_be_bytes())?;
+    raise_latest(tx, new.page_id, new.created_at_us)
 }
 
 fn latest_micros(bytes: &[u8]) -> Option<i64> {
@@ -406,4 +465,143 @@ fn not_null(column: &str) -> StoreError {
 
 fn not_null_summary() -> StoreError {
     not_null("summary")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pages::{PageInput, PutPageOptions};
+
+    fn page(store: &Store, slug: &str) -> u64 {
+        let input = PageInput {
+            page_type: "note".into(),
+            title: slug.into(),
+            compiled_truth: "body".into(),
+            ..PageInput::default()
+        };
+        store
+            .put_page(slug, &input, &PutPageOptions::default())
+            .unwrap();
+        read_page(&*store.read().unwrap(), DEFAULT_SOURCE, slug)
+            .unwrap()
+            .unwrap()
+            .id
+    }
+
+    fn entry(id: u64, page_id: u64, date: &str, summary: &str, at: i64) -> TimelineRecord {
+        TimelineRecord {
+            id,
+            page_id,
+            date: date.into(),
+            source: "s".into(),
+            summary: summary.into(),
+            detail: String::new(),
+            event_page_id: None,
+            created_at_us: at,
+        }
+    }
+
+    fn entries(store: &Store, slug: &str) -> Vec<Value> {
+        store
+            .get_timeline(slug, &TimelineOptions::default())
+            .unwrap()
+    }
+
+    #[test]
+    fn put_entry_writes_reads_and_replaces_an_entry() {
+        let store = crate::test_support::store();
+        let a = page(&store, "a");
+        let first = store
+            .write(|tx| {
+                let id = next_entry_id(tx)?;
+                put_entry(tx, None, &entry(id, a, "2026-01-02", "one", 10))?;
+                Ok(id)
+            })
+            .unwrap();
+        let stored = read_entry(&*store.read().unwrap(), a, "2026-01-02", first)
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.summary, "one");
+        assert_eq!(entries(&store, "a").len(), 1);
+
+        // Move the entry to another date and summary; the old keys go.
+        let moved = entry(first, a, "2026-03-04", "two", 20);
+        store
+            .write(|tx| put_entry(tx, Some(&stored), &moved))
+            .unwrap();
+        let read = store.read().unwrap();
+        assert!(
+            read_entry(&*read, a, "2026-01-02", first)
+                .unwrap()
+                .is_none()
+        );
+        assert!(read.get(&stored.dedup_key()).unwrap().is_none());
+        assert_eq!(
+            read.get(&moved.dedup_key()).unwrap(),
+            Some(first.to_be_bytes().to_vec())
+        );
+        assert_eq!(latest_entry_micros(&*read, a).unwrap(), Some(20));
+        let listed = entries(&store, "a");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0]["summary"], "two");
+
+        // An older created_at does not lower G.
+        let older = entry(first, a, "2026-03-04", "two", 5);
+        store
+            .write(|tx| put_entry(tx, Some(&moved), &older))
+            .unwrap();
+        assert_eq!(
+            latest_entry_micros(&*store.read().unwrap(), a).unwrap(),
+            Some(20)
+        );
+    }
+
+    #[test]
+    fn put_entry_refuses_a_duplicate_and_keeps_nothing() {
+        let store = crate::test_support::store();
+        let a = page(&store, "a");
+        let entry_input = TimelineInput {
+            date: Some("2026-01-02".into()),
+            source: Some("s".into()),
+            summary: Some("one".into()),
+            detail: None,
+        };
+        assert!(
+            store
+                .add_timeline_entry("a", &entry_input, &AddTimelineOptions::default())
+                .unwrap()
+        );
+        let error = store
+            .write(|tx| {
+                let id = next_entry_id(tx)?;
+                put_entry(tx, None, &entry(id, a, "2026-01-02", "one", 10))
+            })
+            .unwrap_err();
+        assert_eq!(error.code, CONSTRAINT_VIOLATION);
+        assert_eq!(entries(&store, "a").len(), 1);
+    }
+
+    #[test]
+    fn put_entry_keeps_a_dedup_key_that_points_at_another_entry() {
+        let store = crate::test_support::store();
+        let a = page(&store, "a");
+        let (x, y) = store
+            .write(|tx| {
+                let x = entry(next_entry_id(tx)?, a, "2026-01-02", "one", 10);
+                put_entry(tx, None, &x)?;
+                // `y` is a stale copy whose dedup key is `x`'s.
+                let y = entry(next_entry_id(tx)?, a, "2026-01-02", "one", 10);
+                Ok((x, y))
+            })
+            .unwrap();
+        store
+            .write(|tx| put_entry(tx, Some(&y), &entry(y.id, a, "2026-05-06", "other", 10)))
+            .unwrap();
+        let read = store.read().unwrap();
+        assert_eq!(
+            read.get(&x.dedup_key()).unwrap(),
+            Some(x.id.to_be_bytes().to_vec())
+        );
+        assert_eq!(entries(&store, "a").len(), 2);
+    }
 }
