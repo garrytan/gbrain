@@ -28,6 +28,7 @@ import type { EntityTypeFilter } from './schema-pack/entity-types.ts';
 import type { ChunkMove } from './page-state/chunk-moves.ts';
 import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence-state.ts';
+import type { DurablePersistenceSettings } from './engine-sql/persistence-declaration.ts';
 import type { ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, WriteCompletion, WriteRequestInsert } from './engine-sql/persistence-journal.ts';
 import type { ClaimExpiry, ClaimRenewal, SourceMembership, TopologyChange, TopologyChangeInsert } from './engine-sql/persistence-claims.ts';
 import type { CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionWindowRow, ReceiptBudget, SegmentedProjectionFilter } from './engine-sql/persistence-housekeeping.ts';
@@ -3248,6 +3249,13 @@ export interface BrainEngine {
 
   /** The brain's persistence identity (`persistence_brain.brain_id`), or null when the schema holds no such row. */
   readPersistenceBrainId(): Promise<string | null>;
+
+  /**
+   * Declares persistence protocol 2 for the current transaction (`gbrain.persistence_protocol`), with the durable-write
+   * settings when given, and returns the brain's persistence id read under the brain row's share lock (null when the
+   * row is missing). Outside a transaction the declaration ends with its statement. engine-sql/persistence-declaration.ts.
+   */
+  declarePersistence(opts?: { durable?: DurablePersistenceSettings }): Promise<string | null>;
 
   /** One local writer registration row (lane, credential hash, grant ceiling, revoked_at), or undefined; `lock` reads it `FOR SHARE`. */
   readLocalWriterRow(id: string, opts?: { lock?: boolean }): Promise<LocalWriterRow | undefined>;
