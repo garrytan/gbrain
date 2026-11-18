@@ -97,6 +97,9 @@ reads, `countOpenJobsByOwner` and `readJobSourceState` come from the store. The 
 `MinionQueue.retryJob` runs the job authority check first. An application job needs no read. An agent job
 (`remote_agent`) reads its source with `readJobSourceState`, so a source that is gone, archived or created again
 is denied on the store as on PGLite; a current source goes on to the owner's `oauth_clients` read, which refuses.
+The archived-source branch is pinned by cargo only (`job_source_state_reads_archived_and_the_creation_stamp` in
+`tests/jobs_slice2.rs`). The parity suite cannot reach it: no member the Rust engine serves archives a source, so
+a mutant that always reads `archived` as false passes parity and fails cargo.
 A generic remote job (`remote_generic`) reads its principal first (`SELECT client_id, deleted_at, scope, source_id,
 bound_slug_prefixes, surface, allowed_operations FROM oauth_clients WHERE client_id = $1`, or `SELECT * FROM
 access_tokens WHERE id = $1` for a legacy token), so its retry refuses at that read until the grants family is in
