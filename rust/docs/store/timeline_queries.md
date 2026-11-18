@@ -1,9 +1,10 @@
-# timeline_queries: the Life Chronicle reads
+# timeline_queries: the Life Chronicle reads and the timeline site reads
 
 Code: `rust/crates/gbrain-store/src/timeline_queries.rs`, the napi methods in
 `rust/crates/gbrain-napi/src/families/timeline_queries.rs` and the members in
 `src/core/rust-engine/store-members/timeline-queries.ts`. The reference is
-`src/core/engine-sql/timeline.ts`.
+`src/core/engine-sql/timeline.ts`; for the site reads (`timeline_queries/site_reads.rs`) it is
+`src/core/engine-sql/timeline-reads.ts`.
 
 ## Members
 
@@ -14,6 +15,15 @@ Code: `rust/crates/gbrain-store/src/timeline_queries.rs`, the napi methods in
 | `getOnThisDay({ date?, limit?, sourceId?, sourceIds? })` | served |
 | `getLastSeen(entitySlug, { asof?, sourceId?, sourceIds? })` | served; the TypeScript member adds `days_ago` with the shared `finalizeLastSeen` |
 | `upsertEventProjection({ depthSlug, eventSlug, date, summary, detail?, sourceId? })` | served, through the core helpers `next_entry_id`, `read_entry` and `put_entry` |
+| `sampleEffectiveDates()` | served (site read) |
+| `sampleEffectiveDateSources()` | served (site read) |
+| `readMaxTimelineEntryId()` | served (site read) |
+| `listStoredTimelineRowsOrdered(pageId)` | served (site read) |
+| `deleteTimelineRows(pageId, deletions)` | served (site write) |
+| `storedTimelineRowsByPageIds(pageIds)` | served (site read) |
+| `countSegmentedTimelinePages(sourceIds, limit)` | served (site read) |
+| `countTimelineCommentMarkupRows(sourceIds)` | served (site read) |
+| `listTimelineOrphanPages({ afterId, limit, sourceId? })` | served (site read) |
 
 `excludePrivate: true` refuses: the SQL engines apply a privacy filter for it. `requireSafeChunks`, `minTrust` and
 `suppressFlagged` are ignored, because the SQL reads ignore them too.
@@ -61,6 +71,38 @@ The SQL is `INSERT ... SELECT` from the depth page and the event page of one sou
   (`idx_timeline_dedup`), and the write keeps nothing.
 - Text with a NUL byte is `invalid_argument`.
 
+## The site reads
+
+The statements doctor, the canonical projection, `gbrain repair timeline` and the orphan prune ran through
+`engine.executeRaw`. None applies a read policy, so the members take none. An own row is one with no event page.
+A live page is one that is not soft-deleted. A segmented page has NULL `compiled_truth` and `timeline`.
+
+- `sampleEffectiveDates`: of the newest 1000 pages by id, soft-deleted pages included, `future_dated` counts an
+  effective date after the store clock plus one calendar year (UTC, the time of day kept, February 29 to February 28).
+  `pre_1990` counts a date before `1990-01-01` whose source is not `event_date`, `date`, `published` or `created`.
+- `sampleEffectiveDateSources`: the same sample, source `fallback`, with a frontmatter key `event_date`, `date` or
+  `published`, newest id first. The member turns `created_at` and `updated_at` into `Date`s.
+- `readMaxTimelineEntryId`: the largest id of any `E` record, event rows included, or 0. It reads the keys, not the
+  id counter, so it matches `max(id)` after a delete.
+- `listStoredTimelineRowsOrdered`: the page's own rows in `E` key order (date, then id).
+- `deleteTimelineRows`: one write. Each deletion's date is parsed as the `date` column parses it; a bad date fails
+  with `invalid_argument` before any row is read. An own row of the page is deleted when a deletion matches its id,
+  date, source, summary and detail (a missing field matches nothing). It returns `{ date, removed }` per deleted row,
+  in key order. The `E` key goes, and the `D` key when it still names the row. `G` of the page is then reset to the
+  newest `created_at` of the rows left, or removed, so the keyword stale flag follows `MAX(created_at)`.
+- `storedTimelineRowsByPageIds`: own rows of the named pages, by page id, then id. A negative id matches nothing.
+- `countSegmentedTimelinePages`: live segmented pages of the sources with own rows, their row total and the first
+  `limit` of them by id.
+- `countTimelineCommentMarkupRows`: own rows on live pages of the sources whose summary or source holds `<!--` or
+  `-->`.
+- `listTimelineOrphanPages`: live pages with an id after `afterId`, in `sourceId` when it is not empty, that hold own
+  rows, by id, at most `limit`. `body_storage` is `segmented` for a segmented page, else `inline`; `revision` is the
+  knowledge revision.
+
+The members refuse with `engine_capability_missing` a value the SQL engines would fail to bind: a page or row id
+that is not a 32-bit integer, a page id or `afterId` that is not an integer, and a limit that is negative or not an
+integer.
+
 ## Keys
 
 The reads write nothing and scan every `E` record. The family keeps one index, in place of `idx_timeline_event_dedup`:
@@ -74,8 +116,11 @@ event page (the hard delete of its depth page removes the entry and leaves the r
 
 ## Known differences
 
-- The core latest-entry marker `G` only goes up. A projection moved to another depth page leaves `G` of the old page
-  where it was, while Postgres computes the newest `created_at` each time. No parity case reads that today.
+- The core latest-entry marker `G` only goes up, except after `deleteTimelineRows`, which resets it. A projection
+  moved to another depth page leaves `G` of the old page where it was, while Postgres computes the newest
+  `created_at` each time. No parity case reads that today.
+- `trust_tier` of a timeline row is not modeled, so fence-guard's held-row count (`heldRows` for `timeline_entries`)
+  stays on the SQL path. Follow-up: `timeline-trust-tier-not-modeled`.
 - Time zone: the store reads `current_date`, `te.date::timestamptz` and `effective_date::text` in UTC (the frozen
   contract). PGLite follows the process time zone; `bun test` pins it to UTC. Follow-up:
   `chronicle-reads-host-time-zone`.

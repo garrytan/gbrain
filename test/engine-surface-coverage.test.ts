@@ -74,6 +74,10 @@ const INTERFACE_METHODS: readonly string[] = [
   'filterPagesAtRevision',
   // Wanted-link writes (engine-sql/wanted-links.ts; covered by test/engine-parity/wanted-links.test.ts)
   'lockRegisteredSourceIds', 'replaceWantedLinkRows',
+  // Timeline site reads (engine-sql/timeline-reads.ts)
+  'sampleEffectiveDates', 'sampleEffectiveDateSources', 'readMaxTimelineEntryId', 'listStoredTimelineRowsOrdered',
+  'deleteTimelineRows', 'storedTimelineRowsByPageIds', 'countSegmentedTimelinePages', 'countTimelineCommentMarkupRows',
+  'listTimelineOrphanPages',
   // Import writes (engine-sql/chunks.ts, tags.ts, pages.ts)
   'deleteChunksExcept', 'setChunkerVersion', 'writeTextProjectionSeal', 'moveChunkIndexes', 'getChunkReuseRows', 'pruneFrontmatterTags',
   'addPageTagsById', 'replaceDerivedAliases', 'getPageSealState', 'refreshPageOrigin',
@@ -170,6 +174,8 @@ const ENGINE_INTERNAL_HELPERS: readonly string[] = [
   'linkRead',
   // Code, doctor, withdrawal, repair and evidence chunk reads: the unscoped engine-sql executor they run through.
   'chunkRead',
+  // Timeline site reads: the unscoped engine-sql executor they run through.
+  'timelineRead',
   // CLI reads: the executors the CLI read members run through (PGLite rawRead wraps executeRaw; cliReads is the unscoped engine-sql executor).
   'rawRead',
   'cliReads',

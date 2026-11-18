@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 283/283
+# covered: 292/292
 # lifecycle: 9/9
 # pages: 31/31
 # search: 7/7
@@ -16,7 +16,7 @@
 # extraction: 7/7
 # links: 23/23
 # tags: 5/5
-# timeline: 8/8
+# timeline: 17/17
 # ontology: 4/4
 # raw_files: 5/5
 # takes: 15/15
@@ -51,13 +51,13 @@ getPage	pages	yes	36	yes	yes	yes	serves
 readPageSnapshot	pages	yes	7	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	155	yes	yes	yes	serves
+putPage	pages	yes	159	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	5	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	55	yes	yes	yes	serves
+softDeletePage	pages	yes	57	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	8	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -78,7 +78,7 @@ listPrefixSampledPages	pages	yes	1	no	yes	yes	serves
 listCorpusSample	pages	yes	1	no	yes	yes	serves
 getPageSealState	pages	yes	1	no	yes	yes	refuses:pages
 refreshPageOrigin	pages	yes	1	no	yes	yes	refuses:pages
-searchKeyword	search	yes	9	yes	yes	yes	serves
+searchKeyword	search	yes	10	yes	yes	yes	serves
 countKeywordPages	search	yes	2	no	yes	yes	serves
 searchKeywordPages	search	yes	2	no	yes	yes	serves
 searchTitles	search	yes	5	yes	yes	yes	serves
@@ -174,14 +174,23 @@ removeTag	tags	yes	2	no	yes	yes	serves
 pruneFrontmatterTags	tags	yes	2	no	yes	yes	serves
 addPageTagsById	tags	yes	1	no	yes	yes	serves
 getTags	tags	yes	3	yes	yes	yes	serves
-addTimelineEntry	timeline	yes	10	yes	yes	yes	serves
+sampleEffectiveDates	timeline	yes	1	no	yes	yes	serves
+sampleEffectiveDateSources	timeline	yes	1	no	yes	yes	serves
+readMaxTimelineEntryId	timeline	yes	1	no	yes	yes	serves
+listStoredTimelineRowsOrdered	timeline	yes	2	no	yes	yes	serves
+deleteTimelineRows	timeline	yes	2	no	yes	yes	serves
+storedTimelineRowsByPageIds	timeline	yes	1	no	yes	yes	serves
+countSegmentedTimelinePages	timeline	yes	1	no	yes	yes	serves
+countTimelineCommentMarkupRows	timeline	yes	1	no	yes	yes	serves
+listTimelineOrphanPages	timeline	yes	1	no	yes	yes	serves
+addTimelineEntry	timeline	yes	13	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	1	no	yes	yes	serves
 getTimeline	timeline	yes	3	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	2	no	yes	yes	serves
 getSince	timeline	yes	1	no	yes	yes	serves
 getOnThisDay	timeline	yes	1	no	yes	yes	serves
 getLastSeen	timeline	yes	1	no	yes	yes	serves
-upsertEventProjection	timeline	yes	4	no	yes	yes	serves
+upsertEventProjection	timeline	yes	6	no	yes	yes	serves
 mergeOntologyFact	ontology	yes	5	no	yes	yes	serves
 getOntology	ontology	yes	3	no	yes	yes	serves
 discoverOntologyDimensions	ontology	yes	1	no	yes	yes	serves
@@ -234,7 +243,7 @@ readSegmentTexts	segmented_body	yes	3	no	yes	yes	serves
 stageManifestRows	segmented_body	yes	4	no	yes	yes	serves
 readManifest	segmented_body	yes	7	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	3	no	yes	yes	serves
-createSegmentedPageShell	segmented_body	yes	5	no	yes	yes	serves
+createSegmentedPageShell	segmented_body	yes	6	no	yes	yes	serves
 flipBodyGeneration	segmented_body	yes	6	no	yes	yes	serves
 sealSegmentedPage	segmented_body	yes	2	no	yes	yes	serves
 openBodyStaging	segmented_body	yes	6	no	yes	yes	serves
