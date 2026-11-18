@@ -259,7 +259,6 @@ src/core/advisor/collect-mcp-client-fit.ts	execute_raw	1
 src/core/advisor/collect-stalled-jobs.ts	execute_raw	1
 src/core/agent-install/setup.ts	execute_raw	2
 src/core/agent-install/shared-skills.ts	execute_raw	1
-src/core/ai/chat-usage.ts	execute_raw	1
 src/core/ai/decide/egress.ts	execute_raw	1
 src/core/ai/decide/proposals-store.ts	execute_raw	16
 src/core/ai/decide/review-lane.ts	execute_raw	17
@@ -619,7 +618,6 @@ src/core/ops/storage-manifest.ts	execute_raw	1
 src/core/ops/tags.ts	execute_raw	1
 src/core/ops/takes.ts	execute_raw	1
 src/core/ops/trust.ts	execute_raw	1
-src/core/ops/usage.ts	execute_raw	2
 src/core/ops/valid-time-read.ts	execute_raw	6
 src/core/ops/wakeshift.ts	execute_raw	5
 src/core/ops/whois.ts	execute_raw	1
