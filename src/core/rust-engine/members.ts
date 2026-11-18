@@ -230,6 +230,17 @@ export const RUST_ENGINE_MEMBERS = {
   // facts: doctor checks (engine-sql/facts-doctor.ts)
 
   // facts: command, cycle and fence reads (engine-sql/facts-cycle.ts)
+  listActiveFactsForEntity: 'facts',
+  listFreshExtractionOutcomes: 'facts',
+  listFenceRowGroups: 'facts',
+  readFactSubject: 'facts',
+  listFactsForPage: 'facts',
+  countLegacyFactsPending: 'facts',
+  countUnconsolidatedFactsBySource: 'facts',
+  findBulkFactDays: 'facts',
+  maxFenceRowNum: 'facts',
+  listStoredFenceFactRows: 'facts',
+  countWorldFacts: 'facts',
 
   // facts: purge, withdrawal, relink and fence repair (engine-sql/facts-purge.ts)
 

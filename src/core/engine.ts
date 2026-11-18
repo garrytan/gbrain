@@ -2923,6 +2923,28 @@ export interface BrainEngine {
   // Facts statements, doctor checks (engine-sql/facts-doctor.ts). Each runs the statement its caller ran through executeRaw.
 
   // Facts statements, command, cycle and fence reads (engine-sql/facts-cycle.ts). Each runs the statement its caller ran through executeRaw.
+  /** enrich's grounding read: an entity's unexpired, unlapsed facts, highest confidence first (newest id breaks a tie), at most `limit`. */
+  listActiveFactsForEntity(sourceId: string, entitySlug: string, limit: number): Promise<FactsCycleSql.EvidenceFactRow[]>;
+  /** The unexpired audit rows of `slugs` written by one of `sources`, by slug, the rows of `preferredSource` first within a page. */
+  listFreshExtractionOutcomes(sourceId: string, slugs: string[], sources: string[], preferredSource: string): Promise<FactsCycleSql.ExtractionOutcomeRow[]>;
+  /** Every page coordinate with fenced rows (no `cli:` rows): its row numbers in order and whether every row is expired. No set order. */
+  listFenceRowGroups(): Promise<FactsCycleSql.FenceRowGroupRow[]>;
+  /** The source and page slug (the row's page, else its entity) of fact `id`, or null for no such row. */
+  readFactSubject(id: number): Promise<FactsCycleSql.FactSubjectRow | null>;
+  /** The fence-owned rows of a page coordinate, by row number then id; `valid_from`, `valid_until` and `expired_at` are dates. */
+  listFactsForPage(sourceId: string, slug: string): Promise<FactsCycleSql.PageFactRow[]>;
+  /** Per entity page of the source, its unexpired unfenced rows (a live page in a source with a checkout). No set order. */
+  countLegacyFactsPending(sourceId: string): Promise<FactsCycleSql.LegacyPendingRow[]>;
+  /** The consolidate phase's (source, entity) buckets of at least `minPerBucket` active unconsolidated facts. No set order. */
+  countUnconsolidatedFactsBySource(opts: { sourceId?: string; worldOnly: boolean; minPerBucket: number }): Promise<FactsCycleSql.UnconsolidatedBucketRow[]>;
+  /** Every bulk day of the unarchived sources (`sourceIds` narrows them) under `rule`, as the statement returns them. */
+  findBulkFactDays(sourceIds: string[] | undefined, rule: FactsCycleSql.BulkDayRule): Promise<FactsCycleSql.BulkDayRow[]>;
+  /** The largest `row_num` of a page coordinate's facts, 0 for none. */
+  maxFenceRowNum(sourceId: string, slug: string): Promise<number>;
+  /** The page coordinate's facts that hold a row number, oldest id first. */
+  listStoredFenceFactRows(sourceId: string, slug: string): Promise<FactsCycleSql.StoredFenceFactRow[]>;
+  /** The entity card's exact active-fact count under its visibility, privacy and read eligibility. */
+  countWorldFacts(opts: FactsCycleSql.EntityFactCountOpts): Promise<number>;
 
   // Facts statements, purge, withdrawal, relink and fence repair (engine-sql/facts-purge.ts). Each runs the statement its caller ran through executeRaw.
 

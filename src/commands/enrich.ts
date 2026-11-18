@@ -280,14 +280,7 @@ async function retrieveEvidence(
 
   // 1. Facts the brain has extracted about this entity (highest signal/char).
   try {
-    const rows = await engine.executeRaw<{ fact: string; context: string | null }>(
-      `SELECT fact, context FROM facts
-        WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL
-          AND (valid_until IS NULL OR valid_until > now())
-        ORDER BY confidence DESC, id DESC
-        LIMIT $3`,
-      [sourceId, slug, FACT_LIMIT],
-    );
+    const rows = await engine.listActiveFactsForEntity(sourceId, slug, FACT_LIMIT);
     for (const r of rows) {
       const text = r.context ? `${r.fact} (${r.context})` : r.fact;
       facts.push({ source_slug: slug, text });

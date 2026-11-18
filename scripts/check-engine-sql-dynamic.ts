@@ -56,6 +56,9 @@ const VETTED_BUILDERS: Record<string, string> = {
   // facts-doctor.ts builders
 
   // facts-cycle.ts builders
+  readersSourcedFactSql: 'src/core/access/member-facts.ts: constant readers-sourced predicate over a caller facts alias; the folder-rule fragment it embeds is constant',
+  privateFactFilterForReader: 'src/core/search/private-visibility.ts: constant private-provenance predicate over a caller facts alias; the caller record picks among constant fragments and binds no value',
+  claimDateSql: 'src/core/engine-sql/facts-cycle.ts: constant date-claim predicate over caller-given constant column aliases; the date token and floor are module constants (no input)',
 
   // facts-purge.ts builders
 

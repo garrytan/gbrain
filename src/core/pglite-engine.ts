@@ -1442,6 +1442,17 @@ export class PGLiteEngine implements BrainEngine {
   // Facts statements, doctor checks (engine-sql/facts-doctor.ts), through executeRaw as before.
 
   // Facts statements, command, cycle and fence reads (engine-sql/facts-cycle.ts), through executeRaw as before.
+  listActiveFactsForEntity(sourceId: string, entitySlug: string, limit: number) { return factsCycleImpl.listActiveFactsForEntity(this.rawRead, sourceId, entitySlug, limit); }
+  listFreshExtractionOutcomes(sourceId: string, slugs: string[], sources: string[], preferredSource: string) { return factsCycleImpl.listFreshExtractionOutcomes(this.rawRead, sourceId, slugs, sources, preferredSource); }
+  listFenceRowGroups() { return factsCycleImpl.listFenceRowGroups(this.rawRead); }
+  readFactSubject(id: number) { return factsCycleImpl.readFactSubject(this.rawRead, id); }
+  listFactsForPage(sourceId: string, slug: string) { return factsCycleImpl.listFactsForPage(this.rawRead, sourceId, slug); }
+  countLegacyFactsPending(sourceId: string) { return factsCycleImpl.countLegacyFactsPending(this.rawRead, sourceId); }
+  countUnconsolidatedFactsBySource(opts: { sourceId?: string; worldOnly: boolean; minPerBucket: number }) { return factsCycleImpl.countUnconsolidatedFactsBySource(this.rawRead, opts); }
+  findBulkFactDays(sourceIds: string[] | undefined, rule: factsCycleImpl.BulkDayRule) { return factsCycleImpl.findBulkFactDays(this.rawRead, sourceIds, rule); }
+  maxFenceRowNum(sourceId: string, slug: string) { return factsCycleImpl.maxFenceRowNum(this.rawRead, sourceId, slug); }
+  listStoredFenceFactRows(sourceId: string, slug: string) { return factsCycleImpl.listStoredFenceFactRows(this.rawRead, sourceId, slug); }
+  countWorldFacts(opts: factsCycleImpl.EntityFactCountOpts) { return factsCycleImpl.countWorldFacts(this.rawRead, opts); }
 
   // Facts statements, purge, withdrawal, relink and fence repair (engine-sql/facts-purge.ts), through executeRaw as before.
 
