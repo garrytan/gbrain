@@ -607,3 +607,55 @@ fn a_trajectory_point_carries_its_vector_only_from_the_brain_model() {
     assert_eq!(head(&points[0], 1), [0.0999755859375]);
     assert_eq!(points[1]["embedding"], Value::Null);
 }
+
+#[test]
+fn unattributed_facts_list_active_rows_with_no_entity_newest_first() {
+    use gbrain_store::facts::UnattributedQuery;
+    let b = brain("facts-unattributed");
+    let first = insert(&b, json!({ "fact": "u-private", "source": "s" }));
+    b.clock.advance(500_000);
+    insert(
+        &b,
+        json!({ "fact": "u-world", "source": "s", "visibility": "world", "kind": "event" }),
+    );
+    insert(
+        &b,
+        json!({ "fact": "u-entity", "source": "s", "entity_slug": "people/u" }),
+    );
+    let gone = insert(&b, json!({ "fact": "u-forgotten", "source": "s" }));
+    b.expire_fact(&args::<ExpireFactArgs>(
+        json!({ "id": gone, "at": iso(T0 + DAY) }),
+    ))
+    .unwrap();
+    insert(
+        &b,
+        json!({ "fact": "u-lapsed", "source": "s", "valid_until": iso(T0 - DAY) }),
+    );
+    let page: gbrain_store::pages::PageInput =
+        args(json!({ "type": "note", "title": "Gone", "compiled_truth": "x" }));
+    b.put_page("notes/gone", &page, &args(json!({}))).unwrap();
+    batch(
+        &b,
+        json!([{ "row_num": 1, "source_markdown_slug": "notes/gone", "fact": "u-hidden",
+                 "entity_slug": null, "source": "fence" }]),
+    );
+    b.soft_delete_page("notes/gone", None).unwrap();
+    let list = |world_only: bool, limit: f64, offset: f64| {
+        b.list_unattributed_facts(&args::<UnattributedQuery>(json!({
+            "sourceIds": ["default", "default", "other"], "worldOnly": world_only,
+            "limit": limit, "offset": offset })))
+    };
+    let all = list(false, 10.0, 0.0).unwrap();
+    assert_eq!(facts(&all), ["u-world", "u-private"]);
+    assert_eq!(all[1]["id"], json!(first));
+    assert_eq!(
+        all[1]["created_at"],
+        iso(T0).replacen('T', " ", 1).replace(".000000Z", "+00")
+    );
+    assert_eq!(all[0]["kind"], "event");
+    assert_eq!(all[0]["source"], "s");
+    assert!(all[0]["created_at"].as_str().unwrap().ends_with(".5+00"));
+    assert_eq!(facts(&list(true, 10.0, 0.0).unwrap()), ["u-world"]);
+    assert_eq!(facts(&list(false, 1.0, 1.0).unwrap()), ["u-private"]);
+    assert_eq!(list(false, -1.0, 0.0).unwrap_err().code, INVALID_ARGUMENT);
+}

@@ -3,8 +3,9 @@
 //! Members: insertFact, insertFacts, deleteFactsForPage, expireFact, listFactsByEntity,
 //! listFactsSince, listFactsKeyset, listFactsBySession, listSupersessions,
 //! countUnconsolidatedFacts, findCandidateDuplicates, consolidateFact, findTrajectory,
-//! getFactsHealth, migrateFactsToCanonical, and the `pageCollapseFacts` search read
-//! (`facts/collapse.rs`). Other families read the rows through `fact_exists`
+//! getFactsHealth, migrateFactsToCanonical, the `listUnattributedFacts` review-list read and the
+//! `pageCollapseFacts` search read (`facts/collapse.rs`). Other families read the rows through
+//! `fact_exists`
 //! (eval capture) and write them through `write_fact` / `delete_fact` (ontology).
 //!
 //! Keys (every one starts with `keys::FACT`, `F`; a text part ends with a NUL byte, and no text
@@ -50,6 +51,7 @@ use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::{next_id, read_page};
 use crate::sources::read_source;
+use crate::timeline_queries::timestamptz_text;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -871,6 +873,20 @@ pub struct SupersessionQuery {
     pub visibility: Option<Vec<String>>,
 }
 
+/// The `listUnattributedFacts` read of src/core/review-lists.ts. The caller passes the page size
+/// it asks the database for (the review list asks for one row more than it shows) and decides
+/// the world-only rule; a private-provenance policy is not modeled, so a caller that needs one
+/// refuses before it reads.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct UnattributedQuery {
+    pub source_ids: Vec<String>,
+    /// `worldOnlyFacts(ctx.remote)`: keep only `visibility = 'world'` rows.
+    pub world_only: bool,
+    pub limit: f64,
+    pub offset: f64,
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct DuplicateQuery {
@@ -1630,6 +1646,50 @@ impl Store {
             "total_consolidated": rows.iter().filter(|r| r.consolidated_at_us.is_some()).count(),
             "top_entities": top.iter().map(|(e, n)| json!({ "entity_slug": e, "count": n })).collect::<Vec<_>>(),
         }))
+    }
+
+    /// `listUnattributedFacts` (src/core/review-lists.ts): the active rows with no entity in any of
+    /// `source_ids`, less the rows a soft-deleted page hides, newest id first, after `offset`, at
+    /// most `limit`. Each row is `id, fact, kind, visibility, source_id, created_at, source`, with
+    /// `created_at` the `timestamptz::text` form (`2026-06-18 09:00:00.5+00`).
+    pub fn list_unattributed_facts(&self, q: &UnattributedQuery) -> Result<Vec<Value>> {
+        const OP: &str = "listUnattributedFacts";
+        let sources: BTreeSet<&str> = q.source_ids.iter().map(String::as_str).collect();
+        let texts: Vec<(&str, &str)> = sources.iter().map(|s| ("sourceIds", *s)).collect();
+        no_nul(OP, &texts)?;
+        let limit = count_arg(OP, "limit", q.limit)?;
+        let offset = count_arg(OP, "offset", q.offset)?;
+        let read = self.read()?;
+        let now = self.env.now_micros();
+        let mut rows = Vec::new();
+        for source in sources {
+            for row in source_rows(&*read, source)? {
+                if row.entity_slug.is_none()
+                    && row.active(now)
+                    && (!q.world_only || row.visibility == "world")
+                    && !hidden_by_deleted_page(&*read, &row)?
+                {
+                    rows.push(row);
+                }
+            }
+        }
+        rows.sort_by_key(|r| std::cmp::Reverse(r.id));
+        Ok(rows
+            .iter()
+            .skip(offset)
+            .take(limit)
+            .map(|r| {
+                json!({
+                    "id": r.id,
+                    "fact": r.fact,
+                    "kind": r.kind,
+                    "visibility": r.visibility,
+                    "source_id": r.source_id,
+                    "created_at": timestamptz_text(r.created_at_us),
+                    "source": r.source,
+                })
+            })
+            .collect())
     }
 
     /// `migrateFactsToCanonical(phantom, canonical, sourceId)`: the phantom page's unexpired rows
