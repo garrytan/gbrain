@@ -73,7 +73,7 @@ getPage	pages	yes	63	yes	yes	yes	serves
 readPageSnapshot	pages	yes	16	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	247	yes	yes	yes	serves
+putPage	pages	yes	251	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	6	yes	yes	yes	serves
@@ -325,9 +325,9 @@ updateSlug	sync_aliases	yes	12	no	yes	yes	serves
 rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
 resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
-resolveAliases	sync_aliases	yes	5	no	yes	yes	serves
-setPageAliases	sync_aliases	yes	11	no	yes	yes	serves
-replaceDerivedAliases	sync_aliases	yes	6	no	yes	yes	serves
+resolveAliases	sync_aliases	yes	9	no	yes	yes	serves
+setPageAliases	sync_aliases	yes	15	no	yes	yes	serves
+replaceDerivedAliases	sync_aliases	yes	10	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
@@ -554,7 +554,7 @@ moveFactWithdrawalSubject	trust	yes	1	no	yes	yes	serves
 hasFactWithdrawalForSubject	trust	yes	1	no	yes	yes	serves
 listFactWithdrawalKeys	trust	yes	3	no	yes	yes	serves
 upsertWriteGateReceipt	trust	yes	3	no	yes	yes	serves
-upsertPageWriteGateReceipt	trust	yes	9	no	yes	yes	serves
+upsertPageWriteGateReceipt	trust	yes	11	no	yes	yes	serves
 deleteStalePageWriteGateReceipts	trust	yes	1	no	yes	yes	serves
 listWriteGateReceiptsFor	trust	yes	3	no	yes	yes	serves
 deleteStaleWriteGateReceipts	trust	yes	1	no	yes	yes	serves
@@ -597,8 +597,8 @@ logMcpRequest	telemetry	yes	3	no	yes	yes	serves
 readMcpLogPruneCutoff	telemetry	yes	1	no	yes	yes	serves
 pruneMcpRequestLogBatch	telemetry	yes	3	no	yes	yes	serves
 readMcpLifetimeUsage	telemetry	yes	1	no	yes	yes	serves
-findPagesByTitles	alias_fanout_reads	yes	3	no	yes	yes	serves
-resolveCaseSensitiveAliases	alias_fanout_reads	yes	3	no	yes	yes	serves
+findPagesByTitles	alias_fanout_reads	yes	4	no	yes	yes	serves
+resolveCaseSensitiveAliases	alias_fanout_reads	yes	4	no	yes	yes	serves
 readPageTitle	alias_fanout_reads	yes	1	no	yes	yes	serves
 readPageAliasRows	alias_fanout_reads	yes	3	no	yes	yes	serves
 hasSegmentStorage	write_guards	yes	1	no	yes	yes	serves
