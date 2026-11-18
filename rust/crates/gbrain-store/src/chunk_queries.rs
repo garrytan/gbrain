@@ -19,7 +19,7 @@
 //! served-projection filter makes. See rust/docs/store/chunk_queries.md.
 
 use crate::Store;
-use crate::chunks::{ChunkRecord, read_chunks};
+use crate::chunks::{ChunkRecord, SegmentView, read_chunks, read_segment_view, visible_chunks};
 use crate::error::Result;
 use crate::kv::KvRead;
 use crate::pages::{PageRecord, all_pages, find_in_scope, read_page_by_id};
@@ -148,6 +148,20 @@ fn chunkless_row(page: &PageRecord) -> Value {
     })
 }
 
+/// `chunkGenerationFilter`: a chunk of the page's live body. An inline chunk belongs to a page that is not segmented; a
+/// segmented chunk is at or below the page's generation and its occurrence has a live manifest row (the segment view
+/// keeps one offset per live occurrence). A staged chunk, one of a retired occurrence and an inline chunk left on a
+/// segmented page are not.
+fn in_live_body(chunk: &ChunkRecord, segmented_page: bool, view: &SegmentView) -> bool {
+    match chunk.segment {
+        None => !segmented_page,
+        Some(place) => {
+            place.body_generation <= view.generation
+                && view.offsets.contains_key(&place.occurrence_id)
+        }
+    }
+}
+
 fn chunk_window_row(chunk: &ChunkRecord, prio: i64) -> Value {
     json!({
         "kind": "chunk",
@@ -159,7 +173,8 @@ fn chunk_window_row(chunk: &ChunkRecord, prio: i64) -> Value {
         "chunk_source": chunk.chunk_source,
         "projected_byte_start": chunk.meta.get("projected_byte_start").cloned().unwrap_or(Value::Null),
         "projected_byte_end": chunk.meta.get("projected_byte_end").cloned().unwrap_or(Value::Null),
-        "occurrence_id": Value::Null,
+        // The manifest occurrence of a segmented chunk; an inline chunk has none.
+        "occurrence_id": chunk.segment.map_or(Value::Null, |place| json!(place.occurrence_id)),
     })
 }
 
@@ -179,18 +194,30 @@ impl Store {
         if !sealed(&page) {
             return Ok(empty);
         }
-        let mut chunks = read_chunks(&*read, page.id)?;
-        chunks.sort_by_key(|c| c.chunk_index);
+        // `chunkVisibleFilter` and `chunkDocumentOrder`: the chunks of the live generation in document order. A segmented
+        // page's `chunk_index` is an insertion sequence (retired chunks leave gaps, an insertion lands last), so its range
+        // is over positions in that order and its max index is the visible count less one; an inline page's is the index.
+        let chunks = visible_chunks(&*read, page.id)?;
         let total = chunks.len();
-        let max = chunks.iter().map(|c| c.chunk_index).max();
+        let by_position = chunks.iter().any(|c| c.segment.is_some());
+        let max = if by_position {
+            total.checked_sub(1).map(|last| last as u32)
+        } else {
+            chunks.iter().map(|c| c.chunk_index).max()
+        };
         let to = options.from_index + options.limit;
         let page_chunks: Vec<Value> = chunks
             .iter()
-            .filter(|c| {
-                let index = f64::from(c.chunk_index);
-                index >= options.from_index && index < to
+            .enumerate()
+            .filter(|(position, c)| {
+                let at = if by_position {
+                    *position as f64
+                } else {
+                    f64::from(c.chunk_index)
+                };
+                at >= options.from_index && at < to
             })
-            .map(ChunkRecord::to_chunk)
+            .map(|(_, c)| c.to_chunk())
             .collect();
         Ok(json!({ "chunks": page_chunks, "total_chunks": total, "max_chunk_index": max }))
     }
@@ -252,7 +279,12 @@ impl Store {
             let page_sealed = page
                 .chunker_version
                 .is_none_or(|v| v >= SAFE_FENCE_CHUNKER_VERSION);
-            let chunks = read_chunks(&*read, page.id)?;
+            // `chunkGenerationFilter`: only the live body's chunks answer, and bound the page's max index.
+            let view = read_segment_view(&*read, page.id)?;
+            let chunks: Vec<ChunkRecord> = read_chunks(&*read, page.id)?
+                .into_iter()
+                .filter(|c| in_live_body(c, segmented(&page), &view))
+                .collect();
             let max = chunks.iter().map(|c| c.chunk_index).max();
             for chunk in &chunks {
                 let index = i64::from(chunk.chunk_index);
