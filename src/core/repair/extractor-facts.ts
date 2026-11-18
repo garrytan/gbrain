@@ -47,6 +47,7 @@
  * whatever its outcome, so a `--limit` run always advances.
  */
 import type { BrainEngine } from '../engine.ts';
+import type { ExtractorFactRow } from '../engine-sql/facts-repair.ts';
 import type { PreparedMutation } from '../persistence/coordinator.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { VERSION } from '../../version.ts';
@@ -66,7 +67,7 @@ import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcom
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 
 export const EXTRACTOR_FACTS_INTENT = 'managed_maintenance_restore_extractor_facts';
-export const EXTRACTOR_FACTS_SOURCE_PREFIX = 'cli:extract-conversation-facts';
+export { EXTRACTOR_FACTS_SOURCE_PREFIX } from '../engine-sql/facts-repair.ts';
 const extractorPreviewFix = (sourceId: string) => readFix('Previews the extractor-facts repair without changing anything.',
   { argv: ['gbrain', 'repair', 'extractor-facts', '--source', sourceId, '--json'] });
 
@@ -111,56 +112,14 @@ export interface ExtractorFactsPage {
 
 interface PageItem extends RepairItem { page: ExtractorFactsPage; hash: string; last: boolean }
 
-interface CandidateRow {
-  id: number | string; source_id: string; slug: string; fact: string; visibility: string; entity_slug: string | null;
-  superseded: boolean; expired_at: string; page_id: number | string | null; page_deleted: boolean | null;
-  withdrawn: boolean; active_duplicate: boolean; fence_history: boolean; fingerprint: string;
-  receipt: string | null; receipt_consumer: string | null;
-}
+type CandidateRow = ExtractorFactRow;
 
 /**
  * Every candidate of these sources (or of one page), classified, in (source,
  * page, id) order. Read-only; `managed` is the brain's persistence mode.
  */
 export async function classifyExtractorFacts(db: BrainEngine, sourceIds: string[], opts: { managed: boolean; slug?: string }): Promise<ExtractorFactCandidate[]> {
-  const rows = await db.executeRaw<CandidateRow>(`
-    WITH cand AS (
-      SELECT f.id, f.source_id, f.source_markdown_slug AS slug, f.fact, f.visibility, f.entity_slug, f.expired_at AS expired,
-             f.superseded_by IS NOT NULL AS superseded, gbrain_fact_fingerprint(f.fact) AS fingerprint
-        FROM facts f
-       WHERE f.source_id=ANY($1::text[]) AND f.source LIKE '${EXTRACTOR_FACTS_SOURCE_PREFIX}%'
-         AND f.expired_at IS NOT NULL AND f.row_num IS NULL AND f.source_markdown_slug IS NOT NULL
-         AND COALESCE(f.context, '') NOT LIKE '%retired: conversation-labels%'
-         AND ($2::text IS NULL OR f.source_markdown_slug=$2::text)
-    ), receipts AS (
-      SELECT DISTINCT ON (r.source_id, r.slug, r.completed_at) r.source_id, r.slug, r.completed_at,
-             r.request_id::text AS request_id, r.consumer_version
-        FROM persistence_requests r
-        JOIN (SELECT DISTINCT source_id, slug, expired FROM cand) k
-          ON k.source_id=r.source_id AND k.slug=r.slug AND k.expired=r.completed_at
-       WHERE r.state='committed'
-       ORDER BY r.source_id, r.slug, r.completed_at, r.sequence
-    ), fenced AS (
-      SELECT DISTINCT g.source_id, g.source_markdown_slug AS slug FROM facts g
-        JOIN (SELECT DISTINCT source_id, slug FROM cand) k ON k.source_id=g.source_id AND k.slug=g.source_markdown_slug
-       WHERE COALESCE(g.source,'') NOT LIKE '${EXTRACTOR_FACTS_SOURCE_PREFIX}%'
-    )
-    SELECT c.id, c.source_id, c.slug, c.fact, c.visibility, c.entity_slug, c.superseded, c.fingerprint,
-           ${EXPIRY_TEXT('c.expired')} AS expired_at,
-           p.id AS page_id, p.deleted_at IS NOT NULL AS page_deleted,
-           EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=c.source_id AND w.visibility=c.visibility
-             AND w.fact_hash IN (gbrain_fact_fingerprint(c.fact), gbrain_fact_fingerprint_v1(c.fact))
-             AND (w.subject='*' OR w.subject=c.entity_slug)) AS withdrawn,
-           EXISTS (SELECT 1 FROM facts a WHERE a.source_id=c.source_id AND a.visibility=c.visibility
-             AND gbrain_fact_fingerprint(a.fact)=c.fingerprint AND a.source_markdown_slug=c.slug AND a.expired_at IS NULL
-             AND a.entity_slug IS NOT DISTINCT FROM c.entity_slug) AS active_duplicate,
-           fenced.slug IS NOT NULL AS fence_history,
-           r.request_id AS receipt, r.consumer_version AS receipt_consumer
-      FROM cand c
-      LEFT JOIN pages p ON p.source_id=c.source_id AND p.slug=c.slug
-      LEFT JOIN receipts r ON r.source_id=c.source_id AND r.slug=c.slug AND r.completed_at=c.expired
-      LEFT JOIN fenced ON fenced.source_id=c.source_id AND fenced.slug=c.slug
-     ORDER BY c.source_id, c.slug, c.id`, [sourceIds, opts.slug ?? null]);
+  const rows = await db.listExtractorFactsForClassification(sourceIds, opts.slug ?? null);
   // One representative per (page, visibility, entity, text): the first evidenced row, else the first ambiguous one.
   const key = (row: CandidateRow) => JSON.stringify([row.source_id, row.slug, row.visibility, row.entity_slug, row.fingerprint]);
   const base = rows.map(row => classify(row, false, opts.managed));

@@ -124,6 +124,45 @@ counter is `M next_facts_id`.
 
 ## Group 5: repair classifiers and loop retirement (`facts/repair.rs`)
 
+Ten members (`src/core/engine-sql/facts-repair.ts`). Four read only `facts` and `pages` and are served; six read a
+table the store does not hold and refuse with `engine_capability_missing` (they are absent from
+`store-members/facts-repair.ts`, so the capability named in `members.ts` is `facts`).
+
+| Member | What it answers | Rust |
+| --- | --- | --- |
+| `listSessionFactsForClassification` | Active, unsuperseded facts of the capture lanes whose attribution is the user or unset, optionally only the named ids, by (source, id). | Served |
+| `listSessionFactTwins` | For each named fact: whether an owner twin exists outside the lanes and the sessions of its lane twins (`twin_sessions`: distinct, `''` for no session, in text order). By id. | Served |
+| `listCapturedFactsForClassification` | The same lane facts with their fingerprint and `legit_twin` (another non-expired fact of the source with the same visibility, entity and fingerprint outside the lanes). By (source, id). | Served |
+| `listWorldFactsFromPrivateSources` | Active `world` facts held in, or extracted from, a page that is private by `visibility`, a privacy alias or `readable_by`, with `readable`. By id. | Served |
+| `loopFactDrift` | Closed loops whose commitment fact is still active. | Refused: needs `open_loops` |
+| `closedLoopWithActiveFact` | One closed loop whose commitment fact is still active. | Refused: needs `open_loops` |
+| `countLabelFacts` | The bounded count of evidenced label facts. | Refused: needs `open_loops` and `fact_withdrawals` (it also matches a regular expression with `~*` over page text) |
+| `listExtractorFactsForClassification` | Expired fenceless extractor facts with page, withdrawal, duplicate, fence and receipt evidence. | Refused: needs `persistence_requests` and `fact_withdrawals` |
+| `countPurgedPageFacts` | The bounded count of facts of a purged page, by class. | Refused: needs `page_purges`, `fact_withdrawals` and `open_loops` |
+| `listUnwithdrawnFacts` | Facts a facts-fence generation retired that no withdrawal covers. | Refused: needs `derived_generations`, `derived_generation_items` and `fact_withdrawals` |
+
+Rules of the four served members:
+
+- Sources are visited in byte order of their id and a source's rows in id order, which is
+  `ORDER BY f.source_id, f.id` under the C collation the parity brains use. The two id-keyed reads
+  (`listSessionFactTwins`, `listWorldFactsFromPrivateSources`) answer by id; an id with no fact answers
+  nothing.
+- A fact's fingerprint is `gbrain_fact_fingerprint`. `IS NOT DISTINCT FROM` on `entity_slug` is plain
+  equality of the optional text. `COALESCE(source, '') <> ALL(lanes)` is "not in a lane"; with no lanes every
+  fact is outside and none is inside.
+- `listWorldFactsFromPrivateSources` derives privacy from the page, not from a setting the store holds: the
+  `provenance` page is the one `factProvenanceSlugSql` names (a `put_page:` or `sync:` session, else the first
+  word of `context` for a page source, one trailing `.md` removed), read in the fact's own source and only when
+  not deleted. The holding page counts when not deleted. A page is private when `visibility` is `private`
+  (an absent one is private on an atom, a question or a synthesized concept), it has a `pinned_question` key, it
+  has a privacy alias value (`access`, `confidentiality`; trimmed and lower-cased), or it has `readable_by`.
+  `readable` is false only for a held page the snapshot filter hides. Whether an alias hides a page with no
+  `visibility` is a process setting; the TypeScript member reads it from the rendered filter and passes it as
+  `honorAliases`.
+- A folder rule is never read: the store holds no access tables, so no page is folder-restricted.
+- The privacy helpers (`provenance_slug`, `snapshot_allows`, `alias_private`, `derivation_private`) are
+  re-implemented in `repair.rs` rather than shared with `privacy.rs`.
+
 ## Group 5: search relevance and trust reads (`facts/trust.rs`)
 
 ## Not modeled

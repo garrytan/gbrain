@@ -101,6 +101,9 @@ export const FAMILIES: Record<string, readonly string[]> = {
   // facts_purge: purge, withdrawal, relink and fence repair
 
   // facts_repair: repair classifiers and loop retirement
+  facts_repair: ['loopFactDrift', 'closedLoopWithActiveFact', 'listSessionFactsForClassification', 'listSessionFactTwins',
+    'listCapturedFactsForClassification', 'countLabelFacts', 'listExtractorFactsForClassification', 'countPurgedPageFacts', 'listUnwithdrawnFacts',
+    'listWorldFactsFromPrivateSources'],
 
   // facts_trust: search relevance and trust reads
 

@@ -46,9 +46,8 @@ import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, sa
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { FACT_FENCE_KIND } from '../generations/fence.ts';
 import { factsFenceHeld, pageFenceRowKeys } from '../generations/fence-evidence.ts';
-import { withdrawalCoversFactSql } from '../access/member-facts.ts';
+import type { UnwithdrawnFactRow } from '../engine-sql/facts-repair.ts';
 import { attributionCompatible } from '../facts/attribution.ts';
-import type { FactAttribution } from '../engine.ts';
 import type { FactPreimage } from '../generations/adapters/fact-rows.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
 
@@ -91,40 +90,11 @@ export interface UnwithdrawnFactsPage {
 
 interface PageItem extends RepairItem { page: UnwithdrawnFactsPage; hash: string; last: boolean }
 
-interface CandidateRow {
-  id: number | string; source_id: string; slug: string; fact: string; visibility: string; entity_slug: string | null; attributed_to: FactAttribution | null; superseded: boolean;
-  generation_id: number | string; generation: number | string; retired_at: string; expired_at: string; preimage: FactPreimage;
-  page_id: number | string | null; page_deleted: boolean | null; history_gap: boolean | null; withdrawn: boolean; active_duplicate: boolean; fingerprint: string;
-}
+type CandidateRow = UnwithdrawnFactRow;
 
 /** Every candidate of these sources (or of one page), classified, in (source, page, id) order. Read-only. */
 export async function classifyUnwithdrawnFacts(db: BrainEngine, sourceIds: string[], opts: { slug?: string } = {}): Promise<UnwithdrawnFactCandidate[]> {
-  const rows = await db.executeRaw<CandidateRow>(`
-    WITH retired AS (
-      SELECT DISTINCT ON ((i.preimage->>'id')::bigint) (i.preimage->>'id')::bigint AS fact_id, g.id AS generation_id, g.generation, g.source_id,
-             substr(g.owner_key, 6) AS slug, ${INSTANT('g.created_at')} AS retired_at, i.preimage
-        FROM derived_generation_items i JOIN derived_generations g ON g.id = i.generation_id
-       WHERE g.kind = $3 AND g.source_id = ANY($1::text[]) AND g.state <> 'held' AND i.action = 'retired' AND left(g.owner_key, 5) = 'page:'
-         AND jsonb_typeof(i.preimage) = 'object' AND i.preimage ? 'id' AND i.preimage->>'expired_at' IS NULL AND i.preimage->>'row_num' IS NOT NULL
-         AND ($2::text IS NULL OR g.owner_key = 'page:' || $2::text)
-       ORDER BY (i.preimage->>'id')::bigint, g.id DESC
-    )
-    SELECT f.id, r.source_id, r.slug, f.fact, f.visibility, f.entity_slug, f.attributed_to, f.superseded_by IS NOT NULL AS superseded, r.generation_id, r.generation,
-           r.retired_at, ${INSTANT('f.expired_at')} AS expired_at, r.preimage, gbrain_fact_fingerprint(f.fact) AS fingerprint,
-           p.id AS page_id, p.deleted_at IS NOT NULL AS page_deleted, p.version_history_gap_at IS NOT NULL AS history_gap,
-           EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = f.source_id AND w.visibility = f.visibility
-             AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact))
-             AND ${withdrawalCoversFactSql('w', 'f')}) AS withdrawn,
-           EXISTS (SELECT 1 FROM facts a WHERE a.source_id = f.source_id AND a.source_markdown_slug = r.slug
-             AND a.expired_at IS NULL AND (a.valid_until IS NULL OR a.valid_until > now())
-             AND gbrain_fact_fingerprint(a.fact) = gbrain_fact_fingerprint(f.fact) AND a.entity_slug IS NOT DISTINCT FROM f.entity_slug
-             AND (a.attributed_to IS NULL OR f.attributed_to IS NULL OR a.attributed_to = f.attributed_to)) AS active_duplicate
-      FROM retired r
-      JOIN facts f ON f.id = r.fact_id AND f.source_id = r.source_id
-      LEFT JOIN pages p ON p.source_id = r.source_id AND p.slug = r.slug
-     WHERE f.expired_at IS NOT NULL AND f.row_num IS NULL AND f.fact = r.preimage->>'fact' AND f.visibility = r.preimage->>'visibility'
-       AND COALESCE(f.source, '') NOT LIKE 'cli:extract-conversation-facts%'
-     ORDER BY r.source_id, r.slug, f.id`, [sourceIds, opts.slug ?? null, FACT_FENCE_KIND]);
+  const rows = await db.listUnwithdrawnFacts(sourceIds, opts.slug ?? null, FACT_FENCE_KIND);
   // A fence that held the row (a generation, the page, a stored version) means the row was withdrawn by an edit of it.
   const evidence = new Map<string, { held: Set<number>; complete: boolean; claims: Set<string> }>();
   for (const row of rows) {
