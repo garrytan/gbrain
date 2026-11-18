@@ -7,8 +7,8 @@
  * and `excludePrivate` through the page policy (private-provenance.ts `storePagePolicy`), and `minTrust` and
  * `suppressFlagged` over the page's stamped trust tier and its write-gate receipts. resolveAliases reads its scope as
  * `readAliases` does: the same policy on the page an alias names and on the page whose title shadows a derived alias.
- * resolveAliases also serves a caller whose record holds only a reader identity and a private-readable grant, which
- * the store reads from the policy; both refuse `excludePrivate` for any other caller whose policy differs. A
+ * Both also serve a caller whose record holds only a reader identity and a private-readable grant, which the store
+ * reads from the policy; both refuse `excludePrivate` for any other caller whose policy differs. A
  * rename moves fact bindings only once the facts family fills its rename hook, and the `none` contextual retrieval
  * tier keeps no vectors to reset (rust/docs/store/aliases.md).
  */
@@ -107,7 +107,7 @@ export const aliasCanonicalRefs: StoreMember<[refs: AliasRef[], policy?: PageRea
   async (brain, refs, policy) => {
     if (refs.length === 0) return [];
     const sourceIds = policy?.sourceIds?.length ? [...policy.sourceIds] : policy?.sourceId ? [policy.sourceId] : null;
-    const excludePrivate = storePagePolicy('aliasCanonicalRefs', policy?.excludePrivate);
+    const excludePrivate = storePagePolicy('aliasCanonicalRefs', policy?.excludePrivate, { callerReaders: true });
     return storeCall({ member: 'aliasCanonicalRefs' }, () => brain.aliasCanonicalRefs({
       refs: refs.map((r) => ({ slug: r.slug, source_id: r.source_id })),
       source_ids: sourceIds,
