@@ -12,8 +12,8 @@ use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
 use gbrain_store::facts::{
-    DuplicateQuery, ExpireFactArgs, FactQuery, InsertFactArgs, InsertFactsArgs, PageDeleteArgs,
-    SupersessionQuery, TrajectoryQuery, UnattributedQuery,
+    DuplicateQuery, ExpireFactArgs, FactQuery, FenceTarget, InsertFactArgs, InsertFactsArgs,
+    PageDeleteArgs, SupersessionQuery, TrajectoryQuery, UnattributedQuery,
 };
 
 #[napi]
@@ -158,6 +158,21 @@ impl Brain {
         source_id: String,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.count_unconsolidated_facts(&source_id))
+    }
+
+    /// `listFenceRetireCandidates({ sourceId, slug, incoming })`: the before-state of each fence row the
+    /// incoming fence does not hold. The opened ids come from the store's write trust context
+    /// (`applyWriteTrust`): an opened row moves in place and is no candidate.
+    #[napi]
+    pub fn list_fence_retire_candidates<'env>(
+        &self,
+        env: &'env Env,
+        target: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let t: FenceTarget = required(target, "listFenceRetireCandidates target")?;
+            s.list_fence_retire_candidates(&t, &s.fence_context())
+        })
     }
 
     /// `consolidateFact(id, takeId)`: resolves null.

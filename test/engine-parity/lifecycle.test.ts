@@ -70,6 +70,21 @@ describe('engine parity: lifecycle', () => {
   );
 
   parityTest(
+    'two transactions opened together both run and both commit',
+    // A hang here fails in seconds, not at the default minute.
+    { methods: ['transaction', 'getPage'], timeout: 15_000 },
+    async (engine) => {
+      const run = (name: string) => engine.transaction(async (tx) => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 10));
+        const page = await tx.getPage(`notes/${name}`);
+        return { name, page: page?.title ?? null };
+      });
+      // Postgres runs them on two connections at once; PGLite and Rust run one after the other. All must finish.
+      return Promise.all([run('first'), run('second')]);
+    },
+  );
+
+  parityTest(
     'transaction rolls back every write when the callback throws and rethrows the same error',
     { methods: ['putPage', 'transaction', 'getPage', 'listPages'] },
     async (engine) => {

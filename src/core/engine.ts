@@ -33,6 +33,11 @@ import type { ClaimExpiry, ClaimRenewal, SourceMembership, TopologyChange, Topol
 import type { CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionWindowRow, ReceiptBudget, SegmentedProjectionFilter } from './engine-sql/persistence-housekeeping.ts';
 import type { ProjectionScanCursor } from './page-state/projection-window.ts';
 import type { WriteRequest } from './persistence/model.ts';
+import type { TimelineDetailRefresh, TimelineRowRemoval } from './engine-sql/timeline.ts';
+import type { TakeFenceRow } from './engine-sql/takes.ts';
+import type { FactPreimage, FenceProjectionTarget } from './engine-sql/facts.ts';
+import type { FenceFactRow, FenceRowsTarget } from './engine-sql/trust-fence.ts';
+import type { GraduationGateRow, ManagedRootBindingRow, PersistenceTable, RetiredDeactivationRow } from './engine-sql/connect-gate.ts';
 import type { ImportedPageSeal, LivePageBodyRow, OriginClaimRow, PageIngestStamp, PageOriginRow, PageOriginTarget } from './engine-sql/write-guards.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type { ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, MentionDueQuery, SiblingCandidateQuery, SiblingCandidateRow } from './engine-sql/entity-reads.ts';
@@ -2245,6 +2250,19 @@ export interface BrainEngine {
    */
   upsertEventProjection(opts: { depthSlug: string; eventSlug: string; date: string; summary: string; detail?: string; sourceId?: string }): Promise<{ projected: boolean }>;
 
+  /**
+   * Delete the page's own (non-event) timeline rows that `rows` name and that still match them on every field (id,
+   * date, source, summary, detail): a row changed since it was read stays, and an event projection (a row with an
+   * event page) is never touched. Returns each deleted row's date (`YYYY-MM-DD`) and its `removed` mark. A page write
+   * calls it inside its own transaction (engine-sql/timeline.ts).
+   */
+  removeTimelineRows(pageId: number, rows: readonly TimelineRowRemoval[]): Promise<Array<{ date: string; removed: boolean }>>;
+  /**
+   * Replace the detail of the page's own (non-event) timeline rows named in `rows` with `next` when the stored detail
+   * still equals the preimage `detail`; any other row stays. Event projections are never touched.
+   */
+  updateTimelineDetails(pageId: number, rows: readonly TimelineDetailRefresh[]): Promise<void>;
+
   // v0.42.x — Life Chronicle (#2390) per-entity ontology (rides `facts`).
   /**
    * Record one ontology observation (entity has dimension=value). Idempotent on
@@ -2432,6 +2450,14 @@ export interface BrainEngine {
     pageIds: number[],
     opts?: { takesHoldersAllowList?: string[] },
   ): Promise<Map<number, Take[]>>;
+
+  /**
+   * The row numbers of the page's stored takes whose claim, kind or holder differs (null-safe) from the fence row of
+   * the same number in `rows`, ascending, at most `limit`. A page write refuses a fence that would take them over.
+   */
+  matchTakeRows(pageId: number, rows: readonly TakeFenceRow[], limit: number): Promise<number[]>;
+  /** Delete the page's takes at `rowNums`, with their synthesis evidence; an empty list deletes nothing. */
+  deleteTakeRows(pageId: number, rowNums: readonly number[]): Promise<void>;
 
   /**
    * Persist a single contradiction-probe run row. Caller supplies a full
@@ -2711,6 +2737,14 @@ export interface BrainEngine {
   countUnconsolidatedFacts(source_id: string): Promise<number>;
 
   /**
+   * The facts a page publication's fence projection would retire (engine-sql/facts.ts `listFenceRetireCandidates`): the
+   * before-state of each fact attached to the page at a fence position that the incoming fence (`target.incoming`, the
+   * JSON text of its row_num, fact and visibility) does not hold as it is, by row number then id. A conversation-extractor
+   * row counts only when a fence row claims its number; a private row `gbrain repair open-facts` opens never does.
+   */
+  listFenceRetireCandidates(target: FenceProjectionTarget): Promise<FactPreimage[]>;
+
+  /**
    * Find candidate duplicates for a new fact within a source+entity bucket.
    * Entity-prefilter is mandatory (bounds the contradiction-classifier blast
    * radius). Hard cap k=5 by default. Embedding-cosine when both sides have
@@ -2947,6 +2981,12 @@ export interface BrainEngine {
   sealImportedPage(slug: string, seal: ImportedPageSeal): Promise<{ id: number } | null>;
   /** A live page's frontmatter, body columns, body storage and content hash (the valid-time advisory's after image), or null. */
   readLivePageBody(slug: string, opts: { sourceId: string }): Promise<LivePageBodyRow | null>;
+  /**
+   * The page's live fence facts the writer may not simply expire (engine-sql/trust-fence.ts), by row number and locked until
+   * the transaction ends: more trusted than the writer's declared tier, held narrower by a widening proposal the incoming
+   * fence still asks to widen, or opened by `gbrain repair open-facts`. Each row carries its stored `trust_tier`.
+   */
+  listFenceFactRows(target: FenceRowsTarget): Promise<FenceFactRow[]>;
 
   /**
    * v0.35.5 — narrow UPDATE of `pages.compiled_truth`, `pages.timeline`, and
@@ -3256,6 +3296,16 @@ export interface BrainEngine {
 
   /** Sets each named setting to the value at its index for the rest of the current transaction (`set_config(name, value, true)`), in one statement. */
   applyTransactionSettings(names: readonly string[], values: readonly string[]): Promise<void>;
+
+  // The connect gate's persistence reads (engine-sql/connect-gate.ts): table probes, managed roots, graduation, retired epochs.
+  /** Whether persistence table `table` exists (a brain before the persistence migrations has none). */
+  hasPersistenceTable(table: PersistenceTable): Promise<boolean>;
+  /** The managed roots host `hostId` binds, plus every source with a local path, in one snapshot. */
+  listManagedRootBindings(hostId: string, opts?: { signal?: AbortSignal }): Promise<ManagedRootBindingRow[]>;
+  /** The graduation custody row, or null; `withRunSetting` adds the run the current transaction declares. */
+  readGraduationGateRow(opts?: { withRunSetting?: boolean }): Promise<GraduationGateRow | null>;
+  /** The outcome of every committed writer deactivation. */
+  listRetiredDeactivations(): Promise<RetiredDeactivationRow[]>;
 
   /**
    * What the belief ledger knows about one source (incarnation, purge epoch, newest coverage event, whether any purge

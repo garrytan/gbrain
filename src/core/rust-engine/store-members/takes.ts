@@ -1,7 +1,7 @@
 /**
  * Takes members (BrainEngine addTakesBatch, listTakes, searchTakes, updateTake, supersedeTake, resolveTake,
- * getScorecard, getCalibrationCurve, addSynthesisEvidence, listActiveTakesForPages). The store keeps the `takes` and
- * `synthesis_evidence` rows (rust/docs/store/takes.md). This shell does what the shared SQL module does before its
+ * getScorecard, getCalibrationCurve, addSynthesisEvidence, listActiveTakesForPages, matchTakeRows, deleteTakeRows).
+ * The store keeps the `takes` and `synthesis_evidence` rows (rust/docs/store/takes.md). This shell does what the shared SQL module does before its
  * statement runs (weight normalization, defaults, limit clamps, the GBrainErrors), so both engines say the same thing.
  *
  * A read-eligibility policy is honoured without `floor` and `suppressFlagged`: the store hides the takes of
@@ -17,6 +17,7 @@ import type { ReadEligibility } from '../../eligibility/policy.ts';
 import { buildTakeRows } from '../../batch-rows.ts';
 import { normalizeWeightForStorage } from '../../takes-fence.ts';
 import { deriveResolutionTuple, finalizeScorecard } from '../../takes-resolution.ts';
+import type { TakeFenceRow } from '../../engine-sql/takes.ts';
 import type { SearchOpts } from '../../types.ts';
 import { GBrainError } from '../../types.ts';
 import { refuseMember, storeCall, takeOptions, throwIfAborted, type StoreMember } from './common.ts';
@@ -255,3 +256,10 @@ export const listActiveTakesForPages: StoreMember<[pageIds: number[], opts?: { t
     for (const take of rows) out.get(take.page_id)?.push(toTake(take));
     return out;
   };
+
+export const matchTakeRows: StoreMember<[pageId: number, rows: TakeFenceRow[], limit: number], number[]> = (brain, pageId, rows, limit) =>
+  storeCall({ member: 'matchTakeRows' }, () => brain.matchTakeRows(pageId, rows, limit));
+
+export const deleteTakeRows: StoreMember<[pageId: number, rowNums: number[]], void> = async (brain, pageId, rowNums) => {
+  await storeCall({ member: 'deleteTakeRows' }, () => brain.deleteTakeRows(pageId, rowNums));
+};

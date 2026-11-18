@@ -131,6 +131,7 @@ test/engine-parity/cli-reads-import.test.ts
 test/engine-parity/cli-reads-ops.test.ts
 test/engine-parity/code-eval-salience.test.ts
 test/engine-parity/config-ingest.test.ts
+test/engine-parity/connect-gate.test.ts
 test/engine-parity/cycle-locks.test.ts
 test/engine-parity/entity-reads.test.ts
 test/engine-parity/extraction.test.ts
@@ -166,6 +167,8 @@ test/engine-parity/takes.test.ts
 test/engine-parity/telemetry.test.ts
 test/engine-parity/timeline-reads.test.ts
 test/engine-parity/timeline.test.ts
+test/engine-parity/transaction-settings.test.ts
+test/engine-parity/trust-fence.test.ts
 test/engine-parity/trust-withdrawals.test.ts
 test/engine-parity/trust-write-gate.test.ts
 test/engine-parity/typed-config-reads.test.ts

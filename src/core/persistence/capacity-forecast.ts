@@ -98,7 +98,7 @@ export async function readCapacityConfig(engine: Pick<BrainEngine, 'getConfigVal
 
 /** The configured days-to-exhaustion thresholds every capacity finding uses. */
 export async function readCapacityThresholds(engine: Pick<BrainEngine, 'getConfigValues'>): Promise<{ warnDays: number; failDays: number }> {
-  const value = new Map((await engine.getConfigValues([CAPACITY_WARN_DAYS_KEY, CAPACITY_FAIL_DAYS_KEY])).map(row => [row.key, row.value]));
+  const value = await readConfigMap(engine, [CAPACITY_WARN_DAYS_KEY, CAPACITY_FAIL_DAYS_KEY]);
   return { warnDays: daysSetting(value.get(CAPACITY_WARN_DAYS_KEY), DEFAULT_CAPACITY_WARN_DAYS), failDays: daysSetting(value.get(CAPACITY_FAIL_DAYS_KEY), DEFAULT_CAPACITY_FAIL_DAYS) };
 }
 

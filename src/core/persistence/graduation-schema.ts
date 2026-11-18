@@ -9,7 +9,7 @@
  * security boundaries.
  */
 import type { BrainEngine } from '../engine.ts';
-import { lacksRawSql } from '../engine-capabilities.ts';
+import type { GraduationGateRow } from '../engine-sql/connect-gate.ts';
 import {
   assertTransition, SOURCE_ROW_STATES, SOURCE_TRANSITIONS, TARGET_ROW_STATES, TARGET_TRANSITIONS,
   type ReplayProbeResult, type SourceRowState, type TableReceipt, type TargetRowState, type TriggerBypass,
@@ -88,9 +88,9 @@ function rootEngine(engine: object): object {
 }
 export async function graduationTablePresent(engine: BrainEngine, opts: { cached?: boolean } = {}): Promise<boolean> {
   if (opts.cached && tablePresent.has(rootEngine(engine))) return true;
-  const [row] = await engine.executeRaw<{ present: boolean }>(`SELECT to_regclass('persistence_graduation') IS NOT NULL AS present`);
-  if (row?.present === true) tablePresent.add(rootEngine(engine));
-  return row?.present === true;
+  const present = await engine.hasPersistenceTable('persistence_graduation');
+  if (present) tablePresent.add(rootEngine(engine));
+  return present;
 }
 
 /** The engine's own custody row, or null on a normal brain (or before the migration). */
@@ -124,15 +124,13 @@ export async function readGraduationRow(engine: BrainEngine, opts: { forUpdate?:
  * work, so it reads the row directly and treats only an undefined table (42P01, a brain before the migration) as "no
  * row" instead of probing for the table first. Outside a transaction only: a failed statement would abort one.
  *
- * An engine without raw SQL (the Rust engine, decision D18) has no custody table, so it reads as "no row", the same
- * answer as a brain before the migration. PGLite and Postgres report `raw_sql`, so they always read the table.
+ * The read is the typed `readGraduationGateRow` member: the Rust engine keeps no custody row, so it answers null, the
+ * same answer as a brain before the migration.
  */
 export async function readGraduationConnectRow(engine: BrainEngine): Promise<Pick<GraduationRow, 'role' | 'run_id' | 'state' | 'source_data_dir'> | null> {
-  if (lacksRawSql(engine)) return null;
-  let row: Record<string, unknown> | undefined;
+  let row: GraduationGateRow | null;
   try {
-    [row] = await engine.executeRaw<Record<string, unknown>>(
-      `SELECT role, run_id::text AS run_id, state, source_data_dir FROM persistence_graduation WHERE singleton = 1`);
+    row = await engine.readGraduationGateRow();
   } catch (error) {
     if ((error as { code?: unknown } | null)?.code === '42P01') return null;
     throw error;

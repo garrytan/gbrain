@@ -66,22 +66,18 @@ async function refusalOf(p: Promise<unknown>): Promise<unknown> {
 }
 
 describe('the graduation connect gate', () => {
-  test('an engine without raw SQL reads as no custody row and never calls executeRaw', async () => {
-    let calls = 0;
+  test('a refused custody read refuses the connect instead of reading as no row', async () => {
     const rust = {
       kind: 'rust',
-      capabilities: new Set<Capability>(),
-      executeRaw: async () => { calls++; throw capabilityMissing('raw_sql', 'executeRaw'); },
+      readGraduationGateRow: async () => { throw capabilityMissing('persistence_journal', 'readGraduationGateRow'); },
     } as unknown as BrainEngine;
-    expect(await readGraduationConnectRow(rust)).toBeNull();
-    await expect(assertGraduationConnectAllowed(rust, {})).resolves.toBeUndefined();
-    expect(calls).toBe(0);
+    expect(isCapabilityMissing(await refusalOf(readGraduationConnectRow(rust)))).toBe(true);
+    expect(isCapabilityMissing(await refusalOf(assertGraduationConnectAllowed(rust, {})))).toBe(true);
   });
 
-  test('an engine with raw SQL still reads the table, so its failures still throw', async () => {
+  test('any custody read failure other than a missing table still throws', async () => {
     const denied = {
-      capabilities: new Set<Capability>(['raw_sql']),
-      executeRaw: async () => { throw Object.assign(new Error('permission denied for table persistence_graduation'), { code: '42501' }); },
+      readGraduationGateRow: async () => { throw Object.assign(new Error('permission denied for table persistence_graduation'), { code: '42501' }); },
     } as unknown as BrainEngine;
     await expect(assertGraduationConnectAllowed(denied, {})).rejects.toThrow(/permission denied/);
   });
