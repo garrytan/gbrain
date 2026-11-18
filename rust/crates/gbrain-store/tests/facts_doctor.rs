@@ -5,6 +5,7 @@ mod memory_env;
 use gbrain_store::facts::doctor::{
     ConversationRowsQuery, CoverageQuery, RedactedQuery, UnlinkedQuery,
 };
+use gbrain_store::facts::relink::{AttemptInput, UpsertOptions};
 use gbrain_store::facts::{ExpireFactArgs, InsertFactArgs, InsertFactsArgs};
 use gbrain_store::links::AddLinkOptions;
 use gbrain_store::pages::{PageInput, PutPageOptions};
@@ -472,14 +473,180 @@ fn unlinked_conversation_slugs_rank_pages_by_row_count() {
     );
 }
 
+/// `REARMED` of facts/conversation-memo.ts, as the TypeScript member passes it (a subset is enough here).
+const REARMED: [&str; 2] = ["no_mention", "no_page"];
+
+fn attempt(
+    b: &Brain,
+    id: u64,
+    outcome: &str,
+    reason: Option<&str>,
+    tier: Option<&str>,
+    slug: Option<&str>,
+) {
+    let a: AttemptInput = args(json!({
+        "factId": id as f64, "outcome": outcome, "reason": reason, "tier": tier, "targetSlug": slug,
+    }));
+    b.upsert_fact_relink_attempt("default", &a, &UpsertOptions::default())
+        .unwrap();
+}
+
 #[test]
-fn attempts_forms_refuse_because_the_store_has_no_attempts_table() {
+fn relink_outcomes_count_linked_rows_of_the_last_seven_days_and_every_no_subject_row() {
+    let b = brain("doctor-relink-window");
+    attempt(&b, 1, "linked", None, Some("mention"), None);
+    attempt(&b, 2, "no_subject", None, Some("model"), None);
+    attempt(&b, 3, "ambiguous", None, None, None);
+    let count = || b.count_fact_relink_outcomes(&["default".into()]).unwrap();
+    let both = [
+        json!({ "outcome": "linked", "tier": "mention", "n": 1 }),
+        json!({ "outcome": "no_subject", "tier": "model", "n": 1 }),
+    ];
+    // Exactly seven days old is still inside the window (`attempted_at >= now() - 7 days`).
+    b.clock.advance(7 * DAY);
+    assert_eq!(count(), both);
+    // One microsecond later the linked row drops out; the no_subject row never ages out.
+    b.clock.advance(1);
+    assert_eq!(count(), [both[1].clone()]);
+}
+
+#[test]
+fn attempts_forms_read_the_tried_paid_and_no_subject_memos() {
     let b = brain("doctor-attempts");
-    let q =
-        unlinked(json!({ "sourceIds": ["default"], "sourceId": "default", "hasAttempts": true }));
-    assert!(b.count_unlinked_facts_by_origin(&q).is_err());
-    assert!(b.count_unlinked_fact_stats(&q).is_err());
-    assert!(b.list_unlinked_conversation_slugs(&q).is_err());
+    let conv = |b: &Brain, fact_text: &str, slug: &str| {
+        fact(
+            b,
+            "default",
+            json!({ "fact": fact_text, "source": CONVERSATION, "source_markdown_slug": slug }),
+        )
+    };
+    let old = conv(&b, "old", "conv/old");
+    b.clock.advance(1);
+    let c1 = conv(&b, "c1", "conv/b");
+    b.clock.advance(1);
+    let c2 = conv(&b, "c2", "conv/b");
+    b.clock.advance(1);
+    let c3 = conv(&b, "c3", "conv/c");
+    b.clock.advance(1);
+    let plain = fact(&b, "default", json!({ "fact": "plain", "source": "chat" }));
+    b.clock.advance(1);
+    // c1's reason is memoized, c2's re-armed, c3's NULL; old has no attempt.
+    attempt(
+        &b,
+        c1,
+        "conversation_unresolved",
+        Some("ambiguous"),
+        Some("mention"),
+        None,
+    );
+    attempt(
+        &b,
+        c2,
+        "conversation_unresolved",
+        Some("no_mention"),
+        Some("mention"),
+        None,
+    );
+    attempt(
+        &b,
+        c3,
+        "conversation_unresolved",
+        None,
+        Some("mention"),
+        None,
+    );
+    attempt(
+        &b,
+        plain,
+        "no_subject",
+        Some("no_subject"),
+        Some("model"),
+        None,
+    );
+    let _ = old;
+    let q = |fix: &str, has: bool| {
+        unlinked(json!({
+            "sourceIds": ["default"], "sourceId": "default", "auditSources": [TERMINAL], "windowPerSource": 100,
+            "fix": fix, "hasAttempts": has, "rearmedReasons": REARMED,
+        }))
+    };
+    let slugs = |fix: &str, has: bool| -> Vec<String> {
+        b.list_unlinked_conversation_slugs(&q(fix, has))
+            .unwrap()
+            .iter()
+            .map(|r| r["slug"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let conversation = |has: bool| -> (u64, u64) {
+        let rows = b.count_unlinked_facts_by_origin(&q("relink", has)).unwrap();
+        let row = rows.iter().find(|r| r["origin"] == "conversation").unwrap();
+        (
+            row["conversation_tried"].as_u64().unwrap(),
+            row["conversation_paid"].as_u64().unwrap(),
+        )
+    };
+    let stats = |has: bool| -> (u64, u64) {
+        let s = b.count_unlinked_fact_stats(&q("relink", has)).unwrap();
+        (
+            s["no_subject"].as_u64().unwrap(),
+            s["conversation_unresolved"].as_u64().unwrap(),
+        )
+    };
+    // No live page yet: every attempted row is tried, none paid.
+    assert_eq!(conversation(true), (3, 0));
+    assert_eq!(stats(true), (1, 3));
+    assert_eq!(slugs("relink", true), ["conv/old"]);
+    assert_eq!(slugs("reextract", true), ["conv/b", "conv/c"]);
+    assert!(slugs("manual", true).is_empty());
+    // Without the table every memo is false.
+    assert_eq!(conversation(false), (0, 0));
+    assert_eq!(stats(false), (0, 0));
+    assert_eq!(slugs("relink", false), ["conv/b", "conv/c", "conv/old"]);
+    // A page created after the attempts re-arms c2 (a re-armed reason) and c3 (a NULL reason).
+    b.clock.advance(1);
+    let hash = {
+        let input: PageInput =
+            args(json!({ "type": "note", "title": "b", "compiled_truth": "body" }));
+        let options: PutPageOptions = args(json!({ "sourceId": "default" }));
+        b.put_page("conv/b", &input, &options).unwrap()["content_hash"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(conversation(true), (1, 0));
+    assert_eq!(stats(true), (1, 1));
+    assert_eq!(slugs("relink", true), ["conv/b", "conv/c", "conv/old"]);
+    assert_eq!(slugs("reextract", true), ["conv/b"]);
+    // A paid memo on another fact id, with a stale hash, does not cover the page; the current hash does.
+    attempt(
+        &b,
+        9_999,
+        "paid_reextract",
+        Some("stale"),
+        Some("paid_reextract"),
+        Some("conv/b"),
+    );
+    assert_eq!(conversation(true), (1, 0));
+    attempt(
+        &b,
+        9_998,
+        "paid_reextract",
+        Some(&hash),
+        Some("paid_reextract"),
+        Some("conv/b"),
+    );
+    assert_eq!(conversation(true), (1, 1));
+    assert_eq!(slugs("manual", true), ["conv/b"]);
+    assert!(slugs("reextract", true).is_empty());
+    // Deleting the page's paid memos uncovers it.
+    b.delete_fact_relink_memos("default", "paid_reextract", "conv/b")
+        .unwrap();
+    assert_eq!(conversation(true), (1, 0));
+    let outcomes = b.count_fact_relink_outcomes(&["default".into()]).unwrap();
+    assert_eq!(
+        outcomes,
+        [json!({ "outcome": "no_subject", "tier": "model", "n": 1 })]
+    );
 }
 
 #[test]

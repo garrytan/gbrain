@@ -12,8 +12,9 @@ test/engine-parity/connect-gate.test.ts	6	0
 test/engine-parity/cycle-locks.test.ts	10	0
 test/engine-parity/entity-reads.test.ts	7	0
 test/engine-parity/extraction.test.ts	6	0
+test/engine-parity/fact-relink-attempts.test.ts	3	0
 test/engine-parity/facts-cycle.test.ts	12	1
-test/engine-parity/facts-doctor.test.ts	8	5
+test/engine-parity/facts-doctor.test.ts	12	1
 test/engine-parity/facts-purge.test.ts	12	3
 test/engine-parity/facts-repair.test.ts	6	5
 test/engine-parity/facts-trust.test.ts	3	6

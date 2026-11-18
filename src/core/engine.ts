@@ -8,6 +8,7 @@ import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/
 import type { RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
 import type { ExtractionPendingRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
 import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
+import type { FactRelinkAttempt, FactRelinkOutcome, FactRelinkUpsertOpts } from './engine-sql/fact-relink-attempts.ts';
 import type * as FactsCycleSql from './engine-sql/facts-cycle.ts';
 import type * as FactsPurgeSql from './engine-sql/facts-purge.ts';
 import type * as FactsRepairSql from './engine-sql/facts-repair.ts';
@@ -3182,6 +3183,14 @@ export interface BrainEngine {
   listUnlinkedConversationSlugs(opts: { sourceId: string; auditSources: string[]; windowPerSource: number; fix: FactsDoctorSql.ConversationFixKind; hasAttempts: boolean }): Promise<Array<{ slug: string }>>;
   /** fact_take_vectors: per source, the embeddable facts with no vector, with a vector not current for `model` and `dims` or the text, and the partially embedded ones. */
   countFactEmbeddingCoverage(opts: { sourceId?: string | null; model: string; dims: number }): Promise<FactsDoctorSql.FactEmbeddingCoverageRow[]>;
+
+  // Facts relink attempts (engine-sql/fact-relink-attempts.ts): the `fact_relink_attempts` writes and reads relink ran through executeRaw.
+  /** Records a fact's latest relink attempt (`attempted_at` now), replacing its stored one; `keepModelAndRun` keeps the stored `model` and `run_id` on a conflict. */
+  upsertFactRelinkAttempt(sourceId: string, attempt: FactRelinkAttempt, opts?: FactRelinkUpsertOpts): Promise<void>;
+  /** The stored relink outcome of each of `factIds` in the source whose outcome is one of `outcomes`, by fact id. */
+  listFactRelinkOutcomes(sourceId: string, factIds: number[], outcomes: string[]): Promise<FactRelinkOutcome[]>;
+  /** Deletes the source's relink attempts of `tier` that name `targetSlug`. */
+  deleteFactRelinkMemos(sourceId: string, tier: string, targetSlug: string): Promise<void>;
 
   // Facts statements, command, cycle and fence reads (engine-sql/facts-cycle.ts). Each runs the statement its caller ran through executeRaw.
   /** enrich's grounding read: an entity's unexpired, unlapsed facts, highest confidence first (newest id breaks a tie), at most `limit`. */

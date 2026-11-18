@@ -331,6 +331,11 @@ export const RUST_ENGINE_MEMBERS = {
   listUnlinkedConversationSlugs: 'facts',
   countFactEmbeddingCoverage: 'facts',
 
+  // facts: relink attempts (engine-sql/fact-relink-attempts.ts)
+  upsertFactRelinkAttempt: 'facts',
+  listFactRelinkOutcomes: 'facts',
+  deleteFactRelinkMemos: 'facts',
+
   // facts: command, cycle and fence reads (engine-sql/facts-cycle.ts)
   listActiveFactsForEntity: 'facts',
   listFreshExtractionOutcomes: 'facts',

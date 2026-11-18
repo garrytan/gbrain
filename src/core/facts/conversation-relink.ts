@@ -157,11 +157,8 @@ async function linkRows(tx: BrainEngine, sourceId: string, slug: string, rows: C
     if (!done.length) continue;
     linked.push(row.id);
     const tier = row.from ? 'unbacked' : 'mention';
-    if (attempts) await tx.executeRaw(
-      `INSERT INTO fact_relink_attempts (source_id, fact_id, outcome, reason, tier, model, target_slug, run_id, attempted_at)
-       VALUES ($1, $2, 'linked', NULL, $4, NULL, $3, NULL, now())
-       ON CONFLICT (source_id, fact_id) DO UPDATE SET outcome = 'linked', reason = NULL, tier = EXCLUDED.tier, model = NULL,
-         target_slug = EXCLUDED.target_slug, run_id = NULL, attempted_at = EXCLUDED.attempted_at`, [sourceId, row.id, row.entity_slug, tier]);
+    if (attempts) await tx.upsertFactRelinkAttempt(sourceId,
+      { factId: row.id, outcome: 'linked', reason: null, tier, model: null, targetSlug: row.entity_slug, runId: null });
   }
   return linked;
 }
@@ -203,11 +200,8 @@ export async function runConversationRelink(engine: BrainEngine, config: GBrainC
       linked = (authority ? await publishManaged(engine, config, authority, opts.sourceId, page)
         : await writeDerivedFacts(engine, opts.sourceId, page.slug, db => linkRows(db, opts.sourceId, page.slug, page.link))).length;
     }
-    if (memo) for (const miss of page.misses) await engine.executeRaw(
-      `INSERT INTO fact_relink_attempts (source_id, fact_id, outcome, reason, tier, model, target_slug, run_id, attempted_at)
-       VALUES ($1, $2, $3, $4, 'mention', NULL, NULL, NULL, now())
-       ON CONFLICT (source_id, fact_id) DO UPDATE SET outcome = EXCLUDED.outcome, reason = EXCLUDED.reason, tier = 'mention',
-         model = NULL, target_slug = NULL, run_id = NULL, attempted_at = EXCLUDED.attempted_at`, [opts.sourceId, miss.id, CONVERSATION_UNRESOLVED, miss.reason]);
+    if (memo) for (const miss of page.misses) await engine.upsertFactRelinkAttempt(opts.sourceId,
+      { factId: miss.id, outcome: CONVERSATION_UNRESOLVED, reason: miss.reason, tier: 'mention', model: null, targetSlug: null, runId: null });
     const changed = page.link.length - linked;
     report.pages.push({ slug: page.slug, linked, unresolved: page.misses.length, changed, not_user_attributed: page.notUserAttributed });
     report.linked += linked;
