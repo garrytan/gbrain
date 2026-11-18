@@ -170,6 +170,7 @@ import type { AdmitJobPolicy, AdmitJobSpec, ClaimJobSpec, ListJobsFilter } from 
 import * as jobsQueue from './engine-sql/jobs-queue.ts';
 import type {
   CancelJobsSpec, DelayActiveJobSpec, JobAttachmentInsert, JobPageSpec, JobTokenCounts, PruneJobsSpec, RetryJobPolicy,
+  SynthesisCompletionPrefix,
 } from './engine-sql/jobs-queue.ts';
 import { noteDirectPoolLease } from './direct-pool-profile.ts';
 import * as filesImpl from './engine-sql/files.ts';
@@ -3277,6 +3278,8 @@ export class PostgresEngine implements BrainEngine {
   async killTimedOutJobs() { return this.transaction(tx => jobsQueue.killTimedOutJobs(tx)); }
   async killWallClockJobs(lockDurationMs: number) { return this.transaction(tx => jobsQueue.killWallClockJobs(tx, lockDurationMs)); }
   async pruneJobs(spec: PruneJobsSpec) { return jobsQueue.pruneJobs(this, spec); }
+  async listSynthesisCompletionKeys(sourceId: string, keyPrefix: SynthesisCompletionPrefix) { return jobsQueue.listSynthesisCompletionKeys(this, sourceId, keyPrefix); }
+  async listRecentSynthesisCompletions(sourceId: string, hours: number) { return jobsQueue.listRecentSynthesisCompletions(this, sourceId, hours); }
   async retryJob(id: number, policy: RetryJobPolicy) { return this.transaction(tx => jobsQueue.retryJob(tx, id, policy)); }
   async postInboxMessage(jobId: number, sender: string, payload: unknown) { return jobsQueue.postInboxMessage(this, jobId, sender, payload); }
   async readJobInbox(jobId: number, lockToken: string) { return jobsQueue.readJobInbox(this, jobId, lockToken); }

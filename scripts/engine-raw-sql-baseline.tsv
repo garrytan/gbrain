@@ -401,7 +401,7 @@ src/core/cycle/phases/consolidate.ts	execute_raw	10
 src/core/cycle/propose-takes-failures.ts	execute_raw	5
 src/core/cycle/propose-takes.ts	execute_raw	5
 src/core/cycle/source-window.ts	execute_raw	4
-src/core/cycle/synthesize-completion.ts	execute_raw	4
+src/core/cycle/synthesize-completion.ts	execute_raw	2
 src/core/cycle/synthesize-concepts.ts	execute_raw	1
 src/core/cycle/synthesize-generations.ts	execute_raw	1
 src/core/cycle/synthesize-postprocess.ts	execute_raw	3

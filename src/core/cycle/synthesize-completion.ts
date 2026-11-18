@@ -7,6 +7,7 @@
  */
 import { basename } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
+import type { SynthesisCompletionPrefix } from '../engine-sql/jobs-queue.ts';
 import type { MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import type { DiscoveredTranscript } from './transcript-discovery.ts';
@@ -127,21 +128,9 @@ async function readManagedSourceIncarnation(engine: BrainEngine, sourceId: strin
 async function loadSuccessfulSynthesisKeys(
   engine: BrainEngine,
   sourceId: string,
-  keyPrefix: 'dream:synth:' | 'dream:synth-v2:',
+  keyPrefix: SynthesisCompletionPrefix,
 ): Promise<string[]> {
-  const rows = await engine.executeRaw<{ idempotency_key: string }>(
-    `SELECT idempotency_key
-       FROM minion_jobs
-      WHERE name = 'subagent'
-        AND status = 'completed'
-        AND COALESCE(NULLIF(data->>'source_id', ''), 'default') = $1
-        AND idempotency_key LIKE $2
-     UNION
-     SELECT idempotency_key FROM dream_synthesis_completions
-      WHERE source_id = $1 AND idempotency_key LIKE $2`,
-    [sourceId, `${keyPrefix}%`],
-  );
-  return rows.map(row => row.idempotency_key);
+  return engine.listSynthesisCompletionKeys(sourceId, keyPrefix);
 }
 
 /**
@@ -150,16 +139,8 @@ async function loadSuccessfulSynthesisKeys(
  */
 export async function recentSynthesisCompletions(engine: BrainEngine, sourceId: string, hours: number): Promise<Array<{ key: string; at: number }>> {
   if (hours <= 0) return [];
-  const rows = await engine.executeRaw<{ idempotency_key: string; at: string | Date }>(
-    `SELECT idempotency_key, finished_at AS at FROM minion_jobs
-      WHERE name = 'subagent' AND status = 'completed' AND finished_at > now() - ($3 || ' hours')::interval
-        AND COALESCE(NULLIF(data->>'source_id', ''), 'default') = $1 AND idempotency_key LIKE $2
-     UNION ALL
-     SELECT idempotency_key, completed_at FROM dream_synthesis_completions
-      WHERE source_id = $1 AND idempotency_key LIKE $2 AND completed_at > now() - ($3 || ' hours')::interval`,
-    [sourceId, 'dream:synth-v2:%', String(hours)],
-  );
-  return rows.map(row => ({ key: row.idempotency_key, at: new Date(row.at).getTime() }));
+  const rows = await engine.listRecentSynthesisCompletions(sourceId, hours);
+  return rows.map(row => ({ key: row.idempotency_key, at: row.at.getTime() }));
 }
 
 /**

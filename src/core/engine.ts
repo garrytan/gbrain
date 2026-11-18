@@ -24,6 +24,7 @@ import type { DefaultSourceSplit, LocalPathSourceRow, SourceRoutingRow } from '.
 import type { AdmitJobPolicy, AdmitJobResult, AdmitJobSpec, ClaimJobSpec, JobRow, ListJobsFilter } from './engine-sql/jobs.ts';
 import type {
   CancelJobsSpec, DelayActiveJobSpec, JobAttachmentInsert, JobPageSpec, JobStatsRead, JobTokenCounts, PrivateQueueState, PruneJobsSpec,
+  SynthesisCompletion, SynthesisCompletionPrefix,
   QueueFamilyRow, RetryJobPolicy,
 } from './engine-sql/jobs-queue.ts';
 import type { JunkEntityHubRow, LinkEndpointPage, LivePageSummary, TitledPage } from './engine-sql/link-reads.ts';
@@ -3168,6 +3169,10 @@ export interface BrainEngine {
   killWallClockJobs(lockDurationMs: number): Promise<JobRow[]>;
   /** Delete (or count, on `dryRun`) jobs in `statuses` last updated before `olderThan`; the count. */
   pruneJobs(spec: PruneJobsSpec): Promise<number>;
+  /** Completed dream synthesis keys of a source starting with `keyPrefix`, live jobs and the prune archive, each once. */
+  listSynthesisCompletionKeys(sourceId: string, keyPrefix: SynthesisCompletionPrefix): Promise<string[]>;
+  /** The source's synth-v2 completions (live jobs, then archive rows) that finished within the last `hours`. */
+  listRecentSynthesisCompletions(sourceId: string, hours: number): Promise<SynthesisCompletion[]>;
   /** Re-queue a failed or dead job fresh after `policy.admit` passes, in one transaction. Null when not retried. */
   retryJob(id: number, policy: RetryJobPolicy): Promise<JobRow | null>;
   /** Insert one inbox message for a job. */
