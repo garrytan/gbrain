@@ -11,7 +11,7 @@
 //! readCycleLocks, deleteCycleLock, deleteCycleLockIfStale, assertCycleLease. Slice 2 lives in the
 //! submodules: `mutations` (writes on one job), `sweeps` (cancel, kill, prune, promote), `inbox`,
 //! `private_queues`, `reads` (stats and lists) and `attachments`. `synthesis_completions` keeps the
-//! `dream_synthesis_completions` archive the prune writes, under its own tag `a`, with the two
+//! `dream_synthesis_completions` archive the prune writes, under its own tag `f`, with the two
 //! dream-cycle reads of it (listSynthesisCompletionKeys, listRecentSynthesisCompletions).
 //!
 //! See docs/designs/RUST_ENGINE_INTERFACES.md ("jobs (core)") and rust/docs/store/jobs.md.

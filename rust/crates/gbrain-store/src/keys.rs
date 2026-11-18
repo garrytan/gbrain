@@ -78,7 +78,7 @@ pub const JOBS: u8 = b'm';
 /// Family `trust` (`trust.rs`).
 pub const TRUST: u8 = b't';
 /// Family `jobs`, the `dream_synthesis_completions` archive (`jobs/synthesis_completions.rs`).
-pub const DREAM_SYNTHESIS_COMPLETION: u8 = b'a';
+pub const DREAM_SYNTHESIS_COMPLETION: u8 = b'f';
 
 pub fn text(tag: u8, parts: &[&str]) -> Vec<u8> {
     let mut key = vec![tag];

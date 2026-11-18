@@ -24,7 +24,7 @@ Keys, under the family tag `keys::JOBS` (`m`):
 | `m 0x09 <owner id> <job id>` | the rows whose `private_queue_owner_job_id` is that owner, so deleting an owner finds them without a scan |
 
 The `dream_synthesis_completions` archive (`rust/crates/gbrain-store/src/jobs/synthesis_completions.rs`) has its own tag,
-`keys::DREAM_SYNTHESIS_COMPLETION` (`a`):
+`keys::DREAM_SYNTHESIS_COMPLETION` (`f`):
 
 | Key | Holds |
 | --- | --- |

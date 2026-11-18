@@ -4,7 +4,7 @@
 //! reads here are the ones `src/core/cycle/synthesize-completion.ts` runs, each a union of the
 //! completed `minion_jobs` rows and the archive.
 //!
-//! Keys: every record starts with `keys::DREAM_SYNTHESIS_COMPLETION` (`a`):
+//! Keys: every record starts with `keys::DREAM_SYNTHESIS_COMPLETION` (`f`):
 //! - `a source_id \0 idempotency_key -> CompletionRecord`: one archive row. The key is the
 //!   table's primary key `(source_id, idempotency_key)`; neither part contains `\0` (Postgres
 //!   text cannot), so a prefix scan of `a source_id \0 key_prefix` is `LIKE 'key_prefix%'`.
