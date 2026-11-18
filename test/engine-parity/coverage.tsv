@@ -66,7 +66,7 @@ getPage	pages	yes	49	yes	yes	yes	serves
 readPageSnapshot	pages	yes	9	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	189	yes	yes	yes	serves
+putPage	pages	yes	191	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	5	yes	yes	yes	serves
@@ -286,8 +286,8 @@ rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
 resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
 resolveAliases	sync_aliases	yes	5	no	yes	yes	serves
-setPageAliases	sync_aliases	yes	8	no	yes	yes	serves
-replaceDerivedAliases	sync_aliases	yes	3	no	yes	yes	serves
+setPageAliases	sync_aliases	yes	10	no	yes	yes	serves
+replaceDerivedAliases	sync_aliases	yes	5	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
@@ -506,9 +506,9 @@ logMcpRequest	telemetry	yes	2	no	yes	yes	serves
 readMcpLogPruneCutoff	telemetry	yes	1	no	yes	yes	serves
 pruneMcpRequestLogBatch	telemetry	yes	2	no	yes	yes	serves
 findPagesByTitles	alias_fanout_reads	yes	3	no	yes	yes	serves
-resolveCaseSensitiveAliases	alias_fanout_reads	yes	2	no	yes	yes	serves
+resolveCaseSensitiveAliases	alias_fanout_reads	yes	3	no	yes	yes	serves
 readPageTitle	alias_fanout_reads	yes	1	no	yes	yes	serves
-readPageAliasRows	alias_fanout_reads	yes	2	no	yes	yes	serves
+readPageAliasRows	alias_fanout_reads	yes	3	no	yes	yes	serves
 hasSegmentStorage	write_guards	yes	1	no	yes	yes	serves
 readPageOrigin	write_guards	yes	1	no	yes	yes	serves
 listOriginClaims	write_guards	yes	1	no	yes	yes	serves

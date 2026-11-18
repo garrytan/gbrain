@@ -216,6 +216,84 @@ describe('engine parity: alias fan-out reads', () => {
   );
 });
 
+/**
+ * Derived fixture: one frontmatter row and three derived rows on one page (one case-sensitive alias under two origins,
+ * one not case-sensitive), a case-sensitive row on a second page, and one in the `other` source. A store read that
+ * ignores the value of a derived row reads `alias_text` as null, finds no case-sensitive row, or refuses the row.
+ */
+async function derived(engine: BrainEngine, backend: Parameters<typeof createSource>[1]) {
+  await createSource(engine, backend, 'other');
+  await engine.putPage('people/alice-example', page('person', 'Alice Example'));
+  await engine.setPageAliases('people/alice-example', 'default', ['ae']);
+  await engine.replaceDerivedAliases('people/alice-example', 'default', [
+    { alias_norm: 'ae', origin: 'subject', case_sensitive: true, alias_text: 'AE' },
+    { alias_norm: 'ae', origin: 'declared', case_sensitive: true, alias_text: 'AE' },
+    { alias_norm: 'alice', origin: 'declared', case_sensitive: false, alias_text: 'Alice' },
+  ]);
+  await engine.replaceDerivedAliases('people/a-founder', 'default', [
+    { alias_norm: 'ae', origin: 'declared', case_sensitive: true, alias_text: 'aE' },
+  ]);
+  await engine.replaceDerivedAliases('people/alice-example', 'other', [
+    { alias_norm: 'ae', origin: 'declared', case_sensitive: true, alias_text: 'A.E.' },
+  ]);
+}
+
+describe('engine parity: alias fan-out reads of derived alias rows', () => {
+  parityTest(
+    'resolveCaseSensitiveAliases returns the case-sensitive rows replaceDerivedAliases wrote, with their alias text',
+    { methods: ['putPage', 'setPageAliases', 'replaceDerivedAliases', 'resolveCaseSensitiveAliases'] },
+    async (engine, backend) => {
+      await derived(engine, backend);
+      const both = await engine.resolveCaseSensitiveAliases(['alice', 'ae'], ['other', 'default']);
+      expect(both).toEqual([
+        { slug: 'people/a-founder', alias_norm: 'ae', alias_text: 'aE' },
+        { slug: 'people/alice-example', alias_norm: 'ae', alias_text: 'AE' },
+        { slug: 'people/alice-example', alias_norm: 'ae', alias_text: 'AE' },
+        { slug: 'people/alice-example', alias_norm: 'ae', alias_text: 'A.E.' },
+      ]);
+      // Not case-sensitive: the derived `alice` row and the frontmatter `ae` row never answer.
+      const notCase = await engine.resolveCaseSensitiveAliases(['alice'], ['default']);
+      // A new set replaces the derived rows: `ae` turns case-insensitive and leaves the answer.
+      await engine.replaceDerivedAliases('people/a-founder', 'default', [
+        { alias_norm: 'ae', origin: 'declared', case_sensitive: false, alias_text: 'aE' },
+      ]);
+      const replaced = await engine.resolveCaseSensitiveAliases(['ae'], ['default']);
+      expect({ notCase, replaced }).toEqual({
+        notCase: [],
+        replaced: [
+          { slug: 'people/alice-example', alias_norm: 'ae', alias_text: 'AE' },
+          { slug: 'people/alice-example', alias_norm: 'ae', alias_text: 'AE' },
+        ],
+      });
+      return { both, notCase, replaced };
+    },
+  );
+
+  parityTest(
+    'readPageAliasRows returns the alias text replaceDerivedAliases wrote, and null for a frontmatter row',
+    { methods: ['putPage', 'setPageAliases', 'replaceDerivedAliases', 'readPageAliasRows'] },
+    async (engine, backend) => {
+      await derived(engine, backend);
+      const rows = await engine.readPageAliasRows(['other', 'default'], ['people/alice-example', 'people/a-founder']);
+      const row = (source_id: string, slug: string, alias_norm: string, origin: string, alias_text: string | null) =>
+        ({ slug, source_id, alias_norm, alias_text, origin });
+      expect(rows).toEqual([
+        row('default', 'people/a-founder', 'ae', 'declared', 'aE'),
+        row('default', 'people/alice-example', 'ae', 'declared', 'AE'),
+        row('default', 'people/alice-example', 'ae', 'frontmatter', null),
+        row('default', 'people/alice-example', 'ae', 'subject', 'AE'),
+        row('default', 'people/alice-example', 'alice', 'declared', 'Alice'),
+        row('other', 'people/alice-example', 'ae', 'declared', 'A.E.'),
+      ]);
+      // Replacing the derived rows with none leaves the frontmatter row.
+      await engine.replaceDerivedAliases('people/alice-example', 'default', []);
+      const cleared = await engine.readPageAliasRows(['default'], ['people/alice-example']);
+      expect(cleared).toEqual([row('default', 'people/alice-example', 'ae', 'frontmatter', null)]);
+      return { rows, cleared };
+    },
+  );
+});
+
 describe('alias fan-out: a refused Rust read reads as no rows', () => {
   test('resolveQueryEntities answers the same when the Rust findPagesByTitles refuses a widened caller as when it finds nothing', async () => {
     const addonCalls: string[] = [];
