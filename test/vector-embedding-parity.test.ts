@@ -62,10 +62,9 @@
  *
  * Rust arm (GBRAIN_TEST_RUST_ARM=1, test/engine-parity/rust-arm.ts): the same
  * fixture through engine methods (the Rust engine has no SQL), and the same
- * expected rows. Differences, each asserted below: a refusal carries the
- * store's `invalid_argument` code with PGLite's message; searchVector serves
- * `excludePrivate` as PGLite does, but a hybrid search with it refuses
- * (engine_capability_missing: the keyword arm cannot apply it). Cases that set state with SQL (the
+ * expected rows. One difference, asserted below: a refusal carries the
+ * store's `invalid_argument` code with PGLite's message. Every member a hybrid
+ * search calls serves `excludePrivate` as PGLite does. Cases that set state with SQL (the
  * guard's model and hash edits, embedding reads, stale chunks, state counts)
  * do not run on Rust; the store's unit tests cover the guard's model and hash
  * rules. A brain whose config routes vectors to another column refuses on Rust,
@@ -129,6 +128,24 @@ const HYBRID_NAMED = [
   'z-gen 0.2471 provenance="generated" generated_demotion=0.5',
   'e-person 0.1913',
 ];
+/**
+ * The same query as HYBRID_NAMED_PRIVATE with salience, recency and graph signals on: the effective-date, salience, backlink,
+ * adjacency and supersede reads all take the page policy, and the rows PGLite answers are the rows the Rust brain answers
+ * (u-dated's score depends on the day, so it is matched by shape and left out here).
+ */
+const HYBRID_NAMED_PRIVATE_ALL_STAGES = [
+  'zorbit 1.7680 backlink_count=1 recency_boost=1.3',
+  'a-exact 0.7112 recency_boost=1.3',
+  'd-multi 0.7059 recency_boost=1.3',
+  'z-after 0.6695 alias_resolved_boost=1.05 recency_boost=1.3',
+  'n-timeline 0.6601 recency_boost=1.3',
+  't-auto 0.6325 recency_boost=1.3 status="unverified" unverified=true',
+  't-flagged 0.6229 recency_boost=1.3 content_flag={"reason":"spam","detail":"x"}',
+  'r-target 0.6044 collapsed=[{"slug":"r-stub","source_id":"default","reason":"redirect"}] recency_boost=1.3 status="verified"',
+  's-new 0.6130 recency_boost=1.3',
+  'e-person 0.2521 recency_boost=1.3',
+];
+
 /** The same query with excludePrivate: true: PGLite hides the generated page and the rest of the order holds (11 rows). */
 const HYBRID_NAMED_PRIVATE = [
   'zorbit 1.3600 backlink_count=1',
@@ -563,9 +580,9 @@ for (const kind of arms) {
       const hybrid = async (query: string, opts: Record<string, unknown> = {}) =>
         outcome(async () => show(await hybridSearch(engine, query, { expansion: false, limit: 40, ...opts } as never)));
       // The post-fusion stages with every metadata stage switched on, over the vector arm's rows.
-      const every = async () => outcome(async () => {
+      const every = async (extra: Record<string, unknown> = {}) => outcome(async () => {
         const rowsIn = await vectorRows();
-        await runPostFusionStages(engine, rowsIn, { applyBacklinks: true, salience: 'on', recency: 'on', graphSignalsEnabled: true } as never);
+        await runPostFusionStages(engine, rowsIn, { applyBacklinks: true, salience: 'on', recency: 'on', graphSignalsEnabled: true, ...extra } as never);
         return show(rowsIn);
       });
       const markers = async () => outcome(async () => {
@@ -623,9 +640,13 @@ for (const kind of arms) {
       const cases = {
         plain: await hybrid('nonlexicalsaffronquery'),
         named: await hybrid('Zorbit'),
-        // A caller that hides private pages: PGLite answers it, so the Rust arm must answer it or refuse it, never return no rows.
+        // A caller that hides private pages.
         namedPrivate: await hybrid('Zorbit', { excludePrivate: true }),
         stages: await every(),
+        // The same stages for a caller that hides private pages: the salience, effective-date, backlink, adjacency and supersede reads all take the page policy.
+        stagesPrivate: await every({ excludePrivate: true }),
+        // The whole pipeline with every metadata stage on and the page policy set, as a remote search runs it.
+        namedPrivateAllStages: await hybrid('Zorbit', { excludePrivate: true, salience: 'on', recency: 'on', graph_signals: true, expansion: false }),
         markers: await markers(),
         bag: await bag(),
         privateBag: await privateBag(),
@@ -641,14 +662,19 @@ for (const kind of arms) {
       const dated = (cases.stages as { ok: string[] }).ok.find((r) => r.startsWith('u-dated '))!;
       expect(dated).toMatch(/^u-dated 0\.\d{4} recency_boost=1\.0\d*$/);
       expect({ ok: (cases.stages as { ok: string[] }).ok.filter((r) => r !== dated) }).toEqual({ ok: STAGES_WITHOUT_DATED });
+      // With the page policy set the private page loses its effective-date boost (and keeps the rest), on both engines.
+      const privateStages = (cases.stagesPrivate as { ok: string[] }).ok;
+      expect(privateStages.find((r) => r.startsWith('u-dated '))).toMatch(/^u-dated 0\.\d{4} recency_boost=1\.0\d*$/);
+      expect({ ok: privateStages.filter((r) => !r.startsWith('u-dated ')) }).toEqual({
+        ok: STAGES_WITHOUT_DATED.map((r) => (r.startsWith('i-private ') ? 'i-private 0.0242' : r)),
+      });
+      const allStages = (cases.namedPrivateAllStages as { ok: string[] }).ok;
+      expect(allStages.find((r) => r.startsWith('u-dated '))).toMatch(/^u-dated 0\.\d{4} recency_boost=1\.0\d*$/);
+      expect({ ok: allStages.filter((r) => !r.startsWith('u-dated ')) }).toEqual({ ok: HYBRID_NAMED_PRIVATE_ALL_STAGES });
       expect(cases.plain).toEqual({ ok: HYBRID_PLAIN });
       expect(cases.named).toEqual({ ok: HYBRID_NAMED });
-      if (rust) {
-        // The arms refuse excludePrivate (engine_capability_missing); hybridSearch must pass the refusal on, not read it as an empty arm.
-        expect(cases.namedPrivate).toMatchObject({ refused: 'engine_capability_missing', message: expect.stringMatching(/search(Keyword|Titles) \(option excludePrivate\)/) });
-      } else {
-        expect(cases.namedPrivate).toEqual({ ok: HYBRID_NAMED_PRIVATE });
-      }
+      // A caller that hides private pages gets the same rows on both engines: the keyword, title and vector arms all apply the page policy.
+      expect(cases.namedPrivate).toEqual({ ok: HYBRID_NAMED_PRIVATE });
       expect(cases.markers).toEqual({ ok: MARKERS });
       expect(cases.bag).toEqual({
         ok: {
