@@ -107,9 +107,12 @@ export function listCompactableReceipts<R = Record<string, unknown>>(exec: Legac
   return exec.executeRaw<R>(COMPACTABLE_RECEIPTS_SQL, [retentionDays]);
 }
 
-/** `sweepCompactedReservations`' window: $1 the sequence walked through, $2 rows. */
+/**
+ * `sweepCompactedReservations`' window: $1 the sequence walked through, $2 rows. ORDER BY names the table's bigint
+ * column: a bare `sequence` would sort the text alias ("10" before "9") and the cursor would skip rows.
+ */
 export const RESERVATIONS_AFTER_SQL = `SELECT id,sequence::text AS sequence,compacted
-    FROM persistence_requests WHERE sequence>$1::bigint ORDER BY sequence LIMIT $2`;
+    FROM persistence_requests WHERE sequence>$1::bigint ORDER BY persistence_requests.sequence LIMIT $2`;
 
 export function listReservationsAfter(exec: LegacyUnscopedRead, after: string, limit: number): Promise<Array<{ id: string; sequence: string; compacted: boolean }>> {
   return exec.executeRaw(RESERVATIONS_AFTER_SQL, [after, limit]);
