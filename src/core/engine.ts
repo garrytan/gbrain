@@ -31,7 +31,7 @@ import type { ChunkMove } from './page-state/chunk-moves.ts';
 import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence-state.ts';
 import type { DurablePersistenceSettings } from './engine-sql/persistence-declaration.ts';
-import type { ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OutstandingBySource, WriteCompletion, WriteRequestInsert, WriteRequestProgress } from './engine-sql/persistence-journal.ts';
+import type { AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OutstandingBySource, WriteCompletion, WriteRequestInsert, WriteRequestProgress } from './engine-sql/persistence-journal.ts';
 import type { ClaimExpiry, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from './engine-sql/persistence-claims.ts';
 import type { GatedMirrorRequest } from './engine-sql/persistence-effect-scans.ts';
 import type { CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionWindowRow, ReceiptBudget, SegmentedProjectionFilter } from './engine-sql/persistence-housekeeping.ts';
@@ -3317,6 +3317,10 @@ export interface BrainEngine {
   readWriteRequestProgress(id: string, opts?: { signal?: AbortSignal }): Promise<WriteRequestProgress | null>;
   /** The sources holding outstanding (queued, deferred, running, recovering) requests of one principal, as `{ source_id, n }`: the most first, a tie in byte order of the source id. */
   countOutstandingBySource(principalKind: string, principalId: string): Promise<OutstandingBySource[]>;
+  /** The existing counter rows of `keys` in key byte order, without a lock (a missing key has no row). */
+  readCounterRows(keys: readonly string[]): Promise<CounterRow[]>;
+  /** The brain's first request id and a sample of the latest 1,000 admissions (one principal's, or the brain's): count, age of the oldest, mean reservation, mean compacted size. `{ sample: false }` reads only the first request id. */
+  readAdmissionRate(principal: { kind: string; id: string } | null, opts?: { sample?: boolean }): Promise<AdmissionRate>;
   /** Creates the missing counter rows and locks them all FOR UPDATE in key order; returns the locked rows. */
   lockPersistenceCounters(keys: readonly string[]): Promise<CounterRow[]>;
   /** Inserts an admitted request and charges its (already locked) counters; returns the stored row. */

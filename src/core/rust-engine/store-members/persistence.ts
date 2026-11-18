@@ -1,7 +1,7 @@
 /**
  * The write-journal members the Rust store answers: the state reads (readManagedModeRows, readLocalWriterRow,
  * insertLocalWriterRow, readJournalLimitRows, readHeldPageRows, readHeldCoverageRows), the request rows the put path
- * reads and writes (readWriteRequest, readWriteRequestById, readWriteRequestProgress, countOutstandingBySource, lockPersistenceCounters, insertWriteRequest,
+ * reads and writes (readWriteRequest, readWriteRequestById, readWriteRequestProgress, countOutstandingBySource, readCounterRows, readAdmissionRate, lockPersistenceCounters, insertWriteRequest,
  * stampWriteClaim, lockWriteRequest, completeWriteRow), the claim upkeep (renewWriteClaim, expireStaleWriteClaims,
  * hasClaimableWrite), the consumer rows (listHostConsumerRows, probeLiveConsumerRows, renewConsumerRow,
  * deleteConsumerRow, stampWorktreeHeartbeats), the admission reads (readSourceMembership, findTopologyChanges), the lifecycle receipts
@@ -15,7 +15,7 @@
  * rust/docs/store/persistence.md.
  */
 import type { LocalWriterInsert, LocalWriterRow } from '../../engine-sql/persistence-state.ts';
-import type { ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OutstandingBySource, WriteCompletion, WriteRequestInsert, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
+import type { AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OutstandingBySource, WriteCompletion, WriteRequestInsert, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
 import type { ClaimExpiry, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from '../../engine-sql/persistence-claims.ts';
 import type { LedgerSource } from '../../engine-sql/belief.ts';
 import type { WriteRequest } from '../../persistence/model.ts';
@@ -93,6 +93,17 @@ export const readWriteRequestProgress: StoreMember<[id: string, opts?: { signal?
 /** The sources holding outstanding requests of one principal, most first; a tie in byte order of the source id, as Postgres sorts `COLLATE "C"`. */
 export const countOutstandingBySource: StoreMember<[principalKind: string, principalId: string], OutstandingBySource[]> = (brain, principalKind, principalId) =>
   storeCall({ member: 'countOutstandingBySource' }, () => brain.countOutstandingBySource(principalKind, principalId));
+
+/** The existing counter rows of `keys` in key byte order (`COLLATE "C"`), unlocked; a missing key has no row. */
+export const readCounterRows: StoreMember<[keys: readonly string[]], CounterRow[]> = (brain, keys) =>
+  storeCall({ member: 'readCounterRows' }, () => brain.readCounterRows([...keys]));
+
+/** The brain's first request id and the latest 1,000 admissions' sample. This engine records no effect row, so `net` counts none. */
+export const readAdmissionRate: StoreMember<[principal: { kind: string; id: string } | null, opts?: { sample?: boolean }], AdmissionRate> = async (brain, principal, opts) => {
+  const rate = await storeCall({ member: 'readAdmissionRate' }, () => brain.readAdmissionRate(principal?.kind ?? null, principal?.id ?? null)) as AdmissionRate;
+  // `{ sample: false }` saves the sample statement on Postgres; the store answers both from its rows, so only the first id is kept.
+  return opts?.sample === false ? { first_request_id: rate.first_request_id, admissions: 0, age_seconds: null, gross: null, net: null } : rate;
+};
 
 /** Request `id`, or null. FOR UPDATE changes nothing in one store write (see the header). */
 export const lockWriteRequest: StoreMember<[id: string], WriteRequest | null> =

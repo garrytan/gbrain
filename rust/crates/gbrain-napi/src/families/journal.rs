@@ -272,6 +272,33 @@ impl Brain {
         })
     }
 
+    /// `readCounterRows(keys)`: the counter rows that exist, in key order, unlocked.
+    #[napi]
+    pub fn read_counter_rows<'env>(
+        &self,
+        env: &'env Env,
+        keys: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_counter_rows(&required::<Vec<String>>(keys, "readCounterRows keys")?)
+        })
+    }
+
+    /// `readAdmissionRate(principal)`: the first request id and the latest admissions' sample;
+    /// both principal arguments null samples the whole brain.
+    #[napi]
+    pub fn read_admission_rate<'env>(
+        &self,
+        env: &'env Env,
+        principal_kind: Option<String>,
+        principal_id: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let principal = principal_kind.as_deref().zip(principal_id.as_deref());
+            s.read_admission_rate(principal)
+        })
+    }
+
     /// `countOutstandingBySource(principalKind, principalId)`: `[{ source_id, n }]`, most first.
     #[napi]
     pub fn count_outstanding_by_source<'env>(

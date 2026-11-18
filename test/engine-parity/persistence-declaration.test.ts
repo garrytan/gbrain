@@ -23,7 +23,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { submissionAuthority } from '../../src/core/persistence/authority.ts';
 import { registerLocalWriter } from '../../src/core/persistence/identity.ts';
-import { admitWrite } from '../../src/core/persistence/journal.ts';
+import { admitWrite, assertWriteHeadroom, readOutstandingRoom } from '../../src/core/persistence/journal.ts';
 import { principalKey } from '../../src/core/persistence/model.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -113,5 +113,30 @@ describe('engine parity: persistence declaration', () => {
     expect(shared.state).toBe('queued');
     expect(refused).toEqual({ code: 'queue_capacity', message: 'Write capacity exhausted: principal outstanding requests (source default holds 2).' });
     return { shared: { source: shared.source_id, state: shared.state }, refused };
+  });
+
+  parityTest('a run past the request-id and receipt-byte caps refuses with the same one-year value, and the outstanding room reads the counters', {
+    methods: ['declarePersistence', 'transaction', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'readCounterRows', 'readAdmissionRate'],
+    timeout: 60_000,
+  }, async (engine) => {
+    await registerLocalWriter(engine, 'cli');
+    await engine.setConfig('persistence.limits.principal_outstanding', '5');
+    const first = await admitPut(engine, 'notes/parity-quota-a', REQUESTS[0]!);
+    await admitPut(engine, 'notes/parity-quota-b', REQUESTS[1]!);
+    const principal = { kind: first.principal_kind, id: first.principal_id } as Parameters<typeof readOutstandingRoom>[1];
+    const room = await readOutstandingRoom(engine, principal);
+    const key = principalKey(principal);
+    const [own] = (await engine.transaction((tx) => tx.lockPersistenceCounters([key])));
+    const usedBytes = Number(own!.terminal_bytes);
+    await engine.setConfig('persistence.limits.principal_lifetime_ids', '3');
+    await engine.setConfig('persistence.limits.principal_terminal_bytes', String(usedBytes + 20_000));
+    const refusal = (needed: { ids: number; bytes?: number }) => assertWriteHeadroom(engine, principal, needed).then(
+      () => null, (err: { code?: string; message?: string; fix?: { argv?: string[] } }) => ({ code: err.code, message: err.message, argv: err.fix?.argv }));
+    const ids = await refusal({ ids: 5 });
+    const bytes = await refusal({ ids: 0, bytes: 50_000 });
+    expect(room).toEqual({ room: 3, scope: 'principal', used: 2, limit: 5 });
+    expect(ids?.code).toBe('write_quota_insufficient');
+    expect(bytes?.code).toBe('write_quota_insufficient');
+    return { room, ids, bytes: bytes && { ...bytes, message: bytes.message?.replace(String(usedBytes), '<used>') } };
   });
 });

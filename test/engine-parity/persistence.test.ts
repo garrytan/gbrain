@@ -297,6 +297,58 @@ describe('engine parity: write journal', () => {
     return result;
   });
 
+  parityTest('readCounterRows reads the existing counter rows in key byte order without creating or locking any', {
+    methods: ['readCounterRows', 'lockPersistenceCounters', 'insertWriteRequest'],
+  }, async (engine) => {
+    const empty = await engine.readCounterRows(KEYS);
+    await admitDirect(engine);
+    // `principal:a-c` sorts before `principal:ab` in byte order and after it in a linguistic collation.
+    await engine.lockPersistenceCounters(['principal:ab', 'principal:a-c']);
+    const rows = await engine.readCounterRows([...KEYS, 'brain', 'principal:ab', 'principal:a-c', 'principal:local_cli:missing']);
+    const missing = await engine.readCounterRows(['principal:local_cli:missing']);
+    expect(empty).toEqual([]);
+    expect(rows.map(r => r.key)).toEqual(['brain', 'principal:a-c', 'principal:ab', 'principal:local_cli:parity-writer']);
+    expect(missing).toEqual([]);
+    return { empty, keys: rows.map(r => r.key), counters: counters(rows), missing };
+  });
+
+  parityTest('readAdmissionRate samples the latest admissions of one principal or the brain, with the brain\'s first request id', {
+    methods: ['readAdmissionRate', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'completeWriteRow'],
+  }, async (engine) => {
+    const empty = await engine.readAdmissionRate(null);
+    const source = await engine.readSourceMembership('default');
+    const admit = async (requestId: string, principalId = PRINCIPAL.id, clientRequestId: string | null = null) => {
+      const keys = [`principal:local_cli:${principalId}`, 'brain'];
+      await engine.lockPersistenceCounters(keys);
+      return (await engine.insertWriteRequest({ ...insertRow(source!.incarnation, requestId), principalId, counterKeys: keys, clientRequestId })).id;
+    };
+    const first = await admit('b0000000-0000-4000-8000-0000000000d1');
+    await admit('b0000000-0000-4000-8000-0000000000d2', PRINCIPAL.id, 'client-d2');
+    const failed = await admit('b0000000-0000-4000-8000-0000000000d3', 'other-writer');
+    await engine.stampWriteClaim(failed, TOKEN, 60_000, JSON.stringify({ phase: 'parity' }));
+    await engine.completeWriteRow({
+      id: failed, state: 'failed', outcome: null, errorCode: 'parity_error', errorMessage: 'parity', consumerVersion: 'parity',
+      consumerHostId: null, errorDetail: { reason: 'parity', step: 2 }, resultBytes: 0, counterKeys: ['principal:local_cli:other-writer', 'brain'],
+      intentBytes: 100, retainedBytes: 800, terminalReservation: 4096, probePurges: false,
+    });
+    const shape = (rate: Awaited<ReturnType<BrainEngine['readAdmissionRate']>>) => ({
+      first: rate.first_request_id === first, admissions: rate.admissions, gross: rate.gross, net: rate.net,
+      recent: rate.age_seconds !== null && rate.age_seconds >= 0 && rate.age_seconds < 3600,
+    });
+    const result = {
+      empty,
+      brain: shape(await engine.readAdmissionRate(null)),
+      writer: shape(await engine.readAdmissionRate(PRINCIPAL)),
+      other: shape(await engine.readAdmissionRate({ kind: PRINCIPAL.kind, id: 'other-writer' })),
+      nobody: await engine.readAdmissionRate({ kind: 'mcp', id: PRINCIPAL.id }),
+    };
+    expect(result.empty).toEqual({ first_request_id: null, admissions: 0, age_seconds: null, gross: null, net: null });
+    expect(result.brain).toMatchObject({ first: true, admissions: 3, recent: true });
+    expect(result.writer).toMatchObject({ first: true, admissions: 2, gross: 4096, recent: true });
+    expect(result.nobody).toMatchObject({ first_request_id: first, admissions: 0, age_seconds: null, gross: null, net: null });
+    return { ...result, nobody: { ...result.nobody, first_request_id: result.nobody.first_request_id === first } };
+  });
+
   parityTest('readSourceMembership returns the incarnation and archive flag, locked or not, and null for an unknown source', { methods: ['readSourceMembership'] }, async (engine) => {
     const plain = await engine.readSourceMembership('default');
     const locked = await engine.readSourceMembership('default', { lock: true });

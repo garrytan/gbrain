@@ -107,7 +107,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   import_guards: ['readManagedModeRows', 'getSourceStrictness', 'readPersistenceBrainId', 'readLocalWriterRow', 'insertLocalWriterRow',
     'readTransactionSettings', 'applyTransactionSettings', 'readLedgerSource', 'isFolderRestricted'],
   persistence_journal: ['readJournalLimitRows', 'readHeldPageRows', 'readHeldCoverageRows', 'readWriteRequest', 'readWriteRequestById',
-    'readWriteRequestProgress', 'countOutstandingBySource', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'lockWriteRequest', 'completeWriteRow', 'readSourceMembership',
+    'readWriteRequestProgress', 'countOutstandingBySource', 'readCounterRows', 'readAdmissionRate', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'lockWriteRequest', 'completeWriteRow', 'readSourceMembership',
     'findTopologyChanges', 'renewWriteClaim', 'expireStaleWriteClaims', 'hasClaimableWrite', 'listHostConsumerRows', 'probeLiveConsumerRows',
     'renewConsumerRow', 'deleteConsumerRow', 'stampWorktreeHeartbeats', 'readTopologyChange', 'insertTopologyChange',
     'claimHousekeepingTurn', 'completeHousekeepingTurn', 'readReceiptBudget', 'listCompactableReceipts', 'listReservationsAfter',

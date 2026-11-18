@@ -89,7 +89,7 @@ function ownerStatusFix(sourceId: string): Action {
 const lifecycleIdConflict = (requestId: string) => opError('idempotency_conflict', 'This request_id belongs to a source lifecycle operation.',
   `Request ID ${requestId} is already recorded for a source lifecycle change of this CLI writer, so this page write was not admitted and nothing changed. Submit the page write with a new request_id.`);
 /** #6696 (A5): a background admission of `ids` requests and `bytes` reservation refuses past the pause line of any locked counter. */
-async function assertBackgroundRoom(tx: SqlEngine, counters: Counter[], limits: JournalLimits, ids: number, bytes: number): Promise<void> {
+async function assertBackgroundRoom(tx: SqlEngine & Pick<BrainEngine, 'readAdmissionRate'>, counters: Counter[], limits: JournalLimits, ids: number, bytes: number): Promise<void> {
   const share = await readBackgroundPauseShare(tx);
   for (const row of counters) {
     const scope = row.key === 'brain' ? 'brain' : 'principal';
@@ -158,7 +158,7 @@ const managedSyncJob = (input: Pick<WriteAdmission, 'operation' | 'intent'>) => 
  * year at the current admission rate; `detail` keeps the limit key, `reason`
  * the resource.
  */
-async function cumulativeCapacityError(tx: SqlEngine, resource: string, scope: string, setting: keyof JournalLimits, used: number, limit: number): Promise<OperationError> {
+async function cumulativeCapacityError(tx: SqlEngine & Pick<BrainEngine, 'readAdmissionRate'>, resource: string, scope: string, setting: keyof JournalLimits, used: number, limit: number): Promise<OperationError> {
   const key = journalLimitKey(setting);
   const ids = setting.endsWith('LifetimeIds');
   const value = await oneYearCapacity(tx, scope, ids ? 'LifetimeIds' : 'TerminalBytes', used, limit);
@@ -182,7 +182,7 @@ export function quotaExhausted(resource: string, key: string, value: number, use
  * refuses with the same filled capacity command an admission would, before
  * the caller mutates anything.
  */
-export async function assertLifetimeIdHeadroom(engine: SqlEngine & Pick<BrainEngine, 'readJournalLimitRows'>, principal: Principal, needed: number): Promise<void> {
+export async function assertLifetimeIdHeadroom(engine: SqlEngine & Pick<BrainEngine, 'readJournalLimitRows' | 'readCounterRows' | 'readAdmissionRate'>, principal: Principal, needed: number): Promise<void> {
   await assertWriteHeadroom(engine, principal, { ids: needed });
 }
 /**
@@ -193,12 +193,11 @@ export async function assertLifetimeIdHeadroom(engine: SqlEngine & Pick<BrainEng
  * writes but cannot cover the run refuses `write_quota_insufficient`, both
  * with the config value that covers the run and one more year.
  */
-export async function assertWriteHeadroom(engine: SqlEngine & Pick<BrainEngine, 'readJournalLimitRows'>, principal: Principal, needed: { ids: number; bytes?: number }, share = 1): Promise<void> {
+export async function assertWriteHeadroom(engine: SqlEngine & Pick<BrainEngine, 'readJournalLimitRows' | 'readCounterRows' | 'readAdmissionRate'>, principal: Principal, needed: { ids: number; bytes?: number }, share = 1): Promise<void> {
   if (needed.ids <= 0 && !needed.bytes) return;
   const limits = await readJournalLimits(engine);
   const keys = ['brain', principalKey(principal)];
-  const rows = await engine.executeRaw<{ key: string; lifetime_ids: number | string; terminal_bytes: number | string }>(
-    'SELECT key,lifetime_ids,terminal_bytes FROM persistence_counters WHERE key=ANY($1::text[])', [keys]);
+  const rows = await engine.readCounterRows(keys);
   for (const key of keys) {
     const scope = key === 'brain' ? 'brain' : 'principal';
     for (const [resource, setting, need, label] of [['lifetime_ids', `${scope}LifetimeIds`, needed.ids, 'permanent request IDs'],
@@ -224,10 +223,9 @@ export async function assertWriteHeadroom(engine: SqlEngine & Pick<BrainEngine, 
  * #6884: how many more requests `principal` can have outstanding before the tighter of its own and the brain's
  * outstanding caps, each taken at `share` (a background run stops at the pause line), with that cap's counts.
  */
-export async function readOutstandingRoom(engine: SqlEngine & Pick<BrainEngine, 'readJournalLimitRows'>, principal: Principal, share = 1): Promise<{ room: number; scope: 'brain' | 'principal'; used: number; limit: number }> {
+export async function readOutstandingRoom(engine: SqlEngine & Pick<BrainEngine, 'readJournalLimitRows' | 'readCounterRows'>, principal: Principal, share = 1): Promise<{ room: number; scope: 'brain' | 'principal'; used: number; limit: number }> {
   const limits = await readJournalLimits(engine);
-  const rows = await engine.executeRaw<{ key: string; outstanding_count: number | string }>('SELECT key,outstanding_count FROM persistence_counters WHERE key=ANY($1::text[])',
-    [['brain', principalKey(principal)]]);
+  const rows = await engine.readCounterRows(['brain', principalKey(principal)]);
   const room = (scope: 'brain' | 'principal', key: string, cap: number) => {
     const used = Number(rows.find(row => row.key === key)?.outstanding_count ?? 0), limit = Math.floor(cap * share);
     return { room: limit - used, scope, used, limit };

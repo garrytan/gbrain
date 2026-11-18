@@ -288,6 +288,74 @@ pub(crate) fn count_outstanding_by_source_in(
         .collect())
 }
 
+/// `persistence/receipt-bytes.ts` `COMPACTED_HEADROOM_BYTES`.
+const COMPACTED_HEADROOM_BYTES: i64 = 1024;
+/// The admissions `readAdmissionRate` samples.
+const ADMISSION_SAMPLE: usize = 1000;
+
+fn text_bytes(value: Option<&Value>) -> i64 {
+    match value {
+        None | Some(Value::Null) => 0,
+        Some(v) => crate::cli_reads::pg_text::jsonb_text(v).len() as i64,
+    }
+}
+
+/// A request's compacted receipt size (`COMPACTED_RECEIPT_BYTES_SQL`): its reservation, or less
+/// when the authority, outcome, error detail and client request id with the compaction headroom
+/// are smaller. This engine records no effect row, so no effect bytes are added.
+fn compacted_receipt_bytes(r: &RequestRecord) -> i64 {
+    let kept = text_bytes(Some(&r.authority))
+        + text_bytes(r.outcome.as_ref())
+        + text_bytes(r.extra.get("error_detail"))
+        + r.client_request_id.as_ref().map_or(0, |c| c.len() as i64)
+        + COMPACTED_HEADROOM_BYTES;
+    extra_i64(r, "terminal_reservation").min(kept)
+}
+
+pub(crate) fn read_admission_rate_in(
+    read: &dyn KvRead,
+    now_us: i64,
+    principal: Option<(&str, &str)>,
+) -> Result<Value> {
+    let mut requests = all_requests(read)?;
+    let first = requests
+        .iter()
+        .min_by_key(|r| r.sequence)
+        .map(|r| r.id.clone());
+    if let Some((kind, id)) = principal {
+        requests.retain(|r| r.principal_kind == kind && r.principal_id == id);
+    }
+    requests.sort_by_key(|r| std::cmp::Reverse(r.sequence));
+    requests.truncate(ADMISSION_SAMPLE);
+    let n = requests.len();
+    let mean = |f: &dyn Fn(&RequestRecord) -> i64| -> Value {
+        if n == 0 {
+            Value::Null
+        } else {
+            json!(requests.iter().map(|r| f(r) as f64).sum::<f64>() / n as f64)
+        }
+    };
+    let oldest = requests.iter().map(|r| r.created_at_us).min();
+    Ok(json!({
+        "first_request_id": first,
+        "admissions": n,
+        "age_seconds": oldest.map(|t| (now_us - t) as f64 / 1_000_000.0),
+        "gross": mean(&|r| extra_i64(r, "terminal_reservation")),
+        "net": mean(&compacted_receipt_bytes),
+    }))
+}
+
+/// `readCounterRows(keys)`: the existing counter rows of `keys`, in byte order, unlocked.
+pub(crate) fn read_counter_rows_in(read: &dyn KvRead, names: &[String]) -> Result<Vec<Value>> {
+    let mut rows = Vec::new();
+    for key in distinct_keys(names) {
+        if let Some(counter) = read_counter(read, &key)? {
+            rows.push(counter.row(&key));
+        }
+    }
+    Ok(rows)
+}
+
 fn request_by_id(read: &dyn KvRead, id: &str) -> Result<Option<RequestRecord>> {
     get_json(read, &keys::request(&uuid_param(id, "id")?))
 }
@@ -1052,6 +1120,17 @@ impl Store {
         principal_id: &str,
     ) -> Result<Vec<Value>> {
         count_outstanding_by_source_in(&*self.read()?, principal_kind, principal_id)
+    }
+
+    /// `readCounterRows(keys)`: the counter rows that exist, in byte order (`COLLATE "C"`), unlocked.
+    pub fn read_counter_rows(&self, names: &[String]) -> Result<Vec<Value>> {
+        read_counter_rows_in(&*self.read()?, names)
+    }
+
+    /// `readAdmissionRate(principal)`: `{ first_request_id, admissions, age_seconds, gross, net }`
+    /// over the latest 1,000 requests of the principal (or of the brain when `None`).
+    pub fn read_admission_rate(&self, principal: Option<(&str, &str)>) -> Result<Value> {
+        read_admission_rate_in(&*self.read()?, self.env.now_micros(), principal)
     }
 
     /// `readSourceMembership(sourceId)`: `{ incarnation, archived }` or `None`.
