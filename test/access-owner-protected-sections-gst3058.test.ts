@@ -18,7 +18,9 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
-import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { buildOperationContext, dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { operations } from '../src/core/operations.ts';
+import { markCliResult } from '../src/cli/room.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { credentialHolders, setOwner } from '../src/core/access/owner.ts';
 import { bindCredential } from '../src/core/access/members.ts';
@@ -28,6 +30,8 @@ import { renderTakesFence } from '../src/core/takes-fence.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { registerLocalWriter } from '../src/core/persistence/identity.ts';
+import { withCallerAccess } from '../src/core/search/private-visibility.ts';
+import { readHolders } from '../src/core/ops/context.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { importSegmented, pageContent } from './helpers/segmented-privacy-fixture.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -278,11 +282,14 @@ for (const kind of testBackends()) {
       }
     }, 240_000);
 
-    test('room marks on a segmented page and fetch_page: the owner client\'s markdown view is not readable for the room, a member\'s is as before, and fetch is never marked readable', async () => {
+    test('room marks on a segmented page and fetch_page: in a room the owner client\'s markdown view is master\'s, the local CLI\'s is not readable for the room, a member\'s is as before, and fetch is never marked readable', async () => {
       const SEG = 'notes/seg-room-example';
       await importSegmented(engine, SEG, pageContent('## Facts\n\n' + renderFactsTable([row(1, 'Seg world'), row(2, 'Seg secret ' + PRIV, 'private')] as never) + '\n\n' + ('Seg prose line here. '.repeat(40) + '\n\n').repeat(1400)));
       const md = { slug: SEG, body: 'window', view: 'markdown', bytes: { offset: 0, length: 100_000 } };
-      expect(await roomMark('ownerC', 'get_page', md)).toEqual({ priv: true, mark: NOT_READABLE });
+      expect(await roomMark('ownerC', 'get_page', md)).toEqual({ priv: false, mark: { readable: true } });
+      const local = await operations.find(o => o.name === 'get_page')!.handler(buildOperationContext(engine, md, { remote: false }), md);
+      const marked = (await markCliResult(engine, 'get_page', local, BOB, { sourceId: 'default' })).result as Record<string, unknown>;
+      expect({ priv: JSON.stringify(marked).includes(PRIV), mark: marked.room_access }).toEqual({ priv: true, mark: NOT_READABLE });
       expect(await roomMark('ownerT', 'get_page', md)).toEqual({ priv: false, mark: { readable: true } });
       expect(await roomMark('bobR', 'get_page', md)).toEqual({ priv: false, mark: { readable: true } });
       for (const who of ['ownerC', 'bobR'] as Caller[]) {
@@ -290,5 +297,31 @@ for (const kind of testBackends()) {
         expect({ who, priv: text.includes(PRIV), readableTrue: text.includes('"readable":true') }).toEqual({ who, priv: who === 'ownerC', readableTrue: false });
       }
     }, 600_000);
+    test('in a declared room the owner reads world takes and gated hop text, as before this change; with no room it reads the widened result; a member is unchanged', async () => {
+      const canaries = TAKES.map(t => t[1]);
+      const room = { room: ['member:' + BOB] };
+      const takesFor = async (who: Caller, extra: Record<string, unknown>) => ({
+        list: seen(await call(who, 'takes_list', { page_slug: TAKER, ...extra }), canaries).length,
+        search: seen(await call(who, 'takes_search', { query: 'Taker view', ...extra }), canaries).length,
+        fence: seen(await call(who, 'get_page', { slug: TAKER, ...extra }), canaries).length,
+      });
+      const hopsFor = async (who: Caller, extra: Record<string, unknown>) => ({
+        priv: seen(await call(who, 'traverse_graph', { slug: LIA, hops: HOPS, ...extra }), [PRIV]).length,
+        take: seen(await call(who, 'traverse_graph', { slug: BACKER, hops: HOPS, ...extra }), [HOP_TAKE]).length,
+      });
+      expect(await takesFor('ownerC', {})).toEqual({ list: 4, search: 4, fence: 4 });
+      expect(await takesFor('ownerC', room)).toEqual({ list: 1, search: 1, fence: 0 });
+      expect(await takesFor('ownerT', room)).toEqual({ list: 1, search: 1, fence: 0 });
+      expect(await takesFor('bobR', room)).toEqual({ list: 1, search: 1, fence: 0 });
+      expect(await hopsFor('ownerC', {})).toEqual({ priv: 1, take: 1 });
+      expect(await hopsFor('ownerT', {})).toEqual({ priv: 1, take: 0 });
+      for (const who of ['ownerC', 'ownerT', 'bobR'] as Caller[]) expect({ who, ...await hopsFor(who, room) }).toEqual({ who, priv: 0, take: 0 });
+      const owner = await provider().verifyAccessToken(tokens.ownerC!) as unknown as AuthInfo;
+      const ownerAccess = { owner: true, identity: ['member:' + OWNER] } as never;
+      expect({
+        noRoom: withCallerAccess(ownerAccess, () => readHolders({ remote: true, auth: owner } as never)),
+        room: withCallerAccess({ ...(ownerAccess as object), room: true } as never, () => readHolders({ remote: true, auth: owner } as never)),
+      }).toEqual({ noRoom: undefined, room: ['world'] });
+    }, 300_000);
   });
 }

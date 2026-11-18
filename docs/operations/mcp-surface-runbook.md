@@ -259,10 +259,20 @@ does not stick yet (the old row stays); use the local CLI for that until
 GST-3064 lands. The `get_page` read view (windows, lines, bytes, section,
 grep) is the same text for every caller, the local CLI included; the owner reads
 the private rows of a large or segmented page through `view: 'markdown'` (a
-segmented page only when the credential has no holders list). With a room
-declared, an owner `get_page` whose body carries private rows, held rows or
-takes is marked `room_access: {readable: false, reason: 'private_label'}`; the
-mark is per page, so a page with one private row is marked whole. History
+segmented page only when the credential has no holders list). With no
+holders list it also reads every holder wherever a read filters takes by
+holder, among them `takes_list`, `takes_search`,
+`takes_scorecard`, `takes_calibration`, `search`, `query`, `recall`,
+`delta`, `think` and `synthesize`; `synthesize` reads world takes only for
+a non-owner with no list. Known limit: in a group chat (a declared room) the
+owner's caller reads world takes and gated hop text, as before this PR, until
+GST-3066 adds marks to those operations. Its `get_page` keeps the Facts rows,
+and a whole-body read or `view: 'markdown'` whose body carries private or
+held rows is marked `room_access: {readable: false, reason: 'private_label'}`;
+the mark is per page, so a page with one private row is marked whole. Held rows
+inside read-view windows and in a holders-list owner's segmented markdown view
+are not marked, as before this PR. The local CLI's `--room` marks a page whose
+body carries private rows, held rows or takes `private_label` too. History
 also checks snapshot visibility while page privacy is enforced. Malformed
 protected sections are omitted; unterminated or interleaved sections discard
 the remaining tail. Restricted salience counts only permitted active takes and

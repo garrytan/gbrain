@@ -2,7 +2,7 @@ import type { PageReadScope, PageReadPolicy, AdjacencyRow, RelationalFanoutOpts,
 import { unverifiedExtractionFragment } from '../extraction-review.ts';
 import { chunkGenerationProbe, currentTextProjectionFilter, protectedBodyFilter, protectedTakesFilter, requiresSafeChunks, safeChunksFilter } from './safe-chunks.ts';
 import { hasReadPolicy, pageReadFilter } from './read-policy-sql.ts';
-import { callerIsOwner } from './private-visibility.ts';
+import { ownerReadsUnmarked } from './private-visibility.ts';
 import { relationshipFilterSql } from '../link-validity.ts';
 import { rankingLinkSql } from '../link-ranking-policy.ts';
 
@@ -149,9 +149,9 @@ export async function readChainHop(query: ReadQuery, frontier: number[], opts: C
   const dg = pageReadFilter('dg', policy, params, true);
   const degreeLive = opts.temporal ? `AND ${relationshipFilterSql('dl', { ...opts.temporal, excludePrivate: opts.excludePrivate })}` : '';
   const ev = pageReadFilter('ev', policy, params, true);
-  // GST-3058: the brain owner reads the stored context; one whose credential names a holders list still skips takes-bearing evidence.
+  // GST-3058: the brain owner reads the stored context (not in a declared room: ownerReadsUnmarked); one whose credential names a holders list still skips takes-bearing evidence.
   const textGate = !requiresSafeChunks(policy) ? ''
-    : !callerIsOwner() ? `AND ${safeChunksFilter('ev')} AND NOT ${protectedBodyFilter('ev')}`
+    : !ownerReadsUnmarked() ? `AND ${safeChunksFilter('ev')} AND NOT ${protectedBodyFilter('ev')}`
     : policy.takesHoldersAllowList === undefined ? '' : `AND ${safeChunksFilter('ev')} AND NOT ${protectedTakesFilter('ev')}`;
   params.push(opts.toward);
   const toward = `$${params.length}`;

@@ -366,6 +366,8 @@ export interface CallerAccess {
   privateFactSources: readonly string[];
   hidePrivate: boolean;
   owner: boolean;
+  /** GST-3058: the request declared a room (access/room.ts); the owner's widenings that no room mark covers stay off (ownerReadsUnmarked). */
+  room?: boolean;
   /**
    * GST-2490 / GBRA-108 design 3: a lineage read, one member speaking for itself in a non-mutating operation: the owner
    * always, any other member only under access.members_read_lineage. Derived pages and facts pass when that member reads
@@ -438,6 +440,7 @@ export function withCallerAccess<T>(access: Partial<CallerAccess>, fn: () => T):
     applyRemoteReadPolicy: access.applyRemoteReadPolicy ?? base.applyRemoteReadPolicy,
     restricted: access.restricted ?? base.restricted,
     remotePolicy: access.remotePolicy ?? base.remotePolicy,
+    room: access.room ?? (fresh ? false : base.room === true),
   }), fn);
 }
 
@@ -470,6 +473,16 @@ export function privateReadableSources(): readonly string[] {
 /** GST-2059: is the current caller the brain owner (CallerAccess.owner)? False outside a remote record or a local --as of the owner. */
 export function callerIsOwner(): boolean {
   return currentCallerAccess().owner;
+}
+
+/**
+ * GST-3058: whether the owner's widenings that no room mark covers apply: every take holder for a credential with no
+ * holders list, and graph-hop text cut from fenced evidence. Only with no room declared; in a room the owner's caller
+ * reads those as before them, until their operations carry room marks (GST-3066).
+ */
+export function ownerReadsUnmarked(): boolean {
+  const access = currentCallerAccess();
+  return access.owner && access.room !== true;
 }
 
 /**
