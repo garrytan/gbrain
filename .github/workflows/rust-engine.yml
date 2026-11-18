@@ -271,7 +271,8 @@ jobs:
       - name: Install dependencies (bounded, retried once)
         timeout-minutes: 8
         run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
-      # The engine on the real store: test/rust-engine-store.test.ts, then every parity file with the Rust
+      # The engine on the real store: test/rust-engine-store.test.ts and the raw-value differential against
+      # PGLite (test/rust-engine-differential.test.ts), then every parity file with the Rust
       # arm added (GBRAIN_TEST_RUST_ARM=1). The addon is required here, so a missing build fails the step
       # instead of skipping. Each file runs in its own Bun process, as the parity suite does elsewhere.
       - name: Rust engine store tests and the parity suite's Rust arm
@@ -281,7 +282,7 @@ jobs:
           GBRAIN_TEST_RUST_ARM: '1'
         run: |
           set -euo pipefail
-          bun test --timeout=60000 test/rust-engine-store.test.ts test/rust-engine-shell.test.ts
+          bun test --timeout=60000 test/rust-engine-store.test.ts test/rust-engine-shell.test.ts test/rust-engine-differential.test.ts
           for file in test/engine-parity/*.test.ts; do
             bun test --timeout=60000 "$file"
           done
