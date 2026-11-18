@@ -13,7 +13,6 @@ import { safeHexEqual } from '../core/timing-safe.ts';
 import { isValidRepoName } from '../core/github-source.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import type { AuthInfo } from '../core/operations.ts';
-import { executeRawJsonb } from '../core/sql-query.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
 import { coalesceOnIdempotencyKey } from '../core/minions/idempotency-coalesce.ts';
 import { APPLICATION_AUTHORITY } from '../core/minions/submission-authority.ts';
@@ -643,16 +642,13 @@ async function handleIngest(
 
     const latency = Date.now() - startTime;
     try {
-      await executeRawJsonb(
-        engine,
-        `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params)
-         VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
-        [authInfo.clientId, agentName, 'webhook_ingest', latency, 'success'],
+      await engine.logMcpRequest({
+        token_name: authInfo.clientId, agent_name: agentName, operation: 'webhook_ingest', latency_ms: latency, status: 'success',
         // write_source_id is the security-relevant part of this request:
         // which partition the capture was routed to. Without it the audit
         // trail cannot answer "where did this client's writes land".
-        [{ content_type: contentType, content_hash: contentHash, bytes: body.length, job_id: job.id, write_source_id: writeSourceId }],
-      );
+        params: { content_type: contentType, content_hash: contentHash, bytes: body.length, job_id: job.id, write_source_id: writeSourceId },
+      });
     } catch { /* best effort */ }
     broadcastEvent({
       agent: agentName,

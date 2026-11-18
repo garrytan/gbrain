@@ -192,16 +192,14 @@ src/commands/reindex.ts	execute_raw	4
 src/commands/repair-jsonb.ts	driver_call	4
 src/commands/repair-propose.ts	execute_raw	1
 src/commands/serve-health.ts	execute_raw	1
-src/commands/serve-http-access.ts	execute_raw	1
 src/commands/serve-http-admin-api.ts	execute_raw	4
 src/commands/serve-http-admin-api.ts	sql_template	12
 src/commands/serve-http-api-keys.ts	execute_raw	2
 src/commands/serve-http-clients.ts	execute_raw	1
-src/commands/serve-http-mcp.ts	execute_raw	6
 src/commands/serve-http-metrics.ts	execute_raw	2
 src/commands/serve-http-registration.ts	execute_raw	2
 src/commands/serve-http-registration.ts	sql_template	3
-src/commands/serve-http-webhooks.ts	execute_raw	5
+src/commands/serve-http-webhooks.ts	execute_raw	4
 src/commands/serve-http.ts	sql_template	1
 src/commands/sources-add-next.ts	execute_raw	2
 src/commands/sources-canonical.ts	execute_raw	1
@@ -468,7 +466,7 @@ src/core/facts/unfenced-facts.ts	execute_raw	3
 src/core/facts/withdrawal-discovery.ts	execute_raw	8
 src/core/facts/withdrawal.ts	execute_raw	14
 src/core/facts/write-single.ts	execute_raw	3
-src/core/facts/writeback-settings.ts	execute_raw	2
+src/core/facts/writeback-settings.ts	execute_raw	1
 src/core/feedback/store.ts	execute_raw	19
 src/core/fence-repair/attempts.ts	execute_raw	3
 src/core/fence-repair/census-store.ts	execute_raw	9
@@ -546,7 +544,7 @@ src/core/links-fence-projection.ts	execute_raw	8
 src/core/loops/loops-store.ts	execute_raw	15
 src/core/maintenance/run.ts	execute_raw	1
 src/core/maintenance/status.ts	execute_raw	1
-src/core/mcp-request-log-retention.ts	execute_raw	4
+src/core/mcp-request-log-retention.ts	execute_raw	2
 src/core/meetings/meetings-source.ts	execute_raw	3
 src/core/mentions/coverage.ts	execute_raw	4
 src/core/mentions/newer-mentions.ts	execute_raw	1
@@ -1080,7 +1078,6 @@ src/core/storage-manifest/adopt.ts	execute_raw	4
 src/core/storage-manifest/find.ts	execute_raw	4
 src/core/storage-manifest/source.ts	execute_raw	4
 src/core/stored-embedding-identity.ts	execute_raw	3
-src/core/surface-audit.ts	execute_raw	1
 src/core/sweep.ts	execute_raw	3
 src/core/sync-anchor.ts	execute_raw	6
 src/core/sync-attempt.ts	execute_raw	1

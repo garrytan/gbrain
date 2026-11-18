@@ -24,7 +24,6 @@
 
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
-import { executeRawJsonb } from '../sql-query.ts';
 import { resolveWritebackConfig, type WritebackConfig, type WritebackMode } from './writeback-config.ts';
 
 export const AGENT_WRITEBACK_KEY = 'memory.agent_writeback';
@@ -122,13 +121,10 @@ export async function writeAgentWriteback(
     await tx.executeRaw('SELECT pg_advisory_xact_lock(hashtext($1))', [AGENT_WRITEBACK_KEY]);
     const previous = parseAgentWriteback(await tx.getConfig(AGENT_WRITEBACK_KEY)) ?? null;
     await tx.setConfig(AGENT_WRITEBACK_KEY, value);
-    await executeRawJsonb(
-      tx,
-      `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params)
-       VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
-      [change.actor, change.actor, MEMORY_SETTING_AUDIT_OP, 0, 'success'],
-      [{ key: AGENT_WRITEBACK_KEY, actor: change.actor, client_id: change.client_id, transport: change.transport, old: previous, new: value }],
-    );
+    await tx.logMcpRequest({
+      token_name: change.actor, agent_name: change.actor, operation: MEMORY_SETTING_AUDIT_OP, latency_ms: 0, status: 'success',
+      params: { key: AGENT_WRITEBACK_KEY, actor: change.actor, client_id: change.client_id, transport: change.transport, old: previous, new: value },
+    });
     return { previous };
   });
   overrideLkg.set(engine, value);

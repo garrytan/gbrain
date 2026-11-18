@@ -374,12 +374,15 @@ export const RUST_ENGINE_MEMBERS = {
   deleteEvalCandidatesBefore: 'eval_capture',
   logEvalCaptureFailure: 'eval_capture',
   listEvalCaptureFailures: 'eval_capture',
-  // telemetry (engine-sql/telemetry.ts): the store serves the search telemetry pair; the MCP usage reads refuse until a
-  // typed member writes the MCP request log, so `telemetry` is not reported yet.
+  // telemetry (engine-sql/telemetry.ts): search telemetry, the MCP request log with its retention prune, and the MCP
+  // usage reads; the store serves every member (rust/docs/store/telemetry.md).
   recordSearchTelemetry: 'telemetry',
   readSearchStats: 'telemetry',
   readClientOpUsage: 'telemetry',
   readMcpRollupPrunedBefore: 'telemetry',
+  logMcpRequest: 'telemetry',
+  readMcpLogPruneCutoff: 'telemetry',
+  pruneMcpRequestLogBatch: 'telemetry',
   // ingest_log
   logIngest: 'ingest_log',
   getIngestLog: 'ingest_log',

@@ -1,7 +1,8 @@
 /**
- * Search telemetry and MCP usage statements: the search telemetry flush and window read (`search/telemetry.ts`) and
- * the per-client MCP usage read with its pruned-window probe (`mcp-usage.ts`), which ran through `engine.executeRaw`,
- * once for both engines.
+ * Search telemetry and MCP usage statements: the search telemetry flush and window read (`search/telemetry.ts`),
+ * the per-client MCP usage read with its pruned-window probe (`mcp-usage.ts`), the MCP request log insert (the
+ * request, surface, access-admin, webhook and memory setting audit rows) and the request log retention prune
+ * (`mcp-request-log-retention.ts`), which ran through `engine.executeRaw`, once for both engines.
  *
  * Every statement here ran on master from the caller named on its function. They keep master's text and run on
  * master's raw path (`exec.executeRaw`) unscoped, as before: these tables carry no source and no read policy. Each value
@@ -10,6 +11,7 @@
  */
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { SqlExecutor } from './executor.ts';
+import { executeRawJsonb } from '../sql-query.ts';
 
 /** One `(date, mode, intent)` search telemetry bucket the flush adds to its row (`date` is `YYYY-MM-DD`). */
 export interface SearchTelemetryBucket {
@@ -40,6 +42,27 @@ export interface McpOpUsageRow { token_name: string | null; operation: string; n
 
 /** The newest pruned request time of the MCP request log (null when nothing was pruned) and the database clock. */
 export interface McpRollupPrunedBefore { pruned_before: unknown; now: unknown }
+
+/**
+ * One `mcp_request_log` row. `error_message` and `params` (a JSON object, or null) default to null. `created_at`
+ * defaults to the database clock; the callers never set it (parity fixtures age a row with it).
+ */
+export interface McpRequestLogRow {
+  token_name: string | null;
+  agent_name: string | null;
+  operation: string;
+  latency_ms: number | null;
+  status: string;
+  error_message?: string | null;
+  params?: unknown;
+  created_at?: Date | string | null;
+}
+
+/** Whether the request log tally table exists, and the retention cutoff `now() - days` on the database clock. */
+export interface McpLogPruneCutoff { rollup_present: boolean; cutoff: unknown }
+
+/** One retention batch: the rows it deleted and the newest `created_at` among them (null when none). */
+export interface McpLogPruneBatch { deleted: number; newest: unknown }
 
 const RECORD_SEARCH_TELEMETRY_SQL = `INSERT INTO search_telemetry
                  (date, mode, intent, count, sum_results, sum_tokens, sum_budget_dropped, cache_hit, cache_miss,
@@ -118,4 +141,68 @@ export async function readMcpRollupPrunedBefore(exec: LegacyUnscopedRead): Promi
     ? await exec.executeRaw<{ pruned_before: unknown }>('SELECT max(pruned_through) AS pruned_before FROM mcp_request_log_rollup')
     : [];
   return { pruned_before: row?.pruned_before ?? null, now: probe?.now ?? null };
+}
+
+const LOG_MCP_REQUEST_SQL = `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, error_message, created_at, params)
+       VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::timestamptz, now()), $8::jsonb)`;
+
+/**
+ * Appends one row to the MCP request log (the MCP request, tools/list, webhook, surface change, access admin and
+ * memory setting audit rows). `params` binds as JSONB through executeRawJsonb, never as JSON text. On a transaction's
+ * executor the row commits with the transaction, as the memory setting audit needs.
+ */
+export async function logMcpRequest(exec: SqlExecutor, row: McpRequestLogRow): Promise<void> {
+  await executeRawJsonb(exec, LOG_MCP_REQUEST_SQL, [
+    row.token_name, row.agent_name, row.operation, row.latency_ms, row.status, row.error_message ?? null,
+    row.created_at ?? null,
+  ], [row.params ?? null]);
+}
+
+/**
+ * The retention prune's first read: whether `mcp_request_log_rollup` exists (a brain before its migration has none,
+ * and the prune skips) and the cutoff `now() - days`, fixed once per run (`pruneMcpRequestLog`).
+ */
+export async function readMcpLogPruneCutoff(exec: SqlExecutor, days: number): Promise<McpLogPruneCutoff> {
+  const [row] = await exec.executeRaw<{ rollup_present: boolean; cutoff: unknown }>(
+    "SELECT to_regclass('mcp_request_log_rollup') IS NOT NULL AS rollup_present, now() - ($1::int * interval '1 day') AS cutoff",
+    [days],
+  );
+  return { rollup_present: row?.rollup_present === true, cutoff: row?.cutoff ?? null };
+}
+
+const PRUNE_BATCH_SQL = `
+WITH victims AS MATERIALIZED (
+  SELECT id FROM mcp_request_log
+   WHERE created_at < $1::timestamptz AND operation <> ALL($2::text[])
+   ORDER BY created_at
+   LIMIT $3
+   FOR UPDATE SKIP LOCKED
+), deleted AS (
+  DELETE FROM mcp_request_log l USING victims v WHERE l.id = v.id
+  RETURNING l.token_name, l.created_at
+), agg AS (
+  SELECT COALESCE(token_name, '') AS token_name, count(*)::bigint AS n, max(created_at) AS newest
+    FROM deleted GROUP BY 1
+), tallied AS (
+  INSERT INTO mcp_request_log_rollup AS r (token_name, requests, last_used_at, pruned_through)
+  SELECT token_name, n, newest, newest FROM agg
+  ON CONFLICT (token_name) DO UPDATE SET
+    requests = r.requests + EXCLUDED.requests,
+    last_used_at = GREATEST(r.last_used_at, EXCLUDED.last_used_at),
+    pruned_through = GREATEST(r.pruned_through, EXCLUDED.pruned_through)
+  RETURNING 1
+)
+SELECT (SELECT count(*) FROM deleted)::int AS deleted, (SELECT max(created_at) FROM deleted) AS newest, (SELECT count(*) FROM tallied)::int AS tallied`;
+
+/**
+ * One retention batch, in ONE statement: the oldest `limit` rows created before `cutoff` whose operation is not in
+ * `keepOperations` (index order on created_at, FOR UPDATE SKIP LOCKED so two prunes never take the same row) are
+ * deleted and added to the per-token tally (count, newest time, pruned_through; a NULL token counts under ''). A
+ * failed tally rolls its delete back.
+ */
+export async function pruneMcpRequestLogBatch(
+  exec: SqlExecutor, cutoff: string, keepOperations: readonly string[], limit: number,
+): Promise<McpLogPruneBatch> {
+  const [row] = await exec.executeRaw<{ deleted: number; newest: unknown }>(PRUNE_BATCH_SQL, [cutoff, [...keepOperations], limit]);
+  return { deleted: Number(row?.deleted ?? 0), newest: row?.newest ?? null };
 }
