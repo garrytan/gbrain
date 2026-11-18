@@ -930,7 +930,7 @@ Raw source data and files attached to pages.
 - **Members (5), capability:** `raw_data` (2), `files` (3).
 - **Store and binding:** `putRawData` (`put_raw_data`), `getRawData` (`get_raw_data`), `upsertFile` (`upsert_file`), `getFile` (`get_file`), `listFilesForPage` (`list_files_for_page`).
 - **Postgres tables:** `raw_data` (page CASCADE), `files` (`page_id` SET NULL, `page_slug` text).
-- **Keys:** `r 0x01 <page id> 0x00 <source name>` raw data; `r 0x02 <source> 0x00 <storage path>` file; `r 0x03 <page id> 0x00 <file id>` page index. `remove_page_rows` deletes raw data and clears `page_id` on files (it keeps the file rows).
+- **Keys:** `r 0x01 <page id> 0x00 <source name>` raw data; `r 0x02 <storage path>` file; `r 0x03 <page id> 0x00 <file id>` page index. `remove_page_rows` deletes raw data and clears `page_id` on files (it keeps the file rows).
 - **Depends on:** Core page helpers.
 - **Estimate:** about 1 day.
 - **Notes:** `raw_data.data` is JSONB: Postgres stores object keys sorted by length then bytes; reproduce that key order on output.
