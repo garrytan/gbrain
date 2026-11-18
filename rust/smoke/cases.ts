@@ -409,6 +409,28 @@ export const cases: Case[] = [
     },
   },
   {
+    name: 'store: a close called while an open is still queued releases the brain',
+    async run(addon) {
+      await withBrainDir(async dir => {
+        const pool = new addon.Pool(1);
+        const busy = pool.blockFor(200);
+        const brain = new addon.Brain(pool);
+        const queued = rejection(brain.open(dir));
+        await brain.close();
+        assert.equal((await queued).code, 'store_closed');
+        await busy;
+        assert.equal(brain.isOpen, false);
+        const other = new addon.Brain(pool);
+        assert.equal((await other.open(dir)).created, true, 'the queued open took no lock and created nothing');
+        await other.close();
+        const reopened = await brain.open(dir);
+        assert.equal(reopened.created, false, 'the handle opens again after the close');
+        await brain.close();
+        await pool.shutdown(1000);
+      });
+    },
+  },
+  {
     name: 'store: put, get, list, tags, versions and delete a page',
     async run(addon) {
       await withBrainDir(async dir => {

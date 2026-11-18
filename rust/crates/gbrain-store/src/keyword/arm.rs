@@ -250,4 +250,138 @@ mod tests {
             .unwrap();
         assert_eq!(capped[0]["chunks"], 1);
     }
+
+    fn put_with(store: &Store, slug: &str, page_type: &str, frontmatter: Value) {
+        let input: crate::pages::PageInput = serde_json::from_value(json!({
+            "type": page_type, "title": slug, "compiled_truth": "heron heron heron", "timeline": "",
+            "frontmatter": frontmatter,
+        }))
+        .unwrap();
+        store
+            .put_page(slug, &input, &crate::pages::PutPageOptions::default())
+            .unwrap();
+    }
+
+    /// `excludePrivate` adds the page policy `privatePagesFilterForCaller('p')` before ranking: a hidden page never
+    /// takes a result slot (so a limit counts only visible pages), whatever its score.
+    #[test]
+    fn exclude_private_hides_the_pages_the_page_policy_hides() {
+        let store = crate::test_support::store();
+        put(&store, "notes/a-open", "heron");
+        put_with(
+            &store,
+            "notes/m-visibility",
+            "note",
+            json!({ "visibility": "private" }),
+        );
+        put_with(
+            &store,
+            "notes/n-access",
+            "note",
+            json!({ "access": "private" }),
+        );
+        put_with(
+            &store,
+            "notes/o-public",
+            "note",
+            json!({ "visibility": "public", "access": "private" }),
+        );
+        // A derived page (an atom) is private unless it says otherwise.
+        put_with(&store, "notes/p-atom", "atom", json!({}));
+        let top = |o: Value| -> Vec<String> {
+            slugs(
+                &store
+                    .search_keyword_arm("heron", "heron", &opts(o))
+                    .unwrap(),
+            )
+        };
+        let all = [
+            "notes/m-visibility",
+            "notes/n-access",
+            "notes/o-public",
+            "notes/p-atom",
+            "notes/a-open",
+        ];
+        let sorted = |mut v: Vec<String>| {
+            v.sort();
+            v
+        };
+        let mut every = all.map(String::from).to_vec();
+        every.sort();
+        assert_eq!(sorted(top(json!({ "limit": 5.0 }))), every);
+        let policy = json!({ "honorAliases": true, "entityPrivacy": true });
+        assert_eq!(
+            sorted(top(json!({ "limit": 5.0, "excludePrivate": policy }))),
+            ["notes/a-open", "notes/o-public"]
+        );
+        // The limit counts visible pages only: one visible page fits where the hidden ones would have filled it.
+        assert_eq!(
+            top(json!({ "limit": 1.0, "excludePrivate": policy })).len(),
+            1
+        );
+        assert_eq!(
+            top(json!({ "limit": 1.0, "offset": 1.0, "excludePrivate": policy })).len(),
+            1
+        );
+        // Without the alias keys only `visibility` (and a derived page's default) hides a page.
+        let visibility_only = json!({ "honorAliases": false, "entityPrivacy": true });
+        assert_eq!(
+            sorted(top(json!({ "excludePrivate": visibility_only }))),
+            ["notes/a-open", "notes/n-access", "notes/o-public"]
+        );
+        // With the privacy part relaxed only the member-access part applies: nothing here is hidden.
+        let relaxed = json!({ "honorAliases": true, "entityPrivacy": false });
+        assert_eq!(sorted(top(json!({ "excludePrivate": relaxed }))), every);
+        // `null` (excludePrivate off) hides nothing, and the policy composes with the other filters.
+        assert_eq!(sorted(top(json!({ "excludePrivate": null }))), every);
+        assert!(top(json!({ "excludePrivate": policy, "type": "atom" })).is_empty());
+        assert_eq!(
+            top(json!({ "excludePrivate": policy, "excludeSlugs": ["notes/a-open"] })),
+            ["notes/o-public"]
+        );
+    }
+
+    /// `requiresSafeChunks`: a page whose recorded chunker version is below the safe fence chunker is hidden; a page
+    /// with no recorded version (this store's own chunker) and a page at the safe version are kept.
+    #[test]
+    fn require_safe_chunks_drops_only_a_page_recorded_below_the_safe_chunker() {
+        let store = crate::test_support::store();
+        put(&store, "notes/none", "heron");
+        put(&store, "notes/three", "heron");
+        put(&store, "notes/four", "heron");
+        store
+            .write(|tx| {
+                for (slug, version) in [
+                    ("notes/none", None),
+                    ("notes/three", Some(3)),
+                    ("notes/four", Some(4)),
+                ] {
+                    let mut page =
+                        crate::pages::read_page(&*tx, crate::sources::DEFAULT_SOURCE, slug)?
+                            .unwrap();
+                    page.chunker_version = version;
+                    crate::pages::write_page(tx, &page)?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        let top = |o: Value| -> Vec<String> {
+            let mut v = slugs(
+                &store
+                    .search_keyword_arm("heron", "heron", &opts(o))
+                    .unwrap(),
+            );
+            v.sort();
+            v
+        };
+        assert_eq!(top(json!({})), ["notes/four", "notes/none", "notes/three"]);
+        assert_eq!(
+            top(json!({ "requireSafeChunks": true })),
+            ["notes/four", "notes/none"]
+        );
+        assert_eq!(
+            top(json!({ "requireSafeChunks": false })),
+            ["notes/four", "notes/none", "notes/three"]
+        );
+    }
 }

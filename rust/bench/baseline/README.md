@@ -107,5 +107,8 @@ Use `--hnsw deferred` for large PGLite runs; compare with `inline` only at 10k.
 `rust/scripts/export-corpus.ts` writes any existing brain in the corpus format so the same runners can use it:
 `bun rust/scripts/export-corpus.ts --out <dir outside any repo> [--database-url ... | --pglite-dir ...]`.
 The export holds private text. It is written 0600, refuses a directory inside a git working tree, and must never be
-committed or shared; only aggregate numbers may be published. Its queries are sampled from stored chunks, so they are in
-the corpus (`queries_in_corpus: true`). `roundtrip-check.ts` verifies an export against the corpus it came from.
+committed or shared; only aggregate numbers may be published. The script counts a directory as outside a repository
+only when git, run with `LC_ALL=C` and `LANG=C`, exits 128 with its exact `not a git repository` message. Any other
+answer (git missing, unsafe ownership, a message in another language) refuses too; `--allow-in-repo` skips the check.
+Its queries are sampled from stored chunks, so they are in the corpus (`queries_in_corpus: true`).
+`roundtrip-check.ts` verifies an export against the corpus it came from.

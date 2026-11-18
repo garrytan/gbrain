@@ -6359,6 +6359,12 @@ that is not connected refuses `engine_closed`. These members run on the store (`
   `getBacklinks`, `traverseGraph`, `traversePaths`, `traversePathsDetailed`, `addTimelineEntry`,
   `addTimelineEntriesBatch`, `getTimeline`. These capabilities stay unreported, because other members of the same
   capability (`revertToVersion`, `getChunkPage`, `searchTitles`, `getBacklinkCounts`, `getTimelineForDate`, ...) still refuse.
+- Segmented pages (a page over 1 MiB, stored in segments): `allocateBodyOccurrenceIds`, `stageSegmentTexts`,
+  `readSegmentTexts`, `stageManifestRows`, `readManifest`, `stageSegmentChunks`, `createSegmentedPageShell`,
+  `flipBodyGeneration`, `openBodyStaging`, `setBodyStagingState`, `readSegmentDerivations`, `upsertSegmentDerivations`,
+  `retireSegmentDerivations`, `sealSegmentedPage` and `refreshPageBody`. `sweepSegments` still refuses, and so does
+  a segmented page written inside `transaction` (the store has none), so the `page_body` capability stays unreported.
+  A whole-body `putPage` over a segmented page refuses, as on PGLite (`rust/docs/store/page_body.md`).
 
 A served member never drops what it cannot keep. An option or input the store has no home for, or cannot answer the
 way PGLite does, refuses `engine_capability_missing` and writes nothing. These are refused today:
@@ -6366,12 +6372,16 @@ way PGLite does, refuses `engine_capability_missing` and writes nothing. These a
 - a chunk that carries a vector or an image vector, and a Rust brain whose config sets `search_embedding_column` or
   `embedding_columns` (the store keeps no vectors yet, so a Rust brain has no vector search and no embeddings until it
   does; this arrives later);
-- a `putPage` that claims a `source_path` (the store has no such claim);
+- a `putPage` with a `source_path` into a source in source-root slug mode whose directory is below its repository root
+  (only the files on disk can say whether another page already holds that file, and the store cannot read them);
 - `listPages` with `listColumnsOnly`;
 - `resolveSlugs` when no live page has exactly that slug, because PGLite goes on to a fuzzy title match the store does
   not have, so an empty answer would be wrong to give;
 - a `getChunks` over more than one distinct `sourceIds` entry, a read of unsealed chunks or embeddings;
 - a keyword search with an offset, `where` or a date window, and a link batch that sets a link kind or resolution.
+
+A `putPage` that carries a `source_path` keeps it, and refuses `page_identity_changed` (detail
+`origin_already_claimed`) when another live page of the same source already records that path, as PGLite does.
 
 What the Rust members do the way PGLite does: `putPage` writes the page alone. It does not chunk and does not seal,
 and `upsertChunks` does not seal either; only `sealChunks` replaces the chunks outright and seals them to the page's
@@ -6384,8 +6394,9 @@ store cannot be cancelled, which is a difference from PGLite. Overlapping `conne
 
 A scope that names no source (an empty string `sourceId` or `sourceIds` entry) is never widened: `getChunks` and `getTags` answer it as PGLite does, with nothing, instead of reading every source. A keyword hit always carries `effective_date` and `effective_date_source`, null when the page has no date.
 
-Keyword search hides what PGLite hides: soft-deleted pages, archived sources, and pages that carry a `quarantine` or
-`pinned_question` frontmatter key, whatever its value. Ranking-only options of `searchKeyword` are accepted and
+Keyword search hides what PGLite hides: soft-deleted pages, archived sources, pages that carry a `quarantine` or
+`pinned_question` frontmatter key, whatever its value, and the slug prefixes `test/`, `attachments/` and `.raw/` plus any
+that `GBRAIN_SEARCH_EXCLUDE` names (`include_slug_prefixes` opts back in). Ranking-only options of `searchKeyword` are accepted and
 ignored, because Rust ranks with BM25 and this is not parity with PGLite (design D5). Its scores and tie order differ
 from PGLite's. The expected difference is listed in `test/rust-expected-divergence/` (one file per family).
 

@@ -17,6 +17,7 @@ use super::vector_cache::{VectorKind, cached};
 use crate::chunks::ChunkRecord;
 use crate::env::iso;
 use crate::error::{Result, StoreError};
+use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::kv::KvRead;
 use crate::pages::PageRecord;
 use crate::sources::read_source;
@@ -25,6 +26,10 @@ use crate::timeline_queries::jsonb_field_text;
 /// The `text_projection_revision` the v153 activation leaves on a page whose pre-upgrade index it
 /// keeps serving (`servedTextProjectionFilter`, search/safe-chunks.ts).
 const ACTIVATION_SERVED_REVISION: &str = "00000000-0000-0000-0000-000000000153";
+
+/// `SAFE_FENCE_CHUNKER_VERSION` (`src/core/search/safe-chunks.ts`): a page chunked at this version or later holds only
+/// safely fenced chunks (`safeChunksFilter`).
+const SAFE_FENCE_CHUNKER_VERSION: i16 = 4;
 
 /// Frontmatter keys whose presence hides a page from search (`buildVisibilityClause`).
 const HIDING_FRONTMATTER_KEYS: [&str; 2] = ["quarantine", "pinned_question"];
@@ -92,6 +97,11 @@ pub struct KeywordOptions {
     pub handles_only: bool,
     /// `searchKeyword`: the per-page candidates kept before the window (`LIMIT $2`, 3x the limit).
     pub inner_limit: Option<f64>,
+    /// `excludePrivate`: the page policy `buildVisibilityClause` adds (`privatePagesFilterForCaller('p')`), as
+    /// `facts/privacy.rs` `page_hidden` reads it. `None` hides nothing.
+    pub exclude_private: Option<PrivacyPolicy>,
+    /// `requiresSafeChunks(opts)` (`requireSafeChunks ?? excludePrivate`): only pages chunked by the safe fence chunker.
+    pub require_safe_chunks: bool,
 }
 
 /// A parsed date bound.
@@ -142,6 +152,20 @@ impl<'a> PageFilter<'a> {
             || HIDING_FRONTMATTER_KEYS
                 .iter()
                 .any(|key| page.frontmatter.contains_key(*key))
+        {
+            return Ok(false);
+        }
+        // A page that records no chunker version was chunked by this store's chunker, which seals (as `chunk_queries`
+        // reads it); only a version recorded below the safe fence chunker is unsafe.
+        if o.require_safe_chunks
+            && page
+                .chunker_version
+                .is_some_and(|v| v < SAFE_FENCE_CHUNKER_VERSION)
+        {
+            return Ok(false);
+        }
+        if let Some(policy) = &o.exclude_private
+            && page_hidden(read, page, policy)?
         {
             return Ok(false);
         }
