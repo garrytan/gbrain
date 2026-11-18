@@ -24,7 +24,6 @@ import { readFix } from '../ops/op-fix.ts';
 import { parseFactsFence } from '../facts-fence.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { logPhantomEvent } from '../facts/phantom-audit.ts';
-import { MOVE_WITHDRAWAL_SUBJECT_SQL } from '../facts/withdrawal-schema.ts';
 import { withHeldFactsFence } from '../facts/unfenced-facts.ts';
 import { recordRenameAlias } from '../page-state/rename-alias.ts';
 import { noteBelief } from '../belief/ledger.ts';
@@ -94,7 +93,7 @@ export async function preparePhantomMerge(engine: BrainEngine, row: WriteRequest
     apply: async tx => {
       // Withdrawals move first so the trigger honors them as the rows take the
       // canonical subject; moved rows then match the published fence rows.
-      await tx.executeRaw(MOVE_WITHDRAWAL_SUBJECT_SQL, [row.source_id, phantomSlug, row.slug]);
+      await tx.moveFactWithdrawalSubject(row.source_id, phantomSlug, row.slug);
       const phantomLinks = await tx.executeRaw<{ id: number }>('SELECT id FROM links WHERE from_page_id = $1 AND origin_page_id IS NULL', [phantomId]);
       const phantomFacts = await tx.executeRaw<{ id: number }>('SELECT id FROM facts WHERE source_id = $1 AND source_markdown_slug = $2 AND expired_at IS NULL', [row.source_id, phantomSlug]);
       const moved = await movePhantomFacts(tx, row.source_id, phantomSlug, row.slug, rowMap);

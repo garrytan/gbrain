@@ -220,12 +220,41 @@ impl Brain {
         self.run(env, move |s| s.kill_wall_clock_jobs(lock_duration_ms))
     }
 
-    /// `pruneJobs({ statuses, olderThan, dryRun })`: `{ count, needsArchive }`.
+    /// `pruneJobs({ statuses, olderThan, dryRun })`: `{ count }`. A pruned completed dream
+    /// synthesis child's key goes into the `dream_synthesis_completions` archive first.
     #[napi]
     pub fn prune_jobs<'env>(&self, env: &'env Env, spec: Value) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             let spec: PruneSpec = required(spec, "pruneJobs spec")?;
             s.prune_jobs(&spec)
+        })
+    }
+
+    /// `listSynthesisCompletionKeys(sourceId, keyPrefix)`: the completed synthesis keys of the
+    /// source, live jobs and archive together, each once, sorted.
+    #[napi]
+    pub fn list_synthesis_completion_keys<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        key_prefix: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_synthesis_completion_keys(&source_id, &key_prefix)
+        })
+    }
+
+    /// `listRecentSynthesisCompletions(sourceId, hours)`: `[{ idempotency_key, at }]` with `at`
+    /// ISO, live jobs then archive rows.
+    #[napi]
+    pub fn list_recent_synthesis_completions<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        hours: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_recent_synthesis_completions(&source_id, hours)
         })
     }
 
@@ -403,6 +432,16 @@ impl Brain {
         self.run(env, move |s| {
             s.get_failed_job_for_retry(job_id(id, "getFailedJobForRetry")?)
         })
+    }
+
+    /// `countOpenJobsByOwner(clientId)`: a count.
+    #[napi]
+    pub fn count_open_jobs_by_owner<'env>(
+        &self,
+        env: &'env Env,
+        client_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.count_open_jobs_by_owner(&client_id))
     }
 
     /// `listJobPage({ status, queue, name, ownerClientId, ownerActor, limit, cursor })`: rows with

@@ -365,13 +365,13 @@ src/core/cycle/inline-drain.ts	execute_raw	3
 src/core/cycle/pattern-claim-sources.ts	execute_raw	1
 src/core/cycle/patterns-plan.ts	execute_raw	1
 src/core/cycle/patterns.ts	execute_raw	11
-src/core/cycle/phantom-redirect-managed.ts	execute_raw	7
-src/core/cycle/phantom-redirect.ts	execute_raw	9
+src/core/cycle/phantom-redirect-managed.ts	execute_raw	6
+src/core/cycle/phantom-redirect.ts	execute_raw	8
 src/core/cycle/phases/consolidate.ts	execute_raw	9
 src/core/cycle/propose-takes-failures.ts	execute_raw	5
 src/core/cycle/propose-takes.ts	execute_raw	5
 src/core/cycle/source-window.ts	execute_raw	4
-src/core/cycle/synthesize-completion.ts	execute_raw	4
+src/core/cycle/synthesize-completion.ts	execute_raw	2
 src/core/cycle/synthesize-concepts.ts	execute_raw	1
 src/core/cycle/synthesize-generations.ts	execute_raw	1
 src/core/cycle/synthesize-postprocess.ts	execute_raw	3
@@ -385,7 +385,7 @@ src/core/db.ts	sql_template	4
 src/core/derived-links.ts	execute_raw	10
 src/core/destructive-guard.ts	execute_raw	17
 src/core/eligibility/activation.ts	execute_raw	2
-src/core/eligibility/explain.ts	execute_raw	4
+src/core/eligibility/explain.ts	execute_raw	3
 src/core/eligibility/fence-overlay.ts	execute_raw	3	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/core/eligibility/generation.ts	execute_raw	1
 src/core/eligibility/scan.ts	execute_raw	6
@@ -466,7 +466,7 @@ src/core/facts/slot-tagging.ts	execute_raw	1	GBRA-574 #9668: the live person-pag
 src/core/facts/subject-infer.ts	execute_raw	1
 src/core/facts/unfenced-facts.ts	execute_raw	3
 src/core/facts/withdrawal-discovery.ts	execute_raw	8
-src/core/facts/withdrawal.ts	execute_raw	14
+src/core/facts/withdrawal.ts	execute_raw	11
 src/core/facts/write-single.ts	execute_raw	3
 src/core/facts/writeback-settings.ts	execute_raw	2
 src/core/feedback/store.ts	execute_raw	19
@@ -543,7 +543,7 @@ src/core/link-single-value.ts	execute_raw	2
 src/core/link-source-check-repair.ts	execute_raw	3
 src/core/link-temporal-apply.ts	execute_raw	8
 src/core/links-fence-projection.ts	execute_raw	8
-src/core/loops/loops-store.ts	execute_raw	15
+src/core/loops/loops-store.ts	execute_raw	11
 src/core/maintenance/run.ts	execute_raw	1
 src/core/maintenance/status.ts	execute_raw	1
 src/core/mcp-request-log-retention.ts	execute_raw	4
@@ -558,8 +558,6 @@ src/core/migration-preludes.ts	execute_raw	12
 src/core/minions/authorize-legacy.ts	execute_raw	7
 src/core/minions/budget-meter.ts	sql_template	14
 src/core/minions/db-probe.ts	execute_raw	2
-src/core/minions/delegated-admission.ts	execute_raw	2
-src/core/minions/delegated-policy.ts	execute_raw	1
 src/core/minions/delegated-spend.ts	execute_raw	1
 src/core/minions/global-maintenance-stall.ts	execute_raw	1
 src/core/minions/handlers/autopilot-cycle.ts	execute_raw	1
@@ -662,7 +660,7 @@ src/core/page-state/materialize.ts	execute_raw	5
 src/core/page-state/projection-status.ts	execute_raw	1
 src/core/page-state/projections.ts	execute_raw	39
 src/core/page-state/rebuild-estimate.ts	execute_raw	1
-src/core/page-state/rename-alias.ts	execute_raw	11
+src/core/page-state/rename-alias.ts	execute_raw	10
 src/core/page-state/revision-backfill-schema.ts	execute_raw	12
 src/core/page-state/tags.ts	execute_raw	3
 src/core/page-state/versions.ts	execute_raw	9
@@ -716,7 +714,7 @@ src/core/persistence/effect-recovery-scan.ts	execute_raw	1
 src/core/persistence/effect-recovery.ts	execute_raw	19
 src/core/persistence/effect-retry.ts	execute_raw	14
 src/core/persistence/effect-settle.ts	execute_raw	7
-src/core/persistence/effect-targets.ts	execute_raw	8
+src/core/persistence/effect-targets.ts	execute_raw	7
 src/core/persistence/effects.ts	execute_raw	19
 src/core/persistence/embedding-noop-settle.ts	execute_raw	5
 src/core/persistence/embedding-settlement.ts	execute_raw	7
@@ -938,7 +936,7 @@ src/core/repair/file-drift.ts	execute_raw	6
 src/core/repair/frontmatter.ts	execute_raw	8
 src/core/repair/ghost-pages.ts	execute_raw	1
 src/core/repair/label-write.ts	execute_raw	1
-src/core/repair/legacy-twins.ts	execute_raw	9
+src/core/repair/legacy-twins.ts	execute_raw	8
 src/core/repair/loop-facts.ts	execute_raw	2
 src/core/repair/lost-fence-rows.ts	execute_raw	10
 src/core/repair/missing-tables.ts	execute_raw	2
@@ -1128,7 +1126,7 @@ src/core/trust/proposals.ts	execute_raw	7
 src/core/trust/provenance-drift.ts	execute_raw	3
 src/core/trust/refs.ts	execute_raw	1
 src/core/trust/release-publish.ts	execute_raw	2
-src/core/trust/review.ts	execute_raw	17
+src/core/trust/review.ts	execute_raw	16
 src/core/trust/supersede-handlers.ts	execute_raw	12	GST-2897 B (#9670, opened before this ratchet): the held-share accept reads the fact's visibility and widens it; no typed engine method exists yet
 src/core/trust/taint.ts	execute_raw	5
 src/core/trust/timeline-projection.ts	execute_raw	2
@@ -1150,7 +1148,6 @@ src/core/wakeshift/forget.ts	sql_template	6
 src/core/wakeshift/spool.ts	execute_raw	3
 src/core/wakeshift/terms.ts	execute_raw	2
 src/core/write-gate-scan.ts	execute_raw	2
-src/core/write-gate-store.ts	execute_raw	8
 src/core/write-through.ts	execute_raw	2
 src/eval/brainbench/adapters/codex.ts	execute_raw	1
 src/eval/brainbench/metrics/continuity.ts	execute_raw	1

@@ -12,10 +12,11 @@ const MEMBERS = [
   'deleteTerminalJob', 'pauseJob', 'resumeJob', 'failParentJob', 'resolveParentJob', 'resolveStrandedParents', 'detachChildJob',
   'updateJobProgress', 'addJobTokens', 'delayActiveJob', 'releaseWatchdogClaim', 'markJobWatchdogSuspect',
   'promoteDelayedJobs', 'cancelJobs', 'killTimedOutJobs', 'killWallClockJobs', 'pruneJobs', 'retryJob',
+  'listSynthesisCompletionKeys', 'listRecentSynthesisCompletions',
   'postInboxMessage', 'readJobInbox', 'readChildCompletions',
   'listOpenJobIdsInQueue', 'renewPrivateQueueLease', 'listOwnedPrivateQueues', 'readPrivateQueueState',
   'listStaleWaitingJobIds', 'countTtlExpiredWaiting', 'readJobStats', 'readQueueFamilyStats', 'hasOverdueWatchdogSuspect',
-  'listUnreviewedJobs', 'getFailedJobForRetry', 'listJobPage',
+  'listUnreviewedJobs', 'getFailedJobForRetry', 'countOpenJobsByOwner', 'lockOAuthClient', 'listJobPage',
   'listJobAttachmentNames', 'insertJobAttachment', 'listJobAttachments', 'getJobAttachment', 'deleteJobAttachment',
 ] as const satisfies ReadonlyArray<keyof typeof jobsQueue>;
 

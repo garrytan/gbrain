@@ -91,6 +91,8 @@ pub const TELEMETRY_FEEDBACK: u8 = 0x07; // retrieval_feedback
 pub const TELEMETRY_RETRIEVAL_WEIGHT: u8 = 0x08; // retrieval_weights
 pub const TELEMETRY_BUDGET_LEDGER: u8 = 0x09; // budget_ledger
 pub const TELEMETRY_BUDGET_RESERVATION: u8 = 0x0A; // budget_reservations
+/// Family `jobs`, the `dream_synthesis_completions` archive (`jobs/synthesis_completions.rs`).
+pub const DREAM_SYNTHESIS_COMPLETION: u8 = b'f';
 
 pub fn text(tag: u8, parts: &[&str]) -> Vec<u8> {
     let mut key = vec![tag];
