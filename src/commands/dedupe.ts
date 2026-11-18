@@ -11,6 +11,8 @@ const HELP = `Usage: gbrain dedupe --preview [--json] [--kind cross-source|in-so
 
 List groups of person and company pages that are likely the same person or company, with the evidence
 (shared keys by type, never their values) and a class: clean, likely, weak, thin or conflict.
+clean: the pages share an account or registry id (LinkedIn, GitHub or a declared id) and exactly the same name;
+it is a strong hint for review, not proof they are one person.
 Read-only: nothing is changed.
 
   --preview         list the groups (the default and, for now, the only mode)
