@@ -1,14 +1,12 @@
 /**
  * Batch page reads and writes over the store's page_ops family (rust/docs/store/page_ops.md).
  *
- * Served: readPageSnapshotsBatch, findDuplicatePage, findDuplicatePages, deletePages, resolveSlugsByPaths,
+ * Served: readPageSnapshotsBatch, findDuplicatePage, findDuplicatePages, deletePages, purgeDeletedPages, resolveSlugsByPaths,
  * softDeletePages, findPages, countPagesBy, getAllSlugs, listAllPageRefs, listPrefixSampledPages, listCorpusSample,
  * getContentFlagsByPageIds, getUnverifiedExtractionPageIds, getPageTimestamps, getEffectiveDates, revertToVersion.
  * deletePages scrubs the eval candidates' retrieved slugs in the delete's transaction, as PGLite does.
- *
- * Still refused (`engine_capability_missing`): purgeDeletedPages. Its atom and derived retirement holds read the page's
- * `retired_by` stamp, which the served putPage stores from a local caller, so a purge with no holds would remove a page
- * PGLite keeps (rust/docs/store/page_ops.md names every hold and its writers).
+ * purgeDeletedPages (also served) keeps the pages PGLite's atom and derived retirement holds keep, reading the `retired_by`
+ * stamp on the page row, and removes and scrubs the rest as deletePages does (rust/docs/store/page_ops.md).
  *
  * Export only BrainEngine members from this file, each a `StoreMember` named after the member it serves (see tags.ts):
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
@@ -99,6 +97,24 @@ export const deletePages: StoreMember<[slugs: string[], opts: { sourceId: string
   // PGLite matches `source_id = $sourceId`; an absent or empty id names no source.
   if (typeof options.sourceId !== 'string' || options.sourceId === '') return [];
   return storeCall({ member: 'deletePages' }, () => brain.deletePages(slugs, options));
+};
+
+type PurgedPages = { slugs: string[]; count: number; pages?: { slug: string; source_id: string; deleted_at: Date }[] };
+
+export const purgeDeletedPages: StoreMember<[olderThanHours: number, opts?: { dryRun?: boolean; excludeIds?: number[] }], PurgedPages> = async (
+  brain,
+  olderThanHours,
+  opts,
+) => {
+  const { excludeIds, ...options } = takeOptions('purgeDeletedPages', opts, ['dryRun', 'excludeIds']);
+  // PGLite filters on excludeIds only when the list is not empty.
+  if (Array.isArray(excludeIds) && excludeIds.length) options.excludeIds = excludeIds;
+  const out: { slugs: string[]; count: number; pages?: Array<{ slug: string; source_id: string; deleted_at: unknown }> } = await storeCall(
+    { member: 'purgeDeletedPages' },
+    () => brain.purgeDeletedPages(olderThanHours, options),
+  );
+  if (!out.pages) return { slugs: out.slugs, count: out.count };
+  return { slugs: out.slugs, count: out.count, pages: out.pages.map((p) => ({ slug: p.slug, source_id: p.source_id, deleted_at: reviveDate(p.deleted_at) })) };
 };
 
 export const softDeletePages: StoreMember<[slugs: string[], opts: { sourceId: string }], string[]> = async (brain, slugs, opts) => {

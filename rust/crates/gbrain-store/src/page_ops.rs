@@ -22,6 +22,10 @@
 //! on and counts it as 0 bytes, as PGLite's `sum(octet_length(...))` skips it; the samplers leave
 //! the page out (`body_storage = 'inline'`); `revertToVersion` refuses `page_body_segmented` when the
 //! page or the version is segmented, before it writes anything.
+//!
+//! `purgeDeletedPages` keeps the tombstones PGLite's derived and atom retirement holds keep
+//! (`PurgeHolds`); rust/docs/store/page_ops.md cites each rule and names the two holds that never
+//! match a store row.
 
 use crate::env::{Env, iso, parse_iso};
 use crate::error::{Result, StoreError};
@@ -404,6 +408,179 @@ fn scrub_purged_slugs(tx: &mut dyn KvWrite, source_id: &str, slugs: &[String]) -
     Ok(())
 }
 
+/// `DERIVED_RETIRED_BY` (`src/core/persistence/derived-retirement-hold.ts:19`): the `retired_by`
+/// stamps a derived writer puts on the pages it retires.
+const DERIVED_RETIRED_BY: [&str; 7] = [
+    "extract-atoms",
+    "managed-reextract",
+    "stale-atoms",
+    "life-chronicle",
+    "generation-restore",
+    "synthesis-resynthesis",
+    "synthesis-cleanup",
+];
+
+/// `ATOM_REEXTRACT_RETIRED_BY` and `ATOM_RESTORE_HOLD_DAYS`
+/// (`src/core/persistence/atom-retirement-hold.ts:25,28`).
+const ATOM_REEXTRACT_RETIRED_BY: &str = "managed-reextract";
+const ATOM_RESTORE_HOLD_DAYS: i64 = 30;
+
+/// `GENERATION_BOUNDS.restoreDays` (`src/core/generations/config.ts:12`).
+const RESTORE_DAYS_KEY: &str = "generations.restore_days";
+const RESTORE_DAYS_MIN: i64 = 3;
+const RESTORE_DAYS_MAX: i64 = 365;
+const RESTORE_DAYS_FALLBACK: i64 = 30;
+
+/// One day of PGLite's `interval '1 day'`. PGLite runs in `Etc/GMT0`, so a day is always 24 hours.
+const DAY_US: i64 = 86_400_000_000;
+
+/// `RESTORE_DAYS_SQL` (`src/core/generations/config.ts:59`): the `generations.restore_days` config
+/// value when it is 1 to 3 ASCII digits naming 3 to 365 days, else 30.
+fn restore_days(read: &dyn KvRead) -> Result<i64> {
+    let value = crate::config::read_config(read, RESTORE_DAYS_KEY)?;
+    let days = value
+        .filter(|v| (1..=3).contains(&v.len()) && v.bytes().all(|b| b.is_ascii_digit()))
+        .and_then(|v| v.parse::<i64>().ok())
+        .filter(|d| (RESTORE_DAYS_MIN..=RESTORE_DAYS_MAX).contains(d));
+    Ok(days.unwrap_or(RESTORE_DAYS_FALLBACK))
+}
+
+/// `NULLIF(frontmatter->>key, '')`.
+fn fm_nonempty(page: &PageRecord, key: &str) -> Option<String> {
+    fm_text(&page.frontmatter, key).filter(|v| !v.is_empty())
+}
+
+/// The origin key of `atomRetirementsSql` (`atom-retirement-hold.ts:31`): `slug:<source_slug>`, else
+/// `path:<source_path>`, else none.
+fn atom_origin_key(page: &PageRecord) -> Option<String> {
+    if let Some(slug) = fm_nonempty(page, "source_slug") {
+        Some(format!("slug:{slug}"))
+    } else {
+        fm_nonempty(page, "source_path").map(|path| format!("path:{path}"))
+    }
+}
+
+/// The stripped source hash of `atomRetirementsSql` (`atom-retirement-hold.ts:30`): `source_hash`
+/// (empty when absent) with one leading `pending:` removed.
+fn atom_hash(page: &PageRecord) -> String {
+    let hash = fm_text(&page.frontmatter, "source_hash").unwrap_or_default();
+    match hash.strip_prefix("pending:") {
+        Some(rest) => rest.to_string(),
+        None => hash,
+    }
+}
+
+/// An atom no import wrote (`notImported`, `atom-retirement-hold.ts:33`).
+fn atom_not_imported(page: &PageRecord) -> bool {
+    page.page_type == "atom" && fm_nonempty(page, "imported_from").is_none()
+}
+
+/// The ids of the restorable re-extraction retirements of `atomRetirementsSql('true')`
+/// (`atom-retirement-hold.ts:41-69`): a soft-deleted, non-imported atom stamped
+/// `retired_by: managed-reextract` with an origin key, whose `source_slug` origin (when it names one)
+/// is a live page of the same source, that no live non-imported atom of the same source and origin
+/// replaced with a different hash, and whose hash is the hash of the origin's latest retirement
+/// (`retired_at` text descending, NULL last, then id descending).
+fn restorable_atoms(pages: &[PageRecord]) -> HashSet<u64> {
+    let live_slugs: HashSet<(&str, &str)> = pages
+        .iter()
+        .filter(|p| p.deleted_at_us.is_none())
+        .map(|p| (p.source_id.as_str(), p.slug.as_str()))
+        .collect();
+    let mut live_hashes: HashMap<(&str, String), HashSet<String>> = HashMap::new();
+    for page in pages
+        .iter()
+        .filter(|p| p.deleted_at_us.is_none() && atom_not_imported(p))
+    {
+        if let Some(key) = atom_origin_key(page) {
+            live_hashes
+                .entry((page.source_id.as_str(), key))
+                .or_default()
+                .insert(atom_hash(page));
+        }
+    }
+    let retired: Vec<(&PageRecord, String, String)> = pages
+        .iter()
+        .filter(|p| {
+            p.deleted_at_us.is_some()
+                && atom_not_imported(p)
+                && fm_text(&p.frontmatter, "retired_by").as_deref()
+                    == Some(ATOM_REEXTRACT_RETIRED_BY)
+        })
+        .filter_map(|p| atom_origin_key(p).map(|key| (p, key, atom_hash(p))))
+        .collect();
+    let mut latest: HashMap<(&str, &str), (Option<String>, u64, &str)> = HashMap::new();
+    for (page, key, hash) in &retired {
+        let rank = (
+            fm_text(&page.frontmatter, "retired_at"),
+            page.id,
+            hash.as_str(),
+        );
+        let slot = latest.entry((page.source_id.as_str(), key.as_str()));
+        let entry = slot.or_insert_with(|| rank.clone());
+        // `retired_at DESC NULLS LAST, id DESC`: a later text wins, any text beats NULL, then the higher id.
+        let newer = match (&rank.0, &entry.0) {
+            (Some(a), Some(b)) => a.as_bytes().cmp(b.as_bytes()).then(rank.1.cmp(&entry.1)),
+            (Some(_), None) => Ordering::Greater,
+            (None, Some(_)) => Ordering::Less,
+            (None, None) => rank.1.cmp(&entry.1),
+        };
+        if newer == Ordering::Greater {
+            *entry = rank;
+        }
+    }
+    retired
+        .iter()
+        .filter(|(page, key, hash)| {
+            let origin_live = fm_nonempty(page, "source_slug")
+                .is_none_or(|slug| live_slugs.contains(&(page.source_id.as_str(), slug.as_str())));
+            let replaced = live_hashes
+                .get(&(page.source_id.as_str(), key.clone()))
+                .is_some_and(|hashes| hashes.iter().any(|h| h != hash));
+            let is_latest = latest
+                .get(&(page.source_id.as_str(), key.as_str()))
+                .is_some_and(|l| l.2 == hash.as_str());
+            origin_live && !replaced && is_latest
+        })
+        .map(|(page, _, _)| page.id)
+        .collect()
+}
+
+/// The purge holds a Rust store row can meet, at `now` (PGLite's statement clock): the derived
+/// retirement hold (`derivedRetirementPurgeHold`, `derived-retirement-hold.ts:38-41`) and the atom
+/// retirement hold (`atomRetirementPurgeHold`, `atom-retirement-hold.ts:80-84`). Each window is open
+/// while `deleted_at > now - days`. The two `op_checkpoints` holds never match here: see
+/// `rust/docs/store/page_ops.md`.
+struct PurgeHolds {
+    now: i64,
+    restore_days: i64,
+    restorable_atoms: HashSet<u64>,
+}
+
+impl PurgeHolds {
+    fn read(read: &dyn KvRead, pages: &[PageRecord], now: i64) -> Result<Self> {
+        Ok(Self {
+            now,
+            restore_days: restore_days(read)?,
+            restorable_atoms: restorable_atoms(pages),
+        })
+    }
+
+    fn holds(&self, page: &PageRecord) -> bool {
+        let Some(deleted) = page.deleted_at_us else {
+            return false;
+        };
+        let within = |days: i64| deleted > self.now.saturating_sub(days.saturating_mul(DAY_US));
+        let stamp = fm_text(&page.frontmatter, "retired_by").unwrap_or_default();
+        let derived = DERIVED_RETIRED_BY.contains(&stamp.as_str()) && within(self.restore_days);
+        let atom = page.page_type == "atom"
+            && stamp == ATOM_REEXTRACT_RETIRED_BY
+            && within(ATOM_RESTORE_HOLD_DAYS)
+            && self.restorable_atoms.contains(&page.id);
+        derived || atom
+    }
+}
+
 /// The pages of `source` whose slug is one of `slugs` exactly, deleted or not, once each, in page
 /// id order (the order PGLite's `RETURNING` hands back rows of a fresh table).
 fn pages_by_slugs(read: &dyn KvRead, source: &str, slugs: &[String]) -> Result<Vec<PageRecord>> {
@@ -729,9 +906,11 @@ impl Store {
     }
 
     /// `purgeDeletedPages(olderThanHours, { dryRun?, excludeIds? })`: the pages soft-deleted more
-    /// than `floor(max(0, hours))` hours ago, minus `excludeIds`, ordered by `deleted_at`, then
-    /// slug. A dry run returns `{ slugs, count, pages: [{ slug, source_id, deleted_at }] }`; a real
-    /// run removes them in one transaction and returns `{ slugs, count }`.
+    /// than `floor(max(0, hours))` hours ago, minus `excludeIds` and the pages a retirement hold
+    /// keeps (`PurgeHolds`), ordered by `deleted_at`, then slug. Each purged page goes through
+    /// `remove_page` and `scrub_purged_slugs`, as `deletePages` does. A dry run returns
+    /// `{ slugs, count, pages: [{ slug, source_id, deleted_at }] }`; a real run removes them in one
+    /// transaction and returns `{ slugs, count }`.
     pub fn purge_deleted_pages(
         &self,
         older_than_hours: f64,
@@ -745,10 +924,13 @@ impl Store {
         let excluded: HashSet<i64> = options.exclude_ids.iter().flatten().copied().collect();
         let select = |read: &dyn KvRead, now: i64| -> Result<Vec<PageRecord>> {
             let cutoff = now.saturating_sub(hours.saturating_mul(3_600_000_000));
-            let mut pages: Vec<PageRecord> = all_pages(read)?
+            let all = all_pages(read)?;
+            let holds = PurgeHolds::read(read, &all, now)?;
+            let mut pages: Vec<PageRecord> = all
                 .into_iter()
                 .filter(|p| p.deleted_at_us.is_some_and(|d| d < cutoff))
                 .filter(|p| !excluded.contains(&(p.id as i64)))
+                .filter(|p| !holds.holds(p))
                 .collect();
             pages.sort_by(|a, b| {
                 a.deleted_at_us
@@ -1295,5 +1477,244 @@ mod tests {
             .unwrap();
         shell(&store, DEFAULT_SOURCE, "notes/a");
         refused(store.revert_to_version("notes/a", version, &SourceOption::default()));
+    }
+
+    // The retirement purge holds. A test sets `deleted_at` directly to stand a tombstone days in the
+    // past, since no member writes one with an older clock.
+
+    const HOUR_US: i64 = 3_600_000_000;
+
+    fn put_fm(store: &Store, slug: &str, page_type: &str, frontmatter: Value) -> u64 {
+        let input: PageInput = serde_json::from_value(json!({
+            "type": page_type, "title": slug, "compiled_truth": "body", "frontmatter": frontmatter
+        }))
+        .unwrap();
+        store
+            .put_page(slug, &input, &PutPageOptions::default())
+            .unwrap();
+        page(store, DEFAULT_SOURCE, slug).id
+    }
+
+    /// Soft-deletes `slug` as if `days_ago` days (plus an hour, so the clock cannot cross a window
+    /// boundary during the test) had passed since.
+    fn tombstone(store: &Store, slug: &str, days_ago: i64) {
+        let at = store.env.now_micros() - days_ago * DAY_US - HOUR_US;
+        store
+            .write(|tx| {
+                let mut page = read_page(&*tx, DEFAULT_SOURCE, slug)?.unwrap();
+                page.deleted_at_us = Some(at);
+                write_page(tx, &page)
+            })
+            .unwrap();
+    }
+
+    fn purged(store: &Store, options: Value) -> Vec<String> {
+        let out = store
+            .purge_deleted_pages(0.0, &serde_json::from_value(options).unwrap())
+            .unwrap();
+        let mut slugs: Vec<String> = out["slugs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        slugs.sort();
+        slugs
+    }
+
+    fn atom(origin: &str, hash: &str, retired_at: &str) -> Value {
+        json!({ "retired_by": "managed-reextract", "source_slug": origin, "source_hash": hash, "retired_at": retired_at })
+    }
+
+    #[test]
+    fn the_purge_keeps_a_derived_retirement_for_the_restore_window() {
+        let store = store();
+        for (slug, stamp) in [
+            ("notes/fresh", json!("extract-atoms")),
+            ("notes/old", json!("life-chronicle")),
+            ("notes/plain", json!(null)),
+            ("notes/other", json!("someone-else")),
+            ("notes/listed", json!(["extract-atoms"])),
+        ] {
+            put_fm(&store, slug, "note", json!({ "retired_by": stamp }));
+        }
+        tombstone(&store, "notes/fresh", 29);
+        tombstone(&store, "notes/old", 30);
+        for slug in ["notes/plain", "notes/other", "notes/listed"] {
+            tombstone(&store, slug, 0);
+        }
+        let dry = purged(&store, json!({ "dryRun": true }));
+        assert_eq!(
+            dry,
+            ["notes/listed", "notes/old", "notes/other", "notes/plain"]
+        );
+        assert_eq!(purged(&store, json!({})), dry);
+        assert!(
+            read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "notes/fresh")
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn the_restore_window_reads_generations_restore_days_with_the_pglite_fallback() {
+        for (value, held) in [
+            (None, true),
+            (Some("3"), false),
+            (Some("003"), false),
+            (Some("365"), true),
+            (Some("2"), true),
+            (Some("366"), true),
+            (Some("0005"), true),
+            (Some("5 "), true),
+            (Some("abc"), true),
+        ] {
+            let store = store();
+            put_fm(
+                &store,
+                "notes/r",
+                "note",
+                json!({ "retired_by": "stale-atoms" }),
+            );
+            tombstone(&store, "notes/r", 4);
+            if let Some(v) = value {
+                store.set_config(RESTORE_DAYS_KEY, v).unwrap();
+            }
+            let kept = purged(&store, json!({ "dryRun": true })).is_empty();
+            assert_eq!(kept, held, "restore_days {value:?}");
+        }
+    }
+
+    #[test]
+    fn a_hold_window_is_open_only_while_deleted_at_is_after_its_start() {
+        let now = 1_000 * DAY_US;
+        let holds = PurgeHolds {
+            now,
+            restore_days: 5,
+            restorable_atoms: HashSet::from([7]),
+        };
+        let mut record = {
+            let store = store();
+            put_fm(
+                &store,
+                "atoms/a",
+                "atom",
+                json!({ "retired_by": "extract-atoms" }),
+            );
+            page(&store, DEFAULT_SOURCE, "atoms/a")
+        };
+        record.deleted_at_us = Some(now - 5 * DAY_US);
+        assert!(!holds.holds(&record), "deleted exactly at the window start");
+        record.deleted_at_us = Some(now - 5 * DAY_US + 1);
+        assert!(holds.holds(&record));
+        record.id = 7;
+        record.frontmatter = atom("notes/o", "h", "t").as_object().unwrap().clone();
+        record.deleted_at_us = Some(now - 30 * DAY_US);
+        assert!(!holds.holds(&record), "an atom deleted exactly 30 days ago");
+        record.deleted_at_us = Some(now - 30 * DAY_US + 1);
+        assert!(
+            holds.holds(&record),
+            "the atom hold outlasts a 5-day restore window"
+        );
+        record.id = 8;
+        assert!(!holds.holds(&record), "an atom that is not restorable");
+    }
+
+    #[test]
+    fn the_purge_keeps_a_restorable_atom_for_30_days_past_a_short_restore_window() {
+        let store = store();
+        store.set_config(RESTORE_DAYS_KEY, "3").unwrap();
+        put_fm(&store, "notes/origin", "note", json!({}));
+        put_fm(
+            &store,
+            "atoms/held",
+            "atom",
+            atom("notes/origin", "pending:h1", "2026-01-02"),
+        );
+        put_fm(
+            &store,
+            "atoms/stale",
+            "atom",
+            atom("notes/origin", "h1", "2026-01-01"),
+        );
+        put_fm(
+            &store,
+            "atoms/expired",
+            "atom",
+            atom("notes/origin", "h1", "2026-01-01"),
+        );
+        tombstone(&store, "atoms/held", 10);
+        tombstone(&store, "atoms/stale", 10);
+        tombstone(&store, "atoms/expired", 30);
+        // A retirement older than the origin's latest one is still restorable when its hash is the latest hash.
+        assert_eq!(purged(&store, json!({ "dryRun": true })), ["atoms/expired"]);
+    }
+
+    #[test]
+    fn the_purge_releases_an_atom_that_cannot_be_restored() {
+        /// A case name, the retired atom's frontmatter, and an optional second atom of the same origin.
+        type Case<'a> = (&'a str, Value, Option<(&'a str, Value)>);
+        let cases: [Case; 6] = [
+            ("origin gone", atom("notes/gone", "h1", "t"), None),
+            (
+                "no origin",
+                json!({ "retired_by": "managed-reextract", "source_hash": "h1" }),
+                None,
+            ),
+            (
+                "imported",
+                json!({ "retired_by": "managed-reextract", "source_slug": "notes/origin", "source_hash": "h1", "imported_from": "x" }),
+                None,
+            ),
+            (
+                "replaced",
+                atom("notes/origin", "h1", "t"),
+                Some((
+                    "atoms/live",
+                    json!({ "source_slug": "notes/origin", "source_hash": "h2" }),
+                )),
+            ),
+            (
+                "not latest",
+                atom("notes/origin", "h1", "2026-01-01"),
+                Some(("atoms/newer", atom("notes/origin", "h2", "2026-01-02"))),
+            ),
+            (
+                "latest by id",
+                atom("notes/origin", "h1", "t"),
+                Some(("atoms/newer", atom("notes/origin", "h2", "t"))),
+            ),
+        ];
+        for (name, frontmatter, other) in cases {
+            let store = store();
+            store.set_config(RESTORE_DAYS_KEY, "3").unwrap();
+            put_fm(&store, "notes/origin", "note", json!({}));
+            put_fm(&store, "atoms/a", "atom", frontmatter);
+            tombstone(&store, "atoms/a", 10);
+            if let Some((slug, fm)) = other {
+                put_fm(&store, slug, "atom", fm.clone());
+                if fm.get("retired_by").is_some() {
+                    tombstone(&store, slug, 10);
+                }
+            }
+            let out = purged(&store, json!({ "dryRun": true }));
+            assert!(out.contains(&"atoms/a".to_string()), "{name}: {out:?}");
+        }
+    }
+
+    #[test]
+    fn a_live_atom_with_the_same_hash_does_not_replace_a_retirement() {
+        let store = store();
+        store.set_config(RESTORE_DAYS_KEY, "3").unwrap();
+        put_fm(&store, "notes/origin", "note", json!({}));
+        put_fm(&store, "atoms/a", "atom", atom("notes/origin", "h1", "t"));
+        put_fm(
+            &store,
+            "atoms/live",
+            "atom",
+            json!({ "source_slug": "notes/origin", "source_hash": "pending:h1" }),
+        );
+        tombstone(&store, "atoms/a", 10);
+        assert!(purged(&store, json!({ "dryRun": true })).is_empty());
     }
 }

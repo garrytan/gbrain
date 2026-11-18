@@ -50,10 +50,10 @@ findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	3	yes	yes	yes	serves
 deletePages	pages	yes	1	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	17	yes	yes	yes	serves
+softDeletePage	pages	yes	19	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	6	yes	yes	yes	serves
-purgeDeletedPages	pages	yes	1	no	yes	yes	refuses:pages
+purgeDeletedPages	pages	yes	3	no	yes	yes	serves
 listPages	pages	yes	4	yes	yes	yes	serves
 findPages	pages	yes	1	no	yes	yes	serves
 countPagesBy	pages	yes	1	no	yes	yes	serves
@@ -206,7 +206,7 @@ refreshPageBody	sync_aliases	yes	1	no	yes	yes	refuses:page_body
 updatePageContextualRetrievalState	sync_aliases	yes	1	no	yes	yes	refuses:pages
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	refuses:facts
 getConfig	config	yes	4	no	yes	yes	serves
-setConfig	config	yes	7	no	yes	yes	serves
+setConfig	config	yes	8	no	yes	yes	serves
 unsetConfig	config	yes	2	no	yes	yes	serves
 listConfigKeys	config	yes	2	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
