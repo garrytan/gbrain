@@ -12,7 +12,7 @@ import { relative, sep } from 'node:path';
 import { execFileBounded } from '../bounded-child-exec.ts';
 import { gitChildEnv } from '../git-env.ts';
 import { OperationError } from '../ops/contract.ts';
-import { authorizeWrite } from './authority.ts';
+import { type AuthorityEngine, authorizeWrite } from './authority.ts';
 import type { BrainEngine } from '../engine.ts';
 import { completeWrite, SYNC_KIND } from './journal.ts';
 import { PENDING_IMPORT } from './pending-import.ts';
@@ -79,7 +79,7 @@ async function laterWriteRefusal(engine: SqlEngine, row: WriteRequest): Promise<
  * refusal to record. A row that was never deferred is not checked. GST-1623: a write held for an import is checked too, for a
  * later write to its page that committed first.
  */
-export async function deferredReplayRefusal(engine: SqlEngine, row: WriteRequest, files: ReadonlyArray<{ path: string; root: string }>): Promise<DeferredRefusal | null> {
+export async function deferredReplayRefusal(engine: AuthorityEngine, row: WriteRequest, files: ReadonlyArray<{ path: string; root: string }>): Promise<DeferredRefusal | null> {
   const refreshId = row.deferred_refresh_id;
   if (!refreshId && row.deferred_import_from == null) return null;
   const later = await laterWriteRefusal(engine, row);

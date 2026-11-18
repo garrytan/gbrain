@@ -94,4 +94,17 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.read_mcp_rollup_pruned_before())
     }
+
+    /// `readMcpLifetimeUsage(tokenNames)`: `{ token_name, requests, last_used_at }` rows,
+    /// `last_used_at` as ISO text.
+    #[napi]
+    pub fn read_mcp_lifetime_usage<'env>(
+        &self,
+        env: &'env Env,
+        token_names: Option<Vec<Option<String>>>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_mcp_lifetime_usage(token_names.as_deref())
+        })
+    }
 }

@@ -38,3 +38,14 @@ export function isCapabilityMissing(e: unknown): e is OperationError {
 export function rethrowCapabilityMissing(e: unknown): void {
   if (isCapabilityMissing(e)) throw e;
 }
+
+/**
+ * The named refusal of a persistence step that must run as one transaction, on an engine that serves none (the Rust
+ * engine until its transaction API lands: docs/designs/RUST_ENGINE.md, "transaction(fn) keeps its shape"). The step
+ * calls it before it opens its transaction, so the refusal names the step and why it needs one, not only the
+ * `transaction` member, and nothing of the step ran. PGLite, Postgres and transaction handles (no capability set) pass.
+ */
+export function requireTransactions(engine: object, step: string, why: string): void {
+  const caps = (engine as { capabilities?: ReadonlySet<Capability> }).capabilities;
+  if (caps && !caps.has('transactions')) throw capabilityMissing('transactions', `${step} (${why})`);
+}

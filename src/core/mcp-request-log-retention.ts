@@ -78,11 +78,6 @@ export interface McpLogPruneOpts {
   yieldBetweenBatches?: boolean;
 }
 
-async function rollupTablePresent(engine: BrainEngine): Promise<boolean> {
-  const [row] = await engine.executeRaw<{ present: boolean }>("SELECT to_regclass('mcp_request_log_rollup') IS NOT NULL AS present");
-  return row?.present === true;
-}
-
 const iso = (v: unknown): string => (v instanceof Date ? v : new Date(String(v))).toISOString();
 
 /** Prune rows older than `days` in bounded batches. Throws on a database error (each batch's statement rolls back whole). */
@@ -136,23 +131,13 @@ export async function runMcpLogRetention(engine: BrainEngine, opts: McpLogPruneO
 
 /**
  * Lifetime requests and last use per token: the rows still in the log plus
- * the pruned tally, in one statement. Before the tally table exists, the log
- * alone (nothing was pruned).
+ * the pruned tally (`engine.readMcpLifetimeUsage`). Before the tally table
+ * exists, the log alone (nothing was pruned).
  */
 export async function lifetimeUsage(engine: BrainEngine, tokenNames: string[]): Promise<Map<string, { requests: number; last_used_at: string | null }>> {
   if (tokenNames.length === 0) return new Map();
-  const kept = `SELECT token_name, count(*)::bigint AS n, max(created_at) AS newest FROM mcp_request_log WHERE token_name = ANY($1::text[]) GROUP BY token_name`;
-  const rows = await engine.executeRaw<{ token_name: string; requests: string | number; last_used_at: unknown }>(
-    (await rollupTablePresent(engine))
-      ? `SELECT token_name, sum(n)::bigint AS requests, max(newest) AS last_used_at FROM (
-           ${kept}
-           UNION ALL
-           SELECT token_name, requests, last_used_at FROM mcp_request_log_rollup WHERE token_name = ANY($1::text[])
-         ) u GROUP BY token_name`
-      : `SELECT token_name, n AS requests, newest AS last_used_at FROM (${kept}) k`,
-    [tokenNames],
-  );
-  return new Map(rows.map((r) => [r.token_name, { requests: Number(r.requests), last_used_at: r.last_used_at ? iso(r.last_used_at) : null }]));
+  const rows = await engine.readMcpLifetimeUsage(tokenNames);
+  return new Map(rows.map((r) => [r.token_name, { requests: r.requests, last_used_at: r.last_used_at ? iso(r.last_used_at) : null }]));
 }
 
 export interface McpLogPruneTickerOpts {

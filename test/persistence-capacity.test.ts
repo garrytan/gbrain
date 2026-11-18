@@ -47,11 +47,15 @@ test('the one-year capacity hint uses the sampled interval, not a one-day floor'
 test('doctor emits one command per brain-wide key with the largest value any principal needs', async () => {
   const { checkPersistenceCapacity } = await import('../src/commands/doctor/checks/persistence-capacity.ts');
   const counter = (key: string) => ({ key, outstanding_count: '0', intent_bytes: '0', lifetime_ids: '9', terminal_bytes: '0', recovery_bytes: '0' });
-  const engine = { executeRaw: async (sql: string, params: unknown[] = []) => {
+  const { readCapacityForecastInputs } = await import('../src/core/engine-sql/persistence-housekeeping.ts');
+  const engine: Record<string, unknown> = { executeRaw: async (sql: string, params: unknown[] = []) => {
     if (sql.includes('FROM persistence_counters')) return [counter('principal:local_cli:fast'), counter('principal:local_cli:slow')];
     if (sql.includes('persistence_requests')) return [{ admissions: 1000, age_seconds: params[1] === 'fast' ? 8640 : 864_000 }];
     return [];
-  }, readJournalLimitRows: async () => [{ key: 'persistence.limits.principal_lifetime_ids', value: '10' }, { key: null, value: null }] };
+  }, readJournalLimitRows: async () => [{ key: 'persistence.limits.principal_lifetime_ids', value: '10' }, { key: null, value: null }],
+  getConfigValues: async () => [] };
+  // The forecast reads through the typed member; the real statements run on the fake executeRaw.
+  engine.readCapacityForecastInputs = (opts?: { light?: boolean }) => readCapacityForecastInputs(engine as never, opts);
   const check = await checkPersistenceCapacity(engine as never);
   expect(check.status).toBe('warn');
   expect((check.details as { commands: string[] }).commands).toEqual(['gbrain config set persistence.limits.principal_lifetime_ids 3650009']);

@@ -130,7 +130,8 @@ describe('own-principal write receipt operations', () => {
         if (args[0].includes('WITH roots AS')) queries++;
         return target.executeRaw(...args);
       };
-      if (key === 'readSourceState') return async () => { throw new Error('AUTHORIZATION_DATABASE_UNAVAILABLE'); };
+      // The authorization's source read is the typed readSourceMembership member.
+      if (key === 'readSourceMembership') return async () => { throw new Error('AUTHORIZATION_DATABASE_UNAVAILABLE'); };
       const value = Reflect.get(target, key);
       return typeof value === 'function' ? value.bind(target) : value;
     } });
