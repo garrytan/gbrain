@@ -5,13 +5,14 @@ public struct HTTPRequest {
     public let path: String
     public let query: [String: String]
     public let headers: [String: String]
+    public var body: [UInt8] = []
 }
 
 public enum HTTPParse {
     case incomplete
     case tooLarge
     case bad
-    case request(HTTPRequest)
+    case request(HTTPRequest, headLength: Int)
 }
 
 public struct HTTPResponse {
@@ -26,7 +27,8 @@ public struct HTTPResponse {
 
     public static func problem(_ problem: Problem, requestId: String) -> HTTPResponse {
         let body = ProblemBody(type: Problem.docBase + problem.code, title: problem.title, status: problem.status, code: problem.code,
-                               detail: problem.detail, retryable: problem.retryable, fix: problem.fix, requestId: requestId)
+                               detail: problem.detail, retryable: problem.retryable, fix: problem.fix, requestId: requestId,
+                               sideEffects: problem.sideEffects, outcome: problem.outcome, replayed: problem.replayed, serverTime: problem.serverTime)
         var headers: [(String, String)] = []
         if let retryAfter = problem.retryAfter { headers.append(("Retry-After", String(retryAfter))) }
         return HTTPResponse(status: problem.status, contentType: "application/problem+json", extraHeaders: headers, body: encode(body))
@@ -54,14 +56,20 @@ public struct HTTPResponse {
     static func reason(_ status: Int) -> String {
         switch status {
         case 200: return "OK"
+        case 202: return "Accepted"
         case 400: return "Bad Request"
         case 401: return "Unauthorized"
         case 403: return "Forbidden"
         case 404: return "Not Found"
         case 405: return "Method Not Allowed"
         case 408: return "Request Timeout"
+        case 409: return "Conflict"
+        case 411: return "Length Required"
         case 413: return "Content Too Large"
+        case 422: return "Unprocessable Content"
+        case 429: return "Too Many Requests"
         case 500: return "Internal Server Error"
+        case 502: return "Bad Gateway"
         case 503: return "Service Unavailable"
         default: return "Status"
         }
@@ -97,6 +105,6 @@ public enum HTTPParser {
                 if query[key] == nil { query[key] = value }
             }
         }
-        return .request(HTTPRequest(method: String(requestLine[0]), path: path, query: query, headers: headers))
+        return .request(HTTPRequest(method: String(requestLine[0]), path: path, query: query, headers: headers), headLength: end + terminator.count)
     }
 }

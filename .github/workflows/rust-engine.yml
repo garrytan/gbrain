@@ -8,7 +8,8 @@ name: Rust engine
 #              The advisory check downloads the RustSec database, so it needs network access.
 #   addon      builds the addon (`bun run rust:build`) and runs the Bun smoke test
 #              (rust/smoke/run.ts, including a `bun build --compile` executable) on Linux x64 and
-#              macOS arm64, then uploads the .node file.
+#              macOS arm64, then runs the engine tests against the built addon (the store tests and
+#              the Rust arm of the engine parity suite), then uploads the .node file.
 #   without-rust  no Rust on PATH: bun install, bun run build, ./bin/gbrain --version.
 #   scope      reads a pull request's changed files and picks the advisory check and addon cells.
 #
@@ -30,6 +31,10 @@ on:
     paths:
       - 'rust/**'
       - 'src/core/rust-engine**'
+      - 'src/core/rust-engine/**'
+      - 'test/engine-parity/**'
+      - 'test/rust-engine-*.test.ts'
+      - 'test/rust-expected-divergence/**'
       - 'src/core/sql-engine-kind.ts'
       - 'src/core/engine.ts'
       - 'src/core/engine-*.ts'
@@ -47,6 +52,10 @@ on:
     paths:
       - 'rust/**'
       - 'src/core/rust-engine**'
+      - 'src/core/rust-engine/**'
+      - 'test/engine-parity/**'
+      - 'test/rust-engine-*.test.ts'
+      - 'test/rust-expected-divergence/**'
       - 'src/core/sql-engine-kind.ts'
       - 'src/core/engine.ts'
       - 'src/core/engine-*.ts'
@@ -259,6 +268,24 @@ jobs:
           export GBRAIN_RUST_ENGINE_ADDON="$PWD/rust/target/addon/gbrain_engine.${{ matrix.target }}.node"
           test -f "$GBRAIN_RUST_ENGINE_ADDON"
           bun rust/smoke/run.ts
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
+      # The engine on the real store: test/rust-engine-store.test.ts and the raw-value differential against
+      # PGLite (test/rust-engine-differential.test.ts), then every parity file with the Rust
+      # arm added (GBRAIN_TEST_RUST_ARM=1). The addon is required here, so a missing build fails the step
+      # instead of skipping. Each file runs in its own Bun process, as the parity suite does elsewhere.
+      - name: Rust engine store tests and the parity suite's Rust arm
+        shell: bash
+        env:
+          GBRAIN_TEST_RUST_ADDON_REQUIRED: '1'
+          GBRAIN_TEST_RUST_ARM: '1'
+        run: |
+          set -euo pipefail
+          bun test --timeout=60000 test/rust-engine-store.test.ts test/rust-engine-shell.test.ts test/rust-engine-differential.test.ts
+          for file in test/engine-parity/*.test.ts; do
+            bun test --timeout=60000 "$file"
+          done
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: gbrain-engine-addon-${{ matrix.target }}
