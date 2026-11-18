@@ -2,8 +2,8 @@
 //! `readJobInsight` (engine-sql/jobs-insight.ts): who submitted each job, how many waiting jobs are
 //! ahead of it, which active jobs hold the slots of its queue, which live children a parent waits
 //! for, which live lease a waiting job is blocked by, and the tokens of completed children another
-//! owner submitted. The spend tree (`mcp_spend_reservations`) is not here: the store keeps no spend
-//! rows.
+//! owner submitted. The spend tree (`mcp_spend_reservations`) is not here: it is the separate member
+//! `readJobSpendTree` (`spend.rs`).
 
 use super::*;
 
