@@ -388,7 +388,7 @@ describe('a CLI write on a Rust brain whose owner is gbrain serve', () => {
 });
 
 describe('a Rust owner whose engine does not report persistence_journal', () => {
-  // The Rust engine shell is the owner: kind 'rust' and no capabilities, as a real Rust owner is today.
+  // The Rust engine shell is the owner: kind 'rust', with no store open and without persistence_journal.
   const addon = { target: 'linux-x64-glibc', engine_abi: 1 } as never;
   let dir: string;
   let db: string;
@@ -445,10 +445,7 @@ describe('a Rust owner whose engine does not report persistence_journal', () => 
     try {
       const calls: Array<[string, (e: BrainEngine) => Promise<unknown>]> = [
         ['executeRaw', e => e.executeRaw('SELECT 1')],
-        ['getPage', e => e.getPage('notes/a')],
-        ['putPage', e => e.putPage('notes/a', { type: 'note', title: 'A', compiled_truth: 'body' })],
         ['transaction', e => e.transaction(async () => null)],
-        ['searchKeyword', e => e.searchKeyword('body', { limit: 5 })],
       ];
       for (const [member, call] of calls) {
         const started = Date.now();
@@ -461,6 +458,26 @@ describe('a Rust owner whose engine does not report persistence_journal', () => 
       expect((await engine.executeRaw('SELECT 1').then(() => null, e => e) as OperationError).reason).toBe('raw_sql');
       expect(asked).toBe(0);
       expect(ownerServer.stats()).toMatchObject({ active: 0, queued: 0 });
+    } finally { close(); }
+  });
+
+  test('a member the Rust store serves is sent to the owner, which answers as it does in process', async () => {
+    const { engine, close } = await clientOf(ownerSocketPath(db));
+    const before = asked;
+    try {
+      const calls: Array<[string, (e: BrainEngine) => Promise<unknown>]> = [
+        ['getPage', e => e.getPage('notes/a')],
+        ['putPage', e => e.putPage('notes/a', { type: 'note', title: 'A', compiled_truth: 'body' })],
+        ['searchKeyword', e => e.searchKeyword('body', { limit: 5 })],
+      ];
+      for (const [member, call] of calls) {
+        const remote = await call(engine).then(() => null, e => e);
+        const local = await (RustEngine.prototype as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>)[member]!.call(rust).then(() => null, e => e);
+        // The owner in this test has no store open, so it answers engine_closed, the same as the engine in process.
+        expect((remote as OperationError).code).toBe('engine_closed');
+        expect(JSON.stringify(errorShape(remote))).toBe(JSON.stringify(errorShape(local)));
+      }
+      expect(asked - before).toBe(calls.length);
     } finally { close(); }
   });
 });

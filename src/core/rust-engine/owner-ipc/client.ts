@@ -21,6 +21,7 @@ import { prepareLocalIpcPath } from '../../context/ipc-path.ts';
 import type { Capability } from '../../engine-capabilities.ts';
 import { capabilityMissing } from '../errors.ts';
 import { RUST_ENGINE_MEMBERS } from '../members.ts';
+import { STORE_MEMBERS } from '../store-members/index.ts';
 import { decodeError, decodeValue, encodeValue, OwnerIpcEncodeError, type Wire } from './codec.ts';
 import {
   OWNER_IPC_MAX_FRAME_BYTES, OWNER_IPC_VERSION, frameLine, ownerSocketPath, readFrames, type OwnerHello,
@@ -231,11 +232,13 @@ export function rustOwnerServesPersistence(capabilities: Iterable<string> | unde
 /**
  * The capability a member needs on a Rust owner that does not report it, or null when the call may be sent. Such a
  * member is refused here with the error the Rust engine gives in process (rust-engine.ts), so the client never asks
- * an owner for what it said it cannot do (executeRaw with no `raw_sql`). An owner of another kind (tests host PGLite)
- * is asked as before.
+ * an owner for what it said it cannot do (executeRaw with no `raw_sql`). A member the Rust store serves
+ * (store-members/index.ts) is always sent, because the owner runs it even when the rest of its capability class still
+ * refuses. An owner of another kind (tests host PGLite) is asked as before.
  */
 function missingOnRustOwner(hello: { kind: string; capabilities: readonly string[] }, member: string): Capability | null {
   if (hello.kind !== 'rust') return null;
+  if (member in STORE_MEMBERS) return null;
   const cls = (RUST_ENGINE_MEMBERS as Record<string, string>)[member];
   if (cls === undefined || cls === 'implemented') return null;
   return hello.capabilities.includes(cls) ? null : cls as Capability;
