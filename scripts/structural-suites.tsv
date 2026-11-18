@@ -4,6 +4,7 @@
 # Columns: file	suite	cases	detector
 test/access-folder-scoped-role.test.ts	(file-level)	8	readFileSync
 test/agent-install.test.ts	(file-level)	10	readFileSync
+test/agent-job-surface-9669.test.ts	agent jobs keep their submitter's tool surface (${kind}, repo-less)	6	exec-scan
 test/agent-journey-upgrade.serial.test.ts	(file-level)	13	readFileSync
 test/agent-register.test.ts	PGLite integration (pre-flight → tx → audit → exchange)	3	readFileSync
 test/agent-register.test.ts	resolvePreset	7	readFileSync
@@ -372,7 +373,7 @@ test/scripts/pregate-remote-gate.test.ts	pregate-remote-gate.sh --list	4	readFil
 test/scripts/pregate-remote-gate.test.ts	reuse of GitHub full runs on the identical tree	9	readFileSync
 test/scripts/pregate-remote-gate.test.ts	ship_lanes_from (/ship lanes carried from CI, docs/ci-event-parity.md#ship-lanes)	3	readFileSync
 test/scripts/promote-stable.test.ts	promote-stable.yml	2	readFileSync
-test/scripts/regen-all.test.ts	regen:all	7	readFileSync
+test/scripts/regen-all.test.ts	regen:all	8	readFileSync
 test/scripts/release-restamp.test.ts	release-restamp --stamp-only	2	readFileSync
 test/scripts/release-restamp.test.ts	release:restamp end to end	16	readFileSync
 test/scripts/release-restamp.test.ts	release:unstamp and merge: direct	7	readFileSync

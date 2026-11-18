@@ -6,7 +6,7 @@
  * that has held owner-only data it also names each database login that reads sources but cannot read and add marks, with
  * the GRANT and CREATE POLICY statements the operator runs (tell_user_to_run), the row-security mark a login whose reads
  * row-level security limits leaves behind, and each login that reads owner-only lineage closed because it cannot read every
- * row of a lineage table (v325), with the statements that would open its reads (an operator choice, never automatic).
+ * row of a lineage table (v327), with the statements that would open its reads (an operator choice, never automatic).
  * Read-only.
  */
 

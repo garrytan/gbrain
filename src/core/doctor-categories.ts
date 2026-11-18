@@ -118,6 +118,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'access_members_read_lineage',
   // GBRA-108 design 1: labelled-only members (doctor/checks/access-labelled-only.ts).
   'access_labelled_only_members',
+  // GBRA-582 item 9: pages no enabled member reads (doctor/checks/access-pages-read-by-nobody.ts).
+  'access_pages_read_by_nobody',
   // GST-1158 F3: attest credentials that read a shared-scope source as the person (doctor/checks/attest-read-access.ts).
   'attest_read_shared_scope',
   // GBRA-504: guest sources, their writers and the owner credentials that read them (doctor/checks/guest-source.ts).

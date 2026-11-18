@@ -20,7 +20,7 @@ import { OWNER_ONLY_LINEAGE_FN, OWNER_ONLY_READ_MODE_FN } from '../access/owner-
 //   closed  another lineage table is not complete, or the unguarded or row-security mark is set: the same closed rows
 //           (a source row hidden from the login included), plus the exact walk, which only adds;
 //   exact   the walk alone.
-// gbrain_owner_only_lineage(table, id, mode) applies it; reads from v325 pass the mode as an InitPlan, and the
+// gbrain_owner_only_lineage(table, id, mode) applies it; reads from v327 pass the mode as an InitPlan, and the
 // two-argument form (reads that recorded v320 to v322) computes it per call. A missing or unknown mode counts as all.
 // Plpgsql keeps each table read in its own statement, so a login without a grant on a table never plans a read of it.
 //
@@ -32,8 +32,8 @@ const LINEAGE_TABLES = ['sources', 'facts', 'derivation_inputs', 'links', 'pages
 const openSourceMissing = (alias: string) => `NOT EXISTS (SELECT 1 FROM sources s WHERE s.id = ${alias}.source_id AND NOT coalesce((${ownerOnlySource('s')}), false))`;
 const complete = (table: string) => `gbrain_owner_only_reads_complete('public.${table}', 'r')`;
 
-export const v325: Migration = {
-  version: 325,
+export const v327: Migration = {
+  version: 327,
   name: 'owner_only_reads_complete',
   idempotent: true,
   sql: `

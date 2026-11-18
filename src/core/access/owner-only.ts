@@ -88,10 +88,10 @@ export async function sourceIsOwnerOnly(engine: Pick<BrainEngine, 'executeRaw'>,
 export const OWNER_ONLY_LINEAGE_FN = 'gbrain_owner_only_lineage';
 /** The schema version (migration v320) that creates it; a literal so a read never loads a migration module. */
 export const OWNER_ONLY_LINEAGE_SINCE = 320;
-/** The read-time function (schema migration v325) that answers once per statement how this login reads owner-only lineage. */
+/** The read-time function (schema migration v327) that answers once per statement how this login reads owner-only lineage. */
 export const OWNER_ONLY_READ_MODE_FN = 'gbrain_owner_only_read_mode';
-/** The schema version (migration v325) that creates it and the three-argument lineage function. */
-export const OWNER_ONLY_READ_MODE_SINCE = 325;
+/** The schema version (migration v327) that creates it and the three-argument lineage function. */
+export const OWNER_ONLY_READ_MODE_SINCE = 327;
 /** The comment on owner_only_marks (v322) that records, once and for good, that the brain has held owner-only data. */
 export const OWNER_ONLY_HELD = 'gbrain:owner_only_held (GST-3032): this brain has held owner-only data, so owner-only lineage stays guarded';
 
@@ -105,7 +105,7 @@ const CLOSED_SQL = `(${ANY_OWNER_ONLY_SQL} OR EXISTS (SELECT 1 FROM pg_catalog.p
 
 /**
  * Which form of the owner-only test a read emits, by its schema version. `mode` at or above OWNER_ONLY_READ_MODE_SINCE: the
- * v325 function, given the login's read mode once per statement as an InitPlan. `fn` from OWNER_ONLY_LINEAGE_SINCE: the
+ * v327 function, given the login's read mode once per statement as an InitPlan. `fn` from OWNER_ONLY_LINEAGE_SINCE: the
  * two-argument function. Both sit behind the guard, one Result node that keeps the test from running on a brain that never
  * held owner-only data. `closed` below v320 or when the version is unknown: the functions may not exist, so on a brain
  * that holds an owner-only source or has held owner-only data every row counts as owner-only (fail closed); a brain

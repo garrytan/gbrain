@@ -6,6 +6,8 @@
       "access_group_members.access_group_members_pkey": "p PRIMARY KEY (group_id, member_id)",
       "access_groups.access_groups_id_check": "c CHECK ((id ~ '^[a-z0-9][a-z0-9._-]{0,63}$'::text))",
       "access_groups.access_groups_pkey": "p PRIMARY KEY (id)",
+      "access_handovers.access_handovers_pkey": "p PRIMARY KEY (id)",
+      "access_handovers.access_handovers_state_check": "c CHECK ((state = ANY (ARRAY['applying'::text, 'publishing'::text, 'applied'::text, 'partial'::text, 'undone'::text])))",
       "access_member_links.access_member_links_external_id_check": "c CHECK (((length(external_id) >= 1) AND (length(external_id) <= 256) AND (external_id ~ '^[!-~]+$'::text)))",
       "access_member_links.access_member_links_member_id_fkey": "f FOREIGN KEY (member_id) REFERENCES access_members(id) ON DELETE CASCADE",
       "access_member_links.access_member_links_pkey": "p PRIMARY KEY (system, external_id)",
@@ -120,6 +122,9 @@
       "entity_identities.entity_identities_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE",
       "entity_identities.entity_identities_page_uniq": "u UNIQUE (source_id, page_id)",
       "entity_identities.entity_identities_pkey": "p PRIMARY KEY (id)",
+      "entity_identity_reviews.entity_identity_reviews_origin_check": "c CHECK ((origin = ANY (ARRAY['database'::text, 'git'::text])))",
+      "entity_identity_reviews.entity_identity_reviews_pkey": "p PRIMARY KEY (decision_id)",
+      "entity_identity_reviews.entity_identity_reviews_verdict_check": "c CHECK ((verdict = ANY (ARRAY['same'::text, 'different'::text])))",
       "eval_candidates.eval_candidates_detail_check": "c CHECK (((detail IS NULL) OR (detail = ANY (ARRAY['low'::text, 'medium'::text, 'high'::text]))))",
       "eval_candidates.eval_candidates_detail_resolved_check": "c CHECK (((detail_resolved IS NULL) OR (detail_resolved = ANY (ARRAY['low'::text, 'medium'::text, 'high'::text]))))",
       "eval_candidates.eval_candidates_pkey": "p PRIMARY KEY (id)",
@@ -708,6 +713,9 @@
       "access_groups": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
+      "access_handovers": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "access_member_links": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -844,6 +852,9 @@
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "entity_identities": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "entity_identity_reviews": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "eval_candidates": [
@@ -1277,6 +1288,9 @@
       "access_group_members_member_idx": "CREATE INDEX access_group_members_member_idx ON public.access_group_members USING btree (member_id)",
       "access_group_members_pkey": "CREATE UNIQUE INDEX access_group_members_pkey ON public.access_group_members USING btree (group_id, member_id)",
       "access_groups_pkey": "CREATE UNIQUE INDEX access_groups_pkey ON public.access_groups USING btree (id)",
+      "access_handovers_member_idx": "CREATE INDEX access_handovers_member_idx ON public.access_handovers USING btree (member_id, created_at DESC)",
+      "access_handovers_pkey": "CREATE UNIQUE INDEX access_handovers_pkey ON public.access_handovers USING btree (id)",
+      "access_handovers_plan_idx": "CREATE UNIQUE INDEX access_handovers_plan_idx ON public.access_handovers USING btree (plan_hash)",
       "access_member_links_member_idx": "CREATE INDEX access_member_links_member_idx ON public.access_member_links USING btree (member_id)",
       "access_member_links_pkey": "CREATE UNIQUE INDEX access_member_links_pkey ON public.access_member_links USING btree (system, external_id)",
       "access_member_sources_pkey": "CREATE UNIQUE INDEX access_member_sources_pkey ON public.access_member_sources USING btree (member_id, source_id)",
@@ -1380,6 +1394,8 @@
       "entity_identities_entity_idx": "CREATE INDEX entity_identities_entity_idx ON public.entity_identities USING btree (entity_id)",
       "entity_identities_page_uniq": "CREATE UNIQUE INDEX entity_identities_page_uniq ON public.entity_identities USING btree (source_id, page_id)",
       "entity_identities_pkey": "CREATE UNIQUE INDEX entity_identities_pkey ON public.entity_identities USING btree (id)",
+      "entity_identity_reviews_entity_idx": "CREATE INDEX entity_identity_reviews_entity_idx ON public.entity_identity_reviews USING btree (entity_id) WHERE (entity_id IS NOT NULL)",
+      "entity_identity_reviews_pkey": "CREATE UNIQUE INDEX entity_identity_reviews_pkey ON public.entity_identity_reviews USING btree (decision_id)",
       "eval_candidates_pkey": "CREATE UNIQUE INDEX eval_candidates_pkey ON public.eval_candidates USING btree (id)",
       "eval_capture_failures_pkey": "CREATE UNIQUE INDEX eval_capture_failures_pkey ON public.eval_capture_failures USING btree (id)",
       "eval_contradictions_cache_expires_idx": "CREATE INDEX eval_contradictions_cache_expires_idx ON public.eval_contradictions_cache USING btree (expires_at)",
@@ -1900,6 +1916,23 @@
         "columns": [
           "1 id text/text NOT NULL",
           "2 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "access_handovers": {
+        "columns": [
+          "1 id text/text NOT NULL",
+          "2 member_id text/text NOT NULL",
+          "3 owner_id text/text NULL",
+          "4 plan_hash text/text NOT NULL",
+          "5 choices jsonb/jsonb NOT NULL DEFAULT '{}'::jsonb",
+          "6 items jsonb/jsonb NOT NULL DEFAULT '[]'::jsonb",
+          "7 commits ARRAY/_text NOT NULL DEFAULT '{}'::text[]",
+          "8 state text/text NOT NULL",
+          "9 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "10 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "11 undone_at timestamp with time zone/timestamptz NULL",
+          "12 undo_of text/text NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
@@ -2638,6 +2671,23 @@
           "8 canonical boolean/bool NOT NULL DEFAULT false"
         ],
         "flags": "relkind=r rls=false force_rls=false"
+      },
+      "entity_identity_reviews": {
+        "columns": [
+          "1 decision_id text/text NOT NULL",
+          "2 verdict text/text NOT NULL",
+          "3 members jsonb/jsonb NOT NULL",
+          "4 group_id text/text NULL",
+          "5 entity_id text/text NULL",
+          "6 canonical_source_id text/text NULL",
+          "7 canonical_slug text/text NULL",
+          "8 decided_by text/text NOT NULL",
+          "9 decided_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "10 origin text/text NOT NULL",
+          "11 home_source_id text/text NULL",
+          "12 git_blob text/text NULL"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
       },
       "eval_candidates": {
         "columns": [
