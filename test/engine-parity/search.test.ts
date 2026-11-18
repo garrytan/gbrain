@@ -540,4 +540,27 @@ describe('engine parity: search', () => {
       return { sealed, reput };
     },
   );
+
+  parityTest(
+    'keyword search marks a page stale on every arm when a timeline entry is newer than the page',
+    { methods: ['searchKeyword', 'searchKeywordChunks', 'searchKeywordPages'] },
+    async (engine) => {
+      for (const slug of ['notes/otter-fresh', 'notes/otter-stale']) {
+        const page = { type: 'note' as const, title: slug, compiled_truth: 'otter colony survey', timeline: '' };
+        await seedPage(engine, { slug, input: page, chunks: [chunk(0, 'otter colony survey')] });
+      }
+      // The entry's created_at must be later than the page's updated_at.
+      await new Promise((r) => setTimeout(r, 5));
+      await engine.addTimelineEntry('notes/otter-stale', { date: '2026-01-02', summary: 'otter count', detail: '' });
+      const view = (rows: SearchResult[]) => sorted(rows.map((r) => `${r.slug} ${r.stale === true}`));
+      const out = {
+        keyword: view(await engine.searchKeyword('otter colony', { limit: 10 })),
+        chunks: view(await engine.searchKeywordChunks('otter colony', { limit: 10 })),
+        pages: view(await engine.searchKeywordPages('otter colony', undefined, { limit: 10 })),
+      };
+      const expected = ['notes/otter-fresh false', 'notes/otter-stale true'];
+      expect(out).toEqual({ keyword: expected, chunks: expected, pages: expected });
+      return out;
+    },
+  );
 });
