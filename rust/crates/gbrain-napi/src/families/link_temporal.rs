@@ -229,6 +229,15 @@ impl Brain {
         })
     }
 
+    /// `readProjectionReadinessGeneration`: the generation the probe's cached answer depends on.
+    #[napi]
+    pub fn read_projection_readiness_generation<'env>(
+        &self,
+        env: &'env Env,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.projection_readiness_generation())
+    }
+
     /// `readProjectionReadiness`: a coverage scope: `{ pending, by_design }`.
     #[napi]
     pub fn read_projection_readiness<'env>(

@@ -37,6 +37,8 @@ import type { TimelineDetailRefresh, TimelineRowRemoval } from './engine-sql/tim
 import type { TakeFenceRow } from './engine-sql/takes.ts';
 import type { FactPreimage, FenceProjectionTarget } from './engine-sql/facts.ts';
 import type { FenceFactRow, FenceRowsTarget } from './engine-sql/trust-fence.ts';
+import type { TrustTable } from './trust/schema.ts';
+import type { NewTrustProposal, TrustProposalFilter, TrustProposalRow, TrustProposalStatus, TrustProposalTransition } from './engine-sql/trust-proposals.ts';
 import type { GraduationGateRow, ManagedRootBindingRow, PersistenceTable, RetiredDeactivationRow } from './engine-sql/connect-gate.ts';
 import type { ImportedPageSeal, LivePageBodyRow, OriginClaimRow, PageIngestStamp, PageOriginRow, PageOriginTarget } from './engine-sql/write-guards.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
@@ -3000,6 +3002,22 @@ export interface BrainEngine {
    * fence still asks to widen, or opened by `gbrain repair open-facts`. Each row carries its stored `trust_tier`.
    */
   listFenceFactRows(target: FenceRowsTarget): Promise<FenceFactRow[]>;
+  /**
+   * Trust decisions (engine-sql/trust-proposals.ts): inserts a pending proposal, or returns the pending one already recorded
+   * for the same (action, target, related) with `created: false`. The proposer principal and request come from the
+   * transaction's attribution settings.
+   */
+  insertTrustProposal(input: NewTrustProposal): Promise<{ id: number; created: boolean }>;
+  /** One trust proposal by id, or null; `lock` takes it `FOR UPDATE` for the decision that follows. */
+  getTrustProposal(id: number, lock?: boolean): Promise<TrustProposalRow | null>;
+  /** Trust proposals by status (`pending` by default; `all`), source, action and creation time, oldest first (500 by default, at most 5000). */
+  listTrustProposals(filter?: TrustProposalFilter): Promise<TrustProposalRow[]>;
+  /** The pending trust proposals naming a row as target or related, by id. */
+  pendingTrustProposalsFor(table: TrustTable, id: number): Promise<TrustProposalRow[]>;
+  /** Replaces a pending trust proposal's after state; a decided one is left alone. */
+  updatePendingTrustProposalAfter(id: number, after: Record<string, unknown>): Promise<void>;
+  /** Compare-and-set on a trust proposal's status, recording an after state and the decider; false when it was not in `from`. */
+  transitionTrustProposal(id: number, from: TrustProposalStatus, to: TrustProposalStatus, opts?: TrustProposalTransition): Promise<boolean>;
 
   /**
    * v0.35.5 — narrow UPDATE of `pages.compiled_truth`, `pages.timeline`, and

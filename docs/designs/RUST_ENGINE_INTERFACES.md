@@ -1597,6 +1597,8 @@ Trust tiers, the write gate, trust review, fact withdrawal and the belief ledger
   - `t 0x06 <page id BE8>`: a gate receipt; `t 0x07 <hold id BE8>`: a gate hold.
   - `t 0x08 <fact id BE8>`: a withdrawal; `t 0x09 ...`: fact and take purges; `t 0x0a ...`: review queue rows.
   - `t 0x10` to `t 0x14`: belief events, lifetimes, commit marks, retier manifest and redactions.
+  - Built so far (rust/docs/store/trust.md is the record of the bytes): `t 0x01` fact withdrawals, `t 0x02` to
+    `t 0x05` write gate receipts and holds, `t 0x06` to `t 0x08` trust proposals and their pending and by-row indexes.
 - **Transaction rules:** a tier change and its tier index change in one write. `lowerPageTrustTiers` and
   `relowerClaimedRows` read the current tier and write the lower one in the same write, so a concurrent raise is not
   lost. `insertFactWithdrawal` checks for an existing withdrawal and writes in one write (PGLite's unique key gives

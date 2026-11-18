@@ -2,8 +2,9 @@
 //! and the belief ledger.
 //!
 //! Built: [`stamp`] (the trust-tier trigger rules as one pure function, for the writers of pages,
-//! facts, takes and timeline entries to call), [`withdrawals`] (the `fact_withdrawals` ledger) and
-//! [`write_gate`] (the write gate's `write_gate_receipts` and `write_gate_holds`).
+//! facts, takes and timeline entries to call), [`withdrawals`] (the `fact_withdrawals` ledger),
+//! [`write_gate`] (the write gate's `write_gate_receipts` and `write_gate_holds`) and [`proposals`]
+//! (the `trust_proposals` decision queue).
 //! Everything else still reaches its tables through `executeRaw`, which the Rust engine refuses.
 //! See rust/docs/store/trust.md.
 //!
@@ -15,19 +16,23 @@
 //!   detector_version` -> its id ([`write_gate`]).
 //! - `t 0x04 id` -> a write gate hold; `t 0x05 source \0 slug \0 fingerprint \0
 //!   detector_version` -> its id ([`write_gate`]).
+//! - `t 0x06 id` -> a trust proposal; `t 0x07 action \0 target_table \0 target_id \0
+//!   related_table \0 related_id` -> the id of the pending one; `t 0x08 table \0 row_id
+//!   proposal_id` -> empty, a proposal that names the row ([`proposals`]).
 //!
 //! Open to build now; see docs/designs/RUST_ENGINE_INTERFACES.md ("trust").
 
-// Crate-only until the writers of pages and facts call `stamp`; the interfaces session wires
-// those calls. The allows go when the first caller lands.
+// Crate-only. The facts writer (`facts::write_fact`) calls `stamp`; the pages, takes and timeline
+// writers do not yet, so their parts of the module are still unused.
 #[allow(dead_code)]
 mod stamp;
 
 mod fingerprint;
+pub mod proposals;
 pub mod withdrawals;
 pub mod write_gate;
 
-#[allow(unused_imports)]
+#[allow(unused_imports)] // the page parts wait for the pages writer
 pub(crate) use stamp::{
     OWNER_TIER_FLOOR, OriginStamp, StampRow, Stamped, TRUST_EPHEMERAL_FRONTMATTER_KEYS,
     TRUST_RAISE_REFUSED, TrustTable, TrustTier, WriteTrust, page_frontmatter_content,
@@ -39,7 +44,8 @@ pub(crate) fn remove_source_rows(
     tx: &mut dyn crate::kv::KvWrite,
     source_id: &str,
 ) -> crate::Result<()> {
-    withdrawals::remove_source_rows(tx, source_id)
+    withdrawals::remove_source_rows(tx, source_id)?;
+    proposals::remove_source_rows(tx, source_id)
 }
 
 /// Adds this family's `getPage` columns to a page (`page_columns::add_page_columns`), such as the

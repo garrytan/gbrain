@@ -2,7 +2,7 @@
 //! src/core/engine-sql/retrieval-coverage.ts that read unsealed pages. `countPendingProjectionPages`
 //! counts the pages in a read scope whose text projection waits, `projectionRebuildProgress` reports an
 //! upgrade's index rebuild, and `readProjectionReadiness` is the readiness probe's one statement
-//! (search/projection-readiness.ts).
+//! (search/projection-readiness.ts), cached under `readProjectionReadinessGeneration`.
 //!
 //! The scope is `scopeFilter`: the source filter, the private-page policy, the live test of
 //! `pageReadFilter` (not soft-deleted, not quarantined, source present and not archived), the page
@@ -321,6 +321,13 @@ impl Store {
             total,
             pages_per_second: (seconds > 0.0 && done > 0).then(|| done as f64 / seconds),
         }))
+    }
+
+    /// `readProjectionReadinessGeneration`: the brain and its commit sequence. Every commit advances the
+    /// sequence, so a cached readiness answer is reused only while nothing was written since it was read.
+    /// A snapshot never sees a commit in flight, so the generation is never null.
+    pub fn projection_readiness_generation(&self) -> Result<String> {
+        Ok(format!("{}/{}", self.brain_id(), self.commit_version()?))
     }
 
     /// `readProjectionReadiness`: whether unsealed pages in scope need work, and when none do,

@@ -7,21 +7,23 @@
 //! fence: a JSON array of `{ row_num, fact, visibility }` cells (PGLite's `jsonb_to_recordset`
 //! text). A cell field that is absent or null equals nothing, as SQL `=` does.
 //!
-//! Context: PGLite reads three transaction settings inside these statements: the writer's tier
-//! (`gbrain.write_trust_tier`), the ids `gbrain repair open-facts` opens (`gbrain.write_open_facts`)
-//! and the widening proposals in `trust_proposals`. [`FenceContext`] carries the first two; the napi
-//! members take it from the store's write trust context (`Store::fence_context`, `write_trust.rs`).
-//! The default is no writer (read as `unknown`) and no opened ids, which is what a PGLite
-//! transaction that declares none gives. There is no `trust_proposals` table in the store, so no
-//! row is ever held. A stored row has no tier column yet and reads as `unknown`, so only a writer
-//! below `unknown` finds rows above it. See rust/docs/store/facts.md, "The fence guard's reads".
+//! Context: PGLite reads two transaction settings inside these statements: the writer's tier
+//! (`gbrain.write_trust_tier`) and the ids `gbrain repair open-facts` opens
+//! (`gbrain.write_open_facts`). [`FenceContext`] carries both; the napi members take it from the
+//! store's write trust context (`Store::fence_context`, `write_trust.rs`). The default is no writer
+//! (read as `unknown`) and no opened ids, which is what a PGLite transaction that declares none
+//! gives. Each row is compared at its stored tier (`trust_tier`, stamped by the facts writer), and
+//! the held arm reads the widening proposals of `trust_proposals` (`trust::proposals`). See
+//! rust/docs/store/facts.md, "The fence guard's reads".
 
 use super::{FactRecord, page_rows};
 use crate::Store;
 use crate::error::{INVALID_ARGUMENT, Result, StoreError};
+use crate::kv::KvRead;
 use crate::links::no_nul;
 use crate::timeline_queries::timestamptz_text;
 use crate::trust::TrustTier;
+use crate::trust::proposals::held_narrower;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -130,6 +132,15 @@ fn opened(row: &FactRecord, row_num: i32, cells: &[Cell], ctx: &FenceContext) ->
         && cells.iter().any(|c| c.holds(row, row_num, "world"))
 }
 
+/// The held arm: a row not at world that a widening proposal holds narrower
+/// (`trust::proposals::held_narrower`), while a cell still asks for world at its number and claim.
+fn held(read: &dyn KvRead, row: &FactRecord, row_num: i32, cells: &[Cell]) -> Result<bool> {
+    if row.visibility == "world" || !cells.iter().any(|c| c.holds(row, row_num, "world")) {
+        return Ok(false);
+    }
+    held_narrower(read, row.id)
+}
+
 /// `timestamptz` as `jsonb_build_object` writes it: `2026-06-18T09:00:00.5+00:00`.
 fn jsonb_time(micros: i64) -> String {
     let text = timestamptz_text(micros).replacen(' ', "T", 1);
@@ -185,9 +196,9 @@ impl Store {
 
     /// `listFenceFactRows({ sourceId, slug, incoming })`: the page's live fence rows, by row number,
     /// that the writer may not simply supersede: a row more trusted than the writer (`above`), held
-    /// narrower by a widening proposal (never, the store has none) or opened (`opened`). Rows the
-    /// incoming fence states as they are, and conversation-extractor rows no cell claims, are left
-    /// out. `trust_tier` is the stored tier, which the store does not keep yet: `unknown`.
+    /// narrower by a widening proposal while the incoming fence still asks for world at its number
+    /// and claim, or opened (`opened`). Rows the incoming fence states as they are, and
+    /// conversation-extractor rows no cell claims, are left out. `trust_tier` is the stored tier.
     pub fn list_fence_fact_rows(
         &self,
         target: &FenceTarget,
@@ -195,29 +206,33 @@ impl Store {
     ) -> Result<Vec<Value>> {
         let cells = cells(&target.incoming)?;
         let writer = ctx.writer_rank();
-        let stored = TrustTier::stored(None);
-        Ok(fence_rows(self, target)?
-            .iter()
-            .filter(|(_, row)| row.expired_at_us.is_none())
-            .filter(|(n, row)| {
-                in_play(row, *n, &cells) && !cells.iter().any(|c| c.holds(row, *n, &row.visibility))
-            })
-            .filter_map(|(n, row)| {
-                let above = stored.rank() > writer;
-                let is_opened = opened(row, *n, &cells, ctx);
-                (above || is_opened).then(|| {
-                    json!({
-                        "id": row.id,
-                        "row_num": n,
-                        "fact": row.fact,
-                        "visibility": row.visibility,
-                        "trust_tier": stored.as_str(),
-                        "above": above,
-                        "opened": is_opened,
-                    })
-                })
-            })
-            .collect())
+        let rows = fence_rows(self, target)?;
+        let read = self.read()?;
+        let mut out = Vec::new();
+        for (n, row) in &rows {
+            if row.expired_at_us.is_some()
+                || !in_play(row, *n, &cells)
+                || cells.iter().any(|c| c.holds(row, *n, &row.visibility))
+            {
+                continue;
+            }
+            let stored = row.tier();
+            let above = stored.rank() > writer;
+            let is_opened = opened(row, *n, &cells, ctx);
+            if !(above || is_opened || held(&*read, row, *n, &cells)?) {
+                continue;
+            }
+            out.push(json!({
+                "id": row.id,
+                "row_num": n,
+                "fact": row.fact,
+                "visibility": row.visibility,
+                "trust_tier": stored.as_str(),
+                "above": above,
+                "opened": is_opened,
+            }));
+        }
+        Ok(out)
     }
 }
 

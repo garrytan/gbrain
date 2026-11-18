@@ -9,7 +9,9 @@
  *    count, its could-affect and image counts, the exact top hit's
  *    `top_counted`, the rebuild progress and the readiness status are the same
  *    for the same pages and the same read scope: sources, privacy, kind, types,
- *    excluded slug prefixes, soft-deleted, quarantined and archived pages.
+ *    excluded slug prefixes, soft-deleted, quarantined and archived pages. A
+ *    count that reaches the cap refuses on Rust, and the probe's cached
+ *    answer lasts until the next write on every arm.
  *  - Regression: an engine whose count drifts tells a search caller that a
  *    complete answer is incomplete (or the reverse), and an engine whose probe
  *    drifts reports `ready` while pages wait for indexing. Before this lane the
@@ -236,6 +238,38 @@ describe('engine parity: retrieval coverage', () => {
         expect(steps).toEqual(['ready', 'ready', 'projection_pending', 'projection_pending', 'ready', 'projection_pending', 'ready']);
         return steps;
       });
+    },
+  );
+
+  parityTest(
+    'search/projection-readiness: with the cache on, a probe with no write since the last reuses its answer',
+    { methods: ['putPage', 'readProjectionReadinessGeneration', 'readProjectionReadiness'] },
+    async (engine) => {
+      __resetProjectionReadinessCacheForTests();
+      return withEnv({ [PROJECTION_READINESS_CACHE_ENV]: undefined }, async () => {
+        await engine.putPage('notes/a', page('A'));
+        const first = await probeProjectionReadiness(engine);
+        const again = await probeProjectionReadiness(engine);
+        await engine.putPage('notes/b', page('B'));
+        const afterWrite = await probeProjectionReadiness(engine);
+        const generation = await engine.readProjectionReadinessGeneration();
+        return { status: first.status, reused: again === first, rereadAfterWrite: afterWrite !== again, named: typeof generation === 'string' };
+      });
+    },
+  );
+
+  parityTest(
+    'search/retrieval-coverage: a count that reaches the cap reports the same could-affect, or refuses',
+    { methods: ['putPage', 'countPendingProjectionPages'] },
+    async (engine) => {
+      // Five matching pages written first, then a cap of pages that sort before them by slug. The SQL engines read the
+      // capped subset in their own scan order (PGLite and Postgres can disagree), so the store refuses a capped count.
+      for (let i = 0; i < 5; i++) await engine.putPage(`zeta/widget-${i}`, page(`Widget ${i}`));
+      for (let i = 0; i < 1000; i++) await engine.putPage(`alpha/other-${String(i).padStart(4, '0')}`, page('Other'));
+      const words = coverageRelevance([{ type: 'company' }], 'widget', undefined, new Set());
+      const capped = await countPendingProjections(engine, {}, words);
+      expect(capped?.capped).toBe(true);
+      return capped;
     },
   );
 
