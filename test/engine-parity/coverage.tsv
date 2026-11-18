@@ -409,7 +409,7 @@ listStoredTimelineRows	cli_reads_import	yes	1	no	yes	yes	serves
 filterPagesAtRevision	cli_reads_import	yes	1	no	yes	yes	serves
 lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	serves
 replaceWantedLinkRows	wanted_links	yes	6	no	yes	yes	serves
-recordSearchTelemetry	telemetry	yes	1	no	yes	yes	refuses:raw_sql
-readSearchStats	telemetry	yes	1	no	yes	yes	refuses:raw_sql
-readClientOpUsage	telemetry	yes	1	no	yes	yes	refuses:raw_sql
-readMcpRollupPrunedBefore	telemetry	yes	1	no	yes	yes	refuses:raw_sql
+recordSearchTelemetry	telemetry	yes	3	no	yes	yes	serves
+readSearchStats	telemetry	yes	3	no	yes	yes	serves
+readClientOpUsage	telemetry	yes	1	no	yes	yes	refuses:telemetry
+readMcpRollupPrunedBefore	telemetry	yes	1	no	yes	yes	refuses:telemetry

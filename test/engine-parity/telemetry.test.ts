@@ -189,4 +189,75 @@ describe('engine parity: telemetry', () => {
     expect(served).toEqual(['readSearchStats', 'recordSearchTelemetry']);
     expect(reported.has('telemetry')).toBe(false);
   });
+
+  parityTest(
+    'readSearchStats keeps a row dated on the cutoff, matches nothing on a null cutoff, and takes the earliest first_seen and latest last_seen as UTC text',
+    { methods: ['recordSearchTelemetry', 'readSearchStats'] },
+    async (engine) => {
+      const pause = () => new Promise((resolve) => setTimeout(resolve, 15));
+      const older = isoDay(-3);
+      const newer = isoDay(-1);
+      await engine.recordSearchTelemetry(bucket(older, 'balanced', 'entity', { count: 2 }));
+      await pause();
+      await engine.recordSearchTelemetry(bucket(newer, 'balanced', 'entity', { count: 5 }));
+      await pause();
+      await engine.recordSearchTelemetry(bucket(newer, 'balanced', 'entity', { count: 1 }));
+      const onCutoff = await engine.readSearchStats(older);
+      const newerOnly = await engine.readSearchStats(newer);
+      const nullCutoff = await engine.readSearchStats(null as unknown as string);
+      // Timestamp text is `YYYY-MM-DD HH:MM:SS[.fraction]+00`; compare instants in microseconds, never the text.
+      const micros = (text: string) => {
+        const m = /^(\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d)(?:\.(\d{1,6}))?\+00$/.exec(text);
+        expect(m).not.toBeNull();
+        return Date.parse(`${m![1]}T${m![2]}Z`) * 1000 + Number((m![3] ?? '').padEnd(6, '0'));
+      };
+      const [group] = onCutoff;
+      const [newRow] = newerOnly;
+      const result = {
+        counts: { onCutoff: onCutoff.map((r) => r.count), newerOnly: newerOnly.map((r) => r.count) },
+        nullCutoff,
+        newerRowUpdated: micros(newRow!.first_seen) < micros(newRow!.last_seen),
+        groupFirstIsOlderRow: micros(group!.first_seen) < micros(newRow!.first_seen),
+        groupLastIsNewerRow: micros(group!.last_seen) === micros(newRow!.last_seen),
+      };
+      expect(result).toEqual({
+        counts: { onCutoff: [8], newerOnly: [6] }, nullCutoff: [],
+        newerRowUpdated: true, groupFirstIsOlderRow: true, groupLastIsNewerRow: true,
+      });
+      return result;
+    },
+  );
+
+  parityTest(
+    'recordSearchTelemetry refuses a null column in column order and writes nothing',
+    { methods: ['recordSearchTelemetry', 'readSearchStats'] },
+    async (engine) => {
+      const today = isoDay(0);
+      const refusal = async (b: SearchTelemetryBucket) => {
+        try {
+          await engine.recordSearchTelemetry(b);
+          return null;
+        } catch (e) {
+          const message = (e as Error).message;
+          return { problem: (e as { problem?: string }).problem ?? null, column: /column "(\w+)"/.exec(message)?.[1] ?? null };
+        }
+      };
+      const nul = null as unknown as number;
+      const result = {
+        // sum_rank1_score comes before count_rank1 in the table, so it is named first.
+        scoreBeforeRank1: await refusal(bucket(today, 'balanced', 'entity', { sum_rank1_score: nul, count_rank1: nul })),
+        countBeforeScore: await refusal(bucket(today, 'balanced', 'entity', { count: nul, sum_rank1_score: nul })),
+        rank1High: await refusal(bucket(today, 'balanced', 'entity', { rank1_high: nul })),
+        written: await engine.readSearchStats(isoDay(-7)),
+      };
+      expect(result).toEqual({
+        scoreBeforeRank1: { problem: null, column: 'sum_rank1_score' },
+        countBeforeScore: { problem: null, column: 'count' },
+        rank1High: { problem: null, column: 'rank1_high' },
+        written: [],
+      });
+      return result;
+    },
+  );
 });
+
