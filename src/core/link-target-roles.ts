@@ -5,8 +5,9 @@
  *   - `works_at` needs an employer: never a person, a temporal or media page
  *     (meeting, calendar event, media, image, transcript), nor a document
  *     (conversation, email, source, note, inbox);
- *   - `founded` / `invested_in` never point at a temporal or media page
- *     (people found and invest together, so a person target keeps them).
+ *   - `founded` / `invested_in` / `advises` never point at a temporal or media
+ *     page nor a document (people found, invest and advise together, so a
+ *     person target keeps them).
  * With no target type, the slug's directory decides (`people/`, `meetings/`,
  * `calendar/`, `cal/`). Every other target is allowed, so pack-defined
  * organization types keep working.
@@ -22,10 +23,16 @@ export const NON_EMPLOYER_PREFIXES: readonly string[] = [
   ...TEMPORAL_PREFIXES, 'people/', 'conversations/', 'emails/', 'sources/', 'notes/', 'inbox/',
 ];
 
+const DOCUMENT_TYPES = ['conversation', 'email', 'source', 'note', 'inbox'];
+const DOCUMENT_PREFIXES = ['conversations/', 'emails/', 'sources/', 'notes/', 'inbox/'];
+
 export function targetTakesVerb(verb: string, targetSlug?: string, targetType?: string | null): boolean {
-  if (verb !== 'works_at' && verb !== 'founded' && verb !== 'invested_in') return true;
+  if (verb !== 'works_at' && verb !== 'founded' && verb !== 'invested_in' && verb !== 'advises') return true;
   const temporal = targetType ? TEMPORAL_OR_MEDIA_TYPES.has(targetType) : TEMPORAL_PREFIXES.some(p => targetSlug?.startsWith(p));
   if (temporal) return false;
-  if (verb !== 'works_at') return true;
+  if (verb !== 'works_at') {
+    // Documents can't hold a role either; a person target stays allowed.
+    return targetType ? !DOCUMENT_TYPES.includes(targetType) : !DOCUMENT_PREFIXES.some(p => targetSlug?.startsWith(p));
+  }
   return targetType ? !NON_EMPLOYER_TYPES.includes(targetType) : !NON_EMPLOYER_PREFIXES.some(p => targetSlug?.startsWith(p));
 }
