@@ -445,7 +445,8 @@ describe('a Rust owner whose engine does not report persistence_journal', () => 
     try {
       const calls: Array<[string, (e: BrainEngine) => Promise<unknown>]> = [
         ['executeRaw', e => e.executeRaw('SELECT 1')],
-        ['transaction', e => e.transaction(async () => null)],
+        // transaction is served in process now; a client refuses it with the owner-socket refusal (tested above).
+        ['getPageSealState', e => e.getPageSealState(1)],
       ];
       for (const [member, call] of calls) {
         const started = Date.now();

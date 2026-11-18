@@ -117,6 +117,9 @@ pub struct Store {
     #[allow(dead_code)] // the vector search family reads it
     pub(crate) vectors: vectors::VectorCache,
     info: StoreInfo,
+    /// The open transaction this store runs on (`transactions.rs`); `None` for the brain's own
+    /// store, whose writes each commit on their own.
+    pub(crate) bound: Option<Arc<transactions::Transaction>>,
 }
 
 pub(crate) fn get_json<T: DeserializeOwned>(read: &dyn KvRead, key: &[u8]) -> Result<Option<T>> {
@@ -204,7 +207,21 @@ impl Store {
                 schema_version,
                 created,
             },
+            bound: None,
         })
+    }
+
+    /// A store on the same brain whose reads and writes run inside `tx` (`transactions.rs`).
+    pub(crate) fn bound_to(&self, tx: Arc<transactions::Transaction>) -> Store {
+        Store {
+            kv: self.kv.clone(),
+            env: self.env.clone(),
+            // The cache holds committed snapshots only; a transaction reads its own uncommitted
+            // writes, so its store starts with an empty cache of its own.
+            vectors: vectors::VectorCache::default(),
+            info: self.info.clone(),
+            bound: Some(tx),
+        }
     }
 
     pub fn info(&self) -> &StoreInfo {
@@ -224,12 +241,22 @@ impl Store {
     /// reference to the underlying engine is dropped.
     pub fn close(self) {}
 
+    /// A consistent state to read: a snapshot, or the bound transaction's own view (its writes
+    /// included).
     pub(crate) fn read(&self) -> Result<Box<dyn KvRead>> {
+        if let Some(tx) = &self.bound {
+            return Ok(tx.reader());
+        }
         self.kv.snapshot()
     }
 
     /// Runs `f` in the write transaction and commits when it returns `Ok`. An `Err` rolls back.
+    /// On a store bound to a transaction, `f` is one statement of it: kept when it returns `Ok`,
+    /// dropped when it returns `Err`, committed with the transaction.
     pub(crate) fn write<T>(&self, f: impl FnOnce(&mut dyn KvWrite) -> Result<T>) -> Result<T> {
+        if let Some(tx) = &self.bound {
+            return tx.statement(f);
+        }
         let mut tx = self.kv.begin_write()?;
         let value = f(&mut *tx)?;
         tx.commit()?;
