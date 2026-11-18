@@ -6,6 +6,7 @@ import type { CapacityForecast } from '../../../core/persistence/capacity-foreca
 import { doctorCapacityForecast, forecastOrNull } from '../capacity-memo.ts';
 import { capacityVerify } from '../../../core/persistence/capacity-view.ts';
 import { BACKGROUND_PRODUCERS, readBackgroundPauseShare } from '../../../core/persistence/admission-origin.ts';
+import { readConfigValue } from '../../../core/config-values.ts';
 
 const VERIFY = 'gbrain doctor --only persistence_capacity --json';
 const DOCS = 'docs/guides/concurrent-writes.md#quota-near-exhaustion';
@@ -36,11 +37,11 @@ export async function checkPersistenceCapacity(engine: BrainEngine): Promise<Che
     const forecast: CapacityForecast | null = await doctorCapacityForecast(engine, { limits }).catch(forecastOrNull);
     const pause = await readBackgroundPauseShare(engine);
     const target = await readReceiptTargetBytes(engine);
-    const [retention] = await engine.executeRaw<{ value: string }>('SELECT value FROM config WHERE key=$1', [RECEIPT_RETENTION_KEY]);
+    const retention = await readConfigValue(engine, RECEIPT_RETENTION_KEY);
     const stored = Number(counters.find(row => row.key === 'brain')?.terminal_bytes ?? 0);
     const compactable = target > 0 && stored > target ? await readCompactableReceiptBytes(engine) : null;
     const housekeeping = { target_bytes: target, used_bytes: stored, compactable_bytes: compactable, over_target: compactable !== null && compactable > target,
-      explicit_retention_days: retention ? Number(retention.value) : null };
+      explicit_retention_days: retention !== undefined ? Number(retention) : null };
     const cumulative = capacityDiagnostics(counters, limits).filter(row => row.resource === 'lifetime_ids' || row.resource === 'terminal_bytes');
     const outstanding = [];
     for (const row of capacityDiagnostics(counters, limits)) {

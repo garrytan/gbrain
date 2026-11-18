@@ -25,6 +25,7 @@ import { opError, type OperationError } from '../ops/contract.ts';
 import type { Action } from '../agent-output.ts';
 import type { SqlEngine } from './model.ts';
 import { CAPACITY_VERIFY } from './capacity-verify.ts';
+import { readConfigValue } from '../config-values.ts';
 
 export type AdmissionOrigin = 'interactive' | 'background';
 export const ADMISSION_ORIGINS: readonly AdmissionOrigin[] = ['interactive', 'background'];
@@ -67,8 +68,7 @@ export function isAdmissionOrigin(value: unknown): value is AdmissionOrigin {
 
 /** The pause line as a share of each cumulative cap (0 < share <= 1); the setting is a percent (80), and a share (0.8) reads the same. */
 export async function readBackgroundPauseShare(engine: SqlEngine): Promise<number> {
-  const [row] = await engine.executeRaw<{ value: string }>('SELECT value FROM config WHERE key=$1', [BACKGROUND_PAUSE_KEY]);
-  return backgroundPauseShare(row?.value);
+  return backgroundPauseShare(await readConfigValue(engine, BACKGROUND_PAUSE_KEY));
 }
 
 /** The pause share a stored setting (undefined when unset) stands for. */
