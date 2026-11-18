@@ -671,6 +671,16 @@ final class Harness {
         #expect(h.messages.count == 1)
     }
 
+    @Test func adminIsServedOnlyOnLoopbackToLoopbackPeers() {
+        let h = Harness()
+        let (loopback, tailnet) = routers(h)
+        let admin = HTTPRequest(method: "POST", path: SendService.adminRoute, query: [:], headers: ["host": goodHost], body: Array(#"{"action":"status"}"#.utf8))
+        #expect(loopback.handle(admin, peer: loopbackPeer, port: testPort, requestId: "t").response.status == 200)
+        #expect(code(loopback.handle(admin, peer: strangerPeer, port: testPort, requestId: "t")) == "forbidden_source")
+        #expect(code(loopback.handle(admin, peer: sendPeer, port: testPort, requestId: "t")) == "forbidden_source")
+        #expect(code(tailnet.handle(admin, peer: sendPeer, port: testPort, requestId: "t")) == "not_found")
+    }
+
     @Test func aReadTokenCanNeverCarryTheSendScope() {
         let config = Config(port: 8792, tokens: [TokenEntry(name: "gbrain", verifier: Token.hexDigest(token), scopes: ["send:imessage"])])
         #expect(throws: ConfigError.self) { try config.validated() }
