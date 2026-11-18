@@ -40,6 +40,8 @@ import * as transactions from './transactions.ts';
 import * as relations from './relations.ts';
 import * as cliSources from './cli-sources.ts';
 import * as cliReadsImport from './cli-reads-import.ts';
+import * as cliReadsOps from './cli-reads-ops.ts';
+import * as cliReadsSearchPages from './cli-reads-search-pages.ts';
 import * as wantedLinks from './wanted-links.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
@@ -57,7 +59,7 @@ export const STORE_MEMBERS = {
   // Typed reads that replace raw SQL in CLI paths (rust/crates/gbrain-store/src/cli_reads/).
   ...cliSources,
   // Typed reads that CLI paths ran through executeRaw (docs/research/rust-cli-executeraw-map.md).
-  ...cliReadsImport,
+  ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

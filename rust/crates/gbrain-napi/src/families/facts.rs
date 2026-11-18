@@ -185,6 +185,22 @@ impl Brain {
         })
     }
 
+    /// `pageCollapseFacts(ids, bodyIds)`: resolves one `{ id, target, body_chars, body, lead }` row
+    /// per page found, by id.
+    #[napi]
+    pub fn page_collapse_facts<'env>(
+        &self,
+        env: &'env Env,
+        ids: Value,
+        body_ids: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let ids: Vec<i64> = required(ids, "pageCollapseFacts ids")?;
+            let body_ids: Vec<i64> = required(body_ids, "pageCollapseFacts bodyIds")?;
+            s.page_collapse_facts(&ids, &body_ids)
+        })
+    }
+
     /// `getFactsHealth(source_id)`: resolves the counts and the top entities.
     #[napi]
     pub fn get_facts_health<'env>(

@@ -1,7 +1,8 @@
 /**
  * Facts and their supersession chains (BrainEngine insertFact, insertFacts, deleteFactsForPage, expireFact,
  * listFactsByEntity, listFactsSince, listFactsKeyset, listFactsBySession, listSupersessions, countUnconsolidatedFacts,
- * findCandidateDuplicates, consolidateFact, findTrajectory, getFactsHealth, migrateFactsToCanonical).
+ * findCandidateDuplicates, consolidateFact, findTrajectory, getFactsHealth, migrateFactsToCanonical, listUnattributedFacts,
+ * pageCollapseFacts).
  *
  * Each member applies the defaults and clamps of src/core/engine-sql/facts.ts, then makes one store call. What the
  * store cannot answer exactly refuses with `engine_capability_missing`: a read eligibility policy, `excludePrivate` for a
@@ -211,6 +212,32 @@ export const listSupersessions: Member<'listSupersessions'> = async (brain, sour
     excludePrivate: factPolicy('listSupersessions', o.excludePrivate),
   }));
   return facts(rows);
+};
+
+/**
+ * `listUnattributedFacts` (engine-sql/cli-reads-ops.ts): active facts with no entity in `sourceIds`, less those of a
+ * soft-deleted page, newest id first. `excludePrivateProvenance` adds `privateProvenanceFilterUnderPolicy('facts')`,
+ * the policy the store reads (`factPolicy`). Rows come back as the SQL returns them: `created_at` is `timestamptz::text`.
+ */
+export const listUnattributedFacts: Member<'listUnattributedFacts'> = (brain, opts) => {
+  const o = takeOptions('listUnattributedFacts', opts, ['sourceIds', 'worldOnly', 'excludePrivateProvenance', 'limit', 'offset']) as typeof opts;
+  return storeCall({ member: 'listUnattributedFacts' }, () => brain.listUnattributedFacts({
+    sourceIds: o.sourceIds, worldOnly: o.worldOnly === true, limit: o.limit, offset: o.offset,
+    excludePrivate: factPolicy('listUnattributedFacts', o.excludePrivateProvenance === true),
+  }));
+};
+
+/**
+ * `pageCollapseFacts` (engine-sql/search-reads.ts): the collapse-stage reads of each page in `ids`, by id (the SQL has
+ * no ORDER BY). Both lists bind as `int[]`, so an id that is not a 32-bit integer refuses rather than guess at
+ * PGLite's cast error.
+ */
+export const pageCollapseFacts: Member<'pageCollapseFacts'> = async (brain, ids, bodyIds) => {
+  for (const id of [...ids, ...bodyIds]) {
+    if (!Number.isInteger(id) || Math.abs(id) > 2 ** 31 - 1) refuseMember('pageCollapseFacts', 'a page id that is not a 32-bit integer');
+  }
+  if (ids.length === 0) return [];
+  return storeCall({ member: 'pageCollapseFacts' }, () => brain.pageCollapseFacts(ids, bodyIds));
 };
 
 export const countUnconsolidatedFacts: Member<'countUnconsolidatedFacts'> = (brain, sourceId) =>
