@@ -711,6 +711,10 @@
       },
       {
         "category": "brain",
+        "name": "concept_stale_inputs"
+      },
+      {
+        "category": "brain",
         "name": "atom_fence_rows"
       },
       {
