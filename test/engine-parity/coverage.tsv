@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 559/559
+# covered: 564/564
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -47,6 +47,7 @@
 # raw_sql: 4/4
 # code_edges: 6/6
 # eval_capture: 5/5
+# calibration_profiles: 5/5
 # salience_enrich: 6/6
 # trust: 15/15
 # open_loops: 3/3
@@ -541,6 +542,11 @@ listEvalCandidates	eval_capture	yes	2	no	yes	yes	serves
 deleteEvalCandidatesBefore	eval_capture	yes	1	no	yes	yes	serves
 logEvalCaptureFailure	eval_capture	yes	1	no	yes	yes	serves
 listEvalCaptureFailures	eval_capture	yes	1	no	yes	yes	serves
+getLatestCalibrationProfile	calibration_profiles	yes	3	no	yes	yes	serves
+isCalibrationProfileUnchanged	calibration_profiles	yes	1	no	yes	yes	serves
+insertCalibrationProfile	calibration_profiles	yes	5	no	yes	yes	serves
+readVoiceGateHealth	calibration_profiles	yes	1	no	yes	yes	serves
+purgeCalibrationProfilesByWave	calibration_profiles	yes	1	no	yes	yes	serves
 countZeroWeightWithTakes	salience_enrich	yes	1	no	yes	yes	serves
 batchLoadEmotionalInputs	salience_enrich	yes	1	no	yes	yes	serves
 setEmotionalWeightBatch	salience_enrich	yes	6	yes	yes	yes	serves

@@ -75,6 +75,7 @@ const OOS = {
   openLoops: 'out-of-scope:open-loops (born in engine-sql/open-loops.ts; pinned by test/engine-parity/open-loops.test.ts)',
   minionJobs: 'out-of-scope:minion-jobs (born in engine-sql/jobs.ts and engine-sql/jobs-queue.ts; pinned by test/engine-parity/jobs.test.ts and jobs-queue.test.ts)',
   takesReads: 'out-of-scope:takes-reads (born in engine-sql/takes-reads.ts; pinned by test/engine-parity/takes.test.ts, code-eval-salience.test.ts and test/engine-sql-takes-reads.test.ts)',
+  calibrationProfiles: 'out-of-scope:calibration-profiles (decide family group B, born in engine-sql/calibration-profiles.ts; pinned by test/engine-parity/calibration-profiles.test.ts)',
 } as const;
 
 export const DOMAIN_OF: Record<string, string> = {
@@ -413,6 +414,12 @@ export const DOMAIN_OF: Record<string, string> = {
   'listTakeSupersessionCandidates': OOS.takesReads,
   'countZeroWeightWithTakes': OOS.takesReads,
   'hasCodeEdgesSymbol': OOS.takesReads,
+  // decide family, group B: calibration profiles
+  'getLatestCalibrationProfile': OOS.calibrationProfiles,
+  'isCalibrationProfileUnchanged': OOS.calibrationProfiles,
+  'insertCalibrationProfile': OOS.calibrationProfiles,
+  'readVoiceGateHealth': OOS.calibrationProfiles,
+  'purgeCalibrationProfilesByWave': OOS.calibrationProfiles,
   // cycle locks (retry/direct-pool transport differs per method; the lease statements are pinned by the parity cases)
   'acquireCycleLock': OOS.cycleLocks, 'refreshCycleLock': OOS.cycleLocks, 'releaseCycleLock': OOS.cycleLocks,
   'readCycleLocks': OOS.cycleLocks, 'deleteCycleLock': OOS.cycleLocks, 'deleteCycleLockIfStale': OOS.cycleLocks,
