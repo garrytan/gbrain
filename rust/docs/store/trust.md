@@ -94,8 +94,8 @@ through `cascade::remove_source_rows`).
 Rust guesses and gaps (1x parity):
 
 - `proposer_principal_kind`, `proposer_principal_id` and `write_request_id` read NULL. PGLite fills them from the
-  transaction's `gbrain.write_principal_kind`, `gbrain.write_principal_id` and `gbrain.write_request` settings, which
-  the store's write trust context does not carry yet.
+  transaction's `gbrain.write_principal_kind`, `gbrain.write_principal_id` and `gbrain.write_request` settings. The
+  store's write context carries them ([write_trust.md](write_trust.md)); the proposal writer does not read them yet.
 - A move back to `pending` that another pending proposal already holds refuses with `constraint_violation`, where
   Postgres raises a unique violation; a status, action or table the CHECK constraints refuse refuses with
   `invalid_argument`. A source that does not exist refuses as the foreign key does.

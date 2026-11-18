@@ -22,6 +22,8 @@ import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { ChronicleTimelineRow, OntologyConflict } from '../../src/core/types.ts';
 import { createSource, parityArms, pick, sorted } from './harness.ts';
+import { withWriteAttribution } from '../../src/core/persistence/context.ts';
+import type { WriteAttribution } from '../../src/core/persistence/attribution.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -298,6 +300,121 @@ describe('engine parity: timeline entries', () => {
       expect(answers.own).toContain('edited since=changed');
       expect(answers.event).toEqual(['before']);
       return answers;
+    },
+  );
+});
+
+/**
+ * Timeline write receipts (persistence/attribution-schema.ts `gbrain_stamp_write_attribution`): an insert under a
+ * principal stamps `write_*` and `last_*` with the request and the principal; an update keeps `write_*` and moves
+ * `last_*` (and `last_written_at`) only when the row's content changed. Request ids are fixed text, so they compare
+ * as values; `last_written_at` compares as a shape and as "moved or not".
+ */
+const RECEIPT_KEYS = [
+  'write_request_id', 'write_principal_kind', 'write_principal_id',
+  'last_write_request_id', 'last_write_principal_kind', 'last_write_principal_id',
+] as const;
+const REQUEST_A = '0b9c4f0e-1a2b-4c3d-8e4f-5a6b7c8d9e01';
+const REQUEST_B = '0b9c4f0e-1a2b-4c3d-8e4f-5a6b7c8d9e02';
+const asActor = (requestId: string | null, kind: WriteAttribution['principal']['kind'], id: string): WriteAttribution =>
+  ({ requestId, principal: { kind, id } });
+/** Runs `fn` in one transaction under `attribution` (none: no principal set). */
+async function attributed<T>(engine: BrainEngine, attribution: WriteAttribution | null, fn: (tx: BrainEngine) => Promise<T>): Promise<T> {
+  return engine.transaction(async (tx) => (attribution ? withWriteAttribution(tx, attribution, () => fn(tx)) : fn(tx)));
+}
+type Receipted = Record<string, unknown>;
+const receiptOf = (entry: Receipted) => ({
+  summary: entry.summary, ...pick(entry, RECEIPT_KEYS),
+  last_written_at: entry.last_written_at === null ? null : entry.last_written_at instanceof Date ? 'Date' : typeof entry.last_written_at,
+});
+async function receipts(engine: BrainEngine, slug: string) {
+  return ((await engine.getTimeline(slug)) as unknown as Receipted[]).map(receiptOf).sort((a, b) => String(a.summary).localeCompare(String(b.summary)));
+}
+const writtenAt = async (engine: BrainEngine, slug: string) => new Map(((await engine.getTimeline(slug)) as unknown as Receipted[])
+  .map((e) => [String(e.summary), e.last_written_at instanceof Date ? e.last_written_at.getTime() : e.last_written_at]));
+
+describe('engine parity: timeline write receipts', () => {
+  parityTest(
+    'a timeline insert under a principal stamps write_* and last_* with its request and principal, on every insert path',
+    { methods: ['transaction', 'readTransactionSettings', 'applyTransactionSettings', 'addTimelineEntry', 'addTimelineEntriesBatch', 'upsertEventProjection', 'getTimeline', 'putPage'] },
+    async (engine) => {
+      await putPlain(engine, 'people/receipt');
+      await putEvent(engine, 'life/events/2026-08-01-001', '2026-08-01T09:00:00Z', { kind: 'meeting' });
+      await attributed(engine, asActor(REQUEST_A, 'application', 'host:test-a'), async (tx) => {
+        await tx.addTimelineEntry('people/receipt', { date: '2026-08-01', source: 'cal', summary: 'single add', detail: 'one' });
+        await tx.addTimelineEntriesBatch([{ slug: 'people/receipt', date: '2026-08-02', source: 'cal', summary: 'batch add', detail: 'two' }]);
+        await tx.upsertEventProjection({ depthSlug: 'people/receipt', eventSlug: 'life/events/2026-08-01-001', date: '2026-08-01', summary: 'projected', detail: 'three' });
+      });
+      // A maintenance actor with no journal request: the request columns stay null, the principal is stamped.
+      await attributed(engine, asActor(null, 'application', 'host:unregistered'), (tx) =>
+        tx.addTimelineEntry('people/receipt', { date: '2026-08-03', summary: 'maintenance add' }));
+      const rows = await receipts(engine, 'people/receipt');
+      expect(rows.find((r) => r.summary === 'single add')).toMatchObject({ write_principal_id: 'host:test-a', last_write_request_id: REQUEST_A, last_written_at: 'Date' });
+      expect(rows.find((r) => r.summary === 'maintenance add')).toMatchObject({ write_request_id: null, write_principal_kind: 'application', last_written_at: 'Date' });
+      return rows;
+    },
+  );
+
+  parityTest(
+    'a timeline insert with no principal leaves every receipt column null',
+    { methods: ['transaction', 'addTimelineEntry', 'addTimelineEntriesBatch', 'upsertEventProjection', 'getTimeline', 'putPage'] },
+    async (engine) => {
+      await putPlain(engine, 'people/unreceipted');
+      await putEvent(engine, 'life/events/2026-08-04-001', '2026-08-04T09:00:00Z', { kind: 'meeting' });
+      await engine.addTimelineEntry('people/unreceipted', { date: '2026-08-04', summary: 'plain add' });
+      await attributed(engine, null, async (tx) => {
+        await tx.addTimelineEntriesBatch([{ slug: 'people/unreceipted', date: '2026-08-05', summary: 'plain batch' }]);
+        await tx.upsertEventProjection({ depthSlug: 'people/unreceipted', eventSlug: 'life/events/2026-08-04-001', date: '2026-08-04', summary: 'plain projection' });
+      });
+      const rows = await receipts(engine, 'people/unreceipted');
+      for (const row of rows) expect(Object.values(pick(row, [...RECEIPT_KEYS, 'last_written_at']))).toEqual([null, null, null, null, null, null, null]);
+      return rows;
+    },
+  );
+
+  parityTest(
+    'a timeline update keeps write_* and moves last_* and last_written_at only when the content changed',
+    { methods: ['transaction', 'readTransactionSettings', 'applyTransactionSettings', 'addTimelineEntry', 'updateTimelineDetails', 'upsertEventProjection', 'listStoredTimelineRows', 'getTimeline', 'getPage', 'putPage'] },
+    async (engine) => {
+      await putPlain(engine, 'people/rewrite');
+      await putEvent(engine, 'life/events/2026-08-06-001', '2026-08-06T09:00:00Z', { kind: 'meeting' });
+      const pageId = Number((await engine.getPage('people/rewrite'))!.id);
+      const first = asActor(REQUEST_A, 'application', 'host:test-a');
+      const second = asActor(REQUEST_B, 'oauth_client', 'client:test-b');
+      await attributed(engine, first, async (tx) => {
+        await tx.addTimelineEntry('people/rewrite', { date: '2026-08-06', summary: 'detail moves', detail: 'before' });
+        await tx.addTimelineEntry('people/rewrite', { date: '2026-08-06', summary: 'detail stays', detail: 'same' });
+        await tx.addTimelineEntry('people/rewrite', { date: '2026-08-06', summary: 'unattributed edit', detail: 'before' });
+        await tx.upsertEventProjection({ depthSlug: 'people/rewrite', eventSlug: 'life/events/2026-08-06-001', date: '2026-08-06', summary: 'projection', detail: 'before' });
+      });
+      const before = await writtenAt(engine, 'people/rewrite');
+      const idOf = async (summary: string) => (await engine.listStoredTimelineRows('default', 'people/rewrite')).find((r) => r.summary === summary)!.id;
+      const refresh = [
+        { id: await idOf('detail moves'), detail: 'before', next: 'after' },
+        { id: await idOf('detail stays'), detail: 'same', next: 'same' },
+      ];
+      const unattributed = await idOf('unattributed edit');
+      await attributed(engine, second, async (tx) => {
+        await tx.updateTimelineDetails(pageId, refresh);
+        // The same projection again changes nothing; then a new detail moves it.
+        await tx.upsertEventProjection({ depthSlug: 'people/rewrite', eventSlug: 'life/events/2026-08-06-001', date: '2026-08-06', summary: 'projection', detail: 'before' });
+      });
+      const afterSame = await writtenAt(engine, 'people/rewrite');
+      const projectionKept = afterSame.get('projection') === before.get('projection');
+      await attributed(engine, second, (tx) =>
+        tx.upsertEventProjection({ depthSlug: 'people/rewrite', eventSlug: 'life/events/2026-08-06-001', date: '2026-08-06', summary: 'projection', detail: 'after' }));
+      // An edit with no principal clears last_* and still moves last_written_at.
+      await engine.updateTimelineDetails(pageId, [{ id: unattributed, detail: 'before', next: 'after' }]);
+      const after = await writtenAt(engine, 'people/rewrite');
+      // Two transactions can share a millisecond, so a moved time compares as not older; a kept one as equal.
+      const kept = after.get('detail stays') === before.get('detail stays');
+      const notOlder = [...before.keys()].every((k) => Number(after.get(k)) >= Number(before.get(k)));
+      const rows = await receipts(engine, 'people/rewrite');
+      expect(rows.find((r) => r.summary === 'detail moves')).toMatchObject({ write_request_id: REQUEST_A, last_write_request_id: REQUEST_B, last_write_principal_id: 'client:test-b' });
+      expect(rows.find((r) => r.summary === 'detail stays')).toMatchObject({ write_request_id: REQUEST_A, last_write_request_id: REQUEST_A });
+      expect(rows.find((r) => r.summary === 'unattributed edit')).toMatchObject({ write_principal_id: 'host:test-a', last_write_principal_kind: null, last_written_at: 'Date' });
+      expect({ projectionKept, kept, notOlder }).toEqual({ projectionKept: true, kept: true, notOlder: true });
+      return { rows, projectionKept, kept, notOlder };
     },
   );
 });

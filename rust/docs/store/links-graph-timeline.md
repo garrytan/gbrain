@@ -35,7 +35,7 @@ the origin.
 | `brain.traversePathsDetailed(slug, opts?)` | `{ paths, truncated }`; at most 5,000 edges, `truncated` when more exist | `traversePathsDetailed` |
 | `brain.addTimelineEntry(slug, { date, summary, source?, detail? }, { sourceId?, skipExistenceCheck? }?)` | `true` when a row was written, `false` for a duplicate (same page, date, summary and source) | `addTimelineEntry` |
 | `brain.addTimelineEntriesBatch(entries)` | inserted count; entries of missing pages are skipped | `addTimelineEntriesBatch` |
-| `brain.getTimeline(slug, { limit?, after?, before?, sourceId?, sourceIds?, excludePrivate? }?)` | `{ id, page_id, date, source, summary, detail, event_page_id, created_at }[]`, `date DESC, id DESC`, default `limit` 100, `0` for all | `getTimeline` |
+| `brain.getTimeline(slug, { limit?, after?, before?, sourceId?, sourceIds?, excludePrivate? }?)` | `{ id, page_id, date, source, summary, detail, event_page_id, created_at, write_request_id, write_principal_kind, write_principal_id, last_write_request_id, last_write_principal_kind, last_write_principal_id, last_written_at }[]`, `date DESC, id DESC`, default `limit` 100, `0` for all | `getTimeline` |
 
 Where this engine differs from PGLite:
 
@@ -45,8 +45,17 @@ Where this engine differs from PGLite:
 - Dates: `YYYY-MM-DD` or `YYYY/MM/DD`, optionally followed by `T` or a space and a time that is
   ignored (`2026-01-05T23:30:00-05:00` is `2026-01-05`, as in PGLite). Other spellings Postgres
   casts are refused `invalid_argument`, as is a date that does not exist.
-- `getTimeline` rows carry the `TimelineEntry` fields only, not the write-provenance and
-  `trust_tier` columns of the table (PGLite returns them `null` and `"unknown"` for these writes).
+- Write receipts: every timeline write stamps the entry's seven attribution columns as PGLite's
+  `gbrain_stamp_write_attribution` trigger does (`timeline/receipt.rs`). An insert under a principal
+  (`gbrain.write_principal_kind` set in the write context, [write_trust.md](write_trust.md)) takes the
+  request and the principal in `write_*` and `last_*` and the transaction time in `last_written_at`; an
+  insert with no principal stamps nothing. An update keeps `write_*`, and moves `last_*` and
+  `last_written_at` only when the content (id, page, date, source, summary, detail, event page,
+  `created_at`) changed; a changed row with no principal clears `last_*`. A record stored before the
+  receipt reads every receipt column null. `getTimeline` returns the seven columns (`last_written_at` ISO).
+- `getTimeline` rows do not carry `trust_tier` and `write_origin`: the store does not stamp timeline
+  trust yet, and the TypeScript codec fills `"unknown"` and `null`, what PGLite stores for an undeclared
+  writer (TODOS.md).
 - On the link and graph reads, `excludePrivate: true`, `temporal` and `page` (keyset paging of
   paths) reject `invalid_argument` instead of being ignored, and so does `eligibility` on
   `getTimeline`. The TypeScript shell must not send them here.

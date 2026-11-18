@@ -103,15 +103,15 @@ export function toChunk<T extends object>(chunk: T): T {
   return row as T;
 }
 
-/** The provenance columns PGLite's timeline rows carry and the store does not keep. */
-const TIMELINE_DEFAULTS = {
-  write_request_id: null, write_principal_kind: null, write_principal_id: null, last_write_request_id: null,
-  last_write_principal_kind: null, last_write_principal_id: null, last_written_at: null, trust_tier: 'unknown', write_origin: null,
-} as const;
+/** The trust columns PGLite's timeline rows carry and the store does not keep yet (TODOS.md). The store returns the write receipt. */
+const TIMELINE_DEFAULTS = { trust_tier: 'unknown', write_origin: null } as const;
 
-/** A timeline row. The entry's `date` (a calendar day, "2026-03-04") reads back as the Date at that day's midnight UTC, as PGLite's DATE column does. */
+/**
+ * A timeline row. The entry's `date` (a calendar day, "2026-03-04") reads back as the Date at that day's midnight UTC, as
+ * PGLite's DATE column does; `created_at` and the receipt's `last_written_at` read back as Dates.
+ */
 export function toTimelineEntry<T extends object>(entry: T): T {
-  const row = { ...TIMELINE_DEFAULTS, ...withDates(entry, ['created_at']) } as Record<string, unknown>;
+  const row = { ...TIMELINE_DEFAULTS, ...withDates(entry, ['created_at', 'last_written_at']) } as Record<string, unknown>;
   if (typeof row.date === 'string') row.date = new Date(`${row.date.slice(0, 10)}T00:00:00.000Z`);
   return row as T;
 }

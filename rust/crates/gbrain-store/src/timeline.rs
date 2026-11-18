@@ -10,6 +10,9 @@
 //! Dates: Postgres casts many spellings to `date`. This engine takes `YYYY-MM-DD` or
 //! `YYYY/MM/DD`, optionally followed by `T` or a space and a time it ignores, and refuses the
 //! rest with `invalid_argument`. A date that does not exist (`2026-02-30`) is refused too.
+//!
+//! Write receipts: every entry written through [`insert_entry`] or [`put_entry`] is stamped with
+//! the write's actor, as the PGLite attribution trigger stamps it (`receipt.rs`).
 
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
@@ -22,6 +25,9 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+
+mod receipt;
+pub(crate) use receipt::TimelineReceipt;
 
 const NEXT_TIMELINE_ID: &str = "next_timeline_id";
 
@@ -38,6 +44,9 @@ pub(crate) struct TimelineRecord {
     #[serde(default)]
     pub event_page_id: Option<u64>,
     pub created_at_us: i64,
+    /// The write receipt. Absent in a record stored before it, and omitted while every column is null.
+    #[serde(default, skip_serializing_if = "TimelineReceipt::is_empty")]
+    pub receipt: TimelineReceipt,
 }
 
 impl TimelineRecord {
@@ -46,9 +55,10 @@ impl TimelineRecord {
         keys::timeline_dedup(self.page_id, &self.date, &digest, &self.source)
     }
 
-    /// The `TimelineEntry` row. `date` stays `YYYY-MM-DD`; `created_at` is an ISO string.
+    /// The `TimelineEntry` row with its receipt columns. `date` stays `YYYY-MM-DD`;
+    /// `created_at` and `last_written_at` are ISO strings.
     pub(crate) fn to_json(&self) -> Value {
-        json!({
+        let mut row = json!({
             "id": self.id,
             "page_id": self.page_id,
             "date": self.date,
@@ -57,7 +67,11 @@ impl TimelineRecord {
             "detail": self.detail,
             "event_page_id": self.event_page_id,
             "created_at": iso(self.created_at_us),
-        })
+        });
+        if let Value::Object(map) = &mut row {
+            self.receipt.extend_json(map);
+        }
+        row
     }
 }
 
@@ -163,6 +177,7 @@ fn insert_entry(tx: &mut dyn KvWrite, mut record: TimelineRecord) -> Result<bool
     if tx.get(&dedup)?.is_some() {
         return Ok(false);
     }
+    let record = receipt::stamp(None, &record)?;
     put_json(
         tx,
         &keys::timeline(record.page_id, &record.date, record.id),
@@ -209,6 +224,7 @@ pub(crate) fn read_entry(
 /// `old`'s `E` key and its `D` key when that `D` key still points at `old.id`. Refuses with
 /// `constraint_violation` when `new`'s `D` key points at another entry (the dedup unique index).
 /// Writes `new`'s `E` and `D` keys and raises `G` of `new.page_id`; this path never lowers `G`.
+/// `new` is stored with its write receipt stamped (`receipt::stamp`; `old` is the update's preimage).
 /// One exception lowers it: `deleteTimelineRows` (timeline_queries/site_reads.rs `reset_latest`)
 /// resets `G` to the newest `created_at` of the rows left, or deletes it when no row is left. On a
 /// refusal the caller returns the error, so the write transaction keeps nothing.
@@ -236,6 +252,7 @@ pub(crate) fn put_entry(
             "duplicate key value violates unique constraint on timeline_entries (page_id, date, summary, source)",
         ));
     }
+    let new = &receipt::stamp(old, new)?;
     put_json(tx, &keys::timeline(new.page_id, &new.date, new.id), new)?;
     tx.put(&dedup, &new.id.to_be_bytes())?;
     raise_latest(tx, new.page_id, new.created_at_us)
@@ -410,6 +427,7 @@ impl Store {
                     detail: clean(entry.detail.as_deref().unwrap_or("")),
                     event_page_id: None,
                     created_at_us: self.env.now_micros(),
+                    receipt: TimelineReceipt::default(),
                 },
             )
         })
@@ -461,6 +479,7 @@ impl Store {
                     detail: clean(entry.detail.as_deref().unwrap_or("")),
                     event_page_id: None,
                     created_at_us: now,
+                    receipt: TimelineReceipt::default(),
                 };
                 if insert_entry(tx, record)? {
                     inserted += 1;
@@ -582,6 +601,7 @@ mod tests {
             detail: String::new(),
             event_page_id: None,
             created_at_us: at,
+            receipt: TimelineReceipt::default(),
         }
     }
 

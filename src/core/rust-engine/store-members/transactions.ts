@@ -30,15 +30,18 @@ import { readPersistenceBrainId } from './persistence-identity.ts';
 
 type TransactionFn<T> = (engine: BrainEngine) => Promise<T>;
 
-/** The six settings the store's write trust context keeps (rust/docs/store/write_trust.md); its writers read them there. */
+/**
+ * The nine settings the store's write context keeps (rust/docs/store/write_trust.md): the trust ones and the write
+ * attribution ones its writers read there (the trust stamp, the fence reads, the timeline write receipt).
+ */
 const TRUST_SETTINGS: ReadonlySet<string> = new Set([
   'gbrain.write_trust_tier', 'gbrain.write_origin', 'gbrain.write_trust_promotion',
   'gbrain.write_trust_backfill', 'gbrain.write_trust_keep', 'gbrain.write_open_facts',
+  'gbrain.write_request', 'gbrain.write_principal_kind', 'gbrain.write_principal_id',
 ]);
-/** The settings the transaction keeps in TypeScript (`RustTransactionScope.settings`): attribution and source scope. */
+/** The settings the transaction keeps in TypeScript (`RustTransactionScope.settings`): source scope and protocols. */
 const SCOPE_SETTINGS: ReadonlySet<string> = new Set([
-  'gbrain.write_sources', 'gbrain.write_request', 'gbrain.write_principal_kind', 'gbrain.write_principal_id',
-  'gbrain.git_protocol', 'gbrain.persistence_protocol',
+  'gbrain.write_sources', 'gbrain.git_protocol', 'gbrain.persistence_protocol',
 ]);
 /** engine-sql/transaction-settings.ts `SETTING_NAME`: the same check and the same error, before any work. */
 const SETTING_NAME = /^[a-z_][a-z0-9_.]*$/;
@@ -64,8 +67,8 @@ function checkSettingNames(member: string, names: readonly string[]): void {
 }
 
 /**
- * `current_setting(name, true)` for each name. Inside a transaction a trust setting reads from the store's write trust
- * context and any other from the transaction's own map; a name never set reads null, or '' once it was set before on
+ * `current_setting(name, true)` for each name. Inside a transaction a trust or attribution setting reads from the
+ * store's write context and any other from the transaction's own map; a name never set reads null, or '' once it was set before on
  * this engine. Outside a transaction nothing is kept, so every name reads that way.
  */
 export const readTransactionSettings = async function readTransactionSettings(this: RustEngine, brain: StoreBrain, names: readonly string[]): Promise<Array<string | null>> {
@@ -86,7 +89,7 @@ export const readTransactionSettings = async function readTransactionSettings(th
 /**
  * `set_config(name, value, true)` for each name, for the rest of the transaction. Outside a transaction the setting
  * lasts one statement on PGLite, so nothing is kept. The store checks the trust values first (a tier that is no tier,
- * an origin that is not JSON refuse `invalid_argument`) and nothing changes when it refuses.
+ * an origin that is not JSON, a request that is not a UUID refuse `invalid_argument`) and nothing changes when it refuses.
  */
 export const applyTransactionSettings = async function applyTransactionSettings(this: RustEngine, brain: StoreBrain, names: readonly string[], values: readonly string[]): Promise<void> {
   checkSettingNames('applyTransactionSettings', names);
