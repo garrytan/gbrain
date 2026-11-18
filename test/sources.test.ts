@@ -13,6 +13,7 @@ import { execFileSync } from 'child_process';
 import { join } from 'path';
 import { runSources } from '../src/commands/sources.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { countSourcePages } from '../src/core/engine-sql/sources.ts';
 
 // ── Stub engine that records queries ───────────────────────
 
@@ -62,9 +63,16 @@ function makeStub(rowsByPattern: Record<string, unknown[]> = {}, opts: { appears
   const listLocalPathSources = async () =>
     ((rowsByPattern['SELECT id, local_path FROM sources WHERE local_path'] ?? []) as Array<{ id: string; local_path: string }>)
       .map(r => ({ id: r.id, local_path: r.local_path, archived: false }));
+  // countSourcePages runs the real engine-sql member over the recording executeRaw, so the tests see its SQL.
+  // insertSource records its typed row as one INSERT call (config as JSON text), the shape the add tests read.
+  const insertSource = async (row: { id: string; name: string; local_path: string | null; config: Record<string, unknown> }) => {
+    calls.push({ sql: 'INSERT INTO sources (id, name, local_path, config)', params: [row.id, row.name, row.local_path, JSON.stringify(row.config)] });
+  };
   const engine = {
     kind: 'pglite' as const,
     executeRaw,
+    countSourcePages: (sourceId: string, o?: { includeDeleted?: boolean }) => countSourcePages({ executeRaw } as never, sourceId, o),
+    insertSource,
     getSource,
     listSourceRecords,
     listLocalPathSources,

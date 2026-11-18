@@ -34,8 +34,8 @@ function getFix(id: string) {
 }
 
 async function shelfExists(ctx: OperationContext): Promise<boolean> {
-  const rows = await ctx.engine.executeRaw<{ ok: number }>('SELECT 1 AS ok FROM sources WHERE id=$1 AND archived IS NOT TRUE', [STORAGE_SOURCE_ID]);
-  return rows.length > 0;
+  const row = await ctx.engine.readSourceRow(STORAGE_SOURCE_ID);
+  return row !== null && row.archived !== true;
 }
 
 /** The read policy for the shelf: the caller's grant must allow the storage source (federatedSearchScope refuses otherwise). */

@@ -229,7 +229,7 @@ src/commands/sources-strategy.ts	execute_raw	3
 src/commands/sources-sync-enabled.ts	execute_raw	1
 src/commands/sources-trust.ts	execute_raw	2
 src/commands/sources-writers.ts	execute_raw	1
-src/commands/sources.ts	execute_raw	14
+src/commands/sources.ts	execute_raw	13
 src/commands/status.ts	execute_raw	6
 src/commands/storage.ts	execute_raw	1
 src/commands/sweep.ts	execute_raw	2
@@ -644,7 +644,7 @@ src/core/ops/request-tools.ts	execute_raw	2
 src/core/ops/search-exact.ts	execute_raw	2	came from master #9574 (held private restatements), which landed before this ratchet
 src/core/ops/search-type-filter.ts	execute_raw	1
 src/core/ops/search.ts	execute_raw	2
-src/core/ops/storage-manifest.ts	execute_raw	2
+src/core/ops/storage-manifest.ts	execute_raw	1
 src/core/ops/tags.ts	execute_raw	1
 src/core/ops/takes.ts	execute_raw	1
 src/core/ops/trust.ts	execute_raw	1
@@ -1089,7 +1089,7 @@ src/core/source-delete.ts	execute_raw	2
 src/core/source-health.ts	execute_raw	6
 src/core/sources-load.ts	execute_raw	2
 src/core/sources-not-readable.ts	execute_raw	1
-src/core/sources-ops.ts	execute_raw	12	#9634, pre-ratchet: +1 is the INSERT that registers a database-only api source row (imessage); no typed engine method exists yet
+src/core/sources-ops.ts	execute_raw	4	#9634, pre-ratchet: +1 is the INSERT that registers a database-only api source row (imessage); no typed engine method exists yet
 src/core/spend-log.ts	sql_template	2
 src/core/sql-query.ts	execute_raw	2
 src/core/storage-manifest/adopt.ts	execute_raw	4

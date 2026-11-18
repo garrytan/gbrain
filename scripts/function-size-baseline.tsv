@@ -54,6 +54,5 @@ src/core/persistence/page-prepare.ts	prepareInlineOrSegmentedMutation	304	+3 #78
 src/core/progressive-batch/orchestrator.ts	runProgressiveBatch	348	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/core/remediation/run.ts	runRemediation	428	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/core/skillopt/orchestrator.ts	runOptimizationLoop	644	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
-src/core/sources-ops.ts	addSource	317	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/core/think/index.ts	runThink	450	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/mcp/http-transport.ts	startHttpTransport	409	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +1 cat40 cost wave C1 (garrytan/gbrain-evals#57 follow-ups): dispatch resultRows from X-Gbrain-Client / mcp.result_rows (logic in mcp/result-rows.ts)
