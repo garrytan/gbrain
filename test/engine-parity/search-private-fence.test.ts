@@ -109,7 +109,7 @@ describe('protected fence text and the search members', () => {
       await defaultPut(engine, backend);
       const search = (q: string) => served(backend, () => engine.searchTitles(q, { limit: 20, excludePrivate: true }));
       const byPage = await search('heron');
-      const bySecret = await search(SECRET);
+      const bySecret = await search(FENCED_WORD);
       expect({ byPage: leaks(byPage), bySecret: leaks(bySecret) }).toEqual({ byPage: false, bySecret: false });
       return { byPage: byPage.map((r) => r.slug), bySecret: bySecret.map((r) => r.slug) };
     },
