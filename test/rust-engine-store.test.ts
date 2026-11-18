@@ -179,6 +179,26 @@ describe('Rust engine on the store', () => {
     expect(await engine.getChunks('notes/a')).toEqual(before);
   });
 
+  withAddon('upsertChunks serves embeddingColumn for the store column only; another column, type or width refuses and writes nothing', async () => {
+    const { engine } = await open();
+    await engine.putPage('notes/a', page);
+    const chunk = (text: string) => ({ chunk_index: 0, chunk_text: text, chunk_source: 'compiled_truth', embedding: new Float32Array(1536).fill(0.5), model: 'm:one' }) as never;
+    const column = (over: object) => ({ name: 'embedding', type: 'vector', dimensions: 1536, embeddingModel: '', ...over }) as never;
+    // upsertChunks writes unsealed chunks (a write's seal publishes them), so each read asks for them.
+    await engine.upsertChunks('notes/a', [chunk('Kept.')], { embeddingColumn: column({}) });
+    const kept = await engine.getChunks('notes/a', { includeEmbedding: true, includeUnsealed: true });
+    expect(kept.map((c) => [c.chunk_text, c.model, c.embedding?.length])).toEqual([['Kept.', 'm:one', 1536]]);
+    for (const over of [{ name: 'embedding_image', dimensions: 1024 }, { name: 'embedding_voyage', embeddingModel: 'voyage:v' }, { type: 'halfvec' }, { dimensions: 768 }]) {
+      expect(await code(() => engine.upsertChunks('notes/a', [chunk('Replaced.')], { embeddingColumn: column(over) }))).toBe('engine_capability_missing');
+    }
+    expect(await code(() => engine.upsertChunks('notes/a', [chunk('Replaced.')], { embeddingColumn: 'embedding_image' as never }))).toBe('engine_capability_missing');
+    expect(await engine.getChunks('notes/a', { includeEmbedding: true, includeUnsealed: true })).toEqual(kept);
+    // A column with a model labels a chunk that names none, as PGLite's `writeCol.embeddingModel || ...` does.
+    const unlabeled = { chunk_index: 0, chunk_text: 'Labeled.', chunk_source: 'compiled_truth', embedding: new Float32Array(1536).fill(0.25) } as never;
+    await engine.upsertChunks('notes/a', [unlabeled], { embeddingColumn: column({ embeddingModel: 'm:column' }) });
+    expect((await engine.getChunks('notes/a', { includeUnsealed: true })).map((c) => [c.chunk_text, c.model])).toEqual([['Labeled.', 'm:column']]);
+  });
+
   withAddon('getStats and getHealth refuse a brain whose config selects another embedding column', async () => {
     const { engine } = await open();
     await engine.putPage('notes/a', page);

@@ -1,26 +1,26 @@
 /**
  * Chunk members (BrainEngine upsertChunks, sealChunks, getChunks, deleteChunks). A chunk's text vector (`embedding`) is
  * stored with it (rust/docs/store/embeddings.md); an image vector (`embedding_image`) is not, so a chunk that carries
- * one is refused.
+ * one is refused, and so is an `embeddingColumn` that names another column than `embedding` of the configured width.
  */
 import type { Chunk, ChunkInput } from '../../types.ts';
-import { prepareChunks } from '../chunk-input.ts';
+import { prepareChunks, textColumnModel } from '../chunk-input.ts';
 import { toChunk } from '../store-codec.ts';
 import { sanitizeRemoteBody } from '../../remote-body.ts';
 import { isRevisionRejection, mapStoreError } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
 import { namedSourceIds, refuseMember, storeCall, takeOptions, throwIfAborted, type StoreMember } from './common.ts';
 
-type UpsertOpts = { sourceId?: string; expectedRevision?: string; sealChunkerVersion?: number; pageId?: number; deferSeal?: true; signal?: AbortSignal; auditSite?: unknown };
+type UpsertOpts = { sourceId?: string; expectedRevision?: string; sealChunkerVersion?: number; pageId?: number; deferSeal?: true; embeddingColumn?: unknown; signal?: AbortSignal; auditSite?: unknown };
 
 /** Sends the chunks to the store and maps a revision rejection. `seal` is PGLite's `sealChunks` (replace and seal). */
-async function writeChunks(brain: StoreBrain, slug: string, chunks: ChunkInput[], options: Record<string, unknown>, member: string): Promise<void> {
+async function writeChunks(brain: StoreBrain, slug: string, chunks: ChunkInput[], options: Record<string, unknown>, member: string, columnModel?: string): Promise<void> {
   for (const chunk of chunks) {
     if (chunk.embedding_image !== undefined) refuseMember(member, 'chunk image vectors are not stored');
   }
   const sourceId = options.sourceId as string | undefined;
   try {
-    await brain.upsertChunks(slug, await prepareChunks(brain, chunks), options);
+    await brain.upsertChunks(slug, await prepareChunks(brain, chunks, columnModel), options);
   } catch (error) {
     const current = isRevisionRejection(error)
       ? ((await brain.readPageSnapshot(slug, { sourceId, includeDeleted: true }).catch(() => null))?.revision ?? null)
@@ -32,10 +32,14 @@ async function writeChunks(brain: StoreBrain, slug: string, chunks: ChunkInput[]
 export const upsertChunks: StoreMember<[slug: string, chunks: ChunkInput[], opts?: UpsertOpts], void> = async (brain, slug, chunks, opts) => {
   // `sealChunkerVersion` goes as the text PGLite binds (`String(version)`), which the store casts to a smallint as
   // Postgres does. `pageId` and `deferSeal` only matter to a write with `sealChunkerVersion`; the store ignores them otherwise.
-  const options = takeOptions('upsertChunks', opts, ['sourceId', 'expectedRevision', 'sealChunkerVersion', 'pageId', 'deferSeal'], ['signal', 'auditSite']);
+  // `embeddingColumn` (import's resolved write column) is served for the store's one vector column (`textColumnModel`)
+  // and stays here: it only picks the model label of a chunk that names none.
+  const { embeddingColumn, ...options } = takeOptions('upsertChunks', opts,
+    ['sourceId', 'expectedRevision', 'sealChunkerVersion', 'pageId', 'deferSeal', 'embeddingColumn'], ['signal', 'auditSite']);
   if (options.sealChunkerVersion !== undefined) options.sealChunkerVersion = String(options.sealChunkerVersion);
   throwIfAborted(opts?.signal);
-  await writeChunks(brain, slug, chunks, options, 'upsertChunks');
+  const columnModel = await textColumnModel(brain, 'upsertChunks', embeddingColumn);
+  await writeChunks(brain, slug, chunks, options, 'upsertChunks', columnModel);
 };
 
 /**

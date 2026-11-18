@@ -21,10 +21,16 @@ import { describe, expect } from 'bun:test';
 import { createSource, parityArms, pick } from './harness.ts';
 import { chunk, installChunks } from './chunk-fixtures.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../../src/core/ai/gateway.ts';
+import { importFromContent } from '../../src/core/import-file.ts';
 
 const { parityTest } = parityArms(testBackends());
 
 const NOTE = { type: 'note' as const, title: 'Import note', compiled_truth: 'alpha beta gamma', timeline: '' };
+
+/** A deterministic stub vector per input text: the import embeds without a provider request. */
+const DIMS = 1536;
+const vectorFor = (text: string) => Array.from({ length: DIMS }, (_, i) => Math.sin((text.length + 1) * (i + 1)));
 
 describe('engine parity: import-path writes', () => {
   parityTest(
@@ -299,6 +305,38 @@ describe('engine parity: import-path writes', () => {
       const gone = pick((await engine.getPage('notes/gone', { includeDeleted: true }))!, ['source_path'] as const);
       expect(gone.source_path ?? null).toBeNull();
       return { first, second, gone: gone.source_path ?? null };
+    },
+  );
+
+  parityTest(
+    'an embedded importFromContent stores each chunk with its vector, input hash and model label, under the resolved write column',
+    { methods: ['upsertChunks', 'getChunks', 'getChunkReuseRows'] },
+    async (engine) => {
+      // Import stamps the input hash and passes the resolved column (`embedding`) to upsertChunks as `embeddingColumn`.
+      configureGateway({ embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: DIMS, env: { OPENAI_API_KEY: 'test' } });
+      __setEmbedTransportForTests((async ({ values }: { values: string[] }) => ({ embeddings: values.map(vectorFor) })) as never);
+      try {
+        const result = await importFromContent(engine, 'concepts/example',
+          '---\ntype: concept\ntitle: Example\n---\n\n# Example\n\nA short body about latency budgets.');
+        const stored = await engine.getChunks('concepts/example', { includeEmbedding: true });
+        // getChunks carries no input hash; the import's reuse read does.
+        const hashes = new Map((await engine.getChunkReuseRows('concepts/example')).map((row) => [row.chunk_index, row.embedding_input_hash]));
+        expect(result.status).toBe('imported');
+        expect(stored.length).toBeGreaterThan(0);
+        const chunks = stored.map((c) => ({
+          index: c.chunk_index, text: c.chunk_text, source: c.chunk_source, model: c.model,
+          inputHash: hashes.get(c.chunk_index) ?? null, embedding: c.embedding ? Array.from(c.embedding) : null,
+        }));
+        for (const c of chunks) {
+          expect(c.embedding?.length).toBe(DIMS);
+          expect(c.inputHash).toMatch(/^[0-9a-f]{64}$/);
+          expect(c.model).toBe('openai:text-embedding-3-large');
+        }
+        return { status: result.status, chunks };
+      } finally {
+        __setEmbedTransportForTests(null);
+        resetGateway();
+      }
     },
   );
 });

@@ -47,6 +47,13 @@ not M" otherwise, and the whole write rolls back. A vector with an empty model l
 provenance is unknown ...", as PGLite does; the TypeScript `prepareChunks` raises it first when no model is
 configured.
 
+`upsertChunks` serves `opts.embeddingColumn`, the write column import resolves (`stampEmbeddingInputs`) and the
+reindex paths pass. The store keeps one vector column, so the option is served when it names `embedding` of type
+`vector` with the configured width; PGLite writes that column too. A column with a model labels each chunk that
+names none, as PGLite's `writeCol.embeddingModel || ...` does. Any other column (`embedding_image`, a registry
+column, `halfvec`, another width) refuses `engine_capability_missing` and writes nothing. Config that routes writes
+to another column (`search_embedding_column`, `embedding_columns`) still refuses in `prepareChunks`.
+
 `upsertChunks` (merge) follows PGLite's CASE rules. When a chunk's text is unchanged, the old vector stays
 unless the write carries a newer one, and the old label stays with it. When the text changed, the old vector
 goes. The pending stamp is set on a new chunk with no vector and on changed text, cleared by a new vector,
