@@ -37,6 +37,9 @@ export const RUST_ENGINE_MEMBERS = {
   lockPageKeys: 'transactions',
   // pages
   aliasCanonicalRefs: 'pages',
+  nextLivePageAfter: 'pages',
+  listExactIdentityCandidates: 'pages',
+  listExtractionPendingPages: 'pages',
   slugsEndingIn: 'pages',
   generatedPagesIn: 'pages',
   livePageIdsAt: 'pages',
@@ -147,6 +150,7 @@ export const RUST_ENGINE_MEMBERS = {
   getChunksWithEmbeddings: 'embeddings',
   // keyword_search
   searchKeyword: 'keyword_search',
+  scanExactBatch: 'keyword_search',
   countKeywordPages: 'keyword_search',
   searchKeywordPages: 'keyword_search',
   searchTitles: 'keyword_search',
@@ -167,6 +171,7 @@ export const RUST_ENGINE_MEMBERS = {
   removeLinksByPagesAndSource: 'links',
   getLinks: 'links',
   getBacklinks: 'links',
+  listWantedPages: 'links',
   listLinkSources: 'links',
   rewriteLinks: 'links',
   getBacklinkCounts: 'links',
@@ -181,6 +186,7 @@ export const RUST_ENGINE_MEMBERS = {
   upsertEventProjection: 'timeline',
   // graph
   traverseGraph: 'graph',
+  rankEntities: 'graph',
   traversePaths: 'graph',
   traversePathsDetailed: 'graph',
   relationalFanout: 'graph',
@@ -197,6 +203,7 @@ export const RUST_ENGINE_MEMBERS = {
   listFactsSince: 'facts',
   listFactsKeyset: 'facts',
   listFactsBySession: 'facts',
+  listUnattributedFacts: 'facts',
   listSupersessions: 'facts',
   countUnconsolidatedFacts: 'facts',
   findCandidateDuplicates: 'facts',

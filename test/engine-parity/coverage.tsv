@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 236/236
+# covered: 243/243
 # lifecycle: 9/9
 # pages: 28/28
 # search: 7/7
@@ -29,6 +29,7 @@
 # config: 6/6
 # import_guards: 9/9
 # cycle_locks: 6/6
+# cli_reads_ops: 7/7
 # raw_sql: 4/4
 # code_edges: 5/5
 # eval_capture: 5/5
@@ -251,6 +252,13 @@ releaseCycleLock	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
 readCycleLocks	cycle_locks	yes	8	no	yes	yes	refuses:minion_queue
 deleteCycleLock	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
 deleteCycleLockIfStale	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
+scanExactBatch	cli_reads_ops	yes	1	no	yes	yes	refuses:keyword_search
+nextLivePageAfter	cli_reads_ops	yes	1	no	yes	yes	refuses:pages
+listExactIdentityCandidates	cli_reads_ops	yes	1	no	yes	yes	refuses:pages
+rankEntities	cli_reads_ops	yes	1	no	yes	yes	refuses:graph
+listExtractionPendingPages	cli_reads_ops	yes	1	no	yes	yes	refuses:pages
+listUnattributedFacts	cli_reads_ops	yes	1	no	yes	yes	refuses:facts
+listWantedPages	cli_reads_ops	yes	1	no	yes	yes	refuses:links
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 executeRaw	raw_sql	yes	2	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql

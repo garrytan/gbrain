@@ -651,12 +651,11 @@ src/core/ops/backlinks-paged.ts	execute_raw	3
 src/core/ops/chronicle.ts	execute_raw	1
 src/core/ops/chunks.ts	execute_raw	1	came from master #9574 (held private restatements), which landed before this ratchet
 src/core/ops/context.ts	execute_raw	1
-src/core/ops/extraction.ts	execute_raw	1
 src/core/ops/facts.ts	execute_raw	1
 src/core/ops/files.ts	execute_raw	13
 src/core/ops/get-page-body.ts	execute_raw	2
 src/core/ops/get-page-projection.ts	execute_raw	1
-src/core/ops/graph-rank.ts	execute_raw	3
+src/core/ops/graph-rank.ts	execute_raw	2
 src/core/ops/jobs.ts	execute_raw	4
 src/core/ops/known-as-of.ts	execute_raw	3
 src/core/ops/links.ts	execute_raw	1
@@ -678,7 +677,7 @@ src/core/ops/trust.ts	execute_raw	1
 src/core/ops/usage.ts	execute_raw	2
 src/core/ops/valid-time-read.ts	execute_raw	6
 src/core/ops/wakeshift.ts	execute_raw	5
-src/core/ops/whois.ts	execute_raw	2
+src/core/ops/whois.ts	execute_raw	1
 src/core/output/writer.ts	execute_raw	1
 src/core/oversized-backfill.ts	execute_raw	6
 src/core/page-body/body-tiling.ts	execute_raw	4
@@ -1030,7 +1029,6 @@ src/core/repair/unwithdrawn-facts.ts	execute_raw	6
 src/core/repair/url-clone-fences.ts	execute_raw	5
 src/core/repair/visibility.ts	execute_raw	11
 src/core/restore-target.ts	execute_raw	4
-src/core/review-lists.ts	execute_raw	1
 src/core/schema-migrations/helpers.ts	execute_raw	12
 src/core/schema-migrations/v039-multimodal-dual-column-v0-27-1.ts	execute_raw	1
 src/core/schema-migrations/v045-facts-hot-memory-v0-31.ts	execute_raw	2
@@ -1073,7 +1071,6 @@ src/core/search/entity-anchor.ts	execute_raw	5
 src/core/search/entity-facts.ts	execute_raw	1
 src/core/search/evidence-date.ts	execute_raw	3
 src/core/search/evidence-delivery.ts	execute_raw	2
-src/core/search/exact-scan.ts	execute_raw	2
 src/core/search/fact-relevance.ts	execute_raw	14	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut; GBRA-574 F #9674 (opened before this ratchet): +1 poolUnbackedKeys, the name-tag lookup for the slot-history arm
 src/core/search/facts-arm.ts	execute_raw	3
 src/core/search/feedback-boost.ts	execute_raw	1
@@ -1212,7 +1209,7 @@ src/core/wakeshift/drain.ts	execute_raw	10
 src/core/wakeshift/forget.ts	sql_template	6
 src/core/wakeshift/spool.ts	execute_raw	3
 src/core/wakeshift/terms.ts	execute_raw	2
-src/core/wanted-links-store.ts	execute_raw	6
+src/core/wanted-links-store.ts	execute_raw	4
 src/core/write-gate-scan.ts	execute_raw	2
 src/core/write-gate-store.ts	execute_raw	8
 src/core/write-through.ts	execute_raw	3

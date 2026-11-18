@@ -15,7 +15,7 @@ import { invalidParam } from './op-fix.ts';
 import { assertSourceInCallerScope, linkReadScopeOpts, resolveRequestedScope, sourceScopeOpts } from './context.ts';
 import { ALL_SOURCES } from '../source-id.ts';
 import { NON_RANKING_LINK_TYPES } from '../link-ranking-policy.ts';
-import { rankEntitiesStatement, type RankDirection, type RankEntityRow } from '../engine-sql/graph-rank.ts';
+import { type RankDirection, type RankEntityRow } from '../engine-sql/graph-rank.ts';
 import type { EntityTypeFilter } from '../schema-pack/entity-types.ts';
 
 export const RANK_ENTITIES_DEFAULT_LIMIT = 20;
@@ -194,7 +194,7 @@ const rank_entities: Operation = {
       : await resolveEntityTypes(ctx.engine, sourceIds ?? null);
     const { resolveExcludePrivatePages } = await import('../search/private-visibility.ts');
     const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
-    const { text, params: values } = rankEntitiesStatement({
+    const statement = {
       direction: params.direction,
       types: resolution.filter,
       ...(sourceIds ? { sourceIds } : {}),
@@ -203,10 +203,10 @@ const rank_entities: Operation = {
       limit: params.limit,
       foldedCap: RANK_ENTITIES_FOLDED_CAP,
       ...(ctx.remote !== false ? { remote: { excludePrivate } } : {}),
-    });
+    };
     let raw: RankEntityRow[];
     try {
-      raw = await ctx.engine.executeRaw<RankEntityRow>(text, values, { timeoutMs: RANK_ENTITIES_STATEMENT_MS });
+      raw = await ctx.engine.rankEntities(statement, RANK_ENTITIES_STATEMENT_MS);
     } catch (e) {
       const { isStatementTimeoutError } = await import('../retry-matcher.ts');
       if (!isStatementTimeoutError(e)) throw e;
