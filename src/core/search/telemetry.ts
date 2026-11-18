@@ -269,27 +269,7 @@ class TelemetryWriter {
       try {
         for (const b of snapshot.values()) {
           try {
-            await engine.executeRaw(
-              `INSERT INTO search_telemetry
-                 (date, mode, intent, count, sum_results, sum_tokens, sum_budget_dropped, cache_hit, cache_miss,
-                  sum_rank1_score, count_rank1, rank1_lt_solid, rank1_solid, rank1_high, first_seen, last_seen)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, now(), now())
-               ON CONFLICT (date, mode, intent) DO UPDATE SET
-                 count = search_telemetry.count + EXCLUDED.count,
-                 sum_results = search_telemetry.sum_results + EXCLUDED.sum_results,
-                 sum_tokens = search_telemetry.sum_tokens + EXCLUDED.sum_tokens,
-                 sum_budget_dropped = search_telemetry.sum_budget_dropped + EXCLUDED.sum_budget_dropped,
-                 cache_hit = search_telemetry.cache_hit + EXCLUDED.cache_hit,
-                 cache_miss = search_telemetry.cache_miss + EXCLUDED.cache_miss,
-                 sum_rank1_score = search_telemetry.sum_rank1_score + EXCLUDED.sum_rank1_score,
-                 count_rank1 = search_telemetry.count_rank1 + EXCLUDED.count_rank1,
-                 rank1_lt_solid = search_telemetry.rank1_lt_solid + EXCLUDED.rank1_lt_solid,
-                 rank1_solid = search_telemetry.rank1_solid + EXCLUDED.rank1_solid,
-                 rank1_high = search_telemetry.rank1_high + EXCLUDED.rank1_high,
-                 last_seen = now()`,
-              [b.date, b.mode, b.intent, b.count, b.sum_results, b.sum_tokens, b.sum_budget_dropped, b.cache_hit, b.cache_miss,
-               b.sum_rank1_score, b.count_rank1, b.rank1_lt_solid, b.rank1_solid, b.rank1_high],
-            );
+            await engine.recordSearchTelemetry(b);
           } catch {
             // swallow — telemetry write must never break the hot path.
             // Per-bucket isolation: one bad row doesn't lose the others.
@@ -590,42 +570,7 @@ export async function readSearchStats(
   const cutoffDate = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
 
   try {
-    const rows = await engine.executeRaw<{
-      mode: string;
-      intent: string;
-      count: number;
-      sum_results: number;
-      sum_tokens: number;
-      sum_budget_dropped: number;
-      cache_hit: number;
-      cache_miss: number;
-      sum_rank1_score: number;
-      count_rank1: number;
-      rank1_lt_solid: number;
-      rank1_solid: number;
-      rank1_high: number;
-      first_seen: string;
-      last_seen: string;
-    }>(
-      `SELECT mode, intent,
-              SUM(count)::int             AS count,
-              SUM(sum_results)::int       AS sum_results,
-              SUM(sum_tokens)::int        AS sum_tokens,
-              SUM(sum_budget_dropped)::int AS sum_budget_dropped,
-              SUM(cache_hit)::int         AS cache_hit,
-              SUM(cache_miss)::int        AS cache_miss,
-              COALESCE(SUM(sum_rank1_score), 0)::float8 AS sum_rank1_score,
-              COALESCE(SUM(count_rank1), 0)::int        AS count_rank1,
-              COALESCE(SUM(rank1_lt_solid), 0)::int     AS rank1_lt_solid,
-              COALESCE(SUM(rank1_solid), 0)::int        AS rank1_solid,
-              COALESCE(SUM(rank1_high), 0)::int         AS rank1_high,
-              MIN(first_seen)::text       AS first_seen,
-              MAX(last_seen)::text        AS last_seen
-       FROM search_telemetry
-       WHERE date >= $1
-       GROUP BY mode, intent`,
-      [cutoffDate],
-    );
+    const rows = await engine.readSearchStats(cutoffDate);
 
     let total_calls = 0;
     let cache_hits = 0;
