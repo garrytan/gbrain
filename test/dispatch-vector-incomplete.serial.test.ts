@@ -21,6 +21,9 @@ const engine = {
   getConfig: async () => null,
   countKeywordPages: async () => 0,
   executeRaw: async (sql: string) => sql.includes('AS pending') ? [{ pending: false }] : [],
+  // No pages and no saved facts in this fake brain: the typed trust and saved-facts reads find nothing.
+  readPageTrustRows: async () => [],
+  matchSavedFacts: async () => [],
 } as unknown as BrainEngine;
 
 describe('HTTP MCP dispatch preserves bounded-vector incompleteness', () => {

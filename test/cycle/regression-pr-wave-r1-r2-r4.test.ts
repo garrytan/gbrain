@@ -56,6 +56,7 @@ function makeCtx(overrides: Partial<OperationContext> = {}): OperationContext {
   const engine = {
     readPageSnapshot: async (_slug: string) => snapshot,
     executeRaw: async () => [], // best-effort read telemetry
+    readPageTrustRows: async () => [], // guest-note stamp: no trust rows, so no guest page
   } as unknown as BrainEngine;
   return {
     engine,

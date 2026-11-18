@@ -46,6 +46,9 @@ const engineStub = {
   getConfig: async () => null,
   executeRaw: async (sql: string) => sql.includes('AS pending') ? [{ pending: false }] : [],
   countKeywordPages: async () => 0,
+  // No pages and no saved facts in this fake brain: the typed trust and saved-facts reads find nothing.
+  readPageTrustRows: async () => [],
+  matchSavedFacts: async () => [],
 } as unknown as BrainEngine;
 
 const REASONS: RerankFailedReason[] = ['timeout', 'budget', 'rate_limited', 'unreachable', 'auth', 'provider_error'];
