@@ -140,6 +140,10 @@ pub struct RecentSalienceOptions {
     #[serde(default)]
     pub holders: Option<Vec<Option<String>>>,
     pub recency: Recency,
+    /// `excludePrivate`: the page policy `pageReadFilter` adds, as `facts/privacy.rs`
+    /// `page_hidden` reads it; null hides nothing.
+    #[serde(default)]
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 /// A page reference of `getSalienceScores`.
@@ -320,6 +324,11 @@ impl Store {
                 || (opts.exclude_briefings && page.slug.starts_with("briefings/"))
                 || !listed(&opts.source_ids, &page.source_id)
                 || !live.passes(&page)?
+            {
+                continue;
+            }
+            if let Some(policy) = &opts.exclude_private
+                && page_hidden(&*read, &page, policy)?
             {
                 continue;
             }
