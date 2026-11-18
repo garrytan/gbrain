@@ -927,7 +927,7 @@ Code call edges between chunks and symbols.
 - **Members (5), capability:** `code_edges` (5).
 - **Store and binding:** `addCodeEdges` (`add_code_edges`), `deleteCodeEdgesForChunks` (`delete_code_edges_for_chunks`), `getCallersOf` (`get_callers_of`), `getCalleesOf` (`get_callees_of`), `getEdgesByChunk` (`get_edges_by_chunk`).
 - **Postgres tables:** `code_edges_chunk`, `code_edges_symbol`.
-- **Keys:** `H 0x01 <edge id>` row; `H 0x02 <from chunk id> <edge id>`; `H 0x03 <to chunk id> <edge id>`; `H 0x04 <source> 0x00 <to symbol> 0x00 <edge id>`.
+- **Keys:** `<table>` is 0 for `code_edges_chunk` and 1 for `code_edges_symbol`. Rows: `H 0x01 <table> <edge id>` row; `H 0x02 <from chunk id> <to chunk id> <edge type>` (chunk-table unique key); `H 0x03 <from chunk id> <to symbol> 0x00 <edge type>` (symbol-table unique key); `H 0x04 <chunk id> <table> <edge id>` (rows by either chunk end); `H 0x05 <to symbol> 0x00 <table> <edge id>` and `H 0x06 <from symbol> 0x00 <table> <edge id>` (rows by target and by caller name). Chunk index: `H 0x07 <chunk id>` (page id and symbol name); `H 0x08 <symbol name> 0x00 <chunk id>` (chunks by name); `H 0x09` (set when the index covers every chunk).
 - **Depends on:** Core chunk ids. Postgres deletes edges when their chunk is deleted. Fill in this family's `remove_chunk_rows` hook (built; "Core hooks"): it gets the ids of every chunk that is gone, on a chunk replace, `deleteChunks` and a hard page delete.
 - **Estimate:** about 1 to 2 days.
 - **Notes:** The chunk and symbol tables share one `LIMIT` in the PGLite union; keep that.
