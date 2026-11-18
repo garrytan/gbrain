@@ -310,6 +310,12 @@ cases without restarting its sequences. A case must not compare or pass raw
 generated ids: count them from the case's first row, or compare by name.
 For the Rust arm, run `bun run rust:build`, then add
 `GBRAIN_TEST_RUST_ARM=1 GBRAIN_RUST_ENGINE_ADDON=$PWD/rust/target/addon/gbrain_engine.linux-x64-glibc.node`.
+`test/engine-parity/rust-tally.tsv` pins, for each parity file, how many cases
+the Rust arm answers equal to PGLite and how many stop on a typed refusal. A
+file with fewer equal or more stopped cases than its pin fails, so a member
+that falls back to a refusal cannot pass. A file that does better prints the
+new counts. After a change to Rust coverage, or at each merge, regenerate the
+pin with `bun test/engine-parity/rust-tally.ts --write` and commit it.
 
 With the same `DATABASE_URL` set, also run the Postgres SQL goldens:
 
