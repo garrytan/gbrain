@@ -236,6 +236,14 @@ export const RUST_ENGINE_MEMBERS = {
   // facts: repair classifiers and loop retirement (engine-sql/facts-repair.ts)
 
   // facts: search relevance and trust reads (engine-sql/facts-trust.ts)
+  listFactsForRelevance: 'facts',
+  countUncomparableFacts: 'facts',
+  matchSavedFacts: 'facts',
+  readFactForOwnerAction: 'facts',
+  listStandingPreferences: 'facts',
+  listLexicalContestCandidates: 'facts',
+  listRestatedPrivateCopies: 'facts',
+  countDerivedFactTaint: 'facts',
 
   // takes
   addTakesBatch: 'takes',

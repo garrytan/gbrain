@@ -103,6 +103,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
   // facts_repair: repair classifiers and loop retirement
 
   // facts_trust: search relevance and trust reads
+  facts_trust: ['listFactsForRelevance', 'countUncomparableFacts', 'matchSavedFacts',
+    'readFactForOwnerAction', 'listStandingPreferences', 'listLexicalContestCandidates', 'listRestatedPrivateCopies', 'countDerivedFactTaint'],
 
   raw_sql: ['runMigration', 'executeRaw', 'executeRawDirect', 'keywordBoundedRead'],
   code_edges: ['addCodeEdges', 'deleteCodeEdgesForChunks', 'getCallersOf', 'getCalleesOf', 'getEdgesByChunk'],

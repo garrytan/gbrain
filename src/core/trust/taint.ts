@@ -228,12 +228,13 @@ export function isExternalTier(tier: TrustTier): boolean {
  * facts, takes, timeline entries and pages. One scan per table, like the tier
  * counts beside it in doctor.
  */
-export async function readDerivedTaintShare(engine: Sql): Promise<{ rows: number; external_untrusted: number; external_pct: number }> {
+export async function readDerivedTaintShare(engine: Sql & Pick<BrainEngine, 'countDerivedFactTaint'>): Promise<{ rows: number; external_untrusted: number; external_pct: number }> {
   let rows = 0, external = 0;
   for (const table of ['facts', 'takes', 'timeline_entries', 'pages'] as const) {
-    const [row] = await engine.executeRaw<{ derived: number | string; external: number | string }>(
-      `SELECT count(*) FILTER (WHERE write_origin ? 'taint_inputs') AS derived,
-              count(*) FILTER (WHERE write_origin ? 'taint_inputs' AND trust_tier = 'external_untrusted') AS external FROM ${table}`);
+    const row = table === 'facts' ? await engine.countDerivedFactTaint()
+      : (await engine.executeRaw<{ derived: number | string; external: number | string }>(
+        `SELECT count(*) FILTER (WHERE write_origin ? 'taint_inputs') AS derived,
+                count(*) FILTER (WHERE write_origin ? 'taint_inputs' AND trust_tier = 'external_untrusted') AS external FROM ${table}`))[0];
     rows += Number(row?.derived ?? 0);
     external += Number(row?.external ?? 0);
   }
