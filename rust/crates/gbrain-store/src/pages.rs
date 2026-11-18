@@ -362,6 +362,15 @@ pub(crate) struct VersionRecord {
     pub knowledge_revision: String,
     pub is_deleted: bool,
     pub snapshot_at_us: i64,
+    /// `segmented` on the snapshot of a segmented page (`insertSegmentedVersion`), which references
+    /// the page's live body generation instead of copying the body; absent on an inline snapshot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_storage: Option<String>,
+    /// The body generation a segmented snapshot references: a root of the segment sweep.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_generation: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_bytes: Option<i64>,
 }
 
 impl VersionRecord {
@@ -382,6 +391,12 @@ impl VersionRecord {
         if include_body {
             v["compiled_truth"] = json!(self.compiled_truth);
             v["timeline"] = json!(self.timeline);
+        }
+        // PGLite's getVersions adds the segmented columns on a segmented snapshot only.
+        if let Some(storage) = &self.body_storage {
+            v["body_storage"] = json!(storage);
+            v["body_generation"] = json!(self.body_generation);
+            v["body_bytes"] = json!(self.body_bytes);
         }
         v
     }
@@ -1413,6 +1428,21 @@ impl Store {
     }
 }
 
+/// The body generations the page's segmented snapshots reference (`page_versions.body_generation`):
+/// each keeps its generation's manifest rows from the segment sweep.
+pub(crate) fn version_generations(read: &dyn KvRead, page_id: u64) -> Result<Vec<i64>> {
+    let mut out = Vec::new();
+    let mut failure = None;
+    scan_prefix(read, &keys::version_prefix(page_id), false, &mut |_, v| {
+        match serde_json::from_slice::<VersionRecord>(v) {
+            Ok(row) => out.extend(row.body_generation),
+            Err(e) => failure = Some(StoreError::from(e)),
+        }
+        failure.is_none()
+    })?;
+    failure.map_or(Ok(out), Err)
+}
+
 pub(crate) fn snapshot_in(
     tx: &mut dyn KvWrite,
     env: &dyn Env,
@@ -1421,6 +1451,7 @@ pub(crate) fn snapshot_in(
     let id = next_id(tx, NEXT_VERSION_ID)?;
     let mut tags = page.tags.clone();
     tags.sort();
+    let segmented = crate::page_body::segmented_reference(&*tx, page.id)?;
     let row = VersionRecord {
         id,
         page_id: page.id,
@@ -1435,6 +1466,9 @@ pub(crate) fn snapshot_in(
         knowledge_revision: page.knowledge_revision.clone(),
         is_deleted: page.deleted_at_us.is_some(),
         snapshot_at_us: env.now_micros(),
+        body_storage: segmented.map(|_| "segmented".to_string()),
+        body_generation: segmented.map(|(generation, _)| generation),
+        body_bytes: segmented.and_then(|(_, bytes)| bytes),
     };
     put_json(tx, &keys::version(page.id, id), &row)?;
     Ok(row)

@@ -35,7 +35,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::cell::Cell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 const COUNTERS: &str = "journal_counters";
 const NEXT_SEQUENCE: &str = "next_sequence";
@@ -169,6 +169,35 @@ pub(crate) struct RequestRecord {
     updated_at_us: i64,
     #[serde(default)]
     completed_at_us: Option<i64>,
+}
+
+/// The staging ids that outstanding (not terminal) requests name in `intent.body_ref.staging_id`:
+/// the journal arm of PGLite's `liveStagingIds` (`engine-sql/page-body.ts`), a root of the
+/// segment sweep. Reads no request when the brain counter says none is outstanding.
+pub(crate) fn request_held_staging_ids(read: &dyn KvRead) -> Result<HashSet<String>> {
+    let counters: Counters = get_json(read, &keys::meta(COUNTERS))?.unwrap_or_default();
+    let mut out = HashSet::new();
+    if counters.brain == 0 {
+        return Ok(out);
+    }
+    let mut failure = None;
+    scan_prefix(read, &[keys::REQUEST], false, &mut |_, v| {
+        match serde_json::from_slice::<RequestRecord>(v) {
+            Ok(request) if !request.terminal() => {
+                if let Some(id) = request
+                    .intent
+                    .pointer("/body_ref/staging_id")
+                    .and_then(Value::as_str)
+                {
+                    out.insert(id.to_string());
+                }
+            }
+            Ok(_) => {}
+            Err(e) => failure = Some(crate::StoreError::from(e)),
+        }
+        failure.is_none()
+    })?;
+    failure.map_or(Ok(out), Err)
 }
 
 impl RequestRecord {
