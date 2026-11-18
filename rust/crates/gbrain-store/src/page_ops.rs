@@ -1323,6 +1323,7 @@ mod tests {
 
     use crate::error::StoreError;
     use crate::pages::{PageInput, PageText, PutPageOptions};
+    use crate::put_json;
     use crate::sources::DEFAULT_SOURCE;
     use crate::test_support::store;
 
@@ -1449,21 +1450,23 @@ mod tests {
     fn revert_refuses_a_segmented_version_of_an_inline_page() {
         let store = store();
         put(&store, "notes/a", None);
-        shell(&store, DEFAULT_SOURCE, "notes/a");
         let version = version_id(&store, "notes/a");
-        // The page is inline again; only the version is segmented.
+        // The page stays inline; only the stored version is segmented. `create_version` itself
+        // refuses a segmented page, so the version loses its body after it is taken.
+        let page_id = page(&store, DEFAULT_SOURCE, "notes/a").id;
         store
             .write(|tx| {
-                let mut page = read_page(&*tx, DEFAULT_SOURCE, "notes/a")?.unwrap();
-                page.compiled_truth = "inline".into();
-                page.timeline = "".into();
-                write_page(tx, &page)
+                let key = keys::version(page_id, version as u64);
+                let mut row = get_json::<VersionRecord>(&*tx, &key)?.unwrap();
+                row.compiled_truth = PageText::null();
+                row.timeline = PageText::null();
+                put_json(tx, &key, &row)
             })
             .unwrap();
         let before = page(&store, DEFAULT_SOURCE, "notes/a");
         refused(store.revert_to_version("notes/a", version, &SourceOption::default()));
         let after = page(&store, DEFAULT_SOURCE, "notes/a");
-        assert_eq!(after.compiled_truth, "inline");
+        assert_eq!(after.compiled_truth, before.compiled_truth);
         assert_eq!(after.updated_at_us, before.updated_at_us);
     }
 
