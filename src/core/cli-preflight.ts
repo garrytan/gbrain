@@ -214,7 +214,7 @@ import {
 import { loadGbrainEnvFile } from './gbrain-env-file.ts';
 import { configDir } from './config.ts';
 import { bunSpawn } from './spawn.ts';
-import { noteJsonDocumentDelegated } from './cli-force-exit.ts';
+import { noteJsonDocumentDelegated } from './json-document-delegation.ts';
 
 /**
  * Set on the sanitized re-run to `JSON {cwd, neutral}` (see "Loop guard").
