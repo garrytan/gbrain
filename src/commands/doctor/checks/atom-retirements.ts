@@ -11,12 +11,13 @@ import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import { agentFix } from '../check-fix.ts';
 import { ATOM_RESTORE_HOLD_DAYS, atomRetirementsSql } from '../../../core/persistence/atom-retirement-hold.ts';
+import { sortSourcesById } from '../../../core/source-rows.ts';
 
 const DOCS = 'docs/guides/repair.md#atoms-restore';
 
 export async function atomRetirementsRestorableCheck(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {
   try {
-    const sources = sourceIds ?? (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(row => row.id);
+    const sources = sourceIds ?? sortSourcesById(await engine.listAllSources()).map(row => row.id);
     const rows = await engine.executeRaw<{ source_id: string; count: number; origins: number; oldest: string | null; newest: string | null; hold_until: string }>(`
       SELECT p.source_id, count(*)::int AS count,
              count(DISTINCT c.origin_kind||':'||c.origin)::int AS origins, min(c.retired_at) AS oldest, max(c.retired_at) AS newest,

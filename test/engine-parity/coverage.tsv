@@ -66,9 +66,9 @@ countPagesBy	pages	yes	1	no	yes	yes	refuses:pages
 resolveSlugs	pages	yes	2	no	yes	yes	serves
 getAllSlugs	pages	yes	4	no	yes	yes	refuses:pages
 listAllPageRefs	pages	yes	1	yes	yes	yes	refuses:pages
-listAllSources	pages	yes	2	no	yes	yes	serves
+listAllSources	pages	yes	3	no	yes	yes	serves
 updateSourceConfig	pages	yes	1	no	yes	yes	serves
-getSource	pages	yes	1	no	yes	yes	serves
+getSource	pages	yes	2	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
 listLocalPathSources	pages	yes	1	no	yes	yes	serves
 listSourceRoutingRows	pages	yes	1	no	yes	yes	serves
@@ -244,7 +244,7 @@ getAllConfig	config	yes	1	no	yes	yes	serves
 getConfigValues	config	yes	1	no	yes	yes	serves
 readManagedModeRows	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
 getSourceStrictness	import_guards	yes	2	no	yes	yes	serves
-readPersistenceBrainId	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
+readPersistenceBrainId	import_guards	yes	1	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
 insertLocalWriterRow	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
 readTransactionSettings	import_guards	yes	1	no	yes	yes	refuses:transactions
@@ -283,7 +283,7 @@ setEmotionalWeightBatch	salience_enrich	yes	2	yes	yes	yes	refuses:salience
 getRecentSalience	salience_enrich	yes	1	yes	yes	yes	refuses:salience
 listEnrichCandidates	salience_enrich	yes	1	yes	yes	yes	refuses:health
 findAnomalies	salience_enrich	yes	1	yes	yes	yes	refuses:health
-listSourceRecords	cli_reads_import	yes	1	no	yes	yes	serves
+listSourceRecords	cli_reads_import	yes	2	no	yes	yes	serves
 readSourceIncarnation	cli_reads_import	yes	1	no	yes	yes	serves
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves
 readGuestSourceRow	cli_reads_import	yes	1	no	yes	yes	serves

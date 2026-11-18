@@ -10,6 +10,7 @@ import type { Operation } from './contract.ts';
 import { opError } from './contract.ts';
 import { hostFix, invalidParam } from './op-fix.ts';
 import { sourceScopeOpts } from './context.ts';
+import { sortSourcesById } from '../source-rows.ts';
 import {
   LIST_SKILLS_DESCRIPTION,
   GET_SKILL_DESCRIPTION,
@@ -355,31 +356,19 @@ const get_status_snapshot: Operation = {
     // Pull sources first (handles brains with zero declared sources too).
     let sources: Array<{ id: string; name: string; local_path: string | null; config: Record<string, unknown> }> = [];
     try {
-      const rows = await ctx.engine.executeRaw<{
-        id: string;
-        name: string;
-        local_path: string | null;
-        config: Record<string, unknown> | null;
-      }>(
-        `SELECT id, name, local_path, config FROM sources WHERE COALESCE(archived, FALSE) = FALSE ORDER BY id`,
-      );
+      const rows = sortSourcesById(await ctx.engine.listAllSources());
       sources = rows.map((r) => ({
         id: r.id,
-        name: r.name,
+        name: r.name as string,
         local_path: r.local_path,
         config: r.config ?? {},
       }));
     } catch {
       // Pre-v0.26.5 brains may lack the `archived` column; degrade to all rows.
-      const rows = await ctx.engine.executeRaw<{
-        id: string;
-        name: string;
-        local_path: string | null;
-        config: Record<string, unknown> | null;
-      }>(`SELECT id, name, local_path, config FROM sources ORDER BY id`);
+      const rows = sortSourcesById(await ctx.engine.listAllSources({ includeArchived: true }));
       sources = rows.map((r) => ({
         id: r.id,
-        name: r.name,
+        name: r.name as string,
         local_path: r.local_path,
         config: r.config ?? {},
       }));

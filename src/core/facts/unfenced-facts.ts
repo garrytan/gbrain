@@ -293,9 +293,7 @@ export function unboundRefusedSentence(pages: UnfencedFactsOutcome['unbound_refu
 /** Read the unfenced active rows of one source (or every source) and group the fenceable ones per page. */
 export async function planUnfencedFacts(engine: BrainEngine, opts: { sourceId?: string } = {}): Promise<UnfencedFactsPlan> {
   const managed = await managedPersistenceEnabled(engine);
-  const sources = await engine.executeRaw<{ id: string; local_path: string | null; archived?: boolean; config: unknown }>(
-    'SELECT id, local_path, archived, config FROM sources',
-  );
+  const sources = await engine.listSourceRoutingRows();
   const urlClones = new Set(managed ? [] : sources.filter(isOwnedClone).map(s => s.id));
   const mirrors = new Set(managed ? [] : sources.filter(s => parseSourceConfig(s.config).mirror_read_only === true).map(s => s.id));
   const localPathById = new Map(sources.map(s => [s.id, s.local_path] as const));

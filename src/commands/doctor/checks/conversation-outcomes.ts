@@ -16,13 +16,14 @@ import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import { boundUnknownDetails } from '../bounded-unknown.ts';
 import { CONVERSATION_EXTRACTOR_VERSION, NON_EXTRACTABLE_AUDIT_SOURCE, outcomeExtractorVersion, TERMINAL_AUDIT_SOURCE } from '../../../core/facts/audit-sources.ts';
+import { sortSourcesById } from '../../../core/source-rows.ts';
 
 export const OUTCOME_SCAN_CAP = 5000;
 
 export async function conversationOutcomesStaleCheck(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {
   const name = 'conversation_outcomes_stale';
   try {
-    const sources = sourceIds ?? (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(row => row.id);
+    const sources = sourceIds ?? sortSourcesById(await engine.listAllSources()).map(row => row.id);
     const rows = await engine.executeRaw<{ source_id: string; slug: string; context: string | null }>(
       `SELECT source_id, source_markdown_slug AS slug, context FROM facts
         WHERE source_id = ANY($1::text[]) AND source LIKE 'cli:extract-conversation-facts%' AND source = ANY($2::text[]) AND expired_at IS NULL
@@ -71,7 +72,7 @@ export async function conversationLabelFactsCheck(engine: BrainEngine, sourceIds
   const name = 'conversation_label_facts';
   try {
     const { countLabelFacts } = await import('../../../core/repair/conversation-labels.ts');
-    const sources = sourceIds ?? (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(row => row.id);
+    const sources = sourceIds ?? sortSourcesById(await engine.listAllSources()).map(row => row.id);
     const { count, capped } = await countLabelFacts(engine, sources, LABEL_SCAN_CAP);
     const details = { evidenced: count, capped, repair: 'conversation-labels', docs: 'docs/guides/repair.md#conversation-labels' };
     if (!count) return { name, status: 'ok', details, message: 'No conversation fact carries the pre-fix meeting-label signature (a 1970-01-01 segment on a label page).' };

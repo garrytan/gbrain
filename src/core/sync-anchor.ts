@@ -14,6 +14,7 @@ import { ownsGlobalSyncAnchor, sameRepoDir } from './sync.ts';
 import { isWithinRoot } from './sync-git.ts';
 import { serr } from './console-prefix.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from './source-config-sql.ts';
+import { sourceConfigText } from './source-rows.ts';
 
 // v0.18.0 Step 5: source-scoped sync state helpers. When opts.sourceId
 // is set, read/write the per-source row instead of the global config
@@ -29,12 +30,8 @@ export async function readSyncAnchor(
     // GBRA-133: inside a CLI sync's routing scope the source's routing row answers the repo path (sync-dispatch-read.ts).
     const routing = which === 'repo_path' ? await syncDispatchRow(engine, sourceId) : undefined;
     if (routing) return routing.local_path;
-    const col = which === 'repo_path' ? 'local_path' : 'last_commit';
-    const rows = await engine.executeRaw<Record<string, string | null>>(
-      `SELECT ${col} AS value FROM sources WHERE id = $1`,
-      [sourceId],
-    );
-    return rows[0]?.value ?? null;
+    const source = await engine.getSource(sourceId);
+    return (which === 'repo_path' ? source?.local_path : source?.last_commit) ?? null;
   }
   return await engine.getConfig(`sync.${which}`);
 }
@@ -402,11 +399,8 @@ export async function readSlugRootMode(
   sourceId: string | undefined,
 ): Promise<SlugRootMode | null> {
   if (sourceId) {
-    const rows = await engine.executeRaw<{ mode: string | null }>(
-      `SELECT config->>'slug_root_mode' AS mode FROM sources WHERE id = $1`,
-      [sourceId],
-    );
-    return asSlugRootMode(rows[0]?.mode);
+    const source = await engine.getSource(sourceId);
+    return asSlugRootMode(sourceConfigText(source?.config, 'slug_root_mode'));
   }
   return asSlugRootMode(await engine.getConfig('sync.slug_root_mode'));
 }

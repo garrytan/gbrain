@@ -45,11 +45,7 @@ const STALE_AFTER_MS = 24 * 3_600_000;
  *  anywhere else can never match. */
 async function sourceHasGoogleContent(ctx: OperationContext, sourceId: string): Promise<boolean> {
   try {
-    const rows = await ctx.engine.executeRaw<{ config: unknown }>(
-      `SELECT config FROM sources WHERE id = $1`,
-      [sourceId],
-    );
-    const c = rows[0]?.config;
+    const c = (await ctx.engine.getSource(sourceId))?.config;
     const cfg =
       typeof c === 'string'
         ? (JSON.parse(c) as Record<string, unknown>)
@@ -71,10 +67,11 @@ async function googleSourceFreshness(
   scope: { sourceId?: string; sourceIds?: string[] },
 ): Promise<{ sources: GoogleSourceFreshness[]; stale: boolean; staleSources: string[]; failed?: true }> {
   try {
-    const rows = await ctx.engine.executeRaw<{ id: string; last_sync_at: string | null; config: unknown }>(
-      `SELECT id, last_sync_at, config FROM sources WHERE archived IS NOT TRUE`,
-      [],
-    );
+    const rows = (await ctx.engine.listAllSources()).map((r) => ({
+      id: r.id,
+      last_sync_at: r.last_sync_at === null ? null : new Date(r.last_sync_at).toISOString(),
+      config: r.config as unknown,
+    }));
     const sources = rows
       .filter((r) => {
         const c =

@@ -17,6 +17,7 @@ import { takesAutoEmbedEnabled } from '../../../core/embed-takes.ts';
 import type { Check } from '../../doctor.ts';
 import { agentFix } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { sortSourcesById } from '../../../core/source-rows.ts';
 
 export const VECTOR_COVERAGE_DOCS = 'docs/GBRAIN_VERIFY.md#5a-fact-and-take-vectors';
 
@@ -40,7 +41,7 @@ async function runFactTakeVectors(ctx: DoctorContext): Promise<Check[]> {
     return checks;
   }
   try {
-    const sources = (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE NOT archived ORDER BY id'))
+    const sources = sortSourcesById(await engine.listAllSources())
       .filter(s => !ctx.orphanRatioSourceId || s.id === ctx.orphanRatioSourceId);
     const factRows = await engine.executeRaw<{ source_id: string; missing: number; stale: number; partial: number }>(
       `SELECT f.source_id, count(*) FILTER (WHERE f.embedding IS NULL)::int AS missing,

@@ -75,7 +75,7 @@ export type HoldScreen = { refusal: ContentRefusal | null; upstreamVersion: stri
 export async function openLegacyHolds(engine: BrainEngine, sourceId: string | undefined): Promise<LegacyHolds | null> {
   if (currentCompanyBrainSync(sourceId)) return null;
   const id = sourceId ?? DEFAULT_SOURCE_ID;
-  const [row] = await engine.executeRaw<{ incarnation: string | null }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [id]).catch(() => []);
+  const row = await engine.readSourceIncarnation(id).catch(() => null);
   if (!row?.incarnation) return null;
   const policy = await readSyncHoldPolicy(engine);
   const listed = await readGitSourceHolds(engine, { sourceIds: [id] });

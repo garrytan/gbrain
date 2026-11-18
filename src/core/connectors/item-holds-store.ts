@@ -22,16 +22,30 @@ import { withFilesystemPublication } from '../persistence/filesystem-guard.ts';
 import type { BrainEngine } from '../engine.ts';
 import { digest } from '../persistence/digest.ts';
 import { connectorDbCursorKey, readConnectorDbCursor, writeConnectorDbCursor } from './db-cursor.ts';
-import { CONNECTOR_KINDS_SQL, connectorCheckpointKey, connectorIdentity, isConnectorSourceKind, type ConnectorKind } from '../persistence/connector-identity.ts';
+import { connectorCheckpointKey, connectorIdentity, isConnectorSourceKind, type ConnectorKind } from '../persistence/connector-identity.ts';
 import { connectorStateKey } from '../persistence/connector-state.ts';
 import { readManagedMode } from '../persistence/managed-mode.ts';
 import { heldItems, type ItemHoldRecord } from './item-holds.ts';
+import { sortSourcesById, sourceConfigText } from '../source-rows.ts';
 
 export const HOLD_RETRY_OP = 'connector-hold-retry';
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
+/** An engine that also reads the `sources` rows through their typed members. */
+type SourceExec = Exec & Pick<BrainEngine, 'listAllSources' | 'readSourceIncarnation'>;
 
 export interface ConnectorSourceRow { id: string; incarnation: string; local_path: string | null; config: Record<string, unknown> }
+
+/** Live connector-kind sources with their incarnation, in id order. */
+async function connectorSourceRows(engine: SourceExec): Promise<ConnectorSourceRow[]> {
+  const out: ConnectorSourceRow[] = [];
+  for (const source of sortSourcesById(await engine.listAllSources())) {
+    if (!isConnectorSourceKind(sourceConfigText(source.config, 'kind'))) continue;
+    const row = await engine.readSourceIncarnation(source.id);
+    if (row) out.push({ id: source.id, incarnation: row.incarnation, local_path: source.local_path, config: source.config });
+  }
+  return out;
+}
 
 export async function managedBrain(engine: Exec): Promise<boolean> {
   // A failed or impossible mode read propagates: guessing "unmanaged" would read a stale state file and report no holds.
@@ -73,9 +87,8 @@ export async function readConnectorCursorState(engine: Exec, source: ConnectorSo
 export interface SourceHolds { sourceId: string; kind: ConnectorKind; held: ItemHoldRecord[] }
 
 /** Held items per connector source (sources with none are omitted). */
-export async function readAllSourceHolds(engine: Exec, opts: { sourceIds?: string[] } = {}): Promise<SourceHolds[]> {
-  const sources = await engine.executeRaw<ConnectorSourceRow>(
-    `SELECT id,incarnation::text AS incarnation,local_path,config FROM sources WHERE archived IS NOT TRUE AND config->>'kind' IN (${CONNECTOR_KINDS_SQL}) ORDER BY id`);
+export async function readAllSourceHolds(engine: SourceExec, opts: { sourceIds?: string[] } = {}): Promise<SourceHolds[]> {
+  const sources = await connectorSourceRows(engine);
   const managed = await managedBrain(engine);
   const out: SourceHolds[] = [];
   for (const source of sources) {
@@ -97,8 +110,6 @@ export interface HoldCarry {
   /** The host that owns the source's worktree when it is not this host. */
   owner_host?: string;
 }
-
-const CONNECTOR_SOURCES_SQL = `SELECT id,incarnation::text AS incarnation,local_path,config FROM sources WHERE archived IS NOT TRUE AND config->>'kind' IN (${CONNECTOR_KINDS_SQL}) ORDER BY id`;
 
 /** True when the hold cannot be carried from this host: deactivation keeps refusing for it. */
 export function holdCarryBlocked(carry: HoldCarry): boolean {
@@ -136,9 +147,9 @@ async function evaluateHoldCarry(engine: Exec, source: ConnectorSourceRow, hostI
  * worktree owned by another host cannot take its holds from here
  * (holdCarryBlocked). Read-only.
  */
-export async function planHoldCarry(engine: Exec, hostId: string | null): Promise<HoldCarry[]> {
+export async function planHoldCarry(engine: SourceExec, hostId: string | null): Promise<HoldCarry[]> {
   const out: HoldCarry[] = [];
-  for (const source of await engine.executeRaw<ConnectorSourceRow>(CONNECTOR_SOURCES_SQL)) {
+  for (const source of await connectorSourceRows(engine)) {
     const evaluated = await evaluateHoldCarry(engine, source, hostId);
     if (evaluated) out.push(evaluated.carry);
   }
@@ -152,9 +163,9 @@ export async function planHoldCarry(engine: Exec, hostId: string | null): Promis
  * that then aborted (and was resolved in managed mode since) is cleared.
  * Throws for a blocked carry; deactivation refuses those first.
  */
-export async function carryHoldsToClassicState(engine: Exec, hostId: string | null): Promise<HoldCarry[]> {
+export async function carryHoldsToClassicState(engine: SourceExec, hostId: string | null): Promise<HoldCarry[]> {
   const carried: HoldCarry[] = [];
-  for (const source of await engine.executeRaw<ConnectorSourceRow>(CONNECTOR_SOURCES_SQL)) {
+  for (const source of await connectorSourceRows(engine)) {
     const evaluated = await evaluateHoldCarry(engine, source, hostId);
     if (!evaluated) continue;
     const { holds, carry } = evaluated;

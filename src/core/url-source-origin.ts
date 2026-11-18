@@ -21,6 +21,7 @@
 import { closeSync, existsSync, fchmodSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import type { BrainEngine } from './engine.ts';
+import { sortSourcesById } from './source-rows.ts';
 import { execFileSync } from './spawn.ts';
 import { opError } from './ops/contract.ts';
 import { LFS_OFF_CLONE_CONFIG } from './git-remote.ts';
@@ -52,8 +53,7 @@ function originState(row: SourceRowLike): OriginState {
 
 /** Active URL sources in the default clone directory with no record of who added them. */
 export async function urlSourcesWithoutOrigin(engine: BrainEngine): Promise<Array<{ id: string; local_path: string }>> {
-  const rows = await engine.executeRaw<SourceRowLike>(
-    'SELECT id, local_path, config FROM sources WHERE archived IS NOT TRUE AND local_path IS NOT NULL ORDER BY id');
+  const rows = sortSourcesById(await engine.listAllSources()).filter(row => row.local_path !== null);
   return rows.filter(row => originState(row) === 'unknown').map(row => ({ id: row.id, local_path: row.local_path! }));
 }
 

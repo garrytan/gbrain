@@ -42,6 +42,7 @@ import {
   RETIRE_REASONS, chronicleDailyRemaining, decideChronicle, pruneChronicleReservations, upsertChronicleRow,
 } from '../chronicle/ledger.ts';
 import { CHRONICLE_REASONS, type ChronicleReasonCode } from '../chronicle/reasons.ts';
+import { sortSourcesById } from '../source-rows.ts';
 
 export interface ChroniclePhaseOpts {
   dryRun?: boolean;
@@ -155,7 +156,7 @@ export async function runPhaseChronicle(engine: BrainEngine, opts: ChroniclePhas
   }
   const { withoutGuestSources } = await import('../guests/derived.ts');
   const sources = await withoutGuestSources(engine, 'chronicle',
-    (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE NOT archived ORDER BY id')).map((s) => s.id), id => id);
+    sortSourcesById(await engine.listAllSources()).map((s) => s.id), id => id);
   details.sources = sources.length;
   for (const sourceId of sources) {
     await discover(engine, sourceId, { managed, enabled, activatedAt, settings, now: now(), dryRun });

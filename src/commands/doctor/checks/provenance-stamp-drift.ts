@@ -10,6 +10,7 @@ import type { Check } from '../../doctor.ts';
 import { agentFix, checkError } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { scanProvenanceDrift, type SourceDrift } from '../../../core/trust/provenance-drift.ts';
+import { sortSourcesById } from '../../../core/source-rows.ts';
 
 const DOCS = 'docs/guides/repair.md#provenance';
 
@@ -17,7 +18,7 @@ async function runProvenanceStampDrift(ctx: DoctorContext): Promise<Check[]> {
   const checks: Check[] = [];
   try {
     const engine = connectedEngine(ctx);
-    const sourceIds = ctx.sourceIds ?? (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(row => row.id);
+    const sourceIds = ctx.sourceIds ?? sortSourcesById(await engine.listAllSources()).map(row => row.id);
     const scans: SourceDrift[] = [];
     for (const sourceId of sourceIds) scans.push(await scanProvenanceDrift(engine, sourceId));
     const damaged = (scan: SourceDrift) => scan.marker_lost.remote + scan.marker_lost.unattributed + scan.stamps_rewritten.remote

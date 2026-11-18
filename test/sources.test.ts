@@ -44,9 +44,22 @@ function makeStub(rowsByPattern: Record<string, unknown[]> = {}): {
   };
 
   // Minimal BrainEngine stub — only the methods sources.ts touches.
+  // The typed source reads answer from the same fake rows: getSource sees a row only once the INSERT ran (the
+  // pre-flight collision check finds nothing, the re-read after the insert finds it), as on a real brain.
+  const DETAIL = 'SELECT id, name, local_path, last_commit, last_sync_at, config, created_at';
+  const inserted = () => new Set(calls.filter(c => c.sql.includes('INSERT INTO sources')).map(c => c.params[0]));
+  const getSource = async (id: string) => {
+    if (!inserted().has(id)) return null;
+    return ((rowsByPattern[DETAIL] ?? []) as Array<{ id: string }>).find(r => r.id === id) ?? null;
+  };
+  const listLocalPathSources = async () =>
+    ((rowsByPattern['SELECT id, local_path FROM sources WHERE local_path'] ?? []) as Array<{ id: string; local_path: string }>)
+      .map(r => ({ id: r.id, local_path: r.local_path, archived: false }));
   const engine = {
     kind: 'pglite' as const,
     executeRaw,
+    getSource,
+    listLocalPathSources,
     // The strict mode reader is a typed method; it answers from the same fake rows as executeRaw.
     readManagedModeRows: () => executeRaw('SELECT enabled FROM persistence_brain WHERE singleton=1'),
     setConfig,

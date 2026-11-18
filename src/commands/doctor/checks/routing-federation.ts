@@ -43,9 +43,7 @@ export const DCR_PRIVILEGED_SCOPES: ReadonlyArray<string> = Object.freeze(
  */
 export async function checkSourceRoutingHealth(engine: BrainEngine): Promise<Check> {
   try {
-    const sources = await engine.executeRaw<{ id: string }>(
-      `SELECT id FROM sources WHERE id <> 'default'`,
-    );
+    const sources = (await engine.listSourceRoutingRows()).filter(s => s.id !== 'default');
     if (sources.length === 0) {
       return { name: 'source_routing_health', status: 'ok', message: 'Single-source brain (no federation to check)' };
     }

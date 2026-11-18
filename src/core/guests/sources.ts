@@ -12,6 +12,7 @@ import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { addSource } from '../sources-ops.ts';
 import type { TrustTier } from '../trust/tier.ts';
 import { lookupGuestSource } from './admission.ts';
+import { sourceConfigText } from '../source-rows.ts';
 
 export const GUEST_TRUST_CEILING: TrustTier = 'external_untrusted';
 const PRINCIPAL_KINDS: readonly Principal['kind'][] = ['oauth_client', 'legacy_token', 'local_cli', 'local_stdio', 'application'];
@@ -53,8 +54,8 @@ export interface GuestSourcePlan { sourceId: string; exists: boolean; localPath:
 
 /** What `guests init` would do, read without writing. `writers` is the list after the run (existing ones kept). */
 export async function planGuestSource(engine: BrainEngine, sourceId: string, writers: readonly string[]): Promise<GuestSourcePlan> {
-  const [source] = await engine.executeRaw<{ local_path: string | null; config_guest: boolean }>(
-    "SELECT local_path, COALESCE(config->>'guest' = 'true', false) AS config_guest FROM sources WHERE id = $1", [sourceId]);
+  const found = await engine.getSource(sourceId);
+  const source = found ? { local_path: found.local_path, config_guest: sourceConfigText(found.config, 'guest') === 'true' } : undefined;
   const guest = source ? await readGuestSource(engine, sourceId) : null;
   const unmarked = !!source && !guest && !source.config_guest;
   const [held] = unmarked ? await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE source_id = $1', [sourceId]) : [];

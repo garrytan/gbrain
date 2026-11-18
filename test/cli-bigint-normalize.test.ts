@@ -17,6 +17,7 @@ import { bigintToStringReplacer, CLI_ONLY } from '../src/cli/main.ts';
 import { takeHitRowToHit } from '../src/core/utils.ts';
 import { runCall } from '../src/commands/call.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { stubSourceMembers } from './helpers/source-members-stub.ts';
 
 describe('bigintToStringReplacer (#2450)', () => {
   test('serializes a bigint to its string form instead of throwing', () => {
@@ -77,8 +78,7 @@ describe('runCall output exit is bigint-safe (#2450)', () => {
     // carry the replacer. Stub just the surface runCall touches: --source
     // resolution (assertSourceExists) + the get_stats handler pass-through.
     const stub = {
-      executeRaw: async (sql: string) =>
-        sql.includes('FROM sources') ? [{ id: 'default' }] : [],
+      ...stubSourceMembers([{ id: 'default' }]),
       getStats: async () => ({ pages: 42n, chunks: 7 }),
     } as unknown as BrainEngine;
 

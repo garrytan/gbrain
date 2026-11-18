@@ -5,23 +5,12 @@ import { tmpdir } from 'node:os';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { resolveMcpStdioSourceScope } from '../src/mcp/server.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { stubSourceMembers, type StubSourceMemberOptions } from './helpers/source-members-stub.ts';
 
-function makeEngine(registeredSources: string[]): BrainEngine {
+function makeEngine(registeredSources: string[], opts: StubSourceMemberOptions = {}): BrainEngine {
   return {
     kind: 'pglite',
-    executeRaw: async <T>(sql: string, params?: unknown[]): Promise<T[]> => {
-      if (sql.includes('SELECT id FROM sources WHERE id = $1')) {
-        const id = params?.[0];
-        return (typeof id === 'string' && registeredSources.includes(id)
-          ? [{ id } as T]
-          : []);
-      }
-      if (sql.includes('SELECT id, local_path FROM sources')) return [];
-      if (sql.includes('SELECT id, config, archived FROM sources')) {
-        return registeredSources.map(id => ({ id, config: null, archived: false }) as T);
-      }
-      return [];
-    },
+    ...stubSourceMembers(registeredSources.map(id => ({ id })), opts),
     getConfig: async () => null,
   } as unknown as BrainEngine;
 }
@@ -66,14 +55,16 @@ describe('stdio MCP source resolution', () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-mcp-source-'));
     scratchDirs.push(dir);
     writeSourceDotfile(dir, 'team-alpha');
-    const base = makeEngine(['default', 'team-alpha']);
-    const failing = {
-      ...base,
-      executeRaw: async <T>(sql: string, params?: unknown[]): Promise<T[]> => {
-        if (/SELECT id, config/.test(sql)) throw new Error('sources table unavailable');
-        return base.executeRaw<T>(sql, params);
+    // The dotfile's existence check answers (the first listAllSources); the admission lookup (the next source read, the
+    // active list and then the every-source fallback) fails.
+    let activeListReads = 0;
+    const failing = makeEngine(['default', 'team-alpha'], {
+      fail: member => {
+        if (member === 'listAllSources' && ++activeListReads > 1) return new Error('sources table unavailable');
+        if (member === 'listSourceRecords') return new Error('sources table unavailable');
+        return undefined;
       },
-    } as unknown as BrainEngine;
+    });
 
     await withEnv({ GBRAIN_SOURCE: undefined }, async () => {
       expect(await resolveMcpStdioSourceScope(failing, dir)).toEqual({ sourceId: 'team-alpha', tier: 'dotfile' });
