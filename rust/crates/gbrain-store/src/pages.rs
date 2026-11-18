@@ -585,7 +585,7 @@ fn origin_holders(
 /// origin the write records (`None` keeps the stored one). Refuses with `origin_claimed` when
 /// another live page of the source records that origin, unless the target is live and already
 /// records it. An empty origin is never checked.
-fn assert_origin_unclaimed(
+pub(crate) fn assert_origin_unclaimed(
     read: &dyn KvRead,
     source_id: &str,
     slug: &str,

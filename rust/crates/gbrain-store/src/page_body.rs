@@ -1100,6 +1100,8 @@ impl Store {
                     "duplicate key value violates unique constraint \"pages_source_slug_key\" ({source_id}, {slug})"
                 )));
             }
+            // One live page per recorded origin (PGLite's pages_live_origin_key).
+            crate::pages::assert_origin_unclaimed(&*tx, &source_id, &slug, None, meta.source_path.as_deref())?;
             let record = PageRecord {
                 id: next_id(tx, NEXT_PAGE_ID)?,
                 source_id: source_id.clone(),
@@ -1179,6 +1181,9 @@ impl Store {
                     "expected": input.expected_generation, "current": current,
                 })));
             }
+            // The flip keeps or sets the page's origin and revives a deleted page, so it must not take an
+            // origin another live page holds (PGLite's pages_live_origin_key).
+            crate::pages::assert_origin_unclaimed(&*tx, &page.source_id, &page.slug, Some(&page), input.meta.source_path.as_deref())?;
             let staged: Option<StagingRecord> = get_json(&*tx, &staging_key(&staging))?;
             if !staged
                 .as_ref()
@@ -2721,5 +2726,118 @@ mod segment_chunk_tests {
         assert!(store.read().unwrap().get(&view).unwrap().is_some());
         store.delete_page("notes/a", None).unwrap();
         assert!(store.read().unwrap().get(&view).unwrap().is_none());
+    }
+
+    fn holder(store: &Store, slug: &str, origin: &str) {
+        let input = crate::pages::PageInput {
+            page_type: "note".into(),
+            title: slug.into(),
+            compiled_truth: "inline body".into(),
+            source_path: Some(origin.into()),
+            ..crate::pages::PageInput::default()
+        };
+        store
+            .put_page(slug, &input, &crate::pages::PutPageOptions::default())
+            .unwrap();
+    }
+
+    #[test]
+    fn a_shell_cannot_claim_an_origin_a_live_page_holds() {
+        let store = crate::test_support::store();
+        holder(&store, "notes/holder", "docs/a.md");
+        let err = store
+            .create_segmented_page_shell(
+                "notes/twin",
+                &serde_json::from_value(
+                    json!({"type": "note", "title": "Twin", "source_path": "docs/a.md"}),
+                )
+                .unwrap(),
+                &ShellOptions {
+                    source_id: Some("default".into()),
+                },
+            )
+            .unwrap_err();
+        assert_eq!(err.code, crate::error::ORIGIN_CLAIMED);
+        assert!(
+            read_page(&*store.read().unwrap(), "default", "notes/twin")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_flip_cannot_move_a_page_onto_or_revive_it_into_a_claimed_origin() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        holder(&store, "notes/holder", "docs/a.md");
+        let stage = |staging_id: &str, client: &str| {
+            store
+                .open_body_staging(&staging(staging_id, id, client))
+                .unwrap();
+            store
+                .stage_segment_texts(
+                    "default",
+                    &[text("one\n"), text("two\n")],
+                    &StageTextsOptions {
+                        staging_id: Some(staging_id.into()),
+                    },
+                )
+                .unwrap();
+            store
+                .stage_manifest_rows(&[
+                    row(id, 3, 2, 0, 0, "one\n", staging_id),
+                    row(id, 4, 2, 1, 4, "two\n", staging_id),
+                ])
+                .unwrap();
+        };
+        stage(STAGING_2, "55555555-5555-4555-8555-555555555555");
+        // A flip that names the holder's origin.
+        let err = store
+            .flip_body_generation(&flip(
+                id,
+                1,
+                STAGING_2,
+                8,
+                json!({"meta": {"type": "note", "title": "Moved", "source_path": "docs/a.md"}}),
+            ))
+            .unwrap_err();
+        assert_eq!(err.code, crate::error::ORIGIN_CLAIMED);
+        let page = read_page(&*store.read().unwrap(), "default", "notes/a")
+            .unwrap()
+            .unwrap();
+        assert_eq!(page.title, "Flipped");
+        assert_eq!(page.source_path, None);
+        assert_eq!(
+            read_body_state(&*store.read().unwrap(), id as u64)
+                .unwrap()
+                .unwrap()
+                .body_generation,
+            1
+        );
+        // A deleted page whose origin another page took is not revived by a flip that keeps its origin.
+        store
+            .write(|tx| {
+                let mut page = read_page(&*tx, "default", "notes/a")?.unwrap();
+                page.source_path = Some("docs/b.md".into());
+                page.deleted_at_us = Some(1);
+                write_page(tx, &page)
+            })
+            .unwrap();
+        holder(&store, "notes/taker", "docs/b.md");
+        let err = store
+            .flip_body_generation(&flip(id, 1, STAGING_2, 8, json!({})))
+            .unwrap_err();
+        assert_eq!(err.code, crate::error::ORIGIN_CLAIMED);
+        let page = read_page(&*store.read().unwrap(), "default", "notes/a")
+            .unwrap()
+            .unwrap();
+        assert!(page.deleted_at_us.is_some());
+        assert_eq!(
+            read_body_state(&*store.read().unwrap(), id as u64)
+                .unwrap()
+                .unwrap()
+                .body_generation,
+            1
+        );
     }
 }
