@@ -190,7 +190,7 @@ impl Store {
                 let index = f64::from(c.chunk_index);
                 index >= options.from_index && index < to
             })
-            .map(ChunkRecord::to_chunk)
+            .map(|c| c.to_chunk(None))
             .collect();
         Ok(json!({ "chunks": page_chunks, "total_chunks": total, "max_chunk_index": max }))
     }
