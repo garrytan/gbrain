@@ -171,11 +171,11 @@ pub(crate) fn no_nul(op: &str, parts: &[(&str, &str)]) -> Result<()> {
 
 fn refuse_unsupported(
     op: &str,
-    exclude_private: Option<bool>,
+    exclude_nonpublic: Option<bool>,
     temporal: &Option<Value>,
     page: &Option<Value>,
 ) -> Result<()> {
-    let refused = if exclude_private == Some(true) {
+    let refused = if exclude_nonpublic == Some(true) {
         Some("excludePrivate")
     } else if temporal.as_ref().is_some_and(|v| !v.is_null()) {
         Some("temporal")
