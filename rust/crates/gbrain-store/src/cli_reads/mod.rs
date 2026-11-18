@@ -4,7 +4,7 @@
 
 pub mod import;
 mod pg_case;
-mod pg_text;
+pub(crate) mod pg_text;
 pub mod reads;
 pub mod search_reads_pages;
 pub mod sources;

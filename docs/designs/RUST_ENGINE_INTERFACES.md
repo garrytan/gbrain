@@ -467,7 +467,7 @@ delete.
 - What the body must do (the trigger's rules): delete the job when the page is hard deleted, soft deleted, moved to
   another slug or source, or when `text_projection_revision` equals `knowledge_revision`; write the job when the page
   is new or its `knowledge_revision` changed.
-- **Owner:** persistence. The body is empty today, so no page write changes.
+- **Owner:** persistence. The body is `persistence/projection_queue.rs` (`rust/docs/store/persistence.md`, "Projection queue").
 
 #### Page origin (`source_path` on `putPage`)
 

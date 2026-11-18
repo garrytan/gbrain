@@ -230,6 +230,7 @@ impl Store {
     /// Runs `f` in the write transaction and commits when it returns `Ok`. An `Err` rolls back.
     pub(crate) fn write<T>(&self, f: impl FnOnce(&mut dyn KvWrite) -> Result<T>) -> Result<T> {
         let mut tx = self.kv.begin_write()?;
+        let _clock = crate::env::transaction_clock::open(self.env.clone());
         let value = f(&mut *tx)?;
         tx.commit()?;
         Ok(value)

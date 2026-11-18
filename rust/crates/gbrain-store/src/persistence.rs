@@ -12,6 +12,8 @@
 //! |---|---|
 //! | `d 0x01 <counter key>` | one `persistence_counters` row (`CounterRecord`), JSON |
 //! | `d 0x02 <op> 0x00 <fingerprint>` | one housekeeping `op_checkpoints` row (`housekeeping.rs`), JSON |
+//! | `d 0x03 <principal_id> 0x00 <request_id>` | one `persistence_topology_changes` row (`topology.rs`), JSON |
+//! | `d 0x04 <source incarnation> 0x00 <slug>` | one `page_projection_jobs` row (`projection_queue.rs`), JSON |
 //!
 //! A counter key is the text of `persistence_counters.key` (`brain`, `principal:<kind>:<id>`); it
 //! cannot hold NUL, as Postgres text cannot.
@@ -44,8 +46,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 mod housekeeping;
+mod projection_queue;
 mod topology;
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn};
+pub(crate) use projection_queue::queue_page_projection;
+pub use projection_queue::{
+    ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
+};
 pub use topology::TopologyChangeInsert;
 
 /// The byte after `keys::PERSISTENCE` of a counter row.
@@ -54,6 +61,8 @@ const COUNTER: u8 = 0x01;
 pub(crate) const HOUSEKEEPING: u8 = 0x02;
 /// The byte after `keys::PERSISTENCE` of a topology change row (persistence/topology.rs).
 const TOPOLOGY: u8 = 0x03;
+/// The byte after `keys::PERSISTENCE` of a page projection job (persistence/projection_queue.rs).
+const QUEUE: u8 = 0x04;
 
 /// `persistence_requests.state` CHECK (with `deferred`, added by a later migration).
 const REQUEST_STATES: &[&str] = &[
@@ -1014,15 +1023,4 @@ impl Store {
         Ok(read_source(&*read, source_id)?
             .map(|s| json!({ "incarnation": s.incarnation, "archived": s.archived })))
     }
-}
-
-/// Keeps the page projection queue in step with a page write (`page_projection::
-/// queue_page_projection`). Queues nothing yet. Full paths keep this stub clear of the imports
-/// this file will add.
-pub(crate) fn queue_page_projection(
-    _tx: &mut dyn crate::kv::KvWrite,
-    _before: Option<&crate::pages::PageRecord>,
-    _after: Option<&crate::pages::PageRecord>,
-) -> crate::Result<()> {
-    Ok(())
 }
