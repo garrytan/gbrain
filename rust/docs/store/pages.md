@@ -82,9 +82,28 @@ The sanitizer runs in TypeScript only, so `sealChunks` sends its output with the
 
 - **Record.** `SearchTimeline { revision, timeline }`: the page's `knowledge_revision` at the seal, and the text with
   NUL removed, cut to 65,536 characters (`SEARCH_TIMELINE_MAX_CHARS`).
-- **Read.** `pages::search_timeline(read, page_id)` returns the record, or `None` when no seal sent one. The text
-  describes the page's current text when `revision` equals the page's `text_projection_revision`.
+- **Read.** `pages::search_timeline(read, page_id)` returns the record, or `None` when no seal sent one since the
+  last write that set the title or timeline. The text describes the page's current text when `revision` equals the
+  page's `text_projection_revision`.
 - **Written by** a seal that carries `searchTimeline` (TypeScript `sealChunks`). A segmented page has a NULL timeline
   and sends none. A write that does not seal ignores it, and a seal without it (the store's own indexing `putPage`)
-  leaves the record as it was, at its older revision.
+  writes nothing.
+- **Forgotten** (`pages::forget_search_timeline`) by every write that sets the title or timeline. PGLite's
+  `trg_pages_search_vector` fires `BEFORE INSERT OR UPDATE OF title, timeline` (and `timeline_lead` once that column
+  exists) and puts the unsanitized trigger form back; `UPDATE OF` fires on the `SET` list, also when the value is
+  unchanged. Only a later seal with the text writes the record again.
 - **Deleted** with the page on a hard delete (`remove_page`).
+
+PGLite SQL that sets `title` or `timeline`, and where the store forgets the record:
+
+| PGLite statement | Store write | Forgets the record |
+| --- | --- | --- |
+| `putPage` (`engine-sql/pages.ts`, `INSERT … ON CONFLICT DO UPDATE SET title, timeline`) | `pages::put_page_in` (`putPage`, and the journal's `submit_page_mutation`) | always, also when nothing changed and with `index: false` |
+| `refreshPageBody` (`engine-sql/pages.ts`, `UPDATE pages SET compiled_truth, timeline`) | page_body family `refresh_page_body` | the family calls `forget_search_timeline` |
+| the body generation flip (`engine-sql/page-body.ts`, `UPDATE pages SET … timeline = NULL, title, timeline_lead`) | page_body family `flip_body_generation` | the family calls `forget_search_timeline` |
+| `createSegmentedPageShell` (`engine-sql/page-body.ts`, `INSERT INTO pages`) | page_body family | nothing to do: a new page id has no record |
+| withdrawal materialize (`page-state/materialize.ts`, `UPDATE pages SET compiled_truth, timeline`) | none: it runs through `executeRaw`, which the Rust engine refuses | not served |
+
+Any other write that changes the title or timeline through `pages::write_page` forgets the record there, since a
+changed value means PGLite's `SET` list named the column. A write that keeps both values (a seal, a tag change, a soft
+delete, a restore, a rename, `revertToVersion`, which sets only `compiled_truth` and `frontmatter`) keeps it.
