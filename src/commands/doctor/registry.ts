@@ -387,9 +387,9 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   storageManifestEntry,
   // GST-2731: facts pages (type: facts) with fact lines that carry no date (read-only; the fix asks the user for the dates).
   factsPagesEntry,
-  fenceIntegrityEntry,
   // GST-2988 PR 3: secret store entries, backups, keys and escrow, spool, held-back commits and side refs (read-only).
   secretStoreEntry,
+  fenceIntegrityEntry,
   searchModeEntry,
 ];
 

@@ -1251,11 +1251,11 @@
       },
       {
         "category": "brain",
-        "name": "fence_integrity"
+        "name": "secret_store"
       },
       {
         "category": "brain",
-        "name": "secret_store"
+        "name": "fence_integrity"
       },
       {
         "category": "ops",
