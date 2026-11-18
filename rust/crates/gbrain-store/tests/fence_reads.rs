@@ -376,3 +376,72 @@ fn fence_fact_rows_list_an_opened_row_even_for_a_trusted_writer() {
             .is_empty()
     );
 }
+
+/// The fence reads with the context taken from the store's write trust settings (`write_trust.rs`),
+/// set as the engine's transaction would set `gbrain.write_trust_tier` and `gbrain.write_open_facts`.
+#[test]
+fn the_write_trust_settings_reach_both_fence_reads_and_clear_with_the_context() {
+    let b = brain("fence-write-trust");
+    let ids = page(&b);
+    let gamma = ids[3];
+    let names = |items: &[&str]| items.iter().map(|s| (*s).to_string()).collect::<Vec<_>>();
+    // The opened list holds a foreign id, a non-canonical piece and Gamma, as `withOpenFacts` may write it.
+    b.apply_write_trust(
+        &names(&["gbrain.write_trust_tier", "gbrain.write_open_facts"]),
+        &names(&["agent_written", &format!("999,0{gamma},{gamma}")]),
+    )
+    .unwrap();
+    let rows = b
+        .list_fence_fact_rows(&target("default", SLUG, incoming()), &b.fence_context())
+        .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            json!({ "id": gamma, "row_num": 3, "fact": "Gamma private", "visibility": "private",
+                     "trust_tier": "unknown", "above": false, "opened": true })
+        ]
+    );
+    let retired = b
+        .list_fence_retire_candidates(&target("default", SLUG, incoming()), &b.fence_context())
+        .unwrap();
+    assert_eq!(
+        facts(&retired),
+        vec![
+            (2, "Beta"),
+            (5, "Epsilon extracted"),
+            (6, "Zeta struck"),
+            (8, "Eta kept")
+        ]
+    );
+    // A writer below `unknown` lists every live unknown row the fence does not hold as above it
+    // (Beta is struck, so it is not live).
+    b.apply_write_trust(
+        &names(&["gbrain.write_trust_tier"]),
+        &names(&["external_untrusted"]),
+    )
+    .unwrap();
+    let rows = b
+        .list_fence_fact_rows(&target("default", SLUG, incoming()), &b.fence_context())
+        .unwrap();
+    assert_eq!(
+        facts(&rows),
+        vec![
+            (3, "Gamma private"),
+            (5, "Epsilon extracted"),
+            (8, "Eta kept")
+        ]
+    );
+    // The end of the transaction ends the context: the default context again.
+    b.clear_write_trust();
+    assert!(
+        b.list_fence_fact_rows(&target("default", SLUG, incoming()), &b.fence_context())
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        b.list_fence_retire_candidates(&target("default", SLUG, incoming()), &b.fence_context())
+            .unwrap()
+            .len(),
+        5
+    );
+}

@@ -138,16 +138,14 @@ raises).
 
 What PGLite reads from the transaction, the store takes as a `FenceContext`: the writer's tier
 (`gbrain.write_trust_tier`, undeclared reads as `unknown`, a name that is no tier ranks 0) and the
-opened ids (`gbrain.write_open_facts`). The napi members pass the default context, because the Rust
-engine has no transaction settings yet. Two further gaps make `list_fence_fact_rows` answer only what
-the default context can reach:
+opened ids (`gbrain.write_open_facts`). Both napi members take it from the store's write trust context
+(`Store::fence_context`, [write_trust.md](write_trust.md)), which the engine's transaction sets. Two
+further gaps limit what `list_fence_fact_rows` answers:
 
-- A stored row has no tier column and reads as `unknown`. Under the default context the writer is
-  `unknown` too, so nothing is above it, nothing is opened, and the list is empty.
+- A stored row has no tier column and reads as `unknown`. Only a writer below `unknown`
+  (`external_untrusted`) sees rows above it; a row an `operator_curated` write stored is not above an
+  `agent_written` writer, where PGLite lists it (`test/rust-expected-divergence/trust_fence.tsv`).
 - There is no `trust_proposals` table, so no row is ever held.
-
-When the interfaces session lands the Rust write context, both napi members take the writer's tier
-and the opened ids from it, and `FenceContext` is the place to wire them.
 
 ## Not modeled
 

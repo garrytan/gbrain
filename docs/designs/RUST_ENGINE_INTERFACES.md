@@ -1262,8 +1262,21 @@ Trust tiers and write provenance on content rows, and the trust records.
   `trust::stamp`. A page version snapshot copies the page's tier and origin. The takes and timeline families call
   `stamp` when they write their rows. The statements are in
   [the put write path map](../research/rust-put-write-path.md#trust-hook).
+- **Write trust context (built, store side):** `gbrain_store::write_trust` holds the six trust settings
+  (`gbrain.write_trust_tier`, `gbrain.write_origin`, `gbrain.write_trust_promotion`, `gbrain.write_trust_backfill`,
+  `gbrain.write_trust_keep`, `gbrain.write_open_facts`) on the open store, as text, with `set_config` /
+  `current_setting(name, true)` semantics. Brain methods: `applyWriteTrust(names, values)`,
+  `readWriteTrust(names)` (`(string | null)[]`) and `clearWriteTrust()`. The fence reads (`listFenceFactRows`,
+  `listFenceRetireCandidates`) take the writer's tier and the opened ids from it (`Store::fence_context`);
+  `trust::stamp` will take `Store::write_trust()` once the writers stamp. See
+  [`rust/docs/store/write_trust.md`](../../rust/docs/store/write_trust.md).
+- **Hook (interfaces owns it, proposed):** the Rust engine's `applyTransactionSettings` and `readTransactionSettings`,
+  and the trust half of `setWriteContext`, route the six names to `applyWriteTrust` / `readWriteTrust` on the
+  transaction's store; the transaction calls `clearWriteTrust()` at commit and at rollback. Other setting names
+  (attribution, `gbrain.write_sources`) are not the write trust context's.
 - **Depends on:** the transactions family for the settings of an open store write; until then a write outside a
-  transaction stamps with no writer, which is `unknown`.
+  transaction stamps with no writer, which is `unknown`, and the parity cases set the context directly
+  (`test/engine-parity/rust-arm.ts` `applyRustWriteTrust`).
 
 ## Cases that need more than one family
 

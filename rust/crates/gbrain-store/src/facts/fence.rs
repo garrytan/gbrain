@@ -7,14 +7,14 @@
 //! fence: a JSON array of `{ row_num, fact, visibility }` cells (PGLite's `jsonb_to_recordset`
 //! text). A cell field that is absent or null equals nothing, as SQL `=` does.
 //!
-//! Context: PGLite reads three transaction settings inside these statements, which the store has
-//! no equivalent of: the writer's tier (`gbrain.write_trust_tier`), the ids `gbrain repair
-//! open-facts` opens (`gbrain.write_open_facts`) and the widening proposals in `trust_proposals`.
-//! [`FenceContext`] carries the first two; the default is no writer (read as `unknown`) and no
-//! opened ids, which is what a PGLite transaction that declares none gives. There is no
-//! `trust_proposals` table in the store, so no row is ever held. A stored row has no tier column
-//! yet and reads as `unknown`, so under the default context `listFenceFactRows` finds nothing:
-//! `unknown` is not above `unknown`. See rust/docs/store/facts.md, "The fence guard's reads".
+//! Context: PGLite reads three transaction settings inside these statements: the writer's tier
+//! (`gbrain.write_trust_tier`), the ids `gbrain repair open-facts` opens (`gbrain.write_open_facts`)
+//! and the widening proposals in `trust_proposals`. [`FenceContext`] carries the first two; the napi
+//! members take it from the store's write trust context (`Store::fence_context`, `write_trust.rs`).
+//! The default is no writer (read as `unknown`) and no opened ids, which is what a PGLite
+//! transaction that declares none gives. There is no `trust_proposals` table in the store, so no
+//! row is ever held. A stored row has no tier column yet and reads as `unknown`, so only a writer
+//! below `unknown` finds rows above it. See rust/docs/store/facts.md, "The fence guard's reads".
 
 use super::{FactRecord, page_rows};
 use crate::Store;
