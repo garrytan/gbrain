@@ -39,6 +39,7 @@ import * as embeddings from './embeddings.ts';
 import * as transactions from './transactions.ts';
 import * as relations from './relations.ts';
 import * as trustWithdrawals from './trust-withdrawals.ts';
+import * as trustWriteGate from './trust-write-gate.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
 const initSchema: StoreMember<[], void> = async () => undefined;
@@ -51,7 +52,7 @@ export const STORE_MEMBERS = {
   // Planned families: a member is served once its family file exports it.
   ...pageOps, ...extraction, ...aliases, ...pageBody, ...facts, ...ontology, ...takes, ...contradictions, ...dream,
   ...evalCapture, ...codeEdges, ...salience, ...stats, ...rawFiles, ...linkQueries, ...timelineQueries, ...keyword,
-  ...chunkQueries, ...vectors, ...embeddings, ...transactions, ...relations, ...trustWithdrawals,
+  ...chunkQueries, ...vectors, ...embeddings, ...transactions, ...relations, ...trustWithdrawals, ...trustWriteGate,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

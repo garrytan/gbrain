@@ -371,10 +371,8 @@ async function claimView(engine: BrainEngine, sourceId: string, tier: TrustTier,
 async function gateReceipts(engine: BrainEngine, table: string, id: number): Promise<TrustExplanation['gate']> {
   const [exists] = await engine.executeRaw<{ t: string | null }>(`SELECT to_regclass('write_gate_receipts')::text AS t`);
   if (!exists?.t) return { verdict: 'unavailable', receipts: [] };
-  const rows = await engine.executeRaw<{ id: number; verdict: string; reason_families: string[]; detector_version: number; last_seen_at: string }>(
-    `SELECT id, verdict, reason_families, detector_version, last_seen_at FROM write_gate_receipts WHERE target_table = $1 AND target_id = $2 ORDER BY last_seen_at DESC LIMIT 5`,
-    [table, String(id)]);
-  const receipts = rows.map(r => ({ id: Number(r.id), verdict: r.verdict, reason_families: r.reason_families ?? [], detector_version: Number(r.detector_version), last_seen_at: new Date(r.last_seen_at).toISOString() }));
+  const rows = await engine.listWriteGateReceiptsFor(table, String(id), 5);
+  const receipts = rows.map(r => ({ id: r.id, verdict: r.verdict, reason_families: r.reason_families, detector_version: r.detector_version, last_seen_at: r.last_seen_at.toISOString() }));
   return { verdict: (receipts[0]?.verdict as 'flag' | 'quarantine' | undefined) ?? 'none', receipts };
 }
 

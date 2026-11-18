@@ -249,6 +249,16 @@ export const RUST_ENGINE_MEMBERS = {
   moveFactWithdrawalSubject: 'facts',
   hasFactWithdrawalForSubject: 'facts',
   listFactWithdrawalKeys: 'facts',
+  // trust: the write gate's receipts and holds (engine-sql/trust-write-gate.ts)
+  upsertWriteGateReceipt: 'facts',
+  upsertPageWriteGateReceipt: 'facts',
+  deleteStalePageWriteGateReceipts: 'facts',
+  listWriteGateReceiptsFor: 'facts',
+  deleteStaleWriteGateReceipts: 'facts',
+  upsertWriteGateHold: 'facts',
+  listWriteGateHoldRows: 'facts',
+  getWriteGateHoldRow: 'facts',
+  decideWriteGateHold: 'facts',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;

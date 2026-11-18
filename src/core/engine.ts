@@ -1,5 +1,6 @@
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type * as TrustWithdrawalsSql from './engine-sql/trust-withdrawals.ts';
+import type * as TrustWriteGateSql from './engine-sql/trust-write-gate.ts';
 import type { EngineCapabilities } from './engine-capabilities.ts';
 import type { GetVersionsOpts, PageVersionRows } from './page-state/version-types.ts';
 import type { PageSnapshotBatch } from './page-snapshot-batch.ts';
@@ -2912,4 +2913,25 @@ export interface BrainEngine {
   hasFactWithdrawalForSubject(sourceId: string, subject: string): Promise<boolean>;
   /** The source's withdrawal keys by visibility, fingerprint and subject, at most `limit`. */
   listFactWithdrawalKeys(sourceId: string, limit: number): Promise<TrustWithdrawalsSql.WithdrawalKeyRow[]>;
+
+  // Trust: the write gate's receipts and holds (engine-sql/trust-write-gate.ts). Writers call these inside their
+  // publication transaction, so a rolled-back write leaves no receipt or hold.
+  /** Record a flag or quarantine receipt; the same target, content hash and detector version refreshes it. Returns its id. */
+  upsertWriteGateReceipt(input: TrustWriteGateSql.WriteGateReceiptInput): Promise<number>;
+  /** Record a receipt on the live page (sourceId, slug); null when no live page has that slug. */
+  upsertPageWriteGateReceipt(sourceId: string, slug: string, receipt: TrustWriteGateSql.WriteGateReceiptFields): Promise<number | null>;
+  /** Remove the live or deleted page's receipts whose content hash is not `contentHash` (null keeps none). */
+  deleteStalePageWriteGateReceipts(sourceId: string, slug: string, contentHash: string | null): Promise<void>;
+  /** One row's receipts, newest `last_seen_at` first (ties: higher id first), at most `limit`. */
+  listWriteGateReceiptsFor(targetTable: string, targetId: string, limit: number): Promise<TrustWriteGateSql.WriteGateReceiptRow[]>;
+  /** Delete receipts not seen for `olderThanDays` days, except those of a hold still held. Returns how many. */
+  deleteStaleWriteGateReceipts(olderThanDays: number): Promise<number>;
+  /** Hold a quarantined fact or take; the same source, slug, fingerprint and detector version re-opens the hold. Returns its id. */
+  upsertWriteGateHold(input: TrustWriteGateSql.WriteGateHoldRowInput): Promise<number>;
+  /** Holds, highest id first. */
+  listWriteGateHoldRows(opts: TrustWriteGateSql.WriteGateHoldListOpts): Promise<TrustWriteGateSql.WriteGateHoldRow[]>;
+  /** One hold by id, any status. */
+  getWriteGateHoldRow(id: number): Promise<TrustWriteGateSql.WriteGateHoldRow | null>;
+  /** Mark a held row released or dropped; false when it does not exist or was already decided. */
+  decideWriteGateHold(id: number, status: 'released' | 'dropped', decidedBy: string): Promise<boolean>;
 }

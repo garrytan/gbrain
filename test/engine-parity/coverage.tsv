@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 204/204
+# covered: 213/213
 # lifecycle: 9/9
 # pages: 24/24
 # search: 7/7
@@ -30,7 +30,7 @@
 # code_edges: 5/5
 # eval_capture: 5/5
 # salience_enrich: 5/5
-# trust: 6/6
+# trust: 15/15
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
 connect	lifecycle	yes	1	yes	yes	yes	serves
 disconnect	lifecycle	yes	1	yes	yes	yes	serves
@@ -41,17 +41,17 @@ transaction	lifecycle	yes	8	no	yes	yes	refuses:transactions
 transactionDirect	lifecycle	yes	1	no	yes	yes	refuses:transactions
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	25	yes	yes	yes	serves
+getPage	pages	yes	26	yes	yes	yes	serves
 readPageSnapshot	pages	yes	6	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	refuses:pages
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	89	yes	yes	yes	serves
+putPage	pages	yes	90	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	refuses:pages
 findDuplicatePages	pages	yes	1	no	yes	yes	refuses:pages
 deletePage	pages	yes	3	yes	yes	yes	serves
 deletePages	pages	yes	1	yes	yes	yes	refuses:pages
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	refuses:pages
-softDeletePage	pages	yes	17	yes	yes	yes	serves
+softDeletePage	pages	yes	18	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	refuses:pages
 restorePage	pages	yes	6	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	1	no	yes	yes	refuses:pages
@@ -236,3 +236,12 @@ listFactWithdrawalDates	trust	yes	2	no	yes	yes	serves
 moveFactWithdrawalSubject	trust	yes	1	no	yes	yes	serves
 hasFactWithdrawalForSubject	trust	yes	1	no	yes	yes	serves
 listFactWithdrawalKeys	trust	yes	3	no	yes	yes	serves
+upsertWriteGateReceipt	trust	yes	2	no	yes	yes	serves
+upsertPageWriteGateReceipt	trust	yes	1	no	yes	yes	serves
+deleteStalePageWriteGateReceipts	trust	yes	1	no	yes	yes	serves
+listWriteGateReceiptsFor	trust	yes	3	no	yes	yes	serves
+deleteStaleWriteGateReceipts	trust	yes	1	no	yes	yes	serves
+upsertWriteGateHold	trust	yes	2	no	yes	yes	serves
+listWriteGateHoldRows	trust	yes	1	no	yes	yes	serves
+getWriteGateHoldRow	trust	yes	1	no	yes	yes	serves
+decideWriteGateHold	trust	yes	2	no	yes	yes	serves

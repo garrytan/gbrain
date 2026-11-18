@@ -82,3 +82,41 @@ Rust guesses and gaps (1x parity):
 - A negative `limit` refuses with `invalid_argument`; Postgres raises `LIMIT must not be negative`.
 - The fingerprint is a copy of the facts family's (facts.rs on the facts-sites line). `pg_lower_char` follows the code
   points probed on PGLite (`LOWER_KEEP`); a Postgres built with a different Unicode table can differ.
+
+## The write gate (`trust::write_gate`)
+
+Receipts record a flag or quarantine verdict on a persisted row (a page, fact, take, timeline entry or hold). Holds
+keep a fact or take the gate quarantined until an operator releases or drops it. Keys:
+
+- `t 0x02 id` → receipt record; `t 0x03 target_table\0target_id\0content_hash\0detector_version` → receipt id.
+- `t 0x04 id` → hold record; `t 0x05 source\0slug\0fingerprint\0detector_version` → hold id.
+
+Ids come from a per-table counter (`pages::next_id`), so they rise like the Postgres `bigserial`. Neither table has a foreign key in
+Postgres, so a source or page delete leaves these rows, and the Rust store does the same (no source cascade).
+
+| Member | Store method | PGLite statement |
+| --- | --- | --- |
+| `upsertWriteGateReceipt` | `upsert_write_gate_receipt`: a new key gets a new id; a known key refreshes the verdict and `last_seen_at`, keeps the id and keeps the old `request_id` when the new one is null | `INSERT … ON CONFLICT (target_table, target_id, content_hash, detector_version) DO UPDATE` |
+| `upsertPageWriteGateReceipt` | `upsert_page_write_gate_receipt`: the same on the live page `(source, slug)`; none when the page is missing or soft-deleted | `INSERT … SELECT 'pages', p.id::text … WHERE p.deleted_at IS NULL` |
+| `deleteStalePageWriteGateReceipts` | `delete_stale_page_write_gate_receipts`: removes the page's receipts (live or soft-deleted page) whose hash differs | `DELETE … USING pages p … content_hash IS DISTINCT FROM $3` |
+| `listWriteGateReceiptsFor` | `list_write_gate_receipts_for`: sorted by `last_seen_at` then id, both descending, cut to `limit` | `ORDER BY last_seen_at DESC, id DESC LIMIT $3` |
+| `deleteStaleWriteGateReceipts` | `delete_stale_write_gate_receipts`: removes receipts older than the cutoff, except those on a hold still `held` | `DELETE … make_interval(days => $1) AND NOT (… h.status = 'held')` |
+| `upsertWriteGateHold` | `upsert_write_gate_hold`: a known key reopens the hold (status `held`, decision cleared, `seen_count` + 1), keeps its id and kind | `INSERT … ON CONFLICT (source_id, slug, fingerprint, detector_version) DO UPDATE` |
+| `listWriteGateHoldRows` | `list_write_gate_hold_rows`: filters on status, kind, source list or source and `beforeId`; sorted by id descending, cut to `limit` | `… ORDER BY id DESC LIMIT $n` |
+| `getWriteGateHoldRow` | `get_write_gate_hold_row`: a point read | `… WHERE id = $1` |
+| `decideWriteGateHold` | `decide_write_gate_hold`: only a `held` hold moves to `released` or `dropped` | `UPDATE … WHERE id = $1 AND status = 'held'` |
+
+Not built (they still run through `executeRaw`, which the Rust engine refuses): the purge paths (`purge.ts`,
+`page-purge.ts`, `purge-slug-stores.ts`, `source-delete.ts`), `owner-actions.ts`, `release-publish.ts`, the
+eligibility SQL and fence overlay, the trust reads that join facts or takes, the `to_regclass` checks in
+`trust/review.ts` and the doctor check.
+
+Rust guesses and gaps (1x parity):
+
+- A value the table's CHECK constraints refuse (target table, verdict, kind, status) refuses with `invalid_argument`;
+  Postgres raises a CHECK violation.
+- `detector_version` outside the `int4` range refuses with `invalid_argument`, as Postgres refuses it.
+- A NUL byte in any text, text array or JSON string refuses with `invalid_argument`, as Postgres refuses one.
+- A negative `limit` refuses with `invalid_argument`; Postgres raises `LIMIT must not be negative`.
+- Timestamps are microseconds. PGLite's `now()` moves in whole milliseconds, so two writes in the same millisecond
+  tie on `last_seen_at` there and fall back to the id order; the parity cases wait for the clock between writes.

@@ -2,7 +2,8 @@
 //! and the belief ledger.
 //!
 //! Built: [`stamp`] (the trust-tier trigger rules as one pure function, for the writers of pages,
-//! facts, takes and timeline entries to call) and [`withdrawals`] (the `fact_withdrawals` ledger).
+//! facts, takes and timeline entries to call), [`withdrawals`] (the `fact_withdrawals` ledger) and
+//! [`write_gate`] (the write gate's `write_gate_receipts` and `write_gate_holds`).
 //! Everything else still reaches its tables through `executeRaw`, which the Rust engine refuses.
 //! See rust/docs/store/trust.md.
 //!
@@ -10,6 +11,10 @@
 //! record kind.
 //! - `t 0x01 source \0 visibility \0 subject \0 fact_hash` -> `{"withdrawn_at_us"}`: a fact
 //!   withdrawal ([`withdrawals`]).
+//! - `t 0x02 id` -> a write gate receipt; `t 0x03 target_table \0 target_id \0 content_hash \0
+//!   detector_version` -> its id ([`write_gate`]).
+//! - `t 0x04 id` -> a write gate hold; `t 0x05 source \0 slug \0 fingerprint \0
+//!   detector_version` -> its id ([`write_gate`]).
 //!
 //! Open to build now; see docs/designs/RUST_ENGINE_INTERFACES.md ("trust").
 
@@ -20,6 +25,7 @@ mod stamp;
 
 mod fingerprint;
 pub mod withdrawals;
+pub mod write_gate;
 
 #[allow(unused_imports)]
 pub(crate) use stamp::{
