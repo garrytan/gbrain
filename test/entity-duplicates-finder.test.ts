@@ -372,6 +372,23 @@ describe('company domains', () => {
   });
 });
 
+describe('LinkedIn profile URLs', () => {
+  test('two legacy /pub/ profiles with one name but different ids are different keys, never clean', async () => {
+    await page('people/alice-example', 'person', 'Alice Example', { linkedin: 'https://www.linkedin.com/pub/alice-example/12/345/678' });
+    await page('people/alice-example', 'person', 'Alice Example', { linkedin: 'https://www.linkedin.com/pub/alice-example/98/765/432/' }, 'source-b');
+    const [g] = await groups('cross_source');
+    expect(g!.class).not.toBe('clean');
+    expect(g!.evidence).toContainEqual({ matcher: 'key_check', rule: 'key_differs', key: 'linkedin', field: 'linkedin', key_class: 'exclusive', veto: true });
+  });
+
+  test('the same legacy /pub/ profile in two sources is one exclusive key', async () => {
+    await page('people/alice-example', 'person', 'Alice Example', { linkedin: 'https://www.linkedin.com/pub/alice-example/12/345/678' });
+    await page('people/alice-example', 'person', 'Alice Example', { linkedin: 'linkedin.com/pub/alice-example/12/345/678/' }, 'source-b');
+    const [g] = await groups('cross_source');
+    expect(g!.class).toBe('clean');
+  });
+});
+
 describe('the union of clean groups that share a page', () => {
   test('a union with one page per source and no veto is one clean group', async () => {
     await page('people/alice-example', 'person', 'Alice Example', { linkedin: 'linkedin.com/in/alice-example' });
@@ -393,6 +410,18 @@ describe('the union of clean groups that share a page', () => {
     expect(members(g!)).toEqual(['default:people/alice-example', 'default:people/alice-example-2', 'source-b:people/alice-example']);
     expect(g!.class).toBe('likely');
     expect(g!.evidence).toContainEqual({ matcher: 'key_check', rule: 'union_check_failed' });
+  });
+
+  test('a union never joins two pages one of them declares distinct_from the other', async () => {
+    await page('people/alice-a', 'person', 'Alice Example', { linkedin: 'linkedin.com/in/alice-example' });
+    await page('people/alice-b', 'person', 'Alice Example', { linkedin: 'linkedin.com/in/alice-example', github: 'alice-one' }, 'source-b');
+    await page('people/alice-c', 'person', 'Alice Example', { github: 'alice-one', distinct_from: ['people/alice-a'] }, 'source-c');
+    const found = await groups('cross_source');
+    expect(found.filter(g => members(g).includes('default:people/alice-a') && members(g).includes('source-c:people/alice-c'))).toEqual([]);
+    expect(found.map(g => [members(g), g.class])).toEqual(expect.arrayContaining([
+      [['default:people/alice-a', 'source-b:people/alice-b'], 'clean'],
+      [['source-b:people/alice-b', 'source-c:people/alice-c'], 'clean'],
+    ]));
   });
 
   test('a veto between two pages of the union sends it to review', async () => {
@@ -584,4 +613,19 @@ describe('entity_duplicates doctor check', () => {
     expect(JSON.stringify(c)).not.toContain('example.com');
   });
 });
+});
+
+describe('a large group of pages with one name', () => {
+  test('30,000 same-name pages are grouped in linear time', async () => {
+    const rows = Array.from({ length: 30_000 }, (_, i) => ({ source_id: 'default', slug: `people/alice-${String(i).padStart(5, '0')}`, title: 'Alice Example', type: 'person', keys: {} }));
+    const stub = {
+      listAllSources: async () => [{ id: 'default' }],
+      getConfig: async () => null,
+      listEntityKeyRows: async (opts: { after?: { source_id: string; slug: string }; limit: number }) =>
+        rows.filter(r => !opts.after || r.slug > opts.after.slug).slice(0, opts.limit),
+    } as unknown as BrainEngine;
+    const { groups: found } = await findDuplicateGroups(stub, { identityKeys: {} });
+    expect(found).toHaveLength(1);
+    expect(found[0]!.members).toHaveLength(30_000);
+  }, 5_000); // gstack-timing-ok: before the fix the grouping copied each bucket on every push and compared every pair (over 15 s here); linear work takes well under 1 s
 });

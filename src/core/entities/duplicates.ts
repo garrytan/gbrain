@@ -115,8 +115,8 @@ const KEY_SPECS: readonly KeySpec[] = [
   { key: 'x_handle', field: 'x_handle', key_class: 'handle', fields: HANDLE_FRONTMATTER_KEYS, kinds: BOTH, norm: raw => frontmatterHandle(raw) },
   { key: 'linkedin', field: 'linkedin', key_class: 'exclusive', fields: ['linkedin', 'linkedin_url'], kinds: BOTH, norm: (raw, kind) => {
     const v = raw.toLowerCase();
-    const m = /(?:^|\/)(in|company|pub)\/([^/?#\s]+)/.exec(v);
-    if (m) return `${m[1]}/${m[2]}`;
+    const m = /(?:^|\/)(in|company|pub)\/([^?#\s]+)/.exec(v);
+    if (m) return `${m[1]}/${m[1] === 'pub' ? m[2]!.replace(/\/+$/, '') : m[2]!.split('/')[0]}`;
     return /^[a-z0-9][a-z0-9_%-]*$/.test(v) ? `${kind === 'company' ? 'company' : 'in'}/${v}` : null;
   } },
   { key: 'github', field: 'github', key_class: 'exclusive', fields: ['github'], kinds: BOTH, norm: raw => {
@@ -252,7 +252,8 @@ const groupBy = <T>(items: readonly T[], keyOf: (t: T) => string | null) => {
   for (const t of items) {
     const k = keyOf(t);
     if (k === null) continue;
-    out.set(k, [...(out.get(k) ?? []), t]);
+    const list = out.get(k);
+    if (list) list.push(t); else out.set(k, [t]);
   }
   return out;
 };
@@ -423,6 +424,8 @@ function classOf(d: Draft, carriers: Map<string, EntityPage[]>): { cls: Duplicat
   return { cls: vetoedWithoutId ? 'conflict' : cls, evidence };
 }
 
+const hasDistinctPair = (members: EntityPage[]) => members.some(a => a.distinctFrom.size > 0 && members.some(b => a !== b && a.distinctFrom.has(b.slug)));
+
 function groupId(kind: DuplicateKind, members: DuplicateMember[]): string {
   const lines = members.map(pageKey).sort(cmp).join('\n');
   return `dedupe/${createHash('sha256').update(`${kind}\n${lines}`).digest('hex').slice(0, 16)}`;
@@ -448,7 +451,7 @@ export async function findDuplicateGroups(engine: BrainEngine, opts: FindDuplica
     for (const p of await matcher.propose(scan)) {
       const members = [...new Map(p.members.map(m => [pageKey(m), byKey.get(pageKey(m))])).values()].filter((m): m is EntityPage => !!m);
       if (members.length < 2) continue;
-      if (members.some(a => members.some(b => a !== b && (a.distinctFrom.has(b.slug) || b.distinctFrom.has(a.slug))))) continue;
+      if (hasDistinctPair(members)) continue;
       const spread = new Set(members.map(m => m.source_id)).size > 1 ? 'cross_source' : 'in_source';
       const kind: DuplicateKind = p.kind === 'conflict' || p.kind === 'thin' ? p.kind : spread;
       const evidence = new Map<string, DuplicateEvidence>();
@@ -470,8 +473,9 @@ export async function findDuplicateGroups(engine: BrainEngine, opts: FindDuplica
   }
   for (const parts of groupBy(clean, ([k]) => find(k)).values()) {
     if (parts.length < 2) continue;
-    for (const [k] of parts) drafts.delete(k);
     const members = [...new Map(parts.flatMap(([, d]) => d.members).map(m => [pageKey(m), m])).values()];
+    if (hasDistinctPair(members)) continue;
+    for (const [k] of parts) drafts.delete(k);
     const evidence = new Map(parts.flatMap(([, d]) => [...d.evidence]));
     const union: Draft = { kind: 'cross_source', members, evidence, proposed: [], builtin: true, union: { parts: parts.length, failed: false } };
     union.union!.failed = classOf(union, carriers).cls !== 'clean';
