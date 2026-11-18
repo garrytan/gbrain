@@ -191,8 +191,9 @@ export async function listQualifiedSymbolNames(
     ? sqlFragment`AND (symbol_name = ${symbol} OR symbol_name_qualified = ${symbol})`
     : sqlFragment`AND symbol_name_qualified ILIKE ${`%${symbol}%`}`;
   const found = await rows<{ symbol_name_qualified: string }>(exec,
+    // Byte order (COLLATE "C") whatever the server locale, as PGLite and the Rust store sort.
     // chunk-visibility-ok: the served projection filter of codeReadFilter is master's visibility test here
-    sqlFragment`SELECT DISTINCT symbol_name_qualified
+    sqlFragment`SELECT DISTINCT symbol_name_qualified COLLATE "C" AS symbol_name_qualified
          FROM content_chunks
          JOIN pages p ON p.id = content_chunks.page_id
         WHERE p.source_id = ${sourceId} AND ${codeFilter({})}
