@@ -1,6 +1,7 @@
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import { classifyCapturedFacts } from '../../../core/repair/captured-facts.ts';
+import { sortSourcesById } from '../../../core/source-rows.ts';
 
 /**
  * `captured_facts_active`: active facts the capture lanes extracted from
@@ -13,7 +14,7 @@ import { classifyCapturedFacts } from '../../../core/repair/captured-facts.ts';
 export async function capturedFactsCheck(engine: BrainEngine, sourceIds?: string[], opts: { projectsRoot?: string; corpusDir?: string | null } = {}): Promise<Check> {
   const name = 'captured_facts_active';
   try {
-    const sources = sourceIds ?? (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(row => row.id);
+    const sources = sourceIds ?? sortSourcesById(await engine.listAllSources()).map(row => row.id);
     const { candidates, unclassifiable } = await classifyCapturedFacts(engine, sources, opts);
     const count = (klass: string) => candidates.filter(c => c.class === klass).length;
     const details = { evidenced: count('evidenced'), ambiguous: count('ambiguous'), excluded: count('excluded'), unclassifiable,

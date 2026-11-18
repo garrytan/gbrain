@@ -439,7 +439,7 @@ export async function gitResidualCommits(root: string, paths: readonly string[],
 }
 
 async function pageFilePaths(engine: BrainEngine, sourceId: string, pageIds: number[]): Promise<{ root: string | null; paths: string[]; files: string[] }> {
-  const [source] = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1', [sourceId]);
+  const source = await engine.getSource(sourceId);
   if (!source?.local_path || !pageIds.length) return { root: source?.local_path ?? null, paths: [], files: [] };
   const rows = await engine.executeRaw<{ source_path: string }>(`SELECT DISTINCT source_path FROM (
       SELECT source_path FROM pages WHERE id=ANY($1::int[]) UNION ALL SELECT source_path FROM page_versions WHERE page_id=ANY($1::int[])) s

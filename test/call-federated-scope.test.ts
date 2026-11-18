@@ -9,6 +9,7 @@ import { describe, test, expect } from 'bun:test';
 import { runCall } from '../src/commands/call.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { stubSourceMembers } from './helpers/source-members-stub.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 
@@ -22,25 +23,7 @@ const SOURCES: SourceRow[] = [
 
 function makeEngine(capture: { resolveSlugsOpts: unknown[] }): BrainEngine {
   return {
-    executeRaw: async (sql: string, params?: unknown[]) => {
-      if (sql.includes('WHERE id = $1 AND archived = false')) {
-        return SOURCES.filter((s) => s.id === params?.[0] && !s.archived).map((s) => ({ id: s.id }));
-      }
-      // localFederatedSourceIds: SELECT id, config, archived FROM sources ...
-      if (sql.includes('SELECT id, config, archived FROM sources')) {
-        return SOURCES.filter((s) => !s.archived).map((s) => ({
-          id: s.id, config: s.config, archived: s.archived,
-        }));
-      }
-      // Tier-4 registered query (old or #3880 shape) — paths never match cwd.
-      if (sql.includes('FROM sources WHERE local_path IS NOT NULL')) {
-        return SOURCES.filter((s) => s.local_path !== null).map((s) => ({
-          id: s.id, local_path: s.local_path, archived: s.archived,
-        }));
-      }
-      if (sql.includes('FROM pages')) return [];
-      return [];
-    },
+    ...stubSourceMembers(SOURCES), // tier-4 paths never match cwd
     getConfig: async (key: string) => (key === 'sources.default' ? 'vault' : null),
     resolveSlugs: async (_partial: string, opts?: unknown) => {
       capture.resolveSlugsOpts.push(opts);

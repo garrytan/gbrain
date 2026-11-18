@@ -80,6 +80,38 @@ export async function updateSourceConfig(exec: SqlExecutor, sourceId: string, pa
     return affectedRows > 0;
   }
 
+/** One source row with the columns a source check reads: its checkout path, raw config and archived flag. */
+export interface SourceCheckRow { id: string; local_path: string | null; config: unknown; archived: boolean }
+
+/** The source row, or null (`SELECT id, local_path, config, archived FROM sources WHERE id=$1`). Unscoped on master. */
+export async function readSourceRow(exec: LegacyUnscopedRead, sourceId: string): Promise<SourceCheckRow | null> {
+  const [row] = await exec.executeRaw<SourceCheckRow>('SELECT id, local_path, config, archived FROM sources WHERE id=$1', [sourceId]);
+  return row ?? null;
+}
+
+/** The source row read `FOR UPDATE`, so it cannot change before the caller's transaction ends; null when absent. */
+export async function lockSourceRow(exec: SqlExecutor, sourceId: string): Promise<SourceCheckRow | null> {
+  const [row] = await exec.executeRaw<SourceCheckRow>('SELECT id, local_path, config, archived FROM sources WHERE id=$1 FOR UPDATE', [sourceId]);
+  return row ?? null;
+}
+
+/** The chunker version the source's last full sync stamped, or null. Unscoped on master. */
+export async function readSourceChunkerVersion(exec: LegacyUnscopedRead, sourceId: string): Promise<string | null> {
+  const [row] = await exec.executeRaw<{ chunker_version: string | null }>('SELECT chunker_version FROM sources WHERE id = $1', [sourceId]);
+  return row?.chunker_version ?? null;
+}
+
+/**
+ * Ids of live sources whose last sync is more than seven days old by the database clock (`now()`), by id: the
+ * advisor's stale-sync read. Unscoped on master. Throws on a schema without `last_sync_at` or `archived`.
+ */
+export async function listStaleSyncSourceIds(exec: LegacyUnscopedRead): Promise<string[]> {
+  const rows = await exec.executeRaw<{ id: string }>(
+    `SELECT id FROM sources WHERE last_sync_at IS NOT NULL AND last_sync_at < now() - interval '7 days' AND NOT archived ORDER BY id`,
+  );
+  return rows.map(r => r.id);
+}
+
 /** One source with the columns import and contextual retrieval read, or null for an unknown id. Rows come back as the driver returns them. */
 export async function getSource(exec: LegacyUnscopedRead, sourceId: string): Promise<SourceDetailRow | null> {
   const rows = await exec.executeRaw<SourceDetailRow>(

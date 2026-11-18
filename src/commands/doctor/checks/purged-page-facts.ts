@@ -1,6 +1,7 @@
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import { countPurgedPageFacts } from '../../../core/repair/purged-page-facts.ts';
+import { sortSourcesById } from '../../../core/source-rows.ts';
 
 const CAP = 10_000;
 
@@ -11,7 +12,7 @@ const CAP = 10_000;
  */
 export async function purgedPageFactsCheck(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {
   try {
-    const sources = sourceIds ?? (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(row => row.id);
+    const sources = sourceIds ?? sortSourcesById(await engine.listAllSources()).map(row => row.id);
     const counted = await countPurgedPageFacts(engine, sources, CAP);
     const details = { evidenced: counted.evidenced, ambiguous: counted.ambiguous, capped: counted.capped, repair: 'purged-page-facts', docs: 'docs/guides/repair.md#purged-page-facts' };
     const total = counted.evidenced + counted.ambiguous;

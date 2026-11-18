@@ -20,6 +20,7 @@ import type { BrainEngine } from '../engine.ts';
 import { configDir } from '../config.ts';
 import { isPathContained } from '../path-confine.ts';
 import { parseGoogleSourceConfig } from './source-config.ts';
+import { sortSourcesById, sourceConfigText, sourceRecordsRawConfig } from '../source-rows.ts';
 
 const LAYOUT = new Set(['emails', 'calendar', 'people']);
 const STATE_PREFIX = '.google-source.json';
@@ -73,12 +74,11 @@ function check(path: string, kind: LooseEntry['kind']): Verdict {
 
 export async function scanGoogleFileModes(engine: BrainEngine, opts: { sourceIds?: string[] } = {}): Promise<GoogleDirScan[]> {
   if (process.platform === 'win32') return [];
-  const sources = await engine.executeRaw<{ id: string; local_path: string | null; config: Record<string, unknown> }>(
-    "SELECT id, local_path, config FROM sources WHERE archived IS NOT TRUE AND config->>'kind'='google' ORDER BY id");
+  const sources = sortSourcesById(await sourceRecordsRawConfig(engine)).filter(s => sourceConfigText(s.config, 'kind') === 'google');
   const scans: GoogleDirScan[] = [];
   for (const source of sources) {
     if (opts.sourceIds && !opts.sourceIds.includes(source.id)) continue;
-    const dir = parseGoogleSourceConfig(source.config, source.local_path ?? '').dir;
+    const dir = parseGoogleSourceConfig(source.config as Record<string, unknown>, source.local_path ?? '').dir;
     if (!dir || !outsideGbrainHome(dir)) continue;
     const scan: GoogleDirScan = { sourceId: source.id, dir, loose: [], skipped: { symlink: 0, foreign_owner: 0, not_regular: 0 } };
     const candidates = new Map<string, LooseEntry['kind']>();

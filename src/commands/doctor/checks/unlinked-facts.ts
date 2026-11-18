@@ -33,6 +33,7 @@ import type { Check } from '../../doctor.ts';
 import type { Action } from '../../../core/agent-output.ts';
 import { doctorVerify } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { sortSourcesById } from '../../../core/source-rows.ts';
 import { answersFromCatalog, catalogTableExists } from '../../../core/rust-engine/store-members/catalog.ts';
 
 export const UNLINKED_NEW_SHARE_WARN = 0.25;
@@ -72,7 +73,7 @@ export async function unlinkedFactsStats(engine: BrainEngine, sourceIds?: readon
       `SELECT to_regclass('facts')::text AS facts, to_regclass('fact_relink_attempts')::text AS attempts`);
   if (!tables?.facts) return null;
   const hasAttempts = !!tables.attempts;
-  const ids = sourceIds?.length ? [...sourceIds] : (await engine.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id')).map((r) => r.id);
+  const ids = sourceIds?.length ? [...sourceIds] : sortSourcesById(await engine.listAllSources({ includeArchived: true })).map((r) => r.id);
   const audit = [...AUDIT_ROW_SOURCES];
   const windowRows = await engine.countUnlinkedFactsByOrigin({ sourceIds: ids, auditSources: audit, windowPerSource: UNLINKED_WINDOW_PER_SOURCE, hasAttempts });
   const perSource = new Map<string, number>();

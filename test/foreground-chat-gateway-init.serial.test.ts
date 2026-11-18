@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { stubSourceMembers } from './helpers/source-members-stub.ts';
 import {
   __unconfigureGatewayForTests,
   isAvailable,
@@ -54,6 +55,7 @@ describe('foreground chat gateway initialization (#2590)', () => {
 
     try {
       await runExtractConversationFacts({
+        ...stubSourceMembers([]),
         executeRaw: async () => [],
       } as never, []);
     } finally {
@@ -71,6 +73,7 @@ describe('foreground chat gateway initialization (#2590)', () => {
 
     try {
       await runEnrich({
+        ...stubSourceMembers([]),
         executeRaw: async () => [],
         getConfig: async () => null,
       } as never, ['--yes']);

@@ -2,6 +2,7 @@ import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import { managedPersistenceEnabled } from '../../../core/persistence/ownership.ts';
 import { classifyExtractorFacts } from '../../../core/repair/extractor-facts.ts';
+import { sortSourcesById } from '../../../core/source-rows.ts';
 
 /**
  * #5731: conversation-extractor facts the pre-fix canonical projection
@@ -12,7 +13,7 @@ import { classifyExtractorFacts } from '../../../core/repair/extractor-facts.ts'
  */
 export async function extractorFactsCheck(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {
   try {
-    const sources = sourceIds ?? (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(row => row.id);
+    const sources = sourceIds ?? sortSourcesById(await engine.listAllSources()).map(row => row.id);
     const facts = await classifyExtractorFacts(engine, sources, { managed: await managedPersistenceEnabled(engine) });
     const count = (klass: string) => facts.filter(f => f.class === klass).length;
     const details = { evidenced: count('evidenced'), ambiguous: count('ambiguous'), excluded: count('excluded'),

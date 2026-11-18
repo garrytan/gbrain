@@ -18,6 +18,7 @@
 import { describe, test, expect } from 'bun:test';
 import { runAdvisor } from '../src/core/advisor/run.ts';
 import type { AdvisorContext } from '../src/core/advisor/types.ts';
+import { stubSourceMembers } from './helpers/source-members-stub.ts';
 
 interface Fixture {
   name: string;
@@ -68,9 +69,9 @@ const FIXTURES: Fixture[] = [
       ...HEALTHY_STATS,
       executeRaw: (async (sql: string) => {
         if (/minion_jobs/.test(sql)) return [{ name: 'embed-backfill', n: 3 }];
-        if (/sources/.test(sql)) return [{ id: 'wiki' }];
         return [];
       }) as AdvisorContext['engine']['executeRaw'],
+      ...stubSourceMembers([{ id: 'wiki', last_sync_at: new Date(Date.now() - 30 * 86400_000) }]),
     },
     expect: ['stalled_job:embed-backfill', 'stale_sync:wiki'],
   },

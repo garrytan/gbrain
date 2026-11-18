@@ -568,9 +568,7 @@ async function runDefaultSourcePath(ctx: DoctorContext): Promise<Check[]> {
   // bail silently here when engine is null since the check needs DB access.
   if (engine !== null) try {
     const { findMisroutedPages } = await import('../../../core/multi-source-drift.ts');
-    const sources = await engine!.executeRaw<{ id: string; local_path: string | null }>(
-      `SELECT id, local_path FROM sources`,
-    );
+    const sources = await engine!.listSourceRecords();
     const nonDefaultWithPath = sources.filter(s => s.id !== 'default' && s.local_path);
     if (sources.length > 1 && nonDefaultWithPath.length > 0) {
       const result = await findMisroutedPages(

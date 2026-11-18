@@ -14,6 +14,7 @@ import { checkError, doctorVerify } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { scanMissingRecordedFiles, type MissingRecordedFiles } from '../../../core/persistence/detached-pages.ts';
 import { boundUnknownDetails } from '../bounded-unknown.ts';
+import { sortSourcesById } from '../../../core/source-rows.ts';
 
 const DOCS = 'docs/storage-tiering.md#restoring-a-page-whose-file-is-gone';
 
@@ -21,7 +22,7 @@ async function runMissingRecordedFiles(ctx: DoctorContext): Promise<Check[]> {
   const checks: Check[] = [];
   try {
     const engine = connectedEngine(ctx);
-    const sourceIds = ctx.sourceIds ?? (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(row => row.id);
+    const sourceIds = ctx.sourceIds ?? sortSourcesById(await engine.listAllSources()).map(row => row.id);
     const scans: MissingRecordedFiles[] = [];
     for (const sourceId of sourceIds) {
       const scan = await scanMissingRecordedFiles(engine, sourceId);
