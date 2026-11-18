@@ -67,8 +67,8 @@ listEntityKeyRows	pages	yes	1	no	yes	yes	refuses:pages
 listAllPageRefs	pages	yes	1	yes	yes	yes	refuses:pages
 listAllSources	pages	yes	2	no	yes	yes	serves
 updateSourceConfig	pages	yes	1	no	yes	yes	serves
-getSource	pages	yes	1	no	yes	yes	refuses:sources
-listSourceLocalPaths	pages	yes	1	no	yes	yes	refuses:sources
+getSource	pages	yes	1	no	yes	yes	serves
+listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
 listPrefixSampledPages	pages	yes	1	no	yes	yes	refuses:pages
 listCorpusSample	pages	yes	1	no	yes	yes	refuses:pages
 getPageSealState	pages	yes	1	no	yes	yes	refuses:pages
@@ -143,8 +143,8 @@ getSalienceScores	links	yes	1	yes	yes	yes	refuses:salience
 findOrphanPages	links	yes	1	yes	yes	yes	refuses:graph
 addTag	tags	yes	5	yes	yes	yes	serves
 removeTag	tags	yes	1	no	yes	yes	serves
-pruneFrontmatterTags	tags	yes	1	no	yes	yes	refuses:tags
-addPageTagsById	tags	yes	1	no	yes	yes	refuses:tags
+pruneFrontmatterTags	tags	yes	1	no	yes	yes	serves
+addPageTagsById	tags	yes	1	no	yes	yes	serves
 getTags	tags	yes	2	yes	yes	yes	serves
 addTimelineEntry	timeline	yes	6	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	1	no	yes	yes	serves
@@ -238,9 +238,9 @@ setConfig	config	yes	8	no	yes	yes	serves
 unsetConfig	config	yes	2	no	yes	yes	serves
 listConfigKeys	config	yes	2	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
-getConfigValues	config	yes	1	no	yes	yes	refuses:config
+getConfigValues	config	yes	1	no	yes	yes	serves
 readManagedModeRows	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
-getSourceStrictness	import_guards	yes	1	no	yes	yes	refuses:sources
+getSourceStrictness	import_guards	yes	1	no	yes	yes	serves
 readPersistenceBrainId	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
 readLocalWriterRow	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
 insertLocalWriterRow	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
