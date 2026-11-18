@@ -343,4 +343,30 @@ describeE2E('owner_only_marks for a non-owner login, upgraded from v321 (Postgre
     expect(await openTo(reader, [plain])).toEqual([]);
     expect(await openTo(admin, [plain])).toEqual([plain]);
   }, 120_000);
+
+  test('(g) doctor names each login that reads owner-only lineage closed, with the statements that open its reads; after them the scoped writer reads the exact lineage', async () => {
+    await admin.executeRaw(`DELETE FROM owner_only_marks WHERE row_table = '*'`);
+    const [plain, fromPlain] = [await pageId('notes/plain'), await pageId('notes/from-plain')];
+    const writer = await connectAs(WRITER);
+    expect(await readMode(writer)).toBe('closed');
+    expect(await openTo(writer, [plain, fromPlain])).toEqual([plain]);
+
+    const denied = (await doctor()).details as { sql?: string[] };
+    if (denied.sql?.length) await admin.executeRaw(denied.sql.join('\n'));
+    const check = await doctor();
+    const details = check.details as { closed_logins: string[]; lineage_sql: string[] };
+    expect({ status: check.status, logins: details.closed_logins }).toEqual({ status: 'warn', logins: [READER, WRITER].sort() });
+    expect(check.message).toContain('needs no action');
+    expect(details.lineage_sql).toContain(`CREATE POLICY gbrain_lineage_read_${READER} ON public.derivation_inputs FOR SELECT TO ${READER} USING (true);`);
+    expect(details.lineage_sql).toContain(`GRANT SELECT ON public.pages TO ${WRITER};`);
+    expect(details.lineage_sql.every(s => s.includes(`TO ${READER}`) || s.includes(`TO ${WRITER}`) || s.startsWith('DROP POLICY IF EXISTS gbrain_lineage_read_'))).toBe(true);
+
+    // Nothing is granted automatically: the operator runs the writer's statements, and only then does it read exactly.
+    await admin.executeRaw(details.lineage_sql.filter(s => s.includes(WRITER)).join('\n'));
+    const opened = await connectAs(WRITER);
+    expect(await readMode(opened)).toBe('exact');
+    expect(await openTo(opened, [plain, fromPlain])).toEqual([plain, fromPlain]);
+    expect(((await doctor()).details as { closed_logins: string[] }).closed_logins).toEqual([READER]);
+    expect(await readMode(await connectAs(READER))).toBe('all');
+  }, 120_000);
 });
