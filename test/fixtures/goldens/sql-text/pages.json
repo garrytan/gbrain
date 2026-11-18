@@ -526,6 +526,36 @@
           }
         ]
       },
+      "listEntityKeyRows": {
+        "after": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<string>",
+              "array<string>",
+              "string",
+              "string",
+              "number"
+            ],
+            "sql": "SELECT p.source_id, p.slug, p.title, p.type, COALESCE((SELECT jsonb_object_agg(k.key, p.frontmatter -> k.key) FROM unnest($1::text[]) AS k(key) WHERE p.frontmatter -> k.key IS NOT NULL), '{}'::jsonb) AS keys FROM pages p JOIN sources s ON s.id = p.source_id WHERE p.deleted_at IS NULL AND s.archived IS NOT TRUE AND p.type = ANY($2::text[]) AND NOT (lower(COALESCE(p.frontmatter->>'canonical', '')) IN ('false', 'no') OR btrim(COALESCE(p.frontmatter->>'superseded_by', '')) <> '' OR btrim(COALESCE(p.frontmatter->>'merged_into', '')) <> '' OR lower(COALESCE(p.frontmatter->>'status', '')) ~ '(^|[^a-z])(alias|redirect|redirected)([^a-z]|$)') AND (p.source_id, p.slug) > ($3::text, $4::text) ORDER BY p.source_id, p.slug LIMIT $5::int",
+            "textSha256": "2bec9d9d2d8a14d49b5345c17ffcbb3fe30b61c9ff02212328eb051b1efeb94d"
+          }
+        ],
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<string>",
+              "array<string>",
+              "string",
+              "string",
+              "number"
+            ],
+            "sql": "SELECT p.source_id, p.slug, p.title, p.type, COALESCE((SELECT jsonb_object_agg(k.key, p.frontmatter -> k.key) FROM unnest($1::text[]) AS k(key) WHERE p.frontmatter -> k.key IS NOT NULL), '{}'::jsonb) AS keys FROM pages p JOIN sources s ON s.id = p.source_id WHERE p.deleted_at IS NULL AND s.archived IS NOT TRUE AND p.type = ANY($2::text[]) AND NOT (lower(COALESCE(p.frontmatter->>'canonical', '')) IN ('false', 'no') OR btrim(COALESCE(p.frontmatter->>'superseded_by', '')) <> '' OR btrim(COALESCE(p.frontmatter->>'merged_into', '')) <> '' OR lower(COALESCE(p.frontmatter->>'status', '')) ~ '(^|[^a-z])(alias|redirect|redirected)([^a-z]|$)') AND (p.source_id, p.slug) > ($3::text, $4::text) ORDER BY p.source_id, p.slug LIMIT $5::int",
+            "textSha256": "2bec9d9d2d8a14d49b5345c17ffcbb3fe30b61c9ff02212328eb051b1efeb94d"
+          }
+        ]
+      },
       "listPages": {
         "default": [
           {

@@ -116,6 +116,7 @@ TOOLS
   beliefs <enable|status|...>        Belief ledger coverage: enable, disable, status, reconcile, backfill
   salience [--days N] [--kind P]     v0.29: pages ranked by emotional + activity salience
   anomalies [--since D] [--sigma N]  v0.29: cohort-based statistical anomalies (tag, type)
+  dedupe --preview [--json]          Likely duplicate person and company pages, with evidence; read-only
   feedback <status|reset>            retrieval feedback: learned page weights; rate answers with gbrain rate
   transcripts <ingest|status|recent> v0.46: import agent session logs + chat exports (local-only)
   dream [--dry-run] [--json]         Run the overnight maintenance cycle once (cron-friendly).
