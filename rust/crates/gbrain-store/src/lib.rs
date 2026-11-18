@@ -269,6 +269,8 @@ impl Store {
     /// dropped when it returns `Err`, committed with the transaction.
     pub(crate) fn write<T>(&self, f: impl FnOnce(&mut dyn KvWrite) -> Result<T>) -> Result<T> {
         if let Some(tx) = &self.bound {
+            // A bound store's env is the transaction's clock (`transactions.rs`, "Time").
+            let _clock = crate::env::transaction_clock::open(self.env.clone());
             return tx.statement(f);
         }
         let mut tx = self.kv.begin_write()?;
