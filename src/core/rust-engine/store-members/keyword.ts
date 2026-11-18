@@ -145,16 +145,32 @@ function whereFields(member: Member, where: unknown): [string, unknown[]][] {
 }
 
 // `$n::text::timestamptz` with TimeZone UTC, for the ISO shapes: a date, or a date and time with an optional
-// fraction and zone. Postgres reads many more shapes; those refuse.
-const ISO_DATE = /^\s*(\d{4})-(\d{1,2})-(\d{1,2})(?:[T ](\d{1,2}):(\d{2})(?::(\d{2})(?:\.(\d{1,6}))?)?\s*(Z|z|[+-]\d{2}(?::?\d{2})?)?)?\s*$/;
+// fraction and zone. Postgres reads the date-time separator and the zone letter in either case. Postgres reads many
+// more shapes; those refuse.
+const ISO_DATE = /^\s*(\d{4})-(\d{1,2})-(\d{1,2})(?:[Tt ](\d{1,2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?\s*(Z|z|[+-]\d{2}(?::?\d{2})?)?)?\s*$/;
+
+/**
+ * Postgres's `ParseFractionalSecond`: `rint(strtod(".ffff") * 1e6)`, so a fraction past six digits rounds to the
+ * nearest microsecond, a tie goes to the even one, and 0.9999995 or more is a whole second.
+ */
+function fractionMicros(digits: string | undefined): number {
+  if (!digits) return 0;
+  const scaled = Number(`0.${digits}`) * 1_000_000;
+  const whole = Math.floor(scaled);
+  const rest = scaled - whole;
+  if (rest > 0.5) return whole + 1;
+  if (rest < 0.5) return whole;
+  return whole % 2 === 0 ? whole : whole + 1;
+}
 
 /** A date bound as UTC microseconds (decimal text), or a refusal for a shape the store does not parse. */
 function dateMicros(member: Member, raw: unknown): string {
   const m = typeof raw === 'string' ? ISO_DATE.exec(raw) : null;
   if (!m) refuseMember(member, 'a date bound that is not an ISO date or date-time');
   const [year, month, day, hour = 0, minute = 0, second = 0] = [m[1], m[2], m[3], m[4], m[5], m[6]].map(v => (v === undefined ? undefined : Number(v))) as number[];
+  const fraction = fractionMicros(m[7]);
   const monthDays = [31, isLeap(year) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1] ?? 0;
-  const midnight = hour === 24 && minute === 0 && second === 0 && !Number(m[7] ?? 0);
+  const midnight = hour === 24 && minute === 0 && second === 0 && fraction === 0;
   if (month < 1 || month > 12 || day < 1 || day > monthDays || (hour > 23 && !midnight) || minute > 59 || second > 59) {
     refuseMember(member, 'a date bound outside the calendar');
   }
@@ -170,8 +186,7 @@ function dateMicros(member: Member, raw: unknown): string {
   const date = new Date(0);
   date.setUTCFullYear(year, month - 1, day);
   date.setUTCHours(hour, minute - offsetMinutes, second, 0);
-  const fraction = BigInt((m[7] ?? '').padEnd(6, '0') || '0');
-  return (BigInt(date.getTime()) * 1000n + fraction).toString();
+  return (BigInt(date.getTime()) * 1000n + BigInt(fraction)).toString();
 }
 
 function isLeap(year: number): boolean {

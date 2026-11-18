@@ -107,7 +107,7 @@ getPageSealState	pages	yes	5	no	yes	yes	serves
 refreshPageOrigin	pages	yes	2	no	yes	yes	serves
 searchKeyword	search	yes	11	yes	yes	yes	serves
 countKeywordPages	search	yes	2	no	yes	yes	serves
-searchKeywordPages	search	yes	3	no	yes	yes	serves
+searchKeywordPages	search	yes	4	no	yes	yes	serves
 searchTitles	search	yes	5	yes	yes	yes	serves
 searchVector	search	yes	2	yes	yes	yes	refuses:vector_search
 getEmbeddingsByChunkIds	search	yes	1	no	yes	yes	serves
