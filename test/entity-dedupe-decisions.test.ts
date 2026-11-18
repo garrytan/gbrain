@@ -34,7 +34,7 @@ import { operations, type OperationContext } from '../src/core/operations.ts';
 import { linkEntityIdentity } from '../src/core/entity-identity.ts';
 import { enrichEntity } from '../src/core/enrichment-service.ts';
 import { importFromContent } from '../src/core/import-file.ts';
-import { decisionId, IDENTITY_DIR } from '../src/core/entities/identity-decisions.ts';
+import { decisionId, IDENTITY_DIR, identityHome, projectIdentityDecisions } from '../src/core/entities/identity-decisions.ts';
 import { entityDuplicatesEntry } from '../src/commands/doctor/checks/entity-duplicates.ts';
 import type { DoctorContext } from '../src/commands/doctor/context.ts';
 import type { Check } from '../src/commands/doctor.ts';
@@ -259,6 +259,31 @@ describe('without a repository', () => {
     expect((await rows()).decisions.map(d => d.verdict)).toEqual(['different']);
   });
 
+  test('a confirm that joins a hand-made group with no canonical page makes the decision canonical', async () => {
+    await seed();
+    await linkEntityIdentity(engine, { entityId: 'alice-by-hand', slug: 'people/alice-example', sourceId: 'default', canonical: false });
+    await cli(['confirm', await groupOf('people/alice-example'), '--join', 'alice-by-hand']);
+    expect((await rows()).identities.map(r => [r.source_id, r.established_by, r.canonical])).toEqual([['default', 'manual', true], ['source-b', 'dedupe:confirm', false]]);
+  });
+
+  test('pages confirmed as one identity across several decisions are not proposed again', async () => {
+    await seed();
+    await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('source-c', 'source-c') ON CONFLICT DO NOTHING");
+    await page('people/alice-example', 'Alice Example', { linkedin: 'linkedin.com/in/alice-example' }, 'source-c');
+    const same = (members: Array<{ source_id: string; slug: string }>) => ({ decision_id: decisionId(members), verdict: 'same', members, group_id: null, entity_id: 'alice-joined',
+      canonical: members[0], decided_by: 'test', origin: 'database', home_source_id: null, git_blob: null });
+    const a = { source_id: 'default', slug: 'people/alice-example' }, b = { source_id: 'source-b', slug: 'people/alice-example' }, c = { source_id: 'source-c', slug: 'people/alice-example' };
+    await engine.applyIdentityDecisions({ upsert: [same([a, b]), same([b, c])] } as never);
+    expect((await preview()).filter(g => g.members.some(m => m.slug === 'people/alice-example'))).toEqual([]);
+  });
+
+  test('a brain with no repository records a group with a page in an owner-only source in the database', async () => {
+    await seed();
+    await engine.executeRaw("UPDATE sources SET config = $1::jsonb WHERE id = 'source-b'", ['{"owner_only": true}']);
+    await cli(['confirm', await groupOf('people/alice-example')]);
+    expect((await rows()).decisions.map(d => [d.verdict, d.origin])).toEqual([['same', 'database']]);
+  });
+
   test('a page pair in one source also gets distinct_from through the page door', async () => {
     await page('people/erin-example', 'Erin Example', { email: 'erin@example.com' }, 'default');
     await page('people/erin-example-2', 'Erin Example', { email: 'erin@example.com' }, 'default');
@@ -369,6 +394,40 @@ describe('with a repository', () => {
     await cli(['reconcile']);
     expect((await rows()).decisions.map(d => d.origin)).toEqual(['git']);
     expect((await doctor()).message).not.toContain('drift');
+  });
+
+  test('a failed read of the committed decisions removes nothing', async () => {
+    await cli(['confirm', await groupOf('people/alice-example')]);
+    const before = await rows();
+    const home = (await identityHome(engine))!;
+    await expect(projectIdentityDecisions(engine, home, 'refs/heads/no-such-branch')).rejects.toThrow('git ls-tree failed');
+    expect(await rows()).toEqual(before);
+    expect(before.identities).toHaveLength(2);
+  });
+
+  test('a committed decision file with an unreadable date is skipped and the others still project', async () => {
+    const bad = [{ source_id: 'default', slug: 'people/bob-sample' }, { source_id: 'source-b', slug: 'people/bob-sample' }];
+    const good = [{ source_id: 'default', slug: 'people/dan-sample' }, { source_id: 'source-b', slug: 'people/dan-sample' }];
+    const file = (members: typeof bad, at: string) => ['---', 'verdict: different', 'members:', ...members.flatMap(m => [`  - source_id: ${m.source_id}`, `    slug: ${m.slug}`]),
+      'decided_by: owner', `decided_at: '${at}'`, '---', ''].join('\n');
+    mkdirSync(join(root, IDENTITY_DIR), { recursive: true });
+    writeFileSync(join(root, IDENTITY_DIR, `${decisionId(bad)}.md`), file(bad, '2026-13-45'));
+    writeFileSync(join(root, IDENTITY_DIR, `${decisionId(good)}.md`), file(good, '2026-11-17T00:00:00.000Z'));
+    git(root, 'add', '-A');
+    git(root, 'commit', '-qm', 'decisions');
+    const r = await projectIdentityDecisions(engine, (await identityHome(engine))!);
+    expect(r.invalid).toEqual([`${IDENTITY_DIR}/${decisionId(bad)}.md`]);
+    expect((await rows()).decisions.map(d => d.decision_id)).toEqual([decisionId(good)]);
+  });
+
+  test('confirm and reject refuse a group with a page in an owner-only source when decisions go to git', async () => {
+    const alice = await groupOf('people/alice-example');
+    const bob = await groupOf('people/bob-sample');
+    await engine.executeRaw("UPDATE sources SET config = $1::jsonb WHERE id = 'source-b'", ['{"kind": "imessage"}']);
+    await expect(cli(['confirm', alice])).rejects.toMatchObject({ code: 'dedupe_group_not_confirmable', reason: 'owner_only_source' });
+    await expect(cli(['reject', bob])).rejects.toMatchObject({ code: 'dedupe_group_not_confirmable', reason: 'owner_only_source' });
+    expect(await rows()).toEqual({ decisions: [], identities: [] });
+    expect(existsSync(join(root, IDENTITY_DIR))).toBe(false);
   });
 
   test('a host that does not see the checkout refuses instead of writing a decision only the database holds', async () => {

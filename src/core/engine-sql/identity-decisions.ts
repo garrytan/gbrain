@@ -124,5 +124,14 @@ export async function applyIdentityDecisions(exec: SqlExecutor, input: ApplyIden
                AND NOT EXISTS (SELECT 1 FROM entity_identities x WHERE x.source_id = p.source_id AND x.page_id = p.id)) m
     ON CONFLICT (source_id, page_id) DO NOTHING
     RETURNING 1`)).rows.length;
+  await exec.query(`
+    UPDATE entity_identities ei SET canonical = true
+      FROM (SELECT DISTINCT ON (r.entity_id) r.entity_id, p.source_id, p.id AS page_id
+              FROM ${MEMBER_PAGES}
+             WHERE r.verdict = 'same' AND r.entity_id IS NOT NULL AND p.id IS NOT NULL
+               AND p.source_id = r.canonical_source_id AND p.slug = r.canonical_slug
+             ORDER BY r.entity_id, r.decision_id) c
+     WHERE ei.entity_id = c.entity_id AND ei.source_id = c.source_id AND ei.page_id = c.page_id
+       AND NOT EXISTS (SELECT 1 FROM entity_identities x WHERE x.entity_id = c.entity_id AND x.canonical)`);
   return { upserted: input.upsert?.length ?? 0, removed, linked, unlinked };
 }

@@ -439,8 +439,9 @@ function decidedChecks(decided: FindDuplicatesOptions['decided']) {
     for (const b of set) if (pageKey(b) !== pageKey(a)) others.add(pageKey(b));
     apartOf.set(pageKey(a), others);
   }
-  const confirmedIn = new Map<string, number>();
-  (decided?.confirmed ?? []).forEach((set, i) => { for (const m of set) confirmedIn.set(pageKey(m), i); });
+  const confirmedSets = (decided?.confirmed ?? []).map(set => new Set(set.map(pageKey)));
+  const confirmedIn = new Map<string, number[]>();
+  confirmedSets.forEach((set, i) => { for (const k of set) confirmedIn.set(k, [...(confirmedIn.get(k) ?? []), i]); });
   return {
     keptApart: (members: EntityPage[]) => {
       if (hasDistinctPair(members)) return true;
@@ -449,8 +450,7 @@ function decidedChecks(decided: FindDuplicatesOptions['decided']) {
       return members.some(a => [...(apartOf.get(pageKey(a)) ?? [])].some(b => inGroup.has(b)));
     },
     confirmed: (members: DuplicateMember[]) => {
-      const set = confirmedIn.get(pageKey(members[0]!));
-      return set !== undefined && members.every(m => confirmedIn.get(pageKey(m)) === set);
+      return (confirmedIn.get(pageKey(members[0]!)) ?? []).some(i => members.every(m => confirmedSets[i]!.has(pageKey(m))));
     },
   };
 }
