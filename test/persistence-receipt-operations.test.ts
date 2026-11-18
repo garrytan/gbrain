@@ -128,7 +128,6 @@ describe('own-principal write receipt operations', () => {
     const proxy = new Proxy(engine, { get(target, key) {
       if (key === 'executeRaw') return async (...args: Parameters<typeof engine.executeRaw>) => {
         if (args[0].includes('WITH roots AS')) queries++;
-        if (args[0].startsWith('SELECT incarnation,archived FROM sources')) throw new Error('AUTHORIZATION_DATABASE_UNAVAILABLE');
         return target.executeRaw(...args);
       };
       // The authorization's source read is the typed readSourceMembership member.

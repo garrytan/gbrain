@@ -51,11 +51,22 @@ function counting(target: PGLiteEngine) {
       statements.push('hasSegmentStorage');
       return obj.hasSegmentStorage();
     };
-    // The housekeeping receipt reads are typed members (engine-sql/persistence-housekeeping.ts) that run one statement each.
-    if (key === 'readReceiptBudget' || key === 'listCompactableReceipts') return (...args: unknown[]) => {
-      statements.push(key);
-      return (Reflect.get(obj, key) as (...a: unknown[]) => Promise<unknown>).apply(obj, args);
-    };
+    // The memory proposal expiry, awaiting read and purge are typed members (engine-sql/write-misc.ts); one statement each.
+    if (key === 'expireMemoryProposals' || key === 'listAwaitingMemoryProposals' || key === 'purgeMemoryProposals') {
+      return (...args: unknown[]) => {
+        statements.push(key);
+        return (obj[key] as (...a: unknown[]) => Promise<unknown>).apply(obj, args);
+      };
+    }
+    // The journal's claim probe, stale-claim expiry, receipt budget read, compactable-receipt list and projection queue
+    // reads are typed members (engine-sql/persistence-*.ts); one statement each.
+    if (key === 'hasClaimableWrite' || key === 'expireStaleWriteClaims' || key === 'readReceiptBudget'
+      || key === 'listCompactableReceipts' || key === 'listPendingSegmentedProjections' || key === 'selectProjectionWindowJobs') {
+      return (...args: unknown[]) => {
+        statements.push(key);
+        return (obj[key] as (...a: unknown[]) => Promise<unknown>).apply(obj, args);
+      };
+    }
     const value = Reflect.get(obj, key);
     return typeof value === 'function' ? value.bind(obj) : value;
   } });

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 472/472
+# covered: 485/485
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -48,10 +48,11 @@
 # open_loops: 3/3
 # cli_reads_import: 11/11
 # wanted_links: 2/2
+# write_misc: 10/10
+# telemetry: 7/7
 # write_guards: 7/7
 # trust_fence: 1/1
 # connect_gate: 4/4
-# telemetry: 4/4
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
 connect	lifecycle	yes	1	yes	yes	yes	serves
 disconnect	lifecycle	yes	1	yes	yes	yes	serves
@@ -84,7 +85,7 @@ getAllSlugs	pages	yes	4	no	yes	yes	serves
 listAllPageRefs	pages	yes	1	yes	yes	yes	serves
 listAllSources	pages	yes	3	no	yes	yes	serves
 updateSourceConfig	pages	yes	1	no	yes	yes	serves
-getSource	pages	yes	3	no	yes	yes	serves
+getSource	pages	yes	4	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
 listLocalPathSources	pages	yes	1	no	yes	yes	serves
 listSourceRoutingRows	pages	yes	1	no	yes	yes	serves
@@ -310,7 +311,7 @@ insertLocalWriterRow	import_guards	yes	1	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	7	no	yes	yes	serves
 applyTransactionSettings	import_guards	yes	6	no	yes	yes	serves
 readLedgerSource	import_guards	yes	8	no	yes	yes	serves
-isFolderRestricted	import_guards	yes	1	no	yes	yes	refuses:access_control
+isFolderRestricted	import_guards	yes	3	no	yes	yes	serves
 readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldPageRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldCoverageRows	persistence_journal	yes	1	no	yes	yes	serves
@@ -509,6 +510,23 @@ listStoredTimelineRows	cli_reads_import	yes	4	no	yes	yes	serves
 filterPagesAtRevision	cli_reads_import	yes	1	no	yes	yes	serves
 lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	serves
 replaceWantedLinkRows	wanted_links	yes	6	no	yes	yes	serves
+readSourceState	write_misc	yes	2	no	yes	yes	serves
+readAdmissionSource	write_misc	yes	1	no	yes	yes	serves
+sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
+listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
+hasExtractedEvents	write_misc	yes	1	no	yes	yes	serves
+listActiveAccessMembers	write_misc	yes	1	no	yes	yes	serves
+expireMemoryProposals	write_misc	yes	1	no	yes	yes	serves
+listAwaitingMemoryProposals	write_misc	yes	1	no	yes	yes	serves
+purgeMemoryProposals	write_misc	yes	1	no	yes	yes	serves
+attachSourcePath	write_misc	yes	1	no	yes	yes	serves
+recordSearchTelemetry	telemetry	yes	3	no	yes	yes	serves
+readSearchStats	telemetry	yes	3	no	yes	yes	serves
+readClientOpUsage	telemetry	yes	3	no	yes	yes	serves
+readMcpRollupPrunedBefore	telemetry	yes	3	no	yes	yes	serves
+logMcpRequest	telemetry	yes	2	no	yes	yes	serves
+readMcpLogPruneCutoff	telemetry	yes	1	no	yes	yes	serves
+pruneMcpRequestLogBatch	telemetry	yes	2	no	yes	yes	serves
 hasSegmentStorage	write_guards	yes	1	no	yes	yes	serves
 readPageOrigin	write_guards	yes	1	no	yes	yes	serves
 listOriginClaims	write_guards	yes	1	no	yes	yes	serves
@@ -521,7 +539,3 @@ hasPersistenceTable	connect_gate	yes	3	no	yes	yes	serves
 listManagedRootBindings	connect_gate	yes	1	no	yes	yes	serves
 readGraduationGateRow	connect_gate	yes	2	no	yes	yes	serves
 listRetiredDeactivations	connect_gate	yes	2	no	yes	yes	serves
-recordSearchTelemetry	telemetry	yes	3	no	yes	yes	serves
-readSearchStats	telemetry	yes	3	no	yes	yes	serves
-readClientOpUsage	telemetry	yes	1	no	yes	yes	refuses:telemetry
-readMcpRollupPrunedBefore	telemetry	yes	1	no	yes	yes	refuses:telemetry

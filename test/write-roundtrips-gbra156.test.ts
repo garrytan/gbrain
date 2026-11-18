@@ -121,8 +121,8 @@ for (const kind of testBackends()) {
       await engine.executeRaw(`INSERT INTO config(key,value) VALUES ('persistence.capacity.warn_days','11'),('persistence.capacity.fail_days','3'),
         ('persistence.receipt_retention_days','9'),('persistence.capacity.background_pause_pct','60')
         ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`);
-      // The config keys and the journal limits are typed engine reads (getConfigValues, readJournalLimitRows): one statement
-      // each, and none through executeRaw.
+      // The config keys and the journal limits are typed engine reads (getConfigValues, readJournalLimitRows); the
+      // recorder counts each as a config statement, so the snapshot makes exactly those two and no raw config read.
       const { result, statements } = await recordStatements(engine, () => cachedCapacitySnapshot(engine, Date.now() + 1e9));
       expect(configReads(statements).map(s => s.split(' ')[0]).sort()).toEqual(['getConfigValues', 'readJournalLimitRows']);
       expect(result.status).toBe('ok');

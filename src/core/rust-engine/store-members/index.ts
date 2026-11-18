@@ -56,6 +56,7 @@ import * as factsTrust from './facts-trust.ts';
 import * as jobs from './jobs.ts';
 import * as housekeeping from './housekeeping.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
+import * as writeMisc from './write-misc.ts';
 import * as writeGuards from './write-guards.ts';
 import * as trustFence from './trust-fence.ts';
 import * as connectGate from './connect-gate.ts';
@@ -85,13 +86,14 @@ export const STORE_MEMBERS = {
   ...factsDoctor, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust,
   // The persistence brain identity the store already keeps (rust/docs/store/journal.md).
   ...persistenceIdentity,
+  // Search telemetry (rust/docs/store/telemetry.md).
+  ...telemetry,
   ...persistence, ...housekeeping,
+  ...writeMisc,
   // The page write guards a page write runs around the page row (rust/docs/store/write-guards.md).
   ...writeGuards, ...trustFence,
   // The connect gate's persistence reads, answered from the unmanaged brain the store keeps (rust/docs/store/journal.md).
   ...connectGate,
-  // Search telemetry (rust/docs/store/telemetry.md).
-  ...telemetry,
   // The page and chunk statements a page import runs around its chunk write (rust/docs/store/import-members.md).
   ...importMembers,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };

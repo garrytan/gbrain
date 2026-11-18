@@ -128,6 +128,7 @@ export async function oneYearCapacity(engine:SqlEngine,scope:string,setting:'Lif
       avg(${COMPACTED_RECEIPT_BYTES_SQL('recent', 'e')})::float8 AS net FROM recent LEFT JOIN e ON e.request_id=recent.id`,
   principal ? [principal[1],principal[2]] : []);
   const perDay=sample!.admissions/Math.max(1/24,(sample!.age_seconds ?? 0)/86_400);
+  // Admission refusals call this under the counter locks inside their transaction, on its SqlEngine, so the setting is read there.
   const retention=await readReceiptRetentionDays(engine).catch(()=>DEFAULT_RECEIPT_RETENTION_DAYS);
   const measured=(value:number|null|undefined,fallback:number)=>Number.isFinite(Number(value)) && Number(value)>0 ? Number(value) : fallback;
   return resource==='lifetime_ids' ? recommendedLimit(resource,used,limit,{perDay},retention)
