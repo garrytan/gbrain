@@ -66,6 +66,10 @@ import type {
   DeadDreamSubmissionSpec, FactsAbsorbJobRow, FactsAbsorbStillDead, GlobalMaintenanceDeaths, LastFailedGlobalMaintenanceJob,
   LegacyJobAuthorityRead, QueuedSpendRows,
 } from './engine-sql/jobs-checks.ts';
+import type {
+  SubagentFailureFallback, SubagentMessageInsert, SubagentMessageRow, SubagentOneshotLedgerRow, SubagentRetainedPutPage, SubagentToolInsert,
+  SubagentToolOrder, SubagentToolRow, SubagentToolStart, SubagentToolTarget, SubagentWriteOutcome,
+} from './engine-sql/jobs-subagent.ts';
 import type { JunkEntityHubRow, LinkEndpointPage, LivePageSummary, TitledPage } from './engine-sql/link-reads.ts';
 import type { CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuery, ContextualModeCandidate, FrozenHitKey, FrozenHitRow, WithdrawalChunkKey, WithdrawalChunkRow } from './engine-sql/chunk-reads.ts';
 import type { EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRow, PageTimelineRow, SegmentedTimelinePages, TimelineOrphanPage, TimelineRowDeletion } from './engine-sql/timeline-reads.ts';
@@ -3700,6 +3704,41 @@ export interface BrainEngine {
   // Group D (jobs insight): the reads behind `describeJobs`.
   /** Submitter, queue position, slot holders, live children, blocking locks and foreign-owner tokens of a batch of jobs. */
   readJobInsight(spec: JobInsightSpec): Promise<JobInsightRows>;
+  // Group B (subagent transcript and tool ledger; engine-sql/jobs-subagent.ts): the rows the subagent handler, replay, the transcript views and the dream provenance reads use.
+  /** The job's subagent messages by `message_idx`; with `last`, only the newest. */
+  listSubagentMessages(jobId: number, opts?: { last?: boolean }): Promise<SubagentMessageRow[]>;
+  /** How many messages the job has persisted. */
+  countSubagentMessages(jobId: number): Promise<number>;
+  /** Persist one message (`content_blocks` is JSON text); a message already at the same `message_idx` stays. */
+  insertSubagentMessage(jobId: number, message: SubagentMessageInsert): Promise<void>;
+  /** The job's tool rows, in replay order (`message_idx`, ordinal with legacy NULL as 0, `id`) or `id` order. */
+  listSubagentToolExecutions(jobId: number, order: SubagentToolOrder): Promise<SubagentToolRow[]>;
+  /** Whether the job has a tool row of `status` whose `tool_use_id` is `LIKE toolUseIdPrefix || '%'` (a LIKE pattern). */
+  hasSubagentToolExecution(jobId: number, opts?: { status?: string; toolUseIdPrefix?: string }): Promise<boolean>;
+  /** The job's `brain_put_page` rows' status, error and output by `id`, scoped to a `tool_use_id` LIKE prefix when given. */
+  listSubagentWriteOutcomes(jobId: number, toolUseIdPrefix?: string): Promise<SubagentWriteOutcome[]>;
+  /** The oneshot ledger: rows whose `tool_use_id` is `LIKE toolUseIdPrefix || '%'`, by `id`, with their input fields as text. */
+  listSubagentOneshotLedger(jobId: number, toolUseIdPrefix: string): Promise<SubagentOneshotLedgerRow[]>;
+  /** How many rows of `toolName` in `status` the jobs hold and the bytes of their output as jsonb text. */
+  summarizeSubagentToolExecutions(jobIds: readonly number[], spec: { toolName: string; status: string }): Promise<{ count: number; output_bytes: number }>;
+  /** The distinct slugs the jobs' completed `brain_put_page` calls named, bytewise ascending, null last. */
+  listSubagentPutPageSlugs(jobIds: readonly number[]): Promise<Array<string | null>>;
+  /** Each completed `brain_put_page` call of the jobs: job, slug and start time, by `id`. */
+  listSubagentPutPageWrites(jobIds: readonly number[]): Promise<Array<{ job_id: number; slug: string | null; started_at: Date }>>;
+  /** The jobs' completed `brain_put_page` calls whose output state is `committed`, with their job's idempotency key, by `id`. */
+  listSubagentRetainedPutPages(jobIds: readonly number[]): Promise<SubagentRetainedPutPage[]>;
+  /** A staging child's pages: per slug the last staged `brain_put_page` and its markdown, slugs bytewise ascending. */
+  listSubagentStagedPages(jobId: number): Promise<Array<{ slug: string | null; content: string | null }>>;
+  /** The jobs' `brain_add_timeline_entry` calls whose request id names a committed, `ok` timeline request of `sourceId`, by `id`. */
+  listSubagentTimelineAppendCalls(jobIds: readonly number[], sourceId: string): Promise<Array<{ request_id: string; slug: string; input: unknown }>>;
+  /** Bank tool rows at stable ordinals atomically; an occupied position stays. `legacyGuard` also skips a turn's legacy NULL-ordinal row of the same id. */
+  recordSubagentToolExecutions(jobId: number, rows: readonly SubagentToolInsert[], opts?: { legacyGuard?: boolean }): Promise<void>;
+  /** Record a gateway tool call's first observation (a pending v2 row); the stable id of the row at that position (null for a legacy row). */
+  startSubagentToolExecution(jobId: number, row: SubagentToolStart): Promise<string | null>;
+  /** Settle a tool row complete (`output` is JSON text); how many rows it settled. */
+  completeSubagentToolExecution(target: SubagentToolTarget, output: string): Promise<number>;
+  /** Settle a tool row failed, inserting one from `fallback` when the position has none; how many rows it changed. */
+  failSubagentToolExecution(target: SubagentToolTarget, error: string, fallback?: SubagentFailureFallback): Promise<number>;
   // Group D (takes, salience and code-edge reads): the counts and lists doctor, onboarding and repair read.
   /** Takes more than 0.001 off the 0.05 weight grid, of all takes. */
   countOffGridTakeWeights(): Promise<{ off_grid: number; total: number }>;
