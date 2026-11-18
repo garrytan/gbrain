@@ -3317,6 +3317,8 @@ export interface BrainEngine {
   readWriteRequestProgress(id: string, opts?: { signal?: AbortSignal }): Promise<WriteRequestProgress | null>;
   /** The sources holding outstanding (queued, deferred, running, recovering) requests of one principal, as `{ source_id, n }`: the most first, a tie in byte order of the source id. */
   countOutstandingBySource(principalKind: string, principalId: string): Promise<OutstandingBySource[]>;
+  /** Whether this connection's role owns the gbrain tables (so it can apply migrations); false only when it provably does not. */
+  ownsSchemaTables(): Promise<boolean>;
   /** The existing counter rows of `keys` in key byte order, without a lock (a missing key has no row). */
   readCounterRows(keys: readonly string[]): Promise<CounterRow[]>;
   /** The brain's first request id and a sample of the latest 1,000 admissions (one principal's, or the brain's): count, age of the oldest, mean reservation, mean compacted size. `{ sample: false }` reads only the first request id. */

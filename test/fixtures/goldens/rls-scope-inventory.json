@@ -4965,6 +4965,7 @@
         "onCheckout": "none",
         "openBodyStaging": "none",
         "openWakeWatch": "none",
+        "ownsSchemaTables": "none",
         "pageCollapseFacts": "none",
         "pagesLinkingTo": "none",
         "pauseJob": "none",

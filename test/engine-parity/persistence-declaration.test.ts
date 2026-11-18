@@ -25,6 +25,8 @@ import { submissionAuthority } from '../../src/core/persistence/authority.ts';
 import { registerLocalWriter } from '../../src/core/persistence/identity.ts';
 import { admitWrite, assertWriteHeadroom, readOutstandingRoom } from '../../src/core/persistence/journal.ts';
 import { principalKey } from '../../src/core/persistence/model.ts';
+import { schemaAdmissionRefusal } from '../../src/core/persistence/schema-admission.ts';
+import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -138,5 +140,20 @@ describe('engine parity: persistence declaration', () => {
     expect(ids?.code).toBe('write_quota_insufficient');
     expect(bytes?.code).toBe('write_quota_insufficient');
     return { room, ids, bytes: bytes && { ...bytes, message: bytes.message?.replace(String(usedBytes), '<used>') } };
+  });
+
+  parityTest('a write while the schema is behind refuses migrations_pending with the schema owner as the actor', {
+    methods: ['ownsSchemaTables', 'getConfig', 'setConfig'],
+  }, async (engine) => {
+    const owns = await engine.ownsSchemaTables();
+    const version = await engine.getConfig('version');
+    await engine.setConfig('version', String(LATEST_SCHEMA_VERSION - 1));
+    try {
+      const refusal = await schemaAdmissionRefusal(engine);
+      expect(refusal?.code).toBe('migrations_pending');
+      return { owns, code: refusal?.code, reason: refusal?.reason, actor: refusal?.fix?.actor, argv: refusal?.fix?.argv };
+    } finally {
+      await engine.setConfig('version', version ?? String(LATEST_SCHEMA_VERSION));
+    }
   });
 });

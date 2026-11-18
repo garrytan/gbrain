@@ -176,6 +176,14 @@ export async function countOutstandingBySource(exec: LegacyUnscopedRead, princip
   return rows.map(row => ({ source_id: row.source_id, n: Number(row.n) }));
 }
 
+/** Whether this connection's role is a member of the role that owns the gbrain tables (`sources` stands for them). */
+export const OWNS_SCHEMA_TABLES_SQL = `SELECT pg_has_role(current_user, c.relowner, 'USAGE') AS owns FROM pg_class c WHERE c.oid = to_regclass('sources')`;
+/** `ownsSchemaTables()`: false only when the role provably does not own the tables; a missing table reads as owned. */
+export async function ownsSchemaTables(exec: LegacyUnscopedRead): Promise<boolean> {
+  const [owner] = await exec.executeRaw<{ owns: boolean | null }>(OWNS_SCHEMA_TABLES_SQL);
+  return owner?.owns !== false;
+}
+
 /** The counter rows of `keys` that exist, unlocked (`readCounterRows`). */
 export const READ_COUNTERS_SQL = 'SELECT * FROM persistence_counters WHERE key=ANY($1::text[]) ORDER BY key COLLATE "C"';
 /** `readCounterRows(keys)`: the existing counter rows of `keys` in key byte order, without a lock; a missing key has no row. */

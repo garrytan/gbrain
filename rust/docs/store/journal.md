@@ -47,6 +47,7 @@ Each returns what PGLite returns for a brain with the same contents.
 | `insertLocalWriterRow(row)` | `brain.insertLocalWriterRow` | The same two unique keys as PGLite's table. |
 | `readJournalLimitRows()` | the config keys that start with `persistence.limits.`, the page-body keys, then `{ key: null, value: null }` | The store keeps no segmented pages, so the largest one has no size. |
 | `readHeldPageRows(pageIds)`, `readHeldCoverageRows(sourceIds)` | `[]` | The store holds no files from a sync, so nothing is held. |
+| `ownsSchemaTables()` | `true` | The process that opens the store owns all of it, so the schema owner of a schema-behind refusal is this caller (fix actor `agent`). |
 
 `src/core/rust-engine/store-members/connect-gate.ts` answers the connect gate's persistence reads the same way
 (SQL for PGLite and Postgres in `src/core/engine-sql/connect-gate.ts`):
