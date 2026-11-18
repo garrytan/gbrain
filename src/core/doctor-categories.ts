@@ -59,8 +59,6 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'atom_provenance_drift',
   // #7013: atoms an empty managed re-extraction retired that atoms-restore can bring back (doctor/checks/atom-retirements.ts).
   'atom_retirements_restorable',
-  // #9653: live concepts that still record a deleted former member as an input (doctor/checks/concept-stale-inputs.ts).
-  'concept_stale_inputs',
   // World atoms that carry an owner-only fence row of their source page (doctor/checks/atom-fence-rows.ts).
   'atom_fence_rows',
   'captured_facts_active',

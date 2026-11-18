@@ -24,11 +24,11 @@ import { maintenanceAttribution } from '../persistence/attribution.ts';
 import { acquirePageLock } from '../page-lock.ts';
 import { derivedFileTarget, writeDerivedPageThrough } from './derived-write-through.ts';
 import { fileDatabaseDriftToken, replaceableFile } from '../facts/file-body-guard.ts';
-import { CONCEPT_DERIVATION_CHANNEL, declareDerivation, deriveTrust, lowerDerivedPage } from '../trust/taint.ts';
+import { declareDerivation, deriveTrust, lowerDerivedPage } from '../trust/taint.ts';
 
 /** #5575 I2: the narrative carries the tier of the member atoms its prompt was built from (capped at agent_written). */
 const conceptDerivation = (engine: BrainEngine, sourceId: string, members: readonly string[]) =>
-  deriveTrust(engine, [...new Set(members)].map(slug => ({ table: 'pages' as const, sourceId, slug })), { channel: CONCEPT_DERIVATION_CHANNEL });
+  deriveTrust(engine, [...new Set(members)].map(slug => ({ table: 'pages' as const, sourceId, slug })), { channel: 'derive:concepts' });
 
 /** Error code for a concept held because republication could lose canonical material. */
 export const CONCEPT_PRESERVATION_CODE = 'concept_preservation_hold';
@@ -283,7 +283,7 @@ export async function publishClassicConcept(engine: BrainEngine, slug: string, s
       : serializeMarkdown(synthesized, narrative, '', { type: 'concept', title, tags: [] });
     await opts.importPage(markdown);
     // The import stamps the page by its own channel; the derivation lowers it to the members' taint and records the edges.
-    if (opts.members) await lowerDerivedPage(engine, await conceptDerivation(engine, sourceId, opts.members), sourceId, slug, { replacePages: true });
+    if (opts.members) await lowerDerivedPage(engine, await conceptDerivation(engine, sourceId, opts.members), sourceId, slug);
     if (file && (file.expectedFileBytes !== null || opts.writeThrough)) {
       const written = await writeDerivedPageThrough(engine, slug, sourceId, { expectedFileBytes: file.expectedFileBytes });
       if (written.skipped === 'file_changed') {
