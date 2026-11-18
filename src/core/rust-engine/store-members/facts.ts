@@ -5,7 +5,8 @@
  *
  * Each member applies the defaults and clamps of src/core/engine-sql/facts.ts, then makes one store call. What the
  * store cannot answer exactly refuses with `engine_capability_missing`: a read eligibility policy, `excludePrivate`,
- * stored embeddings (the keyword and cosine candidate arms, an insert that carries a vector), a visibility list that
+ * stored embeddings (the cosine candidate arm, the keyword arm with an embedding, an insert that carries a vector), the
+ * keyword arm in an FTS language other than `english`, a visibility list that
  * the member-page or grant rules widen, and inputs whose PGLite outcome the store cannot reproduce (a non-finite
  * `claim_value`, `row_num` or `superseded_by_row`, a fractional offset, a keyset time in another text form).
  */
@@ -14,6 +15,7 @@ import { escapeLikePattern } from '../../cjk.ts';
 import { valueHash } from '../../chronicle/ontology.ts';
 import { factVisibilitySql } from '../../access/member-facts.ts';
 import { ensureWellFormed } from '../../text-safe.ts';
+import { getFtsLanguage } from '../../fts-language.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { withDates } from '../store-codec.ts';
 
@@ -200,20 +202,20 @@ export const listSupersessions: Member<'listSupersessions'> = async (brain, sour
 export const countUnconsolidatedFacts: Member<'countUnconsolidatedFacts'> = (brain, sourceId) =>
   storeCall({ member: 'countUnconsolidatedFacts' }, () => brain.countUnconsolidatedFacts(sourceId));
 
-export const findCandidateDuplicates: Member<'findCandidateDuplicates'> = async (brain, sourceId, entitySlug, _factText, opts) => {
+export const findCandidateDuplicates: Member<'findCandidateDuplicates'> = async (brain, sourceId, entitySlug, factText, opts) => {
   const o = takeOptions('findCandidateDuplicates', opts,
     ['k', 'embedding', 'embeddingModel', 'arm', 'attributedTo', 'excludeMemberPages', 'onlyPage']) as NonNullable<typeof opts>;
-  if (o.arm === 'keyword') {
-    if (o.embedding && !o.embeddingModel) return [];
-    refuseMember('findCandidateDuplicates', 'the keyword arm');
-  }
+  const keyword = o.arm === 'keyword';
   if (o.embedding) {
     if (!o.embeddingModel) return [];
-    refuseMember('findCandidateDuplicates', 'the embedding arm');
+    refuseMember('findCandidateDuplicates', keyword ? 'the keyword arm over stored embeddings' : 'the embedding arm');
   }
+  // The store's full-text search is the `english` configuration only.
+  if (keyword && getFtsLanguage() !== 'english') refuseMember('findCandidateDuplicates', `the keyword arm in FTS language ${getFtsLanguage()}`);
   const rows: Row[] = await storeCall({ member: 'findCandidateDuplicates' }, () => brain.findCandidateDuplicates({
     sourceId, entitySlug, k: Math.min(Math.max(o.k ?? 5, 1), 20), attributedTo: o.attributedTo || undefined,
     onlyPage: o.onlyPage || undefined, excludeMemberPages: o.excludeMemberPages === true,
+    ...(keyword ? { keyword: true, factText: wellFormed(factText) } : {}),
   }));
   return facts(rows);
 };

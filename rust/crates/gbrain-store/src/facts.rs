@@ -31,6 +31,7 @@
 use crate::dream::int4;
 use crate::env::{iso, parse_iso};
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
+use crate::keyword::{or_of_lexemes, plainto_tsquery, to_tsvector, ts_matches, ts_rank_cd};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::{next_id, read_page};
@@ -825,6 +826,10 @@ pub struct DuplicateQuery {
     pub attributed_to: Option<String>,
     pub only_page: Option<String>,
     pub exclude_member_pages: bool,
+    /// `arm: 'keyword'`: rank by `ts_rank_cd` against `fact_text` instead of recency.
+    pub keyword: bool,
+    /// The new claim's text, read by the keyword arm.
+    pub fact_text: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -1316,20 +1321,37 @@ impl Store {
             .count() as u64)
     }
 
-    /// `findCandidateDuplicates`, the recency arm: the entity's newest `k` active rows.
+    /// `findCandidateDuplicates` with no embedding. The recency arm returns the entity's newest
+    /// `k` active rows. The keyword arm (`keyword`) drops audit checkpoint rows, keeps the rows whose
+    /// `to_tsvector('english', fact)` matches the OR of the lexemes of
+    /// `plainto_tsquery('english', fact_text)`, and orders them by `ts_rank_cd` descending, then
+    /// `created_at` and `id` descending. A claim with no lexemes (stop words only) matches nothing.
     pub fn find_candidate_duplicates(&self, q: &DuplicateQuery) -> Result<Vec<Value>> {
         const OP: &str = "findCandidateDuplicates";
-        no_nul(
-            OP,
-            &[("sourceId", &q.source_id), ("entitySlug", &q.entity_slug)],
-        )?;
+        let mut texts = vec![
+            ("sourceId", q.source_id.as_str()),
+            ("entitySlug", q.entity_slug.as_str()),
+        ];
+        if q.keyword {
+            texts.push(("factText", &q.fact_text));
+        }
+        no_nul(OP, &texts)?;
         let k = count_arg(OP, "k", q.k)?;
+        let query = if q.keyword {
+            match or_of_lexemes(&plainto_tsquery(&q.fact_text)?) {
+                Some(query) => Some(query),
+                None => return Ok(Vec::new()),
+            }
+        } else {
+            None
+        };
         let read = self.read()?;
         let now = self.env.now_micros();
         let rows: Vec<FactRecord> = entity_rows(&*read, &q.source_id, &q.entity_slug)?
             .into_iter()
             .filter(|r| {
                 r.active(now)
+                    && !(q.keyword && r.audit_row())
                     && q.attributed_to
                         .as_ref()
                         .is_none_or(|who| r.attributed_to.as_ref().is_none_or(|a| a == who))
@@ -1339,9 +1361,29 @@ impl Store {
                     }
             })
             .collect();
-        Ok(page_of(rows, |r| r.created_at_us, true, 0, k)
+        let Some(query) = query else {
+            return Ok(page_of(rows, |r| r.created_at_us, true, 0, k)
+                .iter()
+                .map(|r| r.to_json(false, false))
+                .collect());
+        };
+        let mut ranked = Vec::new();
+        for row in rows {
+            let vector = to_tsvector(&row.fact)?;
+            if ts_matches(&vector, &query) {
+                ranked.push((ts_rank_cd(&vector, &query), row));
+            }
+        }
+        // Postgres sorts `real` with NaN above every number, as `total_cmp` does for a positive NaN.
+        ranked.sort_by(|(sa, a), (sb, b)| {
+            sb.total_cmp(sa)
+                .then(b.created_at_us.cmp(&a.created_at_us))
+                .then(b.id.cmp(&a.id))
+        });
+        Ok(ranked
             .iter()
-            .map(|r| r.to_json(false, false))
+            .take(k)
+            .map(|(_, r)| r.to_json(false, false))
             .collect())
     }
 

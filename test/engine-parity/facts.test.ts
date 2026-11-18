@@ -788,4 +788,64 @@ describe('engine parity: facts', () => {
       };
     },
   );
+  parityTest(
+    'findCandidateDuplicates (keyword arm) orders by ts_rank_cd then newest, stems and drops audit, inactive, speaker and member rows',
+    { methods: ['insertFact', 'insertFacts', 'expireFact', 'findCandidateDuplicates'] },
+    async (engine) => {
+      const ent = 'people/vic-example';
+      const ids = await remember(engine, ent, [
+        { fact: 'Vic trains for the Berlin marathon every spring' },
+        { fact: 'Vic ran the marathon' },
+        { fact: 'Vic likes Berlin' },
+        { fact: 'Vic marathon marathon marathon' },
+        { fact: 'Vic visited a Zürich café' },
+        { fact: 'Vic marathon audit checkpoint', source: 'cli:extract-conversation-facts:terminal:v2' },
+        { fact: 'Vic marathon expired' },
+        { fact: 'Vic marathon lapsed', valid_from: at('2025-01-01T00:00:00Z'), valid_until: at('2025-02-01T00:00:00Z') },
+        { fact: 'Vic marathon said by the assistant', attributed_to: 'assistant' },
+        { fact: 'Vic marathon said by the user', attributed_to: 'user' },
+        { fact: 'Cooking notes with no shared words' },
+      ]);
+      await engine.expireFact(ids.get('Vic marathon expired')!);
+      const onPage = (page: string, n: number, fact: string) => ({
+        row_num: n, source_markdown_slug: page, fact, entity_slug: ent, source: 'fence', valid_from: at('2026-03-01T00:00:00Z'),
+      });
+      await engine.insertFacts([onPage('memory/members/vic-example', 1, 'Vic marathon member note')], { source_id: SRC });
+      await engine.insertFacts([onPage('memory/scope', 1, 'Vic marathon scope note')], { source_id: SRC });
+      await engine.insertFacts([onPage('notes/vic', 1, 'Vic marathon on a notes page'), onPage('notes/vic', 2, 'Vic Berlin on a notes page')], { source_id: SRC });
+      await remember(engine, 'people/other-example', [{ fact: 'Vic marathon on another entity' }]);
+      const q = async (text: string, opts: Parameters<BrainEngine['findCandidateDuplicates']>[3] = {}) =>
+        texts(await engine.findCandidateDuplicates(SRC, ent, text, { arm: 'keyword', k: 20, ...opts }));
+      const full = await q('Vic Berlin marathon training');
+      const k3 = await q('Vic Berlin marathon training', { k: 3 });
+      const defaultK = texts(await engine.findCandidateDuplicates(SRC, ent, 'Vic Berlin marathon training', { arm: 'keyword' }));
+      const byUser = await q('marathon', { attributedTo: 'user' });
+      const byAssistant = await q('marathon', { attributedTo: 'assistant' });
+      const noMembers = await q('marathon', { excludeMemberPages: true });
+      const onlyPage = await q('marathon Berlin', { onlyPage: 'notes/vic' });
+      const stemmed = await q('marathons trained');
+      const punctuation = await q('BERLIN!!! — marathon?');
+      const accented = await q('Zürich café');
+      const unaccented = await q('zurich cafe');
+      const noModel = await q('marathon', { embedding: basisEmbedding(0) });
+      const otherEntity = texts(await engine.findCandidateDuplicates(SRC, 'people/nobody', 'marathon', { arm: 'keyword' }));
+      expect(full).not.toContain('Vic marathon audit checkpoint');
+      expect(full).not.toContain('Vic marathon expired');
+      expect(full).not.toContain('Vic marathon lapsed');
+      expect(full).not.toContain('Cooking notes with no shared words');
+      expect(full).not.toContain('Vic marathon on another entity');
+      expect(k3).toEqual(full.slice(0, 3));
+      expect(defaultK).toEqual(full.slice(0, 5));
+      expect(byUser).not.toContain('Vic marathon said by the assistant');
+      expect(byAssistant).not.toContain('Vic marathon said by the user');
+      expect(noMembers).not.toContain('Vic marathon member note');
+      expect(noMembers).not.toContain('Vic marathon scope note');
+      expect(sorted(onlyPage)).toEqual(['Vic Berlin on a notes page', 'Vic marathon on a notes page']);
+      expect(stemmed).toContain('Vic trains for the Berlin marathon every spring');
+      expect(accented).toEqual(['Vic visited a Zürich café']);
+      expect(noModel).toEqual([]);
+      expect(otherEntity).toEqual([]);
+      return { full, k3, defaultK, byUser, byAssistant, noMembers, onlyPage, stemmed, punctuation, accented, unaccented, noModel, otherEntity };
+    },
+  );
 });
