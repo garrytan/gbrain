@@ -497,8 +497,8 @@ export function storedFactsShown(holders: readonly string[] | undefined, segment
 
 /**
  * GST-3064: sanitizeRemoteBody's `owner` option for an inline body this caller reads (storedFactsShown), keeping takes
- * only for a caller that reads every holder. get_page, fetch, get_page as_of and known_as_of all read through it, so
- * every body that returns a revision shows the owner the same rows.
+ * only for a caller that reads every holder. get_page, fetch and get_page as_of read an inline body through it, so
+ * they show the owner the same rows.
  */
 export function ownerFenceView(holders: readonly string[] | undefined): { keepTakes: boolean } | undefined {
   return storedFactsShown(holders, false) ? { keepTakes: holders === undefined } : undefined;

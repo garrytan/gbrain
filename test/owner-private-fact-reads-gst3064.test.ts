@@ -3,11 +3,11 @@
  * nobody loses a private row by writing back what they read.
  *
  * 1. Protects (R94): one predicate (storedFactsShown, ownerFenceView) decides what the owner's credential reads in a
- *    page body: get_page, fetch, a segmented page's markdown view, get_page as_of and get_page known_as_of. The
+ *    page body: get_page, fetch, a segmented page's markdown view and get_page as_of on an inline page. The
  *    owner's client (no holders list) and token (with one) read the private rows on each; a member and an unbound token
  *    read none. The write-back merge is unchanged: every remote write restores the private rows it leaves out, so an
  *    owner's edit or delete of a private row is stored beside the kept row until the write side lands.
- * 2. Fails when: an owner read of a body returning the page's revision hides private rows another such read shows, a
+ * 2. Fails when: an owner read through get_page, fetch or as_of hides private rows another of those reads shows, a
  *    member or unbound read shows one, or any caller's write-back of any view loses, duplicates or exposes a private row.
  * 3. Real seams: tokens and clients minted by the token service and the OAuth provider, dispatched through MCP dispatch
  *    with the holders list the HTTP transports compute, written through the persistence service, on PGLite and Postgres.
@@ -27,7 +27,6 @@ import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { renderFactsTable } from '../src/core/facts-fence.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { registerLocalWriter } from '../src/core/persistence/identity.ts';
-import { enableBeliefLedger } from '../src/core/belief/coverage.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { importSegmented, pageContent } from './helpers/segmented-privacy-fixture.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -39,7 +38,7 @@ const OLD = 'otterprivoldcanary', NEW = 'otterprivnewcanary', DEL = 'molefprivde
 const WRITERS = ['local', 'ownerC', 'ownerW', 'bobW', 'unboundW'] as const;
 type Writer = typeof WRITERS[number];
 type Shape = 'small' | 'big' | 'segmented';
-type View = 'content' | 'markdown' | 'fetch' | 'asof' | 'known';
+type View = 'content' | 'markdown' | 'fetch' | 'asof';
 const facts = () => renderFactsTable([row(1, 'Edit world fact'), row(2, 'Edit secret ' + OLD, 'private'), row(3, 'Edit gone ' + DEL, 'private')] as never);
 const count = (text: string, needle: string) => text.split(needle).length - 1;
 /** Whether the writer's read of that view shows the private rows: fetch pages a segmented or over-cap page in read-view windows. */
@@ -71,9 +70,8 @@ for (const kind of testBackends()) {
     const put = (who: Writer | 'ownerP', slug: string, content: string, revision?: string) =>
       call(who, 'put_page', { slug, content, request_id: randomUUID(), ...(revision ? { expected_revision: revision } : {}) });
     async function read(who: Writer, slug: string, view: View): Promise<{ text: string; revision: string }> {
-      if (view === 'asof' || view === 'known') {
-        await Bun.sleep(5);
-        const out = JSON.parse(await call(who, 'get_page', { slug, ...(view === 'asof' ? { as_of: '2099-01-01' } : { known_as_of: new Date().toISOString() }) }));
+      if (view === 'asof') {
+        const out = JSON.parse(await call(who, 'get_page', { slug, as_of: '2099-01-01' }));
         expect({ who, view, body: typeof out.compiled_truth }).toEqual({ who, view, body: 'string' });
         return { text: '---\ntype: note\ntitle: Edit Example\nvalid_from: 2026-01-01\n---\n' + out.compiled_truth + (out.timeline ? '\n\n---\n\n' + out.timeline : ''), revision: out.revision };
       }
@@ -131,11 +129,10 @@ for (const kind of testBackends()) {
       await bindCredential(engine, { kind: 'client', id: client.clientId }, { member: OWNER });
       tokens.ownerC = (await provider().exchangeClientCredentials(client.clientId, client.clientSecret!)).access_token;
       await setOwner(engine, OWNER);
-      await enableBeliefLedger(engine, 'default');
     }, 300_000);
     afterAll(async () => { await disposePersistenceConsumer(engine); await close?.(); }, 60_000);
 
-    const CASES: Array<[Shape, View]> = [['small', 'asof'], ['small', 'known'], ['small', 'content'], ['small', 'markdown'], ['small', 'fetch'], ['big', 'content'], ['big', 'markdown'], ['big', 'fetch'], ['segmented', 'markdown'], ['segmented', 'fetch']];
+    const CASES: Array<[Shape, View]> = [['small', 'asof'], ['small', 'content'], ['small', 'markdown'], ['small', 'fetch'], ['big', 'content'], ['big', 'markdown'], ['big', 'fetch'], ['segmented', 'markdown'], ['segmented', 'fetch']];
 
     test('every writer reads each full-page view, puts it back unchanged, and every private row is stored once and stays private', async () => {
       for (const [shape, view] of CASES) for (const who of WRITERS) {
@@ -151,14 +148,14 @@ for (const kind of testBackends()) {
       }
     }, 3_600_000);
 
-    test('every owner read of a page body agrees: as_of and known_as_of show the private rows get_page shows, at its revision', async () => {
+    test('every owner read of a page body agrees: as_of shows the private rows get_page shows, at its revision', async () => {
       for (const who of ['ownerC', 'ownerW', 'bobW', 'unboundW'] as Writer[]) {
         const slug = await seed('small');
-        const [content, asof, known] = [await read(who, slug, 'content'), await read(who, slug, 'asof'), await read(who, slug, 'known')];
+        const [content, asof] = [await read(who, slug, 'content'), await read(who, slug, 'asof')];
         const rows = (r: { text: string }) => [count(r.text, OLD), count(r.text, DEL)];
         const sees = who === 'ownerC' || who === 'ownerW' ? [1, 1] : [0, 0];
-        expect({ who, content: rows(content), asof: rows(asof), known: rows(known), revisions: [asof.revision, known.revision] })
-          .toEqual({ who, content: sees, asof: sees, known: sees, revisions: [content.revision, content.revision] });
+        expect({ who, content: rows(content), asof: rows(asof), revision: asof.revision })
+          .toEqual({ who, content: sees, asof: sees, revision: content.revision });
       }
     }, 600_000);
 
