@@ -1792,7 +1792,13 @@ fn drop_rekey_duplicates(
     // (entity, sms, dimension, value_hash, valid_from) after the move.
     type Key = (String, String, String, String, i64);
     let key_of = |r: &FactRecord, entity: Option<String>, sms: Option<String>| -> Option<Key> {
-        Some((entity?, sms?, r.dimension.clone()?, r.value_hash.clone()?, r.valid_from_us))
+        Some((
+            entity?,
+            sms?,
+            r.dimension.clone()?,
+            r.value_hash.clone()?,
+            r.valid_from_us,
+        ))
     };
     let moving_ids: HashSet<u64> = moving.iter().map(|r| r.id).collect();
     let mut cand: Vec<(Key, FactRecord, bool)> = Vec::new();
@@ -1879,7 +1885,11 @@ pub(crate) fn move_slug_rows(
         return Ok(());
     }
     let about = entity_rows(tx, source_id, old)?;
-    let moving = about.iter().filter(|r| r.dimension.is_some()).cloned().collect();
+    let moving = about
+        .iter()
+        .filter(|r| r.dimension.is_some())
+        .cloned()
+        .collect();
     drop_rekey_duplicates(tx, source_id, moving, |r| {
         (Some(new.to_string()), r.source_markdown_slug.clone())
     })?;
@@ -2191,7 +2201,10 @@ mod tests {
             fact_fingerprint("Alice  likes Tea."),
             "b93bc28474baf9644a7ac21462da07350b4215e5a9ad3a54ecfff9ebb8485883"
         );
-        assert_eq!(fact_normalize("Hello... World. e.g. x.y  ."), "hello world e.g x.y");
+        assert_eq!(
+            fact_normalize("Hello... World. e.g. x.y  ."),
+            "hello world e.g x.y"
+        );
         // ILIKE folds with lower(), one code point at a time.
         assert!(!like("Straße", "%STRASSE%", true).unwrap());
         assert!(!like("σ", "ς", true).unwrap());
@@ -2201,38 +2214,42 @@ mod tests {
         assert!(like("abcabc", "a%c", false).unwrap());
         assert!(like("a_b", "a\\_b", false).unwrap());
         let err = like("x", "x\\", false).unwrap_err();
-        assert!(err.message.contains("LIKE pattern must not end with escape character"));
+        assert!(
+            err.message
+                .contains("LIKE pattern must not end with escape character")
+        );
     }
 
     #[test]
     fn move_slug_rows_matches_move_slug_bindings() {
         // PGLite moveSlugBindings on these rows gives the outcome below (probed).
         let store = crate::test_support::store();
-        let page = |sms: &str, rows: &[(&str, &str, f64, Option<(&str, &str, &str)>)]| -> Vec<u64> {
-            let rows = rows
-                .iter()
-                .map(|(fact, entity, row_num, dim)| NewFactInput {
-                    fact: Some((*fact).into()),
-                    source: Some("test".into()),
-                    valid_from: Some("2026-01-01T00:00:00.000Z".into()),
-                    entity_slug: Some((*entity).into()),
-                    row_num: Some(*row_num),
-                    source_markdown_slug: Some(sms.into()),
-                    dimension: dim.map(|d| d.0.into()),
-                    value: dim.map(|d| d.1.into()),
-                    value_hash: dim.map(|d| d.2.into()),
-                    ..NewFactInput::default()
-                })
-                .collect();
-            let out = store
-                .insert_facts(&InsertFactsArgs {
-                    rows,
-                    source_id: "default".into(),
-                    delete_for_page_first: None,
-                })
-                .unwrap();
-            serde_json::from_value(out["ids"].clone()).unwrap()
-        };
+        let page =
+            |sms: &str, rows: &[(&str, &str, f64, Option<(&str, &str, &str)>)]| -> Vec<u64> {
+                let rows = rows
+                    .iter()
+                    .map(|(fact, entity, row_num, dim)| NewFactInput {
+                        fact: Some((*fact).into()),
+                        source: Some("test".into()),
+                        valid_from: Some("2026-01-01T00:00:00.000Z".into()),
+                        entity_slug: Some((*entity).into()),
+                        row_num: Some(*row_num),
+                        source_markdown_slug: Some(sms.into()),
+                        dimension: dim.map(|d| d.0.into()),
+                        value: dim.map(|d| d.1.into()),
+                        value_hash: dim.map(|d| d.2.into()),
+                        ..NewFactInput::default()
+                    })
+                    .collect();
+                let out = store
+                    .insert_facts(&InsertFactsArgs {
+                        rows,
+                        source_id: "default".into(),
+                        delete_for_page_first: None,
+                    })
+                    .unwrap();
+                serde_json::from_value(out["ids"].clone()).unwrap()
+            };
         let old = page(
             "people/old",
             &[
@@ -2284,18 +2301,43 @@ mod tests {
         assert_eq!(view(old[0]), None);
         assert_eq!(view(new[0]), None);
         assert_eq!(view(meeting[0]), None);
-        assert_eq!(view(old[1]), at("people/new", "people/new", 2, Some(new[1]), None));
-        assert_eq!(view(new[1]), at("people/new", "people/new", 3, None, Some("employer")));
-        assert_eq!(view(meeting[1]), at("people/new", "meetings/m1", 2, None, Some("title")));
-        assert_eq!(view(meeting[2]), at("people/new", "meetings/m1", 3, None, None));
-        assert!(entity_rows(&*read, "default", "people/old").unwrap().is_empty());
-        assert!(page_rows(&*read, "default", "people/old").unwrap().is_empty());
+        assert_eq!(
+            view(old[1]),
+            at("people/new", "people/new", 2, Some(new[1]), None)
+        );
+        assert_eq!(
+            view(new[1]),
+            at("people/new", "people/new", 3, None, Some("employer"))
+        );
+        assert_eq!(
+            view(meeting[1]),
+            at("people/new", "meetings/m1", 2, None, Some("title"))
+        );
+        assert_eq!(
+            view(meeting[2]),
+            at("people/new", "meetings/m1", 3, None, None)
+        );
+        assert!(
+            entity_rows(&*read, "default", "people/old")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            page_rows(&*read, "default", "people/old")
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(source_rows(&*read, "default").unwrap().len(), 4);
         // A rename onto the same slug changes nothing.
         drop(read);
         store
             .write(|tx| move_slug_rows(tx, "default", "people/new", "people/new"))
             .unwrap();
-        assert_eq!(source_rows(&*store.read().unwrap(), "default").unwrap().len(), 4);
+        assert_eq!(
+            source_rows(&*store.read().unwrap(), "default")
+                .unwrap()
+                .len(),
+            4
+        );
     }
 }

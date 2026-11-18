@@ -623,7 +623,8 @@ fn find_duplicate_in(
         .filter(|p| p.source_id == source_id && p.deleted_at_us.is_none())
         .filter(|p| {
             let id = fm_text(&p.frontmatter, "id");
-            p.content_hash == query.hash || (fm_id.is_some() && id.as_deref() == fm_id)
+            p.content_hash.as_deref() == Some(query.hash.as_str())
+                || (fm_id.is_some() && id.as_deref() == fm_id)
         })
         .filter(|p| query.exclude_slug.as_deref() != Some(p.slug.as_str()))
         .min_by(|a, b| {
