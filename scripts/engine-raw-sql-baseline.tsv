@@ -14,6 +14,7 @@ src/commands/agent-register.ts	execute_raw	4
 src/commands/agent-register.ts	sql_template	8
 src/commands/agent.ts	execute_raw	1
 src/commands/auth-client-rows.ts	execute_raw	6
+src/commands/auth-read-shared.ts	execute_raw	2	reads sources (ids that exist and are not archived) and oauth_clients.member_id for the auth CLI read-set lines (GST-2898 read-shared switch, #9590, open before this ratchet landed); no typed engine method exists yet
 src/commands/auth.ts	execute_raw	1
 src/commands/auth.ts	sql_template	6
 src/commands/autopilot-daemon.ts	execute_raw	1
@@ -180,6 +181,7 @@ src/commands/extract.ts	execute_raw	4
 src/commands/files.ts	execute_raw	4
 src/commands/files.ts	sql_template	6
 src/commands/frontmatter-install-hook.ts	execute_raw	3
+src/commands/git.ts	execute_raw	1	GST-2988 PR 2 gbrain git redact-unpushed: reads sources.local_path for --source; branched before the #9641 ratchet; no typed engine method for a source's local path exists yet
 src/commands/google-attachments.ts	execute_raw	3
 src/commands/google-setup-tail.ts	execute_raw	1
 src/commands/google.ts	execute_raw	1
@@ -531,6 +533,7 @@ src/core/generations/managed.ts	execute_raw	7
 src/core/generations/publish.ts	execute_raw	19
 src/core/generations/repair.ts	execute_raw	6
 src/core/ghost-pages.ts	execute_raw	4
+src/core/git/redact-finish.ts	execute_raw	8	GST-2988 PR 2 publish redaction finish: reads sources.local_path and persistence_host_bindings to find the checkout that owns a pushed root, reads and compare-and-sets sources.last_commit to the rebuilt sha, and lists persistence_effects worktree ids to remap parked effects; branched before the #9641 ratchet; no typed engine method for these source and effect reads exists yet
 src/core/git/untrack-admission.ts	execute_raw	3	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/core/github-source.ts	execute_raw	3
 src/core/google/attachment-backfill.ts	execute_raw	2
@@ -543,15 +546,16 @@ src/core/google/loops-extract.ts	execute_raw	1
 src/core/google/loops-reciprocity.ts	execute_raw	1
 src/core/google/people-calendar-sweep.ts	execute_raw	3
 src/core/google/sweep-shared.ts	execute_raw	2
-src/core/grants/legacy-token.ts	execute_raw	9
+src/core/grants/legacy-token.ts	execute_raw	10	+1: rescope stamps access_tokens.read_shared_revision at the new grant_revision or clears it (GST-2898 read-shared switch, #9590, open before this ratchet landed); no typed engine method exists yet
 src/core/grants/legacy-token.ts	sql_template	3
-src/core/grants/lifecycle.ts	sql_template	7
+src/core/grants/lifecycle.ts	sql_template	8	+1: invalidate-tokens re-stamps oauth_clients.read_shared_revision at the new grant_revision so the switch survives (GST-2898 read-shared switch, #9590, open before this ratchet landed); no typed engine method exists yet
 src/core/grants/migration.ts	execute_raw	1
 src/core/grants/migration.ts	sql_template	5
 src/core/grants/model.ts	execute_raw	1
+src/core/grants/read-shared.ts	sql_template	1	reads sources (the federated, non-guest set a switched key reads) (GST-2898 read-shared switch, #9590, open before this ratchet landed); no typed engine method exists yet
 src/core/grants/rescope.ts	sql_template	7
-src/core/grants/service.ts	sql_template	11
-src/core/grants/shared-exposure.ts	execute_raw	1
+src/core/grants/service.ts	sql_template	12	+1: stampReadShared writes oauth_clients.read_shared_revision beside a client grant write (GST-2898 read-shared switch, #9590, open before this ratchet landed); no typed engine method exists yet
+src/core/grants/shared-exposure.ts	execute_raw	3	+2: reads every live access_tokens and oauth_clients row to list the credentials that read a source through the switch (GST-2898 read-shared switch, #9590, open before this ratchet landed); no typed engine method exists yet
 src/core/guard-ledger-checks.ts	execute_raw	3
 src/core/guests/admission.ts	execute_raw	4
 src/core/guests/marker.ts	execute_raw	2
@@ -1014,7 +1018,7 @@ src/core/repair/rename-identity.ts	execute_raw	7
 src/core/repair/rotation.ts	execute_raw	3
 src/core/repair/rows-behind.ts	execute_raw	1
 src/core/repair/safe-chunks.ts	execute_raw	1
-src/core/repair/secret-spans.ts	execute_raw	24
+src/core/repair/secret-spans.ts	execute_raw	26	secret-spans --apply also redacts retained page_versions (selects and updates compiled_truth/frontmatter per version); no typed engine method for version redaction exists yet
 src/core/repair/segmented-mirror.ts	execute_raw	5
 src/core/repair/segmented-tiling.ts	execute_raw	7
 src/core/repair/settle.ts	execute_raw	1
@@ -1094,6 +1098,9 @@ src/core/search/slot-history.ts	execute_raw	1	GBRA-574 F #9674 (opened before th
 src/core/search/telemetry.ts	execute_raw	2
 src/core/search/transcript-quote.ts	execute_raw	3
 src/core/search/two-pass.ts	execute_raw	5
+src/core/secret-store/restore.ts	execute_raw	3	secret restore reads the page revision and live knowledge_revision and flips secret_store.status; no typed engine method for the secret store exists yet
+src/core/secret-store/spool.ts	execute_raw	1	GST-2988 PR 2 spool: reads every allowed (restored) key_id and value_mac from secret_store to rebuild allowed.json; branched before the #9641 ratchet; no typed engine method for the secret store exists yet
+src/core/secret-store/store.ts	execute_raw	14	secret_store and secret_store_occurrence inserts and reads (dedupe by value_mac, entry, occurrences, list, key summary); GST-2988 PR 2 adds +5: drain inserts a spooled original by id (exists check, value_mac lookup, insert), the per-rule counts for secrets list, and the allowed value_macs one source restored; branched before the #9641 ratchet; no typed engine method for the secret store exists yet
 src/core/serve-sync-runner.ts	execute_raw	1
 src/core/session-lane.ts	execute_raw	3
 src/core/shared-skills/adopted-packs.ts	execute_raw	1

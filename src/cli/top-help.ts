@@ -30,6 +30,7 @@ SETUP
   upgrade                            Self-update
   check-update [--json]              Check for new versions
   repair [<kind>] [--apply]          Preview/apply residual repairs (timeline, visibility, safe-chunks)
+  secrets list|reveal|restore|key    Originals that redaction replaced with markers (encrypted store)
   projections drain [--limit n]      Rebuild queued text projections now [--json]
   doctor [--json] [--fast] [--probe-pglite]  Health check (resolver, skills, pgvector, RLS, embeddings; --probe-pglite runs the scratch-store probe)
   integrations [subcommand]          Manage integration recipes (senses + reflexes)
@@ -116,6 +117,7 @@ TOOLS
   beliefs <enable|status|...>        Belief ledger coverage: enable, disable, status, reconcile, backfill
   salience [--days N] [--kind P]     v0.29: pages ranked by emotional + activity salience
   anomalies [--since D] [--sigma N]  v0.29: cohort-based statistical anomalies (tag, type)
+  dedupe --preview [--json]          Likely duplicate person and company pages, with evidence; read-only
   feedback <status|reset>            retrieval feedback: learned page weights; rate answers with gbrain rate
   transcripts <ingest|status|recent> v0.46: import agent session logs + chat exports (local-only)
   dream [--dry-run] [--json]         Run the overnight maintenance cycle once (cron-friendly).

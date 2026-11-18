@@ -1979,6 +1979,28 @@
         ],
         "flagOnScopes": []
       },
+      "listEntityKeyRows#after": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listEntityKeyRows#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listFactsByEntity#allFilters": {
         "flagOffLanes": [
           "pool"
@@ -3958,6 +3980,7 @@
         "listCorpusSample": "direct",
         "listEmbeddingStateRows": "direct",
         "listEnrichCandidates": "none",
+        "listEntityKeyRows": "none",
         "listEvalCandidates": "none",
         "listEvalCaptureFailures": "none",
         "listFactsByEntity": "none",
@@ -3988,6 +4011,7 @@
         "moveChunkIndexes": "none",
         "onCheckout": "none",
         "openBodyStaging": "none",
+        "ownerOnlyMarkTriggers": "none",
         "pageCollapseFacts": "none",
         "pagesLinkingTo": "none",
         "preparationRead": "none",
