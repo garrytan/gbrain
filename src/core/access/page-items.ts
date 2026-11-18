@@ -31,10 +31,12 @@ export function keepRoomEvidence<T extends object>(result: T, evidence: RoomEvid
 const ROOM_BODY = Symbol('gbrain.room_body');
 /**
  * GST-3058: keeps on a get_page result whether the body it returns holds text a world-only read strips
- * (remoteReadStrips), as a check the room marker runs only when a room is declared. Symbol-keyed like keepRoomEvidence.
+ * (remoteReadStrips), as a check the room marker runs only when a room is declared. Unlike keepRoomEvidence the key is
+ * not enumerable, so equality checks ignore it and object spread drops it: attach it to the object the handler returns,
+ * after any spread. A lost check makes the room marker judge the body by the page alone, which is the less strict answer.
  */
 export function keepRoomBody<T extends object>(result: T, strips: () => Promise<boolean>): T {
-  (result as Record<symbol, unknown>)[ROOM_BODY] = strips;
+  Object.defineProperty(result, ROOM_BODY, { value: strips, enumerable: false });
   return result;
 }
 /** The page slot of a get_page result, with its body check (keepRoomBody) when it has one. */
