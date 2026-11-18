@@ -25,6 +25,7 @@ import type { Link, PageInput, PageType } from '../../src/core/types.ts';
 import { linkFamily } from '../../src/core/search/relational-chain.ts';
 import { createSource, parityArms, pick, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -791,6 +792,57 @@ describe('engine parity: excludePrivate on links reads', () => {
       expect(on).toEqual(['default:orph/alone', 'default:orph/by-origin', 'default:orph/by-private', 'default:orph/to-private']);
       expect(inbound).toContain('default:orph/to-private');
       return { off, on, inbound, scopedInbound };
+    },
+  );
+
+  parityTest(
+    'the links reads under excludePrivate apply a caller\'s reader identity and private-readable grant',
+    { methods: ['putPage', 'addLink', 'addLinksBatch', 'getBacklinkCounts', 'getAdjacencyBoosts', 'relationalFanout',
+      'relationalChainHop', 'supersedingPageSlugs', 'findOrphanPages'] },
+    async (engine) => {
+      const ids = await fixture(engine);
+      for (const [slug, frontmatter] of [
+        ['notes/team', { readable_by: 'group:team-a' }], ['notes/bob-only', { readable_by: ['bob-example'] }],
+        ['notes/pinned', { visibility: 'private', pinned_question: true }], ['orph/by-readers', {}], ['orph/by-team', {}], ['notes/stale-g', {}],
+      ] as const) ids.set(slug, (await engine.putPage(slug, page(slug, { frontmatter }))).id);
+      for (const slug of ['notes/team', 'notes/bob-only', 'notes/pinned']) await engine.addLink(slug, 'people/hub', '', 'cites', 'manual');
+      await engine.addLink('notes/readers', 'orph/by-readers', '', 'cites', 'manual');
+      await engine.addLink('notes/team', 'orph/by-team', '', 'cites', 'manual');
+      await engine.addLink('notes/open', 'notes/readers', '', 'supersedes', 'manual');
+      await engine.addLink('notes/private', 'notes/stale-g', '', 'supersedes', 'manual');
+      const all = [...ids.values()];
+      const slugOf = new Map([...ids].map(([slug, id]) => [id, slug]));
+      const read = (access: Parameters<typeof withCallerAccess>[0]) => withCallerAccess(access, async () => ({
+        back: bySlug(ids, await engine.getBacklinkCounts(all, { excludePrivate: true })).filter(([, n]) => n > 0),
+        adjacency: bySlug(ids, await engine.getAdjacencyBoosts(all, { excludePrivate: true })).map(([slug]) => slug),
+        fanout: sorted((await engine.relationalFanout(['people/hub'], { direction: 'in', excludePrivate: true }))
+          .map((r) => `${r.slug}:${r.hop}:${r.edge_count}`)),
+        hop: (await engine.relationalChainHop([ids.get('people/hub')!], {
+          linkTypes: ['cites'], toward: 'subject', subjectTypes: ['note', 'atom', 'concept', 'event'], objectTypes: ['person', 'note'],
+          degreeLinkTypes: ['cites'], neighborCap: 100, excludePrivate: true,
+        })).map((e) => `${slugOf.get(e.from_page_id)}>${e.to_slug}:${e.from_degree}`).sort(),
+        superseded: sorted([...await engine.supersedingPageSlugs(all, { excludePrivate: true })].map(([id, by]) => `${slugOf.get(id)}<${by}`)),
+        orphans: sorted((await engine.findOrphanPages({ excludePrivate: true })).map((r) => r.slug)),
+      }));
+      const member = await read({ identity: ['member:alice-example', 'group:team-a'], hidePrivate: true });
+      const granted = await read({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true });
+      const stranger = await read({ identity: ['member:carol-example'], hidePrivate: true });
+      const hub = (rows: Array<[string, number]>) => rows.find(([slug]) => slug === 'people/hub')?.[1];
+      expect(hub(stranger.back)).toBe(OPEN.length - 1);
+      expect(hub(member.back)).toBe(OPEN.length + 1);
+      expect(member.back).toContainEqual(['orph/by-readers', 1]);
+      expect(stranger.back.map(([slug]) => slug)).not.toContain('orph/by-readers');
+      expect(member.fanout.some((r) => r.startsWith('notes/readers:'))).toBe(true);
+      expect(member.fanout.some((r) => r.startsWith('notes/bob-only:'))).toBe(false);
+      expect(member.superseded).toContain('notes/readers<notes/open');
+      expect(member.superseded).not.toContain('notes/stale-g<notes/private');
+      expect(granted.superseded).toContain('notes/stale-g<notes/private');
+      expect(stranger.orphans).toContain('orph/by-readers');
+      expect(member.orphans).not.toContain('orph/by-readers');
+      expect(member.orphans).not.toContain('orph/by-team');
+      expect(granted.fanout.some((r) => r.startsWith('notes/private:'))).toBe(true);
+      expect(granted.fanout.some((r) => r.startsWith('notes/pinned:'))).toBe(false);
+      return { member, granted, stranger };
     },
   );
 });
