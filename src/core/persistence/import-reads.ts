@@ -151,6 +151,12 @@ export function sliceReads(engine: BrainEngine, slice: { sourceId: string; pageI
       const answered = !opts?.signal && params && [ORIGIN, TIMELINE, TAKES, FENCE].includes(kind) ? answer(kind, sql, params) : undefined;
       return answered ? answered.catch(() => target.executeRaw(sql, params, opts)) : target.executeRaw(sql, params, opts);
     };
+    // The typed fence read (`getPageSealState`) is the same statement as FENCE: answer it from the slice's batch too.
+    if (key === 'getPageSealState') return async (pageId: number) => {
+      const answered = answer(FENCE, SAFE_FENCE_SQL, [pageId]);
+      const rows = answered ? await answered.catch(() => undefined) : undefined;
+      return rows ? (rows[0] as { chunker_version: number | null } | undefined) ?? null : target.getPageSealState(pageId);
+    };
     const value = Reflect.get(target, key, target);
     return typeof value === 'function' ? value.bind(target) : value;
   } }));

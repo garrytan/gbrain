@@ -34,6 +34,10 @@ const mockEngine: Partial<BrainEngine> = {
   kind: 'postgres' as const,
   executeRaw: async () => [],
   sql: sqlStub,
+  // The singleton lock is the typed cycle-lease methods: the lease is always free here.
+  acquireCycleLock: async (lockId: string) => ({ id: lockId, fence: '1' }),
+  refreshCycleLock: async () => true,
+  releaseCycleLock: async () => true,
 } as unknown as BrainEngine;
 
 const pidFile = process.env.SUP_PID_FILE;

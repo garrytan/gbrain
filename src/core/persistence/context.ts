@@ -7,6 +7,8 @@ import { settleAtCommit } from '../page-state/transactions.ts';
 import { isTrustTier, nestWriteTrust, trustRankSql, type TrustTier, type WriteTrust } from '../trust/tier.ts';
 import type { TrustTable } from '../trust/schema.ts';
 
+/** What the transaction-setting scopes need from the engine: typed reads and writes of `current_setting` / `set_config`. */
+type SettingsEngine = Pick<BrainEngine, 'readTransactionSettings' | 'applyTransactionSettings'>;
 interface PublicationContext { brainId: string; sourceIds: ReadonlySet<string>; active: boolean; }
 const publication = new AsyncLocalStorage<PublicationContext>();
 const ATTRIBUTION_SETTINGS = ['gbrain.write_request', 'gbrain.write_principal_kind', 'gbrain.write_principal_id'] as const;
@@ -27,11 +29,9 @@ const OPEN_FACTS_SETTING = 'gbrain.write_open_facts';
  * aborted transaction cannot accept statements; its rollback clears SET LOCAL
  * automatically. A success restores the enclosing values.
  */
-async function withTransactionSettings<T>(engine: Pick<BrainEngine, 'executeRaw'>, names: readonly string[],
+async function withTransactionSettings<T>(engine: SettingsEngine, names: readonly string[],
   next: (previous: string[]) => string[], fn: () => Promise<T>): Promise<T> {
-  const [row] = await engine.executeRaw<Record<string, string | null>>(
-    `SELECT ${names.map((name, index) => `current_setting('${name}',true) AS s${index}`).join(',')}`);
-  const previous = names.map((_, index) => row?.[`s${index}`] ?? '');
+  const previous = (await engine.readTransactionSettings(names)).map(value => value ?? '');
   await applySettings(engine, names, next(previous));
   let failed = false;
   try { return await fn(); }
@@ -41,8 +41,8 @@ async function withTransactionSettings<T>(engine: Pick<BrainEngine, 'executeRaw'
     catch (error) { if (!failed) throw error; }
   }
 }
-function applySettings(engine: Pick<BrainEngine, 'executeRaw'>, names: readonly string[], values: string[]) {
-  return engine.executeRaw(`SELECT ${names.map((name, index) => `set_config('${name}',$${index + 1},true)`).join(',')}`, values);
+function applySettings(engine: SettingsEngine, names: readonly string[], values: string[]) {
+  return engine.applyTransactionSettings(names, values);
 }
 /** A nested scope keeps the outer actor: a request publication that calls a derived writer stays attributed to the request. */
 const attributionValues = (outer: string[], attribution: WriteAttribution) => outer[1]
@@ -116,7 +116,7 @@ export async function setMemberAttribution(engine: Pick<BrainEngine, 'executeRaw
     [attribution.requestId ?? '', attribution.principal.kind, attribution.principal.id, ...trustValues(attribution.trust ?? null)]);
 }
 /** Attribution without coordinator capability, for unmanaged legacy transactions. */
-export function withWriteAttribution<T>(engine: Pick<BrainEngine, 'executeRaw'>, attribution: WriteAttribution, fn: () => Promise<T>): Promise<T> {
+export function withWriteAttribution<T>(engine: SettingsEngine, attribution: WriteAttribution, fn: () => Promise<T>): Promise<T> {
   return withTransactionSettings(engine, [...ATTRIBUTION_SETTINGS, ...TRUST_SETTINGS],
     outer => [...attributionValues(outer.slice(0, 3), attribution), ...nestedTrustValues(outer.slice(3), attribution.trust)], fn);
 }
@@ -126,7 +126,7 @@ export function withWriteAttribution<T>(engine: Pick<BrainEngine, 'executeRaw'>,
  * transaction, or a plain one). Nested declarations combine as min(outer,
  * inner). Compute the declaration once with trust/tier.ts `effectiveWriteTrust`.
  */
-export function withWriteTrust<T>(engine: Pick<BrainEngine, 'executeRaw'>, trust: WriteTrust, fn: () => Promise<T>): Promise<T> {
+export function withWriteTrust<T>(engine: SettingsEngine, trust: WriteTrust, fn: () => Promise<T>): Promise<T> {
   return withTransactionSettings(engine, TRUST_SETTINGS, outer => nestedTrustValues(outer, trust), fn);
 }
 /** The trust declaration in force on this transaction, or null (rows would be stamped `unknown`). */
@@ -140,7 +140,7 @@ export async function currentWriteTrust(engine: Pick<BrainEngine, 'executeRaw'>)
  * a row's trust_tier up to `ceiling`. Callers establish the confirmation first
  * (trust/confirm.ts); the trigger is a backstop against bugs, not a boundary.
  */
-export function withTrustPromotion<T>(engine: Pick<BrainEngine, 'executeRaw'>, ceiling: TrustTier, fn: () => Promise<T>): Promise<T> {
+export function withTrustPromotion<T>(engine: SettingsEngine, ceiling: TrustTier, fn: () => Promise<T>): Promise<T> {
   return withTransactionSettings(engine, [TRUST_PROMOTION_SETTING], () => [ceiling], fn);
 }
 /**
@@ -149,7 +149,7 @@ export function withTrustPromotion<T>(engine: Pick<BrainEngine, 'executeRaw'>, c
  * rewrite a page body without authoring it (a remember or takes fence append,
  * a forget or accept strike); the fence row itself carries the writer's tier.
  */
-export function withTrustKeep<T>(engine: Pick<BrainEngine, 'executeRaw'>, tables: readonly TrustTable[], fn: () => Promise<T>): Promise<T> {
+export function withTrustKeep<T>(engine: SettingsEngine, tables: readonly TrustTable[], fn: () => Promise<T>): Promise<T> {
   return withTransactionSettings(engine, [TRUST_KEEP_SETTING], outer => [[...new Set([...(outer[0] ? outer[0].split(',') : []), ...tables])].join(',')], fn);
 }
 /**
@@ -158,7 +158,7 @@ export function withTrustKeep<T>(engine: Pick<BrainEngine, 'executeRaw'>, tables
  * and the fact generation and the projection's expiry do not retire it (openedFactRowSql). Only `gbrain repair open-facts`
  * calls it.
  */
-export function withOpenFacts<T>(engine: Pick<BrainEngine, 'executeRaw'>, factIds: readonly number[], fn: () => Promise<T>): Promise<T> {
+export function withOpenFacts<T>(engine: SettingsEngine, factIds: readonly number[], fn: () => Promise<T>): Promise<T> {
   return withTransactionSettings(engine, [OPEN_FACTS_SETTING], () => [factIds.map(id => String(Number(id))).join(',')], fn);
 }
 /**
@@ -172,7 +172,7 @@ export function openedFactRowSql(f: string, incoming: string): string {
       WHERE o.row_num = ${f}.row_num AND o.fact = ${f}.fact AND o.visibility = 'world'))`;
 }
 /** CEO-10: the deterministic backfill may move rows from `unknown` to any tier below user_confirmed. */
-export function withTrustBackfill<T>(engine: Pick<BrainEngine, 'executeRaw'>, fn: () => Promise<T>): Promise<T> {
+export function withTrustBackfill<T>(engine: SettingsEngine, fn: () => Promise<T>): Promise<T> {
   return withTransactionSettings(engine, [TRUST_BACKFILL_SETTING], () => ['on'], fn);
 }
 export async function assertCoordinatedWrite(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<void> {

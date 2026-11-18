@@ -12,7 +12,9 @@ import { managedBrain } from '../helpers/managed-brain.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { OperationContext } from '../../src/core/ops/contract.ts';
-import { submitPageMutation } from '../../src/core/persistence/page-mutations.ts';
+import { batchSharedReads, SCREENING_SHARED_READS, submitPageMutation } from '../../src/core/persistence/page-mutations.ts';
+import { ownRequestAccessible } from '../../src/core/persistence/authority.ts';
+import type { WriteRequest } from '../../src/core/persistence/model.ts';
 import { persistenceHome, revokeLocalWriter } from '../../src/core/persistence/identity.ts';
 import { installFaultHook } from '../../src/core/persistence/fault-points.ts';
 import { resetWriteSwitches } from '../../src/core/persistence/switches.ts';
@@ -38,6 +40,27 @@ function countStatements(engine: BrainEngine, fragment: string): { count: () => 
     return original.call(this, sql, ...rest);
   };
   return { count: () => n, restore: () => { proto.executeRaw = original; } };
+}
+/**
+ * Counts the brain-identity and unlocked writer-row reads, whether sent as SQL
+ * text or through the typed `readPersistenceBrainId` / `readLocalWriterRow`.
+ */
+function countIdentityReads(engine: BrainEngine): { count: () => number; restore: () => void } {
+  type Proto = Pick<BrainEngine, 'executeRaw' | 'readPersistenceBrainId' | 'readLocalWriterRow'>;
+  const proto = Object.getPrototypeOf(engine) as Proto;
+  const { executeRaw, readPersistenceBrainId, readLocalWriterRow } = proto;
+  let n = 0;
+  proto.executeRaw = function (this: BrainEngine, sql: string, ...rest: unknown[]) {
+    const text = typeof sql === 'string' ? sql.replace(/\s+/g, ' ').trim() : '';
+    if (text === 'SELECT brain_id FROM persistence_brain WHERE singleton=1' || /FROM persistence_local_writers WHERE id=\$1::uuid$/.test(text)) n++;
+    return (executeRaw as (...a: unknown[]) => Promise<never>).call(this, sql, ...rest);
+  } as Proto['executeRaw'];
+  proto.readPersistenceBrainId = function (this: BrainEngine) { n++; return readPersistenceBrainId.call(this); };
+  proto.readLocalWriterRow = function (this: BrainEngine, id: string, opts?: { lock?: boolean }) {
+    if (!opts?.lock) n++;
+    return readLocalWriterRow.call(this, id, opts);
+  };
+  return { count: () => n, restore: () => Object.assign(proto, { executeRaw, readPersistenceBrainId, readLocalWriterRow }) };
 }
 const GROUP_COMPLETION = "UPDATE persistence_requests r SET state='committed'";
 const SOURCE_READ = ADMISSION_SOURCE_SQL;
@@ -87,6 +110,45 @@ d('single page writes on Postgres (Phase 4.1-4.4)', () => {
         resetWriteSwitches();
         await put(ctx, 'notes/c-4', 'Fourth.');
         expect(reads.count()).toBeGreaterThan(beforeConfig);
+      } finally { reads.restore(); }
+    }, { databaseUrl: url() });
+  }, 120_000);
+
+  test('the pre-admission cache also answers the typed brain-identity and writer-row reads; with the cache off each write reads them again', async () => {
+    await managedBrain(async ({ engine, ctx }) => {
+      const reads = countIdentityReads(engine);
+      try {
+        await put(ctx, 'notes/i-1', 'First.');
+        const afterFirst = reads.count();
+        expect(afterFirst).toBeGreaterThan(0);
+        await put(ctx, 'notes/i-2', 'Second.');
+        await put(ctx, 'notes/i-3', 'Third.');
+        expect(reads.count()).toBe(afterFirst);
+        await engine.setConfig('persistence.preadmit_cache', 'false');
+        resetWriteSwitches();
+        await put(ctx, 'notes/i-4', 'Fourth.');
+        expect(reads.count()).toBeGreaterThan(afterFirst);
+      } finally { reads.restore(); }
+    }, { databaseUrl: url() });
+  }, 120_000);
+
+  test('a batch\'s shared reads and one receipt access check answer the typed identity reads once; a locked writer-row read still goes to the database', async () => {
+    await managedBrain(async ({ engine, ctx }) => {
+      expect((await put(ctx, 'notes/s-1', 'Shared.')).state).toBe('committed');
+      const [row] = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE slug='notes/s-1'");
+      const reads = countIdentityReads(engine);
+      try {
+        expect(await ownRequestAccessible(ctx, row!)).toBe(true);
+        // One access check reads the brain id once and the writer row once per distinct read (4 before the typed reads were memoized).
+        const afterReceipt = reads.count();
+        expect(afterReceipt).toBeLessThanOrEqual(3);
+        const shared = batchSharedReads(engine, SCREENING_SHARED_READS);
+        const [a, b] = [await shared.readPersistenceBrainId(), await shared.readPersistenceBrainId()];
+        expect(a).toBe(b);
+        expect((await shared.readLocalWriterRow(row!.principal_id))?.lane).toBe((await shared.readLocalWriterRow(row!.principal_id))?.lane);
+        expect(reads.count() - afterReceipt).toBe(2);
+        await shared.readLocalWriterRow(row!.principal_id, { lock: true });
+        expect(reads.count() - afterReceipt).toBe(2);
       } finally { reads.restore(); }
     }, { databaseUrl: url() });
   }, 120_000);
@@ -154,6 +216,24 @@ d('single page writes on Postgres (Phase 4.1-4.4)', () => {
       }
     }, { databaseUrl: url() });
   }, 120_000);
+
+  test('a replay of a committed request after its writer was revoked refuses with the cache on, as with it off', async () => {
+    const outcome = (cache: '0' | '1') => withEnv({ GBRAIN_PREADMIT_CACHE: cache }, async () => {
+      resetWriteSwitches();
+      let replay: { code?: string; message?: string } | null = null;
+      await managedBrain(async ({ engine, ctx }) => {
+        const params = { slug: 'notes/revoked-replay', request_id: randomUUID(), content: page('Replay', 'Committed before the revoke.') };
+        const first = await submitPageMutation(ctx, { operation: 'put_page', params: { ...params }, waitMs: 20_000 });
+        expect(first.state).toBe('committed');
+        const [row] = await engine.executeRaw<{ principal_id: string }>("SELECT principal_id FROM persistence_requests WHERE slug='notes/revoked-replay'");
+        await revokeLocalWriter(engine, row!.principal_id);
+        replay = await failure(submitPageMutation(ctx, { operation: 'put_page', params: { ...params }, waitMs: 20_000 }));
+      }, { databaseUrl: url() });
+      return replay as { code?: string } | null;
+    });
+    expect((await outcome('0'))?.code).toBe('permission_denied');
+    expect((await outcome('1'))?.code).toBe('permission_denied');
+  }, 180_000);
 
   test('a failure after the file rename and before commit restores the file through the recovery path, then the write publishes alone', async () => {
     await managedBrain(async ({ ctx, root }) => {

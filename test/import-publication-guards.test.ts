@@ -96,15 +96,13 @@ test('optional legacy path repair rolls back its SQL error without aborting publ
     const body = content('A legacy path can be repaired later.');
     await importFromContent(engine, slug, body, { noEmbed: true, sourceId, sourcePath: 'old.md' });
     const before = await state(engine, slug);
-    const executeRaw = engine.executeRaw;
+    // The legacy path repair is the typed `refreshPageOrigin` call; make its SQL fail.
+    const refreshPageOrigin = engine.refreshPageOrigin;
     let rejected = false;
     let callbackRan = false;
-    engine.executeRaw = function<T>(sql: string, params?: unknown[]): Promise<T[]> {
-      if (sql.startsWith('UPDATE pages SET source_path = $1')) {
-        rejected = true;
-        return executeRaw.call(this, 'SELECT missing_fixture_column FROM pages') as Promise<T[]>;
-      }
-      return executeRaw.call(this, sql, params) as Promise<T[]>;
+    engine.refreshPageOrigin = async function (this: typeof engine): Promise<void> {
+      rejected = true;
+      await this.executeRaw('SELECT missing_fixture_column FROM pages');
     };
     try {
       const result = await importFromContent(engine, slug, body, {
@@ -119,7 +117,7 @@ test('optional legacy path repair rolls back its SQL error without aborting publ
       expect(callbackRan).toBe(true);
       expect(await state(engine, slug)).toEqual(before);
     } finally {
-      engine.executeRaw = executeRaw;
+      engine.refreshPageOrigin = refreshPageOrigin;
     }
   }
 });

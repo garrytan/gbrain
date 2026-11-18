@@ -69,6 +69,13 @@ function buildMockEngine(opts: {
       }
       return [];
     },
+    // The strict mode reader is a typed method; it answers from the same fake rows as executeRaw.
+    async readManagedModeRows() {
+      return engine.executeRaw('SELECT enabled FROM persistence_brain WHERE singleton=1');
+    },
+    // The write-attribution settings are typed reads and writes; the fake has no settings to restore.
+    async readTransactionSettings(names: readonly string[]) { return names.map(() => null); },
+    async applyTransactionSettings() {},
     async resolveTake(pageId: number, rowNum: number, resolution: TakeResolution): Promise<void> {
       resolves.push({ pageId, rowNum, resolution });
     },
