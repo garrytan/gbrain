@@ -91,7 +91,8 @@ These members replace raw SQL at code-def, code-refs, doctor, code readiness, th
 the page projection, repair contextual-mode and evidence delivery. Each answers what its statement in
 `chunk-reads.ts` answers.
 
-- The read policy is `pageReadFilter`'s source clause, its page privacy policy and its live test: not deleted, no
+- The read policy is `pageReadFilter`'s source clause, its page privacy policy (a caller's reader identity and
+  private-readable grant included, through the `callerReaders` opt-in of `storePagePolicy`) and its live test: not deleted, no
   `quarantine` frontmatter key, in a source that exists and is not archived. The TypeScript member sends the scope;
   a `requireSafeChunks` scope refuses with `engine_capability_missing` before any store call. `resolveFrozenHits`
   takes `minTrust` and `suppressFlagged` (assemble_evidence passes the caller's floor) and applies `trust::TrustPolicy`
