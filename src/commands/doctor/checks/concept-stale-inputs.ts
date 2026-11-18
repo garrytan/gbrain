@@ -2,8 +2,8 @@
  * #9653 `concept_stale_inputs`: live synthesized concepts that still hold a derivation_inputs edge to a deleted page
  * which is no longer one of their members (no concept-provenance `synthesized_from` link). Before #9653 a concept's
  * input edges were only ever added, so a concept re-synthesized without a retired atom kept the edge, and the purge of
- * that atom hid the live concept and marked it needs_rederive. A publication now replaces the edges; one already
- * recorded stays until the concept is next re-synthesized with changed members. Read-only; nothing repairs it.
+ * that atom hid the live concept and marked it needs_rederive. A publication now replaces the edges, and so does a
+ * synthesis cycle that finds the concept unchanged; a concept whose group no longer forms keeps them. Read-only.
  */
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
@@ -23,7 +23,7 @@ export async function conceptStaleInputsCheck(engine: BrainEngine, sourceIds?: s
     if (!details.count) return { name, status: 'ok', details, message: 'No live concept holds an input edge to a deleted page that is no longer one of its members.' };
     return { name, status: 'warn', details,
       message: `${details.count} live concept(s) still record ${details.edges} input edge(s) to deleted pages that are no longer their members (#9653). `
-        + 'Purging those pages would hide each such concept and mark it needs_rederive. A concept\'s edges are replaced the next time it is re-synthesized with changed members; no repair rewrites them.' };
+        + 'Purging those pages would hide each such concept and mark it needs_rederive. The next synthesis cycle that still forms a concept replaces its edges; no repair rewrites them.' };
   } catch (error) {
     return { name, status: 'warn', message: `Concept input edges could not be inspected: ${error instanceof Error ? error.message : String(error)}. Health is unknown.`,
       details: { count: 'unknown' } };

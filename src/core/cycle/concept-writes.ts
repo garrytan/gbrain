@@ -18,7 +18,7 @@ import { importFromContent } from '../import-file.ts';
 import type { ConceptRetryBound } from './concept-retry-bound.ts';
 import { publicationHold } from '../persistence/accepted-pending.ts';
 import {
-  conceptProvenanceCovers, replaceConceptProvenanceLinks, CONCEPT_DEFERRAL_CODES, CONCEPT_HOLD_CODES, publishClassicConcept, publishManagedConcepts,
+  conceptProvenanceCovers, replaceConceptInputs, replaceConceptProvenanceLinks, CONCEPT_DEFERRAL_CODES, CONCEPT_HOLD_CODES, publishClassicConcept, publishManagedConcepts,
 } from './concept-publication.ts';
 
 /** Managed concepts a run holds before publishing them as one batch: put_pages' page cap (page-batch.ts PAGE_BATCH_MAX_PAGES). */
@@ -161,5 +161,14 @@ export function conceptWriter(deps: ConceptWriterDeps) {
     flush,
     /** #7548: an unchanged concept whose edges no longer reach every member banks them again, with no publication. */
     restoreProvenance: bankLinks,
+    /** #9653: an unchanged concept whose input record names atoms outside its current members gets that record replaced, with no publication. */
+    async refreshInputs(write: Pick<ConceptWrite, 'concept' | 'conceptSlug' | 'atomSlugs'>): Promise<boolean> {
+      try {
+        return await replaceConceptInputs(engine, src, write.conceptSlug, write.atomSlugs, { managed: !!maintenance, onlyIfStale: true });
+      } catch (err) {
+        deps.linkWarnings.push({ concept: write.concept, warning: `input record refresh failed: ${err instanceof Error ? err.message : String(err)}` });
+        return false;
+      }
+    },
   };
 }

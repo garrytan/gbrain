@@ -45,6 +45,12 @@ export async function recordDerivationInputs(tx: BrainEngine, row: DerivationRef
     ON CONFLICT DO NOTHING`, [derived.table, derived.id, row.sourceId ?? null, JSON.stringify(edges.map(e => ({ input_table: e.table, input_id: e.id })))]);
 }
 
+/** The page ids a derived row's recorded input edges name. */
+export async function pageInputIds(engine: BrainEngine, derived: DerivationRef): Promise<string[]> {
+  return (await engine.executeRaw<{ input_id: string }>(`SELECT input_id FROM derivation_inputs WHERE derived_table=$1 AND derived_id=$2 AND input_table='pages'`,
+    [derived.table, derived.id])).map(row => row.input_id);
+}
+
 export interface DerivedRow { table: string; id: string; depth: number }
 
 /**

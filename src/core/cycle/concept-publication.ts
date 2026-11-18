@@ -24,11 +24,38 @@ import { maintenanceAttribution } from '../persistence/attribution.ts';
 import { acquirePageLock } from '../page-lock.ts';
 import { derivedFileTarget, writeDerivedPageThrough } from './derived-write-through.ts';
 import { fileDatabaseDriftToken, replaceableFile } from '../facts/file-body-guard.ts';
-import { CONCEPT_DERIVATION_CHANNEL, declareDerivation, deriveTrust, lowerDerivedPage } from '../trust/taint.ts';
+import { pageInputIds } from '../facts/derivation-inputs.ts';
+import { CONCEPT_DERIVATION_CHANNEL, declareDerivation, deriveTrust, lowerDerivedPage, lowerDerivedPageIn } from '../trust/taint.ts';
 
 /** #5575 I2: the narrative carries the tier of the member atoms its prompt was built from (capped at agent_written). */
 const conceptDerivation = (engine: BrainEngine, sourceId: string, members: readonly string[]) =>
   deriveTrust(engine, [...new Set(members)].map(slug => ({ table: 'pages' as const, sourceId, slug })), { channel: CONCEPT_DERIVATION_CHANNEL });
+
+/**
+ * #9653: lowers a concept to its members' taint and replaces its page input edges with exactly those members, so a purge
+ * of a former member no longer reaches it. A publication always writes; `onlyIfStale` (an unchanged concept the cycle
+ * skipped, #7548's branch) first compares the recorded page inputs with the members and writes only when they differ.
+ * `managed` runs the write as a coordinated write, as the provenance links are.
+ */
+export async function replaceConceptInputs(engine: BrainEngine, sourceId: string, slug: string, members: readonly string[],
+  opts: { managed?: boolean; onlyIfStale?: boolean } = {}): Promise<boolean> {
+  const derivation = await conceptDerivation(engine, sourceId, members);
+  if (opts.onlyIfStale) {
+    const page = await engine.getPage(slug, { sourceId });
+    if (!page) return false;
+    const recorded = await pageInputIds(engine, { table: 'pages', id: String(page.id) });
+    const current = new Set(derivation.inputs.filter(input => input.table === 'pages').map(input => String(input.id)));
+    if (recorded.length === current.size && recorded.every(id => current.has(id))) return false;
+  }
+  if (!opts.managed) {
+    await lowerDerivedPage(engine, derivation, sourceId, slug, { replacePages: true });
+    return true;
+  }
+  const attribution = await maintenanceAttribution(engine);
+  await engine.transaction(tx => withCoordinatedWrite(tx, [sourceId],
+    () => lowerDerivedPageIn(tx, derivation, sourceId, slug, { replacePages: true }), { ...attribution, trust: derivation.trust }));
+  return true;
+}
 
 /** Error code for a concept held because republication could lose canonical material. */
 export const CONCEPT_PRESERVATION_CODE = 'concept_preservation_hold';
@@ -283,7 +310,7 @@ export async function publishClassicConcept(engine: BrainEngine, slug: string, s
       : serializeMarkdown(synthesized, narrative, '', { type: 'concept', title, tags: [] });
     await opts.importPage(markdown);
     // The import stamps the page by its own channel; the derivation lowers it to the members' taint and records the edges.
-    if (opts.members) await lowerDerivedPage(engine, await conceptDerivation(engine, sourceId, opts.members), sourceId, slug, { replacePages: true });
+    if (opts.members) await replaceConceptInputs(engine, sourceId, slug, opts.members);
     if (file && (file.expectedFileBytes !== null || opts.writeThrough)) {
       const written = await writeDerivedPageThrough(engine, slug, sourceId, { expectedFileBytes: file.expectedFileBytes });
       if (written.skipped === 'file_changed') {
