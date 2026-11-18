@@ -59,6 +59,16 @@
  * Out of scope: take vectors (searchTakesVector, getTakeEmbeddings,
  * updateTakeEmbeddings) belong to the takes group; the 100-row limit cap
  * needs a larger corpus (test/vector-ef-search covers it).
+ *
+ * Rust arm (GBRAIN_TEST_RUST_ARM=1, test/engine-parity/rust-arm.ts): the same
+ * fixture through engine methods (the Rust engine has no SQL), and the same
+ * expected rows. Differences, each asserted below: a refusal carries the
+ * store's `invalid_argument` code with PGLite's message; `excludePrivate`
+ * refuses (engine_capability_missing). Cases that set state with SQL (the
+ * guard's model and hash edits, embedding reads, stale chunks, state counts)
+ * do not run on Rust. While the Rust store refuses a chunk vector (the chunk
+ * vector writes are not served yet), the fixture write ends on that typed
+ * refusal and every vector case asserts it.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -69,15 +79,20 @@ import { testBackends, type TestBackend } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
 import { prngUnitVector, embeddingDims } from './helpers/ef-search-fixture.ts';
+import { createRustSource, openRustBrain, removeBrainDir, rustArmRequested } from './engine-parity/rust-arm.ts';
+import type { RustEngine } from '../src/core/rust-engine.ts';
 
 /** One case result per engine, compared at the end of the file. */
-const seen = new Map<TestBackend, Record<string, unknown>>();
+const seen = new Map<TestBackend | 'rust', Record<string, unknown>>();
 const backends = testBackends();
+const arms: Array<TestBackend | 'rust'> = [...backends, ...(rustArmRequested() ? ['rust' as const] : [])];
+/** The Rust engine's embedding column width: the schema's `vector(1536)` (it has no catalog to read). */
+const RUST_DIMS = 1536;
 const MODEL = 'openai:text-embedding-3-large';
 /** Largest score difference allowed from the float64 cosine of the stored float32 vectors. */
 const SCORE_TOLERANCE = 1e-6;
 
-function record(kind: TestBackend, name: string, value: unknown): void {
+function record(kind: TestBackend | 'rust', name: string, value: unknown): void {
   const run = seen.get(kind) ?? {};
   run[name] = value;
   seen.set(kind, run);
@@ -105,8 +120,20 @@ afterAll(() => {
   resetGateway();
 });
 
-for (const kind of backends) {
+for (const kind of arms) {
   describe(`vectors and embeddings (${kind})`, () => {
+    const rust = kind === 'rust';
+    /** On the Rust arm: the typed refusal the fixture's vector write ended on, if it did. */
+    let refusedFixture: { code?: string; message?: string } | undefined;
+    /** On the Rust arm while chunk vectors are refused: the case ends on the fixture's refusal. */
+    const endsOnRefusal = () => {
+      if (!refusedFixture) return false;
+      expect(refusedFixture.code).toBe('engine_capability_missing');
+      expect(String(refusedFixture.message)).toContain('chunk vectors are not stored');
+      return true;
+    };
+    /** The refusal code of a bad input: PGLite's SQLSTATE, or the Rust store's code (same message). */
+    const badInput = (sqlstate: string) => (rust ? 'invalid_argument' : sqlstate);
     let engine: BrainEngine;
     let close: () => Promise<void>;
     let dims = 0;
@@ -118,10 +145,12 @@ for (const kind of backends) {
     const page = async (slug: string, vecs: Array<Float32Array | null>, o: { type?: string; sourceId?: string; fm?: Record<string, unknown>; timeline?: boolean } = {}) => {
       const scope = o.sourceId ? { sourceId: o.sourceId } : undefined;
       await engine.putPage(slug, { type: o.type ?? 'note', title: slug, compiled_truth: `body ${slug}`, timeline: o.timeline ? `timeline ${slug}` : '', frontmatter: o.fm ?? {} } as never, scope as never);
-      await installFixtureChunks(engine, slug, vecs.map((e, i) => ({
+      const chunks = vecs.map((e, i) => ({
         chunk_index: i, chunk_text: o.timeline && i === 0 ? `timeline ${slug}` : `body ${slug} ${i}`,
         chunk_source: o.timeline && i === 0 ? 'timeline' : 'compiled_truth', ...(e ? { embedding: e, model: MODEL } : {}),
-      })) as never, scope);
+      }));
+      if (rust) await engine.sealChunks(slug, chunks as never, scope);
+      else await installFixtureChunks(engine, slug, chunks as never, scope);
       vecs.forEach((e, i) => { if (e) stored.set(`${slug}#${i}`, e); });
     };
     /** Rows as `slug#chunk score source`; the score rounded to 4 places (NaN kept). Checks each score against the expected cosine. */
@@ -139,10 +168,32 @@ for (const kind of backends) {
 
     beforeAll(async () => {
       if (kind === 'postgres') ({ engine, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!, 'instance', 1));
-      else { engine = new PGLiteEngine(); await engine.connect({ engine: 'pglite' } as never); await engine.initSchema(); close = () => engine.disconnect(); }
-      dims = await embeddingDims(engine);
+      else if (rust) {
+        const brain = await openRustBrain();
+        engine = brain.engine as unknown as BrainEngine;
+        close = async () => { await engine.disconnect(); removeBrainDir(brain.dir); };
+      } else { engine = new PGLiteEngine(); await engine.connect({ engine: 'pglite' } as never); await engine.initSchema(); close = () => engine.disconnect(); }
+      dims = rust ? RUST_DIMS : await embeddingDims(engine);
       q = v(0);
+      if (rust) {
+        await createRustSource(engine, 'src-b', {});
+        await createRustSource(engine, 'src-arch', {});
+        try {
+          await fixture();
+        } catch (error) {
+          refusedFixture = error as { code?: string; message?: string };
+          if (refusedFixture.code !== 'engine_capability_missing') throw error;
+        }
+        return;
+      }
       await raw(`INSERT INTO sources (id, name) VALUES ('src-b', 'src-b'), ('src-arch', 'src-arch') ON CONFLICT DO NOTHING`);
+      await fixture();
+      await raw(`UPDATE pages SET deleted_at = now() WHERE slug = 'g-deleted'`);
+      await raw(`UPDATE sources SET archived = true WHERE id = 'src-arch'`);
+    }, 120_000);
+
+    /** The pages every case reads. The soft delete and the archived source are set after (SQL, or the Rust store). */
+    const fixture = async () => {
       await page('a-exact', [q]);
       await page('b-tie1', [v(1)]);
       await page('c-tie2', [v(1)]);
@@ -158,9 +209,11 @@ for (const kind of backends) {
       await page('m-pinned', [v(10)], { fm: { pinned_question: true } });
       await page('n-timeline', [q.map((x, i) => (i === 0 ? x + 0.5 : x)), v(11)], { timeline: true });
       await page('o-skip', [null], { fm: { embed_skip: 'test' } });
-      await raw(`UPDATE pages SET deleted_at = now() WHERE slug = 'g-deleted'`);
-      await raw(`UPDATE sources SET archived = true WHERE id = 'src-arch'`);
-    }, 120_000);
+      if (rust) {
+        await engine.softDeletePage('g-deleted');
+        await (engine as unknown as RustEngine).openStore('setSourceArchived').brain.setSourceArchived('src-arch', true);
+      }
+    };
 
     afterAll(async () => { await close?.(); }, 60_000);
 
@@ -171,6 +224,7 @@ for (const kind of backends) {
     ];
 
     test('searchVector: order, ties, best chunk per page, result keys', async () => {
+      if (endsOnRefusal()) return;
       const basic = await sv(q);
       expect(ok(basic)).toEqual(ALL);
       const keys = Object.keys((await engine.searchVector(q, { limit: 1 }))[0] ?? {}).sort();
@@ -182,6 +236,7 @@ for (const kind of backends) {
     });
 
     test('searchVector: limit and offset', async () => {
+      if (endsOnRefusal()) return;
       const cases = {
         limit1: await sv(q, { limit: 1 }),
         limit0: await sv(q, { limit: 0 }),
@@ -202,12 +257,13 @@ for (const kind of backends) {
       expect(cases.offset2).toEqual({ ok: ALL.slice(2) });
       expect(cases.offset2Limit2).toEqual({ ok: ALL.slice(2, 4) });
       expect(cases.offsetPastEnd).toEqual({ ok: [] });
-      expect((cases.offsetNegative as { refused: string }).refused).toBe('2201X');
-      expect((cases.offsetFractional as { refused: string }).refused).toBe('22P02');
+      expect(cases.offsetNegative).toEqual({ refused: badInput('2201X'), message: 'OFFSET must not be negative' });
+      expect(cases.offsetFractional).toEqual({ refused: badInput('22P02'), message: 'invalid input syntax for type integer: "101.5"' });
       record(kind, 'limits', cases);
     });
 
     test('searchVector: filters', async () => {
+      if (endsOnRefusal()) return;
       const without = (...names: string[]) => ALL.filter((r) => !names.some((n) => r.startsWith(n)));
       const cases = {
         typePerson: await sv(q, { type: 'person' }),
@@ -238,13 +294,15 @@ for (const kind of backends) {
       expect(cases.excludePrefixes).toEqual({ ok: without('b-', 'c-') });
       // include_slug_prefixes only lifts a default hard exclude; it is not an allow list.
       expect(cases.includePrefixes).toEqual({ ok: ALL });
-      expect(cases.excludePrivate).toEqual({ ok: without('i-private') });
+      if (rust) expect((cases.excludePrivate as { refused: string }).refused).toBe('engine_capability_missing');
+      else expect(cases.excludePrivate).toEqual({ ok: without('i-private') });
       // detail low reads compiled_truth chunks only, so the page falls back to its next best chunk.
       expect(cases.detailLow).toEqual({ ok: [...ALL.slice(0, 2), 'f-srcb#0 0.0244 src-b', 'i-private#0 0.0242 default', 'n-timeline#1 -0.0170 default', ...ALL.slice(5)] });
       record(kind, 'filters', cases);
     });
 
     test('searchVector: bad query vectors', async () => {
+      if (endsOnRefusal()) return;
       const set0 = (x: number) => { const e = new Float32Array(q); e[0] = x; return e; };
       const cases = {
         zero: await sv(new Float32Array(dims)),
@@ -257,16 +315,27 @@ for (const kind of backends) {
       // A zero query has no direction: every visible page's first embedded chunk, NaN score, in page order.
       expect(cases.zero).toEqual({ ok: ['a-exact#0 NaN default', 'b-tie1#0 NaN default', 'c-tie2#0 NaN default', 'd-multi#0 NaN default',
         'e-person#0 NaN default', 'f-srcb#0 NaN src-b', 'i-private#0 NaN default', 'k-opposite#0 NaN default', 'n-timeline#0 NaN default'] });
-      for (const c of [cases.allNaN, cases.oneNaN, cases.infinity, cases.wrongDimension, cases.empty]) expect((c as { refused: string }).refused).toBe('22000');
+      expect(cases.allNaN).toEqual({ refused: badInput('22000'), message: 'NaN not allowed in vector' });
+      expect(cases.oneNaN).toEqual({ refused: badInput('22000'), message: 'NaN not allowed in vector' });
+      expect(cases.infinity).toEqual({ refused: badInput('22000'), message: 'infinite value not allowed in vector' });
+      expect(cases.wrongDimension).toEqual({ refused: badInput('22000'), message: `different vector dimensions 8 and ${dims}` });
+      expect(cases.empty).toEqual({ refused: badInput('22000'), message: 'vector must have at least 1 dimension' });
       record(kind, 'badVectors', cases);
     });
 
     test('searchVector: model and text-hash guard', async () => {
       const col = (model: string) => ({ embeddingColumn: { name: 'embedding', type: 'vector', dimensions: dims, embeddingModel: model } });
+      if (endsOnRefusal()) return;
       const cases: Record<string, unknown> = {
         configuredModel: await sv(q, col(MODEL)),
         otherModel: await sv(q, col('other:model')),
       };
+      if (rust) {
+        // The rest edits a chunk's model and text hash with SQL; the Rust engine has none.
+        expect(cases.configuredModel).toEqual({ ok: ALL });
+        expect(cases.otherModel).toEqual({ ok: [] });
+        return;
+      }
       await raw(`UPDATE content_chunks SET model = 'other:model' WHERE page_id = (SELECT id FROM pages WHERE slug = 'a-exact')`);
       cases.otherModelAfter = await sv(q, col('other:model'));
       await raw(`UPDATE content_chunks SET embedded_text_hash = md5('other text') WHERE page_id = (SELECT id FROM pages WHERE slug = 'a-exact')`);
@@ -285,6 +354,7 @@ for (const kind of backends) {
     });
 
     test('hybridSearch: fusion order over the vector arm', async () => {
+      if (endsOnRefusal()) return;
       await engine.setConfig('embedding_model', MODEL);
       await engine.setConfig('embedding_dimensions', String(dims));
       resetGateway();
@@ -308,7 +378,8 @@ for (const kind of backends) {
       record(kind, 'hybrid', cases);
     }, 60_000);
 
-    test('embedding reads: stored vectors and chunks with embeddings', async () => {
+    // Sets its state with SQL and reads embedding-state members; not on the Rust arm.
+    test.skipIf(rust)('embedding reads: stored vectors and chunks with embeddings', async () => {
       const ids = await raw(`SELECT cc.id, p.slug, cc.chunk_index FROM content_chunks cc JOIN pages p ON p.id = cc.page_id ORDER BY p.slug, cc.chunk_index`);
       const idOf = (name: string) => Number(ids.find((r) => `${r.slug}#${r.chunk_index}` === name)!.id);
       const read = await engine.getEmbeddingsByChunkIds([idOf('d-multi#2'), idOf('o-skip#0'), 999_999]);
@@ -335,7 +406,8 @@ for (const kind of backends) {
       record(kind, 'reads', cases);
     });
 
-    test('stale chunks, signatures and invalidation', async () => {
+    // Sets its state with SQL and reads embedding-state members; not on the Rust arm.
+    test.skipIf(rust)('stale chunks, signatures and invalidation', async () => {
       const sig = (model: string) => `${model}:${dims}`;
       const stale = async () => ({
         count: await outcome(() => engine.countStaleChunks()),
@@ -401,7 +473,8 @@ for (const kind of backends) {
       record(kind, 'stale', cases);
     });
 
-    test('embedding state counts and rows', async () => {
+    // Sets its state with SQL and reads embedding-state members; not on the Rust arm.
+    test.skipIf(rust)('embedding state counts and rows', async () => {
       const strip = (x: unknown) => JSON.parse(JSON.stringify(x, (k, val) => (k === 'unstamped_created_at_min' && val ? 'set' : val)));
       const cases: Record<string, any> = {
         ops: strip(await outcome(() => engine.readEmbeddingStateCounts({ mode: 'ops', purgeWindowHours: 72 } as never))),
