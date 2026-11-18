@@ -18,6 +18,9 @@ import { requestSignal } from '../../request-signal.ts';
 import { readDeadline } from '../../read-deadline.ts';
 import { currentStatementDeadline } from '../../statement-deadline.ts';
 import { prepareLocalIpcPath } from '../../context/ipc-path.ts';
+import type { Capability } from '../../engine-capabilities.ts';
+import { capabilityMissing } from '../errors.ts';
+import { RUST_ENGINE_MEMBERS } from '../members.ts';
 import { decodeError, decodeValue, encodeValue, OwnerIpcEncodeError, type Wire } from './codec.ts';
 import {
   OWNER_IPC_MAX_FRAME_BYTES, OWNER_IPC_VERSION, frameLine, ownerSocketPath, readFrames, type OwnerHello,
@@ -205,13 +208,37 @@ export function connectOwner(legacySocketPath: string, opts: { timeoutMs?: numbe
  * Who owns a Rust brain, read from its owner socket's hello (the shape of pglite-lock.ts `inspectLockHolder`): held
  * with the owner's pid and whether it is a `gbrain serve`, or not held when nothing answers.
  */
-export async function inspectRustOwner(databasePath: string, timeoutMs = 1_000): Promise<{ held: boolean; pid?: number; serve?: boolean; subcommand?: string }> {
+export async function inspectRustOwner(databasePath: string, timeoutMs = 1_000): Promise<{
+  held: boolean; pid?: number; serve?: boolean; subcommand?: string; kind?: string; capabilities?: string[];
+}> {
   let connection: OwnerConnection;
   try { connection = await connectOwner(ownerSocketPath(databasePath), { timeoutMs }); }
   catch { return { held: false }; }
-  const { pid, serve } = connection.hello;
+  const { pid, serve, kind, capabilities } = connection.hello;
   connection.close();
-  return { held: true, pid, serve: serve === true, ...(serve ? { subcommand: 'serve' } : {}) };
+  return { held: true, pid, serve: serve === true, kind, capabilities: [...capabilities], ...(serve ? { subcommand: 'serve' } : {}) };
+}
+
+/**
+ * True when a Rust brain's owner can serve the persistence socket: its engine reports `persistence_journal`. The
+ * persistence provider runs SQL (persistence/context.ts, writer-versions.ts), so a Rust engine without that capability
+ * would fail every call there; until it reports it, no persistence listener starts and callers use the engine path.
+ */
+export function rustOwnerServesPersistence(capabilities: Iterable<string> | undefined): boolean {
+  return [...(capabilities ?? [])].includes('persistence_journal');
+}
+
+/**
+ * The capability a member needs on a Rust owner that does not report it, or null when the call may be sent. Such a
+ * member is refused here with the error the Rust engine gives in process (rust-engine.ts), so the client never asks
+ * an owner for what it said it cannot do (executeRaw with no `raw_sql`). An owner of another kind (tests host PGLite)
+ * is asked as before.
+ */
+function missingOnRustOwner(hello: { kind: string; capabilities: readonly string[] }, member: string): Capability | null {
+  if (hello.kind !== 'rust') return null;
+  const cls = (RUST_ENGINE_MEMBERS as Record<string, string>)[member];
+  if (cls === undefined || cls === 'implemented') return null;
+  return hello.capabilities.includes(cls) ? null : cls as Capability;
 }
 
 type EngineRecord = Record<string, unknown>;
@@ -242,7 +269,10 @@ export function installOwnerClient(engine: object, connection: OwnerConnection):
   const installed: string[] = [];
   for (const [member, route] of Object.entries(OWNER_IPC_ROUTES)) {
     if (route === 'local') continue;
-    const value = route === 'refuse'
+    const missing = missingOnRustOwner(connection.hello, member);
+    const value = missing !== null
+      ? () => Promise.reject(capabilityMissing(missing, member))
+      : route === 'refuse'
       ? () => Promise.reject(ownerIpcRefusal(member, 'transactions, reserved connections and engine callbacks do not cross the owner socket'))
       : member === 'countPagesBy'
         ? (...args: unknown[]) => countPagesByThroughOwner(connection, args)
