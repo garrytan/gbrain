@@ -27,6 +27,8 @@ export interface SearchTitlesDialect {
   statementTimeout?: string;
   /** Run the relaxed (OR) local re-run with `enable_seqscan` off (Postgres). */
   relaxedPrefersIndex: boolean;
+  /** Project `stale` from timeline_entries (PGLite); otherwise `false`. */
+  staleProbe: boolean;
   /** chunkManifestReads; unset reads the manifest. */
   chunkManifest?: boolean;
   /** Match and rank title lexemes only, for local callers too: the OR re-run whose whole-vector matches do not fit the cap (#7135) and the cut strict attempt (#7082). */
@@ -125,8 +127,10 @@ export function buildSearchTitlesStatement(query: string, opts: SearchOpts | und
   // empty text). Accepted limitations (Reviewer F5/F6): the synthetic
   // chunkless row dedups on empty chunk_text (fusion's compiledTruthBoost
   // skips it since #3695); detail='low' filters only the representative.
-  const staleSql = `CASE WHEN tp.updated_at < (SELECT MAX(te.created_at) FROM timeline_entries te
-         WHERE te.page_id = tp.page_id) THEN true ELSE false END`;
+  const staleSql = dialect.staleProbe
+    ? `CASE WHEN tp.updated_at < (SELECT MAX(te.created_at) FROM timeline_entries te
+         WHERE te.page_id = tp.page_id) THEN true ELSE false END`
+    : 'false';
   const pageFilters = `${filters}
         ${hardExcludeClause}
         ${visibilityClause}`;

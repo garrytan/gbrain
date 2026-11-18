@@ -1603,7 +1603,7 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async searchTitles(query: string, opts?: SearchOpts): Promise<SearchResult[]> {
-    return titlesImpl.searchTitles(async (read) => read(scopedRead(this.engineSql)), query, opts, { relaxedPrefersIndex: false });
+    return titlesImpl.searchTitles(async (read) => read(scopedRead(this.engineSql)), query, opts, { relaxedPrefersIndex: false, staleProbe: true });
   }
 
   /**
