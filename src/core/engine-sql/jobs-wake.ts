@@ -14,13 +14,22 @@
  * `oauth_clients`, `access_tokens` and the access members the Rust store does not keep.
  */
 import type { BrainEngine } from '../engine.ts';
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 import { CRON_FINISHED, JOB_FINISHED, WRITE_SETTLED } from '../wakeshift/events.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
 
 const TERMINAL = "('completed', 'failed', 'dead', 'cancelled')";
 const WRITE_TERMINAL = "('failed', 'conflict', 'cancelled')";
-const US = (col: string) => `(floor(extract(epoch FROM ${col}) * 1000000))::bigint::text`;
+// The SQL below splices only constant text (scripts/check-engine-sql-dynamic.ts). The event names are typed against
+// the Wakeshift constants, so a rename there fails the typecheck here.
+const JOB_EVENT: typeof JOB_FINISHED = 'gbrain.job.finished';
+const WRITE_EVENT: typeof WRITE_SETTLED = 'gbrain.write.settled';
+const CRON_EVENT: typeof CRON_FINISHED = 'gbrain.cron.finished';
+// An instant in epoch microseconds, as text: the exact token a lease or a cursor compares against.
+const CREATED_US = '(floor(extract(epoch FROM w.created_at) * 1000000))::bigint::text';
+const FINISHED_US = '(floor(extract(epoch FROM j.finished_at) * 1000000))::bigint::text';
+const SETTLED_US = '(floor(extract(epoch FROM COALESCE(r.completed_at, r.updated_at)) * 1000000))::bigint::text';
 
 export type WakePrincipalKind = 'oauth_client' | 'legacy_token' | 'local_stdio';
 
@@ -82,20 +91,16 @@ export interface WakeWatchRow {
 }
 
 export async function listWakeWatches(tx: Raw, f: WakeWatchFilter): Promise<WakeWatchRow[]> {
-  const params: unknown[] = [f.principalKind, f.principalId, f.memberId];
-  const scope = f.scope === 'open' ? "AND state = 'open'" : "AND (state = 'open' OR updated_at > now() - interval '1 day')";
-  let pick = '';
-  if (f.id !== undefined) {
-    params.push(f.id);
-    pick = 'AND id = $4';
-  } else if (f.event !== undefined && f.target !== undefined) {
-    params.push(f.event, f.target);
-    pick = 'AND event = $4 AND target = $5';
-  }
-  const rows = await tx.executeRaw<Omit<WakeWatchRow, 'id'> & { id: number | string }>(
-    `SELECT id, event, target, state, attempts, last_error, created_at, expires_at, wake_user, ws_subscription_id FROM wake_subscriptions
-      WHERE principal_kind = $1 AND principal_id = $2 AND member_id IS NOT DISTINCT FROM $3 ${scope} ${pick}
-      ORDER BY created_at DESC, id DESC LIMIT 50`, params);
+  const scope = trustedSql(f.scope === 'open' ? "AND state = 'open'" : "AND (state = 'open' OR updated_at > now() - interval '1 day')");
+  const pick = f.id !== undefined
+    ? sqlFragment` AND id = ${f.id}`
+    : f.event !== undefined && f.target !== undefined
+      ? sqlFragment` AND event = ${f.event} AND target = ${f.target}`
+      : sqlFragment` `;
+  const { text, params } = renderFragment(sqlFragment`SELECT id, event, target, state, attempts, last_error, created_at, expires_at, wake_user, ws_subscription_id FROM wake_subscriptions
+      WHERE principal_kind = ${f.principalKind} AND principal_id = ${f.principalId} AND member_id IS NOT DISTINCT FROM ${f.memberId} ${scope}${pick}
+      ORDER BY wake_subscriptions.created_at DESC, wake_subscriptions.id DESC LIMIT 50`);
+  const rows = await tx.executeRaw<Omit<WakeWatchRow, 'id'> & { id: number | string }>(text, params);
   return rows.map(r => ({ ...r, id: Number(r.id), attempts: Number(r.attempts) }));
 }
 
@@ -266,6 +271,7 @@ export interface WakeRow {
 
 /** At most this many watches a pass: the drain batch of `wakeshift/drain.ts`. */
 export const WAKE_DUE_LIMIT = 20;
+const DUE_LIMIT_SQL: `${typeof WAKE_DUE_LIMIT}` = '20';
 
 /**
  * Open, due, unleased watches whose target settled, one row per watch across the three event families (each LEFT JOIN
@@ -275,26 +281,26 @@ export async function listDueWakeWatches(tx: Raw, spec: { ids?: readonly number[
   const byId = spec.ids !== undefined;
   const rows = await tx.executeRaw<WakeRow>(
     `SELECT w.id, w.event, w.target, w.target_ref, w.principal_kind, w.principal_id, w.member_id, w.wake_user, w.ws_subscription_id, w.attempts,
-       ${US('w.created_at')} AS created_us,
-       j.id AS job_id, j.name AS job_name, j.status AS job_status, j.started_at, j.finished_at, ${US('j.finished_at')} AS finished_us,
+       ${CREATED_US} AS created_us,
+       j.id AS job_id, j.name AS job_name, j.status AS job_status, j.started_at, j.finished_at, ${FINISHED_US} AS finished_us,
        r.id::text AS req_id, r.state AS req_state, r.operation AS req_operation, r.source_id AS req_source_id, r.created_at AS req_created_at,
-       COALESCE(r.completed_at, r.updated_at) AS req_settled_at, ${US('COALESCE(r.completed_at, r.updated_at)')} AS req_settled_us,
+       COALESCE(r.completed_at, r.updated_at) AS req_settled_at, ${SETTLED_US} AS req_settled_us,
        c.id AS run_id, c.status AS run_status, c.finished_at AS run_finished_at
   FROM wake_subscriptions w
-  LEFT JOIN minion_jobs j ON w.event = '${JOB_FINISHED}' AND j.id = CASE WHEN w.event = '${JOB_FINISHED}' AND w.target ~ '^[0-9]{1,18}$' THEN w.target::bigint END
-  LEFT JOIN persistence_requests r ON w.event = '${WRITE_SETTLED}'
-       AND r.id = CASE WHEN w.event = '${WRITE_SETTLED}' AND w.target_ref ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN w.target_ref::uuid END
+  LEFT JOIN minion_jobs j ON w.event = '${JOB_EVENT}' AND j.id = CASE WHEN w.event = '${JOB_EVENT}' AND w.target ~ '^[0-9]{1,18}$' THEN w.target::bigint END
+  LEFT JOIN persistence_requests r ON w.event = '${WRITE_EVENT}'
+       AND r.id = CASE WHEN w.event = '${WRITE_EVENT}' AND w.target_ref ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN w.target_ref::uuid END
   LEFT JOIN LATERAL (SELECT cr.id, cr.status, cr.finished_at FROM wake_cron_runs cr
-       WHERE w.event = '${CRON_FINISHED}' AND cr.name = w.target AND cr.finished_at >= w.created_at ORDER BY cr.finished_at, cr.id LIMIT 1) c ON true
+       WHERE w.event = '${CRON_EVENT}' AND cr.name = w.target AND cr.finished_at >= w.created_at ORDER BY cr.finished_at, cr.id LIMIT 1) c ON true
  WHERE w.state = 'open' AND w.next_attempt_at <= now() AND (w.lease_until IS NULL OR w.lease_until < now())
    AND CASE w.event
-     WHEN '${JOB_FINISHED}' THEN (j.id IS NULL OR j.status IN ${TERMINAL})
-     WHEN '${WRITE_SETTLED}' THEN (r.id IS NULL OR r.state IN ${WRITE_TERMINAL} OR (r.state = 'committed' AND r.recovery IS NULL))
-     WHEN '${CRON_FINISHED}' THEN c.id IS NOT NULL
+     WHEN '${JOB_EVENT}' THEN (j.id IS NULL OR j.status IN ${TERMINAL})
+     WHEN '${WRITE_EVENT}' THEN (r.id IS NULL OR r.state IN ${WRITE_TERMINAL} OR (r.state = 'committed' AND r.recovery IS NULL))
+     WHEN '${CRON_EVENT}' THEN c.id IS NOT NULL
      ELSE false END
    ${byId ? 'AND w.id = ANY($1::bigint[])' : ''}
  ORDER BY w.next_attempt_at, w.id
- LIMIT ${WAKE_DUE_LIMIT}`, byId ? [spec.ids] : []);
+ LIMIT ${DUE_LIMIT_SQL}`, byId ? [spec.ids] : []);
   return rows.map(r => ({
     ...r,
     id: Number(r.id),
@@ -312,7 +318,7 @@ export async function claimWakeWatch(tx: Raw, id: number, leaseSeconds: number):
   const rows = await tx.executeRaw<{ lease: string; attempts: number | string }>(
     `UPDATE wake_subscriptions SET lease_until = now() + make_interval(secs => $2::int), updated_at = now()
       WHERE id = $1 AND state = 'open' AND next_attempt_at <= now() AND (lease_until IS NULL OR lease_until < now())
-      RETURNING ${US('lease_until')} AS lease, attempts`, [id, leaseSeconds]);
+      RETURNING (floor(extract(epoch FROM lease_until) * 1000000))::bigint::text AS lease, attempts`, [id, leaseSeconds]);
   return rows[0] ? { lease: rows[0].lease, attempts: Number(rows[0].attempts) } : null;
 }
 
@@ -336,7 +342,7 @@ export async function settleWakeWatch(tx: Raw, s: WakeWatchSettle): Promise<bool
         delivered_marker = COALESCE($3, delivered_marker), attempts = COALESCE($4, attempts),
         next_attempt_at = CASE WHEN $5::int IS NULL THEN next_attempt_at ELSE now() + make_interval(secs => $5::int) END,
         last_error = $6
-      WHERE id = $1 AND state = 'open' AND ${US('lease_until')} = $7 RETURNING id`,
+      WHERE id = $1 AND state = 'open' AND (floor(extract(epoch FROM lease_until) * 1000000))::bigint::text = $7 RETURNING id`,
     [s.id, s.state, s.marker ?? null, s.attempts ?? null, s.delayS ?? null, s.error ?? null, s.lease]);
   return rows.length > 0;
 }
@@ -361,7 +367,7 @@ export async function claimWakeForgets(tx: Raw, spec: { leaseSeconds: number; li
       WHERE id IN (SELECT id FROM wake_forgets WHERE state = 'pending' AND next_attempt_at <= now() AND (lease_until IS NULL OR lease_until < now())
                     ORDER BY next_attempt_at, id LIMIT $2)
         AND state = 'pending' AND (lease_until IS NULL OR lease_until < now())
-      RETURNING id, wake_user, attempts, ${US('lease_until')} AS lease`, [spec.leaseSeconds, spec.limit]);
+      RETURNING id, wake_user, attempts, (floor(extract(epoch FROM lease_until) * 1000000))::bigint::text AS lease`, [spec.leaseSeconds, spec.limit]);
   return rows.map(r => ({ id: Number(r.id), wake_user: r.wake_user, attempts: Number(r.attempts), lease: r.lease }));
 }
 
@@ -380,7 +386,7 @@ export async function settleWakeForget(tx: Raw, s: WakeForgetSettle): Promise<bo
   const rows = await tx.executeRaw(
     `UPDATE wake_forgets SET state = $2, attempts = $3, last_error = $4, lease_until = NULL, updated_at = now(),
         next_attempt_at = CASE WHEN $5::int IS NULL THEN next_attempt_at ELSE now() + make_interval(secs => $5::int) END
-      WHERE id = $1 AND state = 'pending' AND ${US('lease_until')} = $6 RETURNING id`,
+      WHERE id = $1 AND state = 'pending' AND (floor(extract(epoch FROM lease_until) * 1000000))::bigint::text = $6 RETURNING id`,
     [s.id, s.state, s.attempts, s.error, s.delayS ?? null, s.lease]);
   return rows.length > 0;
 }

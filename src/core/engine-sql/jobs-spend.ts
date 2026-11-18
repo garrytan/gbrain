@@ -12,6 +12,7 @@
  * counts and sums as numbers, timestamps as `Date`s.
  */
 import type { BrainEngine } from '../engine.ts';
+import { joinFragments, renderFragment, sqlFragment, type SqlFragment } from './fragment.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
 
@@ -102,12 +103,11 @@ export interface ExpireSpendScope {
  * known). Returns how many rows were marked.
  */
 export async function expireSpendReservations(tx: Raw, scope: ExpireSpendScope = {}): Promise<number> {
-  const params: unknown[] = [];
-  let where = `status = 'pending' AND expires_at < now()`;
-  if (scope.clientId !== undefined) where += ` AND client_id = $${params.push(scope.clientId)}`;
-  if (scope.budgetKey !== undefined) where += ` AND budget_key = $${params.push(scope.budgetKey)}`;
-  const rows = await tx.executeRaw(
-    `UPDATE mcp_spend_reservations SET status = 'expired' WHERE ${where} RETURNING reservation_id`, params);
+  const client = scope.clientId !== undefined ? sqlFragment` AND client_id = ${scope.clientId}` : sqlFragment``;
+  const budget = scope.budgetKey !== undefined ? sqlFragment` AND budget_key = ${scope.budgetKey}` : sqlFragment``;
+  const { text, params } = renderFragment(
+    sqlFragment`UPDATE mcp_spend_reservations SET status = 'expired' WHERE status = 'pending' AND expires_at < now()${client}${budget} RETURNING reservation_id`);
+  const rows = await tx.executeRaw(text, params);
   return rows.length;
 }
 
@@ -186,13 +186,13 @@ export interface LeasePressureFilter {
 }
 
 export async function countLeasePressure(tx: Raw, filter: LeasePressureFilter = {}): Promise<number> {
-  const params: unknown[] = [];
-  const where: string[] = [];
-  if (filter.windowMs !== undefined) where.push(`bounced_at > now() - ($${params.push(filter.windowMs)}::double precision * interval '1 millisecond')`);
-  if (filter.jobId !== undefined) where.push(`job_id = $${params.push(filter.jobId)}`);
-  if (filter.leaseKey !== undefined) where.push(`lease_key = $${params.push(filter.leaseKey)}`);
-  const [row] = await tx.executeRaw<{ n: number | string }>(
-    `SELECT count(*)::int AS n FROM minion_lease_pressure_log${where.length > 0 ? ` WHERE ${where.join(' AND ')}` : ''}`, params);
+  const where: SqlFragment[] = [];
+  if (filter.windowMs !== undefined) where.push(sqlFragment`bounced_at > now() - (${filter.windowMs}::double precision * interval '1 millisecond')`);
+  if (filter.jobId !== undefined) where.push(sqlFragment`job_id = ${filter.jobId}`);
+  if (filter.leaseKey !== undefined) where.push(sqlFragment`lease_key = ${filter.leaseKey}`);
+  const filtered = where.length > 0 ? sqlFragment` WHERE ${joinFragments(where, ' AND ')}` : sqlFragment``;
+  const { text, params } = renderFragment(sqlFragment`SELECT count(*)::int AS n FROM minion_lease_pressure_log${filtered}`);
+  const [row] = await tx.executeRaw<{ n: number | string }>(text, params);
   return num(row?.n);
 }
 

@@ -12,11 +12,9 @@
  * the engines agree on it, and text sort keys are pinned to `COLLATE "C"`.
  */
 import type { BrainEngine } from '../engine.ts';
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
-
-const MSG = 'subagent_messages';
-const TOOL = 'subagent_tool_executions';
 
 /** One `subagent_messages` row. */
 export interface SubagentMessageRow {
@@ -118,26 +116,25 @@ const numOrNull = (v: unknown): number | null => (v == null ? null : Number(v));
 
 /** The job's messages by `message_idx`; with `last`, only the newest one (an empty list when there is none). */
 export async function listSubagentMessages(tx: Raw, jobId: number, opts?: { last?: boolean }): Promise<SubagentMessageRow[]> {
-  const rows = await tx.executeRaw<Rec>(
-    `SELECT id, job_id, message_idx, role, content_blocks, tokens_in, tokens_out,
+  const { text, params } = renderFragment(sqlFragment`SELECT id, job_id, message_idx, role, content_blocks, tokens_in, tokens_out,
             tokens_cache_read, tokens_cache_create, model, ended_at
-       FROM ${MSG}
-      WHERE job_id = $1
-      ORDER BY ${MSG}.message_idx ${opts?.last ? 'DESC LIMIT 1' : 'ASC'}`,
-    [jobId]);
+       FROM subagent_messages
+      WHERE job_id = ${jobId}
+      ORDER BY subagent_messages.message_idx ${trustedSql(opts?.last ? 'DESC LIMIT 1' : 'ASC')}`);
+  const rows = await tx.executeRaw<Rec>(text, params);
   return rows.map(r => ({ ...r, id: num(r.id), job_id: num(r.job_id) }) as unknown as SubagentMessageRow);
 }
 
 /** How many messages the job has persisted. */
 export async function countSubagentMessages(tx: Raw, jobId: number): Promise<number> {
-  const [row] = await tx.executeRaw<{ n: number | string }>(`SELECT count(*)::int AS n FROM ${MSG} WHERE job_id = $1`, [jobId]);
+  const [row] = await tx.executeRaw<{ n: number | string }>(`SELECT count(*)::int AS n FROM subagent_messages WHERE job_id = $1`, [jobId]);
   return Number(row?.n ?? 0);
 }
 
 /** Persists one message; a message already stored at the same `message_idx` stays as it is. */
 export async function insertSubagentMessage(tx: Raw, jobId: number, m: SubagentMessageInsert): Promise<void> {
   await tx.executeRaw(
-    `INSERT INTO ${MSG} (job_id, message_idx, role, content_blocks,
+    `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks,
         tokens_in, tokens_out, tokens_cache_read, tokens_cache_create, model)
      VALUES ($1, $2, $3, $4::text::jsonb, $5, $6, $7, $8, $9)
      ON CONFLICT (job_id, message_idx) DO NOTHING`,
@@ -146,17 +143,18 @@ export async function insertSubagentMessage(tx: Raw, jobId: number, m: SubagentM
 
 // ---------------------------------------------------------------- tool ledger reads
 
-const TOOL_COLUMNS = `id, job_id, message_idx, ordinal, tool_use_id, tool_name, input, status, output, error, schema_version,
-            provider_id, gbrain_tool_use_id::text AS gbrain_tool_use_id, started_at, ended_at`;
 
 /** The job's tool rows: `replay` order (`message_idx`, ordinal with legacy NULL as 0, `id`) or `id` order. */
 export async function listSubagentToolExecutions(tx: Raw, jobId: number, order: SubagentToolOrder): Promise<SubagentToolRow[]> {
-  const rows = await tx.executeRaw<Rec>(
-    `SELECT ${TOOL_COLUMNS}
-       FROM ${TOOL}
-      WHERE job_id = $1
-      ORDER BY ${order === 'replay' ? `${TOOL}.message_idx, COALESCE(${TOOL}.ordinal, 0), ${TOOL}.id` : `${TOOL}.id`}`,
-    [jobId]);
+  const orderBy = order === 'replay'
+    ? 'subagent_tool_executions.message_idx, COALESCE(subagent_tool_executions.ordinal, 0), subagent_tool_executions.id'
+    : 'subagent_tool_executions.id';
+  const { text, params } = renderFragment(sqlFragment`SELECT id, job_id, message_idx, ordinal, tool_use_id, tool_name, input, status, output, error, schema_version,
+            provider_id, gbrain_tool_use_id::text AS gbrain_tool_use_id, started_at, ended_at
+       FROM subagent_tool_executions
+      WHERE job_id = ${jobId}
+      ORDER BY ${trustedSql(orderBy)}`);
+  const rows = await tx.executeRaw<Rec>(text, params);
   return rows.map(r => ({ ...r, id: num(r.id), job_id: num(r.job_id), ordinal: numOrNull(r.ordinal) }) as unknown as SubagentToolRow);
 }
 
@@ -165,21 +163,19 @@ export async function listSubagentToolExecutions(tx: Raw, jobId: number, order: 
  * (`toolUseIdPrefix` is a LIKE pattern prefix: `%` and `_` are wildcards).
  */
 export async function hasSubagentToolExecution(tx: Raw, jobId: number, opts?: { status?: string; toolUseIdPrefix?: string }): Promise<boolean> {
-  const params: unknown[] = [jobId];
-  let where = 'job_id = $1';
-  if (opts?.status !== undefined) { params.push(opts.status); where += ` AND status = $${params.length}`; }
-  if (opts?.toolUseIdPrefix !== undefined) { params.push(`${opts.toolUseIdPrefix}%`); where += ` AND tool_use_id LIKE $${params.length}`; }
-  const rows = await tx.executeRaw(`SELECT 1 AS one FROM ${TOOL} WHERE ${where} LIMIT 1`, params);
+  const status = opts?.status !== undefined ? sqlFragment` AND status = ${opts.status}` : sqlFragment``;
+  const prefix = opts?.toolUseIdPrefix !== undefined ? sqlFragment` AND tool_use_id LIKE ${`${opts.toolUseIdPrefix}%`}` : sqlFragment``;
+  const { text, params } = renderFragment(
+    sqlFragment`SELECT 1 AS one FROM subagent_tool_executions WHERE job_id = ${jobId}${status}${prefix} LIMIT 1`);
+  const rows = await tx.executeRaw(text, params);
   return rows.length > 0;
 }
 
 /** The `brain_put_page` rows' status, error and output, by `id`; scoped to a `tool_use_id` LIKE prefix when given. */
 export async function listSubagentWriteOutcomes(tx: Raw, jobId: number, toolUseIdPrefix?: string): Promise<SubagentWriteOutcome[]> {
-  const params: unknown[] = [jobId];
-  let where = `job_id = $1 AND tool_name = 'brain_put_page'`;
-  if (toolUseIdPrefix !== undefined) { params.push(`${toolUseIdPrefix}%`); where += ` AND tool_use_id LIKE $2`; }
-  return tx.executeRaw<SubagentWriteOutcome>(
-    `SELECT status, error, output FROM ${TOOL} WHERE ${where} ORDER BY ${TOOL}.id`, params);
+  const prefix = toolUseIdPrefix !== undefined ? sqlFragment` AND tool_use_id LIKE ${`${toolUseIdPrefix}%`}` : sqlFragment``;
+  const { text, params } = renderFragment(sqlFragment`SELECT status, error, output FROM subagent_tool_executions WHERE job_id = ${jobId} AND tool_name = 'brain_put_page'${prefix} ORDER BY subagent_tool_executions.id`);
+  return tx.executeRaw<SubagentWriteOutcome>(text, params);
 }
 
 /** The oneshot ledger of a job: rows whose `tool_use_id` is `LIKE prefix || '%'`, by `id`, with their input fields as text. */
@@ -187,9 +183,9 @@ export async function listSubagentOneshotLedger(tx: Raw, jobId: number, toolUseI
   const rows = await tx.executeRaw<Rec>(
     `SELECT tool_use_id, ordinal, status, input->>'slug' AS slug, input->>'content' AS content, input->>'request_id' AS request_id,
             input->>'skip_reason' AS skip_reason, input->>'batch_id' AS batch_id
-       FROM ${TOOL}
+       FROM subagent_tool_executions
       WHERE job_id = $1 AND tool_use_id LIKE $2
-      ORDER BY ${TOOL}.id`,
+      ORDER BY subagent_tool_executions.id`,
     [jobId, `${toolUseIdPrefix}%`]);
   return rows.map(r => ({ ...r, ordinal: numOrNull(r.ordinal) }) as unknown as SubagentOneshotLedgerRow);
 }
@@ -201,7 +197,7 @@ export async function summarizeSubagentToolExecutions(
   if (jobIds.length === 0) return { count: 0, output_bytes: 0 };
   const [row] = await tx.executeRaw<{ count: number | string; output_bytes: number | string | null }>(
     `SELECT count(*)::int AS count, COALESCE(sum(octet_length(output::text)), 0) AS output_bytes
-       FROM ${TOOL}
+       FROM subagent_tool_executions
       WHERE job_id = ANY($1::int[]) AND tool_name = $2 AND status = $3`,
     [jobIds, spec.toolName, spec.status]);
   return { count: Number(row?.count ?? 0), output_bytes: Number(row?.output_bytes ?? 0) };
@@ -210,15 +206,14 @@ export async function summarizeSubagentToolExecutions(
 // ---------------------------------------------------------------- dream provenance reads
 
 /** A `brain_put_page` input's slug: the field of an object input, or of a double-encoded (jsonb string) pre-fix input. */
-const PUT_SLUG = `COALESCE(input->>'slug', (input #>> '{}')::jsonb->>'slug')`;
 
 /** The distinct slugs the jobs' completed `brain_put_page` calls named, bytewise ascending; null (a call without a slug) last. */
 export async function listSubagentPutPageSlugs(tx: Raw, jobIds: readonly number[]): Promise<Array<string | null>> {
   if (jobIds.length === 0) return [];
   const rows = await tx.executeRaw<{ slug: string | null }>(
     `SELECT slug FROM (
-       SELECT DISTINCT ${PUT_SLUG} AS slug
-         FROM ${TOOL}
+       SELECT DISTINCT COALESCE(input->>'slug', (input #>> '{}')::jsonb->>'slug') AS slug
+         FROM subagent_tool_executions
         WHERE job_id = ANY($1::int[]) AND tool_name = 'brain_put_page' AND status = 'complete') s
       ORDER BY slug COLLATE "C"`,
     [jobIds]);
@@ -229,10 +224,10 @@ export async function listSubagentPutPageSlugs(tx: Raw, jobIds: readonly number[
 export async function listSubagentPutPageWrites(tx: Raw, jobIds: readonly number[]): Promise<Array<{ job_id: number; slug: string | null; started_at: Date }>> {
   if (jobIds.length === 0) return [];
   const rows = await tx.executeRaw<Rec>(
-    `SELECT job_id, ${PUT_SLUG} AS slug, started_at
-       FROM ${TOOL}
+    `SELECT job_id, COALESCE(input->>'slug', (input #>> '{}')::jsonb->>'slug') AS slug, started_at
+       FROM subagent_tool_executions
       WHERE job_id = ANY($1::int[]) AND tool_name = 'brain_put_page' AND status = 'complete'
-      ORDER BY ${TOOL}.id`,
+      ORDER BY subagent_tool_executions.id`,
     [jobIds]);
   return rows.map(r => ({ ...r, job_id: num(r.job_id) }) as unknown as { job_id: number; slug: string | null; started_at: Date });
 }
@@ -245,7 +240,7 @@ export async function listSubagentRetainedPutPages(tx: Raw, jobIds: readonly num
   if (jobIds.length === 0) return [];
   const rows = await tx.executeRaw<Rec>(
     `SELECT t.job_id, j.idempotency_key AS job_key, t.input, t.output, t.started_at
-       FROM ${TOOL} t JOIN minion_jobs j ON j.id = t.job_id
+       FROM subagent_tool_executions t JOIN minion_jobs j ON j.id = t.job_id
       WHERE t.job_id = ANY($1::int[]) AND t.tool_name = 'brain_put_page' AND t.status = 'complete' AND t.output->>'state' = 'committed'
       ORDER BY t.id`,
     [jobIds]);
@@ -259,9 +254,9 @@ export async function listSubagentRetainedPutPages(tx: Raw, jobIds: readonly num
 export async function listSubagentStagedPages(tx: Raw, jobId: number): Promise<Array<{ slug: string | null; content: string | null }>> {
   return tx.executeRaw<{ slug: string | null; content: string | null }>(
     `SELECT DISTINCT ON ((output->>'slug') COLLATE "C") output->>'slug' AS slug, COALESCE(output->>'content', input->>'content') AS content
-       FROM ${TOOL}
+       FROM subagent_tool_executions
       WHERE job_id = $1 AND tool_name = 'brain_put_page' AND status = 'complete' AND output->>'status' = 'staged'
-      ORDER BY (output->>'slug') COLLATE "C", ${TOOL}.id DESC`,
+      ORDER BY (output->>'slug') COLLATE "C", subagent_tool_executions.id DESC`,
     [jobId]);
 }
 
@@ -276,7 +271,7 @@ export async function listSubagentTimelineAppendCalls(
   if (jobIds.length === 0) return [];
   return tx.executeRaw<{ request_id: string; slug: string; input: unknown }>(
     `SELECT r.request_id::text AS request_id, r.slug, e.input
-       FROM ${TOOL} e
+       FROM subagent_tool_executions e
        JOIN persistence_requests r ON r.request_id::text = COALESCE(e.input->>'request_id', (e.input #>> '{}')::jsonb->>'request_id')
       WHERE e.job_id = ANY($1::int[]) AND e.tool_name = 'brain_add_timeline_entry'
         AND r.operation = 'add_timeline_entry' AND r.source_id = $2 AND r.state = 'committed' AND r.outcome->>'status' = 'ok'
@@ -286,6 +281,19 @@ export async function listSubagentTimelineAppendCalls(
 
 // ---------------------------------------------------------------- tool ledger writes
 
+/** `recordSubagentToolExecutions`' insert, with and without the legacy-row guard (constant text: no spliced SQL). */
+const RECORD_TOOL_GUARDED_SQL = `INSERT INTO subagent_tool_executions (job_id, message_idx, tool_use_id, tool_name, input, status, ordinal)
+       SELECT $1::bigint, $2::int, $3, $4::text, $5::text::jsonb, $6::text, $7::int
+          WHERE NOT EXISTS (
+            SELECT 1 FROM subagent_tool_executions
+             WHERE job_id = $1 AND message_idx = $2 AND tool_use_id = $3
+               AND ordinal IS NULL
+          )
+       ON CONFLICT (job_id, message_idx, ordinal) DO NOTHING`;
+const RECORD_TOOL_SQL = `INSERT INTO subagent_tool_executions (job_id, message_idx, tool_use_id, tool_name, input, status, ordinal)
+       VALUES ($1, $2, $3, $4, $5::text::jsonb, $6, $7)
+       ON CONFLICT (job_id, message_idx, ordinal) DO NOTHING`;
+
 /**
  * Banks tool rows at their stable ordinals; a row whose (`message_idx`, `ordinal`) already exists stays as it is.
  * `legacyGuard` also skips a row when a legacy (NULL ordinal) row of the same turn and `tool_use_id` exists, keeping
@@ -293,19 +301,10 @@ export async function listSubagentTimelineAppendCalls(
  * Run it in a transaction to bank a batch atomically.
  */
 export async function recordSubagentToolExecutions(tx: Raw, jobId: number, rows: readonly SubagentToolInsert[], opts?: { legacyGuard?: boolean }): Promise<void> {
+  const sql = opts?.legacyGuard ? RECORD_TOOL_GUARDED_SQL : RECORD_TOOL_SQL;
   for (const r of rows) {
-    const guard = opts?.legacyGuard
-      ? `SELECT $1::bigint, $2::int, $3, $4::text, $5::text::jsonb, $6::text, $7::int
-          WHERE NOT EXISTS (
-            SELECT 1 FROM ${TOOL}
-             WHERE job_id = $1 AND message_idx = $2 AND tool_use_id = $3
-               AND ordinal IS NULL
-          )`
-      : `VALUES ($1, $2, $3, $4, $5::text::jsonb, $6, $7)`;
     await tx.executeRaw(
-      `INSERT INTO ${TOOL} (job_id, message_idx, tool_use_id, tool_name, input, status, ordinal)
-       ${guard}
-       ON CONFLICT (job_id, message_idx, ordinal) DO NOTHING`,
+      sql,
       [jobId, r.message_idx, r.tool_use_id, r.tool_name, r.input, r.status, r.ordinal]);
   }
 }
@@ -317,23 +316,17 @@ export async function recordSubagentToolExecutions(tx: Raw, jobId: number, rows:
  */
 export async function startSubagentToolExecution(tx: Raw, jobId: number, r: SubagentToolStart): Promise<string | null> {
   const [row] = await tx.executeRaw<{ gbrain_tool_use_id: string | null }>(
-    `INSERT INTO ${TOOL}
+    `INSERT INTO subagent_tool_executions
        (job_id, message_idx, tool_use_id, tool_name, input, status, schema_version, ordinal, gbrain_tool_use_id, provider_id)
      VALUES ($1, $2, $3, $4, $5::text::jsonb, 'pending', 2, $6, $7, $8)
      ON CONFLICT (job_id, message_idx, ordinal) DO UPDATE
-       SET status = ${TOOL}.status
+       SET status = subagent_tool_executions.status
      RETURNING gbrain_tool_use_id::text AS gbrain_tool_use_id`,
     [jobId, r.message_idx, r.tool_use_id, r.tool_name, r.input, r.ordinal, r.gbrain_tool_use_id, r.provider_id]);
   return row?.gbrain_tool_use_id ?? null;
 }
 
 /** The position target's row: its own ordinal first, then a legacy NULL one, never a row already complete. */
-const POSITION_ROW = `SELECT id FROM ${TOOL}
-         WHERE job_id = $1 AND message_idx = $2 AND tool_use_id = $3
-           AND (ordinal = $5 OR ordinal IS NULL)
-           AND status <> 'complete'
-         ORDER BY CASE WHEN ordinal = $5 THEN 0 ELSE 1 END, ${TOOL}.id
-         LIMIT 1`;
 
 /**
  * Settles a tool row complete with `output` (JSON text). By stable id it updates every match, whatever its status; by
@@ -342,15 +335,20 @@ const POSITION_ROW = `SELECT id FROM ${TOOL}
 export async function completeSubagentToolExecution(tx: Raw, target: SubagentToolTarget, output: string): Promise<number> {
   const rows = 'gbrainToolUseId' in target
     ? await tx.executeRaw<{ id: number }>(
-      `UPDATE ${TOOL}
+      `UPDATE subagent_tool_executions
           SET status = 'complete', output = $1::text::jsonb, ended_at = now()
         WHERE gbrain_tool_use_id::text = $2
         RETURNING id`,
       [output, target.gbrainToolUseId])
     : await tx.executeRaw<{ id: number }>(
-      `UPDATE ${TOOL}
+      `UPDATE subagent_tool_executions
           SET status = 'complete', output = $4::text::jsonb, ended_at = now()
-        WHERE id = (${POSITION_ROW})
+        WHERE id = (SELECT id FROM subagent_tool_executions
+         WHERE job_id = $1 AND message_idx = $2 AND tool_use_id = $3
+           AND (ordinal = $5 OR ordinal IS NULL)
+           AND status <> 'complete'
+         ORDER BY CASE WHEN ordinal = $5 THEN 0 ELSE 1 END, subagent_tool_executions.id
+         LIMIT 1)
         RETURNING id`,
       [target.jobId, target.messageIdx, target.toolUseId, output, target.ordinal]);
   return rows.length;
@@ -365,7 +363,7 @@ export async function completeSubagentToolExecution(tx: Raw, target: SubagentToo
 export async function failSubagentToolExecution(tx: Raw, target: SubagentToolTarget, error: string, fallback?: SubagentFailureFallback): Promise<number> {
   if ('gbrainToolUseId' in target) {
     const rows = await tx.executeRaw<{ id: number }>(
-      `UPDATE ${TOOL}
+      `UPDATE subagent_tool_executions
           SET status = 'failed', error = $1, ended_at = now()
         WHERE gbrain_tool_use_id::text = $2
         RETURNING id`,
@@ -373,19 +371,24 @@ export async function failSubagentToolExecution(tx: Raw, target: SubagentToolTar
     return rows.length;
   }
   const updated = await tx.executeRaw<{ id: number }>(
-    `UPDATE ${TOOL}
+    `UPDATE subagent_tool_executions
         SET status = 'failed', error = $4, ended_at = now()
-      WHERE id = (${POSITION_ROW})
+      WHERE id = (SELECT id FROM subagent_tool_executions
+         WHERE job_id = $1 AND message_idx = $2 AND tool_use_id = $3
+           AND (ordinal = $5 OR ordinal IS NULL)
+           AND status <> 'complete'
+         ORDER BY CASE WHEN ordinal = $5 THEN 0 ELSE 1 END, subagent_tool_executions.id
+         LIMIT 1)
       RETURNING id`,
     [target.jobId, target.messageIdx, target.toolUseId, error, target.ordinal]);
   if (updated.length > 0 || !fallback) return updated.length;
   const inserted = await tx.executeRaw<{ id: number }>(
-    `INSERT INTO ${TOOL} (job_id, message_idx, tool_use_id, tool_name, input, status, error, ended_at, ordinal)
+    `INSERT INTO subagent_tool_executions (job_id, message_idx, tool_use_id, tool_name, input, status, error, ended_at, ordinal)
      VALUES ($1, $2, $3, $4, $5::text::jsonb, 'failed', $6, now(), $7)
      ON CONFLICT (job_id, message_idx, ordinal) DO UPDATE
        SET status = 'failed', error = EXCLUDED.error, ended_at = now()
-       WHERE ${TOOL}.tool_use_id = EXCLUDED.tool_use_id
-         AND ${TOOL}.status <> 'complete'
+       WHERE subagent_tool_executions.tool_use_id = EXCLUDED.tool_use_id
+         AND subagent_tool_executions.status <> 'complete'
      RETURNING id`,
     [target.jobId, target.messageIdx, target.toolUseId, fallback.tool_name, fallback.input, error, target.ordinal]);
   return inserted.length;
