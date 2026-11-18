@@ -35,7 +35,7 @@ the origin.
 | `brain.traversePathsDetailed(slug, opts?)` | `{ paths, truncated }`; at most 5,000 edges, `truncated` when more exist | `traversePathsDetailed` |
 | `brain.addTimelineEntry(slug, { date, summary, source?, detail? }, { sourceId?, skipExistenceCheck? }?)` | `true` when a row was written, `false` for a duplicate (same page, date, summary and source) | `addTimelineEntry` |
 | `brain.addTimelineEntriesBatch(entries)` | inserted count; entries of missing pages are skipped | `addTimelineEntriesBatch` |
-| `brain.getTimeline(slug, { limit?, after?, before?, sourceId?, sourceIds? }?)` | `{ id, page_id, date, source, summary, detail, event_page_id, created_at }[]`, `date DESC, id DESC`, default `limit` 100, `0` for all | `getTimeline` |
+| `brain.getTimeline(slug, { limit?, after?, before?, sourceId?, sourceIds?, excludePrivate? }?)` | `{ id, page_id, date, source, summary, detail, event_page_id, created_at }[]`, `date DESC, id DESC`, default `limit` 100, `0` for all | `getTimeline` |
 
 Where this engine differs from PGLite:
 
@@ -47,8 +47,17 @@ Where this engine differs from PGLite:
   casts are refused `invalid_argument`, as is a date that does not exist.
 - `getTimeline` rows carry the `TimelineEntry` fields only, not the write-provenance and
   `trust_tier` columns of the table (PGLite returns them `null` and `"unknown"` for these writes).
-- `excludePrivate: true`, `temporal`, `page` (keyset paging of paths) and `eligibility` reject
-  `invalid_argument` instead of being ignored. The TypeScript shell must not send them here.
+- On the link and graph reads, `excludePrivate: true`, `temporal` and `page` (keyset paging of
+  paths) reject `invalid_argument` instead of being ignored, and so does `eligibility` on
+  `getTimeline`. The TypeScript shell must not send them here.
+- `getTimeline` serves `excludePrivate`. The TypeScript member reads the page policy from the
+  rendered SQL (`storePagePolicy`) and passes it as `excludePrivate`. It refuses a caller whose
+  member pages, grants or lineage widen the policy. Under the policy a page that
+  `privatePagesFilterForCaller('p')` hides reads no rows. An entry drops when
+  `privateTimelineEventFilterForCaller('te')` hides its event page (`page_hidden` in
+  facts/privacy.rs). That filter is an `EXISTS` on the event page id alone, so an event page in
+  another source or soft-deleted is still judged, and an entry whose event page is gone drops.
+  The filter runs before `limit`.
 
 `crates/gbrain-store/tests/graph_parity.rs` replays PGLite's own results for links, the graph
 walks at depth 0 to 3 and past (cycles, direction, scope, soft delete, caps), timeline writes and
