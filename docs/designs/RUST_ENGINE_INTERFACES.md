@@ -802,6 +802,7 @@ Segmented page bodies: segment texts, manifests, staging and derivations.
 - **Estimate:** about 7 to 8 days: texts and manifest 1 to 2, flip and staging 3, sweep 2, derivations 1.
 - **Notes:** Segment bodies are bytes; sha256 and bodies cross the binding as hex or `Buffer`. `flipBodyGeneration` and `sweepSegments` are each one store write.
 - **Segment storage probe:** `hasSegmentStorage` (capability `page_body`, in `write_guards.rs`) is true when any segment text (`b 0x01`) or body staging (`b 0x03`) exists. The journal reads it before it looks for segmented pages.
+- **Connect gate reads:** `hasPersistenceTable`, `listManagedRootBindings`, `readGraduationGateRow` and `listRetiredDeactivations` (capability `persistence_journal`, SQL in `engine-sql/connect-gate.ts`) are answered in TypeScript from the one unmanaged brain the store keeps; they replace the raw-SQL capability checks the graduation and deactivation gates used. See [`rust/docs/store/journal.md`](../../rust/docs/store/journal.md).
 - **Parity cases (5, in `segmented-body.test.ts`, `sync-aliases.test.ts`):**
   - `segmented-body.test.ts`: a segmented page publishes generation 1 from staged texts and manifest rows
   - `segmented-body.test.ts`: a replace flips to generation 2, closes retired rows and refuses a stale generation

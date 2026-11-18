@@ -1,9 +1,11 @@
 /**
- * An engine without raw SQL (the Rust engine, D18) has no persistence custody
- * tables and no query planner. The startup persistence reads and the planner
- * statistics upkeep answer "no rows" / "nothing to analyze" on it without one
- * `executeRaw` call, instead of refusing the command. PGLite reports `raw_sql`,
- * so each control below runs its SQL as before. Synthetic names only.
+ * An engine without raw SQL (the Rust engine, D18) has no query planner. The
+ * startup persistence reads and the planner statistics upkeep answer "no rows" /
+ * "nothing to analyze" on it without one `executeRaw` call, instead of refusing
+ * the command. The graduation connect row and the retired-marker cleanup read
+ * through typed members (engine-sql/connect-gate.ts; the Rust arm runs them in
+ * test/engine-parity/connect-gate.test.ts). PGLite reports `raw_sql`, so each
+ * control below runs its SQL as before. Synthetic names only.
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -76,12 +78,6 @@ describe('startup persistence reads on an engine without raw SQL', () => {
   test('the graduation connect row reads as no row', async () => {
     const rust = counted(false);
     expect(await readGraduationConnectRow(rust.engine)).toBeNull();
-    expect(rust.calls()).toBe(0);
-  });
-
-  test('retired managed-marker cleanup has nothing to clean', async () => {
-    const rust = counted(false);
-    expect(await cleanupRetiredManagedMarkers(rust.engine)).toEqual({ state: 'cleared', removed: [], pending: [] });
     expect(rust.calls()).toBe(0);
   });
 
