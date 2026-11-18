@@ -8,6 +8,7 @@
  */
 import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { capabilityRefusal, capabilityUnknownCheck } from '../budget.ts';
 
 const DOCS = 'docs/guides/write-refusals.md#file_database_drift';
 const MAX_PATHS = 20;
@@ -32,7 +33,9 @@ async function runLocalEditAdoptions(ctx: DoctorContext): Promise<Check[]> {
       message: `Local edits adopted in the last 24 h: ${sources.map(source => `${source.source_id}: ${source.adoptions} (${source.paths.join(', ')})`).join('; ')}. `
         + 'Each was committed on its own before the write that met it; someone or something is editing these files outside gbrain.' });
   } catch (error) {
-    checks.push({ name: 'local_edit_adoptions', status: 'ok', details: { health: 'unknown', docs: DOCS },
+    const refusal = capabilityRefusal(error);
+    if (refusal) checks.push(capabilityUnknownCheck('local_edit_adoptions', refusal));
+    else checks.push({ name: 'local_edit_adoptions', status: 'ok', details: { health: 'unknown', docs: DOCS },
       message: `Could not read local edit adoptions (${error instanceof Error ? error.message : String(error)}).` });
   }
   return checks;

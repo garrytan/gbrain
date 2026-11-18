@@ -67,6 +67,52 @@
           }
         ]
       },
+      "listStaleSyncSourceIds": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT id FROM sources WHERE last_sync_at IS NOT NULL AND last_sync_at < now() - interval '7 days' AND NOT archived ORDER BY id",
+            "textSha256": "cc41a39850838d726cd1cfbe062bd2c0ade08a63d214f1c9c4ab9068d21281c6"
+          }
+        ]
+      },
+      "lockSourceRow": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT id, local_path, config, archived FROM sources WHERE id=$1 FOR UPDATE",
+            "textSha256": "c96279eec5f617f9eee6412cb97ea5799f1b30d4c826b2eaf5be7c7456bf2c08"
+          }
+        ]
+      },
+      "readSourceChunkerVersion": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT chunker_version FROM sources WHERE id = $1",
+            "textSha256": "89548ea315a927cbdaffec58bb971086a7f2e7d29ad81af3e05f73fa62dc9e77"
+          }
+        ]
+      },
+      "readSourceRow": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT id, local_path, config, archived FROM sources WHERE id=$1",
+            "textSha256": "38c9109affe2faf67e65aa6c6874018bf3b040173ea8d5836ccab976354a368d"
+          }
+        ]
+      },
       "updateSourceConfig": {
         "default": [
           {

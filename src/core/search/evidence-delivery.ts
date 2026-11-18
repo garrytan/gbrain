@@ -31,7 +31,7 @@ import { buildSnippetMarker } from './snippet-cap.ts';
 import { deliveredQuoteText, deliveredQuoteTitle, fenceTranscriptRows, neutralizeTranscriptRows } from './transcript-quote.ts';
 import { stampPageTrust } from '../eligibility/stamp.ts';
 import { pageReadFilter } from './read-policy-sql.ts';
-import { chunkGenerationFilter, chunkManifestReads, safeChunksFilter, requiresSafeChunks, servedTextProjectionFilter } from './safe-chunks.ts';
+import { safeChunksFilter, requiresSafeChunks, servedTextProjectionFilter } from './safe-chunks.ts';
 import { resolveExcludePrivatePages, worldOnlyFacts } from './private-visibility.ts';
 import { safeSplitIndex } from '../text-safe.ts';
 import { loadFenceChunkOverlay, type FenceChunkOverlay } from '../eligibility/fence-overlay.ts';
@@ -1641,25 +1641,14 @@ export async function resolveFrozenHits(
   scope: PageReadScope,
 ): Promise<{ rows: SearchResult[]; unresolved: number[] }> {
   if (hits.length === 0) return { rows: [], unresolved: [] };
-  const params: unknown[] = [
-    hits.map(h => String(h.source_id)),
-    hits.map(h => String(h.slug)),
-    hits.map(h => (Number.isInteger(h.chunk_id) ? h.chunk_id : -1)),
-    hits.map((_, i) => i),
-  ];
-  const filter = pageReadFilter('p', scope, params, true);
-  const safe = requiresSafeChunks(scope) ? `AND ${safeChunksFilter('p')}` : '';
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT h.ord, p.id AS page_id, p.slug, p.source_id, p.title, p.type,
-            p.effective_date, p.effective_date_source,
-            cc.id AS chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source
-       FROM unnest($1::text[], $2::text[], $3::int[], $4::int[]) AS h(source_id, slug, chunk_id, ord)
-       JOIN pages p ON p.source_id = h.source_id AND p.slug = h.slug
-       LEFT JOIN content_chunks cc ON cc.page_id = p.id AND ${chunkGenerationFilter('p', 'cc', await chunkManifestReads(engine))}
-            AND CASE WHEN h.chunk_id > 0 THEN cc.id = h.chunk_id ELSE cc.chunk_index = 0 END
-      WHERE ${filter} AND ${servedTextProjectionFilter('p')} ${safe}`,
-    params,
-  );
+  // A delivery scope carries its `detail` level too; the page read policy is the rest.
+  const { detail: _detail, ...policy } = scope as PageReadScope & { detail?: unknown };
+  const rows: Array<Record<string, unknown>> = (await engine.resolveFrozenHits(hits.map((h, i) => ({
+    source_id: String(h.source_id),
+    slug: String(h.slug),
+    chunk_id: Number.isInteger(h.chunk_id) ? h.chunk_id : -1,
+    ord: i,
+  })), policy)) as unknown as Array<Record<string, unknown>>;
   const byOrd = new Map<number, Record<string, unknown>>();
   for (const r of rows) byOrd.set(Number(r.ord), r);
   const out: SearchResult[] = [];

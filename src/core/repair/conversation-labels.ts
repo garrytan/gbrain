@@ -427,17 +427,7 @@ export async function prepareConversationLabelRetirement(engine: BrainEngine, ro
 
 /** Doctor's bounded count of the default (evidenced) set: the classification's exclusions applied in SQL, capped. */
 export async function countLabelFacts(db: BrainEngine, sourceIds: string[], cap: number): Promise<{ count: number; capped: boolean }> {
-  const rows = await db.executeRaw<{ id: number }>(`SELECT f.id FROM facts f
-      JOIN pages p ON p.source_id=f.source_id AND p.slug=f.source_markdown_slug AND p.deleted_at IS NULL
-     WHERE f.source_id=ANY($1::text[]) AND f.source LIKE 'cli:extract-conversation-facts%' AND f.source=$2 AND f.expired_at IS NULL
-       AND f.context LIKE $3 AND (p.compiled_truth ~* $4 OR COALESCE(p.timeline,'') ~* $4)
-       AND NOT EXISTS (SELECT 1 FROM facts o WHERE o.source_id=f.source_id AND o.source_markdown_slug=f.source_markdown_slug
-         AND o.source IN ($6, $7) AND o.expired_at IS NULL AND o.context ~ 'extractor_version=[0-9]+$')
-       AND f.superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM facts g WHERE g.superseded_by=f.id)
-       AND NOT EXISTS (SELECT 1 FROM open_loops l WHERE l.fact_id=f.id)
-       AND NOT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id AND w.visibility=f.visibility
-         AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact)) AND (w.subject='*' OR w.subject=f.entity_slug))
-     LIMIT $5`, [sourceIds, SEGMENT_SOURCE, `%${EPOCH_SEGMENT_MARKER}%`, LABEL_LINE_SQL, cap + 1, TERMINAL_AUDIT_SOURCE, NON_EXTRACTABLE_AUDIT_SOURCE]);
-  return { count: Math.min(rows.length, cap), capped: rows.length > cap };
+  return db.countLabelFacts(sourceIds, cap, { segmentSource: SEGMENT_SOURCE, contextLike: `%${EPOCH_SEGMENT_MARKER}%`, labelLine: LABEL_LINE_SQL,
+    terminalSource: TERMINAL_AUDIT_SOURCE, nonExtractableSource: NON_EXTRACTABLE_AUDIT_SOURCE });
 }
 

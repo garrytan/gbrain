@@ -15,6 +15,7 @@
  *     candidates?: [{ symbol_qualified, lang, file, lines }] }
  */
 import type { BrainEngine } from '../engine.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import type { CodeEdgeResult } from '../types.ts';
 import { readEdgeResolution } from '../chunkers/symbol-resolver.ts';
 import { classifySink, type SinkKind } from './sinks/index.ts';
@@ -87,39 +88,22 @@ async function disambiguateSymbol(
 ): Promise<{ matches: string[]; suggestions: { symbol_qualified: string; score: number }[] }> {
   try {
     // Exact-match candidates first: anything with symbol_name = bare
-    const exact = await engine.executeRaw<{ symbol_name_qualified: string }>(
-      `SELECT DISTINCT symbol_name_qualified
-         FROM content_chunks
-         JOIN pages p ON p.id = content_chunks.page_id
-        WHERE p.source_id = $1 AND ${codeReadFilter([], {})}
-          AND symbol_name_qualified IS NOT NULL
-          AND (symbol_name = $2 OR symbol_name_qualified = $2)
-        LIMIT 25`,
-      [sourceId, bare],
-    );
-    const matches = exact.map((r) => r.symbol_name_qualified);
+    const matches = await engine.listQualifiedSymbolNames(sourceId, bare, { match: 'exact', limit: 25 });
     if (matches.length > 0) return { matches, suggestions: [] };
 
     // No exact match — try trigram similarity for did_you_mean. Many
     // engines don't have pg_trgm by default; fall back to LIKE-prefix.
-    const fuzzy = await engine.executeRaw<{ symbol_name_qualified: string }>(
-      `SELECT DISTINCT symbol_name_qualified
-         FROM content_chunks
-         JOIN pages p ON p.id = content_chunks.page_id
-        WHERE p.source_id = $1 AND ${codeReadFilter([], {})}
-          AND symbol_name_qualified IS NOT NULL
-          AND symbol_name_qualified ILIKE $2
-        LIMIT 5`,
-      [sourceId, `%${bare}%`],
-    );
+    const fuzzy = await engine.listQualifiedSymbolNames(sourceId, bare, { match: 'contains', limit: 5 });
     return {
       matches: [],
-      suggestions: fuzzy.map((r) => ({
-        symbol_qualified: r.symbol_name_qualified,
+      suggestions: fuzzy.map((name) => ({
+        symbol_qualified: name,
         score: 0.5, // placeholder; v0.34.1 wires real trigram score
       })),
     };
-  } catch {
+  } catch (err) {
+    // An engine that cannot answer must not read as "symbol not found".
+    rethrowCapabilityRefusal(err);
     return { matches: [], suggestions: [] };
   }
 }

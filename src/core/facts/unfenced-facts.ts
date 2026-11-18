@@ -85,6 +85,7 @@ import { commitFactFenceFile, gitPathState } from './fence-write.ts';
 import { isOwnedClone } from '../url-clone.ts';
 import { parseSourceConfig } from '../sources-load.ts';
 import { isSourceDbOnlySlug } from '../persistence/source-storage.ts';
+import { sourceConfigText } from '../source-rows.ts';
 
 export interface UnfencedFactRow {
   id: string;
@@ -271,8 +272,8 @@ async function databaseOnlyPlacement(engine: BrainEngine, sourceId: string, slug
   const [page] = await engine.executeRaw<{ source_path: string | null; source_uri: string | null }>(
     'SELECT source_path, source_uri FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, slug]);
   if (!page || page.source_path?.trim() || page.source_uri?.trim()) return { kind: 'missing' };
-  const [source] = await engine.executeRaw<{ local_path: string | null; kind: string | null }>(
-    "SELECT local_path, config->>'kind' AS kind FROM sources WHERE id=$1", [sourceId]);
+  const row = await engine.readSourceRow(sourceId);
+  const source = row ? { local_path: row.local_path, kind: sourceConfigText(row.config, 'kind') } : undefined;
   try {
     const target = await resolveFactWriteTarget(engine, sourceId, source!, { fileBacked: false, remote: false });
     return target.kind === 'publish' && !target.binding ? { kind: 'fence', reason: target.databaseOnlyReason ?? 'no_repo_configured' } : { kind: 'missing' };
@@ -298,18 +299,7 @@ export async function planUnfencedFacts(engine: BrainEngine, opts: { sourceId?: 
   const mirrors = new Set(managed ? [] : sources.filter(s => parseSourceConfig(s.config).mirror_read_only === true).map(s => s.id));
   const localPathById = new Map(sources.map(s => [s.id, s.local_path] as const));
   const archived = new Set(sources.filter(s => s.archived).map(s => s.id));
-  const rows = await engine.executeRaw<UnfencedFactRow>(
-    `SELECT id, source_id, entity_slug, fact, kind, visibility, notability,
-            context, valid_from, valid_until, source, confidence,
-            claim_metric, claim_value, claim_unit, claim_period, attributed_to,
-            EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id
-              AND p.slug = f.entity_slug AND p.deleted_at IS NULL) AS page_exists
-       FROM facts f
-      WHERE row_num IS NULL AND expired_at IS NULL AND dimension IS NULL
-        ${opts.sourceId !== undefined ? 'AND source_id = $1' : ''}
-      ORDER BY source_id, entity_slug, id`,
-    opts.sourceId !== undefined ? [opts.sourceId] : [],
-  );
+  const rows = await engine.listUnfencedFactRows({ sourceId: opts.sourceId });
   const outcome: UnfencedFactsOutcome = {
     scanned: rows.length, fenced: 0, skipped_no_entity: 0, skipped_no_local_path: 0, skipped_no_page: 0,
     skipped_archived: 0, skipped_url_clone: 0, skipped_mirror_read_only: 0, pages_touched: 0, failed_pages: [], write_errors: 0, fenced_slugs: [], missing_files: [], unbound_refused: [], unadoptable_rows: [],
@@ -358,10 +348,7 @@ export async function planUnfencedFacts(engine: BrainEngine, opts: { sourceId?: 
  * among them, nor is a row no fence ever held or a conversation-extractor row (its replay owns it).
  */
 export async function heldFenceFactRows(engine: BrainEngine, sourceId: string, slug: string): Promise<ParsedFact[]> {
-  const rows = await engine.executeRaw<FenceRowInput & { id: number; row_num: number; fact: string; entity_slug: string | null }>(`SELECT id, row_num, fact, kind, visibility, notability, context,
-      valid_from, valid_until, source, confidence, claim_metric, claim_value, claim_unit, claim_period, attributed_to, entity_slug FROM facts
-     WHERE source_id=$1 AND source_markdown_slug=$2 AND row_num IS NOT NULL AND expired_at IS NULL
-       AND COALESCE(source,'') NOT LIKE 'cli:extract-conversation-facts%' ORDER BY row_num, id`, [sourceId, slug]);
+  const rows = await engine.listHeldFenceFactRows(sourceId, slug);
   if (!rows.length) return [];
   const { held } = await factsFenceHeld(engine, { sourceId, slug, rows });
   const seen = new Set<number>();
@@ -619,7 +606,7 @@ async function fenceDatabaseOnlyPage(engine: BrainEngine, sourceId: string, enti
     if (fence.assignments.length === 0) return;
     assertPersistenceAccepting(engine);
     if (!currentVerifiedLocalWriter()) await registerLocalWriter(engine, 'cli');
-    const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation FROM sources WHERE id=$1', [sourceId]);
+    const source = await engine.readSourceIncarnation(sourceId);
     const writer = await submissionAuthority({ engine, remote: false, sourceId } as OperationContext, 'submit_job', sourceId, source!.incarnation, 'maintenance');
     if (reason) writer.databaseOnlyReason = reason;
     await submitFactFenceAdoption(engine, { writer, binding: null }, entitySlug, { content: fence.body, expectedRevision: snapshot.revision,

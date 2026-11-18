@@ -25,7 +25,7 @@ import { SOURCE_ID_RE, isValidSourceId, ALL_SOURCES } from './source-id.ts';
 import { isTrustedDotfile, realpathOrResolve, realpathOrResolveAsync } from './path-confine.ts';
 import { noteResolvedSource } from './fix-routing.ts';
 import { hookSessionCwd } from './session-cwd.ts';
-import { sortSourcesById } from './source-rows.ts';
+import { sortSourcesById, sourceConfigText, sourceRecordsRawConfig } from './source-rows.ts';
 
 // Re-export so scope-resolution call sites can import the sentinel from
 // either module (#1712).
@@ -380,6 +380,9 @@ async function pickSoleNonDefaultSource(
   // back to every source with a path, as the pre-v34 query did, and reads the guard from the page split.
   const pending = requestSourceRows(engine);
   let routing = pending && await pending;
+  // The snapshot rows were filtered on the parsed config; the live read filtered on `config->>'role'`, which is
+  // null for a config stored as a JSON string. Each path keeps its own filter.
+  const fromSnapshot = !!routing;
   if (!routing) {
     try {
       routing = await engine.listSourceRoutingRows();
@@ -388,7 +391,8 @@ async function pickSoleNonDefaultSource(
     }
   }
   const rows: Array<{ id: string; config?: unknown }> = routing
-    ? routing.filter(row => row.local_path !== null && row.id !== 'default' && row.archived === false && parseSourceConfig(row.config).role !== 'storage_manifest')
+    ? routing.filter(row => row.local_path !== null && row.id !== 'default' && row.archived === false
+      && (fromSnapshot ? parseSourceConfig(row.config).role : sourceConfigText(row.config, 'role')) !== 'storage_manifest')
     : (await legacySourceRows(engine)).filter(row => row.local_path !== null && row.id !== 'default').map(({ id }) => ({ id }));
   const listed = routing;
   const defaultHasPages = (): Promise<boolean> => listed
@@ -1027,7 +1031,7 @@ async function liveSourceRows(engine: BrainEngine): Promise<Array<{ id: string; 
   const request = pending && await pending;
   if (request) return request.filter(row => row.archived === false).map(({ id, config, archived }) => ({ id, config, archived }));
   try {
-    return sortSourcesById(await engine.listAllSources()).map(({ id, config }) => ({ id, config, archived: false }));
+    return sortSourcesById(await sourceRecordsRawConfig(engine)).map(({ id, config }) => ({ id, config, archived: false }));
   } catch (err) {
     rethrowCapabilityRefusal(err);
     return sortSourcesById(await legacySourceRows(engine)).map(({ id, config }) => ({ id, config }));

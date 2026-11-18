@@ -37,6 +37,7 @@ import {
   type LoopType,
   type OpenLoopRow,
 } from '../loops/loops-store.ts';
+import { sourceRecordsRawConfig } from '../source-rows.ts';
 
 const STALE_AFTER_MS = 24 * 3_600_000;
 
@@ -67,9 +68,9 @@ async function googleSourceFreshness(
   scope: { sourceId?: string; sourceIds?: string[] },
 ): Promise<{ sources: GoogleSourceFreshness[]; stale: boolean; staleSources: string[]; failed?: true }> {
   try {
-    const rows = (await ctx.engine.listAllSources()).map((r) => ({
+    const rows = (await sourceRecordsRawConfig(ctx.engine)).map((r) => ({
       id: r.id,
-      last_sync_at: r.last_sync_at === null ? null : new Date(r.last_sync_at).toISOString(),
+      last_sync_at: r.last_sync_at == null ? null : new Date(r.last_sync_at).toISOString(),
       config: r.config as unknown,
     }));
     const sources = rows
@@ -149,9 +150,13 @@ async function withheldNoise(ctx: OperationContext, sources: GoogleSourceFreshne
   if (!sources.length) return null;
   try {
     const { managedBrain, readConnectorCursorState } = await import('../connectors/item-holds-store.ts');
-    const rows = await ctx.engine.executeRaw<{ id: string; incarnation: string; local_path: string | null; config: Record<string, unknown> }>(
-      `SELECT id, incarnation::text AS incarnation, local_path, config FROM sources WHERE id = ANY(string_to_array($1, E'\n'))`,
-      [sources.map((x) => x.id).join('\n')]);
+    const wanted = new Set(sources.map((x) => x.id));
+    const rows: Array<{ id: string; incarnation: string; local_path: string | null; config: Record<string, unknown> }> = [];
+    for (const source of await ctx.engine.listSourceRecords()) {
+      if (!wanted.has(source.id)) continue;
+      const row = await ctx.engine.readSourceIncarnation(source.id);
+      if (row) rows.push({ id: source.id, incarnation: row.incarnation, local_path: source.local_path, config: row.config as Record<string, unknown> });
+    }
     const managed = await managedBrain(ctx.engine);
     const senders: WithheldNoiseSender[] = [];
     for (const row of rows) {

@@ -128,20 +128,16 @@ const parseConfig = parseSourceConfig;
 const isFederated = isSourceFederated;
 
 async function fetchSource(engine: BrainEngine, id: string): Promise<SourceRow | null> {
-  const rows = await engine.executeRaw<SourceRow>(
-    `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at
-       FROM sources WHERE id = $1`,
-    [id],
-  );
-  return rows[0] ?? null;
+  // getSource also returns the retrieval and trust columns; only these seven reach the subcommands' output.
+  const row = await engine.getSource(id);
+  if (!row) return null;
+  const { name, local_path, last_commit, last_sync_at, config, created_at } = row;
+  return { id: row.id, name, local_path, last_commit, last_sync_at, config, created_at };
 }
 
 async function countPages(engine: BrainEngine, sourceId: string): Promise<number> {
-  const rows = await engine.executeRaw<{ n: number }>(
-    `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1 AND deleted_at IS NULL`,
-    [sourceId],
-  );
-  return rows[0]?.n ?? 0;
+  // sourceIds, not sourceId: an empty id must count nothing, never every source.
+  return Number((await engine.getStats({ sourceIds: [sourceId] })).page_count);
 }
 
 // ── Subcommand: add ─────────────────────────────────────────

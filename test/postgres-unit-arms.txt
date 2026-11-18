@@ -123,6 +123,7 @@ test/embedding-completion-atomic.serial.test.ts
 test/enforced-member-writes-setting.serial.test.ts
 test/enforced-member-writes.serial.test.ts
 test/enforced-member.serial.test.ts
+test/engine-parity/chunk-reads.test.ts
 test/engine-parity/chunks.test.ts
 test/engine-parity/cli-capabilities.test.ts
 test/engine-parity/cli-reads-import.test.ts
@@ -130,10 +131,17 @@ test/engine-parity/cli-reads-ops.test.ts
 test/engine-parity/code-eval-salience.test.ts
 test/engine-parity/config-ingest.test.ts
 test/engine-parity/cycle-locks.test.ts
+test/engine-parity/entity-reads.test.ts
 test/engine-parity/extraction.test.ts
+test/engine-parity/facts-cycle.test.ts
+test/engine-parity/facts-doctor.test.ts
+test/engine-parity/facts-purge.test.ts
+test/engine-parity/facts-repair.test.ts
+test/engine-parity/facts-trust.test.ts
 test/engine-parity/facts.test.ts
 test/engine-parity/import-path.test.ts
 test/engine-parity/import-writes.test.ts
+test/engine-parity/jobs.test.ts
 test/engine-parity/lifecycle.test.ts
 test/engine-parity/link-reads.test.ts
 test/engine-parity/links.test.ts
@@ -150,6 +158,7 @@ test/engine-parity/stats.test.ts
 test/engine-parity/sync-aliases.test.ts
 test/engine-parity/takes.test.ts
 test/engine-parity/timeline.test.ts
+test/engine-parity/typed-config-reads.test.ts
 test/engine-parity/versions-raw.test.ts
 test/engine-parity/wanted-links.test.ts
 test/engine-parity/write-guards.test.ts

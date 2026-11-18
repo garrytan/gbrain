@@ -17,3 +17,23 @@ last_sync_at: null, config: { federated: true } }`. A row is PGLite's `SourceRow
 
 `upsertSource` and `setSourceArchived` are not in PGLite's engine interface; the store needs a way
 to make a source, and the page methods below are source-scoped.
+
+## Differences from the SQL engines (accepted for 1x parity)
+
+The source members below behave differently on the Rust engine. Each difference is accepted for
+1x parity. Keep this list current when a member changes.
+
+- `config` is a map in the store. Where a SQL engine keeps a JSON string as the config, the Rust
+  engine writes `{}`. On the SQL engines, a JSON-string config reads as no keys.
+- `pickSoleNonDefaultSource` takes the routing rows from the request snapshot, else from a live
+  `listSourceRoutingRows()` read. Both paths apply one filter: `local_path` set, id not
+  `default`, not archived, role not `storage_manifest`.
+- `listStaleSyncSourceIds` compares `last_sync_at` with the process clock. The SQL engines use
+  the database clock (`now()`).
+- `readSourceChunkerVersion` refuses with the typed `chunks` capability refusal.
+- `lockSourceRow` reads the row from `listSourceRecords` and takes no lock. The SQL engines read
+  with `FOR UPDATE`; no parity case checks that lock.
+- `readSourceRow` reads from `listSourceRecords`. A caller that needs the incarnation makes one
+  `readSourceIncarnation` call per source.
+- `last_commit` is `null` in the row that `gbrain sources` reads through `getSource`.
+- Restore-target and connector status sort sources by id in byte order on every engine.

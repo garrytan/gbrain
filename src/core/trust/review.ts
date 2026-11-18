@@ -173,14 +173,7 @@ async function standingPreferences(engine: BrainEngine, filter: TrustReviewFilte
   const [table] = answersFromCatalog(engine) ? [{ t: catalogTableExists(engine, 'write_gate_receipts') ? 'write_gate_receipts' : null }]
     : await engine.executeRaw<{ t: string | null }>(`SELECT to_regclass('write_gate_receipts')::text AS t`);
   if (!table?.t) return [];
-  const rows = await engine.executeRaw<{ id: number; source_id: string; kind: string; fact: string; trust_tier: string; slug: string | null; created_at: string }>(
-    `SELECT f.id, f.source_id, f.kind, f.fact, f.trust_tier, f.source_markdown_slug AS slug, f.created_at FROM facts f
-      WHERE f.kind IN ('preference', 'commitment') AND f.trust_tier IN ('agent_written', 'unknown', 'external_untrusted') AND f.expired_at IS NULL
-        AND NOT (f.trust_tier = 'unknown' AND EXISTS (SELECT 1 FROM sources cs WHERE cs.id = f.source_id AND ${claimPendingSql('cs')}))
-        AND ($1::text IS NULL OR f.source_id = $1) AND ($2::timestamptz IS NULL OR f.created_at >= $2)
-        AND EXISTS (SELECT 1 FROM write_gate_receipts r WHERE r.target_table = 'facts' AND r.target_id = f.id::text
-                      AND r.verdict = 'flag' AND 'standing_instruction' = ANY(r.reason_families))
-      ORDER BY f.created_at, f.id LIMIT 1000`, [filter.sourceId ?? null, filter.since?.toISOString() ?? null]);
+  const rows = await engine.listStandingPreferences({ sourceId: filter.sourceId, since: filter.since });
   return rows.map(r => {
     const ref = `f${Number(r.id)}`;
     const tier = storedTrustTier(r.trust_tier);

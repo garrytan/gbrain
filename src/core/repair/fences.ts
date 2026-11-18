@@ -39,6 +39,7 @@
  * a run whose every model proposal is rejected reports 0 repaired.
  */
 import type { BrainEngine } from '../engine.ts';
+import { nullUnlessCapabilityRefusal } from '../engine-capability-refusal.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { trustedCliRequired } from '../ops/op-fix.ts';
 import { shellQuote, type Action } from '../agent-output.ts';
@@ -161,7 +162,7 @@ interface Settings {
 async function settings(engine: BrainEngine, opts: Pick<RepairPlanOptions, 'noLlm' | 'maxLlmUsd'>): Promise<Settings> {
   const caps = await readFenceRepairCaps(engine);
   const model = await resolveFenceRepairModel(engine);
-  const day = await dailyLedger(engine, FENCE_REPAIR_LEDGER).readDay().catch(() => null);
+  const day = await dailyLedger(engine, FENCE_REPAIR_LEDGER).readDay().catch(nullUnlessCapabilityRefusal);
   return { llmEnabled: !opts.noLlm && await fenceRepairLlmEnabled(engine), model, overrides: await loadPricingOverrides(engine),
     capSource: caps.perPageSource === 'user' || caps.perDaySource === 'user' || opts.maxLlmUsd !== undefined ? 'user' : 'default',
     perPageUsd: caps.perPageUsd, perDayUsd: caps.perDayUsd, dayRemaining: day ? Math.max(0, caps.perDayUsd - day.committedUsd - day.reservedUsd) : null,
@@ -501,7 +502,7 @@ async function tier3(ctx: OperationContext, src: FenceSource, target: FenceTarge
     const out = await held(result.reason, result.message, { ...(result.gate ? { gate: result.gate } : {}), ...(result.rows ? { rows: result.rows } : {}), next, tier: FENCE_REASONS[result.reason]?.stage === 'gate' ? 'manual' : 'llm' });
     const withSpend = { ...out, ...(result.spentUsd ? { llm_usd: result.spentUsd } : {}), detail: { ...out.detail, ...(result.memoHit ? { memo: 'rejected_before' } : {}) } };
     if (!result.stop) return withSpend;
-    const day = await dailyLedger(engine, FENCE_REPAIR_LEDGER).readDay().catch(() => null);
+    const day = await dailyLedger(engine, FENCE_REPAIR_LEDGER).readDay().catch(nullUnlessCapabilityRefusal);
     const resets = result.resetsAt ?? nextUtcMidnight(new Date());
     const message = opts.allowanceUsd !== undefined && !result.resetsAt
       ? `Stopped: ${result.message} ${entry.llm_waiting} page(s) wait for the model. Rerun with a larger --max-usd, or leave them to the maintenance run.`

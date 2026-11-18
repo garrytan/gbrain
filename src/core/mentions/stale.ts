@@ -22,10 +22,8 @@ export interface MentionPreview {
  */
 export async function previewMentionPass(engine: BrainEngine, sourceId?: string): Promise<MentionPreview> {
   // GBRA-133: the newest pass time does not depend on the policy or the due counts, so it is issued with them.
-  const [[row], { policy, due }] = await Promise.all([
-    engine.executeRaw<{ last: string | null }>(
-      `SELECT to_char(max(last_pass_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last FROM mention_index_status
-        WHERE ($1::text IS NULL OR source_id = $1)`, [sourceId ?? null]),
+  const [last, { policy, due }] = await Promise.all([
+    engine.readMentionLastPass(sourceId),
     readMentionPolicy(engine).then(async policy => {
       let due = 0;
       if (policy.enabled) {
@@ -34,7 +32,7 @@ export async function previewMentionPass(engine: BrainEngine, sourceId?: string)
       }
       return { policy, due };
     })]);
-  return { due, last_pass_at: row?.last ?? null, enabled: policy.enabled };
+  return { due, last_pass_at: last, enabled: policy.enabled };
 }
 
 /**

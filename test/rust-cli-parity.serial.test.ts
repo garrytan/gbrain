@@ -279,6 +279,8 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
 
   test('setup never ends in an untyped Rust failure', () => {
     expect(setupRows.filter((r) => r.state === 'diverged')).toEqual([]);
+    // The mirror is the reference only while a Rust setup write is refused; once every write runs, the full brain is.
+    expect(useMirror).toBe(setupRows.some((r) => r.state === 'refused'));
   });
 
   for (const args of COMMANDS) {
@@ -352,19 +354,22 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       onlyRust: sorted([...names].filter((n) => !pgNames.has(n))),
       // Warnings that do not quote the typed refusal: each one is a refused read the check reports in its own words.
       untypedWarnings: sorted(checks.filter((c) => c.status !== 'ok' && !TYPED.test(c.message)).map((c) => c.name)),
-      // Checks that report ok although a refused read stopped them (each check treats a read error as a skip).
+      // Checks that report ok although a refused read stopped them: none. A refused check warns, health unknown.
       okWhileRefused: sorted(checks.filter((c) => c.status === 'ok' && TYPED.test(c.message)).map((c) => c.name)),
     }).toEqual({
       fail: [],
       onlyPglite: ['default_source_local_path', 'frontmatter_repairable', 'image_assets', 'pglite_scale'],
+      // multi_source_drift is gone from this list: it reads listSourceRecords, which Rust serves, so on this
+      // one-source brain it skips exactly as PGLite does instead of warning with the executeRaw refusal.
       onlyRust: ['canonical_content_writes', 'checkout_lagging', 'commits_outside_source_root', 'dirty_age', 'git_convergence',
-        'quarantined_changes', 'shared_skills_sources', 'sync_failures', 'tracked_ownership_marker', 'transcript_secret_exposure'],
+        'quarantined_changes', 'shared_skills_sources', 'sync_failures', 'tracked_ownership_marker',
+        'transcript_secret_exposure'],
       untypedWarnings: ['backup_coverage', 'canonical_content_writes', 'child_table_orphans', 'embedding_provider',
         'entity_link_coverage', 'extract_atoms_backlog', 'fact_take_vectors', 'graph_coverage', 'orphan_ratio',
         // pack_upgrade_available warns with the same message as PGLite: the pack reads are served.
         'pack_upgrade_available', 'raw_provenance', 'retrieval_reflex_health', 'sync_failures', 'text_projection_readiness',
         'timeline_coverage'],
-      okWhileRefused: ['flagged_pages', 'local_edit_adoptions', 'quarantined_pages', 'scraper_junk_pages', 'volunteer_channels'],
+      okWhileRefused: [],
     });
     const count = (s: string) => checks.filter((c) => c.status === s).length;
     table.push({ command: 'doctor --json', state: 'runs', note: ` ${checks.length} checks, ${count('ok')} ok, ${count('warn')} warn, 0 fail; PGLite ${pgReport!.checks!.length}` });

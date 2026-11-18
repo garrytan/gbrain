@@ -44,6 +44,13 @@ import * as cliReadsOps from './cli-reads-ops.ts';
 import * as cliReadsSearchPages from './cli-reads-search-pages.ts';
 import * as wantedLinks from './wanted-links.ts';
 import * as persistence from './persistence.ts';
+import * as cliEntities from './cli-entities.ts';
+import * as factsDoctor from './facts-doctor.ts';
+import * as factsCycle from './facts-cycle.ts';
+import * as factsPurge from './facts-purge.ts';
+import * as factsRepair from './facts-repair.ts';
+import * as factsTrust from './facts-trust.ts';
+import * as jobs from './jobs.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeGuards from './write-guards.ts';
 
@@ -59,10 +66,15 @@ export const STORE_MEMBERS = {
   ...pageOps, ...extraction, ...aliases, ...pageBody, ...facts, ...ontology, ...takes, ...contradictions, ...dream,
   ...evalCapture, ...codeEdges, ...salience, ...stats, ...rawFiles, ...linkQueries, ...timelineQueries, ...keyword,
   ...chunkQueries, ...vectors, ...embeddings, ...transactions, ...relations, ...wantedLinks,
+  // The minion queue and its cycle locks (rust/crates/gbrain-store/src/jobs.rs).
+  ...jobs,
   // Typed reads that replace raw SQL in CLI paths (rust/crates/gbrain-store/src/cli_reads/).
   ...cliSources,
   // Typed reads that CLI paths ran through executeRaw (docs/research/rust-cli-executeraw-map.md).
   ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages,
+  ...cliEntities,
+  // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
+  ...factsDoctor, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust,
   // The persistence brain identity the store already keeps (rust/docs/store/journal.md).
   ...persistenceIdentity,
   ...persistence,

@@ -21,7 +21,6 @@ import { currentWriteTrust, withCoordinatedWrite, withTrustPromotion, withWriteA
 import { normalizeDimension, NOT_CONVERSATION_SLOT_SQL } from '../chronicle/ontology.ts';
 import { verbError, type OperationError } from '../ops/contract.ts';
 import type { Principal } from '../persistence/model.ts';
-import { onOwnedMemoryPageSql } from '../access/member-facts.ts';
 import {
   decisionResult, getTrustProposal, insertTrustProposal, pendingTrustProposalsFor, registerTrustProposalHandler, SHARE_HELD_GUARD, transitionTrustProposal, trustProposalRef,
   type TrustDecision, type TrustDecisionContext, type TrustProposalAction, type TrustProposalRow,
@@ -29,7 +28,7 @@ import {
 import { tierRaiseFix } from './confirm.ts';
 import { queueTierProjection } from './page-write.ts';
 import { propagateTierLowering } from './propagation.ts';
-import { compareTrust, effectiveWriteTrust, storedTrustTier, trustRankSql, type TrustTier, type WriteTrust } from './tier.ts';
+import { compareTrust, effectiveWriteTrust, storedTrustTier, type TrustTier, type WriteTrust } from './tier.ts';
 import { remoteProvenanceFloorSql } from '../search/private-visibility.ts';
 
 /** I3: a write at `writer` may supersede, expire or forget a row at `target` only when it is at least as trusted. */
@@ -56,11 +55,7 @@ export async function lexicalContestCandidate(engine: BrainEngine, sourceId: str
   input: { fact: string; kind: string; visibility: string; entity_slug: string | null; page_slug?: string }, writer: TrustTier): Promise<{ id: number; trust_tier: TrustTier } | null> {
   if (!input.entity_slug) return null;
   // GST-359 C2: a member's fact contests only facts on its own member page; no other write contests one there.
-  const rows = await engine.executeRaw<{ id: number; fact: string; trust_tier: string }>(
-    `SELECT id, fact, trust_tier FROM facts WHERE source_id = $1 AND entity_slug = $2 AND kind = $3 AND visibility = $4
-       AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) AND ${trustRankSql('trust_tier')} > ${trustRankSql('$5::text')}
-       AND ${input.page_slug ? 'source_markdown_slug = $6' : `($6::text IS NULL AND NOT ${onOwnedMemoryPageSql('facts')})`}
-     ORDER BY id DESC LIMIT 200`, [sourceId, input.entity_slug, input.kind, input.visibility, writer, input.page_slug ?? null]);
+  const rows = await engine.listLexicalContestCandidates({ sourceId, entitySlug: input.entity_slug, kind: input.kind, visibility: input.visibility, pageSlug: input.page_slug, writer });
   const mine = slotTokens(input.fact);
   let best: { id: number; trust_tier: TrustTier; score: number } | null = null;
   for (const row of rows) {
@@ -81,13 +76,7 @@ export async function lexicalContestCandidate(engine: BrainEngine, sourceId: str
  */
 export async function restatedPrivateCopy(engine: BrainEngine, sourceId: string, claim: string, entity: string | null, writer: TrustTier):
   Promise<{ id: number; visibility: string; trust_tier: TrustTier } | null> {
-  const [row] = await engine.executeRaw<{ id: number; visibility: string; trust_tier: string }>(
-    `SELECT f.id, f.visibility, f.trust_tier FROM facts f WHERE f.source_id = $1 AND f.fact = $2 AND f.visibility <> 'world'
-       AND f.entity_slug IS NOT DISTINCT FROM $4::text AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now()) AND ${trustRankSql('f.trust_tier')} > ${trustRankSql('$3::text')}
-       AND NOT EXISTS (SELECT 1 FROM facts w WHERE w.source_id = $1 AND w.fact = $2 AND w.visibility = 'world' AND w.expired_at IS NULL
-         AND w.entity_slug IS NOT DISTINCT FROM $4::text
-         AND (w.valid_until IS NULL OR w.valid_until > now()))
-     ORDER BY f.id LIMIT 1`, [sourceId, claim, writer, entity]);
+  const [row] = await engine.listRestatedPrivateCopies({ sourceId, claim, entity, writer });
   return row ? { id: Number(row.id), visibility: row.visibility, trust_tier: storedTrustTier(row.trust_tier) } : null;
 }
 

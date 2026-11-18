@@ -63,6 +63,7 @@ import { resolveSourceWithTier, type SourceTier } from './source-resolver.ts';
 import { deleteSourceRow } from './source-delete.ts';
 import { defaultCloneDir, isOwnedClone } from './url-clone.ts';
 import { hookSessionCwd } from './session-cwd.ts';
+import { sourceRecordsRawConfig } from './source-rows.ts';
 
 // ── Errors ──────────────────────────────────────────────────────────────────
 
@@ -875,7 +876,7 @@ export async function listSources(
   // internal callers — since wave-L, remote scalar/no-grant callers pass
   // their resolved scope here too instead of arriving unscoped).
   const allowed = opts.allowedSourceIds === undefined ? undefined : new Set(opts.allowedSourceIds);
-  const rows = (await engine.listAllSources({ includeArchived: opts.includeArchived === true }))
+  const rows = (await sourceRecordsRawConfig(engine, { includeArchived: opts.includeArchived === true }))
     .filter(r => !allowed || allowed.has(r.id));
   const out: SourceListEntry[] = [];
   for (const r of rows) {

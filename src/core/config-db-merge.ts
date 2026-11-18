@@ -58,11 +58,8 @@ export interface DbPlaneEngineReader {
   /** One-round-trip whole-table read (see config-snapshot.ts). Optional so
    *  narrow readers and SDK callers keep working on the per-key path. */
   getAllConfig?(): Promise<Record<string, string>>;
-  executeRaw?<T = Record<string, unknown>>(
-    sql: string,
-    params?: unknown[],
-    opts?: { signal?: AbortSignal },
-  ): Promise<T[]>;
+  /** The stored rows of the named keys, read from the table itself (BrainEngine.getConfigValues). */
+  getConfigValues?(keys: readonly string[]): Promise<Array<{ key: string; value: string }>>;
 }
 
 /**
@@ -181,11 +178,16 @@ export function _resetDbPlaneMergeMemoForTests(now?: () => number): void {
 }
 
 /**
- * Fetch every DB-plane value this module merges, in ONE round trip when the
- * engine exposes `executeRaw` (`key = ANY($1) OR key LIKE 'cycle.%'`), else
- * via the legacy per-key `getConfig` walk. Empty-string values are treated
- * as unset (dbStr semantics). Quiet-failure: a missing config table
- * (pre-v36 brain mid-migration) yields an empty map and file/env wins.
+ * Fetch every DB-plane value this module merges. With the engine's typed
+ * reads (`getConfigValues` + `listConfigKeys`, which every BrainEngine has,
+ * Rust included) that is the scalar keys and the two prefix listings at
+ * once, then one keyed read of the prefixed keys when any exist: the same
+ * rows the old `key = ANY($1) OR key LIKE 'cycle.%' OR key LIKE
+ * 'provider\_chat\_options.%'` statement returned, read from the table
+ * itself. A narrow reader without them uses the per-key `getConfig` walk.
+ * Empty-string values are treated as unset (dbStr semantics). Quiet-failure:
+ * a missing config table (pre-v36 brain mid-migration) yields an empty map
+ * and file/env wins.
  */
 async function readDbPlaneMergeValues(
   engine: DbPlaneEngineReader,
@@ -194,12 +196,17 @@ async function readDbPlaneMergeValues(
   if (cached && nowFn() - cached.at < DB_MERGE_MEMO_TTL_MS) return cached.values;
 
   const values = new Map<string, string>();
-  if (typeof engine.executeRaw === 'function') {
+  if (typeof engine.getConfigValues === 'function' && typeof engine.listConfigKeys === 'function') {
+    const getConfigValues = engine.getConfigValues.bind(engine);
+    const listConfigKeys = engine.listConfigKeys.bind(engine);
     try {
-      const rows = await engine.executeRaw<{ key: string; value: string | null }>(
-        `SELECT key, value FROM config WHERE key = ANY($1) OR key LIKE 'cycle.%' OR key LIKE 'provider\\_chat\\_options.%'`,
-        [[...DB_MERGED_SCALAR_KEYS]],
-      );
+      const [scalars, cycleKeys, chatKeys] = await Promise.all([
+        getConfigValues(DB_MERGED_SCALAR_KEYS),
+        listConfigKeys(CYCLE_PREFIX),
+        listConfigKeys(CHAT_OPTIONS_PREFIX),
+      ]);
+      const prefixed = [...cycleKeys, ...chatKeys];
+      const rows = prefixed.length > 0 ? [...scalars, ...await getConfigValues(prefixed)] : scalars;
       for (const row of rows) {
         if (typeof row.key !== 'string') continue;
         if (row.value == null || row.value === '') continue;

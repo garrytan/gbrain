@@ -32,6 +32,9 @@ function mkEngine(legacyCount: number): { calls: CapturedCall[]; engine: BrainEn
       return [];
     },
     ...stubSourceMembers([]), // the typed source and guest reads answer an empty sources table, as the raw stub did
+    // The legacy-pending count and the unfenced-row read moved off executeRaw onto typed members; they answer what the executeRaw stub answered.
+    async countLegacyFactsPending() { return [{ n: String(legacyCount) }]; },
+    async listUnfencedFactRows() { return []; },
     async getAllSlugs() { return []; },
     async getPage() { return null; },
     async deleteFactsForPage() { return { deleted: 0 }; },

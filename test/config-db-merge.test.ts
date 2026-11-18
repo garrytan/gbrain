@@ -4,21 +4,24 @@
  * The merge used to issue ~12 sequential engine.getConfig SELECTs per
  * loadConfigWithEngine call — and that loader runs twice per uncached search,
  * so a remote Postgres brain paid up to ~2s of pure config-read latency per
- * query. It now fetches every merged key in ONE batched statement
- * (`key = ANY($1) OR key LIKE 'cycle.%'`) and memoizes the fetched map per
+ * query. It now fetches every merged key through the engine's typed reads
+ * (the scalar keys and the two prefix listings at once, then one keyed read
+ * of the prefixed keys when any exist) and memoizes the fetched map per
  * engine handle for ~30s (mirroring write-through.ts's sync.write_through
  * flag memo; fail-open — a read error yields no merge, never a throw).
  *
  * Pinned here:
- *   - query-count spy: one batched executeRaw, ZERO per-key getConfig calls
+ *   - query-count spy: one scalar getConfigValues + two prefix listings, ZERO
+ *     per-key getConfig calls; a second keyed read only when prefixed keys exist
  *   - full merge correctness through the batched path (provider keys, chat
  *     pins, chat_fallback_chain, cycle.*)
  *   - memo: same engine handle within the TTL issues no new query; the TTL
  *     expiry re-queries (injected clock); distinct handles don't share
- *   - fail-open: a throwing executeRaw no-ops the merge without throwing
- *   - per-key fallback for engines without executeRaw (the thin-reader shape
- *     test/loadConfig-merge.test.ts fakes use)
- *   - the batched SQL is valid on a real engine (PGLite)
+ *   - fail-open: a throwing typed read no-ops the merge without throwing
+ *   - per-key fallback for readers without getConfigValues (the thin-reader
+ *     shape test/loadConfig-merge.test.ts fakes use)
+ *   - the typed reads merge the same rows on a real engine (PGLite), with
+ *     LIKE wildcards in the prefixes read literally
  */
 
 import { describe, test, expect, afterEach, beforeAll, afterAll } from 'bun:test';
@@ -31,7 +34,7 @@ import {
 import type { GBrainConfig } from '../src/core/config.ts';
 
 interface Counts {
-  executeRaw: number;
+  getConfigValues: number;
   getConfig: number;
   listConfigKeys: number;
 }
@@ -39,10 +42,10 @@ interface Counts {
 function makeBatchEngine(map: Record<string, string>): {
   engine: DbPlaneEngineReader;
   counts: Counts;
-  sqls: string[];
+  prefixes: string[];
 } {
-  const counts: Counts = { executeRaw: 0, getConfig: 0, listConfigKeys: 0 };
-  const sqls: string[] = [];
+  const counts: Counts = { getConfigValues: 0, getConfig: 0, listConfigKeys: 0 };
+  const prefixes: string[] = [];
   const engine: DbPlaneEngineReader = {
     async getConfig(key: string) {
       counts.getConfig += 1;
@@ -50,25 +53,24 @@ function makeBatchEngine(map: Record<string, string>): {
     },
     async listConfigKeys(prefix: string) {
       counts.listConfigKeys += 1;
-      return Object.keys(map).filter((k) => k.startsWith(prefix));
+      prefixes.push(prefix);
+      return Object.keys(map).filter((k) => k.startsWith(prefix)).sort();
     },
-    async executeRaw<T>(sql: string, params?: unknown[]) {
-      counts.executeRaw += 1;
-      sqls.push(sql);
-      const keys = (params?.[0] ?? []) as string[];
+    async getConfigValues(keys: readonly string[]) {
+      counts.getConfigValues += 1;
       return Object.entries(map)
-        .filter(([k]) => keys.includes(k) || k.startsWith('cycle.'))
-        .map(([key, value]) => ({ key, value })) as T[];
+        .filter(([k]) => keys.includes(k))
+        .map(([key, value]) => ({ key, value }));
     },
   };
-  return { engine, counts, sqls };
+  return { engine, counts, prefixes };
 }
 
 function makeFallbackEngine(map: Record<string, string>): {
   engine: DbPlaneEngineReader;
   counts: Counts;
 } {
-  const counts: Counts = { executeRaw: 0, getConfig: 0, listConfigKeys: 0 };
+  const counts: Counts = { getConfigValues: 0, getConfig: 0, listConfigKeys: 0 };
   const engine: DbPlaneEngineReader = {
     async getConfig(key: string) {
       counts.getConfig += 1;
@@ -78,7 +80,7 @@ function makeFallbackEngine(map: Record<string, string>): {
       counts.listConfigKeys += 1;
       return Object.keys(map).filter((k) => k.startsWith(prefix));
     },
-    // no executeRaw — thin config-reader shape
+    // no getConfigValues — thin config-reader shape
   };
   return { engine, counts };
 }
@@ -88,8 +90,8 @@ afterEach(() => {
 });
 
 describe('applyDbPlaneReadSideMerge — batched read (D2)', () => {
-  test('one batched executeRaw; zero per-key getConfig / listConfigKeys', async () => {
-    const { engine, counts, sqls } = makeBatchEngine({
+  test('typed reads: scalar keys + two prefix listings + one keyed prefix read; zero per-key getConfig', async () => {
+    const { engine, counts, prefixes } = makeBatchEngine({
       openai_api_key: 'sk-db-example',
       chat_model: 'anthropic:claude-haiku-4-5',
       'cycle.auto_think.enabled': 'true',
@@ -97,12 +99,19 @@ describe('applyDbPlaneReadSideMerge — batched read (D2)', () => {
     const merged: GBrainConfig = { engine: 'pglite' };
     await applyDbPlaneReadSideMerge(merged, engine);
 
-    expect(counts.executeRaw).toBe(1);
+    expect(counts.getConfigValues).toBe(2);
     expect(counts.getConfig).toBe(0);
-    expect(counts.listConfigKeys).toBe(0);
-    // The single statement carries BOTH arms: scalar batch + cycle prefix.
-    expect(sqls[0]).toContain('key = ANY($1)');
-    expect(sqls[0]).toContain(`key LIKE 'cycle.%'`);
+    expect(counts.listConfigKeys).toBe(2);
+    expect(prefixes.sort()).toEqual(['cycle.', 'provider_chat_options.']);
+  });
+
+  test('no prefixed keys: one keyed read only', async () => {
+    const { engine, counts } = makeBatchEngine({ chat_model: 'anthropic:claude-haiku-4-5' });
+    const merged: GBrainConfig = { engine: 'pglite' };
+    await applyDbPlaneReadSideMerge(merged, engine);
+    expect(merged.chat_model).toBe('anthropic:claude-haiku-4-5');
+    expect(counts.getConfigValues).toBe(1);
+    expect(counts.listConfigKeys).toBe(2);
   });
 
   test('merges provider keys, chat pins, chat_fallback_chain, and cycle.* from the batch', async () => {
@@ -158,11 +167,11 @@ describe('applyDbPlaneReadSideMerge — ~30s memo per engine handle (D2)', () =>
   test('second merge on the same engine within the TTL issues no new query', async () => {
     const { engine, counts } = makeBatchEngine({ chat_model: 'anthropic:claude-haiku-4-5' });
     await applyDbPlaneReadSideMerge({ engine: 'pglite' }, engine);
-    expect(counts.executeRaw).toBe(1);
+    expect(counts.getConfigValues).toBe(1);
 
     const second: GBrainConfig = { engine: 'pglite' };
     await applyDbPlaneReadSideMerge(second, engine);
-    expect(counts.executeRaw).toBe(1); // memo hit — no second round trip
+    expect(counts.getConfigValues).toBe(1); // memo hit — no second round trip
     expect(second.chat_model).toBe('anthropic:claude-haiku-4-5'); // values still merge
   });
 
@@ -172,15 +181,15 @@ describe('applyDbPlaneReadSideMerge — ~30s memo per engine handle (D2)', () =>
     const { engine, counts } = makeBatchEngine({ chat_model: 'anthropic:claude-haiku-4-5' });
 
     await applyDbPlaneReadSideMerge({ engine: 'pglite' }, engine);
-    expect(counts.executeRaw).toBe(1);
+    expect(counts.getConfigValues).toBe(1);
 
     now = DB_MERGE_MEMO_TTL_MS - 1; // still inside the window
     await applyDbPlaneReadSideMerge({ engine: 'pglite' }, engine);
-    expect(counts.executeRaw).toBe(1);
+    expect(counts.getConfigValues).toBe(1);
 
     now = DB_MERGE_MEMO_TTL_MS; // window elapsed — must re-read
     await applyDbPlaneReadSideMerge({ engine: 'pglite' }, engine);
-    expect(counts.executeRaw).toBe(2);
+    expect(counts.getConfigValues).toBe(2);
   });
 
   test('distinct engine handles do not share the memo', async () => {
@@ -192,19 +201,22 @@ describe('applyDbPlaneReadSideMerge — ~30s memo per engine handle (D2)', () =>
     await applyDbPlaneReadSideMerge(mergedB, b.engine);
     expect(mergedA.chat_model).toBe('model-a');
     expect(mergedB.chat_model).toBe('model-b');
-    expect(a.counts.executeRaw).toBe(1);
-    expect(b.counts.executeRaw).toBe(1);
+    expect(a.counts.getConfigValues).toBe(1);
+    expect(b.counts.getConfigValues).toBe(1);
   });
 });
 
 describe('applyDbPlaneReadSideMerge — fail-open', () => {
-  test('a throwing executeRaw no-ops the merge without throwing (and memoizes the miss)', async () => {
+  test('a throwing typed read no-ops the merge without throwing (and memoizes the miss)', async () => {
     let throws = 0;
     const engine: DbPlaneEngineReader = {
       async getConfig() {
         throw new Error('unreachable — batched path must not fall back per key');
       },
-      async executeRaw<T>(): Promise<T[]> {
+      async listConfigKeys(): Promise<string[]> {
+        return [];
+      },
+      async getConfigValues(): Promise<Array<{ key: string; value: string }>> {
         throws += 1;
         throw new Error('relation "config" does not exist');
       },
@@ -221,7 +233,7 @@ describe('applyDbPlaneReadSideMerge — fail-open', () => {
   });
 });
 
-describe('applyDbPlaneReadSideMerge — per-key fallback (no executeRaw)', () => {
+describe('applyDbPlaneReadSideMerge — per-key fallback (no getConfigValues)', () => {
   test('merges via getConfig + listConfigKeys and memoizes the result', async () => {
     const { engine, counts } = makeFallbackEngine({
       anthropic_api_key: 'sk-ant-db-example',
@@ -234,7 +246,7 @@ describe('applyDbPlaneReadSideMerge — per-key fallback (no executeRaw)', () =>
     expect(merged.anthropic_api_key).toBe('sk-ant-db-example');
     expect(merged.chat_fallback_chain).toEqual(['anthropic:claude-haiku-4-5']);
     expect(merged.cycle?.['enrich_thin.enabled']).toBe('true');
-    expect(counts.executeRaw).toBe(0);
+    expect(counts.getConfigValues).toBe(0);
     expect(counts.getConfig).toBeGreaterThan(0);
     expect(counts.listConfigKeys).toBe(1);
 
@@ -246,7 +258,7 @@ describe('applyDbPlaneReadSideMerge — per-key fallback (no executeRaw)', () =>
   });
 });
 
-describe('batched SQL shape on a real engine (PGLite)', () => {
+describe('typed reads on a real engine (PGLite)', () => {
   let engine: import('../src/core/pglite-engine.ts').PGLiteEngine;
 
   beforeAll(async () => {
@@ -260,15 +272,21 @@ describe('batched SQL shape on a real engine (PGLite)', () => {
     await engine.disconnect();
   });
 
-  test(`key = ANY($1) OR key LIKE 'cycle.%' round-trips through PGLite`, async () => {
+  test('scalar keys, cycle.* and provider_chat_options.* merge from the table; prefixes match literally', async () => {
     await engine.setConfig('chat_model', 'anthropic:claude-haiku-4-5');
     await engine.setConfig('cycle.auto_think.enabled', 'true');
     await engine.setConfig('cycle.empty_value', ''); // dbStr semantics: unset
+    await engine.setConfig('provider_chat_options.anthropic', '{"thinking":{"type":"disabled"}}');
+    // The old LIKE escaped the underscores; the prefix listing escapes them too, so this key is not a match.
+    await engine.setConfig('providerXchatXoptions.anthropic', '{"thinking":{"type":"enabled"}}');
+    // Unrelated keys are not read.
+    await engine.setConfig('cyclesX', 'x');
 
     const merged: GBrainConfig = { engine: 'pglite' };
     await applyDbPlaneReadSideMerge(merged, engine);
 
     expect(merged.chat_model).toBe('anthropic:claude-haiku-4-5');
     expect(merged.cycle).toEqual({ 'auto_think.enabled': 'true' });
+    expect(merged.provider_chat_options).toEqual({ anthropic: { thinking: { type: 'disabled' } } });
   }, 60_000);
 });
