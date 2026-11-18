@@ -640,6 +640,9 @@ export const RUST_ENGINE_MEMBERS = {
   upsertDecideState: 'eval_capture',
   deleteDecideState: 'eval_capture',
   ensureDecideState: 'eval_capture',
+  insertDecideSpend: 'eval_capture',
+  dailyDecideSpend: 'eval_capture',
+  listDecideSpendBySlot: 'eval_capture',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;

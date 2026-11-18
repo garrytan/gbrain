@@ -257,7 +257,7 @@ src/core/ai/chat-usage.ts	execute_raw	1
 src/core/ai/decide/egress.ts	execute_raw	1
 src/core/ai/decide/proposals-store.ts	execute_raw	16
 src/core/ai/decide/review-lane.ts	execute_raw	17
-src/core/ai/decide/store.ts	execute_raw	15
+src/core/ai/decide/store.ts	execute_raw	14
 src/core/analyze-lock.ts	execute_raw	1
 src/core/attendance-repair.ts	execute_raw	17
 src/core/backfill-base.ts	execute_raw	12
@@ -1130,7 +1130,6 @@ src/eval/brainbench/metrics/write-back.ts	execute_raw	1
 src/eval/brainbench/seed.ts	execute_raw	1
 src/eval/brainbench/trust-scenario.ts	execute_raw	13
 src/eval/brainbench/trust-suites.ts	execute_raw	1
-src/eval/decide-eval-flags.ts	execute_raw	1
 src/eval/longmemeval/harness.ts	execute_raw	2
 src/eval/longmemeval/retrieval-arms.ts	execute_raw	2
 src/eval/shared/embed-cache.ts	driver_call	4

@@ -1,4 +1,5 @@
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
+import type * as DecideStoreSql from './engine-sql/decide-store.ts';
 import type * as TrustWithdrawalsSql from './engine-sql/trust-withdrawals.ts';
 import type * as OpenLoopsSql from './engine-sql/open-loops.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
@@ -3922,4 +3923,10 @@ export interface BrainEngine {
   deleteDecideState(key: string): Promise<void>;
   /** Keep the value only when the key is empty, then answer the stored value (null if it cannot be read back). */
   ensureDecideState(key: string, value: string): Promise<string | null>;
+  /** Record spend rows; a request id already recorded keeps its first row, and a refused row records none. */
+  insertDecideSpend(rows: readonly DecideStoreSql.DecideSpendInsert[]): Promise<void>;
+  /** Third-party spend recorded at or after `since`: the total and the remote part. */
+  dailyDecideSpend(since: Date): Promise<{ total: number; remote: number }>;
+  /** Spend totals per slot over the whole ledger, in slot order. */
+  listDecideSpendBySlot(): Promise<DecideStoreSql.DecideSpendSlotTotals[]>;
 }

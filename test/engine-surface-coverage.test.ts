@@ -142,6 +142,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'hasPersistenceTable', 'listManagedRootBindings', 'readGraduationGateRow', 'listRetiredDeactivations',
   // Group A (decide store)
   'readDecideState', 'upsertDecideState', 'deleteDecideState', 'ensureDecideState',
+  'insertDecideSpend', 'dailyDecideSpend', 'listDecideSpendBySlot',
   // Search
   'searchKeyword', 'countKeywordPages', 'searchKeywordPages', 'searchTitles', 'searchVector', 'getEmbeddingsByChunkIds',
   // Chunks
