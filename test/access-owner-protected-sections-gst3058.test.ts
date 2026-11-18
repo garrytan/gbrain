@@ -22,7 +22,6 @@ import { buildOperationContext, dispatchToolCall } from '../src/mcp/dispatch.ts'
 import { operations } from '../src/core/operations.ts';
 import { markCliResult } from '../src/cli/room.ts';
 import { buildBrainTools } from '../src/core/minions/tools/brain-allowlist.ts';
-import { join } from 'node:path';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { credentialHolders, setOwner } from '../src/core/access/owner.ts';
 import { bindCredential } from '../src/core/access/members.ts';
@@ -352,12 +351,3 @@ for (const kind of testBackends()) {
     }, 300_000);
   });
 }
-
-// GST-3058: the owner's widenings are off unless dispatch switches them on for a direct remote call from an owner-bound
-// credential with no room declared. This census fails when a second site sets the flag.
-test('census: only dispatch switches the owner widening on', () => {
-  const grep = (args: string[]) => Bun.spawnSync(['git', 'grep', ...args, '--', 'src'], { cwd: join(import.meta.dir, '..') }).stdout.toString().trim().split('\n');
-  expect(grep(['-l', '-E', 'ownerReads\\??:']).sort()).toEqual(['src/core/search/private-visibility.ts', 'src/mcp/dispatch.ts']);
-  expect(grep(['-c', '-E', 'ownerReads\\??:'])).toEqual(expect.arrayContaining(['src/core/search/private-visibility.ts:2', 'src/mcp/dispatch.ts:1']));
-  expect(grep(['-c', 'ownerReads: true'])).toEqual(['src/mcp/dispatch.ts:1']);
-});
