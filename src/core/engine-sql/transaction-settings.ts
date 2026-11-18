@@ -23,6 +23,18 @@ export async function readTransactionSettings(exec: LegacyUnscopedRead, names: r
   return names.map((_, index) => rows[index]?.value ?? null);
 }
 
+/**
+ * `readCurrentWriteTrust`: the text persistence/context.ts `currentWriteTrust` has always sent, byte for byte. The two
+ * trust settings the tier trigger reads (trust/schema.ts), each null where it was never set.
+ */
+export const CURRENT_WRITE_TRUST_SQL = `SELECT current_setting('gbrain.write_trust_tier',true) AS tier, current_setting('gbrain.write_origin',true) AS origin`;
+
+/** The writer's trust declaration in force on this transaction, as its two raw settings (null where never set). */
+export async function readCurrentWriteTrust(exec: LegacyUnscopedRead): Promise<{ tier: string | null; origin: string | null }> {
+  const [row] = await exec.executeRaw<{ tier: string | null; origin: string | null }>(CURRENT_WRITE_TRUST_SQL);
+  return { tier: row?.tier ?? null, origin: row?.origin ?? null };
+}
+
 /** Sets each setting to the value at the same index, for the rest of the current transaction (`set_config(name, value, true)`), in one statement. */
 export async function applyTransactionSettings(exec: SqlExecutor, names: readonly string[], values: readonly string[]): Promise<void> {
   assertSettingNames(names);

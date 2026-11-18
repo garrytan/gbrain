@@ -32,6 +32,7 @@ export const RUST_ENGINE_MEMBERS = {
   // transactions
   readTransactionSettings: 'transactions',
   applyTransactionSettings: 'transactions',
+  readCurrentWriteTrust: 'transactions',
   transaction: 'transactions',
   transactionDirect: 'transactions',
   lockPageKeys: 'transactions',

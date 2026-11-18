@@ -130,10 +130,9 @@ export function withWriteTrust<T>(engine: SettingsEngine, trust: WriteTrust, fn:
   return withTransactionSettings(engine, TRUST_SETTINGS, outer => nestedTrustValues(outer, trust), fn);
 }
 /** The trust declaration in force on this transaction, or null (rows would be stamped `unknown`). */
-export async function currentWriteTrust(engine: Pick<BrainEngine, 'executeRaw'>): Promise<WriteTrust | null> {
-  const [row] = await engine.executeRaw<{ tier: string | null; origin: string | null }>(
-    `SELECT current_setting('gbrain.write_trust_tier',true) AS tier, current_setting('gbrain.write_origin',true) AS origin`);
-  return storedWriteTrust(row?.tier ?? '', row?.origin ?? '');
+export async function currentWriteTrust(engine: Pick<BrainEngine, 'readCurrentWriteTrust'>): Promise<WriteTrust | null> {
+  const row = await engine.readCurrentWriteTrust();
+  return storedWriteTrust(row.tier ?? '', row.origin ?? '');
 }
 /**
  * The owner-confirmation capability (CEO-9): inside `fn`, an UPDATE may raise

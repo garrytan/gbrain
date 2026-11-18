@@ -3076,6 +3076,17 @@
         ],
         "flagOnScopes": []
       },
+      "readCurrentWriteTrust#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "readEmbeddingStateCounts#full": {
         "flagOffLanes": [
           "pool"
@@ -4910,6 +4921,7 @@
         "readChatUsage": "none",
         "readChildCompletions": "none",
         "readClientOpUsage": "none",
+        "readCurrentWriteTrust": "none",
         "readCycleLocks": "none",
         "readDatabaseClock": "none",
         "readEmbedBackfillBySource": "none",

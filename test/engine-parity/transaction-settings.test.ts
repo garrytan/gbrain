@@ -15,6 +15,9 @@
  *    trust context directly.
  *  - Seam: the typed members only (no executeRaw: D18).
  *
+ * `readCurrentWriteTrust` (persistence/context.ts `currentWriteTrust`) reads the two trust settings the tier trigger
+ * reads: the declaration applied in a transaction, none outside one, the outer one again after a savepoint rollback.
+ *
  * Null and '' both mean "unset" to every caller (context.ts reads `value ?? ''`). Which one an unset name reads as
  * depends on the connection: Postgres keeps a placeholder for a name once any statement on that connection set it, so
  * it then reads '' where a fresh connection reads null. PGLite has one connection per engine and Postgres a pool, so
@@ -25,6 +28,7 @@ import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { currentWriteTrust } from '../../src/core/persistence/context.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -112,6 +116,36 @@ describe('engine parity: transaction-local settings', () => {
       return { refused, tier: await tx.readTransactionSettings([TIER]) };
     });
     return { outside, inside: { ...inside, tier: unset(inside.tier) } };
+  });
+
+  parityTest('readCurrentWriteTrust reads the trust declaration in force on the transaction', {
+    methods: ['transaction', 'applyTransactionSettings', 'readCurrentWriteTrust'],
+  }, async (engine, backend) => {
+    const fold = (row: { tier: string | null; origin: string | null }) => ({ tier: row.tier ?? '', origin: row.origin ?? '' });
+    const outside = fold(await engine.readCurrentWriteTrust());
+    const inside = await engine.transaction(async (tx) => {
+      const before = await tx.readCurrentWriteTrust();
+      if (backend === 'rust') expect(before).toEqual({ tier: null, origin: null });
+      await tx.applyTransactionSettings([TIER, ORIGIN], ['agent_written', '{"kind":"cli"}']);
+      const declared = await tx.readCurrentWriteTrust();
+      const dropped = await tx.transaction(async (inner) => {
+        await inner.applyTransactionSettings([TIER, ORIGIN], ['tool_observed', '']);
+        throw Object.assign(new Error('drop the savepoint'), { seen: await inner.readCurrentWriteTrust() });
+      }).then(() => null, (error: { seen?: unknown }) => error.seen ?? null);
+      return { before: fold(before), declared, parsed: await currentWriteTrust(tx), dropped, restored: await tx.readCurrentWriteTrust() };
+    });
+    const later = await engine.transaction(async (tx) => ({ raw: fold(await tx.readCurrentWriteTrust()), parsed: await currentWriteTrust(tx) }));
+    const answers = { outside, ...inside, later };
+    expect(answers).toEqual({
+      outside: { tier: '', origin: '' },
+      before: { tier: '', origin: '' },
+      declared: { tier: 'agent_written', origin: '{"kind":"cli"}' },
+      parsed: { tier: 'agent_written', origin: { kind: 'cli' } },
+      dropped: { tier: 'tool_observed', origin: '' },
+      restored: { tier: 'agent_written', origin: '{"kind":"cli"}' },
+      later: { raw: { tier: '', origin: '' }, parsed: null },
+    });
+    return answers;
   });
 
   // The Rust engine keeps only the settings its writers read (the six trust settings in the store, the attribution

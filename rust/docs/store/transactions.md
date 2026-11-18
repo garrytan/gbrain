@@ -63,6 +63,10 @@ becomes visible to the brain in one commit, or not at all.
     - Two transactions never see each other's settings. The store admits one write transaction at
       a time: a second `begin_transaction` waits for the writer, and each transaction's handle has
       its own context, which starts empty.
+    - `readCurrentWriteTrust()` (`store-members/write-context.ts`) is `readTransactionSettings`
+      for `gbrain.write_trust_tier` and `gbrain.write_origin`, returned as `{ tier, origin }`.
+      PGLite and Postgres send the text `persistence/context.ts` `currentWriteTrust` always sent
+      (`CURRENT_WRITE_TRUST_SQL` in `src/core/engine-sql/transaction-settings.ts`).
 
 An `AbortSignal` in `opts` is honoured before the transaction starts and while it waits at the
 gate (`cancelled`); once `fn` runs the signal is ignored, as on PGLite.
