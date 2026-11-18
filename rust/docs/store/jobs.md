@@ -8,6 +8,8 @@ statements in `src/core/engine-sql/jobs.ts` and `cycle-locks.ts`; this store run
 records. Timestamps cross the binding as ISO strings; the TypeScript members
 (`src/core/rust-engine/store-members/jobs.ts`) turn them into `Date`s, as PGLite returns them.
 
+The status reads (counts, last runs, windows) are in [jobs-status.md](jobs-status.md).
+
 Keys, under the family tag `keys::JOBS` (`m`):
 
 | Key | Holds |

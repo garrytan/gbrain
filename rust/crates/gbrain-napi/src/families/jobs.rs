@@ -5,6 +5,7 @@
 //! (rust/docs/store/jobs.md).
 
 mod ops;
+mod status;
 
 use gbrain_store::error::StoreError;
 use gbrain_store::jobs::{AdmitSpec, ClaimSpec, ListFilter, LockAcquire, LockFilter, LockHolder};
