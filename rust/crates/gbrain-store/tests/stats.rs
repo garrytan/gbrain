@@ -442,3 +442,58 @@ fn enrich_salience_order_reads_the_emotional_weight() {
     store.set_emotional_weight_batch(&rows).unwrap();
     assert_eq!(slugs(&store), ["high", "low", "linked"]);
 }
+
+fn onboard(store: &Store, signal: &str) -> u64 {
+    let input: OnboardSignalInput = serde_json::from_value(json!({
+        "signal": signal,
+        "entityTypes": {
+            "types": ["person", "company"],
+            "per_source": [{ "source_id": "other", "types": ["company"] }],
+        },
+    }))
+    .unwrap();
+    store.count_onboard_signal(&input).unwrap()
+}
+
+#[test]
+fn onboard_signals_count_brain_wide_live_pages_under_the_entity_filter() {
+    let dir = TempDir::new("stats-onboard");
+    let store = open(&dir);
+    source(&store, "other");
+    put_page(&store, "people/alice-example", "person", "alice", None);
+    put_page(&store, "companies/acme-example", "company", "acme", None);
+    put_page(&store, "people/gone-example", "person", "gone", None);
+    put_page(&store, "notes/memo", "note", "memo", None);
+    // A person in `other`, whose entity types are only `company`.
+    put_page(
+        &store,
+        "people/carol-example",
+        "person",
+        "carol",
+        Some("other"),
+    );
+    let skip: PageInput = serde_json::from_value(json!({
+        "type": "note", "title": "skip", "compiled_truth": "skip", "frontmatter": { "embed_skip": true },
+    }))
+    .unwrap();
+    store
+        .put_page("notes/skip", &skip, &PutPageOptions::default())
+        .unwrap();
+    chunks(&store, "notes/memo", 3, 1);
+    chunks(&store, "notes/skip", 2, 0);
+    chunks(&store, "people/gone-example", 1, 0);
+    link(&store, "notes/memo", "people/alice-example");
+    link(&store, "people/alice-example", "people/gone-example");
+    store.soft_delete_page("people/gone-example", None).unwrap();
+
+    // memo has 2 chunks with no vector; alice, acme and carol each have the one chunk `put_page`
+    // made from the body. skip (embed_skip) and gone (soft-deleted) do not count.
+    assert_eq!(onboard(&store, "stale_chunks"), 5);
+    assert_eq!(onboard(&store, "entities"), 2);
+    assert_eq!(onboard(&store, "linked_entities"), 1);
+    assert_eq!(onboard(&store, "timeline_entities"), 0);
+    assert_eq!(onboard(&store, "takes"), 0);
+    assert_eq!(onboard(&store, "pages"), 5);
+    // A signal the member does not name counts live pages, as the SQL's last arm does.
+    assert_eq!(onboard(&store, "unknown"), 5);
+}
