@@ -63,7 +63,8 @@ export function rememberIneligible(cursor: ProjectionScanCursor, row: { source_i
 
 /**
  * The CTEs `recent` and `win` over `page_projection_jobs` for one cursor: each
- * row carries `lane` ('recent' or 'window') and `ord` (window order). `filter`
+ * row carries `lane` ('recent' or 'window') and `ord` (window order, cast to
+ * int4 so every engine reads a number, as projectionWindowFragment does). `filter`
  * is an extra predicate over `j` (internal SQL); parameters are appended to
  * `params`. `high_water` (the queue's current `max(updated_at)`) rides along so
  * the caller can move the mark.
@@ -80,7 +81,7 @@ export function residentWindowCtes(cursor: ProjectionScanCursor, params: unknown
       ORDER BY j.source_incarnation,j.slug LIMIT ${WINDOW_ROWS}),
     wrap AS (SELECT ${cols} FROM page_projection_jobs j WHERE (j.source_incarnation,j.slug) <= ($${inc}::uuid,$${slug}) AND ${filter}
       ORDER BY j.source_incarnation,j.slug LIMIT ${WINDOW_ROWS}),
-    win AS (SELECT *,'window'::text AS lane,row_number() OVER (ORDER BY part,source_incarnation,slug) AS ord FROM (
+    win AS (SELECT *,'window'::text AS lane,(row_number() OVER (ORDER BY part,source_incarnation,slug))::int AS ord FROM (
       (SELECT *,0 AS part FROM fwd ORDER BY source_incarnation,slug) UNION ALL (SELECT *,1 AS part FROM wrap ORDER BY source_incarnation,slug)
       ORDER BY part,source_incarnation,slug LIMIT ${WINDOW_ROWS}) w),
     high_water AS (SELECT max(updated_at)::text AS at FROM page_projection_jobs)`;
