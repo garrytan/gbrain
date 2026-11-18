@@ -61,6 +61,7 @@ import { classifyPgAccessError } from '../core/pg-access-classify.ts';
 import { redactConnectionInfo } from '../core/audit/redact-connection-info.ts';
 import { redactUrlsInText } from '../core/url-redact.ts';
 import { authSourcesFromGrant, privatePagesAuth } from '../core/grants/model.ts';
+import { tokenReadSources } from '../core/grants/read-shared.ts';
 import { resolveTokenGrant, touchTokenLastUsed } from '../core/grants/legacy-token.ts';
 import { storedMinTrust } from '../core/trust/tier.ts';
 import { tokenMemberBinding } from '../core/access/token-binding.ts';
@@ -311,7 +312,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
       const binding = await tokenMemberBinding(sql, row, row.created_at).catch(() => null); // GBRA-218 verify join
       if (!binding) return { ok: false, code: 'access_member_disabled' };
       const allowList = grant.takesHolders ?? ['world'];
-      const { sourceId, allowedSources, hasSourceGrant } = authSourcesFromGrant(grant);
+      const { sourceId, allowedSources, hasSourceGrant, ...readShared } = await tokenReadSources(sql, grant, async () => binding.member?.id ?? null);
       const auth: AuthInfo = {
         token,
         clientId: rowId,
@@ -321,7 +322,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         scopes: grant.scopes,
         sourceId,
         ...(grant.allowedOperations === null ? {} : { allowedOperations: grant.allowedOperations }),
-        ...(allowedSources ? { allowedSources } : {}), ...privatePagesAuth(grant),
+        ...(allowedSources ? { allowedSources } : {}), ...privatePagesAuth(grant), ...readShared,
         ...(storedMinTrust(row.min_trust) ? { minTrust: storedMinTrust(row.min_trust) } : {}),
       };
       return {

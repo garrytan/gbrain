@@ -9,7 +9,7 @@ import { isHostAbsolutePath } from '../path-confine.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { OperationError } from '../ops/contract.ts';
 import { admitChangeReason, CHANGE_REASON_OPERATIONS } from './change-reason.ts';
-import { grantedWriteSource, writeGrantRefusal } from './write-grant.ts';
+import { grantedWriteSource, readsButWritesOnly, writeGrantRefusal } from './write-grant.ts';
 import { VERSION } from '../../version.ts';
 import { ownerBuildMismatch } from './publication-failure.ts';
 import { enforceClientSlugFence, enforceSubagentSlugFence, isLegacyStoredPageSlug, normalizeSlugPrefix, parseSourceIdParam, requireWritablePage, validatePageSlug } from '../ops/context.ts';
@@ -153,7 +153,7 @@ export function pageMutationSource(ctx: OperationContext, params: Record<string,
   const granted = grantedWriteSource(ctx);
   if (ctx.remote !== false && sourceId !== granted && !perCallWriteSource(ctx, sourceId)) {
     throw writeGrantRefusal(ctx,
-      `This connection writes only to source ${granted}. Pass source_id ${granted} (or omit it), or ask the brain host's operator to grant write access to ${sourceId}.`);
+      `${readsButWritesOnly(ctx, sourceId, granted)}This connection writes only to source ${granted}. Pass source_id ${granted} (or omit it), or ask the brain host's operator to grant write access to ${sourceId}.`);
   }
   return sourceId;
 }

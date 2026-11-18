@@ -6768,6 +6768,8 @@
           "principal?: { kind: \"oauth_client\" | \"legacy_token\"; id: string; } | undefined",
           "privateFacts?: { mode: \"granted_sources\"; sources: string[]; } | undefined",
           "privatePages?: { mode: \"granted_sources\"; sources: string[]; } | undefined",
+          "readShared?: boolean | undefined",
+          "readSharedUnresolved?: boolean | undefined",
           "readsUnscoped?: boolean | undefined",
           "scopes: string[]",
           "sourceActive?: boolean | undefined",
