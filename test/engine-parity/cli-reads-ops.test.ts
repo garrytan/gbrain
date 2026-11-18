@@ -10,12 +10,11 @@
  *    can implement or refuse.
  *  - Why existing coverage misses it: these statements ran through `executeRaw`, which the parity cases cannot call
  *    (D18), so no case compared them across engines (docs/research/rust-cli-executeraw-map.md).
- *  - Seam: none in the cases except `seedWantedLink`, harness-style SQL behind the backend switch (no typed member
- *    writes wanted_links alone; the Rust arm refuses listWantedPages, so it seeds nothing). Generated values (page ids,
- *    timestamps) are compared by relation or shape, never by value.
+ *  - Seam: none; wanted rows are seeded through the typed `replaceWantedLinkRows` on every arm. Generated values
+ *    (page ids, timestamps) are compared by relation or shape, never by value.
  */
 import { describe, expect } from 'bun:test';
-import { createSource, parityArms, sorted, type ParityBackend } from './harness.ts';
+import { createSource, parityArms, sorted } from './harness.ts';
 import { chunk, seedPage } from './chunk-fixtures.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -33,22 +32,11 @@ function scan(extra: Partial<ExactScanOpts> = {}): ExactScanOpts {
 const note = (title: string, body: string, frontmatter: Record<string, unknown> = {}, type = 'note') =>
   ({ type: type as 'note', title, compiled_truth: body, frontmatter });
 
-/** Fixture: one wanted_links row from `originSlug` to a missing target. SQL arms only; see the header. */
-async function seedWantedLink(engine: BrainEngine, backend: ParityBackend, originSlug: string, target: string, refKind: 'slug' | 'name', linkType = '') {
-  switch (backend) {
-    case 'rust':
-      return;
-    case 'pglite':
-    case 'postgres': {
-      const origin = await engine.getPage(originSlug);
-      await engine.executeRaw(
-        `INSERT INTO wanted_links (origin_page_id, source_id, producer, ref_kind, target_source_id, target_ref, link_type, context, checked_at)
-         VALUES ($1, 'default', 'body', $2, 'default', $3, $4, '', now())`,
-        [origin!.id, refKind, target, linkType],
-      );
-      return;
-    }
-  }
+/** Fixture: the body-producer wanted rows of `originSlug`, written through the typed member on every arm. */
+async function seedWantedLinks(engine: BrainEngine, originSlug: string, targets: Array<{ target: string; refKind: 'slug' | 'name'; linkType?: string }>) {
+  const origin = await engine.getPage(originSlug, { sourceId: 'default' });
+  const rows = targets.map(t => ({ producer: 'body' as const, ref_kind: t.refKind, target_source_id: 'default', target_ref: t.target, link_type: t.linkType ?? '', context: '' }));
+  await engine.replaceWantedLinkRows({ pageId: Number(origin!.id), sourceId: 'default' }, { rows, producers: ['body'], readAt: '2026-01-02T03:04:05.678Z' });
 }
 
 describe('engine parity: read-command statements', () => {
@@ -152,13 +140,12 @@ describe('engine parity: read-command statements', () => {
     return { all, world: await read(true), paged: await read(false, 1, 1) };
   });
 
-  parityTest('listWantedPages counts missing link targets in scope, most referenced first', { methods: ['listWantedPages'] }, async (engine, backend) => {
+  parityTest('listWantedPages counts missing link targets in scope, most referenced first', { methods: ['listWantedPages', 'replaceWantedLinkRows'] }, async (engine) => {
     await engine.putPage('notes/a', note('A', 'links to missing pages'));
     await engine.putPage('notes/b', note('B', 'links too'));
     await engine.putPage('people/carol-example', note('Carol', 'exists', {}, 'person'));
-    await seedWantedLink(engine, backend, 'notes/a', 'people/missing-example', 'slug', 'mentions');
-    await seedWantedLink(engine, backend, 'notes/b', 'people/missing-example', 'slug');
-    await seedWantedLink(engine, backend, 'notes/a', 'carol-example', 'name');
+    await seedWantedLinks(engine, 'notes/a', [{ target: 'people/missing-example', refKind: 'slug', linkType: 'mentions' }, { target: 'carol-example', refKind: 'name' }]);
+    await seedWantedLinks(engine, 'notes/b', [{ target: 'people/missing-example', refKind: 'slug' }]);
     const { total, rows } = await engine.listWantedPages({ sourceId: 'default', limit: 10, offset: 0 });
     for (const r of rows) for (const at of [r.first_seen, r.last_checked]) expect(at === 'pending' || TS.test(at)).toBe(true);
     const view = rows.map(({ first_seen: _f, last_checked: _l, ...r }) => r);
@@ -166,5 +153,18 @@ describe('engine parity: read-command statements', () => {
     expect(view[0]).toMatchObject({ target: 'people/missing-example', referenced_by: 2 });
     const paged = await engine.listWantedPages({ sourceId: 'default', limit: 1, offset: 1 });
     return { total, view, pagedTotal: paged.total, paged: paged.rows.map(r => r.target) };
+  });
+
+  parityTest('listWantedPages with excludePrivate drops wanted rows whose origin page is private', { methods: ['listWantedPages', 'replaceWantedLinkRows'] }, async (engine) => {
+    await engine.putPage('notes/open', note('Open', 'public origin'));
+    await engine.putPage('notes/closed', note('Closed', 'private origin', { visibility: 'private' }));
+    await seedWantedLinks(engine, 'notes/open', [{ target: 'people/open-missing', refKind: 'slug' }]);
+    await seedWantedLinks(engine, 'notes/closed', [{ target: 'people/closed-missing', refKind: 'slug' }]);
+    const all = await engine.listWantedPages({ sourceId: 'default', limit: 10, offset: 0 });
+    expect(all.rows.map(r => r.target).sort()).toEqual(['people/closed-missing', 'people/open-missing']);
+    // The Rust store has no visibility filter: this call is its typed refusal (engine_capability_missing).
+    const open = await engine.listWantedPages({ sourceId: 'default', excludePrivate: true, limit: 10, offset: 0 });
+    expect(open.rows.map(r => r.target)).toEqual(['people/open-missing']);
+    return { total: open.total, targets: open.rows.map(r => r.target) };
   });
 });

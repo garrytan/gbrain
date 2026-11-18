@@ -263,7 +263,7 @@ listExactIdentityCandidates	cli_reads_ops	yes	1	no	yes	yes	refuses:pages
 rankEntities	cli_reads_ops	yes	1	no	yes	yes	refuses:graph
 listExtractionPendingPages	cli_reads_ops	yes	1	no	yes	yes	refuses:pages
 listUnattributedFacts	cli_reads_ops	yes	1	no	yes	yes	refuses:facts
-listWantedPages	cli_reads_ops	yes	1	no	yes	yes	refuses:links
+listWantedPages	cli_reads_ops	yes	5	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 executeRaw	raw_sql	yes	2	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
@@ -295,4 +295,4 @@ listLinkPageMetadata	cli_reads_import	yes	1	no	yes	yes	serves
 listStoredTimelineRows	cli_reads_import	yes	1	no	yes	yes	serves
 filterPagesAtRevision	cli_reads_import	yes	1	no	yes	yes	serves
 lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	serves
-replaceWantedLinkRows	wanted_links	yes	4	no	yes	yes	serves
+replaceWantedLinkRows	wanted_links	yes	6	no	yes	yes	serves

@@ -4,23 +4,20 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: lockRegisteredSourceIds and replaceWantedLinkRows return the same observable result on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1), and the wanted rows they
- *    leave read back the same through listWantedPages (the free function on the SQL arms, the store read on Rust).
+ *    leave read back the same through the engine member listWantedPages (SQL on the SQL arms, the store read on Rust).
  *  - Regression: an engine that writes wanted rows differently changes which missing targets `gbrain wanted` lists,
  *    how many pages reference each, which bare names match an existing page and which origins stale extraction
  *    re-reads; the Rust engine has no SQL, so the writes have to exist as typed methods it can implement.
  *  - Why existing coverage misses it: wanted-links-store.ts ran these statements through `executeRaw`, which the
  *    parity cases cannot call (D18), so no case compared them across engines (docs/research/rust-cli-executeraw-map.md).
- *  - Seam: `readWanted` below reads the rows back: on the SQL arms through `listWantedPages` (its SQL lives in
- *    src/core/wanted-links-store.ts, not in the case), on Rust through the napi `listWantedPages` the store serves
- *    until lane 2's member lands. Generated values (first_seen, now() check times) are compared by shape or by a
- *    relation, never by value.
+ *  - Seam: none; `readWanted` below reads the rows back through the typed engine member on every arm. Generated
+ *    values (first_seen, now() check times) are compared by shape or by a relation, never by value.
  */
 import { describe, expect } from 'bun:test';
 import { createSource, parityArms, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine, WantedLinkRowInput } from '../../src/core/engine.ts';
-import type { RustEngine } from '../../src/core/rust-engine.ts';
-import { listWantedPages, type WantedPageRow } from '../../src/core/wanted-links-store.ts';
+import type { WantedPageRow } from '../../src/core/wanted-links-store.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -29,9 +26,8 @@ const READ_AT = '2026-01-02T03:04:05.678Z';
 
 type WantedQuery = { sourceId?: string; sourceIds?: string[]; limit: number; offset: number };
 
-async function readWanted(engine: BrainEngine, backend: ParityBackend, query: WantedQuery = { limit: 50, offset: 0 }): Promise<{ total: number; rows: WantedPageRow[] }> {
-  if (backend === 'rust') return (engine as unknown as RustEngine).openStore('listWantedPages').brain.listWantedPages(query);
-  return listWantedPages(engine, query);
+async function readWanted(engine: BrainEngine, _backend: ParityBackend, query: WantedQuery = { limit: 50, offset: 0 }): Promise<{ total: number; rows: WantedPageRow[] }> {
+  return engine.listWantedPages(query);
 }
 
 /** A row with its generated times replaced by their shape. */
@@ -61,7 +57,7 @@ describe('engine parity: wanted links', () => {
     return { ids, empty };
   });
 
-  parityTest('replaceWantedLinkRows inserts, updates in place and deletes only the named producers', { methods: ['replaceWantedLinkRows'] }, async (engine, backend) => {
+  parityTest('replaceWantedLinkRows inserts, updates in place and deletes only the named producers', { methods: ['replaceWantedLinkRows', 'listWantedPages'] }, async (engine, backend) => {
     const origin = { pageId: await note(engine, 'notes/a'), sourceId: 'default' };
     const first = await engine.replaceWantedLinkRows(origin, {
       rows: [wanted('body', 'slug', 'missing/x', 'mentions'), wanted('body', 'name', 'Ghost'), wanted('frontmatter', 'slug', 'missing/y', 'parent')],
@@ -82,7 +78,7 @@ describe('engine parity: wanted links', () => {
     return { first, second, none, before: { total: before.total, rows: before.rows.map(view) }, after: { total: after.total, rows: after.rows.map(view) }, firstSeenKept: x?.first_seen === seenBefore };
   });
 
-  parityTest('replaceWantedLinkRows marks a live slug target pending; a bare name lists its basename matches', { methods: ['replaceWantedLinkRows'] }, async (engine, backend) => {
+  parityTest('replaceWantedLinkRows marks a live slug target pending; a bare name lists its basename matches', { methods: ['replaceWantedLinkRows', 'listWantedPages'] }, async (engine, backend) => {
     await note(engine, 'notes/b');
     await note(engine, 'people/c');
     await note(engine, 'topics/c');
@@ -100,7 +96,7 @@ describe('engine parity: wanted links', () => {
     return { written, live: live.rows.map(view), gone: { total: gone.total, rows: gone.rows.map(view) } };
   });
 
-  parityTest('wanted rows count live origins only, rank by references and honour scope and paging', { methods: ['replaceWantedLinkRows'] }, async (engine, backend) => {
+  parityTest('wanted rows count live origins only, rank by references and honour scope and paging', { methods: ['replaceWantedLinkRows', 'listWantedPages'] }, async (engine, backend) => {
     await createSource(engine, backend, 'work');
     const slugRow = (target: string) => ({ rows: [wanted('body', 'slug', target, 'mentions')], producers: ['body' as const], readAt: READ_AT });
     for (const slug of ['notes/a', 'notes/b', 'notes/c']) await engine.replaceWantedLinkRows({ pageId: await note(engine, slug), sourceId: 'default' }, slugRow('missing/z'));

@@ -11,7 +11,7 @@ The store keeps one record per row (`crates/gbrain-store/src/wanted_links.rs`).
 | --- | --- | --- |
 | `brain.lockRegisteredSourceIds(sourceIds)` | the registered ids among `sourceIds`, sorted, once each. The store write is already exclusive, so nothing is locked. | `lockRegisteredSourceIds` |
 | `brain.replaceWantedLinkRows({ pageId, sourceId }, { rows, producers, readAt })` | the number of rows written. Rows of `producers` that `rows` does not name are deleted. Each row of `rows` is written, and an existing row keeps its id and `first_seen`. | `replaceWantedLinkRows` |
-| `brain.listWantedPages({ sourceId?, sourceIds?, excludePrivate?, limit, offset })` | `{ total, rows }`, each row in the final `WantedPageRow` shape that `listWantedPages` in `wanted-links-store.ts` returns | `listWantedPages` (store read; lane 2 wires the member) |
+| `brain.listWantedPages({ sourceId?, sourceIds?, excludePrivate?, limit, offset })` | `{ total, rows }`, each row in the final `WantedPageRow` shape that `listWantedPages` in `wanted-links-store.ts` returns | `listWantedPages` (engine member; `excludePrivate: true` is a typed `engine_capability_missing` refusal before the store is called) |
 
 ## Write rules
 
