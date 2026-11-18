@@ -25,7 +25,7 @@
  * cannot be pre-empted.
  */
 import { AGENT_TOOL_LIMIT_MS } from '../../core/agent-output.ts';
-import { opError } from '../../core/ops/contract.ts';
+import { OperationError, opError } from '../../core/ops/contract.ts';
 import { StatementDeadlineError } from '../../core/statement-deadline.ts';
 import type { Check, DoctorReport } from '../doctor.ts';
 import { agentFix } from './check-fix.ts';
@@ -170,6 +170,22 @@ const AGENT_RERUN_HEADROOM_MS = 10_000;
  * the agent's while N fits an agent tool call (AGENT_TOOL_LIMIT_MS), else the user's to run in a terminal. When the agent's
  * N is capped below ten times, the message also names the uncapped budget to use in a terminal if the capped rerun stops too.
  */
+/**
+ * The engine's typed capability refusal (`engine_capability_missing`, the Rust engine) reached a check: its health is
+ * unknown, not clear and not failed, so the check warns and names the capability, and the run goes on.
+ */
+export function capabilityRefusal(error: unknown): OperationError | null {
+  return error instanceof OperationError && error.code === 'engine_capability_missing' ? error : null;
+}
+
+export function capabilityUnknownCheck(name: string, error: OperationError): Check {
+  return {
+    name, status: 'warn',
+    message: `Health unknown: ${error.message}`,
+    details: { health: 'unknown', reason: 'engine_capability_missing', capability: error.reason ?? null },
+  };
+}
+
 export function budgetUnknownCheck(name: string, elapsedMs: number, budgetMs: number, limit: BudgetLimit = 'entry'): Check {
   const agentCap = AGENT_TOOL_LIMIT_MS - AGENT_RERUN_HEADROOM_MS;
   const wanted = Math.ceil(Math.max(elapsedMs, budgetMs, 1) * RERUN_BUDGET_FACTOR / 1000) * 1000;

@@ -195,6 +195,7 @@ import {
 import { STOP_DOCTOR, cheapTier, type DoctorContext, type DoctorEntry, type DoctorTier } from './context.ts';
 import {
   BUDGET_EXPIRED, DoctorBudgetError, budgetExpired, type BudgetExpired, ENTRY_BUDGET_KEY, ENTRY_BUDGET_MS_DEFAULT, budgetUnknownCheck, entryRunsAt,
+  capabilityRefusal, capabilityUnknownCheck,
   isBudgetUnknown, opsNotApplicableCheck, raceBudget, startDeferredDeadline,
 } from './budget.ts';
 import { StatementDeadlineError, deadlineBoundEngine, withStatementDeadline, type StatementDeadline } from '../../core/statement-deadline.ts';
@@ -523,7 +524,13 @@ export function runDoctorRegistry(ctx: DoctorContext, entries: readonly DoctorEn
       const scope: StatementDeadline = { startedAt: started, deadlineAt: budgetMs === null ? null : started + budgetMs, expired: false, memo, runDeadlineAt: ctx.deadline?.deadlineAt ?? null };
       ctx.entryDeadlineAt = scope.deadlineAt ?? undefined;
       const run = withStatementDeadline(scope, () => entry.run(ctx))
-        .catch((error: unknown): BudgetExpired => { if (error instanceof StatementDeadlineError || scope.expired) return BUDGET_EXPIRED; throw error; });
+        .catch((error: unknown): BudgetExpired | Check[] => {
+          if (error instanceof StatementDeadlineError || scope.expired) return BUDGET_EXPIRED;
+          // An engine that refuses a capability this check reads (the Rust engine): each emitted check is unknown.
+          const refusal = capabilityRefusal(error);
+          if (refusal) return emitted.map((n) => capabilityUnknownCheck(n, refusal));
+          throw error;
+        });
       const result = budgetMs === null ? await run : await raceBudget(run, budgetMs);
       ctx.entryDeadlineAt = undefined;
       const elapsed = Date.now() - started;
