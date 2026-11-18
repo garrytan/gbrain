@@ -9,6 +9,7 @@ import {
   DREAM_INLINE_PRIVATE_QUEUE_PREFIX,
   type CancelJobsSpec, type DelayActiveJobSpec, type JobAttachmentInsert, type JobPageSpec, type JobStatsRead,
   type JobTokenCounts, type PrivateQueueState, type PruneJobsSpec, type QueueFamilyRow, type RetryJobPolicy,
+  type SynthesisCompletion, type SynthesisCompletionPrefix,
 } from '../../engine-sql/jobs-queue.ts';
 import { WATCHDOG_SUSPECT_MARK } from '../../minions/watchdog-attribution.ts';
 import { withDates } from '../store-codec.ts';
@@ -81,15 +82,22 @@ export const killWallClockJobs: StoreMember<[lockDurationMs: number], JobRow[]> 
   jobRows(await call('killWallClockJobs', () => brain.killWallClockJobs(lockDurationMs)));
 
 /**
- * The store cannot archive a pruned dream synthesis completion into `dream_synthesis_completions`, so a prune that
- * matches one deletes nothing and refuses; PGLite archives the key and deletes. A dry run only counts.
+ * A pruned completed dream synthesis child's key goes into the store's `dream_synthesis_completions` archive in the
+ * delete's transaction, as the SQL engines' `archived` CTE does. A dry run only counts.
  */
 export const pruneJobs: StoreMember<[spec: PruneJobsSpec], number> = async (brain, spec) => {
-  const out: { count: number; needsArchive: boolean } = await call('pruneJobs', () =>
+  const out: { count: number } = await call('pruneJobs', () =>
     brain.pruneJobs({ statuses: [...spec.statuses], olderThan: spec.olderThan.toISOString(), dryRun: spec.dryRun === true }));
-  if (out.needsArchive) refuseMember('pruneJobs', 'a pruned dream synthesis completion needs the dream_synthesis_completions archive');
   return out.count;
 };
+
+/** The store returns the keys sorted; the SQL engines' `UNION` has no set order. */
+export const listSynthesisCompletionKeys: StoreMember<[sourceId: string, keyPrefix: SynthesisCompletionPrefix], string[]> =
+  (brain, sourceId, keyPrefix) => call('listSynthesisCompletionKeys', () => brain.listSynthesisCompletionKeys(sourceId, keyPrefix));
+
+export const listRecentSynthesisCompletions: StoreMember<[sourceId: string, hours: number], SynthesisCompletion[]> = async (brain, sourceId, hours) =>
+  (await call('listRecentSynthesisCompletions', () => brain.listRecentSynthesisCompletions(sourceId, hours)) as SynthesisCompletion[])
+    .map(r => withDates(r, ['at']));
 
 /**
  * The retry policy runs against a handle that reads only the job (getJob, getFailedJobForRetry); anything else, such

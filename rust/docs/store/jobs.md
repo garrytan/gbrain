@@ -23,6 +23,13 @@ Keys, under the family tag `keys::JOBS` (`m`):
 | `m 0x08 <job id> <attachment id>` | the attachments of a job, with their base64 bytes. `(job_id, filename)` is unique (a scan of the job's rows) |
 | `m 0x09 <owner id> <job id>` | the rows whose `private_queue_owner_job_id` is that owner, so deleting an owner finds them without a scan |
 
+The `dream_synthesis_completions` archive (`rust/crates/gbrain-store/src/jobs/synthesis_completions.rs`) has its own tag,
+`keys::DREAM_SYNTHESIS_COMPLETION` (`a`):
+
+| Key | Holds |
+| --- | --- |
+| `a <source_id> 0x00 <idempotency_key>` | `{ completed_at }` (microseconds): one archive row, keyed by the table's primary key `(source_id, idempotency_key)`. Neither part holds `0x00`, so a scan of `a <source_id> 0x00 <prefix>` is `idempotency_key LIKE '<prefix>%'` |
+
 Integers are big-endian, signed ones with the sign bit flipped. Every call reads the store clock once, as one
 Postgres transaction reads one `now()`. A millisecond duration becomes `round(ms * 1000)` microseconds. The one
 write transaction is the lock: two claims never see the same `waiting` row (`FOR UPDATE SKIP LOCKED` on the
@@ -62,7 +69,9 @@ said.
 | `brain.promoteDelayedJobs()` | the `delayed` rows whose `delay_until` has passed, now `waiting` |
 | `brain.cancelJobs(ids, { reason, rootStatuses, ownerClientId, ownerActor })` | the cancelled rows. Roots are the existing `ids` matching `rootStatuses` and the owner fence (`data.__owner_client_id` and the actor match below); descendants follow `parent_job_id` to depth 100; only live rows change. The reason goes on the roots in `ids` only. Live parents get a `child_done` (`outcome` and `error` `cancelled`) and wake when no child is left |
 | `brain.killTimedOutJobs()` / `killWallClockJobs(lockDurationMs)` | the rows set `dead` for `timeout_at` (`timeout exceeded`) or the wall-clock bound (`wall-clock timeout exceeded`); `gbrain-drain-lease` is exempt; parents get `child_done` (`outcome` `timeout`) and wake |
-| `brain.pruneJobs({ statuses, olderThan, dryRun })` | `{ count, needsArchive }`. `dryRun` counts. Otherwise a match containing a completed `subagent` whose key starts `dream:synth` deletes nothing and returns `{ 0, true }` (see below); else every match is deleted with its cascade |
+| `brain.pruneJobs({ statuses, olderThan, dryRun })` | `{ count }`. `dryRun` counts. Otherwise, in one write transaction, each match that is a completed `subagent` whose key starts `dream:synth` goes into the archive as `(COALESCE(NULLIF(data->>'source_id', ''), 'default'), key, COALESCE(finished_at, now()))` when that key is not there yet (`ON CONFLICT DO NOTHING`), and every match is deleted with its cascade |
+| `brain.listSynthesisCompletionKeys(sourceId, keyPrefix)` | the keys starting `keyPrefix` of the source's completed `subagent` rows and of its archive rows, each once (`UNION`), in byte order (the SQL engines give no order; parity compares them sorted) |
+| `brain.listRecentSynthesisCompletions(sourceId, hours)` | `[{ idempotency_key, at }]` (`at` ISO) for the source's `dream:synth-v2:` completions after `now() - hours`: completed `subagent` rows by `finished_at` in id order, then archive rows by `completed_at` in key order, every row kept (`UNION ALL`) |
 | `brain.postInboxMessage(jobId, sender, payload)` / `readJobInbox(jobId, token)` / `readChildCompletions(parentId, token, since?)` | the inbox row; the unread rows marked read (only for an `active` job under the token); the `child_done` payloads sent after `since`, by `sent_at`. A missing job or a null payload is `constraint_violation` |
 | `brain.listOpenJobIdsInQueue(queue)` / `renewPrivateQueueLease(queue, ownerToken, leaseMs)` / `listOwnedPrivateQueues(prefix, maxQueues)` / `readPrivateQueueState(queue)` | the live ids; the rows renewed (a lease only ever grows); queue names with owner metadata, oldest first; the recovery classifier's counts (`active_healthy`, `owner_ids`, `metadata_rows`, `live_owner_rows`, `nonterminal_owner_rows`, `max_lease_until`, `future_lease_rows`, `recently_touched`) |
 | `brain.listStaleWaitingJobIds(name, hours, limit)` / `countTtlExpiredWaiting(name, hours)` | ids, oldest `updated_at` first; a count |
@@ -76,11 +85,6 @@ The actor match of `cancelJobs` and `listJobPage` is `jobActorSql`: the `grant.a
 `external_id`, `member` as text (missing or null is `''`), and the audience, which is `grant.actingFor`'s
 distinct elements sorted and joined with `,` when it is an array (`''` when empty), `!` for any other
 value, and `''` when missing. A NULL authority or no grant matches the four `''`.
-
-`pruneJobs` cannot archive: the SQL engines copy completed dream-synthesis subagent rows into
-`dream_synthesis_completions` before deleting them, and that table has no Rust store yet (follow-up
-`dream-synthesis-completions`). The store refuses by returning `needsArchive`, and the TypeScript member turns
-that into `engine_capability_missing`.
 
 Still refused by the TypeScript members before the store is called (`engine_capability_missing`, capability
 `minion_queue`): `admitJob` with a delegated client's `lock` or `checkCapacity` policy, and the retry of a

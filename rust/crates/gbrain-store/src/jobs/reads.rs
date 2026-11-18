@@ -98,7 +98,7 @@ fn parse_since(what: &str, since: &str) -> Result<i64> {
     })
 }
 
-fn hours_us(hours: f64) -> i64 {
+pub(super) fn hours_us(hours: f64) -> i64 {
     (hours * 3_600_000_000.0).round() as i64
 }
 

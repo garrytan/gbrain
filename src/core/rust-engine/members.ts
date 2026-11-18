@@ -347,6 +347,8 @@ export const RUST_ENGINE_MEMBERS = {
   readJobInbox: 'minion_queue',
   readChildCompletions: 'minion_queue',
   listOpenJobIdsInQueue: 'minion_queue',
+  listSynthesisCompletionKeys: 'minion_queue',
+  listRecentSynthesisCompletions: 'minion_queue',
   renewPrivateQueueLease: 'minion_queue',
   listOwnedPrivateQueues: 'minion_queue',
   readPrivateQueueState: 'minion_queue',

@@ -163,6 +163,7 @@ Reserved tags:
 | persistence (core) | `d` (requests stay under `J` / `j`, local writers under `W`) | `PERSISTENCE` | no |
 | jobs (core) | `m` | `JOBS` | no |
 | trust | `t` | `TRUST` | no (the trust family asks core when it needs the page-delete hook) |
+| jobs, the `dream_synthesis_completions` archive | `a` | `DREAM_SYNTHESIS_COMPLETION` | no |
 
 The `q` tag is shared. link_queries and wanted_links both key records as `q <source id> 0x00 ...`; the byte after
 `0x00` is `W` for a wanted_links record (`q <origin source id> 0x00 W <origin page id BE8> ...`), and link_queries
@@ -1222,7 +1223,7 @@ the same rows into one member, so the member counts here are smaller than the si
 
 These four sections are design only. No file, tag, constant or list entry below exists yet. The tags are proposed:
 core adds them to the reserved block in `keys.rs` and to the reserved tag table above in one reviewed change, and
-until then no family writes under them. The free lowercase bytes today are `a d f g h i m t x y z`.
+until then no family writes under them. The free lowercase bytes today are `f g h i x y z`.
 
 | Family | Proposed tag | Proposed constant | Cascade on page delete | Owner |
 |---|---|---|---|---|
