@@ -18,6 +18,7 @@ import type { SqlEngine } from '../src/core/persistence/model.ts';
 import { managedPersistenceEnabled, readManagedMode, readPersistenceBrain } from '../src/core/persistence/ownership.ts';
 import { inspectPersistenceBrain } from '../src/core/persistence/managed-mode.ts';
 import { readWriterDiagnostics } from '../src/core/persistence/diagnostics.ts';
+import { JOURNAL_LIMITS_SQL } from '../src/core/persistence/limits.ts';
 import { assertUnmanagedCanonicalWriter } from '../src/core/persistence/maintenance.ts';
 import { beginConnectorSync, withConnectorSync } from '../src/core/persistence/connector-sync.ts';
 import { renderCliError } from '../src/core/agent-output.ts';
@@ -27,11 +28,12 @@ const MALFORMED: ReadonlyArray<readonly [string, readonly unknown[]]> = [
   ['numeric enabled', [{ enabled: 1 }]], ['duplicated', [{ enabled: false }, { enabled: true }]],
 ];
 
-type FakeEngine = SqlEngine & Pick<BrainEngine, 'readManagedModeRows' | 'getSourceStrictness'>;
+type FakeEngine = SqlEngine & Pick<BrainEngine, 'readManagedModeRows' | 'readJournalLimitRows' | 'getSourceStrictness'>;
 function fake(rows: readonly unknown[] | Error, seen: string[] = []): FakeEngine {
   const read = async (sql: string) => { seen.push(sql); if (rows instanceof Error) throw rows; return rows as unknown[]; };
   // The typed reads the import guard uses answer the same rows (and the same error) the raw statement does.
-  return { executeRaw: read, readManagedModeRows: () => read('SELECT enabled FROM persistence_brain WHERE singleton=1'), getSourceStrictness: async () => false } as unknown as FakeEngine;
+  return { executeRaw: read, readManagedModeRows: () => read('SELECT enabled FROM persistence_brain WHERE singleton=1'),
+    readJournalLimitRows: () => read(JOURNAL_LIMITS_SQL), getSourceStrictness: async () => false } as unknown as FakeEngine;
 }
 
 describe('readManagedMode', () => {
@@ -104,6 +106,23 @@ describe('connector entry paths on an impossible read', () => {
   }, 120_000);
   afterAll(async () => { await engine.disconnect(); });
   beforeEach(async () => { await resetPgliteState(engine); });
+
+  test('a Rust brain answers the singleton a fresh SQL brain stores, through its brain id and no SQL', async () => {
+    const sql = await readPersistenceBrain(engine);
+    const statements: string[] = [];
+    const rust = { kind: 'rust', readPersistenceBrainId: async () => 'rust-brain-id',
+      readManagedModeRows: async () => [{ enabled: false }],
+      executeRaw: async (text: string) => { statements.push(text); throw new Error('a Rust brain has no SQL'); } } as unknown as SqlEngine;
+    const expected = { ...sql, brain_id: 'rust-brain-id' };
+    expect(await readPersistenceBrain(rust)).toEqual(expected);
+    expect(await readPersistenceBrain(rust, { lock: 'share' })).toEqual(expected);
+    expect(await inspectPersistenceBrain(rust)).toEqual({ row: expected, problem: null });
+    expect(await readManagedMode(rust)).toBe(false);
+    expect(statements).toEqual([]);
+    // Without a brain id the singleton is missing, and the strict reader refuses as it does on a SQL brain.
+    const blank = { ...rust, readPersistenceBrainId: async () => null } as unknown as SqlEngine;
+    await expect(readPersistenceBrain(blank)).rejects.toMatchObject({ code: 'storage_error' });
+  });
 
   /** The real engine, except that the mode read answers `rows`; every statement after the mode read is recorded. */
   function misreading(rows: readonly unknown[]) {

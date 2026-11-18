@@ -9,17 +9,19 @@
 //! - `k 0x02 source \0 alias_norm \0 slug \0 origin` (by alias), and
 //! - `k 0x03 source \0 slug \0 alias_norm \0 origin` (by page),
 //!
-//! both with an empty value. The layout is private to `aliases.rs`; this module mirrors it, and a
-//! test writes through `Store::set_page_aliases` and reads it back here to pin it. The store keeps
-//! no `alias_text` and no `case_sensitive` flag (only `setPageAliases` writes rows, every one
-//! `frontmatter`, as PGLite's insert leaves `alias_text` NULL and `case_sensitive` false), so every
-//! row reads with a null `alias_text` and none is case-sensitive. A row whose value is not empty
-//! was written by a writer this reader does not know: the read refuses with `store_corrupt`
-//! rather than drop what it holds.
+//! The by-alias key is empty. The by-page key of a derived row (`replaceDerivedAliases`, origin
+//! `declared` or `subject`) holds its [`DerivedAliasValue`] (`case_sensitive`, `alias_text`); the
+//! by-page key of a `frontmatter` row is empty, the column defaults (`false`, NULL). The layout is
+//! private to `aliases.rs`; this module mirrors it, and tests write through
+//! `Store::set_page_aliases` and `Store::replace_derived_aliases` and read the rows back here to
+//! pin it. A by-alias key with a value, a by-page value that is not a `DerivedAliasValue`, or a
+//! by-alias key with no by-page key was written by a writer this reader does not know: the read
+//! refuses with `store_corrupt` rather than guess what the row holds.
 //!
 //! Each read sorts in byte order, as the SQL's `COLLATE "C"` does. Text holding a NUL byte is
 //! `invalid_argument`, as Postgres refuses a NUL in a text parameter.
 
+use crate::aliases::DerivedAliasValue;
 use crate::error::{Result, STORE_CORRUPT, StoreError};
 use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::kv::{KvRead, scan_prefix};
@@ -65,30 +67,45 @@ fn reject_nul<'a>(member: &str, items: impl IntoIterator<Item = &'a str>) -> Res
     Ok(())
 }
 
-/// The text parts after `prefix_len` bytes of every key under `prefix`; a non-empty value refuses.
-fn alias_tails(read: &dyn KvRead, member: &str, prefix: &[u8]) -> Result<Vec<Vec<String>>> {
+/// One alias key under a scan prefix: the text parts after the prefix, and the value.
+struct AliasKey {
+    parts: Vec<String>,
+    value: Vec<u8>,
+}
+
+/// Every key under `prefix`, in key (byte) order.
+fn alias_keys(read: &dyn KvRead, prefix: &[u8]) -> Result<Vec<AliasKey>> {
     let mut out = Vec::new();
-    let mut foreign = false;
     scan_prefix(read, prefix, false, &mut |k, v| {
-        if !v.is_empty() {
-            foreign = true;
-            return false;
-        }
-        out.push(
-            k[prefix.len()..]
+        out.push(AliasKey {
+            parts: k[prefix.len()..]
                 .split(|b| *b == 0)
                 .map(|p| String::from_utf8_lossy(p).into_owned())
                 .collect(),
-        );
+            value: v.to_vec(),
+        });
         true
     })?;
-    if foreign {
-        return Err(StoreError::new(
-            STORE_CORRUPT,
-            format!("{member}: a page alias row holds a value this store does not read"),
-        ));
-    }
     Ok(out)
+}
+
+fn corrupt(member: &str, what: &str) -> StoreError {
+    StoreError::new(
+        STORE_CORRUPT,
+        format!("{member}: a page alias row {what} this store does not read"),
+    )
+}
+
+/// The `case_sensitive` and `alias_text` columns a by-page value holds: an empty value is a
+/// `frontmatter` row, the column defaults (`false`, NULL).
+fn row_value(member: &str, value: &[u8]) -> Result<DerivedAliasValue> {
+    if value.is_empty() {
+        return Ok(DerivedAliasValue {
+            case_sensitive: false,
+            alias_text: None,
+        });
+    }
+    serde_json::from_slice(value).map_err(|_| corrupt(member, "holds a value"))
 }
 
 /// The distinct texts of `items` in byte order; a NUL byte is `invalid_argument`.
@@ -137,7 +154,8 @@ impl Store {
     }
 
     /// `resolveCaseSensitiveAliases`: the case-sensitive rows of the listed aliases in the listed
-    /// sources. The store keeps none, so the answer is empty once the rows read clean.
+    /// sources, as `{ slug, alias_norm, alias_text }` by source, slug, alias. The SQL leaves the
+    /// order of two origins of one row open; this read puts them in origin byte order.
     pub fn resolve_case_sensitive_aliases(
         &self,
         alias_norms: &[String],
@@ -147,12 +165,34 @@ impl Store {
         let sources = key_texts(MEMBER, source_ids)?;
         let aliases = key_texts(MEMBER, alias_norms)?;
         let read = self.read()?;
+        let mut out = Vec::new();
         for &source in &sources {
+            let mut rows = Vec::new();
             for &alias in &aliases {
-                alias_tails(&*read, MEMBER, &alias_prefix(PAGE_ALIAS, &[source, alias]))?;
+                for key in alias_keys(&*read, &alias_prefix(PAGE_ALIAS, &[source, alias]))? {
+                    if !key.value.is_empty() {
+                        return Err(corrupt(MEMBER, "holds a value"));
+                    }
+                    let [slug, origin] = key.parts.as_slice() else {
+                        continue;
+                    };
+                    let mut by_page = alias_prefix(PAGE_ALIAS_BY_SLUG, &[source, slug, alias]);
+                    by_page.extend_from_slice(origin.as_bytes());
+                    let Some(value) = read.get(&by_page)? else {
+                        return Err(corrupt(MEMBER, "has no page key"));
+                    };
+                    let value = row_value(MEMBER, &value)?;
+                    if value.case_sensitive {
+                        rows.push((slug.clone(), alias, origin.clone(), value.alias_text));
+                    }
+                }
             }
+            rows.sort();
+            out.extend(rows.into_iter().map(|(slug, alias, _, text)| {
+                json!({"slug": slug, "alias_norm": alias, "alias_text": text})
+            }));
         }
-        Ok(Vec::new())
+        Ok(out)
     }
 
     /// `readPageTitle`: the title of the page at `(source_id, slug)`, soft-deleted pages included;
@@ -164,7 +204,7 @@ impl Store {
     }
 
     /// `readPageAliasRows`: every alias row of a listed slug in a listed source, as `{ slug,
-    /// source_id, alias_norm, alias_text: null, origin }` by source, slug, alias, then origin.
+    /// source_id, alias_norm, alias_text, origin }` by source, slug, alias, then origin.
     pub fn read_page_alias_rows(
         &self,
         source_ids: &[String],
@@ -178,15 +218,16 @@ impl Store {
         for &source in &sources {
             for &slug in &slugs {
                 let prefix = alias_prefix(PAGE_ALIAS_BY_SLUG, &[source, slug]);
-                for parts in alias_tails(&*read, MEMBER, &prefix)? {
-                    let [alias, origin] = parts.as_slice() else {
+                for key in alias_keys(&*read, &prefix)? {
+                    let [alias, origin] = key.parts.as_slice() else {
                         continue;
                     };
+                    let value = row_value(MEMBER, &key.value)?;
                     out.push(json!({
                         "slug": slug,
                         "source_id": source,
                         "alias_norm": alias,
-                        "alias_text": null,
+                        "alias_text": value.alias_text,
                         "origin": origin,
                     }));
                 }
@@ -272,6 +313,79 @@ mod tests {
             .resolve_case_sensitive_aliases(&strings(&["al"]), &strings(&["default"]))
             .unwrap_err();
         assert_eq!(by_alias.code, STORE_CORRUPT);
+    }
+
+    #[test]
+    fn derived_rows_read_back_their_case_flag_and_text() {
+        use crate::aliases::DerivedAliasRow;
+        let store = temp_store();
+        let row = |alias: &str, origin: &str, case_sensitive: bool, text: &str| DerivedAliasRow {
+            alias_norm: alias.into(),
+            origin: origin.into(),
+            case_sensitive,
+            alias_text: Some(text.into()),
+        };
+        store
+            .set_page_aliases("people/alice-example", "default", &strings(&["ae"]))
+            .unwrap();
+        store
+            .replace_derived_aliases(
+                "people/alice-example",
+                "default",
+                &[
+                    row("ae", "subject", true, "AE"),
+                    row("ae", "declared", true, "AE"),
+                    row("alice", "declared", false, "Alice"),
+                ],
+            )
+            .unwrap();
+        store
+            .replace_derived_aliases(
+                "people/a-founder",
+                "default",
+                &[row("ae", "declared", true, "aE")],
+            )
+            .unwrap();
+        let rows = store
+            .read_page_alias_rows(&strings(&["default"]), &strings(&["people/alice-example"]))
+            .unwrap();
+        let row_json = |alias: &str, text: Value, origin: &str| json!({"slug": "people/alice-example", "source_id": "default", "alias_norm": alias, "alias_text": text, "origin": origin});
+        assert_eq!(
+            rows,
+            vec![
+                row_json("ae", json!("AE"), "declared"),
+                row_json("ae", Value::Null, "frontmatter"),
+                row_json("ae", json!("AE"), "subject"),
+                row_json("alice", json!("Alice"), "declared"),
+            ]
+        );
+        let hits = store
+            .resolve_case_sensitive_aliases(&strings(&["alice", "ae"]), &strings(&["default"]))
+            .unwrap();
+        assert_eq!(
+            hits,
+            vec![
+                json!({"slug": "people/a-founder", "alias_norm": "ae", "alias_text": "aE"}),
+                json!({"slug": "people/alice-example", "alias_norm": "ae", "alias_text": "AE"}),
+                json!({"slug": "people/alice-example", "alias_norm": "ae", "alias_text": "AE"}),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_row_with_no_page_key_refuses() {
+        let store = temp_store();
+        store
+            .write(|tx: &mut dyn KvWrite| {
+                let mut key = alias_prefix(PAGE_ALIAS, &["default", "al", "p"]);
+                key.extend_from_slice(b"declared");
+                tx.put(&key, b"")
+            })
+            .unwrap();
+        let err = store
+            .resolve_case_sensitive_aliases(&strings(&["al"]), &strings(&["default"]))
+            .unwrap_err();
+        assert_eq!(err.code, STORE_CORRUPT);
     }
 
     #[test]

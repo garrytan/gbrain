@@ -31,6 +31,12 @@
     },
     "countPagesBy#grouped+since+remote": {},
     "countPagesBy#totals": {},
+    "countSourcePages#default": {
+      "raw": 1
+    },
+    "countSourcePages#includeDeleted": {
+      "raw": 1
+    },
     "countStaleChunks#default": {
       "raw": 1
     },
@@ -187,6 +193,7 @@
     "insertFact#supersedeId+embedding": {},
     "insertFacts#default": {},
     "insertFacts#deleteForPageFirst": {},
+    "insertSource#default": {},
     "invalidateContentDriftEmbeddings#default": {
       "raw": 3,
       "tx": 1

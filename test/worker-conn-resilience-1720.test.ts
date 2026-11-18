@@ -23,6 +23,7 @@ import { MinionWorker } from '../src/core/minions/worker.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { MinionJob } from '../src/core/minions/types.ts';
 import { isRetryableConnError } from '../src/core/retry-matcher.ts';
+import { withQueueMembers } from './helpers/queue-engine-members.ts';
 
 /** The exact shape postgres.js throws when a pooler closes the socket. */
 function connClosed(): Error {
@@ -33,7 +34,7 @@ function connClosed(): Error {
 }
 
 function makeEngine(counter: { reconnects: number }): BrainEngine {
-  return {
+  return withQueueMembers({
     kind: 'postgres',
     reconnect: async () => { counter.reconnects += 1; },
     executeRaw: async (sql: string) => {
@@ -44,7 +45,7 @@ function makeEngine(counter: { reconnects: number }): BrainEngine {
           sql.includes('submission_authority IS DISTINCT FROM')) return [];
       throw new Error('Unexpected SQL in worker reconnect fixture');
     },
-  } as unknown as BrainEngine;
+  }) as unknown as BrainEngine;
 }
 
 /** Swap the worker's private queue for a fake (same pattern as worker-promote-reconnect.test.ts). */

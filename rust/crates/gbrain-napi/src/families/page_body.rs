@@ -198,6 +198,20 @@ impl Brain {
         })
     }
 
+    /// `sweepSegments({ sourceId?, pageId?, graceMs?, expireStagings?, now? }?)`: the segment
+    /// garbage collection, `now` as an ISO string; `{ retiredChunksDeleted, manifestRowsDeleted,
+    /// textsDeleted, stagingsExpired }`.
+    #[napi]
+    pub fn sweep_segments<'env>(
+        &self,
+        env: &'env Env,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.sweep_segments(&arg(options, "sweepSegments options")?)
+        })
+    }
+
     /// `readSegmentDerivations(pageId, { kind?, occurrenceIds? }?)`: rows by kind, occurrence.
     #[napi]
     pub fn read_segment_derivations<'env>(

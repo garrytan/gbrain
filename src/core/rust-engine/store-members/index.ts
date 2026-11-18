@@ -38,11 +38,15 @@ import * as vectors from './vectors.ts';
 import * as embeddings from './embeddings.ts';
 import * as transactions from './transactions.ts';
 import * as relations from './relations.ts';
+import * as trustWithdrawals from './trust-withdrawals.ts';
+import * as openLoops from './open-loops.ts';
+import * as trustWriteGate from './trust-write-gate.ts';
 import * as cliSources from './cli-sources.ts';
 import * as cliReadsImport from './cli-reads-import.ts';
 import * as cliReadsOps from './cli-reads-ops.ts';
 import * as cliReadsSearchPages from './cli-reads-search-pages.ts';
 import * as wantedLinks from './wanted-links.ts';
+import * as persistence from './persistence.ts';
 import * as cliEntities from './cli-entities.ts';
 import * as factsDoctor from './facts-doctor.ts';
 import * as factsCycle from './facts-cycle.ts';
@@ -51,8 +55,11 @@ import * as factsRepair from './facts-repair.ts';
 import * as factsTrust from './facts-trust.ts';
 import * as jobs from './jobs.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
+import * as writeMisc from './write-misc.ts';
 import * as telemetry from './telemetry.ts';
 import * as aliasFanoutReads from './alias-fanout-reads.ts';
+import * as writeGuards from './write-guards.ts';
+import * as importMembers from './import-members.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
 const initSchema: StoreMember<[], void> = async () => undefined;
@@ -65,7 +72,7 @@ export const STORE_MEMBERS = {
   // Planned families: a member is served once its family file exports it.
   ...pageOps, ...extraction, ...aliases, ...pageBody, ...facts, ...ontology, ...takes, ...contradictions, ...dream,
   ...evalCapture, ...codeEdges, ...salience, ...stats, ...rawFiles, ...linkQueries, ...timelineQueries, ...keyword,
-  ...chunkQueries, ...vectors, ...embeddings, ...transactions, ...relations, ...wantedLinks,
+  ...chunkQueries, ...vectors, ...embeddings, ...transactions, ...relations, ...wantedLinks, ...trustWithdrawals, ...trustWriteGate, ...openLoops,
   // The minion queue and its cycle locks (rust/crates/gbrain-store/src/jobs.rs).
   ...jobs,
   // Typed reads that replace raw SQL in CLI paths (rust/crates/gbrain-store/src/cli_reads/).
@@ -81,6 +88,12 @@ export const STORE_MEMBERS = {
   ...telemetry,
   // Alias fan-out reads (rust/docs/store/alias_fanout_reads.md).
   ...aliasFanoutReads,
+  ...persistence,
+  ...writeMisc,
+  // The page write guards a page write runs around the page row (rust/docs/store/write-guards.md).
+  ...writeGuards,
+  // The page and chunk statements a page import runs around its chunk write (rust/docs/store/import-members.md).
+  ...importMembers,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

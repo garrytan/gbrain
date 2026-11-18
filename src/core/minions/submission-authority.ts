@@ -318,12 +318,11 @@ export async function assertRemoteJobControl(ctx: OperationContext, job: MinionJ
 export const LIVE_JOB_STATUSES = ['waiting', 'active', 'delayed', 'waiting-children', 'paused'] as const;
 
 /**
- * The claim gate's population predicate, shared by `assertNoUnreviewedJobs`
- * and the doctor `legacy_job_authority` check so their counts can never drift.
+ * The claim gate's population predicate (engine-sql/jobs-queue.ts, over LIVE_JOB_STATUSES), shared by
+ * `assertNoUnreviewedJobs` and the doctor `legacy_job_authority` check so their counts can never drift.
  * Callers keep the rows `parseSubmissionAuthority` rejects.
  */
-export const UNREVIEWED_LIVE_JOBS_WHERE = `status IN (${LIVE_JOB_STATUSES.map(s => `'${s}'`).join(',')})
-        AND submission_authority IS DISTINCT FROM '{"version":1,"kind":"application"}'::jsonb`;
+export { UNREVIEWED_LIVE_JOBS_WHERE } from '../engine-sql/jobs-queue.ts';
 
 /** Select-list column every coalesce read adds so SQL NULL stays distinguishable from JSONB null. */
 export const LEGACY_AUTHORITY_COLUMN = 'submission_authority IS NULL AS legacy_authority_is_null';
@@ -369,9 +368,7 @@ export function coalesceDecision(row: Record<string, unknown>, authority: Submis
 
 /** Startup and claim gate: do not let sweeps silently destroy unresolved legacy dependency graphs. */
 export async function assertNoUnreviewedJobs(engine: BrainEngine): Promise<void> {
-  const rows = await engine.executeRaw<{ id: number; submission_authority: unknown }>(
-    `SELECT id, submission_authority FROM minion_jobs
-      WHERE ${UNREVIEWED_LIVE_JOBS_WHERE}`);
+  const rows = await engine.listUnreviewedJobs();
   const invalid = rows.filter(row => !parseSubmissionAuthority(row.submission_authority));
   if (!invalid.length) return;
   throw catalogueError('legacy_job_authority',

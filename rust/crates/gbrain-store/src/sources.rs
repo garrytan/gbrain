@@ -100,7 +100,8 @@ pub struct SourceInput {
     pub config: Option<Map<String, Value>>,
 }
 
-fn source_key(id: &str) -> Vec<u8> {
+/// The key of a source record. Other families that change a source record write it here.
+pub(crate) fn source_key(id: &str) -> Vec<u8> {
     keys::text(keys::SOURCE, &[id])
 }
 

@@ -58,13 +58,14 @@ for (const boundary of ['admission-counter', 'completed-withdrawal'] as const) {
           let aborted = false;
           const wrap = (tx: BrainEngine): BrainEngine => new Proxy(tx, { get(nested, key) {
             if (key === 'transaction') return (fn: (tx: BrainEngine) => Promise<any>, ...more: unknown[]) => (nested.transaction as any)((child: BrainEngine) => fn(wrap(child)), ...more);
-            if (key === 'executeRaw') return async (sql: string, args?: unknown[]) => {
-              // GBRA-190 G4: the forget is admitted like every write, then published by the coordinator.
-              if (!injected && boundary === 'admission-counter' && sql.startsWith('SELECT * FROM persistence_counters WHERE key')) {
+            // GBRA-190 G4: the forget is admitted like every write, then published by the coordinator. The counter
+            // lock is the typed lockPersistenceCounters member.
+            if (key === 'lockPersistenceCounters') return async (...args: Parameters<BrainEngine['lockPersistenceCounters']>) => {
+              if (!injected && boundary === 'admission-counter') {
                 injected = aborted = true;
                 throw Object.assign(new Error('confirmed counter statement abort'), { code: '55P03' });
               }
-              return nested.executeRaw(sql, args);
+              return nested.lockPersistenceCounters(...args);
             };
             const value = Reflect.get(nested, key); return typeof value === 'function' ? value.bind(nested) : value;
           } });

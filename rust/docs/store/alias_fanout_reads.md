@@ -13,17 +13,21 @@ Keys: the alias reads scan the `page_aliases` rows the aliases family writes ([a
 - `k 0x02 <source> 0x00 <alias_norm> 0x00 <slug> 0x00 <origin>` (by alias), and
 - `k 0x03 <source> 0x00 <slug> 0x00 <alias_norm> 0x00 <origin>` (by page),
 
-both with an empty value. A unit test writes rows through `Store::set_page_aliases` and reads them back here, so a
-layout change in `aliases.rs` fails that test. A row whose value is not empty comes from a writer this reader does not
-know: the read refuses with `store_corrupt` and does not drop what the row holds. The title read walks the page
+The by-alias key is empty. The by-page key of a derived row (origin `declared` or `subject`, written by
+`replaceDerivedAliases`) holds its `{ c, t? }` value (`case_sensitive`, `alias_text`); the by-page key of a
+`frontmatter` row is empty, which reads as the column defaults (`case_sensitive` false, `alias_text` NULL), as PGLite's
+`setPageAliases` writes them. Unit tests write rows through `Store::set_page_aliases` and
+`Store::replace_derived_aliases` and read them back here, so a layout change in `aliases.rs` fails them. A row this
+reader does not know refuses with `store_corrupt`, and the read does not drop what the row holds: a by-alias key with a
+value, a by-page value that is not `{ c, t? }`, or a by-alias key with no by-page key. The title read walks the page
 records ([pages.md](pages.md)).
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `brain.findPagesByTitles({ title_norms, source_ids, types, exclude_private })` | `{ slug, source_id, t }` rows, by source then slug in byte order: the pages of a listed source that are not soft-deleted, whose type is listed and whose lower-cased title (`t`) is a listed title. `exclude_private` is the page policy of `excludePrivate` (`page_hidden`, [facts.md](facts.md)); null keeps every page. Quarantined pages and archived sources still answer, as the SQL does not filter them | `findPagesByTitles` |
-| `brain.resolveCaseSensitiveAliases(aliasNorms, sourceIds)` | `[]`. The store keeps no case-sensitive alias row (see below). The read still scans the rows of each listed source and alias, so a foreign row refuses | `resolveCaseSensitiveAliases` |
+| `brain.resolveCaseSensitiveAliases(aliasNorms, sourceIds)` | `{ slug, alias_norm, alias_text }` rows of each listed alias in each listed source whose `case_sensitive` is true, by source, slug, alias in byte order. The read scans the by-alias keys and reads each row's value from its by-page key. One alias under two origins (`declared` and `subject`) answers twice, as the SQL has no `DISTINCT`; the SQL leaves the order of those two open, and the store puts them in origin byte order. A `frontmatter` row is never case-sensitive | `resolveCaseSensitiveAliases` |
 | `brain.readPageTitle(sourceId, slug)` | the title of the page at `(sourceId, slug)`, soft-deleted pages included; null with no page | `readPageTitle` |
-| `brain.readPageAliasRows(sourceIds, slugs)` | `{ slug, source_id, alias_norm, alias_text: null, origin }` rows of each listed slug in each listed source, by source, slug, alias, then origin in byte order. A listed slug twice reads once | `readPageAliasRows` |
+| `brain.readPageAliasRows(sourceIds, slugs)` | `{ slug, source_id, alias_norm, alias_text, origin }` rows of each listed slug in each listed source, by source, slug, alias, then origin in byte order. `alias_text` is the derived row's text, or null for a `frontmatter` row. A listed slug twice reads once | `readPageAliasRows` |
 
 Text that holds a NUL byte is `invalid_argument` in every member, as Postgres refuses a NUL in a text parameter. The
 TypeScript members return `[]` with no call when a list is empty, as the SQL members do.
@@ -45,9 +49,6 @@ Differences from PGLite:
 
 ## Known gaps
 
-- The store keeps no `alias_text` and no `case_sensitive` flag. Only `setPageAliases` writes alias rows, every one
-  with origin `frontmatter`; PGLite's `setPageAliases` also leaves `alias_text` NULL and `case_sensitive` false, so
-  these rows read the same on every arm. The derived rows (origin `declared` or `subject`, with alias text and
-  sometimes case-sensitive) come from `replaceDerivedAliases` and the mention pass, which the store refuses. On a
-  store brain, `resolveCaseSensitiveAliases` therefore finds nothing and every alias row has a null `alias_text`.
-  Serving `replaceDerivedAliases` needs a value or key change in `aliases.rs` and a matching change here.
+None in this family. A `replaceDerivedAliases` row with origin `frontmatter` is a gap of the writer, not of these
+reads: `aliases.rs` stores no value for it, so its `case_sensitive` and `alias_text` read as the defaults
+([aliases.md](aliases.md)).

@@ -288,8 +288,14 @@ test('an unchanged re-import screens its files with one read of each batch-share
         if (flat.includes(key)) counted.set(key, (counted.get(key) ?? 0) + 1);
       return original.call(this, sql, params, opts);
     } as BrainEngine['executeRaw'];
+    // The company-brain receipt read is the typed hasCompanyBrainReceipt member, counted under the same key.
+    const receipt = brain.engine.hasCompanyBrainReceipt;
+    brain.engine.hasCompanyBrainReceipt = function(this: BrainEngine, id: string) {
+      counted.set("profile='company-brain'", (counted.get("profile='company-brain'") ?? 0) + 1);
+      return receipt.call(this, id);
+    };
     let again: PromiseSettledResult<unknown>[];
-    try { again = await importManagedFiles(brain.engine, files, { sourceId, noEmbed: true }); } finally { brain.engine.executeRaw = original; }
+    try { again = await importManagedFiles(brain.engine, files, { sourceId, noEmbed: true }); } finally { brain.engine.executeRaw = original; brain.engine.hasCompanyBrainReceipt = receipt; }
     expect(again.map(r => r.status === 'fulfilled' && (r.value as { status: string }).status)).toEqual(files.map(() => 'skipped'));
     // A per-file screen would read each of these at least once per file (12 here).
     for (const key of counted.keys()) expect({ key, perBatch: counted.get(key)! <= 4 }).toEqual({ key, perBatch: true });

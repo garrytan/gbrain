@@ -32,6 +32,19 @@ impl Brain {
         })
     }
 
+    /// `insertLocalWriterRow({ id, lane, credentialHash, grantCeiling? })`: `true` when this call
+    /// stored the row, `false` when the id or the credential hash is already registered.
+    #[napi]
+    pub fn insert_local_writer_row<'env>(
+        &self,
+        env: &'env Env,
+        writer: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.insert_local_writer_row(&required(writer, "insertLocalWriterRow writer")?)
+        })
+    }
+
     /// `readLocalWriter(id)`: the writer row or `null`.
     #[napi]
     pub fn read_local_writer<'env>(

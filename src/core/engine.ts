@@ -1,4 +1,8 @@
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
+import type * as TrustWithdrawalsSql from './engine-sql/trust-withdrawals.ts';
+import type * as OpenLoopsSql from './engine-sql/open-loops.ts';
+import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
+import type * as TrustWriteGateSql from './engine-sql/trust-write-gate.ts';
 import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
 import type { RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
@@ -24,10 +28,21 @@ import type { EntityTypeFilter } from './schema-pack/entity-types.ts';
 import type { ChunkMove } from './page-state/chunk-moves.ts';
 import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence-state.ts';
+import type { ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, WriteCompletion, WriteRequestInsert } from './engine-sql/persistence-journal.ts';
+import type { WriteRequest } from './persistence/model.ts';
+import type { ImportedPageSeal, LivePageBodyRow, OriginClaimRow, PageIngestStamp, PageOriginRow, PageOriginTarget } from './engine-sql/write-guards.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type { ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, MentionDueQuery, SiblingCandidateQuery, SiblingCandidateRow } from './engine-sql/entity-reads.ts';
-import type { DefaultSourceSplit, LocalPathSourceRow, SourceCheckRow, SourceRoutingRow } from './engine-sql/sources.ts';
+import type { DefaultSourceSplit, LocalPathSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
+import type {
+  AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow,
+} from './engine-sql/write-misc.ts';
 import type { AdmitJobPolicy, AdmitJobResult, AdmitJobSpec, ClaimJobSpec, JobRow, ListJobsFilter } from './engine-sql/jobs.ts';
+import type {
+  CancelJobsSpec, DelayActiveJobSpec, JobAttachmentInsert, JobPageSpec, JobStatsRead, JobTokenCounts, PrivateQueueState, PruneJobsSpec,
+  SynthesisCompletion, SynthesisCompletionPrefix,
+  QueueFamilyRow, RetryJobPolicy,
+} from './engine-sql/jobs-queue.ts';
 import type { JunkEntityHubRow, LinkEndpointPage, LivePageSummary, TitledPage } from './engine-sql/link-reads.ts';
 import type { CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuery, ContextualModeCandidate, FrozenHitKey, FrozenHitRow, WithdrawalChunkKey, WithdrawalChunkRow } from './engine-sql/chunk-reads.ts';
 import type { EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRow, PageTimelineRow, SegmentedTimelinePages, TimelineOrphanPage, TimelineRowDeletion } from './engine-sql/timeline-reads.ts';
@@ -1289,6 +1304,10 @@ export interface BrainEngine {
   lockSourceRow(sourceId: string): Promise<SourceCheckRow | null>;
   /** The source's stamped chunker version, or null (engine-sql/sources.ts). */
   readSourceChunkerVersion(sourceId: string): Promise<string | null>;
+  /** Pages of one source, soft-deleted pages only with `includeDeleted`; an unknown source has none (engine-sql/sources.ts). */
+  countSourcePages(sourceId: string, opts?: { includeDeleted?: boolean }): Promise<number>;
+  /** Inserts one source row (id, name, local_path, config); a taken id or name throws and writes nothing. */
+  insertSource(row: SourceInsert): Promise<void>;
   /** Every source with the columns `loadAllSources` reads, `default` first then by id; a schema without `archived`/`newest_content_at` omits them. */
   listSourceRecords(): Promise<SourceRecordRow[]>;
   /** A source's config and incarnation, or null for an unknown id. */
@@ -1305,6 +1324,21 @@ export interface BrainEngine {
   readPageTrustRows(lookup: PageTrustLookup): Promise<PageTrustRow[]>;
   /** The database clock as a UTC ISO string with microseconds (`YYYY-MM-DDTHH:MM:SS.ffffffZ`). */
   readDatabaseClock(): Promise<string>;
+  /**
+   * Page-write reads and upkeep that belong to no other domain (SQL and contracts in engine-sql/write-misc.ts). A Rust
+   * brain keeps no shared skillpacks, chronicle state, access members or memory proposals, so it answers those empty.
+   */
+  readSourceState(sourceId: string, opts?: SourceStateOptions): Promise<SourceStateRow | null>;
+  readAdmissionSource(sourceId: string): Promise<AdmissionSourceRow | null>;
+  sharedSkillPackTablePresent(): Promise<boolean>;
+  listSharedSkillPackRoots(hostId: string): Promise<SharedSkillPackRoot[]>;
+  hasExtractedEvents(sourceId: string, pageId: number): Promise<boolean>;
+  listActiveAccessMembers(): Promise<string[]>;
+  expireMemoryProposals(reason: string): Promise<number>;
+  listAwaitingMemoryProposals(limit: number): Promise<Array<Record<string, unknown>>>;
+  purgeMemoryProposals(retentionDays: number): Promise<number>;
+  /** Attach a working tree to an existing path-less source (`sources add --path`); an unknown id changes nothing. */
+  attachSourcePath(sourceId: string, localPath: string, opts?: AttachSourcePathOptions): Promise<void>;
   /** Every live page (of one source when given) with aliases and knowledge revision, by source then slug. */
   listLinkPageMetadata(sourceId?: string): Promise<LinkPageMetadataRow[]>;
   /** A page's stored non-event timeline rows, in no particular order. */
@@ -2711,6 +2745,8 @@ export interface BrainEngine {
   setBodyStagingState(id: string, state: BodyStagingState, opts?: { commitRequestId?: string | null }): Promise<void>;
   /** Garbage collection: retired chunks and dead manifest rows (versions are roots), unreferenced texts past the grace window, expired stagings. */
   sweepSegments(opts?: SegmentSweepOptions): Promise<SegmentSweepResult>;
+  /** Whether any body staging or segment text exists: the vacuum's one probe before it sweeps (engine-sql/write-guards.ts). */
+  hasSegmentStorage(): Promise<boolean>;
   // Per-segment derivation watermarks (Wave B PR 4; types in page-body/derivations.ts, SQL in engine-sql/page-body.ts).
   /** A page's rows (every kind, or `kind`; optionally only `occurrenceIds`), by kind then occurrence. */
   readSegmentDerivations(pageId: number, opts?: { kind?: SegmentDerivationKind; occurrenceIds?: readonly number[] }): Promise<SegmentDerivationRow[]>;
@@ -2860,6 +2896,19 @@ export interface BrainEngine {
   getPageSealState(pageId: number): Promise<{ chunker_version: number | null } | null>;
   /** Record where a live page's file lives (`source_path`, and `source_uri` when given); a page already holding both writes nothing. */
   refreshPageOrigin(slug: string, opts: { sourceId: string; sourcePath: string; sourceUri?: string | null }): Promise<void>;
+  // Page write guards (engine-sql/write-guards.ts): the origin check and bind, the ingest stamp and the import seal.
+  /** The page `target` names, live or a tombstone (by `pageId` within the source, else by `slug`), or null. */
+  readPageOrigin(target: PageOriginTarget): Promise<PageOriginRow | null>;
+  /** Locks each origin key (`opts.lockKeys`) until the transaction ends, then the live pages other than `excludePageId` recording one of `spellings`, by slug. */
+  listOriginClaims(sourceId: string, spellings: readonly string[], opts: { lockKeys: readonly string[]; excludePageId?: number | null }): Promise<OriginClaimRow[]>;
+  /** Records `sourcePath` as a page's origin (persistence/origin-guard.ts `bindOrigin` only); the number of pages whose origin changed. */
+  bindPageOrigin(target: PageOriginTarget & { sourcePath: string; onlyIfUnset?: boolean; liveOnly?: boolean }): Promise<number>;
+  /** Records a page's ingest provenance (`source_kind`, `ingested_via`, `ingested_at`); a missing page writes nothing. */
+  stampPageIngest(slug: string, stamp: PageIngestStamp): Promise<void>;
+  /** An import's closing seal: the chunker version always, the text seal when the page is at `seal.revision`; the page id, or null. */
+  sealImportedPage(slug: string, seal: ImportedPageSeal): Promise<{ id: number } | null>;
+  /** A live page's frontmatter, body columns, body storage and content hash (the valid-time advisory's after image), or null. */
+  readLivePageBody(slug: string, opts: { sourceId: string }): Promise<LivePageBodyRow | null>;
 
   /**
    * v0.35.5 — narrow UPDATE of `pages.compiled_truth`, `pages.timeline`, and
@@ -3106,6 +3155,28 @@ export interface BrainEngine {
   /** Registers a local writer unless its id or credential hash is already registered; true when this call inserted the row. */
   insertLocalWriterRow(row: LocalWriterInsert): Promise<boolean>;
 
+  // Write-journal statements (engine-sql/persistence-journal.ts): the text journal.ts, limits.ts and held-reads.ts sent through executeRaw.
+  /** The journal limit config rows, then one row with a null key: the largest page stored in segments, or 'unindexed'. */
+  readJournalLimitRows(): Promise<Array<{ key: string | null; value: string | null }>>;
+  /** The current-incarnation hold rows (`record`, page `revision`) naming these page ids, in fingerprint order. */
+  readHeldPageRows<R = Record<string, unknown>>(pageIds: string[]): Promise<Array<{ record: R; revision: string | null }>>;
+  /** The held-file summary rows of live sources with at least one held file, in source order; null reads every source. */
+  readHeldCoverageRows(sourceIds: string[] | null): Promise<HeldCoverageRow[]>;
+  /** The request a principal admitted under `requestId` (a uuid), or null. */
+  readWriteRequest(principalKind: string, principalId: string, requestId: string): Promise<WriteRequest | null>;
+  /** The request with journal id `id`, or null; `signal` cancels the read. */
+  readWriteRequestById(id: string, opts?: { signal?: AbortSignal }): Promise<WriteRequest | null>;
+  /** Creates the missing counter rows and locks them all FOR UPDATE in key order; returns the locked rows. */
+  lockPersistenceCounters(keys: readonly string[]): Promise<CounterRow[]>;
+  /** Inserts an admitted request and charges its (already locked) counters; returns the stored row. */
+  insertWriteRequest(row: WriteRequestInsert): Promise<WriteRequest>;
+  /** Stamps a claim (running, token, lease, first phase) on request `id`; null when the refresh barrier refused it. */
+  stampWriteClaim(id: string, token: string, leaseMs: number, phaseJson: string): Promise<ClaimedWriteRow | null>;
+  /** Request `id` locked FOR UPDATE until the transaction ends, or null. */
+  lockWriteRequest(id: string): Promise<WriteRequest | null>;
+  /** Records a request's terminal state and releases its counters; null when the result exceeds its reservation. */
+  completeWriteRow(completion: WriteCompletion): Promise<CompletedWriteRow | null>;
+
   /**
    * The current value of each named transaction-local setting (`current_setting(name, true)`), in `names` order, null
    * where unset. On a transaction engine it reads inside that transaction. Names are code constants (dotted lowercase).
@@ -3315,6 +3386,96 @@ export interface BrainEngine {
    */
   reclaimStalledJobs(graceMs: number): Promise<{ requeued: JobRow[]; dead: JobRow[] }>;
 
+  // Minion queue statements beyond the lifecycle (engine-sql/jobs-queue.ts): operator writes, sweeps, inbox, private
+  // queues, stats and attachments. The queue keeps the policy (validation, the unreviewed-job gate, authorization).
+  /** Delete a terminal job (its inbox and attachments go with it); false when it is missing or still live. */
+  deleteTerminalJob(id: number): Promise<boolean>;
+  /** Pause a waiting, active or delayed job, clearing its lock. Null when the job is in no such status. */
+  pauseJob(id: number): Promise<JobRow | null>;
+  /** Return a paused job to waiting. Null when it is not paused. */
+  resumeJob(id: number): Promise<JobRow | null>;
+  /** Fail a parent waiting on its children with `errorText`. Null when it is not waiting on children. */
+  failParentJob(parentId: number, errorText: string): Promise<JobRow | null>;
+  /** Return a parent waiting on its children to waiting when none of them is live. */
+  resolveParentJob(parentId: number): Promise<JobRow | null>;
+  /** Wake every parent waiting on children with no live child; the count woken. */
+  resolveStrandedParents(): Promise<number>;
+  /** Remove a child's dependency on its parent. */
+  detachChildJob(childId: number): Promise<void>;
+  /** Replace the progress of an active job this token holds; false when the claim moved on. */
+  updateJobProgress(id: number, lockToken: string, progress: unknown): Promise<boolean>;
+  /** Add to the token counts of an active job this token holds; false when the claim moved on. */
+  addJobTokens(id: number, lockToken: string, tokens: JobTokenCounts): Promise<boolean>;
+  /**
+   * Return an active job this token holds to `delayed` without counting an attempt (a lease-full bounce, a deferral,
+   * a configuration release). Null when the claim moved on. Postgres cancels the statement when `signal` aborts.
+   */
+  delayActiveJob(id: number, lockToken: string, spec: DelayActiveJobSpec, opts?: { signal?: AbortSignal }): Promise<JobRow | null>;
+  /** Requeue a co-runner of a watchdog drain with the suspect mark, no attempt counted; false when the claim moved on. */
+  releaseWatchdogClaim(id: number, lockToken: string, errorText: string): Promise<boolean>;
+  /** Append the watchdog suspect mark once to a job's stacktrace (any status, `updated_at` untouched). */
+  markJobWatchdogSuspect(id: number): Promise<void>;
+  /** Move delayed jobs whose delay passed back to waiting. */
+  promoteDelayedJobs(): Promise<JobRow[]>;
+  /** Cancel the live roots in `ids` and their descendants in one transaction, notifying and waking their parents. */
+  cancelJobs(ids: readonly number[], spec?: CancelJobsSpec): Promise<JobRow[]>;
+  /** Dead-letter active jobs past `timeout_at` that still hold a lease, notifying and waking their parents. */
+  killTimedOutJobs(): Promise<JobRow[]>;
+  /** Dead-letter active jobs past their wall-clock threshold, notifying and waking their parents. */
+  killWallClockJobs(lockDurationMs: number): Promise<JobRow[]>;
+  /** Delete (or count, on `dryRun`) jobs in `statuses` last updated before `olderThan`; the count. */
+  pruneJobs(spec: PruneJobsSpec): Promise<number>;
+  /** Completed dream synthesis keys of a source starting with `keyPrefix`, live jobs and the prune archive, each once. */
+  listSynthesisCompletionKeys(sourceId: string, keyPrefix: SynthesisCompletionPrefix): Promise<string[]>;
+  /** The source's synth-v2 completions (live jobs, then archive rows) that finished within the last `hours`. */
+  listRecentSynthesisCompletions(sourceId: string, hours: number): Promise<SynthesisCompletion[]>;
+  /** Re-queue a failed or dead job fresh after `policy.admit` passes, in one transaction. Null when not retried. */
+  retryJob(id: number, policy: RetryJobPolicy): Promise<JobRow | null>;
+  /** Insert one inbox message for a job. */
+  postInboxMessage(jobId: number, sender: string, payload: unknown): Promise<JobRow>;
+  /** Mark and return the unread messages of an active job this token holds; [] when the claim moved on. */
+  readJobInbox(jobId: number, lockToken: string): Promise<JobRow[]>;
+  /** The `child_done` payloads in an active parent's inbox (after `since`), oldest first; [] unless this token holds it. */
+  readChildCompletions(parentId: number, lockToken: string, since?: Date | null): Promise<unknown[]>;
+  /** Ids of the live jobs in one queue, ascending. */
+  listOpenJobIdsInQueue(queue: string): Promise<number[]>;
+  /** Extend the owner lease of a private queue's live jobs this owner token holds; the count renewed. */
+  renewPrivateQueueLease(queue: string, ownerToken: string, leaseMs: number): Promise<number>;
+  /** Private queues with live jobs and owner metadata, oldest first, at most `maxQueues`. */
+  listOwnedPrivateQueues(maxQueues: number): Promise<string[]>;
+  /** The recovery verdict's inputs for one private queue. */
+  readPrivateQueueState(queue: string): Promise<PrivateQueueState>;
+  /** Ids of jobs of `name` waiting since before `hours` ago, oldest first, at most `limit`. */
+  listStaleWaitingJobIds(name: string, hours: number, limit: number): Promise<number[]>;
+  /** How many jobs of `name` have waited since before `hours` ago. */
+  countTtlExpiredWaiting(name: string, hours: number): Promise<number>;
+  /** The raw counts behind the queue statistics, with the wedge signature of `queue`. */
+  readJobStats(since: Date, queue: string): Promise<JobStatsRead>;
+  /** Per queue family: live counts now and intake since `since`, families in byte order. */
+  readQueueFamilyStats(since: Date): Promise<QueueFamilyRow[]>;
+  /** Whether a waiting, authorized, marked job of `names` in `queue` has waited `waitMs` since its requeue. */
+  hasOverdueWatchdogSuspect(queue: string, names: readonly string[], waitMs: number): Promise<boolean>;
+  /** Live jobs whose authority is not exactly the application authority, by id. */
+  listUnreviewedJobs(): Promise<Array<{ id: number; submission_authority: unknown }>>;
+  /** The name and data of a failed or dead job, or null. */
+  getFailedJobForRetry(id: number): Promise<{ name: string; data: Record<string, unknown> } | null>;
+  /** A delegated client's open `subagent` jobs, across queues and non-terminal statuses (its used slots). */
+  countOpenJobsByOwner(clientId: string): Promise<number>;
+  /** Lock a delegated client's OAuth row for the rest of the transaction (delegated job admission). */
+  lockOAuthClient(clientId: string): Promise<void>;
+  /** One `list_jobs` page, newest first on `(created_at, id)`, each row with `created_us` for the next cursor. */
+  listJobPage(spec: JobPageSpec): Promise<JobRow[]>;
+  /** The attachment filenames of a job, or null when the job does not exist. */
+  listJobAttachmentNames(jobId: number): Promise<string[] | null>;
+  /** Store one attachment; its metadata. A duplicate filename violates `uniq_minion_attachments_job_filename`. */
+  insertJobAttachment(jobId: number, attachment: JobAttachmentInsert): Promise<JobRow>;
+  /** The attachment metadata of a job, oldest first. */
+  listJobAttachments(jobId: number): Promise<JobRow[]>;
+  /** One attachment with its `content` bytes, or null. */
+  getJobAttachment(jobId: number, filename: string): Promise<JobRow | null>;
+  /** Delete one attachment; false when there was none. */
+  deleteJobAttachment(jobId: number, filename: string): Promise<boolean>;
+
   // ============================================================
   // v0.20.0 Cathedral II: code edges (Layer 5 populates, Layer 7 consumes)
   // ============================================================
@@ -3458,4 +3619,48 @@ export interface BrainEngine {
    * not a misleading mean of 1.
    */
   findAnomalies(opts: AnomaliesOpts): Promise<AnomalyResult[]>;
+
+  // Trust: the fact withdrawal ledger (engine-sql/trust-withdrawals.ts). Each runs the statement its caller ran through executeRaw.
+  /** Whether a withdrawal in the source at `visibility` covers a claim for `subject`: its fingerprint is `factHash` or the v1 fingerprint of `claim`, and its subject is '*' or `subject`. */
+  hasCoveringFactWithdrawal(sourceId: string, visibility: string, factHash: string, claim: string, subject: string): Promise<boolean>;
+  /** Records a withdrawal of `claim` (by its fingerprint) for `subject`, at `withdrawnAt` (an ISO time) or now; false when that withdrawal was already recorded. */
+  insertFactWithdrawal(sourceId: string, visibility: string, claim: string, subject: string, withdrawnAt: string | null): Promise<boolean>;
+  /** Per claim row with a matching withdrawal (same visibility, its fingerprint or v1 fingerprint, subject '*' or `subject`; any subject when null): the earliest withdrawal time. No set order. */
+  listFactWithdrawalDates(sourceId: string, claims: readonly TrustWithdrawalsSql.WithdrawalClaimRow[], subject: string | null): Promise<TrustWithdrawalsSql.WithdrawalDateRow[]>;
+  /** Rename or merge: moves the source's withdrawals of subject `oldSlug` to `newSlug`, keeping a withdrawal `newSlug` already has. */
+  moveFactWithdrawalSubject(sourceId: string, oldSlug: string, newSlug: string): Promise<void>;
+  /** Whether any withdrawal of the source has subject `subject`. */
+  hasFactWithdrawalForSubject(sourceId: string, subject: string): Promise<boolean>;
+  /** The source's withdrawal keys by visibility, fingerprint and subject, at most `limit`. */
+  listFactWithdrawalKeys(sourceId: string, limit: number): Promise<TrustWithdrawalsSql.WithdrawalKeyRow[]>;
+
+  // Open loops (engine-sql/open-loops.ts). Each runs the statement loops-store.ts ran through executeRaw and returns
+  // the raw rows; loops-store.ts normalizes them.
+  /** Inserts a loop, or updates the row with its source and dedup key when that row is open, the new activity is newer, or an unmute queued it, and a mute does not hold it for the same counterparty email. `applied` is false when the guard kept the existing row. */
+  upsertOpenLoop(loop: OpenLoopUpsertInput): Promise<OpenLoopsSql.OpenLoopUpsertResult>;
+  /** Closes the open loop `id` (in `sourceId` when not null) as `status`, by `closedBy`, now; the closed row, or null when no open loop matches. */
+  closeOpenLoop(sourceId: string | null, id: number, status: Exclude<OpenLoopStatus, 'open'>, closedBy: string): Promise<OpenLoopsSql.OpenLoopDbRow | null>;
+  /** The loops that pass every filter, newest activity first, then id descending, at most `limit` (1 to 1000, 200 by default). */
+  listOpenLoops(opts?: OpenLoopListOpts): Promise<OpenLoopsSql.OpenLoopDbRow[]>;
+
+  // Trust: the write gate's receipts and holds (engine-sql/trust-write-gate.ts). Writers call these inside their
+  // publication transaction, so a rolled-back write leaves no receipt or hold.
+  /** Record a flag or quarantine receipt; the same target, content hash and detector version refreshes it. Returns its id. */
+  upsertWriteGateReceipt(input: TrustWriteGateSql.WriteGateReceiptInput): Promise<number>;
+  /** Record a receipt on the live page (sourceId, slug); null when no live page has that slug. */
+  upsertPageWriteGateReceipt(sourceId: string, slug: string, receipt: TrustWriteGateSql.WriteGateReceiptFields): Promise<number | null>;
+  /** Remove the live or deleted page's receipts whose content hash is not `contentHash` (null keeps none). */
+  deleteStalePageWriteGateReceipts(sourceId: string, slug: string, contentHash: string | null): Promise<void>;
+  /** One row's receipts, newest `last_seen_at` first (ties: higher id first), at most `limit`. */
+  listWriteGateReceiptsFor(targetTable: string, targetId: string, limit: number): Promise<TrustWriteGateSql.WriteGateReceiptRow[]>;
+  /** Delete receipts not seen for `olderThanDays` days, except those of a hold still held. Returns how many. */
+  deleteStaleWriteGateReceipts(olderThanDays: number): Promise<number>;
+  /** Hold a quarantined fact or take; the same source, slug, fingerprint and detector version re-opens the hold. Returns its id. */
+  upsertWriteGateHold(input: TrustWriteGateSql.WriteGateHoldRowInput): Promise<number>;
+  /** Holds, highest id first. */
+  listWriteGateHoldRows(opts: TrustWriteGateSql.WriteGateHoldListOpts): Promise<TrustWriteGateSql.WriteGateHoldRow[]>;
+  /** One hold by id, any status. */
+  getWriteGateHoldRow(id: number): Promise<TrustWriteGateSql.WriteGateHoldRow | null>;
+  /** Mark a held row released or dropped; false when it does not exist or was already decided. */
+  decideWriteGateHold(id: number, status: 'released' | 'dropped', decidedBy: string): Promise<boolean>;
 }

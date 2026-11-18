@@ -1,6 +1,7 @@
 import { opError, type OperationError } from '../ops/contract.ts';
 import { PAGE_BODY_CONFIG_KEYS, pageRecoveryBytes, segmentedPageCeiling } from '../page-body/limits.ts';
 import { DEFAULT_JOURNAL_LIMITS, principalKey, type JournalLimits, type Principal, type SqlEngine } from './model.ts';
+import type { BrainEngine } from '../engine.ts';
 import { engineKey } from '../engine-key.ts';
 import { COMPACTED_RECEIPT_BYTES_SQL, EFFECT_BYTES_SQL, RECEIPT_RESERVATION_FLOOR } from './receipt-bytes.ts';
 import { readConfigMap, readConfigValue } from '../config-values.ts';
@@ -63,8 +64,8 @@ export function parseJournalConfigValue(key:string,value:string):number {
 export const JOURNAL_LIMITS_SQL=`SELECT key,value FROM config WHERE key LIKE 'persistence.limits.%' OR key IN ('${PAGE_BODY_CONFIG_KEYS.segmentedStorage}','${PAGE_BODY_CONFIG_KEYS.maxBytes}')
     UNION ALL SELECT NULL,CASE WHEN (SELECT indisvalid FROM pg_index WHERE indexrelid=to_regclass('pages_segmented_body_bytes_idx')) IS TRUE
       THEN (SELECT max(body_bytes) FROM pages WHERE body_storage='segmented')::text ELSE 'unindexed' END`;
-export async function readJournalLimits(engine:SqlEngine & { kind?: string },overrides?:Partial<JournalLimits>):Promise<JournalLimits> {
-  const rows=await engine.executeRaw<{key:string|null;value:string|null}>(JOURNAL_LIMITS_SQL);
+export async function readJournalLimits(engine:Pick<BrainEngine,'readJournalLimitRows'> & { kind?: string },overrides?:Partial<JournalLimits>):Promise<JournalLimits> {
+  const rows=await engine.readJournalLimitRows();
   const kind=engine.kind === 'pglite' ? 'pglite' : 'postgres';
   const configured=new Map(rows.filter(row=>row.key!==null && row.value!==null).map(row=>[row.key!,row.value!]));
   const stored=rows.find(row=>row.key===null)?.value ?? null;

@@ -35,7 +35,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::cell::Cell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 const COUNTERS: &str = "journal_counters";
 const NEXT_SEQUENCE: &str = "next_sequence";
@@ -169,6 +169,35 @@ pub(crate) struct RequestRecord {
     updated_at_us: i64,
     #[serde(default)]
     completed_at_us: Option<i64>,
+}
+
+/// The staging ids that outstanding (not terminal) requests name in `intent.body_ref.staging_id`:
+/// the journal arm of PGLite's `liveStagingIds` (`engine-sql/page-body.ts`), a root of the
+/// segment sweep. Reads no request when the brain counter says none is outstanding.
+pub(crate) fn request_held_staging_ids(read: &dyn KvRead) -> Result<HashSet<String>> {
+    let counters: Counters = get_json(read, &keys::meta(COUNTERS))?.unwrap_or_default();
+    let mut out = HashSet::new();
+    if counters.brain == 0 {
+        return Ok(out);
+    }
+    let mut failure = None;
+    scan_prefix(read, &[keys::REQUEST], false, &mut |_, v| {
+        match serde_json::from_slice::<RequestRecord>(v) {
+            Ok(request) if !request.terminal() => {
+                if let Some(id) = request
+                    .intent
+                    .pointer("/body_ref/staging_id")
+                    .and_then(Value::as_str)
+                {
+                    out.insert(id.to_string());
+                }
+            }
+            Ok(_) => {}
+            Err(e) => failure = Some(crate::StoreError::from(e)),
+        }
+        failure.is_none()
+    })?;
+    failure.map_or(Ok(out), Err)
 }
 
 impl RequestRecord {
@@ -781,6 +810,51 @@ impl Store {
             };
             put_json(tx, &keys::writer(&id), &record)?;
             Ok(record.to_row())
+        })
+    }
+
+    /// `insertLocalWriterRow`: the `INSERT .. ON CONFLICT DO NOTHING` of PGLite's
+    /// `persistence_local_writers`. True when this call stored the row; false, with nothing
+    /// written, when a row already holds the id or the credential hash (the table's two unique
+    /// keys), whatever that row's lane, revocation or grant. The lane and id checks are the
+    /// table's own constraints, so a bad lane or a non-UUID id is an error, not a false.
+    pub fn insert_local_writer_row(&self, registration: &WriterRegistration) -> Result<bool> {
+        if !is_uuid(&registration.id) {
+            return Err(StoreError::invalid("a local writer id is a UUID"));
+        }
+        if registration.lane != "cli" && registration.lane != "stdio" {
+            return Err(StoreError::invalid("a local writer lane is cli or stdio"));
+        }
+        let id = registration.id.to_lowercase();
+        self.write(|tx| {
+            if get_json::<WriterRecord>(&*tx, &keys::writer(&id))?.is_some() {
+                return Ok(false);
+            }
+            let mut taken = false;
+            scan_prefix(&*tx, &[keys::WRITER], false, &mut |_, v| {
+                if let Ok(other) = serde_json::from_slice::<WriterRecord>(v)
+                    && other.credential_hash == registration.credential_hash
+                {
+                    taken = true;
+                }
+                !taken
+            })?;
+            if taken {
+                return Ok(false);
+            }
+            let record = WriterRecord {
+                id: id.clone(),
+                lane: registration.lane.clone(),
+                credential_hash: registration.credential_hash.clone(),
+                grant_ceiling: registration
+                    .grant_ceiling
+                    .clone()
+                    .unwrap_or_else(|| json!({})),
+                created_at_us: self.env.now_micros(),
+                revoked_at_us: None,
+            };
+            put_json(tx, &keys::writer(&id), &record)?;
+            Ok(true)
         })
     }
 

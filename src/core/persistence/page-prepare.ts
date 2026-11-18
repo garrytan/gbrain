@@ -1275,8 +1275,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
         async () => pinMode ? (await tx.executeRaw<{ mode: string | null }>(`UPDATE sources SET config=CASE WHEN config->>'slug_root_mode' IS NULL
           THEN jsonb_set(${SOURCE_CONFIG_OBJECT_SQL},'{slug_root_mode}',to_jsonb($2::text)) ELSE config END WHERE id=$1 RETURNING config->>'slug_root_mode' AS mode`,
         [row.source_id, pinMode]))[0] : undefined,
-        async () => { if (provenance) await tx.executeRaw(`UPDATE pages SET source_kind=$3,ingested_via=$4,ingested_at=$5::timestamptz
-          WHERE source_id=$1 AND slug=$2`, [row.source_id, row.slug, provenance.source_kind, provenance.ingested_via, provenance.ingested_at]); },
+        async () => { if (provenance) await tx.stampPageIngest(row.slug, { sourceId: row.source_id, sourceKind: provenance.source_kind, ingestedVia: provenance.ingested_via, ingestedAt: provenance.ingested_at }); },
         async () => { if (lean) ({ removedTimeline, contested } = projectedRows(await project?.(tx, applied?.pageId))); },
       ]) as [unknown, { mode: string | null } | undefined, unknown, unknown];
       if (pinMode && pinned?.mode !== pinMode) throw pageRefusal('revision_conflict', 'The source slug-root mode changed during preparation.', row,

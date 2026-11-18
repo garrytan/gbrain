@@ -358,7 +358,7 @@ test('queued Git work respects the native owner lock and expected file hash', as
   expect(await run(effect.id)).toMatchObject({ state: 'committed', outcome: { git: 'superseded' } });
   expect(git(f.remote, 'ls-tree', '-r', '--name-only', 'refs/heads/main')).toBe('initial.md\n');
   expect(readFileSync(join(f.root, '.git', 'index'))).toEqual(index);
-});
+}, 30_000); // the held lock makes the first pass wait its full EFFECT_LOCK_WAIT_MS (5 s) before writer_busy
 
 test('root replacement refuses queued work without changing canonical receipts', async () => {
   const f = await fixture();

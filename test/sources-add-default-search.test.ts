@@ -145,7 +145,7 @@ describe('a brain that cannot be shown to be personal keeps new sources out', ()
     await engine.unsetConfig('brain.audience');
     const failing = new Proxy(engine, {
       get(target, key, receiver) {
-        // The client usage read is the engine's typed readClientOpUsage member.
+        // The client-usage read is the engine's typed telemetry member (SQL in engine-sql/telemetry.ts).
         if (key === 'readClientOpUsage') return () => Promise.reject(new Error('canceling statement due to statement timeout'));
         const value = Reflect.get(target, key, receiver);
         return typeof value === 'function' ? value.bind(target) : value;

@@ -170,8 +170,7 @@ async function pairVerdict(engine: BrainEngine, root: string, sourceId: string, 
   if (drift.reason === 'file_database_drift') return 'file_drift';
   if (drift.reason !== 'agrees') return 'file_unverified';
   if (existsSync(resolveSourceLocalFilePath(root, undefined, twin.slug, undefined) ?? join(root, `${twin.slug}.md`))) return 'twin_slug_path_occupied';
-  const [withdrawn] = await engine.executeRaw('SELECT 1 FROM fact_withdrawals WHERE source_id=$1 AND subject=$2 LIMIT 1', [sourceId, twin.slug]);
-  if (withdrawn) return 'twin_has_withdrawals';
+  if (await engine.hasFactWithdrawalForSubject(sourceId, twin.slug)) return 'twin_has_withdrawals';
   return (await twinMergeConflicts(engine, Number(only.id), Number(twin.id))).length ? 'twin_evidence_conflicts' : null;
 }
 
