@@ -49,6 +49,7 @@ const OOS = {
   writeMisc: 'out-of-scope:write-misc (born in engine-sql/write-misc.ts; pinned by test/engine-parity/write-misc.test.ts)',
   journal: 'out-of-scope:persistence-journal (born in engine-sql/persistence-journal.ts, persistence-claims.ts and persistence-housekeeping.ts; pinned by test/engine-parity/persistence.test.ts and test/persistence-journal-statements.test.ts)',
   writeGuards: 'out-of-scope:write-guards (born in engine-sql/write-guards.ts; pinned by test/engine-parity/write-guards.test.ts and test/fold-hook-noop-6712.test.ts)',
+  persistenceDeclaration: 'out-of-scope:persistence-declaration (born in engine-sql/persistence-declaration.ts; pinned by test/engine-parity/persistence-declaration.test.ts)',
   pageWriteRows: 'out-of-scope:page-write-rows (born in engine-sql/timeline.ts and takes.ts; pinned by test/engine-parity/timeline.test.ts, takes.test.ts and test/fold-hook-noop-6712.test.ts)',
   trustFence: 'out-of-scope:trust-fence (born in engine-sql/facts.ts and engine-sql/trust-fence.ts; pinned by test/engine-parity/facts.test.ts, test/engine-parity/trust-fence.test.ts and test/fold-hook-noop-6712.test.ts)',
   trustProposals: 'out-of-scope:trust-proposals (born in engine-sql/trust-proposals.ts; pinned by test/engine-parity/trust-proposals.test.ts and test/engine-parity/trust-fence.test.ts)',
@@ -462,6 +463,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'getStats': OOS.stats, 'getHealth': OOS.stats,
   'getConfig': OOS.config, 'setConfig': OOS.config, 'unsetConfig': OOS.config, 'listConfigKeys': OOS.config, 'getAllConfig': OOS.config, 'getConfigValues': OOS.config,
   // import guards (typed reads and writes the default import path runs)
+  // persistence declaration (the typed protocol-2 declaration every managed write transaction runs first)
+  'declarePersistence': OOS.persistenceDeclaration,
   'readManagedModeRows': OOS.importGuards, 'getSourceStrictness': OOS.importGuards, 'readPersistenceBrainId': OOS.importGuards,
   'readLocalWriterRow': OOS.importGuards, 'insertLocalWriterRow': OOS.importGuards, 'readTransactionSettings': OOS.importGuards,
   'applyTransactionSettings': OOS.importGuards, 'readLedgerSource': OOS.importGuards, 'isFolderRestricted': OOS.importGuards,

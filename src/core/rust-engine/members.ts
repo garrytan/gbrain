@@ -35,6 +35,7 @@ export const RUST_ENGINE_MEMBERS = {
   transaction: 'transactions',
   transactionDirect: 'transactions',
   lockPageKeys: 'transactions',
+  declarePersistence: 'transactions',
   // pages
   aliasCanonicalRefs: 'pages',
   nextLivePageAfter: 'pages',

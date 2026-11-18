@@ -4536,6 +4536,7 @@
         "createVersion": "none",
         "currentCodeChunksExist": "none",
         "decideWriteGateHold": "none",
+        "declarePersistence": "none",
         "delayActiveJob": "none",
         "deleteChunks": "none",
         "deleteChunksExcept": "none",
