@@ -12,8 +12,9 @@
 //!
 //! The context holds the text each setting was last set to, as `set_config(name, value, true)`
 //! does; a setting never set reads as `None` (SQL NULL) and one set to `''` reads as `''`. The
-//! fence reads take it through [`Store::fence_context`]; the trust stamp
-//! (`trust::stamp`, lane 4) takes it through [`Store::write_trust`] once the facts insert calls it.
+//! fence reads take it through [`Store::fence_context`]. The trust stamp (`trust::stamp`) takes it
+//! through [`Store::write_trust`]: `Store::write` opens [`stamp_context`] with it for the write, and
+//! the page writer (`pages::write_page`) stamps each page it stores with it.
 //!
 //! Lifetime: PGLite ends the settings with the transaction (`SET LOCAL`). Each store has its own
 //! context: a store bound to a transaction (`Store::begin_transaction`) starts with an empty one,
@@ -174,7 +175,6 @@ impl Store {
     }
 
     /// The context as the trust stamp reads it (`trust::stamp`). Values were checked when set.
-    #[allow(dead_code)] // the facts, pages, takes and timeline writers call it once they stamp (lane 4)
     pub(crate) fn write_trust(&self) -> Result<WriteTrust> {
         let slot = self.write_context.lock();
         let text = |name: &str| slot.get(name).map(String::as_str);
@@ -190,6 +190,38 @@ impl Store {
             backfill: text(WRITE_TRUST_BACKFILL) == Some("on"),
             keep: TrustTable::keep_list(text(WRITE_TRUST_KEEP)),
         })
+    }
+}
+
+/// The write trust context of the store write transaction that runs on this thread, as the
+/// stamping writers read it: `Store::write` opens it with [`Store::write_trust`] and it ends with
+/// the write, as `transaction_clock` does. A write outside one (a test that drives a writer on a
+/// bare transaction) reads the empty context: an undeclared writer, stamped `unknown`.
+pub(crate) mod stamp_context {
+    use crate::trust::WriteTrust;
+    use std::cell::RefCell;
+
+    thread_local! {
+        static CONTEXT: RefCell<Option<WriteTrust>> = const { RefCell::new(None) };
+    }
+
+    /// Restores the context of the enclosing scope when the write transaction ends.
+    pub(crate) struct Scope(Option<WriteTrust>);
+
+    impl Drop for Scope {
+        fn drop(&mut self) {
+            let outer = self.0.take();
+            CONTEXT.with(|c| *c.borrow_mut() = outer);
+        }
+    }
+
+    pub(crate) fn open(trust: WriteTrust) -> Scope {
+        Scope(CONTEXT.with(|c| c.borrow_mut().replace(trust)))
+    }
+
+    /// The open write's trust context, or the empty one outside a write.
+    pub(crate) fn current() -> WriteTrust {
+        CONTEXT.with(|c| c.borrow().clone().unwrap_or_default())
     }
 }
 

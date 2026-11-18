@@ -184,3 +184,100 @@ fn stored_timeline_rows_are_the_page_rows_by_id_and_the_clock_is_iso() {
     assert_eq!(clock.len(), "2026-01-01T00:00:00.000000Z".len());
     assert!(clock.ends_with('Z'));
 }
+
+fn declare(store: &Store, tier: &str, origin: &str) {
+    let names = ["gbrain.write_trust_tier", "gbrain.write_origin"].map(String::from);
+    store
+        .apply_write_trust(&names, &[tier.to_string(), origin.to_string()])
+        .unwrap();
+}
+
+fn stamped(store: &Store, slug: &str) -> (String, Option<Value>) {
+    let rows = store
+        .read_page_trust_rows(&PageTrustLookup {
+            keys: vec![PageTrustKey {
+                source_id: "default".into(),
+                slug: slug.into(),
+            }],
+            include_deleted: true,
+            ..PageTrustLookup::default()
+        })
+        .unwrap();
+    (rows[0].trust_tier.clone(), rows[0].write_origin.clone())
+}
+
+#[test]
+fn a_page_write_stamps_the_tier_and_origin_of_the_write_trust_context() {
+    let dir = TempDir::new("cli-reads-page-trust");
+    let store = open(&dir);
+    let tx = store.begin_transaction(false).unwrap();
+    declare(&tx, "operator_curated", r#"{"channel":"import"}"#);
+    page(&tx, "default", "curated", json!({}));
+    let curated = (
+        "operator_curated".to_string(),
+        Some(json!({ "channel": "import" })),
+    );
+    assert_eq!(stamped(&tx, "curated"), curated);
+
+    // A rewrite of only a trust-ephemeral frontmatter key is no content change.
+    declare(&tx, "agent_written", r#"{"channel":"agent"}"#);
+    page(
+        &tx,
+        "default",
+        "curated",
+        json!({ "captured_at": "2026-01-01" }),
+    );
+    assert_eq!(stamped(&tx, "curated"), curated);
+    // A content change by a lower writer lowers the tier and takes its origin.
+    page(&tx, "default", "curated", json!({ "kind": "rewritten" }));
+    let agent = (
+        "agent_written".to_string(),
+        Some(json!({ "channel": "agent" })),
+    );
+    assert_eq!(stamped(&tx, "curated"), agent);
+    // A change to the body alone is a content change.
+    declare(&tx, "operator_curated", r#"{"channel":"body"}"#);
+    let body_only = PageInput {
+        page_type: "note".into(),
+        title: "CURATED".into(),
+        compiled_truth: "a new body".into(),
+        frontmatter: json!({ "kind": "rewritten" }).as_object().cloned(),
+        ..PageInput::default()
+    };
+    tx.put_page("curated", &body_only, &PutPageOptions::default())
+        .unwrap();
+    assert_eq!(
+        stamped(&tx, "curated"),
+        (
+            "operator_curated".to_string(),
+            Some(json!({ "channel": "body" })),
+        )
+    );
+    // A soft delete is a content change.
+    declare(&tx, "operator_curated", r#"{"channel":"owner"}"#);
+    tx.soft_delete_page("curated", Some("default")).unwrap();
+    let owner = (
+        "operator_curated".to_string(),
+        Some(json!({ "channel": "owner" })),
+    );
+    assert_eq!(stamped(&tx, "curated"), owner);
+
+    // A writer above operator_curated needs a covering promotion.
+    declare(&tx, "user_confirmed", r#"{"channel":"claim"}"#);
+    let input = PageInput {
+        page_type: "note".into(),
+        title: "RAISED".into(),
+        compiled_truth: "body".into(),
+        ..PageInput::default()
+    };
+    let refused = tx
+        .put_page("raised", &input, &PutPageOptions::default())
+        .unwrap_err();
+    assert_eq!(refused.code, "trust_raise_refused");
+    tx.commit_transaction().unwrap();
+
+    // The context ends with the transaction: an undeclared rewrite stamps unknown and NULL.
+    page(&store, "default", "plain", json!({}));
+    assert_eq!(stamped(&store, "plain"), ("unknown".to_string(), None));
+    assert_eq!(stamped(&store, "curated"), owner);
+}

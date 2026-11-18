@@ -34,9 +34,10 @@ Each answer below is what Postgres gives for a brain that never wrote the missin
   `readGuestSourceRow` is never hidden and never finds a row. This is the Postgres answer for a source that is a
   guest by config with no `guest_sources` row, so the import guard in `guests/admission.ts` lets the write through,
   as it does on Postgres for that source.
-- **Page trust.** Pages have no trust tier, no write origin and no activation-suppression receipts. Every page reads
-  `trust_tier: 'unknown'` (the column default), `write_origin: null` and `flagged: false`. `guest` is the source's
-  config value above.
+- **Page trust.** A page reads the `trust_tier` and `write_origin` its last write stamped
+  ([`write_trust.md`](write_trust.md), "Page stamping"); a page written by an undeclared writer reads
+  `trust_tier: 'unknown'` and `write_origin: null`. Pages have no activation-suppression receipts, so `flagged` is
+  always `false`. `guest` is the source's config value above.
 - **Knowledge revision.** Every stored page has a UUID `knowledge_revision`; it is never `null`. The extract stamp's
   "no revision" sentinel therefore never matches a store page, as it never matches a Postgres page written since the
   column became `NOT NULL`.

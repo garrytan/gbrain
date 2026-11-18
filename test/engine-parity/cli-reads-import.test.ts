@@ -112,6 +112,45 @@ describe('engine parity: CLI import reads', () => {
     return { live, withDeleted, none };
   });
 
+  parityTest('readPageTrustRows reads the tier and origin the page write stamped under the write trust context', { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'readPageTrustRows'] }, async (engine) => {
+    const TIER = 'gbrain.write_trust_tier';
+    const ORIGIN = 'gbrain.write_origin';
+    const declared = (tier: string, origin: Record<string, unknown> | null, fn: (tx: BrainEngine) => Promise<unknown>) =>
+      engine.transaction(async (tx) => {
+        await tx.applyTransactionSettings([TIER, ORIGIN], [tier, origin ? JSON.stringify(origin) : '']);
+        return fn(tx);
+      });
+    const read = async (slug: string) => {
+      const [row] = await engine.readPageTrustRows({ keys: [{ source_id: 'default', slug }] });
+      const origin = typeof row?.write_origin === 'string' ? JSON.parse(row.write_origin) : row?.write_origin ?? null;
+      return { tier: row?.trust_tier, origin };
+    };
+    const steps: Record<string, unknown> = {};
+    await declared('operator_curated', { channel: 'import' }, tx => note(tx, 'curated'));
+    steps.inserted = await read('curated');
+    expect(steps.inserted).toEqual({ tier: 'operator_curated', origin: { channel: 'import' } });
+    await declared('agent_written', { channel: 'agent' }, tx => note(tx, 'curated', 'default', { captured_at: '2026-01-01' }));
+    steps.ephemeralOnly = await read('curated');
+    expect(steps.ephemeralOnly).toEqual(steps.inserted);
+    await declared('agent_written', { channel: 'agent' }, tx => tx.putPage('curated', { type: 'note', title: 'CURATED', compiled_truth: 'rewritten by an agent' }));
+    steps.agentRewrite = await read('curated');
+    expect(steps.agentRewrite).toEqual({ tier: 'agent_written', origin: { channel: 'agent' } });
+    await declared('operator_curated', { channel: 'owner' }, tx => tx.putPage('curated', { type: 'note', title: 'CURATED', compiled_truth: 'rewritten by the owner' }));
+    steps.ownerRewrite = await read('curated');
+    expect(steps.ownerRewrite).toEqual({ tier: 'operator_curated', origin: { channel: 'owner' } });
+    await engine.putPage('curated', { type: 'note', title: 'CURATED', compiled_truth: 'rewritten undeclared' });
+    steps.undeclaredRewrite = await read('curated');
+    expect(steps.undeclaredRewrite).toEqual({ tier: 'unknown', origin: null });
+    await note(engine, 'plain');
+    steps.undeclaredInsert = await read('plain');
+    expect(steps.undeclaredInsert).toEqual({ tier: 'unknown', origin: null });
+    let refused = false;
+    await declared('user_confirmed', { channel: 'claim' }, tx => note(tx, 'raised')).catch(() => { refused = true; });
+    steps.raiseRefused = { refused, rows: await engine.readPageTrustRows({ keys: [{ source_id: 'default', slug: 'raised' }] }) };
+    expect(steps.raiseRefused).toEqual({ refused: true, rows: [] });
+    return steps;
+  });
+
   parityTest('readDatabaseClock returns the UTC clock with microseconds', { methods: ['readDatabaseClock'] }, async (engine) => {
     const at = await engine.readDatabaseClock();
     expect(at).toMatch(CLOCK);
