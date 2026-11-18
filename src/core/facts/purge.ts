@@ -169,10 +169,7 @@ export async function planFactPurge(engine: BrainEngine, target: PurgeTarget, al
   const subject = allSubjects || unbacked ? '*' : target.entity_slug ?? '*';
   const facts = await engine.planFactPurgeIds(target.source_id, target.visibility, target.fact_hash, subject);
   const factIds = facts.map(f => Number(f.id));
-  const takes = (await engine.executeRaw<{ id: number; page_id: number }>(`SELECT DISTINCT k.id,k.page_id FROM takes k JOIN pages p ON p.id=k.page_id
-    WHERE p.source_id=$1 AND (k.id IN (SELECT consolidated_into FROM facts WHERE id=ANY($2::bigint[]) AND consolidated_into IS NOT NULL)
-      OR (gbrain_fact_fingerprint(k.claim)=$3 AND ($4='*' OR p.slug=$4))) ORDER BY k.id`,
-  [target.source_id, factIds, target.fact_hash, subject])).map(t => ({ id: Number(t.id), page_id: Number(t.page_id) }));
+  const takes = await engine.planFactPurgeTakes({ sourceId: target.source_id, factIds, factHash: target.fact_hash, subject });
   const discovered = await discoverWithdrawalTargets(engine, target.source_id,
     [{ visibility: target.visibility, fact_hash: target.fact_hash, subject, claim: target.fact }]).catch(withdrawalDiscoveryFailure);
   const known = new Set(discovered.map(p => p.page_id));

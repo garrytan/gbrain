@@ -29,8 +29,9 @@
  * every command is listed as `no-engine` and only the PGLite half runs, so the fixture and the command list stay
  * checked. The table goes to stdout at the end of the file.
  *
- * Write commands in RECORDED_WRITES run last. Each one must write on the PGLite brain and refuse on the Rust brain with
- * the typed refusal that names the next engine member its write path needs.
+ * Write commands in RECORDED_WRITES run last. Each one must write on the PGLite brain. On the Rust brain it either
+ * refuses with the typed refusal that names the next engine member its write path needs, or is accepted and stays
+ * queued (write_pending) behind the member the background writer needs.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  * 1. Protects: the agent-facing contract of the read commands, end to end (flag parsing, operation dispatch, engine
@@ -253,14 +254,15 @@ const COMMANDS: string[][] = [
  * typed refusal that names the member given here, the next engine member the write path needs. When a later change
  * serves that member, this case fails and names the new next member, so the record stays current.
  */
-const RECORDED_WRITES: Array<{ args: string[]; member: string }> = [
-  { args: ['put', 'notes/parity-put', '--content', '---\ntype: note\ntitle: Parity put\n---\nBody text.\n', '--json'], member: 'executeRaw' },
+/** A write stops on Rust with a typed refusal that names `member`, or is accepted and stays queued behind `member`. */
+const RECORDED_WRITES: Array<{ args: string[]; rust: 'refused' | 'queued'; member: string }> = [
+  { args: ['put', 'notes/parity-put', '--content', '---\ntype: note\ntitle: Parity put\n---\nBody text.\n', '--json'], rust: 'queued', member: 'executeRawDirect' },
 ];
-// `put` passes the brain id, the source resolver and the request identity reads (readTopologyChange,
-// readWriteRequest), then stops at the raw admission source read (ADMISSION_SOURCE_SQL) in preparePageAdmission
-// (src/core/persistence/page-mutations.ts).
+// `put` passes the persistence declaration and write admission, so the request is recorded (state queued). The
+// background writer that applies it then stops at the raw consumer heartbeat (executeRawDirect in
+// src/core/persistence/consumer-heartbeat.ts), so the reply is write_pending (exit 10) and nothing is applied.
 
-type State = 'equal' | 'refused' | 'diverged' | 'no-engine' | 'runs';
+type State = 'equal' | 'refused' | 'queued' | 'diverged' | 'no-engine' | 'runs';
 interface Row { command: string; state: State; note: string }
 const table: Row[] = [];
 const setupRows: Row[] = [];
@@ -273,7 +275,7 @@ function printTable(): void {
     '[rust cli parity] commands:', ...table.map((r) => `  ${r.command} | ${r.state}${r.note ? ` (${r.note})` : ''}`)];
   const count = (s: State) => table.filter((r) => r.state === s).length;
   if (useMirror) lines.push('[rust cli parity] a Rust setup write was refused: reads were compared with the mirror (PGLite with the same completed writes)');
-  lines.push(`[rust cli parity] ${count('equal')} equal, ${count('refused')} refused, ${count('diverged')} diverged, ${count('no-engine')} without a Rust engine`);
+  lines.push(`[rust cli parity] ${count('equal')} equal, ${count('refused')} refused, ${count('queued')} queued, ${count('diverged')} diverged, ${count('no-engine')} without a Rust engine`);
   console.log(lines.join('\n'));
 }
 
@@ -340,8 +342,8 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
     }, 240_000);
   }
 
-  for (const { args, member: next } of RECORDED_WRITES) {
-    test(`${label(args)} writes on PGLite and refuses on Rust at ${next}`, async () => {
+  for (const { args, rust: outcome, member: next } of RECORDED_WRITES) {
+    test(`${label(args)} writes on PGLite and ${outcome === 'refused' ? 'refuses on Rust at' : 'stays queued on Rust behind'} ${next}`, async () => {
       const [pg, rust] = await Promise.all([cli(brains.pglite, args), rustArm === 'on' ? cli(brains.rust, args) : Promise.resolve(null)]);
       expect({ exitCode: pg.exitCode, json: parseJson(pg.stdout) !== undefined }).toEqual({ exitCode: 0, json: true });
       if (!rust || engineMissing(rust)) {
@@ -349,6 +351,14 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
         return;
       }
       const member = refusedMember(rust);
+      if (outcome === 'queued') {
+        // Accepted, never applied: the reply is the typed pending receipt, not a refusal or a success.
+        const body = parseJson(rust.stdout) as { code?: string; state?: string } | undefined;
+        const queued = rust.exitCode === 10 && body?.code === 'write_pending' && body?.state === 'queued';
+        table.push({ command: label(args), state: queued ? 'queued' : 'diverged', note: queued ? `behind ${next}` : `exit ${rust.exitCode}` });
+        expect({ exitCode: rust.exitCode, code: body?.code, state: body?.state, member }).toEqual({ exitCode: 10, code: 'write_pending', state: 'queued', member: null });
+        return;
+      }
       table.push({ command: label(args), state: member ? 'refused' : 'diverged', note: member ?? `exit ${rust.exitCode}` });
       // Nothing ran on Rust: the refusal is typed, names the next member, and reports that nothing was written.
       expect({ member, written: /written=nothing/.test(rust.stdout) }).toEqual({ member: next, written: true });

@@ -26,6 +26,7 @@ import { opError } from '../../ops/contract.ts';
 import { mapStoreError, storeErrorCode } from '../store-errors.ts';
 import type { RustStore, StoreBrain } from '../store.ts';
 import { storeCall } from './common.ts';
+import { readPersistenceBrainId } from './persistence-identity.ts';
 
 type TransactionFn<T> = (engine: BrainEngine) => Promise<T>;
 
@@ -37,7 +38,7 @@ const TRUST_SETTINGS: ReadonlySet<string> = new Set([
 /** The settings the transaction keeps in TypeScript (`RustTransactionScope.settings`): attribution and source scope. */
 const SCOPE_SETTINGS: ReadonlySet<string> = new Set([
   'gbrain.write_sources', 'gbrain.write_request', 'gbrain.write_principal_kind', 'gbrain.write_principal_id',
-  'gbrain.git_protocol',
+  'gbrain.git_protocol', 'gbrain.persistence_protocol',
 ]);
 /** engine-sql/transaction-settings.ts `SETTING_NAME`: the same check and the same error, before any work. */
 const SETTING_NAME = /^[a-z_][a-z0-9_.]*$/;
@@ -101,6 +102,22 @@ export const applyTransactionSettings = async function applyTransactionSettings(
   }
   const known = seen(this);
   for (const name of names) known.add(name);
+};
+
+/**
+ * The persistence protocol declaration: protocol 2 for the rest of the transaction, then the brain id. The store
+ * commits every transaction durably through its one writer and has no lock or statement timeouts, so the durable
+ * settings change nothing here. The id is the one `readPersistenceBrainId` reads (null for a store without one).
+ * Outside a transaction nothing is kept, as on PGLite, where the setting ends with its statement.
+ */
+export const declarePersistence = async function declarePersistence(this: RustEngine, brain: StoreBrain, _opts?: Parameters<BrainEngine['declarePersistence']>[0]): Promise<string | null> {
+  const scope = this._txScope;
+  if (scope) {
+    if (scope.ended) throw mapStoreError({ code: 'store_closed' }, { member: 'declarePersistence' });
+    scope.settings.set('gbrain.persistence_protocol', '2');
+  }
+  seen(this).add('gbrain.persistence_protocol');
+  return readPersistenceBrainId(brain);
 };
 
 /** What a transaction-bound clone carries on top of the engine it was made from. */

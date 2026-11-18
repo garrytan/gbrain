@@ -14,6 +14,7 @@ import { MinionSupervisor, queryWedgeSignals } from '../src/core/minions/supervi
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { withQueueMembers } from './helpers/queue-engine-members.ts';
 
 // ---------------------------------------------------------------------------
 // Layer 1: decision logic (stub engine + fake child supervisor)
@@ -47,7 +48,7 @@ function makeSup(opts?: {
     current: opts?.row ?? {},
   };
 
-  const stubEngine = {
+  const stubEngine = withQueueMembers({
     kind: 'postgres',
     async executeRaw() {
       const r = rowRef.current;
@@ -60,7 +61,7 @@ function makeSup(opts?: {
         last_completed_claimable: r.last_completed_claimable ?? null,
       }];
     },
-  } as unknown as BrainEngine;
+  }) as unknown as BrainEngine;
 
   const sup = new MinionSupervisor(stubEngine, {
     cliPath: '/bin/true',

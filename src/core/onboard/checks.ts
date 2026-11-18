@@ -31,7 +31,7 @@ import { MIN_ENTITY_PAGES_FOR_COVERAGE } from '../types.ts';
 import { ORPHANED_ALIAS_COUNTS_SQL, SOFT_DELETED_ALIAS_COUNT_SQL } from '../repair/aliases.ts';
 import { repairPreviewCommand } from '../repair/registry.ts';
 import { isMissingSchemaObject } from '../utils.ts';
-import { isEngineCapabilityRefusal } from '../engine-capability-refusal.ts';
+import { isEngineCapabilityRefusal, rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 /** Shared shape returned by all four checks. */
 export interface OnboardCheckResult {
@@ -488,10 +488,12 @@ export async function checkTimelineCoverage(
 export async function checkTakesCount(
   engine: BrainEngine,
 ): Promise<OnboardCheckResult> {
-  const takesCount = await safeCount(
-    engine,
-    `SELECT COUNT(*) AS count FROM takes`,
-  );
+  let takesCount = 0;
+  try {
+    takesCount = await engine.countTakes();
+  } catch (e) {
+    rethrowCapabilityRefusal(e);
+  }
 
   let bootstrapEnabled = false;
   try {

@@ -71,13 +71,7 @@ const defaultSources: RuntimeBuildSources = {
 };
 
 async function recentChildBuilds(engine: BrainEngine): Promise<ChildBuild[]> {
-  const rows = await engine.executeRaw<{ id: number; line: string }>(
-    `SELECT j.id, e.line FROM (
-       SELECT id, stacktrace FROM minion_jobs
-        WHERE jsonb_typeof(stacktrace) = 'array' AND updated_at > now() - interval '${CHILD_WINDOW_HOURS} hours'
-        ORDER BY id DESC LIMIT ${CHILD_SCAN_JOBS}) j
-     CROSS JOIN LATERAL jsonb_array_elements_text(j.stacktrace) AS e(line)
-     WHERE e.line LIKE $1`, [`${JOB_BUILD_SKEW_PREFIX}%`]);
+  const rows = await engine.listBuildSkewStacktraceLines({ prefix: JOB_BUILD_SKEW_PREFIX, windowHours: CHILD_WINDOW_HOURS, scanJobs: CHILD_SCAN_JOBS });
   return rows.flatMap(row => {
     const match = CHILD_LINE.exec(row.line);
     return match ? [{ job_id: Number(row.id), child_version: match[1]!, worker_pid: Number(match[3]), worker_version: match[4]!, refused: match[2] === 'refused to run' }] : [];

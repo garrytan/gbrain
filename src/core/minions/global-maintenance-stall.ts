@@ -55,11 +55,7 @@ export async function assessGlobalMaintenanceStall(engine: BrainEngine, nowMs = 
   const last = Number.isFinite(lastMs) ? new Date(lastMs).toISOString() : null;
   const floorMin = await resolveGlobalFloorMin(engine);
   const progress = await readGlobalMaintenanceProgress(engine);
-  const [job] = await engine.executeRaw<{ id: number; status: string; error_text: string | null; total: number; since: string | null }>(
-    `SELECT id, status, error_text, count(*) OVER ()::int AS total, min(finished_at) OVER ()::text AS since FROM minion_jobs
-      WHERE name = 'autopilot-global-maintenance' AND status IN ('failed', 'dead', 'cancelled')
-        AND ($1::timestamptz IS NULL OR finished_at > $1::timestamptz)
-      ORDER BY finished_at DESC NULLS LAST, id DESC LIMIT 1`, [last]);
+  const job = await engine.readLastFailedGlobalMaintenanceJob(last);
   const phases: StalledPhase[] = Object.entries(progress.failures ?? {})
     .map(([phase, s]) => ({ phase, key: s.key, count: s.count, first_at: s.first_at, last_at: s.last_at, retry_at: s.retry_at ?? null,
       stamping_past: streakStampsPast(s, s.count), ...(s.deferred !== undefined ? { deferred: s.deferred, stalled: s.stalled ?? 0 } : {}) }))

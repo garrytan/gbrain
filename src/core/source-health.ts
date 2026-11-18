@@ -419,24 +419,14 @@ type JobStats = { failed_24h: number; queue_depth: number; backfill_active: numb
 async function jobCountsBySource(engine: BrainEngine): Promise<Map<string, JobStats>> {
   // Pre-v0.11 brains don't have minion_jobs; return empty map.
   try {
-    const rows = await engine.executeRaw<{ source_id: string; failed_24h: number; queue_depth: number; backfill_active: number; backfill_queued: number }>(
-      `SELECT data->>'sourceId' AS source_id,
-              COUNT(*) FILTER (WHERE status IN ('failed','dead') AND created_at > NOW() - INTERVAL '24 hours')::int AS failed_24h,
-              COUNT(*) FILTER (WHERE status IN ('waiting','active','delayed'))::int AS queue_depth,
-              COUNT(*) FILTER (WHERE name = 'embed-backfill' AND status = 'active')::int AS backfill_active,
-              COUNT(*) FILTER (WHERE name = 'embed-backfill' AND status IN ('waiting','delayed','waiting-children'))::int AS backfill_queued
-         FROM minion_jobs
-        WHERE name IN ('sync','embed-backfill')
-          AND data->>'sourceId' IS NOT NULL
-        GROUP BY data->>'sourceId'`,
-    );
+    const rows = await engine.readSourceJobCounts(86400);
     const m = new Map<string, JobStats>();
     for (const r of rows) {
       m.set(r.source_id, {
-        failed_24h: Number(r.failed_24h),
-        queue_depth: Number(r.queue_depth),
-        backfill_active: Number(r.backfill_active),
-        backfill_queued: Number(r.backfill_queued),
+        failed_24h: r.failed_24h,
+        queue_depth: r.queue_depth,
+        backfill_active: r.backfill_active,
+        backfill_queued: r.backfill_queued,
       });
     }
     return m;

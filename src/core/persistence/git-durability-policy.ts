@@ -22,6 +22,7 @@
  * claim runs it.
  */
 import { isDurabilityHardenedAsync } from '../brain-repo-durability.ts';
+import type { BrainEngine } from '../engine.ts';
 import type { SqlEngine } from './model.ts';
 import type { WorktreeBinding } from './ownership.ts';
 import { declarePersistenceProtocol, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
@@ -69,7 +70,7 @@ export async function planGitDurabilityCatchUp(engine: SqlEngine, binding: Pick<
  * (or that is no longer skipped) is left alone; the returned ids are the rows
  * actually queued.
  */
-export async function requeueGitDurabilityCatchUp(tx: SqlEngine, binding: Pick<WorktreeBinding, 'worktree_id' | 'source_incarnation'>, ids: readonly string[]): Promise<string[]> {
+export async function requeueGitDurabilityCatchUp(tx: SqlEngine & Pick<BrainEngine, 'declarePersistence'>, binding: Pick<WorktreeBinding, 'worktree_id' | 'source_incarnation'>, ids: readonly string[]): Promise<string[]> {
   if (!ids.length) return [];
   await declarePersistenceProtocol(tx);
   const rows = await tx.executeRaw<{ id: string }>(`

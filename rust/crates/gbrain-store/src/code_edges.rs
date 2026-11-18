@@ -1,7 +1,8 @@
 //! Code call edges between chunks and symbols: the `code_edges_chunk` and `code_edges_symbol`
 //! tables of the PGLite engine.
 //!
-//! Members: addCodeEdges, deleteCodeEdgesForChunks, getCallersOf, getCalleesOf, getEdgesByChunk.
+//! Members: addCodeEdges, deleteCodeEdgesForChunks, getCallersOf, getCalleesOf, getEdgesByChunk,
+//! hasCodeEdgesSymbol.
 //!
 //! An edge is resolved (a `code_edges_chunk` row, `Table::Chunk`) when the caller knows the chunk
 //! it points at, and unresolved (a `code_edges_symbol` row, `Table::Symbol`) when it knows only the
@@ -642,6 +643,13 @@ impl Store {
             }
             Ok(inserted)
         })
+    }
+
+    /// `hasCodeEdgesSymbol(sourceId)`: whether the source owns an unresolved (symbol) edge.
+    pub fn has_code_edges_symbol(&self, source_id: &str) -> Result<bool> {
+        Ok(table_rows(&*self.read()?, Table::Symbol)?
+            .iter()
+            .any(|e| e.source_id.as_deref() == Some(source_id)))
     }
 
     /// `deleteCodeEdgesForChunks(ids)`: deletes the chunk-table rows with an end in `ids` and the
