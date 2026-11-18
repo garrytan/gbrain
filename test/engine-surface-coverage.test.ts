@@ -140,6 +140,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'transitionTrustProposal',
   // The connect gate's persistence reads (engine-sql/connect-gate.ts).
   'hasPersistenceTable', 'listManagedRootBindings', 'readGraduationGateRow', 'listRetiredDeactivations',
+  // Group A (decide store)
+  'readDecideState', 'upsertDecideState', 'deleteDecideState', 'ensureDecideState',
   // Search
   'searchKeyword', 'countKeywordPages', 'searchKeywordPages', 'searchTitles', 'searchVector', 'getEmbeddingsByChunkIds',
   // Chunks

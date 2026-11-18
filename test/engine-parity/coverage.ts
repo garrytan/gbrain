@@ -194,6 +194,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
   trust_proposals: ['insertTrustProposal', 'getTrustProposal', 'listTrustProposals', 'pendingTrustProposalsFor',
     'updatePendingTrustProposalAfter', 'transitionTrustProposal'],
   connect_gate: ['hasPersistenceTable', 'listManagedRootBindings', 'readGraduationGateRow', 'listRetiredDeactivations'],
+  // decide_store: the decide state, spend, receipt and calibration tables (engine-sql/decide-store.ts)
+  decide_store: ['readDecideState', 'upsertDecideState', 'deleteDecideState', 'ensureDecideState'],
 };
 
 /** Callable members of `interface BrainEngine`, in declaration order (`kind` excluded). */

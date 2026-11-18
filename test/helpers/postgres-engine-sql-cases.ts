@@ -73,6 +73,7 @@ const OOS = {
   trustWithdrawals: 'out-of-scope:trust-withdrawals (born in engine-sql/trust-withdrawals.ts; pinned by test/engine-parity/trust-withdrawals.test.ts)',
   trustWriteGate: 'out-of-scope:trust-write-gate (born in engine-sql/trust-write-gate.ts; pinned by test/engine-parity/trust-write-gate.test.ts)',
   openLoops: 'out-of-scope:open-loops (born in engine-sql/open-loops.ts; pinned by test/engine-parity/open-loops.test.ts)',
+  decideStore: 'out-of-scope:decide-store (born in engine-sql/decide-store.ts; pinned by test/engine-parity/decide-store.test.ts)',
   minionJobs: 'out-of-scope:minion-jobs (born in engine-sql/jobs.ts and engine-sql/jobs-queue.ts; pinned by test/engine-parity/jobs.test.ts and jobs-queue.test.ts)',
   takesReads: 'out-of-scope:takes-reads (born in engine-sql/takes-reads.ts; pinned by test/engine-parity/takes.test.ts, code-eval-salience.test.ts and test/engine-sql-takes-reads.test.ts)',
 } as const;
@@ -287,6 +288,11 @@ export const DOMAIN_OF: Record<string, string> = {
   'listManagedRootBindings': OOS.connectGate,
   'readGraduationGateRow': OOS.connectGate,
   'listRetiredDeactivations': OOS.connectGate,
+  // Group A (decide store)
+  'readDecideState': OOS.decideStore,
+  'upsertDecideState': OOS.decideStore,
+  'deleteDecideState': OOS.decideStore,
+  'ensureDecideState': OOS.decideStore,
   'constructor': OOS.lifecycle,
   'registerBeforeDisconnect': OOS.lifecycle,
   'sql': OOS.lifecycle,

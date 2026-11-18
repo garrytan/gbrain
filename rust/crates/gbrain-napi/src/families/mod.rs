@@ -32,6 +32,7 @@ mod aliases;
 mod chunk_queries;
 mod code_edges;
 mod contradictions;
+mod decide_store;
 mod dream;
 mod embeddings;
 mod eval_capture;
