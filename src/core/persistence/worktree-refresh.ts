@@ -565,7 +565,11 @@ async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTi
     const pushed = await publishInChild(root, sourceId, targetHead);
     const published = { sha: pushed.sha ?? targetHead, local_commits: localCommits, integrated: pushed.integrated,
       ...(pushed.quarantined ? { quarantined: pushed.quarantined } : {}), ...(pushed.superseded_remote_paths ? { superseded_remote_paths: pushed.superseded_remote_paths } : {}) };
-    const plan = await precheck(engine, git, sourceId, fetchTimeoutMs).catch(error => { throw notePublished(error, published); });
+    const plan = await precheck(engine, git, sourceId, fetchTimeoutMs).catch(async error => {
+      notePublished(error, published);
+      if (error instanceof OperationError && error.code === 'refresh_diverged' && await revParse(git, root, 'HEAD') !== oldHead) throw retryInTick(error);
+      throw error;
+    });
     return { ...plan, published: { ...published, sha: pushed.sha ?? plan.targetHead } };
   }
   const dirt = await dirtyOverlap(git, root, oldHead, targetHead);
