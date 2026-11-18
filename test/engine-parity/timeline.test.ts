@@ -165,6 +165,58 @@ describe('engine parity: timeline entries', () => {
   );
 
   parityTest(
+    'getTimeline under excludePrivate applies a caller\'s reader identity and private-readable grant',
+    { methods: ['getTimeline', 'addTimelineEntry', 'upsertEventProjection', 'putPage'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'alt');
+      const page = (slug: string, type: string, frontmatter: Record<string, unknown>, opts?: { sourceId?: string }) =>
+        engine.putPage(slug, { type: type as 'person', title: slug, compiled_truth: `${slug} body`, timeline: '', frontmatter }, opts);
+      await page('people/alice-example', 'person', {});
+      await page('people/private-example', 'person', { visibility: 'private' });
+      await page('people/alt-private-example', 'person', { visibility: 'private' }, { sourceId: 'alt' });
+      await page('people/readers-example', 'person', { readable_by: ['alice-example'] });
+      await page('people/team-example', 'person', { readable_by: 'group:team-a' });
+      await page('people/bob-only-example', 'person', { readable_by: ['bob-example'] });
+      await page('people/pinned-example', 'person', { visibility: 'private', pinned_question: true });
+      for (const [eventSlug, frontmatter] of [
+        ['life/events/open', {}], ['life/events/private', { visibility: 'private' }],
+        ['life/events/readers', { readable_by: ['alice-example'] }], ['life/events/bob-only', { readable_by: ['bob-example'] }],
+      ] as const) {
+        await engine.putPage(eventSlug, {
+          type: 'event', title: eventSlug, compiled_truth: `${eventSlug} body`, timeline: '',
+          frontmatter: { ...frontmatter, event: { kind: 'meeting', who: ['people/alice-example'] } },
+          effective_date: new Date('2026-06-18T09:00:00Z'), effective_date_source: 'event_date',
+        });
+        await engine.upsertEventProjection({ depthSlug: 'people/alice-example', eventSlug, date: '2026-06-18', summary: eventSlug });
+      }
+      const own = ['people/private-example', 'people/readers-example', 'people/team-example', 'people/bob-only-example', 'people/pinned-example'];
+      for (const slug of own) await engine.addTimelineEntry(slug, { date: '2026-06-15', summary: `${slug} plain` });
+      await engine.addTimelineEntry('people/alt-private-example', { date: '2026-06-15', summary: 'alt plain' }, { sourceId: 'alt' });
+      const read = (access: Parameters<typeof withCallerAccess>[0]) => withCallerAccess(access, async () => {
+        const rows: Record<string, string[]> = {};
+        for (const slug of ['people/alice-example', ...own, 'people/alt-private-example']) {
+          rows[slug] = (await engine.getTimeline(slug, { excludePrivate: true })).map((e) => e.summary);
+        }
+        return rows;
+      });
+      const member = await read({ identity: ['member:alice-example', 'group:team-a'], hidePrivate: true });
+      const granted = await read({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true });
+      const stranger = await read({ identity: ['member:carol-example'], hidePrivate: true });
+      expect(stranger['people/alice-example']).toEqual(['life/events/open']);
+      expect(sorted(member['people/alice-example'])).toEqual(['life/events/open', 'life/events/readers']);
+      expect(member['people/readers-example']).toEqual(['people/readers-example plain']);
+      expect(member['people/team-example']).toEqual(['people/team-example plain']);
+      expect(member['people/bob-only-example']).toEqual([]);
+      expect(member['people/private-example']).toEqual([]);
+      expect(granted['people/private-example']).toEqual(['people/private-example plain']);
+      expect(granted['people/pinned-example']).toEqual([]);
+      expect(granted['people/alt-private-example']).toEqual([]);
+      expect(sorted(granted['people/alice-example'])).toEqual(['life/events/open', 'life/events/private', 'life/events/readers']);
+      return { member, granted, stranger };
+    },
+  );
+
+  parityTest(
     'addTimelineEntriesBatch counts inserted rows, drops missing pages and replays as no-ops',
     { methods: ['addTimelineEntriesBatch', 'getTimeline', 'putPage'] },
     async (engine, backend) => {
