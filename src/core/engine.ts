@@ -43,7 +43,7 @@ import type {
 import type { AdmitJobPolicy, AdmitJobResult, AdmitJobSpec, ClaimJobSpec, JobRow, ListJobsFilter } from './engine-sql/jobs.ts';
 import type {
   CancelJobsSpec, DelayActiveJobSpec, JobAttachmentInsert, JobPageSpec, JobStatsRead, JobTokenCounts, PrivateQueueState, PruneJobsSpec,
-  SynthesisCompletion, SynthesisCompletionPrefix,
+  SynthesisCompletion, SynthesisCompletionPrefix, JobSourceState,
   QueueFamilyRow, RetryJobPolicy,
 } from './engine-sql/jobs-queue.ts';
 import type { JunkEntityHubRow, LinkEndpointPage, LivePageSummary, TitledPage } from './engine-sql/link-reads.ts';
@@ -3499,6 +3499,8 @@ export interface BrainEngine {
   countOpenJobsByOwner(clientId: string): Promise<number>;
   /** Lock a delegated client's OAuth row for the rest of the transaction (delegated job admission). */
   lockOAuthClient(clientId: string): Promise<void>;
+  /** An agent job's source: archived and created_at, or null (the job authority check). */
+  readJobSourceState(sourceId: string): Promise<JobSourceState | null>;
   /** One `list_jobs` page, newest first on `(created_at, id)`, each row with `created_us` for the next cursor. */
   listJobPage(spec: JobPageSpec): Promise<JobRow[]>;
   /** The attachment filenames of a job, or null when the job does not exist. */
