@@ -193,7 +193,8 @@ export async function previewHandover(engine: BrainEngine, rawMember: string, ch
     { group: 'memory', choice: 'never', count: memory + Number(memoryPage?.n ?? 0) - memory, sample: Number(memoryPage?.n ?? 0) ? [MEMBER_PAGE_PREFIX + leaver.id] : [],
       note: Number(memoryFacts?.n ?? 0) + ' private fact(s); never opened. The owner reads them on the brain host.' }];
   const [creds] = await engine.executeRaw<{ n: number }>("SELECT (SELECT count(*) FROM access_tokens WHERE member_id = $1 AND revoked_at IS NULL) + (SELECT count(*) FROM oauth_clients WHERE member_id = $1) AS n", [leaver.id]).catch(() => [{ n: 0 }]);
-  const hash = previewHash({ kind: 'member-handover-v1', member: leaver.id, owner: ctx.owner, choices, items: changed });
+  const [undone] = await engine.executeRaw<{ id: string }>("SELECT id FROM access_handovers WHERE member_id = $1 AND state = 'undone' ORDER BY undone_at DESC LIMIT 1", [leaver.id]);
+  const hash = previewHash({ kind: 'member-handover-v1', member: leaver.id, owner: ctx.owner, choices, items: changed, ...(undone ? { after_undo: String(undone.id) } : {}) });
   if (changed.length) await saveApprovedSet<HandoverItem>(engine, { command: 'member-handover', hash }, changed);
   return { member: leaver.id, member_status: leaver.status, owner: ctx.owner, choices, groups, items: changed, ...impact,
     bound_credentials: Number(creds?.n ?? 0), leaver_groups: [...ctx.leaverPrincipals].filter(p => p.startsWith('group:')).map(plain), plan_hash: hash, warnings };
@@ -287,12 +288,7 @@ export async function applyHandover(engine: BrainEngine, member: string, opts: A
       const now = await currentReaders(engine, item);
       if (!holdsFrom(item, now) && !holdsTo(item, now)) throw previewChangedError(opts.expect, opts.previewCommand);
     }
-    const sources = [...new Set(items.filter(i => i.kind === 'rule').map(i => i.source_id))];
-    for (const source of sources) {
-      if ((await coverageRows(engine, source)).some(c => c.reason === 'pending')) await resumePolicy(engine, source);
-      if ((await previewApply(engine, source)).widening.length) throw handoverError('handover_rules_held', 'Source ' + source + ' has a folder-rule change waiting for approval; the handover would approve it too, so nothing was written.',
-        'gbrain access apply --source ' + source, 'Approving a rule change installs every change waiting for that source, and a handover approves only what it showed.');
-    }
+    for (const source of new Set(items.filter(i => i.kind === 'rule').map(i => i.source_id))) await refuseHeldRules(engine, source);
     await engine.executeRaw('INSERT INTO access_handovers (id, member_id, owner_id, plan_hash, choices, items, state, undo_of) VALUES ($1, $2, $3, $4, $5::text::jsonb, $6::text::jsonb, \'applying\', $7) ON CONFLICT (plan_hash) DO NOTHING',
       [id, leaver.id, await ownerMemberId(engine), opts.expect, JSON.stringify(opts.undo?.choices ?? {}), JSON.stringify(items), opts.undo?.id ?? null]);
     record = (await readRecord(engine, 'plan_hash', opts.expect))!;
@@ -301,6 +297,7 @@ export async function applyHandover(engine: BrainEngine, member: string, opts: A
   const pending = (i: RecordedItem) => i.outcome !== 'done';
   for (const source of [...new Set(record.items.filter(i => i.kind === 'rule' && pending(i)).map(i => i.source_id))]) {
     const rules = record.items.filter((i): i is RecordedItem & RuleItem => i.kind === 'rule' && i.source_id === source);
+    await refuseHeldRules(engine, source);
     const base = await currentFolderRules(engine, source);
     const desired = sortRules(base.flatMap(r => {
       const item = rules.find(i => i.rule_id === r.id);
@@ -358,6 +355,13 @@ export async function applyHandover(engine: BrainEngine, member: string, opts: A
   await clearApprovedSet(engine, { command: 'member-handover', hash: opts.expect });
   if (opts.undo) await engine.executeRaw('UPDATE access_handovers SET state = \'undone\', undone_at = now(), updated_at = now() WHERE id = $1', [opts.undo.id]);
   return record;
+}
+
+/** Refuses while the source has a folder-rule change waiting for approval: writeApprovedRules would approve it too. */
+async function refuseHeldRules(engine: BrainEngine, source: string): Promise<void> {
+  if ((await coverageRows(engine, source)).some(c => c.reason === 'pending')) await resumePolicy(engine, source);
+  if ((await previewApply(engine, source)).widening.length) throw handoverError('handover_rules_held', 'Source ' + source + ' has a folder-rule change waiting for approval; the handover would approve it too, so its folder rules were not written.',
+    'gbrain access apply --source ' + source, 'Approving a rule change installs every change waiting for that source, and a handover approves only what it showed.');
 }
 
 /** True while a page write of the handover still waits for its Git commit. */

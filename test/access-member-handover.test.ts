@@ -159,6 +159,48 @@ async function cases(engine: BrainEngine): Promise<void> {
   expect(await readersOf(engine, 'people/bob-example/journal')).toBe('every_source_reader');
 }
 
+/** A default handover after an undo is a new plan: it writes again instead of returning the undone row. */
+async function reapplyAfterUndo(engine: BrainEngine): Promise<void> {
+  await addMember(engine, 'dana-example');
+  await importFromContent(engine, 'notes/dana-example', '---\ntype: note\ntitle: dana\nreadable_by: [dana-example]\n---\nSynthetic.\n', { sourceId: SRC });
+  await access(engine, ['member', 'disable', 'dana-example']);
+  const first = await json<Preview>(engine, ['member', 'handover', 'dana-example']);
+  const applied = await json<Record>(engine, ['member', 'handover', 'dana-example', '--yes', '--expect', first.plan_hash]);
+  await access(engine, ['member', 'enable', 'dana-example']);
+  const undo = await json<{ plan_hash: string }>(engine, ['member', 'handover', 'dana-example', '--undo', applied.id]);
+  await json<Record>(engine, ['member', 'handover', 'dana-example', '--undo', applied.id, '--yes', '--expect', undo.plan_hash]);
+  expect(await readers(engine, 'notes/dana-example')).toEqual(['dana-example']);
+  await access(engine, ['member', 'disable', 'dana-example']);
+  const second = await json<Preview>(engine, ['member', 'handover', 'dana-example']);
+  expect(second.plan_hash).not.toBe(first.plan_hash);
+  const again = await json<Record>(engine, ['member', 'handover', 'dana-example', '--yes', '--expect', second.plan_hash]);
+  expect(again.id).not.toBe(applied.id);
+  expect(again.state).toBe('applied');
+  expect(await readersOf(engine, 'notes/dana-example')).toEqual(['owner-example']);
+}
+
+/** Resuming a handover refuses while another folder-rule change waits for approval, so it never approves that change. */
+async function resumeWithHeldRule(engine: BrainEngine): Promise<void> {
+  await addMember(engine, 'frank-example');
+  await addFolderRules(engine, SRC, [{ id: 'frank-folder', prefix: 'people/frank-example/', readable_by: ['member:frank-example'] } as never], { apply: true, json: true });
+  await importFromContent(engine, 'people/frank-example/plan', '---\ntype: note\ntitle: plan\n---\nSynthetic.\n', { sourceId: SRC });
+  await addFolderRules(engine, SRC, [{ id: 'held-folder', prefix: 'held/', readable_by: ['member:owner-example'] } as never], { apply: true, json: true });
+  await importFromContent(engine, 'held/page-example', '---\ntype: note\ntitle: held\n---\nSynthetic.\n', { sourceId: SRC });
+  await access(engine, ['member', 'disable', 'frank-example']);
+  const p = await json<Preview>(engine, ['member', 'handover', 'frank-example']);
+  expect(p.items.some(i => i.kind === 'rule')).toBe(true);
+  const applied = await json<Record>(engine, ['member', 'handover', 'frank-example', '--yes', '--expect', p.plan_hash]);
+  const [row] = await engine.executeRaw<{ items: unknown }>('SELECT items FROM access_handovers WHERE id = $1', [applied.id]);
+  const items = (typeof row!.items === 'string' ? JSON.parse(row!.items) : row!.items) as Array<{ kind: string; outcome?: string }>;
+  for (const item of items) if (item.kind === 'rule') delete item.outcome;
+  await engine.executeRaw("UPDATE access_handovers SET state = 'applying', items = $2::text::jsonb WHERE id = $1", [applied.id, JSON.stringify(items)]);
+  await addFolderRules(engine, SRC, [{ id: 'held-folder', prefix: 'held/', readable_by: ['member:owner-example', 'member:alice-example'] } as never], { apply: true, json: true });
+  expect(await readersOf(engine, 'held/page-example')).toEqual(['owner-example']);
+  const resumed = await refusal(() => access(engine, ['member', 'handover', 'frank-example', '--yes', '--expect', p.plan_hash]));
+  expect(resumed.code).toBe('handover_rules_held');
+  expect(await readersOf(engine, 'held/page-example')).toEqual(['owner-example']);
+}
+
 async function noOwner(engine: BrainEngine): Promise<void> {
   await addMember(engine, 'erin-example');
   await importFromContent(engine, 'notes/erin-example', '---\ntype: note\ntitle: erin\nreadable_by: [erin-example]\n---\nSynthetic.\n', { sourceId: SRC });
@@ -182,6 +224,8 @@ for (const backend of testBackends()) {
     afterAll(async () => { await close?.(); });
 
     test('preview, apply, resume, status, undo and --set choices', () => cases(engine), 180_000);
+    test('a default handover after an undo applies again', () => reapplyAfterUndo(engine), 120_000);
+    test('a resumed handover refuses while another rule change is held', () => resumeWithHeldRule(engine), 120_000);
     test('a brain with no owner refuses the default and allows keep', () => noOwner(engine), 60_000);
   });
 
