@@ -18,6 +18,9 @@
  * The housekeeping statements in src/core/engine-sql/persistence-housekeeping.ts and the lifecycle receipt statements in
  * persistence-claims.ts follow it too: the compaction listing's refusal and sync exclusions, the effect sizing of the
  * true-up and the capacity reads, the compacted-byte sizing, and the projection queue's probes are pinned below.
+ *
+ * The effect claim's candidate read in src/core/engine-sql/persistence-effect-scans.ts does too: its dead-owner test and
+ * refresh fence are pinned below against the effect-journal and worktree-refresh fragments.
  */
 import { describe, expect, test } from 'bun:test';
 import { CLAIM_STAMP_SQL, COMPLETE_WRITE_PURGE_PROBE_SQL, COMPLETE_WRITE_SQL } from '../src/core/engine-sql/persistence-journal.ts';
@@ -38,6 +41,9 @@ import { INSERT_TOPOLOGY_CHANGE_SQL, TOPOLOGY_CHANGE_SQL } from '../src/core/eng
 import { NEWEST_SYNC_RECEIPT_EXCLUSION, OPEN_SYNC_CURSOR_EXCLUSION } from '../src/core/persistence/journal.ts';
 import { UNRESOLVED_CALLER_REFUSAL_SQL } from '../src/core/persistence/terminal-classify.ts';
 import { COMPACTED_RECEIPT_BYTES_SQL } from '../src/core/persistence/receipt-bytes.ts';
+import { CLAIMABLE_EFFECT_SQL } from '../src/core/engine-sql/persistence-effect-scans.ts';
+import { DEAD_OWNER_EFFECT_SQL } from '../src/core/persistence/effect-journal.ts';
+import { refreshFenceClear } from '../src/core/persistence/worktree-refresh-schema.ts';
 import { PROJECTION_RETRY_READY_SQL, SEGMENTED_JOB_PROBES, SEGMENTED_PROJECTION_CLAIMED_SQL } from '../src/core/page-state/projections.ts';
 
 const completion = (purgeColumns: string) => `WITH effects AS (SELECT COALESCE(SUM(${EFFECT_BYTES_SQL}),0) AS bytes,
@@ -140,5 +146,14 @@ describe('written-out write-journal statements', () => {
     expect(INSERT_TOPOLOGY_CHANGE_SQL).toContain('$9::text::jsonb');
     expect(INSERT_TOPOLOGY_CHANGE_SQL).toContain('$12::text::jsonb');
     expect(INSERT_TOPOLOGY_CHANGE_SQL).toContain('RETURNING *');
+  });
+});
+
+describe('the effect claim read copies the claim fragments', () => {
+  test('selectClaimableEffect carries the dead-owner test and the refresh fence the journal builds', () => {
+    expect(CLAIMABLE_EFFECT_SQL).toContain(`OR ${DEAD_OWNER_EFFECT_SQL('e', '$2')}) AND e.next_attempt_at<=now()`);
+    expect(CLAIMABLE_EFFECT_SQL).toContain(`AND (e.worktree_id IS NULL OR ${refreshFenceClear('e')})\n`);
+    expect(CLAIMABLE_EFFECT_SQL).toContain('w.owner_host_id=$1::uuid');
+    expect(CLAIMABLE_EFFECT_SQL.endsWith('ORDER BY e.next_attempt_at,e.id LIMIT 1 FOR UPDATE OF e SKIP LOCKED')).toBe(true);
   });
 });

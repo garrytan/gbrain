@@ -522,6 +522,7 @@ export const RUST_ENGINE_MEMBERS = {
   listTrueUpRequests: 'persistence_journal',
   listGatedMirrorRequests: 'persistence_journal',
   listEffectRecoveries: 'persistence_journal',
+  selectClaimableEffect: 'persistence_journal',
   readCapacityForecastInputs: 'persistence_journal',
   listPendingSegmentedProjections: 'persistence_journal',
   selectProjectionWindowJobs: 'persistence_journal',
