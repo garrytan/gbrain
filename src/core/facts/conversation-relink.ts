@@ -51,6 +51,7 @@ import { appendContextNote } from './subject-infer.ts';
 import { entityLinkable } from './attribution.ts';
 import { inferConversationSubject } from './conversation-subject-infer.ts';
 import { ACTIVE_UNLINKED_FACT_SQL, UNBACKED_FACT_SQL, derivedConversationRow } from '../engine-sql/fact-relink-writes.ts';
+import { hasRelinkAttemptsTable } from './conversation-memo.ts';
 import { resolveStrictEntityReference } from '../entities/resolve.ts';
 import { dropRekeyDuplicates } from './ontology-rekey.ts';
 
@@ -85,14 +86,9 @@ export interface ConversationRelinkReport {
   reextract_slugs: string[];
 }
 
-async function hasAttemptsTable(engine: BrainEngine): Promise<boolean> {
-  const [row] = await engine.executeRaw<{ t: string | null }>(`SELECT to_regclass('fact_relink_attempts')::text AS t`);
-  return !!row?.t;
-}
-
 /** The pages with the most unlinked derived rows not yet tried by this relink, up to `limit`. */
 export async function conversationRelinkPages(engine: BrainEngine, sourceId: string, limit = CONVERSATION_RELINK_PAGES, unbacked = false): Promise<string[]> {
-  return engine.listConversationRelinkPages(sourceId, { limit, unbacked, skipTried: !unbacked && await hasAttemptsTable(engine) });
+  return engine.listConversationRelinkPages(sourceId, { limit, unbacked, skipTried: !unbacked && await hasRelinkAttemptsTable(engine) });
 }
 
 /** GBRA-574 C1: each page's rows on an unbacked name key, linked when the key now resolves to exactly one readable page. */
@@ -137,7 +133,7 @@ async function planPages(engine: BrainEngine, sourceId: string, slugs: string[])
 /** Under the page's lock: link the planned rows still exactly as planned, recording each link. */
 async function linkRows(tx: BrainEngine, sourceId: string, slug: string, rows: ConversationRelinkRow[]): Promise<number[]> {
   const linked: number[] = [];
-  const attempts = await hasAttemptsTable(tx);
+  const attempts = await hasRelinkAttemptsTable(tx);
   for (const row of rows) {
     // A re-keyed row's slot gives way to one its target already holds on the page (facts/ontology-rekey.ts), so the move never collides.
     if (row.from) await dropRekeyDuplicates(tx, sourceId, { where: `f.id = $2::bigint AND ${UNBACKED}`, entity: '$3::text', sms: 'f.source_markdown_slug',
@@ -183,7 +179,7 @@ export async function runConversationRelink(engine: BrainEngine, config: GBrainC
   const report: ConversationRelinkReport = { source_id: opts.sourceId, dry_run: !!opts.dryRun, ...(opts.unbacked ? { unbacked: true } : {}),
     pages: [], linked: 0, unresolved: 0, not_user_attributed: 0, changed: 0, reextract_slugs: [] };
   const authority = opts.dryRun ? null : await maintenancePreflight(engine, opts.sourceId);
-  const memo = !opts.dryRun && !opts.unbacked && await hasAttemptsTable(engine);
+  const memo = !opts.dryRun && !opts.unbacked && await hasRelinkAttemptsTable(engine);
   for (const page of plans) {
     let linked = page.link.length;
     if (!opts.dryRun && page.link.length) {
