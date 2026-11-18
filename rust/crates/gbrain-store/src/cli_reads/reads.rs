@@ -16,6 +16,8 @@ use super::pg_text::{
     btrim, fm_text, fm_value, is_pg_space, like_contains, pg_lower, regex_char_matches,
     timestamptz_text,
 };
+use crate::alias_fanout_reads::reject_nul;
+use crate::aliases::alias_row_slugs;
 use crate::chunks::{read_chunks, read_segment_view};
 use crate::error::{INVALID_ARGUMENT, Result, STORE_CORRUPT, StoreError};
 use crate::kv::KvRead;
@@ -584,18 +586,40 @@ impl Store {
         Ok(found)
     }
 
-    /// `listExactIdentityCandidates`: pages matching a title, slug-basename or email probe inside
-    /// `source_ids`, by (source_id, slug).
+    /// `listExactIdentityCandidates`: pages matching a title, slug-basename, page-alias or email
+    /// probe inside `source_ids`, by (source_id, slug). A probe or source id holding a NUL byte is
+    /// refused, as Postgres refuses it in a text parameter.
     pub fn list_exact_identity_candidates(
         &self,
         input: &ExactIdentityInput,
     ) -> Result<Vec<ExactIdentityRow>> {
-        refuse_private(&input.remote, "listExactIdentityCandidates")?;
+        const MEMBER: &str = "listExactIdentityCandidates";
+        refuse_private(&input.remote, MEMBER)?;
         let limit = row_count(input.limit, "LIMIT")?;
+        let probes = &input.probes;
+        reject_nul(
+            MEMBER,
+            [&probes.title_raw]
+                .into_iter()
+                .chain(&probes.title_keys)
+                .chain(&probes.basenames)
+                .chain(&probes.alias_keys)
+                .chain(&probes.emails)
+                .chain(&input.source_ids)
+                .map(String::as_str),
+        )?;
         let read = self.read()?;
         let mut sources = Sources::new(&*read);
-        let probes = &input.probes;
         let raw_key = pg_lower(&probes.title_raw);
+        // The alias arm: `page_aliases.alias_norm = key` joined to the page at the row's slug.
+        let mut aliased: BTreeSet<(String, String)> = BTreeSet::new();
+        for source in &input.source_ids {
+            for alias in &probes.alias_keys {
+                for slug in alias_row_slugs(&*read, source, alias)? {
+                    aliased.insert((source.clone(), slug));
+                }
+            }
+        }
         let mut found: BTreeMap<(Vec<u8>, Vec<u8>), ExactIdentityRow> = BTreeMap::new();
         for page in all_pages(&*read)? {
             if !input.source_ids.contains(&page.source_id) {
@@ -606,6 +630,7 @@ impl Store {
             let hit = title == raw_key
                 || probes.title_keys.contains(&title)
                 || probes.basenames.iter().any(|b| b == basename)
+                || aliased.contains(&(page.source_id.clone(), page.slug.clone()))
                 || probes.emails.iter().any(|e| {
                     holds_email(&page.frontmatter, "email", e)
                         || holds_email(&page.frontmatter, "emails", e)

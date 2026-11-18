@@ -56,7 +56,7 @@ fn alias_prefix(sub: u8, parts: &[&str]) -> Vec<u8> {
 }
 
 /// Refuses text holding a NUL byte, as Postgres does for a text parameter.
-fn reject_nul<'a>(member: &str, items: impl IntoIterator<Item = &'a str>) -> Result<()> {
+pub(crate) fn reject_nul<'a>(member: &str, items: impl IntoIterator<Item = &'a str>) -> Result<()> {
     for item in items {
         if item.contains('\0') {
             return Err(StoreError::invalid(format!(

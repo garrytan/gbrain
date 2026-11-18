@@ -20,6 +20,8 @@ import { connectorsHealthCheck } from '../src/commands/doctor/checks/connectors.
 import { saveCredential } from '../src/core/connectors/credentials.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { checkLinkResolutionOpportunity } from '../src/commands/doctor/checks/calibration.ts';
+import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
 
 const dirs: string[] = [];
 const tmp = (label: string) => {
@@ -153,4 +155,21 @@ describe('link_resolution_opportunity names its sample on every verdict', () => 
     expect(check.message).toBe('No bare wikilinks found (scanned the 1000 most-recent of 1001 pages)');
     expect(check.details).toMatchObject({ exact: false, bound: 'sample', limit: 1000, total_pages: 1001 });
   }, 120_000);
+
+  test('a refused page read warns with the refusal (health unknown); any other read failure still skips ok', async () => {
+    await engine.executeRaw("INSERT INTO pages(source_id, slug, type, title, compiled_truth, timeline, frontmatter) VALUES ('default', 'notes/refused', 'note', 'r', 'see [[n-1]]', '', '{}'::jsonb) ON CONFLICT DO NOTHING");
+    const throwing = (error: Error) => new Proxy(engine, {
+      get(target, prop, receiver) {
+        if (prop === 'executeRaw') return async () => { throw error; };
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    }) as unknown as BrainEngine;
+    const refused = await checkLinkResolutionOpportunity(throwing(capabilityMissing('raw_sql', 'executeRaw')));
+    expect(refused).toMatchObject({ name: 'link_resolution_opportunity', status: 'warn',
+      details: { health: 'unknown', reason: 'engine_capability_missing', capability: 'raw_sql' } });
+    expect(refused.message).toMatch(/^Health unknown: .*does not support executeRaw yet \(it needs the raw_sql capability\)/);
+    const failed = await checkLinkResolutionOpportunity(throwing(new Error('disk full')));
+    expect(failed).toEqual({ name: 'link_resolution_opportunity', status: 'ok', message: 'Skipped (disk full)' });
+  }, 60_000);
 });
