@@ -36,6 +36,7 @@
 import { existsSync, readdirSync, readFileSync, type Dirent } from 'node:fs';
 import { basename, dirname, join, relative } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
+import type { CapturedFactRow } from '../engine-sql/facts-repair.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { parseFactsFence, type ParsedFact } from '../facts-fence.ts';
@@ -96,10 +97,7 @@ export interface CapturedFactsPage {
 
 interface PageItem extends RepairItem { page: CapturedFactsPage; hash: string; last: boolean }
 
-interface FactRow {
-  id: number | string; source_id: string; source: string; source_session: string | null; fact: string; visibility: string;
-  entity_slug: string | null; row_num: number | null; source_markdown_slug: string | null; fingerprint: string; legit_twin: boolean;
-}
+type FactRow = CapturedFactRow;
 
 export interface ClassifyOptions { projectsRoot?: string; corpusDir?: string | null; ids?: number[] }
 
@@ -170,17 +168,7 @@ const targetSlug = (row: Pick<FactRow, 'row_num' | 'source_markdown_slug' | 'ent
 
 /** Read-only: every suspect capture-lane fact of these sources, classified, in (source, page, id) order. */
 export async function classifyCapturedFacts(db: BrainEngine, sourceIds: string[], opts: ClassifyOptions = {}): Promise<CapturedFactsClassification> {
-  const rows = await db.executeRaw<FactRow>(`
-    SELECT f.id, f.source_id, f.source, f.source_session, f.fact, f.visibility, f.entity_slug, f.row_num, f.source_markdown_slug,
-           gbrain_fact_fingerprint(f.fact) AS fingerprint,
-           EXISTS (SELECT 1 FROM facts a WHERE a.source_id=f.source_id AND a.id<>f.id AND a.expired_at IS NULL
-             AND a.visibility=f.visibility AND a.entity_slug IS NOT DISTINCT FROM f.entity_slug
-             AND gbrain_fact_fingerprint(a.fact)=gbrain_fact_fingerprint(f.fact)
-             AND COALESCE(a.source,'') <> ALL($2::text[])) AS legit_twin
-      FROM facts f
-     WHERE f.source_id=ANY($1::text[]) AND f.source=ANY($2::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL
-       AND ($3::bigint[] IS NULL OR f.id=ANY($3::bigint[]))
-     ORDER BY f.source_id, f.id`, [sourceIds, [...CAPTURE_LANES], opts.ids ?? null]);
+  const rows = await db.listCapturedFactsForClassification(sourceIds, [...CAPTURE_LANES], opts.ids ?? null);
   if (!rows.length) return { candidates: [], unclassifiable: 0, not_suspect: 0, unreadable_corpus_files: [] };
   const projectsRoot = opts.projectsRoot ?? claudeProjectsDir();
   const selfSessions = claudeCliSelfSessions(projectsRoot);

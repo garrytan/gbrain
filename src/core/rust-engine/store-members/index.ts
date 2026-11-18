@@ -44,6 +44,11 @@ import * as cliReadsOps from './cli-reads-ops.ts';
 import * as cliReadsSearchPages from './cli-reads-search-pages.ts';
 import * as wantedLinks from './wanted-links.ts';
 import * as cliEntities from './cli-entities.ts';
+import * as factsDoctor from './facts-doctor.ts';
+import * as factsCycle from './facts-cycle.ts';
+import * as factsPurge from './facts-purge.ts';
+import * as factsRepair from './facts-repair.ts';
+import * as factsTrust from './facts-trust.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
 const initSchema: StoreMember<[], void> = async () => undefined;
@@ -62,6 +67,8 @@ export const STORE_MEMBERS = {
   // Typed reads that CLI paths ran through executeRaw (docs/research/rust-cli-executeraw-map.md).
   ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages,
   ...cliEntities,
+  // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
+  ...factsDoctor, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

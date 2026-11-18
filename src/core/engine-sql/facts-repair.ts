@@ -1,0 +1,297 @@
+/**
+ * Group 5 facts statements, repair classifiers and loop retirement (docs/research/rust-cli-contract-map.md, "Facts queries, purge and unlinked-fact
+ * checks"). Each function runs the statement its caller ran through `executeRaw`, with the same text and parameters, on
+ * the engine's own `executeRaw`; only its home moved.
+ */
+import { contextHeadSql, PAGE_EXTRACTION_SOURCE_LIST } from '../facts/gone-page-facts.ts';
+import { withdrawalCoversFactSql } from '../access/member-facts.ts';
+import { factProvenanceSlugSql } from '../facts/private-fact-pages.ts';
+import { derivationPrivateSql, privateSnapshotFilterFragment } from '../search/private-visibility.ts';
+import type { FactAttribution } from '../engine.ts';
+import type { FactPreimage } from '../generations/adapters/fact-rows.ts';
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
+import type { EngineRawRead } from './cli-reads-ops.ts';
+
+export type { EngineRawRead } from './cli-reads-ops.ts';
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Loop fact retirement (src/core/persistence/loop-fact-retirement.ts)
+// ---------------------------------------------------------------------------------------------------------------------
+
+export interface LoopFactDriftRow { loop_id: number; source_id: string; fact_id: number; status: string; slug: string | null }
+
+/** Closed loops whose commitment fact is still active and retirable (same source, no other open loop references it), in id order. */
+export async function loopFactDrift(raw: EngineRawRead, sourceIds: string[], loopId: number | null): Promise<LoopFactDriftRow[]> {
+  return raw<LoopFactDriftRow>(
+    `SELECT l.id AS loop_id, l.source_id, l.fact_id, l.status, f.source_markdown_slug AS slug
+       FROM open_loops l JOIN facts f ON f.id=l.fact_id AND f.source_id=l.source_id
+      WHERE l.source_id=ANY($1::text[]) AND l.status IN ('done','dropped') AND f.expired_at IS NULL
+        AND ($2::bigint IS NULL OR l.id=$2::bigint)
+        AND NOT EXISTS (SELECT 1 FROM open_loops o WHERE o.fact_id=l.fact_id AND o.status='open')
+      ORDER BY l.id`, [sourceIds, loopId]);
+}
+
+export interface ClosedLoopRow { id: number; status: string; fact_id: number }
+
+/** A loop already closed whose commitment fact is still active (the retry path of `loops_close`); `sourceId` null is unscoped. */
+export async function closedLoopWithActiveFact(raw: EngineRawRead, sourceId: string | null, loopId: number): Promise<ClosedLoopRow | null> {
+  const [row] = await raw<ClosedLoopRow>(
+    `SELECT l.id, l.status, l.fact_id FROM open_loops l JOIN facts f ON f.id=l.fact_id
+      WHERE l.id=$1 AND ($2::text IS NULL OR l.source_id=$2) AND l.status IN ('done','dropped') AND f.expired_at IS NULL`, [loopId, sourceId]);
+  return row ?? null;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// agent-session-facts (src/core/repair/agent-session-facts.ts)
+// ---------------------------------------------------------------------------------------------------------------------
+
+export interface SessionFactRow {
+  id: number | string; source_id: string; source_session: string | null; fact: string; visibility: string; entity_slug: string | null;
+  row_num: number | null; source_markdown_slug: string | null; attributed_to: string | null; context: string | null;
+}
+
+/** Active, unsuperseded facts of the capture `lanes` in these sources whose attribution is the user or unset, optionally only `ids`, in (source, id) order. */
+export async function listSessionFactsForClassification(raw: EngineRawRead, sourceIds: string[], lanes: string[], ids: number[] | null): Promise<SessionFactRow[]> {
+  return raw<SessionFactRow>(`
+    SELECT f.id, f.source_id, f.source_session, f.fact, f.visibility, f.entity_slug, f.row_num, f.source_markdown_slug, f.attributed_to, f.context
+      FROM facts f
+     WHERE f.source_id=ANY($1::text[]) AND f.source=ANY($2::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL
+       AND (f.attributed_to IS NULL OR f.attributed_to='user') AND ($3::bigint[] IS NULL OR f.id=ANY($3::bigint[]))
+     ORDER BY f.source_id, f.id`, [sourceIds, lanes, ids]);
+}
+
+export interface SessionFactTwinRow { id: number | string; owner_twin: boolean; twin_sessions: Array<string | null> | null }
+
+/** For each fact in `ids`: whether an owner twin exists outside the capture `lanes`, and the sessions of its capture-lane twins. */
+export async function listSessionFactTwins(raw: EngineRawRead, ids: number[], lanes: string[]): Promise<SessionFactTwinRow[]> {
+  return raw<SessionFactTwinRow>(`
+    SELECT f.id,
+           EXISTS (SELECT 1 FROM facts a WHERE a.source_id=f.source_id AND a.visibility IN ('private','world') AND gbrain_fact_fingerprint(a.fact)=gbrain_fact_fingerprint(f.fact)
+             AND a.id<>f.id AND a.expired_at IS NULL AND a.superseded_by IS NULL AND a.entity_slug IS NOT DISTINCT FROM f.entity_slug
+             AND (a.attributed_to IS NULL OR a.attributed_to='user') AND COALESCE(a.source,'') <> ALL($2::text[])) AS owner_twin,
+           ARRAY(SELECT DISTINCT COALESCE(a.source_session,'') FROM facts a WHERE a.source_id=f.source_id AND a.visibility IN ('private','world')
+             AND gbrain_fact_fingerprint(a.fact)=gbrain_fact_fingerprint(f.fact) AND a.id<>f.id AND a.expired_at IS NULL AND a.superseded_by IS NULL
+             AND a.entity_slug IS NOT DISTINCT FROM f.entity_slug AND (a.attributed_to IS NULL OR a.attributed_to='user') AND a.source=ANY($2::text[])) AS twin_sessions
+      FROM facts f
+     WHERE f.id=ANY($1::bigint[])`, [ids, lanes]);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// captured-facts (src/core/repair/captured-facts.ts)
+// ---------------------------------------------------------------------------------------------------------------------
+
+export interface CapturedFactRow {
+  id: number | string; source_id: string; source: string; source_session: string | null; fact: string; visibility: string;
+  entity_slug: string | null; row_num: number | null; source_markdown_slug: string | null; fingerprint: string; legit_twin: boolean;
+}
+
+/** Active, unsuperseded capture-lane facts of these sources with their fingerprint and whether a legitimate (other-lane) twin exists, in (source, id) order. */
+export async function listCapturedFactsForClassification(raw: EngineRawRead, sourceIds: string[], lanes: string[], ids: number[] | null): Promise<CapturedFactRow[]> {
+  return raw<CapturedFactRow>(`
+    SELECT f.id, f.source_id, f.source, f.source_session, f.fact, f.visibility, f.entity_slug, f.row_num, f.source_markdown_slug,
+           gbrain_fact_fingerprint(f.fact) AS fingerprint,
+           EXISTS (SELECT 1 FROM facts a WHERE a.source_id=f.source_id AND a.id<>f.id AND a.expired_at IS NULL
+             AND a.visibility=f.visibility AND a.entity_slug IS NOT DISTINCT FROM f.entity_slug
+             AND gbrain_fact_fingerprint(a.fact)=gbrain_fact_fingerprint(f.fact)
+             AND COALESCE(a.source,'') <> ALL($2::text[])) AS legit_twin
+      FROM facts f
+     WHERE f.source_id=ANY($1::text[]) AND f.source=ANY($2::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL
+       AND ($3::bigint[] IS NULL OR f.id=ANY($3::bigint[]))
+     ORDER BY f.source_id, f.id`, [sourceIds, lanes, ids]);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// conversation-labels (src/core/repair/conversation-labels.ts)
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** The constants the label count binds; the caller owns them (repair/conversation-labels.ts). */
+export interface LabelFactCountArgs {
+  /** The segment extractor's source (`f.source = $2`). */
+  segmentSource: string;
+  /** The `LIKE` pattern of the default epoch-segment context (`f.context LIKE $3`). */
+  contextLike: string;
+  /** The metadata label line regular expression (`~* $4`). */
+  labelLine: string;
+  /** The two audit sources whose active stamped row marks a page as already decided. */
+  terminalSource: string;
+  nonExtractableSource: string;
+}
+
+/** The bounded count of the default (evidenced) set of label facts: the classification's exclusions applied in SQL, capped at `cap`. */
+export async function countLabelFacts(raw: EngineRawRead, sourceIds: string[], cap: number, args: LabelFactCountArgs): Promise<{ count: number; capped: boolean }> {
+  const rows = await raw<{ id: number }>(`SELECT f.id FROM facts f
+      JOIN pages p ON p.source_id=f.source_id AND p.slug=f.source_markdown_slug AND p.deleted_at IS NULL
+     WHERE f.source_id=ANY($1::text[]) AND f.source LIKE 'cli:extract-conversation-facts%' AND f.source=$2 AND f.expired_at IS NULL
+       AND f.context LIKE $3 AND (p.compiled_truth ~* $4 OR COALESCE(p.timeline,'') ~* $4)
+       AND NOT EXISTS (SELECT 1 FROM facts o WHERE o.source_id=f.source_id AND o.source_markdown_slug=f.source_markdown_slug
+         AND o.source IN ($6, $7) AND o.expired_at IS NULL AND o.context ~ 'extractor_version=[0-9]+$')
+       AND f.superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM facts g WHERE g.superseded_by=f.id)
+       AND NOT EXISTS (SELECT 1 FROM open_loops l WHERE l.fact_id=f.id)
+       AND NOT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id AND w.visibility=f.visibility
+         AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact)) AND (w.subject='*' OR w.subject=f.entity_slug))
+     LIMIT $5`, [sourceIds, args.segmentSource, args.contextLike, args.labelLine, cap + 1, args.terminalSource, args.nonExtractableSource]);
+  return { count: Math.min(rows.length, cap), capped: rows.length > cap };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// extractor-facts (src/core/repair/extractor-facts.ts)
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** The source prefix of conversation-extractor facts. */
+export const EXTRACTOR_FACTS_SOURCE_PREFIX = 'cli:extract-conversation-facts';
+
+/** The exact instant as text (UTC, microseconds); compared as text, as a bound timestamp can lose its microseconds. */
+const expiryTextSql = (column: string) => `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+
+export interface ExtractorFactRow {
+  id: number | string; source_id: string; slug: string; fact: string; visibility: string; entity_slug: string | null;
+  superseded: boolean; expired_at: string; page_id: number | string | null; page_deleted: boolean | null;
+  withdrawn: boolean; active_duplicate: boolean; fence_history: boolean; fingerprint: string;
+  receipt: string | null; receipt_consumer: string | null;
+}
+
+/** Expired fenceless extractor facts of these sources (or of one page) with the page, withdrawal, duplicate, fence and receipt evidence, in (source, page, id) order. */
+export async function listExtractorFactsForClassification(raw: EngineRawRead, sourceIds: string[], slug: string | null): Promise<ExtractorFactRow[]> {
+  const { text, params } = renderFragment(sqlFragment`
+    WITH cand AS (
+      SELECT f.id, f.source_id, f.source_markdown_slug AS slug, f.fact, f.visibility, f.entity_slug, f.expired_at AS expired,
+             f.superseded_by IS NOT NULL AS superseded, gbrain_fact_fingerprint(f.fact) AS fingerprint
+        FROM facts f
+       WHERE f.source_id=ANY(${sourceIds}::text[]) AND f.source LIKE '${trustedSql(EXTRACTOR_FACTS_SOURCE_PREFIX)}%'
+         AND f.expired_at IS NOT NULL AND f.row_num IS NULL AND f.source_markdown_slug IS NOT NULL
+         AND COALESCE(f.context, '') NOT LIKE '%retired: conversation-labels%'
+         AND (${slug}::text IS NULL OR f.source_markdown_slug=${slug}::text)
+    ), receipts AS (
+      SELECT DISTINCT ON (r.source_id, r.slug, r.completed_at) r.source_id, r.slug, r.completed_at,
+             r.request_id::text AS request_id, r.consumer_version
+        FROM persistence_requests r
+        JOIN (SELECT DISTINCT source_id, slug, expired FROM cand) k
+          ON k.source_id=r.source_id AND k.slug=r.slug AND k.expired=r.completed_at
+       WHERE r.state='committed'
+       ORDER BY r.source_id, r.slug, r.completed_at, r.sequence
+    ), fenced AS (
+      SELECT DISTINCT g.source_id, g.source_markdown_slug AS slug FROM facts g
+        JOIN (SELECT DISTINCT source_id, slug FROM cand) k ON k.source_id=g.source_id AND k.slug=g.source_markdown_slug
+       WHERE COALESCE(g.source,'') NOT LIKE '${trustedSql(EXTRACTOR_FACTS_SOURCE_PREFIX)}%'
+    )
+    SELECT c.id, c.source_id, c.slug, c.fact, c.visibility, c.entity_slug, c.superseded, c.fingerprint,
+           ${trustedSql(expiryTextSql('c.expired'))} AS expired_at,
+           p.id AS page_id, p.deleted_at IS NOT NULL AS page_deleted,
+           EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=c.source_id AND w.visibility=c.visibility
+             AND w.fact_hash IN (gbrain_fact_fingerprint(c.fact), gbrain_fact_fingerprint_v1(c.fact))
+             AND (w.subject='*' OR w.subject=c.entity_slug)) AS withdrawn,
+           EXISTS (SELECT 1 FROM facts a WHERE a.source_id=c.source_id AND a.visibility=c.visibility
+             AND gbrain_fact_fingerprint(a.fact)=c.fingerprint AND a.source_markdown_slug=c.slug AND a.expired_at IS NULL
+             AND a.entity_slug IS NOT DISTINCT FROM c.entity_slug) AS active_duplicate,
+           fenced.slug IS NOT NULL AS fence_history,
+           r.request_id AS receipt, r.consumer_version AS receipt_consumer
+      FROM cand c
+      LEFT JOIN pages p ON p.source_id=c.source_id AND p.slug=c.slug
+      LEFT JOIN receipts r ON r.source_id=c.source_id AND r.slug=c.slug AND r.completed_at=c.expired
+      LEFT JOIN fenced ON fenced.source_id=c.source_id AND fenced.slug=c.slug
+     ORDER BY c.source_id, c.slug, c.id`);
+  return raw<ExtractorFactRow>(text, params);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// purged-page-facts (src/core/repair/purged-page-facts.ts)
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** The gone page's slug: the head of the fact's context. */
+export const PURGED_HEAD_SQL = contextHeadSql('f');
+/** The page-extraction sources as a SQL list. */
+export const PURGED_SOURCES_SQL = PAGE_EXTRACTION_SOURCE_LIST.map(s => `'${s}'`).join(', ');
+/** The page purge ledger records the slug after the fact was written. */
+export const PURGED_PAGE_SQL = `EXISTS (SELECT 1 FROM page_purges pp WHERE pp.source_id = f.source_id AND pp.slug = ${PURGED_HEAD_SQL} AND pp.purged_at >= f.created_at)`;
+/** The exclusion predicates over alias f; constant text with no input. */
+export const PURGED_EXCLUDED_SQL = {
+  withdrawn: `EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = f.source_id AND w.visibility = f.visibility
+    AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact)) AND (w.subject = '*' OR w.subject = f.entity_slug))`,
+  superseded: 'f.superseded_by IS NOT NULL',
+  referenced: 'EXISTS (SELECT 1 FROM facts g WHERE g.superseded_by = f.id)',
+  open_loop: 'EXISTS (SELECT 1 FROM open_loops o WHERE o.fact_id = f.id)',
+} as const;
+
+/**
+ * Doctor's bounded count of the retirable candidates by class, capped at `cap`. The facts whose page is gone are found
+ * first, so the purge-record and exclusion checks run only on those, never on every active fact of a healthy brain.
+ */
+export async function countPurgedPageFacts(raw: EngineRawRead, sourceIds: string[], cap: number): Promise<{ evidenced: number; ambiguous: number; capped: boolean }> {
+  const HEAD = PURGED_HEAD_SQL;
+  const { text, params } = renderFragment(sqlFragment`WITH f AS MATERIALIZED (
+    SELECT f.id, f.source_id, f.fact, f.context, f.entity_slug, f.visibility, f.superseded_by, f.created_at FROM facts f
+     WHERE f.source_id = ANY(${sourceIds}::text[]) AND f.expired_at IS NULL AND f.source_markdown_slug IS NULL AND f.source = ANY(${PAGE_EXTRACTION_SOURCE_LIST}::text[])
+       AND ${trustedSql(HEAD)} <> '' AND ${trustedSql(HEAD)} !~ '[[:space:]]' AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = ${trustedSql(HEAD)}))
+    SELECT ${trustedSql(PURGED_PAGE_SQL)} AS purged FROM f WHERE (strpos(${trustedSql(HEAD)}, '/') > 0 OR ${trustedSql(PURGED_PAGE_SQL)})
+      AND NOT (${trustedSql(PURGED_EXCLUDED_SQL.withdrawn)} OR ${trustedSql(PURGED_EXCLUDED_SQL.superseded)} OR ${trustedSql(PURGED_EXCLUDED_SQL.referenced)} OR ${trustedSql(PURGED_EXCLUDED_SQL.open_loop)})
+    LIMIT ${cap + 1}`);
+  const rows = await raw<{ purged: boolean }>(text, params);
+  const kept = rows.slice(0, cap);
+  return { evidenced: kept.filter(r => r.purged).length, ambiguous: kept.filter(r => !r.purged).length, capped: rows.length > cap };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// unwithdrawn-facts (src/core/repair/unwithdrawn-facts.ts)
+// ---------------------------------------------------------------------------------------------------------------------
+
+const instantTextSql = (column: string) => `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+
+export interface UnwithdrawnFactRow {
+  id: number | string; source_id: string; slug: string; fact: string; visibility: string; entity_slug: string | null; attributed_to: FactAttribution | null; superseded: boolean;
+  generation_id: number | string; generation: number | string; retired_at: string; expired_at: string; preimage: FactPreimage;
+  page_id: number | string | null; page_deleted: boolean | null; history_gap: boolean | null; withdrawn: boolean; active_duplicate: boolean; fingerprint: string;
+}
+
+/** Facts a facts-fence generation retired that no withdrawal covers, in (source, page, id) order; `fenceKind` is the generation kind (generations/fence.ts FACT_FENCE_KIND). */
+export async function listUnwithdrawnFacts(raw: EngineRawRead, sourceIds: string[], slug: string | null, fenceKind: string): Promise<UnwithdrawnFactRow[]> {
+  const { text, params } = renderFragment(sqlFragment`
+    WITH retired AS (
+      SELECT DISTINCT ON ((i.preimage->>'id')::bigint) (i.preimage->>'id')::bigint AS fact_id, g.id AS generation_id, g.generation, g.source_id,
+             substr(g.owner_key, 6) AS slug, ${trustedSql(instantTextSql('g.created_at'))} AS retired_at, i.preimage
+        FROM derived_generation_items i JOIN derived_generations g ON g.id = i.generation_id
+       WHERE g.kind = ${fenceKind} AND g.source_id = ANY(${sourceIds}::text[]) AND g.state <> 'held' AND i.action = 'retired' AND left(g.owner_key, 5) = 'page:'
+         AND jsonb_typeof(i.preimage) = 'object' AND i.preimage ? 'id' AND i.preimage->>'expired_at' IS NULL AND i.preimage->>'row_num' IS NOT NULL
+         AND (${slug}::text IS NULL OR g.owner_key = 'page:' || ${slug}::text)
+       ORDER BY (i.preimage->>'id')::bigint, g.id DESC
+    )
+    SELECT f.id, r.source_id, r.slug, f.fact, f.visibility, f.entity_slug, f.attributed_to, f.superseded_by IS NOT NULL AS superseded, r.generation_id, r.generation,
+           r.retired_at, ${trustedSql(instantTextSql('f.expired_at'))} AS expired_at, r.preimage, gbrain_fact_fingerprint(f.fact) AS fingerprint,
+           p.id AS page_id, p.deleted_at IS NOT NULL AS page_deleted, p.version_history_gap_at IS NOT NULL AS history_gap,
+           EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = f.source_id AND w.visibility = f.visibility
+             AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact))
+             AND ${trustedSql(withdrawalCoversFactSql('w', 'f'))}) AS withdrawn,
+           EXISTS (SELECT 1 FROM facts a WHERE a.source_id = f.source_id AND a.source_markdown_slug = r.slug
+             AND a.expired_at IS NULL AND (a.valid_until IS NULL OR a.valid_until > now())
+             AND gbrain_fact_fingerprint(a.fact) = gbrain_fact_fingerprint(f.fact) AND a.entity_slug IS NOT DISTINCT FROM f.entity_slug
+             AND (a.attributed_to IS NULL OR f.attributed_to IS NULL OR a.attributed_to = f.attributed_to)) AS active_duplicate
+      FROM retired r
+      JOIN facts f ON f.id = r.fact_id AND f.source_id = r.source_id
+      LEFT JOIN pages p ON p.source_id = r.source_id AND p.slug = r.slug
+     WHERE f.expired_at IS NOT NULL AND f.row_num IS NULL AND f.fact = r.preimage->>'fact' AND f.visibility = r.preimage->>'visibility'
+       AND COALESCE(f.source, '') NOT LIKE 'cli:extract-conversation-facts%'
+     ORDER BY r.source_id, r.slug, f.id`);
+  return raw<UnwithdrawnFactRow>(text, params);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// visibility (src/core/repair/visibility.ts)
+// ---------------------------------------------------------------------------------------------------------------------
+
+export interface WorldFactFromPrivateSourceRow { id: number; source_id: string; row_num: number | null; source_markdown_slug: string | null; entity_slug: string | null; readable: boolean }
+
+/**
+ * Active `world` facts held in, or extracted from, a page that is private by its `visibility`, its declared lineage or a
+ * privacy alias. `readable` says a remote caller can recall the row today: its holding page does not hide it through the
+ * provenance filter.
+ */
+export async function listWorldFactsFromPrivateSources(raw: EngineRawRead, sourceIds: string[], ids: number[] | null): Promise<WorldFactFromPrivateSourceRow[]> {
+  const { text, params } = renderFragment(sqlFragment`SELECT f.id,f.source_id,f.row_num,f.source_markdown_slug,f.entity_slug,
+      (f.source_markdown_slug IS NULL OR h.id IS NULL OR ${trustedSql(privateSnapshotFilterFragment('h'))}) AS readable
+    FROM facts f
+      LEFT JOIN pages h ON h.source_id=f.source_id AND h.slug=f.source_markdown_slug
+      LEFT JOIN pages o ON o.source_id=f.source_id AND o.slug=${trustedSql(factProvenanceSlugSql('f'))} AND o.deleted_at IS NULL
+    WHERE f.visibility='world' AND f.expired_at IS NULL AND f.source_id=ANY(${sourceIds}::text[]) AND (${ids}::bigint[] IS NULL OR f.id=ANY(${ids}::bigint[]))
+      AND ((h.id IS NOT NULL AND h.deleted_at IS NULL AND ${trustedSql(derivationPrivateSql('h'))}) OR (o.id IS NOT NULL AND ${trustedSql(derivationPrivateSql('o'))}))
+    ORDER BY f.id`);
+  return raw<WorldFactFromPrivateSourceRow>(text, params);
+}

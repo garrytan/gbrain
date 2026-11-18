@@ -90,15 +90,7 @@ function emptyReport(opts: RelinkOptions, runId: string): RelinkReport {
 
 export async function loadRelinkCandidates(engine: BrainEngine, opts: RelinkOptions): Promise<{ rows: Candidate[]; hasMore: boolean }> {
   const limit = opts.limit ?? RELINK_DEFAULT_LIMIT;
-  const rows = await engine.executeRaw<Candidate & { id: number | string }>(
-    `SELECT id, fact, visibility, context, source, attributed_to FROM facts
-      WHERE source_id = $1 AND entity_slug IS NULL AND expired_at IS NULL
-        AND row_num IS NULL AND source_markdown_slug IS NULL
-        AND (valid_until IS NULL OR valid_until > now())
-        AND id > $2 AND ($3::timestamptz IS NULL OR created_at >= $3::timestamptz)
-      ORDER BY id LIMIT $4`,
-    [opts.sourceId, opts.afterId ?? 0, opts.since ? opts.since.toISOString() : null, limit + 1],
-  );
+  const rows = await engine.listRelinkCandidateRows({ sourceId: opts.sourceId, afterId: opts.afterId ?? 0, since: opts.since ?? null, limit: limit + 1 });
   return { rows: rows.slice(0, limit).map(r => ({ ...r, id: Number(r.id) })), hasMore: rows.length > limit };
 }
 
@@ -115,10 +107,7 @@ export async function runFactsRelink(engine: BrainEngine, opts: RelinkOptions): 
     note(reason, c);
   };
 
-  const [owned] = await engine.executeRaw<{ n: number | string }>(
-    `SELECT COUNT(*) AS n FROM facts WHERE source_id = $1 AND entity_slug IS NULL AND expired_at IS NULL
-       AND (row_num IS NOT NULL OR source_markdown_slug IS NOT NULL)`, [opts.sourceId]);
-  report.fence_owned = Number(owned?.n ?? 0);
+  report.fence_owned = await engine.countRelinkCandidates(opts.sourceId);
 
   const { rows, hasMore } = await loadRelinkCandidates(engine, opts);
   report.scanned = rows.length;

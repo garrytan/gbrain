@@ -132,6 +132,11 @@ test/engine-parity/config-ingest.test.ts
 test/engine-parity/cycle-locks.test.ts
 test/engine-parity/entity-reads.test.ts
 test/engine-parity/extraction.test.ts
+test/engine-parity/facts-cycle.test.ts
+test/engine-parity/facts-doctor.test.ts
+test/engine-parity/facts-purge.test.ts
+test/engine-parity/facts-repair.test.ts
+test/engine-parity/facts-trust.test.ts
 test/engine-parity/facts.test.ts
 test/engine-parity/import-path.test.ts
 test/engine-parity/import-writes.test.ts

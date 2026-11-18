@@ -53,6 +53,44 @@ const CONSTANT_ALLOWLIST: Record<string, string> = {
 };
 
 const VETTED_BUILDERS: Record<string, string> = {
+  // facts-doctor.ts builders
+  entityLinkableSql: 'src/core/engine-sql/facts-doctor.ts: returns the constant ENTITY_LINKABLE_SQL predicate (attribution.ts) over the facts alias f; no values',
+  relinkTriedSql: 'src/core/engine-sql/facts-doctor.ts: the constant conversationTriedSql EXISTS predicate (conversation-memo.ts; code-constant outcome and reason codes) or the literal false; no values',
+  relinkPaidSql: 'src/core/engine-sql/facts-doctor.ts: the constant conversationPaidSql EXISTS predicate (conversation-memo.ts; code-constant tier) or the literal false; no values',
+  staleFactEmbeddingSql: 'src/core/engine-sql/facts-doctor.ts: returns the constant staleFactEmbedding predicate (embedding-identity.ts, placeholders $3 model and $4 width bound by the caller); no values',
+  partiallyEmbeddedFactSql: 'src/core/engine-sql/facts-doctor.ts: returns the constant partiallyEmbeddedFact predicate (embedding-identity.ts, EMBED_MAX_CHARS literal); no values',
+  eligibleFactEmbeddingSql: 'src/core/engine-sql/facts-doctor.ts: returns the constant eligibleFactEmbedding predicate (embedding-identity.ts, placeholder $2 audit sources bound by the caller); no values',
+  factSourceScopeSql: 'src/core/engine-sql/facts-doctor.ts: constant optional-source scope over the facts alias f with the hand-numbered $1 source id bound by the caller; no values',
+
+  // facts-cycle.ts builders
+  readersSourcedFactSql: 'src/core/access/member-facts.ts: constant readers-sourced predicate over a caller facts alias; the folder-rule fragment it embeds is constant',
+  privateFactFilterForReader: 'src/core/search/private-visibility.ts: constant private-provenance predicate over a caller facts alias; the caller record picks among constant fragments and binds no value',
+  claimDateSql: 'src/core/engine-sql/facts-cycle.ts: constant date-claim predicate over caller-given constant column aliases; the date token and floor are module constants (no input)',
+
+  // facts-purge.ts builders
+  outcomeMarkerSql: 'src/core/facts/audit-sources.ts: constant checkpoint-row predicate over a caller facts alias; the source and fact lists are module constants',
+  unbackedEntitySql: 'src/core/facts/withdrawal-schema.ts: constant unbacked-name-key predicate over a caller facts alias; the callers pass constant aliases',
+  ownedMemorySubjectSql: 'src/core/facts/withdrawal-schema.ts: constant owned-memory-subject predicate over a caller column expression; engine-sql passes only the constant column q.subject',
+  remoteProvenanceFloorSql: 'src/core/search/private-visibility.ts: constant remote provenance floor (private-provenance filter plus labelled-only) over a caller facts alias',
+
+  // facts-repair.ts builders
+  contextHeadSql: 'src/core/facts/gone-page-facts.ts: constant head-of-context expression over a caller facts alias; no values',
+  withdrawalCoversFactSql: 'src/core/access/member-facts.ts: constant withdrawal-covers-fact predicate over caller withdrawal and fact aliases; no values',
+  factProvenanceSlugSql: 'src/core/facts/private-fact-pages.ts: constant provenance-slug expression over a caller facts alias; prefixes and source lanes are module constants; no values',
+  derivationPrivateSql: 'src/core/search/private-visibility.ts: constant derivation-private predicate over a caller page alias; no values',
+  expiryTextSql: 'src/core/engine-sql/facts-repair.ts: constant to_char UTC microsecond text of a caller column expression (code-provided); no values',
+  instantTextSql: 'src/core/engine-sql/facts-repair.ts: constant to_char UTC microsecond text of a caller column expression (code-provided); no values',
+
+  // facts-trust.ts builders
+  quarantinedProvenanceFilterFragment: 'src/core/quarantine.ts: constant fact-provenance quarantine predicate over a caller alias; no values',
+  factsFtsDocument: 'src/core/fts-language.ts: constant facts full-text document expression over a caller alias; the language passes VALID_CONFIG_NAME or falls back to the default',
+  getFtsLanguage: 'src/core/fts-language.ts: the brain full-text config name; passes VALID_CONFIG_NAME ([a-z][a-z0-9_]*) or falls back to the default',
+  grantedPrivateFactSql: 'src/core/access/member-facts.ts: private-facts grant predicate over a caller alias; granted source ids passed isValidSourceId, so they embed as literals',
+  trustRankSql: 'src/core/trust/tier.ts: CASE mapping a caller column expression to a rank from the constant tier table; callers pass a column, never a value',
+  claimPendingSql: 'src/core/trust/claim-state.ts: constant claim-pending predicate over a caller sources alias; config keys are module constants',
+  conversationSlotSql: 'src/core/engine-sql/facts-trust.ts: CONVERSATION_SLOT_SQL, the constant conversation-source prefix test; no values',
+  savedFactCollapseColumns: 'src/core/engine-sql/facts-trust.ts: SAVED_FACT_COLLAPSE_COLUMNS, the constant select list the capture-dedup collapse reads; no values',
+
   guestSourceSql: 'src/core/guests/note.ts: constant guest-source predicate over caller-given constant aliases (no input)',
   activationSuppressedSql: 'src/core/eligibility/sql.ts: constant activation-suppression predicate over a caller alias; tier ranks and reason families come from constant tables',
   unverifiedExtractionFragment: 'src/core/extraction-review.ts: constant frontmatter predicate over a caller alias; keys and values are module constants',

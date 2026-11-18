@@ -29,7 +29,6 @@ import { trustFields } from '../eligibility/labels.ts';
 import { isQuarantined } from '../quarantine.ts';
 import { loadPageTrust } from '../eligibility/stamp.ts';
 import { storedEdge, worldLinkContexts } from '../eligibility/fence-overlay.ts';
-import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { loadRelationshipNotes, relationshipNoteKey } from '../link-relationship-notes.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
 import { isIdentityEntity, slugify } from '../entities/resolve.ts';
@@ -594,7 +593,7 @@ async function assembleCard(
   readerRemote: boolean,
 ): Promise<{ card: EntityCard; facts: FactRow[] }> {
   const pageSlug = row.slug;
-  const { privatePagesFilterForCaller, privateLinkOriginFilterForCaller, privateFactFilterForReader, worldOnlyFacts } = await import('../search/private-visibility.ts');
+  const { privatePagesFilterForCaller, privateLinkOriginFilterForCaller, worldOnlyFacts } = await import('../search/private-visibility.ts');
   const worldOnly = worldOnlyFacts(remote);
   const visibility = worldOnly ? (['world'] as ('private' | 'world')[]) : undefined;
   // Facts saved about this entity may sit under a sibling page or the bare subject slug (siblings.ts).
@@ -657,15 +656,7 @@ async function assembleCard(
     // visibility), indexed COUNT instead of rows. Fail-soft to null so a
     // count failure degrades to the capped payload length, never to 0.
     engine
-      .executeRaw<{ n: string | number }>(
-        `SELECT COUNT(*) AS n
-           FROM facts
-          WHERE source_id = $1 AND entity_slug = ANY($2::text[])
-            AND expired_at IS NULL${worldOnly ? ` AND visibility = 'world'` : ''}${excludePrivate ? ` AND ${privateFactFilterForReader('facts')}` : ''}
-            AND ${projectionEligibleSql('facts', 'facts', eligibility)}`,
-        [sourceId, factSlugs],
-      )
-      .then(rs => Number(rs[0]?.n ?? 0))
+      .countWorldFacts({ sourceId, entitySlugs: factSlugs, worldOnly: !!worldOnly, excludePrivate: !!excludePrivate, eligibility })
       .catch(() => null),
   ]);
 

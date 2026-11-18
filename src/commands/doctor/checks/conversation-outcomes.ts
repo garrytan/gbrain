@@ -15,7 +15,7 @@
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import { boundUnknownDetails } from '../bounded-unknown.ts';
-import { CONVERSATION_EXTRACTOR_VERSION, NON_EXTRACTABLE_AUDIT_SOURCE, outcomeExtractorVersion, TERMINAL_AUDIT_SOURCE } from '../../../core/facts/audit-sources.ts';
+import { CONVERSATION_EXTRACTOR_VERSION, outcomeExtractorVersion } from '../../../core/facts/audit-sources.ts';
 
 export const OUTCOME_SCAN_CAP = 5000;
 
@@ -23,10 +23,7 @@ export async function conversationOutcomesStaleCheck(engine: BrainEngine, source
   const name = 'conversation_outcomes_stale';
   try {
     const sources = sourceIds ?? (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(row => row.id);
-    const rows = await engine.executeRaw<{ source_id: string; slug: string; context: string | null }>(
-      `SELECT source_id, source_markdown_slug AS slug, context FROM facts
-        WHERE source_id = ANY($1::text[]) AND source LIKE 'cli:extract-conversation-facts%' AND source = ANY($2::text[]) AND expired_at IS NULL
-        ORDER BY id DESC LIMIT $3`, [sources, [TERMINAL_AUDIT_SOURCE, NON_EXTRACTABLE_AUDIT_SOURCE], OUTCOME_SCAN_CAP + 1]);
+    const rows = await engine.listConversationFactRows(sources, OUTCOME_SCAN_CAP + 1);
     const capped = rows.length > OUTCOME_SCAN_CAP;
     const scanned = rows.slice(0, OUTCOME_SCAN_CAP).map(row => ({ ...row, version: outcomeExtractorVersion(row.context) }));
     const stale = scanned.filter(row => row.version !== null && row.version < CONVERSATION_EXTRACTOR_VERSION);
