@@ -75,6 +75,22 @@ for (const backend of testBackends()) {
       });
     }, 120_000);
 
+    test('a contextual reindex that cannot read the setting sends nothing and retries', async () => {
+      await world(databaseUrl, async engine => {
+        await stalePage(engine, 'notes/queued');
+        await engine.setConfig('search.contextual_retrieval', 'title');
+        const original = engine.getConfig.bind(engine);
+        engine.getConfig = async (key: string) => {
+          if (key === 'embedding_disabled') throw new Error('synthetic config read failure');
+          return original(key);
+        };
+        try {
+          await expect(makeContextualReindexHandler({ engine })(job('notes/queued'))).rejects.toThrow(/transient error/);
+        } finally { engine.getConfig = original; }
+        expect(sent).toEqual([]);
+      });
+    }, 120_000);
+
     test('a running multimodal reindex sends no batch after the setting is turned on', async () => {
       await world(databaseUrl, async engine => {
         await stalePage(engine, 'notes/many', 40);

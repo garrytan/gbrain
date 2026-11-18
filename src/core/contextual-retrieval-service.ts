@@ -42,7 +42,7 @@
 import { createHash } from 'crypto';
 import * as fs from 'node:fs';
 import { embedBatch } from './embedding.ts';
-import { embeddingSendBlocked } from './embedding-disabled.ts';
+import { embeddingSendBlocked, embeddingsDisabled } from './embedding-disabled.ts';
 import { resolveContextualRetrievalMode } from './contextual-retrieval-resolver.ts';
 import {
   buildContextualPrefix,
@@ -313,8 +313,9 @@ export interface ReembedPageArgs {
 export async function reembedPageWithContextualRetrieval(
   args: ReembedPageArgs,
 ): Promise<ReembedPageResult> {
-  // #9715: a job queued before the owner turned embedding off sends nothing when it runs.
-  if (await embeddingSendBlocked(args.engine)) return { kind: 'skipped', reason: 'embedding_disabled' };
+  // #9715: a job queued before the owner turned embedding off sends nothing when it runs; an unreadable setting retries.
+  if (await embeddingSendBlocked(args.engine)) return await embeddingsDisabled(args.engine) ? { kind: 'skipped', reason: 'embedding_disabled' }
+    : { kind: 'transient_error', cause: 'db', detail: 'The embedding_disabled setting could not be read, so nothing was sent; the job retries.' };
   // ── Load page + source + chunks ────────────────────────────────────
   const initial = await args.engine.getPage(args.pageSlug, { sourceId: args.sourceId });
   if (!initial) {

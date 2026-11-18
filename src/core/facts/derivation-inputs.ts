@@ -31,8 +31,10 @@ function refKey(ref: DerivationRef): { table: string; id: string } {
  * a source is purged. `replacePages` (#9653) is for a deriver that rewrites the
  * whole row from these inputs (a concept narrative): the row's page edges not
  * named now are dropped, so a purge of a former input no longer reaches it.
- * For a page they move to each of its retained versions first, which were
- * built from them, so purge and owner-only lineage still reach the history.
+ * For a page they move to each of its retained versions first, so purge and
+ * owner-only lineage still reach the history. The copy covers every retained
+ * version, including ones archived before that input joined: a later purge
+ * of the input over-hides those, never leaves a version built from it live.
  */
 export async function recordDerivationInputs(tx: BrainEngine, row: DerivationRef & { sourceId?: string | null },
   inputs: readonly DerivationRef[], opts: { replacePages?: boolean } = {}): Promise<void> {
@@ -65,7 +67,10 @@ export interface DerivedRow { table: string; id: string; depth: number }
 /**
  * Every row derived (transitively) from `inputs`, breadth-first, bounded by
  * `limit` rows and `maxDepth` hops. `truncated` is true when a bound stopped
- * the walk; the caller reports the remainder as unverified.
+ * the walk; the caller reports the remainder as unverified. Retained versions
+ * (#9653) are terminal: they are collected after the live walk under their own
+ * `limit`, so a concept's long history never truncates the walk before it
+ * reaches a live row still built from the input.
  */
 export async function derivedRowsFrom(engine: BrainEngine, inputs: readonly DerivationRef[],
   opts: { limit?: number; maxDepth?: number } = {}): Promise<{ rows: DerivedRow[]; truncated: boolean }> {
@@ -77,6 +82,7 @@ export async function derivedRowsFrom(engine: BrainEngine, inputs: readonly Deri
     const next = await engine.executeRaw<{ derived_table: string; derived_id: string }>(`SELECT DISTINCT d.derived_table,d.derived_id
       FROM derivation_inputs d JOIN jsonb_to_recordset($1::text::jsonb) AS f(input_table text,input_id text)
         ON d.input_table=f.input_table AND d.input_id=f.input_id
+      WHERE d.derived_table<>'page_versions'
       ORDER BY d.derived_table,d.derived_id LIMIT $2`, [JSON.stringify(frontier.map(f => ({ input_table: f.table, input_id: f.id }))), limit + 1]);
     frontier = [];
     for (const r of next) {
@@ -89,6 +95,16 @@ export async function derivedRowsFrom(engine: BrainEngine, inputs: readonly Deri
     }
     if (depth === maxDepth && frontier.length) return { rows, truncated: true };
   }
+  const depthOf = new Map([...inputs.map(i => [`${i.table}:${i.id}`, 0] as const), ...rows.map(r => [`${r.table}:${r.id}`, r.depth] as const)]);
+  const versions = await engine.executeRaw<{ derived_id: string; input_table: string; input_id: string }>(`SELECT d.derived_id,d.input_table,d.input_id
+    FROM derivation_inputs d JOIN jsonb_to_recordset($1::text::jsonb) AS f(input_table text,input_id text)
+      ON d.input_table=f.input_table AND d.input_id=f.input_id
+    WHERE d.derived_table='page_versions' ORDER BY d.derived_id LIMIT $2`,
+  [JSON.stringify([...depthOf.keys()].map(k => { const at = k.indexOf(':'); return { input_table: k.slice(0, at), input_id: k.slice(at + 1) }; })), limit + 1]);
+  const versionDepth = new Map<string, number>();
+  for (const v of versions) versionDepth.set(v.derived_id, Math.min(versionDepth.get(v.derived_id) ?? Infinity, depthOf.get(`${v.input_table}:${v.input_id}`)! + 1));
+  if (versionDepth.size > limit) return { rows, truncated: true };
+  for (const [id, depth] of versionDepth) rows.push({ table: 'page_versions', id, depth });
   return { rows, truncated: false };
 }
 

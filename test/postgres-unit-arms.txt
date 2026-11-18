@@ -101,6 +101,7 @@ test/decide/conflict-proposals-managed.test.ts
 test/declared-lineage-visibility.test.ts
 test/degraded-engine-recovered-surface-9224.test.ts
 test/delta-beliefs-link-context-2957.test.ts
+test/derivation-walk-versions-9653.test.ts
 test/derived-link-reconciliation.test.ts
 test/derived-origin-carry-managed.test.ts
 test/derived-origin-carry-private.test.ts
