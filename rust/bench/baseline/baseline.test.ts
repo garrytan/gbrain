@@ -9,6 +9,7 @@ import { describe, expect, test } from 'bun:test';
 import { join, resolve } from 'node:path';
 import { parseArgs } from './lib/args.ts';
 import { makeRng, median, percentile, summarize } from './lib/stats.ts';
+import { preparePostgresDatabase } from './lib/store.ts';
 
 const repo = resolve(import.meta.dir, '../../..');
 
@@ -57,6 +58,14 @@ describe('bake-off baseline', () => {
     expect(bad.code).toBe(2);
     expect(bad.out).toContain('--engine must be pglite or postgres');
   }, 60_000);
+
+  test('the Postgres prep loads the vendored driver before it checks the URL', async () => {
+    // The repo vendors postgres.js as '#postgres'; there is no 'postgres' package on a clean install.
+    // A bad database name is refused only after the driver import succeeds, and nothing connects.
+    await expect(preparePostgresDatabase('postgresql://u@127.0.0.1:1/not-plain', false)).rejects.toThrow(
+      /is not a plain identifier/,
+    );
+  });
 
   test('the corpus script parses', () => {
     const py = run(['python3', '-c', 'import ast,sys; ast.parse(open(sys.argv[1]).read())', 'rust/bench/corpus/dbpedia.py']);
