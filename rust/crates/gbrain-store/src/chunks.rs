@@ -1055,12 +1055,19 @@ impl Store {
         chunk_rows(&*read, &page, options.include_embedding)
     }
 
-    /// `deleteChunks(slug, {sourceId})`: removes the page's chunks. The page stays.
+    /// `deleteChunks(slug, {sourceId})`: removes the page's chunks and, when there were any, clears
+    /// the page's `text_projection_revision` (the seal). The page stays.
     pub fn delete_chunks(&self, slug: &str, source_id: Option<&str>) -> Result<()> {
         self.write(|tx| {
             let source = source_id.unwrap_or(DEFAULT_SOURCE);
-            if let Some(page) = read_page(&*tx, source, &slug.to_lowercase())? {
+            if let Some(mut page) = read_page(&*tx, source, &slug.to_lowercase())? {
+                // PGLite: removing chunks voids the seal that certified them (#8502).
+                let had_chunks = !read_chunks(&*tx, page.id)?.is_empty();
                 clear_chunks(tx, page.id)?;
+                if had_chunks && page.text_projection_revision.is_some() {
+                    page.text_projection_revision = None;
+                    write_page(tx, &page)?;
+                }
             }
             Ok(())
         })
@@ -1373,5 +1380,34 @@ mod segment_tests {
         assert_eq!(input.chunk.chunk_source.as_deref(), Some("timeline"));
         assert_eq!(input.chunk.rest.get("token_count"), Some(&json!(3)));
         assert!(input.chunk.rest.get("occurrence_id").is_none());
+    }
+
+    fn seal_of(store: &Store) -> Option<String> {
+        read_page(&*store.read().unwrap(), "default", "a")
+            .unwrap()
+            .unwrap()
+            .text_projection_revision
+    }
+
+    /// PGLite's deleteChunks clears the seal when it removed chunks (#8502), so the page reads as
+    /// chunkless again; a delete that removed nothing leaves the seal alone.
+    #[test]
+    fn delete_chunks_clears_the_seal_only_when_chunks_were_removed() {
+        let store = crate::test_support::store();
+        page(&store);
+        assert!(seal_of(&store).is_some());
+        store.delete_chunks("a", None).unwrap();
+        assert!(texts(&store).is_empty());
+        assert_eq!(seal_of(&store), None);
+
+        let seal = UpsertChunksOptions {
+            seal: true,
+            ..UpsertChunksOptions::default()
+        };
+        store.upsert_chunks("a", &[], &seal).unwrap();
+        let sealed = seal_of(&store);
+        assert!(sealed.is_some());
+        store.delete_chunks("a", None).unwrap();
+        assert_eq!(seal_of(&store), sealed);
     }
 }
