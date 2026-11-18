@@ -122,12 +122,12 @@ async function runPushCli(engine: BrainEngine, args: string[]): Promise<CliRun> 
   return { exitCode, stdout, stderr };
 }
 
-/** Engine stub whose executeRaw serves canned source rows (and records params). */
+/** Engine stub whose typed getSource serves canned source rows by id (and records the ids it was asked for). */
 function stubEngine(rows: Array<Record<string, unknown>>, calls: unknown[][] = []): BrainEngine {
   return {
-    executeRaw: async (_sql: string, params?: unknown[]) => {
-      calls.push(params ?? []);
-      return rows;
+    getSource: async (id: string) => {
+      calls.push([id]);
+      return rows.find(r => r.id === id) ?? null;
     },
   } as unknown as BrainEngine;
 }

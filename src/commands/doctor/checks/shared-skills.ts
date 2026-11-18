@@ -4,6 +4,7 @@ import { SHARED_SKILLS_OPT_OUT_DOCS } from '../../../core/shared-skills/setup-so
 import type { Check } from '../../doctor.ts';
 import { agentFix } from '../check-fix.ts';
 import { isMissingSchemaObject } from '../../../core/utils.ts';
+import { sortSourcesById } from '../../../core/source-rows.ts';
 
 /**
  * Sources opted out of shared-skills adoption (`config.shared_skills=false`)
@@ -13,7 +14,7 @@ import { isMissingSchemaObject } from '../../../core/utils.ts';
  */
 export async function checkSharedSkillsSources(engine: BrainEngine): Promise<Check | null> {
   try {
-    const ids = (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE NOT archived ORDER BY id')).map(row => row.id);
+    const ids = sortSourcesById(await engine.listAllSources()).map(row => row.id);
     const views = await Promise.all(ids.map(id => readSharedSkillsSourceView(engine, id)));
     const optedOut = views.filter(view => view.configured === false).map(view => view.source_id);
     const parked = views.filter(view => view.parked);

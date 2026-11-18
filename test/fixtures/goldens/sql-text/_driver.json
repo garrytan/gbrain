@@ -4973,6 +4973,58 @@
           }
         ]
       },
+      "listStaleSyncSourceIds": {
+        "default": [
+          {
+            "paramCount": 0,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": true
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "lockSourceRow": {
+        "default": [
+          {
+            "paramCount": 1,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "readSourceChunkerVersion": {
+        "default": [
+          {
+            "paramCount": 1,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "readSourceRow": {
+        "default": [
+          {
+            "paramCount": 1,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "updateSourceConfig": {
         "default": [
           {

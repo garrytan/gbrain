@@ -18,7 +18,7 @@
  * snapshot means (`db-lock.ts`). Nothing here reads the clock of the calling process: every timestamp is the
  * database's `NOW()`.
  */
-import type { CycleLockFilter, CycleLockRow } from '../engine.ts';
+import type { BrainEngine, CycleLockFilter, CycleLockRow } from '../engine.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { QueryOpts, SqlExecutor } from './executor.ts';
 
@@ -135,6 +135,21 @@ export async function deleteCycleLockIfStale(exec: SqlExecutor, lockId: string, 
   if (rows.length === 0) return { deleted: false, lastRefreshedAt: null };
   const lr = rows[0].last_refreshed_at;
   return { deleted: true, lastRefreshedAt: lr == null ? null : (lr instanceof Date ? lr : new Date(lr)) };
+}
+
+/**
+ * #7442: the fence on a lease row: the row with this token, unexpired, `FOR KEY SHARE`. KEY SHARE lets the holder's
+ * own renewal (an UPDATE of non-key columns) through while a fenced transaction is open; a takeover (its upsert writes
+ * the key) and every DELETE wait for it. `db-lock.ts` `fenceLockRow` runs the same text.
+ */
+export const ASSERT_LEASE_SQL = 'SELECT 1 FROM gbrain_cycle_locks WHERE id=$1 AND acquisition_token=$2::uuid AND ttl_expires_at > now() FOR KEY SHARE';
+
+/**
+ * Whether the lease `lockId` is still held under `acquisitionToken`, holding the fence for the rest of the transaction.
+ * Issues its statement synchronously (no await before it), so a pipelined caller keeps its statement order.
+ */
+export function assertCycleLease(exec: Pick<BrainEngine, 'executeRaw'>, lockId: string, acquisitionToken: string): Promise<boolean> {
+  return exec.executeRaw(ASSERT_LEASE_SQL, [lockId, acquisitionToken]).then(rows => rows.length > 0);
 }
 
 function assertNever(value: never): never {

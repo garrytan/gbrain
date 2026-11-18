@@ -342,9 +342,9 @@ export interface LedgerPurgeReport { purged_events: number; redacted_fields: Red
 
 /** The logical key of one live fact or take row and its carrying-field values, for an owner release. */
 async function rowSubject(engine: BrainEngine, table: 'facts' | 'takes', id: number): Promise<{ sourceId: string; key: string; value: Record<string, unknown> } | null> {
-  const [row] = await engine.executeRaw<{ source_id: string; slug: string | null }>(table === 'facts'
-    ? 'SELECT source_id, COALESCE(source_markdown_slug, entity_slug) AS slug FROM facts WHERE id = $1'
-    : 'SELECT p.source_id, p.slug FROM takes k JOIN pages p ON p.id = k.page_id WHERE k.id = $1', [id]);
+  const [row] = table === 'facts'
+    ? [await engine.readFactSubject(id)]
+    : await engine.executeRaw<{ source_id: string; slug: string | null }>('SELECT p.source_id, p.slug FROM takes k JOIN pages p ON p.id = k.page_id WHERE k.id = $1', [id]);
   if (!row?.slug) return null;
   const source = await readLedgerSource(engine, row.source_id);
   if (!source) return null;

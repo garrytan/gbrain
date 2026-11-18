@@ -25,6 +25,7 @@ import { SOURCE_ID_RE, isValidSourceId, ALL_SOURCES } from './source-id.ts';
 import { isTrustedDotfile, realpathOrResolve, realpathOrResolveAsync } from './path-confine.ts';
 import { noteResolvedSource } from './fix-routing.ts';
 import { hookSessionCwd } from './session-cwd.ts';
+import { sortSourcesById, sourceConfigText, sourceRecordsRawConfig } from './source-rows.ts';
 
 // Re-export so scope-resolution call sites can import the sentinel from
 // either module (#1712).
@@ -339,10 +340,18 @@ async function listRegisteredLocalPathSources(
     return await engine.listLocalPathSources();
   } catch (err) {
     rethrowCapabilityRefusal(err);
-    return engine.executeRaw<{ id: string; local_path: string }>(
-      `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL`,
-    );
+    // A brain older than the `archived` column: every source with a path, without the flag (all treated as active).
+    return (await legacySourceRows(engine)).filter(row => row.local_path !== null).map(({ id, local_path }) => ({ id, local_path: local_path! }));
   }
+}
+
+/**
+ * Every source row through `listSourceRecords`, which re-reads a brain older than the `archived` column with the
+ * columns it has. The resolver's fallback after an `archived`-aware read fails: rows carry only id, local_path and
+ * config, so the archived flag the fallback never had is never consulted.
+ */
+async function legacySourceRows(engine: BrainEngine): Promise<Array<{ id: string; local_path: string | null; config: unknown }>> {
+  return (await engine.listSourceRecords()).map(({ id, local_path, config }) => ({ id, local_path, config }));
 }
 
 /**
@@ -366,34 +375,33 @@ async function pickSoleNonDefaultSource(
   engine: BrainEngine,
   opts: { quiet?: boolean } = {},
 ): Promise<string | null> {
-  // archived column was added in v34 (v0.26.5). Older brains may not have
-  // it — fall back to the un-archived query in that case via try/catch.
+  // GBRA-133: one statement lists the sources and carries the emptiness guard's answer (`default_has_pages`), from the
+  // request snapshot when one is open, else read live. A brain older than the `archived` column (v34, v0.26.5) falls
+  // back to every source with a path, as the pre-v34 query did, and reads the guard from the page split.
   const pending = requestSourceRows(engine);
-  const request = pending && await pending;
-  // GBRA-133: the emptiness guard's read is sent with the listing (one round trip); it is used only for a sole candidate.
-  // The request's rows carry its answer already.
-  const defaultHasPages = request
-    ? Promise.resolve(request.some(row => row.default_has_pages))
-    : engine.executeRaw<{ one: number }>(
-      `SELECT 1 AS one FROM pages WHERE source_id = 'default' AND deleted_at IS NULL LIMIT 1`,
-    ).then(found => found.length > 0);
-  defaultHasPages.catch(() => {});
-  let rows: Array<{ id: string; config?: unknown }> = request ? request.filter(row => row.local_path !== null && row.id !== 'default' && row.archived === false && parseSourceConfig(row.config).role !== 'storage_manifest') : [];
-  if (!request) {
+  let routing = pending && await pending;
+  // The snapshot rows were filtered on the parsed config; the live read filtered on `config->>'role'`, which is
+  // null for a config stored as a JSON string. Each path keeps its own filter.
+  const fromSnapshot = !!routing;
+  if (!routing) {
     try {
-      rows = await engine.executeRaw<{ id: string; config: unknown }>(
-        `SELECT id, config FROM sources WHERE local_path IS NOT NULL AND id != 'default' AND archived = false AND config->>'role' IS DISTINCT FROM 'storage_manifest'`,
-      );
-    } catch {
-      rows = await engine.executeRaw<{ id: string }>(
-        `SELECT id FROM sources WHERE local_path IS NOT NULL AND id != 'default'`,
-      );
+      routing = await engine.listSourceRoutingRows();
+    } catch (err) {
+      rethrowCapabilityRefusal(err);
     }
   }
+  const rows: Array<{ id: string; config?: unknown }> = routing
+    ? routing.filter(row => row.local_path !== null && row.id !== 'default' && row.archived === false
+      && (fromSnapshot ? parseSourceConfig(row.config).role : sourceConfigText(row.config, 'role')) !== 'storage_manifest')
+    : (await legacySourceRows(engine)).filter(row => row.local_path !== null && row.id !== 'default').map(({ id }) => ({ id }));
+  const listed = routing;
+  const defaultHasPages = (): Promise<boolean> => listed
+    ? Promise.resolve(listed.some(row => row.default_has_pages))
+    : engine.countDefaultSourceSplit().then(split => split.defaultPages > 0);
   if (rows.length !== 1) return null;
   // #3070 emptiness guard: fire only when 'default' holds no active pages.
   try {
-    if (await defaultHasPages) {
+    if (await defaultHasPages()) {
       // The flip must not be silent: one stray page in 'default' reroutes
       // every bare command away from the sole side-source, and the user
       // hunts for "lost" writes. One stderr line names both sides so the
@@ -668,10 +676,7 @@ async function assertSourceExists(engine: BrainEngine, id: string): Promise<void
   const request = pending && await pending;
   const rows = routing ? (routing.id !== null && routing.archived === false ? [routing] : [])
     : request ? request.filter(row => row.id === id && row.archived === false)
-    : await engine.executeRaw<{ id: string }>(
-      `SELECT id FROM sources WHERE id = $1 AND archived = false`,
-      [id],
-    );
+    : (await engine.listAllSources()).filter(row => row.id === id);
   if (rows.length === 0) {
     const nearest = await nearestSourceId(engine, id);
     throw new SourceTargetError(
@@ -688,7 +693,7 @@ async function assertSourceExists(engine: BrainEngine, id: string): Promise<void
  */
 async function nearestSourceId(engine: BrainEngine, id: string): Promise<string | null> {
   try {
-    const sources = await engine.executeRaw<{ id: string; name: string | null }>('SELECT id, name FROM sources WHERE archived = false ORDER BY id');
+    const sources = sortSourcesById(await engine.listAllSources()).map(({ id: sourceId, name }) => ({ id: sourceId, name: name as string | null }));
     const named = sources.filter(s => s.name === id);
     if (named.length === 1) return named[0]!.id;
     const prefixed = sources.filter(s => s.id.startsWith(id) || (s.name ?? '').startsWith(id));
@@ -751,9 +756,7 @@ export async function resolveSourceForRepoPath(
   }
 
   // 2. Registered local_path containing the repo dir (longest prefix wins).
-  const registered = await engine.executeRaw<{ id: string; local_path: string }>(
-    `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL`,
-  );
+  const registered = await listRegisteredLocalPathSources(engine);
   const dirResolved = realpathOrResolve(dir);
   let best: { id: string; path: string; pathLen: number } | null = null;
   for (const r of registered) {
@@ -800,7 +803,7 @@ export async function getDefaultSourcePath(
   // (absent means NULL), so it is not read again.
   const localPath = seen.registered
     ? seen.registered.find(r => r.id === sourceId)?.local_path ?? null
-    : (await engine.executeRaw<{ local_path: string | null }>(`SELECT local_path FROM sources WHERE id = $1`, [sourceId]))[0]?.local_path ?? null;
+    : (await engine.getSource(sourceId))?.local_path ?? null;
   if (localPath) return localPath;
 
   // Legacy fallback: pre-v0.18 brains stored the repo path in the global
@@ -1028,13 +1031,10 @@ async function liveSourceRows(engine: BrainEngine): Promise<Array<{ id: string; 
   const request = pending && await pending;
   if (request) return request.filter(row => row.archived === false).map(({ id, config, archived }) => ({ id, config, archived }));
   try {
-    return await engine.executeRaw<{ id: string; config: unknown; archived?: boolean }>(
-      `SELECT id, config, archived FROM sources WHERE archived = false ORDER BY id`,
-    );
-  } catch {
-    return await engine.executeRaw<{ id: string; config: unknown }>(
-      `SELECT id, config FROM sources ORDER BY id`,
-    );
+    return sortSourcesById(await sourceRecordsRawConfig(engine)).map(({ id, config }) => ({ id, config, archived: false }));
+  } catch (err) {
+    rethrowCapabilityRefusal(err);
+    return sortSourcesById(await legacySourceRows(engine)).map(({ id, config }) => ({ id, config }));
   }
 }
 
@@ -1119,11 +1119,9 @@ let sourcesQueryShape: 'archived' | 'legacy' | null = null;
 async function otherSourceExists(engine: BrainEngine): Promise<boolean> {
   if (sourcesQueryShape !== 'legacy') {
     try {
-      const rows = await engine.executeRaw<{ id: string }>(
-        `SELECT id FROM sources WHERE id <> 'default' AND archived = false LIMIT 1`,
-      );
+      const rows = await engine.listAllSources();
       sourcesQueryShape = 'archived';
-      return rows.length > 0;
+      return rows.some(row => row.id !== 'default');
     } catch (err) {
       // Cache 'legacy' ONLY for a genuine missing-column error; re-throw
       // anything else so a transient failure doesn't permanently degrade.
@@ -1133,10 +1131,7 @@ async function otherSourceExists(engine: BrainEngine): Promise<boolean> {
       sourcesQueryShape = 'legacy';
     }
   }
-  const rows = await engine.executeRaw<{ id: string }>(
-    `SELECT id FROM sources WHERE id <> 'default' LIMIT 1`,
-  );
-  return rows.length > 0;
+  return (await legacySourceRows(engine)).some(row => row.id !== 'default');
 }
 
 export async function sourceGuardBlocksWrite(

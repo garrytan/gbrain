@@ -18,6 +18,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { checkSourceRoutingHealth } from '../src/commands/doctor.ts';
+import { stubSourceMembers } from './helpers/source-members-stub.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 
@@ -109,10 +110,11 @@ for (const backend of testBackends()) {
 describe('checkSourceRoutingHealth on a schema without shared skills', () => {
   test('keeps the zero-page warning', async () => {
     const preSharedSkills = {
+      ...stubSourceMembers([{ id: 'skills' }]),
       executeRaw: async (sql: string) => {
         if (/shared_skill_packs/.test(sql)) throw Object.assign(new Error('relation "shared_skill_packs" does not exist'), { code: '42P01' });
         if (/FROM pages/.test(sql)) return [{ n: '0' }];
-        return [{ id: 'skills' }];
+        return [];
       },
     } as unknown as BrainEngine;
     const r = await checkSourceRoutingHealth(preSharedSkills);

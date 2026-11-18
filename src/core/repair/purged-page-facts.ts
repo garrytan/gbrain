@@ -37,7 +37,7 @@ import { waitForWrite, writeResponse } from '../persistence/service.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { maintenancePreflight, submitDatabaseMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
-import { PAGE_EXTRACTION_SOURCE_LIST, contextHeadSql } from '../facts/gone-page-facts.ts';
+import { PURGED_EXCLUDED_SQL, PURGED_HEAD_SQL, PURGED_PAGE_SQL, PURGED_SOURCES_SQL } from '../engine-sql/facts-repair.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan } from './core.ts';
 
 export const PURGED_PAGE_FACTS_INTENT = 'managed_maintenance_expire_purged_page_facts';
@@ -65,19 +65,13 @@ export interface PurgedPageFact {
 interface Approved { source_id: string; include_ambiguous: boolean; scope: string[]; facts: PurgedPageFact[] }
 interface BatchItem extends RepairItem { batch: Approved; request_id: string; hash: string; last: boolean }
 
-const HEAD = contextHeadSql('f');
-const SOURCES = PAGE_EXTRACTION_SOURCE_LIST.map(s => `'${s}'`).join(', ');
-const PURGED_SQL = `EXISTS (SELECT 1 FROM page_purges pp WHERE pp.source_id = f.source_id AND pp.slug = ${HEAD} AND pp.purged_at >= f.created_at)`;
+const HEAD = PURGED_HEAD_SQL;
+const SOURCES = PURGED_SOURCES_SQL;
+const PURGED_SQL = PURGED_PAGE_SQL;
+const EXCLUDED_SQL = PURGED_EXCLUDED_SQL;
 const CANDIDATE_WHERE = `f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND f.source_markdown_slug IS NULL AND f.source IN (${SOURCES})
      AND ${HEAD} <> '' AND ${HEAD} !~ '[[:space:]]' AND (strpos(${HEAD}, '/') > 0 OR ${PURGED_SQL})
      AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = ${HEAD})`;
-const EXCLUDED_SQL = {
-  withdrawn: `EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = f.source_id AND w.visibility = f.visibility
-    AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact)) AND (w.subject = '*' OR w.subject = f.entity_slug))`,
-  superseded: 'f.superseded_by IS NOT NULL',
-  referenced: 'EXISTS (SELECT 1 FROM facts g WHERE g.superseded_by = f.id)',
-  open_loop: 'EXISTS (SELECT 1 FROM open_loops o WHERE o.fact_id = f.id)',
-};
 
 interface CandidateRow {
   id: number | string; source_id: string; slug: string; fact: string; context: string; entity_slug: string | null; visibility: string; source: string;
@@ -108,14 +102,7 @@ export async function classifyPurgedPageFacts(db: BrainEngine, sourceIds: string
  * on every active fact of a healthy brain.
  */
 export async function countPurgedPageFacts(db: BrainEngine, sourceIds: string[], cap: number): Promise<{ evidenced: number; ambiguous: number; capped: boolean }> {
-  const rows = await db.executeRaw<{ purged: boolean }>(`WITH f AS MATERIALIZED (
-    SELECT f.id, f.source_id, f.fact, f.context, f.entity_slug, f.visibility, f.superseded_by, f.created_at FROM facts f
-     WHERE f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND f.source_markdown_slug IS NULL AND f.source IN (${SOURCES})
-       AND ${HEAD} <> '' AND ${HEAD} !~ '[[:space:]]' AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = ${HEAD}))
-    SELECT ${PURGED_SQL} AS purged FROM f WHERE (strpos(${HEAD}, '/') > 0 OR ${PURGED_SQL}) AND NOT (${Object.values(EXCLUDED_SQL).join(' OR ')}) LIMIT $2`,
-    [sourceIds, cap + 1]);
-  const kept = rows.slice(0, cap);
-  return { evidenced: kept.filter(r => r.purged).length, ambiguous: kept.filter(r => !r.purged).length, capped: rows.length > cap };
+  return db.countPurgedPageFacts(sourceIds, cap);
 }
 
 const DETAILS: Record<string, string> = {

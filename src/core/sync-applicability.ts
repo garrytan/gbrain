@@ -42,7 +42,7 @@ function underGbrainContent(root: string): boolean {
 }
 
 async function ownedByContentReceipt(engine: BrainEngine, sourceId: string, root: string): Promise<boolean> {
-  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation FROM sources WHERE id=$1', [sourceId]);
+  const source = await engine.readSourceIncarnation(sourceId);
   if (!source?.incarnation) return false;
   const saved = await engine.getConfig(contentSetupKey(sourceId, source.incarnation));
   if (!saved) return false;

@@ -3,6 +3,7 @@ import type { BrainEngine } from './engine.ts';
 import { resolveSourceLocalFilePath } from './markdown.ts';
 import { resolveSourceId } from './source-resolver.ts';
 import { ALL_SOURCES } from './source-id.ts';
+import { sortSourcesById } from './source-rows.ts';
 import type { SlugRootMode } from './sync-anchor.ts';
 
 /** The restore request does not identify exactly one source and its repo. */
@@ -27,14 +28,16 @@ export async function resolveRestoreTarget(
 ): Promise<{ source: string; repo: string }> {
   if (source === ALL_SOURCES) throw new RestoreTargetError('--restore-only requires one source; pass --source <id>.');
   if (!source && repo) {
-    const matches = await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE AND local_path=$1 LIMIT 2', [resolve(repo)]);
+    const path = resolve(repo);
+    const sources = sortSourcesById(await engine.listSourceRecords());
+    const matches = sources.filter(s => s.archived !== true && s.local_path === path).slice(0, 2);
     if (matches.length === 1) source = matches[0].id;
     else {
       // A repo registered only to an archived source is that source's repo;
       // restoring another source's pages from it would be wrong.
-      const [archived] = matches.length ? [] : await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS TRUE AND local_path=$1 ORDER BY id LIMIT 1', [resolve(repo)]);
+      const [archived] = matches.length ? [] : sources.filter(s => s.archived === true && s.local_path === path);
       if (archived) throw new RestoreTargetError(`The restore repo belongs to archived source "${archived.id}". Run gbrain sources restore ${archived.id} first. Or pass --source <id> and --repo <path> for an active source.`);
-      const owners = await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id LIMIT 2');
+      const owners = sources.filter(s => s.archived !== true).slice(0, 2);
       if (!matches.length && owners.length === 1) source = owners[0].id;
       else throw new RestoreTargetError('The restore repo does not identify exactly one source. Pass --source <id> and --repo <path> for that source.');
     }
@@ -42,7 +45,7 @@ export async function resolveRestoreTarget(
   source ??= await resolveSourceId(engine, undefined);
   if (source === ALL_SOURCES) throw new RestoreTargetError('--restore-only requires one source; pass --source <id>.');
   if (!repo) {
-    const [owner] = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1', [source]);
+    const owner = await engine.getSource(source);
     repo = owner?.local_path ?? (source === 'default' ? await engine.getConfig('sync.repo_path') : undefined) ?? undefined;
   }
   if (!repo) throw new RestoreTargetError('--restore-only requires --repo <path> or a configured default source with a local_path.');

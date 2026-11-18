@@ -278,6 +278,9 @@
     "listStaleFrontmatterKeyPages#default": {},
     "listStalePagesForExtraction#afterPageId+versionTs+sourceId": {},
     "listStalePagesForExtraction#default": {},
+    "listStaleSyncSourceIds#default": {
+      "raw": 1
+    },
     "listStaleTakes#default": {},
     "listSupersessions#default": {},
     "listSupersessions#since+visibility": {},
@@ -288,6 +291,9 @@
     "lockPageKeys#default": {
       "raw": 4,
       "tx": 1
+    },
+    "lockSourceRow#default": {
+      "raw": 1
     },
     "markPagesAttendanceBlocked#default": {},
     "markPagesExtractedBatch#default": {},
@@ -324,6 +330,12 @@
     "readPageSnapshot#default": {},
     "readPageSnapshot#sourceId": {},
     "readPageSnapshotsBatch#default": {},
+    "readSourceChunkerVersion#default": {
+      "raw": 1
+    },
+    "readSourceRow#default": {
+      "raw": 1
+    },
     "refreshPageBody#default": {},
     "removeLink#default": {},
     "removeLink#linkSource": {},

@@ -1,11 +1,13 @@
 /**
- * Extraction members (BrainEngine countStalePagesForExtraction, listStalePagesForExtraction, markPagesExtractedBatch,
- * markPagesAttendanceBlocked, countStaleFrontmatterKeyPages, listStaleFrontmatterKeyPages, stripStaleFrontmatterKeys).
+ * Extraction members (BrainEngine countStalePagesForExtraction, listStalePagesForExtraction, readExtractionLagCounts,
+ * markPagesExtractedBatch, markPagesAttendanceBlocked, countStaleFrontmatterKeyPages, listStaleFrontmatterKeyPages,
+ * stripStaleFrontmatterKeys).
  *
  * `held` and `wantedProducers` are passed to the store, where no page is held and no wanted link exists: `held:
  * 'exclude'` and `wantedProducers` change nothing and `held: 'only'` matches nothing, as in PGLite while those tables
  * are empty (rust/docs/store/extraction.md).
  */
+import type { ExtractionLagCounts, ExtractionLagQuery } from '../../engine-sql/entity-reads.ts';
 import type { StalePageRow } from '../../types.ts';
 import { rowToStalePage } from '../../utils.ts';
 import { storeCall, takeOptions, type StoreMember } from './common.ts';
@@ -25,6 +27,16 @@ export const listStalePagesForExtraction: StoreMember<[opts: ListStaleOpts], Sta
   const rows: Record<string, unknown>[] = await storeCall({ member: 'listStalePagesForExtraction', sourceId: o.sourceId as string | undefined }, () =>
     brain.listStalePagesForExtraction(o));
   return rows.map(rowToStalePage);
+};
+
+/**
+ * The link-extraction lag row (`extractionLagStatement`) from the same stale predicate: live pages, the stale ones
+ * extraction can clear, the attendance-blocked ones and the held ones (always 0: no page is held here). `timeoutMs`
+ * bounds a database statement; the store read has none to bound, so it is ignored.
+ */
+export const readExtractionLagCounts: StoreMember<[q: ExtractionLagQuery], ExtractionLagCounts | undefined> = (brain, q) => {
+  const o = takeOptions('readExtractionLagCounts', q, ['sourceId', 'versionTs', 'attendance', 'held', 'guests', 'wantedProducers'], ['timeoutMs']);
+  return storeCall({ member: 'readExtractionLagCounts', sourceId: o.sourceId as string | undefined }, () => brain.readExtractionLagCounts(o));
 };
 
 export const markPagesExtractedBatch: StoreMember<[refs: Array<{ slug: string; source_id: string; extractedAt?: string }>, defaultExtractedAt: string], number> =

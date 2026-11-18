@@ -6,13 +6,13 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 292/292
+# covered: 363/363
 # lifecycle: 9/9
-# pages: 31/31
+# pages: 34/34
 # search: 7/7
 # search_reads: 9/9
 # link_reads: 10/10
-# chunks: 35/35
+# chunks: 36/36
 # extraction: 7/7
 # links: 23/23
 # tags: 5/5
@@ -29,8 +29,15 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 9/9
-# cycle_locks: 6/6
+# entity_reads: 6/6
+# cycle_locks: 7/7
+# minion_jobs: 8/8
 # cli_reads_ops: 7/7
+# facts_doctor: 10/10
+# facts_cycle: 11/11
+# facts_purge: 13/13
+# facts_repair: 10/10
+# facts_trust: 8/8
 # raw_sql: 4/4
 # code_edges: 5/5
 # eval_capture: 5/5
@@ -51,13 +58,13 @@ getPage	pages	yes	36	yes	yes	yes	serves
 readPageSnapshot	pages	yes	7	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	159	yes	yes	yes	serves
+putPage	pages	yes	165	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	5	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	57	yes	yes	yes	serves
+softDeletePage	pages	yes	59	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	8	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -67,13 +74,16 @@ countPagesBy	pages	yes	1	no	yes	yes	serves
 resolveSlugs	pages	yes	2	no	yes	yes	serves
 getAllSlugs	pages	yes	4	no	yes	yes	serves
 listAllPageRefs	pages	yes	1	yes	yes	yes	serves
-listAllSources	pages	yes	2	no	yes	yes	serves
+listAllSources	pages	yes	3	no	yes	yes	serves
 updateSourceConfig	pages	yes	1	no	yes	yes	serves
-getSource	pages	yes	1	no	yes	yes	serves
+getSource	pages	yes	3	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
 listLocalPathSources	pages	yes	1	no	yes	yes	serves
 listSourceRoutingRows	pages	yes	1	no	yes	yes	serves
 countDefaultSourceSplit	pages	yes	1	no	yes	yes	serves
+listStaleSyncSourceIds	pages	yes	1	no	yes	yes	serves
+readSourceRow	pages	yes	1	no	yes	yes	serves
+lockSourceRow	pages	yes	1	no	yes	yes	serves
 listPrefixSampledPages	pages	yes	1	no	yes	yes	serves
 listCorpusSample	pages	yes	1	no	yes	yes	serves
 getPageSealState	pages	yes	1	no	yes	yes	refuses:pages
@@ -104,6 +114,7 @@ countInboundLinks	link_reads	yes	1	no	yes	yes	serves
 listLinkEndpointPages	link_reads	yes	1	no	yes	yes	serves
 listPagesTitledIn	link_reads	yes	1	no	yes	yes	serves
 wordLexemes	link_reads	yes	1	no	yes	yes	serves
+readSourceChunkerVersion	chunks	yes	1	no	yes	yes	refuses:chunks
 findCodeDefinitions	chunks	yes	1	no	yes	yes	serves
 listSymbolTypesForName	chunks	yes	1	no	yes	yes	serves
 findCodeRefChunks	chunks	yes	1	no	yes	yes	serves
@@ -141,8 +152,8 @@ getChunkReuseRows	chunks	yes	1	no	yes	yes	refuses:chunks
 getChunksWithEmbeddings	chunks	yes	1	no	yes	yes	serves
 countStalePagesForExtraction	extraction	yes	4	yes	yes	yes	serves
 listStalePagesForExtraction	extraction	yes	3	yes	yes	yes	serves
-markPagesExtractedBatch	extraction	yes	4	yes	yes	yes	serves
-markPagesAttendanceBlocked	extraction	yes	1	no	yes	yes	serves
+markPagesExtractedBatch	extraction	yes	5	yes	yes	yes	serves
+markPagesAttendanceBlocked	extraction	yes	2	no	yes	yes	serves
 countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
@@ -191,7 +202,7 @@ getSince	timeline	yes	1	no	yes	yes	serves
 getOnThisDay	timeline	yes	1	no	yes	yes	serves
 getLastSeen	timeline	yes	1	no	yes	yes	serves
 upsertEventProjection	timeline	yes	6	no	yes	yes	serves
-mergeOntologyFact	ontology	yes	5	no	yes	yes	serves
+mergeOntologyFact	ontology	yes	7	no	yes	yes	serves
 getOntology	ontology	yes	3	no	yes	yes	serves
 discoverOntologyDimensions	ontology	yes	1	no	yes	yes	serves
 findOntologyConflicts	ontology	yes	2	no	yes	yes	serves
@@ -223,11 +234,11 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	27	yes	yes	yes	serves
-insertFacts	facts	yes	14	no	yes	yes	serves
+insertFact	facts	yes	31	yes	yes	yes	serves
+insertFacts	facts	yes	20	no	yes	yes	serves
 deleteFactsForPage	facts	yes	2	no	yes	yes	serves
-expireFact	facts	yes	10	no	yes	yes	serves
-listFactsByEntity	facts	yes	13	yes	yes	yes	serves
+expireFact	facts	yes	17	no	yes	yes	serves
+listFactsByEntity	facts	yes	14	yes	yes	yes	serves
 listFactsSince	facts	yes	8	yes	yes	yes	serves
 listFactsKeyset	facts	yes	2	no	yes	yes	serves
 listFactsBySession	facts	yes	3	yes	yes	yes	serves
@@ -270,27 +281,42 @@ replaceDerivedAliases	sync_aliases	yes	1	no	yes	yes	refuses:pages
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	1	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
-getConfig	config	yes	4	no	yes	yes	serves
-setConfig	config	yes	10	no	yes	yes	serves
+getConfig	config	yes	5	no	yes	yes	serves
+setConfig	config	yes	12	no	yes	yes	serves
 unsetConfig	config	yes	2	no	yes	yes	serves
-listConfigKeys	config	yes	2	no	yes	yes	serves
+listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
-getConfigValues	config	yes	1	no	yes	yes	serves
+getConfigValues	config	yes	3	no	yes	yes	serves
 readManagedModeRows	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
 getSourceStrictness	import_guards	yes	2	no	yes	yes	serves
-readPersistenceBrainId	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
+readPersistenceBrainId	import_guards	yes	1	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
 insertLocalWriterRow	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
 readTransactionSettings	import_guards	yes	1	no	yes	yes	refuses:transactions
 applyTransactionSettings	import_guards	yes	1	no	yes	yes	refuses:transactions
 readLedgerSource	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
 isFolderRestricted	import_guards	yes	1	no	yes	yes	refuses:access_control
-acquireCycleLock	cycle_locks	yes	8	no	yes	yes	refuses:minion_queue
-refreshCycleLock	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
-releaseCycleLock	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
-readCycleLocks	cycle_locks	yes	8	no	yes	yes	refuses:minion_queue
-deleteCycleLock	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
-deleteCycleLockIfStale	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
+readMentionLastPass	entity_reads	yes	1	no	yes	yes	serves
+countPagesDueForMentions	entity_reads	yes	1	no	yes	yes	serves
+readIdentitySiblingCandidates	entity_reads	yes	2	no	yes	yes	serves
+findExactSlug	entity_reads	yes	1	no	yes	yes	serves
+readExtractionLagCounts	entity_reads	yes	2	no	yes	yes	serves
+readIgnoredPrivacyLabelPages	entity_reads	yes	2	no	yes	yes	serves
+acquireCycleLock	cycle_locks	yes	10	no	yes	yes	serves
+refreshCycleLock	cycle_locks	yes	1	no	yes	yes	serves
+releaseCycleLock	cycle_locks	yes	1	no	yes	yes	serves
+readCycleLocks	cycle_locks	yes	8	no	yes	yes	serves
+deleteCycleLock	cycle_locks	yes	1	no	yes	yes	serves
+deleteCycleLockIfStale	cycle_locks	yes	1	no	yes	yes	serves
+assertCycleLease	cycle_locks	yes	1	no	yes	yes	serves
+admitJob	minion_jobs	yes	14	no	yes	yes	serves
+getJob	minion_jobs	yes	7	no	yes	yes	serves
+listJobs	minion_jobs	yes	1	no	yes	yes	serves
+claimNextJob	minion_jobs	yes	10	no	yes	yes	serves
+renewJobLease	minion_jobs	yes	1	no	yes	yes	serves
+completeJob	minion_jobs	yes	3	no	yes	yes	serves
+failJob	minion_jobs	yes	2	no	yes	yes	serves
+reclaimStalledJobs	minion_jobs	yes	1	no	yes	yes	serves
 scanExactBatch	cli_reads_ops	yes	4	no	yes	yes	serves
 nextLivePageAfter	cli_reads_ops	yes	1	no	yes	yes	serves
 listExactIdentityCandidates	cli_reads_ops	yes	3	no	yes	yes	serves
@@ -298,6 +324,58 @@ rankEntities	cli_reads_ops	yes	3	no	yes	yes	serves
 listExtractionPendingPages	cli_reads_ops	yes	2	no	yes	yes	serves
 listUnattributedFacts	cli_reads_ops	yes	2	no	yes	yes	serves
 listWantedPages	cli_reads_ops	yes	5	no	yes	yes	serves
+listConversationFactRows	facts_doctor	yes	1	no	yes	yes	serves
+countRedactedFacts	facts_doctor	yes	1	no	yes	yes	serves
+listOutsideContentFenceCounts	facts_doctor	yes	1	no	yes	yes	serves
+countAtomFacts	facts_doctor	yes	1	no	yes	yes	serves
+listUnpreviewedTrustFacts	facts_doctor	yes	1	no	yes	yes	refuses:facts
+countUnlinkedFactsByOrigin	facts_doctor	yes	2	no	yes	yes	serves
+countUnlinkedFactStats	facts_doctor	yes	2	no	yes	yes	serves
+countFactRelinkOutcomes	facts_doctor	yes	1	no	yes	yes	refuses:facts
+listUnlinkedConversationSlugs	facts_doctor	yes	2	no	yes	yes	serves
+countFactEmbeddingCoverage	facts_doctor	yes	1	no	yes	yes	serves
+listActiveFactsForEntity	facts_cycle	yes	1	no	yes	yes	serves
+listFreshExtractionOutcomes	facts_cycle	yes	1	no	yes	yes	serves
+listFenceRowGroups	facts_cycle	yes	1	no	yes	yes	serves
+readFactSubject	facts_cycle	yes	1	no	yes	yes	serves
+listFactsForPage	facts_cycle	yes	1	no	yes	yes	serves
+countLegacyFactsPending	facts_cycle	yes	1	no	yes	yes	serves
+countUnconsolidatedFactsBySource	facts_cycle	yes	1	no	yes	yes	serves
+findBulkFactDays	facts_cycle	yes	1	no	yes	yes	serves
+maxFenceRowNum	facts_cycle	yes	1	no	yes	yes	serves
+listStoredFenceFactRows	facts_cycle	yes	1	no	yes	yes	serves
+countWorldFacts	facts_cycle	yes	3	no	yes	yes	serves
+countFactFingerprintLeftovers	facts_purge	yes	1	no	yes	yes	serves
+loadPurgeTarget	facts_purge	yes	4	no	yes	yes	serves
+planFactPurgeIds	facts_purge	yes	1	no	yes	yes	serves
+listFactsReconcileBacklog	facts_purge	yes	1	no	yes	yes	refuses:facts
+listRelinkCandidateRows	facts_purge	yes	1	no	yes	yes	serves
+countRelinkCandidates	facts_purge	yes	1	no	yes	yes	serves
+listSimilarActiveFacts	facts_purge	yes	2	no	yes	yes	serves
+findActiveSingleFact	facts_purge	yes	2	no	yes	yes	serves
+listSingleFactMetadata	facts_purge	yes	1	no	yes	yes	refuses:facts
+listUnfencedFactRows	facts_purge	yes	1	no	yes	yes	serves
+listHeldFenceFactRows	facts_purge	yes	1	no	yes	yes	serves
+listWithdrawalSlugs	facts_purge	yes	2	no	yes	yes	serves
+expireFactsByWithdrawal	facts_purge	yes	1	no	yes	yes	serves
+loopFactDrift	facts_repair	yes	1	no	yes	yes	refuses:facts
+closedLoopWithActiveFact	facts_repair	yes	1	no	yes	yes	refuses:facts
+listSessionFactsForClassification	facts_repair	yes	1	no	yes	yes	serves
+listSessionFactTwins	facts_repair	yes	1	no	yes	yes	serves
+listCapturedFactsForClassification	facts_repair	yes	1	no	yes	yes	serves
+countLabelFacts	facts_repair	yes	1	no	yes	yes	refuses:facts
+listExtractorFactsForClassification	facts_repair	yes	1	no	yes	yes	refuses:facts
+countPurgedPageFacts	facts_repair	yes	1	no	yes	yes	refuses:facts
+listUnwithdrawnFacts	facts_repair	yes	1	no	yes	yes	refuses:facts
+listWorldFactsFromPrivateSources	facts_repair	yes	1	no	yes	yes	serves
+listFactsForRelevance	facts_trust	yes	2	no	yes	yes	serves
+countUncomparableFacts	facts_trust	yes	1	no	yes	yes	serves
+matchSavedFacts	facts_trust	yes	1	no	yes	yes	refuses:facts
+readFactForOwnerAction	facts_trust	yes	1	no	yes	yes	refuses:facts
+listStandingPreferences	facts_trust	yes	1	no	yes	yes	refuses:facts
+listLexicalContestCandidates	facts_trust	yes	1	no	yes	yes	refuses:facts
+listRestatedPrivateCopies	facts_trust	yes	1	no	yes	yes	refuses:facts
+countDerivedFactTaint	facts_trust	yes	1	no	yes	yes	refuses:facts
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 executeRaw	raw_sql	yes	2	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
@@ -317,7 +395,7 @@ setEmotionalWeightBatch	salience_enrich	yes	5	yes	yes	yes	serves
 getRecentSalience	salience_enrich	yes	2	yes	yes	yes	serves
 listEnrichCandidates	salience_enrich	yes	3	yes	yes	yes	serves
 findAnomalies	salience_enrich	yes	3	yes	yes	yes	serves
-listSourceRecords	cli_reads_import	yes	1	no	yes	yes	serves
+listSourceRecords	cli_reads_import	yes	3	no	yes	yes	serves
 readSourceIncarnation	cli_reads_import	yes	1	no	yes	yes	serves
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves
 readGuestSourceRow	cli_reads_import	yes	1	no	yes	yes	serves

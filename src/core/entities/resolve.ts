@@ -848,14 +848,10 @@ async function tryExactSlug(
 ): Promise<{ slug: string; retired: boolean } | null> {
   // A database error propagates: degrading to the fallback slug would
   // silently attribute the caller's facts to a different entity.
-  const exact = (retired: boolean) => engine.executeRaw<{ slug: string }>(
-    `SELECT slug FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL AND ${retired ? '' : 'NOT'} ${retiredPageSql('pages')} LIMIT 1`,
-    [source_id, candidate],
-  );
-  const [live] = await exact(false);
-  if (live) return { slug: live.slug, retired: false };
-  const [retired] = await exact(true);
-  return retired ? { slug: retired.slug, retired: true } : null;
+  const live = await engine.findExactSlug(source_id, [candidate], { retired: false });
+  if (live) return { slug: live, retired: false };
+  const retired = await engine.findExactSlug(source_id, [candidate], { retired: true });
+  return retired ? { slug: retired, retired: true } : null;
 }
 
 async function tryFuzzyMatch(

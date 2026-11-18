@@ -49,12 +49,15 @@ const DIM = 1536;
 const INTERFACE_METHODS: readonly string[] = [
   // Cycle-lock leases
   'acquireCycleLock', 'refreshCycleLock', 'releaseCycleLock', 'readCycleLocks', 'deleteCycleLock', 'deleteCycleLockIfStale',
+  'assertCycleLease',
+  // Minion queue (engine-sql/jobs.ts)
+  'admitJob', 'getJob', 'listJobs', 'claimNextJob', 'renewJobLease', 'completeJob', 'failJob', 'reclaimStalledJobs',
   // Lifecycle
   'connect', 'disconnect', 'reconnect', 'initSchema', 'transaction', 'transactionDirect', 'registerBeforeDisconnect', 'withReservedConnection',
   // Pages CRUD
   'getPage', 'readPageSnapshot', 'readPageSnapshotsBatch', 'lockPageKeys', 'putPage', 'findDuplicatePage', 'findDuplicatePages', 'deletePage', 'deletePages', 'resolveSlugsByPaths',
   'softDeletePage', 'softDeletePages', 'restorePage', 'purgeDeletedPages', 'listPages', 'findPages', 'countPagesBy', 'resolveSlugs', 'getAllSlugs',
-  'listAllPageRefs', 'listAllSources', 'listSourceLocalPaths', 'listLocalPathSources', 'listSourceRoutingRows', 'countDefaultSourceSplit', 'updateSourceConfig', 'getSource', 'listPrefixSampledPages', 'listCorpusSample',
+  'listAllPageRefs', 'listAllSources', 'listSourceLocalPaths', 'listLocalPathSources', 'listSourceRoutingRows', 'countDefaultSourceSplit', 'updateSourceConfig', 'getSource', 'listStaleSyncSourceIds', 'readSourceRow', 'lockSourceRow', 'readSourceChunkerVersion', 'listPrefixSampledPages', 'listCorpusSample',
   // Hybrid search reads (engine-sql/search-reads.ts) and the onboarding signal count (engine-sql/health.ts)
   'cosinesByChunkIds', 'hasSupersedeEdges', 'supersedingPageSlugs', 'aliasCanonicalRefs', 'pageCollapseFacts', 'slugsEndingIn',
   'generatedPagesIn', 'livePageIdsAt', 'pagesLinkingTo', 'countOnboardSignal',
@@ -74,6 +77,18 @@ const INTERFACE_METHODS: readonly string[] = [
   'filterPagesAtRevision',
   // Wanted-link writes (engine-sql/wanted-links.ts; covered by test/engine-parity/wanted-links.test.ts)
   'lockRegisteredSourceIds', 'replaceWantedLinkRows',
+  // Facts statements (engine-sql/facts-doctor.ts, facts-cycle.ts, facts-purge.ts, facts-repair.ts, facts-trust.ts)
+  'listConversationFactRows', 'countRedactedFacts', 'listOutsideContentFenceCounts', 'countAtomFacts', 'listUnpreviewedTrustFacts',
+  'countUnlinkedFactsByOrigin', 'countUnlinkedFactStats', 'countFactRelinkOutcomes', 'listUnlinkedConversationSlugs', 'countFactEmbeddingCoverage',
+  'listActiveFactsForEntity', 'listFreshExtractionOutcomes', 'listFenceRowGroups', 'readFactSubject', 'listFactsForPage', 'countLegacyFactsPending',
+  'countUnconsolidatedFactsBySource', 'findBulkFactDays', 'maxFenceRowNum', 'listStoredFenceFactRows', 'countWorldFacts',
+  'countFactFingerprintLeftovers', 'loadPurgeTarget', 'planFactPurgeIds', 'listFactsReconcileBacklog', 'listRelinkCandidateRows',
+  'countRelinkCandidates', 'listSimilarActiveFacts', 'findActiveSingleFact', 'listSingleFactMetadata', 'listUnfencedFactRows',
+  'listHeldFenceFactRows', 'listWithdrawalSlugs', 'expireFactsByWithdrawal', 'loopFactDrift', 'closedLoopWithActiveFact',
+  'listSessionFactsForClassification', 'listSessionFactTwins', 'listCapturedFactsForClassification', 'countLabelFacts',
+  'listExtractorFactsForClassification', 'countPurgedPageFacts', 'listUnwithdrawnFacts', 'listWorldFactsFromPrivateSources', 'listFactsForRelevance',
+  'countUncomparableFacts', 'matchSavedFacts', 'readFactForOwnerAction', 'listStandingPreferences', 'listLexicalContestCandidates',
+  'listRestatedPrivateCopies', 'countDerivedFactTaint',
   // Timeline site reads (engine-sql/timeline-reads.ts)
   'sampleEffectiveDates', 'sampleEffectiveDateSources', 'readMaxTimelineEntryId', 'listStoredTimelineRowsOrdered',
   'deleteTimelineRows', 'storedTimelineRowsByPageIds', 'countSegmentedTimelinePages', 'countTimelineCommentMarkupRows',
@@ -132,7 +147,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // v0.46.28-34 master waves (classified at the test-gap-wave merge):
   // #3980 bulk config read, #3776 takes-embedding update, #3674 scoped
   // link removal.
-  'getAllConfig', 'getConfigValues', 'readManagedModeRows', 'getSourceStrictness', 'readPersistenceBrainId', 'readLocalWriterRow', 'insertLocalWriterRow', 'readTransactionSettings', 'applyTransactionSettings', 'readLedgerSource', 'isFolderRestricted', 'updateTakeEmbeddings', 'removeLinksByPagesAndSource',
+  'getAllConfig', 'getConfigValues', 'readManagedModeRows', 'getSourceStrictness', 'readPersistenceBrainId', 'readLocalWriterRow', 'insertLocalWriterRow', 'readTransactionSettings', 'applyTransactionSettings', 'readLedgerSource', 'isFolderRestricted', 'readMentionLastPass', 'countPagesDueForMentions', 'readIdentitySiblingCandidates', 'findExactSlug', 'readExtractionLagCounts', 'readIgnoredPrivacyLabelPages', 'updateTakeEmbeddings', 'removeLinksByPagesAndSource',
   // Code edges
   'addCodeEdges', 'deleteCodeEdgesForChunks', 'getCallersOf', 'getCalleesOf', 'getEdgesByChunk',
   'searchKeywordChunks',
@@ -164,6 +179,8 @@ const ENGINE_INTERNAL_HELPERS: readonly string[] = [
   'batchRetry',
   'activeEmbeddingColId',
   'codeEdgesDeps',
+  // group 5 facts sites: per-call transaction executor getter for the facts relevance reads (engine-sql/facts-trust.ts).
+  'rawTransaction',
   // refactor wave 1 C9: per-call engine-sql executor getter (EO1).
   'engineSql',
   // Cycle-lock leases: the engine-sql executor the lease statements run through (the methods themselves are in INTERFACE_METHODS).
@@ -179,6 +196,8 @@ const ENGINE_INTERNAL_HELPERS: readonly string[] = [
   // CLI reads: the executors the CLI read members run through (PGLite rawRead wraps executeRaw; cliReads is the unscoped engine-sql executor).
   'rawRead',
   'cliReads',
+  // Entity reads: the PGLite executeRaw view the two timed entity reads run through.
+  'untimedRead',
   // Engine graduation: PGLite close/open that keeps the kernel lock across the custody window.
   'closeRetainingLock',
   'connectWithHeldLock',

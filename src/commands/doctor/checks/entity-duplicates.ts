@@ -23,6 +23,7 @@ import { resolveNameVariant } from '../../../core/verbs/entity-variants.ts';
 import { retiredPageSql } from '../../../core/entities/resolve.ts';
 import { doctorVerify } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { sortSourcesById } from '../../../core/source-rows.ts';
 
 export const NAME = 'person_title_duplicates';
 /** Titled person pages examined per run; more are reported as not examined. */
@@ -41,7 +42,7 @@ async function runPersonTitleDuplicates(ctx: DoctorContext): Promise<Check[]> {
   try {
     const sources = ctx.orphanRatioSourceId
       ? [ctx.orphanRatioSourceId]
-      : (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(r => r.id);
+      : sortSourcesById(await engine.listAllSources()).map(r => r.id);
     const pairs: TitleDuplicatePair[] = [];
     let scanned = 0;
     let capped = false;

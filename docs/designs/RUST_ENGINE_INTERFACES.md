@@ -62,7 +62,7 @@ small commit. Every other file in the table at the end belongs to exactly one fa
 - `test/engine-parity/{harness.ts,rust-arm.ts,coverage.ts}`, `test/rust-engine-shell.test.ts`,
   `test/rust-engine-store.test.ts`, `test/rust-arm-harness.test.ts`
 
-The list files (`lib.rs`, `families/mod.rs`, `index.ts`, `cascade.rs`, `page_columns.rs`, `page_index.rs`, the reserved block in
+The list files (`lib.rs`, `families/mod.rs`, `index.ts`, `cascade.rs`, `page_columns.rs`, `page_index.rs`, `page_projection.rs`, the reserved block in
 `keys.rs`) already name every planned family once, so no family edits them.
 
 ## Shared contracts (frozen)
@@ -160,6 +160,9 @@ Reserved tags:
 | embeddings (core) | `B` | `EMBEDDING_STATE` | yes |
 | transactions (core) | `w` | `LOCK_QUEUE` | no |
 | relations (core) | `v` | `RELATION_CATALOG` | no |
+| persistence (core) | `d` (requests stay under `J` / `j`, local writers under `W`) | `PERSISTENCE` | no |
+| jobs (core) | `m` | `JOBS` | no |
+| trust | `t` | `TRUST` | no (the trust family asks core when it needs the page-delete hook) |
 
 The `q` tag is shared. link_queries and wanted_links both key records as `q <source id> 0x00 ...`; the byte after
 `0x00` is `W` for a wanted_links record (`q <origin source id> 0x00 W <origin page id BE8> ...`), and link_queries
@@ -205,7 +208,7 @@ store `source_path`, the nullable page fields let a page record hold a segmented
 #### Page columns (`page_columns.rs`)
 
 ```rust
-// In salience.rs, aliases.rs, extraction.rs and page_body.rs:
+// In salience.rs, aliases.rs, extraction.rs, page_body.rs and trust.rs:
 pub(crate) fn page_columns(read: &dyn KvRead, page: &PageRecord, columns: &mut PageColumns) -> Result<()>;
 // PageColumns:
 pub(crate) fn set(&mut self, name: &str, value: Value);
@@ -222,7 +225,7 @@ pub(crate) fn set(&mut self, name: &str, value: Value);
   decoder turns every `Page` date column into a `Date`, including `salience_touched_at`. Numbers go as JSON numbers
   (round `emotional_weight` to `f32` first, as Postgres `REAL` does).
 - **Owners:** salience (`emotional_weight`, `salience_touched_at`), aliases (`contextual_retrieval_mode`), page_body
-  (`body_storage` and `body_bytes` of a segmented page). Extraction is on the list too, but PGLite's `getPage`
+  (`body_storage` and `body_bytes` of a segmented page), trust (`trust_tier` and the write provenance fields). Extraction is on the list too, but PGLite's `getPage`
   returns no extraction stamp, so its hook stays empty unless a parity case shows one. `withheld_source_path` has no
   owner yet and stays `null`.
 - **Cost:** one read per listed family per page returned. A family whose record is absent for most pages does one
@@ -442,6 +445,29 @@ same transaction. `before` is the page as stored before the write; `after` is th
   needs the hook asks core for one line.
 - The timeline date index (`u`, timeline_queries) is a different hook in `timeline.rs`; core adds it when that family
   asks.
+
+#### Page projection (`page_projection::queue_page_projection`)
+
+```rust
+// In persistence.rs (full paths, so the file needs no import line):
+pub(crate) fn queue_page_projection(
+    tx: &mut dyn crate::kv::KvWrite,
+    before: Option<&crate::pages::PageRecord>,
+    after: Option<&crate::pages::PageRecord>,
+) -> crate::Result<()>;
+```
+
+The persistence family keeps the page projection queue (Postgres `page_projection_jobs`) in step with page writes,
+in the same transaction, as PGLite's `gbrain_queue_page_projection` trigger does on every `pages` insert, update and
+delete.
+
+- It gets the same `(before, after)` forms as the page index hook, from the same two callers: `pages::write_page`
+  and `pages::remove_page`. It fires after the page index hook, and for a hard delete before the page record is
+  deleted.
+- What the body must do (the trigger's rules): delete the job when the page is hard deleted, soft deleted, moved to
+  another slug or source, or when `text_projection_revision` equals `knowledge_revision`; write the job when the page
+  is new or its `knowledge_revision` changed.
+- **Owner:** persistence. The body is empty today, so no page write changes.
 
 #### Page origin (`source_path` on `putPage`)
 
@@ -722,17 +748,18 @@ Extraction state of pages.
 
 - **Files:** `gbrain-store/src/extraction.rs`, `gbrain-napi/src/families/extraction.rs`, `store-members/extraction.ts`.
 - **Tag:** `e` (`EXTRACTION`). Cascade on page delete: yes.
-- **Members (7), capability:** `pages` (7).
-- **Store and binding:** `countStalePagesForExtraction` (`count_stale_pages_for_extraction`), `listStalePagesForExtraction` (`list_stale_pages_for_extraction`), `markPagesExtractedBatch` (`mark_pages_extracted_batch`), `markPagesAttendanceBlocked` (`mark_pages_attendance_blocked`), `countStaleFrontmatterKeyPages` (`count_stale_frontmatter_key_pages`), `listStaleFrontmatterKeyPages` (`list_stale_frontmatter_key_pages`), `stripStaleFrontmatterKeys` (`strip_stale_frontmatter_keys`).
+- **Members (8), capability:** `pages` (8).
+- **Store and binding:** `countStalePagesForExtraction` (`count_stale_pages_for_extraction`), `listStalePagesForExtraction` (`list_stale_pages_for_extraction`), `readExtractionLagCounts` (`read_extraction_lag_counts`, the `links_extraction_lag` doctor row), `markPagesExtractedBatch` (`mark_pages_extracted_batch`), `markPagesAttendanceBlocked` (`mark_pages_attendance_blocked`), `countStaleFrontmatterKeyPages` (`count_stale_frontmatter_key_pages`), `listStaleFrontmatterKeyPages` (`list_stale_frontmatter_key_pages`), `stripStaleFrontmatterKeys` (`strip_stale_frontmatter_keys`).
 - **Postgres tables:** `pages.links_extracted_at`, `pages.timeline_extracted_at`, attendance-blocked state, `page_extraction_state`; frontmatter key rewrites go through core `write_page`.
 - **Keys:** `e <page id>` holds one record with the extraction stamps and the attendance-blocked flag for that page. Removed by `remove_page_rows`.
 - **Depends on:** Core page helpers. `stripStaleFrontmatterKeys` changes a page body: it writes through `write_page` and the version rules core uses. `getStats`/`getHealth` (stats family) read these stamps.
 - **Estimate:** about 4 to 5 days.
 - **Notes:** A page is stale for extraction when its body changed after the stamp: compare `updated_at_us` (or the body revision) with the stamp, as the PGLite query does. Same capability (`pages`) as page_ops and aliases.
-- **Parity cases (5, in `extraction.test.ts`):**
+- **Parity cases (6, in `extraction.test.ts`):**
   - `extraction.test.ts`: countStalePagesForExtraction: NULL stamp, older-than-version and edited-since-stamp are stale; deleted and quarantined are not
   - `extraction.test.ts`: listStalePagesForExtraction pages by id keyset, scopes by source and carries the page content
   - `extraction.test.ts`: markPagesExtractedBatch returns the rows stamped: wrong-source and unknown refs match nothing, empty input is 0
+  - `extraction.test.ts`: readExtractionLagCounts counts live, actionable-stale, attendance-blocked and held pages in each statement shape
   - `extraction.test.ts`: markPagesAttendanceBlocked marks a page at its revision; attendance narrows the stale set and an edit releases it
   - `extraction.test.ts`: countStaleFrontmatterKeyPages, listStaleFrontmatterKeyPages and stripStaleFrontmatterKeys sweep parser-reserved keys per source
 
@@ -1625,12 +1652,14 @@ brain; then the first persistence slice (about 4 days, core) comes first.
 
 | Core item | Waits on | Needed by |
 |---|---|---|
-| Page-columns hook (`page_columns.rs`): family values that `getPage` returns (`emotional_weight`, `contextual_retrieval_mode`, segmented-body fields) | built | salience, aliases, page_body; extraction listed, likely unused |
+| Page-columns hook (`page_columns.rs`): family values that `getPage` returns (`emotional_weight`, `contextual_retrieval_mode`, segmented-body fields, `trust_tier`) | built | salience, aliases, page_body, trust; extraction listed, likely unused |
 | `pages::rename_page` helper | built | aliases (`updateSlug`) |
 | Chunk-delete hook (`cascade::remove_chunk_rows`) | built | code_edges; vectors and embeddings listed |
 | Timeline entry helpers (`next_entry_id`, `read_entry`, `put_entry`) | built | timeline_queries (`upsertEventProjection`) |
 | Event projection delete (`timeline_queries::remove_event_projections`, called by `remove_page`) | built; the family fills in the body | timeline_queries |
 | Page index hook (`page_index::reindex_page`, called by `write_page` and `remove_page`) | built; the family fills in the body | keyword (`R` title trigrams), page_ops |
+| Page projection hook (`page_projection::queue_page_projection`, called by `write_page` and `remove_page`) | built; the family fills in the body | persistence (`page_projection_jobs`) |
+| Tags `d`, `m`, `t` (`PERSISTENCE`, `JOBS`, `TRUST`) and the empty `persistence.rs`, `jobs.rs` and `trust.rs` | built | persistence, jobs, trust |
 | Timeline date index hook in `timeline.rs` | a family asking | timeline_queries |
 | vectors (`X`): chunk and take vectors, vector search | the coming vector store work | embeddings, takes capability, page_body chunk vectors, `findCandidateDuplicates` with an embedding |
 | embeddings (`B`): stale counts, signatures, embedding state | vectors | stats `getHealth`, chunk_queries shared cases, takes capability |

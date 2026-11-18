@@ -183,20 +183,12 @@ export async function retireLoopFact(ctx: OperationContext, loopId: number): Pro
  * `loop_facts_drift` counts and `repair loop-facts` retires, in id order.
  */
 export async function loopFactDrift(db: BrainEngine, sourceIds: string[], loopId?: number): Promise<Array<{ loop_id: number; source_id: string; fact_id: number; status: string; slug: string | null }>> {
-  const rows = await db.executeRaw<{ loop_id: number; source_id: string; fact_id: number; status: string; slug: string | null }>(
-    `SELECT l.id AS loop_id, l.source_id, l.fact_id, l.status, f.source_markdown_slug AS slug
-       FROM open_loops l JOIN facts f ON f.id=l.fact_id AND f.source_id=l.source_id
-      WHERE l.source_id=ANY($1::text[]) AND l.status IN ('done','dropped') AND f.expired_at IS NULL
-        AND ($2::bigint IS NULL OR l.id=$2::bigint)
-        AND NOT EXISTS (SELECT 1 FROM open_loops o WHERE o.fact_id=l.fact_id AND o.status='open')
-      ORDER BY l.id`, [sourceIds, loopId ?? null]);
+  const rows = await db.loopFactDrift(sourceIds, loopId ?? null);
   return rows.map(r => ({ ...r, loop_id: Number(r.loop_id), fact_id: Number(r.fact_id) }));
 }
 
 /** A loop already closed whose commitment fact is still active (the retry path of `loops_close`); `sourceId` null is unscoped. */
 export async function closedLoopWithActiveFact(db: BrainEngine, sourceId: string | null, loopId: number): Promise<{ id: number; status: string; fact_id: number } | null> {
-  const [row] = await db.executeRaw<{ id: number; status: string; fact_id: number }>(
-    `SELECT l.id, l.status, l.fact_id FROM open_loops l JOIN facts f ON f.id=l.fact_id
-      WHERE l.id=$1 AND ($2::text IS NULL OR l.source_id=$2) AND l.status IN ('done','dropped') AND f.expired_at IS NULL`, [loopId, sourceId]);
+  const row = await db.closedLoopWithActiveFact(sourceId, loopId);
   return row ? { id: Number(row.id), status: row.status, fact_id: Number(row.fact_id) } : null;
 }

@@ -48,6 +48,7 @@ import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
 import { repairAdmissionWindow, repairPublicationOwner, settleRepairReceipts, type PendingRepair } from './settle.ts';
 import { RECEIPT_RESERVATION_FLOOR } from '../persistence/receipt-bytes.ts';
 import { readFix } from '../ops/op-fix.ts';
+import { sortSourcesById } from '../source-rows.ts';
 import { classifyItemFailure, ItemRun, type ItemFailure } from '../item-failure.ts';
 import type { ProgressReporter } from '../progress.ts';
 import type { GenerationsSelection } from '../generations/repair.ts';
@@ -288,8 +289,7 @@ const SAMPLE = 10;
 /** Default: every active source. `--source` narrows to one active source. */
 export async function resolveRepairScope(engine: BrainEngine, source?: string): Promise<RepairScope> {
   const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1').catch(() => []);
-  const rows = await engine.executeRaw<{ id: string }>(
-    `SELECT id FROM sources WHERE archived IS NOT TRUE ${source ? 'AND id=$1' : ''} ORDER BY id`, source ? [source] : []);
+  const rows = sortSourcesById(await engine.listAllSources()).filter(row => !source || row.id === source);
   if (source && !rows.length) throw new OperationError('invalid_params', `Source '${source}' does not exist or is archived.`, 'Run `gbrain sources list` and pass an active source id.');
   return { brain_id: brain?.brain_id ?? 'host', source_ids: rows.map(row => row.id) };
 }

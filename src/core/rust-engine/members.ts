@@ -94,6 +94,9 @@ export const RUST_ENGINE_MEMBERS = {
   listLocalPathSources: 'sources',
   listSourceRoutingRows: 'sources',
   countDefaultSourceSplit: 'sources',
+  listStaleSyncSourceIds: 'sources',
+  readSourceRow: 'sources',
+  lockSourceRow: 'sources',
   listSourceRecords: 'sources',
   readSourceIncarnation: 'sources',
   hasCompanyBrainReceipt: 'sources',
@@ -140,6 +143,8 @@ export const RUST_ENGINE_MEMBERS = {
   // chunks
   deleteChunksExcept: 'chunks',
   setChunkerVersion: 'chunks',
+  // The store keeps no per-source chunker stamp (sync preflight's version gate), so this stays refused with chunks.
+  readSourceChunkerVersion: 'chunks',
   writeTextProjectionSeal: 'chunks',
   moveChunkIndexes: 'chunks',
   getChunkReuseRows: 'chunks',
@@ -260,6 +265,69 @@ export const RUST_ENGINE_MEMBERS = {
   findTrajectory: 'facts',
   getFactsHealth: 'facts',
   migrateFactsToCanonical: 'facts',
+  // facts: doctor checks (engine-sql/facts-doctor.ts)
+  listConversationFactRows: 'facts',
+  countRedactedFacts: 'facts',
+  listOutsideContentFenceCounts: 'facts',
+  countAtomFacts: 'facts',
+  listUnpreviewedTrustFacts: 'facts',
+  countUnlinkedFactsByOrigin: 'facts',
+  countUnlinkedFactStats: 'facts',
+  countFactRelinkOutcomes: 'facts',
+  listUnlinkedConversationSlugs: 'facts',
+  countFactEmbeddingCoverage: 'facts',
+
+  // facts: command, cycle and fence reads (engine-sql/facts-cycle.ts)
+  listActiveFactsForEntity: 'facts',
+  listFreshExtractionOutcomes: 'facts',
+  listFenceRowGroups: 'facts',
+  readFactSubject: 'facts',
+  listFactsForPage: 'facts',
+  countLegacyFactsPending: 'facts',
+  countUnconsolidatedFactsBySource: 'facts',
+  findBulkFactDays: 'facts',
+  maxFenceRowNum: 'facts',
+  listStoredFenceFactRows: 'facts',
+  countWorldFacts: 'facts',
+
+  // facts: purge, withdrawal, relink and fence repair (engine-sql/facts-purge.ts)
+
+  countFactFingerprintLeftovers: 'facts',
+  loadPurgeTarget: 'facts',
+  planFactPurgeIds: 'facts',
+  listFactsReconcileBacklog: 'facts',
+  listRelinkCandidateRows: 'facts',
+  countRelinkCandidates: 'facts',
+  listSimilarActiveFacts: 'facts',
+  findActiveSingleFact: 'facts',
+  listSingleFactMetadata: 'facts',
+  listUnfencedFactRows: 'facts',
+  listHeldFenceFactRows: 'facts',
+  listWithdrawalSlugs: 'facts',
+  expireFactsByWithdrawal: 'facts',
+
+  // facts: repair classifiers and loop retirement (engine-sql/facts-repair.ts)
+  loopFactDrift: 'facts',
+  closedLoopWithActiveFact: 'facts',
+  listSessionFactsForClassification: 'facts',
+  listSessionFactTwins: 'facts',
+  listCapturedFactsForClassification: 'facts',
+  countLabelFacts: 'facts',
+  listExtractorFactsForClassification: 'facts',
+  countPurgedPageFacts: 'facts',
+  listUnwithdrawnFacts: 'facts',
+  listWorldFactsFromPrivateSources: 'facts',
+
+  // facts: search relevance and trust reads (engine-sql/facts-trust.ts)
+  listFactsForRelevance: 'facts',
+  countUncomparableFacts: 'facts',
+  matchSavedFacts: 'facts',
+  readFactForOwnerAction: 'facts',
+  listStandingPreferences: 'facts',
+  listLexicalContestCandidates: 'facts',
+  listRestatedPrivateCopies: 'facts',
+  countDerivedFactTaint: 'facts',
+
   // takes
   addTakesBatch: 'takes',
   updateTakeEmbeddings: 'takes',
@@ -332,6 +400,13 @@ export const RUST_ENGINE_MEMBERS = {
   readLedgerSource: 'persistence_journal',
   // access_control
   isFolderRestricted: 'access_control',
+  // pages: entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts)
+  readMentionLastPass: 'pages',
+  countPagesDueForMentions: 'pages',
+  readIdentitySiblingCandidates: 'pages',
+  findExactSlug: 'pages',
+  readExtractionLagCounts: 'pages',
+  readIgnoredPrivacyLabelPages: 'pages',
   // minion_queue (the Rust plan ships cycle locks with the minion queue: docs/designs/RUST_ENGINE.md, "Cycle locks")
   acquireCycleLock: 'minion_queue',
   refreshCycleLock: 'minion_queue',
@@ -339,6 +414,15 @@ export const RUST_ENGINE_MEMBERS = {
   readCycleLocks: 'minion_queue',
   deleteCycleLock: 'minion_queue',
   deleteCycleLockIfStale: 'minion_queue',
+  assertCycleLease: 'minion_queue',
+  admitJob: 'minion_queue',
+  getJob: 'minion_queue',
+  listJobs: 'minion_queue',
+  claimNextJob: 'minion_queue',
+  renewJobLease: 'minion_queue',
+  completeJob: 'minion_queue',
+  failJob: 'minion_queue',
+  reclaimStalledJobs: 'minion_queue',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;

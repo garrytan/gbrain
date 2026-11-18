@@ -50,7 +50,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   pages: ['getPage', 'readPageSnapshot', 'readPageSnapshotsBatch', 'lockPageKeys', 'putPage', 'findDuplicatePage', 'findDuplicatePages',
     'deletePage', 'deletePages', 'resolveSlugsByPaths', 'softDeletePage', 'softDeletePages', 'restorePage', 'purgeDeletedPages',
     'listPages', 'findPages', 'countPagesBy', 'resolveSlugs', 'getAllSlugs', 'listAllPageRefs', 'listAllSources', 'listSourceLocalPaths', 'listLocalPathSources', 'listSourceRoutingRows',
-    'countDefaultSourceSplit', 'updateSourceConfig', 'getSource',
+    'countDefaultSourceSplit', 'listStaleSyncSourceIds', 'readSourceRow', 'lockSourceRow', 'updateSourceConfig', 'getSource',
     'listPrefixSampledPages', 'listCorpusSample', 'getPageSealState', 'refreshPageOrigin'],
   search: ['searchKeyword', 'countKeywordPages', 'searchKeywordPages', 'searchTitles', 'searchVector', 'getEmbeddingsByChunkIds',
     'searchKeywordChunks'],
@@ -61,7 +61,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   chunks: ['upsertChunks', 'sealChunks', 'getChunks', 'getChunkPage', 'getChunkWindows', 'countStaleChunks', 'sumStaleChunkChars',
     'setPageEmbeddingSignature', 'invalidateStaleSignatureEmbeddings', 'invalidateContentDriftEmbeddings', 'listStaleChunks',
     'countChunklessPagesWithContent', 'listChunklessPagesWithContent', 'readEmbeddingStateCounts', 'listEmbeddingStateRows',
-    'deleteChunks', 'getChunksWithEmbeddings', 'deleteChunksExcept', 'setChunkerVersion', 'writeTextProjectionSeal',
+    'deleteChunks', 'getChunksWithEmbeddings', 'deleteChunksExcept', 'setChunkerVersion', 'readSourceChunkerVersion', 'writeTextProjectionSeal',
     'moveChunkIndexes', 'getChunkReuseRows', 'findCodeDefinitions', 'listSymbolTypesForName', 'findCodeRefChunks',
     'countOversizedEmbedSkips', 'countOrphanChunks', 'countCodeChunkPages', 'codeChunksExist', 'currentCodeChunksExist',
     'listQualifiedSymbolNames', 'listWithdrawalChunks', 'deleteChunksForPages', 'listContextualModeCandidates', 'resolveFrozenHits'],
@@ -97,9 +97,36 @@ export const FAMILIES: Record<string, readonly string[]> = {
   config: ['getConfig', 'setConfig', 'unsetConfig', 'listConfigKeys', 'getAllConfig', 'getConfigValues'],
   import_guards: ['readManagedModeRows', 'getSourceStrictness', 'readPersistenceBrainId', 'readLocalWriterRow', 'insertLocalWriterRow',
     'readTransactionSettings', 'applyTransactionSettings', 'readLedgerSource', 'isFolderRestricted'],
-  cycle_locks: ['acquireCycleLock', 'refreshCycleLock', 'releaseCycleLock', 'readCycleLocks', 'deleteCycleLock', 'deleteCycleLockIfStale'],
+  entity_reads: ['readMentionLastPass', 'countPagesDueForMentions', 'readIdentitySiblingCandidates', 'findExactSlug',
+    'readExtractionLagCounts', 'readIgnoredPrivacyLabelPages'],
+  cycle_locks: ['acquireCycleLock', 'refreshCycleLock', 'releaseCycleLock', 'readCycleLocks', 'deleteCycleLock', 'deleteCycleLockIfStale',
+    'assertCycleLease'],
+  minion_jobs: ['admitJob', 'getJob', 'listJobs', 'claimNextJob', 'renewJobLease', 'completeJob', 'failJob', 'reclaimStalledJobs'],
   cli_reads_ops: ['scanExactBatch', 'nextLivePageAfter', 'listExactIdentityCandidates', 'rankEntities', 'listExtractionPendingPages',
     'listUnattributedFacts', 'listWantedPages'],
+  // facts_doctor: doctor checks
+  facts_doctor: ['listConversationFactRows', 'countRedactedFacts', 'listOutsideContentFenceCounts', 'countAtomFacts', 'listUnpreviewedTrustFacts',
+    'countUnlinkedFactsByOrigin', 'countUnlinkedFactStats', 'countFactRelinkOutcomes', 'listUnlinkedConversationSlugs', 'countFactEmbeddingCoverage'],
+
+  // facts_cycle: command, cycle and fence reads
+  facts_cycle: ['listActiveFactsForEntity', 'listFreshExtractionOutcomes', 'listFenceRowGroups', 'readFactSubject', 'listFactsForPage', 'countLegacyFactsPending',
+    'countUnconsolidatedFactsBySource', 'findBulkFactDays', 'maxFenceRowNum', 'listStoredFenceFactRows', 'countWorldFacts'],
+
+  // facts_purge: purge, withdrawal, relink and fence repair
+
+  facts_purge: ['countFactFingerprintLeftovers', 'loadPurgeTarget', 'planFactPurgeIds', 'listFactsReconcileBacklog', 'listRelinkCandidateRows',
+    'countRelinkCandidates', 'listSimilarActiveFacts', 'findActiveSingleFact', 'listSingleFactMetadata', 'listUnfencedFactRows',
+    'listHeldFenceFactRows', 'listWithdrawalSlugs', 'expireFactsByWithdrawal'],
+
+  // facts_repair: repair classifiers and loop retirement
+  facts_repair: ['loopFactDrift', 'closedLoopWithActiveFact', 'listSessionFactsForClassification', 'listSessionFactTwins',
+    'listCapturedFactsForClassification', 'countLabelFacts', 'listExtractorFactsForClassification', 'countPurgedPageFacts', 'listUnwithdrawnFacts',
+    'listWorldFactsFromPrivateSources'],
+
+  // facts_trust: search relevance and trust reads
+  facts_trust: ['listFactsForRelevance', 'countUncomparableFacts', 'matchSavedFacts',
+    'readFactForOwnerAction', 'listStandingPreferences', 'listLexicalContestCandidates', 'listRestatedPrivateCopies', 'countDerivedFactTaint'],
+
   raw_sql: ['runMigration', 'executeRaw', 'executeRawDirect', 'keywordBoundedRead'],
   code_edges: ['addCodeEdges', 'deleteCodeEdgesForChunks', 'getCallersOf', 'getCalleesOf', 'getEdgesByChunk'],
   eval_capture: ['logEvalCandidate', 'listEvalCandidates', 'deleteEvalCandidatesBefore', 'logEvalCaptureFailure',
