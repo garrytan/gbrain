@@ -16,8 +16,12 @@
 //! strings with microseconds.
 //!
 //! What the store does not hold answers as empty: no page has a `last_retrieved_at` (no retrieval
-//! records), no chunk has an embedding (so `representative_chunk_id` is always null), and every
-//! page body is inline (no segmented pages, so `revertToVersion` never refuses for one).
+//! records) and no chunk has an embedding (so `representative_chunk_id` is always null).
+//!
+//! Segmented pages (a NULL body, `pages::PageText`): `readPageSnapshotsBatch` sends the NULL body
+//! on and counts it as 0 bytes, as PGLite's `sum(octet_length(...))` skips it; the samplers leave
+//! the page out (`body_storage = 'inline'`); `revertToVersion` refuses `page_body_segmented` when the
+//! page or the version is segmented, before it writes anything.
 
 use crate::env::{Env, iso, parse_iso};
 use crate::error::{Result, StoreError};
@@ -30,6 +34,10 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+
+/// The code `revertToVersion` refuses with when the page or the version is segmented. The
+/// TypeScript member turns it into PGLite's `segmentedRevertRefusal`.
+pub const PAGE_BODY_SEGMENTED: &str = "page_body_segmented";
 
 /// `PAGE_SNAPSHOT_BATCH_MAX_BYTES` (`src/core/page-snapshot-batch.ts`).
 pub const SNAPSHOT_BATCH_MAX_BYTES: f64 = 32.0 * 1024.0 * 1024.0;
@@ -942,7 +950,7 @@ impl Store {
         }))
     }
 
-    /// `listPrefixSampledPages(opts)`: one live page per wanted slug prefix (the first two slug
+    /// `listPrefixSampledPages(opts)`: one live inline page per wanted slug prefix (the first two slug
     /// segments), the one with the most inbound links, then the lowest slug; ordered by prefix.
     /// No page has a retrieval date, so `staleBias` ranks every page the same.
     pub fn list_prefix_sampled_pages(&self, options: &PrefixSampleOptions) -> Result<Vec<Value>> {
@@ -960,6 +968,7 @@ impl Store {
         let mut best: BTreeMap<String, (usize, PageRecord)> = BTreeMap::new();
         for page in all_pages(&*read)? {
             if page.deleted_at_us.is_some()
+                || page.compiled_truth.is_null()
                 || exclude.contains(page.slug.as_str())
                 || !sample_scope(&page, &options.source_id, &options.source_ids)
             {
@@ -987,7 +996,7 @@ impl Store {
             .collect()
     }
 
-    /// `listCorpusSample(opts)`: up to `n` live pages picked at random (a seeded shuffle when
+    /// `listCorpusSample(opts)`: up to `n` live inline pages picked at random (a seeded shuffle when
     /// `seed` is given, so a seed gives the same pick every time; not Postgres's `random()`
     /// sequence).
     pub fn list_corpus_sample(&self, options: &CorpusSampleOptions) -> Result<Vec<Value>> {
@@ -1003,7 +1012,8 @@ impl Store {
         let read = self.read()?;
         let mut pages: Vec<PageRecord> = all_pages(&*read)?
             .into_iter()
-            .filter(|p| p.deleted_at_us.is_none() && !exclude.contains(p.slug.as_str()))
+            .filter(|p| p.deleted_at_us.is_none() && !p.compiled_truth.is_null())
+            .filter(|p| !exclude.contains(p.slug.as_str()))
             .filter(|p| sample_scope(p, &options.source_id, &options.source_ids))
             .collect();
         pages.sort_by_key(|p| p.id);
@@ -1021,7 +1031,8 @@ impl Store {
     /// when `sourceId` is not empty, else in every source) that owns the version, deleted or not.
     /// A version the page does not own changes nothing. Like PGLite it writes no version snapshot
     /// and leaves `content_hash` and the other fields alone; the revision changes only when the
-    /// body or frontmatter does.
+    /// body or frontmatter does. When any page it would revert, or its version, is segmented (a NULL
+    /// body), it refuses `page_body_segmented` and writes nothing, as PGLite's first query does.
     pub fn revert_to_version(
         &self,
         slug: &str,
@@ -1037,9 +1048,9 @@ impl Store {
                 Some(id) => vec![id.clone()],
                 None => all_sources(&*tx)?.into_iter().map(|s| s.id).collect(),
             };
-            let now = self.env.now_micros();
+            let mut found = Vec::new();
             for id in ids {
-                let Some(mut page) = read_page(&*tx, &id, slug)? else {
+                let Some(page) = read_page(&*tx, &id, slug)? else {
                     continue;
                 };
                 let Some(version) =
@@ -1047,6 +1058,18 @@ impl Store {
                 else {
                     continue;
                 };
+                if page.compiled_truth.is_null() || version.compiled_truth.is_null() {
+                    return Err(StoreError::new(
+                        PAGE_BODY_SEGMENTED,
+                        format!(
+                            "Page {slug} or its version {version_id} is stored in segments, so revert_version cannot restore it yet; nothing was changed."
+                        ),
+                    ));
+                }
+                found.push((page, version));
+            }
+            let now = self.env.now_micros();
+            for (mut page, version) in found {
                 let changed = page.compiled_truth != version.compiled_truth
                     || page.frontmatter != version.frontmatter;
                 page.compiled_truth = version.compiled_truth;
@@ -1105,5 +1128,181 @@ mod tests {
             json_text(&json!({"bb": [1, 2], "a": "x"})),
             Some("{\"a\": \"x\", \"bb\": [1, 2]}".to_string())
         );
+    }
+
+    // Segmented pages (shared item 12). No member writes a segmented shell yet (the page_body family
+    // does), so these tests turn a stored page into one directly, as `pages.rs` tests do.
+
+    use crate::error::StoreError;
+    use crate::pages::{PageInput, PageText, PutPageOptions};
+    use crate::sources::DEFAULT_SOURCE;
+    use crate::test_support::store;
+
+    fn put(store: &Store, slug: &str, source: Option<&str>) {
+        let input: PageInput = serde_json::from_value(
+            json!({"type": "note", "title": slug, "compiled_truth": "body"}),
+        )
+        .unwrap();
+        let options = PutPageOptions {
+            source_id: source.map(str::to_string),
+            ..PutPageOptions::default()
+        };
+        store.put_page(slug, &input, &options).unwrap();
+    }
+
+    fn shell(store: &Store, source: &str, slug: &str) {
+        store
+            .write(|tx| {
+                let mut page = read_page(&*tx, source, slug)?.unwrap();
+                page.compiled_truth = PageText::null();
+                page.timeline = PageText::null();
+                page.content_hash = None;
+                write_page(tx, &page)
+            })
+            .unwrap();
+    }
+
+    fn page(store: &Store, source: &str, slug: &str) -> PageRecord {
+        read_page(&*store.read().unwrap(), source, slug)
+            .unwrap()
+            .unwrap()
+    }
+
+    fn version_id(store: &Store, slug: &str) -> i64 {
+        store.create_version(slug, None).unwrap()["id"]
+            .as_i64()
+            .unwrap()
+    }
+
+    fn page_ref(slug: &str) -> PageRef {
+        PageRef {
+            slug: slug.into(),
+            source_id: DEFAULT_SOURCE.into(),
+        }
+    }
+
+    #[test]
+    fn a_snapshot_batch_sends_a_segmented_body_as_null_and_counts_it_as_no_bytes() {
+        let store = store();
+        put(&store, "notes/a", None);
+        put(&store, "notes/b", None);
+        shell(&store, DEFAULT_SOURCE, "notes/a");
+        // The shell's body is 0 bytes, so a 1-byte budget still covers the ref after it.
+        let options = SnapshotBatchOptions {
+            max_bytes: Some(1.0),
+            include_deleted: false,
+        };
+        let batch = store
+            .read_page_snapshots_batch(&[page_ref("notes/a"), page_ref("notes/b")], &options)
+            .unwrap();
+        assert_eq!(batch["covered"], 2);
+        let shell_page = &batch["snapshots"][0]["page"];
+        assert_eq!(shell_page["compiled_truth"], Value::Null);
+        assert_eq!(shell_page["timeline"], Value::Null);
+        assert_eq!(shell_page["content_hash"], Value::Null);
+        assert_eq!(batch["snapshots"][1]["page"]["compiled_truth"], "body");
+    }
+
+    #[test]
+    fn the_samplers_leave_segmented_pages_out() {
+        let store = store();
+        put(&store, "notes/a/1", None);
+        put(&store, "notes/a/2", None);
+        put(&store, "notes/b/1", None);
+        // The lowest slug wins a prefix; as a shell it must not be a candidate at all.
+        shell(&store, DEFAULT_SOURCE, "notes/a/1");
+        shell(&store, DEFAULT_SOURCE, "notes/b/1");
+        let picked = store
+            .list_prefix_sampled_pages(&PrefixSampleOptions {
+                prefixes: vec!["notes/a".into(), "notes/b".into()],
+                ..PrefixSampleOptions::default()
+            })
+            .unwrap();
+        let slugs: Vec<&str> = picked.iter().map(|r| r["slug"].as_str().unwrap()).collect();
+        assert_eq!(slugs, ["notes/a/2"]);
+        let sample = store
+            .list_corpus_sample(&CorpusSampleOptions {
+                n: 10.0,
+                seed: Some(0.5),
+                ..CorpusSampleOptions::default()
+            })
+            .unwrap();
+        let slugs: Vec<&str> = sample.iter().map(|r| r["slug"].as_str().unwrap()).collect();
+        assert_eq!(slugs, ["notes/a/2"]);
+    }
+
+    fn refused(result: Result<()>) -> StoreError {
+        let error = result.unwrap_err();
+        assert_eq!(error.code, PAGE_BODY_SEGMENTED);
+        error
+    }
+
+    #[test]
+    fn revert_refuses_a_segmented_page_and_writes_nothing() {
+        let store = store();
+        put(&store, "notes/a", None);
+        let version = version_id(&store, "notes/a");
+        shell(&store, DEFAULT_SOURCE, "notes/a");
+        let before = page(&store, DEFAULT_SOURCE, "notes/a");
+        let error = refused(store.revert_to_version("notes/a", version, &SourceOption::default()));
+        assert_eq!(
+            error.message,
+            format!(
+                "Page notes/a or its version {version} is stored in segments, so revert_version cannot restore it yet; nothing was changed."
+            )
+        );
+        let after = page(&store, DEFAULT_SOURCE, "notes/a");
+        assert!(after.compiled_truth.is_null());
+        assert_eq!(after.updated_at_us, before.updated_at_us);
+        assert_eq!(after.knowledge_revision, before.knowledge_revision);
+    }
+
+    #[test]
+    fn revert_refuses_a_segmented_version_of_an_inline_page() {
+        let store = store();
+        put(&store, "notes/a", None);
+        shell(&store, DEFAULT_SOURCE, "notes/a");
+        let version = version_id(&store, "notes/a");
+        // The page is inline again; only the version is segmented.
+        store
+            .write(|tx| {
+                let mut page = read_page(&*tx, DEFAULT_SOURCE, "notes/a")?.unwrap();
+                page.compiled_truth = "inline".into();
+                page.timeline = "".into();
+                write_page(tx, &page)
+            })
+            .unwrap();
+        let before = page(&store, DEFAULT_SOURCE, "notes/a");
+        refused(store.revert_to_version("notes/a", version, &SourceOption::default()));
+        let after = page(&store, DEFAULT_SOURCE, "notes/a");
+        assert_eq!(after.compiled_truth, "inline");
+        assert_eq!(after.updated_at_us, before.updated_at_us);
+    }
+
+    #[test]
+    fn revert_without_a_source_checks_only_the_pages_that_own_the_version() {
+        let store = store();
+        let other = serde_json::from_value(json!({"id": "other"})).unwrap();
+        store.upsert_source(&other).unwrap();
+        put(&store, "notes/a", None);
+        let version = version_id(&store, "notes/a");
+        put(&store, "notes/a", Some("other"));
+        shell(&store, "other", "notes/a");
+        // The other source's page does not own the version, so it is not a target and does not refuse.
+        store
+            .revert_to_version("notes/a", version, &SourceOption::default())
+            .unwrap();
+        // Scoped to the default source, the inline page reverts.
+        store
+            .revert_to_version(
+                "notes/a",
+                version,
+                &SourceOption {
+                    source_id: Some(DEFAULT_SOURCE.into()),
+                },
+            )
+            .unwrap();
+        shell(&store, DEFAULT_SOURCE, "notes/a");
+        refused(store.revert_to_version("notes/a", version, &SourceOption::default()));
     }
 }

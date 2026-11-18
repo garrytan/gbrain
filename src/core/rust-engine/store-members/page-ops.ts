@@ -20,8 +20,10 @@ import type { PageCountQuery, PageCounts, TypeGrouper } from '../../page-counts.
 import { pageSnapshotKey, type PageSnapshotBatch } from '../../page-snapshot-batch.ts';
 import type { PageSnapshot } from '../../page-state/types.ts';
 import { pickCanonicalOrigin } from '../../persistence/origin-guard.ts';
+import { segmentedRevertRefusal } from '../../page-state/versions.ts';
 import type { CorpusSampleOpts, DomainBankRow, DomainBankSampleOpts, PageReadScope } from '../../types.ts';
 import { toGetPage } from '../store-codec.ts';
+import { storeErrorCode } from '../store-errors.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { HYBRID_BAG_KEYS, storePagePolicy } from './private-provenance.ts';
 
@@ -262,5 +264,11 @@ export const getEffectiveDates: StoreMember<[refs: Array<{ slug: string; source_
 export const revertToVersion: StoreMember<[slug: string, versionId: number, opts?: { sourceId?: string }], void> = async (brain, slug, versionId, opts) => {
   const options = takeOptions('revertToVersion', opts, ['sourceId']);
   if (!Number.isSafeInteger(versionId)) throw new TypeError(`revertToVersion: version id ${String(versionId)} is not an integer`);
-  await storeCall({ member: 'revertToVersion', slug }, () => brain.revertToVersion(slug, versionId, options));
+  try {
+    await storeCall({ member: 'revertToVersion', slug }, () => brain.revertToVersion(slug, versionId, options));
+  } catch (error) {
+    // The store refuses a segmented page or version before it writes; PGLite throws this OperationError.
+    if (storeErrorCode(error) === 'page_body_segmented') throw segmentedRevertRefusal(slug, versionId);
+    throw error;
+  }
 };

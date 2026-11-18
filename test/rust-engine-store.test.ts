@@ -238,6 +238,16 @@ describe('Rust store members', () => {
       for (const member of needed) expect(Object.hasOwn(STORE_MEMBERS, member)).toBe(true);
     }
   });
+
+  test("revertToVersion turns the store's page_body_segmented refusal into PGLite's segmentedRevertRefusal", async () => {
+    const refusal = Object.assign(new Error('segmented'), { code: 'page_body_segmented' });
+    const brain = { revertToVersion: async () => { throw refusal; } };
+    const revert = STORE_MEMBERS.revertToVersion as (brain: unknown, slug: string, versionId: number) => Promise<void>;
+    const error = await revert(brain, 'notes/a', 7).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(OperationError);
+    expect((error as OperationError).code).toBe('page_body_segmented');
+    expect((error as Error).message).toBe('Page notes/a or its version 7 is stored in segments, so revert_version cannot restore it yet; nothing was changed.');
+  });
 });
 
 describe('Rust store page codec', () => {
