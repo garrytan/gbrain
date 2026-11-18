@@ -44,6 +44,7 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+mod effect_scans;
 mod housekeeping;
 mod projection_queue;
 mod topology;

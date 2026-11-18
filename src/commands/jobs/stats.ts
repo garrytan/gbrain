@@ -220,11 +220,7 @@ export async function runJobsStats({ args, engine, queue }: JobsCommandContext):
   // brains (no table) silently skip; the queue_health line above is the
   // operator's primary signal in that case.
   try {
-    const lpRows = await engine.executeRaw<{ count: string }>(
-      `SELECT count(*)::text AS count FROM minion_lease_pressure_log
-            WHERE bounced_at > now() - interval '1 hour'`,
-    );
-    const lpCount = parseInt(lpRows[0]?.count ?? '0', 10);
+    const lpCount = await engine.countLeasePressure({ windowMs: 3_600_000 });
     if (lpCount > 0) {
       // Also surface whether any of those bounces stalled forward progress.
       // Bounces with rising completed counts = healthy backpressure; bounces

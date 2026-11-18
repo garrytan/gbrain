@@ -66,10 +66,7 @@ export function withDelegatedSpend<T>(engine: BrainEngine, snapshot: DelegationS
     return { async settle(usage) {
       const cents = actualCents(call, usage, overrides);
       if (cents !== null) await settle(engine, hold.reservationId, cents, call.operation);
-      else await engine.executeRaw(
-        `UPDATE mcp_spend_reservations SET usage_unknown_reason = $2 WHERE reservation_id = $1 AND status IN ('pending','expired')`,
-        [hold.reservationId, usage === null ? 'provider_usage_unknown' : 'pricing_unknown'],
-      );
+      else await engine.markSpendUsageUnknown(hold.reservationId, usage === null ? 'provider_usage_unknown' : 'pricing_unknown');
     } };
   }, run, { inherit: true });
 }

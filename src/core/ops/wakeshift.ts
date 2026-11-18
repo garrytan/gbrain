@@ -25,6 +25,7 @@ import { WakeshiftError, type WakeshiftCall } from '../wakeshift/client.ts';
 import { wakeshiftBrainKey, wakeshiftRuntime, wakeshiftSecret, wakeshiftUserId, type WakeshiftRuntime } from '../wakeshift/config.ts';
 import { CRON_FINISHED, JOB_FINISHED, WRITE_SETTLED, cronName } from '../wakeshift/events.ts';
 import { drainWakes, endAtWakeshift, liveAccessMembers, STDIO_REGISTRATION_PRINCIPAL } from '../wakeshift/drain.ts';
+import type { WakeWatchFilter, WakeWatchRow } from '../engine-sql/jobs-wake.ts';
 import { agreementStep, operatorTerms, recordAcceptance, termsAccepted, wakePrincipalKey, type WakePrincipalRef } from '../wakeshift/terms.ts';
 
 const WATCH_TTL = '7d';
@@ -156,14 +157,10 @@ async function openWatch(ctx: OperationContext, runtime: WakeshiftRuntime, princ
   try {
     const expires = sub.event_subscription.expires_at && !Number.isNaN(Date.parse(sub.event_subscription.expires_at))
       ? sub.event_subscription.expires_at : new Date(Date.now() + 7 * 86_400_000).toISOString();
-    const [row] = await ctx.engine.executeRaw<{ id: number }>(
-      `INSERT INTO wake_subscriptions (event, target, target_ref, principal_kind, principal_id, member_id, wake_user, ws_subscription_id, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::timestamptz)
-       ON CONFLICT (wake_user, ws_subscription_id) WHERE state = 'open'
-       DO UPDATE SET expires_at = EXCLUDED.expires_at, updated_at = now()
-       RETURNING id`,
-      [spec.event, spec.target, spec.targetRef ?? null, principal.kind, principal.id, principal.member, user, String(sub.event_subscription.id), expires]);
-    rowId = Number(row!.id);
+    rowId = await ctx.engine.openWakeWatch({
+      event: spec.event, target: spec.target, targetRef: spec.targetRef ?? null, principalKind: principal.kind, principalId: principal.id,
+      memberId: principal.member, wakeUser: user, wsSubscriptionId: String(sub.event_subscription.id), expiresAt: new Date(Date.parse(expires)).toISOString(),
+    });
   } catch (e) {
     if (sub.event_subscription.created !== false) {
       await runtime.api.unsubscribe({ call, name: spec.event, arguments: spec.args, reason: 'rolled_back' }).catch(() => {});
@@ -218,10 +215,10 @@ const watch_job: Operation = {
     if (step) return step;
     const owner = agentOwnerFence(ctx, 'watch_job');
     if (owner !== null) await assertJobOwned(ctx, id, owner);
-    const [job] = await ctx.engine.executeRaw<{ status: string }>('SELECT status FROM minion_jobs WHERE id = $1', [id]);
+    const job = await ctx.engine.getJob(id);
     if (!job) throw jobNotFound(`Job not found: ${id}`);
     if (ctx.dryRun) return { dry_run: true, action: 'watch_job', job: id };
-    const finished = TERMINAL.has(job.status);
+    const finished = TERMINAL.has(String(job.status));
     const { rowId, recognized } = await openWatch(ctx, runtime, principal, p, {
       tool: 'watch_job', event: JOB_FINISHED, target: String(id), args: { job: id }, reason: `Watching gbrain job ${id}`,
       settledNow: finished, fallback: `call wait_job ${id}`, fix: waitFix(id),
@@ -300,8 +297,7 @@ const watch_cron: Operation = {
     const { runtime, principal } = await watchContext(ctx, 'watch_cron', 'Check the cron output where it writes it.');
     const step = await termsStep(ctx, runtime, principal, 'watch_cron');
     if (step) return step;
-    const registered = await ctx.engine.executeRaw('SELECT 1 FROM wake_crons WHERE name = $1', [name]);
-    if (registered.length === 0) {
+    if (!(await ctx.engine.hasWakeCron(name))) {
       throw opError('not_found', 'No registered cron has that name.',
         `Check the name with the brain owner: gbrain wakeshift cron list shows the registered crons, and gbrain wakeshift cron add ${name} registers this one.`);
     }
@@ -348,20 +344,17 @@ const accept_wakeshift_terms: Operation = {
   },
 };
 
-interface WatchRow { id: number; event: string; target: string; state: string; attempts: number; last_error: string | null; created_at: Date | string; expires_at: Date | string }
+type WatchRow = WakeWatchRow;
 
 function publicWatch(r: WatchRow) {
   const key = r.event === JOB_FINISHED ? { job: Number(r.target) } : r.event === WRITE_SETTLED ? { request_id: r.target } : r.event === CRON_FINISHED ? { cron: r.target } : {};
   return { watch: Number(r.id), event: r.event, target: r.target, ...key, state: r.state, attempts: r.attempts, last_error: r.last_error, created_at: r.created_at, expires_at: r.expires_at };
 }
 
-async function ownRows(ctx: OperationContext, extra: string, params: unknown[]): Promise<Array<WatchRow & { wake_user: string; ws_subscription_id: string }>> {
+async function ownRows(ctx: OperationContext, scope: WakeWatchFilter['scope'], pick: { event: string; target: string } | { id: number } | null): Promise<WakeWatchRow[]> {
   const principal = await watchPrincipal(ctx);
   if (!principal) return [];
-  return ctx.engine.executeRaw(
-    `SELECT id, event, target, state, attempts, last_error, created_at, expires_at, wake_user, ws_subscription_id FROM wake_subscriptions
-      WHERE principal_kind = $1 AND principal_id = $2 AND member_id IS NOT DISTINCT FROM $3 ${extra} ORDER BY created_at DESC, id DESC LIMIT 50`,
-    [principal.kind, principal.id, principal.member, ...params]);
+  return ctx.engine.listWakeWatches({ principalKind: principal.kind, principalId: principal.id, memberId: principal.member, scope, ...pick });
 }
 
 const list_watches: Operation = {
@@ -378,13 +371,13 @@ const list_watches: Operation = {
   handler: async (ctx) => {
     refuseAttested();
     if (!wakeshiftRuntime()) throw notEnabled();
-    const rows = await ownRows(ctx, "AND (state = 'open' OR updated_at > now() - interval '1 day')", []);
+    const rows = await ownRows(ctx, 'open_or_recent', null);
     return { watches: rows.map(publicWatch) };
   },
 };
 
-/** The one target an unwatch names, as a row filter after ownRows' three principal params. */
-function unwatchFilter(p: Record<string, unknown>): { key: Record<string, unknown>; extra: string; params: unknown[] } {
+/** The one target an unwatch names, as the row filter ownRows narrows to. */
+function unwatchFilter(p: Record<string, unknown>): { key: Record<string, unknown>; pick: { event: string; target: string } | { id: number } } {
   const given = (['job', 'request_id', 'cron', 'watch'] as const).filter(k => p[k] !== undefined && p[k] !== null);
   const usage = () => opError('invalid_params', 'unwatch: pass exactly one of job, request_id, cron or watch.', 'Pass the id you watched; list_watches shows your watches and their ids.');
   if (given.length !== 1) throw usage();
@@ -393,17 +386,17 @@ function unwatchFilter(p: Record<string, unknown>): { key: Record<string, unknow
     const n = p[k] as number;
     if (!Number.isSafeInteger(n) || n <= 0) throw usage();
     return k === 'job'
-      ? { key: { job: n }, extra: 'AND event = $4 AND target = $5', params: [JOB_FINISHED, String(n)] }
-      : { key: { watch: n }, extra: 'AND id = $4', params: [n] };
+      ? { key: { job: n }, pick: { event: JOB_FINISHED, target: String(n) } }
+      : { key: { watch: n }, pick: { id: n } };
   }
   if (k === 'request_id') {
     const id = parseWriteRequestId(p.request_id);
     if (!id) throw usage();
-    return { key: { request_id: id }, extra: 'AND event = $4 AND target = $5', params: [WRITE_SETTLED, id] };
+    return { key: { request_id: id }, pick: { event: WRITE_SETTLED, target: id } };
   }
   const name = cronName(p.cron);
   if (!name) throw usage();
-  return { key: { cron: name }, extra: 'AND event = $4 AND target = $5', params: [CRON_FINISHED, name] };
+  return { key: { cron: name }, pick: { event: CRON_FINISHED, target: name } };
 }
 
 const unwatch: Operation = {
@@ -427,12 +420,12 @@ const unwatch: Operation = {
     refuseAttested();
     const runtime = wakeshiftRuntime();
     if (!runtime) throw notEnabled();
-    const { key, extra, params } = unwatchFilter(p);
+    const { key, pick } = unwatchFilter(p);
     if (ctx.dryRun) return { dry_run: true, action: 'unwatch', ...key };
-    const rows = await ownRows(ctx, `AND state = 'open' ${extra}`, params);
+    const rows = await ownRows(ctx, 'open', pick);
     let ended = 0;
     for (const row of rows) {
-      const done = await ctx.engine.executeRaw(`UPDATE wake_subscriptions SET state = 'ended', last_error = 'unwatched', lease_until = NULL, updated_at = now() WHERE id = $1 AND state = 'open' RETURNING id`, [row.id]);
+      const done = await ctx.engine.endWakeWatches({ reason: 'unwatched', id: row.id });
       if (done.length === 0) continue;
       ended++;
       await endAtWakeshift(runtime.api, row);

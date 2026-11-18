@@ -1,6 +1,6 @@
 /**
- * Brain statistics, health and the ingest log (BrainEngine getStats, getHealth, logIngest, getIngestLog,
- * listEnrichCandidates, findAnomalies).
+ * Brain statistics, health and the ingest log (BrainEngine getStats, getHealth, countOnboardSignal, logIngest,
+ * getIngestLog, listEnrichCandidates, findAnomalies).
  *
  * The store counts; these members resolve what PGLite resolves in TypeScript and finish the same arithmetic:
  *  - getHealth reads the orphan policy overrides, the timeline grading and the entity types (schema pack, through
@@ -9,17 +9,19 @@
  *    with countStalePagesForExtraction and scores as `engine-sql/health.ts` does;
  *  - findAnomalies computes the window bounds (an invalid `since` throws the same RangeError), zero-fills the store's
  *    per-day counts over the same days and runs `computeAnomaliesFromBuckets`.
- * The store counts a chunk as embedded when it has a stored vector, and reads the salience weight. getStats and getHealth
- * refuse a brain whose config selects another embedding column, as the embedding members do (rust/docs/store/stats.md).
+ * The store counts a chunk as embedded when it has a stored vector, and reads the salience weight. getStats, getHealth
+ * and countOnboardSignal's `stale_chunks` count refuse a brain whose config selects another embedding column, as the embedding members do (rust/docs/store/stats.md).
  */
 import type {
   AnomaliesOpts, AnomalyResult, BrainHealth, BrainStats, EnrichCandidate, EnrichCandidatesOpts, IngestLogEntry, IngestLogInput,
 } from '../../types.ts';
 import { MIN_ENTITY_PAGES_FOR_COVERAGE } from '../../types.ts';
+import type { OnboardSignal } from '../../engine-sql/health.ts';
+import { throwIfAborted as throwIfQueryAborted } from '../../engine-sql/executor.ts';
 import { computeAnomaliesFromBuckets, type CohortDayRow, type CohortTodayRow } from '../../cycle/anomaly.ts';
 import { effectiveLinkExtractorWatermark } from '../../link-extraction-watermark.ts';
 import { loadOrphanPolicyOverrides, shouldExcludeFromOrphanReporting } from '../../orphan-policy.ts';
-import { resolveEntityTypes } from '../../schema-pack/entity-types.ts';
+import { resolveEntityTypes, type EntityTypeFilter } from '../../schema-pack/entity-types.ts';
 import { loadTimelineGradedPredicate } from '../../timeline-grading.ts';
 import { withDates } from '../store-codec.ts';
 import type { StoreBrain } from '../store.ts';
@@ -156,6 +158,18 @@ export const getHealth: StoreMember<[opts?: ScopeOpts], BrainHealth> = async (br
     no_dead_links_score: noDeadLinksScore,
   };
 };
+
+/**
+ * One onboarding count (engine-sql/health.ts countOnboardSignal), brain-wide: the caller resolves `entityTypes`. A
+ * signal that is already aborted rejects with `AbortError` before the store runs, as the SQL executor does.
+ */
+export const countOnboardSignal: StoreMember<[signal: OnboardSignal, entityTypes: EntityTypeFilter, opts?: { signal?: AbortSignal }], number> =
+  async (brain, signal, entityTypes, opts) => {
+    throwIfQueryAborted(opts);
+    if (signal === 'stale_chunks') await requireTextColumn(brain, 'countOnboardSignal');
+    const input = { signal, entityTypes: { types: [...entityTypes.types], per_source: entityTypes.per_source.map((b) => ({ source_id: b.source_id, types: [...b.types] })) } };
+    return storeCall({ member: 'countOnboardSignal' }, () => brain.countOnboardSignal(input));
+  };
 
 /** The text node-postgres binds for a non-null parameter; null and undefined bind SQL NULL. */
 function boundText(value: unknown): string | null {

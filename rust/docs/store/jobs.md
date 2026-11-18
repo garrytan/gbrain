@@ -12,6 +12,7 @@ records. Timestamps cross the binding as ISO strings; the TypeScript members
 
 The queue health reads (the doctor's queue checks, the advisor's stalled jobs and the submit-time probe) are in [jobs-health.md](jobs-health.md).
 The status reads (counts, last runs, windows) are in [jobs-status.md](jobs-status.md).
+The Wakeshift report-back tables (watches, crons, cron runs, terms, forgets) are in [jobs-wake.md](jobs-wake.md).
 
 Keys, under the family tag `keys::JOBS` (`m`):
 
@@ -86,6 +87,8 @@ said.
 | `brain.readJobSourceState(sourceId)` | `{ archived, created_at }` (`created_at` ISO) of the source an agent job was accepted against, or null for an unknown id; the job authority check (`assertCurrentAgent`) denies the job when the source is gone, archived or created again after acceptance |
 | `brain.countOpenJobsByOwner(clientId)` | how many `subagent` rows in a non-terminal status (`waiting`, `active`, `delayed`, `waiting-children`, `paused`), in any queue, have `data->>'__owner_client_id'` equal to `clientId` (a number owner matches its text; a null owner matches nothing) |
 | `brain.readJobInsight(spec)` | the six reads behind `describeJobs`: submitter, queue position, slot holders, live children, live leases with their beacon, foreign-owner tokens; see [jobs-insight.md](jobs-insight.md) |
+| `brain.readJobSpendTree(spec)`, `insertSpendReservation`, `expireSpendReservations`, `settleSpendReservation`, `markSpendUsageUnknown`, `insertLeasePressure`, `countLeasePressure`, `listRecentLeasePressure` | the spend reservations and the lease-pressure log; see [jobs-spend.md](jobs-spend.md) |
+| `brain.listSubagentMessages(jobId, opts)` and 16 more members | the subagent transcript and tool ledger: messages, the tool rows and their stable ids, the write-outcome and dream provenance reads; see [jobs-subagent.md](jobs-subagent.md) |
 | `brain.listJobPage({ status?, queue?, name?, ownerClientId?, ownerActor?, limit, cursor })` | rows with `created_us`, newest first by `(created_at, id)`, after the `{ micros, id }` cursor |
 | `brain.listJobAttachmentNames(jobId)` / `insertJobAttachment(jobId, input)` / `listJobAttachments(jobId)` / `getJobAttachment(jobId, filename)` / `deleteJobAttachment(jobId, filename)` | names (null for a missing job); the metadata; metadata by `(created_at, id)`; metadata plus `content_b64`, or null; whether a row went. A missing job, a negative size or a repeated filename (`uniq_minion_attachments_job_filename`) is `constraint_violation` |
 
