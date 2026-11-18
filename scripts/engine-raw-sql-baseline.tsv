@@ -324,7 +324,6 @@ src/core/company-brain/profile.ts	execute_raw	2
 src/core/company-brain/receipts.ts	execute_raw	9
 src/core/company-brain/runtime.ts	execute_raw	14
 src/core/company-brain/verification.ts	execute_raw	3
-src/core/config-db-merge.ts	execute_raw	1
 src/core/config-values.ts	execute_raw	1	the keyed config read for a narrow executeRaw-only handle (a test fake or wrapper without getConfigValues); real engines take the typed getConfigValues read, and 23 config sites moved here from their own executeRaw
 src/core/connection-manager.ts	sql_template	3
 src/core/connectors/api-source.ts	execute_raw	2
@@ -1113,7 +1112,7 @@ src/core/timeline-extract.ts	execute_raw	10
 src/core/timeline-write-through.ts	execute_raw	1
 src/core/token-mint.ts	execute_raw	3
 src/core/token-mint.ts	sql_template	1
-src/core/transcripts/archive.ts	execute_raw	14
+src/core/transcripts/archive.ts	execute_raw	12
 src/core/transcripts/discover.ts	execute_raw	2
 src/core/transcripts/hermes.ts	driver_call	1
 src/core/transcripts/ingest.ts	execute_raw	3

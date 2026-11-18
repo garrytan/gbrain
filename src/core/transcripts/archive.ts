@@ -294,9 +294,15 @@ function ledgerKey(sourceId: string, harness: string, hash: string, day: string)
   return LEDGER_PREFIX + sourceId + '.' + harness + '.' + hash + '.' + day;
 }
 
+/**
+ * The ledger rows of `sourceId`, ordered by key. Typed reads (a literal prefix listing, then the keyed values), so every
+ * engine serves it; the prefix matches literally, where the old LIKE would have read `_` in an id as a wildcard
+ * (SOURCE_ID_RE admits no `_` or `%`, so a valid id reads the same rows).
+ */
 export async function readArchiveLedger(engine: BrainEngine, sourceId: string): Promise<ArchiveLedgerEntry[]> {
   const prefix = LEDGER_PREFIX + sourceId + '.';
-  const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key LIKE $1 ORDER BY key', [prefix + '%']);
+  const keys = await engine.listConfigKeys(prefix);
+  const rows = keys.length > 0 ? await engine.getConfigValues(keys) : [];
   const out: ArchiveLedgerEntry[] = [];
   for (const row of rows) {
     const [harness, hash, day] = row.key.slice(prefix.length).split('.');
@@ -322,8 +328,7 @@ async function legacyCovered(engine: BrainEngine, configured: string): Promise<S
   const out = new Set<string>();
   for (const id of [configured, configured + '-owner']) {
     const prefix = LEGACY_PREFIX + id + '.';
-    const rows = await engine.executeRaw<{ key: string }>('SELECT key FROM config WHERE key LIKE $1', [prefix + '%']);
-    for (const r of rows) out.add(r.key.slice(prefix.length));
+    for (const key of await engine.listConfigKeys(prefix)) out.add(key.slice(prefix.length));
   }
   return out;
 }
