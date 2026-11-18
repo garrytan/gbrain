@@ -81,10 +81,7 @@ interface RetainedCall { job_id: number | bigint; job_key: string; input_slug: s
 
 async function retainedPutPageCalls(engine: BrainEngine, childIds: number[]): Promise<RetainedCall[]> {
   if (!childIds.length) return [];
-  const tools = await engine.executeRaw<{ job_id: number | bigint; job_key: string; input: Record<string, unknown> | null; output: Record<string, unknown> | null; started_at: Date | string | null }>(
-    `SELECT t.job_id,j.idempotency_key AS job_key,t.input,t.output,t.started_at
-       FROM subagent_tool_executions t JOIN minion_jobs j ON j.id=t.job_id
-      WHERE t.job_id=ANY($1::int[]) AND t.tool_name='brain_put_page' AND t.status='complete' AND t.output->>'state'='committed'`, [childIds]);
+  const tools = (await engine.listSubagentRetainedPutPages(childIds)) as unknown as Array<{ job_id: number | bigint; job_key: string; input: Record<string, unknown> | null; output: Record<string, unknown> | null; started_at: Date | string | null }>;
   return tools.flatMap(t => {
     const inputSlug = t.input?.slug;
     const revision = t.output?.revision;

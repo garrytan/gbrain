@@ -34,6 +34,6 @@ Differences from PGLite and PostgreSQL:
 
 - The database clock `describeJobs` compares against comes from `readDatabaseClock()` (`clock_timestamp()`), not
   `now()`: the two differ only by the time one statement takes.
-- The spend tree (`mcp_spend_reservations`) is not in the store, so `describeJobs` still reads it through `executeRaw`,
-  which the Rust engine refuses. `readJobInsight` is complete on its own; `jobs list` on a Rust brain needs the spend rows too.
+- The spend tree (`mcp_spend_reservations`) is a separate member, `readJobSpendTree` ([jobs-spend.md](jobs-spend.md)); with
+  it `describeJobs` makes no raw SQL call on a Rust brain.
 - Timestamps are ISO strings across the binding; the TypeScript member turns the two lease times into `Date`s.

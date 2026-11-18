@@ -46,7 +46,7 @@ impl Brain {
         self.run(env, move |s| s.list_take_rows_for_page(page_id as i64))
     }
 
-    /// `countMcpResolvedTakes({ sourceIds, holders })`: resolves the count.
+    /// `countMcpResolvedTakes({ sourceIds, holders, excludePrivate })`: resolves the count.
     #[napi]
     pub fn count_mcp_resolved_takes<'env>(
         &self,

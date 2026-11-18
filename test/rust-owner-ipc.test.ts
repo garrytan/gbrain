@@ -446,8 +446,8 @@ describe('a Rust owner whose engine does not report persistence_journal', () => 
       const calls: Array<[string, (e: BrainEngine) => Promise<unknown>]> = [
         ['executeRaw', e => e.executeRaw('SELECT 1')],
         // transaction is served in process now; a client refuses it with the owner-socket refusal (tested above).
-        // A member the Rust store does not serve (capability health); getPageSealState is served since the import members.
-        ['countOnboardSignal', e => e.countOnboardSignal('entities' as never, null as never)],
+        // A member the Rust store does not serve (capability minion_queue); countOnboardSignal is served since alias-trust-2.
+        ['lockOAuthClient', e => e.lockOAuthClient('client-a')],
       ];
       for (const [member, call] of calls) {
         const started = Date.now();

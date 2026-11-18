@@ -2,7 +2,9 @@
 //! tables of the PGLite engine.
 //!
 //! Members: addCodeEdges, deleteCodeEdgesForChunks, getCallersOf, getCalleesOf, getEdgesByChunk,
-//! hasCodeEdgesSymbol.
+//! hasCodeEdgesSymbol. The `code_traversal_cache` table, which memoises what these edges answer,
+//! is kept by the `traversal_cache` submodule under its own key tag (getCodeTraversalCache,
+//! putCodeTraversalCache, clearCodeTraversalCache).
 //!
 //! An edge is resolved (a `code_edges_chunk` row, `Table::Chunk`) when the caller knows the chunk
 //! it points at, and unresolved (a `code_edges_symbol` row, `Table::Symbol`) when it knows only the
@@ -40,6 +42,9 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeSet, HashMap, HashSet};
+
+mod traversal_cache;
+pub use traversal_cache::{CacheClearInput, CacheKeyInput, CachePutInput};
 
 const ROW: u8 = 0x01;
 const CHUNK_UNIQUE: u8 = 0x02;

@@ -8,9 +8,11 @@
 //!
 //! A take is scoped by the page it hangs on, read now (its `source_id` and `slug`), not by the
 //! source it was inserted under. No read here hides a soft-deleted page unless its SQL does.
+//! `countMcpResolvedTakes` takes the page policy of a caller (`excludePrivate`, see
+//! `facts/privacy.rs`) the way the salience reads do.
 
 use super::*;
-use crate::facts::{fact_fingerprint, read_fact};
+use crate::facts::{PrivacyPolicy, fact_fingerprint, page_hidden, read_fact};
 
 /// The widest `10^-exp` the grid check works on exactly. A weight with more places than this is
 /// within 1e-30 of zero, and zero is on the grid.
@@ -60,6 +62,8 @@ pub struct McpResolvedInput {
     pub source_ids: Option<Vec<Option<String>>>,
     /// `t.holder = ANY(...)`; `None` is no filter.
     pub holders: Option<Vec<Option<String>>>,
+    /// `excludePrivate`: the page policy (`facts/privacy.rs` `page_hidden`); null reads every page.
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 impl Store {
@@ -130,7 +134,9 @@ impl Store {
     }
 
     /// `countMcpResolvedTakes(scope)`: the resolved takes whose `resolved_by` starts with `mcp:`,
-    /// on a page in the source scope, held by a listed holder.
+    /// on a page in the source scope, held by a listed holder. With `exclude_private`, a take on a
+    /// page the page policy hides is not counted (a soft-deleted page is still judged, as its row
+    /// stays in `pages`).
     pub fn count_mcp_resolved_takes(&self, input: &McpResolvedInput) -> Result<u64> {
         let read = self.read()?;
         let mut pages = PageCache::new(&*read);
@@ -148,9 +154,15 @@ impl Store {
             let Some(page) = pages.get(take.page_id)? else {
                 continue;
             };
-            if in_scope(&input.source_ids, &page.source_id) {
-                n += 1;
+            if !in_scope(&input.source_ids, &page.source_id) {
+                continue;
             }
+            if let Some(policy) = &input.exclude_private
+                && page_hidden(&*read, page, policy)?
+            {
+                continue;
+            }
+            n += 1;
         }
         Ok(n)
     }

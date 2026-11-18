@@ -415,6 +415,33 @@ export const DOMAIN_OF: Record<string, string> = {
   'listDeadFactsAbsorbJobsByKeys': OOS.minionJobs,
   // group D (jobs insight)
   'readJobInsight': OOS.minionJobs,
+  // group C (spend reservations and lease pressure)
+  'readJobSpendTree': OOS.minionJobs,
+  'insertSpendReservation': OOS.minionJobs,
+  'expireSpendReservations': OOS.minionJobs,
+  'settleSpendReservation': OOS.minionJobs,
+  'markSpendUsageUnknown': OOS.minionJobs,
+  'insertLeasePressure': OOS.minionJobs,
+  'countLeasePressure': OOS.minionJobs,
+  'listRecentLeasePressure': OOS.minionJobs,
+  // group B (subagent transcript and tool ledger)
+  'listSubagentMessages': OOS.minionJobs,
+  'countSubagentMessages': OOS.minionJobs,
+  'insertSubagentMessage': OOS.minionJobs,
+  'listSubagentToolExecutions': OOS.minionJobs,
+  'hasSubagentToolExecution': OOS.minionJobs,
+  'listSubagentWriteOutcomes': OOS.minionJobs,
+  'listSubagentOneshotLedger': OOS.minionJobs,
+  'summarizeSubagentToolExecutions': OOS.minionJobs,
+  'listSubagentPutPageSlugs': OOS.minionJobs,
+  'listSubagentPutPageWrites': OOS.minionJobs,
+  'listSubagentRetainedPutPages': OOS.minionJobs,
+  'listSubagentStagedPages': OOS.minionJobs,
+  'listSubagentTimelineAppendCalls': OOS.minionJobs,
+  'recordSubagentToolExecutions': OOS.minionJobs,
+  'startSubagentToolExecution': OOS.minionJobs,
+  'completeSubagentToolExecution': OOS.minionJobs,
+  'failSubagentToolExecution': OOS.minionJobs,
   // group D (takes, salience and code-edge reads)
   'countOffGridTakeWeights': OOS.takesReads,
   'countTakes': OOS.takesReads,
@@ -463,6 +490,7 @@ export const DOMAIN_OF: Record<string, string> = {
   // code-edges
   'addCodeEdges': 'code-edges', 'deleteCodeEdgesForChunks': 'code-edges', 'getCallersOf': 'code-edges',
   'getCalleesOf': 'code-edges', 'getEdgesByChunk': 'code-edges',
+  'getCodeTraversalCache': 'code-edges', 'putCodeTraversalCache': 'code-edges', 'clearCodeTraversalCache': 'code-edges',
   // cjk-search: the CJK branch of the two keyword methods (cases tagged #cjk)
   'searchKeyword': 'cjk-search', 'searchKeywordChunks': 'cjk-search',
 
@@ -512,6 +540,12 @@ export const DOMAIN_OF: Record<string, string> = {
   'logEvalCaptureFailure': OOS.eval, 'listEvalCaptureFailures': OOS.eval,
   'getDreamVerdict': OOS.dream, 'putDreamVerdict': OOS.dream, 'sweepDreamVerdicts': OOS.dream,
   'putRawData': OOS.raw, 'getRawData': OOS.raw,
+  // group A of jobs-tables (Wakeshift report-back tables)
+  'openWakeWatch': OOS.minionJobs, 'listWakeWatches': OOS.minionJobs, 'endWakeWatches': OOS.minionJobs, 'countWakeWatches': OOS.minionJobs,
+  'readWakeDoctor': OOS.minionJobs, 'countPendingWakeForgets': OOS.minionJobs, 'listWakeCrons': OOS.minionJobs, 'addWakeCron': OOS.minionJobs,
+  'removeWakeCron': OOS.minionJobs, 'hasWakeCron': OOS.minionJobs, 'recordWakeCronRun': OOS.minionJobs, 'hasWakeTermsAcceptance': OOS.minionJobs,
+  'recordWakeTermsAcceptance': OOS.minionJobs, 'listDueWakeWatches': OOS.minionJobs, 'claimWakeWatch': OOS.minionJobs, 'settleWakeWatch': OOS.minionJobs,
+  'queueWakeForget': OOS.minionJobs, 'claimWakeForgets': OOS.minionJobs, 'settleWakeForget': OOS.minionJobs,
 };
 
 /** Every own member of PostgresEngine.prototype (methods + accessors), sorted. */
@@ -1159,6 +1193,18 @@ export const SQL_CASES: SqlCase[] = [
     ['default', (e) => e.getEdgesByChunk(1)],
     ['in+edgeType', (e) => e.getEdgesByChunk(1, { direction: 'in', edgeType: 'calls' })],
     ['out', (e) => e.getEdgesByChunk(1, { direction: 'out' })],
+  ]),
+  ...variants('getCodeTraversalCache', [
+    ['default', (e) => e.getCodeTraversalCache({ symbol_qualified: 'A.f', depth: 2, source_id: SRC, cluster_generation: 3 })],
+  ]),
+  ...variants('putCodeTraversalCache', [
+    ['default', (e) => e.putCodeTraversalCache(
+      { symbol_qualified: 'A.f', depth: 2, source_id: SRC, cluster_generation: 3 }, { nodes: ['A.f'] }, '2026-01-02T00:00:00.000Z', 7,
+    )],
+  ]),
+  ...variants('clearCodeTraversalCache', [
+    ['sourceId', (e) => e.clearCodeTraversalCache({ sourceId: SRC })],
+    ['allSources', (e) => e.clearCodeTraversalCache({ allSources: true })],
   ]),
 
   // ── cjk-search (CJK branch only) ──
