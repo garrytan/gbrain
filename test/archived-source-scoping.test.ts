@@ -21,11 +21,12 @@ import {
 } from '../src/core/source-resolver.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { withSourceResolutionReads } from './helpers/source-resolution-reads.ts';
 
 type StubSource = { id: string; local_path: string | null; archived?: boolean };
 
 function stubEngine(sources: StubSource[]): BrainEngine {
-  return {
+  return withSourceResolutionReads({
     executeRaw: async (sql: string, params?: unknown[]) => {
       if (sql.includes('archived FROM sources WHERE local_path IS NOT NULL')) {
         return sources
@@ -46,7 +47,7 @@ function stubEngine(sources: StubSource[]): BrainEngine {
       return [];
     },
     getConfig: async () => null,
-  } as unknown as BrainEngine;
+  }) as unknown as BrainEngine;
 }
 
 let root: string;
@@ -118,8 +119,10 @@ describe('#3880 structural pins — all-source local_path selections filter arch
     // The resolver keeps archived rows in the SELECT (JS tiering) so a cwd
     // landing ONLY in an archived tree still throws the deliberate
     // SourceTargetError instead of silently falling through.
+    // The statement is the typed listLocalPathSources read (SQL in engine-sql/sources.ts).
     const src = readFileSync('src/core/source-resolver.ts', 'utf-8');
-    expect(src).toContain('SELECT id, local_path, archived FROM sources WHERE local_path IS NOT NULL');
+    expect(src).toContain('engine.listLocalPathSources()');
+    expect(readFileSync('src/core/engine-sql/sources.ts', 'utf-8')).toContain('SELECT id, local_path, archived FROM sources WHERE local_path IS NOT NULL');
     // #4411: tier-4 realpath resolution was parallelized and the two
     // active/archived filter passes were consolidated into one indexed loop
     // over both tiers — same active-over-archived behavior (see the two

@@ -170,6 +170,17 @@
           "src-a"
         ]
       },
+      "countDefaultSourceSplit#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "countPagesBy#grouped+since+remote": {
         "flagOffLanes": [
           "pool"
@@ -2128,6 +2139,17 @@
           "src-a,src-b"
         ]
       },
+      "listLocalPathSources#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listPages#default": {
         "flagOffLanes": [
           "pool"
@@ -2324,6 +2346,17 @@
         ]
       },
       "listSourceLocalPaths#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listSourceRoutingRows#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -3850,6 +3883,7 @@
         "consolidateFact": "none",
         "cosinesByChunkIds": "none",
         "countChunklessPagesWithContent": "direct",
+        "countDefaultSourceSplit": "none",
         "countKeywordPages": "direct",
         "countOnboardSignal": "none",
         "countPagesBy": "direct",
@@ -3966,9 +4000,11 @@
         "listFactsSince": "none",
         "listFilesForPage": "none",
         "listLinkSources": "direct",
+        "listLocalPathSources": "none",
         "listPages": "direct",
         "listPrefixSampledPages": "direct",
         "listSourceLocalPaths": "none",
+        "listSourceRoutingRows": "none",
         "listStaleChunks": "direct",
         "listStaleFrontmatterKeyPages": "direct",
         "listStalePagesForExtraction": "direct",

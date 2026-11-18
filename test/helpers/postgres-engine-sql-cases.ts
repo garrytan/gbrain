@@ -141,7 +141,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'acquireCycleLock': OOS.cycleLocks, 'refreshCycleLock': OOS.cycleLocks, 'releaseCycleLock': OOS.cycleLocks,
   'readCycleLocks': OOS.cycleLocks, 'deleteCycleLock': OOS.cycleLocks, 'deleteCycleLockIfStale': OOS.cycleLocks,
   // sources
-  'listAllSources': 'sources', 'listSourceLocalPaths': 'sources', 'updateSourceConfig': 'sources', 'getSource': 'sources',
+  'listAllSources': 'sources', 'listSourceLocalPaths': 'sources', 'updateSourceConfig': 'sources',
+  'listLocalPathSources': 'sources', 'listSourceRoutingRows': 'sources', 'countDefaultSourceSplit': 'sources', 'getSource': 'sources',
   // files
   'upsertFile': 'files', 'getFile': 'files', 'listFilesForPage': 'files',
   // chunks
@@ -563,6 +564,9 @@ export const SQL_CASES: SqlCase[] = [
   // ── sources ──
   ...variants('listAllSources', [['default', (e) => e.listAllSources()]]),
   ...variants('listSourceLocalPaths', [['default', (e) => e.listSourceLocalPaths()]]),
+  ...variants('listLocalPathSources', [['default', (e) => e.listLocalPathSources()]]),
+  ...variants('listSourceRoutingRows', [['default', (e) => e.listSourceRoutingRows()]]),
+  ...variants('countDefaultSourceSplit', [['default', (e) => e.countDefaultSourceSplit()]]),
   ...variants('updateSourceConfig', [['default', (e) => e.updateSourceConfig(SRC, { federated: true })]]),
   ...variants('getSource', [['default', (e) => e.getSource(SRC)]]),
 

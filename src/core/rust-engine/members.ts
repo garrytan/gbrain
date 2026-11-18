@@ -84,6 +84,9 @@ export const RUST_ENGINE_MEMBERS = {
   // sources
   getSource: 'sources',
   listSourceLocalPaths: 'sources',
+  listLocalPathSources: 'sources',
+  listSourceRoutingRows: 'sources',
+  countDefaultSourceSplit: 'sources',
   getSourceStrictness: 'sources',
   listAllSources: 'sources',
   updateSourceConfig: 'sources',

@@ -26,6 +26,9 @@
     "consolidateFact#default": {},
     "countChunklessPagesWithContent#default": {},
     "countChunklessPagesWithContent#sourceId": {},
+    "countDefaultSourceSplit#default": {
+      "raw": 1
+    },
     "countPagesBy#grouped+since+remote": {},
     "countPagesBy#totals": {},
     "countStaleChunks#default": {
@@ -232,6 +235,9 @@
     "listLinkSources#default": {},
     "listLinkSources#sourceId": {},
     "listLinkSources#sourceIds": {},
+    "listLocalPathSources#default": {
+      "raw": 1
+    },
     "listPages#default": {},
     "listPages#effective_after": {},
     "listPages#effective_before": {},
@@ -248,6 +254,9 @@
     "listPrefixSampledPages#default": {},
     "listPrefixSampledPages#sourceIds": {},
     "listSourceLocalPaths#default": {},
+    "listSourceRoutingRows#default": {
+      "raw": 1
+    },
     "listStaleChunks#default": {
       "raw": 1
     },
