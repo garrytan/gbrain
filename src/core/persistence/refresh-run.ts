@@ -9,9 +9,19 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { persistenceHome } from './identity.ts';
 import { tryAcquireNativeLock } from './native-lock.ts';
+import type { NativeLockHandle } from './native-lock.ts';
 import type { TailBacklogShare } from './sync-tail.ts';
 
 export interface RefreshRun { phases: Record<string, number>; lockHeldMs?: number; backlog: Array<{ sourceId: string; share: TailBacklogShare }> }
+/** The run's fields of `WorktreeRefreshResult`, which only the CLI's `--json` prints. */
+export interface RefreshRunReport {
+  /** Whole milliseconds per phase this run reached (`fetch`, `precheck`, `drain`, `merge`, `sync`, `tail`, `backlog`). */
+  phase_ms?: Record<string, number>;
+  /** How long this run held the worktree's refresh lock, in whole milliseconds; absent when it never took it. */
+  lock_held_ms?: number;
+  /** The stale-link backlog each member's sync left, drained after the refresh lock was released. */
+  link_backlog?: RefreshLinkBacklog[];
+}
 /** `drained`: the backlog share ran (`pages` derived); `skipped`: another drain of the source was running; `failed`: it threw (`message`). */
 export interface RefreshLinkBacklog { source_id: string; outcome: 'drained' | 'skipped' | 'failed'; pages: number; remaining?: number; message?: string }
 
@@ -22,8 +32,30 @@ export async function timedPhase<T>(run: RefreshRun | undefined, key: string, fn
   const started = performance.now();
   try { return await fn(); } finally { notePhase(run, key, performance.now() - started); }
 }
-export function noteLockHeld(run: RefreshRun | undefined, started: number): void {
-  if (run) run.lockHeldMs = (run.lockHeldMs ?? 0) + performance.now() - started;
+/** Adds the time `lock` stays held, from now until its release, to the run's `lock_held_ms`. */
+export function timedLock(run: RefreshRun | undefined, lock: NativeLockHandle | null): NativeLockHandle | null {
+  if (!run || !lock) return lock;
+  const started = performance.now();
+  return { get released() { return lock.released; }, release: async () => {
+    if (!lock.released) run.lockHeldMs = (run.lockHeldMs ?? 0) + performance.now() - started;
+    await lock.release();
+  } };
+}
+/** Keeps the stale-link backlog share a member sync's deferred tail left, for the run to spend after its locks are released. */
+export function noteBacklog<T extends { tail?: { backlog?: TailBacklogShare } }>(run: RefreshRun | undefined, sourceId: string, result: T): T {
+  if (run && result.tail?.backlog) run.backlog.push({ sourceId, share: result.tail.backlog });
+  return result;
+}
+
+type FinishOptions = { beforeDrain?: (sourceId: string) => Promise<void> | void; redact: (text: string) => string };
+
+/** Runs one refresh with a fresh run record, then spends its backlog shares, on success and failure alike, and adds the run's fields to the result. */
+export async function withRefreshRun<T extends object>(engine: BrainEngine, opts: FinishOptions, refresh: (run: RefreshRun) => Promise<T>): Promise<T & RefreshRunReport> {
+  const run: RefreshRun = { phases: {}, backlog: [] };
+  let result: T;
+  try { result = await refresh(run); }
+  catch (error) { await finishRefreshRun(engine, run, opts); throw error; }
+  return { ...result, ...await finishRefreshRun(engine, run, opts) };
 }
 
 /**
@@ -31,8 +63,7 @@ export function noteLockHeld(run: RefreshRun | undefined, started: number): void
  * A source whose drain lock another process holds is skipped and named; a failure is reported on the share's entry and
  * never fails the refresh, whose imports already completed. `beforeDrain` is the test seam `hooks.backlog`.
  */
-export async function finishRefreshRun(engine: BrainEngine, run: RefreshRun, opts: { beforeDrain?: (sourceId: string) => Promise<void> | void; redact: (text: string) => string }):
-  Promise<{ phase_ms?: Record<string, number>; lock_held_ms?: number; link_backlog?: RefreshLinkBacklog[] }> {
+async function finishRefreshRun(engine: BrainEngine, run: RefreshRun, opts: FinishOptions): Promise<RefreshRunReport> {
   const drained: RefreshLinkBacklog[] = [];
   if (run.backlog.length) {
     const { drainSyncTailBacklog } = await import('./sync-tail.ts');

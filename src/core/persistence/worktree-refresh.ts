@@ -43,7 +43,7 @@ import { lockTopologyPrincipal, lockTopologyRows, topologyPrincipal, withTopolog
 import { ACTIVE_REFRESH_STATES_SQL, CHECKOUT_EFFECT_KINDS_SQL, RELEASED_DEFERRED, type WorktreeRefreshState } from './worktree-refresh-schema.ts';
 import { gitChildEnv } from '../git-env.ts';
 import type { QuarantineEntry } from '../git/commit-push.ts';
-import { finishRefreshRun, notePhase, noteLockHeld, timedPhase, type RefreshLinkBacklog, type RefreshRun } from './refresh-run.ts';
+import { noteBacklog, notePhase, timedLock, timedPhase, withRefreshRun, type RefreshRun, type RefreshRunReport } from './refresh-run.ts';
 import { isTruthy } from '../connectors/config-keys.ts';
 import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
 import { redactUrlsInText } from '../url-redact.ts';
@@ -62,11 +62,7 @@ export interface WorktreeRefreshRow {
   barrier_sequence?: string | number | null;
 }
 export type RefreshBoundary = 'drained' | 'fenced' | 'merged' | 'syncing' | 'synced';
-export interface RefreshHooks {
-  boundary?: (point: RefreshBoundary, row: WorktreeRefreshRow) => Promise<void> | void;
-  /** GST-3107: runs holding a source's stale-link backlog drain lock, after every refresh lock is released, before the drain. */
-  backlog?: (sourceId: string) => Promise<void> | void;
-}
+export interface RefreshHooks { boundary?: (point: RefreshBoundary, row: WorktreeRefreshRow) => Promise<void> | void; backlog?: (sourceId: string) => Promise<void> | void }
 export interface RefreshOptions {
   dryRun?: boolean; resume?: boolean; abandon?: boolean;
   /** Flag value; falls back to GBRAIN_REFRESH_DRAIN_WAIT_MS, then `sources.refresh_drain_wait_ms`, then 60 s. */
@@ -79,7 +75,7 @@ export interface RefreshOptions {
 }
 export interface RefreshMemberSync { source_id: string; status: string; last_commit: string | null }
 export interface RefreshSyncBlocked { source_id: string; code: string; message: string; resume: string }
-export interface WorktreeRefreshResult {
+export interface WorktreeRefreshResult extends RefreshRunReport {
   status: 'already_current' | 'completed' | 'sync_blocked' | 'sync_deferred' | 'dry_run' | 'syncing' | 'abandoned' | 'nothing_to_resume';
   refresh_id: string | null; worktree_id: string; source_ids: string[]; old_head: string | null; target_head: string | null;
   upstream_ref: string | null; preserved_uncommitted: string[]; incoming_files?: number;
@@ -88,12 +84,6 @@ export interface WorktreeRefreshResult {
   recovered?: { refresh_id: string; state: WorktreeRefreshState; status: WorktreeRefreshResult['status']; previous_holder: RefreshHolder | null };
   /** #7686: the diverged checkout's local commits this run published, merged with the upstream, before fast-forwarding (`sources.refresh_publish_diverged`). */
   published?: { sha: string; local_commits: number; integrated: number; quarantined?: QuarantineEntry; superseded_remote_paths?: string[] };
-  /** GST-3107: whole milliseconds per phase this run reached (`fetch`, `precheck`, `drain`, `merge`, `sync`, `tail`, `backlog`). */
-  phase_ms?: Record<string, number>;
-  /** GST-3107: how long this run held the worktree's refresh lock, in whole milliseconds; absent when it never took it. */
-  lock_held_ms?: number;
-  /** GST-3107: the stale-link backlog each member's sync left, drained after the refresh lock was released. */
-  link_backlog?: RefreshLinkBacklog[];
 }
 /** #7679: the process that holds a refresh's lock, recorded on the row so status can name it. */
 export interface RefreshHolder { host_id: string | null; hostname: string; pid: number; started_at: string }
@@ -767,9 +757,7 @@ async function boundedMemberSync(budgetMs: number, run?: RefreshRun) {
     try {
       const drained = await timedPhase(run, 'sync', () => withDrainLease(engine, sourceId, { holder: { kind: 'refresh', id: null }, remote: false },
         signal => drainManagedSync(engine, signal ? { ...opts, signal } : opts, false)));
-      const tailed = await timedPhase(run, 'tail', () => withSyncTail(engine, sourceId, drained, { deadlineAtMs: memberDeadlineAtMs, deferBacklog: run !== undefined }));
-      if (run && tailed.tail?.backlog) run.backlog.push({ sourceId, share: tailed.tail.backlog });
-      return tailed;
+      return noteBacklog(run, sourceId, await timedPhase(run, 'tail', () => withSyncTail(engine, sourceId, drained, { deadlineAtMs: memberDeadlineAtMs, deferBacklog: run !== undefined })));
     } catch (error) {
       if (!(error instanceof LockUnavailableError) || error.lockId !== syncLockId(sourceId)) throw error;
       return leaseHeldResult(sourceId, await readDrainHolder(engine, sourceId).catch(() => null));
@@ -817,17 +805,10 @@ function finished(row: WorktreeRefreshRow, sync: { synced: RefreshMemberSync[]; 
 
 /**
  * `gbrain sources refresh <source>`. Trusted local CLI on the registered owner
- * host only; refusals throw catalogue errors (`code`, cause, literal fix, docs).
+ * host only; refusals throw catalogue errors (`code`, cause, literal fix, docs). Callers omit `run`, the record of one run (GST-3107).
  */
-export async function refreshWorktree(engine: BrainEngine, sourceId: string, opts: RefreshOptions = {}): Promise<WorktreeRefreshResult> {
-  const run: RefreshRun = { phases: {}, backlog: [] };
-  let result: WorktreeRefreshResult;
-  try { result = await refreshAndOwedSync(engine, sourceId, opts, run); }
-  catch (error) { await finishRefreshRun(engine, run, { beforeDrain: opts.hooks?.backlog, redact }); throw error; }
-  return { ...result, ...await finishRefreshRun(engine, run, { beforeDrain: opts.hooks?.backlog, redact }) };
-}
-
-async function refreshAndOwedSync(engine: BrainEngine, sourceId: string, opts: RefreshOptions, run: RefreshRun): Promise<WorktreeRefreshResult> {
+export async function refreshWorktree(engine: BrainEngine, sourceId: string, opts: RefreshOptions = {}, run?: RefreshRun): Promise<WorktreeRefreshResult> {
+  if (!run) return withRefreshRun(engine, { beforeDrain: opts.hooks?.backlog, redact }, next => refreshWorktree(engine, sourceId, opts, next));
   let result: WorktreeRefreshResult;
   try { result = await runRefresh(engine, sourceId, opts, run); }
   catch (error) {
@@ -1007,9 +988,8 @@ async function refreshOnce(engine: BrainEngine, sourceId: string, opts: RefreshO
       return { ...base, status: blocked.length ? 'sync_blocked' : deferred ? 'sync_deferred' : 'already_current', synced, ...(blocked.length ? { sync_blocked: blocked, next: blocked.map(b => b.resume).join(' ; ') }
         : deferred ? { next: `gbrain sources refresh ${sourceId}` } : {}) };
     }
-    const refreshLock = await acquireNativeLock(refreshLockPath(plan.binding.worktree_id), { timeoutMs: 1000 });
+    const refreshLock = timedLock(run, await acquireNativeLock(refreshLockPath(plan.binding.worktree_id), { timeoutMs: 1000 }));
     if (!refreshLock) throw inProgress('Another process is refreshing this worktree right now.', sourceId);
-    const locked = performance.now();
     try {
       const principal = await topologyPrincipal(engine);
       const row = await fenceDraining(engine, sourceId, plan, principal);
@@ -1017,7 +997,6 @@ async function refreshOnce(engine: BrainEngine, sourceId: string, opts: RefreshO
       // The owner keeps claiming what is already queued; this process may be that owner.
       startPersistenceConsumer(engine, config);
       const deadline = performance.now() + waitDrainMs;
-      const drainStarted = performance.now();
       for (;;) {
         const counts = await drainCounts(engine, row.worktree_id);
         if (counts.requests + counts.effects + counts.recovery === 0) break;
@@ -1028,14 +1007,13 @@ async function refreshOnce(engine: BrainEngine, sourceId: string, opts: RefreshO
         }
         await new Promise(resolve => setTimeout(resolve, DRAIN_POLL_MS));
       }
-      notePhase(run, 'drain', performance.now() - drainStarted);
+      notePhase(run, 'drain', performance.now() - deadline + waitDrainMs);
       await opts.hooks?.boundary?.('drained', row);
       const merged = await timedPhase(run, 'merge', () => fenceAndMerge(engine, git, sourceId, plan, row, opts.hooks));
       await opts.hooks?.boundary?.('syncing', merged);
       const sync = await syncMembers(engine, git, merged, plan.root, syncBudgetMs, opts.hooks, run);
-      const result = finished(await readRefresh(engine, row.id), sync, plan.preserved);
-      return plan.published ? { ...result, published: plan.published } : result;
-    } finally { noteLockHeld(run, locked); await refreshLock.release(); }
+      return { ...finished(await readRefresh(engine, row.id), sync, plan.preserved), ...(plan.published ? { published: plan.published } : {}) };
+    } finally { await refreshLock.release(); }
   }).catch(error => { throw notePublished(error, published); });
 }
 
@@ -1365,9 +1343,8 @@ async function resumeOrAbandon(engine: BrainEngine, sourceId: string, opts: Refr
   const empty: WorktreeRefreshResult = { status: 'nothing_to_resume', refresh_id: null, worktree_id: binding.worktree_id, source_ids: [sourceId],
     old_head: null, target_head: null, upstream_ref: null, preserved_uncommitted: [], synced: [], next: `gbrain sources refresh ${sourceId}` };
   if (!active) return empty;
-  const lock = await acquireNativeLock(refreshLockPath(binding.worktree_id), { timeoutMs: 1000 }).catch(() => null as NativeLockHandle | null);
+  const lock = timedLock(run, await acquireNativeLock(refreshLockPath(binding.worktree_id), { timeoutMs: 1000 }).catch(() => null as NativeLockHandle | null));
   if (!lock) throw inProgress(`Refresh ${active.id} is still running in another process (${describeHolder(holderOf(active))}).`, sourceId, active.id);
-  const locked = performance.now();
   try {
     return await withGit(async git => {
       const head = await headOf(git, root);
@@ -1395,7 +1372,7 @@ async function resumeOrAbandon(engine: BrainEngine, sourceId: string, opts: Refr
       }
       return resumeHeld(engine, git, sourceId, active.id, root, head, empty, syncBudgetMs, false, run);
     });
-  } finally { noteLockHeld(run, locked); await lock.release(); }
+  } finally { await lock.release(); }
 }
 
 /**
@@ -1449,9 +1426,8 @@ async function adoptOrphanedRefresh(engine: BrainEngine, sourceId: string, syncB
   // A holder recorded on another host is never adopted: this host's lock cannot say whether it is alive.
   if ((holderOf(active)?.host_id ?? hostId) !== hostId) return null;
   // #7728: a lock this process cannot read says nothing about the holder, so it is not adopted; the precheck refuses refresh_in_progress.
-  const lock = await acquireNativeLock(refreshLockPath(binding.worktree_id), { timeoutMs: 1000 }).catch(() => null as NativeLockHandle | null);
+  const lock = timedLock(run, await acquireNativeLock(refreshLockPath(binding.worktree_id), { timeoutMs: 1000 }).catch(() => null as NativeLockHandle | null));
   if (!lock) return null;
-  const locked = performance.now();
   try {
     const orphan = await readActiveRefresh(engine, binding.worktree_id);
     if (!orphan || orphan.state === 'recovery_required' || (holderOf(orphan)?.host_id ?? hostId) !== hostId) return null;
@@ -1462,7 +1438,7 @@ async function adoptOrphanedRefresh(engine: BrainEngine, sourceId: string, syncB
       const head = await headOf(git, root);
       return head === null ? null : resumeHeld(engine, git, sourceId, orphan.id, root, head, empty, syncBudgetMs, true, run);
     });
-  } finally { noteLockHeld(run, locked); await lock.release(); }
+  } finally { await lock.release(); }
 }
 
 /**
