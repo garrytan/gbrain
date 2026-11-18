@@ -10,6 +10,7 @@ import { replaceWantedLinks, type WantedLinksReplacement } from './wanted-links-
 import { applyTemporalEvidence, relationshipKeysForOrigin, type TemporalBody } from './link-temporal-apply.ts';
 import { primeRelationSemantics } from './link-semantics-pack.ts';
 import { effectiveRangesEnabled, LINK_EXTRACTION_GENERATION_KEY, type LineGrammarSettings } from './line-grammar.ts';
+import { DerivedLinkLockBusyError, lockDerivedLinkPages } from './derived-link-lock.ts';
 
 export interface DerivedLinkOrigin {
   slug: string;
@@ -25,6 +26,8 @@ export interface DerivedLinkOrigin {
 }
 
 export interface DerivedLinkReplacementOptions {
+  /** Optional page-guard acquisition bound; a busy guard rolls back before per-page replay. */
+  lockTimeoutMs?: number;
   includeFrontmatter?: boolean;
   preserveExisting?: boolean;
   includeLegacyNullProducer?: boolean;
@@ -81,13 +84,14 @@ export function isConcurrentLinkWriteConflict(error: unknown): boolean {
  * A deferring caller's outcome for one origin: written, left stale by a settings change or a concurrent write, or
  * (#6808) refused because the origin's source or a link target's source has no sources row (the missing source id).
  */
-export type DeferredDerivedLinkOutcome = { created: number; removed: number } | 'settings_changed' | 'concurrent_write' | { unknownSource: string };
+export type DeferredDerivedLinkOutcome = { created: number; removed: number } | 'settings_changed' | 'concurrent_write' | 'lock_busy' | { unknownSource: string };
 
 /** replaceDerivedLinksUnlessSettingsChanged for a run that defers (and counts) pages a concurrent writer moved or whose source is gone. */
 export async function replaceDerivedLinksDeferringConflicts(engine: Pick<BrainEngine, 'replaceDerivedLinks'>,
   ...args: Parameters<BrainEngine['replaceDerivedLinks']>): Promise<DeferredDerivedLinkOutcome> {
   try { return await replaceDerivedLinksUnlessSettingsChanged(engine, ...args) ?? 'settings_changed'; }
   catch (error) {
+    if (error instanceof DerivedLinkLockBusyError) return 'lock_busy';
     if (error instanceof PageSourceMissingError) return { unknownSource: error.sourceId };
     if (isConcurrentLinkWriteConflict(error)) return 'concurrent_write';
     throw error;
@@ -178,7 +182,8 @@ export async function replaceDerivedLinks(
   const result = await engine.transaction(async tx => {
     await pipelined(tx, [
       async () => { if (!opts.semanticsPrimed) await primeRelationSemantics(tx); },
-      () => tx.lockPageKeys(derivedLinkLockKeys(origin, rows)),
+      () => opts.lockTimeoutMs === undefined ? tx.lockPageKeys(derivedLinkLockKeys(origin, rows))
+        : lockDerivedLinkPages(tx, derivedLinkLockKeys(origin, rows), opts.lockTimeoutMs),
     ]);
     if (opts.lineGrammar && await lockedExtractionGeneration(tx) !== opts.lineGrammar.generation) throw new DerivedLinkSettingsChangedError();
     const snapshot = origin.snapshot !== undefined ? origin.snapshot : await tx.readPageSnapshot(origin.slug, { sourceId: origin.sourceId });
@@ -207,9 +212,13 @@ export async function replaceDerivedLinksBatch(
   if (!prepared.length) return [];
   const beliefs = prepared.map(item => unmanagedBeliefPoint(item.origin.sourceId, [item.origin.slug], 'derived_links'));
   const results = await engine.transaction(async tx => {
+    const bounds = prepared.flatMap(item => item.opts.lockTimeoutMs === undefined ? [] : [item.opts.lockTimeoutMs]);
     await pipelined(tx, [
       async () => { if (prepared.some(item => !item.opts.semanticsPrimed)) await primeRelationSemantics(tx); },
-      () => tx.lockPageKeys(prepared.flatMap(item => derivedLinkLockKeys(item.origin, item.rows))),
+      () => {
+        const keys = prepared.flatMap(item => derivedLinkLockKeys(item.origin, item.rows));
+        return bounds.length ? lockDerivedLinkPages(tx, keys, Math.min(...bounds)) : tx.lockPageKeys(keys);
+      },
     ]);
     if (prepared.some(item => item.opts.lineGrammar)) {
       const generation = await lockedExtractionGeneration(tx);
