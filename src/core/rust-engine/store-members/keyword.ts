@@ -1,7 +1,8 @@
 /**
  * Keyword search members of the keyword_search capability and title trigrams. findByTitleFuzzy, searchKeyword,
- * searchKeywordChunks, countKeywordPages and searchKeywordPages are served; searchTitles still refuses with `engine_capability_missing`
- * until this file exports it (docs/designs/RUST_ENGINE_INTERFACES.md).
+ * searchKeywordChunks, countKeywordPages, searchKeywordPages and searchTitles are served. searchTitles refuses with
+ * `engine_capability_missing` until the store holds the sealed search timeline (core-hooks item 13,
+ * `SEALED_SEARCH_TIMELINE` below): without it a sealed page's title vector cannot be rebuilt.
  *
  * The keyword members resolve every engine default here (the hard-exclude list, the source-boost map, the slug
  * handles, the dash-run collapse, the date bounds) and send the store only predicates; rust/docs/store/keyword.md
@@ -13,14 +14,22 @@
  */
 import { hasCJK } from '../../cjk.ts';
 import { clampSearchLimit } from '../../engine.ts';
+import { rankByRarity } from '../../engine-sql/titles.ts';
+import { normalizeAlias } from '../../search/alias-normalize.ts';
 import { getFtsLanguage } from '../../fts-language.ts';
 import { searchLimitCap } from '../../search/eval-pool-depth.ts';
 import { slugHandles } from '../../search/keyword-handles.ts';
-import { keywordArmRows } from '../../search/keyword-identifier-probe.ts';
-import { RARE_TERM_CHUNK_CAP, rankOrFallbackByRarity, type RareTermPages } from '../../search/keyword-or-rarity.ts';
+import { holdsIdentifiers, identifierTokens, keywordArmRows } from '../../search/keyword-identifier-probe.ts';
+import {
+  RARE_TERM_CHUNK_CAP, RARITY_MAX_TERMS, rankOrFallbackByRarity, type RareTermPages,
+} from '../../search/keyword-or-rarity.ts';
 import type { KeywordPageWindow } from '../../search/keyword-statement.ts';
 import { resolveBoostMap, resolveHardExcludes } from '../../search/source-boost.ts';
-import { collapseWebsearchDashRuns } from '../../search/sql-ranking.ts';
+import {
+  boundWebsearchQuery, buildOrFallbackWebsearchQuery, collapseWebsearchDashRuns, orFallbackTokens,
+} from '../../search/sql-ranking.ts';
+import { titleNameVariants } from '../../search/title-match.ts';
+import { titleWholeVectorCandidates } from '../../search/title-statement.ts';
 import type { SearchOpts, SearchResult } from '../../types.ts';
 import { rowToSearchResult } from '../../utils.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
@@ -57,7 +66,7 @@ const PAGE_FILTERS = ['type', 'types', 'where', 'exclude_slugs'] as const;
 /** Visibility options the store cannot apply (private pages, safe chunks, the trust floor). */
 const VISIBILITY = ['excludePrivate', 'requireSafeChunks', 'minTrust', 'suppressFlagged'] as const;
 
-type Member = 'searchKeyword' | 'searchKeywordChunks' | 'countKeywordPages' | 'searchKeywordPages';
+type Member = 'searchKeyword' | 'searchKeywordChunks' | 'countKeywordPages' | 'searchKeywordPages' | 'searchTitles';
 
 /** Checks every option `member` gets, refusing one it cannot answer exactly, and returns the store options. */
 function keywordOptions(member: Member, query: string, opts: (SearchOpts & { timeoutMs?: number }) | undefined): Record<string, unknown> {
@@ -258,4 +267,64 @@ export const searchKeyword: StoreMember<[query: string, opts?: SearchOpts], Sear
         () => brain.keywordRareTermPages(terms, RARE_TERM_CHUNK_CAP))) as RareTermPages[],
     }),
   });
+};
+
+/**
+ * Whether the store holds the sealed search timeline (core-hooks item 13). Until it does, the store cannot rebuild the
+ * title vector of a sealed page (title plus sanitized timeline) and searchTitles refuses; hybrid's title arm fails
+ * open on the refusal.
+ */
+const SEALED_SEARCH_TIMELINE = false;
+
+type TitleKind = 'whole' | 'title' | 'complete';
+type TitleAttempt = { text: string; kind: TitleKind; limit: number; offset: number };
+
+/**
+ * engine-sql/titles.ts `searchTitles`: the strict attempt over the whole vector (completed by the title-only attempt
+ * when more pages match than `titleWholeVectorCandidates()`), then the any-word retry with per-word rarity and the
+ * identifier lead. Each store call runs its attempts over one read, as each scoped read of the SQL engines does.
+ * `requireSafeChunks` and `excludePrivate` refuse (keywordOptions), so the arm is never the safe-chunks one.
+ */
+export const searchTitles: StoreMember<[query: string, opts?: SearchOpts], SearchResult[]> = async (brain, query, opts) => {
+  // Chunk-grain code filters have no page-grain meaning: the SQL engines answer nothing.
+  if (opts?.language || opts?.symbolKind) return [];
+  const options = keywordOptions('searchTitles', query, opts);
+  if (!SEALED_SEARCH_TIMELINE) refuseMember('searchTitles', 'the sealed search timeline (core-hooks item 13)');
+  const cap = searchLimitCap();
+  if (opts?.limit && opts.limit > cap) {
+    console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${cap}`);
+  }
+  const limit = clampSearchLimit(opts?.limit, 20, cap);
+  const offset = wholeCount('searchTitles', opts?.offset || 0, 'an offset')!;
+  const strictQuery = boundWebsearchQuery(query);
+  const exactKey = normalizeAlias(query);
+  // The given-name variants are ORed into every attempt; the OR retry rebinds only the first text.
+  const variants = titleNameVariants(query);
+  const run = async (attempts: TitleAttempt[]): Promise<{ rows: Row[]; cut: boolean }[]> =>
+    storeCall({ member: 'searchTitles' }, () => brain.searchTitlesAttempts(
+      attempts.map(a => ({ texts: [a.text, ...variants], kind: a.kind, limit: a.limit, offset: a.offset })),
+      exactKey, titleWholeVectorCandidates(), options,
+    ));
+
+  const top = offset + limit;
+  const [strict] = await run([{ text: strictQuery, kind: 'whole', limit: top, offset: 0 }]);
+  if (strict.rows.length > 0 && strict.cut) {
+    opts?.onKeywordIncomplete?.('candidate_budget');
+    const [title] = await run([{ text: strictQuery, kind: 'title', limit: top, offset: 0 }]);
+    const titled = new Set(title.rows.map(r => r.page_id));
+    return [...title.rows, ...strict.rows.filter(r => !titled.has(r.page_id))].slice(offset, offset + limit).map(rowToSearchResult);
+  }
+  if (strict.rows.length > offset) return strict.rows.slice(offset).map(rowToSearchResult);
+  const orQuery = buildOrFallbackWebsearchQuery(strictQuery);
+  if (!orQuery) return [];
+  const terms = orFallbackTokens(strictQuery);
+  const rarity = terms.length <= RARITY_MAX_TERMS && !opts?.offset;
+  const anyWord = boundWebsearchQuery(orQuery);
+  const wordAttempts: TitleAttempt[] = rarity ? terms.map(text => ({ text, kind: 'title', limit, offset })) : [];
+  const [any, ...words] = await run([{ text: anyWord, kind: 'complete', limit, offset }, ...wordAttempts]);
+  const orRows = any.cut ? (await run([{ text: anyWord, kind: 'title', limit, offset }]))[0].rows : any.rows;
+  const relaxedRows = (rarity ? rankByRarity(orRows, words.map(w => w.rows), limit) : orRows).map(rowToSearchResult);
+  const idents = identifierTokens(query);
+  const named = idents ? relaxedRows.filter(r => holdsIdentifiers(r.title, idents)) : [];
+  return [...named, ...relaxedRows.filter(r => !named.includes(r)).map(r => ({ ...r, keyword_relaxed: true as const }))];
 };

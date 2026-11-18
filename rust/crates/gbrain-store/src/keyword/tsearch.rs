@@ -934,6 +934,51 @@ pub(crate) fn or_of_lexemes(q: &TsQuery) -> Option<TsQuery> {
     b.finish().ok()
 }
 
+/// `a || b` on tsqueries (`tsquery_or`): `b` when `a` is empty, `a` when `b` is empty, else an OR
+/// whose left operand is `a` and right operand `b`. `join_tsqueries` puts `b` in `child[0]` and
+/// `QTN2QT` writes the operator, then `child[0]` (the right operand), then `child[1]`.
+pub(crate) fn tsquery_or(a: TsQuery, b: TsQuery) -> TsQuery {
+    if a.items.is_empty() {
+        return b;
+    }
+    if b.items.is_empty() {
+        return a;
+    }
+    let mut items = Vec::with_capacity(1 + a.items.len() + b.items.len());
+    items.push(QItem::Opr {
+        op: Op::Or,
+        distance: 0,
+        left: 1 + b.items.len() as u32,
+    });
+    items.extend(b.items);
+    items.extend(a.items);
+    TsQuery { items }
+}
+
+/// `ts_filter(v, weights)` (`tsvector_filter`): each lexeme keeps its positions whose weight is
+/// one of `weights`; a lexeme without positions, or left with none, is dropped.
+pub(crate) fn ts_filter(v: &TsVector, weights: &[Weight]) -> TsVector {
+    let mask = weights.iter().fold(0u16, |m, w| m | (1 << (*w as u16)));
+    TsVector {
+        entries: v
+            .entries
+            .iter()
+            .filter_map(|e| {
+                let pos: Vec<u16> = e
+                    .pos
+                    .iter()
+                    .copied()
+                    .filter(|p| mask & (1 << wep_weight(*p)) != 0)
+                    .collect();
+                (!pos.is_empty()).then(|| TsEntry {
+                    lexeme: e.lexeme.clone(),
+                    pos,
+                })
+            })
+            .collect(),
+    }
+}
+
 impl TsQuery {
     /// `tsqueryout` (`infix`).
     pub(crate) fn to_text(&self) -> String {
