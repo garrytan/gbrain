@@ -33,6 +33,7 @@ import { runSchemaTransition } from '../src/core/embedding-migration.ts';
 import { runMigrations } from '../src/core/migrate.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
+import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
 
 async function runCheck(ctx: DoctorContext): Promise<Check[]> {
   return await embeddingsEntry.run(ctx) as Check[];
@@ -149,6 +150,22 @@ describe('embeddings doctor check: backlog age', () => {
     expect(low.details).toMatchObject({ backlog: 40_000, oldest_pending_age_s: null, age_threshold_s: EMBEDDING_BACKLOG_MAX_AGE_S });
     const high = (await runCheck(ctxFor(0.95, 50_000, {}, { ageS: null })))[0];
     expect(high.status).toBe('ok');
+  });
+
+  test('a refused age read warns with the typed refusal, health unknown, and keeps the backlog and its fix', async () => {
+    const ctx = ctxFor(0, 34);
+    (ctx.engine as unknown as { executeRaw: () => Promise<never> }).executeRaw = async () => { throw capabilityMissing('raw_sql', 'executeRaw'); };
+    const [check] = await runCheck(ctx);
+    expect(check.status).toBe('warn');
+    expect(check.message).toMatch(/^No embeddings yet\. Backlog: 34 chunk\(s\) without embeddings\. Backlog age unknown: This brain's engine does not support executeRaw yet \(it needs the raw_sql capability\)/);
+    expect(check.message).toContain('Fix: gbrain embed --stale --catch-up');
+    expect(check.details).toMatchObject({ code: 'embedding_backlog', backlog: 34, oldest_pending_age_s: null,
+      health: 'unknown', reason: 'engine_capability_missing', capability: 'raw_sql' });
+    expect(check.fix?.consent).toEqual(['paid']);
+    // Any other age-read failure still leaves the coverage rule to decide (a mostly embedded brain stays ok).
+    const other = ctxFor(0.95, 50_000);
+    (other.engine as unknown as { executeRaw: () => Promise<never> }).executeRaw = async () => { throw new Error('disk full'); };
+    expect((await runCheck(other))[0].status).toBe('ok');
   });
 
   test('a keyless brain is info even with an old backlog', async () => {

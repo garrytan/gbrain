@@ -13,7 +13,7 @@ no keys of its own. The TypeScript side is `src/core/rust-engine/store-members/c
 | --- | --- | --- |
 | `brain.scanExactBatch({ words, longest, caseSensitive, sourceId, sourceIds, types, slugPrefix, excludeSlugPrefixes, after, batchPages })` | `null` for no words; else the next `batchPages` pages in scope after page id `after`, in id order: `{ page_id, slug, source_id, title, type, matching_chunks, snippets, gap }` | `scanExactBatch` |
 | `brain.nextLivePageAfter(afterPageId)` | the first live page with a larger id, in any source (archived ones too): `{ id, slug, source_id }`, or `null` | `nextLivePageAfter` |
-| `brain.listExactIdentityCandidates({ probes, sourceIds, types, remote, limit })` | live pages in `sourceIds` whose title, slug basename or frontmatter email equals a probe, by `(source_id, slug)` in byte order: `{ slug, source_id, title, type, email, emails, aliases }` | `listExactIdentityCandidates` |
+| `brain.listExactIdentityCandidates({ probes, sourceIds, types, remote, limit })` | live pages in `sourceIds` whose title, slug basename, page alias or frontmatter email equals a probe, by `(source_id, slug)` in byte order: `{ slug, source_id, title, type, email, emails, aliases }` | `listExactIdentityCandidates` |
 | `brain.rankEntities({ direction, types, sourceIds, linkType, includeMentions, limit, foldedCap, remote })` | pages ranked by distinct in-scope edges, retired pages folded in: `{ slug, title, type, source_id, inbound, outbound, neighbors, folded_total, folded }` | `rankEntities` |
 | `brain.listExtractionPendingPages({ sourceIds, sourceId, limit, offset })` | unverified auto-extracted pages in scope, newest first: `{ slug, title, type, source_id, extracted_from, created_at }` | `listExtractionPendingPages` |
 
@@ -33,8 +33,10 @@ negative `LIMIT` or `OFFSET` is an `invalid_argument` error, as Postgres rejects
   quantifier). A page with no hit has `matching_chunks` and `snippets` `null` and `gap` `projection_pending` (projection
   not served), `unchunked` (no visible chunk and a body) or `null`.
 - **listExactIdentityCandidates.** A page matches when `lower(title)` equals `lower(titleRaw)` or is in `titleKeys`,
-  when the part of the slug after the last `/` is in `basenames`, or when the frontmatter `email` or `emails` is a probe
-  string or an array that holds it. A number or other value never matches an email probe. Then: live, the source exists
+  when the part of the slug after the last `/` is in `basenames`, when a `page_aliases` row of its source and slug (any
+  origin) has an `alias_norm` in `aliasKeys`, or when the frontmatter `email` or `emails` is a probe string or an array
+  that holds it. A number or other value never matches an email probe. A probe or source id with a NUL byte is refused
+  (`invalid_argument`), as Postgres refuses it in a text parameter. Then: live, the source exists
   and is not archived, the type passes the entity type filter (the first `per_source` entry for the page's source, else
   `types`), and for a remote caller no `quarantine` key. `email`, `emails` and `aliases` are the frontmatter values, or
   `null`.

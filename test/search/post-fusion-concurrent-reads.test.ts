@@ -88,9 +88,11 @@ const answers: Record<ReadName, unknown> = {
  */
 function fakeEngine(mode: (name: ReadName) => 'resolve' | 'defer' | 'reject' | 'refuse' = () => 'resolve') {
   const issued: ReadName[] = [];
+  const policies: Partial<Record<ReadName, unknown>> = {};
   const parked: Array<() => void> = [];
-  const read = (name: ReadName) => {
+  const read = (name: ReadName, policy?: unknown) => {
     issued.push(name);
+    policies[name] = policy;
     const how = mode(name);
     if (how === 'reject') return Promise.reject(new Error(`${name} failed`));
     if (how === 'refuse') return Promise.reject(Object.assign(new Error(`${name} not served`), { code: 'engine_capability_missing' }));
@@ -98,15 +100,15 @@ function fakeEngine(mode: (name: ReadName) => 'resolve' | 'defer' | 'reject' | '
     return new Promise(resolve => parked.push(() => resolve(answers[name])));
   };
   const engine = {
-    getBacklinkCounts: () => read('backlinks'),
-    getSalienceScores: () => read('salience'),
-    getEffectiveDates: () => read('dates'),
-    getAdjacencyBoosts: () => read('graph'),
-    aliasCanonicalRefs: () => read('alias'),
+    getBacklinkCounts: (_ids: unknown, policy?: unknown) => read('backlinks', policy),
+    getSalienceScores: (_refs: unknown, policy?: unknown) => read('salience', policy),
+    getEffectiveDates: (_refs: unknown, policy?: unknown) => read('dates', policy),
+    getAdjacencyBoosts: (_ids: unknown, policy?: unknown) => read('graph', policy),
+    aliasCanonicalRefs: (_refs: unknown, policy?: unknown) => read('alias', policy),
     hasSupersedeEdges: () => read('supersede-probe'),
-    supersedingPageSlugs: () => read('supersede'),
+    supersedingPageSlugs: (_ids: unknown, policy?: unknown) => read('supersede', policy),
   };
-  return { engine, issued, release: () => { while (parked.length) parked.shift()!(); } };
+  return { engine, issued, policies, release: () => { while (parked.length) parked.shift()!(); } };
 }
 
 const opts = (overrides: Partial<PostFusionOpts> = {}): PostFusionOpts => ({
@@ -191,6 +193,33 @@ describe('runPostFusionStages — id-keyed reads run concurrently', () => {
     }
     const weak = actual.find(r => r.slug === 'notes/weak-hub')!;
     expect(weak.score).toBe(weak.base_score!);
+  });
+
+  test('each read gets only the page read policy, never the stage options', async () => {
+    // An engine that refuses option keys it does not model (the Rust engine does) must still boost.
+    setSystemTime(NOW);
+    const scoped = opts({ sourceId: 'default', excludePrivate: true });
+    const expected = fixture();
+    await sequential(expected, scoped);
+    const actual = fixture();
+    const { engine, policies } = fakeEngine();
+    await runPostFusionStages(engine as never, actual, scoped);
+    expect(policies).toEqual({
+      backlinks: { sourceId: 'default', excludePrivate: true },
+      salience: { sourceId: 'default', excludePrivate: true },
+      dates: { sourceId: 'default', excludePrivate: true },
+      graph: { sourceId: 'default', excludePrivate: true },
+      alias: { sourceId: 'default', excludePrivate: true },
+      'supersede-probe': undefined,
+      supersede: { sourceId: 'default', excludePrivate: true },
+    });
+    expect(actual).toEqual(expected);
+  });
+
+  test('an unrestricted run passes no policy', async () => {
+    const { engine, policies } = fakeEngine();
+    await runPostFusionStages(engine as never, fixture(), opts());
+    expect(Object.values(policies).every(p => p === undefined)).toBe(true);
   });
 
   for (const failing of ['backlinks', 'salience', 'dates', 'graph', 'alias', 'supersede-probe', 'supersede'] as const) {

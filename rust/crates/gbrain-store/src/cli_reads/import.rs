@@ -8,10 +8,12 @@
 //! - there are no source ingestion receipts: `hasCompanyBrainReceipt` is false;
 //! - there is no `guest_sources` table and no row-level security: a guest source is one whose
 //!   config says `guest: true`, `readGuestSourceRow` is never hidden and finds no row;
-//! - pages have no trust tier, write origin or write-gate receipts: a page reads tier `unknown`,
-//!   origin null and not flagged.
 //!
-//! Keys: none of its own. It reads the source, page and timeline records.
+//! A page reads the trust tier and write origin its last write stamped (`pages::write_page`), and
+//! `flagged` is `activationSuppressedSql` over the page's write-gate receipts
+//! (`trust::activation_suppressed`).
+//!
+//! Keys: none of its own. It reads the source, page, timeline and write-gate receipt records.
 
 use crate::env::iso;
 use crate::error::{Result, StoreError};
@@ -19,6 +21,7 @@ use crate::kv::{KvRead, scan_prefix};
 use crate::pages::{PageRecord, all_pages, read_page, read_page_by_id};
 use crate::sources::{DEFAULT_SOURCE, SourceRecord, all_sources, read_source};
 use crate::timeline::TimelineRecord;
+use crate::trust::TrustTier;
 use crate::{Store, keys};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -78,7 +81,7 @@ pub struct PageTrustRow {
     pub source_id: String,
     pub slug: String,
     pub trust_tier: String,
-    pub write_origin: Option<String>,
+    pub write_origin: Option<Value>,
     pub flagged: bool,
     pub guest: bool,
     #[serde(rename = "byId")]
@@ -137,13 +140,14 @@ fn source_is_guest(read: &dyn KvRead, id: &str) -> Result<bool> {
 }
 
 fn trust_row(read: &dyn KvRead, page: &PageRecord, by_id: bool) -> Result<PageTrustRow> {
+    let tier = TrustTier::stored(page.trust_tier.as_deref());
     Ok(PageTrustRow {
         id: page.id,
         source_id: page.source_id.clone(),
         slug: page.slug.clone(),
-        trust_tier: "unknown".into(),
-        write_origin: None,
-        flagged: false,
+        trust_tier: tier.as_str().to_owned(),
+        write_origin: page.write_origin.clone(),
+        flagged: crate::trust::activation_suppressed(read, "pages", page.id, tier)?,
         guest: source_is_guest(read, &page.source_id)?,
         by_id,
     })

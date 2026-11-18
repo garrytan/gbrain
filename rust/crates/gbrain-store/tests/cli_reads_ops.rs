@@ -149,3 +149,78 @@ fn extraction_queue_reads_unverified_auto_extracted_pages_as_text() {
     };
     assert!(store.list_extraction_pending_pages(&negative).is_err());
 }
+
+#[test]
+fn identity_finds_a_live_page_by_its_alias_rows_in_the_named_sources_and_refuses_nul() {
+    let dir = TempDir::new("cli-reads-ops-alias");
+    let store = open(&dir);
+    source(&store, "other");
+    page(
+        &store,
+        "default",
+        "people/alice-example",
+        "person",
+        json!({}),
+    );
+    page(
+        &store,
+        "default",
+        "people/gone-example",
+        "person",
+        json!({}),
+    );
+    page(&store, "default", "notes/alice-note", "note", json!({}));
+    page(&store, "other", "people/other-alice", "person", json!({}));
+    let alias = |slug: &str, source: &str, names: &[&str]| {
+        let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+        store.set_page_aliases(slug, source, &names).unwrap();
+    };
+    alias("people/alice-example", "default", &["alice", "ae"]);
+    alias("people/gone-example", "default", &["alice"]);
+    alias("notes/alice-note", "default", &["alice"]);
+    alias("people/other-alice", "other", &["alice"]);
+    alias("people/nobody-example", "default", &["alice"]);
+    store
+        .soft_delete_page("people/gone-example", Some("default"))
+        .unwrap();
+    let read = |keys: &[&str], sources: &[&str]| {
+        store.list_exact_identity_candidates(&ExactIdentityInput {
+            probes: ExactIdentityProbes {
+                alias_keys: keys.iter().map(|k| k.to_string()).collect(),
+                ..ExactIdentityProbes::default()
+            },
+            source_ids: sources.iter().map(|s| s.to_string()).collect(),
+            types: EntityTypeFilter {
+                types: vec!["person".into()],
+                per_source: Vec::new(),
+            },
+            remote: None,
+            limit: 10,
+        })
+    };
+    let slugs = |keys: &[&str], sources: &[&str]| -> Vec<String> {
+        read(keys, sources)
+            .unwrap()
+            .into_iter()
+            .map(|r| format!("{}:{}", r.source_id, r.slug))
+            .collect()
+    };
+    assert_eq!(
+        slugs(&["alice"], &["default"]),
+        ["default:people/alice-example"]
+    );
+    assert_eq!(
+        slugs(&["alice"], &["default", "other"]),
+        ["default:people/alice-example", "other:people/other-alice"]
+    );
+    assert_eq!(
+        slugs(&["nope", "ae"], &["default"]),
+        ["default:people/alice-example"]
+    );
+    assert!(slugs(&["ali"], &["default"]).is_empty());
+    assert!(slugs(&["nope"], &["default"]).is_empty());
+    let err = read(&["al\0ice"], &["default"]).unwrap_err();
+    assert!(err.to_string().contains("invalid byte sequence"), "{err}");
+    let err = read(&["alice"], &["def\0ault"]).unwrap_err();
+    assert!(err.to_string().contains("invalid byte sequence"), "{err}");
+}

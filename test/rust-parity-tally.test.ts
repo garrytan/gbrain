@@ -1,0 +1,59 @@
+/**
+ * The Rust arm's pinned tally (test/engine-parity/rust-tally.ts): a parity file that loses equal cases or gains stopped
+ * cases against its pin fails; one that does better passes and names the new counts; an incomplete run is not checked.
+ */
+import { describe, expect, test } from 'bun:test';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { checkRustTally, parsePins, renderPins, RUST_TALLY_PATH } from './engine-parity/rust-tally.ts';
+
+const FILE = 'test/engine-parity/search.test.ts';
+const pins = parsePins(renderPins([[FILE, { equal: 14, stopped: 2 }]]));
+const tally = (compared: number, refused: number, extra: Partial<{ diverged: number; skipped: number }> = {}) =>
+  ({ compared, refused, diverged: extra.diverged ?? 0, skipped: extra.skipped ?? 0 });
+const outcome = (run: () => unknown) => {
+  try {
+    return { value: run() };
+  } catch (error) {
+    return { threw: (error as Error).message.includes('rust-tally.tsv pins') || (error as Error).message.includes('has no row') };
+  }
+};
+
+describe('Rust parity tally pin', () => {
+  test('a file at its pin passes quietly; fewer equal or more stopped fails', () => {
+    expect([
+      outcome(() => checkRustTally(FILE, tally(14, 2), 16, pins, {})),
+      outcome(() => checkRustTally(FILE, tally(13, 3), 16, pins, {})),
+      outcome(() => checkRustTally(FILE, tally(13, 2, { diverged: 1 }), 16, pins, {})),
+      outcome(() => checkRustTally(FILE, tally(14, 3), 17, pins, {})),
+    ]).toEqual([{ value: null }, { threw: true }, { threw: true }, { threw: true }]);
+  });
+
+  test('a file that does better passes and prints the counts to pin', () => {
+    const line = checkRustTally(FILE, tally(15, 1), 16, pins, {});
+    expect(line).toContain(`${FILE} 15 1`);
+  });
+
+  test('an incomplete run (a filter or a failed case) is not checked, and a file with no pin fails', () => {
+    expect([
+      outcome(() => checkRustTally(FILE, tally(3, 0), 16, pins, {})),
+      outcome(() => checkRustTally('test/engine-parity/new.test.ts', tally(1, 0), 1, pins, {})),
+      outcome(() => checkRustTally(FILE, tally(13, 2, { skipped: 1 }), 16, pins, {})),
+    ]).toEqual([{ value: null }, { threw: true }, { threw: true }]);
+  });
+
+  test('a Rust-arm file outside test/engine-parity/ (no parity file name) is not checked', () => {
+    // doctor-catalog-probes.test.ts runs the parity harness from test/; the harness finds no parity file name for it.
+    expect(outcome(() => checkRustTally('', tally(8, 0), 8, pins, {}))).toEqual({ value: null });
+  });
+
+  test('the checked-in pin has one row per parity file and round-trips', () => {
+    const text = readFileSync(RUST_TALLY_PATH, 'utf8');
+    const files = readdirSync(join(import.meta.dir, 'engine-parity')).filter((f) => f.endsWith('.test.ts') && f !== 'coverage.test.ts')
+      .map((f) => `test/engine-parity/${f}`).sort();
+    const pinned = [...parsePins(text).keys()].sort();
+    expect({ missing: files.filter((f) => !pinned.includes(f)), stale: pinned.filter((f) => !files.includes(f)) })
+      .toEqual({ missing: [], stale: [] });
+    expect(renderPins(parsePins(text))).toBe(text);
+  });
+});

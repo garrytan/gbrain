@@ -6,7 +6,9 @@
 //!
 //! The scope is `scopeFilter`: the source filter, the private-page policy, the live test of
 //! `pageReadFilter` (not soft-deleted, not quarantined, source present and not archived), the page
-//! kind, the types and the excluded slug prefixes. Trust floors are refused by the TypeScript member.
+//! kind, the types and the excluded slug prefixes, and `pageEligibleSql`: the trust floor
+//! (`minTrust`, the page's stamped tier at or above it) and the flagged-page filter (`suppressFlagged`,
+//! no `activationSuppressedSql` receipt, `trust::activation_suppressed`).
 //!
 //! A page is served when its text projection is its knowledge revision or the pre-activation marker
 //! (`servedTextProjectionFilter`); otherwise it waits. Its class is `projectionClassSql`: `archived`
@@ -20,13 +22,14 @@
 
 use crate::Store;
 use crate::cli_reads::pg_text::pg_lower;
-use crate::error::Result;
+use crate::error::{Result, StoreError};
 use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::keyword::parser::is_alnum_char;
 use crate::kv::KvRead;
 use crate::pages::{PageRecord, all_pages, read_page_by_id};
 use crate::persistence::activation_started_us;
 use crate::sources::read_source;
+use crate::trust::{TrustTier, activation_suppressed};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -36,7 +39,7 @@ const COVERAGE_COUNT_CAP: u64 = 1000;
 const ACTIVATION_SERVED_REVISION: &str = "00000000-0000-0000-0000-000000000153";
 const QUARANTINE_KEY: &str = "quarantine";
 
-/// `ProjectionReadinessScope` without the trust options, which the member refuses.
+/// `ProjectionReadinessScope`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CoverageScope {
@@ -53,6 +56,12 @@ pub struct CoverageScope {
     pub types: Option<Vec<String>>,
     #[serde(default)]
     pub exclude_slug_prefixes: Vec<String>,
+    /// The trust floor: a page in scope has a tier at or above it. None (or empty) keeps every tier.
+    #[serde(default)]
+    pub min_trust: Option<String>,
+    /// Leaves out a page that `activationSuppressedSql` suppresses.
+    #[serde(default)]
+    pub suppress_flagged: bool,
 }
 
 /// `CoverageRelevance` with its patterns given as query words.
@@ -207,7 +216,24 @@ fn in_scope(
     {
         return Ok(false);
     }
-    Ok(true)
+    let tier = TrustTier::stored(page.trust_tier.as_deref());
+    if let Some(floor) = min_trust(scope)?
+        && tier.rank() < floor.rank()
+    {
+        return Ok(false);
+    }
+    Ok(!(scope.suppress_flagged && activation_suppressed(read, "pages", page.id, tier)?))
+}
+
+/// The scope's trust floor (`trustFloorSql`): none when unset or empty, and a refusal for a name
+/// that is no tier.
+fn min_trust(scope: &CoverageScope) -> Result<Option<TrustTier>> {
+    match scope.min_trust.as_deref() {
+        None | Some("") => Ok(None),
+        Some(name) => TrustTier::parse(name).map(Some).ok_or_else(|| {
+            StoreError::invalid(format!("minTrust: \"{name}\" names no trust tier"))
+        }),
+    }
 }
 
 /// `haystack ~ '(^|[^[:alnum:]])<term>([^[:alnum:]]|$)'`: `term` occurs with no alphanumeric character

@@ -69,6 +69,36 @@ describe('engine parity: versions', () => {
   );
 
   parityTest(
+    'createVersion snapshots the page\'s stamped trust tier and write origin, not the snapshot writer\'s',
+    { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'createVersion', 'getVersions'] },
+    async (engine) => {
+      const declared = <T>(tier: string, origin: Record<string, unknown> | null, fn: (tx: typeof engine) => Promise<T>) =>
+        engine.transaction(async (tx) => {
+          await tx.applyTransactionSettings(['gbrain.write_trust_tier', 'gbrain.write_origin'], [tier, origin ? JSON.stringify(origin) : '']);
+          return fn(tx);
+        });
+      const trust = (version: object) => {
+        const v = version as { trust_tier?: unknown; write_origin?: unknown };
+        return {
+          tier: v.trust_tier ?? null,
+          origin: typeof v.write_origin === 'string' ? JSON.parse(v.write_origin) : v.write_origin ?? null,
+        };
+      };
+      const body = { type: 'note' as const, title: 'Trusted', compiled_truth: 'Curated body.', timeline: '' };
+      await declared('operator_curated', { channel: 'import' }, tx => tx.putPage('notes/trusted', body));
+      const curated = trust(await engine.createVersion('notes/trusted'));
+      expect(curated).toEqual({ tier: 'operator_curated', origin: { channel: 'import' } });
+      const byAgent = trust(await declared('agent_written', { channel: 'agent' }, tx => tx.createVersion('notes/trusted')));
+      expect(byAgent).toEqual(curated);
+      await engine.putPage('notes/plain', { ...body, title: 'Plain' });
+      const plain = trust(await engine.createVersion('notes/plain'));
+      expect(plain).toEqual({ tier: 'unknown', origin: null });
+      const listed = (await engine.getVersions('notes/trusted')).map(v => 'trust_tier' in v);
+      return { curated, byAgent, plain, listed };
+    },
+  );
+
+  parityTest(
     'createVersion on a missing page throws; getVersions of a missing page is empty',
     { methods: ['createVersion', 'getVersions'] },
     async (engine) => {

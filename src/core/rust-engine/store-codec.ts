@@ -137,7 +137,11 @@ export function toVersion<T extends object>(version: T): T {
   return { ...rest, replaced_because: null, valid_from: validDate(frontmatter.valid_from), valid_until: validDate(frontmatter.valid_until) } as T;
 }
 
-/** The row `createVersion` returns: PGLite hands back the whole inserted row, columns and defaults included. */
+/**
+ * The row `createVersion` returns: PGLite hands back the whole inserted row, columns and defaults included. The store
+ * sends the snapshot's `trust_tier` and `write_origin` (copied from the page, as `snapshot_version_trust` does), which
+ * replace the defaults here.
+ */
 export function toCreatedVersion<T extends object>(version: T): T {
   const rest = versionHash(version);
   return {

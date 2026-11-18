@@ -368,6 +368,37 @@ fn all_receipts(read: &dyn KvRead) -> Result<Vec<ReceiptRecord>> {
 }
 
 /// The receipts of one target, through the unique index.
+/// `ACTIVATION_REASON_FAMILIES` (src/core/eligibility/sql.ts): the write-gate reason families that
+/// make an unconfirmed row ineligible for proactive injection.
+const ACTIVATION_REASON_FAMILIES: [&str; 4] = [
+    "standing_instruction",
+    "override",
+    "exfiltration",
+    "credential",
+];
+
+/// `activationSuppressedSql`: a row whose tier is at or below `agent_written`
+/// (`ACTIVATION_TIER_CEILING`) and that holds a `flag` receipt in an activation reason family.
+/// Owner confirmation raises the tier, which lifts the suppression without touching the receipt.
+pub(crate) fn activation_suppressed(
+    read: &dyn KvRead,
+    target_table: &str,
+    target_id: u64,
+    tier: crate::trust::TrustTier,
+) -> Result<bool> {
+    if tier.rank() > crate::trust::TrustTier::AgentWritten.rank() {
+        return Ok(false);
+    }
+    Ok(receipts_of(read, target_table, &target_id.to_string())?
+        .iter()
+        .any(|r| {
+            r.verdict == "flag"
+                && r.reason_families
+                    .iter()
+                    .any(|f| ACTIVATION_REASON_FAMILIES.contains(&f.as_str()))
+        }))
+}
+
 fn receipts_of(
     read: &dyn KvRead,
     target_table: &str,
