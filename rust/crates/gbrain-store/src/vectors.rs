@@ -657,11 +657,6 @@ impl Store {
     }
 }
 
-/// The per-store cache of decoded vectors (`Store::vectors`). Empty in core; the vector search
-/// family gives it its fields and reads it from `Store::vectors`.
-#[derive(Debug, Default)]
-pub(crate) struct VectorCache {}
-
 /// Deletes this family's records of a page that is deleted for good (`cascade::remove_page_rows`).
 /// This family keeps no records: the vectors are the embeddings family's.
 pub(crate) fn remove_page_rows(_tx: &mut dyn KvWrite, _page: &PageRecord) -> Result<()> {
