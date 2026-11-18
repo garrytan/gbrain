@@ -62,4 +62,26 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.set_source_archived(&id, archived))
     }
+
+    /// `getSource(id)`: the `SourceDetailRow` or `null`.
+    #[napi]
+    pub fn get_source<'env>(&self, env: &'env Env, id: String) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.get_source(&id))
+    }
+
+    /// `listSourceLocalPaths()`: every non-empty source local path.
+    #[napi]
+    pub fn list_source_local_paths<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, |s| s.list_source_local_paths())
+    }
+
+    /// `getSourceStrictness(id)`: whether the source is git-canonical.
+    #[napi]
+    pub fn get_source_strictness<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.get_source_strictness(&id))
+    }
 }
