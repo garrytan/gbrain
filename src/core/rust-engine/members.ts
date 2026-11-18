@@ -427,8 +427,9 @@ export const RUST_ENGINE_MEMBERS = {
   deleteEvalCandidatesBefore: 'eval_capture',
   logEvalCaptureFailure: 'eval_capture',
   listEvalCaptureFailures: 'eval_capture',
-  // telemetry (engine-sql/telemetry.ts): search telemetry, the MCP request log with its retention prune, and the MCP
-  // usage reads; the store serves every member (rust/docs/store/telemetry.md).
+  // telemetry (engine-sql/telemetry.ts, engine-sql/chat-usage.ts): search telemetry, the MCP request log with its
+  // retention prune, the MCP usage reads and the chat usage ledger; the store serves every member
+  // (rust/docs/store/telemetry.md).
   recordSearchTelemetry: 'telemetry',
   readSearchStats: 'telemetry',
   readClientOpUsage: 'telemetry',
@@ -437,6 +438,8 @@ export const RUST_ENGINE_MEMBERS = {
   logMcpRequest: 'telemetry',
   readMcpLogPruneCutoff: 'telemetry',
   pruneMcpRequestLogBatch: 'telemetry',
+  logChatUsage: 'telemetry',
+  readChatUsage: 'telemetry',
   // ingest_log
   logIngest: 'ingest_log',
   getIngestLog: 'ingest_log',

@@ -1,13 +1,14 @@
 /**
  * Telemetry members (BrainEngine recordSearchTelemetry, readSearchStats, logMcpRequest, readMcpLogPruneCutoff,
- * pruneMcpRequestLogBatch, readClientOpUsage, readMcpRollupPrunedBefore, readMcpLifetimeUsage). The store keeps the `search_telemetry`
- * rows, the MCP request log and its tally (rust/docs/store/telemetry.md). The store answers a timestamp as ISO text;
+ * pruneMcpRequestLogBatch, readClientOpUsage, readMcpRollupPrunedBefore, readMcpLifetimeUsage, logChatUsage, readChatUsage). The store
+ * keeps the `search_telemetry` rows, the MCP request log and its tally, and the chat usage ledger (rust/docs/store/telemetry.md). The store answers a timestamp as ISO text;
  * these members turn it into a Date, as PGLite's driver reads a `timestamptz`.
  */
 import type {
   McpLifetimeUsageRow, McpLogPruneBatch, McpLogPruneCutoff, McpOpUsageRow, McpRequestLogRow, McpRollupPrunedBefore, SearchTelemetryBucket,
   SearchTelemetryRow,
 } from '../../engine-sql/telemetry.ts';
+import type { ChatUsageAggregateRow, ChatUsageLogRow, ChatUsageWindow } from '../../engine-sql/chat-usage.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 type StoreRow = Record<string, unknown>;
@@ -60,4 +61,23 @@ export const readMcpLifetimeUsage: StoreMember<[tokenNames: readonly string[]], 
   const rows: StoreRow[] = await storeCall({ member: 'readMcpLifetimeUsage' },
     () => brain.readMcpLifetimeUsage(tokenNames === null || tokenNames === undefined ? null : [...tokenNames]));
   return rows.map((r) => ({ token_name: String(r.token_name), requests: Number(r.requests), last_used_at: toDate(r.last_used_at) }));
+};
+
+/** Appends one chat usage ledger row; `created_at` crosses as ISO text (a Date) or the caller's text, null for now. */
+export const logChatUsage: StoreMember<[row: ChatUsageLogRow], void> = async (brain, row) => {
+  const created = row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at ?? null;
+  await storeCall({ member: 'logChatUsage' }, () => brain.logChatUsage({ ...row, created_at: created }));
+};
+
+/** The ledger sums per `(model, phase)` over the last `days` in cost order, and the first logged time as timestamp text. */
+export const readChatUsage: StoreMember<[days: number], ChatUsageWindow> = async (brain, days) => {
+  const out: { rows: StoreRow[]; logged_since: string | null } =
+    await storeCall({ member: 'readChatUsage' }, () => brain.readChatUsage(days ?? null));
+  const rows: ChatUsageAggregateRow[] = out.rows.map((r) => ({
+    model: String(r.model), phase: r.phase === null || r.phase === undefined ? null : String(r.phase),
+    calls: Number(r.calls), input_tokens: Number(r.input_tokens), output_tokens: Number(r.output_tokens),
+    cache_read_tokens: Number(r.cache_read_tokens), cache_write_tokens: Number(r.cache_write_tokens),
+    cost_usd: r.cost_usd === null || r.cost_usd === undefined ? null : Number(r.cost_usd), unpriced_calls: Number(r.unpriced_calls),
+  }));
+  return { rows, logged_since: out.logged_since ?? null };
 };
