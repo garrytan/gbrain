@@ -338,14 +338,17 @@ fn remove_chunk_record(
 
 /// Replaces a page's chunks with `chunks` (an empty list removes them all). A chunk that keeps
 /// its index keeps its id; the chunk-delete hook gets the ids of the indexes that are gone. When `seal` is set the page's `text_projection_revision` becomes its
-/// `knowledge_revision`: the chunks now describe the current text. A seal also stamps the page `chunker_version` at
-/// `SAFE_FENCE_CHUNKER_VERSION` (PGLite's `sealChunkerVersion`); a write that is not a seal stamps it -1 when it changes
-/// what the page holds (`chunkWriteInvalidations`), so the next seal is the only thing that certifies the chunks again.
+/// `knowledge_revision`: the chunks now describe the current text. A `certified` seal (the caller sends chunks it ran
+/// through the protected-fence sanitizer: `sealChunks`) also stamps the page `chunker_version` at
+/// `SAFE_FENCE_CHUNKER_VERSION` (PGLite's `sealChunkerVersion`). A write that is not certified (a plain upsert, or the
+/// store's own raw split of a body that no sanitizer read) stamps it -1 when it changes what the page holds or the page
+/// is below the fence (`chunkWriteInvalidations`), so an explicit certified seal is the only thing that makes chunks safe.
 pub(crate) fn replace_chunks(
     tx: &mut dyn KvWrite,
     page: &mut PageRecord,
     chunks: &[ChunkInput],
     seal: bool,
+    certified: bool,
     merge: bool,
 ) -> Result<()> {
     let previous: HashMap<u32, ChunkRecord> = read_chunks(&*tx, page.id)?
@@ -414,6 +417,8 @@ pub(crate) fn replace_chunks(
     put_json(tx, &keys::meta(STATS), &stats)?;
     if seal {
         page.text_projection_revision = Some(page.knowledge_revision.clone());
+    }
+    if seal && certified {
         page.chunker_version = Some(SAFE_FENCE_CHUNKER_VERSION);
         write_page(tx, page)?;
     } else if changes_chunks
@@ -424,6 +429,8 @@ pub(crate) fn replace_chunks(
         // `UPDATE pages SET chunker_version = -1 WHERE NOT (chunker_version >= 4) OR <the chunks change>`: a page that holds
         // no version is not below the fence (NULL), so it takes the stamp only when the chunks change.
         page.chunker_version = Some(-1);
+        write_page(tx, page)?;
+    } else if seal {
         write_page(tx, page)?;
     }
     Ok(())
@@ -856,14 +863,14 @@ impl Store {
             }
             if chunks.is_empty() && !seal {
                 // PGLite: an empty write removes the chunks and leaves the page unsealed.
-                replace_chunks(tx, &mut page, chunks, false, true)?;
+                replace_chunks(tx, &mut page, chunks, false, false, true)?;
                 if page.text_projection_revision.is_some() {
                     page.text_projection_revision = None;
                     write_page(tx, &page)?;
                 }
                 return Ok(());
             }
-            replace_chunks(tx, &mut page, chunks, seal, !seal)
+            replace_chunks(tx, &mut page, chunks, seal, seal, !seal)
         })
     }
 

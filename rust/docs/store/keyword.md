@@ -70,7 +70,7 @@ so `deletePage` is the one path that deletes an owner-only page here.
 
 The safe-chunks rule keeps a page only when its recorded `chunker_version` is at least the safe fence chunker (4), as
 SQL's `chunker_version >= 4`: a page with no recorded version is dropped too (the comparison is NULL). The store stamps
-4 when `sealChunks` or a put seals a page's chunks and -1 when a later `upsertChunks` changes them (`chunk_queries.md`).
+4 when `sealChunks` seals a page's chunks (a put's own chunks are not certified and never stamp 4) and -1 when a later `upsertChunks` changes them (`chunk_queries.md`).
 
 This store keeps no slug aliases or rename history (the aliases family is not served), so the origin checks of the
 policy read those lookups as empty. When the aliases family lands, `facts/privacy.rs` reads them as PGLite does.

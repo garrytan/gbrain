@@ -921,12 +921,12 @@ pub(crate) fn put_page_in(
         return Ok(record);
     }
     match &options.chunks {
-        Some(chunks) => replace_chunks(tx, &mut record, chunks, true, false)?,
+        Some(chunks) => replace_chunks(tx, &mut record, chunks, true, false, false)?,
         None if record.text_projection_revision.as_deref()
             != Some(record.knowledge_revision.as_str()) =>
         {
             let chunks = auto_chunks(&record);
-            replace_chunks(tx, &mut record, &chunks, true, false)?
+            replace_chunks(tx, &mut record, &chunks, true, false, false)?
         }
         None => {}
     }

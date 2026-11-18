@@ -436,6 +436,64 @@ mod tests {
         );
     }
 
+    /// The chunks `put_page` makes itself are raw splits of the body: nothing removed the protected facts / takes fences
+    /// from them, so they are not certified by the safe-fence stamp (only a `sealChunks` of sanitized chunks is). A
+    /// world-readable note with a secret inside a takes fence, written through the default path, must not come back
+    /// from a `requireSafeChunks` search, while the same search without the rule still finds it and a later explicit
+    /// seal makes the page safe again.
+    #[test]
+    fn chunks_made_by_put_page_are_not_safe_until_an_explicit_seal() {
+        let store = crate::test_support::store();
+        let secret = "<!--- gbrain:takes:begin -->\n| 1 | heron owns the vault, code ZEPHYR-9 | fact | 1 | 2026 |\n<!--- gbrain:takes:end -->";
+        put(
+            &store,
+            "notes/world",
+            &format!("heron overview\n\n{secret}"),
+        );
+        let hits = |o: Value| {
+            slugs(
+                &store
+                    .search_keyword_arm("heron", "heron", &opts(o))
+                    .unwrap(),
+            )
+        };
+        assert_eq!(hits(json!({ "limit": 20.0 })), ["notes/world"]);
+        assert!(hits(json!({ "limit": 20.0, "requireSafeChunks": true })).is_empty());
+        let version = |store: &Store| {
+            crate::pages::read_page(
+                &*store.read().unwrap(),
+                crate::sources::DEFAULT_SOURCE,
+                "notes/world",
+            )
+            .unwrap()
+            .unwrap()
+            .chunker_version
+        };
+        assert!(version(&store).is_none_or(|v| v < crate::chunks::SAFE_FENCE_CHUNKER_VERSION));
+        // The explicit seal of sanitized chunks certifies the page.
+        let clean = crate::chunks::ChunkInput {
+            chunk_text: "heron overview".into(),
+            ..crate::chunks::ChunkInput::default()
+        };
+        let seal = crate::chunks::UpsertChunksOptions {
+            seal: true,
+            ..crate::chunks::UpsertChunksOptions::default()
+        };
+        store.upsert_chunks("notes/world", &[clean], &seal).unwrap();
+        assert_eq!(
+            version(&store),
+            Some(crate::chunks::SAFE_FENCE_CHUNKER_VERSION)
+        );
+        assert_eq!(
+            hits(json!({ "limit": 20.0, "requireSafeChunks": true })),
+            ["notes/world"]
+        );
+        // A rewrite through the default path takes the safe stamp away again.
+        put(&store, "notes/world", &format!("heron changed\n\n{secret}"));
+        assert!(version(&store).is_some_and(|v| v < crate::chunks::SAFE_FENCE_CHUNKER_VERSION));
+        assert!(hits(json!({ "limit": 20.0, "requireSafeChunks": true })).is_empty());
+    }
+
     /// `requiresSafeChunks` (`chunker_version >= 4`): a page whose recorded chunker version is below the safe fence
     /// chunker, or that records none (the comparison is NULL), is hidden; only a page at the safe version is kept.
     #[test]

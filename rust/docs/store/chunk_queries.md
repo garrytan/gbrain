@@ -83,7 +83,10 @@ given, at most `batchSize` rows (default 50). A negative or fractional `batchSiz
 ## Known differences
 
 - `sealed` is `COALESCE(chunker_version, 0) >= 4`, as in SQL: a page with no recorded version reads `sealed: false`.
-  `sealChunks` (and a put that chunks the page) stamps version 4, even for an empty chunk list; an `upsertChunks`
+  `sealChunks` stamps version 4, even for an empty chunk list. A put that chunks the page (its own raw split of the
+  body, or the `chunks` it was given) seals the text projection but does not stamp 4: no sanitizer read those chunks,
+  so the page stays below the fence (stamped -1 when it changes the chunks or sits below 4, else left) until a
+  `sealChunks` of sanitized chunks. An `upsertChunks`
   that changes a chunk (text, source or modality, a given metadata value, or an added or dropped index) stamps -1,
   and one that repeats the stored chunks leaves the stamp, as `chunkWriteInvalidations` does.
 - The activation sentinel revision (`ACTIVATION_SERVED_REVISION`) of the served-projection filter does not exist in
