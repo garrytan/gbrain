@@ -963,22 +963,29 @@ describe('engine parity: facts', () => {
     { methods: ['insertFact', 'insertFacts', 'listFactsByEntity'] },
     async (engine) => {
       const ent = 'people/xan-example';
+      // Each input must be refused and leave no row. The refusal text names the type the engine cast the
+      // literal to (Postgres casts to the column's halfvec, PGLite to vector: engine-sql/facts.ts), so it
+      // is not compared.
+      const refusedLeavingNoRow = async (attempt: Promise<unknown>) => {
+        const refused = await attempt.then(() => false, () => true);
+        const saved = (await engine.listFactsByEntity(SRC, ent)).length;
+        return { refused, saved };
+      };
       const one = (embedding: Float32Array) =>
-        messageOf(engine.insertFact({ fact: 'x-bad', entity_slug: ent, source: 'mcp:remember', embedding, embedding_model: 'm1' }, { source_id: SRC }));
+        refusedLeavingNoRow(engine.insertFact({ fact: 'x-bad', entity_slug: ent, source: 'mcp:remember', embedding, embedding_model: 'm1' }, { source_id: SRC }));
       const narrow = await one(new Float32Array([0.1, 0.2, 0.3]));
       const nan = await one(vec(0.1, Number.NaN));
       const empty = await one(new Float32Array(0));
       const huge = await one(vec(70000));
       const big = await one(vec(1e6));
       const edge = await one(vec(65520));
-      const batch = await messageOf(engine.insertFacts(
+      const batch = await refusedLeavingNoRow(engine.insertFacts(
         [{ row_num: 1, source_markdown_slug: ent, fact: 'x-fence', entity_slug: ent, source: 'fence', embedding: new Float32Array([1, 2]), embedding_model: 'm1' }],
         { source_id: SRC },
       ));
-      const left = texts(await engine.listFactsByEntity(SRC, ent));
-      for (const m of [narrow, nan, empty, huge, big, edge, batch]) expect(m).not.toBe('ok');
-      expect(left).toEqual([]);
-      return { narrow, nan, empty, huge, big, edge, batch, left };
+      const outcomes = { narrow, nan, empty, huge, big, edge, batch };
+      for (const o of Object.values(outcomes)) expect(o).toEqual({ refused: true, saved: 0 });
+      return outcomes;
     },
   );
 
