@@ -1103,6 +1103,17 @@ export class PostgresEngine implements BrainEngine {
   countFactEmbeddingCoverage(opts: { sourceId?: string | null; model: string; dims: number }) { return factsDoctorImpl.countFactEmbeddingCoverage(this.executeRaw.bind(this), opts); }
 
   // Facts statements, command, cycle and fence reads (engine-sql/facts-cycle.ts), through executeRaw as before.
+  listActiveFactsForEntity(sourceId: string, entitySlug: string, limit: number) { return factsCycleImpl.listActiveFactsForEntity(this.executeRaw.bind(this), sourceId, entitySlug, limit); }
+  listFreshExtractionOutcomes(sourceId: string, slugs: string[], sources: string[], preferredSource: string) { return factsCycleImpl.listFreshExtractionOutcomes(this.executeRaw.bind(this), sourceId, slugs, sources, preferredSource); }
+  listFenceRowGroups() { return factsCycleImpl.listFenceRowGroups(this.executeRaw.bind(this)); }
+  readFactSubject(id: number) { return factsCycleImpl.readFactSubject(this.executeRaw.bind(this), id); }
+  listFactsForPage(sourceId: string, slug: string) { return factsCycleImpl.listFactsForPage(this.executeRaw.bind(this), sourceId, slug); }
+  countLegacyFactsPending(sourceId: string) { return factsCycleImpl.countLegacyFactsPending(this.executeRaw.bind(this), sourceId); }
+  countUnconsolidatedFactsBySource(opts: { sourceId?: string; worldOnly: boolean; minPerBucket: number }) { return factsCycleImpl.countUnconsolidatedFactsBySource(this.executeRaw.bind(this), opts); }
+  findBulkFactDays(sourceIds: string[] | undefined, rule: factsCycleImpl.BulkDayRule) { return factsCycleImpl.findBulkFactDays(this.executeRaw.bind(this), sourceIds, rule); }
+  maxFenceRowNum(sourceId: string, slug: string) { return factsCycleImpl.maxFenceRowNum(this.executeRaw.bind(this), sourceId, slug); }
+  listStoredFenceFactRows(sourceId: string, slug: string) { return factsCycleImpl.listStoredFenceFactRows(this.executeRaw.bind(this), sourceId, slug); }
+  countWorldFacts(opts: factsCycleImpl.EntityFactCountOpts) { return factsCycleImpl.countWorldFacts(this.executeRaw.bind(this), opts); }
 
   // Facts statements, purge, withdrawal, relink and fence repair (engine-sql/facts-purge.ts), through executeRaw as before.
 

@@ -150,6 +150,23 @@ refuse their `hasAttempts: true` form.
 
 ## Group 5: command, cycle and fence reads (`facts/cycle.rs`)
 
+Each member is one store call (a scan of the fact rows, no SQL). The TypeScript statements live in
+`src/core/engine-sql/facts-cycle.ts`; `Pg` and `PGLite` run them, the store answers the same rows.
+
+| member | what it answers | served or refused |
+| --- | --- | --- |
+| `listActiveFactsForEntity` | an entity's unexpired, unlapsed facts, highest confidence then newest id first, at most `limit` | served |
+| `listFreshExtractionOutcomes` | the unexpired `audit:` rows of named pages, the preferred source first within a page | served (exact ties break by id) |
+| `listFenceRowGroups` | per page coordinate with fenced rows (no `cli:` rows): row numbers and whether all are expired | served (no set order) |
+| `readFactSubject` | a fact's source and page slug (its page, else its entity), or null | served |
+| `listFactsForPage` | the fence-owned rows of a page by row number then id; times come back as `Date`s | served |
+| `countLegacyFactsPending` | per entity page, the unexpired unfenced non-observation rows of a live page in a source with a checkout | served (no set order) |
+| `countUnconsolidatedFactsBySource` | the consolidate buckets of at least `minPerBucket` active unconsolidated facts | served; "names readers" is a page whose frontmatter has `readable_by` (the folder-rule tables and `page_readers` are empty, as in `privacy.rs`) |
+| `findBulkFactDays` | the bulk days of unarchived sources under a `rule`, with top sources and self-dated claims | served; refused when a count threshold is not an integer or the share is not finite |
+| `maxFenceRowNum` | the largest `row_num` of a page coordinate, 0 for none | served |
+| `listStoredFenceFactRows` | the numbered rows of a page coordinate, oldest id first | served |
+| `countWorldFacts` | the entity card's unexpired fact count under its visibility and privacy | served; refused under a trust floor (no `trust_tier`), under `suppressFlagged` (no `write_gate_receipts`) and for `excludePrivate` when the caller's rendering is not the store's policy. Deleted and quarantined pages are always hidden, and `needs_rederive` is treated as empty, as in `takes.rs` |
+
 ## Group 5: purge, withdrawal, relink and fence repair (`facts/purge.rs`)
 
 SQL in `src/core/engine-sql/facts-purge.ts`; each member sends the arguments of its `BrainEngine`
