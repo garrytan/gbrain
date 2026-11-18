@@ -318,6 +318,7 @@ refuse on this engine.
   bare date, a time with no zone) as written, and the store refuses it with `invalid_argument`, where
   Postgres would read it in the session time zone.
 - Deleting a source removes its loops (`ON DELETE CASCADE`).
+
 ## The fence guard's reads (`facts/fence.rs`)
 
 Two reads of one page's fact rows, for the page publication path (`engine-sql/facts.ts`
