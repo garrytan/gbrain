@@ -22,10 +22,7 @@ export const READ_BUDGET_EXCERPT_BYTES = 400;
 
 /** Bytes of `get_page` output this job has already been given. */
 async function spentReadBytes(engine: BrainEngine, jobId: number): Promise<number> {
-  const [row] = await engine.executeRaw<{ used: number | string | null }>(
-    `SELECT COALESCE(sum(octet_length(output::text)), 0) AS used FROM subagent_tool_executions
-      WHERE job_id = $1 AND tool_name = 'brain_get_page' AND status = 'complete'`, [jobId]);
-  return Number(row?.used ?? 0);
+  return (await engine.summarizeSubagentToolExecutions([jobId], { toolName: 'brain_get_page', status: 'complete' })).output_bytes;
 }
 
 /** The read as returned when it fits the budget, else a summary naming the page, the budget and what to do next. */

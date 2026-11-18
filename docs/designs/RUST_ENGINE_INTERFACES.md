@@ -148,6 +148,7 @@ Reserved tags:
 | dream | `Y` | `DREAM_VERDICT` | no |
 | eval_capture | `Z` | `EVAL_CAPTURE` | no |
 | code_edges | `H` | `CODE_EDGE` | yes |
+| code_edges (`code_traversal_cache`) | `g` | `CODE_TRAVERSAL_CACHE` | no |
 | salience | `s` | `SALIENCE` | yes |
 | stats | `n` | `INGEST_LOG` | no |
 | raw_files | `r` | `RAW_FILES` | yes |
@@ -1008,7 +1009,8 @@ Code call edges between chunks and symbols.
 - **Tag:** `H` (`CODE_EDGE`). Cascade on page delete: yes.
 - **Members (5), capability:** `code_edges` (5).
 - **Store and binding:** `addCodeEdges` (`add_code_edges`), `deleteCodeEdgesForChunks` (`delete_code_edges_for_chunks`), `getCallersOf` (`get_callers_of`), `getCalleesOf` (`get_callees_of`), `getEdgesByChunk` (`get_edges_by_chunk`).
-- **Postgres tables:** `code_edges_chunk`, `code_edges_symbol`.
+- **Traversal cache (group D):** `getCodeTraversalCache` (`get_code_traversal_cache`), `putCodeTraversalCache` (`put_code_traversal_cache`), `clearCodeTraversalCache` (`clear_code_traversal_cache`), in `gbrain-store/src/code_edges/traversal_cache.rs` and `store-members/code-traversal-cache.ts`, under tag `g` (`CODE_TRAVERSAL_CACHE`, no cascade: the table has no foreign key). See `rust/docs/store/code-traversal-cache.md`.
+- **Postgres tables:** `code_edges_chunk`, `code_edges_symbol`, `code_traversal_cache`.
 - **Keys:** `H 0x01 <edge id>` row; `H 0x02 <from chunk id> <edge id>`; `H 0x03 <to chunk id> <edge id>`; `H 0x04 <source> 0x00 <to symbol> 0x00 <edge id>`.
 - **Depends on:** Core chunk ids. Postgres deletes edges when their chunk is deleted. Fill in this family's `remove_chunk_rows` hook (built; "Core hooks"): it gets the ids of every chunk that is gone, on a chunk replace, `deleteChunks` and a hard page delete.
 - **Estimate:** about 1 to 2 days.
@@ -1304,7 +1306,7 @@ the same rows into one member, so the member counts here are smaller than the si
 
 These four sections are design only. No file, tag, constant or list entry below exists yet. The tags are proposed:
 core adds them to the reserved block in `keys.rs` and to the reserved tag table above in one reviewed change, and
-until then no family writes under them. The free lowercase bytes today are `g h i x y z` (`d`, `m` and `t` are now reserved above, `a` is telemetry and `f` is the dream synthesis completion archive).
+until then no family writes under them. The free lowercase bytes today are `h i x y z` (`g` is the code traversal cache) (`d`, `m` and `t` are now reserved above, `a` is telemetry and `f` is the dream synthesis completion archive).
 
 | Family | Proposed tag | Proposed constant | Cascade on page delete | Owner |
 |---|---|---|---|---|
@@ -1561,6 +1563,25 @@ The Minion job queue, cycle locks, spend and rate leases, and wake subscriptions
     `listQueueWedgeCounts`, `listPrivateQueueHealth`, `readWedgeSignals`, `readOldestWaitingAge`,
     `listStuckActiveJobsByName`) serve the doctor's queue checks, the advisor's stalled jobs and the submit-time
     probe (`src/core/engine-sql/jobs-health.ts`, `rust/docs/store/jobs-health.md`). `parity: test/engine-parity/jobs-health.test.ts`.
+  - Spend reservations and the lease-pressure log. Eight members (`readJobSpendTree`, `insertSpendReservation`,
+    `expireSpendReservations`, `settleSpendReservation`, `markSpendUsageUnknown`, `insertLeasePressure`,
+    `countLeasePressure`, `listRecentLeasePressure`) serve `describeJobs`, the hold's insert, sweep, settle and
+    unknown-usage mark, and the lease-pressure audit, `jobs stats` and the `subagent_health` check
+    (`src/core/engine-sql/jobs-spend.ts`, `rust/docs/store/jobs-spend.md`). The statements that need `mcp_spend_log` or
+    `oauth_clients` (`reserve`, the capped group read, the log insert inside `settle`, `getClientDailyCapCents`) stay raw
+    and the Rust engine refuses them. `parity: test/engine-parity/jobs-spend.test.ts`.
+  - Subagent transcript and tool ledger. Seventeen members (`listSubagentMessages`, `insertSubagentMessage`, `listSubagentToolExecutions`,
+    `recordSubagentToolExecutions`, `startSubagentToolExecution`, `completeSubagentToolExecution`, `failSubagentToolExecution`, the
+    write-outcome, oneshot-ledger and byte-sum reads, and the dream cycle's provenance reads) serve `subagent_messages` and
+    `subagent_tool_executions` (`src/core/engine-sql/jobs-subagent.ts`, `rust/docs/store/jobs-subagent.md`). `parity: test/engine-parity/jobs-subagent.test.ts`.
+  - Wake subscriptions. Nineteen members serve the Wakeshift report-back tables (`wake_subscriptions`, `wake_crons`,
+    `wake_cron_runs`, `wake_terms_acceptances`, `wake_forgets`): `openWakeWatch`, `listWakeWatches`, `endWakeWatches`,
+    `countWakeWatches`, `readWakeDoctor`, `countPendingWakeForgets`, `listWakeCrons`, `addWakeCron`, `removeWakeCron`,
+    `hasWakeCron`, `recordWakeCronRun`, `hasWakeTermsAcceptance`, `recordWakeTermsAcceptance` and, for the drainer,
+    `listDueWakeWatches`, `claimWakeWatch`, `settleWakeWatch`, `queueWakeForget`, `claimWakeForgets`,
+    `settleWakeForget` (`src/core/engine-sql/jobs-wake.ts`, `rust/docs/store/jobs-wake.md`). The tables have no
+    foreign keys, so a deleted job, request or member changes nothing. `wakeshift/forget.ts` and `principalLive` stay on
+    `executeRaw`. `parity: test/engine-parity/jobs-wake.test.ts`.
   - Wake. The `minion_job_notify` trigger's `pg_notify` has no store equivalent: a Rust worker uses the short poll,
     which `sync-queue-wake.ts` already chooses when LISTEN is not available.
 - **Depends on:** the transactions family (`w`) for the members a caller runs inside its own transaction.

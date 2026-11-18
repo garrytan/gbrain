@@ -28,7 +28,10 @@ test/engine-parity/jobs-checks.test.ts	9	0
 test/engine-parity/jobs-health.test.ts	7	0
 test/engine-parity/jobs-insight.test.ts	2	0
 test/engine-parity/jobs-queue.test.ts	33	4
+test/engine-parity/jobs-spend.test.ts	4	0
 test/engine-parity/jobs-status.test.ts	11	0
+test/engine-parity/jobs-subagent.test.ts	16	0
+test/engine-parity/jobs-wake.test.ts	15	0
 test/engine-parity/jobs.test.ts	13	1
 test/engine-parity/keyword-visibility.test.ts	4	0
 test/engine-parity/lifecycle.test.ts	10	1
@@ -49,12 +52,12 @@ test/engine-parity/source-resolver-reads.test.ts	11	0
 test/engine-parity/stats-vectors.test.ts	2	0
 test/engine-parity/stats.test.ts	6	0
 test/engine-parity/sync-aliases.test.ts	9	0
-test/engine-parity/takes.test.ts	22	1
+test/engine-parity/takes.test.ts	23	2
 test/engine-parity/telemetry.test.ts	10	0
 test/engine-parity/timeline-reads.test.ts	4	0
 test/engine-parity/timeline.test.ts	18	1
 test/engine-parity/transaction-settings.test.ts	5	1
-test/engine-parity/traversal-cache.test.ts	0	2
+test/engine-parity/traversal-cache.test.ts	5	2
 test/engine-parity/trust-fence.test.ts	4	0
 test/engine-parity/trust-proposals.test.ts	3	0
 test/engine-parity/trust-reads.test.ts	6	0

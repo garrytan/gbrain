@@ -3,10 +3,13 @@
  * (rust/docs/store/takes-reads.md).
  *
  * `countMcpResolvedTakes` reads the caller's source and holder scope. Under `excludePrivate` the SQL adds the page
- * policy of the caller in context, which the store does not render, so it refuses with `engine_capability_missing`.
+ * policy of the caller in context (`privatePagesFilterForCaller('p')`): `storePagePolicy` sends the flags the store
+ * applies when the caller is the one the store models, and refuses with `engine_capability_missing` for a caller
+ * whose member pages, grants or lineage widen the policy.
  */
 import type { McpResolvedSpec, PurgeTakesSpec } from '../../engine-sql/takes-reads.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { storeCall, type StoreMember } from './common.ts';
+import { storePagePolicy } from './private-provenance.ts';
 
 export const countOffGridTakeWeights: StoreMember<[], { off_grid: number; total: number }> = (brain) =>
   storeCall({ member: 'countOffGridTakeWeights' }, () => brain.countOffGridTakeWeights());
@@ -23,10 +26,11 @@ export const listTakeRowsForPage: StoreMember<[pageId: number], Array<{ row_num:
   storeCall({ member: 'listTakeRowsForPage' }, () => brain.listTakeRowsForPage(pageId));
 
 export const countMcpResolvedTakes: StoreMember<[spec: McpResolvedSpec], number> = (brain, spec) => {
-  if (spec.excludePrivate) refuseMember('countMcpResolvedTakes', 'option excludePrivate');
+  const excludePrivate = storePagePolicy('countMcpResolvedTakes', spec.excludePrivate);
   return storeCall({ member: 'countMcpResolvedTakes' }, () => brain.countMcpResolvedTakes({
     sourceIds: spec.sourceIds ? [...spec.sourceIds] : null,
     holders: spec.holders ? [...spec.holders] : null,
+    excludePrivate: excludePrivate ?? null,
   }));
 };
 

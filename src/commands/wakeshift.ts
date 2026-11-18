@@ -21,7 +21,7 @@ import { opError } from '../core/ops/contract.ts';
 import { requireConsent } from '../core/consent.ts';
 import { WakeshiftError, WakeshiftKeyError, normalizeWakeshiftUrl, parseWakeshiftKey, wakeshiftClient, type WakeshiftKey } from '../core/wakeshift/client.ts';
 import { readWakeshiftKey, wakeshiftFileConfig, wakeshiftKeyFile, wakeshiftPublished, wakeshiftRuntime, wakeshiftSecret, type WakeshiftFileConfig } from '../core/wakeshift/config.ts';
-import { CRON_FINISHED, cronName, wakeshiftManifest, wakeshiftManifestHash } from '../core/wakeshift/events.ts';
+import { cronName, wakeshiftManifest, wakeshiftManifestHash } from '../core/wakeshift/events.ts';
 import { endAtWakeshift, liveAccessMembers } from '../core/wakeshift/drain.ts';
 import { WAKESHIFT_CONNECTOR_TERMS_URL, WAKESHIFT_PRIVACY_URL, httpsUrl, operatorTerms } from '../core/wakeshift/terms.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
@@ -82,8 +82,7 @@ function loadKey(): { key: WakeshiftKey; source: 'env' | 'file' } {
 
 async function watchCounts(engine: BrainEngine): Promise<Record<string, number>> {
   try {
-    const rows = await engine.executeRaw<{ state: string; last_error: string | null; n: number }>(
-      'SELECT state, last_error, count(*)::int AS n FROM wake_subscriptions GROUP BY state, last_error');
+    const rows = await engine.countWakeWatches();
     const out: Record<string, number> = { open: 0, delivered: 0, dead: 0, ended: 0, id_reused: 0 };
     for (const r of rows) {
       out[r.state] = (out[r.state] ?? 0) + Number(r.n);
@@ -209,9 +208,7 @@ async function enable(engine: BrainEngine, args: string[]): Promise<void> {
 
 async function disable(engine: BrainEngine, json: boolean): Promise<void> {
   writeFilePlane(w => ({ ...w, enabled: false }));
-  const rows = await engine.executeRaw<{ id: number; wake_user: string; ws_subscription_id: string }>(
-    `UPDATE wake_subscriptions SET state = 'ended', last_error = 'disabled', lease_until = NULL, updated_at = now() WHERE state = 'open'
-     RETURNING id, wake_user, ws_subscription_id`);
+  const rows = await engine.endWakeWatches({ reason: 'disabled' });
   let told = 0;
   if (rows.length > 0) {
     try {
@@ -244,10 +241,7 @@ async function test(json: boolean): Promise<void> {
 async function cron(engine: BrainEngine, args: string[], json: boolean): Promise<void> {
   const [verb, raw] = args;
   if (verb === 'list') {
-    const rows = await engine.executeRaw<{ name: string; created_at: Date | string; last_status: string | null; last_finished_at: Date | string | null }>(
-      `SELECT c.name, c.created_at, r.status AS last_status, r.finished_at AS last_finished_at FROM wake_crons c
-        LEFT JOIN LATERAL (SELECT status, finished_at FROM wake_cron_runs WHERE name = c.name ORDER BY finished_at DESC, id DESC LIMIT 1) r ON true
-        ORDER BY c.name`);
+    const rows = await engine.listWakeCrons();
     say(json, { crons: rows }, rows.length ? rows.map(r => `${r.name}${r.last_status ? `  last run: ${r.last_status} at ${new Date(r.last_finished_at!).toISOString()}` : '  no run reported yet'}`) : ['No crons registered (gbrain wakeshift cron add <name>).']);
     return;
   }
@@ -259,14 +253,11 @@ async function cron(engine: BrainEngine, args: string[], json: boolean): Promise
   }
   const renamed = name !== raw ? ` (stored as ${name})` : '';
   if (verb === 'add') {
-    await engine.executeRaw('INSERT INTO wake_crons (name) VALUES ($1) ON CONFLICT (name) DO NOTHING', [name]);
+    await engine.addWakeCron(name);
     say(json, { name, registered: true }, [`Registered cron ${name}${renamed}. End its script with: gbrain wakeshift emit cron.finished --name ${name} --status ok (or failed).`]);
     return;
   }
-  await engine.executeRaw('DELETE FROM wake_crons WHERE name = $1', [name]);
-  const ended = await engine.executeRaw<{ id: number; wake_user: string; ws_subscription_id: string }>(
-    `UPDATE wake_subscriptions SET state = 'ended', last_error = 'cron_removed', lease_until = NULL, updated_at = now()
-      WHERE state = 'open' AND event = $1 AND target = $2 RETURNING id, wake_user, ws_subscription_id`, [CRON_FINISHED, name]);
+  const ended = await engine.removeWakeCron(name);
   const api = ended.length ? wakeshiftRuntime()?.api : undefined;
   if (api) for (const row of ended) await endAtWakeshift(api, row);
   say(json, { name, registered: false, ended: ended.length }, [`Removed cron ${name}${renamed}; ended ${ended.length} open watch(es) on it.`]);

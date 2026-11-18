@@ -8,6 +8,7 @@
  * queue-slot holder or lock holder is never named, and foreign children are left out of spend.
  */
 import type { BrainEngine } from '../engine.ts';
+import type { SpendTreeRow } from '../engine-sql/jobs-spend.ts';
 import { parseGlobalFlags } from '../cli-options.ts';
 import type { Action } from '../agent-output.ts';
 import { currentSubmissionAuthority } from './submission-authority.ts';
@@ -134,7 +135,6 @@ function delayReason(job: MinionJob): { reason: DelayReason; detail?: string } {
 }
 
 type LockRow = { holder_pid: number; holder_host: string | null; acquired_at: unknown; ttl_expires_at: unknown; beacon: Record<string, unknown> | null; holder_owner: string | null };
-type SpendRow = { root: number; self: boolean; settled_cents: number | string | null; priced: number | string; unsettled: number | string };
 
 /** Insight for each job, keyed by id. Read-only. */
 export async function describeJobs(engine: BrainEngine, jobs: MinionJob[], opts: InsightOpts = {}): Promise<Map<number, JobInsight>> {
@@ -171,19 +171,7 @@ export async function describeJobs(engine: BrainEngine, jobs: MinionJob[], opts:
   const locks = new Map<string, LockRow>();
   for (const r of read.locks) locks.set(r.id, { ...r, beacon: record(r.beacon) });
 
-  const spendRows = await engine.executeRaw<SpendRow>(
-    `WITH RECURSIVE tree(root, id, owner, depth) AS (
-       SELECT id, id, data->>'__owner_client_id', 0 FROM minion_jobs WHERE id = ANY($1::int[])
-       UNION ALL
-       SELECT t.root, c.id, c.data->>'__owner_client_id', t.depth + 1 FROM minion_jobs c JOIN tree t ON c.parent_job_id = t.id WHERE t.depth < 20
-     )
-     SELECT t.root, (t.id = t.root) AS self,
-            sum(r.actual_cents) FILTER (WHERE r.status = 'settled' AND r.actual_cents IS NOT NULL) AS settled_cents,
-            count(*) FILTER (WHERE r.status = 'settled' AND r.actual_cents IS NOT NULL) AS priced,
-            count(*) FILTER (WHERE r.status <> 'settled' OR r.actual_cents IS NULL) AS unsettled
-       FROM tree t JOIN mcp_spend_reservations r ON r.job_id = t.id
-      WHERE t.id = t.root OR $2::text IS NULL OR t.owner = $2::text
-      GROUP BY 1, 2`, [ids, owner]);
+  const spendRows = await engine.readJobSpendTree({ jobIds: ids, owner });
   const foreignTokens = new Map(read.foreign_tokens.map(r => [r.parent_job_id, r]));
 
   const ctx: BlockCtx = { positions, holders, children, locks, owns, owner, remote: opts.remote === true };
@@ -192,7 +180,7 @@ export async function describeJobs(engine: BrainEngine, jobs: MinionJob[], opts:
       submitted_by: submittedBy(job, meta.get(job.id), owner),
       blocked_by: blockedBy(job, ctx),
       ...liveness(job, now),
-      spend: spendOf(job, spendRows.filter(r => Number(r.root) === job.id), foreignTokens.get(job.id)),
+      spend: spendOf(job, spendRows.filter(r => r.root === job.id), foreignTokens.get(job.id)),
     });
   }
   return out;
@@ -276,7 +264,7 @@ function liveness(job: MinionJob, now: number): Pick<JobInsight, 'heartbeat_age_
   };
 }
 
-function spendOf(job: MinionJob, rows: SpendRow[], foreign: { i: number; o: number; c: number } | undefined): JobSpend {
+function spendOf(job: MinionJob, rows: SpendTreeRow[], foreign: { i: number; o: number; c: number } | undefined): JobSpend {
   const priced = rows.reduce((n, r) => n + num(r.priced), 0);
   const cents = rows.reduce((n, r) => n + num(r.settled_cents), 0);
   return {
