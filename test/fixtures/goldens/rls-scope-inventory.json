@@ -4121,6 +4121,7 @@
         "runVectorAttempt": "direct",
         "scanExactBatch": "none",
         "sealChunks": "none",
+        "sealSegmentedPage": "none",
         "searchKeyword": "direct",
         "searchKeywordChunks": "direct",
         "searchKeywordPages": "direct",

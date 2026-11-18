@@ -2656,6 +2656,13 @@ export interface BrainEngine {
   createSegmentedPageShell(slug: string, meta: SegmentedPageMeta, opts: { sourceId: string }): Promise<{ id: number }>;
   /** The generation flip, inside the publication transaction: closes and publishes manifest rows, retires chunk rows (bounded), updates the page row. Refuses `revision_changed` when the page's body_generation is not `expectedGeneration`. */
   flipBodyGeneration(input: BodyFlipInput): Promise<BodyFlipResult>;
+  /**
+   * Seal a segmented page's text projection at its current revision: its chunks become visible, and its title and
+   * sanitized timeline lead (`timelineLead`, else the stored lead, after the page's withdrawal overlay) become its keyword
+   * vector. The chunker stamp keeps an older segmented chunker while any chunk row from before this generation remains.
+   * A missing page is a no-op. Runs inside the caller's publication transaction as its last step.
+   */
+  sealSegmentedPage(pageId: number, opts?: { timelineLead?: string }): Promise<void>;
   /** Record a body staging (GC root while open/sealed/prepared). */
   openBodyStaging(input: BodyStagingInput): Promise<void>;
   /** Move a staging to a new state; `commitRequestId` with `committed`. */

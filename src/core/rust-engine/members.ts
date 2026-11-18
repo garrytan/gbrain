@@ -124,6 +124,7 @@ export const RUST_ENGINE_MEMBERS = {
   stageSegmentChunks: 'page_body',
   createSegmentedPageShell: 'page_body',
   flipBodyGeneration: 'page_body',
+  sealSegmentedPage: 'page_body',
   openBodyStaging: 'page_body',
   setBodyStagingState: 'page_body',
   sweepSegments: 'page_body',
