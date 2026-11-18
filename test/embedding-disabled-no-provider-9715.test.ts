@@ -19,6 +19,8 @@ import { safeChunksRepair } from '../src/core/repair/safe-chunks.ts';
 import { embedStaleForSource } from '../src/core/embed-stale.ts';
 import { importCodeFile } from '../src/core/import-file.ts';
 import { runEmbedCore } from '../src/commands/embed.ts';
+import { registerPersistenceConsumerConfig } from '../src/core/embedding-disabled.ts';
+import { persistenceConsumerConfig } from '../src/core/persistence/service.ts';
 import { runBrainstorm } from '../src/core/brainstorm/orchestrator.ts';
 import { runReindexMultimodal } from '../src/commands/reindex-multimodal.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
@@ -151,6 +153,24 @@ for (const backend of testBackends()) {
         await expect(runEmbedCore(engine, { stale: true })).rejects.toMatchObject({ name: 'EmbeddingDisabledError' });
         expect(sent).toEqual([]);
       });
+    }, 120_000);
+
+    test('embed follows the brain, not a consumer: consumer disabled with the row on embeds; the row disabled refuses whatever the consumer says', async () => {
+      const consumer = (embedding_disabled: boolean) => registerPersistenceConsumerConfig(() => ({ engine: 'pglite', embedding_disabled }) as never);
+      try {
+        consumer(true);
+        await world(databaseUrl, 'off', async engine => {
+          await stalePage(engine, 'notes/backlog');
+          expect((await runEmbedCore(engine, { stale: true })).embedded).toBe(2);
+          expect(sent.length).toBe(2);
+        });
+        consumer(false);
+        await world(databaseUrl, 'database', async engine => {
+          await stalePage(engine, 'notes/backlog');
+          await expect(runEmbedCore(engine, { stale: true })).rejects.toMatchObject({ name: 'EmbeddingDisabledError' });
+          expect(sent).toEqual([]);
+        });
+      } finally { registerPersistenceConsumerConfig(persistenceConsumerConfig); }
     }, 120_000);
 
     test('a code import without --no-embed stores its chunks without sending them', async () => {
