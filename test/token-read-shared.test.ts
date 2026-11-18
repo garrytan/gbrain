@@ -223,7 +223,13 @@ for (const kind of testBackends()) {
       expect((await verify('rescope-me')).allowedSources).toEqual([PRIVATE_ALICE]);
       const on = await rescopeLegacyToken(engine, parseRescopeTokenArgs(['rescope-me', '--read-shared', 'on']));
       expect(on.reads.shared_now).toEqual(['default', 'company', 'team']);
-      await expect(rescopeLegacyToken(engine, parseRescopeTokenArgs(['rescope-me', '--sources', 'none']))).rejects.toMatchObject({ reasons: ['read_shared_needs_source'] });
+      const narrowing = await rescopeLegacyToken(engine, parseRescopeTokenArgs(['rescope-me', '--sources', 'none'])).then(() => null, (e: Error & { reasons?: string[] }) => e);
+      expect(narrowing?.reasons).toEqual(['read_shared_needs_source']);
+      const narrowText = narrowing!.message;
+      const [offRoute, revokeRoute, widenRoute] = ['gbrain auth rescope --token rescope-me --sources none --read-shared off', 'gbrain auth revoke "rescope-me"', '--sources <write-source>'].map(s => narrowText.indexOf(s));
+      expect({ offRoute: offRoute >= 0, revokeRoute: revokeRoute > offRoute, widenLast: widenRoute > revokeRoute }).toEqual({ offRoute: true, revokeRoute: true, widenLast: true });
+      const narrowed2 = await rescopeLegacyToken(engine, parseRescopeTokenArgs(['rescope-me', '--sources', 'none', '--read-shared', 'off']));
+      expect({ readShared: narrowed2.after.readShared === true, reads: (await verify('rescope-me')).allowedSources }).toEqual({ readShared: false, reads: [] });
       expect(() => parseRescopeTokenArgs(['rescope-me', '--read-shared', 'yes'])).toThrow('--read-shared must be on or off');
     }, 240_000);
 
@@ -253,7 +259,13 @@ for (const kind of testBackends()) {
       await mutateClientLifecycle(engine, registered.clientId, 'invalidate-tokens', { actor: 'test', dryRun: false, yes: true, expectedRevision: g.revision });
       expect((await readClientGrant(engine, registered.clientId)).readShared).toBe(true);
       expect(await credentialReadSources(engine, grantFromClient(await readClientGrant(engine, registered.clientId)), 'alice-example')).toEqual([PRIVATE_ALICE, 'default', 'company', 'team']);
-      await expect(rescopeClientGrant(engine, registered.clientId, { sourceId: null, sourcesNone: true, federatedRead: [] }, { actor: 'test' })).rejects.toMatchObject({ reasons: expect.arrayContaining(['read_shared_needs_source']) });
+      const clientNarrow = await rescopeClientGrant(engine, registered.clientId, { sourceId: null, sourcesNone: true, federatedRead: [] }, { actor: 'test' }).then(() => null, (e: Error & { reasons?: string[] }) => e);
+      expect(clientNarrow?.reasons).toEqual(expect.arrayContaining(['read_shared_needs_source']));
+      const clientText = clientNarrow!.message;
+      const [cOff, cRevoke, cWiden] = [`gbrain auth rescope --client ${registered.clientId} --sources none --read-shared off`, `gbrain auth revoke-client "${registered.clientId}"`, '--sources <write-source>'].map(s => clientText.indexOf(s));
+      expect({ off: cOff >= 0, revoke: cRevoke > cOff, widenLast: cWiden > cRevoke }).toEqual({ off: true, revoke: true, widenLast: true });
+      const clientOff = await rescopeClientGrant(engine, registered.clientId, { sourceId: null, sourcesNone: true, federatedRead: [], readShared: false }, { actor: 'test' });
+      expect({ none: clientOff.after.sourcesNone, readShared: clientOff.after.readShared === true }).toEqual({ none: true, readShared: false });
     }, 240_000);
 
     test('consumers see the resolved set: access check, whoami and the census resolver', async () => {

@@ -16,7 +16,7 @@
 import { isSourceFederated, parseSourceConfig } from '../sources-load.ts';
 import type { SqlQuery } from '../sql-query.ts';
 import { OWNER_MEMBER_KEY } from '../search/private-visibility.ts';
-import { authSourcesFromGrant, readSharedFromColumns, type PrincipalGrant } from './model.ts';
+import { GrantError, authSourcesFromGrant, readSharedFromColumns, type PrincipalGrant } from './model.ts';
 
 export interface SharedRow { id: string; config: unknown; guest: boolean; owners: string[]; owner_member: string | null }
 
@@ -91,4 +91,18 @@ export async function clientReadShared(sql: SqlQuery, row: { source_grant?: unkn
   if (row.source_grant === 'none' || !scopesAlive || !readSharedFromColumns(row.read_shared_revision, row.grant_revision)) return null;
   const expanded = await expandReadShared(sql, stored, await member());
   return { allowedSources: expanded.sources, flags: { readShared: true, ...(expanded.unresolved ? { readSharedUnresolved: true as const } : {}) } };
+}
+
+/**
+ * GBRA-108: the refusal when a key that reads every shared source is narrowed to no source. The two states cannot
+ * coexist, so the fix names the narrowing routes first (switch off and no sources in one command, then revoking the
+ * key) and widening last.
+ */
+export function readSharedNoSourceRefusal(kind: 'token' | 'client', ref: string): GrantError {
+  const flag = kind === 'token' ? '--token' : '--client';
+  const revoke = kind === 'token' ? 'gbrain auth revoke' : 'gbrain auth revoke-client';
+  return new GrantError('invalid_grant', `${kind === 'token' ? 'Token' : 'OAuth client'} "${ref}" reads every shared source (--read-shared on), so it cannot also have no source (--sources none). `
+    + `To narrow it to no source, turn the switch off in the same command: gbrain auth rescope ${flag} ${ref} --sources none --read-shared off. `
+    + `To stop it reading anything: ${revoke} "${ref}". `
+    + `Only if it should keep reading shared sources, give it a write source instead: gbrain auth rescope ${flag} ${ref} --sources <write-source>.`, ['read_shared_needs_source']);
 }
