@@ -584,11 +584,10 @@ carries its output to the store.
   the last write that set the title or timeline.
 - **Forget.** `pub(crate) fn forget_search_timeline(tx: &mut dyn KvWrite, page_id: u64) -> Result<()>` deletes it.
   PGLite's `trg_pages_search_vector` (`BEFORE INSERT OR UPDATE OF title, timeline`) puts the trigger form back on
-  every write whose `SET` list names either column, also with an unchanged value. `put_page_in` calls it on every
-  `putPage`; `write_page` calls it when the title or timeline changed, after it has built the page's trigger-form vector
+  every write whose `SET` list names either column, also with an unchanged value. `write_page` calls it when the title or timeline changed (`write_page_setting_vector` every time, for the statements that SET them: `putPage`, the refresh, the flip), after it has built the page's trigger-form vector
   (`keyword::check_page_vector`) and refused a vector past the 1,048,575-byte tsvector cap with PGLite's "string is too
   long for tsvector" error. `record_search_timeline` takes the page title and refuses a sealed vector past the cap the same way. The page_body family calls it from
-  `refresh_page_body` and the body generation flip, and `seal_segmented_page` calls `record_search_timeline`. `rust/docs/store/pages.md` ("Search timeline") lists each PGLite
+  `refresh_page_body` and the body generation flip (through `write_page_setting_vector`, the flip after it has stored its body state, so the check reads the incoming lead), and `seal_segmented_page` calls `record_search_timeline`. `rust/docs/store/pages.md` ("Search timeline") lists each PGLite
   statement.
 - **Delete.** `remove_page` deletes it on a hard delete. A soft delete keeps it.
 - **Other writers.** A family that seals a page by another path and has the sanitized text from TypeScript calls

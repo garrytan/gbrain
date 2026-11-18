@@ -1300,10 +1300,6 @@ impl Store {
             // The body generation moved, so Postgres's revision trigger always advances it.
             page.knowledge_revision = self.env.new_uuid();
             page.text_projection_revision = None;
-            write_page(tx, &page)?;
-            // The flip sets the title, timeline and timeline lead, so PGLite's search vector trigger
-            // fires, also when the title is unchanged: the sealed search timeline goes.
-            crate::pages::forget_search_timeline(tx, page.id)?;
             let state = BodyState {
                 body_storage: "segmented".into(),
                 body_generation: input.new_generation,
@@ -1318,7 +1314,13 @@ impl Store {
                 chunker_version: meta_chunker_version(meta)
                     .or(old_state.as_ref().and_then(|s| s.chunker_version)),
             };
+            // The flip is one UPDATE that sets the title, the NULL timeline and the new lead together, so PGLite's
+            // search vector trigger builds the vector from the incoming lead, and its error aborts the flip. The
+            // state is stored first because the check reads the lead from it; a later refusal rolls both back. The
+            // trigger fires also when the title is unchanged: the vector is checked and the sealed search timeline
+            // goes.
             put_json(tx, &body_key(page.id), &state)?;
+            crate::pages::write_page_setting_vector(tx, &page)?;
             let live: Vec<ManifestRow> = manifest_rows(&*tx, page.id)?
                 .into_iter()
                 .map(|(_, r)| r)
@@ -1842,10 +1844,9 @@ impl Store {
             page.timeline = timeline.into();
             page.content_hash = Some(content_hash.to_string());
             page.updated_at_us = now;
-            write_page(tx, &page)?;
             // The statement sets the timeline, so PGLite's search vector trigger fires, also when
-            // the text is unchanged: the sealed search timeline goes.
-            crate::pages::forget_search_timeline(tx, page.id)
+            // the text is unchanged: the vector is checked again and the sealed search timeline goes.
+            crate::pages::write_page_setting_vector(tx, &page)
         })
     }
 }
@@ -2298,6 +2299,11 @@ mod segment_chunk_tests {
 
     /// A shell published at generation 1 from occurrences 1 ("one\n" at 0) and 2 ("two\n" at 4).
     fn published(store: &Store) -> i64 {
+        published_with(store, json!({}))
+    }
+
+    /// `published`, the flip's input changed by `extra` (as `flip` takes it).
+    fn published_with(store: &Store, extra: Value) -> i64 {
         let id = store
             .create_segmented_page_shell(
                 "notes/a",
@@ -2332,7 +2338,7 @@ mod segment_chunk_tests {
             ])
             .unwrap();
         store
-            .flip_body_generation(&flip(id, 0, STAGING, 8, json!({})))
+            .flip_body_generation(&flip(id, 0, STAGING, 8, extra))
             .unwrap();
         id
     }
@@ -2390,6 +2396,85 @@ mod segment_chunk_tests {
         store
             .stage_segment_chunks(id, 2, &[chunk(3, 0, "TWO!"), chunk(9, 0, "orphan")])
             .unwrap();
+    }
+
+    /// The `body` of a flip of `body_bytes` bytes that publishes `lead` as the timeline lead.
+    fn body_with_lead(body_bytes: i64, lead: &str) -> Value {
+        json!({
+            "content_hash": "h", "body_bytes": body_bytes, "truth_bytes": body_bytes,
+            "body_lines": 2, "segment_count": 2, "segmenter_version": 1,
+            "truth_lead": "", "timeline_lead": lead, "body_flags": {},
+        })
+    }
+
+    /// 104,000 distinct six-character tokens, a tsvector of about 1,040,000 bytes: inside the 1,048,575-byte cap with
+    /// room for a short lead, not for a lead of 65,536 characters.
+    fn near_cap_title() -> String {
+        (0..104_000)
+            .map(|i| {
+                if i < 100_000 {
+                    format!("n{i:05}")
+                } else {
+                    format!("m{:05}", i - 100_000)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// The flip is one UPDATE that sets the title, the NULL timeline and the NEW lead together, so the search vector
+    /// trigger reads the incoming lead. A page with a small title and a long lead that is flipped to a near-cap title
+    /// with a short lead is therefore accepted; the same title beside a long lead is refused whole. Before, the
+    /// vector was built from the lead the page held before the flip, and the valid flip was refused.
+    #[test]
+    fn a_flip_builds_the_search_vector_from_its_incoming_lead_not_the_one_it_replaces() {
+        let store = crate::test_support::store();
+        let long_lead = (0..9_000)
+            .map(|i| format!("lead{i}z"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(long_lead.len() > 65_536);
+        let id = published_with(&store, json!({ "body": body_with_lead(8, &long_lead) }));
+        second_generation(&store, id);
+        let page = |store: &Store| {
+            crate::pages::read_page_by_id(&*store.read().unwrap(), id as u64)
+                .unwrap()
+                .unwrap()
+        };
+        let incoming = |lead: &str| {
+            json!({
+                "closeOccurrences": [2],
+                "body": body_with_lead(9, lead),
+                "meta": { "type": "note", "title": near_cap_title() },
+            })
+        };
+        // The title alone fits; beside a long incoming lead it does not.
+        let err = store
+            .flip_body_generation(&flip(id, 1, STAGING_2, 9, incoming(&long_lead)))
+            .unwrap_err();
+        assert!(
+            err.message.starts_with("string is too long for tsvector ("),
+            "{}",
+            err.message
+        );
+        assert_eq!(page(&store).title, "Flipped");
+        assert_eq!(
+            read_body_state(&*store.read().unwrap(), id as u64)
+                .unwrap()
+                .unwrap()
+                .body_generation,
+            1
+        );
+        // With a short incoming lead it fits, whatever lead the page held.
+        store
+            .flip_body_generation(&flip(id, 1, STAGING_2, 9, incoming("short lead")))
+            .unwrap();
+        assert_eq!(page(&store).title, near_cap_title());
+        let state = read_body_state(&*store.read().unwrap(), id as u64)
+            .unwrap()
+            .unwrap();
+        assert_eq!(state.body_generation, 2);
+        assert_eq!(state.timeline_lead.as_deref(), Some("short lead"));
     }
 
     #[test]

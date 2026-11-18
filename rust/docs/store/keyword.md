@@ -127,9 +127,11 @@ facts OR builder recurse the same way, once per item, and the stack of the threa
   stopword placeholder carries no lexeme bytes and so never reaches the `MAXSTRPOS` check ("value is too big in
   tsquery"). The bound is at the parser, so every keyword member (chunk, page, title and facts arms) has it.
 - `searchTitlesAttempts` ORs the texts of one attempt (`tsquery_or_all`, the left fold of `||`). The same item bound holds
-  for the whole chain, counting an operator per join: an attempt whose texts add up past 131,072 items is refused with
-  the same error, checked while the texts parse, so the work stays linear in the texts. The chain is laid out once
-  rather than copied at each `||`.
+  for the whole chain, counting an operator per join of two nonempty queries (a text that parses to nothing, such as a
+  stopword, adds neither an item nor an operator, as `||` skips it): an attempt whose texts add up past 131,072 items is
+  refused with the same error, and one of exactly 131,072 is answered. The check runs while the texts parse, so the
+  work stays linear in the texts. The chain is laid out once rather than copied at each `||`. The boundary is a Rust
+  unit test (`keyword/titles.rs`): PGLite runs out of stack long before it.
 - PGLite 0.5.16 answers a query like `quokka the ` x 20,000 (about 80,000 items) through `@@`, and runs out of its 2 MB
   stack for the whole `searchKeyword` statement at a few thousand repeats, where it returns an empty result with no
   error (the limit is not a fixed number: 4,000 repeats failed and 4,500 passed in one run). The Rust engine answers
@@ -154,9 +156,14 @@ SQL behavior to compare that read with, so it is covered by Rust unit tests only
 `pages`' `trg_pages_search_vector` (`BEFORE INSERT OR UPDATE OF title, timeline`) builds the page vector before the row is
 stored, and the same \"string is too long for tsvector\" error aborts the `putPage`. The title is unbounded (the timeline
 and the entries are cut to 65,536 and 32,768 characters), so a title of about 100,000 distinct tokens is enough. The store
-builds the trigger-form vector in `pages::write_page` whenever the page is new or its title or timeline changed
-(`keyword::check_page_vector`, which also warms the vector cache), so every write path that sets them refuses with the
-same message and stores nothing, with or without chunking (`index: false`). A seal that sends a search timeline
+builds the trigger-form vector in `pages::write_page` whenever the page is new or its title or timeline changed, and in
+`pages::write_page_setting_vector` on every call (`keyword::check_page_vector`, which also warms the vector cache). The
+second form is for the statements that SET `title` and `timeline` whatever their values (`putPage`, the body refresh, the body flip): the trigger fires with unchanged values too, and the vector can have grown since (a timeline entry
+added, a lead published), so a repeated `putPage` is refused when the page no longer fits. The flip stores its body state (with the
+incoming `timeline_lead`) before it writes the page, so the check reads the lead the flip publishes and not the one it
+replaces: a flip to a short lead is accepted whatever the old lead was, and one whose title and lead overflow is
+refused whole. Every write path that sets
+them refuses with the same message and stores nothing, with or without chunking (`index: false`). A seal that sends a search timeline
 (`pages::record_search_timeline`, from `upsertChunks` with `seal` and from the segmented seal) builds the sealed-form
 vector (`keyword::check_sealed_page_vector`) and refuses the same way, since `pageSearchVectorSql` builds it in the
 seal's statement.
@@ -164,7 +171,9 @@ seal's statement.
 A store written before those checks may hold a page SQL can never hold. `searchTitles` treats its vector as matching
 nothing (`titles::readable_page_vector`, which skips only the size error) rather than failing every search in its
 scope. The refusal is a parity case (`test/engine-parity/page-vector-overflow.test.ts`; the arm's `putPage` always writes
-with `index: false`); the chunking path and the stored page are Rust unit tests in `keyword/titles.rs`.
+with `index: false`); the chunking path, the repeated `putPage` that no longer fits and the stored page are Rust unit tests in
+`keyword/titles.rs` (the SQL engines cannot hold a title that large: `idx_pages_source_title_lower` refuses a title of
+about 8 KB first).
 
 ## The page filter
 
