@@ -1,7 +1,7 @@
 /**
  * The statements a page write ran through `executeRaw` that belong to no other storage domain
  * (docs/research/rust-put-write-path.md): the source-state reads of admission, publication and effect recovery, the
- * shared-skillpack screen, the chronicle retire check, the access-member
+ * shared-skillpack screen, the writer-binding read of ownership, the chronicle retire check, the access-member
  * read of `brainServes`, memory-proposal upkeep and the path attach of `sources add`. Each function keeps the statement text its call site ran, so PGLite
  * and Postgres answer exactly as before; a Rust brain answers from its store
  * (rust/crates/gbrain-store/src/write_misc.rs, rust/docs/store/write_misc.md).
@@ -72,6 +72,47 @@ export function listSharedSkillPackRoots(exec: LegacyUnscopedRead, hostId: strin
       JOIN sources s ON s.id=p.source_id AND s.incarnation=p.source_incarnation
       LEFT JOIN persistence_source_bindings b ON b.source_id=p.source_id AND b.source_incarnation=p.source_incarnation
       LEFT JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$1::uuid`, [hostId]);
+}
+
+/** A source's #5182 per-host Git-durability opt-in: null until an operator records one. */
+export type GitDurabilitySetting = 'enabled' | 'disabled' | null;
+
+/** A source's writer binding as one host sees it (`getWorktreeBinding`); the host columns are null without a host row. */
+export interface WorktreeBinding {
+  worktree_id: string;
+  source_id: string;
+  source_incarnation: string;
+  relative_path: string;
+  topology_generation: string | number;
+  owner_host_id: string | null;
+  owner_epoch: string | number;
+  state: 'active' | 'draining' | 'recovering';
+  local_path: string | null;
+  coordination_path: string | null;
+  /** #5182 per-host Git-durability opt-in: null until an operator records one. */
+  git_durability: GitDurabilitySetting;
+  /** C-5: when the prepared transfer was recorded (manifest `prepared_at`); null when none is, or an older release prepared it. */
+  prepared_at?: string | null;
+  /** G2 (git-door.ts): the source is strict (`config.canonical = "git"`), read with the binding so a write pays no extra statement. */
+  canonical_git?: boolean | null;
+}
+
+/**
+ * The source's binding as host `$2` sees it. The legacy sweep's screen (persistence/sync-convergence.ts) memoizes
+ * this exact text, so a change here changes what that screen answers once per slice.
+ */
+export const WORKTREE_BINDING_SQL = `SELECT s.source_id,s.source_incarnation,s.worktree_id,s.relative_path,
+    s.topology_generation::text AS topology_generation,w.owner_host_id,w.owner_epoch::text AS owner_epoch,w.state,
+    h.local_path,h.coordination_path,h.git_durability,w.manifest->>'prepared_at' AS prepared_at,
+    (SELECT COALESCE(src.config->>'canonical','')='git' FROM sources src WHERE src.id=s.source_id) AS canonical_git FROM persistence_source_bindings s
+    JOIN persistence_worktrees w ON w.id=s.worktree_id
+    LEFT JOIN persistence_host_bindings h ON h.worktree_id=w.id AND h.host_id=$2::uuid
+    WHERE s.source_id=$1`;
+
+/** The source's writer binding with host `hostId`'s paths (null host columns for a null or unbound host); null when the source has none. */
+export async function getWorktreeBinding(exec: LegacyUnscopedRead, sourceId: string, hostId: string | null): Promise<WorktreeBinding | null> {
+  const [row] = await exec.executeRaw<WorktreeBinding>(WORKTREE_BINDING_SQL, [sourceId, hostId]);
+  return row ?? null;
 }
 
 /** Whether the page has an extracted chronicle generation with events. */

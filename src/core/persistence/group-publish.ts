@@ -40,7 +40,7 @@ import { OperationError } from '../ops/contract.ts';
 import { withoutReadDeadline } from '../read-deadline.ts';
 import { authorizeStoredRequest, storedAuthorizationReads } from './authority.ts';
 import { hostIdFor } from './identity.ts';
-import { acquireWorktree, acquireWorktreeShared, getWorktreeBinding, guardOwnership, joinWorktreeLease, MANAGED_MODE_SQL } from './ownership.ts';
+import { acquireWorktree, acquireWorktreeShared, getWorktreeBinding, guardOwnership, joinWorktreeLease, MANAGED_MODE_SQL, WORKTREE_BINDING_SQL } from './ownership.ts';
 import { isLockOpenFailure, type NativeLockHandle } from './native-lock.ts';
 import { awaitLaneBegin, awaitLaneTurn, LaneAbort, laneApplyBegin, laneClaimed, laneFinished, lanePolicy, stepDownLanes, type LaneState } from './sync-lanes.ts';
 import { laneFaultBlockedReason, windowPredecessor } from './sync-window.ts';
@@ -194,6 +194,7 @@ const STABLE_IN_PREPARATION = new Set([
  * one group's preparation; a failed read is not kept. `also` adds plain reads a
  * caller's preparations repeat (GBRA-108: the legacy sweep's read-only screen).
  */
+const BINDING_KEY = flat(WORKTREE_BINDING_SQL);
 export function preparationReads(engine: BrainEngine, imports?: ImportGroupReads, also: readonly string[] = []): BrainEngine {
   const stable = also.length ? new Set([...STABLE_IN_PREPARATION, ...also.map(flat)]) : STABLE_IN_PREPARATION;
   const reads = new Map<string, Promise<unknown>>();
@@ -220,6 +221,9 @@ export function preparationReads(engine: BrainEngine, imports?: ImportGroupReads
       opts?.lock ? target.readSourceState(sourceId, opts) : once(JSON.stringify([key, sourceId]), () => target.readSourceState(sourceId));
     if (key === 'sharedSkillPackTablePresent') return () => once(key, () => target.sharedSkillPackTablePresent());
     if (key === 'listSharedSkillPackRoots') return (hostId: string) => once(JSON.stringify([key, hostId]), () => target.listSharedSkillPackRoots(hostId));
+    // The writer-binding read is the typed WORKTREE_BINDING_SQL: answered once only where a caller lists that statement (the legacy sweep's screen).
+    if (key === 'getWorktreeBinding' && stable.has(BINDING_KEY)) return (sourceId: string, hostId: string | null) =>
+      once(JSON.stringify([BINDING_KEY, [sourceId, hostId]]), () => target.getWorktreeBinding(sourceId, hostId));
     if (imports && key === 'readPageSnapshot') return (slug: string, opts?: Parameters<BrainEngine['readPageSnapshot']>[1]) =>
       imports.snapshot(slug, opts) ?? target.readPageSnapshot(slug, opts);
     if (imports && key === 'findDuplicatePage') return (sourceId: string, opts: Parameters<NonNullable<BrainEngine['findDuplicatePage']>>[1]) => imports.findDuplicate(sourceId, opts);

@@ -781,7 +781,7 @@ src/core/persistence/origin-twins.ts	execute_raw	2
 src/core/persistence/orphan-bindings.ts	execute_raw	2
 src/core/persistence/overwritten-edits.ts	execute_raw	3
 src/core/persistence/owner-activity.ts	execute_raw	1
-src/core/persistence/ownership.ts	execute_raw	25
+src/core/persistence/ownership.ts	execute_raw	24
 src/core/persistence/page-advisories.ts	execute_raw	1
 src/core/persistence/page-append.ts	execute_raw	3
 src/core/persistence/page-batch.ts	execute_raw	2

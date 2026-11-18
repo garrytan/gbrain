@@ -88,6 +88,8 @@ function refuse(scope: StatementDeadline): never {
 
 /** The write-journal reads (engine-sql/persistence-journal.ts) that replaced statements this wrapper bounded through executeRaw. */
 const JOURNAL_TYPED_READS: ReadonlySet<string> = new Set(['readJournalLimitRows', 'readWriteRequest', 'readWriteRequestById', 'readHeldPageRows', 'readHeldCoverageRows']);
+/** Those reads and the writer-binding read (engine-sql/write-misc.ts `getWorktreeBinding`), which also replaced a bounded statement. */
+const BOUNDED_TYPED_READS: ReadonlySet<string> = new Set([...JOURNAL_TYPED_READS, 'getWorktreeBinding']);
 
 type RawCall = (sql: string, params?: unknown[], opts?: Record<string, unknown> & { signal?: AbortSignal; timeoutMs?: number }) => Promise<unknown[]>;
 
@@ -120,10 +122,10 @@ export function deadlineBoundEngine<E extends object>(engine: E): E {
     return new Proxy(value as (...a: unknown[]) => unknown, { apply(fn, _self, args) {
       const scope = scopes.getStore();
       if (scope && scope.deadlineAt !== null && Date.now() >= scope.deadlineAt) refuse(scope);
-      if (!scope || scope.deadlineAt === null || typeof key !== 'string' || !JOURNAL_TYPED_READS.has(key) || !boundsStatements) {
+      if (!scope || scope.deadlineAt === null || typeof key !== 'string' || !BOUNDED_TYPED_READS.has(key) || !boundsStatements) {
         return Reflect.apply(fn, target, args);
       }
-      // A journal read that replaced an executeRaw statement keeps that statement's bound: the engine ends it at the deadline.
+      // A typed read that replaced an executeRaw statement keeps that statement's bound: the engine ends it at the deadline.
       const deadlineAt = scope.deadlineAt;
       return withReadDeadline(deadlineAt, () => Reflect.apply(fn, target, args) as Promise<unknown>)
         .catch((error: unknown) => {
