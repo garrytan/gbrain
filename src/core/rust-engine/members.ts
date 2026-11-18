@@ -176,6 +176,8 @@ export const RUST_ENGINE_MEMBERS = {
   addLinksBatch: 'links',
   replaceDerivedLinks: 'links',
   replaceDerivedLinksBatch: 'links',
+  lockRegisteredSourceIds: 'links',
+  replaceWantedLinkRows: 'links',
   removeLink: 'links',
   removeLinksByPagesAndSource: 'links',
   getLinks: 'links',

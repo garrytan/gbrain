@@ -99,6 +99,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   salience_enrich: ['batchLoadEmotionalInputs', 'setEmotionalWeightBatch', 'getRecentSalience', 'listEnrichCandidates', 'findAnomalies'],
   cli_reads_import: ['listSourceRecords', 'readSourceIncarnation', 'hasCompanyBrainReceipt', 'readGuestSourceRow', 'listGuestSourceIds',
     'hasGuestSource', 'readPageTrustRows', 'readDatabaseClock', 'listLinkPageMetadata', 'listStoredTimelineRows', 'filterPagesAtRevision'],
+  wanted_links: ['lockRegisteredSourceIds', 'replaceWantedLinkRows'],
 };
 
 /** Callable members of `interface BrainEngine`, in declaration order (`kind` excluded). */

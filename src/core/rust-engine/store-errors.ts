@@ -6,9 +6,11 @@
  *    `store_io` are `rust_store_unreadable` with that reason.
  *  - `revision_conflict` and `revision_required` are `PageRevisionConflictError`; a missing page is the error
  *    PGLite's member throws (`PageMissingError` for addLink and addTimelineEntry).
+ *  - `origin_claimed` is `page_identity_changed` with detail `origin_already_claimed`, PGLite's origin-guard refusal.
  *  - Every other code stays on the original error, which already carries it (`invalid_slug`, `empty_overwrite`, ...).
  */
 import { opError } from '../ops/contract.ts';
+import { originAlreadyClaimed } from '../persistence/origin-guard.ts';
 import { PageMissingError } from '../engine-errors.ts';
 import { PageRevisionConflictError } from '../page-state/types.ts';
 
@@ -53,6 +55,8 @@ export function mapStoreError(error: unknown, ctx: StoreErrorContext): unknown {
       return new PageRevisionConflictError(code === 'revision_required' ? undefined : (ctx.expectedRevision ?? null), ctx.currentRevision ?? null);
     case 'page_not_found':
       return pageNotFound(error, ctx);
+    case 'origin_claimed':
+      return originClaimed(error);
     default:
       return error;
   }
@@ -71,4 +75,14 @@ function pageNotFound(error: unknown, ctx: StoreErrorContext): unknown {
     return new Error(`${ctx.member} failed: page "${slug}" (source=${sourceId}) not found`);
   }
   return error;
+}
+
+/** The store's message is JSON: `{ source_id, source_path, holders, slug }` (rust/README.md "Error codes"). */
+function originClaimed(error: unknown): unknown {
+  try {
+    const at = JSON.parse(error instanceof Error ? error.message : '') as { source_id: string; source_path: string; holders: string[]; slug: string };
+    return originAlreadyClaimed(at.source_id, at.source_path, at.holders, at.slug);
+  } catch {
+    return error;
+  }
 }

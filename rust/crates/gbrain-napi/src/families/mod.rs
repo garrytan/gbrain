@@ -39,3 +39,4 @@ mod takes;
 mod timeline_queries;
 mod transactions;
 mod vectors;
+mod wanted_links;

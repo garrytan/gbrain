@@ -1211,7 +1211,7 @@ src/core/wakeshift/drain.ts	execute_raw	10
 src/core/wakeshift/forget.ts	sql_template	6
 src/core/wakeshift/spool.ts	execute_raw	3
 src/core/wakeshift/terms.ts	execute_raw	2
-src/core/wanted-links-store.ts	execute_raw	5
+src/core/wanted-links-store.ts	execute_raw	2
 src/core/write-gate-scan.ts	execute_raw	2
 src/core/write-gate-store.ts	execute_raw	8
 src/core/write-through.ts	execute_raw	3

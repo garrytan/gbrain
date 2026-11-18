@@ -41,6 +41,7 @@ import type {
   FactRow, FactInsertStatus,
   NewFact, FactListOpts, RecallFactReadOpts, FactsHealth,
   SourceRow, PageTrustLookup, PageAtRevisionRef,
+  WantedLinkRowsReplacement,
 } from './engine.ts';
 // Engine-path imports stay static unless a call site carries an explicit
 // engine-dynamic-import-ok justification. The gateway is the only current
@@ -150,6 +151,7 @@ import { resolveEntityTypes } from './schema-pack/entity-types.ts';
 import * as pagesImpl from './engine-sql/pages.ts';
 import * as tagsImpl from './engine-sql/tags.ts';
 import * as linksImpl from './engine-sql/links.ts';
+import * as wantedLinksImpl from './engine-sql/wanted-links.ts';
 import * as timelineImpl from './engine-sql/timeline.ts';
 import * as sourcesImpl from './engine-sql/sources.ts';
 import * as cliReadsImpl from './engine-sql/cli-reads-import.ts';
@@ -1879,6 +1881,13 @@ export class PostgresEngine implements BrainEngine {
 
   async replaceDerivedLinksBatch(items: readonly DerivedLinkBatchItem[]) {
     return replaceDerivedLinksBatch(this, items);
+  }
+
+  // Wanted-link writes (engine-sql/wanted-links.ts), on the current connection: the caller's transaction when there is
+  // one. autocommitSql retries a statement a read-only session default refused, as the executeRaw calls they replace did.
+  lockRegisteredSourceIds(sourceIds: readonly string[]) { return wantedLinksImpl.lockRegisteredSourceIds(this.autocommitSql, sourceIds); }
+  replaceWantedLinkRows(origin: { pageId: number; sourceId: string }, replacement: WantedLinkRowsReplacement) {
+    return wantedLinksImpl.replaceWantedLinkRows(this.autocommitSql, origin, replacement);
   }
 
   // #3674 — see BrainEngine.removeLinksByPagesAndSource JSDoc. Identical SQL
