@@ -250,25 +250,32 @@ final class Harness {
         let h = Harness()
         h.messages.gate = DispatchSemaphore(value: 0)
         let group = DispatchGroup()
-        var results: [Int] = []
-        let lock = NSLock()
-        for _ in 0..<2 {
-            group.enter()
-            let request = h.request(h.body())
-            DispatchQueue.global().async {
-                let status = h.send(request).status
-                lock.lock()
-                results.append(status)
-                lock.unlock()
-                group.leave()
-            }
+        var first = 0
+        let request = h.request(h.body())
+        group.enter()
+        DispatchQueue.global().async {
+            first = h.send(request).status
+            group.leave()
         }
-        Thread.sleep(forTimeInterval: 0.5)
-        h.messages.gate?.signal()
+        let deadline = Date().addingTimeInterval(10)
+        while h.messages.count == 0 && Date() < deadline { Thread.sleep(forTimeInterval: 0.01) }
+        var second: (status: Int, json: [String: Any]) = (0, [:])
+        let secondDone = DispatchSemaphore(value: 0)
+        let retry = h.request(h.body())
+        DispatchQueue.global().async {
+            second = h.send(retry)
+            secondDone.signal()
+        }
+        let answeredWhileFirstRan = secondDone.wait(timeout: .now() + 5) == .success
         h.messages.gate?.signal()
         group.wait()
+        if !answeredWhileFirstRan { secondDone.wait() }
+        #expect(answeredWhileFirstRan)
         #expect(h.messages.count == 1)
-        #expect(results.sorted() == [200, 409])
+        #expect(first == 200)
+        #expect(second.status == 409)
+        #expect(second.json["code"] as? String == "send_in_progress")
+        #expect(h.send(h.request(h.body())).json["replayed"] as? Bool == true)
     }
 
     @Test func parallelSendsCannotPassTheLimit() {
