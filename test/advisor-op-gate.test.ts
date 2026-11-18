@@ -15,6 +15,7 @@ function ctx(over: Partial<OperationContext>, cfg: Record<string, string | null>
       getStats: async () => { throw new Error('no'); },
       getHealth: async () => { throw new Error('no'); },
       executeRaw: async () => { throw new Error('no'); },
+      listStuckActiveJobsByName: async () => { throw new Error('no'); },
     } as unknown as OperationContext['engine'],
     config: {} as OperationContext['config'],
     logger: { info() {}, warn() {}, error() {}, debug() {} } as unknown as OperationContext['logger'],
