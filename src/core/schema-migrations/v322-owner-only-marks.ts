@@ -55,7 +55,8 @@ const MARKS_DENIED_RAISE = `    RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE
       HINT = 'As the table owner run GRANT SELECT, INSERT ON public.owner_only_marks TO ' || pg_catalog.quote_ident(current_user)
         || ' and the CREATE POLICY statements gbrain doctor prints (owner_only_marks_triggers); see docs/ENGINES.md#owner-only-delete-triggers.';`;
 /** Row-level security limits this role's reads of a table the owner-only lineage walk or the source trigger reads. */
-const READS_LIMITED = ['sources', 'facts', 'derivation_inputs', 'links', 'pages', 'takes', 'timeline_entries']
+const LINEAGE_TABLES = ['sources', 'facts', 'derivation_inputs', 'links', 'pages', 'takes', 'timeline_entries'];
+const READS_LIMITED = LINEAGE_TABLES
   .map(table => `pg_catalog.row_security_active('${table}')`).join(' OR ');
 
 export const v322: Migration = {
@@ -148,6 +149,9 @@ DECLARE
 BEGIN
   IF p_id IS NULL THEN
     RETURN false;
+  END IF;
+  IF NOT (${LINEAGE_TABLES.map(t => `pg_catalog.has_table_privilege('public.${t}', 'SELECT')`).join(' AND ')}) THEN
+    RETURN true;
   END IF;
   denied := gbrain_owner_only_marks_denied('r');
   IF denied THEN

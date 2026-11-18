@@ -495,6 +495,13 @@ CREATE POLICY owner_only_marks_read_<reader-role> ON owner_only_marks FOR SELECT
 ```
 <!-- gbrain:owner-only-marks-recipe:end -->
 
+A login that cannot read `derivation_inputs`, `facts`, `links`, `takes` and `timeline_entries`
+(the reader role above reads none of them) cannot walk owner-only lineage, so on a brain that has
+held owner-only data it reads every row closed: it sees no page or fact as open, with no error,
+also after the last owner-only source is removed. Do not grant it `SELECT` on those tables
+without a policy that shows it every row: under row-level security it would miss derivation rows
+and read rows open that are owner-only.
+
 <a id="purge-and-withdrawal-guards"></a>
 **Purge and withdrawal guards.** The guards that refuse purged content and keep withdrawn
 facts withdrawn run as the writing role (`SECURITY INVOKER`) and read their ledgers

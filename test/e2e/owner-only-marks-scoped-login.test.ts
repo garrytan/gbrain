@@ -189,6 +189,7 @@ describeE2E('owner_only_marks for a non-owner login, upgraded from v321 (Postgre
     const writer = await connectAs(WRITER);
     expect(await openTo(admin, [chat, fromChat, plain, fromPlain])).toEqual([plain, fromPlain]);
     expect(await openTo(writer, [chat, fromChat, plain, fromPlain])).toEqual([plain]);
+    expect(await openTo(await connectAs(READER), [chat, fromChat, plain, fromPlain])).toEqual([]);
     await expect(writer.deletePage('notes/plain', { sourceId: OPEN })).rejects.toThrow(/owner_only_marks_unwritable/);
     expect(await pageId('notes/plain')).toBe(plain);
 
@@ -206,6 +207,7 @@ describeE2E('owner_only_marks for a non-owner login, upgraded from v321 (Postgre
     const chat = await pageId('imessage/chat/2026-06-14', CHATS);
     const [fromChat, plain, fromPlain] = [await pageId('notes/from-chat'), await pageId('notes/plain'), await pageId('notes/from-plain')];
     expect(await openTo(writer, [chat, fromChat, plain, fromPlain])).toEqual([plain, fromPlain]);
+    expect(await openTo(await connectAs(READER), [chat, fromChat, plain, fromPlain])).toEqual([]);
 
     // The writer's open deletes, a take and a timeline rewrite and a coordinated purge all go through.
     const victim = await page('notes/victim');
@@ -268,4 +270,14 @@ describeE2E('owner_only_marks for a non-owner login, upgraded from v321 (Postgre
       await admin.executeRaw('ALTER TABLE links NO FORCE ROW LEVEL SECURITY');
     }
   }, 240_000);
+
+  test('the reader role, which cannot read the lineage tables, reads every row closed and never an error, also after the last owner-only source is removed', async () => {
+    const reader = await connectAs(READER);
+    const plain = await pageId('notes/plain');
+    expect(await openTo(reader, [plain])).toEqual([]);
+    await admin.executeRaw('DELETE FROM sources WHERE id = $1', [CHATS]);
+    expect(await held()).toBe(true);
+    expect(await openTo(reader, [plain])).toEqual([]);
+    expect(await openTo(admin, [plain])).toEqual([plain]);
+  }, 120_000);
 });
