@@ -1293,6 +1293,9 @@ impl Store {
             page.knowledge_revision = self.env.new_uuid();
             page.text_projection_revision = None;
             write_page(tx, &page)?;
+            // The flip sets the title, timeline and timeline lead, so PGLite's search vector trigger
+            // fires, also when the title is unchanged: the sealed search timeline goes.
+            crate::pages::forget_search_timeline(tx, page.id)?;
             let state = BodyState {
                 body_storage: "segmented".into(),
                 body_generation: input.new_generation,
@@ -1758,7 +1761,10 @@ impl Store {
             page.timeline = timeline.into();
             page.content_hash = Some(content_hash.to_string());
             page.updated_at_us = now;
-            write_page(tx, &page)
+            write_page(tx, &page)?;
+            // The statement sets the timeline, so PGLite's search vector trigger fires, also when
+            // the text is unchanged: the sealed search timeline goes.
+            crate::pages::forget_search_timeline(tx, page.id)
         })
     }
 }
@@ -2375,6 +2381,86 @@ mod segment_chunk_tests {
             .unwrap();
         assert_eq!(lead(&store, inline["id"].as_i64().unwrap()), None);
         assert_eq!(lead(&store, 999_999), None);
+    }
+
+    fn kept_timeline(store: &Store, id: i64) -> Option<crate::pages::SearchTimeline> {
+        crate::pages::search_timeline(&*store.read().unwrap(), id as u64).unwrap()
+    }
+
+    fn keep_timeline(store: &Store, id: i64) {
+        store
+            .write(|tx| crate::pages::record_search_timeline(tx, id as u64, "rev", "sealed"))
+            .unwrap();
+        assert!(kept_timeline(store, id).is_some());
+    }
+
+    #[test]
+    fn a_flip_forgets_the_search_timeline_and_a_refused_flip_keeps_it() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        keep_timeline(&store, id);
+        second_generation(&store, id);
+        // A flip refused after the page write (the rows do not tile 99 bytes) writes nothing, so
+        // the record stays.
+        assert!(
+            store
+                .flip_body_generation(&flip(
+                    id,
+                    1,
+                    STAGING_2,
+                    99,
+                    json!({"closeOccurrences": [2]})
+                ))
+                .is_err()
+        );
+        assert!(kept_timeline(&store, id).is_some());
+        // The fixture's title is "Flipped" both times: the flip forgets the record anyway.
+        store
+            .flip_body_generation(&flip(id, 1, STAGING_2, 9, json!({"closeOccurrences": [2]})))
+            .unwrap();
+        assert_eq!(kept_timeline(&store, id), None);
+    }
+
+    #[test]
+    fn a_refresh_forgets_the_search_timeline_also_with_the_same_text() {
+        let store = crate::test_support::store();
+        let page = store
+            .put_page(
+                "notes/r",
+                &crate::pages::PageInput {
+                    page_type: "note".into(),
+                    title: "R".into(),
+                    compiled_truth: "body".into(),
+                    timeline: Some("tl".into()),
+                    ..crate::pages::PageInput::default()
+                },
+                &crate::pages::PutPageOptions::default(),
+            )
+            .unwrap();
+        let id = page["id"].as_i64().unwrap();
+        // A seal that sends the text records it.
+        store
+            .upsert_chunks(
+                "notes/r",
+                &[],
+                &crate::chunks::UpsertChunksOptions {
+                    seal: true,
+                    search_timeline: Some("tl".into()),
+                    ..crate::chunks::UpsertChunksOptions::default()
+                },
+            )
+            .unwrap();
+        assert!(kept_timeline(&store, id).is_some());
+        // A refresh of another page, or of a missing one, leaves it.
+        store
+            .refresh_page_body("notes/missing", "default", "x", "", "h")
+            .unwrap();
+        assert!(kept_timeline(&store, id).is_some());
+        // The same body and timeline: PGLite's trigger still fires on the SET list.
+        store
+            .refresh_page_body("notes/r", "default", "body", "tl", "h2")
+            .unwrap();
+        assert_eq!(kept_timeline(&store, id), None);
     }
 
     #[test]

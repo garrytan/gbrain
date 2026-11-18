@@ -30,7 +30,7 @@ ISO strings. Derivation `createdAt` and `updatedAt` are `YYYY-MM-DDTHH:MM:SS.fff
 | `brain.readSegmentDerivations(pageId, { kind?, occurrenceIds? }?)` | derivation rows by kind, then occurrence; `[]` for an empty `occurrenceIds` | `readSegmentDerivations` |
 | `brain.upsertSegmentDerivations(rows)` | `null`. A row with the same `(page, kind, occurrence)` is replaced and keeps its `createdAt` | `upsertSegmentDerivations` |
 | `brain.retireSegmentDerivations(pageId, liveOccurrenceIds, { kind? }?)` | the number of rows deleted whose occurrence is not live | `retireSegmentDerivations` |
-| `brain.refreshPageBody(slug, sourceId, compiledTruth, timeline, contentHash)` | `null`. Sets the body, timeline, hash and `updated_at` of a live inline page; a missing or soft-deleted page is left alone. A new revision only when the body or timeline changed. No re-chunk and no version | `refreshPageBody` |
+| `brain.refreshPageBody(slug, sourceId, compiledTruth, timeline, contentHash)` | `null`. Sets the body, timeline, hash and `updated_at` of a live inline page; a missing or soft-deleted page is left alone. A new revision only when the body or timeline changed. No re-chunk and no version. A live page's sealed search timeline goes, also when nothing changed, since PGLite's `UPDATE … SET timeline` fires the search vector trigger | `refreshPageBody` |
 
 ## Keys under tag `b`
 
@@ -83,7 +83,9 @@ does; an inline page has neither.
    (then none are, and `retireDeferred` is true).
 7. The page row takes the meta (`type`, `page_kind` default `markdown`, `title`, `frontmatter`;
    the other meta fields only when given; `chunker_version` at most 3; `ingested_at` now when a
-   provenance field is set), and the body state takes the body columns.
+   provenance field is set), and the body state takes the body columns. The sealed search timeline
+   (`pages::forget_search_timeline`) goes, also when the title is unchanged: PGLite's
+   `UPDATE … SET title, timeline, timeline_lead` fires its search vector trigger either way.
 8. The live rows must tile `body_bytes` from 0 without a gap, with `segment_count` rows; else the
    flip refuses `body_staging_expired` with `reason: 'generation_incomplete'`.
 9. The chunks family publishes `newGeneration` (`chunks::publish_segment_chunks`), with the
