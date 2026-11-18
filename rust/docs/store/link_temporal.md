@@ -36,7 +36,10 @@ writes the rows the builder returns.
   `day`, `month` or `year`. Any other value is refused with `constraint_violation` (the tables' CHECKs).
 - `valid_ranges` is stored and returned in the text form Postgres prints for a `datemultirange` (`{[2019-02-01,2025-03-01)}`).
 - The privacy policy of the world scope (`originPolicy`, `excludePrivate`) uses the store's page privacy rules
-  (`facts::page_hidden`), the same rules `privatePagesFilterFragment` composes in SQL.
+  (`facts::page_hidden`), the same rules `privatePagesFilterFragment` composes in SQL. `listRelationshipNoteRows`, `listPageStatusByRef` and
+  `listRecordMetadataRows` carry a caller's reader identity and private-readable grant in the policy (the
+  `callerReaders` opt-in of `storePagePolicy`); any other caller whose policy differs (folder grants, lineage, an owner
+  read) refuses.
 - A repeated refresh over unchanged evidence writes nothing and returns 0.
 - `applyLinkTemporalRows` replaces the origin's derived transitions: the old rows go before the new rows are written. On
   Postgres the SQL statements are pipelined, which keeps their order only on one connection, so the Postgres member opens a
