@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 522/522
+# covered: 523/523
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -53,6 +53,7 @@
 # wanted_links: 2/2
 # write_misc: 11/11
 # telemetry: 10/10
+# field_usage: 1/1
 # alias_fanout_reads: 4/4
 # write_guards: 7/7
 # trust_fence: 1/1
@@ -72,13 +73,13 @@ getPage	pages	yes	58	yes	yes	yes	serves
 readPageSnapshot	pages	yes	16	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	225	yes	yes	yes	serves
+putPage	pages	yes	228	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	6	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	80	yes	yes	yes	serves
+softDeletePage	pages	yes	81	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -297,7 +298,7 @@ readSegmentTexts	segmented_body	yes	5	no	yes	yes	serves
 stageManifestRows	segmented_body	yes	5	no	yes	yes	serves
 readManifest	segmented_body	yes	9	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	4	no	yes	yes	serves
-createSegmentedPageShell	segmented_body	yes	6	no	yes	yes	serves
+createSegmentedPageShell	segmented_body	yes	7	no	yes	yes	serves
 flipBodyGeneration	segmented_body	yes	7	no	yes	yes	serves
 sealSegmentedPage	segmented_body	yes	2	no	yes	yes	serves
 openBodyStaging	segmented_body	yes	7	no	yes	yes	serves
@@ -559,6 +560,7 @@ pruneMcpRequestLogBatch	telemetry	yes	3	no	yes	yes	serves
 readMcpLifetimeUsage	telemetry	yes	1	no	yes	yes	serves
 logChatUsage	telemetry	yes	2	no	yes	yes	serves
 readChatUsage	telemetry	yes	2	no	yes	yes	serves
+readFieldUsageSamples	field_usage	yes	3	no	yes	yes	serves
 findPagesByTitles	alias_fanout_reads	yes	3	no	yes	yes	serves
 resolveCaseSensitiveAliases	alias_fanout_reads	yes	3	no	yes	yes	serves
 readPageTitle	alias_fanout_reads	yes	1	no	yes	yes	serves

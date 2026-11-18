@@ -4834,6 +4834,7 @@
         "readExtractionLagCounts": "none",
         "readFactForOwnerAction": "none",
         "readFactSubject": "none",
+        "readFieldUsageSamples": "none",
         "readGraduationGateRow": "none",
         "readGuestSourceRow": "none",
         "readHeldCoverageRows": "none",
