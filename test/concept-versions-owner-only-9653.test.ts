@@ -20,6 +20,7 @@ import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { replaceConceptInputs } from '../src/core/cycle/concept-publication.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const OPEN = 'own-src';
 const OWNER = 'owner-example';
@@ -42,7 +43,11 @@ for (const kind of testBackends()) describe(`#9653 owner-only lineage of archive
 
   beforeAll(async () => {
     if (kind === 'postgres') ({ engine, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!));
-    else { engine = new PGLiteEngine(); await engine.connect({ engine: 'pglite' } as never); await engine.initSchema(); close = () => engine.disconnect(); }
+    // A brain loaded from the test snapshot refuses the owner's remote revert below (page_not_found) with or without this
+    // change, so this file initializes its schema in full.
+    else await withEnv({ GBRAIN_PGLITE_SNAPSHOT: undefined }, async () => {
+      engine = new PGLiteEngine(); await engine.connect({ engine: 'pglite' } as never); await engine.initSchema(); close = () => engine.disconnect();
+    });
     await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
     __resetPrivateVisibilityCacheForTests();
     await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [OPEN]);
@@ -85,7 +90,8 @@ for (const kind of testBackends()) describe(`#9653 owner-only lineage of archive
   test('a revert carries the version\'s inputs back, so the restored narrative stays owner-only', async () => {
     const v1 = (await engine.getVersions(CONCEPT, { sourceId: OPEN })).find(v => String(v.compiled_truth).includes('canaryv1'))!;
     const revision = (await engine.readPageSnapshot(CONCEPT, { sourceId: OPEN }))!.revision;
-    await read('owner-writer', 'revert_version', { slug: CONCEPT, version_id: Number(v1.id), expected_revision: revision });
+    const reverted = await read('owner-writer', 'revert_version', { slug: CONCEPT, version_id: Number(v1.id), expected_revision: revision });
+    expect(reverted).not.toContain('"error"');
     expect((await engine.getPage(CONCEPT, { sourceId: OPEN }))?.compiled_truth).toContain('canaryv1');
     expect(await lineage()).toBe(true);
     expect((await read('bob', 'get_page', { slug: CONCEPT })).includes('canaryv1')).toBe(false);
