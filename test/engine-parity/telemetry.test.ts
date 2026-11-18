@@ -23,7 +23,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import type { SearchTelemetryBucket } from '../../src/core/engine-sql/telemetry.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { RUST_ENGINE_MEMBERS } from '../../src/core/rust-engine/members.ts';
-import { servedCapabilities } from '../../src/core/rust-engine/store-capabilities.ts';
+import { CAPABILITY_REQUIRES, servedCapabilities } from '../../src/core/rust-engine/store-capabilities.ts';
 import { STORE_MEMBERS } from '../../src/core/rust-engine/store-members/index.ts';
 import { parityArms, sorted, type ParityBackend } from './harness.ts';
 
@@ -198,7 +198,12 @@ describe('engine parity: telemetry', () => {
       withoutTelemetry.add(cls);
       if (!(member in STORE_MEMBERS)) refusing.add(cls);
     }
-    const expected = [...withoutTelemetry].filter((c) => !refusing.has(c)).sort();
+    const servedWithout = new Set([...withoutTelemetry].filter((c) => !refusing.has(c)));
+    // A capability that needs another one (CAPABILITY_REQUIRES) is withheld until that one is served.
+    for (const [cap, needs] of Object.entries(CAPABILITY_REQUIRES)) {
+      if (needs!.some((need) => !servedWithout.has(need))) servedWithout.delete(cap);
+    }
+    const expected = [...servedWithout].sort();
     expect([...reported].filter((c) => c !== 'telemetry').map(String).sort()).toEqual(expected);
     // The store serves every telemetry member, so the Rust arm reports the capability.
     expect(served).toEqual(members);
