@@ -572,6 +572,8 @@ export interface OperationContext {
    * treated as 'full'.
    */
   surfaceCeiling?: 'verbs' | 'starter' | 'full';
+  /** #9669: the tool surface MCP dispatch served this call on; a remote agent job records it. Unset for the local CLI. */
+  surface?: 'verbs' | 'starter' | 'full';
   /**
    * GBRA-218 local `--as <member>`: the member identity a trusted local read previews. Set only by the
    * CLI with `applyRemoteReadPolicy`; `remote` stays false, so upload confinement and write trust are unchanged.
@@ -691,7 +693,7 @@ export interface OperationContext {
    * callable. Unset on local and in-process callers. Shape only, never
    * authority: dispatch enforces callability itself.
    */
-  isCallable?: (opName: string) => boolean;
+  isCallable?: (opName: string, args?: Record<string, unknown>) => boolean;
   /**
    * Resolved global CLI options (--quiet / --progress-json / --progress-interval).
    * CLI callers populate this from `getCliOptions()`. MCP / library callers

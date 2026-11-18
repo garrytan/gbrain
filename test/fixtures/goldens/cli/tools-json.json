@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 301448,
-    "stdoutSha256": "78c57e6d0541404ce29f7ff140711dc2aa72c99bbdc567981c262e32cbe1b793",
+    "stdoutBytes": 301442,
+    "stdoutSha256": "75d5b3e9ae6e8072f3c5bec08c12f68958e19f3663c1049f59e2569431e07e49",
     "toolNames": [
       "remember",
       "entity",
@@ -6441,7 +6441,7 @@
         "scope": "read"
       },
       {
-        "description": "More tools and params: no arguments lists your catalog; {tools: [names]} returns full schemas, every optional param included; {surface} widens it (per client or stdio session).",
+        "description": "More tools and params: no arguments lists your catalog; {tools: [names]} returns schemas with every param you may pass; {surface} widens it (per client or stdio session).",
         "idempotent": false,
         "local_only": false,
         "mutating": true,
