@@ -8,7 +8,6 @@
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { SqlExecutor } from './executor.ts';
 import { sqlFragment } from './fragment.ts';
-import { trustRankSql } from '../trust/tier.ts';
 
 const SETTING_NAME = /^[a-z_][a-z0-9_.]*$/;
 function assertSettingNames(names: readonly string[]): void {
@@ -64,6 +63,9 @@ export interface WriteContextResult { brainId: string | null; previous: string[]
  * the enclosing settings and the new settings in one round trip; nothing is set when the identity row is missing. The
  * OFFSET 0 subquery reads the enclosing values first. A nested scope keeps the outer actor; a declared trust tier nests
  * as min(outer, inner) (ranks compared in SQL); an undeclared one leaves the enclosing trust settings.
+ *
+ * Static text, so the engine-sql dynamic-SQL guard accepts its placeholders: the trust ranks are trustRankSql
+ * (trust/tier.ts) and the enclosing reads follow WRITE_CONTEXT_SETTINGS; test/write-context-sql-text.test.ts pins both.
  */
 export const SET_WRITE_CONTEXT_SQL = `SELECT b.brain_id,prev.*,
       CASE WHEN b.brain_id IS NOT NULL THEN concat(set_config('gbrain.write_sources',$1,true),set_config('gbrain.git_protocol','1',true),
@@ -71,9 +73,9 @@ export const SET_WRITE_CONTEXT_SQL = `SELECT b.brain_id,prev.*,
         set_config('gbrain.write_principal_kind',CASE WHEN prev.s2<>'' THEN prev.s2 ELSE $3 END,true),
         set_config('gbrain.write_principal_id',CASE WHEN prev.s2<>'' THEN prev.s3 ELSE $4 END,true),
         CASE WHEN $5::text<>'' THEN concat(
-          set_config('gbrain.write_trust_tier',CASE WHEN ${trustRankSql('prev.s4')}>0 AND ${trustRankSql('prev.s4')}<${trustRankSql('$5::text')} THEN prev.s4 ELSE $5::text END,true),
+          set_config('gbrain.write_trust_tier',CASE WHEN (CASE prev.s4 WHEN 'user_confirmed' THEN 6 WHEN 'operator_curated' THEN 5 WHEN 'tool_observed' THEN 4 WHEN 'agent_written' THEN 3 WHEN 'unknown' THEN 2 WHEN 'external_untrusted' THEN 1 ELSE 0 END)>0 AND (CASE prev.s4 WHEN 'user_confirmed' THEN 6 WHEN 'operator_curated' THEN 5 WHEN 'tool_observed' THEN 4 WHEN 'agent_written' THEN 3 WHEN 'unknown' THEN 2 WHEN 'external_untrusted' THEN 1 ELSE 0 END)<(CASE $5::text WHEN 'user_confirmed' THEN 6 WHEN 'operator_curated' THEN 5 WHEN 'tool_observed' THEN 4 WHEN 'agent_written' THEN 3 WHEN 'unknown' THEN 2 WHEN 'external_untrusted' THEN 1 ELSE 0 END) THEN prev.s4 ELSE $5::text END,true),
           set_config('gbrain.write_origin',CASE WHEN $6::text<>'' THEN $6::text ELSE prev.s5 END,true)) END) END AS applied
-    FROM (SELECT ${WRITE_CONTEXT_SETTINGS.map((name, index) => `COALESCE(current_setting('${name}',true),'') AS s${index}`).join(',')} OFFSET 0) prev
+    FROM (SELECT COALESCE(current_setting('gbrain.write_sources',true),'') AS s0,COALESCE(current_setting('gbrain.write_request',true),'') AS s1,COALESCE(current_setting('gbrain.write_principal_kind',true),'') AS s2,COALESCE(current_setting('gbrain.write_principal_id',true),'') AS s3,COALESCE(current_setting('gbrain.write_trust_tier',true),'') AS s4,COALESCE(current_setting('gbrain.write_origin',true),'') AS s5,COALESCE(current_setting('gbrain.git_protocol',true),'') AS s6 OFFSET 0) prev
     LEFT JOIN persistence_brain b ON b.singleton=1`;
 
 /** Establishes the coordinated write context on the current transaction and returns what it replaced. */

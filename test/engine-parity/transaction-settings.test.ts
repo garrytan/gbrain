@@ -57,7 +57,7 @@ describe('engine parity: transaction-local settings', () => {
     const inside = await engine.transaction(async (tx) => {
       const before = await tx.readTransactionSettings(names);
       if (backend === 'rust') expect(before).toEqual([null, null, null, null, null]);
-      await tx.applyTransactionSettings(names, ['agent_written', '{"kind":"cli"}', 'default,notes', 'req-1', 'on']);
+      await tx.applyTransactionSettings(names, ['agent_written', '{"channel":"cli"}', 'default,notes', 'req-1', 'on']);
       return { before: unset(before), after: await tx.readTransactionSettings(names) };
     });
     const later = await engine.transaction((tx) => tx.readTransactionSettings(names));
@@ -132,7 +132,7 @@ describe('engine parity: transaction-local settings', () => {
     const inside = await engine.transaction(async (tx) => {
       const before = await tx.readCurrentWriteTrust();
       if (backend === 'rust') expect(before).toEqual({ tier: null, origin: null });
-      await tx.applyTransactionSettings([TIER, ORIGIN], ['agent_written', '{"kind":"cli"}']);
+      await tx.applyTransactionSettings([TIER, ORIGIN], ['agent_written', '{"channel":"cli"}']);
       const declared = await tx.readCurrentWriteTrust();
       const dropped = await tx.transaction(async (inner) => {
         await inner.applyTransactionSettings([TIER, ORIGIN], ['tool_observed', '']);
@@ -145,10 +145,10 @@ describe('engine parity: transaction-local settings', () => {
     expect(answers).toEqual({
       outside: { tier: '', origin: '' },
       before: { tier: '', origin: '' },
-      declared: { tier: 'agent_written', origin: '{"kind":"cli"}' },
-      parsed: { tier: 'agent_written', origin: { kind: 'cli' } },
+      declared: { tier: 'agent_written', origin: '{"channel":"cli"}' },
+      parsed: { tier: 'agent_written', origin: { channel: 'cli' } },
       dropped: { tier: 'tool_observed', origin: '' },
-      restored: { tier: 'agent_written', origin: '{"kind":"cli"}' },
+      restored: { tier: 'agent_written', origin: '{"channel":"cli"}' },
       later: { raw: { tier: '', origin: '' }, parsed: null },
     });
     return answers;
@@ -165,7 +165,7 @@ describe('engine parity: transaction-local settings', () => {
       const outer = await tx.setWriteContext(input({}));
       const afterOuter = await read(tx);
       const lowered = await tx.setWriteContext(input({ sourceIds: ['default', 'notes'], requestId: 'req-inner', principalKind: 'cli',
-        principalId: 'cli-1', tier: 'agent_written', origin: '{"kind":"cli"}' }));
+        principalId: 'cli-1', tier: 'agent_written', origin: '{"channel":"cli"}' }));
       const afterLowered = await read(tx);
       // A higher tier does not raise the enclosing one; the declared origin still replaces the enclosing origin.
       const notRaised = await tx.setWriteContext(input({ tier: 'user_confirmed', origin: '{"kind":"owner"}' }));
@@ -187,8 +187,8 @@ describe('engine parity: transaction-local settings', () => {
       outer: { identity: true, previous: ['', '', '', '', '', '', ''] },
       afterOuter: ['["default"]', ...outerActor, '', '', '1'],
       lowered: { identity: true, previous: ['["default"]', ...outerActor, '', '', '1'] },
-      afterLowered: ['["default","notes"]', ...outerActor, 'agent_written', '{"kind":"cli"}', '1'],
-      notRaised: { identity: true, previous: ['["default","notes"]', ...outerActor, 'agent_written', '{"kind":"cli"}', '1'] },
+      afterLowered: ['["default","notes"]', ...outerActor, 'agent_written', '{"channel":"cli"}', '1'],
+      notRaised: { identity: true, previous: ['["default","notes"]', ...outerActor, 'agent_written', '{"channel":"cli"}', '1'] },
       afterNotRaised: ['["default"]', ...outerActor, 'agent_written', '{"kind":"owner"}', '1'],
       lower: { identity: true, previous: ['["default"]', ...outerActor, 'agent_written', '{"kind":"owner"}', '1'] },
       afterLower: ['["default"]', ...outerActor, 'external_untrusted', '{"kind":"owner"}', '1'],

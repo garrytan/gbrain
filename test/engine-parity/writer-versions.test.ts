@@ -100,8 +100,8 @@ describe('engine parity: writer-version reads', () => {
     const limited = untimed(await engine.listWriterVersions(2));
     const none = await engine.listWriterVersions(0);
     const answers = { empty, all, limited, none };
-    const consumerA = { role: 'consumer', host_id: CONSUMER, principal: 'local_cli:parity-writer-a', version: 'c1' };
-    const admitterA = { role: 'admitter', host_id: ADMITTER, principal: 'local_cli:parity-writer-a', version: 'a1' };
+    const consumerA = { role: 'consumer' as const, host_id: CONSUMER, principal: 'local_cli:parity-writer-a', version: 'c1' };
+    const admitterA = { role: 'admitter' as const, host_id: ADMITTER, principal: 'local_cli:parity-writer-a', version: 'a1' };
     expect(answers).toEqual({
       empty: [],
       all: [consumerA, admitterA,
