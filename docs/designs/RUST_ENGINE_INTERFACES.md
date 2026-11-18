@@ -490,7 +490,7 @@ delete.
 - What the body must do (the trigger's rules): delete the job when the page is hard deleted, soft deleted, moved to
   another slug or source, or when `text_projection_revision` equals `knowledge_revision`; write the job when the page
   is new or its `knowledge_revision` changed.
-- **Owner:** persistence. The body is empty today, so no page write changes.
+- **Owner:** persistence. The body is `persistence/projection_queue.rs` (`rust/docs/store/persistence.md`, "Projection queue").
 
 #### Page origin (`source_path` on `putPage`)
 
@@ -804,6 +804,7 @@ Slug renames and page aliases.
 - **Depends on:** `updateSlug` moves the page key (`P`) from the old slug to the new one through core's `pages::rename_page` (built; "Core hooks"). This family versions the page first (`pages::snapshot_in`), then calls `rename_page`, then records the alias, moves its own slug bindings (`page_aliases`, statements 7 and 8 of "Rename slug rows"), and calls `cascade::rename_slug_rows` for the facts records. Links, chunks, tags, timeline and versions follow the page id and need no change.
 - **Estimate:** about 5 to 6 days.
 - **Notes:** Same capability (`pages`) as page_ops and extraction. `resolveSlugWithAliasDetailed` returns how the slug was found; keep its result fields exact.
+- **Known gap:** the Rust store keeps no `alias_text` and no `case_sensitive` flag on `page_aliases` rows, so `resolveCaseSensitiveAliases` is always empty, `readPageAliasRows` gives `alias_text: null`, and `replaceDerivedAliases` stays unserved until alias storage exists (`rust/docs/store/alias_fanout_reads.md`). `findPagesByTitles` with `excludePrivate` refuses with `engine_capability_missing` for a caller whose reader identity widens the page policy; the caller's fail-open fallback reads that as no rows.
 - **Parity cases (6, in `sync-aliases.test.ts`):**
   - `sync-aliases.test.ts`: updateSlug renames a page in place, keeps its chunks, and returns 0 when the old slug is absent
   - `sync-aliases.test.ts`: updateSlug is source-scoped and rejects a path-traversal new slug
@@ -1568,6 +1569,7 @@ Trust tiers, the write gate, trust review, fact withdrawal and the belief ledger
   list; trust owns the table, and facts calls `trust::remove_source_rows` or drops the entry. The access tables
   (`access_rules`, `access_members`, `access_tokens`, `access_policy_state`, `oauth_clients`, `oauth_grant_audit`,
   `guest_sources`) belong to the `access` family in the contract map, not to trust.
+  No access rules on Rust: `isFolderRestricted` answers false until an access-rule store exists, and the access-rule write refuses (`raw_sql`).
 - **Depends on:** the facts family (fact ids and the withdrawal overlap); the page-columns hook (built).
 - **Owner:** group 4 (memory records), after facts and contradictions.
 - **Estimate:** about 8 days, plus about 4 for the belief ledger.

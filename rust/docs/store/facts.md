@@ -96,6 +96,8 @@ counter is `M next_facts_id`.
 | `F 0x05 source source_markdown_slug row_num` | id | `idx_facts_fence_key` (unique). |
 | `F 0x06 target referrer` | empty | `superseded_by` back-links, so a deleted row clears its referrers (`ON DELETE SET NULL`). |
 | `F 0x07 source entity dimension value_hash source_markdown_slug valid_from` | id | `idx_facts_ontology_stint_dedup` (unique). |
+| `F 0x08 id` | `LoopRecord` (JSON) | One `open_loops` row. Its counter is `M next_open_loops_id`. |
+| `F 0x09 source dedup_key` | id | `open_loops_dedup` (unique). |
 
 ## Lookups and hooks for other families
 
@@ -269,6 +271,32 @@ provenance page hides the row; then the entity, session, `since` (on `valid_from
 - `listFactsForRelevance` serves the pool reads only. Its caller `collectFactCandidates` still makes
   other reads on the way (the word stems, the facts embedding column, the named-entity anchor and the
   nearest-vector arm); on Rust each of those is served or refused by the family that owns it.
+
+## Open loops (`facts/loops.rs`)
+
+The `open_loops` table, for the three members loops-store.ts calls through the engine. The other loop
+statements (thread auto-close, the staleness pass, mutes and the loop-fact reads) still run through
+`executeRaw`, so they refuse on this engine.
+
+| Member | What it does |
+|---|---|
+| `upsertOpenLoop` | Inserts a loop, or updates the row with the same `(source_id, dedup_key)`. The update runs only when the row is open, the new activity is newer, or `closed_by` is `mute_recheck`; and only when `closed_by` is not `muted` or the counterparty email changed. It keeps `thread_id` and `detector`, keeps the old slug, email, page, due time and fact id when the new one is NULL, and keeps the old counterparty source when the new slug is NULL. An open row keeps its earlier `opened_at`; a reopened row takes the new one. Returns `{ id, created, applied }`. |
+| `listOpenLoops` | The rows that pass the source list, status, type, counterparty (slug in the counterparty source, or email) and id filters, by `last_activity_at` descending, then id descending, at most the clamped limit. |
+| `closeOpenLoop` | Closes an open row (in the named source when one is given) with a status, `closed_by` and now. NULL when no open row matches. |
+
+- Every upsert takes an id from the counter, also one that lands on an existing row, as `nextval`
+  does before `ON CONFLICT`. A refused upsert (a CHECK value, an unknown source) rolls back and takes
+  none, where Postgres keeps the gap. No member exposes the gap.
+- `loop_type`, `detector` and the close `status` refuse with `constraint_violation` when the table's
+  CHECK list does not hold them. The close status is checked only when a row matches, as the
+  `UPDATE` checks only the rows it writes.
+- `confidence` is the `real` column: it is kept as `f32` and read back as its shortest text.
+- `evidence` is kept in jsonb key order.
+- Times: the store reads `YYYY-MM-DDTHH:MM:SS[.ffffff]Z`. The member rewrites an ISO time with an
+  offset and at most 3 fractional digits through `Date#toISOString`. It sends any other spelling (a
+  bare date, a time with no zone) as written, and the store refuses it with `invalid_argument`, where
+  Postgres would read it in the session time zone.
+- Deleting a source removes its loops (`ON DELETE CASCADE`).
 
 ## Not modeled
 

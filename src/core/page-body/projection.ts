@@ -227,15 +227,8 @@ export async function rebuildPendingSegmentedProjections(engine: BrainEngine, li
     onFailure?: (failure: ProjectionRebuildFailure) => void } = {}): Promise<{ rebuilt: number; failed: number; listed: string[] }> {
   const now = opts.now ?? Date.now;
   const startedAt = now();
-  const params: unknown[] = [Math.max(1, limit)];
-  const filters = [opts.retryCooldown === false ? `NOT ${SEGMENTED_PROJECTION_CLAIMED_SQL}` : PROJECTION_RETRY_READY_SQL];
-  if (opts.notAfter !== undefined) filters.push(`j.updated_at<=$${params.push(opts.notAfter)}::text::timestamptz`);
-  if (opts.reasons) filters.push(`j.reason=ANY($${params.push(opts.reasons)}::text[])`);
-  if (opts.exclude?.length) filters.push(`NOT (j.source_incarnation::text || '/' || j.slug)=ANY($${params.push(opts.exclude)}::text[])`);
-  const jobs = await engine.executeRaw<{ source_id: string; source_incarnation: string; slug: string; revision: string }>(`SELECT s.id AS source_id,
-      j.source_incarnation::text AS source_incarnation, j.slug, j.revision::text AS revision
-    FROM page_projection_jobs j ${SEGMENTED_JOB_PROBES}
-    WHERE ${filters.join(' AND ')} ORDER BY j.updated_at, j.slug LIMIT $1`, params);
+  const jobs = await engine.listPendingSegmentedProjections({ limit, notAfter: opts.notAfter, reasons: opts.reasons, exclude: opts.exclude,
+    retryCooldown: opts.retryCooldown });
   let rebuilt = 0, failed = 0;
   const listed: string[] = [];
   for (const [index, job] of jobs.entries()) {

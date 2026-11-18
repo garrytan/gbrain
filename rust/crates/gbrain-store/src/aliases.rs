@@ -98,7 +98,7 @@ pub struct DerivedAliasRow {
 }
 
 /// The columns of a derived `page_aliases` row the key does not hold, stored on its `0x03` key.
-/// No typed read returns them yet; the mention pass reads them through SQL.
+/// The typed reads readPageAliasRows and resolveCaseSensitiveAliases return them (alias_fanout_reads.rs).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct DerivedAliasValue {
     #[serde(rename = "c")]

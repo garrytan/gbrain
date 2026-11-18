@@ -1,6 +1,5 @@
 import type { BrainEngine } from '../engine.ts';
 import { isMissingSchemaObject } from '../utils.ts';
-import { MOVE_WITHDRAWAL_SUBJECT_SQL } from '../facts/withdrawal-schema.ts';
 import { dropRekeyDuplicates } from '../facts/ontology-rekey.ts';
 
 /**
@@ -84,13 +83,13 @@ export async function recordSlugLineAlias(tx: Pick<BrainEngine, 'transaction'>, 
  * savepoint.
  */
 export async function moveSlugBindings(
-  tx: Pick<BrainEngine, 'transaction' | 'executeRaw'>,
+  tx: Pick<BrainEngine, 'transaction' | 'executeRaw' | 'moveFactWithdrawalSubject'>,
   sourceId: string,
   oldSlug: string,
   newSlug: string,
 ): Promise<void> {
   if (oldSlug === newSlug) return;
-  await tx.executeRaw(MOVE_WITHDRAWAL_SUBJECT_SQL, [sourceId, oldSlug, newSlug]);
+  await tx.moveFactWithdrawalSubject(sourceId, oldSlug, newSlug);
   type Savepoint = Pick<BrainEngine, 'executeRaw'>;
   const sql = (text: string) => (savepoint: Savepoint) => savepoint.executeRaw(text, [sourceId, oldSlug, newSlug]);
   const statements: Array<(savepoint: Savepoint) => Promise<unknown>> = [

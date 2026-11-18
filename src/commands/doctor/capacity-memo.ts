@@ -15,7 +15,7 @@ import { currentStatementDeadline, deadlineBoundEngine, deadlineFailure, withSta
 
 const KEY = 'capacity_forecast';
 
-export function doctorCapacityForecast(engine: SqlEngine & Pick<BrainEngine, 'readJournalLimitRows'> & { kind?: string }, opts: { limits: JournalLimits }): Promise<CapacityForecast> {
+export function doctorCapacityForecast(engine: SqlEngine & Pick<BrainEngine, 'readJournalLimitRows' | 'readCapacityForecastInputs' | 'getConfigValues'> & { kind?: string }, opts: { limits: JournalLimits }): Promise<CapacityForecast> {
   const scope = currentStatementDeadline();
   const memo = scope?.memo;
   if (!scope || !memo) return readCapacityForecast(engine, opts);

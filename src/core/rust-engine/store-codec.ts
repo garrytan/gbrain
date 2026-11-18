@@ -20,6 +20,19 @@ export function withDates<T extends object>(row: T, fields: readonly string[]): 
   return out as T;
 }
 
+/** The write-journal request columns PGLite returns as a Date (timestamptz). */
+const REQUEST_DATES = ['claim_expires_at', 'created_at', 'updated_at', 'completed_at', 'published_at', 'next_attempt_at'];
+
+/** A stored write-journal request row as PGLite returns it: the timestamps as Dates, every other column as stored. */
+export function requestRow<R extends object>(row: unknown): R | null {
+  return row === null || row === undefined ? null : withDates(row as R, REQUEST_DATES);
+}
+
+/** A stored topology change row as PGLite returns it: created_at and updated_at as Dates. */
+export function topologyRow<R extends object>(row: unknown): R | null {
+  return row === null || row === undefined ? null : withDates(row as R, ['created_at', 'updated_at']);
+}
+
 /** A `PageInput` or any write body with its `Date` values as ISO strings, which is what the store reads. */
 export function withIsoDates<T extends object>(row: T): T {
   const out: Row = { ...(row as Row) };

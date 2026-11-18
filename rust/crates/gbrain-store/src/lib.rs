@@ -32,6 +32,7 @@ pub mod timeline;
 
 // One module per planned family (docs/designs/RUST_ENGINE_INTERFACES.md). Each is listed once, here,
 // so building a family never edits this list.
+pub mod alias_fanout_reads;
 pub mod aliases;
 pub mod chunk_queries;
 pub mod code_edges;
@@ -61,6 +62,7 @@ pub mod trust;
 pub mod vectors;
 pub mod wanted_links;
 pub mod write_guards;
+pub mod write_misc;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -233,6 +235,7 @@ impl Store {
     /// Runs `f` in the write transaction and commits when it returns `Ok`. An `Err` rolls back.
     pub(crate) fn write<T>(&self, f: impl FnOnce(&mut dyn KvWrite) -> Result<T>) -> Result<T> {
         let mut tx = self.kv.begin_write()?;
+        let _clock = crate::env::transaction_clock::open(self.env.clone());
         let value = f(&mut *tx)?;
         tx.commit()?;
         Ok(value)
