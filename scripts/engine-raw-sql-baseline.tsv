@@ -188,7 +188,6 @@ src/commands/migrations/v0_29_1.ts	execute_raw	1
 src/commands/migrations/v0_31_0.ts	execute_raw	1
 src/commands/migrations/v0_32_2.ts	execute_raw	3
 src/commands/onboard.ts	execute_raw	1
-src/commands/orphans.ts	execute_raw	1
 src/commands/pages-status.ts	execute_raw	2
 src/commands/quarantine.ts	execute_raw	1
 src/commands/recall.ts	execute_raw	1
