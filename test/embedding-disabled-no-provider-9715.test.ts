@@ -102,6 +102,23 @@ for (const backend of testBackends()) {
       }, 120_000);
     }
 
+    test('a failed read of the database row counts as disabled, so nothing is sent', async () => {
+      await world(databaseUrl, 'database', async engine => {
+        await stalePage(engine, 'notes/written');
+        const original = engine.getConfig.bind(engine);
+        let failed = false;
+        engine.getConfig = async (key: string) => {
+          if (key === 'embedding_disabled' && !failed) { failed = true; throw new Error('synthetic config read failure'); }
+          return original(key);
+        };
+        try {
+          expect((await embedStalePages(engine, ['notes/written'], 'default')).embedded).toBe(0);
+        } finally { engine.getConfig = original; }
+        expect(failed).toBe(true);
+        expect(sent).toEqual([]);
+      });
+    }, 120_000);
+
     test('the safe-chunks repair re-seals a page without embedding it', async () => {
       await world(databaseUrl, 'database', async engine => {
         await stalePage(engine, 'notes/old-seal');
