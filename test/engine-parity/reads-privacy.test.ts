@@ -253,16 +253,48 @@ const openedCase = (r: Reader) => async (engine: BrainEngine, backend: ParityBac
   return view;
 };
 
-const describeMember = (member: EngineMethod): void => {
-  const r = reader(member);
-  parityTest(`${member}: without excludePrivate it reads the private, owner-only and other-source pages alike`, { methods: [member] }, plainCase(r));
-  parityTest(`${member}: excludePrivate in a served brain hides the private, owner-only and derived pages and keeps the other source`, { methods: [member] }, servedCase(r));
-  parityTest(`${member}: excludePrivate outside an engine scope hides every page of a brain that holds an owner-only source`, { methods: [member] }, closedCase(r));
-  parityTest(`${member}: excludePrivate in a brain whose owner-only source was opened hides the private pages and nothing else`, { methods: [member] }, openedCase(r));
-};
-
 describe('private pages, owner-only pages and other sources across the reads and embeddings members', () => {
-  for (const r of READERS) describeMember(r.member);
+  // Each case names its member as a literal: the coverage list reads the declarations from the source.
+  parityTest('searchVector: without excludePrivate it reads the private, owner-only and other-source pages alike', { methods: ['searchVector'] }, plainCase(reader('searchVector')));
+  parityTest('searchVector: excludePrivate in a served brain hides the private, owner-only and derived pages and keeps the other source', { methods: ['searchVector'] }, servedCase(reader('searchVector')));
+  parityTest('searchVector: excludePrivate outside an engine scope hides every page of a brain that holds an owner-only source', { methods: ['searchVector'] }, closedCase(reader('searchVector')));
+  parityTest('searchVector: excludePrivate in a brain whose owner-only source was opened hides the private pages and nothing else', { methods: ['searchVector'] }, openedCase(reader('searchVector')));
+  parityTest('getBacklinkCounts: without excludePrivate it reads the private, owner-only and other-source pages alike', { methods: ['getBacklinkCounts'] }, plainCase(reader('getBacklinkCounts')));
+  parityTest('getBacklinkCounts: excludePrivate in a served brain hides the private, owner-only and derived pages and keeps the other source', { methods: ['getBacklinkCounts'] }, servedCase(reader('getBacklinkCounts')));
+  parityTest('getBacklinkCounts: excludePrivate outside an engine scope hides every page of a brain that holds an owner-only source', { methods: ['getBacklinkCounts'] }, closedCase(reader('getBacklinkCounts')));
+  parityTest('getBacklinkCounts: excludePrivate in a brain whose owner-only source was opened hides the private pages and nothing else', { methods: ['getBacklinkCounts'] }, openedCase(reader('getBacklinkCounts')));
+  parityTest('getAdjacencyBoosts: without excludePrivate it reads the private, owner-only and other-source pages alike', { methods: ['getAdjacencyBoosts'] }, plainCase(reader('getAdjacencyBoosts')));
+  parityTest('getAdjacencyBoosts: excludePrivate in a served brain hides the private, owner-only and derived pages and keeps the other source', { methods: ['getAdjacencyBoosts'] }, servedCase(reader('getAdjacencyBoosts')));
+  parityTest('getAdjacencyBoosts: excludePrivate outside an engine scope hides every page of a brain that holds an owner-only source', { methods: ['getAdjacencyBoosts'] }, closedCase(reader('getAdjacencyBoosts')));
+  parityTest('getAdjacencyBoosts: excludePrivate in a brain whose owner-only source was opened hides the private pages and nothing else', { methods: ['getAdjacencyBoosts'] }, openedCase(reader('getAdjacencyBoosts')));
+  parityTest('supersedingPageSlugs: without excludePrivate it reads the private, owner-only and other-source pages alike', { methods: ['supersedingPageSlugs'] }, plainCase(reader('supersedingPageSlugs')));
+  parityTest('supersedingPageSlugs: excludePrivate in a served brain hides the private, owner-only and derived pages and keeps the other source', { methods: ['supersedingPageSlugs'] }, servedCase(reader('supersedingPageSlugs')));
+  parityTest('supersedingPageSlugs: excludePrivate outside an engine scope hides every page of a brain that holds an owner-only source', { methods: ['supersedingPageSlugs'] }, closedCase(reader('supersedingPageSlugs')));
+  parityTest('supersedingPageSlugs: excludePrivate in a brain whose owner-only source was opened hides the private pages and nothing else', { methods: ['supersedingPageSlugs'] }, openedCase(reader('supersedingPageSlugs')));
+  parityTest('resolveAliases: without excludePrivate it reads the private, owner-only and other-source pages alike', { methods: ['resolveAliases'] }, plainCase(reader('resolveAliases')));
+  parityTest('resolveAliases: excludePrivate in a served brain hides the private, owner-only and derived pages and keeps the other source', { methods: ['resolveAliases'] }, servedCase(reader('resolveAliases')));
+  parityTest('resolveAliases: excludePrivate outside an engine scope hides every page of a brain that holds an owner-only source', { methods: ['resolveAliases'] }, closedCase(reader('resolveAliases')));
+  parityTest('resolveAliases: excludePrivate in a brain whose owner-only source was opened hides the private pages and nothing else', { methods: ['resolveAliases'] }, openedCase(reader('resolveAliases')));
+  parityTest('aliasCanonicalRefs: without excludePrivate it reads the private, owner-only and other-source pages alike', { methods: ['aliasCanonicalRefs'] }, plainCase(reader('aliasCanonicalRefs')));
+  parityTest('aliasCanonicalRefs: excludePrivate in a served brain hides the private, owner-only and derived pages and keeps the other source', { methods: ['aliasCanonicalRefs'] }, servedCase(reader('aliasCanonicalRefs')));
+  parityTest('aliasCanonicalRefs: excludePrivate outside an engine scope hides every page of a brain that holds an owner-only source', { methods: ['aliasCanonicalRefs'] }, closedCase(reader('aliasCanonicalRefs')));
+  parityTest('aliasCanonicalRefs: excludePrivate in a brain whose owner-only source was opened hides the private pages and nothing else', { methods: ['aliasCanonicalRefs'] }, openedCase(reader('aliasCanonicalRefs')));
+  parityTest('getSalienceScores: without excludePrivate it reads the private, owner-only and other-source pages alike', { methods: ['getSalienceScores'] }, plainCase(reader('getSalienceScores')));
+  parityTest('getSalienceScores: excludePrivate in a served brain hides the private, owner-only and derived pages and keeps the other source', { methods: ['getSalienceScores'] }, servedCase(reader('getSalienceScores')));
+  parityTest('getSalienceScores: excludePrivate outside an engine scope hides every page of a brain that holds an owner-only source', { methods: ['getSalienceScores'] }, closedCase(reader('getSalienceScores')));
+  parityTest('getSalienceScores: excludePrivate in a brain whose owner-only source was opened hides the private pages and nothing else', { methods: ['getSalienceScores'] }, openedCase(reader('getSalienceScores')));
+  parityTest('getContentFlagsByPageIds: without excludePrivate it reads the private, owner-only and other-source pages alike', { methods: ['getContentFlagsByPageIds'] }, plainCase(reader('getContentFlagsByPageIds')));
+  parityTest('getContentFlagsByPageIds: excludePrivate in a served brain hides the private, owner-only and derived pages and keeps the other source', { methods: ['getContentFlagsByPageIds'] }, servedCase(reader('getContentFlagsByPageIds')));
+  parityTest('getContentFlagsByPageIds: excludePrivate outside an engine scope hides every page of a brain that holds an owner-only source', { methods: ['getContentFlagsByPageIds'] }, closedCase(reader('getContentFlagsByPageIds')));
+  parityTest('getContentFlagsByPageIds: excludePrivate in a brain whose owner-only source was opened hides the private pages and nothing else', { methods: ['getContentFlagsByPageIds'] }, openedCase(reader('getContentFlagsByPageIds')));
+  parityTest('getUnverifiedExtractionPageIds: without excludePrivate it reads the private, owner-only and other-source pages alike', { methods: ['getUnverifiedExtractionPageIds'] }, plainCase(reader('getUnverifiedExtractionPageIds')));
+  parityTest('getUnverifiedExtractionPageIds: excludePrivate in a served brain hides the private, owner-only and derived pages and keeps the other source', { methods: ['getUnverifiedExtractionPageIds'] }, servedCase(reader('getUnverifiedExtractionPageIds')));
+  parityTest('getUnverifiedExtractionPageIds: excludePrivate outside an engine scope hides every page of a brain that holds an owner-only source', { methods: ['getUnverifiedExtractionPageIds'] }, closedCase(reader('getUnverifiedExtractionPageIds')));
+  parityTest('getUnverifiedExtractionPageIds: excludePrivate in a brain whose owner-only source was opened hides the private pages and nothing else', { methods: ['getUnverifiedExtractionPageIds'] }, openedCase(reader('getUnverifiedExtractionPageIds')));
+  parityTest('getEffectiveDates: without excludePrivate it reads the private, owner-only and other-source pages alike', { methods: ['getEffectiveDates'] }, plainCase(reader('getEffectiveDates')));
+  parityTest('getEffectiveDates: excludePrivate in a served brain hides the private, owner-only and derived pages and keeps the other source', { methods: ['getEffectiveDates'] }, servedCase(reader('getEffectiveDates')));
+  parityTest('getEffectiveDates: excludePrivate outside an engine scope hides every page of a brain that holds an owner-only source', { methods: ['getEffectiveDates'] }, closedCase(reader('getEffectiveDates')));
+  parityTest('getEffectiveDates: excludePrivate in a brain whose owner-only source was opened hides the private pages and nothing else', { methods: ['getEffectiveDates'] }, openedCase(reader('getEffectiveDates')));
 
   // The owner-only rule follows a page by id and source, not by slug: a rename or an alias does not move a vault page out of it.
   parityTest(
