@@ -349,6 +349,7 @@ test/scripts/e2e-wiring.test.ts	(file-level)	14	readFileSync
 test/scripts/engine-raw-sql-ratchet.test.ts	check-engine-raw-sql-ratchet.ts: shrink-only baseline	11	readFileSync
 test/scripts/fix-wave-gate.test.ts	fix-wave gate workflow	3	readFileSync
 test/scripts/full-ci-workflow.test.ts	full CI on pull requests	7	readFileSync
+test/scripts/full-ci-workflow.test.ts	full-ci label lifetime	4	readFileSync
 test/scripts/full-ci-workflow.test.ts	master-push reuse of a passed full-suite run	2	readFileSync
 test/scripts/gh-issue-agent-filed.test.ts	agent-filed label	2	readFileSync
 test/scripts/heavy-door-workflow.test.ts	heavy door supply chain and coverage gates	8	readFileSync
@@ -381,7 +382,7 @@ test/scripts/run-verify-parallel.test.ts	run-verify-parallel.sh — no-timeout-b
 test/scripts/serial-files.test.ts	scripts/serial-files.tsv (serial lane manifest)	5	readFileSync
 test/scripts/stable-daily.test.ts	stable-daily.yml	2	readFileSync
 test/scripts/stress-gate.test.ts	docs anchors	1	readFileSync
-test/scripts/stress-gate.test.ts	gate plan	6	readFileSync
+test/scripts/stress-gate.test.ts	gate plan	8	readFileSync
 test/scripts/stress-plan.test.ts	execution profiles	3	readFileSync
 test/scripts/stress-plan.test.ts	shards	5	readFileSync
 test/scripts/test-env-opt-ins-guard.test.ts	check-test-env-opt-ins	5	readFileSync
