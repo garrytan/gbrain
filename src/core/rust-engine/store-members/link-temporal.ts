@@ -133,7 +133,8 @@ export const ensureFactsKeywordIndex: StoreMember<[lang: string, notice?: (line:
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Retrieval coverage. The store keeps no embedding budget, so no page is held. The other reads send the scope with the
-// store's private-page policy, the trust floor and the flagged-page filter (the store reads each page's stamped tier and
+// store's private-page policy (a caller's reader identity and private-readable grant included), the trust floor and the
+// flagged-page filter (the store reads each page's stamped tier and
 // write-gate receipts), and `requireSafeChunks` changes nothing because these reads count pages, not chunks.
 // ---------------------------------------------------------------------------------------------------------------------
 
@@ -142,7 +143,7 @@ function coverageScope(member: string, scope: ProjectionReadinessScope = {}) {
   return {
     sourceId: scope.sourceId ?? null,
     sourceIds: scope.sourceIds ? [...scope.sourceIds] : null,
-    excludePrivate: storePagePolicy(member, scope.excludePrivate) ?? null,
+    excludePrivate: storePagePolicy(member, scope.excludePrivate, { callerReaders: true }) ?? null,
     pageKind: scope.pageKind ?? null,
     types: scope.types ? [...scope.types] : null,
     excludeSlugPrefixes: [...(scope.excludeSlugPrefixes ?? [])],

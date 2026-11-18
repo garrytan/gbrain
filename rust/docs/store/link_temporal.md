@@ -64,7 +64,8 @@ Pinned by `test/engine-parity/link-temporal.test.ts` and `test/engine-parity/ret
 ## Retrieval coverage
 
 The scope of the three coverage reads is `scopeFilter` (`src/core/engine-sql/retrieval-coverage.ts`): the source filter,
-the private-page policy (`excludePrivate`, as `storePagePolicy` sends it), live pages only (not soft-deleted, not
+the private-page policy (`excludePrivate`, as `storePagePolicy` sends it with `callerReaders`, so a caller's reader
+identity and private-readable grant count), live pages only (not soft-deleted, not
 quarantined, source present and not archived), the page kind, the types and the excluded slug prefixes. A page waits
 when its text projection is neither its knowledge revision nor the pre-activation marker. It needs work unless it is an
 image whose body holds a protected fence (`by_design`). The pending count matches a query word as a whole token of
