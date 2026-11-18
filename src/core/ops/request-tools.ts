@@ -190,8 +190,10 @@ const request_tools: Operation = {
     // GBRA-449: {surface, tools} together runs the surface branch exactly as a surface-only call (its refusals
     // included), then the descriptor branch against the resulting surface; surface_change carries the first answer.
     if (p.surface !== undefined && p.tools !== undefined) {
-      const surfaceChange = await request_tools.handler(ctx, { surface: p.surface });
-      return { ...(await request_tools.handler(ctx, { tools: p.tools }) as Record<string, unknown>), surface_change: surfaceChange };
+      const surfaceChange = await request_tools.handler(ctx, { surface: p.surface }) as Record<string, unknown>;
+      const changed = !surfaceChange.dry_run && (surfaceChange.persisted === true || surfaceChange.scope === 'session') && isMcpSurface(surfaceChange.surface as string);
+      const described = changed ? { ...ctx, surface: surfaceChange.surface as OperationContext['surface'] } : ctx;
+      return { ...(await request_tools.handler(described, { tools: p.tools }) as Record<string, unknown>), surface_change: surfaceChange };
     }
 
     // ── persist branch ({surface}) ──────────────────────────────────────

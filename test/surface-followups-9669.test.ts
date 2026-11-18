@@ -14,7 +14,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operations } from '../src/core/operations.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
-import { allowedOpNames, type McpSurface } from '../src/mcp/surface.ts';
+import { allowedOpNames, createStdioSurfaceState, type McpSurface } from '../src/mcp/surface.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 
@@ -46,6 +46,18 @@ for (const kind of testBackends()) {
       expect(starter).toContain('cursor');
       expect(starter).toContain('slug');
       expect(await props('full')).toContain('include_deleted');
+    });
+
+    test('request_tools {surface, tools} describes the tools on the surface the call just widened to', async () => {
+      const session = createStdioSurfaceState(operations, { surface: 'starter', source: 'flag', readOnly: false });
+      const res = await dispatchToolCall(engine, 'request_tools', { surface: 'full', tools: ['get_page'] }, {
+        remote: true, transport: 'stdio', sourceId: 'default', ...(session.allowedOps ? { allowedOps: session.allowedOps } : {}),
+        surface: session.surface, surfaceCeiling: session.surface, stdioSurface: session,
+      });
+      expect(res.isError).toBeFalsy();
+      const body = JSON.parse(res.content[0]!.text) as { tools: Array<{ inputSchema: { properties: object } }>; surface_change: { surface: string } };
+      expect(body.surface_change.surface).toBe('full');
+      expect(Object.keys(body.tools[0]!.inputSchema.properties)).toContain('include_deleted');
     });
 
     test('the listing_truncated fix keeps slug_prefix, where and source_ids', async () => {
