@@ -1992,7 +1992,8 @@
           "21 attest_sources ARRAY/_text NULL",
           "22 attest_read text/text NULL",
           "23 reads_unscoped timestamp with time zone/timestamptz NULL",
-          "24 private_facts text/text NOT NULL DEFAULT 'none'::text"
+          "24 private_facts text/text NOT NULL DEFAULT 'none'::text",
+          "25 read_shared_revision integer/int4 NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
@@ -3328,7 +3329,8 @@
           "38 attest_sources ARRAY/_text NULL",
           "39 attest_read text/text NULL",
           "40 reads_unscoped timestamp with time zone/timestamptz NULL",
-          "41 private_facts text/text NOT NULL DEFAULT 'none'::text"
+          "41 private_facts text/text NOT NULL DEFAULT 'none'::text",
+          "42 read_shared_revision integer/int4 NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

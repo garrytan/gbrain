@@ -30,7 +30,11 @@ export async function mutateClientLifecycle(engine: BrainEngine, clientId: strin
     await sql`DELETE FROM oauth_codes WHERE client_id = ${clientId}`;
     if (action === 'delete') await sql`DELETE FROM oauth_clients WHERE client_id = ${clientId}`;
     else if (action === 'revoke') await sql`UPDATE oauth_clients SET deleted_at = COALESCE(deleted_at, now()), grant_revision = ${after.revision} WHERE client_id = ${clientId}`;
-    else await sql`UPDATE oauth_clients SET grant_revision = ${after.revision} WHERE client_id = ${clientId}`;
+    else {
+      await sql`UPDATE oauth_clients SET grant_revision = ${after.revision} WHERE client_id = ${clientId}`;
+      // GST-2898: invalidating tokens changes no grant, so a switched client stays switched at the new revision.
+      if (before.readShared === true) await sql`UPDATE oauth_clients SET read_shared_revision = ${after.revision} WHERE client_id = ${clientId}`;
+    }
     const auditAfter = action === 'delete' ? { clientId, revision: after.revision, deleted: true } : after;
     await sql`INSERT INTO oauth_grant_audit (client_id, actor, action, revision, before_grant, after_grant)
       VALUES (${clientId}, ${opts.actor}, ${action}, ${after.revision}, ${JSON.stringify(before)}::text::jsonb, ${JSON.stringify(auditAfter)}::text::jsonb)`;
