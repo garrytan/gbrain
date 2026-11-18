@@ -29,6 +29,7 @@ import { bindCredential } from '../src/core/access/members.ts';
 import { accessCheck } from '../src/commands/access.ts';
 import { authSourcesFromGrant, grantFromClient, grantFromTokenRow } from '../src/core/grants/model.ts';
 import { rescopeLegacyToken, parseRescopeTokenArgs } from '../src/core/grants/legacy-token.ts';
+import { readsChangeLines } from '../src/commands/auth-read-shared.ts';
 import { readClientGrant, rescopeClientGrant } from '../src/core/grants/service.ts';
 import { mutateClientLifecycle } from '../src/core/grants/lifecycle.ts';
 import { credentialReadSources } from '../src/core/grants/shared-exposure.ts';
@@ -215,6 +216,8 @@ for (const kind of testBackends()) {
       await mint2('rescope-me', [PRIVATE_ALICE]);
       const narrowed = await rescopeLegacyToken(engine, parseRescopeTokenArgs(['floor', '--sources', PRIVATE_ALICE]));
       expect(narrowed.reads.stops_reading).toEqual(expect.arrayContaining(['company', 'team', 'guests']));
+      const hint = (r: typeof narrowed, target: string) => readsChangeLines(r.reads, r.before.readShared === true, r.after.readShared === true, target).some(l => l.includes('Add --read-shared on'));
+      expect(hint(narrowed, '--token floor')).toBe(true);
       const kept = await rescopeLegacyToken(engine, parseRescopeTokenArgs(['rescope-me', '--takes-holders', 'world']));
       expect(kept.after.readShared).toBe(true);
       expect((await verify('rescope-me')).allowedSources).toContain('company');
@@ -230,6 +233,8 @@ for (const kind of testBackends()) {
       expect({ offRoute: offRoute >= 0, revokeRoute: revokeRoute > offRoute, widenLast: widenRoute > revokeRoute }).toEqual({ offRoute: true, revokeRoute: true, widenLast: true });
       const narrowed2 = await rescopeLegacyToken(engine, parseRescopeTokenArgs(['rescope-me', '--sources', 'none', '--read-shared', 'off']));
       expect({ readShared: narrowed2.after.readShared === true, reads: (await verify('rescope-me')).allowedSources }).toEqual({ readShared: false, reads: [] });
+      expect(narrowed2.reads.stops_reading.length).toBeGreaterThan(0);
+      expect(hint(narrowed2, '--token rescope-me')).toBe(false);
       expect(() => parseRescopeTokenArgs(['rescope-me', '--read-shared', 'yes'])).toThrow('--read-shared must be on or off');
     }, 240_000);
 
