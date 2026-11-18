@@ -760,6 +760,7 @@ mod tests {
     // Red until the link_queries family's remove_source_rows deletes every key under
     // `q <source> \0`; the core-hooks stub deletes nothing.
     #[test]
+    #[ignore = "needs link_queries::remove_source_rows from rust-lane-graph-search; core removes this ignore when it combines lane 6"]
     fn source_delete_through_the_cascade_removes_wanted_rows_of_that_source_only() {
         let (_d, store) = open("wl-source-cascade");
         source(&store, "team");
