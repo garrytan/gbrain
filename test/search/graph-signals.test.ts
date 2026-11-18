@@ -378,6 +378,20 @@ describe('applyGraphSignals — fail-open', () => {
     expect(metaOut.session_demotions).toBe(0);
   });
 
+  test('a refused engine capability on the adjacency read propagates; no meta is reported and results are unchanged', async () => {
+    const results = [makeResult('a/b', 10, 1), makeResult('c/d', 9, 2)];
+    const before = results.map(r => r.score);
+    let metaOut: unknown;
+    const refusal = Object.assign(new Error('getAdjacencyBoosts not served'), { code: 'engine_capability_missing' });
+    await expect(applyGraphSignals(results, ENGINE_STUB, {
+      enabled: true,
+      adjacencyFn: async () => { throw refusal; },
+      onMeta: (m) => { metaOut = m; },
+    })).rejects.toBe(refusal);
+    expect(results.map(r => r.score)).toEqual(before);
+    expect(metaOut).toBeUndefined();
+  });
+
   test('adjacencyFn returns empty Map → no boosts, session diversification still runs', async () => {
     // Use session-shaped slugs (date anchor) so sessionPrefix returns a
     // real session id, not null. Post-v0.40.4 codex fix: bare `chat/a`
