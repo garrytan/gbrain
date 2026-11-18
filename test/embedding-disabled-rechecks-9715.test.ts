@@ -13,6 +13,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { __setEmbedTransportForTests, configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { makeContextualReindexHandler } from '../src/core/minions/handlers/contextual-reindex-per-chunk.ts';
 import { runReindexMultimodal } from '../src/commands/reindex-multimodal.ts';
+import { embedStaleForSource } from '../src/core/embed-stale.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
@@ -90,6 +91,21 @@ for (const backend of testBackends()) {
           await expect(runReindexMultimodal(engine, { yes: true })).rejects.toMatchObject({ name: 'EmbeddingDisabledError' });
         } finally { globalThis.fetch = originalFetch; configureGateway(gateway); }
         expect(calls).toEqual([32]);
+      });
+    }, 120_000);
+
+    test('a source-wide stale sweep that cannot read the setting sends nothing and leaves the work pending', async () => {
+      await world(databaseUrl, async engine => {
+        await stalePage(engine, 'notes/backlog');
+        const original = engine.getConfig.bind(engine);
+        engine.getConfig = async (key: string) => {
+          if (key === 'embedding_disabled') throw new Error('synthetic config read failure');
+          return original(key);
+        };
+        try {
+          expect(await embedStaleForSource(engine, 'default')).toMatchObject({ embedded: 0, complete: false });
+        } finally { engine.getConfig = original; }
+        expect(sent).toEqual([]);
       });
     }, 120_000);
   });

@@ -32,7 +32,7 @@ import {
   quoteIdentifier,
 } from './search/embedding-column.ts';
 import { type DbPacer, createNoopPacer, observed } from './db-pacer.ts';
-import { embeddingSendBlocked } from './embedding-disabled.ts';
+import { embeddingSendBlocked, embeddingsDisabled } from './embedding-disabled.ts';
 import { resolveStaleEmbedConcurrency } from './embed-concurrency.ts';
 import { AbortError } from './abort-check.ts';
 import { contentDriftSweepLine, runContentDriftSweep, type ContentDriftSweepStatus } from './content-drift-sweep.ts';
@@ -414,7 +414,8 @@ export async function embedStaleForSource(
     done: false,
     aborted: false,
   };
-  if (await embeddingSendBlocked(engine)) return { ...result, done: true };
+  // #9715: off by choice is done; a setting nobody could read leaves the work pending for the next pass.
+  if (await embeddingSendBlocked(engine)) return await embeddingsDisabled(engine) ? { ...result, done: true } : { ...result, done: true, complete: false };
   const signature = opts.embeddingSignature;
   const stopped = () => !!signal?.aborted || Date.now() >= (opts.deadline ?? Infinity);
   if (stopped()) return { ...result, aborted: true };
