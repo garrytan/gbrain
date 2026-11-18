@@ -60,12 +60,12 @@ export function hasSourceFilesystemLock(path: string): boolean {
 }
 async function registeredLockRoot(engine: BrainEngine, pathRoot: string): Promise<string> {
   let root = pathRoot;
-  const sources = await engine.executeRaw<{ local_path: string }>(`SELECT local_path FROM sources WHERE local_path IS NOT NULL AND local_path <> ''`);
+  const localPaths = await engine.listSourceLocalPaths();
   // A registered non-Git parent can contain a Git source. Canonicalize every
   // registered source through the same worktree rule, then choose the outermost
   // ancestor so overlapping sources agree regardless of which one starts first.
-  for (const source of sources) {
-    const candidate = await lockRootAsync(source.local_path);
+  for (const localPath of localPaths) {
+    const candidate = await lockRootAsync(localPath);
     if (encloses(candidate, root)) root = candidate;
   }
   return root;

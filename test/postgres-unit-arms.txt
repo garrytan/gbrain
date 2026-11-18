@@ -75,6 +75,7 @@ test/claim-fifo-foreground-waiting.test.ts
 test/claim-lease-holder-only-6712.test.ts
 test/claude-cli-output-cap.test.ts
 test/cli-page-writes.test.ts
+test/code-edges-parity.test.ts
 test/colon-slug-windows-5032.test.ts
 test/company-brain-policy.test.ts
 test/company-brain-runtime.test.ts
@@ -124,13 +125,17 @@ test/enforced-member.serial.test.ts
 test/engine-parity/chunks.test.ts
 test/engine-parity/code-eval-salience.test.ts
 test/engine-parity/config-ingest.test.ts
+test/engine-parity/cycle-locks.test.ts
 test/engine-parity/extraction.test.ts
 test/engine-parity/facts.test.ts
+test/engine-parity/import-path.test.ts
+test/engine-parity/import-writes.test.ts
 test/engine-parity/lifecycle.test.ts
 test/engine-parity/links.test.ts
 test/engine-parity/owner-only-marks.test.ts
 test/engine-parity/pages.test.ts
 test/engine-parity/raw-sql.test.ts
+test/engine-parity/search-reads.test.ts
 test/engine-parity/search.test.ts
 test/engine-parity/segmented-body.test.ts
 test/engine-parity/sync-aliases.test.ts
@@ -139,6 +144,7 @@ test/engine-parity/timeline.test.ts
 test/engine-parity/versions-raw.test.ts
 test/engine-sql-facts-keyset.test.ts
 test/entity-duplicates-finder.test.ts
+test/eval-log-tables-parity.test.ts
 test/extract-all-stamp-intersection.serial.test.ts
 test/extract-atoms-concurrent-run-7923.test.ts
 test/extract-atoms-input-truncated-6503.test.ts
@@ -414,6 +420,7 @@ test/notifier-sync-disabled-gst2515.test.ts
 test/on-commit-embedding.serial.test.ts
 test/oneshot-consumer-direct-route.test.ts
 test/oneshot-housekeeping-cli.test.ts
+test/ontology-raw-files-parity.test.ts
 test/open-shared-pages.test.ts
 test/origin-guard-6948.test.ts
 test/origin-twin-sequence-7150.test.ts
@@ -659,6 +666,7 @@ test/request-tools-combined-gbra449.test.ts
 test/requester-scope.test.ts
 test/restated-private-cross-entity-2891.test.ts
 test/retrieval-coverage-notices.test.ts
+test/salience-enrich-parity.test.ts
 test/schema-missing-tables.test.ts
 test/schema-replay-deadlock-6143.test.ts
 test/scripts/test-stress-postgres.test.ts
@@ -785,11 +793,13 @@ test/sync-unknown-drift-rescreen-gbra133.test.ts
 test/sync-unreadable-file-gbra130.test.ts
 test/sync-waiver-budget.test.ts
 test/sync-waiver-run-imports.test.ts
+test/tags-versions-parity.test.ts
 test/take-resolution-survives-publish.test.ts
 test/takes-vector-lifecycle-5885.serial.test.ts
 test/terminal-failures-6650.test.ts
 test/think-remote-model.test.ts
 test/timeline-chunk-reuse.test.ts
+test/timeline-date-parity.test.ts
 test/transcript-redaction-key-names.test.ts
 test/trust-channel-writes.test.ts
 test/trust-claim-chronicle-9284.test.ts

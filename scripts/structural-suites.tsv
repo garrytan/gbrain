@@ -4,6 +4,7 @@
 # Columns: file	suite	cases	detector
 test/access-folder-scoped-role.test.ts	(file-level)	8	readFileSync
 test/agent-install.test.ts	(file-level)	10	readFileSync
+test/agent-job-surface-9669.test.ts	agent jobs keep their submitter's tool surface (${kind}, repo-less)	6	exec-scan
 test/agent-journey-upgrade.serial.test.ts	(file-level)	13	readFileSync
 test/agent-register.test.ts	PGLite integration (pre-flight → tx → audit → exchange)	3	readFileSync
 test/agent-register.test.ts	resolvePreset	7	readFileSync
@@ -103,7 +104,7 @@ test/cycle-abort.test.ts	#1972 — complete cooperative-abort coverage	3	readFil
 test/cycle-abort.test.ts	#4077 — synthesize/patterns cooperative-abort threading	3	readFileSync
 test/cycle-abort.test.ts	CycleOpts.signal contract (v0.20.5)	3	readFileSync
 test/cycle-abort.test.ts	autopilot-cycle handler contract (v0.20.5)	3	readFileSync,source-surface-helper
-test/cycle-drain-renewal.test.ts	db-lock heartbeat wiring (structural — issue #6 cancellation)	1	readFileSync
+test/cycle-drain-renewal.test.ts	db-lock heartbeat wiring (structural — issue #6 cancellation)	1	readFileSync,source-surface-helper
 test/cycle-drain-renewal.test.ts	drain-loop wiring (structural — the shape guard only covers worker.ts)	2	readFileSync
 test/cycle-embed-phase-warn.serial.test.ts	cycle embed phase reports embed failures (E-A)	4	source-surface-helper
 test/cycle-legacy-phases.test.ts	cycle.lint_exclude (#6134)	4	readFileSync
@@ -154,7 +155,7 @@ test/e2e/bootstrap-real-codex.serial.test.ts	bootstrap rendered protocol — amb
 test/e2e/codex-plugin-install-real.serial.test.ts	(file-level)	2	readFileSync
 test/e2e/migration-flow.test.ts	(file-level)	4	readFileSync
 test/e2e/openclaw-reference-compat.test.ts	OpenClaw reference workspace compat (W1 + W2 + W3)	8	readFileSync
-test/e2e/segmented-rls-scope.test.ts	(file-level)	5	readFileSync
+test/e2e/segmented-rls-scope.test.ts	(file-level)	6	readFileSync
 test/e2e/workspace-generic-compat.test.ts	generic agent-workspace compat (INSTALL_FOR_AGENTS.md flow)	6	readFileSync
 test/embedding-dim-check-facts.test.ts	doctor checkFactsEmbeddingWidthConsistency wiring (T6)	4	doctor-source-helper
 test/embedding-dim-check-facts.test.ts	postgres-engine fact insert cast (T6, codex #20)	1	source-surface-helper

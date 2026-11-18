@@ -546,8 +546,10 @@ function makeServiceEngine(chunks: ChunkInput[]) {
         }
         return [];
       }
-      if (!sql.includes('FROM sources')) throw new Error(`Unexpected fixture SQL: ${sql}`);
-      return [{
+      throw new Error(`Unexpected fixture SQL: ${sql}`);
+    },
+    async getSource() {
+      return {
         id: 'default',
         name: 'Default',
         local_path: null,
@@ -557,7 +559,7 @@ function makeServiceEngine(chunks: ChunkInput[]) {
         created_at: new Date('2026-01-01T00:00:00Z'),
         contextual_retrieval_mode: null,
         trust_frontmatter_overrides: false,
-      }];
+      };
     },
     async getChunks() {
       return storedChunks;

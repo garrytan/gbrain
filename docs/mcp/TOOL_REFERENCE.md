@@ -7,9 +7,10 @@ defaults, and the edge cases behind each parameter. The served schemas
 remain the contract; when they and this page differ, the schemas win.
 
 The starter surface lists the parameters an agent needs for the common call.
-Local-only, admin, legacy and tuning parameters stay callable on every
-surface, and `request_tools {tools: ["name"]}` returns a tool's full schema
-with every optional parameter.
+A starter caller that passes a parameter the surface leaves out is refused
+with `param_not_on_surface`, apart from a short reviewed list that gbrain's own
+clients send, and `request_tools {tools: ["name"]}` returns a tool's schema
+with every parameter this connection may pass.
 
 Say to your agent: *"Before you call a gbrain tool you have not used yet,
 check docs/mcp/TOOL_REFERENCE.md for its defaults."*
@@ -178,7 +179,7 @@ Read a page by slug (supports optional fuzzy matching). Slug aliases left by ren
 | `fuzzy` | boolean | Enable fuzzy slug resolution (default: false) |
 | `include_content` | boolean | Include the canonical serialized `content` field (frontmatter + body + timeline sentinel) for lossless get→edit→put_page round-trips. Default false — it roughly duplicates compiled_truth + timeline, so read-only callers should not pay for it. |
 | `content_only` | boolean | With include_content: true, return only the round-trip fields: `slug`, `source_id`, `type`, `title`, `revision`, `tags` and `content` (plus `deleted_at`, `resolved_slug`, `content_flag`, `file_held` and `timeline_entries` when they apply), without the duplicate compiled_truth / timeline / frontmatter. Ignored without include_content. To write back, send `content` to put_page with this `source_id` and `revision` as expected_revision: on a multi-source brain the same slug can live in several sources, and a write without source_id goes to your default source. |
-| `include_deleted` | boolean | Surface soft-deleted pages with deleted_at populated (default: false). Used by restore workflows. |
+| `include_deleted` | boolean | Surface soft-deleted pages with deleted_at populated (default: false). Used by restore workflows. Full surface only: a starter caller that passes it is refused (`param_not_on_surface`). |
 | `include_timeline_entries` | boolean | Also return `timeline_entries`, the page's timeline rows (the same rows and filtering as get_timeline for this caller). Default false to keep the payload small. |
 | `source_id` | string | Scope the lookup to a single source (a multi-source brain can hold the same slug in several sources). Defaults to ctx.sourceId / the caller's grant. '__all__' spans every source for trusted local callers, your granted sources for remote callers. |
 | `include_quarantined` | boolean | Admin scope only: return a quarantined page's body to a remote caller (default: false). Ignored without the admin scope; trusted local reads always include it. |
@@ -258,7 +259,7 @@ List pages with optional filters. For 'what's recent / what did I touch this wee
 | `updated_after` | string | ISO date (YYYY-MM-DD) or full timestamp. Returns pages with updated_at > value. Bare (without updated_after_slug) this is LOSSY across rows sharing one timestamp — a bulk sync stamps one now() across a transaction; pair with updated_after_slug to page exactly. |
 | `updated_after_slug` | string | Keyset cursor slug: pass the last row's slug together with updated_after set to that row's updated_at_iso (column precision — a millisecond-rounded value re-selects same-millisecond rows). Resumes strictly after (updated_at, slug) and forces sort=updated_asc. |
 | `sort` | string (`updated_desc`, `updated_asc`, `created_desc`, `slug`) | Sort order. Default updated_desc. Options: updated_desc, updated_asc, created_desc, slug. |
-| `include_deleted` | boolean | Include soft-deleted pages (default: false). Used by restore workflows and operator diagnostics. |
+| `include_deleted` | boolean | Include soft-deleted pages (default: false). Used by restore workflows and operator diagnostics. Full surface only: a starter caller that passes it is refused (`param_not_on_surface`). |
 | `source_id` | string | Scope listing to a single source. Defaults to OperationContext.sourceId / federated scope. Pass '__all__' to span every source for trusted local callers; for remote callers '__all__' spans only your granted sources. |
 
 ## `list_skills`
@@ -354,7 +355,7 @@ MEMORY VERB (v1): retrieve saved facts/snippets — the protocol read verb. Filt
 
 | Parameter | Type | Guidance |
 | --- | --- | --- |
-| `entity` | string | Entity slug (canonical). Returns facts about this entity newest first, each labelled with its source_id. Across several granted sources, same-slug entities that no entity-identity group links are different entities: facts comes back empty and ambiguous_entity names each (source_id, entity_slug); pass source_id to read one. |
+| `entity` | string | Entity slug (canonical). Returns facts about this entity newest first, each labelled with its source_id. Across several granted sources, same-slug entities that no entity-identity group links are different entities: facts comes back empty and ambiguous_entity names each (source_id, entity_slug); pass source_id to read one. One split merges instead: for a key with `--read-shared on` whose write source is not shared, namesakes in exactly its write source and one shared source both return their facts, each labelled, and `merged_sources` names the pair. |
 | `question` | string | Ranks active facts by relevance to this question (cosine to its embedding plus term share, with words matched on their stems and dates, years and auxiliary verbs ignored, +0.1 for a writer-dated fact) instead of newest first. Facts below the admission rule are left out, so an empty facts[] is a valid answer. Each fact carries `relevance` (a ranking score, about 0 to 2.1, not comparable across calls); the response carries `facts_order: "relevance"` and, when ranking ran without full semantic matching, `facts_degraded`. When semantic matching ran on an embedding model whose fact admission floors were never measured, the response also carries the informational `facts_calibration: {status: "unmeasured", model_key}` (one `facts_calibration_unmeasured` notice per session explains it; `gbrain doctor --only fact_admission_floors --json` names the model): treat a short facts list as weaker evidence of "nothing matched". Applies inside `entity`, `session_id`, `since` and `grep`. Does not search pages (`query` does; both may be passed). With `include_expired`, expired and superseded facts are ranked too. A question over 12 content words is searched on its last 24 and scored on the 12 of those the fewest candidates hold. `facts_below_floor: <n>` is present when candidates were found and none cleared the admission rule (absent when nothing matched). Rejected with `supersessions`, and over 2,000 characters (invalid_params reason `question_too_long`, detail `max_chars=2000 received_chars=<n>`, with the corrected call as `fix`; never cut). One query embedding per call, shared with a `query` of the same text. |
 | `query` | string | MEMORY_VERBS v1: free-text retrieval over pages (hybrid search arm). Response adds results[] (slug, title, chunk, evidence, create_safety, provenance). Combinable with entity (both arms run). Degrades to keyword-only search when no embedding provider is configured (search_degraded notes it; never an error). |
 | `budget_tokens` | number | MEMORY_VERBS v1: server-side token budget (char/4 estimate). Facts pack first, then results. Response adds budget_tokens, budget_used, dropped_count. |

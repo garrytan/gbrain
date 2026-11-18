@@ -11,10 +11,17 @@ import type { EmbeddingState, EmbeddingStateCounts, EmbeddingStateRow } from './
 import type { DerivedLinkBatchItem, DerivedLinkOrigin, DerivedLinkReplacementOptions } from './derived-links.ts';
 import type { FindPagesQuery, FoundPages } from './page-find.ts';
 import type { PageCountQuery, PageCounts, TypeGrouper } from './page-counts.ts';
+import type { GeneratedPageRow, PageCollapseFactRow } from './engine-sql/search-reads.ts';
+import type { OnboardSignal } from './engine-sql/health.ts';
+import type { EntityTypeFilter } from './schema-pack/entity-types.ts';
+import type { ChunkMove } from './page-state/chunk-moves.ts';
+import type { DerivedAliasRow } from './engine-sql/pages.ts';
+import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence-state.ts';
+import type { LedgerSource } from './engine-sql/belief.ts';
 export type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions, PageMutationPrecondition, PageWithdrawal } from './page-state/types.ts';
 import type {
   Page, PageInput, PageFilters, GetPageOpts, PageReadScope, PageReadPolicy,
-  Chunk, ChunkInput, StaleChunkRow, StalePageRow, ChunklessPageRow,
+  Chunk, ChunkInput, ChunkReuseRow, StaleChunkRow, StalePageRow, ChunklessPageRow,
   SearchResult, SearchOpts, ResolvedColumn,
   Link, GraphNode, GraphPath, RelationalFanoutRow, RelationalFanoutOpts, ChainHopOpts, ChainHopEdge,
   TimelineEntry, TimelineInput, TimelineOpts,
@@ -65,6 +72,44 @@ export interface SourceRow {
   last_sync_at: Date | null;
   config: Record<string, unknown>;
 }
+
+/** One `sources` row with the columns import and contextual retrieval read (`BrainEngine.getSource`); values as the driver returns them. */
+export interface SourceDetailRow {
+  id: string;
+  name: string;
+  local_path: string | null;
+  last_commit: string | null;
+  last_sync_at: Date | null;
+  config: Record<string, unknown>;
+  created_at: Date;
+  /** Per-source contextual-retrieval mode override; null falls through to the global mode. */
+  contextual_retrieval_mode?: string | null;
+  /** Per-source mount-frontmatter trust gate. */
+  trust_frontmatter_overrides?: boolean;
+}
+
+/**
+ * One `gbrain_cycle_locks` row as `readCycleLocks` returns it: the lease the lock id names. Timestamps are the
+ * database's (`db_now` is its clock at the read, so ages compare database stamps with the database clock, #7614);
+ * the driver may hand them back as `Date` or ISO text, and the caller coerces.
+ */
+export interface CycleLockRow {
+  id: string;
+  holder_pid: number;
+  holder_host: string;
+  acquisition_token: string;
+  acquired_at: Date | string;
+  ttl_expires_at: Date | string;
+  last_refreshed_at: Date | string | null;
+  db_now: Date | string;
+}
+
+/** Which lease rows `readCycleLocks` returns: one lock id, several, every expired row, or every row (oldest first for the last two). */
+export type CycleLockFilter =
+  | { by: 'id'; lockId: string }
+  | { by: 'ids'; lockIds: readonly string[] }
+  | { by: 'stale' }
+  | { by: 'all' };
 
 export interface TraverseGraphOpts extends LinkReadScope {
   sourceId?: string;
@@ -1173,6 +1218,15 @@ export interface BrainEngine {
    */
   updateSourceConfig(sourceId: string, patch: Record<string, unknown>): Promise<boolean>;
 
+  /** One source row (id, name, local_path, last_commit, last_sync_at, config, created_at, contextual_retrieval_mode, trust_frontmatter_overrides), or null when no source has that id. */
+  getSource(sourceId: string): Promise<SourceDetailRow | null>;
+
+  /**
+   * Local paths of every source that has one (non-null, non-empty), in no particular order. The filesystem lock
+   * (`withSourceFilesystemLock`) canonicalizes each to pick the outermost worktree root an import locks.
+   */
+  listSourceLocalPaths(): Promise<string[]>;
+
   /**
    * v0.37.0 — prefix-stratified page sampling for `gbrain brainstorm` / `gbrain lsd`
    * domain-bank module. Takes a caller-supplied prefix list (cached at the domain-bank
@@ -1245,6 +1299,27 @@ export interface BrainEngine {
    * interpolation as defense in depth (D12).
    */
   getEmbeddingsByChunkIds(ids: number[], column?: string): Promise<Map<number, Float32Array>>;
+  /** Text-space cosine per visible chunk id with an embedding in `column`, computed in the database; absent ids did not hydrate (SQL in engine-sql/search-reads.ts). */
+  cosinesByChunkIds(ids: number[], column: string, query: Float32Array): Promise<Map<number, number>>;
+  // Search ranking-stage reads (hybrid search after fusion; SQL in engine-sql/search-reads.ts).
+  /** Whether any `supersedes` link exists (one index probe). */
+  hasSupersedeEdges(): Promise<boolean>;
+  /** Superseded page id -> slug of a live same-source page that supersedes it; under a policy all three pages must be readable. */
+  supersedingPageSlugs(pageIds: number[], policy?: PageReadPolicy): Promise<Map<number, string>>;
+  /** The refs that are the canonical slug of a `slug_aliases` row, on a page the policy may read. */
+  aliasCanonicalRefs(refs: Array<{ slug: string; source_id: string }>, policy?: PageReadPolicy): Promise<Array<{ source_id: string; canonical_slug: string }>>;
+  /** Collapse facts per existing page id: redirect target, bounded body length and, for `bodyIds`, body md5 and lead. */
+  pageCollapseFacts(ids: number[], bodyIds: number[]): Promise<PageCollapseFactRow[]>;
+  /** Up to two live slugs in a source that are `word` or end in `/word`. */
+  slugsEndingIn(sourceId: string, word: string): Promise<string[]>;
+  /** The pages among `ids` gbrain generated (`dream_generated: true` or type `extract_receipt`). */
+  generatedPagesIn(ids: number[]): Promise<GeneratedPageRow[]>;
+  /** Ids of the live pages at the given (source id, slug) refs. */
+  livePageIdsAt(refs: Array<{ slug: string; source_id: string }>): Promise<number[]>;
+  /** The pages among `fromIds` with a ranking link to a page in `toIds`. */
+  pagesLinkingTo(fromIds: number[], toIds: number[]): Promise<number[]>;
+  /** One brain-wide MCP onboarding count (SQL in engine-sql/health.ts). */
+  countOnboardSignal(signal: OnboardSignal, entityTypes: EntityTypeFilter, opts?: { signal?: AbortSignal }): Promise<number>;
 
   // Chunks
   /**
@@ -1441,6 +1516,23 @@ export interface BrainEngine {
    * the wrong row count in multi-source brains.
    */
   deleteChunks(slug: string, opts?: { sourceId?: string }): Promise<void>;
+  /**
+   * Delete a page's chunks except the rows in `keepIds` (the import's reused vectors). Unlike `deleteChunks` it does
+   * not clear the page's text seal; the caller reseals. An empty `keepIds` deletes them all.
+   */
+  deleteChunksExcept(slug: string, keepIds: readonly number[], opts?: { sourceId?: string }): Promise<void>;
+  /** Stamp `pages.chunker_version` on one page (a page with no chunks counts as sealed once stamped). */
+  setChunkerVersion(slug: string, version: number, opts?: { sourceId?: string }): Promise<void>;
+  /**
+   * Seal a page's text projection at `revision` and rebuild its `search_vector` from its title and `timeline` (the
+   * sanitized timeline the caller indexes). Writes nothing once the page's revision has moved on. Callers use the
+   * `sealPageTextProjection` helper, which reads the page's snapshot first.
+   */
+  writeTextProjectionSeal(slug: string, opts: { sourceId: string; revision: string; timelineText: string }): Promise<void>;
+  /** Move kept chunk rows to new `chunk_index` values in place, one UPDATE per wave (keeps their vectors). */
+  moveChunkIndexes(pageId: number, waves: readonly (readonly ChunkMove[])[]): Promise<void>;
+  /** A page's stored chunks with the flags the import's vector-reuse gate reads (recorded input hash, text-only, unembedded). */
+  getChunkReuseRows(slug: string, opts?: { sourceId?: string }): Promise<ChunkReuseRow[]>;
 
   // ============================================================
   // v0.42.7 (#1696): link/timeline extraction freshness watermark.
@@ -1871,6 +1963,10 @@ export interface BrainEngine {
    */
   addTag(slug: string, tag: string, opts?: { sourceId?: string; tagSource?: 'frontmatter' }): Promise<void>;
   removeTag(slug: string, tag: string, opts?: { sourceId?: string }): Promise<void>;
+  /** Delete a page's frontmatter-owned tags that are not in `keep`; explicitly added and legacy NULL-source tags stay. */
+  pruneFrontmatterTags(slug: string, keep: readonly string[], opts?: { sourceId?: string }): Promise<void>;
+  /** Add many tags to one page by its id in one statement (same claim rules as `addTag`); the caller holds the page guard. */
+  addPageTagsById(pageId: number, tags: readonly string[], opts?: { tagSource?: 'frontmatter' }): Promise<void>;
   /**
    * #2200: getTags ALSO accepts a federated `sourceIds[]` read grant (precedence
    * over scalar `sourceId`); it unions tags across the matched same-slug pages
@@ -2605,6 +2701,18 @@ export interface BrainEngine {
     /** #5984: `inline` writes in the caller's page transaction, without a savepoint. */
     opts?: { inline?: boolean },
   ): Promise<void>;
+  /**
+   * Replace a page's derived alias rows (origin declared/subject, written by the mention pass) with `aliases`; an
+   * empty list only deletes. Frontmatter rows are untouched. Runs on the transaction engine it is called on.
+   */
+  replaceDerivedAliases(slug: string, sourceId: string, aliases: readonly DerivedAliasRow[]): Promise<void>;
+  /**
+   * A live, unsegmented page's stored `chunker_version` by page id, or null when the page is gone, deleted or
+   * segmented. The import reads it to see whether the stored chunks predate the safe-chunk fence.
+   */
+  getPageSealState(pageId: number): Promise<{ chunker_version: number | null } | null>;
+  /** Record where a live page's file lives (`source_path`, and `source_uri` when given); a page already holding both writes nothing. */
+  refreshPageOrigin(slug: string, opts: { sourceId: string; sourcePath: string; sourceUri?: string | null }): Promise<void>;
 
   /**
    * v0.35.5 — narrow UPDATE of `pages.compiled_truth`, `pages.timeline`, and
@@ -2704,6 +2812,52 @@ export interface BrainEngine {
    */
   getAllConfig(): Promise<Record<string, string>>;
 
+  /**
+   * The stored `{ key, value }` rows for the named config keys in one read, ordered by key; a key with no row is
+   * absent. Reads the table itself, not the request config snapshot (`getConfig` / `getAllConfig` honor that).
+   */
+  getConfigValues(keys: readonly string[]): Promise<Array<{ key: string; value: string }>>;
+
+  /**
+   * The `enabled` value of every `persistence_brain` singleton row, as stored (a healthy brain has exactly one boolean).
+   * Callers decide what a malformed answer means; the direct-write guard refuses it (persistence/managed-mode.ts).
+   */
+  readManagedModeRows(): Promise<Array<{ enabled: unknown }>>;
+
+  /** True when the source's `config.canonical` is `git` (a git-canonical source); false for anything else, including an unknown id. */
+  getSourceStrictness(sourceId: string): Promise<boolean>;
+
+  /** The brain's persistence identity (`persistence_brain.brain_id`), or null when the schema holds no such row. */
+  readPersistenceBrainId(): Promise<string | null>;
+
+  /** One local writer registration row (lane, credential hash, grant ceiling, revoked_at), or undefined; `lock` reads it `FOR SHARE`. */
+  readLocalWriterRow(id: string, opts?: { lock?: boolean }): Promise<LocalWriterRow | undefined>;
+
+  /** Registers a local writer unless its id or credential hash is already registered; true when this call inserted the row. */
+  insertLocalWriterRow(row: LocalWriterInsert): Promise<boolean>;
+
+  /**
+   * The current value of each named transaction-local setting (`current_setting(name, true)`), in `names` order, null
+   * where unset. On a transaction engine it reads inside that transaction. Names are code constants (dotted lowercase).
+   */
+  readTransactionSettings(names: readonly string[]): Promise<Array<string | null>>;
+
+  /** Sets each named setting to the value at its index for the rest of the current transaction (`set_config(name, value, true)`), in one statement. */
+  applyTransactionSettings(names: readonly string[], values: readonly string[]): Promise<void>;
+
+  /**
+   * What the belief ledger knows about one source (incarnation, purge epoch, newest coverage event, whether any purge
+   * exists), or null for an unknown source. `batch` also returns the managed-mode rows and the plan-cache mode it
+   * replaced, and switches the transaction to generic plans when coverage is active.
+   */
+  readLedgerSource(sourceId: string, opts?: { batch?: boolean }): Promise<LedgerSource | null>;
+
+  /**
+   * Whether a page known by its slug sits under an applied folder rule, a pending or invalid folder prefix, or the
+   * database role cannot read the folder access tables. A failed read throws; callers that count it as restricted catch.
+   */
+  isFolderRestricted(sourceId: string, slug: string): Promise<boolean>;
+
   // Migration support
   runMigration(version: number, sql: string): Promise<void>;
   // Deliberately scalar-only (no sourceIds[] widening): engine-internal with
@@ -2764,6 +2918,59 @@ export interface BrainEngine {
    * no statement timeout, as for its keyword statements.
    */
   keywordBoundedRead<T>(read: (db: Pick<BrainEngine, 'executeRaw'>) => Promise<T>): Promise<T>;
+
+  // ============================================================
+  // Cycle locks: TTL lease rows in `gbrain_cycle_locks` (db-lock.ts owns the policy)
+  // ============================================================
+  /**
+   * Take the lease `lockId`: insert a free row, or steal an expired one whose holder has not refreshed it within
+   * `stealGraceSeconds` (a starved-but-alive holder keeps it, #1794). The caller supplies the holder identity and the
+   * `acquisitionToken` UUID that fences every later call. Returns the row's id and an epoch-text `fence` for
+   * diagnostics (never compared), or null when the lease is held and unexpired. Timestamps are the database's `NOW()`.
+   * On Postgres a successful acquire also notes a direct-pool lease (direct-pool-profile.ts).
+   */
+  acquireCycleLock(lockId: string, opts: {
+    holderPid: number;
+    holderHost: string;
+    acquisitionToken: string;
+    ttlMinutes: number;
+    stealGraceSeconds: number;
+  }): Promise<{ id: string; fence: string } | null>;
+
+  /**
+   * Renew the lease: push `ttl_expires_at` out by `ttlMinutes` and stamp `last_refreshed_at`, only when the row still
+   * carries this holder pid and token. Returns false when the lease is gone or was taken over (the holder lost it).
+   * Postgres routes it to the direct session pool and cancels the statement when `signal` aborts; PGLite runs it on
+   * its database and never forwarded the signal.
+   */
+  refreshCycleLock(lockId: string, opts: {
+    holderPid: number;
+    acquisitionToken: string;
+    ttlMinutes: number;
+  }, queryOpts?: { signal?: AbortSignal }): Promise<boolean>;
+
+  /** Release the lease: delete the row only when pid and token still match. Returns whether a row was deleted (false: already released or taken over). */
+  releaseCycleLock(lockId: string, opts: { holderPid: number; acquisitionToken: string }): Promise<boolean>;
+
+  /** Read lease rows (see `CycleLockFilter`). A read: no side effects, no acquire. */
+  readCycleLocks(filter: CycleLockFilter): Promise<CycleLockRow[]>;
+
+  /**
+   * Snapshot-matched delete (`gbrain sync --break-lock`, the dead-holder reaper, takeover): one DELETE matching the
+   * observed id, pid and token, so a reused pid or a fresh holder is never removed. True when it deleted the row.
+   */
+  deleteCycleLock(lockId: string, opts: { holderPid: number; acquisitionToken: string }): Promise<boolean>;
+
+  /**
+   * Age-gated delete (`gbrain sync --break-lock --max-age`): as `deleteCycleLock`, but only when the row's
+   * `last_refreshed_at` is older than `maxAgeSeconds` (a wedged-but-alive holder). Returns the deleted row's
+   * `last_refreshed_at` so the caller can report the stale age.
+   */
+  deleteCycleLockIfStale(lockId: string, opts: {
+    holderPid: number;
+    acquisitionToken: string;
+    maxAgeSeconds: number;
+  }): Promise<{ deleted: boolean; lastRefreshedAt: Date | null }>;
 
   // ============================================================
   // v0.20.0 Cathedral II: code edges (Layer 5 populates, Layer 7 consumes)
