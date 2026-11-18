@@ -1,19 +1,24 @@
 /**
  * BrainEngine parity — the guarded relink writes of `facts` rows (engine-sql/fact-relink-writes.ts): placeRelinkedFact and
- * linkConversationFact.
+ * linkConversationFact, and listConversationRelinkPages, the conversation relink's page pick.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1)
  *    places a pinned fact only while it still has no entity, page, row number or expiry, in the named source: `link` gives it
  *    the page, its fence row number and the new context; `retire` expires it onto the page with the new context. A conversation
  *    row links only while it is the same claim on the same page, live, user-said or unattributed, a derived extractor row (not
- *    an audit row), unlinked (or on the named unbacked key), and the target page is live.
+ *    an audit row), unlinked (or on the named unbacked key), and the target page is live. The page pick counts, per page of the
+ *    source, the live user-or-unattributed derived rows with no entity (or, `unbacked`, on an unbacked name key), leaves out
+ *    rows the relink already tried unless a newer page re-armed the miss (`skipTried`), and orders most rows first, then by
+ *    slug in byte order (COLLATE "C"), at most `limit`.
  *  - Regression: an engine that moves a row another writer already placed, a row of another source, an expired or lapsed row,
  *    an assistant-said or audit row, or that links onto a deleted page, makes `gbrain facts relink` overwrite a fence position
  *    or attach a claim to the wrong entity. An engine that ignores the fence position's unique index writes two rows at one
- *    position.
+ *    position. A page pick that sorts equal counts by the database collation (en_US puts `a-page` before `B-page`) picks a
+ *    different page at the `limit` cut on Postgres than on PGLite.
  *  - Why existing coverage misses it: both statements ran through `executeRaw` inside facts/relink-publish.ts (the
- *    `relink_facts` coordinator mutation) and facts/conversation-relink.ts, which the parity cases cannot call (D18).
+ *    `relink_facts` coordinator mutation) and facts/conversation-relink.ts, which the parity cases cannot call (D18); the page
+ *    pick also ran there through `executeRaw`.
  *  - Seam: rows are written with insertFact / insertFacts and read back with listFactsByEntity and listFactsForPage. Each
  *    answer names a row by the claim text the case wrote, never by its generated id, and times are reduced to "expired or
  *    not": each engine stamps its own clock. Lists are sorted by claim text in byte order.
@@ -22,6 +27,7 @@ import { describe, expect } from 'bun:test';
 import { createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine, NewFact } from '../../src/core/engine.ts';
+import { CONVERSATION_UNRESOLVED } from '../../src/core/facts/relink-reasons.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -36,9 +42,9 @@ async function loose(engine: BrainEngine, text: string, sourceId = 'default'): P
 }
 
 /** A conversation page's derived row: database-only (no row number). */
-async function derived(engine: BrainEngine, slug: string, text: string, extra: Partial<NewFact> = {}): Promise<number> {
+async function derived(engine: BrainEngine, slug: string, text: string, extra: Partial<NewFact> = {}, sourceId = 'default'): Promise<number> {
   const out = await engine.insertFacts([{ fact: text, source: CONVERSATION, ...extra, row_num: null, source_markdown_slug: slug } as never],
-    { source_id: 'default' });
+    { source_id: sourceId });
   return out.ids[0]!;
 }
 
@@ -136,5 +142,54 @@ describe('engine parity: fact relink writes', () => {
       { fact: 'e on a name key', context: 'relinked', expired: false },
     ]);
     return { outcomes, target };
+  });
+
+  parityTest('listConversationRelinkPages picks pages by row count, then slug in byte order', { methods: ['listConversationRelinkPages', 'insertFacts', 'upsertFactRelinkAttempt', 'expireFact'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    await engine.putPage(TARGET, note('Alice'));
+    await engine.putPage('bob', note('Bob'));
+    const rows = async (slug: string, n: number, extra: Partial<NewFact> = {}) => {
+      const ids: number[] = [];
+      for (let i = 0; i < n; i++) ids.push(await derived(engine, slug, `${slug} claim ${i}`, extra));
+      return ids;
+    };
+    await rows('conversations/top', 3);
+    await rows('conversations/B-page', 2);
+    await rows('conversations/a-page', 2);
+    await derived(engine, 'conversations/a-page', 'a row of another source', {}, 'other');
+    const miss = (factId: number, reason: string) => engine.upsertFactRelinkAttempt('default',
+      { factId, outcome: CONVERSATION_UNRESOLVED, reason, tier: 'mention', model: null, targetSlug: null, runId: null });
+    for (const id of await rows('conversations/tried', 2)) await miss(id, 'ambiguous');
+    for (const id of await rows('conversations/rearmed', 1)) await miss(id, 'no_page');
+    // A page created after the attempt re-arms a no_page miss; the wait keeps its created_at strictly later on a coarse clock.
+    await Bun.sleep(20);
+    await engine.putPage('people/new-example', note('New'));
+    await rows('conversations/noise', 1, { attributed_to: 'assistant' } as never);
+    await rows('conversations/noise', 1, { source: TERMINAL });
+    await rows('conversations/noise', 1, { source: 'chat' });
+    await rows('conversations/noise', 1, { entity_slug: TARGET });
+    await rows('conversations/noise', 1, { valid_until: new Date('2001-01-01T00:00:00Z') } as never);
+    for (const id of await rows('conversations/noise', 1)) await engine.expireFact(id);
+    await rows('conversations/named', 2, { entity_slug: 'alice' });
+    await rows('conversations/named', 1, { entity_slug: 'bob' });
+
+    const pick = (limit: number, unbacked = false, skipTried = !unbacked) => engine.listConversationRelinkPages('default', { limit, unbacked, skipTried });
+    const picks = {
+      untried: await pick(50),
+      all: await pick(50, false, false),
+      cut: await pick(2),
+      unbacked: await pick(50, true),
+      none: await pick(0),
+      other: await engine.listConversationRelinkPages('other', { limit: 50, unbacked: false, skipTried: true }),
+    };
+    expect(picks).toEqual({
+      untried: ['conversations/top', 'conversations/B-page', 'conversations/a-page', 'conversations/rearmed'],
+      all: ['conversations/top', 'conversations/B-page', 'conversations/a-page', 'conversations/tried', 'conversations/rearmed'],
+      cut: ['conversations/top', 'conversations/B-page'],
+      unbacked: ['conversations/named'],
+      none: [],
+      other: ['conversations/a-page'],
+    });
+    return picks;
   });
 });

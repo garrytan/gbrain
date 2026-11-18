@@ -27,7 +27,8 @@ const INFERRED_TIER = `substring(f.context from 'entity inferred from ([a-z]+)')
 /** Wrapper builders over shared constant fragments (each is constant text, no values). */
 /** The constant ENTITY_LINKABLE_SQL predicate (a vetted builder of check-engine-sql-dynamic; fact-relink-writes.ts shares it). */
 export function entityLinkableSql(): string { return ENTITY_LINKABLE_SQL; }
-function relinkTriedSql(hasAttempts: boolean): string { return hasAttempts ? conversationTriedSql : 'false'; }
+/** The constant conversationTriedSql predicate, or `false` (a vetted builder; fact-relink-writes.ts shares it). */
+export function relinkTriedSql(hasAttempts: boolean): string { return hasAttempts ? conversationTriedSql : 'false'; }
 function relinkPaidSql(hasAttempts: boolean): string { return hasAttempts ? conversationPaidSql : 'false'; }
 function staleFactEmbeddingSql(): string { return staleFactEmbedding; }
 function partiallyEmbeddedFactSql(): string { return partiallyEmbeddedFact; }

@@ -131,6 +131,14 @@ user or unattributed, written by a conversation extractor, and the target page i
 return false and write nothing when the row does not match. Not modeled: the withdrawal and
 purge triggers of the Postgres `UPDATE`, because their ledgers have no Rust writer.
 
+`listConversationRelinkPages` is the page pick of `gbrain facts relink --conversation`. It reads
+the source's rows in one snapshot and counts, per `source_markdown_slug`, the live rows written by
+a conversation extractor (not an audit row), user or unattributed, with no entity (or, with
+`unbacked`, on an unbacked name key). With `skipTried` it leaves out a row whose attempt is a
+`conversation_unresolved` miss, unless a newer live page re-armed the reason (`rearmedReasons`,
+passed from `REARMED_REASONS` of facts/conversation-memo.ts). Pages sort by count, most first,
+then by slug in byte order (COLLATE "C"), and the list stops at `limit`.
+
 ## Lookups and hooks for other families
 
 - `read_fact`, `write_fact`, `delete_fact` (`pub(crate)`): row access for the ontology family.

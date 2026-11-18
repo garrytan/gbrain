@@ -1,10 +1,14 @@
 //! The guarded relink writes of `facts` rows (`facts/relink_writes.rs`): the PGLite semantics of
-//! `placeRelinkedFact` and `linkConversationFact`.
+//! `placeRelinkedFact` and `linkConversationFact`, and of `listConversationRelinkPages`, the
+//! conversation relink's page pick.
 
 mod memory_env;
 
 use gbrain_store::facts::cycle::PageCoordinate;
-use gbrain_store::facts::relink_writes::{ConversationFactLink, RelinkPlacement};
+use gbrain_store::facts::relink::{AttemptInput, UpsertOptions};
+use gbrain_store::facts::relink_writes::{
+    ConversationFactLink, ConversationRelinkPagesQuery, RelinkPlacement,
+};
 use gbrain_store::facts::{ExpireFactArgs, FactQuery, InsertFactArgs, InsertFactsArgs};
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::sources::SourceInput;
@@ -287,4 +291,107 @@ fn a_lapsed_or_expired_conversation_row_does_not_link() {
             })
         ));
     }
+}
+
+fn pick(b: &Brain, source_id: &str, limit: u32, unbacked: bool, skip_tried: bool) -> Vec<String> {
+    let q: ConversationRelinkPagesQuery = args(json!({
+        "limit": limit, "unbacked": unbacked, "skipTried": skip_tried,
+        "rearmedReasons": ["no_mention", "no_page"],
+    }));
+    b.list_conversation_relink_pages(source_id, &q).unwrap()
+}
+
+#[test]
+fn the_page_pick_counts_rows_and_breaks_ties_by_slug_bytes() {
+    let b = brain("relink-pages");
+    source(&b, "s2");
+    page(&b, "default", "people/alice-example");
+    page(&b, "default", "bob");
+    let rows = |slug: &str, n: usize, extra: Value| -> Vec<u64> {
+        (0..n)
+            .map(|i| {
+                let mut row = extra.clone();
+                row["fact"] = json!(format!("{slug} claim {i}"));
+                derived(&b, "default", slug, row)
+            })
+            .collect()
+    };
+    rows("conversations/top", 3, json!({}));
+    rows("conversations/B-page", 2, json!({}));
+    rows("conversations/a-page", 2, json!({}));
+    derived(&b, "s2", "conversations/a-page", json!({}));
+    let miss = |id: u64, reason: &str| {
+        let a: AttemptInput = args(json!({
+            "factId": id, "outcome": "conversation_unresolved", "reason": reason, "tier": "mention",
+        }));
+        b.upsert_fact_relink_attempt("default", &a, &UpsertOptions::default())
+            .unwrap();
+    };
+    for id in rows("conversations/tried", 2, json!({})) {
+        miss(id, "ambiguous");
+    }
+    for id in rows("conversations/rearmed", 1, json!({})) {
+        miss(id, "no_page");
+    }
+    // A page created after the attempt re-arms the no_page miss.
+    b.clock.advance(1_000);
+    page(&b, "default", "people/new-example");
+    rows(
+        "conversations/noise",
+        1,
+        json!({ "attributed_to": "assistant" }),
+    );
+    rows("conversations/noise", 1, json!({ "source": TERMINAL }));
+    rows("conversations/noise", 1, json!({ "source": "chat" }));
+    rows(
+        "conversations/noise",
+        1,
+        json!({ "entity_slug": "people/alice-example" }),
+    );
+    rows(
+        "conversations/noise",
+        1,
+        json!({ "valid_until": "2001-01-01T00:00:00Z" }),
+    );
+    for id in rows("conversations/noise", 1, json!({})) {
+        b.expire_fact(&args::<ExpireFactArgs>(json!({ "id": id })))
+            .unwrap();
+    }
+    rows("conversations/named", 2, json!({ "entity_slug": "alice" }));
+    rows("conversations/named", 1, json!({ "entity_slug": "bob" }));
+
+    let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    assert_eq!(
+        pick(&b, "default", 50, false, true),
+        s(&[
+            "conversations/top",
+            "conversations/B-page",
+            "conversations/a-page",
+            "conversations/rearmed"
+        ])
+    );
+    assert_eq!(
+        pick(&b, "default", 50, false, false),
+        s(&[
+            "conversations/top",
+            "conversations/B-page",
+            "conversations/a-page",
+            "conversations/tried",
+            "conversations/rearmed",
+        ])
+    );
+    // Equal counts sort by slug bytes: `B` (0x42) before `a` (0x61), so the cut keeps B-page.
+    assert_eq!(
+        pick(&b, "default", 2, false, true),
+        s(&["conversations/top", "conversations/B-page"])
+    );
+    assert_eq!(
+        pick(&b, "default", 50, true, false),
+        s(&["conversations/named"])
+    );
+    assert!(pick(&b, "default", 0, false, true).is_empty());
+    assert_eq!(
+        pick(&b, "s2", 50, false, true),
+        s(&["conversations/a-page"])
+    );
 }

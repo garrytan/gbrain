@@ -124,6 +124,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listActiveFactsForEntity': OOS.factsCycle,
   'listCapturedFactsForClassification': OOS.factsRepair,
   'listConversationFactRows': OOS.factsDoctor,
+  'listConversationRelinkPages': OOS.factRelinkWrites,
   'listExtractorFactsForClassification': OOS.factsRepair,
   'listFactRelinkOutcomes': OOS.factRelinkAttempts,
   'listFactsForPage': OOS.factsCycle,

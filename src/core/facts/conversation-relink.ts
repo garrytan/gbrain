@@ -47,9 +47,8 @@ import { maintenancePreflight, submitDatabaseMaintenanceIntent } from '../persis
 import { writeDerivedFacts } from '../persistence/derived-facts.ts';
 import { AUDIT_ROW_SOURCES } from './audit-sources.ts';
 import { CONVERSATION_UNRESOLVED } from './relink-reasons.ts';
-import { conversationTriedSql } from './conversation-memo.ts';
 import { appendContextNote } from './subject-infer.ts';
-import { ENTITY_LINKABLE_SQL, entityLinkable } from './attribution.ts';
+import { entityLinkable } from './attribution.ts';
 import { inferConversationSubject } from './conversation-subject-infer.ts';
 import { ACTIVE_UNLINKED_FACT_SQL, UNBACKED_FACT_SQL, derivedConversationRow } from '../engine-sql/fact-relink-writes.ts';
 import { resolveStrictEntityReference } from '../entities/resolve.ts';
@@ -93,13 +92,7 @@ async function hasAttemptsTable(engine: BrainEngine): Promise<boolean> {
 
 /** The pages with the most unlinked derived rows not yet tried by this relink, up to `limit`. */
 export async function conversationRelinkPages(engine: BrainEngine, sourceId: string, limit = CONVERSATION_RELINK_PAGES, unbacked = false): Promise<string[]> {
-  const untried = !unbacked && await hasAttemptsTable(engine)
-    ? `AND NOT ${conversationTriedSql}` : '';
-  const rows = await engine.executeRaw<{ slug: string }>(
-    `SELECT f.source_markdown_slug AS slug FROM facts f WHERE f.source_id = $1 AND f.source_markdown_slug IS NOT NULL AND ${unbacked ? UNBACKED : ACTIVE} AND ${ENTITY_LINKABLE_SQL}
-        AND ${derivedConversationRow('$2')} ${untried}
-      GROUP BY f.source_markdown_slug ORDER BY COUNT(*) DESC, f.source_markdown_slug LIMIT $3`, [sourceId, [...AUDIT_ROW_SOURCES], limit]);
-  return rows.map(r => r.slug);
+  return engine.listConversationRelinkPages(sourceId, { limit, unbacked, skipTried: !unbacked && await hasAttemptsTable(engine) });
 }
 
 /** GBRA-574 C1: each page's rows on an unbacked name key, linked when the key now resolves to exactly one readable page. */

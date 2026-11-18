@@ -2,7 +2,8 @@
 //! `UPDATE facts` statements `gbrain facts relink` ran through `executeRaw`.
 //!
 //! Members: placeRelinkedFact (facts/relink-publish.ts, the coordinator mutation `relink_facts`)
-//! and linkConversationFact (facts/conversation-relink.ts, `gbrain facts relink --conversation`).
+//! and linkConversationFact (facts/conversation-relink.ts, `gbrain facts relink --conversation`),
+//! and the read that picks the conversation relink's pages (listConversationRelinkPages).
 //!
 //! Each member reads the one row by id, applies the statement's `WHERE` to it, and writes the
 //! changed row through [`write_fact`], so the trust stamp and the unique indexes run as the
@@ -10,13 +11,18 @@
 //! statement's empty `RETURNING`). The withdrawal and purge guards of the `UPDATE` are not modeled
 //! (\"Not modeled\" in rust/docs/store/facts.md): their ledgers have no Rust writer.
 
-use super::{AUDIT_ROW_SOURCES, FactRecord, fact_by_number, purge::unbacked, write_fact};
+use super::relink::Memos;
+use super::{
+    AUDIT_ROW_SOURCES, FactRecord, count_arg, fact_by_number, purge::unbacked, source_rows,
+    write_fact,
+};
 use crate::Store;
 use crate::dream::int4;
 use crate::error::{INVALID_ARGUMENT, Result, StoreError};
 use crate::links::no_nul;
 use crate::pages::read_page;
 use serde::Deserialize;
+use std::collections::BTreeMap;
 
 /// `placeRelinkedFact(sourceId, placement)`: the placement. `link` moves the row onto `slug`'s
 /// fence at `rowNum`; `retire` expires it as a duplicate on `slug`.
@@ -43,6 +49,19 @@ pub struct ConversationFactLink {
     pub context: String,
     #[serde(default)]
     pub from: Option<String>,
+}
+
+/// `listConversationRelinkPages(sourceId, q)`: the planner's page pick. `rearmedReasons` is
+/// `REARMED_REASONS` of facts/conversation-memo.ts, passed by the TypeScript member so the two
+/// cannot drift.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ConversationRelinkPagesQuery {
+    pub limit: f64,
+    pub unbacked: bool,
+    pub skip_tried: bool,
+    #[serde(default)]
+    pub rearmed_reasons: Vec<String>,
 }
 
 /// `derivedConversationRow`: `source LIKE 'cli:extract-conversation-facts%' AND source <>
@@ -175,5 +194,58 @@ impl Store {
             write_fact(tx, trust, Some(&old), &new)?;
             Ok(true)
         })
+    }
+
+    /// `listConversationRelinkPages(sourceId, q)`: `SELECT source_markdown_slug FROM facts f WHERE
+    /// source_id AND source_markdown_slug IS NOT NULL AND` the row is live and has no entity (or,
+    /// with `unbacked`, sits on an unbacked name key) `AND` user or unattributed `AND` a
+    /// conversation extractor's derived row, `AND NOT` tried (`skipTried`, `conversationTriedSql`),
+    /// `GROUP BY` page `ORDER BY COUNT(*) DESC, slug COLLATE "C" LIMIT limit`.
+    pub fn list_conversation_relink_pages(
+        &self,
+        source_id: &str,
+        q: &ConversationRelinkPagesQuery,
+    ) -> Result<Vec<String>> {
+        const OP: &str = "listConversationRelinkPages";
+        let texts: Vec<(&str, &str)> = std::iter::once(("sourceId", source_id))
+            .chain(
+                q.rearmed_reasons
+                    .iter()
+                    .map(|r| ("rearmedReasons", r.as_str())),
+            )
+            .collect();
+        no_nul(OP, &texts)?;
+        let limit = count_arg(OP, "limit", q.limit)?;
+        let read = self.read()?;
+        let now = self.env.now_micros();
+        let mut memos = q.skip_tried.then(|| Memos::new(&*read, &q.rearmed_reasons));
+        let mut pages: BTreeMap<String, u64> = BTreeMap::new();
+        for row in source_rows(&*read, source_id)? {
+            let Some(slug) = row.source_markdown_slug.as_deref() else {
+                continue;
+            };
+            let keyed = if q.unbacked {
+                unbacked(&*read, &row)?
+            } else {
+                row.entity_slug.is_none()
+            };
+            if !(keyed
+                && row.active(now)
+                && entity_linkable(&row)
+                && derived_conversation_row(&row))
+            {
+                continue;
+            }
+            if let Some(m) = memos.as_mut()
+                && m.tried(&row)?
+            {
+                continue;
+            }
+            *pages.entry(slug.to_string()).or_default() += 1;
+        }
+        let mut pages: Vec<(String, u64)> = pages.into_iter().collect();
+        pages.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        pages.truncate(limit);
+        Ok(pages.into_iter().map(|(slug, _)| slug).collect())
     }
 }

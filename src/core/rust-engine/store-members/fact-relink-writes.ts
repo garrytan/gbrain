@@ -1,11 +1,13 @@
 /**
- * Facts relink writes: the guarded facts update members (BrainEngine placeRelinkedFact, linkConversationFact;
+ * Facts relink writes: the guarded facts update members (BrainEngine placeRelinkedFact, linkConversationFact) and the
+ * conversation relink's page pick (listConversationRelinkPages;
  * src/core/engine-sql/fact-relink-writes.ts), over rust/crates/gbrain-store/src/facts/relink_writes.rs.
  *
  * A fact id or row number the store cannot read as the integer PGLite binds (not a safe integer) refuses rather than
  * guess at the cast error.
  */
 import type { BrainEngine } from '../../engine.ts';
+import { REARMED_REASONS } from '../../facts/conversation-memo.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
@@ -31,4 +33,11 @@ export const linkConversationFact: Member<'linkConversationFact'> = async (brain
     from: link.from ?? null,
   }));
   return linked === true;
+};
+
+export const listConversationRelinkPages: Member<'listConversationRelinkPages'> = async (brain, sourceId, q) => {
+  const slugs: string[] = await storeCall({ member: 'listConversationRelinkPages', sourceId }, () => brain.listConversationRelinkPages(sourceId, {
+    limit: q.limit, unbacked: q.unbacked, skipTried: q.skipTried, rearmedReasons: REARMED_REASONS,
+  }));
+  return slugs;
 };

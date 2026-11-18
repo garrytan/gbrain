@@ -5,13 +5,14 @@
  * their page locks and the trust keep (`withTrustKeep`) around these calls.
  *
  * The conversation predicates (`derivedConversationRow`, the live, unlinked and unbacked row tests) live here so the relink
- * planner and this writer read the same text.
+ * planner and this writer read the same text. `listConversationRelinkPages` is the planner's page pick.
  */
 import type { SqlExecutor } from './executor.ts';
+import type { EngineRawRead } from './cli-reads-ops.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
 import { unbackedEntitySql } from '../facts/withdrawal-schema.ts';
-import { entityLinkableSql } from './facts-doctor.ts';
-import { sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
+import { entityLinkableSql, relinkTriedSql } from './facts-doctor.ts';
+import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 
 const CONVERSATION_SOURCE_SQL = "f.source LIKE 'cli:extract-conversation-facts%'";
 /** The SQL predicate (on alias `f`, audit sources as `$audit`) of a conversation extractor's derived fact row. */
@@ -68,4 +69,19 @@ export async function linkConversationFact(exec: SqlExecutor, sourceId: string, 
         AND ${keyed} AND ${trustedSql(entityLinkableSql())} AND ${derivedConversationFragment()}
         AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id = ${sourceId} AND p.slug = ${link.entitySlug} AND p.deleted_at IS NULL) RETURNING f.id`);
   return done.rows.length > 0;
+}
+
+/**
+ * Which pages `gbrain facts relink --conversation` takes: `unbacked` picks rows on an unbacked name key, otherwise rows with no
+ * entity; `skipTried` leaves out rows the free relink already tried (conversation-memo.ts, the `fact_relink_attempts` record).
+ */
+export interface ConversationRelinkPagesQuery { limit: number; unbacked: boolean; skipTried: boolean }
+
+/** The pages of the source with the most live, user-or-unattributed derived conversation rows the query picks, most rows first, then by slug in byte order, at most `limit`. */
+export async function listConversationRelinkPages(raw: EngineRawRead, sourceId: string, q: ConversationRelinkPagesQuery): Promise<string[]> {
+  const { text, params } = renderFragment(sqlFragment`SELECT f.source_markdown_slug AS slug FROM facts f
+      WHERE f.source_id = ${sourceId} AND f.source_markdown_slug IS NOT NULL AND ${q.unbacked ? trustedSql(UNBACKED_FACT_SQL) : trustedSql(ACTIVE_UNLINKED_FACT_SQL)} AND ${trustedSql(entityLinkableSql())}
+        AND ${derivedConversationFragment()} AND NOT ${trustedSql(relinkTriedSql(q.skipTried))}
+      GROUP BY f.source_markdown_slug ORDER BY COUNT(*) DESC, f.source_markdown_slug COLLATE "C" LIMIT ${q.limit}`);
+  return (await raw<{ slug: string }>(text, params)).map(r => r.slug);
 }
