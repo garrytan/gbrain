@@ -131,3 +131,53 @@ fn the_default_split_counts_live_pages_and_distinct_other_sources() {
         json!({"defaultPages": 1, "nonDefaultPages": 2, "nonDefaultSources": 1})
     );
 }
+
+#[test]
+fn source_page_counts_keep_to_one_source_and_count_soft_deleted_pages_only_when_asked() {
+    let dir = TempDir::new("cli-src-count");
+    let store = open(&dir);
+    source(&store, "a", None, json!({}));
+    source(&store, "ab", None, json!({}));
+    page(&store, "a", "x");
+    page(&store, "a", "y");
+    page(&store, "ab", "z");
+    page(&store, "default", "d");
+    store.soft_delete_page("y", Some("a")).unwrap();
+    assert_eq!(store.count_source_pages("a", false).unwrap(), 1);
+    assert_eq!(store.count_source_pages("a", true).unwrap(), 2);
+    assert_eq!(store.count_source_pages("ab", false).unwrap(), 1);
+    assert_eq!(store.count_source_pages("default", true).unwrap(), 1);
+    assert_eq!(store.count_source_pages("missing", true).unwrap(), 0);
+}
+
+#[test]
+fn insert_source_creates_a_source_and_refuses_a_taken_id_or_name() {
+    let dir = TempDir::new("cli-src-insert");
+    let store = open(&dir);
+    let config = json!({"federated": false, "kind": "url"});
+    let row = store
+        .insert_source("wiki", "Wiki", Some("/w/wiki"), config.as_object().unwrap())
+        .unwrap();
+    assert_eq!(row.id, "wiki");
+    let got = store.get_source_by_id("wiki").unwrap().unwrap();
+    assert_eq!(got.name.as_deref(), Some("Wiki"));
+    assert_eq!(got.local_path.as_deref(), Some("/w/wiki"));
+    assert_eq!(serde_json::to_value(&got.config).unwrap(), config);
+    let empty = serde_json::Map::new();
+    let taken_id = store
+        .insert_source("wiki", "Other", None, &empty)
+        .unwrap_err();
+    assert_eq!(taken_id.code, "constraint_violation");
+    let taken_name = store
+        .insert_source("notes", "Wiki", None, &empty)
+        .unwrap_err();
+    assert_eq!(taken_name.code, "constraint_violation");
+    assert!(store.get_source_by_id("notes").unwrap().is_none());
+    let bad = store
+        .insert_source("Bad Id", "Bad", None, &empty)
+        .unwrap_err();
+    assert_eq!(bad.code, "invalid_argument");
+    // The first insert is untouched by the refused ones.
+    let again = store.get_source_by_id("wiki").unwrap().unwrap();
+    assert_eq!(again.name.as_deref(), Some("Wiki"));
+}
