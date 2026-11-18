@@ -40,6 +40,18 @@ impl Brain {
         })
     }
 
+    /// `countOnboardSignal({ signal, entityTypes })`: resolves the count.
+    #[napi]
+    pub fn count_onboard_signal<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.count_onboard_signal(&required(input, "countOnboardSignal input")?)
+        })
+    }
+
     /// `logIngest({ source_id?, source_type, source_ref, pages_updated_json, summary })`.
     #[napi]
     pub fn log_ingest<'env>(&self, env: &'env Env, entry: Value) -> napi::Result<Object<'env>> {

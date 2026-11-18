@@ -515,11 +515,7 @@ export async function checkGradeConfidenceDrift(engine: BrainEngine, opts: { sou
  */
 export async function checkSubagentHealth(engine: BrainEngine): Promise<Check> {
   try {
-    const bounceRows = await engine.executeRaw<{ count: string }>(
-      `SELECT count(*)::text AS count FROM minion_lease_pressure_log
-        WHERE bounced_at > now() - interval '24 hours'`,
-    );
-    const bounces = parseInt(bounceRows[0]?.count ?? '0', 10);
+    const bounces = await engine.countLeasePressure({ windowMs: 86_400_000 });
     if (bounces === 0) {
       return {
         name: 'subagent_health',
@@ -535,13 +531,7 @@ export async function checkSubagentHealth(engine: BrainEngine): Promise<Check> {
       };
     }
     // 1-999 bounces: cross-check forward progress.
-    const completedRows = await engine.executeRaw<{ count: string }>(
-      `SELECT count(*)::text AS count FROM minion_jobs
-        WHERE finished_at > now() - interval '24 hours'
-          AND status = 'completed'
-          AND name = 'subagent'`,
-    ).catch(() => [{ count: '0' }]);
-    const completed = parseInt(completedRows[0]?.count ?? '0', 10);
+    const completed = await engine.countRecentCompletedJobs('subagent', 86_400).catch(() => 0);
     if (bounces >= 100 && completed === 0) {
       return {
         name: 'subagent_health',

@@ -618,12 +618,13 @@ export interface FenceTrendPrefix { since: string | null; through: string; open?
  * The publication's read has no upper bound (`upTo` null) and also reads, by sequence, the imports the prefix left open; the
  * prefix reads one range of the sequence index per statement.
  */
+// Both reads select `sequence::text AS sequence`; ORDER BY names the column, since the bare name sorts the text alias ('10' < '9').
 function fenceTrendRows(engine: Pick<BrainEngine, 'executeRaw'>, scope: { worktreeId: string; sourceId: string }, after: string, upTo: string | null, open: string[] = []) {
   const range = upTo !== null ? 'sequence > $3::bigint AND sequence <= $4::bigint'
     : open.length ? '(sequence > $3::bigint OR sequence = ANY($4::text::bigint[]))' : 'sequence > $3::bigint';
   return engine.executeRaw<{ path: string | null; fences: Array<{ class: string }>; sequence?: string }>(`SELECT intent->>'path' AS path, outcome->'fences_normalized' AS fences${upTo === null ? '' : ', sequence::text AS sequence'}
     FROM persistence_requests WHERE worktree_id=$1::uuid AND source_id=$2 AND ${range} AND state='committed'
-      AND intent->>'kind'='managed_sync_import' AND intent->>'passId' IS NOT NULL AND jsonb_typeof(outcome->'fences_normalized')='array' ORDER BY sequence`,
+      AND intent->>'kind'='managed_sync_import' AND intent->>'passId' IS NOT NULL AND jsonb_typeof(outcome->'fences_normalized')='array' ORDER BY persistence_requests.sequence`,
   upTo !== null ? [scope.worktreeId, scope.sourceId, after, upTo] : open.length ? [scope.worktreeId, scope.sourceId, after, `{${open.join(',')}}`] : [scope.worktreeId, scope.sourceId, after]);
 }
 
@@ -643,7 +644,7 @@ export async function readFenceTrendPrefix(engine: Pick<BrainEngine, 'executeRaw
   // The worktree's open requests are few, and persistence_requests_open indexes exactly them by sequence.
   const open = through > floor ? (await engine.executeRaw<{ sequence: string }>(`SELECT sequence::text AS sequence FROM persistence_requests
     WHERE worktree_id=$1::uuid AND sequence > $2::bigint AND sequence <= $3::bigint AND state IN ('queued','deferred','running','recovering')
-      AND source_id=$4 AND intent->>'kind'='managed_sync_import' ORDER BY sequence`, [scope.worktreeId, String(floor), String(through), scope.sourceId])).map(row => row.sequence) : [];
+      AND source_id=$4 AND intent->>'kind'='managed_sync_import' ORDER BY persistence_requests.sequence`, [scope.worktreeId, String(floor), String(through), scope.sourceId])).map(row => row.sequence) : [];
   const skip = new Set(open);
   let tally: FencesTally | undefined;
   for (let low = floor; low < through; low += BigInt(FENCE_TREND_PAGE)) {

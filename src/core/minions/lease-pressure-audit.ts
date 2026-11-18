@@ -57,23 +57,17 @@ export async function logLeasePressure(
   record: LeasePressureRecord,
 ): Promise<void> {
   try {
-    await engine.executeRaw(
-      `INSERT INTO minion_lease_pressure_log
-         (job_id, lease_key, active_at_bounce, max_concurrent,
-          queue_name, job_name, model, provider, root_owner_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [
-        record.job_id,
-        record.lease_key,
-        record.active_at_bounce,
-        record.max_concurrent,
-        record.queue_name ?? null,
-        record.job_name ?? null,
-        record.model ?? null,
-        record.provider ?? null,
-        record.root_owner_id ?? null,
-      ],
-    );
+    await engine.insertLeasePressure({
+      job_id: record.job_id,
+      lease_key: record.lease_key,
+      active_at_bounce: record.active_at_bounce,
+      max_concurrent: record.max_concurrent,
+      queue_name: record.queue_name ?? null,
+      job_name: record.job_name ?? null,
+      model: record.model ?? null,
+      provider: record.provider ?? null,
+      root_owner_id: record.root_owner_id ?? null,
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(
@@ -92,29 +86,8 @@ export async function readRecentLeasePressure(
   engine: BrainEngine,
   windowMs: number,
   opts: { limit?: number } = {},
-): Promise<Array<LeasePressureRecord & { id: number; bounced_at: string }>> {
-  const limit = opts.limit ?? 1000;
-  const rows = await engine.executeRaw<{
-    id: number;
-    job_id: number | null;
-    lease_key: string;
-    active_at_bounce: number;
-    max_concurrent: number;
-    bounced_at: string;
-    queue_name: string | null;
-    job_name: string | null;
-    model: string | null;
-    provider: string | null;
-    root_owner_id: number | null;
-  }>(
-    `SELECT id, job_id, lease_key, active_at_bounce, max_concurrent,
-            bounced_at, queue_name, job_name, model, provider, root_owner_id
-       FROM minion_lease_pressure_log
-       WHERE bounced_at > now() - ($1::double precision * interval '1 millisecond')
-       ORDER BY bounced_at DESC
-       LIMIT $2`,
-    [windowMs, limit],
-  );
+): Promise<Array<LeasePressureRecord & { id: number; bounced_at: Date }>> {
+  const rows = await engine.listRecentLeasePressure(windowMs, opts.limit ?? 1000);
   return rows.map(r => ({
     id: r.id,
     job_id: r.job_id ?? 0, // job_id is SET NULL after prune; surface as 0 for callers that don't care
@@ -138,11 +111,5 @@ export async function countRecentLeasePressure(
   engine: BrainEngine,
   windowMs: number,
 ): Promise<number> {
-  const rows = await engine.executeRaw<{ count: string }>(
-    `SELECT count(*)::text AS count
-       FROM minion_lease_pressure_log
-       WHERE bounced_at > now() - ($1::double precision * interval '1 millisecond')`,
-    [windowMs],
-  );
-  return parseInt(rows[0]?.count ?? '0', 10);
+  return engine.countLeasePressure({ windowMs });
 }

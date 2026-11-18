@@ -33,6 +33,26 @@
           }
         ]
       },
+      "clearCodeTraversalCache": {
+        "allSources": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "WITH deleted AS (DELETE FROM code_traversal_cache RETURNING 1) SELECT COUNT(*)::text AS count FROM deleted",
+            "textSha256": "62d232ac8a848fe0793c68724f2c42daa5bcad8a607bc037ebb37d87830cf68f"
+          }
+        ],
+        "sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "WITH deleted AS ( DELETE FROM code_traversal_cache WHERE source_id = $1 RETURNING 1 ) SELECT COUNT(*)::text AS count FROM deleted",
+            "textSha256": "942683021d5e1d82d5db0354646686b7ef2715e5e7cbab18f1cd4505bedfb62e"
+          }
+        ]
+      },
       "deleteCodeEdgesForChunks": {
         "default": [
           {
@@ -160,6 +180,21 @@
           }
         ]
       },
+      "getCodeTraversalCache": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "number",
+              "string",
+              "number"
+            ],
+            "sql": "SELECT response_json, computed_at, cluster_generation FROM code_traversal_cache WHERE symbol_qualified = $1 AND depth = $2 AND source_id = $3 AND cluster_generation = $4 LIMIT 1",
+            "textSha256": "231ad894b09b3d0c41662f3e9e31e35e8a659f93b9b3f497e43f5533aa6b6d66"
+          }
+        ]
+      },
       "getEdgesByChunk": {
         "default": [
           {
@@ -212,6 +247,24 @@
             ],
             "sql": "SELECT id, from_chunk_id, NULL::int as to_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id, false as resolved FROM code_edges_symbol WHERE from_chunk_id = $1 ORDER BY id LIMIT $2",
             "textSha256": "c9b87f1fbeef8e59620ce3278d4b04ccde687c462216865af74f798516d99ed7"
+          }
+        ]
+      },
+      "putCodeTraversalCache": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "number",
+              "string",
+              "string",
+              "string",
+              "number",
+              "number"
+            ],
+            "sql": "INSERT INTO code_traversal_cache (symbol_qualified, depth, source_id, response_json, max_chunk_updated_at, xmin_max, cluster_generation) VALUES ($1, $2, $3, $4::text::jsonb, $5::timestamptz, $6, $7) ON CONFLICT (symbol_qualified, depth, source_id) DO UPDATE SET response_json = EXCLUDED.response_json, max_chunk_updated_at = EXCLUDED.max_chunk_updated_at, xmin_max = EXCLUDED.xmin_max, cluster_generation = EXCLUDED.cluster_generation, computed_at = NOW()",
+            "textSha256": "8449070ea7121dd11fcb24e4eb1c01884a23672e469edda2e81a7ab6b3d4c521"
           }
         ]
       }

@@ -30,7 +30,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { MinionQueue } from '../src/core/minions/queue.ts';
-import { runMigrations, LATEST_VERSION } from '../src/core/migrate.ts';
+import { runMigrations, LATEST_VERSION, MIGRATIONS } from '../src/core/migrate.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
@@ -76,7 +76,7 @@ test('X1: an upgrade from v178 builds the request indexes; managed working-tree 
     await engine.executeRaw('DROP INDEX IF EXISTS persistence_requests_sync_run_open');
     await engine.executeRaw('DROP INDEX IF EXISTS persistence_requests_sync_run_committed');
     await engine.setConfig('version', '178');
-    expect(await runMigrations(engine)).toEqual({ applied: LATEST_VERSION - 178, current: LATEST_VERSION });
+    expect(await runMigrations(engine)).toEqual({ applied: MIGRATIONS.filter(m => m.version > 178).length, current: LATEST_VERSION });
     // #6511/#6757/#7649: the online-built set is the checkpoint pair, the purge slug index, the request-id index, the claims' foreground-commit index and the failed-writes replay-id and slug-sequence indexes (#8707).
     expect((await readRequestIndexStates(engine)).map(index => index.state)).toEqual(['valid', 'valid', 'valid', 'valid', 'valid', 'valid', 'valid']);
     expect((await requestIndexesCheck(engine)).status).toBe('ok');

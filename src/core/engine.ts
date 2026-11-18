@@ -5,6 +5,7 @@ import type * as OpenLoopsSql from './engine-sql/open-loops.ts';
 import type * as CalibrationProfilesSql from './engine-sql/calibration-profiles.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
 import type * as TrustWriteGateSql from './engine-sql/trust-write-gate.ts';
+import type * as JobsWake from './engine-sql/jobs-wake.ts';
 import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
 import type { RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
@@ -34,11 +35,13 @@ import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence
 import type { DurablePersistenceSettings } from './engine-sql/persistence-declaration.ts';
 import type { ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, WriteCompletion, WriteRequestInsert } from './engine-sql/persistence-journal.ts';
 import type { ClaimExpiry, ClaimRenewal, SourceMembership, TopologyChange, TopologyChangeInsert } from './engine-sql/persistence-claims.ts';
+import type { GatedMirrorRequest } from './engine-sql/persistence-effect-scans.ts';
 import type { CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionWindowRow, ReceiptBudget, SegmentedProjectionFilter } from './engine-sql/persistence-housekeeping.ts';
 import type { ProjectionScanCursor } from './page-state/projection-window.ts';
 import type { WriteRequest } from './persistence/model.ts';
 import type { TimelineDetailRefresh, TimelineRowRemoval } from './engine-sql/timeline.ts';
 import type { TakeFenceRow } from './engine-sql/takes.ts';
+import type { CodeTraversalCacheClear, CodeTraversalCacheKey, CodeTraversalCacheRow } from './engine-sql/code-traversal-cache.ts';
 import type { FactPreimage, FenceProjectionTarget } from './engine-sql/facts.ts';
 import type { FenceFactRow, FenceRowsTarget } from './engine-sql/trust-fence.ts';
 import type { TrustTable } from './trust/schema.ts';
@@ -53,6 +56,9 @@ import type {
 } from './engine-sql/write-misc.ts';
 import type { AdmitJobPolicy, AdmitJobResult, AdmitJobSpec, ClaimJobSpec, JobRow, ListJobsFilter } from './engine-sql/jobs.ts';
 import type { JobInsightRows, JobInsightSpec } from './engine-sql/jobs-insight.ts';
+import type {
+  ExpireSpendScope, JobSpendTreeSpec, LeasePressureFilter, LeasePressureInsert, LeasePressureRow, SettleSpendOutcome, SpendReservationInsert, SpendTreeRow,
+} from './engine-sql/jobs-spend.ts';
 import type { McpResolvedSpec, PurgeTakesSpec } from './engine-sql/takes-reads.ts';
 import type {
   CancelJobsSpec, DelayActiveJobSpec, JobAttachmentInsert, JobPageSpec, JobStatsRead, JobTokenCounts, PrivateQueueState, PruneJobsSpec,
@@ -70,6 +76,10 @@ import type {
   DeadDreamSubmissionSpec, FactsAbsorbJobRow, FactsAbsorbStillDead, GlobalMaintenanceDeaths, LastFailedGlobalMaintenanceJob,
   LegacyJobAuthorityRead, QueuedSpendRows,
 } from './engine-sql/jobs-checks.ts';
+import type {
+  SubagentFailureFallback, SubagentMessageInsert, SubagentMessageRow, SubagentOneshotLedgerRow, SubagentRetainedPutPage, SubagentToolInsert,
+  SubagentToolOrder, SubagentToolRow, SubagentToolStart, SubagentToolTarget, SubagentWriteOutcome,
+} from './engine-sql/jobs-subagent.ts';
 import type { JunkEntityHubRow, LinkEndpointPage, LivePageSummary, TitledPage } from './engine-sql/link-reads.ts';
 import type { CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuery, ContextualModeCandidate, FrozenHitKey, FrozenHitRow, WithdrawalChunkKey, WithdrawalChunkRow } from './engine-sql/chunk-reads.ts';
 import type { EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRow, PageTimelineRow, SegmentedTimelinePages, TimelineOrphanPage, TimelineRowDeletion } from './engine-sql/timeline-reads.ts';
@@ -3349,6 +3359,17 @@ export interface BrainEngine {
   listPendingSegmentedProjections(filter: SegmentedProjectionFilter): Promise<PendingSegmentedProjection[]>;
   /** The resident projection pass's window of pending jobs after `cursor`, with the high-water row last. */
   selectProjectionWindowJobs(cursor: Pick<ProjectionScanCursor, 'after' | 'highWater'>, retryCooldown: boolean): Promise<ProjectionWindowRow[]>;
+  // Effect scans (engine-sql/persistence-effect-scans.ts): the reads the effect worker's pass sent through executeRaw.
+  /**
+   * Up to 100 requests on worktrees `hostId` owns whose failed withdrawal mirror is parked by `gateCode` and whose other
+   * unsettled effects are parked only with a code in `allowedCodes` (`resumeGatedMirrors`). A non-uuid host id refuses.
+   */
+  listGatedMirrorRequests(hostId: string, gateCode: string, allowedCodes: readonly string[]): Promise<GatedMirrorRequest[]>;
+  /**
+   * Up to `limit` effects on worktrees `hostId` owns with a recovery due now, in id order after effect id `after` (from
+   * the start when null) (`selectEffectRecoveries`). A non-uuid host, a non-bigint `after` or a negative limit refuses.
+   */
+  listEffectRecoveries<R = Record<string, unknown>>(hostId: string, after: string | null, limit: number): Promise<R[]>;
 
   /**
    * The current value of each named transaction-local setting (`current_setting(name, true)`), in `names` order, null
@@ -3727,6 +3748,58 @@ export interface BrainEngine {
   // Group D (jobs insight): the reads behind `describeJobs`.
   /** Submitter, queue position, slot holders, live children, blocking locks and foreign-owner tokens of a batch of jobs. */
   readJobInsight(spec: JobInsightSpec): Promise<JobInsightRows>;
+  // Group C (spend reservations and lease pressure): `mcp_spend_reservations` and `minion_lease_pressure_log`.
+  /** Per described job: the settled cents, priced count and unsettled count of the reservations of itself and its descendants. */
+  readJobSpendTree(spec: JobSpendTreeSpec): Promise<SpendTreeRow[]>;
+  /** One new `pending` spend reservation, for a client or a budget group, optionally tied to a job. */
+  insertSpendReservation(row: SpendReservationInsert): Promise<void>;
+  /** Mark every overdue `pending` reservation `expired` (all, one client's or one group's); how many. */
+  expireSpendReservations(scope?: ExpireSpendScope): Promise<number>;
+  /** Settle a pending or expired hold at its actual cents (idempotent: a settled one reports `already_settled`). */
+  settleSpendReservation(reservationId: string, actualCents: number): Promise<SettleSpendOutcome>;
+  /** Record why a pending or expired hold's usage is unknown; whether a row changed. */
+  markSpendUsageUnknown(reservationId: string, reason: string): Promise<boolean>;
+  /** One rate-lease bounce appended to the lease-pressure log. */
+  insertLeasePressure(row: LeasePressureInsert): Promise<void>;
+  /** How many lease bounces match every given field (window in ms, job id, lease key). */
+  countLeasePressure(filter?: LeasePressureFilter): Promise<number>;
+  /** The bounces of the last `windowMs` ms, newest first, at most `limit`. */
+  listRecentLeasePressure(windowMs: number, limit: number): Promise<LeasePressureRow[]>;
+  // Group B (subagent transcript and tool ledger; engine-sql/jobs-subagent.ts): the rows the subagent handler, replay, the transcript views and the dream provenance reads use.
+  /** The job's subagent messages by `message_idx`; with `last`, only the newest. */
+  listSubagentMessages(jobId: number, opts?: { last?: boolean }): Promise<SubagentMessageRow[]>;
+  /** How many messages the job has persisted. */
+  countSubagentMessages(jobId: number): Promise<number>;
+  /** Persist one message (`content_blocks` is JSON text); a message already at the same `message_idx` stays. */
+  insertSubagentMessage(jobId: number, message: SubagentMessageInsert): Promise<void>;
+  /** The job's tool rows, in replay order (`message_idx`, ordinal with legacy NULL as 0, `id`) or `id` order. */
+  listSubagentToolExecutions(jobId: number, order: SubagentToolOrder): Promise<SubagentToolRow[]>;
+  /** Whether the job has a tool row of `status` whose `tool_use_id` is `LIKE toolUseIdPrefix || '%'` (a LIKE pattern). */
+  hasSubagentToolExecution(jobId: number, opts?: { status?: string; toolUseIdPrefix?: string }): Promise<boolean>;
+  /** The job's `brain_put_page` rows' status, error and output by `id`, scoped to a `tool_use_id` LIKE prefix when given. */
+  listSubagentWriteOutcomes(jobId: number, toolUseIdPrefix?: string): Promise<SubagentWriteOutcome[]>;
+  /** The oneshot ledger: rows whose `tool_use_id` is `LIKE toolUseIdPrefix || '%'`, by `id`, with their input fields as text. */
+  listSubagentOneshotLedger(jobId: number, toolUseIdPrefix: string): Promise<SubagentOneshotLedgerRow[]>;
+  /** How many rows of `toolName` in `status` the jobs hold and the bytes of their output as jsonb text. */
+  summarizeSubagentToolExecutions(jobIds: readonly number[], spec: { toolName: string; status: string }): Promise<{ count: number; output_bytes: number }>;
+  /** The distinct slugs the jobs' completed `brain_put_page` calls named, bytewise ascending, null last. */
+  listSubagentPutPageSlugs(jobIds: readonly number[]): Promise<Array<string | null>>;
+  /** Each completed `brain_put_page` call of the jobs: job, slug and start time, by `id`. */
+  listSubagentPutPageWrites(jobIds: readonly number[]): Promise<Array<{ job_id: number; slug: string | null; started_at: Date }>>;
+  /** The jobs' completed `brain_put_page` calls whose output state is `committed`, with their job's idempotency key, by `id`. */
+  listSubagentRetainedPutPages(jobIds: readonly number[]): Promise<SubagentRetainedPutPage[]>;
+  /** A staging child's pages: per slug the last staged `brain_put_page` and its markdown, slugs bytewise ascending. */
+  listSubagentStagedPages(jobId: number): Promise<Array<{ slug: string | null; content: string | null }>>;
+  /** The jobs' `brain_add_timeline_entry` calls whose request id names a committed, `ok` timeline request of `sourceId`, by `id`. */
+  listSubagentTimelineAppendCalls(jobIds: readonly number[], sourceId: string): Promise<Array<{ request_id: string; slug: string; input: unknown }>>;
+  /** Bank tool rows at stable ordinals atomically; an occupied position stays. `legacyGuard` also skips a turn's legacy NULL-ordinal row of the same id. */
+  recordSubagentToolExecutions(jobId: number, rows: readonly SubagentToolInsert[], opts?: { legacyGuard?: boolean }): Promise<void>;
+  /** Record a gateway tool call's first observation (a pending v2 row); the stable id of the row at that position (null for a legacy row). */
+  startSubagentToolExecution(jobId: number, row: SubagentToolStart): Promise<string | null>;
+  /** Settle a tool row complete (`output` is JSON text); how many rows it settled. */
+  completeSubagentToolExecution(target: SubagentToolTarget, output: string): Promise<number>;
+  /** Settle a tool row failed, inserting one from `fallback` when the position has none; how many rows it changed. */
+  failSubagentToolExecution(target: SubagentToolTarget, error: string, fallback?: SubagentFailureFallback): Promise<number>;
   // Group D (takes, salience and code-edge reads): the counts and lists doctor, onboarding and repair read.
   /** Takes more than 0.001 off the 0.05 weight grid, of all takes. */
   countOffGridTakeWeights(): Promise<{ off_grid: number; total: number }>;
@@ -3807,6 +3880,13 @@ export interface BrainEngine {
     chunkId: number,
     opts?: { direction?: 'in' | 'out' | 'both'; edgeType?: string; limit?: number },
   ): Promise<CodeEdgeResult[]>;
+  // jobs-tables group D: the code_traversal_cache table.
+  /** The memoised traversal at the key and generation, or null (code_blast and code_flow). */
+  getCodeTraversalCache(key: CodeTraversalCacheKey): Promise<CodeTraversalCacheRow | null>;
+  /** Upsert a memoised traversal on (symbol, depth, source); the response is stored as JSON. */
+  putCodeTraversalCache(key: CodeTraversalCacheKey, response: unknown, maxChunkUpdatedAt: string, xminMax: number): Promise<void>;
+  /** Delete one source's cached traversals, or all of them; returns the number deleted. */
+  clearCodeTraversalCache(opts: CodeTraversalCacheClear): Promise<number>;
 
   /**
    * Chunk-grain keyword search. Ranks by content_chunks.search_vector
@@ -4022,4 +4102,43 @@ export interface BrainEngine {
   getDecideCalibration(id: number): Promise<DecideStoreSql.DecideCalibration | null>;
   /** Retire calibration `id` or bring it back; answers whether the row exists. */
   setDecideCalibrationRetired(id: number, retired: boolean): Promise<boolean>;
+  // Group A (jobs-tables): the Wakeshift report-back tables (engine-sql/jobs-wake.ts).
+  /** Record a watch and return its id; a second open watch of the same Wakeshift subscription keeps its row and takes the new expiry. */
+  openWakeWatch(watch: JobsWake.WakeWatchInsert): Promise<number>;
+  /** One principal's watches, newest first, at most 50: the open ones (and ones updated in the last day), or one target's. */
+  listWakeWatches(filter: JobsWake.WakeWatchFilter): Promise<JobsWake.WakeWatchRow[]>;
+  /** End open watches for a reason (disabled, expired, or one unwatched id); the rows that ended. */
+  endWakeWatches(spec: JobsWake.EndWakeWatches): Promise<JobsWake.EndedWakeWatch[]>;
+  /** Every watch counted by state and last error. */
+  countWakeWatches(): Promise<Array<{ state: string; last_error: string | null; n: number }>>;
+  /** The doctor's wakeshift reads: 7-day watch counts, unregistered cron runs, stale and dead forgets. */
+  readWakeDoctor(): Promise<JobsWake.WakeDoctorRead>;
+  /** Wakeshift forgets still waiting to be sent. */
+  countPendingWakeForgets(): Promise<number>;
+  /** The registered crons by name with each one's last reported run. */
+  listWakeCrons(): Promise<JobsWake.WakeCronRow[]>;
+  /** Register a cron name. */
+  addWakeCron(name: string): Promise<void>;
+  /** Unregister a cron name and end the open watches on it; the watches that ended. */
+  removeWakeCron(name: string): Promise<JobsWake.EndedWakeWatch[]>;
+  /** Whether a cron name is registered. */
+  hasWakeCron(name: string): Promise<boolean>;
+  /** Record one cron run, drop that cron's runs older than 30 days, and say whether the name is registered. */
+  recordWakeCronRun(run: { name: string; status: string; finishedAt: string | null }): Promise<{ registered: boolean }>;
+  /** Whether a principal key accepted a terms version. */
+  hasWakeTermsAcceptance(principalKey: string, termsVersion: string): Promise<boolean>;
+  /** Record a terms acceptance (one already recorded stays). */
+  recordWakeTermsAcceptance(principalKey: string, termsVersion: string): Promise<void>;
+  /** The open, due, unleased watches whose target settled (at most 20), each with the job, write request or cron run it watches. */
+  listDueWakeWatches(spec?: { ids?: readonly number[] }): Promise<JobsWake.WakeRow[]>;
+  /** Lease one due watch; its lease token and attempts, or null when it is not due or leased. */
+  claimWakeWatch(id: number, leaseSeconds: number): Promise<{ lease: string; attempts: number } | null>;
+  /** Settle a leased watch; false when it was ended or re-leased meanwhile. */
+  settleWakeWatch(settle: JobsWake.WakeWatchSettle): Promise<boolean>;
+  /** Queue a Wakeshift forget of a user (once while one is pending); with a member id, only when that member is not removed. */
+  queueWakeForget(wakeUser: string, memberId: string | null): Promise<void>;
+  /** Lease up to `limit` due pending forgets. */
+  claimWakeForgets(spec: { leaseSeconds: number; limit: number }): Promise<JobsWake.WakeForgetClaim[]>;
+  /** Settle a leased forget; false when its lease no longer matches. */
+  settleWakeForget(settle: JobsWake.WakeForgetSettle): Promise<boolean>;
 }
