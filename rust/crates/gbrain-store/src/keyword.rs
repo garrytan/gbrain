@@ -1,9 +1,13 @@
-//! Keyword search members the keyword_search capability still refuses, and title trigrams. The
-//! members are not built yet: each still refuses with `engine_capability_missing` in the
-//! TypeScript engine.
+//! Keyword search members of the keyword_search capability, and title trigrams.
 //!
-//! Members: countKeywordPages, searchKeywordPages, searchTitles, searchKeywordChunks,
-//! findByTitleFuzzy.
+//! Served: findByTitleFuzzy (`keyword/title_fuzzy.rs`), searchKeyword (`keyword/arm.rs`: the
+//! arm's statement and the rare-word read its OR retry ranks with), searchKeywordChunks
+//! (`keyword/chunk_search.rs`), countKeywordPages and searchKeywordPages (`keyword/page_search.rs`),
+//! and searchTitles (`keyword/titles.rs`: the title arm's statements, over page vectors rebuilt
+//! from the page, its timeline entries and the sealed search timeline), with the page and chunk
+//! filters they share in `keyword/filters.rs`. The rebuilt chunk and page vectors are cached in
+//! `keyword/vector_cache.rs` (bounded, keyed by the exact input text). rust/docs/store/keyword.md
+//! lists what each member reads, refuses and leaves as a follow-up.
 //!
 //! Built: the pg_trgm scorer (`keyword/trgm.rs`), for findByTitleFuzzy here and for other
 //! families (searchTakes). Its signatures and thresholds are stable:
@@ -30,14 +34,26 @@
 //!
 //! See docs/designs/RUST_ENGINE_INTERFACES.md.
 
+mod arm;
+mod chunk_search;
+mod filters;
+mod page_search;
 mod parser;
 mod rank;
 mod stem;
+mod title_fuzzy;
+mod titles;
 mod trgm;
 mod tsearch;
+mod vector_cache;
+
+pub use filters::{AfterKey, DateBound, KeywordOptions};
+pub use titles::{TitleAttempt, TitleAttemptKind};
 
 #[allow(unused_imports)]
 pub(crate) use rank::{ts_rank, ts_rank_cd};
+#[allow(unused_imports)]
+pub(crate) use stem::pg_lower;
 #[allow(unused_imports)]
 pub(crate) use tsearch::{
     TsQuery, TsVector, Weight, concat, fts_input, or_of_lexemes, phraseto_tsquery, plainto_tsquery,

@@ -14,6 +14,7 @@ import { opError, type Operation, type OperationContext } from './contract.ts';
 import { invalidParam } from './op-fix.ts';
 import { assertSourceInCallerScope, linkReadScopeOpts, resolveRequestedScope, sourceScopeOpts } from './context.ts';
 import { ALL_SOURCES } from '../source-id.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { NON_RANKING_LINK_TYPES } from '../link-ranking-policy.ts';
 import { type RankDirection, type RankEntityRow } from '../engine-sql/graph-rank.ts';
 import type { EntityTypeFilter } from '../schema-pack/entity-types.ts';
@@ -118,7 +119,8 @@ async function readCoverage(ctx: OperationContext, sourceIds: string[] | undefin
       sum.held += lag.held ?? 0;
       if (lag.mention_due !== null) sum.mention_due = (sum.mention_due ?? 0) + lag.mention_due;
     }
-  } catch {
+  } catch (err) {
+    rethrowCapabilityRefusal(err); // an engine that cannot read coverage refuses; it never ranks as if coverage were unknown
     return { state: 'unread', reason: 'read_failed' };
   }
   return { state: sum.actionable > 0 || (includeMentions && (sum.mention_due ?? 0) > 0) ? 'behind' : 'current', ...sum };
@@ -140,7 +142,8 @@ async function readRemoteCoverage(ctx: OperationContext, sourceIds: string[] | u
       const [row] = await ctx.engine.executeRaw<{ link_behind: boolean; mention_due: boolean }>(text, params, { timeoutMs: 10_000 });
       if (row?.link_behind || row?.mention_due) return { state: 'behind' };
     }
-  } catch {
+  } catch (err) {
+    rethrowCapabilityRefusal(err); // an engine that cannot read coverage refuses; it never ranks as if coverage were unknown
     return { state: 'unread', reason: 'read_failed' };
   }
   return { state: 'current' };

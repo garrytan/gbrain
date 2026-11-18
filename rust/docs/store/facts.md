@@ -266,6 +266,9 @@ provenance page hides the row; then the entity, session, `since` (on `valid_from
   `halfvec`) column and a non-`english` FTS language refuse in the member.
 - `countUncomparableFacts` keeps SQL's three-valued logic: with an undeclared column width a row counts
   only when a conjunct of the comparable test is false, so a vector with a NULL model is not counted.
+- `listFactsForRelevance` serves the pool reads only. Its caller `collectFactCandidates` still makes
+  other reads on the way (the word stems, the facts embedding column, the named-entity anchor and the
+  nearest-vector arm); on Rust each of those is served or refused by the family that owns it.
 
 ## Not modeled
 

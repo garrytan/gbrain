@@ -15,6 +15,7 @@ import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { edgeValidityEnabled } from '../../../core/link-validity.ts';
 import { staleRelationshipKeys } from '../../../core/link-relationships.ts';
+import { answersFromCatalog, catalogTableExists } from '../../../core/rust-engine/store-members/catalog.ts';
 
 /** Stale-assertion pages `edge_validity` lists before it reports a floor. */
 const STALE_ASSERTION_LIMIT = 20;
@@ -31,8 +32,9 @@ export interface EdgeValidityStats {
 }
 
 export async function edgeValidityStats(engine: BrainEngine, sourceIds?: readonly string[]): Promise<EdgeValidityStats | null> {
-  const [t] = await engine.executeRaw<{ lr: string | null }>(`SELECT to_regclass('link_relationships')::text AS lr`);
-  if (!t?.lr) return null;
+  const present = answersFromCatalog(engine) ? catalogTableExists(engine, 'link_relationships')
+    : !!(await engine.executeRaw<{ lr: string | null }>(`SELECT to_regclass('link_relationships')::text AS lr`))[0]?.lr;
+  if (!present) return null;
   const scope = sourceIds?.length ? [...sourceIds] : null;
   const byStatus = await engine.executeRaw<{ status: string; n: number }>(
     `SELECT CASE WHEN semantics = 'event' THEN 'event' WHEN disputed THEN 'disputed' ELSE status_now END AS status, COUNT(*)::int AS n

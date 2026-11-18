@@ -19,6 +19,7 @@
  */
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
+import { answersFromCatalog, catalogTableExists } from '../rust-engine/store-members/catalog.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { opError } from '../ops/contract.ts';
@@ -164,6 +165,7 @@ export interface HoldStoreAdapter {
   publish?(engine: BrainEngine, id: number, by: string, config?: GBrainConfig, approved?: string): Promise<boolean | null>;
 }
 async function holdTableExists(engine: BrainEngine): Promise<boolean> {
+  if (answersFromCatalog(engine)) return catalogTableExists(engine, 'write_gate_holds');
   const [row] = await engine.executeRaw<{ t: string | null }>(`SELECT to_regclass('write_gate_holds')::text AS t`);
   return !!row?.t;
 }

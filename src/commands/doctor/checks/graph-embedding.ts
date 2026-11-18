@@ -11,7 +11,8 @@ import { pricingSetCommand } from '../../../core/budget/no-pricing.ts';
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import { checkError } from '../check-fix.ts';
-import { CONNECTOR_KINDS_SQL, isConnectorSourceKind } from '../../../core/persistence/connector-identity.ts';
+import { answersFromCatalog, catalogSkipCheck } from '../../../core/rust-engine/store-members/catalog.ts';
+import { isConnectorSourceKind } from '../../../core/persistence/connector-identity.ts';
 import { isCrossSourceLinksEnabled } from '../../../core/link-extraction.ts';
 
 /**
@@ -75,10 +76,7 @@ export async function checkGraphSignalsCoverage(engine: BrainEngine, opts: { sou
     // Compute global inbound-link density. Counts DISTINCT pages with
     // at least one inbound edge / total pages. A remote caller's grant
     // confines both sides to its sources (no brain-wide ratio).
-    const scope = opts.sourceIds ? ' AND p.source_id = ANY($1::text[])' : '';
-    const params = opts.sourceIds ? [opts.sourceIds] : undefined;
-    const totalRows = await engine.executeRaw(`SELECT COUNT(*)::int AS n FROM pages p WHERE deleted_at IS NULL${scope}`, params);
-    const totalPages = Number((totalRows as any)[0]?.n ?? 0);
+    const { livePages: totalPages, linkedPages } = await engine.inboundLinkCoverage(opts.sourceIds ? { sourceIds: opts.sourceIds } : undefined);
 
     if (totalPages === 0) {
       return {
@@ -88,14 +86,6 @@ export async function checkGraphSignalsCoverage(engine: BrainEngine, opts: { sou
       };
     }
 
-    const linkedRows = await engine.executeRaw(
-      `SELECT COUNT(DISTINCT l.to_page_id)::int AS n
-       FROM links l
-       JOIN pages p ON p.id = l.to_page_id
-       WHERE p.deleted_at IS NULL${scope}`,
-      params,
-    );
-    const linkedPages = Number((linkedRows as any)[0]?.n ?? 0);
     const pct = (linkedPages / totalPages) * 100;
     const pctStr = pct.toFixed(1);
 
@@ -152,6 +142,8 @@ export async function checkGraphSignalsCoverage(engine: BrainEngine, opts: { sou
  * signal.
  */
 export async function checkBrainstormHealth(engine: BrainEngine, opts: { sourceIds?: string[] } = {}): Promise<Check> {
+  // Rust: the column probe needs the relation catalog (rust/catalog/relations.json), which does not exist yet.
+  if (answersFromCatalog(engine)) return catalogSkipCheck('brainstorm_health', 'no_relation_catalog');
   // (1) Column probe — fast, single-query.
   try {
     const probeRows = await engine.executeRaw<{ exists: boolean }>(
@@ -464,47 +456,7 @@ export async function checkJunkEntityHubs(
   const edgeThreshold = opts?.edgeThreshold ?? JUNK_HUB_EDGE_THRESHOLD;
   const maxChunks = opts?.maxChunks ?? JUNK_HUB_MAX_CHUNKS;
   try {
-    const listed = await engine.executeRaw<{
-      slug: string;
-      source_id: string | null;
-      edges: number;
-      chunks: number;
-      connector_page: boolean;
-      source_kind: string | null;
-      canonical_twin_source: string | null;
-    }>(
-      `WITH edge_counts AS (
-         SELECT page_id, COUNT(*)::int AS edges FROM (
-           SELECT from_page_id AS page_id FROM links
-           UNION ALL
-           SELECT to_page_id AS page_id FROM links
-         ) e
-         GROUP BY page_id
-         HAVING COUNT(*) > $1
-       ),
-       chunk_counts AS (
-         SELECT page_id, COUNT(*)::int AS chunks
-         FROM content_chunks
-         GROUP BY page_id
-       )
-       SELECT p.slug, p.source_id, ec.edges, COALESCE(cc.chunks, 0)::int AS chunks,
-              (p.frontmatter ->> 'google_contact_id') IS NOT NULL AS connector_page,
-              s.config ->> 'kind' AS source_kind,
-              (SELECT t.source_id FROM pages t LEFT JOIN sources ts ON ts.id = t.source_id
-                WHERE t.slug = p.slug AND t.source_id <> p.source_id AND t.deleted_at IS NULL
-                  AND (t.frontmatter ->> 'google_contact_id') IS NULL
-                  AND COALESCE(ts.config ->> 'kind', '') NOT IN (${CONNECTOR_KINDS_SQL})
-                ORDER BY (t.source_id = 'default') DESC, t.source_id LIMIT 1) AS canonical_twin_source
-       FROM edge_counts ec
-       JOIN pages p ON p.id = ec.page_id AND p.deleted_at IS NULL
-       LEFT JOIN sources s ON s.id = p.source_id
-       LEFT JOIN chunk_counts cc ON cc.page_id = ec.page_id
-       WHERE COALESCE(cc.chunks, 0) <= $2
-         AND COALESCE(p.frontmatter ->> 'junk_hub_exempt', 'false') <> 'true'
-       ORDER BY ec.edges DESC
-       LIMIT ${JUNK_HUB_LIMIT + 1}`,
-      [edgeThreshold, maxChunks],
-    );
+    const listed = await engine.listJunkEntityHubs({ edgeThreshold, maxChunks, limit: JUNK_HUB_LIMIT + 1 });
     // #7145: a full list means more pages match; the counts below are then floors.
     const capped = listed.length > JUNK_HUB_LIMIT;
     const rows = listed.slice(0, JUNK_HUB_LIMIT);

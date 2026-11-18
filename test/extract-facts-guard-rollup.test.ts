@@ -33,6 +33,8 @@ function mkEngine(legacyCount: number): { calls: CapturedCall[]; engine: BrainEn
     // The legacy-pending count and the unfenced-row read moved off executeRaw onto typed members; they answer what the executeRaw stub answered.
     async countLegacyFactsPending() { return [{ n: String(legacyCount) }]; },
     async listUnfencedFactRows() { return []; },
+    // The guest-source read moved onto a typed member; no source here is a guest.
+    async listGuestSourceIds() { return []; },
     async getAllSlugs() { return []; },
     async getPage() { return null; },
     async deleteFactsForPage() { return { deleted: 0 }; },

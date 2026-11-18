@@ -25,8 +25,6 @@ src/commands/doctor/checks/calibration.ts	checkLinkResolutionOpportunity	sql	LEA
 src/commands/doctor/checks/content-quality.ts	runContentSanity	sql	META	
 src/commands/doctor/checks/data-integrity.ts	runMarkdownBody	sql	META	
 src/commands/doctor/checks/derived-visibility.ts	derivedVisibilityCheck	sql	NONE	not the page body: p.* in a CTE, only metadata columns read
-src/commands/doctor/checks/graph-health.ts	runGraphCoverage	field	NONE	not the page body: timeline count alias
-src/commands/doctor/checks/graph-health.ts	runGraphCoverage	sql	NONE	not the page body: timeline coverage count alias
 src/commands/enrich.ts	enrichOneLocked	call:serializeMarkdown	SEGW	
 src/commands/enrich.ts	enrichOneLocked	field	SEGW	
 src/commands/export.ts	runExport	sql	STREAM	

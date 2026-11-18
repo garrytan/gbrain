@@ -2,6 +2,7 @@
 import { VERSION } from '../../version.ts';
 import { existingHostIdFor, hostIdFor } from './identity.ts';
 import type { SqlEngine } from './model.ts';
+import { lacksRawSql } from '../engine-capabilities.ts';
 
 /** Writers older than this may still delete database-only timeline rows during publication. */
 export const WRITER_VERSION_FLOOR = '0.60.5.0';
@@ -122,6 +123,8 @@ export async function segmentedGateWriters(engine: SqlEngine, days: number, floo
 
 /** Every writer the gate read in the last `days`, passing or not, grouped as `segmentedGateWriters` groups them. */
 export async function segmentedGateEvidence(engine: SqlEngine, days: number): Promise<SegmentedGateWriter[]> {
+  // An engine without raw SQL (Rust, D18) has no request journal or ingest log for an older writer to have left rows in.
+  if (lacksRawSql(engine)) return [];
   const rows = await engine.executeRaw<Omit<SegmentedGateWriter, 'version_label' | 'last_seen' | 'requests' | 'first_seen'> & { last_seen: unknown; requests: number; first_seen: unknown }>(
     `WITH win AS (SELECT now()-($1::double precision*interval '1 day') AS since)
     SELECT 'admitter' AS role,r.admitter_host_id::text AS host_id,r.principal_kind||':'||r.principal_id AS principal,r.admitter_version AS version,

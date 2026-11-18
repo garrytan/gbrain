@@ -337,4 +337,207 @@ describe('engine parity: search', () => {
       return { byIndex, namedSize: named.size, emptySize: empty.size };
     },
   );
+  parityTest(
+    'keyword pages and chunks agree on scores, phrase and handle boosts, where, dates, sources and boosts',
+    { methods: ['countKeywordPages', 'searchKeywordPages', 'searchKeywordChunks'] },
+    async (engine, backend) => {
+      const day = (iso: string) => new Date(iso);
+      await seedPage(engine, {
+        slug: 'notes/nebula-drive',
+        input: { type: 'note', title: 'Nebula drive', compiled_truth: 'x', timeline: '', frontmatter: { status: 'active', rank: 3 }, effective_date: day('2026-03-01T00:00:00Z'), effective_date_source: 'date' },
+        chunks: [chunk(0, 'the nebula drive hums near the core'), chunk(1, 'drive nebula backwards for the drive test')],
+      });
+      await seedPage(engine, {
+        slug: 'notes/drive-log',
+        input: { type: 'note', title: 'Drive log', compiled_truth: 'x', timeline: '', frontmatter: { status: ['draft', 'active'] }, effective_date: day('2026-05-10T12:00:00Z'), effective_date_source: 'date' },
+        chunks: [chunk(0, 'nebula readings and one drive entry', { chunk_source: 'timeline' })],
+      });
+      await seedPage(engine, {
+        slug: 'archive/nebula-old',
+        input: { type: 'concept', title: 'Old nebula', compiled_truth: 'x', timeline: '', frontmatter: { rank: '3' } },
+        chunks: [chunk(0, 'nebula drive nebula drive nebula drive')],
+      });
+      await createSource(engine, backend, 'side');
+      await seedPage(engine, {
+        slug: 'notes/side-nebula',
+        input: { type: 'note', title: 'Side nebula', compiled_truth: 'x', timeline: '' },
+        chunks: [chunk(0, 'a nebula drive on the side')],
+      }, { sourceId: 'side' });
+
+      const view = (rows: SearchResult[]) => rows.map((r) => ({ slug: r.slug, score: round(r.score), source_id: r.source_id }));
+      const q = 'nebula drive';
+      const pages = view(await engine.searchKeywordPages(q, undefined, { limit: 10 }));
+      const phrase = view(await engine.searchKeywordPages(q, { keywordPhrase: true }, { limit: 10 }));
+      const handle = view(await engine.searchKeywordPages('drive-log', undefined, { limit: 10 }));
+      const handleCount = await engine.countKeywordPages('drive-log');
+      const where = view(await engine.searchKeywordPages(q, { where: { status: ['active'] } }, { limit: 10 }));
+      const whereNumber = view(await engine.searchKeywordPages(q, { where: { rank: ['3'] } }, { limit: 10 }));
+      const after = view(await engine.searchKeywordPages(q, { afterDate: '2026-04-01' }, { limit: 10 }));
+      const before = view(await engine.searchKeywordPages(q, { beforeDate: '2026-03-01T00:00:00Z', beforeDateInclusive: true }, { limit: 10 }));
+      const scoped = view(await engine.searchKeywordPages(q, { sourceIds: ['side'] }, { limit: 10 }));
+      const boosted = view(await engine.searchKeywordPages(q, { source_boosts: { 'archive/': 0.5, 'notes/': 1.5 } }, { limit: 10 }));
+      const excluded = await engine.countKeywordPages(q, { exclude_slug_prefixes: ['archive/'] });
+      const chunks = view(await engine.searchKeywordChunks(q, { limit: 10 }));
+      const lowDetail = view(await engine.searchKeywordChunks(q, { limit: 10, detail: 'low' }));
+      const offset = view(await engine.searchKeywordChunks(q, { limit: 2, offset: 1 }));
+      expect(handleCount).toBe(1);
+      expect(handle.map((r) => r.slug)).toEqual(['notes/drive-log']);
+      expect(lowDetail.some((r) => r.slug === 'notes/drive-log')).toBe(false);
+      return { pages, phrase, handle, handleCount, where, whereNumber, after, before, scoped, boosted, excluded, chunks, lowDetail, offset };
+    },
+  );
+
+  parityTest(
+    'searchKeyword serves the hybrid arm options: OR retry by rarity, identifier probe, handles, phrase, rank query and windows',
+    { methods: ['searchKeyword'] },
+    async (engine) => {
+      const day = (iso: string) => new Date(iso);
+      await seedPage(engine, {
+        slug: 'notes/nebula-drive',
+        input: { type: 'note', title: 'Nebula drive', compiled_truth: 'x', timeline: '', frontmatter: { status: 'active' }, effective_date: day('2026-03-01T00:00:00Z'), effective_date_source: 'date' },
+        chunks: [chunk(0, 'the nebula drive hums near the core'), chunk(1, 'drive nebula backwards for the drive test')],
+      });
+      await seedPage(engine, {
+        slug: 'notes/drive-log',
+        input: { type: 'note', title: 'Drive log', compiled_truth: 'x', timeline: '', frontmatter: { status: 'draft' }, effective_date: day('2026-05-10T12:00:00Z'), effective_date_source: 'date' },
+        chunks: [chunk(0, 'nebula readings and one drive entry')],
+      });
+      await seedPage(engine, {
+        slug: 'notes/weekly-digest-412',
+        input: { type: 'note', title: 'Weekly digest', compiled_truth: 'x', timeline: '' },
+        chunks: [chunk(0, 'digest 412 covered the quokka census')],
+      });
+      for (const n of [1, 2, 3]) {
+        await seedPage(engine, {
+          slug: `notes/weekly-digest-${n}`,
+          input: { type: 'note', title: `Weekly digest ${n}`, compiled_truth: 'x', timeline: '' },
+          chunks: [chunk(0, `the weekly digest said the latest news was about nebula drive work, week ${n}, and more weekly digest news`)],
+        });
+      }
+
+      const view = (rows: SearchResult[]) => rows.map((r) => ({
+        slug: r.slug, chunk_index: r.chunk_index, score: round(r.score),
+        relaxed: r.keyword_relaxed ?? false, fill: (r as { keyword_fill?: boolean }).keyword_fill ?? false,
+      }));
+      const incomplete: string[] = [];
+      // What hybridSearch passes the keyword arm (search/hybrid/request.ts, arms.ts): knobs PGLite does not read included.
+      const hybrid = {
+        limit: 5, detail: undefined, embeddingColumn: { name: 'embedding', dims: 1536 } as never, cjkKeyword: { deadlineMs: 1000, onMeta: () => undefined } as never,
+        keywordTimeoutCache: true, vectorLegacyGuard: undefined, hnswIterativeScan: undefined, onVectorPoolMeta: () => undefined,
+        onKeywordIncomplete: (reason: string) => { incomplete.push(reason); }, orFallback: true,
+      } as Parameters<BrainEngine['searchKeyword']>[1];
+      const search = async (q: string, opts: Parameters<BrainEngine['searchKeyword']>[1]) => view(await engine.searchKeyword(q, opts));
+      const out = {
+        strict: await search('nebula drive', hybrid),
+        relaxed: await search('nebula quokka census', hybrid),
+        probe: await search('what did the latest weekly digest (#412) say', hybrid),
+        handles: await search('drive-log readings nebula', hybrid),
+        phrase: await search('nebula drive', { ...hybrid, keywordPhrase: true }),
+        rankQuery: await search('nebula drive', { ...hybrid, rankQuery: 'core' }),
+        where: await search('nebula drive', { ...hybrid, where: { status: ['active'] } }),
+        after: await search('nebula drive', { ...hybrid, afterDate: '2026-04-01' }),
+        window: await search('nebula or digest or drive', { limit: 2, offset: 1 }),
+        windowPastInner: await search('nebula or digest or drive', { limit: 1, offset: 4 }),
+        fill: await search('nebula quokka', { ...hybrid, orFill: true }),
+        fillPaged: await search('nebula quokka', { ...hybrid, orFill: true, offset: 1 }),
+        strictOnly: await search('nebula quokka', { limit: 5 }),
+        empty: await search('', hybrid),
+        stopwords: await search('the and of', hybrid),
+      };
+      expect(out.strict.length).toBeGreaterThan(0);
+      expect(out.relaxed.every((r) => r.relaxed)).toBe(true);
+      expect(out.relaxed[0]!.slug).toBe('notes/weekly-digest-412');
+      expect(out.probe[0]!.slug).toBe('notes/weekly-digest-412');
+      expect(out.handles[0]!.slug).toBe('notes/drive-log');
+      expect(out.fill.every((r) => r.fill)).toBe(true);
+      expect(out.fillPaged).toEqual([]);
+      expect(out.strictOnly).toEqual([]);
+      expect(incomplete).toEqual([]);
+      return out;
+    },
+  );
+
+  parityTest(
+    'searchTitles: sealed timelines, timeline entries, the candidate cut, the OR retry by rarity, identifiers and paging',
+    { methods: ['searchTitles'] },
+    async (engine) => {
+      const { __setTitleWholeVectorCandidatesForTests, titleWholeVectorCandidates } = await import('../../src/core/search/title-statement.ts');
+      const put = (slug: string, title: string, timeline: string, sealed = true) =>
+        seedPage(engine, {
+          slug,
+          input: { type: 'note', title, compiled_truth: `${title} body`, timeline },
+          chunks: sealed ? [chunk(0, `${title} body`)] : undefined,
+        });
+      await put('notes/flight-log', 'Flight Log', 'quokka sighted near the hangar');
+      await put('notes/comet-tally', 'Comet Tally', '');
+      await put('notes/comet-vault', 'Comet Vault', 'atlas mention');
+      await put('notes/vault-atlas', 'Vault Atlas', '');
+      await put('notes/weekly-digest', 'Weekly Digest 412', '');
+      await put('people/matthew-example', 'Matthew Example', '');
+      // A page never sealed is not served (servedTextProjectionFilter), even with a timeline entry in its trigger vector.
+      await put('notes/walrus-page', 'Walrus Page', 'first', false);
+      await engine.addTimelineEntry('notes/walrus-page', { date: '2026-01-02', summary: 'pinniped migration', detail: 'tundra' });
+      await put('notes/walrus-page', 'Walrus Page', 'second', false);
+      // An entry added after the seal is not in the sealed vector.
+      await engine.addTimelineEntry('notes/flight-log', { date: '2026-01-03', summary: 'zebra crossing', detail: '' });
+
+      const incomplete: string[] = [];
+      const view = (rows: SearchResult[]) =>
+        rows.map((r) => ({ slug: r.slug, relaxed: r.keyword_relaxed === true, score: round(r.score), chunk: r.chunk_text }));
+      const search = async (q: string, opts: Parameters<BrainEngine['searchTitles']>[1] = {}) =>
+        view(await engine.searchTitles(q, { limit: 5, onKeywordIncomplete: (r) => incomplete.push(r), ...opts }));
+      const out = {
+        timeline: await search('quokka hangar'),
+        pinniped: await search('pinniped tundra'),
+        zebra: await search('zebra'),
+        comet: await search('comet'),
+        paged: await search('comet', { limit: 1, offset: 1 }),
+        rarity: await search('comet atlas quokka'),
+        rarityPaged: await search('comet atlas quokka', { offset: 1 }),
+        ident: await search('what did digest #412 say'),
+        variant: await search('Matt Example'),
+        cut: [] as ReturnType<typeof view>,
+        cutRelaxed: [] as ReturnType<typeof view>,
+        incomplete,
+      };
+      const cap = titleWholeVectorCandidates();
+      __setTitleWholeVectorCandidatesForTests(1);
+      try {
+        out.cut = await search('comet');
+        out.cutRelaxed = await search('comet atlas quokka');
+      } finally {
+        __setTitleWholeVectorCandidatesForTests(cap);
+      }
+      expect(out.timeline.map((r) => r.slug)).toEqual(['notes/flight-log']);
+      expect(out.zebra).toEqual([]);
+      expect(out.pinniped).toEqual([]);
+      expect(out.comet.length).toBe(2);
+      expect(out.rarity.every((r) => r.relaxed)).toBe(true);
+      expect(out.ident[0]!.slug).toBe('notes/weekly-digest');
+      expect(out.variant[0]!.slug).toBe('people/matthew-example');
+      expect(out.incomplete).toContain('candidate_budget');
+      return out;
+    },
+  );
+
+  parityTest(
+    'searchTitles: a re-put of an unchanged sealed page reads the trigger vector (title, raw timeline, every entry)',
+    { methods: ['searchTitles'] },
+    async (engine) => {
+      const page = { type: 'note' as const, title: 'Harbor Log', compiled_truth: 'Harbor Log body', timeline: 'ferry arrived at dawn' };
+      await seedPage(engine, { slug: 'notes/harbor-log', input: page, chunks: [chunk(0, 'Harbor Log body')] });
+      // An entry added after the seal is not in the sealed vector.
+      await engine.addTimelineEntry('notes/harbor-log', { date: '2026-01-04', summary: 'narwhal surfaced', detail: 'fjord' });
+      const view = (rows: SearchResult[]) => rows.map((r) => ({ slug: r.slug, score: round(r.score), chunk: r.chunk_text }));
+      const search = async (q: string) => view(await engine.searchTitles(q, { limit: 5 }));
+      const sealed = { entry: await search('narwhal fjord'), timeline: await search('ferry dawn') };
+      // The same input again: the page keeps its revision and seal, and the trigger rewrites the vector.
+      await seedPage(engine, { slug: 'notes/harbor-log', input: page });
+      const reput = { entry: await search('narwhal fjord'), timeline: await search('ferry dawn'), title: await search('harbor') };
+      expect(sealed.entry).toEqual([]);
+      expect(sealed.timeline.map((r) => r.slug)).toEqual(['notes/harbor-log']);
+      expect(reput.entry.map((r) => r.slug)).toEqual(['notes/harbor-log']);
+      return { sealed, reput };
+    },
+  );
 });

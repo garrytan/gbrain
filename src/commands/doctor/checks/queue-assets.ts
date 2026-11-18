@@ -13,6 +13,7 @@ import { computeQueueHealthCheck } from './queue-jobs.ts';
 import { checkSubagentCapability } from './search-eval.ts';
 import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { answersFromCatalog, catalogTableExists } from '../../../core/rust-engine/store-members/catalog.ts';
 
 async function runQueueHealth(ctx: DoctorContext): Promise<Check[]> {
   const { progress } = ctx;
@@ -42,9 +43,11 @@ async function runQueueHealth(ctx: DoctorContext): Promise<Check[]> {
   // probe is a no-op.
   progress.heartbeat('facts_health');
   try {
-    const factsExists = await engine.executeRaw<{ exists: boolean }>(
-      `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'facts') AS exists`,
-    );
+    const factsExists = answersFromCatalog(engine)
+      ? [{ exists: catalogTableExists(engine, 'facts') }]
+      : await engine.executeRaw<{ exists: boolean }>(
+        `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'facts') AS exists`,
+      );
     if (factsExists[0]?.exists) {
       const health = await engine.getFactsHealth('default');
       const status: 'ok' | 'warn' = health.total_active >= 0 ? 'ok' : 'warn';
