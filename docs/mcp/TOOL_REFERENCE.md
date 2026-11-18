@@ -7,9 +7,10 @@ defaults, and the edge cases behind each parameter. The served schemas
 remain the contract; when they and this page differ, the schemas win.
 
 The starter surface lists the parameters an agent needs for the common call.
-Local-only, admin, legacy and tuning parameters stay callable on every
-surface, and `request_tools {tools: ["name"]}` returns a tool's full schema
-with every optional parameter.
+A starter caller that passes a parameter the surface leaves out is refused
+with `param_not_on_surface`, apart from a short reviewed list that gbrain's own
+clients send, and `request_tools {tools: ["name"]}` returns a tool's schema
+with every parameter this connection may pass.
 
 Say to your agent: *"Before you call a gbrain tool you have not used yet,
 check docs/mcp/TOOL_REFERENCE.md for its defaults."*
@@ -178,7 +179,7 @@ Read a page by slug (supports optional fuzzy matching). Slug aliases left by ren
 | `fuzzy` | boolean | Enable fuzzy slug resolution (default: false) |
 | `include_content` | boolean | Include the canonical serialized `content` field (frontmatter + body + timeline sentinel) for lossless get→edit→put_page round-trips. Default false — it roughly duplicates compiled_truth + timeline, so read-only callers should not pay for it. |
 | `content_only` | boolean | With include_content: true, return only the round-trip fields: `slug`, `source_id`, `type`, `title`, `revision`, `tags` and `content` (plus `deleted_at`, `resolved_slug`, `content_flag`, `file_held` and `timeline_entries` when they apply), without the duplicate compiled_truth / timeline / frontmatter. Ignored without include_content. To write back, send `content` to put_page with this `source_id` and `revision` as expected_revision: on a multi-source brain the same slug can live in several sources, and a write without source_id goes to your default source. |
-| `include_deleted` | boolean | Surface soft-deleted pages with deleted_at populated (default: false). Used by restore workflows. |
+| `include_deleted` | boolean | Surface soft-deleted pages with deleted_at populated (default: false). Used by restore workflows. Full surface only: a starter caller that passes it is refused (`param_not_on_surface`). |
 | `include_timeline_entries` | boolean | Also return `timeline_entries`, the page's timeline rows (the same rows and filtering as get_timeline for this caller). Default false to keep the payload small. |
 | `source_id` | string | Scope the lookup to a single source (a multi-source brain can hold the same slug in several sources). Defaults to ctx.sourceId / the caller's grant. '__all__' spans every source for trusted local callers, your granted sources for remote callers. |
 | `include_quarantined` | boolean | Admin scope only: return a quarantined page's body to a remote caller (default: false). Ignored without the admin scope; trusted local reads always include it. |
@@ -258,7 +259,7 @@ List pages with optional filters. For 'what's recent / what did I touch this wee
 | `updated_after` | string | ISO date (YYYY-MM-DD) or full timestamp. Returns pages with updated_at > value. Bare (without updated_after_slug) this is LOSSY across rows sharing one timestamp — a bulk sync stamps one now() across a transaction; pair with updated_after_slug to page exactly. |
 | `updated_after_slug` | string | Keyset cursor slug: pass the last row's slug together with updated_after set to that row's updated_at_iso (column precision — a millisecond-rounded value re-selects same-millisecond rows). Resumes strictly after (updated_at, slug) and forces sort=updated_asc. |
 | `sort` | string (`updated_desc`, `updated_asc`, `created_desc`, `slug`) | Sort order. Default updated_desc. Options: updated_desc, updated_asc, created_desc, slug. |
-| `include_deleted` | boolean | Include soft-deleted pages (default: false). Used by restore workflows and operator diagnostics. |
+| `include_deleted` | boolean | Include soft-deleted pages (default: false). Used by restore workflows and operator diagnostics. Full surface only: a starter caller that passes it is refused (`param_not_on_surface`). |
 | `source_id` | string | Scope listing to a single source. Defaults to OperationContext.sourceId / federated scope. Pass '__all__' to span every source for trusted local callers; for remote callers '__all__' spans only your granted sources. |
 
 ## `list_skills`
