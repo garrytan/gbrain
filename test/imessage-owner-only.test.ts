@@ -311,6 +311,36 @@ for (const kind of testBackends()) {
     /** The derived take and timeline canaries `who` reads on any path. */
     const derivedSeenBy = async (who: string) => { const seen = new Set(Object.values(await seenBy(who)).flat()); return [TIMELINE_FANNED, TAKE_DERIVED].filter(c => seen.has(c)); };
 
+    test('scorecard, calibration, the MCP-resolved count and write attribution leave out the derived take and timeline row for another member, and keep them for the owner', async () => {
+      await engine.executeRaw(`UPDATE takes SET weight = 0.85, resolved_at = now(), resolved_quality = 'correct', resolved_outcome = true, resolved_by = 'mcp:fixture' WHERE claim LIKE $1`, [`%${TAKE_DERIVED}%`]);
+      for (const [name, member] of [['owner-admin', OWNER], ['bob-admin', 'bob-example']] as const) {
+        const minted = await mintLegacyToken(engine, { name, scopes: ['read', 'admin'], takesHolders: ['world'], sourceGrant: [OPEN_SRC, IMSG, FLAGGED] });
+        tokens[name] = minted.token;
+        await bindCredential(engine, { kind: 'token', id: minted.id }, { member });
+      }
+      await engine.executeRaw(`UPDATE access_tokens SET private_pages = 'granted_sources', private_facts = 'granted_sources'`);
+      const fanned = Number((await engine.executeRaw<{ id: number }>('SELECT id FROM timeline_entries WHERE summary LIKE $1', [`%${TIMELINE_FANNED}%`]))[0]!.id);
+      const json = async (who: string, op: string, params: Record<string, unknown>) => {
+        const out = await call(who, op, { source_id: OPEN_SRC, ...params });
+        expect({ who, op, isError: out.isError }).toEqual({ who, op, isError: false });
+        return JSON.parse(out.text) as Record<string, unknown>;
+      };
+      const numbers = async (who: string) => {
+        const card = await json(who, 'takes_scorecard', {});
+        const curve = await json(who, 'takes_calibration', {}) as unknown as Array<{ n: number }>;
+        return { resolved: card.resolved, mcp_resolved: card.mcp_resolved, calibrated: curve.reduce((n, b) => n + Number(b.n ?? 0), 0) };
+      };
+      expect(await numbers('owner')).toEqual({ resolved: 1, mcp_resolved: 1, calibrated: 1 });
+      expect(await numbers('bob')).toEqual({ resolved: 0, mcp_resolved: 0, calibrated: 0 });
+
+      const attribute = (who: string, params: Record<string, unknown>) => call(who, 'get_write_attribution', { slug: OPEN.slug, ...params });
+      for (const who of ['owner-admin', 'bob-admin']) expect({ who, isError: (await attribute(who, {})).isError }).toEqual({ who, isError: false });
+      for (const params of [{ take: 1 }, { timeline: fanned }]) {
+        expect({ params, isError: (await attribute('owner-admin', params)).isError }).toEqual({ params, isError: false });
+        expect({ params, isError: (await attribute('bob-admin', params)).isError }).toEqual({ params, isError: true });
+      }
+    }, 120_000);
+
     test('the owner\'s own remote callers (a bound legacy token, a bound client_credentials client with no holders list) read the derived take and timeline row, also with no readable schema version', async () => {
       for (const who of ['owner', 'owner-client']) expect({ who, seen: await derivedSeenBy(who) }).toEqual({ who, seen: [TIMELINE_FANNED, TAKE_DERIVED] });
       await withoutSchemaVersion(async () => {
