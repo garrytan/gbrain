@@ -1,3 +1,4 @@
+import AppKit
 import Darwin
 import Foundation
 import HelperCore
@@ -40,6 +41,14 @@ func save(_ config: Config) {
     }
 }
 
+func lockedConfig() -> Config {
+    _ = loadConfig()
+    let lockPath = configPath + ".lock"
+    let lockFile = Darwin.open(lockPath, O_CREAT | O_RDWR, 0o600)
+    guard lockFile >= 0, flock(lockFile, LOCK_EX) == 0 else { fail("could not lock \(lockPath)", code: 75) }
+    return loadConfig().0
+}
+
 func printJSON<T: Encodable>(_ value: T) {
     let encoder = JSONEncoder()
     encoder.keyEncodingStrategy = .convertToSnakeCase
@@ -47,11 +56,25 @@ func printJSON<T: Encodable>(_ value: T) {
     if let data = try? encoder.encode(value) { print(String(decoding: data, as: UTF8.self)) }
 }
 
+func admin(_ fields: [String: String], timeout: TimeInterval = 30) -> Never {
+    let port = loadConfig().1.port
+    guard let (status, body) = AdminClient.post(port: port, fields: fields, timeout: timeout) else {
+        fail("GBrain Helper isn't answering on 127.0.0.1:\(port). Check it is running: launchctl print gui/\(getuid())/\(HelperIdentity.bundleId)", code: 69)
+    }
+    print(String(decoding: body, as: UTF8.self))
+    exit(status == 200 ? 0 : 1)
+}
+
 struct DBState: Encodable {
     let db: String
 }
 
-let usage = "usage: \(name) serve | init --port <n> [--enable <source>] [--db <path>] | validate-config | check [--db <path>] | token add --name <name> --verifier <sha256> [--scope <scope>]... | token remove --name <name> | --version"
+let usage = """
+usage: \(name) serve | init --port <n> [--enable <source>] [--db <path>] | validate-config | check [--db <path>]
+       | token add --name <name> --verifier <sha256> [--scope <scope>]... | token remove --name <name>
+       | send-setup [--off] | send-key add --name <name> --public-key-file <path or -> | send-key remove --name <name>
+       | send-limits set <limit>=<n>... | send-audit show --redacted [--since <n>d] | --version
+"""
 
 switch arguments.first {
 case "--version", "version":
@@ -71,11 +94,7 @@ case "validate-config":
     print("config ok")
 
 case "token":
-    _ = loadConfig()
-    let lockPath = configPath + ".lock"
-    let lockFile = Darwin.open(lockPath, O_CREAT | O_RDWR, 0o600)
-    guard lockFile >= 0, flock(lockFile, LOCK_EX) == 0 else { fail("could not lock \(lockPath)", code: 75) }
-    var config = loadConfig().0
+    var config = lockedConfig()
     guard let tokenName = value("--name") else { fail(usage, code: 64) }
     switch arguments.dropFirst().first {
     case "add":
@@ -91,6 +110,69 @@ case "token":
         print("token \(tokenName) removed")
     default:
         fail(usage, code: 64)
+    }
+
+case "send-setup":
+    var config = lockedConfig()
+    let off = arguments.contains("--off")
+    if !off, config.send?.enabled != true, AdminClient.post(port: UInt16(config.port), fields: ["action": "off"], timeout: 10)?.0 != 200 {
+        fail("GBrain Helper isn't answering on 127.0.0.1:\(config.port). Start it, then run send-setup again.", code: 69)
+    }
+    config.send = SendSetting(enabled: !off)
+    save(config)
+    if off {
+        print("sending is off in \(configPath)")
+        let port = config.port
+        if let (status, _) = AdminClient.post(port: UInt16(port), fields: ["action": "off"], timeout: 10), status == 200 {
+            print("GBrain Helper confirmed sending is off")
+        } else {
+            print("GBrain Helper didn't answer; the config switch already stops every send")
+        }
+        exit(0)
+    }
+    admin(["action": "setup"], timeout: 300)
+
+case "send-key":
+    guard let keyName = value("--name") else { fail(usage, code: 64) }
+    switch arguments.dropFirst().first {
+    case "add":
+        guard let source = value("--public-key-file") else { fail("send-key add needs --public-key-file <path or ->", code: 64) }
+        let data = source == "-" ? FileHandle.standardInput.readDataToEndOfFile() : FileManager.default.contents(atPath: source)
+        guard let data, let key = String(data: data, encoding: .utf8) else { fail("could not read the public key", code: 66) }
+        admin(["action": "add_key", "name": keyName, "public_key": key.trimmingCharacters(in: .whitespacesAndNewlines)], timeout: 180)
+    case "remove":
+        admin(["action": "remove_key", "name": keyName])
+    default:
+        fail(usage, code: 64)
+    }
+
+case "send-limits":
+    guard arguments.dropFirst().first == "set" else { fail(usage, code: 64) }
+    var fields = ["action": "set_limits"]
+    var pairs = Array(arguments.dropFirst(2))
+    if let index = pairs.firstIndex(of: "--config") { pairs.removeSubrange(index..<min(index + 2, pairs.count)) }
+    for pair in pairs {
+        let parts = pair.split(separator: "=", maxSplits: 1).map(String.init)
+        guard parts.count == 2, SendLimits.names.contains(parts[0]) else { fail("limits are \(SendLimits.names.joined(separator: ", ")), as name=value", code: 64) }
+        fields[parts[0]] = parts[1]
+    }
+    guard fields.count > 1 else { fail(usage, code: 64) }
+    admin(fields, timeout: 180)
+
+case "send-audit":
+    guard arguments.dropFirst().first == "show", arguments.contains("--redacted") else {
+        fail("only send-audit show --redacted is offered; the raw send log stays on this Mac", code: 64)
+    }
+    var since = Date.distantPast
+    if let raw = value("--since") {
+        guard raw.hasSuffix("d"), let days = Double(raw.dropLast()), days > 0 else { fail("--since takes days, such as 7d", code: 64) }
+        since = Date().addingTimeInterval(-days * 86400)
+    }
+    let audit = SendAudit(directory: SendAudit.defaultDirectory)
+    for path in audit.monthFiles() {
+        for record in audit.read(path, repair: false) where (record.date ?? .distantPast) >= since {
+            printJSON(record.redacted)
+        }
     }
 
 case "check":
@@ -127,9 +209,14 @@ case "serve":
         exit(78)
     }
     let grants = LiveGrants(path: configPath)
-    let settings = RouterSettings(listener: .loopback, liveGrants: grants.current, sources: [IMessageSource(dbPath: config.dbPath)],
-                                  enabled: config.enabled, version: version)
-    let server = Server(host: IPv4.parse("127.0.0.1")!, port: config.port, router: Router(settings: settings))
+    let send = SendService(store: KeychainSendStateStore(helperPath: Bundle.main.executablePath ?? CommandLine.arguments[0]),
+                           switchedOn: { Config.sendSwitchedOn(path: configPath) }, audit: SendAudit(directory: SendAudit.defaultDirectory),
+                           messages: MessagesApp(), ledger: ChatDeliveryLedger(dbPath: config.dbPath), banner: NotificationBanner(),
+                           presence: LocalOwnerPresence())
+    send.start()
+    let sources: [SourceModule] = [IMessageSource(dbPath: config.dbPath)]
+    let loopback = RouterSettings(listener: .loopback, liveGrants: grants.current, sources: sources, enabled: config.enabled, version: version, send: send)
+    let server = Server(host: IPv4.parse("127.0.0.1")!, port: config.port, router: Router(settings: loopback))
     do {
         try server.start()
     } catch {
@@ -137,7 +224,33 @@ case "serve":
         exit(75)
     }
     Log.line("serving \(name) \(version) on 127.0.0.1:\(server.boundPort)")
-    server.serveForever()
+    Thread.detachNewThread { server.serveForever() }
+    if let tailnet = config.tailnet {
+        let settings = RouterSettings(listener: .tailnet(allowed: tailnet.peers), grants: [], sources: [], enabled: [], version: version, send: send)
+        Thread.detachNewThread {
+            var delay: TimeInterval = 1
+            while true {
+                let interfaces = Interfaces.ipv4()
+                if let host = tailnet.host ?? Interfaces.tailnetAddress(interfaces), BindPolicy.problem(host: host, interfaces: interfaces) == nil {
+                    let listener = Server(host: host, port: config.port, router: Router(settings: settings))
+                    do {
+                        try listener.start()
+                        Log.line("serving send on \(IPv4.string(host)):\(listener.boundPort)")
+                        delay = 1
+                        listener.serveForever()
+                    } catch {
+                        Log.line("tailnet listener not up yet: \(error)")
+                    }
+                } else {
+                    Log.line("tailnet listener waiting for this Mac's Tailscale address")
+                }
+                Thread.sleep(forTimeInterval: delay)
+                delay = min(delay * 2, 30)
+            }
+        }
+    }
+    _ = NSApplication.shared
+    RunLoop.main.run()
 
 default:
     fail(usage, code: 64)
