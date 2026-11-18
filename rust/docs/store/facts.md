@@ -36,7 +36,9 @@ ontology reads hides a row the way PGLite's `privateProvenanceFilterUnderPolicy(
 `src/core/engine-sql/facts.ts:67` (`privacyClause`), used at lines 443, 472, 511, 539, 567 and
 729; at `src/core/review-lists.ts:30`; and as `privateFactFilterForReader('facts')`
 (`private-visibility.ts:1021`) at `src/core/pglite-engine.ts:2225` and `:2269`. Rules, each from
-the PGLite text it copies (lines in `src/core/search/private-visibility.ts` unless named):
+the PGLite text it copies (lines in `src/core/search/private-visibility.ts` unless named). The page
+reads `getRecentSalience`, `getSalienceScores` and `findAnomalies` apply the same reader and privacy checks to
+their own page (`page_hidden`; see [salience.md](salience.md#private-pages-excludeprivate)):
 
 | Rule | Source |
 |---|---|
