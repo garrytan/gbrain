@@ -46,7 +46,7 @@ const HOPS = [{ link_type: 'works_at', toward: 'object' }];
 const HOP_TAKE = 'takehopcanary';
 const OWNER = 'owner-example', BOB = 'bob-example';
 const CALLERS = ['local', 'ownerT', 'ownerC', 'bob', 'bobC', 'unbound', 'channel'] as const;
-type Caller = typeof CALLERS[number] | 'ownerW' | 'bobW' | 'unboundW';
+type Caller = typeof CALLERS[number] | 'ownerW' | 'bobW' | 'unboundW' | 'bobR';
 const EDIT_OLD = 'otterprivoldcanary', EDIT_DEL = 'molefprivdelcanary';
 
 for (const kind of testBackends()) {
@@ -106,7 +106,7 @@ for (const kind of testBackends()) {
         if (member) await bindCredential(engine, { kind: 'token', id: m.id }, { member, ...(mayActFor ? { mayActFor } : {}) }); else await readsUnscopedOnPurpose(engine, m.id);
       };
       await mint('ownerT', OWNER, ['member:' + OWNER, 'member:' + BOB]); await mint('bob', BOB); await mint('unbound'); await mint('ownerW', OWNER, undefined, ['read', 'write']);
-      await mint('bobW', BOB, undefined, ['read', 'write']); await mint('unboundW', undefined, undefined, ['read', 'write']);
+      await mint('bobW', BOB, undefined, ['read', 'write']); await mint('bobR', BOB, ['member:' + BOB]); await mint('unboundW', undefined, undefined, ['read', 'write']);
       const client = await provider().registerClientManual('owner-client-example', ['client_credentials'], 'admin skills_member_self', [], 'default', ['default', 'source-b']);
       await bindCredential(engine, { kind: 'client', id: client.clientId }, { member: OWNER });
       tokens.ownerC = (await provider().exchangeClientCredentials(client.clientId, client.clientSecret!)).access_token;
@@ -248,6 +248,47 @@ for (const kind of testBackends()) {
       expect({ read: text.length > 1_000_000, priv: text.includes(PRIV) }).toEqual({ read: true, priv: false });
       await call('ownerW', 'put_page', { slug: SEG, content: text.replace('Seg world', 'Seg world edited'), expected_revision: revision, request_id: randomUUID() });
       expect({ edited: (await call('local', 'get_page', { slug: SEG, body: 'window', view: 'markdown', bytes: { offset: 0, length: 100_000 } })).includes('Seg world edited'), kept: await stored() }).toEqual({ edited: true, kept: true });
+    }, 600_000);
+    const roomMark = async (who: Caller, op: string, params: Record<string, unknown>) => {
+      const text = await call(who, op, { ...params, room: ['member:' + BOB] });
+      const m = text.match(/"room_access":(\{[^}]*\})/);
+      return { priv: text.includes(PRIV), mark: m ? JSON.parse(m[1]!) : null };
+    };
+    const NOT_READABLE = { readable: false, reason: 'private_label' };
+
+    test('room marks: an owner read that carries private rows or takes is marked not readable for the room; a page with neither stays readable', async () => {
+      for (const who of OWNERS) {
+        expect({ who, ...await roomMark(who, 'get_page', { slug: LIA }) }).toEqual({ who, priv: true, mark: NOT_READABLE });
+        expect({ who, ...await roomMark(who, 'get_page', { slug: TAKER, include_content: true }) }).toEqual({ who, priv: true, mark: NOT_READABLE });
+        expect({ who, ...await roomMark(who, 'get_page', { slug: LIA, body: 'window', view: 'markdown', bytes: { offset: 0, length: 100_000 } }) }).toEqual({ who, priv: true, mark: NOT_READABLE });
+        expect({ who, ...await roomMark(who, 'get_page', { slug: LIA, lines: { from: 1, count: 200 } }) }).toEqual({ who, priv: false, mark: { readable: true } });
+        expect({ who, ...await roomMark(who, 'get_page', { slug: TARGET }) }).toEqual({ who, priv: false, mark: { readable: true } });
+      }
+      const held = page('person', 'Held Room Example', [row(1, 'Held room world'), row(2, 'Held room ' + HELD + 'room')]);
+      await put('people/held-room-example', held); await holdRow(HELD + 'room');
+      const heldText = await call('ownerC', 'get_page', { slug: 'people/held-room-example', room: ['member:' + BOB] });
+      expect({ shown: heldText.includes(HELD + 'room'), mark: JSON.parse(heldText.match(/"room_access":(\{[^}]*\})/)![1]!) }).toEqual({ shown: true, mark: NOT_READABLE });
+    }, 240_000);
+
+    test('room marks: a member in the same room reads and is marked as before', async () => {
+      for (const who of ['bobR'] as Caller[]) {
+        expect({ who, ...await roomMark(who, 'get_page', { slug: LIA }) }).toEqual({ who, priv: false, mark: { readable: true } });
+        expect({ who, ...await roomMark(who, 'get_page', { slug: TAKER, include_content: true }) }).toEqual({ who, priv: false, mark: { readable: true } });
+        expect({ who, ...await roomMark(who, 'get_page', { slug: LIA, body: 'window', view: 'markdown', bytes: { offset: 0, length: 100_000 } }) }).toEqual({ who, priv: false, mark: { readable: true } });
+      }
+    }, 240_000);
+
+    test('room marks on a segmented page and fetch_page: the owner client\'s markdown view is not readable for the room, a member\'s is as before, and fetch is never marked readable', async () => {
+      const SEG = 'notes/seg-room-example';
+      await importSegmented(engine, SEG, pageContent('## Facts\n\n' + renderFactsTable([row(1, 'Seg world'), row(2, 'Seg secret ' + PRIV, 'private')] as never) + '\n\n' + ('Seg prose line here. '.repeat(40) + '\n\n').repeat(1400)));
+      const md = { slug: SEG, body: 'window', view: 'markdown', bytes: { offset: 0, length: 100_000 } };
+      expect(await roomMark('ownerC', 'get_page', md)).toEqual({ priv: true, mark: NOT_READABLE });
+      expect(await roomMark('ownerT', 'get_page', md)).toEqual({ priv: false, mark: { readable: true } });
+      expect(await roomMark('bobR', 'get_page', md)).toEqual({ priv: false, mark: { readable: true } });
+      for (const who of ['ownerC', 'bobR'] as Caller[]) {
+        const text = await call(who, 'fetch', { id: LIA, room: ['member:' + BOB] });
+        expect({ who, priv: text.includes(PRIV), readableTrue: text.includes('"readable":true') }).toEqual({ who, priv: who === 'ownerC', readableTrue: false });
+      }
     }, 600_000);
   });
 }

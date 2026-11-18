@@ -259,7 +259,10 @@ does not stick yet (the old row stays); use the local CLI for that until
 GST-3064 lands. The `get_page` read view (windows, lines, bytes, section,
 grep) is the same text for every caller, the local CLI included; the owner reads
 the private rows of a large or segmented page through `view: 'markdown'` (a
-segmented page only when the credential has no holders list). History
+segmented page only when the credential has no holders list). With a room
+declared, an owner `get_page` whose body carries private rows, held rows or
+takes is marked `room_access: {readable: false, reason: 'private_label'}`; the
+mark is per page, so a page with one private row is marked whole. History
 also checks snapshot visibility while page privacy is enforced. Malformed
 protected sections are omitted; unterminated or interleaved sections discard
 the remaining tail. Restricted salience counts only permitted active takes and

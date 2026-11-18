@@ -34,6 +34,8 @@
  */
 import type { Page } from '../types.ts';
 import { callerIsOwner, worldOnlyFacts } from '../search/private-visibility.ts';
+import { remoteReadStrips } from '../remote-body.ts';
+import { loadFenceChunkOverlay } from '../eligibility/fence-overlay.ts';
 import { readHolders } from './context.ts';
 import { dropHeldFenceRows } from '../eligibility/stamp.ts';
 import type { OperationContext, ParamDef } from './contract.ts';
@@ -50,7 +52,7 @@ import {
   type PageOutline, type WindowSlice, type WindowView,
 } from '../page-window/window.ts';
 import {
-  markdownDigest, markdownHead, readViewLines, segmentedMarkdownDocument, segmentedOutline, segmentedReadDocument, tailDigest, type SegmentedDocument,
+  markdownDigest, markdownHead, readViewLines, segmentedBodyStrips, segmentedMarkdownDocument, segmentedOutline, segmentedReadDocument, tailDigest, type SegmentedDocument,
 } from '../page-window/segmented.ts';
 import { confirmBodyPin, hiddenBefore, openSegmentedBody, type BodyPin } from '../page-body/read-range.ts';
 import { inlineRegions, inlineTailDigest } from '../page-body/tail-digest.ts';
@@ -399,6 +401,31 @@ function inlineDocument(doc: PageDocument): WindowDocument {
   };
 }
 
+/** Who a segmented page's markdown view is paged for: the stored body for the local CLI and (GST-3058) the owner's own credential reading every holder, else the read projection. */
+function markdownAudienceFor(ctx: OperationContext): 'trusted' | 'remote' {
+  return ctx.remote === false || (callerIsOwner() && readHolders(ctx) === undefined) ? 'trusted' : 'remote';
+}
+
+/** GST-3058: the room marker's check (keepRoomBody) for a whole body this caller reads: remoteReadStrips over each column, with the rows held from world-only readers. */
+export function bodyStripsFor(ctx: OperationContext, page: Pick<Page, 'source_id' | 'slug'>, body: { compiled_truth: string; timeline?: string | null }): () => Promise<boolean> {
+  return async () => {
+    const held = (await loadFenceChunkOverlay(ctx.engine, { sourceId: page.source_id, slug: page.slug, compiled_truth: body.compiled_truth, timeline: body.timeline ?? '' }, { hideHeld: true }))?.held;
+    return remoteReadStrips(body.compiled_truth, held) || remoteReadStrips(body.timeline ?? '', held);
+  };
+}
+
+/**
+ * The room marker's check for a partial read: view 'markdown' is judged on the whole body it pages (the mark is per
+ * page), the caller's visible body inline or the stored body when markdownAudienceFor gives the stored one. The read
+ * view needs none: it is sanitizeRemoteBody's output for every caller, the local CLI included.
+ */
+export function partialBodyStrips(ctx: OperationContext, input: Pick<PartialReadInput, 'page' | 'visibleBody' | 'pin' | 'revision'>, req: BodyRequest): (() => Promise<boolean>) | undefined {
+  if (req.view !== 'markdown') return undefined;
+  if (!isSegmentedPage(input.page)) return bodyStripsFor(ctx, input.page, input.visibleBody);
+  if (markdownAudienceFor(ctx) === 'remote') return undefined;
+  return async () => segmentedBodyStrips(ctx.engine, await openSegmentedBody(ctx.engine, { pageId: input.page.id, pin: { ...input.pin, revision: input.revision } }));
+}
+
 /**
  * A segmented page's document and size (spec 7.2): read-view totals from the stored sums (the line count cached
  * per revision), for a trusted caller the stored body size, and for `none` the tail digest; a markdown view's size
@@ -412,8 +439,7 @@ async function segmentedWindows(ctx: OperationContext, input: PartialReadInput, 
   let seg: SegmentedDocument;
   let size: Record<string, unknown>;
   if (req.view === 'markdown') {
-    // GST-3058: the owner's own credential reading every holder pages the round-trip markdown the local CLI pages.
-    const markdownAudience = audience === 'remote' && callerIsOwner() && readHolders(ctx) === undefined ? 'trusted' : audience;
+    const markdownAudience = markdownAudienceFor(ctx);
     seg = await segmentedMarkdownDocument(ctx.engine, body, markdownHead(page, tags), markdownAudience);
     size = { ...await markdownDigest(seg, revision, markdownAudience), ...stored };
   } else {

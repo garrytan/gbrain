@@ -39,6 +39,17 @@ export function sanitizeRemoteBody(body: string, opts: { includeWithdrawn?: bool
   return output.join('');
 }
 
+/**
+ * GST-3058: whether a world-only remote read of `body` (sanitizeRemoteBody as get_page applies it to a non-owner)
+ * would strip anything `body` holds: a takes fence, a facts row that is not world, or one of `omitRows` (rows held
+ * from world-only readers). The room marker reads every whole body get_page returns through it (access/room.ts), so a
+ * read that carries more than the room would read is never marked readable for the room.
+ */
+export function remoteReadStrips(body: string, omitRows?: ReadonlySet<number>): boolean {
+  const opts = { includeWithdrawn: true, keepMaterializedMarkers: true };
+  return sanitizeRemoteBody(body, { ...opts, omitRows }) !== sanitizeRemoteBody(body, { ...opts, owner: { keepTakes: true } });
+}
+
 /** What sanitizeRemoteBody puts in place of one protected facts region: its world rows rendered (less `omitRows`), or nothing. */
 export function renderFactsRegion(region: string, includeWithdrawn = false, omitRows?: ReadonlySet<number>): string {
   try {

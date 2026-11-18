@@ -1,0 +1,4 @@
+---
+kind: default
+---
+A credential bound to the brain owner (access.owner_member) and speaking for itself now reads over remote MCP what the local CLI reads: get_page and fetch give it the private and held rows of a page's Facts fence, graph hops give it the stored edge context, and when the credential has no takes holders list of its own it reads every take holder (a credential with a list still reads only the holders it names). Every other remote caller reads exactly as before. With a room declared, an owner get_page whose body carries private rows, held rows or takes is marked not readable for the room (room_access reason private_label); the mark is per page. Known limit: editing or deleting a private Facts row through a remote put_page does not stick yet (the old row is restored); use the local CLI for that.

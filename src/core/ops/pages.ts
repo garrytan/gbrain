@@ -18,7 +18,8 @@ import { PageSnapshotAmbiguousError, type PageSnapshot } from '../page-state/typ
 import { serializePageToMarkdown } from '../markdown.ts';
 import { neutralizesBody, pageTrustForRead, projectFetchText, projectGetPage, quotedPageMeta, quotesBody, readQuarantined, unverifiedOriginNotice } from './get-page-projection.ts';
 import { assertLargePageAdmission } from '../persistence/large-page-guard.ts';
-import { assertFullReadFits, bodyBytes, fetchWindowResult, GET_PAGE_BODY_PARAMS, inlineBodyBytes, parseBodyRequest, readPartialBody, segmentedFullReadError, authorizedReadPin } from './get-page-body.ts';
+import { assertFullReadFits, bodyBytes, bodyStripsFor, fetchWindowResult, GET_PAGE_BODY_PARAMS, inlineBodyBytes, parseBodyRequest, partialBodyStrips, readPartialBody, segmentedFullReadError, authorizedReadPin } from './get-page-body.ts';
+import { keepRoomBody } from '../access/page-items.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { MIN_TRUST_PARAM } from '../eligibility/policy.ts';
 import { getPageKnownAsOf, KNOWN_AS_OF_PARAM } from './known-as-of.ts';
@@ -252,7 +253,9 @@ const get_page: Operation = {
       const partial = await readPartialBody(ctx, { page, visibleBody, revision: snapshot!.revision, tags, quarantined, trust: readable.trust, pin, quote: quotesBody(ctx, page, readable.trust), neutralize: neutralizesBody(ctx, page),
         extras: { ...(quarantined ? { quarantined } : {}), ...(timelineEntries ? { timeline_entries: timelineEntries } : {}), ...fileHeld,
           ...(resolved_slug ? { resolved_slug } : {}), ...(content_flag ? { content_flag } : {}), ...(validTime ? { valid_time: validTime } : {}) } }, bodyRequest);
-      return lineGrammar ? { ...partial, line_grammar: lineGrammar } : partial;
+      const strips = partialBodyStrips(ctx, { page, visibleBody, pin, revision: snapshot!.revision }, bodyRequest);
+      const out = lineGrammar ? { ...partial, line_grammar: lineGrammar } : partial;
+      return strips ? keepRoomBody(out, strips) : out;
     }
     if (segmented) throw await segmentedFullReadError(ctx, page, bodyRequest, { ...pin, revision: snapshot!.revision });
     const projected = projectGetPage(visibleBody, {
@@ -262,7 +265,7 @@ const get_page: Operation = {
     });
     if (ctx.remote !== false) await assertFullReadFits(ctx, visibleBody, projected, bodyRequest);
     const withValidTime = validTime ? { ...projected, valid_time: validTime } : projected;
-    return lineGrammar ? { ...withValidTime, line_grammar: lineGrammar } : withValidTime;
+    return keepRoomBody(lineGrammar ? { ...withValidTime, line_grammar: lineGrammar } : withValidTime, bodyStripsFor(ctx, page, visibleBody));
   },
   scope: 'read', mutating: false,
   cliHints: { name: 'get', positional: ['slug'] },
