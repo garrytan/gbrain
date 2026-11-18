@@ -306,9 +306,22 @@ docker rm -f parity-pg
 
 The database name must contain `test`, or the guard refuses it. The harness
 creates one fresh database per file from that URL and empties it between
-cases without restarting its sequences, so a case never compares generated
-ids. For the Rust arm, run `bun run rust:build`, then add
+cases without restarting its sequences. A case must not compare or pass raw
+generated ids: count them from the case's first row, or compare by name.
+For the Rust arm, run `bun run rust:build`, then add
 `GBRAIN_TEST_RUST_ARM=1 GBRAIN_RUST_ENGINE_ADDON=$PWD/rust/target/addon/gbrain_engine.linux-x64-glibc.node`.
+
+With the same `DATABASE_URL` set, also run the Postgres SQL goldens:
+
+```bash
+bun test ./test/engine-sql-sql-text.test.ts ./test/postgres-rls-scope-inventory.test.ts
+```
+
+These goldens record the Postgres engine's SQL on a recording fake. A change
+to Postgres SQL (for example a `COLLATE "C"`) moves them, so run them with
+every Postgres arm. Regenerate them with `GBRAIN_TEST_UPDATE_GOLDENS=1` and
+commit the changed files.
+
 ### Stress gate
 
 `stress-changed-tests` (in `test-status`) runs each touched test file 10x on fresh databases; local twin `bun run test:stress`. Details: [scripts/stress/README.md](../scripts/stress/README.md).
