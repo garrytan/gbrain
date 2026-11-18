@@ -19,6 +19,7 @@
 
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
+use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::kv::{KvRead, KvWrite};
 use crate::links::no_nul;
 use crate::page_columns::PageColumns;
@@ -162,6 +163,10 @@ pub struct SalienceScoresInput {
     /// applies them whenever a read policy is passed.
     #[serde(default)]
     pub live: bool,
+    /// `excludePrivate`: the page policy `pageReadFilter` adds, as `facts/privacy.rs`
+    /// `page_hidden` reads it; null hides nothing.
+    #[serde(default)]
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 fn listed(list: &Option<Vec<Option<String>>>, value: &str) -> bool {
@@ -383,6 +388,11 @@ impl Store {
             if !seen.insert(page.id)
                 || !listed(&input.source_ids, &page.source_id)
                 || (input.live && !live.passes(&page)?)
+            {
+                continue;
+            }
+            if let Some(policy) = &input.exclude_private
+                && page_hidden(&*read, &page, policy)?
             {
                 continue;
             }

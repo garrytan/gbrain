@@ -10,10 +10,12 @@
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
  * unexported.
  *
- * The store models the source filter and the live test of the read policy (src/core/search/read-policy-sql.ts). A
- * privacy, trust, flag, safe-chunk or temporal policy refuses with `engine_capability_missing`, as does a derived-link
- * option that needs state the store does not keep (wanted pages, line-grammar ranges, temporal evidence). See
- * rust/docs/store/link_queries.md.
+ * The store models the source filter and the live test of the read policy (src/core/search/read-policy-sql.ts), and
+ * for getBacklinkCounts, getAdjacencyBoosts and supersedingPageSlugs the page policy `excludePrivate` adds, over every
+ * page the read judges (the target, the linking page and the page that authored the edge). Any other privacy, trust,
+ * flag, safe-chunk or temporal policy refuses with `engine_capability_missing`, as does `excludePrivate` on the other
+ * members and a derived-link option that needs state the store does not keep (wanted pages, line-grammar ranges,
+ * temporal evidence). See rust/docs/store/link_queries.md.
  */
 import {
   DerivedLinkEndpointChangedError, DerivedLinkRepairRequiredError,
@@ -27,6 +29,7 @@ import type {
 import { mapStoreError, storeErrorCode } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { HYBRID_BAG_KEYS, storePagePolicy } from './private-provenance.ts';
 
 /** The read-policy keys the store models: the source filter. */
 const SCOPE_KEYS = ['sourceId', 'sourceIds'] as const;
@@ -52,6 +55,18 @@ function int32Ids(member: string, ids: readonly number[], label?: string): numbe
 }
 
 const scopeOf = (o: Record<string, unknown>) => ({ sourceId: o.sourceId, sourceIds: o.sourceIds });
+
+/**
+ * The scope of a ranking read hybridSearch hands its whole option bag: the source filter, the bag's own keys (ignored,
+ * as PGLite reads only the page policy out of the bag) and `excludePrivate` as the page policy `pageReadFilter` adds
+ * (private-provenance.ts `storePagePolicy`, which refuses a caller whose policy is wider than the store's). The trust
+ * filters still refuse. `scoped` says a policy object was passed at all, which turns on the live filter.
+ */
+function rankingScope(member: string, opts: PageReadPolicy | undefined): Record<string, unknown> {
+  const options = takeOptions(member, opts, SCOPE_KEYS, [...UNREAD_BY_FILTER, 'excludePrivate', ...HYBRID_BAG_KEYS]);
+  const excludePrivate = storePagePolicy(member, opts?.excludePrivate);
+  return { ...scopeOf(options), scoped: !!opts, ...(excludePrivate ? { excludePrivate } : {}) };
+}
 
 /**
  * Ids the SQL engines cast to `bigint[]`: a non-integer is refused (the cast fails there). An id below 1 or past
@@ -197,10 +212,10 @@ export const getBacklinkCounts: StoreMember<[pageIds: number[], opts?: PageReadS
   async (brain, pageIds, opts) => {
     const result = new Map(pageIds.map(id => [id, 0]));
     if (!pageIds.length) return result;
-    const options = takeOptions('getBacklinkCounts', opts, SCOPE_KEYS, UNREAD_BY_FILTER);
+    const scope = rankingScope('getBacklinkCounts', opts);
     int32Ids('getBacklinkCounts', pageIds);
     const rows: Array<{ page_id: number; cnt: number }> = await storeCall({ member: 'getBacklinkCounts' },
-      () => brain.getBacklinkCounts(pageIds, { ...scopeOf(options), scoped: !!opts }));
+      () => brain.getBacklinkCounts(pageIds, scope));
     for (const row of rows) result.set(Number(row.page_id), Number(row.cnt));
     return result;
   };
@@ -209,9 +224,9 @@ export const getAdjacencyBoosts: StoreMember<[pageIds: number[], opts?: PageRead
   async (brain, pageIds, opts) => {
     if (!pageIds.length) return new Map();
     int32Ids('getAdjacencyBoosts', pageIds, 'readAdjacencyBoosts');
-    const options = takeOptions('getAdjacencyBoosts', opts, SCOPE_KEYS, UNREAD_BY_FILTER);
+    const scope = rankingScope('getAdjacencyBoosts', opts);
     const rows: Array<{ to_page_id: number; hits: number; cross_source_hits: number }> = await storeCall({ member: 'getAdjacencyBoosts' },
-      () => brain.getAdjacencyBoosts(pageIds, { ...scopeOf(options), scoped: !!opts }));
+      () => brain.getAdjacencyBoosts(pageIds, scope));
     return new Map(rows.map(row => [Number(row.to_page_id), { hits: Number(row.hits), cross_source_hits: Number(row.cross_source_hits) }]));
   };
 
@@ -276,10 +291,10 @@ export const supersedingPageSlugs: StoreMember<[pageIds: number[], policy?: Page
   async (brain, pageIds, policy) => {
     const result = new Map<number, string>();
     if (pageIds.length === 0) return result;
-    const options = takeOptions('supersedingPageSlugs', policy, SCOPE_KEYS, UNREAD_BY_FILTER);
+    const scope = rankingScope('supersedingPageSlugs', policy);
     const ids = bigintIds('supersedingPageSlugs', pageIds);
     const rows: Array<{ to_page_id: number; by_slug: string }> = await storeCall({ member: 'supersedingPageSlugs' },
-      () => brain.supersedingPageSlugs(ids, { ...scopeOf(options), scoped: !!policy }));
+      () => brain.supersedingPageSlugs(ids, scope));
     for (const row of rows) {
       const id = Number(row.to_page_id);
       if (!result.has(id)) result.set(id, row.by_slug);

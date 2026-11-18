@@ -22,6 +22,8 @@ import {
   withoutCallerAccess,
   privateProvenanceFilterUnderPolicy,
 } from '../../search/private-visibility.ts';
+import type { HybridSearchOpts, PostFusionOpts } from '../../search/hybrid.ts';
+import type { PageReadScope } from '../../types.ts';
 import { refuseMember } from './common.ts';
 
 /** The policy flags the store reads (`PrivacyPolicy` in rust/crates/gbrain-store/src/facts/privacy.rs). */
@@ -90,3 +92,32 @@ export function storePagePolicy(member: string, excludePrivate: unknown): StoreP
     entityPrivacy: baseline.includes(privateSnapshotFilterFragment('p')),
   };
 }
+
+/**
+ * Every key hybridSearch's option bag carries that does not decide which pages a marker read may see: the search's own
+ * settings, callbacks and internal flags, and `takesHoldersAllowList`, which only the takes reads honour. hybridSearch
+ * hands the page-marker reads (stampContentFlags, stampUnverifiedExtractions) and the ranking reads
+ * (getBacklinkCounts, getAdjacencyBoosts, supersedingPageSlugs) that whole bag as their policy, and PGLite
+ * reads only the page policy out of it (src/core/search/read-policy-sql.ts), so these change nothing here. The list is
+ * checked against the two option types below: a new key in either one fails the type check until it is listed.
+ */
+export const HYBRID_BAG_KEYS = [
+  'expansion', 'anyWordFill', 'decide', 'aliasTokenHop', 'onRelationalMeta', 'mode', 'expandFn', 'expansionVariantBudget',
+  'keywordArmConfidenceFloor', 'metadataBoostGate', 'rerankGate', 'pageRankCut', 'explainTarget', 'explain', 'rrfK', 'dedupOpts',
+  'onMeta', 'onRerankPool', '_queryEmbedDeadline', '_queryPrefix', '_embeddingOptedOut', '_timings', 'queryEmbedFn',
+  'onQueryEmbedding', '_telemetryCacheStatus', '_searchModeInput', 'limit', 'offset', 'onVectorPoolMeta', 'vectorLegacyGuard',
+  'hnswIterativeScan', 'cjkKeyword', 'onKeywordIncomplete', 'adaptiveReturn', 'autocut', 'type', 'types', 'where',
+  'exclude_slugs', 'exclude_slug_prefixes', 'source_boosts', 'include_slug_prefixes', 'detail', 'language', 'symbolKind',
+  'nearSymbol', 'walkDepth', 'orFallback', 'orFill', 'keywordTimeoutCache', 'rankQuery', 'keywordPhrase', 'embeddingColumn',
+  'afterDate', 'afterDateInclusive', 'beforeDate', 'beforeDateInclusive', 'recencyBoost', 'salience', 'recency', 'since',
+  'until', 'tokenBudget', 'useCache', 'intentWeighting', 'reranker', 'floorRatio', 'crossModal', 'graph_signals',
+  'relationalRetrieval', 'relationalRetrievalDepth', 'relationalRerankPin', 'relationalPlanner', 'relationalOrientOneHop',
+  'relationalChainSlots', 'takesHoldersAllowList', 'applyBacklinks', 'decayMap', 'fallback', 'graphSignalsEnabled',
+  'onGraphMeta', 'onScoreDistribution', 'query', 'titleBoost', 'skipMetadataBoosts',
+] as const;
+type BagKey = Exclude<keyof HybridSearchOpts | keyof PostFusionOpts, keyof PageReadScope>;
+// Both directions: every listed key is a key of the bag, and every key of the bag that is not a page policy key is listed.
+const HYBRID_BAG_KEYS_CHECKED: readonly BagKey[] = HYBRID_BAG_KEYS;
+const HYBRID_BAG_KEYS_COMPLETE: [Exclude<BagKey, (typeof HYBRID_BAG_KEYS)[number]>] extends [never] ? true : never = true;
+void HYBRID_BAG_KEYS_CHECKED;
+void HYBRID_BAG_KEYS_COMPLETE;

@@ -8,38 +8,9 @@
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
  * unexported.
  */
-import type { HybridSearchOpts, PostFusionOpts } from '../../search/hybrid.ts';
 import type { PageReadScope } from '../../types.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
-import { storePagePolicy } from './private-provenance.ts';
-
-/**
- * Every key hybridSearch's option bag carries that does not decide which pages a marker read may see: the search's own
- * settings, callbacks and internal flags, and `takesHoldersAllowList`, which only the takes reads honour. hybridSearch
- * hands the page-marker reads (stampContentFlags, stampUnverifiedExtractions) that whole bag as their policy, and PGLite
- * reads only the page policy out of it (src/core/search/read-policy-sql.ts), so these change nothing here. The list is
- * checked against the two option types below: a new key in either one fails the type check until it is listed.
- */
-const HYBRID_BAG_KEYS = [
-  'expansion', 'anyWordFill', 'decide', 'aliasTokenHop', 'onRelationalMeta', 'mode', 'expandFn', 'expansionVariantBudget',
-  'keywordArmConfidenceFloor', 'metadataBoostGate', 'rerankGate', 'pageRankCut', 'explainTarget', 'explain', 'rrfK', 'dedupOpts',
-  'onMeta', 'onRerankPool', '_queryEmbedDeadline', '_queryPrefix', '_embeddingOptedOut', '_timings', 'queryEmbedFn',
-  'onQueryEmbedding', '_telemetryCacheStatus', '_searchModeInput', 'limit', 'offset', 'onVectorPoolMeta', 'vectorLegacyGuard',
-  'hnswIterativeScan', 'cjkKeyword', 'onKeywordIncomplete', 'adaptiveReturn', 'autocut', 'type', 'types', 'where',
-  'exclude_slugs', 'exclude_slug_prefixes', 'source_boosts', 'include_slug_prefixes', 'detail', 'language', 'symbolKind',
-  'nearSymbol', 'walkDepth', 'orFallback', 'orFill', 'keywordTimeoutCache', 'rankQuery', 'keywordPhrase', 'embeddingColumn',
-  'afterDate', 'afterDateInclusive', 'beforeDate', 'beforeDateInclusive', 'recencyBoost', 'salience', 'recency', 'since',
-  'until', 'tokenBudget', 'useCache', 'intentWeighting', 'reranker', 'floorRatio', 'crossModal', 'graph_signals',
-  'relationalRetrieval', 'relationalRetrievalDepth', 'relationalRerankPin', 'relationalPlanner', 'relationalOrientOneHop',
-  'relationalChainSlots', 'takesHoldersAllowList', 'applyBacklinks', 'decayMap', 'fallback', 'graphSignalsEnabled',
-  'onGraphMeta', 'onScoreDistribution', 'query', 'titleBoost', 'skipMetadataBoosts',
-] as const;
-type BagKey = Exclude<keyof HybridSearchOpts | keyof PostFusionOpts, keyof PageReadScope>;
-// Both directions: every listed key is a key of the bag, and every key of the bag that is not a page policy key is listed.
-const HYBRID_BAG_KEYS_CHECKED: readonly BagKey[] = HYBRID_BAG_KEYS;
-const HYBRID_BAG_KEYS_COMPLETE: [Exclude<BagKey, (typeof HYBRID_BAG_KEYS)[number]>] extends [never] ? true : never = true;
-void HYBRID_BAG_KEYS_CHECKED;
-void HYBRID_BAG_KEYS_COMPLETE;
+import { HYBRID_BAG_KEYS, storePagePolicy } from './private-provenance.ts';
 
 /**
  * A `PageReadScope` as the store reads it. Any scope object turns on PGLite's live filter (not deleted, not quarantined,
@@ -47,7 +18,7 @@ void HYBRID_BAG_KEYS_COMPLETE;
  * `requireSafeChunks` changes nothing on these reads. `markerRead` is for the marker reads hybridSearch hands its whole
  * option bag: they also accept and ignore the bag's own keys (any other key still refuses) and serve `excludePrivate`
  * as the page policy `pageReadFilter` adds (private-provenance.ts `storePagePolicy`, which refuses a caller whose policy
- * is wider than the store's). getEffectiveDates still refuses `excludePrivate`.
+ * is wider than the store's). Every member here is a marker read, so each serves `excludePrivate`.
  */
 function readScope(member: string, opts: PageReadScope | undefined, markerRead = false): Record<string, unknown> {
   if (opts === undefined || opts === null) return {};
@@ -98,7 +69,7 @@ export const getEffectiveDates: StoreMember<[refs: Array<{ slug: string; source_
   opts,
 ) => {
   if (!refs.length) return new Map();
-  const scope = readScope('getEffectiveDates', opts);
+  const scope = readScope('getEffectiveDates', opts, true);
   const rows: Array<{ slug: string; source_id: string; ts: string }> = await storeCall({ member: 'getEffectiveDates' }, () =>
     brain.getEffectiveDates(refs.map((r) => ({ slug: r.slug, source_id: r.source_id })), scope));
   return new Map(rows.map((r) => [`${r.source_id}::${r.slug}`, reviveDate(r.ts)]));

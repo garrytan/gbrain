@@ -15,12 +15,11 @@ TypeScript members send `live: true` whenever the caller passes a scope object, 
 
 `excludePrivate` is the page policy `pageReadFilter` adds, as `facts/privacy.rs` `page_hidden` reads it
 (`{ honorAliases, entityPrivacy }`, as `resolveAliases` takes it): a page the policy hides is not read. The
-TypeScript members `getContentFlagsByPageIds` and `getUnverifiedExtractionPageIds` send it from a truthy
-`excludePrivate` through `storePagePolicy`, which refuses a caller whose policy is wider than the store's.
-`getContentFlagsByPageIds` and `getUnverifiedExtractionPageIds` also accept and ignore the other keys of hybrid
-search's option bag (its settings, callbacks and `takesHoldersAllowList`), because hybrid search hands them that whole bag
-as their policy; any other key still refuses. `getEffectiveDates` gets a policy hybrid search builds, so it keeps the
-strict list and still refuses a truthy `excludePrivate` (the store method would apply it).
+TypeScript members `getContentFlagsByPageIds`, `getUnverifiedExtractionPageIds` and `getEffectiveDates` send it
+from a truthy `excludePrivate` through `storePagePolicy`, which refuses a caller whose policy is wider than the
+store's. They also accept and ignore the other keys of hybrid search's option bag (its settings, callbacks and
+`takesHoldersAllowList`), because hybrid search hands them that whole bag as their policy; any other key still
+refuses.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |

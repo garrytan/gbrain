@@ -351,3 +351,52 @@ fn get_salience_scores_combines_weight_and_takes_and_applies_the_read_policy() {
     let scoped = scores(&store, json!({"refs": refs, "source_ids": ["other"]}));
     assert!(scoped.is_empty());
 }
+
+#[test]
+fn salience_scores_under_exclude_private_skip_the_pages_the_policy_hides() {
+    let dir = TempDir::new("salience-private");
+    let (store, _) = open(&dir);
+    page(&store, "default", "notes/open", json!({}));
+    page(
+        &store,
+        "default",
+        "notes/private",
+        json!({"visibility": "private"}),
+    );
+    page(
+        &store,
+        "default",
+        "notes/alias",
+        json!({"access": "private"}),
+    );
+    let refs = json!([
+        {"slug": "notes/open", "source_id": "default"},
+        {"slug": "notes/private", "source_id": "default"},
+        {"slug": "notes/alias", "source_id": "default"},
+    ]);
+    let slugs = |extra: Value| -> Vec<String> {
+        let mut input = json!({"refs": refs, "live": true});
+        input
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        scores(&store, input).into_iter().map(|(k, _)| k).collect()
+    };
+    let all = [
+        "default::notes/open",
+        "default::notes/private",
+        "default::notes/alias",
+    ];
+    assert_eq!(slugs(json!({})), all, "no policy hides nothing private");
+    let policy = json!({"honorAliases": true, "entityPrivacy": true});
+    assert_eq!(
+        slugs(json!({"exclude_private": policy})),
+        ["default::notes/open"]
+    );
+    let visibility_only = json!({"honorAliases": false, "entityPrivacy": true});
+    assert_eq!(
+        slugs(json!({"exclude_private": visibility_only})),
+        ["default::notes/open", "default::notes/alias"],
+        "without the alias keys only `visibility` hides a page"
+    );
+}

@@ -23,13 +23,16 @@
 //!
 //! The read policy of `src/core/search/read-policy-sql.ts` (`pageReadFilter`) is modelled for the
 //! source filter and the live test (not soft-deleted, not quarantined, source not archived).
-//! Privacy, trust, safe-chunk and temporal filters are refused by the TypeScript members. The
+//! Trust, safe-chunk and temporal filters are refused by the TypeScript members, and so is the
+//! privacy filter except on `getBacklinkCounts`, `getAdjacencyBoosts` and `supersedingPageSlugs`,
+//! which pass `excludePrivate` as a `PrivacyPolicy` (`GraphScope.exclude_private`). The
 //! store keeps every chunk inline, so a page's canonical chunk is its lowest `chunk_index`
 //! chunk. See rust/docs/store/link_queries.md.
 
 use crate::Store;
 use crate::chunks::read_chunks;
 use crate::error::{INVALID_STATE, REVISION_CONFLICT, Result, StoreError};
+use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::keys;
 use crate::kv::{KvRead, KvWrite, collect_prefix, scan_prefix};
 use crate::links::{LinkBatchInput, LinkRecord, delete_link, in_links, out_links, put_link};
@@ -74,13 +77,18 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
 
 /// A `{ sourceId?, sourceIds? }` scope plus whether a read policy applies at all. `scoped` is
 /// `hasReadPolicy(opts)` for relationalFanout and `opts !== undefined` for getBacklinkCounts and
-/// getAdjacencyBoosts; relationalChainHop always applies the policy.
+/// getAdjacencyBoosts; relationalChainHop always applies the policy. `exclude_private`
+/// (`excludePrivate`) is the page policy `pageReadFilter` adds, as `facts/privacy.rs`
+/// `page_hidden` reads it; `None` hides nothing. getBacklinkCounts, getAdjacencyBoosts and
+/// supersedingPageSlugs send it; every page they judge (target, linking page, origin page)
+/// must pass it.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct GraphScope {
     pub source_id: Option<String>,
     pub source_ids: Option<Vec<String>>,
     pub scoped: bool,
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 impl GraphScope {
@@ -257,6 +265,11 @@ impl<'a> Pages<'a> {
     /// `pageReadFilter(alias, scope, params, live)`.
     fn passes(&mut self, page: &PageRecord, scope: &GraphScope, live: bool) -> Result<bool> {
         if !scope.source_ok(&page.source_id) {
+            return Ok(false);
+        }
+        if let Some(policy) = &scope.exclude_private
+            && page_hidden(self.read, page, policy)?
+        {
             return Ok(false);
         }
         if !live {
@@ -851,6 +864,7 @@ impl Store {
             source_id: options.source_id.clone(),
             source_ids: options.source_ids.clone(),
             scoped: true,
+            exclude_private: None,
         };
         let scoped = scope.has_sources();
         let mut pages = Pages::new(&*read);
@@ -898,6 +912,7 @@ impl Store {
             source_id: options.source_id.clone(),
             source_ids: options.source_ids.clone(),
             scoped: true,
+            exclude_private: None,
         };
         let islanded = options.mode.as_deref().unwrap_or("islanded") == "islanded";
         let mut pages = Pages::new(&*read);
@@ -1125,6 +1140,7 @@ impl Store {
             source_id: options.source_id.clone(),
             source_ids: options.source_ids.clone(),
             scoped: options.scoped,
+            exclude_private: None,
         };
         let policy = scope.scoped;
         // Without a read policy pageReadFilter renders TRUE, source clause included.
@@ -1305,6 +1321,7 @@ impl Store {
             source_id: options.source_id.clone(),
             source_ids: options.source_ids.clone(),
             scoped: true,
+            exclude_private: None,
         };
         let cap = options.neighbor_cap.clamp(1, 1000);
         let has = |list: &[String], v: &str| list.iter().any(|x| x == v);
@@ -1521,6 +1538,7 @@ mod tests {
             source_ids: Some(vec![]),
             source_id: Some("a".into()),
             scoped: true,
+            exclude_private: None,
         };
         assert!(empty_ids.source_ok("a") && !empty_ids.source_ok("b"));
         let blank = GraphScope {
@@ -1532,6 +1550,7 @@ mod tests {
             source_ids: Some(vec!["b".into()]),
             source_id: Some("a".into()),
             scoped: true,
+            exclude_private: None,
         };
         assert!(ids.source_ok("b") && !ids.source_ok("a"));
     }

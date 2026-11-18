@@ -28,12 +28,18 @@ Code: `rust/crates/gbrain-store/src/link_queries.rs`, the napi methods in
 
 ### Refusals (`engine_capability_missing`)
 
-- Read policy the store does not record: `excludePrivate`, `minTrust`, `suppressFlagged` and any temporal option
-  (`temporal`, `wanted`, `lineGrammar`, `temporalBody`). `requireSafeChunks` and `takesHoldersAllowList` are accepted
-  where `pageReadFilter` does not read them: they only turn the live filter on in `relationalFanout`, and they are
-  ignored by `getBacklinkCounts`, `getAdjacencyBoosts` and `relationalChainHop`, as in the SQL engines.
-  `supersedingPageSlugs` takes the same rule: hybrid search passes its read policy, so a remote search with
-  `excludePrivate: true` refuses there.
+- Read policy the store does not record: `minTrust`, `suppressFlagged` and any temporal option
+  (`temporal`, `wanted`, `lineGrammar`, `temporalBody`), and `excludePrivate` on every member but the three ranking
+  reads below. `requireSafeChunks` and `takesHoldersAllowList` are accepted where `pageReadFilter` does not read
+  them: they only turn the live filter on in `relationalFanout`, and they are ignored by `getBacklinkCounts`,
+  `getAdjacencyBoosts` and `relationalChainHop`, as in the SQL engines.
+- `excludePrivate` on `getBacklinkCounts`, `getAdjacencyBoosts` and `supersedingPageSlugs` is the page policy
+  `pageReadFilter` adds, judged by `page_hidden` in `facts/privacy.rs`. The wire scope carries it as `excludePrivate`
+  (`{ honorAliases, entityPrivacy }`, `GraphScope.exclude_private`) and every page the read judges must pass it: the
+  target, the linking page and the page that authored the edge. The TypeScript member sends it through
+  `storePagePolicy`, which refuses a caller whose policy is wider than the store's. These three members also accept
+  and ignore the other keys of hybrid search's option bag, because hybrid search hands them that whole bag as their
+  policy; any other key still refuses.
 - A derived-link origin with a caller-read `snapshot`. `semanticsPrimed` is ignored: the store has no relation
   semantics to prime.
 - A page id that is not a 32-bit integer (`getBacklinkCounts`, `getAdjacencyBoosts`, `relationalChainHop`): Postgres

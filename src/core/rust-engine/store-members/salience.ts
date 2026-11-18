@@ -4,9 +4,10 @@
  * shell does what the shared SQL does before its statement runs (window boundary, limit clamp, briefings rule, recency
  * map), so both engines rank the same pages.
  *
- * Read policy: source scope and `takesHoldersAllowList` are honoured. `excludePrivate` refuses (the caller's privacy
- * filter is not on the store). On getSalienceScores a trust floor or flag suppression refuses too, as its SQL reads
- * them; getRecentSalience's SQL never reads them, so they change nothing there.
+ * Read policy: source scope and `takesHoldersAllowList` are honoured. On getSalienceScores `excludePrivate` is served as
+ * the page policy `pageReadFilter` adds (private-provenance.ts `storePagePolicy`, which refuses a caller whose policy is
+ * wider than the store's); on getRecentSalience it refuses. On getSalienceScores a trust floor or flag suppression
+ * refuses too, as its SQL reads them; getRecentSalience's SQL never reads them, so they change nothing there.
  */
 import { clampSearchLimit } from '../../engine.ts';
 import { resolveRecencyDecayMap, DEFAULT_FALLBACK, type RecencyDecayConfig, type RecencyDecayMap } from '../../search/recency-decay.ts';
@@ -14,6 +15,7 @@ import type {
   EmotionalWeightInputRow, EmotionalWeightWriteRow, PageReadPolicy, SalienceOpts, SalienceResult,
 } from '../../types.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { storePagePolicy } from './private-provenance.ts';
 
 /** `SearchOpts` keys hybrid search passes along with its read policy; readSalienceScores never reads them. */
 const SEARCH_KEYS = [
@@ -94,12 +96,14 @@ export const getRecentSalience: StoreMember<[opts: SalienceOpts], SalienceResult
 export const getSalienceScores: StoreMember<[refs: Array<{ slug: string; source_id: string }>, opts?: PageReadPolicy], Map<string, number>> = async (brain, refs, opts) => {
   if (!refs.length) return new Map();
   const o = takeOptions('getSalienceScores', opts, ['sourceId', 'sourceIds', 'takesHoldersAllowList'],
-    ['requireSafeChunks', ...SEARCH_KEYS]);
+    ['requireSafeChunks', 'excludePrivate', ...SEARCH_KEYS]);
+  const excludePrivate = storePagePolicy('getSalienceScores', opts?.excludePrivate);
   const rows = (await storeCall({ member: 'getSalienceScores' }, () => brain.getSalienceScores({
     refs: refs.map((r) => ({ slug: r.slug, source_id: r.source_id })),
     source_ids: sourceScope(o),
     holders: holders(o),
     live: !!opts,
+    ...(excludePrivate ? { exclude_private: excludePrivate } : {}),
   }))) as Array<{ slug: string; source_id: string; score: number }>;
   return new Map(rows.map((r) => [`${r.source_id}::${r.slug}`, r.score]));
 };
