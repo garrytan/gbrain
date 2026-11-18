@@ -123,7 +123,8 @@ impl Brain {
         })
     }
 
-    /// `findCandidateDuplicates` (recency arm): resolves the entity's newest active rows.
+    /// `findCandidateDuplicates` with no embedding (the recency and keyword arms): resolves the
+    /// entity's candidate rows.
     #[napi]
     pub fn find_candidate_duplicates<'env>(
         &self,

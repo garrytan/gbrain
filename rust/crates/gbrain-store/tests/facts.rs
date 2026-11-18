@@ -464,3 +464,40 @@ fn recency_duplicates_and_health_count_active_rows() {
         ])
     );
 }
+
+#[test]
+fn keyword_duplicates_rank_shared_terms_then_newest() {
+    let b = brain("facts-keyword");
+    for (fact, source) in [
+        ("Ivy runs the Berlin marathon", "s"),
+        ("Ivy likes Berlin", "s"),
+        ("Ivy visited Berlin", "s"),
+        (
+            "Ivy Berlin marathon audit",
+            "cli:extract-conversation-facts:terminal:v2",
+        ),
+        ("Cooking notes", "s"),
+    ] {
+        insert(
+            &b,
+            json!({ "fact": fact, "source": source, "entity_slug": "people/ivy" }),
+        );
+        b.clock.advance(10);
+    }
+    let find = |text: &str| {
+        b.find_candidate_duplicates(&args::<DuplicateQuery>(json!({ "sourceId": "default",
+            "entitySlug": "people/ivy", "k": 5, "keyword": true, "factText": text })))
+    };
+    // Two shared lexemes outrank one; equal ranks put the newest row first; audit rows drop out.
+    assert_eq!(
+        facts(&find("Berlin marathons").unwrap()),
+        [
+            "Ivy runs the Berlin marathon",
+            "Ivy visited Berlin",
+            "Ivy likes Berlin"
+        ]
+    );
+    // A claim of stop words only has no lexemes and matches nothing.
+    assert!(find("the and of").unwrap().is_empty());
+    assert_eq!(find("Berlin\0").unwrap_err().code, INVALID_ARGUMENT);
+}

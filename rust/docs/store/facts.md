@@ -15,7 +15,7 @@ typed claims. Each member gives the answer PGLite gives today, odd behavior incl
 | `listFactsKeyset` | Oldest first by `(created_at, id)` after a microsecond ISO cursor. |
 | `listSupersessions` | Superseded rows, newest supersession first. |
 | `countUnconsolidatedFacts`, `getFactsHealth` | Counts of active rows (and the five entities with the most). |
-| `findCandidateDuplicates` | The recency arm only: active same-entity rows, newest first, capped by `k`. The keyword arm waits for the ts_rank ranker and the embedding arm for vectors; both refuse in the member. |
+| `findCandidateDuplicates` | The recency arm: active same-entity rows, newest first, capped by `k`. The keyword arm (`keyword`, `factText`): the same rows less audit checkpoints, kept when `to_tsvector('english', fact)` matches the OR of the claim's `plainto_tsquery` lexemes (`keyword::or_of_lexemes`; none matches nothing), ordered by `ts_rank_cd` descending, then `created_at` and `id` descending. The member refuses the embedding arm, the keyword arm with an embedding (facts store no vectors yet), and the keyword arm when `GBRAIN_FTS_LANGUAGE` is not `english`. |
 | `consolidateFact` | Stamps `consolidated_at` and `consolidated_into`. |
 | `findTrajectory` | Typed claims and events of an entity, oldest first, world rows only for remote callers. |
 | `migrateFactsToCanonical` | Moves a phantom page's active rows onto the canonical slug, `row_num` offset past the canonical page's largest. The ontology duplicates the move would make are dropped first, in its own write, as PGLite runs the two statements outside one transaction. |
