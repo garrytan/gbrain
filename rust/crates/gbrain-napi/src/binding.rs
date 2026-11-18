@@ -25,7 +25,7 @@ use crate::pool::{self, CancelToken as Token, Task};
 type TaskResult<T> = std::result::Result<T, TaskError>;
 
 /// Build the JavaScript `Error` for a typed error: `message`, a stable `code`, and its details.
-fn js_error(env: &Env, error: TaskError) -> napi::Error {
+pub(crate) fn js_error(env: &Env, error: TaskError) -> napi::Error {
     let build = || -> napi::Result<napi::Error> {
         let mut object = env.create_error(napi::Error::new(
             Status::GenericFailure,
@@ -61,7 +61,11 @@ pub fn module_exports(mut exports: Object, env: Env) -> napi::Result<()> {
     exports.set("engineAbi", crate::ENGINE_ABI)?;
     exports.set("engineBuild", crate::ENGINE_BUILD)?;
     exports.set("catalogVersion", crate::CATALOG_VERSION)?;
-    exports.set("formatVersions", env.create_array(0)?)?;
+    let mut formats = env.create_array(0)?;
+    for version in gbrain_store::FORMAT_VERSIONS {
+        formats.insert(*version)?;
+    }
+    exports.set("formatVersions", formats)?;
     exports.set("sinkMaxQueueSize", SINK_QUEUE_SIZE as u32)?;
     Ok(())
 }
@@ -334,7 +338,7 @@ fn settle<T: ToNapiValue + Send + 'static>(
 
 /// Start `work` on the pool and return its promise. A pool that no longer takes work returns a
 /// promise already rejected with `engine_shutdown`.
-fn spawn<'env, T: ToNapiValue + Send + 'static>(
+pub(crate) fn spawn<'env, T: ToNapiValue + Send + 'static>(
     env: &'env Env,
     pool: &pool::Pool,
     work: impl FnOnce() -> TaskResult<T> + Send + 'static,
@@ -372,7 +376,7 @@ pub struct ShutdownReport {
 /// work and settles results.
 #[napi]
 pub struct Pool {
-    pool: pool::Pool,
+    pub(crate) pool: pool::Pool,
 }
 
 #[napi]

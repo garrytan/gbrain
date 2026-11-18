@@ -21,9 +21,18 @@ export async function seedPage(engine: BrainEngine, page: SeedPage, opts?: { sou
   if (page.chunks) await installChunks(engine, page.slug, page.chunks, opts);
 }
 
-/** Replace a page's chunks with a sealed projection. */
+/**
+ * Replace a page's chunks with a sealed projection. The Rust store keeps no chunk vectors and refuses a chunk that carries
+ * one, so on that arm only, this seeding helper drops the vectors it was given (a text search never reads them). Only
+ * fixtures seeded here lose them: a case that writes chunks itself, and so tests that write, is never rewritten.
+ */
 export async function installChunks(engine: BrainEngine, slug: string, chunks: ChunkInput[], opts?: { sourceId?: string }): Promise<void> {
-  await engine.sealChunks(slug, chunks, opts);
+  await engine.sealChunks(slug, (engine.kind as string) === 'rust' ? chunks.map(withoutVectors) : chunks, opts);
+}
+
+function withoutVectors(input: ChunkInput): ChunkInput {
+  const { embedding: _embedding, embedding_image: _image, ...text } = input;
+  return text;
 }
 
 /** A compiled_truth chunk input. */
