@@ -31,10 +31,8 @@ Every keyword member except `findByTitleFuzzy` refuses:
 - a text search configuration other than `english` (`getFtsLanguage()`);
 - truthy `requireSafeChunks`, `minTrust` or `suppressFlagged`: the store does not record trust tiers or flags, and a
   safe-chunks rule stands alone only with `excludePrivate` (see below);
-- truthy `excludePrivate` on every member but `searchKeyword`: `searchKeywordChunks`, `countKeywordPages`,
-  `searchKeywordPages` and `searchTitles` refuse it (`searchKeyword` serves it, see below; `searchVector` serves it,
-  `vectors.md`). `hybridSearch` does not hide this refusal: its title arm rethrows it, so a hybrid search with
-  `excludePrivate` refuses (naming `searchTitles`) instead of answering `[]` where PGLite answers rows;
+- truthy `excludePrivate` on `searchKeywordChunks`, `countKeywordPages` and `searchKeywordPages` (`searchKeyword`
+  and `searchTitles` serve it, see below; `searchVector` serves it, `vectors.md`);
 - a date bound (`afterDate`, `beforeDate`) that is not an ISO date or date-time
   (`YYYY-M-D[( |T)H:MM[:SS[.ffffff]][Z|±HH[:MM]]]`), that is outside the calendar, or that has more than six fraction
   digits. Postgres reads more shapes (`Jan 5 2026`); those refuse rather than guess;
@@ -44,14 +42,19 @@ Every keyword member except `findByTitleFuzzy` refuses:
   non-integer `after.page_id`: Postgres rejects them as a `bigint`;
 - any option the member does not know.
 
-### `excludePrivate` (`searchKeyword` only)
+### `excludePrivate` (`searchKeyword` and `searchTitles`)
 
-`searchKeyword` serves truthy `excludePrivate` with the page policy PGLite adds in `buildVisibilityClause`
+`searchKeyword` and `searchTitles` serve truthy `excludePrivate` with the page policy PGLite adds in `buildVisibilityClause`
 (`privatePagesFilterForCaller('p')`), judged by `page_hidden` in `facts/privacy.rs`. The member sends the policy only
 when the caller in context renders the same text as the store's no-caller policy (`private-provenance.ts`
 `storePagePolicy`); any other caller refuses. The policy is part of every statement of the member (the matching and
 rare-term arms, the handles retry and the fallback arms), so a hidden page never takes a result slot and a limit counts
 only visible pages. A `requireSafeChunks` beside it is read as PGLite reads it (`requireSafeChunks ?? excludePrivate`).
+
+`searchTitles` applies the same policy to every attempt of its title statement. When the safe-chunks rule is on, the
+statement matches titles only (every row is a `title` match, as `title-statement.ts` renders it), so a page whose
+only match is its timeline is not returned, and a page limit and the page count read only visible pages. A hybrid
+search with `excludePrivate` therefore reaches its title arm without a refusal.
 
 The safe-chunks rule drops a page whose recorded `chunker_version` is below the safe fence chunker (4). A page with no
 recorded version was chunked by this store's chunker, which seals, so it is kept (as `chunk_queries.md` reads it).
@@ -192,5 +195,5 @@ The page vector is not stored; `keyword/titles.rs` rebuilds the one PGLite last 
   `exclude_slugs`, which Postgres applies; no production caller. A PGLite behavior change, so it waits until after
   1x parity. Then the member serves the four filters with a parity case.
 - `fuzzy-title-unscoped-deleted`: the SQL unscoped arm returns soft-deleted pages.
-- Serve `excludePrivate` on the other keyword members (`searchKeywordChunks`, `countKeywordPages`, `searchKeywordPages`,
-  `searchTitles`) and the trust options once the store records them.
+- Serve `excludePrivate` on the other keyword members (`searchKeywordChunks`, `countKeywordPages`,
+  `searchKeywordPages`) and the trust options once the store records them.
