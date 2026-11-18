@@ -37,6 +37,7 @@ import { stagingNeedsTextSql } from '../page-body/schema.ts';
 import { atomRetirementPurgeHold } from '../persistence/atom-retirement-hold.ts';
 import { derivedRetirementPurgeHold } from '../persistence/derived-retirement-hold.ts';
 import { createPageVersion } from '../page-state/versions.ts';
+import { withTrustKeep } from '../persistence/context.ts';
 import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 import { frontmatterWhereFragment } from '../search/frontmatter-where.ts';
 import { quoteIdentifier, resolveWriteColumnFromConfigRows } from '../search/embedding-column.ts';
@@ -1158,14 +1159,18 @@ export async function updateSlug(exec: SqlExecutor, tx: BrainEngine, oldSlug: st
       const preimage = await tx.readPageSnapshot(oldSlug, { sourceId, includeDeleted: true });
       if (preimage) await createPageVersion(tx, oldSlug, sourceId, preimage);
       // origin-guard-ok: the moved row keeps its own origin and liveness, so it adds no claimant (#6948); callers that record a new path bind it with bindOrigin
-      const moved = await exec.executeRaw(
-        `UPDATE pages SET slug = $1, updated_at = now() WHERE slug = $2 AND source_id = $3 RETURNING id`,
-        [newSlug, oldSlug, sourceId],
-      );
-      if (moved.length > 0) {
-        await recordRenameAlias(tx, sourceId, oldSlug, newSlug);
-        await moveSlugBindings(tx, sourceId, oldSlug, newSlug);
-      }
+      // The move re-keys rows without authoring text, so the page and its facts keep their stored trust tier (#9735).
+      const moved = await withTrustKeep(tx, ['pages', 'facts'], async () => {
+        const rows = await exec.executeRaw(
+          `UPDATE pages SET slug = $1, updated_at = now() WHERE slug = $2 AND source_id = $3 RETURNING id`,
+          [newSlug, oldSlug, sourceId],
+        );
+        if (rows.length > 0) {
+          await recordRenameAlias(tx, sourceId, oldSlug, newSlug);
+          await moveSlugBindings(tx, sourceId, oldSlug, newSlug);
+        }
+        return rows;
+      });
       // #3056: rows moved — a zero-row UPDATE does not throw, so the count is
       // the only way callers can see the no-op.
       return moved.length;
