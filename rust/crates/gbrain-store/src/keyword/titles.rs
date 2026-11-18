@@ -216,8 +216,12 @@ fn title_query(texts: &[String]) -> Result<TsQuery> {
     for text in texts {
         let next = websearch_to_tsquery(&fts_input(text))?;
         // The bound holds for the whole `||` chain, not just each text, so it stops the parsing as well as the join.
-        items += next.items.len() + 1;
-        check_query_items(items)?;
+        // An empty query (a stopword-only text) is skipped by `||` and adds no item and no operator; a nonempty one
+        // adds its items and, unless it comes first, the OR that joins it. The count is `tsquery_or_all`'s own.
+        if !next.items.is_empty() {
+            items += next.items.len() + usize::from(items > 0);
+            check_query_items(items)?;
+        }
         queries.push(next);
     }
     tsquery_or_all(queries)
@@ -865,5 +869,40 @@ mod tests {
             );
         }
         assert_eq!(found(&store, "n00005"), ["notes/full"]);
+    }
+
+    /// The bound counts the items the chain really holds: only nonempty queries, and an OR only between two of them.
+    /// `-quasar` parses to two items (`!'quasar'`) and `the` to none, so `-quasar` followed by 65,535 `quasar` texts holds
+    /// 2 + 65,535 + 65,535 = 131,072 items, exactly the bound (accepted), and 65,537 `quasar` texts hold 131,073 (refused).
+    /// Before, an OR was counted before the first query and for every empty one: the 131,072-item chain was refused, and so
+    /// was 65,536 `quasar` texts with a stopword (131,071 items).
+    #[test]
+    fn the_item_bound_counts_only_nonempty_queries_and_the_ors_between_them() {
+        let store = crate::test_support::store();
+        put(&store, "notes/a", "Quasar Notes", "");
+        let opts = KeywordOptions::default();
+        let run = |lead: &[&str], quasars: usize| {
+            let mut texts: Vec<&str> = lead.to_vec();
+            texts.extend(std::iter::repeat_n("quasar", quasars));
+            store.search_titles_attempts(
+                &[attempt(&texts, TitleAttemptKind::Whole, 10.0)],
+                "",
+                5000.0,
+                &opts,
+            )
+        };
+        // 131,072 items: the bound itself.
+        let ok = run(&["-quasar"], 65_535).unwrap();
+        assert_eq!(slugs(&ok[0]), ["notes/a"]);
+        // 131,071 items, with an empty query and a stopword-only query that hold none.
+        let ok = run(&["the", "", "the"], 65_536).unwrap();
+        assert_eq!(slugs(&ok[0]), ["notes/a"]);
+        // 131,073 items.
+        let e = run(&[], 65_537).unwrap_err();
+        assert!(
+            e.message.starts_with("stack depth limit exceeded"),
+            "{}",
+            e.message
+        );
     }
 }
