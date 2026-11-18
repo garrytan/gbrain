@@ -23,11 +23,14 @@ import { commitAndPush } from '../src/core/git/commit-push.ts';
 import { rangeSecretRefusal, scanRange } from '../src/core/git/range-secret-scan.ts';
 import { resetLedgerCacheForTests } from '../src/core/git/commit-ledger.ts';
 import { git } from './helpers/git-publication.ts';
-import { withEnv } from './helpers/with-env.ts';
+import { withEnv, envForFile } from './helpers/with-env.ts';
 import { activateSharedSkillPersistence } from '../src/core/persistence/skill-activation.ts';
 import { gitConvergenceCheck } from '../src/commands/doctor/checks/git-convergence.ts';
 import { scanText } from '../src/core/secret-scan.ts';
 import { bindSource, createGitCoalescingFixture, harden } from './helpers/git-coalescing-fixture.ts';
+
+/** GST-2988: these tests pin the publish refusal, which secrets.on_push refuse keeps. */
+envForFile({ GBRAIN_SECRETS_ON_PUSH: 'refuse' });
 
 const { makeRepo, withBrain, dispose } = createGitCoalescingFixture('scan-gaps');
 

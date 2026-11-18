@@ -173,6 +173,8 @@ const ROWS: readonly Row[] = [
   ['retrieval_feedback', 'swept', 'retrieval_feedback', 'event_id signal element_kind source_id element_key client_id'],
   ['retrieval_weights', 'swept', 'retrieval_feedback', 'source_id element_kind element_key content_hash'],
   ['search_telemetry', 'out_of_scope', 'no_memory_text', 'date mode intent'],
+  ['secret_store', 'out_of_scope', 'secret_material', 'id source_id rule ciphertext nonce tag key_id key_host value_mac status'],
+  ['secret_store_occurrence', 'out_of_scope', 'no_memory_text', 'entry_id source_id slug field origin commit_sha path pre_field_sha256 created_by'],
   ['session_context_state', 'out_of_scope', 'probed_reported', 'source_id client_id session_id standing_entities surfaced_slugs checkpoint_manifest', 'checkpoint_manifest standing_entities'],
   ['shared_skill_delivery_batches', 'out_of_scope', 'no_memory_text', 'view_token authority_digest revisions evidence'],
   ['shared_skill_heads', 'out_of_scope', 'no_memory_text', 'source_id pack_id name metadata policy_epoch'],
