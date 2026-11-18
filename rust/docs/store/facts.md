@@ -275,34 +275,6 @@ provenance page hides the row; then the entity, session, `since` (on `valid_from
   other reads on the way (the word stems, the facts embedding column, the named-entity anchor and the
   nearest-vector arm); on Rust each of those is served or refused by the family that owns it.
 
-## The fence guard's reads (`facts/fence.rs`)
-
-Two reads of one page's fact rows, for the page publication path (`engine-sql/facts.ts`
-`listFenceRetireCandidates`, `engine-sql/trust-fence.ts` `listFenceFactRows`). Both read the page's
-rows through the by-page index, keep the rows at a fence position (`row_num` set), and compare each
-with the incoming fence: a JSON array of `{ row_num, fact, visibility }` cells. A cell field that is
-absent or null equals nothing, as SQL `=` does. A document that is not an array of objects, or a
-`row_num` that is not an integer, refuses with `invalid_argument` (PGLite's `jsonb_to_recordset`
-raises).
-
-- `list_fence_retire_candidates`: the before-state (`FACT_PREIMAGE_SQL`'s keys, the times as the
-  `jsonb` text `2026-06-18T09:00:00.5+00:00`) of each row the incoming fence does not hold at the
-  same number, fact and visibility, in row number then id order, expired rows included. A
-  conversation-extractor row (`source` starting `cli:extract-conversation-facts`) is a candidate
-  only when a cell claims its number. A private row that `open-facts` opens in place is not.
-- `list_fence_fact_rows`: the live (`expired_at` null) rows under the same filters that are more
-  trusted than the writer (`above`), held narrower by a widening proposal, or opened (`opened`):
-  `{ id, row_num, fact, visibility, trust_tier, above, opened }`, by row number.
-
-What PGLite reads from the transaction, the store takes as a `FenceContext`: the writer's tier
-(`gbrain.write_trust_tier`, undeclared reads as `unknown`, a name that is no tier ranks 0) and the
-opened ids (`gbrain.write_open_facts`). Both napi members take it from the store's write trust context
-(`Store::fence_context`, [write_trust.md](write_trust.md)), which the engine's transaction sets.
-`above` compares the row's stored tier with the writer's. A row is held when it is not `world`, a
-cell at its number with its fact asks for `world`, and a `confirm` or `supersede_fact` proposal
-names it as the related fact, is `pending`, `rejected` or `undone`, and has a `visibility` key in its
-before state (`trust::proposals::held_narrower`, [trust.md](trust.md#trust-proposals-trustproposals)).
-
 ## Open loops (`facts/loops.rs`)
 
 The `open_loops` table, for the three members loops-store.ts calls through the engine and the
@@ -330,6 +302,34 @@ refuse on this engine.
   bare date, a time with no zone) as written, and the store refuses it with `invalid_argument`, where
   Postgres would read it in the session time zone.
 - Deleting a source removes its loops (`ON DELETE CASCADE`).
+
+## The fence guard's reads (`facts/fence.rs`)
+
+Two reads of one page's fact rows, for the page publication path (`engine-sql/facts.ts`
+`listFenceRetireCandidates`, `engine-sql/trust-fence.ts` `listFenceFactRows`). Both read the page's
+rows through the by-page index, keep the rows at a fence position (`row_num` set), and compare each
+with the incoming fence: a JSON array of `{ row_num, fact, visibility }` cells. A cell field that is
+absent or null equals nothing, as SQL `=` does. A document that is not an array of objects, or a
+`row_num` that is not an integer, refuses with `invalid_argument` (PGLite's `jsonb_to_recordset`
+raises).
+
+- `list_fence_retire_candidates`: the before-state (`FACT_PREIMAGE_SQL`'s keys, the times as the
+  `jsonb` text `2026-06-18T09:00:00.5+00:00`) of each row the incoming fence does not hold at the
+  same number, fact and visibility, in row number then id order, expired rows included. A
+  conversation-extractor row (`source` starting `cli:extract-conversation-facts`) is a candidate
+  only when a cell claims its number. A private row that `open-facts` opens in place is not.
+- `list_fence_fact_rows`: the live (`expired_at` null) rows under the same filters that are more
+  trusted than the writer (`above`), held narrower by a widening proposal, or opened (`opened`):
+  `{ id, row_num, fact, visibility, trust_tier, above, opened }`, by row number.
+
+What PGLite reads from the transaction, the store takes as a `FenceContext`: the writer's tier
+(`gbrain.write_trust_tier`, undeclared reads as `unknown`, a name that is no tier ranks 0) and the
+opened ids (`gbrain.write_open_facts`). Both napi members take it from the store's write trust context
+(`Store::fence_context`, [write_trust.md](write_trust.md)), which the engine's transaction sets.
+`above` compares the row's stored tier with the writer's. A row is held when it is not `world`, a
+cell at its number with its fact asks for `world`, and a `confirm` or `supersede_fact` proposal
+names it as the related fact, is `pending`, `rejected` or `undone`, and has a `visibility` key in its
+before state (`trust::proposals::held_narrower`, [trust.md](trust.md#trust-proposals-trustproposals)).
 
 ## Not modeled
 
