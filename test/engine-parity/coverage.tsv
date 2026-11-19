@@ -6,9 +6,9 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 670/670
+# covered: 671/671
 # lifecycle: 9/9
-# pages: 39/39
+# pages: 40/40
 # search: 7/7
 # search_reads: 9/9
 # link_reads: 11/11
@@ -81,7 +81,7 @@ getPage	pages	yes	83	yes	yes	yes	serves
 readPageSnapshot	pages	yes	22	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	385	yes	yes	yes	serves
+putPage	pages	yes	386	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
@@ -114,10 +114,10 @@ countSourcePages	pages	yes	1	no	yes	yes	serves
 insertSource	pages	yes	1	no	yes	yes	serves
 listPrefixSampledPages	pages	yes	2	no	yes	yes	serves
 listCorpusSample	pages	yes	2	no	yes	yes	serves
-bumpPageRetrievals	pages	yes	1	no	yes	yes	serves
+bumpPageRetrievals	pages	yes	2	no	yes	yes	serves
 getPageSealState	pages	yes	5	no	yes	yes	serves
 refreshPageOrigin	pages	yes	2	no	yes	yes	serves
-searchKeyword	search	yes	17	yes	yes	yes	serves
+searchKeyword	search	yes	18	yes	yes	yes	serves
 countKeywordPages	search	yes	7	no	yes	yes	serves
 searchKeywordPages	search	yes	9	no	yes	yes	serves
 searchTitles	search	yes	10	yes	yes	yes	serves
@@ -184,7 +184,7 @@ deleteChunksForPages	chunks	yes	1	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	4	no	yes	yes	serves
 upsertChunks	chunks	yes	24	yes	yes	yes	serves
-sealChunks	chunks	yes	43	no	yes	yes	serves
+sealChunks	chunks	yes	44	no	yes	yes	serves
 getChunks	chunks	yes	27	yes	yes	yes	serves
 getChunkPage	chunks	yes	6	no	yes	yes	serves
 getChunkWindows	chunks	yes	4	no	yes	yes	serves
@@ -412,7 +412,7 @@ countPagesDueForMentions	entity_reads	yes	1	no	yes	yes	serves
 readIdentitySiblingCandidates	entity_reads	yes	4	no	yes	yes	serves
 findExactSlug	entity_reads	yes	1	no	yes	yes	serves
 readRetirementHop	entity_reads	yes	3	no	yes	yes	serves
-readEntityCardRows	entity_reads	yes	1	no	yes	yes	serves
+readEntityCardRows	entity_reads	yes	2	no	yes	yes	serves
 readExtractionLagCounts	entity_reads	yes	2	no	yes	yes	serves
 readIgnoredPrivacyLabelPages	entity_reads	yes	2	no	yes	yes	serves
 acquireCycleLock	cycle_locks	yes	11	no	yes	yes	serves
