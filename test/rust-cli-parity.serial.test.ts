@@ -256,11 +256,12 @@ const COMMANDS: string[][] = [
  */
 /** A write stops on Rust with a typed refusal that names `member`, or is accepted and stays queued behind `member`. */
 const RECORDED_WRITES: Array<{ args: string[]; rust: 'refused' | 'queued'; member: string }> = [
-  { args: ['put', 'notes/parity-put', '--content', '---\ntype: note\ntitle: Parity put\n---\nBody text.\n', '--json'], rust: 'queued', member: 'executeRawDirect' },
+  { args: ['put', 'notes/parity-put', '--content', '---\ntype: note\ntitle: Parity put\n---\nBody text.\n', '--json'], rust: 'queued', member: 'insertPublicationEffects' },
 ];
-// `put` passes the persistence declaration and write admission, so the request is recorded (state queued). The
-// background writer that applies it then stops at the raw consumer heartbeat (executeRawDirect in
-// src/core/persistence/consumer-heartbeat.ts), so the reply is write_pending (exit 10) and nothing is applied.
+// `put` passes the persistence declaration and write admission, so the request is recorded and claimed. Publication
+// then stops at insertPublicationEffects (the Rust store records no publication effect yet), and the writer returns
+// the claim (src/core/persistence/coordinator.ts finishUnpublishedFailure), so the reply is write_pending (exit 10),
+// nothing is applied, and the stored request is queued again, never left running under a claim nobody holds.
 
 type State = 'equal' | 'refused' | 'queued' | 'diverged' | 'no-engine' | 'runs';
 interface Row { command: string; state: State; note: string }
@@ -357,6 +358,7 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
         const queued = rust.exitCode === 10 && body?.code === 'write_pending' && body?.state === 'queued';
         table.push({ command: label(args), state: queued ? 'queued' : 'diverged', note: queued ? `behind ${next}` : `exit ${rust.exitCode}` });
         expect({ exitCode: rust.exitCode, code: body?.code, state: body?.state, member }).toEqual({ exitCode: 10, code: 'write_pending', state: 'queued', member: null });
+        // The receipt's state is the stored row read after the writer returned its claim (finishUnpublishedFailure).
         return;
       }
       table.push({ command: label(args), state: member ? 'refused' : 'diverged', note: member ?? `exit ${rust.exitCode}` });
