@@ -587,6 +587,18 @@ impl Store {
         let read = self.read()?;
         Ok(load_client(&*read, client_id)?.map(|c| c.to_row()))
     }
+
+    /// `listOauthClients()`: every client's whole row (as `read_oauth_client` returns it), by name then id in byte
+    /// order, as `ORDER BY client_name COLLATE "C", client_id COLLATE "C"` sorts.
+    pub fn list_oauth_clients(&self) -> Result<Value> {
+        let read = self.read()?;
+        let mut clients = all_clients(&*read)?;
+        clients.sort_by(|a, b| {
+            (a.client_name.as_bytes(), a.client_id.as_bytes())
+                .cmp(&(b.client_name.as_bytes(), b.client_id.as_bytes()))
+        });
+        Ok(Value::Array(clients.iter().map(|c| c.to_row()).collect()))
+    }
 }
 
 #[cfg(test)]

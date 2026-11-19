@@ -117,6 +117,12 @@ impl Brain {
         self.run(env, move |s| s.read_oauth_client(&client_id))
     }
 
+    /// `listOauthClients()`: every client's whole row, by name then id in byte order.
+    #[napi]
+    pub fn list_oauth_clients<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_oauth_clients())
+    }
+
     /// `patchOauthClient(clientId, patch, guard)`: `{ row, before }` of the patched client, or null.
     #[napi]
     pub fn patch_oauth_client<'env>(

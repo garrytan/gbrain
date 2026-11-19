@@ -18,6 +18,11 @@ export const readOauthClient: StoreMember<[clientId: string], OauthClientRow | n
   return raw ? normalizeOauthClientRow(raw) : null;
 };
 
+export const listOauthClients: StoreMember<[], OauthClientRow[]> = async (brain) => {
+  const raw = await storeCall({ member: 'listOauthClients' }, () => brain.listOauthClients()) as Record<string, unknown>[];
+  return raw.map(normalizeOauthClientRow);
+};
+
 export const patchOauthClient: StoreMember<[clientId: string, patch: OauthClientPatch, guard?: OauthClientPatchGuard], OauthClientPatched | null> = async (brain, clientId, patch, guard) => {
   const set = (Object.keys(patch) as Array<keyof OauthClientPatch>).filter(k => patch[k] !== undefined);
   const raw = await refusing('patchOauthClient', () => brain.patchOauthClient(clientId, { ...patch, set }, guard ?? {})) as { row: Record<string, unknown>; before: OauthClientPatched['before'] } | null;

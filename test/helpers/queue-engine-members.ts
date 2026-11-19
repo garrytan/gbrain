@@ -53,7 +53,7 @@ const SPEND_LOG_MEMBERS = [
 ] as const satisfies ReadonlyArray<keyof typeof spendLog>;
 
 /** The `oauth_clients` rows (engine-sql/oauth-clients.ts), added the same way. */
-const OAUTH_CLIENT_MEMBERS = ['readOauthClient', 'patchOauthClient'] as const satisfies ReadonlyArray<keyof typeof oauthClients>;
+const OAUTH_CLIENT_MEMBERS = ['readOauthClient', 'listOauthClients', 'patchOauthClient'] as const satisfies ReadonlyArray<keyof typeof oauthClients>;
 
 /** The `access_tokens` rows (engine-sql/access-tokens.ts), added the same way. */
 const ACCESS_TOKEN_MEMBERS = ['insertAccessToken', 'findActiveAccessTokens', 'setAccessTokenMinTrust'] as const satisfies ReadonlyArray<keyof typeof accessTokens>;

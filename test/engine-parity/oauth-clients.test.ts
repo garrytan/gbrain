@@ -1,6 +1,6 @@
 /**
  * BrainEngine parity: the whole `oauth_clients` row and the constraints a write to it meets (engine-sql/oauth-clients.ts):
- * `insertOauthClient`, `readOauthClient`, `updateOauthClientBudget`, `patchOauthClient`.
+ * `insertOauthClient`, `readOauthClient`, `listOauthClients`, `updateOauthClientBudget`, `patchOauthClient`.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: the same calls return the same rows and the same refusals on every engine arm (PGLite always; Postgres with
@@ -29,6 +29,7 @@ import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { OauthClientInsert } from '../../src/core/engine-sql/oauth-clients.ts';
 import { rotateClientSecret } from '../../src/commands/agent-register.ts';
+import { listClientRows } from '../../src/commands/auth-client-rows.ts';
 import { hashToken } from '../../src/core/utils.ts';
 import { createSource, parityArms, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
@@ -187,6 +188,27 @@ describe('engine parity: oauth_clients rows and constraints', () => {
       out.badTrust = await refusal(() => engine.patchOauthClient('a', { min_trust: 'bogus' }));
       out.afterBad = await seen('a');
       return out;
+    });
+
+  parityTest('listOauthClients returns every client row by name then id, and the auth clients listing narrows it the same way',
+    { methods: ['insertOauthClient', 'listOauthClients'] }, async (engine) => {
+      const day = (r: Awaited<ReturnType<BrainEngine['listOauthClients']>>[number]) => ({ ...r, created_at: r.created_at instanceof Date });
+      const empty = { rows: await engine.listOauthClients(), listing: await listClientRows(engine) };
+      await engine.insertOauthClient({ client_id: 'c-beta', client_name: 'beta', scope: 'read write', surface: 'minimal', surface_set_by: 'operator', federated_read: ['default'], private_pages: 'granted_sources' });
+      await engine.insertOauthClient({ client_id: 'c-alpha', client_name: 'alpha', scope: null });
+      await engine.insertOauthClient({ client_id: 'z-twin', client_name: 'twin' });
+      await engine.insertOauthClient({ client_id: 'y-twin', client_name: 'twin', deleted_at: new Date('2025-02-03T04:05:06.789Z'), allowed_operations: [] });
+      // Upper case sorts before lower case in byte order, whatever the database's collation says.
+      await engine.insertOauthClient({ client_id: 'c-upper', client_name: 'Zeta' });
+      await engine.insertOauthClient({ client_id: 'c-under', client_name: 'alpha_two' });
+      const rows = await engine.listOauthClients();
+      expect(rows.map(r => r.client_id)).toEqual(['c-upper', 'c-alpha', 'c-under', 'c-beta', 'y-twin', 'z-twin']);
+      return {
+        empty,
+        order: rows.map(r => [r.client_name, r.client_id]),
+        rows: rows.map(day),
+        listing: await listClientRows(engine),
+      };
     });
 
   parityTest('two concurrent secret rotations of one client: exactly one wins, the other gets the same error, and the winner\'s secret is the one kept',

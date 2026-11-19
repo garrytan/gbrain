@@ -13,7 +13,6 @@ src/commands/agent-logs.ts	execute_raw	1
 src/commands/agent-register.ts	execute_raw	2
 src/commands/agent-register.ts	sql_template	7
 src/commands/agent.ts	execute_raw	1
-src/commands/auth-client-rows.ts	execute_raw	6
 src/commands/auth.ts	execute_raw	1
 src/commands/auth.ts	sql_template	6
 src/commands/autopilot-daemon.ts	execute_raw	1

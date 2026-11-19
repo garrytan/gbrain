@@ -351,3 +351,33 @@ fn a_secret_patch_that_names_the_hash_it_read_writes_only_while_the_hash_is_stil
     });
     assert_eq!(wins, 1);
 }
+
+#[test]
+fn the_list_is_every_row_by_name_then_id_in_byte_order() {
+    let b = brain("oauth-list");
+    assert_eq!(b.list_oauth_clients().unwrap(), json!([]));
+    for (id, name) in [
+        ("c-beta", "beta"),
+        ("z-twin", "twin"),
+        ("c-upper", "Zeta"),
+        ("y-twin", "twin"),
+        ("c-alpha", "alpha"),
+    ] {
+        insert(&b, json!({ "client_id": id, "client_name": name })).unwrap();
+    }
+    let ids: Vec<String> = b
+        .list_oauth_clients()
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["client_id"].as_str().unwrap().to_string())
+        .collect();
+    // Upper case sorts first in byte order; equal names fall back to the id.
+    assert_eq!(ids, ["c-upper", "c-alpha", "c-beta", "y-twin", "z-twin"]);
+    // Each element is the row a read returns.
+    assert_eq!(
+        b.list_oauth_clients().unwrap()[1],
+        b.read_oauth_client("c-alpha").unwrap().unwrap()
+    );
+}

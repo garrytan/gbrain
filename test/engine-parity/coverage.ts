@@ -139,7 +139,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'reserveClientSpend', 'reserveGroupSpend', 'readGroupSpendTotals', 'settleSpendWithLog', 'insertSpendLog', 'sumClientSpendSince',
     'readClientBudgetUsd', 'insertOauthClient', 'updateOauthClientBudget', 'readAgentClientSpend',
     // oauth_clients rows (engine-sql/oauth-clients.ts)
-    'readOauthClient', 'patchOauthClient',
+    'readOauthClient', 'listOauthClients', 'patchOauthClient',
     // access_tokens rows (engine-sql/access-tokens.ts)
     'insertAccessToken', 'findActiveAccessTokens', 'setAccessTokenMinTrust'],
   // minion_status: lane L5 group B, job counts and last-run reads for the status surfaces (engine-sql/jobs-status.ts)

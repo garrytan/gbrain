@@ -12,6 +12,7 @@ serves the same members, and the spend ledger reads the same record ([spend-log.
 | --- | --- |
 | `brain.insertOauthClient(row)` | null. `row` is any of the table's columns; `client_id` and `client_name` are required. A column left out takes the table's default |
 | `brain.readOauthClient(clientId)` | the row as `SELECT * FROM oauth_clients WHERE client_id = $1` returns it, or null |
+| `brain.listOauthClients()` | every client's whole row, as `SELECT * FROM oauth_clients ORDER BY client_name COLLATE "C", client_id COLLATE "C"` returns them (byte order on every engine; the store sorts the bytes of the name, then of the id) |
 | `brain.patchOauthClient(clientId, patch, guard)` | `{ row, before }` or null. `patch.set` names the columns to set (`client_secret_hash`, `token_ttl`, `min_trust`, `surface`, `surface_set_by`) and the field of that name is the value, absent meaning NULL; `row` is the whole row after (checked again), `before` the five columns before. Null when the client is missing or the guard excludes it: `live` skips a deleted client, `unless_surface_set_by` skips a client with that pin (a NULL pin is not equal to it), `client_secret_hash_is` skips a client whose secret hash is not that value (compare-and-set, so of two callers that read the same hash exactly one writes). The write is one store write, so on this store it is the lock |
 | `brain.updateOauthClientBudget(clientId, usd)` | whether the client exists; `usd` null clears the cap. The rewritten row is checked again |
 
@@ -24,7 +25,11 @@ and `grant_repair_reasons` `{}`, `bound_max_concurrent` 1, `delegated_namespace`
 
 `readOauthClient` serves the by-client-id reads of `access.ts` (`access check --client`), `harness/client-setup.ts`,
 `agent-register.ts` (reissue), `minions/submission-authority.ts` (two reads), `shared-skills/policy.ts`,
-`access/requester-scope.ts`, `persistence/effect-facts.ts` and `persistence/authority.ts` (the takes-holders read). It
+`access/requester-scope.ts`, `persistence/effect-facts.ts` and `persistence/authority.ts` (the takes-holders read).
+`listOauthClients` serves `listClientRows` (`commands/auth-client-rows.ts`, behind `gbrain auth clients`), which picks the
+columns it shows out of each row; a brain from before a column returns rows without it, so the old six-step projection
+ladder is gone and the surface and source columns read as null there, as before. The listing's order is now byte order
+(`COLLATE "C"`) where it followed the database's collation on PostgreSQL. `readOauthClient` also
 returns every column, so a caller that named columns checks the ones it needs with `requireOauthClientColumns`, which
 raises the undefined-column error (42703) a SELECT of a missing column raises. `patchOauthClient` serves the writers
 `min-trust.ts` (`setMinTrust`), `request-tools.ts` (the surface persist) and `agent-register.ts` (`rotateClientSecret`).
