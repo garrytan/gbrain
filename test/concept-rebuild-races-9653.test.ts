@@ -15,7 +15,7 @@ import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { __setMaintenanceWriteWaitForTests } from '../src/core/persistence/maintenance-wait.ts';
 import { managedBrain, settleManagedGitEffects } from './helpers/managed-brain.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
-import { CONCEPT, NEW, atom, members, reply, deletePage, raw, purge, synthesize, state, heldConcept, stillHeld } from './helpers/concept-rebuild-9653.ts';
+import { CONCEPT, NEW, atom, members, reply, put, deletePage, raw, purge, synthesize, state, heldConcept, stillHeld } from './helpers/concept-rebuild-9653.ts';
 import { assertPurgeParams } from '../src/core/persistence/purge-params.ts';
 
 afterEach(() => { installFaultHook(undefined); __setChatTransportForTests(null); });
@@ -80,6 +80,20 @@ for (const backend of testBackends()) {
         await raw(engine, "INSERT INTO secret_store_occurrence (entry_id, source_id, page_id, slug, field, origin) SELECT 'ss_0123456789ad', 'default', p.id, p.slug, 'compiled_truth', 'repair' FROM pages p WHERE p.slug = $1", [atom(1)]);
         expect((await synthesize(engine, root, [1, 2, 3, 4, 5], { text: NEW, unmanaged: true })).rebuilt).toEqual([CONCEPT]);
         expect(await engine.executeRaw("SELECT 1 FROM secret_store s JOIN secret_store_occurrence o ON o.entry_id = s.id JOIN pages p ON p.id = o.page_id WHERE s.id = 'ss_0123456789ad' AND p.slug = $1", [atom(1)])).toHaveLength(1);
+      }, { databaseUrl });
+    }, 300_000);
+
+    test('a sealed secret whose only other occurrence is on another deleted page keeps the concept hidden, so two purges cannot both orphan it', async () => {
+      await managedBrain(async ({ engine, ctx, root }) => {
+        const id = await heldConcept(engine, ctx, root);
+        await put(ctx, 'notes/other-example', 'Another page that recorded the same secret.', 'note');
+        await deletePage(engine, ctx, 'notes/other-example');
+        await raw(engine, "INSERT INTO secret_store (id, source_id, rule, ciphertext, nonce, tag, key_id, value_mac) VALUES ('ss_0123456789ae', 'default', 'api_key', 'sealed', 'nonce', 'tag', '0123456789abcdef', 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd')");
+        await raw(engine, "INSERT INTO secret_store_occurrence (entry_id, source_id, page_id, slug, field, origin) VALUES ('ss_0123456789ae', 'default', $1, $2, 'compiled_truth', 'repair')", [id, CONCEPT]);
+        await raw(engine, "INSERT INTO secret_store_occurrence (entry_id, source_id, page_id, slug, field, origin) SELECT 'ss_0123456789ae', 'default', p.id, p.slug, 'compiled_truth', 'repair' FROM pages p WHERE p.slug = 'notes/other-example'");
+        const details = await synthesize(engine, root, [1, 2, 3, 4, 5], { text: NEW, unmanaged: true });
+        expect(details.rebuild_kept).toEqual([{ source_id: 'default', slug: CONCEPT, reason: 'stated', kinds: ['secret_store_occurrence'] }]);
+        await stillHeld(engine, id);
       }, { databaseUrl });
     }, 300_000);
 
