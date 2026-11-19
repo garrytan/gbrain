@@ -9,7 +9,8 @@
  *    reader cannot tell apart from a brain whose rows are unflagged and whose guest notes carry no sender.
  *  - Why existing coverage misses it: fence-chunk-trust-read.test.ts and the guest-notes tests run on SQL engines,
  *    which never refuse `executeRaw`.
- *  - Seam: a fake engine with only `executeRaw`, `readPageTrustRows` and `readRowTrustRows`, the members these call.
+ *  - Seam: a fake engine with only `executeRaw`, `readPageTrustRows`, `readRowTrustRows` and `listHeldFenceCells`, the
+ *    members these call.
  */
 import { describe, expect, test } from 'bun:test';
 import { loadPageTrust, stampPageTrust } from '../src/core/eligibility/stamp.ts';
@@ -22,6 +23,8 @@ const fake = (raw: Raw, pages: PageTrustRow[] = []) => ({
   executeRaw: raw as never,
   readPageTrustRows: async () => pages,
   readRowTrustRows: async () => [],
+  // Only a hideHeld read (dropHeldFenceRows) calls it; these cases never pass hideHeld.
+  listHeldFenceCells: async () => [],
 });
 
 const page = (over: Partial<PageTrustRow> = {}): PageTrustRow => ({
