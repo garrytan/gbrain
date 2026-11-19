@@ -5209,6 +5209,7 @@
           "frontmatter_recovery?: { quoted: boolean; comment_value: boolean; } | undefined",
           "gate?: WriteGateAssessment | undefined",
           "parsedPage?: ParsedPage | undefined",
+          "privateRowsKept?: { count: number; renumbered: number; } | undefined",
           "projection?: \"pending\" | undefined",
           "quarantined?: boolean | undefined",
           "refusal?: ContentRefusal | undefined",
