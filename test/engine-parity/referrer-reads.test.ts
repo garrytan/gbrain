@@ -13,7 +13,12 @@
  *  - Why existing coverage misses it: test/engine-parity/mention-coverage.test.ts reads one unpaged group page and
  *    asserts the coverage only; test/engine-parity/link-temporal.test.ts calls the card members, not these reads.
  *  - Seam: none. Real engines and the production functions only. Every referrer has an effective date, so dates do
- *    not depend on when an arm wrote the page.
+ *    not depend on when an arm wrote the page, except in the same-millisecond case: there two undated referrers get
+ *    exact microsecond `updated_at` times through the harness fixture `stampUpdatedAt` (the SQL arms; the Rust arm
+ *    keeps its write times, written in the same order).
+ *  - Same-millisecond regression: the Postgres cursor bound its date as `$7::timestamptz`, which postgres.js turns into
+ *    a JavaScript Date (milliseconds only), so the next page skipped an undated referrer updated earlier in the same
+ *    millisecond as the cursor row.
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -22,7 +27,7 @@ import type { Notice } from '../../src/core/agent-output.ts';
 import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { operations } from '../../src/core/operations.ts';
 import { readReferrerPage, readTargetReferences, type ReferrerScope } from '../../src/core/mentions/referrers.ts';
-import { createSource, parityArms } from './harness.ts';
+import { createSource, parityArms, stampUpdatedAt } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -153,6 +158,40 @@ describe('engine parity: referrer page and record reads', () => {
         [['meeting', 2, 'per_page', 1]], [['meeting', 2, 'per_call', 0]], [], [['meeting', 2, 'per_page', 1]]]);
       expect(countsOnly.map(t => t.count)).toEqual([7, 3, 0, 7]);
       return { wide, tight, countsOnly };
+    },
+  );
+  parityTest(
+    'a referrer page continues after a cursor without skipping an undated referrer updated in the same millisecond',
+    { methods: ['putPage', 'addLinksBatch', 'listReferrerTargetSources', 'countReferrerRows', 'readReferrerRows'] },
+    async (engine: BrainEngine, backend) => {
+      await engine.putPage(ACME, page('Acme Example', '2020-01-01', { type: 'company' }));
+      // Older first: the Rust arm keeps each write's time, so a-undated is the newer page there too.
+      const undated = { effective_date: null, effective_date_source: null };
+      await engine.putPage('notes/b-undated', page('B undated', '2026-03-01', undated));
+      await engine.putPage('notes/a-undated', page('A undated', '2026-03-01', undated));
+      await engine.addLinksBatch(['notes/b-undated', 'notes/a-undated'].map(f => ({ from_slug: f, to_slug: ACME, link_type: 'mentions',
+        context: '', link_source: 'manual', from_source_id: 'default', to_source_id: 'default' })));
+      await stampUpdatedAt(engine, backend, 'default', 'notes/b-undated', '2026-03-01T12:00:00.000200Z');
+      await stampUpdatedAt(engine, backend, 'default', 'notes/a-undated', '2026-03-01T12:00:00.000700Z');
+      const op = operations.find(o => o.name === 'get_backlinks')!;
+      const notices: Notice[] = [];
+      const pages: Row[][] = [];
+      const shape: Array<[number, boolean]> = [];
+      let cursor: string | undefined;
+      do {
+        const r = await op.handler(ctxFor(engine, notices), { slug: ACME, group: 'page', limit: 1, ...(cursor ? { cursor } : {}) }) as
+          { rows: Row[]; total: number; truncated: boolean; cursor: string | null };
+        pages.push(r.rows);
+        shape.push([r.total, r.truncated]);
+        cursor = r.cursor ?? undefined;
+      } while (cursor && pages.length < 4);
+      if (backend !== 'rust') {
+        expect(pages.flat().map(r => [r.slug, r.date, r.date_source])).toEqual([
+          ['notes/a-undated', '2026-03-01T12:00:00.000700Z', 'updated_at'], ['notes/b-undated', '2026-03-01T12:00:00.000200Z', 'updated_at']]);
+      }
+      const out = { pages: pages.map(rows => rows.map(r => [r.slug, r.date_source])), shape };
+      expect(out).toEqual({ pages: [[['notes/a-undated', 'updated_at']], [['notes/b-undated', 'updated_at']]], shape: [[2, true], [2, false]] });
+      return out;
     },
   );
 });
