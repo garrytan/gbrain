@@ -15,7 +15,7 @@
  * The concept-input test is rendered either inline or as a call of `gbrain_concept_inputs_private` (migration v311),
  * by the schema version the context carries. The two forms are the same test, so the comparison reads both as one.
  */
-import { ANY_OWNER_ONLY_SQL, ownerOnlyPageSql } from '../../access/owner-only.ts';
+import { ownerOnlyPageSql } from '../../access/owner-only.ts';
 import {
   privacyAliasSql,
   privatePagesFilterForCaller,
@@ -37,15 +37,16 @@ export interface StorePrivacyPolicy {
 /**
  * The owner-only part of the policy, as the baseline renders it (src/core/access/owner-only.ts): `lineage` is the v320
  * form (a page of an owner-only source, or a concept or question synthesized from one, is hidden), which a brain at or
- * above that schema version renders; `closed` is the form below it or outside an engine scope (any owner-only source in
- * the brain hides every page). The part always applies to the no-caller baseline, whatever the other settings say.
+ * above that schema version renders, and its v328 form with the login's read mode (always the exact lineage in the store,
+ * which has no logins that row security narrows); `closed` is the form below v320 or outside an engine scope (any
+ * owner-only source in the brain, or the held flag, hides every page). The part always applies to the no-caller baseline, whatever the other settings say.
  */
 export type StoreOwnerOnly = 'lineage' | 'closed';
 
 /** Which owner-only form `baseline` renders for the page alias `alias`; a text that holds neither refuses (the store has no third form). */
 function ownerOnlyOf(member: string, baseline: string, alias: string): StoreOwnerOnly {
-  if (baseline.includes(ownerOnlyPageSql(alias, 'fn'))) return 'lineage';
-  if (baseline.includes(ANY_OWNER_ONLY_SQL)) return 'closed';
+  if (baseline.includes(ownerOnlyPageSql(alias, 'fn')) || baseline.includes(ownerOnlyPageSql(alias, 'mode'))) return 'lineage';
+  if (baseline.includes(ownerOnlyPageSql(alias, 'closed'))) return 'closed';
   return refuseMember(member, 'excludePrivate under an owner-only rule the store does not model');
 }
 

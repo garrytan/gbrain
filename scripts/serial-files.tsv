@@ -329,6 +329,7 @@ test/pglite-engine-disconnect.serial.test.ts	global-state	global-state: R3: cons
 test/pglite-in-memory-create-retry.serial.test.ts	R2	R2: mock.module(@electric-sql/pglite) replaces modules for every file in the process
 test/pglite-reconnect.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect
 test/pglite-repair-command.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect; patches process stdout/stderr/console
+test/pglite-snapshot-schema-version.serial.test.ts	R1	R1: mutates process.env (GBRAIN_PGLITE_SNAPSHOT)
 test/pglite-snapshot-timezone.serial.test.ts	R1	R1: mutates process.env (GBRAIN_PGLITE_SNAPSHOT)
 test/pglite-wal-repair.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect; patches process stdout/stderr/console
 test/physical-root-overlap-vanished-dir.serial.test.ts	R2	R2: mock.module(node:fs) makes readdirSync throw ENOENT for one path

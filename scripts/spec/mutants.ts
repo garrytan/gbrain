@@ -66,7 +66,7 @@ function runSpec(m: Mutant, tla2tools: string): void {
   const mutated = applyOnce(readFileSync(target, 'utf8'), m.spec);
   if (mutated === null) return fail('MUTANT_STALE', m.id, `spec text not found exactly once in ${m.spec.file}: ${JSON.stringify(m.spec.before)}`);
   writeFileSync(target, mutated);
-  const tlc = (cfg: string) => spawnSync('java', ['-XX:+UseParallelGC', `-Djava.io.tmpdir=${join(work, 'tmp')}`, '-cp', tla2tools, 'tlc2.TLC', '-workers', 'auto',
+  const tlc = (cfg: string) => spawnSync('java', ['-XX:+UseParallelGC', '-Dtlc2.tool.queue.DiskStateQueue.BufSize=1048576', `-Djava.io.tmpdir=${join(work, 'tmp')}`, '-cp', tla2tools, 'tlc2.TLC', '-workers', 'auto',
     '-config', cfg, '-metadir', join(work, `states-${cfg}`), `${catalog.module}.tla`], { cwd: work, encoding: 'utf8', timeout: timeoutS * 1000 });
   const r = tlc(config);
   const log = `${r.stdout ?? ''}${r.stderr ?? ''}`;
