@@ -91,6 +91,8 @@ function statsRejectingEngine(err: Error): BrainEngine {
       if (prop === 'readAtomProvenanceCounts') return async () => null;
       // The atom extraction backlog is a count; 0 is the no-row answer the raw COUNT read gave before the typed member.
       if (prop === 'countAtomExtractionBacklog') return async () => 0;
+      // The managed-sync orphan read answers five lists, so its empty answer is five empty lists.
+      if (prop === 'listManagedSyncOrphanRowsets') return async () => ({ cursors: [], failures: [], passes: [], retiredCursors: [], retiredFailures: [] });
       return async () => [];
     },
   }) as unknown as BrainEngine;

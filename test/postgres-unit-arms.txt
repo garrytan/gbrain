@@ -143,6 +143,7 @@ test/engine-parity/doctor-persistence.test.ts
 test/engine-parity/doctor-reads.test.ts
 test/engine-parity/doctor-search.test.ts
 test/engine-parity/doctor-sources.test.ts
+test/engine-parity/doctor-sync.test.ts
 test/engine-parity/effect-scans.test.ts
 test/engine-parity/embedding-catalog.test.ts
 test/engine-parity/entity-anchor-reads.test.ts

@@ -81,6 +81,7 @@ import * as doctorPages from './doctor-pages.ts';
 import * as doctorSearch from './doctor-search.ts';
 import * as doctorAcc from './doctor-acc.ts';
 import * as doctorCheckpoints from './doctor-checkpoints.ts';
+import * as doctorSync from './doctor-sync.ts';
 import * as doctorSources from './doctor-sources.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
@@ -141,6 +142,8 @@ export const STORE_MEMBERS = {
   ...doctorAcc,
   // The op_checkpoints and ingest_log statements doctor ran through executeRaw (rust/docs/store/cli-reads-doctor-checkpoints.md).
   ...doctorCheckpoints,
+  // Doctor sync reads: the managed-sync cursor, failure and orphan statements doctor ran through executeRaw (rust/docs/store/cli-reads-doctor-sync.md).
+  ...doctorSync,
   // The doctor reads over sources (rust/docs/store/cli-reads-doctor-src.md).
   ...doctorSources,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };

@@ -206,6 +206,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'listVolunteerChannels',
   // Doctor checkpoint reads (engine-sql/doctor-checkpoints.ts; covered by test/engine-parity/doctor-checkpoints.test.ts)
   'readOpCheckpointKeys', 'listFenceCandidateRecords', 'listDerivedOriginParks', 'listPurgeParks', 'readSoakCounterRows', 'listUnfinishedManagedSyncCursors', 'listManagedSyncPassStops', 'listManagedSyncBacklogHeaders', 'readManagedSyncPassRow', 'listLiveManagedSyncPassRows', 'listCheckpointBlockedSources', 'listOpenIdentityDowngrades', 'listHeldManagedAtomRows', 'readDoctorLastKnown', 'writeDoctorLastKnown', 'readSyncAdmissionSettingRow', 'readLatestConnectorReceipt', 'listFactsAbsorbFailureGroups',
+  // Doctor sync reads: the managed-sync cursor, failure and orphan statements doctor ran through executeRaw (engine-sql/doctor-sync.ts; covered by test/engine-parity/doctor-sync.test.ts)
+  'listManagedSyncCursorFailureRows', 'listManagedSyncOrphanRowsets', 'listDurableManagedSyncFailureKeys',
   // Doctor source reads (engine-sql/doctor-sources.ts; covered by test/engine-parity/doctor-sources.test.ts)
   'readDoctorSources', 'listGuestSourceRows', 'listCheckoutRoots', 'listPendingRoster', 'listOwnedContentRows', 'countDefaultSourceFiles',
   'upsertFactRelinkAttempt', 'listFactRelinkOutcomes', 'deleteFactRelinkMemos',

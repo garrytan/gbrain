@@ -191,6 +191,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'readFeedbackStatus', 'listBeliefCoveredSources', 'listVolunteerChannels'],
   // doctor_checkpoints: the op_checkpoints and ingest_log reads doctor checks ran through executeRaw (engine-sql/doctor-checkpoints.ts)
   doctor_checkpoints: ['readOpCheckpointKeys', 'listFenceCandidateRecords', 'listDerivedOriginParks', 'listPurgeParks', 'readSoakCounterRows', 'listUnfinishedManagedSyncCursors', 'listManagedSyncPassStops', 'listManagedSyncBacklogHeaders', 'readManagedSyncPassRow', 'listLiveManagedSyncPassRows', 'listCheckpointBlockedSources', 'listOpenIdentityDowngrades', 'listHeldManagedAtomRows', 'readDoctorLastKnown', 'writeDoctorLastKnown', 'readSyncAdmissionSettingRow', 'readLatestConnectorReceipt', 'listFactsAbsorbFailureGroups'],
+  // doctor_sync: Doctor sync reads: the managed-sync cursor, failure and orphan statements doctor ran through executeRaw (engine-sql/doctor-sync.ts)
+  doctor_sync: ['listManagedSyncCursorFailureRows', 'listManagedSyncOrphanRowsets', 'listDurableManagedSyncFailureKeys'],
   // doctor_sources: the doctor reads over sources (engine-sql/doctor-sources.ts)
   doctor_sources: ['readDoctorSources', 'listGuestSourceRows', 'listCheckoutRoots', 'listPendingRoster', 'listOwnedContentRows', 'countDefaultSourceFiles'],
 

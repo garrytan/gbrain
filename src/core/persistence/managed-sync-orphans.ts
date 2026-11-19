@@ -46,7 +46,6 @@
  * since the preview is kept.
  */
 import type { BrainEngine } from '../engine.ts';
-import type { SqlEngine } from './model.ts';
 import { clearManagedSyncFailure, loadSyncFailures } from '../sync-failure-ledger.ts';
 import { CHECKPOINT_MOVED_MESSAGE } from './sync-slug-mode.ts';
 import { clearSyncSlice } from './sync-slices.ts';
@@ -80,12 +79,8 @@ export interface ManagedSyncOrphanClassification {
 
 const TERMINAL = ['committed', 'failed', 'conflict', 'cancelled'];
 
-interface CursorRow {
-  cursor_key: string; source_id: string; source_incarnation: string; run_id: string | null;
-  principal_kind: string | null; principal_id: string | null; has_sync_options: boolean;
-  pending_request_id: string | null; pending_state: string | null;
-  principal_live: boolean; superseded: boolean; checkpoint_moved: boolean; slug_mode_refused: boolean; updated_at: string;
-}
+/** What the orphan classification reads: the typed rowsets, and the sources and durable failure keys the mirror check compares. */
+export type OrphanReadEngine = Pick<BrainEngine, 'listManagedSyncOrphanRowsets' | 'readDoctorSources' | 'listDurableManagedSyncFailureKeys'>;
 
 /**
  * #6834: the cursor `c` (of source `s`) stands at its checkpoint, which ended refused because `last_commit` moved, and the
@@ -94,7 +89,7 @@ interface CursorRow {
  * approval and is never one. Shared by the classification and the retirement's re-check, so both read the same rule.
  * `$msg` is the moved-checkpoint message parameter.
  */
-const checkpointMovedSql = (msg: string) => `(c.completed_keys->0->'pending'->'intent'->>'kind'='managed_sync_checkpoint' AND c.completed_keys->0->>'companyReceiptId' IS NULL
+export const checkpointMovedSql = (msg: string) => `(c.completed_keys->0->'pending'->'intent'->>'kind'='managed_sync_checkpoint' AND c.completed_keys->0->>'companyReceiptId' IS NULL
   AND (c.completed_keys->0->>'index')::int>=(c.completed_keys->0->>'total')::int
   AND s.last_commit IS DISTINCT FROM c.completed_keys->0->>'from'
   AND (c.completed_keys->0->'pending'->'intent'->'slice'->>'done'='false' OR s.last_commit IS DISTINCT FROM c.completed_keys->0->>'target')
@@ -107,7 +102,7 @@ const checkpointMovedSql = (msg: string) => `(c.completed_keys->0->'pending'->'i
  * #6712 PR 3: the cursor `c` (of source `s`) stands at its checkpoint, refused `slug_root_mode_mismatch`, and the source
  * still pins a mode other than the run's. Shared by the classification and the retirement's re-check.
  */
-const slugModeRefusedSql = `(c.completed_keys->0->'pending'->'intent'->>'kind'='managed_sync_checkpoint' AND c.completed_keys->0->>'companyReceiptId' IS NULL
+export const slugModeRefusedSql = `(c.completed_keys->0->'pending'->'intent'->>'kind'='managed_sync_checkpoint' AND c.completed_keys->0->>'companyReceiptId' IS NULL
   AND (c.completed_keys->0->>'index')::int>=(c.completed_keys->0->>'total')::int
   AND s.config->>'slug_root_mode' IS NOT NULL AND s.config->>'slug_root_mode' IS DISTINCT FROM c.completed_keys->0->>'slugMode'
   AND EXISTS(SELECT 1 FROM persistence_requests m WHERE m.source_id=s.id AND m.request_id=(c.completed_keys->0->'pending'->>'requestId')::uuid
@@ -120,42 +115,19 @@ const slugModeRefusedSql = `(c.completed_keys->0->'pending'->'intent'->>'kind'='
  * source pins another, the pass's stamp `req` ended refused `slug_root_mode_mismatch`, and nothing that pass admitted is
  * still open. Shared by the classification and the retirement's re-check.
  */
-const passSlugModeRefusedSql = (req: string) => `(p.completed_keys->0->'obligations'->>'slug_mode' IS NOT NULL
+export const passSlugModeRefusedSql = (req: string) => `(p.completed_keys->0->'obligations'->>'slug_mode' IS NOT NULL
   AND s.config->>'slug_root_mode' IS NOT NULL AND s.config->>'slug_root_mode' IS DISTINCT FROM p.completed_keys->0->'obligations'->>'slug_mode'
   AND EXISTS(SELECT 1 FROM persistence_requests m WHERE m.source_id=s.id AND m.request_id=${req} AND m.intent->>'kind'='managed_sync_checkpoint'
     AND m.intent->>'passId'=p.completed_keys->0->'telemetry'->>'pass_id' AND m.state IN ('failed','conflict') AND m.recovery IS NULL AND m.error_code='slug_root_mode_mismatch')
   AND NOT EXISTS(SELECT 1 FROM persistence_requests o WHERE o.source_id=s.id AND o.intent->>'passId'=p.completed_keys->0->'telemetry'->>'pass_id'
     AND (o.state IN ('queued','running','recovering') OR o.recovery IS NOT NULL)))`;
 /** The newest stamp request of the pass row `p`'s pass. */
-const passStampSql = `(SELECT n.request_id FROM persistence_requests n WHERE n.source_id=s.id AND n.intent->>'kind'='managed_sync_checkpoint'
+export const passStampSql = `(SELECT n.request_id FROM persistence_requests n WHERE n.source_id=s.id AND n.intent->>'kind'='managed_sync_checkpoint'
   AND n.intent->>'passId'=p.completed_keys->0->'telemetry'->>'pass_id' ORDER BY n.sequence DESC LIMIT 1)`;
 
 /** Read-only. `sourceIds` narrows to those sources; null reads every active source. */
-export async function classifyManagedSyncOrphans(engine: SqlEngine, sourceIds: string[] | null = null): Promise<ManagedSyncOrphanClassification> {
-  const cursors = await engine.executeRaw<CursorRow>(`
-    SELECT c.fingerprint AS cursor_key,s.id AS source_id,s.incarnation::text AS source_incarnation,c.completed_keys->0->>'runId' AS run_id,
-      c.completed_keys->0->'authority'->'writer'->'principal'->>'kind' AS principal_kind,
-      c.completed_keys->0->'authority'->'writer'->'principal'->>'id' AS principal_id,
-      (c.completed_keys->0 ? 'syncOptions') AS has_sync_options,
-      c.completed_keys->0->'pending'->>'requestId' AS pending_request_id,r.state AS pending_state,
-      EXISTS(SELECT 1 FROM persistence_local_writers w WHERE w.revoked_at IS NULL
-        AND w.id::text=c.completed_keys->0->'authority'->'writer'->'principal'->>'id'
-        AND c.completed_keys->0->'authority'->'writer'->'principal'->>'kind' IN ('local_cli','local_stdio')) AS principal_live,
-      EXISTS(SELECT 1 FROM op_checkpoints n WHERE n.op='managed-sync' AND n.fingerprint<>c.fingerprint
-        AND n.completed_keys->0->>'sourceId'=s.id AND n.completed_keys->0->>'incarnation'=s.incarnation::text
-        AND COALESCE(n.completed_keys->0->>'done','false')='true' AND n.updated_at>c.updated_at) AS superseded,
-      ${checkpointMovedSql('$2')} AS checkpoint_moved,
-      ${slugModeRefusedSql} AS slug_mode_refused,
-      to_char(c.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at
-    FROM op_checkpoints c
-    JOIN sources s ON s.id=c.completed_keys->0->>'sourceId' AND s.incarnation::text=c.completed_keys->0->>'incarnation' AND NOT COALESCE(s.archived,false)
-    LEFT JOIN persistence_requests r ON r.source_id=s.id AND r.source_incarnation=s.incarnation
-      AND r.request_id=(c.completed_keys->0->'pending'->>'requestId')::uuid
-      AND r.principal_id=c.completed_keys->0->'authority'->'writer'->'principal'->>'id'
-      AND r.principal_kind=c.completed_keys->0->'authority'->'writer'->'principal'->>'kind'
-    WHERE c.op='managed-sync' AND COALESCE(c.completed_keys->0->>'done','false')<>'true'
-      AND ($1::text[] IS NULL OR s.id=ANY($1::text[]))
-    ORDER BY s.id,c.updated_at,c.fingerprint`, [sourceIds, CHECKPOINT_MOVED_MESSAGE]);
+export async function classifyManagedSyncOrphans(engine: OrphanReadEngine, sourceIds: string[] | null = null): Promise<ManagedSyncOrphanClassification> {
+  const { cursors, failures, passes, retiredCursors, retiredFailures } = await engine.listManagedSyncOrphanRowsets(sourceIds, CHECKPOINT_MOVED_MESSAGE);
   const orphans: ManagedSyncOrphan[] = [];
   const retained: ManagedSyncOrphanClassification['retained'] = [];
   for (const row of cursors) {
@@ -167,44 +139,16 @@ export async function classifyManagedSyncOrphans(engine: SqlEngine, sourceIds: s
     orphans.push({ kind: 'unfinished_cursor', cursor_key: row.cursor_key, source_id: row.source_id, source_incarnation: row.source_incarnation, run_id: row.run_id,
       principal, pending_request_id: row.pending_request_id, pending_state: row.pending_state, reason, updated_at: row.updated_at });
   }
-  const failures = await engine.executeRaw<{ cursor_key: string; source_id: string; source_incarnation: string; run_id: string | null; request_id: string | null; updated_at: string }>(`
-    SELECT f.fingerprint AS cursor_key,s.id AS source_id,s.incarnation::text AS source_incarnation,f.completed_keys->0->>'run_id' AS run_id,
-      f.completed_keys->0->>'request_id' AS request_id,to_char(f.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at
-    FROM op_checkpoints f
-    JOIN sources s ON s.id=f.completed_keys->0->>'source_id' AND s.incarnation::text=f.completed_keys->0->>'source_incarnation' AND NOT COALESCE(s.archived,false)
-    WHERE f.op='managed-sync-failure' AND ($1::text[] IS NULL OR s.id=ANY($1::text[]))
-      AND NOT EXISTS(SELECT 1 FROM op_checkpoints c WHERE c.op IN ('managed-sync','managed-sync-pass') AND c.fingerprint=f.fingerprint)
-    ORDER BY s.id,f.fingerprint`, [sourceIds]);
   for (const row of failures) {
     orphans.push({ kind: 'failure_row', cursor_key: row.cursor_key, source_id: row.source_id, source_incarnation: row.source_incarnation, run_id: row.run_id,
       principal: null, pending_request_id: row.request_id, pending_state: null, reason: 'no_cursor', updated_at: row.updated_at });
   }
-  const passes = await engine.executeRaw<{ cursor_key: string; source_id: string; source_incarnation: string; run_id: string; request_id: string; state: string; updated_at: string }>(`
-    SELECT p.fingerprint AS cursor_key,s.id AS source_id,s.incarnation::text AS source_incarnation,p.completed_keys->0->'telemetry'->>'pass_id' AS run_id,
-      ${passStampSql}::text AS request_id,(SELECT m.state FROM persistence_requests m WHERE m.source_id=s.id AND m.request_id=${passStampSql}) AS state,
-      to_char(p.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at
-    FROM op_checkpoints p
-    JOIN sources s ON p.fingerprint=s.id||':'||s.incarnation::text AND NOT COALESCE(s.archived,false)
-    WHERE p.op='managed-sync-pass' AND ($1::text[] IS NULL OR s.id=ANY($1::text[])) AND ${passSlugModeRefusedSql(passStampSql)}
-    ORDER BY s.id`, [sourceIds]);
   for (const row of passes) {
     orphans.push({ kind: 'unfinished_cursor', cursor_key: row.cursor_key, source_id: row.source_id, source_incarnation: row.source_incarnation, run_id: row.run_id,
       principal: null, pending_request_id: row.request_id, pending_state: row.state, reason: 'slug_mode_refused', updated_at: row.updated_at });
   }
   // #6518: rows keyed under an incarnation the source no longer has. The join is on the source id alone; the live
   // pending-request guard stays, the live-writer guard does not apply (no current key can select these rows).
-  const retiredCursors = await engine.executeRaw<Pick<CursorRow, 'cursor_key' | 'source_id' | 'source_incarnation' | 'run_id' | 'principal_kind' | 'principal_id' | 'pending_request_id' | 'pending_state' | 'updated_at'>>(`
-    SELECT c.fingerprint AS cursor_key,s.id AS source_id,c.completed_keys->0->>'incarnation' AS source_incarnation,c.completed_keys->0->>'runId' AS run_id,
-      c.completed_keys->0->'authority'->'writer'->'principal'->>'kind' AS principal_kind,
-      c.completed_keys->0->'authority'->'writer'->'principal'->>'id' AS principal_id,
-      c.completed_keys->0->'pending'->>'requestId' AS pending_request_id,r.state AS pending_state,
-      to_char(c.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at
-    FROM op_checkpoints c
-    JOIN sources s ON s.id=c.completed_keys->0->>'sourceId' AND s.incarnation::text<>c.completed_keys->0->>'incarnation' AND NOT COALESCE(s.archived,false)
-    LEFT JOIN persistence_requests r ON r.source_id=s.id AND r.request_id=(c.completed_keys->0->'pending'->>'requestId')::uuid
-    WHERE c.op='managed-sync' AND COALESCE(c.completed_keys->0->>'done','false')<>'true'
-      AND ($1::text[] IS NULL OR s.id=ANY($1::text[]))
-    ORDER BY s.id,c.updated_at,c.fingerprint`, [sourceIds]);
   for (const row of retiredCursors) {
     if (row.pending_request_id && row.pending_state && !TERMINAL.includes(row.pending_state)) { retained.push({ cursor_key: row.cursor_key, source_id: row.source_id, why: 'pending_request_live' }); continue; }
     orphans.push({ kind: 'unfinished_cursor', cursor_key: row.cursor_key, source_id: row.source_id, source_incarnation: row.source_incarnation, run_id: row.run_id,
@@ -212,14 +156,6 @@ export async function classifyManagedSyncOrphans(engine: SqlEngine, sourceIds: s
       reason: 'incarnation_retired', updated_at: row.updated_at });
   }
   // A retired failure row rides with its unfinished cursor when one exists under its key (the cursor's retirement deletes it).
-  const retiredFailures = await engine.executeRaw<{ cursor_key: string; source_id: string; source_incarnation: string; run_id: string | null; request_id: string | null; updated_at: string }>(`
-    SELECT f.fingerprint AS cursor_key,s.id AS source_id,f.completed_keys->0->>'source_incarnation' AS source_incarnation,f.completed_keys->0->>'run_id' AS run_id,
-      f.completed_keys->0->>'request_id' AS request_id,to_char(f.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at
-    FROM op_checkpoints f
-    JOIN sources s ON s.id=f.completed_keys->0->>'source_id' AND s.incarnation::text<>f.completed_keys->0->>'source_incarnation' AND NOT COALESCE(s.archived,false)
-    WHERE f.op='managed-sync-failure' AND ($1::text[] IS NULL OR s.id=ANY($1::text[]))
-      AND NOT EXISTS(SELECT 1 FROM op_checkpoints c WHERE c.op='managed-sync' AND c.fingerprint=f.fingerprint AND COALESCE(c.completed_keys->0->>'done','false')<>'true')
-    ORDER BY s.id,f.fingerprint`, [sourceIds]);
   for (const row of retiredFailures) {
     orphans.push({ kind: 'failure_row', cursor_key: row.cursor_key, source_id: row.source_id, source_incarnation: row.source_incarnation, run_id: row.run_id,
       principal: null, pending_request_id: row.request_id, pending_state: null, reason: 'incarnation_retired', updated_at: row.updated_at });
@@ -236,14 +172,14 @@ export async function classifyManagedSyncOrphans(engine: SqlEngine, sourceIds: s
  * (any incarnation), on active sources. The durable read is the authority: when it fails, this throws rather than
  * naming every mirror as prunable. A ledger that cannot be read names nothing.
  */
-export async function mirrorOnlyManagedFailures(engine: SqlEngine, sourceIds: string[] | null = null): Promise<Array<{ cursor_key: string; source_id: string; run_id: string | null; request_id: string | null; updated_at: string }>> {
+export async function mirrorOnlyManagedFailures(engine: OrphanReadEngine, sourceIds: string[] | null = null): Promise<Array<{ cursor_key: string; source_id: string; run_id: string | null; request_id: string | null; updated_at: string }>> {
   let rows: ReturnType<typeof loadSyncFailures> = [];
   try { rows = loadSyncFailures(); } catch { return []; }
   const mirrors = rows.filter(row => row.managed_cursor_key && (!sourceIds || sourceIds.includes(row.source_id)));
   if (!mirrors.length) return [];
-  const archived = new Set((await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived = true')).map(row => row.id));
+  const archived = new Set((await engine.readDoctorSources('local_path_state')).filter(row => row.archived).map(row => row.id));
   const keys = [...new Set(mirrors.map(row => row.managed_cursor_key!))];
-  const durable = new Set((await engine.executeRaw<{ fingerprint: string }>("SELECT fingerprint FROM op_checkpoints WHERE op='managed-sync-failure' AND fingerprint=ANY($1::text[])", [keys])).map(row => row.fingerprint));
+  const durable = new Set(await engine.listDurableManagedSyncFailureKeys(keys));
   const seen = new Set<string>();
   const out: Array<{ cursor_key: string; source_id: string; run_id: string | null; request_id: string | null; updated_at: string }> = [];
   for (const row of mirrors) {
@@ -256,7 +192,7 @@ export async function mirrorOnlyManagedFailures(engine: SqlEngine, sourceIds: st
 }
 
 /** #6518: prunes a source's mirror-only ledger rows (the successful-sync path); returns how many it removed. */
-export async function pruneMirrorOnlyManagedFailures(engine: SqlEngine, sourceId: string): Promise<number> {
+export async function pruneMirrorOnlyManagedFailures(engine: OrphanReadEngine, sourceId: string): Promise<number> {
   const rows = await mirrorOnlyManagedFailures(engine, [sourceId]);
   for (const row of rows) clearManagedSyncFailure(row.cursor_key);
   return rows.length;

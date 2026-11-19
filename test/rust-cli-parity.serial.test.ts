@@ -435,7 +435,9 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // dirty_age, git_convergence, quarantined_changes, shared_skills_sources, tracked_ownership_marker,
       // transcript_secret_exposure) are gone from this list: the typed sources reads now show the brain has no git
       // source root, so those checks emit nothing, as on PGLite.
-      onlyRust: ['sync_failures'],
+      // sync_failures is gone from this list: its reads are typed members Rust serves, so on this brain it emits nothing,
+      // as on PGLite.
+      onlyRust: [],
       // entity_link_coverage, graph_coverage, orphan_ratio and timeline_coverage are gone from this list: the entity
       // types resolve on a Rust brain (overrideSourcesFromKeys), so those checks pass as they do on PGLite.
       // trust_scan counts the pages and facts on Rust, then warns with the refusal of the takes count, which names
@@ -449,7 +451,8 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // projection-queue and reflex reads are served, so those checks report what PGLite reports. dangling_aliases,
       // type_proliferation, markdown_body_completeness, link_resolution_opportunity, hidden_by_search_policy and
       // image_embedding_coverage run on Rust too; person_title_duplicates still warns with its typed refusal (okWhileRefused).
-      untypedWarnings: ['backup_coverage', 'fact_take_vectors', 'provenance_stamp_drift', 'sync_failures', 'trust_scan'],
+      // sync_failures is gone from this list too: it no longer warns in its own words.
+      untypedWarnings: ['backup_coverage', 'fact_take_vectors', 'provenance_stamp_drift', 'trust_scan'],
       // The imported fixture has no embeddings, so both engines score it below 100 and count its chunks stale; the pack
       // reads are served, so the successor notice is the same. embeddings is not here: Rust cannot read the backlog
       // age, so it warns with that typed refusal where PGLite reads the age and passes. default_source_local_path
