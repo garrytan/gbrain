@@ -150,6 +150,53 @@ current and a page ahead is rebuilt by its batch. Dropping the `Store` stops the
 
 The binding and `gbrain doctor` do not expose `verify` or `rebuild` yet.
 
+### Scale
+
+Measured with `keyword_scale` (`crates/gbrain-store/examples/keyword_scale.rs`) on the bake-off corpus at 50,000
+pages and 200,000 chunks (`rust/bench/corpus/dbpedia.py --chunks 200000`; where the text comes from and its licence
+are in `rust/bench/corpus/PROVENANCE.md`). A release build, the store opened with `Store::open_dir`, one fresh
+process per member, 30 queries per member (35 for `fuzzy`), every query measured, pass 2 of 2. With 30 queries the
+p99 is the slowest query. "Scan" is the same member with the index forced off (`GBRAIN_RUST_KEYWORD_SCAN=1`).
+
+| Member | p50 ms, index (scan) | p99 ms, index (scan) | Peak RSS MiB, index (scan) |
+|---|---|---|---|
+| `arm` | 5.4 (8,121) | 203 (8,868) | 405 (650) |
+| `chunks` | 5.8 (7,764) | 157 (8,182) | 396 (667) |
+| `pages_count` | 6.2 (7,649) | 127 (7,738) | 361 (648) |
+| `pages_search` | 5.8 (7,774) | 162 (8,145) | 402 (648) |
+| `titles` | 0.1 (540) | 2.5 (663) | 24 (454) |
+| `titles_complete` | 0.1 (497) | 2.2 (508) | 23 (435) |
+| `fuzzy` | 3.4 (393) | 10.8 (469) | 30 (359) |
+
+The first query after open takes 45 to 58 ms on the four body members. Every
+member is under 100 ms at p50 and 500 ms at p99.
+
+- Build from a format 2 store: 196 batches of 256 pages in 505 s. The build is bound by the durable commit of each
+  batch (the thread uses about 8% of a CPU), and it peaks at 1.04 GiB RSS.
+- Size: the file is 2.23 GB after the build. Compacted, it is 1.37 GB; the same brain before the index compacts to
+  0.86 GB, so the index adds 0.51 GB compacted. The postings (`R` keys and values) are 222 MB in 7,195,328 records. The
+  build leaves about 0.86 GB of free pages in the file.
+- `keyword_index_verify(None)` (`index-check`) takes 21 s and reads 1.0 GiB RSS: 7,195,327 postings expected, 0
+  missing, 0 changed, 0 orphan.
+
+NOT-only queries (`-word`) have no candidate bound, so they scan, and they are not faster with the index. At this
+size `keyword_scale not-only` gives a p50 of 10.3 s for `arm`, 10.2 s for `chunks`, 9.9 s for `pages_search` and 2.3 s
+for `pages_count`.
+
+Writes keep the index current in the same transaction. `keyword_scale writes` on a copy of the 200,000-chunk store:
+200 durable `put_page` calls took a p50 of 208 ms (p99 318 ms). Body queries while a writer ran had a p50 of 8.5 ms,
+against 6.7 ms alone; title queries were 0.20 ms in both cases. The index check after those writes found 0 missing,
+0 changed and 0 orphan postings. The store has no way to run without the index, so there is no baseline for the put
+cost without postings.
+
+`verify` at this size (512 cases on the bench corpus, 544 with the private-page fixtures on a copy) found 0 mismatches
+between the indexed and the forced-scan result bytes for every member.
+
+To rerun: the header of `keyword_scale.rs` lists every mode and the full recipe (`load ... nosync`, `queries`,
+`build`, `run <store> <queries> <member> 900 2` once per member, `index-check`, `verify`, `sizes`). `verify` is the
+untimed correctness mode: it runs each query through the index and through the forced scan on the same store and
+compares the full result bytes, and `writes` times durable `put_page` calls and queries during writes.
+
 ## The vector cache
 
 The store keeps no `search_vector`, so each member rebuilds a chunk's or a page's vector from its text. Rebuilt
