@@ -314,7 +314,8 @@ fn words(text: &str) -> Vec<String> {
 }
 
 /// 30 queries over `docs`: 10 single common words, 6 pairs and 4 triples of common words, 3
-/// mid-frequency words, 3 rare words, 4 quoted phrases of consecutive words of a real document.
+/// mid-frequency words, 3 rare words, 4 quoted phrases of consecutive words of a real document
+/// (none when no document can give one).
 fn make_queries(docs: &[String], seed: u64) -> Vec<Value> {
     let mut rng = Rng(seed);
     let mut df: HashMap<String, u32> = HashMap::new();
@@ -376,7 +377,22 @@ fn make_queries(docs: &[String], seed: u64) -> Vec<Value> {
     for _ in 0..3 {
         add("rare1", rare[rng.below(rare.len())].clone());
     }
-    for _ in 0..4 {
+    // A phrase comes from a document of 8 or more words with three consecutive words that are
+    // not stop words. Without one such document the sampling below would never end (a corpus of
+    // short titles), so the phrases are left out; the check draws nothing from `rng`, so a corpus
+    // that has one gets the same queries as before.
+    let phrase_source = docs.iter().any(|d| {
+        let ws = words(d);
+        ws.len() >= 8
+            && (0..ws.len() - 3)
+                .any(|at| ws[at..at + 3].iter().all(|w| !STOP.contains(&w.as_str())))
+    });
+    if !phrase_source {
+        eprintln!(
+            "keyword_scale: no document has 8 or more words with three consecutive non-stop words; the queries have no phrase3 entries"
+        );
+    }
+    for _ in 0..if phrase_source { 4 } else { 0 } {
         loop {
             let ws = words(&docs[rng.below(docs.len())]);
             if ws.len() < 8 {
@@ -1710,5 +1726,64 @@ fn main() {
         _ => die(
             "mode is load, queries, run, build, sizes, compact, index-check, verify, not-only or writes",
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    /// Documents with every word frequency the generator needs: common words, mid-frequency
+    /// words, rare words, `extra` appended to the first document.
+    fn docs(words_per_doc: usize, extra: &str) -> Vec<String> {
+        let letters = |n: usize| -> String {
+            (0..3)
+                .map(|k| (b'a' + ((n / 26usize.pow(k)) % 26) as u8) as char)
+                .collect()
+        };
+        let mut out: Vec<String> = (0..400)
+            .map(|i| {
+                let mut ws: Vec<String> = (0..words_per_doc)
+                    .map(|k| format!("common{}", letters((i + k) % 220)))
+                    .collect();
+                ws.push(format!("middling{}", letters(i % 40)));
+                if i < 20 {
+                    ws.push(format!("rareword{}", letters(i)));
+                }
+                ws.join(" ")
+            })
+            .collect();
+        out[0].push_str(extra);
+        out
+    }
+
+    fn phrases(docs: Vec<String>) -> Vec<String> {
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(make_queries(&docs, 2));
+        });
+        let queries = rx
+            .recv_timeout(Duration::from_secs(20))
+            .expect("make_queries returned within 20 s");
+        queries
+            .iter()
+            .filter(|q| q["kind"] == "phrase3")
+            .map(|q| q["text"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn queries_end_when_no_document_is_long_enough_for_a_phrase() {
+        // Every document has 4 words, under the 8 a phrase source needs (short titles).
+        assert_eq!(phrases(docs(3, "")), Vec::<String>::new());
+    }
+
+    #[test]
+    fn queries_still_take_phrases_from_the_long_documents() {
+        let found = phrases(docs(3, " alpha bravo charlie delta echo foxtrot"));
+        assert_eq!(found.len(), 4);
+        assert!(found.iter().all(|p| p.starts_with('"') && p.ends_with('"')));
     }
 }
