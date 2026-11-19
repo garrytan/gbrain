@@ -217,6 +217,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'listLivePageSummaries': OOS.linkReads,
   'countInboundLinks': OOS.linkReads,
   'listLinkEndpointPages': OOS.linkReads,
+  'readLinkContextMatches': OOS.linkReads,
+  'readLinkContextOriginPages': OOS.linkReads,
   'listPagesTitledIn': OOS.linkReads,
   'chunkRead': OOS.helper,
   'findCodeDefinitions': OOS.chunkReads,

@@ -6,7 +6,7 @@
  * and the link reads of hybrid search's ranking stage (hasSupersedeEdges, supersedingPageSlugs, pagesLinkingTo; the
  * SQL is src/core/engine-sql/search-reads.ts), and the link reads of src/core/engine-sql/link-reads.ts (inboundLinkCoverage,
  * listJunkEntityHubs, countEntityPages, entityGraphCoverage, countForeignEdges, listLivePageSummaries, countInboundLinks,
- * listLinkEndpointPages, listPagesTitledIn, wordLexemes).
+ * listLinkEndpointPages, listPagesTitledIn, wordLexemes, readLinkContextMatches, readLinkContextOriginPages).
  *
  * Export only BrainEngine members from this file, each a `StoreMember` named after the member it serves (see tags.ts):
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
@@ -34,7 +34,9 @@ import { assertPageRevision, PageRevisionConflictError, type PageSnapshot } from
 import type {
   AdjacencyRow, ChainHopEdge, ChainHopOpts, PageReadPolicy, PageReadScope, RelationalFanoutOpts, RelationalFanoutRow,
 } from '../../types.ts';
-import type { JunkEntityHubRow, LinkEndpointPage, LivePageSummary, TitledPage } from '../../engine-sql/link-reads.ts';
+import type {
+  JunkEntityHubRow, LinkContextAsk, LinkContextMatch, LinkContextOriginPage, LinkEndpointPage, LivePageSummary, TitledPage,
+} from '../../engine-sql/link-reads.ts';
 import { getFtsLanguage } from '../../fts-language.ts';
 import { CONNECTOR_SOURCE_KINDS } from '../../persistence/connector-kinds.ts';
 import type { EntityTypeFilter } from '../../schema-pack/entity-types.ts';
@@ -463,4 +465,21 @@ export const wordLexemes: StoreMember<[words: string[]], Map<string, string[]>> 
     if (getFtsLanguage() !== 'english') refuseMember('wordLexemes', `the ${getFtsLanguage()} text search configuration`);
     const rows: Array<{ w: string; lexemes: string[] }> = await storeCall({ member: 'wordLexemes' }, () => brain.wordLexemes(words));
     return new Map(rows.map(r => [r.w, r.lexemes]));
+  };
+
+/** The stored link rows behind returned link contexts (worldLinkContexts): in ask order, then link id order. */
+export const readLinkContextMatches: StoreMember<[asks: readonly LinkContextAsk[]], LinkContextMatch[]> =
+  async (brain, asks) => {
+    if (asks.length === 0) return [];
+    const rows: LinkContextMatch[] = await storeCall({ member: 'readLinkContextMatches' }, () => brain.readLinkContextMatches(asks));
+    return rows.map(r => ({ ...r, i: Number(r.i), page_id: r.page_id == null ? null : Number(r.page_id) }));
+  };
+
+/** The origin page bodies worldLinkContexts reads, segmented pages left out: by id. */
+export const readLinkContextOriginPages: StoreMember<[ids: readonly number[]], LinkContextOriginPage[]> =
+  async (brain, ids) => {
+    if (ids.length === 0) return [];
+    const rows: LinkContextOriginPage[] = await storeCall({ member: 'readLinkContextOriginPages' },
+      () => brain.readLinkContextOriginPages(ids.map(Number)));
+    return rows.map(r => ({ ...r, id: Number(r.id) }));
   };

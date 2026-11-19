@@ -239,6 +239,8 @@ export const RUST_ENGINE_MEMBERS = {
   listLinkEndpointPages: 'links',
   listPagesTitledIn: 'links',
   wordLexemes: 'links',
+  readLinkContextMatches: 'links',
+  readLinkContextOriginPages: 'links',
   // link temporal state (engine-sql/link-temporal.ts; rust/docs/store/link_temporal.md)
   readLinkRelationshipEvidence: 'links',
   writeLinkRelationshipState: 'links',
