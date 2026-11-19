@@ -541,6 +541,35 @@ describe('engine parity: takes', () => {
       return { beforeAll, written, storedView, stale, nearest, nearestOne, allow, sideScoped, noOne, afterEdit, rejectsDuplicateIds: dupErr !== null };
     },
   );
+
+  parityTest(
+    'a claim edited through the batch upsert drops out of a vector search that ran before the edit',
+    { methods: ['putPage', 'addTakesBatch', 'listTakes', 'updateTakeEmbeddings', 'searchTakesVector'] },
+    async (engine) => {
+      const a = await page(engine, 'people/alice-example');
+      await engine.addTakesBatch([
+        take(a.id, 1, 'axis zero take', { holder: 'garry', weight: 0.5 }),
+        take(a.id, 2, 'axis one take', { holder: 'alice', weight: 0.5 }),
+      ]);
+      const ids = await takeIds(engine, a.id);
+      expect(await engine.updateTakeEmbeddings([
+        { take_id: ids.get('axis zero take')!, embedding: basisEmbedding(0), claim: 'axis zero take', model: 'embed-m1' },
+        { take_id: ids.get('axis one take')!, embedding: basisEmbedding(1), claim: 'axis one take', model: 'embed-m1' },
+      ])).toBe(2);
+      const query = new Float32Array(1536);
+      query[0] = 1;
+      query[1] = 0.1;
+      const claims = async () => (await engine.searchTakesVector(query)).map((h) => h.claim);
+      // The first search warms whatever the engine keeps between reads.
+      const before = await claims();
+      // The claim changes; Postgres nulls the take's embedding in the same upsert, so the take has no vector to rank.
+      await engine.addTakesBatch([take(a.id, 1, 'axis zero take, reworded', { holder: 'garry', weight: 0.5 })]);
+      const after = await claims();
+      expect(before).toEqual(['axis zero take', 'axis one take']);
+      expect(after).toEqual(['axis one take']);
+      return { before, after };
+    },
+  );
 });
 
 describe('engine parity: contradiction probe runs and judge cache', () => {

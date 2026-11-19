@@ -19,8 +19,8 @@
 
 use crate::Store;
 use crate::chunks::{
-    ChunkRecord, SAFE_FENCE_CHUNKER_VERSION, SegmentView, read_chunks, read_segment_view,
-    visible_chunks,
+    ChunkRecord, SAFE_FENCE_CHUNKER_VERSION, in_live_body, read_chunks, read_segment_view,
+    segmented, visible_chunks,
 };
 use crate::error::Result;
 use crate::kv::KvRead;
@@ -36,11 +36,6 @@ const DEFAULT_CHUNKLESS_BATCH: u64 = 50;
 const QUARANTINE_KEY: &str = "quarantine";
 /// The frontmatter key that marks a page whose chunks get no vectors.
 const EMBED_SKIP_KEY: &str = "embed_skip";
-
-/// True for a segmented shell page: its body columns are NULL.
-fn segmented(page: &PageRecord) -> bool {
-    page.compiled_truth.is_null() && page.timeline.is_null()
-}
 
 /// The page's `body_bytes`. The page_body family keeps it in its private body state.
 fn body_bytes(read: &dyn KvRead, page: &PageRecord) -> Result<Option<i64>> {
@@ -145,20 +140,6 @@ fn chunkless_row(page: &PageRecord) -> Value {
     })
 }
 
-/// `chunkGenerationFilter`: a chunk of the page's live body. An inline chunk belongs to a page that is not segmented; a
-/// segmented chunk is at or below the page's generation and its occurrence has a live manifest row (the segment view
-/// keeps one offset per live occurrence). A staged chunk, one of a retired occurrence and an inline chunk left on a
-/// segmented page are not.
-fn in_live_body(chunk: &ChunkRecord, segmented_page: bool, view: &SegmentView) -> bool {
-    match chunk.segment {
-        None => !segmented_page,
-        Some(place) => {
-            place.body_generation <= view.generation
-                && view.offsets.contains_key(&place.occurrence_id)
-        }
-    }
-}
-
 fn chunk_window_row(chunk: &ChunkRecord, prio: i64) -> Value {
     json!({
         "kind": "chunk",
@@ -214,7 +195,7 @@ impl Store {
                 };
                 at >= options.from_index && at < to
             })
-            .map(|(_, c)| c.to_chunk())
+            .map(|(_, c)| c.to_chunk(None))
             .collect();
         Ok(json!({ "chunks": page_chunks, "total_chunks": total, "max_chunk_index": max }))
     }

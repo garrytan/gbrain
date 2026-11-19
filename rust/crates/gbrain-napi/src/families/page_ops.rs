@@ -1,12 +1,62 @@
-//! Batch page reads and writes the pages capability still refuses. No methods yet.
+//! Page operations: the marker and date reads hybrid search needs, over `gbrain_store::page_ops`
+//! (rust/docs/store/page_ops.md).
 //!
-//! Store methods for: readPageSnapshotsBatch, findDuplicatePage, findDuplicatePages, deletePages,
-//! resolveSlugsByPaths, softDeletePages, purgeDeletedPages, findPages, countPagesBy, getAllSlugs,
-//! listAllPageRefs, listPrefixSampledPages, listCorpusSample, getContentFlagsByPageIds,
-//! getUnverifiedExtractionPageIds, getPageTimestamps, getEffectiveDates, revertToVersion.
-//!
-//! Add them here as one `#[napi] impl Brain { ... }` block, each method a thin `self.run(env, move
-//! |s| s.<method>(...))` over the `gbrain_store::page_ops` module (see `pages.rs` in this directory
-//! for the pattern).
-//!
-//! Open to build now; see docs/designs/RUST_ENGINE_INTERFACES.md.
+//! One `#[napi] impl Brain` block; each method decodes its arguments, runs one `Store` call on the
+//! pool through `Brain::run` and resolves plain JSON. Maps, sets and dates are built by the
+//! TypeScript members (`store-members/page-ops.ts`).
+
+use napi::Env;
+use napi::bindgen_prelude::Object;
+use napi_derive::napi;
+use serde_json::Value;
+
+use crate::store_binding::{Brain, arg, required};
+
+#[napi]
+impl Brain {
+    /// `getContentFlagsByPageIds(ids, { sourceId?, sourceIds?, live? }?)`: `[{ id, reason, detail }]`.
+    #[napi]
+    pub fn get_content_flags_by_page_ids<'env>(
+        &self,
+        env: &'env Env,
+        ids: Vec<i64>,
+        scope: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.get_content_flags_by_page_ids(&ids, &arg(scope, "getContentFlagsByPageIds scope")?)
+        })
+    }
+
+    /// `getUnverifiedExtractionPageIds(ids, { sourceId?, sourceIds?, live? }?)`: `[{ id, status,
+    /// unverified }]`.
+    #[napi]
+    pub fn get_unverified_extraction_page_ids<'env>(
+        &self,
+        env: &'env Env,
+        ids: Vec<i64>,
+        scope: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.get_unverified_extraction_page_ids(
+                &ids,
+                &arg(scope, "getUnverifiedExtractionPageIds scope")?,
+            )
+        })
+    }
+
+    /// `getEffectiveDates(refs, { sourceId?, sourceIds?, live? }?)`: `[{ slug, source_id, ts }]`.
+    #[napi]
+    pub fn get_effective_dates<'env>(
+        &self,
+        env: &'env Env,
+        refs: Value,
+        scope: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.get_effective_dates(
+                &required::<Vec<_>>(refs, "getEffectiveDates refs")?,
+                &arg(scope, "getEffectiveDates scope")?,
+            )
+        })
+    }
+}
