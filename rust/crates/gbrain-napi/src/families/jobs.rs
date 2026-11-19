@@ -9,6 +9,7 @@ mod health;
 mod insight;
 mod ops;
 mod spend;
+mod spend_log;
 mod status;
 mod subagent;
 mod wake;

@@ -1416,6 +1416,16 @@
           },
           {
             "category": "ops",
+            "details": {
+              "closed": false
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Every owner-only delete trigger exists, so rows derived from a removed owner-only source stay owner-only",
+            "name": "owner_only_marks_triggers",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
             "elapsed_ms": "<volatile>",
             "message": "Skipped (PGLite is always UTF8)",
             "name": "database_encoding",
@@ -1438,7 +1448,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 186 table(s) the applied migrations create exist.",
+            "message": "All 190 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -4428,6 +4438,32 @@
           {
             "category": "brain",
             "details": {
+              "counts": {
+                "by_class": {
+                  "clean": 0,
+                  "conflict": 0,
+                  "likely": 0,
+                  "thin": 0,
+                  "weak": 0
+                },
+                "by_kind": {
+                  "conflict": 0,
+                  "cross_source": 0,
+                  "in_source": 0,
+                  "thin": 0
+                },
+                "crowded_key_values": 0
+              },
+              "groups": []
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No likely duplicate person or company pages.",
+            "name": "entity_duplicates",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
               "docs": "docs/guides/write-refusals.md#file_database_drift",
               "sources": []
             },
@@ -6889,6 +6925,16 @@
           },
           {
             "category": "ops",
+            "details": {
+              "closed": false
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Every owner-only delete trigger exists, so rows derived from a removed owner-only source stay owner-only",
+            "name": "owner_only_marks_triggers",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
             "elapsed_ms": "<volatile>",
             "message": "Skipped (PGLite is always UTF8)",
             "name": "database_encoding",
@@ -6911,7 +6957,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 186 table(s) the applied migrations create exist.",
+            "message": "All 190 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -9908,6 +9954,32 @@
             "elapsed_ms": "<volatile>",
             "message": "No title-prefixed person page pairs with an unprefixed page (0 titled page(s) examined).",
             "name": "person_title_duplicates",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "counts": {
+                "by_class": {
+                  "clean": 0,
+                  "conflict": 0,
+                  "likely": 0,
+                  "thin": 0,
+                  "weak": 0
+                },
+                "by_kind": {
+                  "conflict": 0,
+                  "cross_source": 0,
+                  "in_source": 0,
+                  "thin": 0
+                },
+                "crowded_key_values": 0
+              },
+              "groups": []
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No likely duplicate person or company pages.",
+            "name": "entity_duplicates",
             "status": "ok"
           },
           {

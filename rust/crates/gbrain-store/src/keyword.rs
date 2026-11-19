@@ -9,6 +9,9 @@
 //! `keyword/vector_cache.rs` (bounded, keyed by the exact input text). rust/docs/store/keyword.md
 //! lists what each member reads, refuses and leaves as a follow-up.
 //!
+//! This family also writes the `ts_rank` compatibility ranker (design D5) over the core keyword
+//! postings (`keys::POSTING`, `T`); the facts keyword arm reuses it.
+//!
 //! Built: the pg_trgm scorer (`keyword/trgm.rs`), for findByTitleFuzzy here and for other
 //! families (searchTakes). Its signatures and thresholds are stable:
 //! `trgm_similarity`, `trgm_word_similarity`, `trgm_strict_word_similarity`, `trigrams` and
@@ -49,9 +52,17 @@ mod vector_cache;
 
 pub use filters::{AfterKey, DateBound, KeywordOptions};
 pub use titles::{TitleAttempt, TitleAttemptKind};
+pub(crate) use titles::{check_page_vector, check_sealed_page_vector};
 
 #[allow(unused_imports)]
 pub(crate) use rank::{ts_rank, ts_rank_cd};
+
+/// The write-time half of `update_chunk_search_vector`: builds the chunk's `search_vector` and returns the error the
+/// trigger would raise ("string is too long for tsvector") when it cannot be stored. The built vector is cached for the
+/// searches that read the chunk next.
+pub(crate) fn check_chunk_vector(chunk: &crate::chunks::ChunkRecord) -> crate::error::Result<()> {
+    filters::chunk_vector(chunk).map(|_| ())
+}
 #[allow(unused_imports)]
 pub(crate) use stem::pg_lower;
 #[allow(unused_imports)]

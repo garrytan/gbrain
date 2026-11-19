@@ -526,6 +526,36 @@
           }
         ]
       },
+      "listEntityKeyRows": {
+        "after": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<string>",
+              "array<string>",
+              "string",
+              "string",
+              "number"
+            ],
+            "sql": "SELECT p.source_id, p.slug, p.title, p.type, COALESCE((SELECT jsonb_object_agg(k.key, p.frontmatter -> k.key) FROM unnest($1::text[]) AS k(key) WHERE p.frontmatter -> k.key IS NOT NULL), '{}'::jsonb) AS keys FROM pages p JOIN sources s ON s.id = p.source_id WHERE p.deleted_at IS NULL AND s.archived IS NOT TRUE AND p.type = ANY($2::text[]) AND NOT (lower(COALESCE(p.frontmatter->>'canonical', '')) IN ('false', 'no') OR btrim(COALESCE(p.frontmatter->>'superseded_by', '')) <> '' OR btrim(COALESCE(p.frontmatter->>'merged_into', '')) <> '' OR lower(COALESCE(p.frontmatter->>'status', '')) ~ '(^|[^a-z])(alias|redirect|redirected)([^a-z]|$)') AND (p.source_id, p.slug) > ($3::text, $4::text) ORDER BY p.source_id, p.slug LIMIT $5::int",
+            "textSha256": "2bec9d9d2d8a14d49b5345c17ffcbb3fe30b61c9ff02212328eb051b1efeb94d"
+          }
+        ],
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<string>",
+              "array<string>",
+              "string",
+              "string",
+              "number"
+            ],
+            "sql": "SELECT p.source_id, p.slug, p.title, p.type, COALESCE((SELECT jsonb_object_agg(k.key, p.frontmatter -> k.key) FROM unnest($1::text[]) AS k(key) WHERE p.frontmatter -> k.key IS NOT NULL), '{}'::jsonb) AS keys FROM pages p JOIN sources s ON s.id = p.source_id WHERE p.deleted_at IS NULL AND s.archived IS NOT TRUE AND p.type = ANY($2::text[]) AND NOT (lower(COALESCE(p.frontmatter->>'canonical', '')) IN ('false', 'no') OR btrim(COALESCE(p.frontmatter->>'superseded_by', '')) <> '' OR btrim(COALESCE(p.frontmatter->>'merged_into', '')) <> '' OR lower(COALESCE(p.frontmatter->>'status', '')) ~ '(^|[^a-z])(alias|redirect|redirected)([^a-z]|$)') AND (p.source_id, p.slug) > ($3::text, $4::text) ORDER BY p.source_id, p.slug LIMIT $5::int",
+            "textSha256": "2bec9d9d2d8a14d49b5345c17ffcbb3fe30b61c9ff02212328eb051b1efeb94d"
+          }
+        ]
+      },
       "listPages": {
         "default": [
           {
@@ -1654,6 +1684,23 @@
           {
             "lane": "tx",
             "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT current_setting(t.name, true) AS value FROM unnest($1::text[]) WITH ORDINALITY AS t(name, position) ORDER BY t.position",
+            "textSha256": "b9fb1ea4b0273886752e85cdbb2dc7838809fa86d5b404104af0ae8015ca07c4"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "array<string>",
+              "array<string>"
+            ],
+            "sql": "SELECT set_config(t.name, t.value, true) FROM unnest($1::text[], $2::text[]) AS t(name, value)",
+            "textSha256": "ec1a147ffc19676b214e760f7743c4caf08aadeaf9a5357468d19da5b73cfaea"
+          },
+          {
+            "lane": "tx",
+            "params": [
               "string",
               "string",
               "string",
@@ -1919,6 +1966,15 @@
             "lane": "tx>sp"
           },
           {
+            "lane": "tx",
+            "params": [
+              "array<string>",
+              "array<string>"
+            ],
+            "sql": "SELECT set_config(t.name, t.value, true) FROM unnest($1::text[], $2::text[]) AS t(name, value)",
+            "textSha256": "ec1a147ffc19676b214e760f7743c4caf08aadeaf9a5357468d19da5b73cfaea"
+          },
+          {
             "event": "commit",
             "lane": "tx"
           }
@@ -1927,6 +1983,23 @@
           {
             "event": "begin",
             "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT current_setting(t.name, true) AS value FROM unnest($1::text[]) WITH ORDINALITY AS t(name, position) ORDER BY t.position",
+            "textSha256": "b9fb1ea4b0273886752e85cdbb2dc7838809fa86d5b404104af0ae8015ca07c4"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "array<string>",
+              "array<string>"
+            ],
+            "sql": "SELECT set_config(t.name, t.value, true) FROM unnest($1::text[], $2::text[]) AS t(name, value)",
+            "textSha256": "ec1a147ffc19676b214e760f7743c4caf08aadeaf9a5357468d19da5b73cfaea"
           },
           {
             "lane": "tx",
@@ -1966,6 +2039,15 @@
             ],
             "sql": "UPDATE pages SET slug = $1, updated_at = now() WHERE slug = $2 AND source_id = $3 RETURNING id",
             "textSha256": "bf3641ff709a5368753967c9c95db40c4ef2c2f065e9449147765b3f40922370"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "array<string>",
+              "array<string>"
+            ],
+            "sql": "SELECT set_config(t.name, t.value, true) FROM unnest($1::text[], $2::text[]) AS t(name, value)",
+            "textSha256": "ec1a147ffc19676b214e760f7743c4caf08aadeaf9a5357468d19da5b73cfaea"
           },
           {
             "event": "commit",

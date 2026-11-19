@@ -23,6 +23,7 @@ import { isInteractive, readLine } from '../core/interaction.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { CONFIRMATION_REQUIRED_EXIT_CODE } from '../core/exit-codes.ts';
 import { resolveSourceId } from '../core/source-resolver.ts';
+import { EQUALS_READERS } from '../cli/equals-readers.ts';
 
 export const PURGE_FAMILY_HELP = `Purge family (remove content from live stores; never physical erasure):
   gbrain forget <id> --purge            purge one fact's claim (dry-run receipt, then a typed token)
@@ -91,6 +92,12 @@ export function renderPurgeReceipt(r: Record<string, unknown>): string {
 /** Test seam: the terminal probe and the typed-token reader (defaults: isInteractive and a stderr prompt). */
 export interface PurgeCliIo { interactive?: () => boolean; readToken?: (prompt: string) => Promise<string | null> }
 
+/** #9738: the fact ids among `gbrain forget` arguments: every all-digit argument that is not the value of one of its flags (`--reason 42`). */
+export async function forgetFactIds(args: readonly string[]): Promise<string[]> {
+  const valueFlags = new Set([...EQUALS_READERS.forget ?? [], ...EQUALS_READERS['forget --purge'] ?? []]);
+  return args.filter((arg, i) => /^\d+$/.test(arg) && !valueFlags.has(args[i - 1] ?? ''));
+}
+
 /** `gbrain forget` argv this module handles: a purge, its help, and a --dry-run (which a plain forget refuses here, since it has none). */
 export function routesToForgetPurge(args: readonly string[]): boolean {
   return args.includes('--purge') || args.includes('--dry-run') || args.includes('--help') || args.includes('-h');
@@ -104,7 +111,7 @@ export async function runForgetPurge(engine: BrainEngine | (() => Promise<BrainE
   const out = (value: Record<string, unknown>, human: string) => process.stdout.write(json ? `${JSON.stringify(value, null, 2)}\n` : human);
   try {
     if (args.includes('--help') || args.includes('-h')) { process.stdout.write(USAGE); return; }
-    const idArg = args.find(a => /^\d+$/.test(a));
+    const idArg = (await forgetFactIds(args))[0];
     if (!args.includes('--purge')) {
       throw opError('invalid_params', '--dry-run previews a purge only; a plain forget has no dry run, so nothing was forgotten.',
         idArg ? `Run gbrain forget ${idArg} --purge --dry-run to preview a purge, or gbrain forget ${idArg} to forget the fact.` : 'Run gbrain forget --help for the forget and purge forms.');

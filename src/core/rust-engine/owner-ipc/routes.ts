@@ -64,11 +64,11 @@ export function ownerGone(member: string, ownerPid: number | null, sent: boolean
       ? `${who} exited or closed its socket before it answered ${member}; a write may or may not have committed.`
       : `${who} exited or closed its socket, so ${member} was not sent.`,
     sent
-      ? 'Read the page or run the read again before you retry a write. Then run the command again: with no owner running, this process opens the brain itself.'
+      ? 'Read the page before you retry the write: the next call on this engine elects a new owner (possibly this process) and runs there.'
       : 'Run the command again: with no owner running, this process opens the brain itself.',
     { reason: sent ? 'outcome_unknown' : 'not_sent', retryable: true,
       detail: `member=${member} via=owner_ipc owner_pid=${ownerPid ?? 'unknown'} sent=${sent}`,
-      why: 'This process reached the brain through the owner process. Taking over the brain while calls are in flight (owner handoff) is not part of this release, so calls in flight end here.' });
+      why: 'This process reached the brain through the owner process. A call the owner may have run is never sent again, so a write is not applied twice; the next call runs the election again and takes over the brain.' });
 }
 
 /** The call's deadline passed before the owner answered; the owner cancelled it. */

@@ -507,11 +507,11 @@ impl Store {
                     }
                     file.page_slug = spec.page_slug.clone();
                     file.page_id = new_page;
-                    file.filename = filename;
+                    file.filename = filename.clone();
                     file.mime_type = spec.mime_type.clone();
                     file.size_bytes = size_bytes;
-                    file.content_hash = content_hash;
-                    file.metadata = metadata;
+                    file.content_hash = content_hash.clone();
+                    file.metadata = metadata.clone();
                     put_file(tx, &file)?;
                     Ok(UpsertFileResult {
                         id: file.id,
@@ -533,12 +533,12 @@ impl Store {
                         source_id: source_id.to_string(),
                         page_slug: spec.page_slug.clone(),
                         page_id: new_page,
-                        filename,
+                        filename: filename.clone(),
                         storage_path: storage_path.clone(),
                         mime_type: spec.mime_type.clone(),
                         size_bytes,
-                        content_hash,
-                        metadata,
+                        content_hash: content_hash.clone(),
+                        metadata: metadata.clone(),
                         created_at_us: self.env.now_micros(),
                     };
                     if let Some(page) = new_page {

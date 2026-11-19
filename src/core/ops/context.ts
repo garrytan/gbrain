@@ -26,7 +26,7 @@ import { isSearchMode } from '../search/mode.ts';
 import { stampEvidence, type EvidenceOpts } from '../search/evidence.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from '../eval-capture.ts';
 import type { SearchResult, HybridSearchMeta, PageReadScope, PageReadPolicy } from '../types.ts';
-import { resolveExcludePrivatePages, isPrivatePage } from '../search/private-visibility.ts';
+import { ownerWidened, resolveExcludePrivatePages, isPrivatePage } from '../search/private-visibility.ts';
 import { assertMemberPageWriter, assertScopePageWriter } from '../access/member-facts.ts';
 import { pageNotVisibleError, remoteTargetHidden } from '../persistence/page-visibility.ts';
 
@@ -69,7 +69,7 @@ export function withFix(fix: Action | undefined): { fix?: Action } {
  * surface-correct prose plus the matching read.
  */
 export function pageNotFoundError(
-  ctx: Pick<OperationContext, 'remote' | 'transport' | 'auth'>,
+  ctx: Pick<OperationContext, 'remote' | 'transport' | 'auth' | 'isCallable'>,
   slug: string,
   opts: { includeDeleted: boolean; sourceIdParam?: string; elsewhereSource?: string },
 ): OperationError {
@@ -79,15 +79,22 @@ export function pageNotFoundError(
     return opError('page_not_found', `Page not found: ${slug}`,
       'This connection reads no page with this slug: it may not exist, or it may not be readable by this connection, since a page can be kept to other members. Do not create it to find out; ask the user whether the page exists and who can read it.');
   }
-  const retry = opts.includeDeleted ? `Check the slug or use ${paramUse(ctx, 'fuzzy')}` : `Page may be soft-deleted; pass ${paramUse(ctx, 'include_deleted')} to verify`;
+  // #9669: a caller whose surface refuses include_deleted or fuzzy is never pointed at them; it gets a search instead.
+  const can = (param: string) => ctx.remote === false || !ctx.isCallable || ctx.isCallable('get_page', { slug, [param]: true });
+  const fuzzy = can('fuzzy');
+  const deleted = !opts.includeDeleted && can('include_deleted');
+  const check = fuzzy ? `Check the slug or use ${paramUse(ctx, 'fuzzy')}` : 'Check the slug, or search for the page';
+  const retry = deleted ? `Page may be soft-deleted; pass ${paramUse(ctx, 'include_deleted')} to verify` : check;
   const where = opts.elsewhereSource;
   const explicit = opts.sourceIdParam !== ALL_SOURCES ? opts.sourceIdParam : undefined;
   return opError('page_not_found', `Page not found: ${slug}`,
     where !== undefined ? `Page exists in source '${where}' — pass ${paramUse(ctx, 'source', where)}. ${retry}` : retry,
     withFix(where !== undefined
       ? getPageFix(slug, `Reads the page from source ${where}, where it exists.`, { sourceId: where })
-      : getPageFix(slug, opts.includeDeleted ? 'Fuzzy-matches the slug.' : 'Shows the page if it is soft-deleted (deleted_at set).',
-        { sourceId: explicit, ...(opts.includeDeleted ? { fuzzy: true } : { includeDeleted: true }) })));
+      : deleted || fuzzy ? getPageFix(slug, deleted ? 'Shows the page if it is soft-deleted (deleted_at set).' : 'Fuzzy-matches the slug.',
+        { sourceId: explicit, ...(deleted ? { includeDeleted: true } : { fuzzy: true }) })
+      : readFix('Searches for pages matching the slug, to find the one you meant.', {
+        argv: cliSafeSlug(slug) ? ['gbrain', 'search', slug] : ['gbrain', 'search', '--', slug], mcp: { tool: 'search', arguments: { query: slug } } })));
 }
 
 const HTTP_HOST = { remote: true, transport: 'http' } as const;
@@ -736,9 +743,14 @@ export function assertSourceInCallerWriteScope(ctx: OperationContext, id: string
   }
 }
 
-/** Holder permissions are independent of the operator's page-visibility opt-out. */
+/**
+ * The take holders a read returns; undefined reads every holder. Holder permissions are independent of the operator's
+ * page-visibility opt-out. A remote credential with no stored list reads world takes, except the brain owner's own
+ * direct remote call (ownerWidened, GST-3058, R94), which reads every holder; a stored list is always honoured.
+ */
 export function readHolders(ctx: OperationContext): string[] | undefined {
-  return ctx.remote === false ? ctx.takesHoldersAllowList : ctx.takesHoldersAllowList ?? ['world'];
+  if (ctx.remote === false) return ctx.takesHoldersAllowList;
+  return ctx.takesHoldersAllowList ?? (ownerWidened() ? undefined : ['world']);
 }
 
 /** Resolve policy once at the operation boundary; callers may supply a canonical per-call scope. */

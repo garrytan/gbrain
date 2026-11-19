@@ -46,7 +46,9 @@ export const upsertChunks: StoreMember<[slug: string, chunks: ChunkInput[], opts
  * Replaces a page's chunks and seals them to its current revision (PGLite's sealChunks). A missing or deleted page
  * throws PGLite's `Page not found`; the write itself carries the revision it read, so a page that changes in between
  * rejects as a revision conflict. The seal also sends `sanitizeRemoteBody(timeline)`, the timeline text of the page
- * keyword vector (PGLite's `sealPageTextProjection`); a segmented page (NULL timeline) sends none.
+ * keyword vector (PGLite's `sealPageTextProjection`); a segmented page (NULL timeline) sends none. The store refuses,
+ * before it writes, what PGLite's `sealChunks` refuses: a page in an archived source (`Page not found`) and a
+ * segmented page (`sealChunks refuses segmented page ...`), whose projection is built from its segments.
  */
 export const sealChunks: StoreMember<[slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; expectedRevision?: string }], void> =
   async (brain, slug, chunks, opts) => {

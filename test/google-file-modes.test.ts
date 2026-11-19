@@ -92,8 +92,8 @@ describe.skipIf(!posix)('Google files written under umask 0000', () => {
     expect(managed.googleImport).toMatchObject({ file: 0o600, root: 0o755, dirs: { emails: 0o700, 'emails/2026': 0o700, 'emails/2026/09': 0o700 } });
     expect(managed.googleImport.intentText).not.toContain('publishMode');
     expect(managed.googleImport.intentText).not.toContain('"mode"');
-    // Request ids derive from this intent (minus its authority); the key set is the pre-wave set, so ids are unchanged across the upgrade.
-    expect(managed.googleImport.intentKeys).toEqual(['canonicalRoot', 'checkpointBefore', 'checkpointKey', 'configHash', 'connector', 'content',
+    // Request ids derive from this intent (minus its authority and #9681's run stamp, `checkpointRun`); the other keys are the pre-wave set, so ids are unchanged across the upgrade.
+    expect(managed.googleImport.intentKeys).toEqual(['canonicalRoot', 'checkpointBefore', 'checkpointKey', 'checkpointRun', 'configHash', 'connector', 'content',
       'expected_revision', 'fileBeforeHash', 'filePath', 'kind', 'noEmbed', 'noSchemaPack', 'ownerEpoch', 'sourcePath', 'sourceRoot', 'syncAuthority']);
     expect(managed.googleReceipts).toEqual({ status: 'complete', file: 0o600 });
   });

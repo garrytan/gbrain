@@ -254,19 +254,15 @@ const COMMANDS: string[][] = [
  * typed refusal that names the member given here, the next engine member the write path needs. When a later change
  * serves that member, this case fails and names the new next member, so the record stays current.
  */
-/**
- * A write stops on Rust with a typed refusal that names `member`, or is accepted and stays pending behind `member`:
- * `queued` when no background writer claims it, `running` when the writer claims it and then stops at `member`.
- */
-const RECORDED_WRITES: Array<{ args: string[]; rust: 'refused' | 'queued' | 'running'; member: string }> = [
-  { args: ['put', 'notes/parity-put', '--content', '---\ntype: note\ntitle: Parity put\n---\nBody text.\n', '--json'], rust: 'running', member: 'executeRaw' },
+/** A write stops on Rust with a typed refusal that names `member`, or is accepted and stays queued behind `member`. */
+const RECORDED_WRITES: Array<{ args: string[]; rust: 'equal' } | { args: string[]; rust: 'refused' | 'queued'; member: string }> = [
+  { args: ['put', 'notes/parity-put', '--content', '---\ntype: note\ntitle: Parity put\n---\nBody text.\n', '--json'], rust: 'equal' },
 ];
-// `put` passes the persistence declaration and write admission, so the request is recorded. The background writer
-// claims it (state running) and then stops at the raw publication-effect insert (executeRaw in
-// src/core/persistence/effect-journal.ts queuePublicationEffects), so the reply is write_pending (exit 10) and
-// nothing is applied.
+// `put` records, claims, publishes and completes its request on the Rust brain as on PGLite: the store keeps the
+// publication's effects (insertPublicationEffects) and the receipt says committed. Its `write-request` receipt is then
+// read on both brains: the same, but for the effects, which the Rust brain stores and does not run yet.
 
-type State = 'equal' | 'refused' | 'queued' | 'running' | 'diverged' | 'no-engine' | 'runs';
+type State = 'equal' | 'refused' | 'queued' | 'diverged' | 'no-engine' | 'runs';
 interface Row { command: string; state: State; note: string }
 const table: Row[] = [];
 const setupRows: Row[] = [];
@@ -279,7 +275,7 @@ function printTable(): void {
     '[rust cli parity] commands:', ...table.map((r) => `  ${r.command} | ${r.state}${r.note ? ` (${r.note})` : ''}`)];
   const count = (s: State) => table.filter((r) => r.state === s).length;
   if (useMirror) lines.push('[rust cli parity] a Rust setup write was refused: reads were compared with the mirror (PGLite with the same completed writes)');
-  lines.push(`[rust cli parity] ${count('equal')} equal, ${count('refused')} refused, ${count('queued')} queued, ${count('running')} running, ${count('diverged')} diverged, ${count('no-engine')} without a Rust engine`);
+  lines.push(`[rust cli parity] ${count('equal')} equal, ${count('refused')} refused, ${count('queued')} queued, ${count('diverged')} diverged, ${count('no-engine')} without a Rust engine`);
   console.log(lines.join('\n'));
 }
 
@@ -346,8 +342,12 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
     }, 240_000);
   }
 
-  for (const { args, rust: outcome, member: next } of RECORDED_WRITES) {
-    test(`${label(args)} writes on PGLite and ${outcome === 'refused' ? 'refuses on Rust at' : `stays ${outcome} on Rust behind`} ${next}`, async () => {
+  for (const write of RECORDED_WRITES) {
+    const { args, rust: outcome } = write;
+    const next = 'member' in write ? write.member : '';
+    const title = outcome === 'equal' ? 'writes on PGLite and on Rust with the same answer'
+      : `writes on PGLite and ${outcome === 'refused' ? 'refuses on Rust at' : 'stays queued on Rust behind'} ${next}`;
+    test(`${label(args)} ${title}`, async () => {
       const [pg, rust] = await Promise.all([cli(brains.pglite, args), rustArm === 'on' ? cli(brains.rust, args) : Promise.resolve(null)]);
       expect({ exitCode: pg.exitCode, json: parseJson(pg.stdout) !== undefined }).toEqual({ exitCode: 0, json: true });
       if (!rust || engineMissing(rust)) {
@@ -355,12 +355,38 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
         return;
       }
       const member = refusedMember(rust);
-      if (outcome !== 'refused') {
+      if (outcome === 'equal') {
+        // The write completed on Rust, so the mirror (PGLite with the writes Rust completed) gets it too.
+        const mirror = await cli(brains.mirror, args);
+        expect(mirror.exitCode).toBe(0);
+        const want = { exitCode: pg.exitCode, member: null, json: normalize(parseJson(pg.stdout), pathsOf(brains.pglite)) };
+        const got = { exitCode: rust.exitCode, member, json: normalize(parseJson(rust.stdout) ?? `${rust.stdout}\n${rust.stderr}`, pathsOf(brains.rust)) };
+        const equal = got.exitCode === want.exitCode && got.member === null && same(got.json, want.json);
+        table.push({ command: label(args), state: equal ? 'equal' : 'diverged', note: equal ? 'written' : member ?? `exit ${rust.exitCode}` });
+        if (!equal) expect(got).toEqual(want);
+        // The write's receipt reads the same on both brains, but for its effects: PGLite ran its effect pass and
+        // settled each one; the Rust brain stores every effect and runs none yet, so each one waits queued with
+        // nothing recorded against it (rust/docs/store/persistence.md, "Publication effects").
+        const requestOf = (run: Run) => String((parseJson(run.stdout) as { request_id?: unknown } | undefined)?.request_id ?? '');
+        const [pgReceipt, rustReceipt] = await Promise.all([cli(brains.pglite, ['write-request', requestOf(pg), '--json']),
+          cli(brains.rust, ['write-request', requestOf(rust), '--json'])]);
+        type Receipt = { effects?: Array<Record<string, unknown>> } & Record<string, unknown>;
+        const pgBody = parseJson(pgReceipt.stdout) as Receipt | undefined;
+        const rustBody = parseJson(rustReceipt.stdout) as Receipt | undefined;
+        const without = (body: Receipt | undefined) => body && normalize({ ...body, effects: undefined }, []);
+        expect({ exitCode: rustReceipt.exitCode, receipt: without(rustBody), member: refusedMember(rustReceipt) })
+          .toEqual({ exitCode: pgReceipt.exitCode, receipt: without(pgBody), member: null });
+        expect(pgBody?.effects?.some((e) => e.kind === 'embedding' && e.state === 'skipped')).toBe(true);
+        expect(rustBody?.effects).toEqual([{ kind: 'embedding', state: 'queued' }]);
+        return;
+      }
+      if (outcome === 'queued') {
         // Accepted, never applied: the reply is the typed pending receipt, not a refusal or a success.
         const body = parseJson(rust.stdout) as { code?: string; state?: string } | undefined;
-        const pending = rust.exitCode === 10 && body?.code === 'write_pending' && body?.state === outcome;
-        table.push({ command: label(args), state: pending ? outcome : 'diverged', note: pending ? `behind ${next}` : `exit ${rust.exitCode}` });
-        expect({ exitCode: rust.exitCode, code: body?.code, state: body?.state, member }).toEqual({ exitCode: 10, code: 'write_pending', state: outcome, member: null });
+        const queued = rust.exitCode === 10 && body?.code === 'write_pending' && body?.state === 'queued';
+        table.push({ command: label(args), state: queued ? 'queued' : 'diverged', note: queued ? `behind ${next}` : `exit ${rust.exitCode}` });
+        expect({ exitCode: rust.exitCode, code: body?.code, state: body?.state, member }).toEqual({ exitCode: 10, code: 'write_pending', state: 'queued', member: null });
+        // The receipt's state is the stored row read after the writer returned its claim (finishUnpublishedFailure).
         return;
       }
       table.push({ command: label(args), state: member ? 'refused' : 'diverged', note: member ?? `exit ${rust.exitCode}` });

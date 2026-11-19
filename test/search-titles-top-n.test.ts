@@ -2,7 +2,7 @@
  * Title arm: rank and limit pages BEFORE attaching the representative chunk.
  *
  * searchTitles returns at most `limit` page-grain rows, each decorated with a
- * representative chunk (LEFT JOIN LATERAL) and a stale probe (both engines)
+ * representative chunk (LEFT JOIN LATERAL) and, on PGLite, a stale probe
  * over timeline_entries. Both decorations must run per OUTPUT row, not per
  * title-matched page: on a broad title match the per-page form did hundreds
  * of chunk lookups to serve a handful of rows.

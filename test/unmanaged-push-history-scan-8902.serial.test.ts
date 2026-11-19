@@ -19,6 +19,10 @@ import { defaultRunner } from '../src/core/repo-visibility.ts';
 import { workspacePush, type WorkspacePushResult } from '../src/core/workspace-push.ts';
 import { SCAN_ALLOW_FILENAME } from '../src/core/secret-scan.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
+import { envForFile } from './helpers/with-env.ts';
+
+/** GST-2988: these tests pin the publish refusal, which secrets.on_push refuse keeps. */
+envForFile({ GBRAIN_SECRETS_ON_PUSH: 'refuse' });
 
 const T = 60_000;
 const TOKEN = 'ghp_' + 'Qx7v'.repeat(9);

@@ -675,7 +675,7 @@ describe('engine parity: backlink and page signal reads', () => {
       await engine.putPage('fz/a-tie', page('Widget Example', { type: 'concept' }));
       await engine.putPage('fz_x/odd', page('Gadget Thing', { type: 'concept' }));
       await engine.putPage('fz/gone', page('Vanished Widget Example', { type: 'concept' }));
-      await engine.putPage('fz/alt', page('Widget Example', { type: 'concept' }), { sourceId: 'fuzzy-src' });
+      await engine.putPage('fz/z-alt', page('Widget Example', { type: 'concept' }), { sourceId: 'fuzzy-src' });
       await engine.softDeletePage('fz/gone');
       const tie = await engine.findByTitleFuzzy('Widget Example');
       const partial = await engine.findByTitleFuzzy('Widget Exampl', 'fz');

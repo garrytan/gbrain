@@ -1,6 +1,8 @@
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
+import type * as DecideStoreSql from './engine-sql/decide-store.ts';
 import type * as TrustWithdrawalsSql from './engine-sql/trust-withdrawals.ts';
 import type * as OpenLoopsSql from './engine-sql/open-loops.ts';
+import type * as CalibrationProfilesSql from './engine-sql/calibration-profiles.ts';
 import type { WriteContextInput, WriteContextResult } from './engine-sql/transaction-settings.ts';
 import type { RecentWriterVersionRow, WriterVersionRow } from './engine-sql/writer-versions.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
@@ -18,8 +20,11 @@ import type * as FactsPurgeSql from './engine-sql/facts-purge.ts';
 import type * as FactsRepairSql from './engine-sql/facts-repair.ts';
 import type * as FactsTrustSql from './engine-sql/facts-trust.ts';
 import type { EngineCapabilities } from './engine-capabilities.ts';
+import type { OwnerOnlyTriggerState } from './access/owner-only-marks.ts';
 import type { GetVersionsOpts, PageVersionRows } from './page-state/version-types.ts';
 import type { PageSnapshotBatch } from './page-snapshot-batch.ts';
+import type { EntityKeyRow, EntityKeyRowsOpts } from './engine-sql/entity-keys.ts';
+import type { ApplyIdentityDecisionsInput, ApplyIdentityDecisionsResult, IdentityDecisionsRead, IdentityMemberRef } from './engine-sql/identity-decisions.ts';
 import type { LinkReadScope } from './link-validity.ts';
 import type { ChunkWindowRequest, ChunkWindowOpts, ChunkWindowPage } from './search/chunk-windows.ts';
 import type { KeywordPageWindow } from './search/keyword-statement.ts';
@@ -34,9 +39,9 @@ import type { ChunkMove } from './page-state/chunk-moves.ts';
 import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence-state.ts';
 import type { DurablePersistenceSettings } from './engine-sql/persistence-declaration.ts';
-import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, WriteCompletion, WriteRequestInsert, WriteRequestProgress } from './engine-sql/persistence-journal.ts';
-import type { ClaimExpiry, ClaimHeadSpec, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from './engine-sql/persistence-claims.ts';
-import type { GatedMirrorRequest } from './engine-sql/persistence-effect-scans.ts';
+import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WriteCompletion, WriteRequestInsert, WriteRequestProgress } from './engine-sql/persistence-journal.ts';
+import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from './engine-sql/persistence-claims.ts';
+import type { GatedMirrorRequest, RequestEffectState } from './engine-sql/persistence-effect-scans.ts';
 import type { OverdueHold, OverdueHoldKind } from './engine-sql/persistence-owner-scans.ts';
 import type { CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionWindowRow, ReceiptBudget, SegmentedProjectionFilter } from './engine-sql/persistence-housekeeping.ts';
 import type { ProjectionScanCursor } from './page-state/projection-window.ts';
@@ -62,6 +67,10 @@ import type { JobInsightRows, JobInsightSpec } from './engine-sql/jobs-insight.t
 import type {
   ExpireSpendScope, JobSpendTreeSpec, LeasePressureFilter, LeasePressureInsert, LeasePressureRow, SettleSpendOutcome, SpendReservationInsert, SpendTreeRow,
 } from './engine-sql/jobs-spend.ts';
+import type {
+  AgentClientSpendRow, ClientReserveOutcome, ClientReserveSpec, GroupReserveOutcome, GroupReserveSpec, GroupSpendRow, OauthClientInsert,
+  SettleLogOutcome, SpendLogInsert,
+} from './engine-sql/spend-log.ts';
 import type { McpResolvedSpec, PurgeTakesSpec } from './engine-sql/takes-reads.ts';
 import type {
   BeliefHistoryRowQuery, CorePageRow, CorePageRowSpec, TrustScanRow, TrustScanRowSpec, UnscannedTrustSpec, ValidTimeIdentityRow,
@@ -95,6 +104,7 @@ import type { McpLifetimeUsageRow, McpLogPruneBatch, McpLogPruneCutoff, McpOpUsa
 import type { ChatUsageLogRow, ChatUsageWindow } from './engine-sql/chat-usage.ts';
 import type { FieldUsageQuery, FieldUsageTypeSample } from './engine-sql/field-usage.ts';
 import type * as LinkTemporalSql from './engine-sql/link-temporal.ts';
+import type * as DecideProposalsSql from './engine-sql/decide-proposals.ts';
 import type { RelationshipEvidence, RelationshipKey, RelationshipStateWrite } from './link-relationships.ts';
 import type { CoverageRelevance, ProjectionRebuildProgress, ScopedCount } from './search/retrieval-coverage.ts';
 import type { ProjectionReadinessRow, ProjectionReadinessScope } from './search/projection-readiness.ts';
@@ -178,6 +188,13 @@ export interface SourceRecordRow {
 }
 /** A source's config and incarnation (`readSourceIncarnation`). */
 export interface SourceIncarnationRow { config: unknown; incarnation: string }
+/** The source row a memory write admits against (`readSourceWriteRow`): `kind` and `role` are `config->>'kind'` and `config->>'role'`. */
+export interface SourceWriteRow { incarnation: string; archived: boolean; local_path: string | null; kind: string | null; role: string | null }
+/** `factReadableUnder`: one fact, read with any visibility (the owner) or the caller's world rule, under a read eligibility. */
+export interface FactReadableSpec {
+  id: number; sourceId: string; anyVisibility: boolean;
+  eligibility: import('./eligibility/policy.ts').ReadEligibility | undefined; excludePrivate: boolean;
+}
 /** `readGuestSourceRow`: the source's guest_sources row (null fields without one) and whether row-level security hides guest_sources. */
 export interface GuestSourceLookupRow { hidden: boolean; source_id: string | null; writers: string[] | null; trust_ceiling: string | null }
 /** `readPageTrustRows` input: page ids, and (source_id, slug) keys read live unless `includeDeleted`. */
@@ -1282,6 +1299,15 @@ export interface BrainEngine {
    */
   getAllSlugs(opts?: { sourceId?: string }): Promise<Set<string>>;
 
+  /** Duplicate finder: live, unretired pages of these types in unarchived sources with only the named frontmatter keys, keyset-paged by (source_id, slug) (SQL in engine-sql/entity-keys.ts). */
+  listEntityKeyRows(opts: EntityKeyRowsOpts): Promise<EntityKeyRow[]>;
+  /** The owner's identity decisions (migration v325) and the members a "same" decision could not link yet (SQL in engine-sql/identity-decisions.ts). */
+  listIdentityDecisions(): Promise<IdentityDecisionsRead>;
+  /** The given pages that not every reader may read: readers named, a folder rule or a private label (SQL in engine-sql/identity-decisions.ts). */
+  listRestrictedIdentityMembers(members: ReadonlyArray<IdentityMemberRef>): Promise<IdentityMemberRef[]>;
+  /** Writes and removes identity decisions and reconciles their 'dedupe:confirm' identity rows, in one transaction. */
+  applyIdentityDecisions(input: ApplyIdentityDecisionsInput): Promise<ApplyIdentityDecisionsResult>;
+
   /**
    * v0.32.8: cross-source page enumeration. Returns one row per (slug,
    * source_id) pair across the brain, ordered by (source_id, slug) for
@@ -1626,6 +1652,12 @@ export interface BrainEngine {
    * segmented page, an archived source and a stale `expectedRevision` (SQL in engine-sql/chunks.ts).
    */
   sealChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; expectedRevision?: string }): Promise<void>;
+  /**
+   * GST-3032: the owner-only delete triggers (migration v322) that are missing or disabled, with each table's owner. With
+   * `ensure`, on a brain holding an owner-only source or a mark, sets the unguarded mark that reads owner-only lineage
+   * closed (a gap; not while `installing`), then re-creates each one on a table the current role owns (SQL in engine-sql/owner-only-marks.ts).
+   */
+  ownerOnlyMarkTriggers(opts?: { ensure?: boolean; installing?: boolean }): Promise<OwnerOnlyTriggerState>;
   /**
    * Read every chunk for a page. Scope precedence mirrors getPage (#2555):
    * a federated grant (`sourceIds[]`) wins over scalar `sourceId`; with
@@ -2898,6 +2930,10 @@ export interface BrainEngine {
    * (pre-v0.31.8 behavior; preserved via two-branch query).
    */
   getVersions<B extends boolean = true>(slug: string, opts?: GetVersionsOpts<B>): Promise<PageVersionRows<B>>;
+  /** The page's newest version id (`max(page_versions.id)`), or null when it keeps none (engine-sql/version-reasons.ts). */
+  readLatestVersionId(pageId: number): Promise<number | null>;
+  /** Sets `change_reason` on the page's versions with an id over `afterVersionId`; answers how many took it. */
+  stampVersionChangeReason(spec: { pageId: number; afterVersionId: number; reason: string }): Promise<number>;
   /**
    * v0.31.8 (D12): `opts.sourceId` source-scopes both the version lookup
    * and the page revert. Without it, multi-source brains can revert the
@@ -3270,6 +3306,12 @@ export interface BrainEngine {
   loadPurgeTarget(id: number, sourceId: string): Promise<FactsPurgeSql.PurgeTargetRow | null>;
   planFactPurgeIds(sourceId: string, visibility: string, factHash: string, subject: string): Promise<Array<{ id: number }>>;
   listFactsReconcileBacklog(): Promise<FactsPurgeSql.FactsReconcileBacklogRows>;
+  /** extract_facts: record one live page's reconcile outcome at `revision` (`undefined`: the current revision); a page that moved on records nothing. */
+  settleFactsReconcile(sourceId: string, slug: string, outcome: FactsPurgeSql.FactsReconcileOutcome, revision?: string | null): Promise<void>;
+  /** extract_facts' commit step: lock the live page for the rest of the transaction and report whether it is still at `revision`. */
+  lockReconcileRevision(sourceId: string, slug: string, revision: string | null): Promise<boolean>;
+  /** extract_facts: settle the source's due fenceless pages as complete, then return up to `pageLimit` due retryable slugs, never-attempted first. */
+  selectFactsReconcileDrain(sourceId: string, pageLimit: number): Promise<string[]>;
   listRelinkCandidateRows(opts: { sourceId: string; afterId: number; since: Date | null; limit: number }): Promise<FactsPurgeSql.RelinkCandidateRow[]>;
   countRelinkCandidates(sourceId: string): Promise<number>;
   listSimilarActiveFacts(opts: { sourceId: string; factId: number; remote: boolean; excludePrivate: boolean; minCosine: number; limit: number }): Promise<FactsPurgeSql.SimilarActiveFacts>;
@@ -3333,6 +3375,8 @@ export interface BrainEngine {
    * row is missing). Outside a transaction the declaration ends with its statement. engine-sql/persistence-declaration.ts.
    */
   declarePersistence(opts?: { durable?: DurablePersistenceSettings }): Promise<string | null>;
+  /** Synchronous commit for the rest of the current transaction (engine-sql/persistence-declaration.ts); nothing outside one. */
+  requireSynchronousCommit(): Promise<void>;
 
   /** One local writer registration row (lane, credential hash, grant ceiling, revoked_at), or undefined; `lock` reads it `FOR SHARE`. */
   readLocalWriterRow(id: string, opts?: { lock?: boolean }): Promise<LocalWriterRow | undefined>;
@@ -3377,6 +3421,8 @@ export interface BrainEngine {
   lockWriteRequest(id: string): Promise<WriteRequest | null>;
   /** Records a request's terminal state and releases its counters; null when the result exceeds its reservation. */
   completeWriteRow(completion: WriteCompletion): Promise<CompletedWriteRow | null>;
+  /** Inserts a publication's effects in queue order (a gated one only while auto-linking is on); returns the kinds inserted. */
+  insertPublicationEffects(spec: PublicationEffectsSpec): Promise<string[]>;
   // Write-claim statements (engine-sql/persistence-claims.ts): the text journal.ts, authority.ts and consumer.ts sent through executeRaw.
   /** A source's incarnation and archive flag, or null; `lock` reads it FOR SHARE until the transaction ends. */
   readSourceMembership(sourceId: string, opts?: { lock?: boolean }): Promise<SourceMembership | null>;
@@ -3386,6 +3432,8 @@ export interface BrainEngine {
   insertTopologyChange(row: TopologyChangeInsert): Promise<TopologyChange>;
   /** Extends a claim's lease (and records its phase); true while the request is running under the token. Postgres sends it on the direct pool. */
   renewWriteClaim(renewal: ClaimRenewal, opts?: { signal?: AbortSignal }): Promise<boolean>;
+  /** Returns a claim that never began to publish to queued under its token; `direct` sends it on the Postgres direct pool. */
+  releaseUnpublishedClaim(release: ClaimRelease, opts?: { direct?: boolean }): Promise<void>;
   /** Returns expired claims and claims of dead owners to queued, at most 100; `direct` sends it on the Postgres direct pool. */
   expireStaleWriteClaims(expiry: ClaimExpiry, opts?: { signal?: AbortSignal; direct?: boolean }): Promise<void>;
   /** Whether a claim would find a row now; `priority` overrides the foreground-priority config row when set. */
@@ -3436,6 +3484,11 @@ export interface BrainEngine {
    * A non-uuid host id refuses.
    */
   selectClaimableEffect<R = Record<string, unknown>>(hostId: string, deadOwners: readonly string[]): Promise<R | null>;
+  /**
+   * The effects of journal request `requestId` as its receipt reads them (state, error code, outcome, whether a recovery
+   * is open), in kind order, or only its Git effect when `kind` is `'git'`. A non-uuid request id refuses.
+   */
+  readRequestEffects(requestId: string, kind?: 'git'): Promise<RequestEffectState[]>;
 
   // Owner scans (engine-sql/persistence-owner-scans.ts): the reads the write owner's housekeeping sent through executeRaw.
   /**
@@ -3874,6 +3927,27 @@ export interface BrainEngine {
   settleSpendReservation(reservationId: string, actualCents: number): Promise<SettleSpendOutcome>;
   /** Record why a pending or expired hold's usage is unknown; whether a row changed. */
   markSpendUsageUnknown(reservationId: string, reason: string): Promise<boolean>;
+  // Spend ledger and client budgets (engine-sql/spend-log.ts): `mcp_spend_log` and the spend columns of `oauth_clients`.
+  /** Atomic client admission: the client's cap, the sweep, the day's ledger sum and open holds, then a refusal or the new hold. */
+  reserveClientSpend(spec: ClientReserveSpec): Promise<ClientReserveOutcome>;
+  /** Atomic group admission against a lifetime total: the sweep, the totals, then a refusal or the (bounded) new hold. */
+  reserveGroupSpend(spec: GroupReserveSpec): Promise<GroupReserveOutcome>;
+  /** A budget key's ledger sum, overdue holds and live holds, in cents. */
+  readGroupSpendTotals(budgetKey: string): Promise<GroupSpendRow>;
+  /** Settle a hold and write its ledger row as one unit (a settled hold is left alone; a missing one is reported). */
+  settleSpendWithLog(reservationId: string, actualCents: number, operation: string, tokenName: string | null): Promise<SettleLogOutcome>;
+  /** One ledger row of an unreserved paid call. */
+  insertSpendLog(row: SpendLogInsert): Promise<void>;
+  /** A client's ledger sum from an instant on, in cents. */
+  sumClientSpendSince(clientId: string, since: Date): Promise<number>;
+  /** A client's `budget_usd_per_day` as text (dollars to two decimals); null for no cap or no such client. */
+  readClientBudgetUsd(clientId: string): Promise<string | null>;
+  /** One `oauth_clients` row with the spend columns (a repeated client id is a constraint error). */
+  insertOauthClient(row: OauthClientInsert): Promise<void>;
+  /** Set or clear a client's daily cap in dollars; whether the client exists. */
+  updateOauthClientBudget(clientId: string, usd: number | null): Promise<boolean>;
+  /** The admin page's spend per live agent client: cap, today's ledger sum, open holds, unknown holds and open subagent jobs. */
+  readAgentClientSpend(): Promise<AgentClientSpendRow[]>;
   /** One rate-lease bounce appended to the lease-pressure log. */
   insertLeasePressure(row: LeasePressureInsert): Promise<void>;
   /** How many lease bounces match every given field (window in ms, job id, lease key). */
@@ -3959,6 +4033,31 @@ export interface BrainEngine {
   readCursorEdition(spec: { pageId: number; revision: string }): Promise<CursorEditionRow | null>;
   /** Whether a purge hid the page until it is derived again (a `needs_rederive` row names it). */
   pageAwaitsRederive(pageId: number): Promise<boolean>;
+  // Memory mutation reads (engine-sql/memory-mutation-reads.ts): the reads remember and forget make before admission.
+  /** The source row a memory write admits against; null for an unknown id. */
+  readSourceWriteRow(sourceId: string): Promise<SourceWriteRow | null>;
+  /** A source's checkout path; null for an unknown id or a source with none. */
+  readSourceLocalPath(sourceId: string): Promise<string | null>;
+  /** The entity slug of one fact of a source; null when there is no such fact or it names none. */
+  readFactEntitySlug(id: number, sourceId: string): Promise<string | null>;
+  /** Whether a live page of the source among the slugs has a source file. */
+  hasLiveFileBackedPage(sourceId: string, slugs: readonly string[]): Promise<boolean>;
+  /** Whether the caller reads one fact under its visibility rule, a read eligibility and optionally the private-provenance policy. */
+  factReadableUnder(spec: FactReadableSpec): Promise<boolean>;
+  /** The stored tier of a world fact of the source a remote forget targets, under the remote provenance floor with `remoteFloor`; null when none. */
+  readRemoteForgetTier(spec: { factId: number; sourceId: string; remoteFloor: boolean }): Promise<string | null>;
+
+  // Decide family, group B: calibration profiles (engine-sql/calibration-profiles.ts).
+  /** The newest calibration profile (`generated_at DESC`, then `id DESC`) of `holder` (any holder when unset) in `sourceIds` (an empty list matches nothing) or else `sourceId`; null when none. `id` is the BIGSERIAL as text. */
+  getLatestCalibrationProfile(spec: CalibrationProfilesSql.LatestCalibrationProfileSpec): Promise<CalibrationProfilesSql.CalibrationProfileRow | null>;
+  /** Whether the latest profile of the source and holder already holds this total, brier, accuracy, partial rate (REAL-rounded) and model; false when there is none. */
+  isCalibrationProfileUnchanged(spec: CalibrationProfilesSql.CalibrationProfileUnchangedSpec): Promise<boolean>;
+  /** Insert one calibration profile (the `calibration_profile` cycle phase's write). The source must exist; `generatedAt`, `waveVersion` and `published` default to now, `v0.36.1.0` and false. */
+  insertCalibrationProfile(row: CalibrationProfilesSql.CalibrationProfileInsert): Promise<void>;
+  /** The profiles generated in the last 7 days (of `sourceIds` when set) and how many of them failed the voice gate. */
+  readVoiceGateHealth(spec: { sourceIds?: readonly string[] }): Promise<CalibrationProfilesSql.VoiceGateHealth>;
+  /** `undo-wave`: how many profiles `waveVersion` wrote (`dryRun`), or delete them and return how many went. */
+  purgeCalibrationProfilesByWave(spec: { waveVersion: string; dryRun: boolean }): Promise<number>;
 
   // ============================================================
   // v0.20.0 Cathedral II: code edges (Layer 5 populates, Layer 7 consumes)
@@ -4154,6 +4253,84 @@ export interface BrainEngine {
   getWriteGateHoldRow(id: number): Promise<TrustWriteGateSql.WriteGateHoldRow | null>;
   /** Mark a held row released or dropped; false when it does not exist or was already decided. */
   decideWriteGateHold(id: number, status: 'released' | 'dropped', decidedBy: string): Promise<boolean>;
+
+  // ============================================================
+  // Decide proposals (group C; engine-sql/decide-proposals.ts, rust/docs/store/decide-proposals.md)
+  // ============================================================
+  /** Insert a supersede proposal. Returns its id, or null when its sweep slot or claim-sweep fact pair already carries one. */
+  insertDecideProposal(p: DecideProposalsSql.NewProposal): Promise<number | null>;
+  /** One supersede proposal; `lock` takes the row lock inside a transaction (a store with no row locks reads it plain). */
+  getDecideProposal(id: number, lock?: boolean): Promise<DecideProposalsSql.ProposalRow | null>;
+  /** The ids of one sweep's proposals in a status, by pair index. */
+  listDecideProposalIds(sweepId: string, status: DecideProposalsSql.ProposalStatus): Promise<number[]>;
+  /** Supersede proposals with both facts' text, oldest first; default status `pending`, default limit 200. */
+  listDecideProposals(opts?: { status?: DecideProposalsSql.ProposalStatus | 'all'; limit?: number }): Promise<DecideProposalsSql.ProposalListing[]>;
+  /** Compare-and-set a supersede proposal's status; false when it is no longer `from`. */
+  transitionDecideProposal(id: number, from: DecideProposalsSql.ProposalStatus, to: DecideProposalsSql.ProposalStatus, state?: { before?: string | null; after?: string | null }): Promise<boolean>;
+  /** The ordered fact pairs that already carry a proposal, in any status, and name `factId`. */
+  listDecideProposedPairs(sourceId: string, factId: number): Promise<Array<{ a: number; b: number }>>;
+  /** Insert a review proposal. Returns its id, or null when the (kind, source, a, b, subject) proposal exists. */
+  insertDecideReviewProposal(p: DecideProposalsSql.NewReviewProposal): Promise<number | null>;
+  /** Review proposals in a status (`all` for every one), by id. */
+  listDecideReviewProposals(status: string): Promise<DecideProposalsSql.ReviewProposalRecord[]>;
+  /** One review proposal; `lock` takes the row lock inside a transaction (a store with no row locks reads it plain). */
+  getDecideReviewProposal(id: number, lock?: boolean): Promise<DecideProposalsSql.ReviewProposalRecord | null>;
+  /** Compare-and-set a review proposal's status; false when it is no longer `from`. */
+  transitionDecideReviewProposal(id: number, from: string, to: string): Promise<boolean>;
+  /** The pending review proposals of one sweep, by id; withdrawals only when asked. */
+  listDecideReviewProposalIds(sweepId: string, includeWithdrawals: boolean): Promise<number[]>;
+  /** The doctor's review rates: per kind the pending count, oldest pending age in days and 30-day decisions, over both proposal tables. */
+  readProposalReviewRates(): Promise<DecideProposalsSql.ProposalReviewCounts[]>;
+  /** Review-queue rows of one kind and source that are due and not exhausted, oldest due first. */
+  listDueDecideReviewQueue(kind: string, sourceId: string, limit: number): Promise<DecideProposalsSql.ReviewQueueRow[]>;
+  /** Queue a review pair (idempotent), drop a queue row or defer it with a reason; the number of rows it touched. */
+  applyDecideReviewQueue(op: DecideProposalsSql.ReviewQueueOp): Promise<number>;
+  /** Due conflict-sweep retries of a source, oldest due first. */
+  listDueDecideSweepDeferred(sourceId: string, limit: number): Promise<Array<{ fact_id: number; attempts: number }>>;
+  /** Defer a swept fact, hand over relinked facts or clear a fact's retry row; the number of rows it touched. */
+  applyDecideSweepDeferred(sourceId: string, op: DecideProposalsSql.SweepDeferredOp): Promise<number>;
+
+  // Group A (decide store): `decide_state`, `decide_spend`, `decision_receipts`, `decide_calibrations` (engine-sql/decide-store.ts).
+  /** The value kept under a decide state key, or null. */
+  readDecideState(key: string): Promise<string | null>;
+  /** Keep a value under a decide state key, replacing an earlier one. */
+  upsertDecideState(key: string, value: string): Promise<void>;
+  /** Forget a decide state key (absent is fine). */
+  deleteDecideState(key: string): Promise<void>;
+  /** Keep the value only when the key is empty, then answer the stored value (null if it cannot be read back). */
+  ensureDecideState(key: string, value: string): Promise<string | null>;
+  /** Record spend rows; a request id already recorded keeps its first row, and a refused row records none. */
+  insertDecideSpend(rows: readonly DecideStoreSql.DecideSpendInsert[]): Promise<void>;
+  /** Third-party spend recorded at or after `since`: the total and the remote part. */
+  dailyDecideSpend(since: Date): Promise<{ total: number; remote: number }>;
+  /** Spend totals per slot over the whole ledger, in slot order. */
+  listDecideSpendBySlot(): Promise<DecideStoreSql.DecideSpendSlotTotals[]>;
+  /** Record receipt rows in order; a refused row records none. */
+  insertDecideReceipts(rows: readonly DecideStoreSql.DecideReceiptInsert[]): Promise<void>;
+  /** Delete receipts older than `retentionDays` (and spend older than `max(retentionDays, 31)` days); answers how many receipts went. */
+  pruneDecideReceipts(retentionDays: number): Promise<number>;
+  /** Receipt counts, mean answer value, latency percentiles and tokens per (slot, mode, outcome, error reason) over the window. */
+  listDecideReceiptStats(opts: { slot?: string; sinceHours: number }): Promise<DecideStoreSql.DecideReceiptStat[]>;
+  /** Per-slot decisions, rows, tokens, errors, skips and egress refusals over the window. */
+  decideSlotUsage(sinceHours: number): Promise<DecideStoreSql.DecideSlotUsageRow[]>;
+  /** Conflict receipts in the window and how many were `no_entity` skips. */
+  decideConflictNoEntityCounts(sinceHours: number): Promise<{ receipts: number; skipped: number }>;
+  /** The receipts of `slot` in the window that a replay reads, by decision id, rank, insertion order. */
+  listDecideReplayReceipts(slot: string, sinceHours: number): Promise<DecideStoreSql.DecideReplayReceipt[]>;
+  /** Each (slot, provider, resolved model) in the window with its count and latest time, latest first. */
+  listDecideResolvedModels(sinceHours: number): Promise<DecideStoreSql.DecideResolvedModel[]>;
+  /** Per slot, the receipts in the window marked `mixed_model`. */
+  listDecideMixedModelDecisions(sinceHours: number): Promise<Array<{ slot: string; n: number }>>;
+  /** Record one calibration, stamped now, and answer its id. */
+  insertDecideCalibration(row: DecideStoreSql.DecideCalibrationInsert): Promise<number>;
+  /** Replace the qualification columns of calibration `id` and stamp `qualified_at`; an unknown id changes nothing. */
+  storeDecideQualification(id: number, q: DecideStoreSql.DecideQualification): Promise<void>;
+  /** The calibrations by slot (byte order), newest first; retired ones only with `includeRetired`. */
+  listDecideCalibrations(opts?: { slot?: string; includeRetired?: boolean }): Promise<DecideStoreSql.DecideCalibration[]>;
+  /** Calibration `id`, or null. */
+  getDecideCalibration(id: number): Promise<DecideStoreSql.DecideCalibration | null>;
+  /** Retire calibration `id` or bring it back; answers whether the row exists. */
+  setDecideCalibrationRetired(id: number, retired: boolean): Promise<boolean>;
   // Group A (jobs-tables): the Wakeshift report-back tables (engine-sql/jobs-wake.ts).
   /** Record a watch and return its id; a second open watch of the same Wakeshift subscription keeps its row and takes the new expiry. */
   openWakeWatch(watch: JobsWake.WakeWatchInsert): Promise<number>;

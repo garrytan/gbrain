@@ -14,11 +14,10 @@ use serde_json::{Map, Value, json};
 
 use super::tsearch::{TsVector, Weight, concat, fts_input, setweight, to_tsvector};
 use super::vector_cache::{VectorKind, cached};
-use crate::chunk_queries::SAFE_FENCE_CHUNKER_VERSION;
-use crate::chunks::ChunkRecord;
+use crate::chunks::{ChunkRecord, SAFE_FENCE_CHUNKER_VERSION};
 use crate::env::iso;
 use crate::error::{Result, StoreError};
-use crate::facts::{PrivacyPolicy, page_hidden};
+use crate::facts::{OwnerOnlySources, PrivacyPolicy, page_hidden_with};
 use crate::kv::KvRead;
 use crate::pages::PageRecord;
 use crate::sources::read_source;
@@ -155,6 +154,8 @@ pub(super) struct PageFilter<'a> {
     after: Option<Bound>,
     before: Option<Bound>,
     live_sources: HashMap<String, bool>,
+    /// The owner-only sources, read on the first page `exclude_private` judges.
+    owner_only: Option<OwnerOnlySources>,
 }
 
 impl<'a> PageFilter<'a> {
@@ -164,6 +165,7 @@ impl<'a> PageFilter<'a> {
             after: Bound::parse(options.after_date.as_ref(), "afterDate")?,
             before: Bound::parse(options.before_date.as_ref(), "beforeDate")?,
             live_sources: HashMap::new(),
+            owner_only: None,
         })
     }
 
@@ -178,6 +180,16 @@ impl<'a> PageFilter<'a> {
                 .any(|key| page.frontmatter.contains_key(*key))
         {
             return Ok(false);
+        }
+        if let Some(policy) = &o.exclude_private {
+            if self.owner_only.is_none() {
+                self.owner_only = Some(OwnerOnlySources::read(read)?);
+            }
+            if let Some(owner_only) = &self.owner_only
+                && page_hidden_with(read, page, policy, owner_only)?
+            {
+                return Ok(false);
+            }
         }
         if o.page_type.as_ref().is_some_and(|t| *t != page.page_type)
             || o.types
@@ -223,11 +235,6 @@ impl<'a> PageFilter<'a> {
             }
         };
         if !live {
-            return Ok(false);
-        }
-        if let Some(policy) = &o.exclude_private
-            && page_hidden(read, page, policy)?
-        {
             return Ok(false);
         }
         // `pageEligibleSql(p)`: the trust floor, then the flagged-page filter.
@@ -316,6 +323,14 @@ pub(super) fn chunk_vector(chunk: &ChunkRecord) -> Result<Arc<TsVector>> {
         let head = concat(&part(doc, Weight::A)?, &part(symbol, Weight::A)?)?;
         concat(&head, &part(&chunk.chunk_text, Weight::B)?)
     })
+}
+
+/// The chunk's vector as a search reads it, or `None` for a chunk whose vector cannot be built (a text past the
+/// tsvector size cap). SQL never stores such a chunk (its trigger raises in the write, and `check_chunk_vector` raises
+/// the same here), but a store written before that check may hold one. It matches nothing; it must not fail the searches
+/// that pass over it.
+pub(super) fn readable_chunk_vector(chunk: &ChunkRecord) -> Option<Arc<TsVector>> {
+    chunk_vector(chunk).ok()
 }
 
 /// `[[:space:]]` in a Postgres regular expression.

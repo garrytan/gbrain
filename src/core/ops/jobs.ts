@@ -360,6 +360,9 @@ function callerJobActor(): JobActor {
   return actor ? [actor.system, actor.external_id, actor.member, ''] : ['', '', '', jobAudienceKey(audience)];
 }
 
+/** What a submit_agent call that sends no max_turns gets; a starter caller may only lower it (STARTER_PARAM_CEILINGS). */
+export const SUBMIT_AGENT_DEFAULT_MAX_TURNS = 20;
+
 const submit_agent: Operation = {
   name: 'submit_agent',
   idempotent: false,
@@ -406,9 +409,9 @@ const submit_agent: Operation = {
     const bad = (param: string, message: string, example: unknown) =>
       invalidParam(ctx, 'submit_agent', param, message, { def: submit_agent.params[param], example });
     if (typeof p.prompt !== 'string' || p.prompt.trim() === '') throw bad('prompt', 'prompt must be nonempty', "Summarize this week's new pages.");
-    const maxTurns = p.max_turns ?? 20;
+    const maxTurns = p.max_turns ?? SUBMIT_AGENT_DEFAULT_MAX_TURNS;
     if (!Number.isSafeInteger(maxTurns) || Number(maxTurns) < 1 || Number(maxTurns) > 100) {
-      throw bad('max_turns', 'max_turns must be an integer from 1 to 100', 20);
+      throw bad('max_turns', 'max_turns must be an integer from 1 to 100', SUBMIT_AGENT_DEFAULT_MAX_TURNS);
     }
     if (p.model !== undefined && (typeof p.model !== 'string' || p.model.trim() === '')) {
       throw bad('model', 'model must name a supported agent tool-loop model', TIER_DEFAULTS.subagent);

@@ -22,6 +22,7 @@ const PLAIN: Record<string, string> = {
   'src/core/belief/state.ts readBeliefState privatePagesFilterFragment': 'the ledger and purge read the stored world visibility, not a caller view',
   'src/core/cycle/synthesize-concepts.ts runPhaseSynthesizeConcepts privatePagesFilterFragment': 'dream cycle: marks a concept private when an input is',
   'src/core/engine-sql/link-temporal.ts readLinkRelationshipEvidence privatePagesFilterFragment': 'write-side: records whether a link origin is public',
+  'src/core/engine-sql/identity-decisions.ts listRestrictedIdentityMembers privatePagesFilterFragment': 'write-side: which duplicate-decision members may be written into the home repository, judged as world; local dedupe only',
   'src/core/engine-sql/trust-tier-reads.ts listValidTimeIdentities privatePagesFilterFragment': 'the world flag of the page; the read itself is gated by privatePagesFilterForCaller',
   'src/core/facts/held-fact-move.ts planHeldMoves privatePagesFilterFragment': 'write-side: whether the target page is world',
   'src/core/persistence/change-reason.ts pageWorldVisible privatePagesFilterFragment': 'write-side: whether a change reason may be published',

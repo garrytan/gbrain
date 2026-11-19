@@ -34,7 +34,10 @@ import { recordCommit, resetLedgerCacheForTests } from '../src/core/git/commit-l
 import { retryParkedPushes } from '../src/core/persistence/git-durability-administration.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { git } from './helpers/git-publication.ts';
-import { withEnv } from './helpers/with-env.ts';
+import { withEnv, envForFile } from './helpers/with-env.ts';
+
+/** GST-2988: these tests pin the publish refusal, which secrets.on_push refuse keeps. */
+envForFile({ GBRAIN_SECRETS_ON_PUSH: 'refuse' });
 
 const token = 'ghp_' + 'Zt4q'.repeat(9);
 const config = { engine: 'pglite' as const, embedding_disabled: true };

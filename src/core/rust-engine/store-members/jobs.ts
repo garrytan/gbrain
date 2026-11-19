@@ -115,6 +115,8 @@ export * from './jobs-wake.ts';
 export * from './jobs-insight.ts';
 // Group C: the spend reservations and the lease-pressure log (engine-sql/jobs-spend.ts).
 export * from './jobs-spend.ts';
+// The spend ledger and the client budgets (engine-sql/spend-log.ts).
+export * from './jobs-spend-log.ts';
 // The subagent transcript and tool ledger (engine-sql/jobs-subagent.ts).
 export * from './jobs-subagent.ts';
 

@@ -43,6 +43,7 @@ import { loadFenceChunkOverlay } from '../eligibility/fence-overlay.ts';
 import { findLiveFileClaimants, type FileClaimant, type FileClaimTarget } from './file-claims.ts';
 import { digest, sha256 } from './digest.ts';
 import { replaceableFile } from '../facts/file-body-guard.ts';
+import { releaseHiddenMoment } from '../facts/derivation-inputs.ts';
 import { getWorktreeBinding } from './ownership.ts';
 import type { PreparedContentImport } from './prepared-import.ts';
 import type { PreparedMutation } from './coordinator.ts';
@@ -824,6 +825,7 @@ async function prepareDeletePageMutation(engine: BrainEngine, row: WriteRequest,
       if (preparedPurge) return purgePageInTransaction(tx, row, snapshot, preparedPurge);
       // GST-2518: a soft delete authors no content, so the tombstone keeps its tier (and a write over it the page's label guard).
       if (!noop) { await tx.createVersion(row.slug, source); await withTrustKeep(tx, ['pages'], () => tx.softDeletePage(row.slug, source)); }
+      else await releaseHiddenMoment(tx, Number(snapshot.page.id));
       return { status: 'soft_deleted', slug: row.slug, source_id: row.source_id, noop,
         recoverable_until: 'now + 72h via restore_page (remove immediately instead: gbrain delete <slug> --purge, local CLI only)' };
     } };
