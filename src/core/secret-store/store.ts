@@ -280,7 +280,7 @@ async function holdingSlugs(tx: BrainEngine, sourceId: string, slugs: string[], 
   const rows = await tx.executeRaw<{ id: number | string; slug: string; segmented: boolean; holds: boolean }>(
     `SELECT p.id, p.slug, p.body_storage = 'segmented' AS segmented, ${pageHoldsSql('p', '$3')} AS holds FROM pages p WHERE p.source_id = $1 AND p.slug = ANY($2::text[])`,
     [sourceId, slugs, id]);
-  const marker = new RegExp(`<REDACTED:[a-z0-9_]{1,64}:${id}>`);
+  const holds = (text: string) => [...text.matchAll(/<REDACTED:[a-z0-9_]{1,64}:([^<>]+)>/g)].some((m) => m[1] === id);
   const out: string[] = [];
   for (const page of rows) {
     if (page.holds) { out.push(page.slug); continue; }
@@ -289,7 +289,7 @@ async function holdingSlugs(tx: BrainEngine, sourceId: string, slugs: string[], 
     let carry = '';
     for await (const part of readSegmentedBody(tx, Number(page.id), sourceId)) {
       const text = carry + decoder.decode(part.bytes, { stream: true });
-      if (marker.test(text)) { out.push(page.slug); break; }
+      if (holds(text)) { out.push(page.slug); break; }
       carry = text.slice(-96);
     }
   }
