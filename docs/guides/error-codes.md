@@ -5476,7 +5476,7 @@ More: [docs/guides/skill-resolver.md#skill_resolver_host_hidden](../../docs/guid
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| OpenClaw does not list some skills in the agent's skill directories (dropped at load by skills.limits.maxCandidatesPerRoot or skills.limits.maxSkillsLoadedPerSource), so setup leaves them out of the agent's suggestions and doctor warns when the plugin still offers one. | The request itself was wrong or no longer matches the brain; nothing was changed. | Raise skills.limits.maxCandidatesPerRoot and skills.limits.maxSkillsLoadedPerSource in openclaw.json, or split the skill root, then run gbrain setup openclaw --skill-loading resolve again. | agent | `repeat the read that failed` | 1 | no |
+| OpenClaw does not list some skills in the agent's skill directories (dropped at load by skills.limits.maxCandidatesPerRoot or skills.limits.maxSkillsLoadedPerSource), so setup leaves them out of the agent's suggestions and doctor warns when the plugin still offers one. | The request itself was wrong or no longer matches the brain; nothing was changed. | Raise skills.limits.maxCandidatesPerRoot and skills.limits.maxSkillsLoadedPerSource in openclaw.json, or split the skill root, then run gbrain setup openclaw --skills-index-only. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/skill-resolver.md#skill_resolver_host_load_cut](../../docs/guides/skill-resolver.md#skill_resolver_host_load_cut)
 

@@ -24,13 +24,15 @@ export const OPENCLAW_TURN_PLUGIN_ID = 'gbrain-turn-rule';
 
 export interface OpenclawTurnPluginOutcome { action: 'write' | 'keep' | 'print' | 'remove' | 'skip'; path: string; detail: string; commands?: string[]; unchanged?: true }
 
-/** Whether OpenClaw's config already loads the plugin at dir, enables it and allows it conversation access (so no CLI call is needed). */
+/** Whether OpenClaw's config already loads the plugin at dir, enables it, lets its plugin policy (plugins.enabled, allow, deny) load it and allows it conversation access (so no CLI call is needed). */
 export function openclawPluginRegistered(id: string, dir: string): boolean {
   try {
-    const cfg = parseJson5ish(readFileSync(openclawConfigPath(), 'utf8')) as { plugins?: { load?: { paths?: unknown }; entries?: Record<string, { enabled?: unknown; hooks?: { allowConversationAccess?: unknown } }> } } | undefined;
-    const entry = cfg?.plugins?.entries?.[id];
-    const paths = Array.isArray(cfg?.plugins?.load?.paths) ? cfg!.plugins!.load!.paths as unknown[] : [];
-    return !!entry && entry.enabled !== false && entry.hooks?.allowConversationAccess === true && paths.includes(dir);
+    const cfg = parseJson5ish(readFileSync(openclawConfigPath(), 'utf8')) as { plugins?: { enabled?: unknown; allow?: unknown; deny?: unknown; load?: { paths?: unknown }; entries?: Record<string, { enabled?: unknown; hooks?: { allowConversationAccess?: unknown } }> } } | undefined;
+    const plugins = cfg?.plugins;
+    const entry = plugins?.entries?.[id];
+    const paths = Array.isArray(plugins?.load?.paths) ? plugins!.load!.paths as unknown[] : [];
+    const allowed = plugins?.enabled !== false && !(Array.isArray(plugins?.deny) && plugins!.deny.includes(id)) && !(Array.isArray(plugins?.allow) && plugins!.allow.length > 0 && !plugins!.allow.includes(id));
+    return allowed && !!entry && entry.enabled !== false && entry.hooks?.allowConversationAccess === true && paths.includes(dir);
   } catch { return false; }
 }
 

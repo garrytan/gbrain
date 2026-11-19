@@ -95,8 +95,8 @@ export const openclawSkillPluginDir = (): string => join(openclawStateDir(), 'gb
 export const openclawSkillStatePath = (home: string): string => join(home, OPENCLAW_SKILL_STATE_FILE);
 export const openclawSkillLibDir = (home: string): string => join(home, 'lib');
 
-function defaultRun(argv: string[]): { ok: boolean; output: string; stdout: string } {
-  const r = bunSpawnSync(argv, { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: process.env, timeout: 120_000 });
+function defaultRun(argv: string[], timeout = 120_000): { ok: boolean; output: string; stdout: string } {
+  const r = bunSpawnSync(argv, { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: process.env, timeout });
   return { ok: r.exitCode === 0, output: `${r.stdout.toString()}${r.stderr.toString()}`.trim(), stdout: r.stdout.toString() };
 }
 
@@ -225,7 +225,7 @@ function hostSkills(run: Run, bin: string, agentId: string): { listed: Set<strin
 export function openclawHostDrift(agentId: string, catalogIds: string[], excluded: string[], deps: OpenclawSkillDeps = {}): { hidden: string[]; cut: string[] } | null {
   const bin = deps.openclawBin !== undefined ? deps.openclawBin : which('openclaw');
   if (!bin) return null;
-  const host = hostSkills(deps.run ?? defaultRun, bin, agentId);
+  const host = hostSkills(deps.run ?? ((argv) => defaultRun(argv, 20_000)), bin, agentId);
   if (!host || !catalogIds.some((n) => host.listed.has(n))) return null;
   const offered = catalogIds.filter((n) => !excluded.includes(n) && !host.visible.has(n));
   const cut = offered.filter((n) => !host.listed.has(n));

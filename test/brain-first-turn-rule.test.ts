@@ -347,6 +347,15 @@ describe('per-turn rule: OpenClaw before_prompt_build plugin', () => {
       const off = recorder();
       expect(syncOpenclawTurnPlugin({ access, dryRun: false, openclawBin: '/bin/openclaw', run: off.run }).unchanged).toBeUndefined();
       expect(off.calls).toHaveLength(3);
+      const entries = { [OPENCLAW_TURN_PLUGIN_ID]: { enabled: true, hooks: { allowConversationAccess: true } } };
+      for (const policy of [{ allow: ['another-plugin'] }, { deny: [OPENCLAW_TURN_PLUGIN_ID] }, { enabled: false }]) {
+        writeFileSync(join(st, 'openclaw.json'), JSON.stringify({ plugins: { ...policy, load: { paths: [dir] }, entries } }));
+        const blocked = recorder();
+        expect(syncOpenclawTurnPlugin({ access, dryRun: false, openclawBin: '/bin/openclaw', run: blocked.run }).unchanged).toBeUndefined();
+        expect(blocked.calls).toHaveLength(3);
+      }
+      writeFileSync(join(st, 'openclaw.json'), JSON.stringify({ plugins: { allow: [OPENCLAW_TURN_PLUGIN_ID], load: { paths: [dir] }, entries } }));
+      expect(syncOpenclawTurnPlugin({ access, dryRun: false, openclawBin: '/bin/openclaw', run: recorder().run }).unchanged).toBe(true);
     });
   });
 
