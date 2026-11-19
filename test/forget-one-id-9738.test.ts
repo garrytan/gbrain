@@ -38,8 +38,14 @@ for (const kind of testBackends()) {
       const consoleError = console.error;
       console.error = (...parts: unknown[]) => { err.push(parts.map(String).join(' ') + '\n'); };
       _resetCliExitVerdictForTests();
-      try { await withEnv({ GBRAIN_HOME: home }, fn); } finally { process.stdout.write = o; process.stderr.write = e; console.error = consoleError; }
-      return { out: out.join(''), err: err.join(''), code: currentExitCode() };
+      let code: number;
+      try { await withEnv({ GBRAIN_HOME: home }, fn); } finally {
+        process.stdout.write = o; process.stderr.write = e; console.error = consoleError;
+        code = currentExitCode();
+        _resetCliExitVerdictForTests();
+        process.exitCode = 0;
+      }
+      return { out: out.join(''), err: err.join(''), code };
     }
     const active = async () => (await engine.executeRaw<{ id: number }>(
       'SELECT id FROM facts WHERE entity_slug=$1 AND expired_at IS NULL ORDER BY id', [SLUG])).map(r => Number(r.id));
