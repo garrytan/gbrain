@@ -14,8 +14,9 @@ use crate::store_binding::{Brain, arg, required};
 
 #[napi]
 impl Brain {
-    /// `createVersion(slug, { sourceId?, reason? }?)`: snapshots the page and resolves the version
-    /// row; `reason` is the snapshot's change reason.
+    /// `createVersion(slug, { sourceId?, reason?, historyGap? }?)`: snapshots the page and resolves
+    /// the version row; `reason` is the snapshot's change reason, and `historyGap` records that the
+    /// page lost history first.
     #[napi]
     pub fn create_version<'env>(
         &self,
@@ -26,7 +27,7 @@ impl Brain {
         self.run(env, move |s| {
             let o: gbrain_store::pages::CreateVersionOptions =
                 arg(options, "createVersion options")?;
-            s.create_version_with(&slug, o.source_id.as_deref(), o.reason.as_deref())
+            s.create_version_opts(&slug, &o)
         })
     }
 
