@@ -160,6 +160,10 @@ that differ only in punctuation or case can come back in another order than PGLi
   written or renamed under an applied rule that a later restamp does not count, and a reader a rule names that
   `findPagesByTitles` serves the folder, except while its prefix is pending; and a caller record with no folder
   coverage, read while a prefix is pending, that `findPagesByTitles` and `getRecentSalience` serve as Postgres does.
+  The salience, salience-score and anomaly reads serve a rule-named reader the folder (not while pending); the write
+  visibility probe says an identity could open a page only a folder rule hides; a world fact held by a page under a
+  rule counts as a world fact from a private page and stays out of the consolidate buckets; and the fact cache
+  watermark moves when a rule or a pending prefix changes.
 - `crates/gbrain-store/src/access_migrations.rs` (unit tests): the unfinished migration is the newest that has not
   switched, and a migration write the table refuses (a source with no access state, a direction or phase it does not
   allow, a used id) writes nothing.

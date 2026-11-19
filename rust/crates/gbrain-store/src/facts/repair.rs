@@ -24,9 +24,12 @@
 //! plain `Option` equality.
 
 use super::loops::loop_fact_ids;
+use super::privacy::stamped_rules;
 use super::{FactRecord, fact_fingerprint, ids_under, refs_prefix, source_rows};
 use crate::Store;
+use crate::access_rules::pending_covers;
 use crate::error::Result;
+use crate::kv::KvRead;
 use crate::links::no_nul;
 use crate::pages::{PageRecord, read_page};
 use crate::timeline_queries::jsonb_field_text;
@@ -366,12 +369,16 @@ impl Store {
                         .filter(|page| page.deleted_at_us.is_none()),
                     None => None,
                 };
-                let held_private = held.as_ref().is_some_and(|page| {
-                    page.deleted_at_us.is_none() && derivation_private(page, args.honor_aliases)
-                });
-                let origin_private = origin
-                    .as_ref()
-                    .is_some_and(|page| derivation_private(page, args.honor_aliases));
+                let held_private = match held.as_ref() {
+                    Some(page) if page.deleted_at_us.is_none() => {
+                        derivation_private(&*read, page, args.honor_aliases)?
+                    }
+                    _ => false,
+                };
+                let origin_private = match origin.as_ref() {
+                    Some(page) => derivation_private(&*read, page, args.honor_aliases)?,
+                    None => false,
+                };
                 if !(held_private || origin_private) {
                     continue;
                 }
@@ -580,12 +587,26 @@ fn snapshot_allows(page: &PageRecord, honor_aliases: bool) -> bool {
 }
 
 /// `derivationPrivateSql('h')`: the snapshot filter fails, a privacy alias is set (whether or not
-/// aliases are honoured), the page names readers (`readable_by`), or a folder rule covers it (never
-/// here: the store holds no folder rules).
-pub(crate) fn derivation_private(page: &PageRecord, honor_aliases: bool) -> bool {
-    !snapshot_allows(page, honor_aliases)
+/// aliases are honoured), the page names readers (`readable_by`), or it sits under a folder
+/// ([`folder_restricted`]).
+pub(crate) fn derivation_private(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    honor_aliases: bool,
+) -> Result<bool> {
+    Ok(!snapshot_allows(page, honor_aliases)
         || alias_private(&page.frontmatter)
         || page.frontmatter.contains_key("readable_by")
+        || folder_restricted(read, page)?)
+}
+
+/// `folderRestrictedSql`: a folder rule is stamped on the page, or a pending or invalid prefix of
+/// its source covers its slug.
+pub(crate) fn folder_restricted(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
+    Ok(
+        !stamped_rules(read, page)?.is_empty()
+            || pending_covers(read, &page.source_id, &page.slug)?,
+    )
 }
 
 #[cfg(test)]

@@ -272,7 +272,7 @@ Each member is one store call (a scan of the fact rows, no SQL). The TypeScript 
 | `readFactSubject` | a fact's source and page slug (its page, else its entity), or null | served |
 | `listFactsForPage` | the fence-owned rows of a page by row number then id; times come back as `Date`s | served |
 | `countLegacyFactsPending` | per entity page, the unexpired unfenced non-observation rows of a live page in a source with a checkout | served (no set order) |
-| `countUnconsolidatedFactsBySource` | the consolidate buckets of at least `minPerBucket` active unconsolidated facts | served; "names readers" is a page whose frontmatter has `readable_by` (the folder-rule tables and `page_readers` are empty, as in `privacy.rs`) |
+| `countUnconsolidatedFactsBySource` | the consolidate buckets of at least `minPerBucket` active unconsolidated facts | served; "names readers" is a page whose frontmatter has `readable_by` or that sits under a folder rule or a pending prefix (`folder_restricted`); `page_readers` is empty, as in `privacy.rs` |
 | `findBulkFactDays` | the bulk days of unarchived sources under a `rule`, with top sources and self-dated claims | served; refused when a count threshold is not an integer or the share is not finite |
 | `maxFenceRowNum` | the largest `row_num` of a page coordinate, 0 for none | served |
 | `listStoredFenceFactRows` | the numbered rows of a page coordinate, oldest id first | served |
@@ -346,7 +346,8 @@ Rules of the four served members:
   `readable` is false only for a held page the snapshot filter hides. Whether an alias hides a page with no
   `visibility` is a process setting; the TypeScript member reads it from the rendered filter and passes it as
   `honorAliases`.
-- A folder rule is never read: the store holds no access tables, so no page is folder-restricted.
+- A page is also private when it sits under a folder (`folderRestrictedSql`): a folder rule of its source is
+  stamped on it, or a pending or invalid prefix of its source covers its slug (`folder_restricted`).
 - The privacy helpers (`provenance_slug`, `snapshot_allows`, `alias_private`, `derivation_private`) are
   re-implemented in `repair.rs` rather than shared with `privacy.rs`.
 

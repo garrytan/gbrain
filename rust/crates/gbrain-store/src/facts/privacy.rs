@@ -456,7 +456,7 @@ fn names_readers(page: &PageRecord) -> bool {
 
 /// The folder rules stamped on a page (`folder_rule_ids`): none unless its source holds access
 /// state, else every rule whose prefix its slug starts with.
-fn stamped_rules(read: &dyn KvRead, page: &PageRecord) -> Result<Vec<AccessRuleRecord>> {
+pub(crate) fn stamped_rules(read: &dyn KvRead, page: &PageRecord) -> Result<Vec<AccessRuleRecord>> {
     if !stamped(read, &page.source_id, &page.slug)? {
         return Ok(Vec::new());
     }

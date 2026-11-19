@@ -56,12 +56,13 @@ pub mod trust_reads;
 mod widen;
 
 pub use crate::owner_only::OwnerOnlyForm;
+pub(crate) use embedding::md5_hex;
 pub use fence::{FenceContext, FenceTarget};
 pub use fence_overlay::{FenceOverlayIncomingRow, FenceOverlayInput};
 pub use held_cells::{HeldFenceCellKey, HeldFenceCellsInput, HeldFenceMember};
 pub use privacy::PrivacyPolicy;
 use privacy::hidden_by_private_provenance;
-pub(crate) use privacy::{caller_version_hidden, page_hidden, version_hidden};
+pub(crate) use privacy::{caller_version_hidden, page_hidden, stamped_rules, version_hidden};
 pub use widen::VisibilityWidening;
 use widen::{visibility_admits, world_admits};
 
