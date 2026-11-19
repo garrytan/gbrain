@@ -21,7 +21,7 @@ typed claims. Each member gives the answer PGLite gives today, odd behavior incl
 | `listUnattributedFacts` | The review-list read of `src/core/review-lists.ts`: active rows with no `entity_slug` in any of `sourceIds` (duplicates read once), less rows whose page or entity page is soft-deleted, `worldOnly` keeping `visibility = 'world'`, newest id first, then `offset` and `limit`. Each row is `id, fact, kind, visibility, source_id, created_at, source`, `created_at` in the `timestamptz::text` form (`2026-06-18 09:00:00.5+00`). `excludePrivate` applies the private-provenance policy below, as `src/core/review-lists.ts:30` does. The `BrainEngine` member `listUnattributedFacts` (`src/core/rust-engine/store-members/facts.ts`) calls it in place of the SQL of `src/core/engine-sql/cli-reads-ops.ts`; its `excludePrivateProvenance` becomes this policy. |
 | `pageCollapseFacts` | The collapse-stage read of hybrid search (`facts/collapse.rs`, SQL in `src/core/engine-sql/search-reads.ts`): one `{ id, target, body_chars, body, lead }` row per page row whose id is in `ids`, soft-deleted pages and every source included, by id (the SQL has no `ORDER BY`); a missing id has no row. `target` is the first of `redirect_to`, `redirect` and `merged_into` that is a non-empty string after trimming spaces, then `superseded_by` when the lower-cased `status` holds the word `alias`, `redirect` or `redirected`. `BODY` is the first 65,536 code points of `compiled_truth`, spaces trimmed; `body_chars` is its length in code points, `body` its md5 hex for an id in `bodyIds` with at least 200 code points, `lead` its first 4,000 code points for an id in `bodyIds`. The TypeScript member refuses an id that is not a 32-bit integer, as the SQL casts both lists to `int[]`. It reads pages, not facts; it sits here because its `BrainEngine` capability class is `facts`. |
 | `listFenceRetireCandidates`, `listFenceFactRows` | The fence guard's two reads of a page's fence rows (`facts/fence.rs`): the rows a publication would retire, and the live rows the writer may not supersede. See "The fence guard's reads". |
-| `listHeldFenceCells` | The fence row lines a caller with world-only fact reads may not see (`facts/held_cells.rs`), for the caller with no member page and no private-facts grant. See "Held fence cells". |
+| `listHeldFenceCells` | The fence row lines a caller with world-only fact reads may not see (`facts/held_cells.rs`), member callers and callers with a private-facts grant included. See "Held fence cells". |
 | `readFenceOverlayRows` | The fence overlay's read of one page body's world fence rows (`facts/fence_overlay.rs`): page tier, newest row fact tier and flag, held hold, narrower fact. See "The fence overlay". |
 | `migrateFactsToCanonical` | Moves a phantom page's active rows onto the canonical slug, `row_num` offset past the canonical page's largest. The ontology duplicates the move would make are dropped first, in its own write, as PGLite runs the two statements outside one transaction. |
 
@@ -64,6 +64,11 @@ compared as one token. The store knows two fact forms: `privateProvenanceFilterU
 fact lists, the relevance pool and `listSimilarActiveFacts`) and `privateFactFilterForCaller` (what
 `privateFactFilterForReader` renders for a caller that is not the owner: `countWorldFacts` and the
 ontology reads). With no caller the two are the same policy in a different order.
+
+A caller read while the config flag `access.restrictions_present` was unset (`CallerAccess.restricted` false)
+renders the short member-access form. The member renders its comparison texts under that form and sends
+`open: true`. The store then hides every page that names readers, whatever the identity, and runs the origin walk
+only when its own flag ([access-flag.md](access-flag.md)) is `'1'`, so a stale flag read fails closed.
 
 Every fact family opts in with `callerReaders`: a caller whose text equals the rendering for a
 record of only its reader identity and private-readable grant is served, and the member sends
@@ -205,6 +210,7 @@ reads refuse their `hasAttempts: true` form.
 | `countFactRelinkOutcomes` | refused | the `fact_relink_attempts` table |
 | `listUnlinkedConversationSlugs` | served for `hasAttempts: false` | `hasAttempts: true` reads the `fact_relink_attempts` table |
 | `countFactEmbeddingCoverage` | served | |
+| `countStaleFactEmbeddings` | served | the same eligibility as `countFactEmbeddingCoverage`; `chars` counts code points |
 
 - With no attempts table nothing was tried or paid, so the served unlinked reads return
   `conversation_tried`, `conversation_paid`, `no_subject` and `conversation_unresolved` as 0,
@@ -356,6 +362,62 @@ key range of its own: they read the fact rows and the write-gate holds (`trust/w
 | `listSingleFactMetadata` | `facts/purge.ts` | yes, without the remote floor | `id = ANY(ids)` within `sourceId`: a repeated id answers once and an id no row has answers nothing. The SQL has no `ORDER BY`; the store answers in id order. The member refuses `remoteFloor: true` and an id that is not an `int4`. |
 | `listUnpreviewedTrustFacts` | doctor `trust-release-unpreviewed` | yes | Unexpired `user_confirmed` facts whose `write_origin` names the `trust_release` channel and has no `fields_previewed`, each joined to the newest released fact hold with the same source, slug, fence row (`payload->>'row_num'` as text, so `"3"` matches row 3) and request id (`IS NOT DISTINCT FROM`). A fact with no such hold drops out. In id order, at most `limit`; every row carries `total`, the count before the limit. The member refuses a limit that is not a non-negative integer. |
 
+## Withdrawal discovery reads (`facts/withdrawal_discovery.rs`)
+
+`readWithdrawalDiscovery(read)` is the one member `discoverWithdrawalTargets` (`src/core/facts/withdrawal-discovery.ts`)
+calls to find every page that carries a withdrawn claim; PGLite and Postgres run the SQL in
+`src/core/engine-sql/withdrawal-discovery.ts`. `read.kind` picks the statement. No key range of its own: the store reads
+the `F 0x01` fact rows, the page records and, for a segmented page, the live published manifest rows with facts slots
+and their segment texts (`page_body::live_facts_slot_rows`).
+
+| Kind | Answer |
+|---|---|
+| `claim_keys` | Each claim with its subject (`*` for none) and `norm`: `fact_normalize` of its own text, else of the first source fact of its visibility whose fingerprint, then v1 fingerprint, is the claim's hash; null when none. |
+| `provenance_pages` | The distinct page ids of the facts of a key's visibility whose fingerprint is the sha256 of `norm` (the key's hash when `norm` is null), for subject `*`, the fact's entity, or the fact's owned memory page (`memory/members/…`, `memory/scope`). The page is `COALESCE(source_markdown_slug, entity_slug)` in the fact's source; a fact whose page was never written answers nothing. |
+| `claim_matches` | The distinct `(id, ambiguous)` of the candidates a key matches: no or the same visibility, subject `*` or the candidate's slug, the key's hash equal to the claim's fingerprint or v1. |
+| `inline_fence_pages` | Pages after `after` by id, at most `limit`, within `subjects` when given, whose truth or timeline holds `gbrain:facts:` and whose lowered truth or timeline matches every LIKE pattern of a key of their subject (no patterns match). |
+| `segment_fence_rows` | Live published rows of segmented pages with facts slots, after `(page, occurrence)`, one of whose whole slots (no `open_start`) matches every pattern of a key; each with its whole slot texts. A slot reads `substring` semantics; text that is not UTF-8 is refused, as `convert_from` is. |
+| `split_fence_slots` | Open slots (`open_start`) of those rows grouped by page, region and open start, with the bytes they hold, after `(page, region, open start)`, at most `limit`. |
+| `target_pages`, `sample_slugs` | Slug, id and knowledge revision of the given page ids in the source; up to 20 slugs in byte order (Postgres sorts by the database collation). |
+
+No kind filters soft-deleted pages or expired facts, as no statement does. The member
+(`store-members/withdrawal-discovery.ts`) refuses a cursor, limit, page id or candidate id that is not a safe integer,
+and maps ids to numbers. Pinned by `test/engine-parity/withdrawal-discovery-reads.test.ts`,
+`test/withdrawal-discovery-reads-sql-pin.test.ts` and `rust/crates/gbrain-store/tests/withdrawal_discovery.rs`.
+
+## Withdrawal page statements (`facts/withdrawal_pages.rs`)
+
+`recordFactWithdrawal` (`src/core/facts/withdrawal.ts`) calls two members on the pages that carry a withdrawn claim;
+PGLite and Postgres run the SQL in `src/core/engine-sql/withdrawal-pages.ts`. No key range of their own: the store
+reads and writes page records and deletes the page's `B 's'` embedding signature (`embeddings::clear_signature`).
+
+| Member | Answer |
+|---|---|
+| `listSegmentedPages(sourceId, slugs)` | `{ id, slug }` of each segmented page (truth and timeline both NULL) at the slugs in the source. |
+| `invalidateWithdrawnPages(sourceId, slugs)` | In one store write, each other page at the slugs in the source gets a new knowledge revision and no text projection revision through `write_page` (which queues its projection rebuild, as the revision trigger does), and loses its embedding signature; answers `{ id, slug, knowledge_revision }` of each. |
+
+Each slug counts once, in the order given (`slug = ANY($2)` matches a row once; the SQL has no `ORDER BY`). Neither
+member skips a soft-deleted page, as neither statement does. A source id with a NUL byte is refused. The member
+(`store-members/withdrawal-pages.ts`) maps ids to numbers. Pinned by `test/engine-parity/withdrawal-forget.test.ts`,
+`test/withdrawal-pages-sql-pin.test.ts` and `rust/crates/gbrain-store/tests/withdrawal_pages.rs`.
+
+## Withdrawal check on a malformed fence (`facts/withdrawal_fence.rs`)
+
+`assertPreparedFactWithdrawals` (`src/core/facts/withdrawal.ts`) refuses a prepared import whose malformed facts fence
+holds a withdrawn or purged claim. It calls one member; PGLite and Postgres run the SQL in
+`src/core/engine-sql/withdrawal-fence.ts`. No key range of its own: the store reads the withdrawal ledger
+(`t 0x01`, `trust/withdrawals.rs`) and the purge ledger (`F 0x0F`, `facts/purge_ledger.rs`).
+
+| Member | Answer |
+|---|---|
+| `hasWithdrawnFenceClaim(sourceId, [{ claim, visibility }], subject)` | Whether a withdrawal or a purge tombstone of the source has the fingerprint or the v1 fingerprint of a claim (`trust::fingerprint`, byte for byte the `gbrain_fact_fingerprint` and `_v1` hex), at the claim's visibility (`private` and `world` when it has none), under subject `*` or `subject` (any subject when `subject` is null). False for no claims. |
+
+Both ledgers match both fingerprints, unlike `isFactWithdrawn`, whose purge half reads the fingerprint only: the SQL
+joins the union of `fact_withdrawals` and `fact_purges` on `fact_hash IN (fp, fp_v1)`. With a subject the store reads
+two keys per ledger, visibility and hash; with none it scans the `source\0visibility\0` prefix and compares the hash
+after the subject. A NUL byte in any text is refused. Pinned by `test/engine-parity/withdrawal-fence.test.ts`,
+`test/withdrawal-fence-sql-pin.test.ts` and `rust/crates/gbrain-store/tests/withdrawal_fence.rs`.
+
 ## Group 5: search relevance and trust reads (`facts/trust.rs`)
 
 | Member | Site | Served | Notes |
@@ -447,19 +509,39 @@ before state (`trust::proposals::held_narrower`, [trust.md](trust.md#trust-propo
 
 ## Held fence cells (`facts/held_cells.rs`)
 
-`list_held_fence_cells({ keys })` (`engine-sql/cli-reads-ops.ts` `listHeldFenceCells`): which facts-fence
+`list_held_fence_cells({ keys, member, grantSources })` (`engine-sql/cli-reads-ops.ts` `listHeldFenceCells`): which facts-fence
 row lines of a page's text a caller with world-only fact reads may not see. get_page, get_chunks, think
 and search_exact ask it through `eligibility/stamp.ts` `heldFenceLines` and drop the held lines. A key
 is `{ sourceId, slug, rowNum, claim, partial }`: the page, the line's row number (-1 when the line names
 none), its claim, and whether a chunk boundary cut it.
 
-The store answers the form of `eligibility/fence-overlay.ts` `heldRowSql` for a caller with no member
-page and no private-facts grant (`memberFactAdmitSql` and `grantedPrivateFactSql` both `FALSE`); the
-TypeScript member refuses any other caller with `unsupported`, and `heldFenceLines` then holds every
-line. Over the page's live rows (by-page index, `expired_at` null), a key is held when a row that is not
-`world` sits at its row number, or when a row that is not `world` states its claim and no `world` row
-states it. A row states a claim when its fact equals it, or, for a cut claim, contains it
-(`strpos(fact, claim) > 0`). The answer is `[{ source_id, slug, row_num, claim }]`, one row per distinct
+The store answers `eligibility/fence-overlay.ts` `heldRowSql`. Over the page's live rows (by-page index,
+`expired_at` null), a key is held when a narrower row sits at its row number, or when a narrower row
+states its claim and no `world` row states it. A row states a claim when its fact equals it, or, for a
+cut claim, contains it (`strpos(fact, claim) > 0`).
+
+A row that is not `world` is narrower unless the member admission (`memberFactAdmitSql`) or the grant
+admission (`grantedPrivateFactSql`) takes it. For a
+member caller (`callerMember()`) the TypeScript member passes `member: { slug, principal, policy }`: the
+caller's page `memory/members/<member>`, its principal `member:<member>`, and its page policy, which
+`storePageTextPolicy` reads from `privatePagesFilterForCaller` with the caller's readers (a policy the
+store does not render refuses, and every line is held). A `private` row of that page is admitted when
+the page is live (`deleted_at` null), its readers (`readable_by`, as `page_readers`) name the principal,
+and the policy shows the page (`page_hidden`). Every other page, and every page for a caller with no
+member identity, admits nothing.
+
+For a caller with a private-facts grant the TypeScript member passes `grantSources`, the sources of
+`privateFactSources()`. A `private` row is admitted when its source is granted, its `source_markdown_slug` is set,
+it is not a transcript-lane row (a `source` of the conversation prefix, `hook:writeback`, `hook:compact`,
+`sweep:corpus`, `transcript:…` or `connector:…`), none of its holding, entity and provenance slugs is a member page
+(`memory/members/…`), and none of those pages keeps its facts private: the stored page row (soft-deleted too) is a
+private derivation (`derivation_private`), or, for a page other than the entity page, there is no live row or the
+live row carries the quarantine key. A row that a `confirm` or `supersede_fact` proposal with a `visibility` key in
+its before state names as the related fact is admitted only when every target copy of those proposals is itself
+admitted by the member or grant admission (`trust::proposals::visibility_proposal_targets`). With no grant, a grant
+on another source, or a soft-deleted page, the rows stay held.
+
+The answer is `[{ source_id, slug, row_num, claim }]`, one row per distinct
 held cell, in first-key order (SQL leaves the order open). A NUL character or a row number outside
 `integer` refuses with `invalid_argument`, as Postgres raises for the same parameters. No keys answer
 `[]` without a read.

@@ -11,7 +11,8 @@
  * and FOR UPDATE; and the reads that decide what a forget's withdrawal reaches (refuseForgetReachingOtherCopies and
  * ownerReachesFact, forget-prepare.ts): the unbacked check, the linked copies with and without the floor, the hidden
  * copy and the owner reach for an owner with and without a member identity; and the withdrawal claim read
- * (planFactWithdrawal, src/core/facts/withdrawal.ts) with and without a member page and the floor.
+ * (planFactWithdrawal, src/core/facts/withdrawal.ts) with and without a member page and the floor, and FOR UPDATE
+ * (recordFactWithdrawal's row lock).
  * Fails when a member reorders a clause, renumbers a placeholder or binds a value as text.
  * No database: the engine runs on the recording fake.
  */
@@ -142,14 +143,17 @@ test('ownerReachesFact sends the old owner reach statement, with and without a m
   expect(last()).toEqual({ text: old(identity, ['rule-1']), params: [5, 'src-a'] });
 });
 
-test('readFactWithdrawalClaim sends the old planFactWithdrawal statement, with and without a member page and the floor', async () => {
+test('readFactWithdrawalClaim sends the old planFactWithdrawal statement, with and without a member page and the floor, and locked', async () => {
   const { engine, last } = recordingEngine();
-  const old = (floor: boolean) => `SELECT visibility,fact,gbrain_fact_fingerprint(fact) AS fact_hash,${factWithdrawalSubjectSql('facts')} AS subject,expired_at IS NOT NULL AS expired FROM facts WHERE id=$1 AND source_id=$2
-      AND NOT ${outcomeMarkerSql('facts')} AND ($3::boolean=false OR visibility='world' OR (visibility='private' AND source_markdown_slug=$4::text))${floor ? ` AND ${remoteProvenanceFloorSql('facts')}` : ''}`;
+  const old = (floor: boolean, lock = false) => `SELECT visibility,fact,gbrain_fact_fingerprint(fact) AS fact_hash,${factWithdrawalSubjectSql('facts')} AS subject,expired_at IS NOT NULL AS expired FROM facts WHERE id=$1 AND source_id=$2
+      AND NOT ${outcomeMarkerSql('facts')} AND ($3::boolean=false OR visibility='world' OR (visibility='private' AND source_markdown_slug=$4::text))${floor ? ` AND ${remoteProvenanceFloorSql('facts')}` : ''}${lock ? ' FOR UPDATE' : ''}`;
   await engine.readFactWithdrawalClaim({ id: 5, sourceId: 'src-a', worldOnly: false, memberPage: null, remoteFloor: false });
   expect(last()).toEqual({ text: old(false), params: [5, 'src-a', false, null] });
   await engine.readFactWithdrawalClaim({ id: 5, sourceId: 'src-a', worldOnly: true, memberPage: 'memory/members/alice-example', remoteFloor: false });
   expect(last()).toEqual({ text: old(false), params: [5, 'src-a', true, 'memory/members/alice-example'] });
   await engine.readFactWithdrawalClaim({ id: 5, sourceId: 'src-a', worldOnly: true, memberPage: null, remoteFloor: true });
   expect(last()).toEqual({ text: old(true), params: [5, 'src-a', true, null] });
+  // recordFactWithdrawal's row lock (src/core/facts/withdrawal.ts) reads the same claim FOR UPDATE.
+  await engine.readFactWithdrawalClaim({ id: 5, sourceId: 'src-a', worldOnly: true, memberPage: 'memory/members/alice-example', remoteFloor: true, lock: true });
+  expect(last()).toEqual({ text: old(true, true), params: [5, 'src-a', true, 'memory/members/alice-example'] });
 });

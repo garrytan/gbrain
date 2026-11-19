@@ -80,13 +80,15 @@ const LIST_FILTERS = ['type', 'tag', 'limit', 'offset', 'updated_after', 'update
 /**
  * A page as PGLite's `listPages({ listColumnsOnly: true })` row reads: only the list columns (id, source, slug, type,
  * title, dates, effective date, a segmented body's storage and size), with a blank body and timeline and empty
- * frontmatter. Every other page field is absent.
+ * frontmatter. `content_hash` and `emotional_weight` are present and undefined, as rowToPage leaves them when the list
+ * columns omit them. Every other page field is absent.
  */
 function listColumns(page: Page): Page {
   const { id, source_id, slug, type, title, created_at, updated_at, updated_at_iso, deleted_at, effective_date,
     effective_date_source, body_storage, body_bytes } = page;
   return {
     id, source_id, slug, type, title, compiled_truth: '', timeline: '', frontmatter: {}, created_at, updated_at,
+    content_hash: undefined, emotional_weight: undefined,
     ...(updated_at_iso !== undefined && { updated_at_iso }),
     ...(deleted_at !== undefined && { deleted_at }),
     ...(effective_date !== undefined && { effective_date }),

@@ -58,6 +58,8 @@ from the source, fact and page records the other families write
   is false, and, with `remoteFloor`, passes the floor of `readRemoteForgetTier`. `fact_hash` is
   `gbrain_fact_fingerprint(fact)`; `subject` is the slug of its owned memory page (a member page or the scope page),
   else `*` for no entity or an unbacked one, else the entity (`factWithdrawalSubjectSql`).
+  With `lock`, PGLite and Postgres add `FOR UPDATE` (`recordFactWithdrawal` locks the claim it changes); the store
+  takes no row lock, because it serializes writes and the withdrawal's `Store::write` is the lock.
 - A negative fact id reads as no fact (null or false), as the SQL `WHERE id=$1` does.
 - The TypeScript member (`src/core/rust-engine/store-members/memory-mutation-reads.ts`) refuses with
   `engine_capability_missing`:

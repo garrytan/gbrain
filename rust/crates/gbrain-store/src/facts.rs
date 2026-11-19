@@ -61,11 +61,14 @@ pub mod relink_writes;
 pub mod repair;
 pub mod trust;
 pub mod trust_reads;
+pub mod withdrawal_discovery;
+pub mod withdrawal_fence;
+pub mod withdrawal_pages;
 
 pub use crate::owner_only::OwnerOnlyForm;
 pub use fence::{FenceContext, FenceTarget};
 pub use fence_overlay::{FenceOverlayIncomingRow, FenceOverlayInput};
-pub use held_cells::{HeldFenceCellKey, HeldFenceCellsInput};
+pub use held_cells::{HeldFenceCellKey, HeldFenceCellsInput, HeldFenceMember};
 pub use privacy::PrivacyPolicy;
 use privacy::hidden_by_private_provenance;
 pub(crate) use privacy::{

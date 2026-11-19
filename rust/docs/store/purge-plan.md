@@ -44,6 +44,7 @@ A claim matches as the SQL does: `strpos(lower(text), needle) > 0`, with `lower`
 
 ## Not modeled
 
-`discoverWithdrawalTargets` (lane 4) still runs through `executeRaw`, so a purge plan and its dry run stop there on
-Rust; these members serve the reads after it. Pinned by `test/engine-parity/purge-plan.test.ts`; the Postgres text is
+Withdrawal discovery is the typed member `readWithdrawalDiscovery` (rust/docs/store/facts.md), so a purge plan completes
+on Rust; its dry run refuses at a table the store keeps but does not probe yet. The purge commit and its post-commit
+work still run through `executeRaw`. Pinned by `test/engine-parity/purge-plan.test.ts`; the Postgres text is
 pinned by `test/purge-plan-sql-pin.test.ts`.

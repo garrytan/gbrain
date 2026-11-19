@@ -93,8 +93,7 @@ async function assertSameIdentity(engine: BrainEngine, model: string): Promise<v
   const stored = await readStoredEmbeddingIdentity(engine);
   if (stored?.model === model) return;
   for (const table of await readPrimaryEmbeddingStores(engine)) {
-    const [row] = await engine.executeRaw<{ present: boolean }>(`SELECT EXISTS (SELECT 1 FROM ${table} WHERE embedding IS NOT NULL) AS present`);
-    if (row?.present) {
+    if (await engine.hasStoredVectors(table)) {
       throw opError('embedding_model_mismatch', 'This brain already holds vectors from a different or unrecorded embedding model; enabling cannot change their identity.',
         'Read `gbrain migrate embeddings --status --json`, then preview an explicit migration with --dry-run.',
         { fix: { argv: ['gbrain', 'migrate', 'embeddings', '--status', '--json'], consent: [], actor: 'agent', requires_exclusive: false, why: 'A model switch with existing vectors is a re-embed migration, previewed first.' } });
@@ -130,8 +129,9 @@ async function enable(opts: EnableOpts): Promise<Record<string, unknown>> {
     throw opError('embedding_model_mismatch', `The host already embeds with ${hostModel}; the embedding model is host-wide, so a mount cannot use ${opts.model}.`,
       `Re-run with --embedding-model ${hostModel}.`);
   }
-  if (target.engine === 'pglite' && (!target.database_path || !existsSync(target.database_path))) {
-    throw opError('not_found', `No PGLite brain exists at the selected datastore${target.database_path ? ` (${target.database_path})` : ''}.`, 'Run `gbrain init` (or check `gbrain mounts list`).');
+  if ((target.engine === 'pglite' || target.engine === 'rust') && (!target.database_path || !existsSync(target.database_path))) {
+    const kind = target.engine === 'rust' ? 'Rust' : 'PGLite';
+    throw opError('not_found', `No ${kind} brain exists at the selected datastore${target.database_path ? ` (${target.database_path})` : ''}.`, 'Run `gbrain init` (or check `gbrain mounts list`).');
   }
   const engine = await createEngine(toEngineConfig(target));
   await engine.connect(toEngineConfig(target));
@@ -144,6 +144,12 @@ async function enable(opts: EnableOpts): Promise<Record<string, unknown>> {
     fileCfg.embedding_dimensions = width;
     delete fileCfg.embedding_disabled;
     saveConfig(fileCfg);
+    if (!column.exists) {
+      // A brain with no vector column yet (a Rust store before its first vector) takes the width it is enabled with, so
+      // the first vector write is checked against it, not against the store's 1536 default.
+      await engine.setConfig('embedding_dimensions', String(width));
+      await engine.setConfig('embedding_model', opts.model);
+    }
     await engine.unsetConfig('embedding_disabled');
     const queuedChunks = await engine.countStaleChunks();
     const queuedFacts = (await countStaleFactEmbeddings(engine, opts.model, width)).count;
