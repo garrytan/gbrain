@@ -22,6 +22,7 @@ import type * as FactsPurgeSql from './engine-sql/facts-purge.ts';
 import type * as FactsRepairSql from './engine-sql/facts-repair.ts';
 import type * as FilesOpsSql from './engine-sql/files-ops.ts';
 import type * as FactsTrustSql from './engine-sql/facts-trust.ts';
+import type * as FactsConversationSql from './engine-sql/facts-conversation.ts';
 import type { EngineCapabilities } from './engine-capabilities.ts';
 import type { GetVersionsOpts, PageVersionRows } from './page-state/version-types.ts';
 import type { PageSnapshotBatch } from './page-snapshot-batch.ts';
@@ -3539,6 +3540,68 @@ export interface BrainEngine {
   countClaimConflictPairs(sourceId: string, auditSources: string[]): Promise<{ n: number | string } | null>;
   /** The ids of every source that is not archived, in id order (the claim-conflict sweep's default scope). */
   listUnarchivedSourceIds(): Promise<Array<{ id: string }>>;
+
+  // Facts statements, conversation fact publication and relink (engine-sql/facts-conversation.ts). Each runs the statement its caller ran through executeRaw.
+  /** The newest extractor fact id of a page (null when it has none): the next generation's seed. */
+  readNewestConversationFactId(sourceId: string, slug: string): Promise<number | string | null>;
+  /** The writer's request `requestId` when its digest is not `digest`, or it was compacted without committing: a spent id. */
+  findSpentConversationRequest(principalKind: string, principalId: string, requestId: string, digest: string): Promise<{ request_id: string } | null>;
+  /** The writer's unsettled and failed (not yet compacted) conversation-facts batch requests of a source, in journal order. */
+  listConversationBatchRequests(principalKind: string, principalId: string, sourceId: string, anchorSlug: string): Promise<FactsConversationSql.ConversationBatchRequestRow[]>;
+  /** The stored entry of `generation` in the batch request row `id` (null when the row or the entry is gone). */
+  readStoredConversationEntry(id: string, generation: string): Promise<FactsConversationSql.ConversationPageEntry | null>;
+  /** A principal's journal counters (outstanding requests, reserved receipt bytes, lifetime ids), null when it has no row. */
+  readPrincipalCounters(key: string): Promise<FactsConversationSql.PersistenceCounterRow | null>;
+  /** Live pages of the given types in a source that a run would extract: all of them with `force`, else those with no active outcome row. */
+  countConversationPagesToExtract(sourceId: string, pageTypes: string[], force: boolean): Promise<number>;
+  /** Entity slugs that became aliases of a live page (and no longer name a live page of their own): alias to canonical. */
+  listMergedEntityAliases(sourceId: string, slugs: string[]): Promise<FactsConversationSql.MergedAliasRow[]>;
+  /** Re-anchors a page's extractor facts from each `from` window key to its `to` window (ids unchanged) in one statement, so a chain of moves among windows of the same text applies at once. */
+  moveConversationSourceWindows(sourceId: string, slug: string, moves: ReadonlyArray<{ from: string; to: FactsConversationSql.SourceWindow }>): Promise<void>;
+  /** Anchors one batch of freshly inserted facts to their windows; one JSON bind, so JSONB stays an object. */
+  stampConversationSourceWindows(pairs: ReadonlyArray<{ id: number; w: FactsConversationSql.SourceWindow | null }>): Promise<void>;
+  /** A page's active conversation facts, audit rows aside. */
+  countActiveConversationFacts(sourceId: string, slug: string): Promise<number>;
+  /** The value hash of the slot's latest conversation-source value at or before `validFrom`, null when there is none. */
+  readConversationSlotValueHash(sourceId: string, entitySlug: string, dimension: string, validFrom: Date | string): Promise<{ value_hash: string } | null>;
+  /** Deletes a page's audit (outcome) rows; returns the ids removed. */
+  deleteConversationOutcomeRows(sourceId: string, slug: string): Promise<Array<{ id: number }>>;
+  /** The positions (1-based) of the claims that match a purge tombstone (under their own entity, or any subject for an unbacked name key). */
+  listPurgeTombstoneMatches(sourceId: string, claims: { facts: string[]; visibilities: string[]; entitySlugs: Array<string | null>; sources: Array<string | null> }): Promise<Array<{ ord: number | string }>>;
+  /** The largest row number any fact of the page holds (null for none). */
+  maxConversationRowNum(sourceId: string, slug: string): Promise<number | string | null>;
+  /** The slot keys the page's facts already hold. */
+  listHeldFactSlots(sourceId: string, slug: string): Promise<FactsConversationSql.HeldFactSlotRow[]>;
+  /** The page's conversation facts, audit rows aside: what a clear would lose that a window extraction may not see again. */
+  countPageConversationFacts(sourceId: string, slug: string): Promise<number>;
+  /** The page's active conversation facts anchored to window `key`. */
+  countConversationWindowFacts(sourceId: string, slug: string, key: string): Promise<number>;
+  /** The page's active conversation facts a settled collection keeping window `keys` removes: anchored to another window, or unanchored. */
+  countConversationFactsOutsideWindows(sourceId: string, slug: string, keys: readonly string[]): Promise<number>;
+  /** Clears a page's prior extractor batch before a replacement, keeping the history other records depend on: a row an open loop or another fact's `superseded_by` references is expired, never deleted, and rows `gbrain repair conversation-labels` retired stay expired. */
+  clearConversationPageFacts(sourceId: string, slug: string, windows?: { keys: readonly string[]; keep: boolean; unanchored: boolean }): Promise<number>;
+  /** The oldest active fence row of the page holding the same claim and source, whatever its visibility. */
+  findSameClaimFenceRow(sourceId: string, slug: string, fact: string, source: string | null): Promise<{ id: number | string; visibility: string } | null>;
+  /** An ontology observation the page already holds at the same key as fact `factId` (preferring an active one). */
+  findOntologyTwin(sourceId: string, slug: string, factId: number): Promise<{ id: number | string } | null>;
+  /** The source row a relink publication checks before it writes (null when the source is not registered). */
+  readRelinkSource(sourceId: string): Promise<FactsConversationSql.RelinkSourceRow | null>;
+  /** Whether the brain has the `fact_relink_attempts` table. */
+  factRelinkAttemptsTableExists(): Promise<boolean>;
+  /** The page's newest active terminal outcome row and the content hash of its live page (null when it has none). */
+  readReextractOutcomeRow(sourceId: string, slug: string): Promise<{ id: number | string; hash: string } | null>;
+  /** Derived rows of these pages that sit on an unbacked name key, in (page, id) order. */
+  listUnbackedConversationRows(sourceId: string, slugs: string[]): Promise<FactsConversationSql.UnbackedConversationRow[]>;
+  /** Derived rows of these pages that are live and have no entity, in (page, id) order. */
+  listUnlinkedConversationRows(sourceId: string, slugs: string[]): Promise<FactsConversationSql.UnlinkedConversationRow[]>;
+  /** The live pages among `slugs` with their retirement and folder-restriction flags. */
+  listEntityHintPages(sourceId: string, slugs: string[]): Promise<FactsConversationSql.EntityHintPageRow[]>;
+  /** Locks one page row until the transaction ends. */
+  lockPageById(pageId: number): Promise<void>;
+  /** The page's expired conversation facts that a relink had linked to a still-live entity page, newest first. */
+  listClearedRelinkedFacts(sourceId: string, slug: string): Promise<FactsConversationSql.ClearedRelinkedFactRow[]>;
+  /** How many of the facts `ids` carry an embedding. */
+  countEmbeddedFactsAmong(sourceId: string, ids: number[]): Promise<number>;
 
 
   /** True when the source's `config.canonical` is `git` (a git-canonical source); false for anything else, including an unknown id. */

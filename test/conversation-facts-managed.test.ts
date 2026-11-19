@@ -543,7 +543,12 @@ for (const backend of testBackends()) {
 
 test('a lost insert fails the replacement instead of committing a partial batch', async () => {
   const tx = {
-    executeRaw: async (sql: string) => sql.includes('DELETE') ? [{ count: '2' }] : [{ n: null }],
+    // What the stub's `executeRaw` answered before these reads were typed members: the clear removed rows (three counts of 2),
+    // the page holds no row number, no relinked row and no purge tombstone matches.
+    clearConversationPageFacts: async () => 6,
+    maxConversationRowNum: async () => null,
+    listClearedRelinkedFacts: async () => [],
+    listPurgeTombstoneMatches: async () => [],
     insertFacts: async () => ({ inserted: 1, ids: [1], warnings: [], deleted: 0 }),
   } as unknown as BrainEngine;
   const error = await replaceConversationFacts(tx, 'default', SLUG, [
