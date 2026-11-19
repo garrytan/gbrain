@@ -21,11 +21,12 @@
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine, LinkBatchInput } from '../../src/core/engine.ts';
-import type { Link, PageInput, PageType, RelationalFanoutOpts } from '../../src/core/types.ts';
+import type { Link, PageInput, PageType, RelationalFanoutOpts, SearchResult } from '../../src/core/types.ts';
 import { linkFamily } from '../../src/core/search/relational-chain.ts';
 import { createSource, parityArms, pick, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
+import { runPostFusionStages, type PostFusionOpts } from '../../src/core/search/hybrid.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -665,6 +666,36 @@ describe('engine parity: backlink and page signal reads', () => {
         taken: round(scores.get('default::sal/taken')),
         missing: round(scores.get('default::sal/missing')),
       };
+    },
+  );
+
+  // Review finding outside-voice#5: hybrid search hands its whole post-fusion option bag (applyBacklinks, floorRatio,
+  // graphSignalsEnabled, query, titleBoost...) to getSalienceScores. A member that refused those keys had its refusal
+  // swallowed by the stage, so the salience boost silently never applied on the Rust engine.
+  parityTest(
+    'the salience boost applies through the post-fusion stage, which passes the hybrid option bag',
+    { methods: ['getSalienceScores', 'setEmotionalWeightBatch', 'putPage'] },
+    async (engine) => {
+      const ids = await seedPages(engine, ['salpf/plain', 'salpf/weighted']);
+      await engine.setEmotionalWeightBatch([{ slug: 'salpf/weighted', source_id: 'default', weight: 0.9 }]);
+      const round = (n: number) => Math.round(n * 1e6) / 1e6;
+      // The stage hands the bag on only when it carries a read policy (hasReadPolicy), as a source-scoped search does.
+      const run = async (policy: Pick<PostFusionOpts, 'sourceId' | 'takesHoldersAllowList'>) => {
+        const results = ['salpf/plain', 'salpf/weighted'].map((slug) => ({
+          slug, page_id: ids.get(slug)!, source_id: 'default', title: slug, type: 'note', chunk_text: slug,
+          chunk_source: 'compiled_truth', chunk_id: 0, chunk_index: 0, score: 1, stale: false,
+        })) as unknown as SearchResult[];
+        await runPostFusionStages(engine, results, {
+          ...policy, excludePrivate: undefined, requireSafeChunks: undefined, applyBacklinks: true, salience: 'on',
+          recency: 'off', floorRatio: undefined, graphSignalsEnabled: false, query: 'salpf', titleBoost: undefined,
+        });
+        return Object.fromEntries(results.map((r) => [r.slug, round(r.score)]));
+      };
+      const unscoped = await run({});
+      const scoped = await run({ sourceId: 'default' });
+      const holders = await run({ takesHoldersAllowList: ['garry'] });
+      expect(scoped['salpf/weighted']).toBeGreaterThan(scoped['salpf/plain']);
+      return { unscoped, scoped, holders };
     },
   );
 
