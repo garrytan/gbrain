@@ -182,8 +182,7 @@ export async function prepareForgetMutation(engine: BrainEngine, row: WriteReque
       pages = (await recordFactWithdrawal(tx, id, sourceId, worldOnly, ownPage
         ? { requestId: row.id, semanticReview: false, memberPage: ownPage, publication }
         : { requestId: row.id, semanticReview: p.semantic_review !== false, excludePrivate, publication })).pages.map(page => page.slug);
-      if (reason) await tx.executeRaw(`UPDATE facts SET context=concat_ws(' | ',NULLIF(context,''),$3::text)
-        WHERE id=$1 AND source_id=$2`, [id, sourceId, `forgotten: ${reason}`]);
+      if (reason) await tx.appendFactForgetReason(id, sourceId, `forgotten: ${reason}`);
       return row.operation === 'forget'
         ? { id: rawId, expired: fact.expired_at === null, reason, protocol_version: 1 }
         : { id, expired: true, path: 'legacy_db', reason: reason ?? 'forgotten' };
