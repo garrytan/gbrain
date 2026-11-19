@@ -94,6 +94,26 @@ fn at(read: &dyn KvRead, parts: &[&str]) -> Result<Option<i64>> {
     Ok(get_json::<WithdrawalRecord>(read, &key(parts))?.map(|r| r.withdrawn_at_us))
 }
 
+/// `EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = $source AND w.visibility =
+/// $visibility AND w.fact_hash IN (gbrain_fact_fingerprint(claim), gbrain_fact_fingerprint_v1(claim))
+/// AND (w.subject = '*' OR w.subject = entity))`: a NULL entity matches only `*`.
+pub(crate) fn withdrawn_claim(
+    read: &dyn KvRead,
+    source_id: &str,
+    visibility: &str,
+    claim: &str,
+    entity: Option<&str>,
+) -> Result<bool> {
+    for hash in [fact_fingerprint(claim), fact_fingerprint_v1(claim)] {
+        for who in std::iter::once("*").chain(entity) {
+            if at(read, &[source_id, visibility, who, &hash])?.is_some() {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
 /// Removes every withdrawal of a source, for the source delete.
 /// Whether a withdrawal of `source_id` covers the page `slug`: its subject is `*` or the slug (the
 /// `withdrawn` column of `listCorePageRows`, src/core/engine-sql/trust-tier-reads.ts).

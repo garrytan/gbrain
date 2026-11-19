@@ -32,6 +32,7 @@ export const RUST_ENGINE_MEMBERS = {
   // transactions
   readTransactionSettings: 'transactions',
   applyTransactionSettings: 'transactions',
+  beginSnapshotRead: 'transactions',
   transaction: 'transactions',
   transactionDirect: 'transactions',
   lockPageKeys: 'transactions',
@@ -729,6 +730,10 @@ export const RUST_ENGINE_MEMBERS = {
   listVersionReasonWriters: 'page_versions',
   listValidTimeIdentities: 'pages',
   pickValidTimeEdition: 'page_versions',
+  listAmendmentsNotApplied: 'links',
+  readPageVersionEdition: 'page_versions',
+  readCursorEdition: 'page_versions',
+  pageAwaitsRederive: 'pages',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;
