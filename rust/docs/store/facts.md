@@ -376,6 +376,25 @@ doctor and write-path callers stop on that refusal instead of the `raw_sql` refu
 | `listCaptureDuplicateCandidates`, `computeFactFingerprints` | `facts` | `gbrain_fact_fingerprint`, the member-owned-page exclusion and a numeric scan limit. |
 | `listClaimConflictPairs`, `countClaimConflictPairs` | `facts`, `decide_proposals`, `trust_proposals` | Typed claim columns, the as-of bucket, and the proposal tables that exclude a pair already proposed. |
 
+## Group 5: the rest of the facts write and recall sites (not yet in Rust)
+
+Eighteen members that were raw `executeRaw` statements in twelve callers (`src/core/facts/absorb-log.ts`, `backstop.ts`,
+`embedding-identity.ts`, `slot-tagging.ts`, `subject-infer.ts`, `writeback-settings.ts`, `retire.ts`, `contested-claims.ts`,
+`fts-index.ts`, `question-recall.ts`, `src/core/ops/facts.ts` and `src/core/search/fact-relevance.ts`). Seven are in
+`src/core/engine-sql/facts-recall.ts` (`readFactsEmbeddingColumn`, `listNearestFacts`, `listSlotRows`, `listPoolUnbackedKeys`,
+`listCallOffCueFacts`, `listPoolEntityPairs`, `listFactRowsByIds`) and eleven are in `facts-trust.ts`. Each runs the
+statement its caller ran, except `listNearestFacts`, which binds the embedding model, dimensions and vector literal twice
+(dimensions once when the column type is declared), so its `$n` numbers differ from the old text. None is implemented on Rust
+yet: each is named `facts` in `rust-engine/members.ts` and refuses by name with `engine_capability_missing` until the store
+serves it.
+
+| Group | Members | What the store would need |
+| --- | --- | --- |
+| Write gate | `readPendingWriteReceipt`, `lockSourceShared`, `lockAgentWritebackSetting` | The write-gate receipt, the shared source lock and the advisory lock for the writeback setting. |
+| Provenance and listing | `listOversizedStaleFacts`, `listLivePersonTitles`, `readLiveFactEntityPage`, `listFactsToRetireFromPage`, `listContestedProposalPairs`, `listFactProvenance` | Live-page lookups, the oversized-fact scan cap and the proposal tables. |
+| FTS index | `readFactsFtsIndexState`, `swapFactsFtsIndex` | The `facts` full-text index language and its swap. |
+| Recall pool | the seven `facts-recall.ts` members | The embedding column, nearest-vector scan, slot rows, unbacked keys, call-off cues, entity pairs and rows by id. |
+
 ## Group 5: stamped trust reads (`facts/trust_reads.rs`)
 
 Two reads of the `trust_tier` and `write_origin` the store stamps on every fact row. Neither needs a

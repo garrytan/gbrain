@@ -11,8 +11,11 @@ import { claimBucketSql } from '../facts/typed-claim.ts';
 import { CONVERSATION_SLOT_SQL } from '../chronicle/ontology.ts';
 import { PAGE_EXTRACTION_SOURCE_LIST, contextHeadSql } from '../facts/gone-page-facts.ts';
 import { factsFtsDocument, getFtsLanguage } from '../fts-language.ts';
-import { privateFactFilterForReader, privateProvenanceFilterUnderPolicy } from '../search/private-visibility.ts';
+import { privateFactFilterForCaller, privateFactFilterForReader, privateProvenanceFilterUnderPolicy, remoteReadFloorSql } from '../search/private-visibility.ts';
 import { factVisibilitySql, grantedPrivateFactSql, onOwnedMemoryPageSql, withdrawalCoversFactSql } from '../access/member-facts.ts';
+import { retiredPageSql } from '../entities/resolve.ts';
+import { eligibleFactEmbedding, OVERSIZED_SCAN_CAP, staleFactEmbedding } from '../facts/embedding-identity.ts';
+import type { ReadEligibility } from '../eligibility/policy.ts';
 import { quarantinedProvenanceFilterFragment } from '../quarantine.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { claimPendingSql } from '../trust/claim-state.ts';
@@ -54,6 +57,9 @@ function pageExtractionSources(): readonly string[] { return PAGE_EXTRACTION_SOU
 function conversationSlotSql(): string { return CONVERSATION_SLOT_SQL; }
 function savedFactCollapseColumns(): string { return SAVED_FACT_COLLAPSE_COLUMNS; }
 function factsAuditSources(): string[] { return [...AUDIT_ROW_SOURCES]; }
+function oversizedEligibleSql(): string { return eligibleFactEmbedding; }
+function oversizedStaleSql(): string { return staleFactEmbedding; }
+function oversizedScanCapSql(): string { return String(OVERSIZED_SCAN_CAP); }
 
 /** The columns every pool arm returns, in this order. */
 export const FACT_POOL_COLUMNS = 'f.id, f.fact, f.kind, f.entity_slug, f.source_id, f.source, f.valid_from, f.valid_until, f.created_at, f.claim_metric, f.claim_period, f.source_markdown_slug, f.visibility, f.attributed_to, f.dimension, f.value_hash';
@@ -134,7 +140,7 @@ export interface FactRelevanceRow {
   similarity: number | null;
 }
 
-function similarity(vector: RelevanceVector | null): SqlFragment {
+export function relevanceSimilarity(vector: RelevanceVector | null): SqlFragment {
   if (!vector) return sqlFragment`NULL::float8 AS similarity`;
   const cast = vector.type === 'halfvec' ? '::halfvec' : '::vector';
   return sqlFragment`CASE WHEN ${comparable(vector.model, vector.dims)} THEN 1 - (f.embedding <=> ${vector.literal}${trustedSql(cast)}) END AS similarity`;
@@ -160,7 +166,7 @@ function customPlan<T>(transaction: EngineRawTransaction, fragment: SqlFragment)
  * the row's embedding is comparable with it.
  */
 export async function listFactsForRelevance(raw: EngineRawRead, transaction: EngineRawTransaction, q: FactRelevanceQuery): Promise<FactRelevanceRow[]> {
-  const sim = similarity(q.vector);
+  const sim = relevanceSimilarity(q.vector);
   if (q.arm === 'keyword') {
     const doc = trustedSql(factsFtsDocument('f'));
     const tsq = sqlFragment`NULLIF(replace(plainto_tsquery('${trustedSql(getFtsLanguage())}'::regconfig, ${q.terms ?? ''})::text, ' & ', ' | '), '')::tsquery`;
@@ -452,4 +458,119 @@ export async function countClaimConflictPairs(raw: EngineRawRead, sourceId: stri
 /** The ids of every source that is not archived, in id order (the claim-conflict sweep's default scope). */
 export async function listUnarchivedSourceIds(raw: EngineRawRead): Promise<Array<{ id: string }>> {
   return raw<{ id: string }>('SELECT id FROM sources WHERE NOT archived ORDER BY id');
+}
+
+// ---------------------------------------------------------------------------
+// Write-path and caller-side reads of the facts module (batch G, "facts rest sites"): each runs the statement its caller ran
+// through `executeRaw`, with the same text and parameters. The ones that write run in the caller's own transaction, as the
+// member is called on the transaction's engine handle.
+// ---------------------------------------------------------------------------
+
+/** The durable receipt of a write still queued, running or recovering, or null (a `write_pending` error's request). */
+export async function readPendingWriteReceipt(raw: EngineRawRead, principalKind: string, principalId: string, requestId: string): Promise<{ request_id: string; state: string } | null> {
+  const [row] = await raw<{ request_id: string; state: string }>(
+    `SELECT request_id::text AS request_id, state FROM persistence_requests
+        WHERE principal_kind=$1 AND principal_id=$2 AND request_id=$3::uuid AND state IN ('queued','running','recovering')`,
+    [principalKind, principalId, requestId]);
+  return row ?? null;
+}
+
+/** Takes a shared row lock on the source for the rest of the caller's transaction. */
+export async function lockSourceShared(raw: EngineRawRead, sourceId: string): Promise<void> {
+  await raw('SELECT id FROM sources WHERE id=$1 FOR SHARE', [sourceId]);
+}
+
+export interface OversizedStaleFactRow { id: string; source_id: string; slug: string | null; fact: string }
+
+const OVERSIZED_HEAD = `SELECT f.id::text, f.source_id, f.source_markdown_slug AS slug, f.fact FROM facts f
+      WHERE ($1::text IS NULL OR f.source_id = $1) AND `;
+const OVERSIZED_TAIL = `
+        AND octet_length(f.fact) > $5::int ORDER BY f.id LIMIT `;
+
+/** The stale, embeddable facts for `model` and `dims` longer than `maxTokens` bytes, at most OVERSIZED_SCAN_CAP, in id order (`sourceId` narrows to one source). */
+export async function listOversizedStaleFacts(raw: EngineRawRead, opts: { sourceId?: string; model: string; dims: number; maxTokens: number }): Promise<OversizedStaleFactRow[]> {
+  const { text } = renderFragment(sqlFragment`${trustedSql(OVERSIZED_HEAD)}${trustedSql(oversizedEligibleSql())} AND ${trustedSql(oversizedStaleSql())}${trustedSql(OVERSIZED_TAIL)}${trustedSql(oversizedScanCapSql())}`);
+  return raw<OversizedStaleFactRow>(text, [opts.sourceId ?? null, [...AUDIT_ROW_SOURCES], opts.model, opts.dims, opts.maxTokens]);
+}
+
+const LIVE_PERSON_TITLES = `SELECT slug, title FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND type = 'person' AND slug = ANY($2::text[]) AND NOT `;
+
+/** The slug and title of each named live, non-retired person page of the source. */
+export async function listLivePersonTitles(raw: EngineRawRead, sourceId: string, slugs: string[]): Promise<Array<{ slug: string; title: string | null }>> {
+  const { text } = renderFragment(sqlFragment`${trustedSql(LIVE_PERSON_TITLES)}${trustedSql(retiredPageSql('pages'))}`);
+  return raw<{ slug: string; title: string | null }>(text, [sourceId, slugs]);
+}
+
+const LIVE_ENTITY_PAGE = 'SELECT p.slug, p.type FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL ';
+
+/** The live page `slug` of the source (`excludePrivate` also applies the remote read floor), or null. */
+export async function readLiveFactEntityPage(raw: EngineRawRead, sourceId: string, slug: string, excludePrivate?: boolean): Promise<{ slug: string; type: string | null } | null> {
+  const privacy = excludePrivate ? sqlFragment`AND ${trustedSql(remoteReadFloorSql('p'))}` : sqlFragment``;
+  const { text } = renderFragment(sqlFragment`${trustedSql(LIVE_ENTITY_PAGE)}${privacy} LIMIT 1`);
+  const [row] = await raw<{ slug: string; type: string | null }>(text, [sourceId, slug]);
+  return row ?? null;
+}
+
+/** Takes the advisory lock that serializes changes to one memory setting for the rest of the caller's transaction. */
+export async function lockAgentWritebackSetting(raw: EngineRawRead, key: string): Promise<void> {
+  await raw('SELECT pg_advisory_xact_lock(hashtext($1))', [key]);
+}
+
+export interface RetireFactRow { id: number; row_num: number | null; source_markdown_slug: string | null; entity_slug: string | null }
+
+/** The active facts of the source extracted under `session`, or whose context is `slug` or matches `pattern` (a LIKE pattern), in id order. */
+export async function listFactsToRetireFromPage(raw: EngineRawRead, sourceId: string, session: string, slug: string, pattern: string): Promise<RetireFactRow[]> {
+  return raw<RetireFactRow>(`SELECT id,row_num,source_markdown_slug,entity_slug FROM facts
+    WHERE source_id=$1 AND expired_at IS NULL AND (source_session=$2 OR context=$3 OR context LIKE $4)
+    ORDER BY id`, [sourceId, session, slug, pattern]);
+}
+
+/** What a contested lookup may read: remote callers see world facts, `excludePrivate` hides private provenance, `eligibility` is the trust floor. */
+export interface ContestedReadPolicy { remote: boolean; excludePrivate: boolean; eligibility?: ReadEligibility }
+
+export interface ContestedProposalPairRow { id: number | string; delivered: number | string; new_fact_id: number | string; old_fact_id: number | string }
+
+function contestedReadableSql(alias: string, policy: ContestedReadPolicy): string {
+  return [
+    `${alias}.expired_at IS NULL AND (${alias}.valid_until IS NULL OR ${alias}.valid_until > now())`,
+    ...(policy.remote ? [`${alias}.visibility = 'world'`] : []),
+    ...(policy.excludePrivate ? [privateFactFilterForCaller(alias)] : []),
+    projectionEligibleSql('facts', alias, policy.eligibility),
+  ].join(' AND ');
+}
+
+const CONTESTED_HEAD = `SELECT p.id, x.id AS delivered, p.new_fact_id, p.old_fact_id FROM unnest($1::bigint[]) AS x(id)
+  JOIN decide_proposals p ON p.status = 'pending' AND (p.new_fact_id = x.id OR p.old_fact_id = x.id)
+  JOIN facts n ON n.id = p.new_fact_id AND n.source_id = p.source_id
+  JOIN facts o ON o.id = p.old_fact_id AND o.source_id = p.source_id
+ WHERE `;
+const CONTESTED_TAIL = `
+ ORDER BY p.id`;
+
+/** The pending decide proposals that name any of `ids` as their new or old fact, both facts readable under `policy`, in proposal order. Throws when the read fails. */
+export async function listContestedProposalPairs(raw: EngineRawRead, ids: number[], policy: ContestedReadPolicy): Promise<ContestedProposalPairRow[]> {
+  const { text } = renderFragment(sqlFragment`${trustedSql(CONTESTED_HEAD)}${trustedSql(contestedReadableSql('n', policy))} AND ${trustedSql(contestedReadableSql('o', policy))}${trustedSql(CONTESTED_TAIL)}`);
+  return raw<ContestedProposalPairRow>(text, [ids]);
+}
+
+/** The stored provenance (`facts.source`) of these facts of the source. */
+export async function listFactProvenance(raw: EngineRawRead, sourceId: string, ids: number[]): Promise<Array<{ id: number | string; source: string | null }>> {
+  return raw<{ id: number | string; source: string | null }>('SELECT id, source FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[])', [sourceId, ids]);
+}
+
+/** Whether index `name` is valid, and its definition; null when there is no such index. */
+export async function readFactsFtsIndexState(raw: EngineRawRead, name: string): Promise<{ valid: boolean; def: string } | null> {
+  const [row] = await raw<{ valid: boolean; def: string }>(
+    'SELECT i.indisvalid AS valid, pg_get_indexdef(i.indexrelid) AS def FROM pg_index i WHERE i.indexrelid = to_regclass($1)', [name]);
+  return row ?? null;
+}
+
+/**
+ * Swaps the freshly built `idx_facts_fts_next` into place: renames the live `idx_facts_fts` to `idx_facts_fts_old`, then the next one
+ * to `idx_facts_fts` (a rename takes no lock that blocks reads or writes). The index names are those of facts/fts-index.ts. Runs
+ * in the caller's transaction, so a failure of the second rename restores the first.
+ */
+export async function swapFactsFtsIndex(raw: EngineRawRead): Promise<void> {
+  await raw('ALTER INDEX IF EXISTS idx_facts_fts RENAME TO idx_facts_fts_old');
+  await raw('ALTER INDEX idx_facts_fts_next RENAME TO idx_facts_fts');
 }

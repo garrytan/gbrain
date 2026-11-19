@@ -214,11 +214,7 @@ async function pendingReceipt(engine: BrainEngine, err: unknown): Promise<{ requ
   const requestId = writeRequest?.request_id;
   if (typeof requestId !== 'string' || typeof receiptFields?.principal_kind !== 'string' || typeof receiptFields.principal_id !== 'string') return null;
   try {
-    const [row] = await engine.executeRaw<{ request_id: string; state: string }>(
-      `SELECT request_id::text AS request_id, state FROM persistence_requests
-        WHERE principal_kind=$1 AND principal_id=$2 AND request_id=$3::uuid AND state IN ('queued','running','recovering')`,
-      [receiptFields.principal_kind, receiptFields.principal_id, requestId]);
-    return row ?? null;
+    return await engine.readPendingWriteReceipt(receiptFields.principal_kind, receiptFields.principal_id, requestId);
   } catch {
     return null;
   }

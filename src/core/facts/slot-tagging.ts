@@ -8,7 +8,6 @@
 import { chat, isAvailable } from '../ai/gateway.ts';
 import { BudgetExhausted } from '../budget/budget-tracker.ts';
 import type { BrainEngine } from '../engine.ts';
-import { retiredPageSql } from '../entities/resolve.ts';
 import { getFactsExtractionModel } from './extract.ts';
 import { normalizeSlot, SLOT_DIMENSIONS } from './slots.ts';
 
@@ -62,9 +61,8 @@ export async function tagSlots<T extends TaggableRow>(engine: BrainEngine, sourc
   const picked = rows.map((row, i) => ({ row, i }))
     .filter(({ row, i }) => (exact[i] || unbacked?.has(i)) && row.entity_slug && SLOT_KINDS.has(row.kind ?? 'fact'));
   if (!picked.length) return { rows, called: false, failed: false };
-  const people = new Map((await engine.executeRaw<{ slug: string; title: string | null }>(
-    `SELECT slug, title FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND type = 'person' AND slug = ANY($2::text[]) AND NOT ${retiredPageSql('pages')}`,
-    [sourceId, [...new Set(picked.map(p => p.row.entity_slug!))]])).map(p => [p.slug, p.title || p.slug]));
+  const people = new Map((await engine.listLivePersonTitles(sourceId, [...new Set(picked.map(p => p.row.entity_slug!))]))
+    .map(p => [p.slug, p.title || p.slug]));
   const named = (p: { row: T; i: number }) => exact[p.i] ? people.get(p.row.entity_slug!) : unbacked?.get(p.i);
   const candidates = picked.filter(p => named(p)).slice(0, SLOT_TAG_MAX_FACTS);
   if (!candidates.length) return { rows, called: false, failed: false };

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1001/1001
+# covered: 1019/1019
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -48,7 +48,8 @@
 # facts_cycle_sites: 34/34
 # facts_purge: 51/51
 # facts_repair: 25/25
-# facts_trust: 18/18
+# facts_trust: 29/29
+# facts_recall: 7/7
 # facts_conversation: 30/30
 # trust_tier_reads: 13/13
 # memory_mutation_reads: 12/12
@@ -83,7 +84,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	101	no	yes	yes	serves
+transaction	lifecycle	yes	103	no	yes	yes	serves
 transactionDirect	lifecycle	yes	13	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -91,13 +92,13 @@ getPage	pages	yes	114	yes	yes	yes	serves
 readPageSnapshot	pages	yes	27	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	484	yes	yes	yes	serves
+putPage	pages	yes	490	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	8	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	145	yes	yes	yes	serves
+softDeletePage	pages	yes	147	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -390,10 +391,10 @@ listLiveChunksByIds	contradictions	yes	1	no	yes	yes	refuses:chunks
 listLiveTakesByIds	contradictions	yes	1	no	yes	yes	refuses:takes
 readLastContradictionsPromptVersion	contradictions	yes	1	no	yes	yes	refuses:contradictions
 listEvalCandidateQueries	contradictions	yes	1	no	yes	yes	refuses:eval_capture
-insertFact	facts	yes	67	yes	yes	yes	serves
-insertFacts	facts	yes	100	no	yes	yes	serves
+insertFact	facts	yes	75	yes	yes	yes	serves
+insertFacts	facts	yes	104	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
-expireFact	facts	yes	52	no	yes	yes	serves
+expireFact	facts	yes	57	no	yes	yes	serves
 listFactsByEntity	facts	yes	25	yes	yes	yes	serves
 listFactsSince	facts	yes	15	yes	yes	yes	serves
 listFactsKeyset	facts	yes	3	no	yes	yes	serves
@@ -846,6 +847,24 @@ computeFactFingerprints	facts_trust	yes	1	no	yes	yes	refuses:facts
 listClaimConflictPairs	facts_trust	yes	1	no	yes	yes	refuses:facts
 countClaimConflictPairs	facts_trust	yes	1	no	yes	yes	refuses:facts
 listUnarchivedSourceIds	facts_trust	yes	1	no	yes	yes	refuses:facts
+readPendingWriteReceipt	facts_trust	yes	1	no	yes	yes	refuses:facts
+lockSourceShared	facts_trust	yes	1	no	yes	yes	refuses:facts
+listOversizedStaleFacts	facts_trust	yes	1	no	yes	yes	refuses:facts
+listLivePersonTitles	facts_trust	yes	1	no	yes	yes	refuses:facts
+readLiveFactEntityPage	facts_trust	yes	1	no	yes	yes	refuses:facts
+lockAgentWritebackSetting	facts_trust	yes	1	no	yes	yes	refuses:facts
+listFactsToRetireFromPage	facts_trust	yes	1	no	yes	yes	refuses:facts
+listContestedProposalPairs	facts_trust	yes	1	no	yes	yes	refuses:facts
+listFactProvenance	facts_trust	yes	1	no	yes	yes	refuses:facts
+readFactsFtsIndexState	facts_trust	yes	1	no	yes	yes	refuses:facts
+swapFactsFtsIndex	facts_trust	yes	1	no	yes	yes	refuses:facts
+readFactsEmbeddingColumn	facts_recall	yes	1	no	yes	yes	refuses:facts
+listNearestFacts	facts_recall	yes	1	no	yes	yes	refuses:facts
+listSlotRows	facts_recall	yes	1	no	yes	yes	refuses:facts
+listPoolUnbackedKeys	facts_recall	yes	1	no	yes	yes	refuses:facts
+listCallOffCueFacts	facts_recall	yes	1	no	yes	yes	refuses:facts
+listPoolEntityPairs	facts_recall	yes	1	no	yes	yes	refuses:facts
+listFactRowsByIds	facts_recall	yes	1	no	yes	yes	refuses:facts
 readNewestConversationFactId	facts_conversation	yes	1	no	yes	yes	refuses:facts
 findSpentConversationRequest	facts_conversation	yes	1	no	yes	yes	refuses:facts
 listConversationBatchRequests	facts_conversation	yes	1	no	yes	yes	refuses:facts
@@ -1024,7 +1043,7 @@ hasPersistenceTable	connect_gate	yes	3	no	yes	yes	serves
 listManagedRootBindings	connect_gate	yes	1	no	yes	yes	serves
 readGraduationGateRow	connect_gate	yes	2	no	yes	yes	serves
 listRetiredDeactivations	connect_gate	yes	2	no	yes	yes	serves
-insertDecideProposal	decide_proposals	yes	5	no	yes	yes	serves
+insertDecideProposal	decide_proposals	yes	6	no	yes	yes	serves
 getDecideProposal	decide_proposals	yes	2	no	yes	yes	serves
 listDecideProposalIds	decide_proposals	yes	1	no	yes	yes	serves
 listDecideProposals	decide_proposals	yes	1	no	yes	yes	serves
