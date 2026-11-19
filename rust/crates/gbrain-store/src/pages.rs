@@ -1560,7 +1560,7 @@ impl Store {
         })
     }
 
-    /// `getTags(slug, opts)`, sorted.
+    /// `getTags(slug, opts)`, sorted. A page the `exclude_private` page policy hides has no tags.
     pub fn get_tags(&self, slug: &str, scope: &ReadScope) -> Result<Vec<String>> {
         let read = self.read()?;
         let page = find_in_scope(
@@ -1570,6 +1570,10 @@ impl Store {
             &scope.source_ids,
             true,
         )?;
+        let page = match (page, &scope.exclude_private) {
+            (Some(page), Some(policy)) if page_hidden(&*read, &page, policy)? => None,
+            (page, _) => page,
+        };
         let mut tags = page.map(|p| p.tags).unwrap_or_default();
         tags.sort();
         Ok(tags)
