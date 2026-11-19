@@ -74,6 +74,9 @@ async function seed(engine: BrainEngine) {
   await commit(engine, r1, 'a', 'c1', CONSUMER);
   await commit(engine, r3, 'b', 'c3', null);
   const r4 = await admit(engine, { request: 'b0000000-0000-4000-8000-0000000000b4', writer: 'a', version: 'a1', host: ADMITTER });
+  // Admitting r4 sets the admitter a1 row's last_seen and committing it sets the consumer c1 row's. On a fast runner
+  // both can land in the same clock tick, and a tie leaves the newest-first order to the plan (seen on macOS CI).
+  await Bun.sleep(5);
   await commit(engine, r4, 'a', 'c1', CONSUMER);
 }
 
