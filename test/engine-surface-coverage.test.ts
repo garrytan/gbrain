@@ -90,7 +90,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'listAllPageRefs', 'listAllSources', 'listSourceLocalPaths', 'listLocalPathSources', 'listSourceRoutingRows', 'countDefaultSourceSplit', 'updateSourceConfig', 'getSource', 'listStaleSyncSourceIds', 'readSourceRow', 'lockSourceRow', 'readSourceChunkerVersion', 'setSourceChunkerVersion', 'countSourcePages', 'insertSource', 'listPrefixSampledPages', 'listCorpusSample',
   // Hybrid search reads (engine-sql/search-reads.ts) and the onboarding signal count (engine-sql/health.ts)
   'cosinesByChunkIds', 'hasSupersedeEdges', 'supersedingPageSlugs', 'aliasCanonicalRefs', 'pageCollapseFacts', 'slugsEndingIn',
-  'generatedPagesIn', 'livePageIdsAt', 'pagesLinkingTo', 'countOnboardSignal', 'countBrainLivePages',
+  'generatedPagesIn', 'livePageIdsAt', 'pagesLinkingTo', 'countOnboardSignal', 'countBrainLivePages', 'readBrainMaturity',
   // Graph and doctor link reads (engine-sql/link-reads.ts)
   'inboundLinkCoverage', 'listJunkEntityHubs', 'countEntityPages', 'entityGraphCoverage', 'countForeignEdges',
   'listLivePageSummaries', 'countInboundLinks', 'listLinkEndpointPages', 'listPagesTitledIn', 'wordLexemes',

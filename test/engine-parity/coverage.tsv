@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 656/656
+# covered: 657/657
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -28,7 +28,7 @@
 # facts: 15/15
 # segmented_body: 15/15
 # versions: 3/3
-# stats_ingest: 6/6
+# stats_ingest: 7/7
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 10/10
@@ -77,17 +77,17 @@ transaction	lifecycle	yes	54	no	yes	yes	serves
 transactionDirect	lifecycle	yes	2	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	83	yes	yes	yes	serves
+getPage	pages	yes	84	yes	yes	yes	serves
 readPageSnapshot	pages	yes	17	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	348	yes	yes	yes	serves
+putPage	pages	yes	349	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	103	yes	yes	yes	serves
+softDeletePage	pages	yes	104	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -293,10 +293,10 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	41	yes	yes	yes	serves
+insertFact	facts	yes	42	yes	yes	yes	serves
 insertFacts	facts	yes	47	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
-expireFact	facts	yes	26	no	yes	yes	serves
+expireFact	facts	yes	27	no	yes	yes	serves
 listFactsByEntity	facts	yes	18	yes	yes	yes	serves
 listFactsSince	facts	yes	10	yes	yes	yes	serves
 listFactsKeyset	facts	yes	3	no	yes	yes	serves
@@ -328,6 +328,7 @@ getVersions	versions	yes	8	no	yes	yes	serves
 revertToVersion	versions	yes	2	no	yes	yes	serves
 countOnboardSignal	stats_ingest	yes	2	no	yes	yes	serves
 countBrainLivePages	stats_ingest	yes	1	no	yes	yes	serves
+readBrainMaturity	stats_ingest	yes	1	no	yes	yes	serves
 getStats	stats_ingest	yes	4	yes	yes	yes	serves
 getHealth	stats_ingest	yes	5	yes	yes	yes	serves
 logIngest	stats_ingest	yes	2	no	yes	yes	serves
@@ -642,7 +643,7 @@ decideWriteGateHold	trust	yes	3	no	yes	yes	serves
 upsertOpenLoop	open_loops	yes	7	no	yes	yes	serves
 closeOpenLoop	open_loops	yes	6	no	yes	yes	serves
 listOpenLoops	open_loops	yes	3	no	yes	yes	serves
-listSourceRecords	cli_reads_import	yes	3	no	yes	yes	serves
+listSourceRecords	cli_reads_import	yes	4	no	yes	yes	serves
 readSourceIncarnation	cli_reads_import	yes	3	no	yes	yes	serves
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves
 readGuestSourceRow	cli_reads_import	yes	1	no	yes	yes	serves

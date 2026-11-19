@@ -476,6 +476,24 @@ impl Store {
         Ok(all_pages(&*read)?.iter().filter(|p| live(p)).count() as u64)
     }
 
+    /// `readBrainMaturity` (`engine-sql/health.ts`): live pages and unexpired facts in every
+    /// source, and `since`, the earliest `created_at` of any source or page (soft-deleted pages
+    /// count, as `MIN(created_at) FROM pages` does), or null when there is neither.
+    pub fn read_brain_maturity(&self) -> Result<Value> {
+        let read = self.read()?;
+        let pages = all_pages(&*read)?;
+        let since = all_sources(&*read)?
+            .iter()
+            .map(|s| s.created_at_us)
+            .chain(pages.iter().map(|p| p.created_at_us))
+            .min();
+        Ok(json!({
+            "pages": pages.iter().filter(|p| live(p)).count() as u64,
+            "facts": crate::facts::count_unexpired(&*read)?,
+            "since": since.map(iso),
+        }))
+    }
+
     /// `logIngest`: appends one row. A NULL column fails as Postgres's NOT NULL check does, in
     /// column order.
     pub fn log_ingest(&self, input: &IngestInput) -> Result<()> {

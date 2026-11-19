@@ -574,6 +574,20 @@ fn rows_under(read: &dyn KvRead, prefix: &[u8]) -> Result<Vec<FactRecord>> {
     Ok(out)
 }
 
+/// Facts in every source with no `expired_at` (`expired_at IS NULL`).
+pub(crate) fn count_unexpired(read: &dyn KvRead) -> Result<u64> {
+    let mut count = 0u64;
+    let mut failure = None;
+    scan_prefix(read, &[keys::FACT, ROW], false, &mut |_, v| {
+        match serde_json::from_slice::<FactRecord>(v) {
+            Ok(row) => count += u64::from(row.expired_at_us.is_none()),
+            Err(e) => failure = Some(StoreError::from(e)),
+        }
+        failure.is_none()
+    })?;
+    failure.map_or(Ok(count), Err)
+}
+
 pub(crate) fn source_rows(read: &dyn KvRead, source_id: &str) -> Result<Vec<FactRecord>> {
     rows_under(read, &text_key(BY_SOURCE, &[source_id]))
 }

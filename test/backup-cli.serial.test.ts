@@ -36,7 +36,7 @@ import { surfaceSource } from './helpers/source-surface.ts';
 import * as snapshot from '../src/core/backup/snapshot.ts';
 import { pgliteBackupPreflight } from '../src/core/backup/preflight.ts';
 import * as fs from 'node:fs';
-import { countBrainLivePages as countBrainLivePagesSql } from '../src/core/engine-sql/health.ts';
+import { countBrainLivePages as countBrainLivePagesSql, readBrainMaturity as readBrainMaturitySql } from '../src/core/engine-sql/health.ts';
 
 /** The exact literal thrown by src/core/pglite-engine.ts on lock contention.
  * isLockError in src/commands/backup.ts matches on the leading substring —
@@ -107,6 +107,7 @@ function stubEngine(opts: {
     // loadAllSources reads the typed member; the page count still runs executeRaw.
     listSourceRecords: sources,
     countBrainLivePages() { return countBrainLivePagesSql(this as never); },
+    readBrainMaturity() { return readBrainMaturitySql(this as never); },
     executeRaw: async (sql: string) => {
       if (sql.includes('FROM pages')) return [{ n: opts.pages ?? 0 }];
       if (sql.includes('FROM sources')) return sources();

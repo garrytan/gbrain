@@ -27,7 +27,7 @@ import {
   type BackupStatus,
 } from '../src/core/backup/status-file.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
-import { countBrainLivePages as countBrainLivePagesSql } from '../src/core/engine-sql/health.ts';
+import { countBrainLivePages as countBrainLivePagesSql, readBrainMaturity as readBrainMaturitySql } from '../src/core/engine-sql/health.ts';
 
 const ENV_KEYS = ['GBRAIN_HOME', 'GBRAIN_BACKUP_CHECK', 'GBRAIN_BACKUP_CHECK_DAYS'] as const;
 
@@ -108,6 +108,7 @@ function makeEngine(sourcePaths: Array<{ id: string; local_path: string }>, page
     // loadAllSources reads the typed member; the page count still runs executeRaw.
     listSourceRecords: async () => sources(),
     countBrainLivePages() { return countBrainLivePagesSql(this as never); },
+    readBrainMaturity() { return readBrainMaturitySql(this as never); },
     executeRaw: async (sql: string) => {
       if (/FROM sources/i.test(sql)) return sources().map((s) => ({ ...s, config: '{}' }));
       if (/FROM pages/i.test(sql)) return [{ n: pageCount }];
@@ -218,6 +219,7 @@ describe('checkBackupCoverage — localOnly (trusted, probes run)', () => {
     const engine = {
       kind: 'pglite',
       countBrainLivePages() { return countBrainLivePagesSql(this as never); },
+      readBrainMaturity() { return readBrainMaturitySql(this as never); },
       executeRaw: async (sql: string) => {
         if (/FROM sources/i.test(sql)) return [];
         throw new Error('pages unreadable');
@@ -359,6 +361,7 @@ describe('checkBackupCoverage — localOnly catch branch', () => {
     const throwing = {
       kind: 'pglite',
       countBrainLivePages() { return countBrainLivePagesSql(this as never); },
+      readBrainMaturity() { return readBrainMaturitySql(this as never); },
       executeRaw: async () => {
         throw new Error('engine down');
       },
@@ -391,6 +394,7 @@ describe('checkBackupCoverage — localOnly catch branch', () => {
     const throwing = {
       kind: 'pglite',
       countBrainLivePages() { return countBrainLivePagesSql(this as never); },
+      readBrainMaturity() { return readBrainMaturitySql(this as never); },
       executeRaw: async () => {
         throw new Error('engine down');
       },
@@ -416,6 +420,7 @@ function makeCountingEngine(kind: 'pglite' | 'postgres', sources: Array<{ id: st
     kind,
     listSourceRecords: listing.listSourceRecords,
     countBrainLivePages() { return countBrainLivePagesSql(this as never); },
+    readBrainMaturity() { return readBrainMaturitySql(this as never); },
     executeRaw: async (sql: string) => {
       if (/AS pages/i.test(sql)) return [{ pages, facts, since: new Date(Date.now() - 60_000).toISOString() }];
       return listing.executeRaw(sql);

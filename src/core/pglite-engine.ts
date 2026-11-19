@@ -2070,6 +2070,7 @@ export class PGLiteEngine implements BrainEngine {
     return healthImpl.countOnboardSignal(this.searchRead, signal, entityTypes, opts);
   }
   async countBrainLivePages() { return healthImpl.countBrainLivePages(this.searchRead); }
+  async readBrainMaturity() { return healthImpl.readBrainMaturity(this.searchRead); }
   private get linkRead() { return unscopedExecutor(this.engineSql, 'link reads: master engine.executeRaw, unscoped'); }
   inboundLinkCoverage(opts?: { sourceIds?: string[] }) { return linkReadsImpl.inboundLinkCoverage(this.linkRead, opts); }
   listJunkEntityHubs(opts: { edgeThreshold: number; maxChunks: number; limit: number }) { return linkReadsImpl.listJunkEntityHubs(this.linkRead, opts); }

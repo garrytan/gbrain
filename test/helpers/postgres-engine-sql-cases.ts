@@ -207,6 +207,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'searchRead': OOS.helper,
   'countOnboardSignal': OOS.stats,
   'countBrainLivePages': OOS.stats,
+  'readBrainMaturity': OOS.stats,
   'linkRead': OOS.helper,
   'inboundLinkCoverage': OOS.linkReads,
   'countEntityPages': OOS.linkReads,

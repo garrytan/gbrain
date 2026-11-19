@@ -39,7 +39,7 @@ import {
   saveBackupStatus,
   type BackupStatus,
 } from '../src/core/backup/status-file.ts';
-import { countBrainLivePages as countBrainLivePagesSql } from '../src/core/engine-sql/health.ts';
+import { countBrainLivePages as countBrainLivePagesSql, readBrainMaturity as readBrainMaturitySql } from '../src/core/engine-sql/health.ts';
 
 const ENV_KEYS = [
   'GBRAIN_HOME',
@@ -133,6 +133,7 @@ function stubEngine(opts: {
   return {
     kind: opts.kind ?? 'pglite',
     countBrainLivePages() { return countBrainLivePagesSql(this as never); },
+    readBrainMaturity() { return readBrainMaturitySql(this as never); },
     executeRaw: async (sql: string) => {
       opts.onCall?.();
       if (sql.includes('FROM persistence_brain')) return [{ enabled: opts.managed === true }];
@@ -472,6 +473,7 @@ describe('getBackupStatus — cache choke point', () => {
     const throwing = {
       kind: 'pglite',
       countBrainLivePages() { return countBrainLivePagesSql(this as never); },
+      readBrainMaturity() { return readBrainMaturitySql(this as never); },
       executeRaw: async () => {
         throwCalls++;
         throw new Error('boom');
@@ -535,6 +537,7 @@ describe('computeBackupCoverage — pages count unestablished', () => {
     return {
       kind: 'pglite',
       countBrainLivePages() { return countBrainLivePagesSql(this as never); },
+      readBrainMaturity() { return readBrainMaturitySql(this as never); },
       executeRaw: async (sql: string) => {
         if (sql.includes('FROM pages')) return pagesRows;
         if (sql.includes('FROM sources')) return [];
@@ -808,6 +811,7 @@ describe('computeBackupCoverage: API connector sources', () => {
     const engine = {
       kind: 'pglite',
       countBrainLivePages() { return countBrainLivePagesSql(this as never); },
+      readBrainMaturity() { return readBrainMaturitySql(this as never); },
       executeRaw: async (sql: string) => {
         if (sql.includes('FROM persistence_brain')) throw new Error('persistence table unreadable');
         if (sql.includes('FROM pages')) return [{ n: 1 }];
@@ -958,6 +962,7 @@ describe('degraded verdict never clobbers a probed cache', () => {
       const broken = {
         kind: 'pglite',
         countBrainLivePages() { return countBrainLivePagesSql(this as never); },
+        readBrainMaturity() { return readBrainMaturitySql(this as never); },
         executeRaw: async () => {
           throw new Error('engine down');
         },

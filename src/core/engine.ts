@@ -26,7 +26,7 @@ import type { DerivedLinkBatchItem, DerivedLinkOrigin, DerivedLinkReplacementOpt
 import type { FindPagesQuery, FoundPages } from './page-find.ts';
 import type { PageCountQuery, PageCounts, TypeGrouper } from './page-counts.ts';
 import type { GeneratedPageRow, PageCollapseFactRow } from './engine-sql/search-reads.ts';
-import type { OnboardSignal } from './engine-sql/health.ts';
+import type { BrainMaturityRow, OnboardSignal } from './engine-sql/health.ts';
 import type { EntityTypeFilter } from './schema-pack/entity-types.ts';
 import type { ChunkMove } from './page-state/chunk-moves.ts';
 import type { DerivedAliasRow } from './engine-sql/pages.ts';
@@ -1504,6 +1504,8 @@ export interface BrainEngine {
   countOnboardSignal(signal: OnboardSignal, entityTypes: EntityTypeFilter, opts?: { signal?: AbortSignal }): Promise<number>;
   /** Live pages brain-wide, or null when unreadable (backup coverage; SQL in engine-sql/health.ts). */
   countBrainLivePages(): Promise<number | null>;
+  /** Live pages, active facts and the earliest source or page timestamp, brain-wide (backup coverage; engine-sql/health.ts). */
+  readBrainMaturity(): Promise<BrainMaturityRow | null>;
   /** Graph counts and endpoint reads of doctor, orphans, graph-query, the entity card, link preparation and search (SQL and contracts in engine-sql/link-reads.ts). */
   inboundLinkCoverage(opts?: { sourceIds?: string[] }): Promise<{ livePages: number; linkedPages: number }>;
   listJunkEntityHubs(opts: { edgeThreshold: number; maxChunks: number; limit: number }): Promise<JunkEntityHubRow[]>;

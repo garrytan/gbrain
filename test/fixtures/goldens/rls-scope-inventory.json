@@ -5036,6 +5036,7 @@
         "readAdmissionRate": "none",
         "readAdmissionSource": "none",
         "readBeliefHistoryRows": "none",
+        "readBrainMaturity": "none",
         "readCallerPageAccess": "none",
         "readCapacityForecastInputs": "none",
         "readChatUsage": "none",

@@ -29,7 +29,7 @@ import * as realReadiness from '../src/core/search/projection-readiness.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { encodeDeepResearchId } from '../src/core/deep-research-id.ts';
 import { fenceTranscriptText } from '../src/core/search/transcript-quote.ts';
-import { countBrainLivePages as countBrainLivePagesSql } from '../src/core/engine-sql/health.ts';
+import { countBrainLivePages as countBrainLivePagesSql, readBrainMaturity as readBrainMaturitySql } from '../src/core/engine-sql/health.ts';
 
 let nextResults: unknown[] = [{ id: encodeDeepResearchId('default', 'a'), page_id: 1, source_id: 'default', slug: 'a', chunk_text: 'x' }];
 
@@ -93,6 +93,7 @@ const engineStub = {
   readPageAliasRows: async () => [],
   listSourceRecords: async () => { sourceListings++; return []; },
   countBrainLivePages() { return countBrainLivePagesSql(this as never); },
+  readBrainMaturity() { return readBrainMaturitySql(this as never); },
   executeRaw: async (sql: string) => {
     rawCalls.push(String(sql));
     // countLivePages treats an EMPTY rowset as UNESTABLISHED (null → degraded

@@ -58,6 +58,12 @@ impl Brain {
         self.run(env, move |s| s.count_brain_live_pages())
     }
 
+    /// `readBrainMaturity()`: resolves `{ pages, facts, since }`.
+    #[napi]
+    pub fn read_brain_maturity<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_brain_maturity())
+    }
+
     /// `logIngest({ source_id?, source_type, source_ref, pages_updated_json, summary })`.
     #[napi]
     pub fn log_ingest<'env>(&self, env: &'env Env, entry: Value) -> napi::Result<Object<'env>> {
