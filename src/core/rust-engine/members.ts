@@ -236,6 +236,7 @@ export const RUST_ENGINE_MEMBERS = {
   countForeignEdges: 'links',
   listLivePageSummaries: 'links',
   countInboundLinks: 'links',
+  readEntityInboundEdges: 'links',
   listLinkEndpointPages: 'links',
   listPagesTitledIn: 'links',
   wordLexemes: 'links',

@@ -6,12 +6,12 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 652/652
+# covered: 653/653
 # lifecycle: 9/9
 # pages: 39/39
 # search: 7/7
 # search_reads: 9/9
-# link_reads: 10/10
+# link_reads: 11/11
 # link_temporal: 12/12
 # search_vector: 4/4
 # retrieval_coverage: 5/5
@@ -81,13 +81,13 @@ getPage	pages	yes	71	yes	yes	yes	serves
 readPageSnapshot	pages	yes	17	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	303	yes	yes	yes	serves
+putPage	pages	yes	304	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	96	yes	yes	yes	serves
+softDeletePage	pages	yes	97	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -138,7 +138,8 @@ countEntityPages	link_reads	yes	1	no	yes	yes	serves
 entityGraphCoverage	link_reads	yes	1	no	yes	yes	serves
 countForeignEdges	link_reads	yes	1	no	yes	yes	serves
 listLivePageSummaries	link_reads	yes	3	no	yes	yes	serves
-countInboundLinks	link_reads	yes	2	no	yes	yes	serves
+countInboundLinks	link_reads	yes	3	no	yes	yes	serves
+readEntityInboundEdges	link_reads	yes	1	no	yes	yes	serves
 listLinkEndpointPages	link_reads	yes	1	no	yes	yes	serves
 listPagesTitledIn	link_reads	yes	3	no	yes	yes	serves
 wordLexemes	link_reads	yes	1	no	yes	yes	serves
@@ -207,8 +208,8 @@ markPagesAttendanceBlocked	extraction	yes	2	no	yes	yes	serves
 countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
-addLink	links	yes	51	yes	yes	yes	serves
-addLinksBatch	links	yes	8	yes	yes	yes	serves
+addLink	links	yes	52	yes	yes	yes	serves
+addLinksBatch	links	yes	9	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	8	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
 removeLink	links	yes	2	no	yes	yes	serves

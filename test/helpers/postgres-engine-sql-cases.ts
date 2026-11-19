@@ -206,6 +206,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'countForeignEdges': OOS.linkReads,
   'listLivePageSummaries': OOS.linkReads,
   'countInboundLinks': OOS.linkReads,
+  'readEntityInboundEdges': OOS.callerRawSql,
   'listLinkEndpointPages': OOS.linkReads,
   'listPagesTitledIn': OOS.linkReads,
   'chunkRead': OOS.helper,
@@ -1343,6 +1344,10 @@ export const EXTRA_READ_CASES: SqlCase[] = [
     ['slugs+private', (e) => e.readEntityCardRows(SRC, { slugs: [SLUG] }, { excludePrivate: true })],
   ]),
   ...variants('readEntityAliasRows', [['default', (e) => e.readEntityAliasRows(SRC, [SLUG, 'people/bob-example'])]]),
+  ...variants('readEntityInboundEdges', [
+    ['local', (e) => e.readEntityInboundEdges(SLUG, SRC, { excludePrivate: false, originSameSource: false })],
+    ['remote+private', (e) => e.readEntityInboundEdges(SLUG, SRC, { excludePrivate: true, originSameSource: true })],
+  ]),
   ...variants('readExtractionLagCounts', [['default', (e) => e.readExtractionLagCounts({ sourceId: SRC, versionTs: '2000-01-01T00:00:00Z', attendance: true, held: true })]]),
   ...variants('readIgnoredPrivacyLabelPages', [
     ['slugs', (e) => e.readIgnoredPrivacyLabelPages(SRC, { slugs: [SLUG] })],

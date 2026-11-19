@@ -3239,6 +3239,28 @@
         ],
         "flagOnScopes": []
       },
+      "readEntityInboundEdges#local": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readEntityInboundEdges#remote+private": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readExtractionLagCounts#default": {
         "flagOffLanes": [
           "reserved"
@@ -5238,6 +5260,7 @@
         "readEmbeddingStateCounts": "direct",
         "readEntityAliasRows": "none",
         "readEntityCardRows": "none",
+        "readEntityInboundEdges": "none",
         "readExtractionLagCounts": "none",
         "readFactForOwnerAction": "none",
         "readFactSubject": "none",

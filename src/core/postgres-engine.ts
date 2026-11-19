@@ -1871,6 +1871,7 @@ export class PostgresEngine implements BrainEngine {
   countForeignEdges(slug: string, sourceId: string, direction: 'in' | 'out' | 'both') { return linkReadsImpl.countForeignEdges(this.linkRead, slug, sourceId, direction); }
   listLivePageSummaries(scope?: PageReadScope) { return linkReadsImpl.listLivePageSummaries(this.linkRead, scope); }
   countInboundLinks(slug: string, sourceId: string, opts: { excludePrivate: boolean; originSameSource: boolean }) { return linkReadsImpl.countInboundLinks(this.linkRead, slug, sourceId, opts); }
+  readEntityInboundEdges(slug: string, sourceId: string, opts: { excludePrivate: boolean; originSameSource: boolean }) { return linkReadsImpl.readEntityInboundEdges(this.linkRead, slug, sourceId, opts); }
   /** Link preparation's endpoint read: master bounded it through executeRaw, so a preparation read ends at its deadline. */
   listLinkEndpointPages(sourceId: string, slugs: string[], crossSourceSlugs: string[]) {
     return this.preparationRead(exec => linkReadsImpl.listLinkEndpointPages(unscopedExecutor(exec, 'link reads: master engine.executeRaw, unscoped'), sourceId, slugs, crossSourceSlugs));

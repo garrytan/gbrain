@@ -16,7 +16,7 @@ import { runCase, withPinnedSqlEnvironment, type SqlCase } from './helpers/postg
 import { edgeTrimSql } from '../src/core/edge-whitespace.ts';
 import { retiredPageSql } from '../src/core/entities/resolve.ts';
 import { boundedBodyPrefixSql } from '../src/core/page-window/bounded-lead.ts';
-import { callerAccessAllowedSql, privatePagesFilterForCaller, remoteReadFloorSql } from '../src/core/search/private-visibility.ts';
+import { callerAccessAllowedSql, privateLinkOriginFilterForCaller, privatePagesFilterForCaller, remoteReadFloorSql } from '../src/core/search/private-visibility.ts';
 
 interface Pin {
   /** The caller site the statement came from, at 7470c703ed. */
@@ -117,6 +117,27 @@ const PINS: Pin[] = [
     case: { method: 'readEntityAliasRows', variant: 'aka', run: e => e.readEntityAliasRows('default', ['people/alice-example']) },
     texts: ['SELECT slug, alias_norm, origin, alias_text FROM page_aliases WHERE source_id = $1 AND slug = ANY($2::text[]) ORDER BY alias_norm'],
   },
+  ...([[false, false], [true, true]] as const).map(([excludePrivate, remote]): Pin => ({
+    from: 'src/core/verbs/entity-card.ts:617 assembleCard incoming edges',
+    case: {
+      method: 'readEntityInboundEdges', variant: excludePrivate ? 'remote+private' : 'local',
+      run: e => e.readEntityInboundEdges('people/alice-example', 'default', { excludePrivate, originSameSource: remote }),
+    },
+    texts: () => [`SELECT f.slug AS from_slug, l.link_type, l.context, lr_t.valid_ranges::text AS temporal_ranges, lr_t.semantics AS temporal_semantics,
+      lr_t.disputed AS temporal_disputed, lr_t.undated_past AS temporal_undated_past, lr_t.first_start::text AS temporal_first_start,
+      lr_t.recorded_at AS temporal_recorded_at, lr_t.retired_at AS temporal_retired_at
+           FROM links l
+           JOIN pages f ON f.id = l.from_page_id
+           JOIN pages t ON t.id = l.to_page_id
+           LEFT JOIN link_relationships lr_t ON lr_t.from_page_id = l.from_page_id
+      AND lr_t.to_page_id = l.to_page_id AND lr_t.link_type = l.link_type
+      AND lr_t.scope = '${excludePrivate ? 'world' : 'all'}'
+          WHERE t.slug = $1 AND t.source_id = $2 AND f.source_id = $2 AND f.deleted_at IS NULL
+            AND COALESCE(l.link_source, '') <> 'mentions'${excludePrivate
+    ? ` AND ${privatePagesFilterForCaller('f')} AND ${privateLinkOriginFilterForCaller('l')}`
+    : ''} AND (l.origin_page_id IS NULL OR EXISTS (SELECT 1 FROM pages lo WHERE lo.id = l.origin_page_id AND lo.deleted_at IS NULL${remote ? ' AND lo.source_id = $2' : ''}))
+          ORDER BY l.id`],
+  })),
   {
     from: 'src/core/access/owner-only.ts:56 ownerOnlySourcesPresent',
     case: { method: 'readOwnerOnlySourcesPresent', variant: 'default', run: e => e.readOwnerOnlySourcesPresent() },

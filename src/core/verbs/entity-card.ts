@@ -20,7 +20,7 @@
  * facts respect visibility for remote callers (world-only).
  */
 
-import { annotateTemporalRow, LIVENESS_EXEMPT_LINK_TYPES, temporalLinkJoinSql, TEMPORAL_LINK_SELECT_SQL, type TemporalAnnotation } from '../link-validity.ts';
+import { annotateTemporalRow, LIVENESS_EXEMPT_LINK_TYPES, type TemporalAnnotation } from '../link-validity.ts';
 import type { BrainEngine, FactRow } from '../engine.ts';
 import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import type { TrustTier } from '../trust/tier.ts';
@@ -583,14 +583,11 @@ async function assembleCard(
   readerRemote: boolean,
 ): Promise<{ card: EntityCard; facts: FactRow[] }> {
   const pageSlug = row.slug;
-  const { privatePagesFilterForCaller, privateLinkOriginFilterForCaller, worldOnlyFacts } = await import('../search/private-visibility.ts');
+  const { worldOnlyFacts } = await import('../search/private-visibility.ts');
   const worldOnly = worldOnlyFacts(remote);
   const visibility = worldOnly ? (['world'] as ('private' | 'world')[]) : undefined;
   // Facts saved about this entity may sit under a sibling page or the bare subject slug (siblings.ts).
   const factSlugs = await factEntitySlugs(engine, sourceId, pageSlug, { excludePrivate, title: row.title }).catch(failOpen([pageSlug]));
-  const inboundPrivacy = (excludePrivate
-    ? ` AND ${privatePagesFilterForCaller('f')} AND ${privateLinkOriginFilterForCaller('l')}`
-    : '') + ` AND (l.origin_page_id IS NULL OR EXISTS (SELECT 1 FROM pages lo WHERE lo.id = l.origin_page_id AND lo.deleted_at IS NULL${remote ? ' AND lo.source_id = $2' : ''}))`;
 
   // Parallel depth-1 reads — every arm individually fail-soft so a partial
   // brain (no aliases, no timeline) still returns a card.
@@ -614,17 +611,7 @@ async function assembleCard(
     readAka(engine, sourceId, pageSlug),
     engine.getLinks(pageSlug, { ...(remote ? { sourceIds: [sourceId] } : { sourceId }), excludePrivate, temporal: { status: 'all' } }).catch(failOpen([] as Link[])),
     engine
-      .executeRaw<{ from_slug: string; link_type: string; context: string | null }>(
-        `SELECT f.slug AS from_slug, l.link_type, l.context${TEMPORAL_LINK_SELECT_SQL}
-           FROM links l
-           JOIN pages f ON f.id = l.from_page_id
-           JOIN pages t ON t.id = l.to_page_id
-           ${temporalLinkJoinSql('l', excludePrivate)}
-          WHERE t.slug = $1 AND t.source_id = $2 AND f.source_id = $2 AND f.deleted_at IS NULL
-            AND COALESCE(l.link_source, '') <> 'mentions'${inboundPrivacy}
-          ORDER BY l.id`,
-        [pageSlug, sourceId],
-      )
+      .readEntityInboundEdges(pageSlug, sourceId, { excludePrivate: !!excludePrivate, originSameSource: !!remote })
       .then(rs => rs.map(r => annotateTemporalRow(r)))
       .catch(failOpen([] as Array<{ from_slug: string; link_type: string; context: string | null } & TemporalAnnotation>)),
     engine
