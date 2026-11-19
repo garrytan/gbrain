@@ -71,8 +71,15 @@ describe('access setup members (engine-sql/access-setup.ts)', () => {
     await page(engine, 'people/work/gone', 'team');
     await engine.softDeletePage('people/work/gone', { sourceId: 'team' });
     await page(engine, 'notes/people/x/y', 'team');
+    // Mixed ids sort by byte ('-' before letters), as PGLite and the store do; an en_US collation puts 'ab' first.
+    await createSource(engine, backend, 'a-z');
+    await createSource(engine, backend, 'ab');
+    for (const [slug, sourceId] of [['people/ab/x', 'a-z'], ['people/a-z/x', 'a-z'], ['people/ab/y', 'ab']]) await page(engine, slug, sourceId);
     const folders = await engine.countPeopleFolderPages();
     expect(folders).toEqual([
+      { source_id: 'a-z', folder: 'a-z', pages: 1 },
+      { source_id: 'a-z', folder: 'ab', pages: 1 },
+      { source_id: 'ab', folder: 'ab', pages: 1 },
       { source_id: 'default', folder: 'family', pages: 2 },
       { source_id: 'default', folder: 'work', pages: 1 },
       { source_id: 'team', folder: 'work', pages: 1 },
@@ -82,12 +89,12 @@ describe('access setup members (engine-sql/access-setup.ts)', () => {
 
   parityTest('the policy-store sources are the sources with access state, by id', { methods: ['listAccessPolicySources'] }, async (engine, backend) => {
     const before = await engine.listAccessPolicySources();
-    for (const id of ['work', 'home', 'open']) await createSource(engine, backend, id);
-    await engine.ensureAccessPolicyState('work');
-    await engine.ensureAccessPolicyState('home');
+    for (const id of ['work', 'home', 'open', 'ab', 'a-z']) await createSource(engine, backend, id);
+    for (const id of ['work', 'ab', 'home', 'a-z']) await engine.ensureAccessPolicyState(id);
     const after = await engine.listAccessPolicySources();
     expect(before).toEqual([]);
-    expect(after).toEqual(['home', 'work']);
+    // By byte: 'a-z' before 'ab' on every arm, whatever the Postgres collation.
+    expect(after).toEqual(['a-z', 'ab', 'home', 'work']);
     return { before, after };
   });
 

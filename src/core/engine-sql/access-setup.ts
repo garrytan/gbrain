@@ -31,21 +31,21 @@ export interface AccessMigrationRow { id: string; phase: string; direction: stri
 /** The live pages of top-level people/<folder>/ folders, per source. */
 export interface PeopleFolderCount { source_id: string; folder: string; pages: number }
 
-export const UNBOUND_TOKEN_NAMES_SQL = 'SELECT DISTINCT name FROM access_tokens WHERE revoked_at IS NULL AND member_id IS NULL ORDER BY name';
-export const UNBOUND_CLIENT_IDS_SQL = 'SELECT client_id FROM oauth_clients WHERE deleted_at IS NULL AND member_id IS NULL ORDER BY client_id';
+export const UNBOUND_TOKEN_NAMES_SQL = 'SELECT DISTINCT name COLLATE "C" AS name FROM access_tokens WHERE revoked_at IS NULL AND member_id IS NULL ORDER BY name';
+export const UNBOUND_CLIENT_IDS_SQL = 'SELECT client_id FROM oauth_clients WHERE deleted_at IS NULL AND member_id IS NULL ORDER BY client_id COLLATE "C"';
 export const LIVE_TOKEN_SQL = 'SELECT member_id, token_hash, source_grant, source_id, federated_read, permissions FROM access_tokens WHERE name = $1 AND revoked_at IS NULL';
 export const UNARCHIVED_SOURCE_IDS_SQL = 'SELECT id FROM sources WHERE id = ANY($1::text[]) AND archived IS NOT TRUE';
 export const RECORD_SETUP_READS_SQL = "UPDATE access_tokens SET permissions = COALESCE(permissions, '{}'::jsonb) || jsonb_build_object('setup_reads', $2::text[]) WHERE name = $1 AND revoked_at IS NULL AND (permissions IS NULL OR jsonb_typeof(permissions) = 'object')";
-export const KEYS_READING_SOURCE_SQL = "SELECT name, member_id, federated_read FROM access_tokens WHERE revoked_at IS NULL AND member_id IS NOT NULL AND source_grant = 'federated' AND source_id <> $1 AND $1 = ANY(federated_read) ORDER BY name";
+export const KEYS_READING_SOURCE_SQL = "SELECT name, member_id, federated_read FROM access_tokens WHERE revoked_at IS NULL AND member_id IS NOT NULL AND source_grant = 'federated' AND source_id <> $1 AND $1 = ANY(federated_read) ORDER BY name COLLATE \"C\"";
 export const COMPANY_PAGE_COUNTS_SQL = "SELECT count(*)::int AS pages, count(*) FILTER (WHERE slug LIKE 'company/calls/%')::int AS calls FROM pages WHERE source_id = $1 AND deleted_at IS NULL";
 export const REVOKE_TOKEN_SQL = 'UPDATE access_tokens SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL';
 export const UNFINISHED_MIGRATION_SQL = `SELECT id, phase, direction, receipts FROM access_policy_migrations WHERE source_id = $1 AND phase <> 'switched' ORDER BY created_at DESC LIMIT 1`;
 export const INSERT_MIGRATION_SQL = `INSERT INTO access_policy_migrations (id, source_id, direction, phase) VALUES ($1, $2, $3, 'started')`;
 export const RECORD_MIGRATION_PHASE_SQL = 'UPDATE access_policy_migrations SET phase = $2, receipts = $3::text::jsonb, updated_at = now() WHERE id = $1';
 export const SWITCH_MIGRATION_SQL = `UPDATE access_policy_migrations SET phase = 'switched', receipts = $2::text::jsonb, updated_at = now() WHERE id = $1`;
-export const POLICY_STATE_SOURCES_SQL = 'SELECT source_id FROM access_policy_state ORDER BY source_id';
+export const POLICY_STATE_SOURCES_SQL = 'SELECT source_id FROM access_policy_state ORDER BY source_id COLLATE "C"';
 export const PEOPLE_FOLDER_PAGES_SQL = `SELECT source_id, split_part(slug, '/', 2) AS folder, count(*)::int AS pages FROM pages
-      WHERE deleted_at IS NULL AND slug LIKE 'people/%/%' GROUP BY 1, 2 ORDER BY 1, 2`;
+      WHERE deleted_at IS NULL AND slug LIKE 'people/%/%' GROUP BY 1, 2 ORDER BY source_id COLLATE "C", split_part(slug, '/', 2) COLLATE "C"`;
 
 /** Live tokens bound to no member, by name. */
 export async function listUnboundTokenNames(exec: AccessSetupExec): Promise<string[]> {
