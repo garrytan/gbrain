@@ -453,4 +453,95 @@ impl Brain {
             s.read_page_trust_stamp(&page)
         })
     }
+
+    /// `readSegmentedRewritePage(pageId)`: the page a live fence rewrite reads, or null.
+    #[napi]
+    pub fn read_segmented_rewrite_page<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_segmented_rewrite_page(page_id))
+    }
+
+    /// `restorePageDeletedAt(pageId, deletedAt)`: `deletedAt` as an ISO string.
+    #[napi]
+    pub fn restore_page_deleted_at<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        deleted_at: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.restore_page_deleted_at(page_id, &deleted_at)
+        })
+    }
+
+    /// `lockSegmentedGenerationPage(pageId)`: the page's body columns, or null.
+    #[napi]
+    pub fn lock_segmented_generation_page<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.lock_segmented_generation_page(page_id))
+    }
+
+    /// `splitManifestGeneration(pageId, generation, stagingId)`: resolves `null`.
+    #[napi]
+    pub fn split_manifest_generation<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        generation: i64,
+        staging_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.split_manifest_generation(page_id, generation, &staging_id)
+        })
+    }
+
+    /// `publishRebuiltGeneration(pageId, generation, stagingId)`: resolves `null`.
+    #[napi]
+    pub fn publish_rebuilt_generation<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        generation: i64,
+        staging_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.publish_rebuilt_generation(page_id, generation, &staging_id)
+        })
+    }
+
+    /// `setSegmentedVersionHash(pageId, generation, contentHash, bodyBytes)`: resolves `null`.
+    #[napi]
+    pub fn set_segmented_version_hash<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        generation: i64,
+        content_hash: String,
+        body_bytes: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.set_segmented_version_hash(page_id, generation, &content_hash, body_bytes)
+        })
+    }
+
+    /// `deleteRewrittenDerivationRows(pageId, { touched, reach, unpaidKinds, live })`: rows deleted.
+    #[napi]
+    pub fn delete_rewritten_derivation_rows<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        scope: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let scope: gbrain_store::page_body::RewrittenDerivationScope =
+                required(scope, "deleteRewrittenDerivationRows scope")?;
+            s.delete_rewritten_derivation_rows(page_id, &scope)
+        })
+    }
 }

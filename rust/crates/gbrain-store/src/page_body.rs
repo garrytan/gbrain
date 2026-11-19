@@ -47,7 +47,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+mod segment_rewrite;
 mod segmented_writes;
+pub use segment_rewrite::{
+    RewrittenDerivationScope, SegmentedGenerationLock, SegmentedRewritePage,
+};
 pub use segmented_writes::{
     OccurrenceChunkRow, PageTrustRef, PageTrustStamp, RechunkCandidateScope, SegmentedLivePageRow,
     SegmentedProjectionPage, SegmentedRechunkPage,
