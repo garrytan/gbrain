@@ -32,4 +32,5 @@ The link endpoint read (`listLinkEndpointPages`) is in [link_queries.md](link_qu
 | `listAwaitingMemoryProposals(limit)` | `[]` | The store keeps no memory proposals. |
 | `readPendingProposalSummary()` | `{ n: 0, oldest: null }` | The store keeps no memory proposals, so `gbrain status` and `gbrain doctor` report none pending. |
 | `listMemoryProposalRows(query)` | `[]` | The store keeps no memory proposals, so `gbrain memory-proposals list` lists none, on every page. |
+| `listOwnerProposalRows(requestId)` | `[]` | No request id names a proposal, so `gbrain memory-proposals show`, `approve` and `deny` answer `not_found`. |
 | `readMemoryProposal(principalKind, principalId, requestId)` | `null` | The store keeps no memory proposals, so `get_write_request` and `cancel_write_request` answer `not_found` for a request id with no write request. |

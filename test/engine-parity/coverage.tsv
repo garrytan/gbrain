@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 654/654
+# covered: 655/655
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -56,7 +56,7 @@
 # open_loops: 3/3
 # cli_reads_import: 12/12
 # wanted_links: 2/2
-# write_misc: 14/14
+# write_misc: 15/15
 # telemetry: 10/10
 # field_usage: 1/1
 # alias_fanout_reads: 4/4
@@ -664,6 +664,7 @@ readMemoryProposal	write_misc	yes	2	no	yes	yes	serves
 purgeMemoryProposals	write_misc	yes	1	no	yes	yes	serves
 readPendingProposalSummary	write_misc	yes	1	no	yes	yes	serves
 listMemoryProposalRows	write_misc	yes	1	no	yes	yes	serves
+listOwnerProposalRows	write_misc	yes	1	no	yes	yes	serves
 attachSourcePath	write_misc	yes	1	no	yes	yes	serves
 recordSearchTelemetry	telemetry	yes	3	no	yes	yes	serves
 readSearchStats	telemetry	yes	3	no	yes	yes	serves

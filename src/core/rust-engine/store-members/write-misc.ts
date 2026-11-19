@@ -1,6 +1,6 @@
 /**
  * The page-write reads and upkeep that belong to no other domain (BrainEngine readSourceState through
- * purgeMemoryProposals, readMemoryProposal, readPendingProposalSummary, listMemoryProposalRows, attachSourcePath and getWorktreeBinding; SQL in engine-sql/write-misc.ts), and the folder access read beside the
+ * purgeMemoryProposals, readMemoryProposal, readPendingProposalSummary, listMemoryProposalRows, listOwnerProposalRows, attachSourcePath and getWorktreeBinding; SQL in engine-sql/write-misc.ts), and the folder access read beside the
  * access members (isFolderRestricted; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
  * gbrain-store `write_misc`; the rest answer for state the store does not keep. What each member answers and why:
  * rust/docs/store/write_misc.md.
@@ -87,3 +87,6 @@ export const readPendingProposalSummary: StoreMember<[], PendingProposalRow | nu
 
 /** No memory proposals exist on this engine (see expireMemoryProposals), so the owner's list is empty on every page. */
 export const listMemoryProposalRows: StoreMember<[query: ProposalListQuery], Array<Record<string, unknown>>> = async () => [];
+
+/** No memory proposals exist on this engine, so no request id names one: show, approve and deny answer not_found. */
+export const listOwnerProposalRows: StoreMember<[requestId: string], Array<Record<string, unknown>>> = async () => [];

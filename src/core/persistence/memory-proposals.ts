@@ -91,9 +91,9 @@ const proposalNotFound = (requestId: string) => opError('not_found', `No memory 
   'List the proposals awaiting a decision with gbrain memory-proposals list, and pass one of their request ids.');
 
 /** The proposal an owner names by request id. The namespace holds the credential, so two credentials share one only by a uuidv5 collision; that is refused, never guessed. */
-export async function ownerProposal(engine: SqlEngine, requestId: string): Promise<MemoryProposal> {
+export async function ownerProposal(engine: Pick<BrainEngine, 'listOwnerProposalRows'>, requestId: string): Promise<MemoryProposal> {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestId)) throw proposalNotFound(requestId);
-  const rows = await engine.executeRaw<Record<string, unknown>>('SELECT * FROM memory_proposals WHERE request_id=$1::uuid LIMIT 2', [requestId]);
+  const rows = await engine.listOwnerProposalRows(requestId);
   if (!rows.length) throw proposalNotFound(requestId);
   if (rows.length > 1) throw opError('invalid_params', `Request id ${requestId} names proposals from two credentials.`,
     'Decide each from its credential\'s list (gbrain memory-proposals list --json shows principal_kind and principal_id).');

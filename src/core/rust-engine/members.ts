@@ -539,6 +539,7 @@ export const RUST_ENGINE_MEMBERS = {
   purgeMemoryProposals: 'persistence_journal',
   readPendingProposalSummary: 'persistence_journal',
   listMemoryProposalRows: 'persistence_journal',
+  listOwnerProposalRows: 'persistence_journal',
   readSourceMembership: 'persistence_journal',
   findTopologyChanges: 'persistence_journal',
   readTopologyChange: 'persistence_journal',

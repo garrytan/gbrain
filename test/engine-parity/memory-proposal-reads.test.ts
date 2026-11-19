@@ -17,11 +17,20 @@
 import { describe, expect } from 'bun:test';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
-import { listMemoryProposals, pendingProposalSummary, proposalCursor } from '../../src/core/persistence/memory-proposals.ts';
+import type { BrainEngine } from '../../src/core/engine.ts';
+import type { OperationContext } from '../../src/core/ops/contract.ts';
+import {
+  approveMemoryProposal, denyMemoryProposal, listMemoryProposals, ownerProposal, pendingProposalSummary, proposalCursor,
+} from '../../src/core/persistence/memory-proposals.ts';
 
 const { parityTest } = parityArms(testBackends());
 
 const UNKNOWN = 'b0000000-0000-4000-8000-0000000000d1';
+
+function local(engine: BrainEngine): OperationContext {
+  return { engine, config: { engine: engine.kind }, remote: false, dryRun: false, sourceId: 'default',
+    logger: { info() {}, warn() {}, error() {} } } as OperationContext;
+}
 
 /** The value, or the code it refused with. */
 async function settle(fn: () => Promise<unknown>): Promise<unknown> {
@@ -35,6 +44,7 @@ describe('engine parity: the owner reads of memory proposals', () => {
       expect(summary).toEqual({ pending: 0, oldest_hours: null });
       return summary;
     });
+
   parityTest('the owner list is empty, with --all, --source and a cursor', { methods: ['listMemoryProposalRows'] },
     async (engine) => {
       const after = proposalCursor({ created_at: '2026-01-01T00:00:00.000Z', request_id: UNKNOWN });
@@ -45,6 +55,19 @@ describe('engine parity: the owner reads of memory proposals', () => {
         badCursor: await settle(() => listMemoryProposals(engine, { after: 'nope' })),
       };
       expect(result).toEqual({ awaiting: [], all: [], after: [], badCursor: { code: 'invalid_params' } });
+      return result;
+    });
+
+  parityTest('show, approve and deny of a request id that names no proposal answer not_found', { methods: ['listOwnerProposalRows'] },
+    async (engine) => {
+      const result = {
+        show: await settle(() => ownerProposal(engine, UNKNOWN)),
+        approve: await settle(() => approveMemoryProposal(local(engine), UNKNOWN, { decidedBy: 'owner' })),
+        deny: await settle(() => denyMemoryProposal(local(engine), UNKNOWN, 'not wanted', { decidedBy: 'owner' })),
+        notUuid: await settle(() => ownerProposal(engine, 'nope')),
+      };
+      const notFound = { code: 'not_found' };
+      expect(result).toEqual({ show: notFound, approve: notFound, deny: notFound, notUuid: notFound });
       return result;
     });
 });

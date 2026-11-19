@@ -1401,6 +1401,8 @@ export interface BrainEngine {
   readPendingProposalSummary(): Promise<PendingProposalRow | null>;
   /** One page of the owner's memory-proposal list, oldest first, as stored rows. */
   listMemoryProposalRows(query: ProposalListQuery): Promise<Array<Record<string, unknown>>>;
+  /** The stored proposals of any credential with this request id, at most two. */
+  listOwnerProposalRows(requestId: string): Promise<Array<Record<string, unknown>>>;
   /** Attach a working tree to an existing path-less source (`sources add --path`); an unknown id changes nothing. */
   attachSourcePath(sourceId: string, localPath: string, opts?: AttachSourcePathOptions): Promise<void>;
   /** Every live page (of one source when given) with aliases and knowledge revision, by source then slug. */

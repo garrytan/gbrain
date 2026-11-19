@@ -192,6 +192,11 @@ export function listMemoryProposalRows(exec: LegacyUnscopedRead, q: ProposalList
     [q.sourceId, q.all, q.limit, q.afterAt, q.afterId]);
 }
 
+/** The proposals of any credential that carry this request id (at most two, so a uuidv5 collision is seen, never guessed). */
+export function listOwnerProposalRows(exec: LegacyUnscopedRead, requestId: string): Promise<Array<Record<string, unknown>>> {
+  return exec.executeRaw<Record<string, unknown>>('SELECT * FROM memory_proposals WHERE request_id=$1::uuid LIMIT 2', [requestId]);
+}
+
 /** Deletes every closed memory proposal decided (or last updated) at least `retentionDays` days ago; returns how many. */
 export async function purgeMemoryProposals(exec: SqlExecutor, retentionDays: number): Promise<number> {
   const rows = await exec.executeRaw(`DELETE FROM memory_proposals WHERE state<>'awaiting_owner'

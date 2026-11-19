@@ -4917,6 +4917,7 @@
         "listOriginClaims": "none",
         "listOutsideContentFenceCounts": "none",
         "listOwnedPrivateQueues": "none",
+        "listOwnerProposalRows": "none",
         "listPageStatusByRef": "none",
         "listPages": "direct",
         "listPagesTitledIn": "none",
