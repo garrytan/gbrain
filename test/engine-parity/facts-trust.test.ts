@@ -21,6 +21,7 @@ import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { basisEmbedding, createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { callerFactRows, putCallerPages, readAsCallers } from './fact-callers.ts';
 import { CORRECTION_CUE } from '../../src/core/search/saved-facts-match.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -116,6 +117,23 @@ describe('engine parity: facts relevance and trust statements', () => {
     expect(names(out.includeExpired)).not.toContain('tea audit checkpoint');
     expect(names(out.twoSources)).toContain('tea in another source');
     return out;
+  });
+
+  parityTest('listFactsForRelevance under excludePrivate applies a caller\'s reader identity, own member page and private-readable grant', { methods: ['listFactsForRelevance'] }, async (engine) => {
+    await putCallerPages(engine);
+    await engine.insertFacts(callerFactRows().map((r, i) => ({
+      ...r, fact: `tea ${r.fact}`, kind: 'fact' as const, visibility: 'world' as const, source: 'fence', valid_from: new Date(Date.UTC(2026, 6, 1 + i)),
+    })) as never, { source_id: SRC });
+    const kept = await readAsCallers(async () => (await relevance(engine, {
+      arm: 'keyword', scope: scope({ excludePrivate: true }), vector: null, terms: 'tea', limit: 50,
+    })).map(h => h.fact).sort());
+    const open = ['tea entity:people/open-example', 'tea prov:notes/open'];
+    const member = 'tea prov:memory/members/alice-example';
+    expect(kept.none).toEqual(open);
+    expect(kept.stranger).toEqual(open);
+    expect(kept.member).toEqual([...open, member, 'tea entity:people/readers-example', 'tea entity:people/team-example'].sort());
+    expect(kept.granted).toEqual([...open, member, 'tea entity:people/readers-example', 'tea entity:people/private-example'].sort());
+    return kept;
   });
 
   parityTest('listFactsForRelevance entity arm reads one entity newest first, scores comparable vectors, and applies the filters', { methods: ['listFactsForRelevance'] }, async (engine) => {

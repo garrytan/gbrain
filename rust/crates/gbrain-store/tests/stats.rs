@@ -319,29 +319,35 @@ fn anomalies_under_exclude_private_skip_hidden_pages_in_today_and_the_baseline()
     let strict = PrivacyPolicy {
         honor_aliases: true,
         entity_privacy: true,
+        ..Default::default()
     };
     assert_eq!(
         slugs(&read(since, None)),
         ["alias", "open", "readers", "secret"]
     );
-    assert_eq!(slugs(&read(since, Some(strict))), ["open"]);
+    assert_eq!(slugs(&read(since, Some(strict.clone()))), ["open"]);
     // With aliases off, `access: restricted` is no longer private.
     let no_alias = PrivacyPolicy {
         honor_aliases: false,
         entity_privacy: true,
+        ..Default::default()
     };
-    assert_eq!(slugs(&read(since, Some(no_alias))), ["alias", "open"]);
+    assert_eq!(
+        slugs(&read(since, Some(no_alias.clone()))),
+        ["alias", "open"]
+    );
     // With the privacy part off (privacy relaxed), only the reader list still hides a page.
     let relaxed = PrivacyPolicy {
         honor_aliases: true,
         entity_privacy: false,
+        ..Default::default()
     };
     assert_eq!(
-        slugs(&read(since, Some(relaxed))),
+        slugs(&read(since, Some(relaxed.clone()))),
         ["alias", "open", "secret"]
     );
     // The baseline window counts only what the policy keeps.
-    let later = read(since + day, Some(strict));
+    let later = read(since + day, Some(strict.clone()));
     let tag = later["baseline"]["tag"]["t"].as_object().unwrap();
     assert_eq!(tag.values().next().unwrap(), 1);
 }

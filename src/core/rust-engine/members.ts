@@ -273,6 +273,7 @@ export const RUST_ENGINE_MEMBERS = {
   // timeline
   addTimelineEntry: 'timeline',
   addTimelineEntriesBatch: 'timeline',
+  readRowTrustRows: 'timeline',
   getTimeline: 'timeline',
   listStoredTimelineRows: 'timeline',
   getTimelineForDate: 'timeline',
@@ -336,6 +337,11 @@ export const RUST_ENGINE_MEMBERS = {
   upsertFactRelinkAttempt: 'facts',
   listFactRelinkOutcomes: 'facts',
   deleteFactRelinkMemos: 'facts',
+
+  // facts: relink writes and the conversation relink's page pick (engine-sql/fact-relink-writes.ts)
+  placeRelinkedFact: 'facts',
+  linkConversationFact: 'facts',
+  listConversationRelinkPages: 'facts',
 
   // facts: command, cycle and fence reads (engine-sql/facts-cycle.ts)
   listActiveFactsForEntity: 'facts',
@@ -716,6 +722,16 @@ export const RUST_ENGINE_MEMBERS = {
   queueWakeForget: 'minion_queue',
   claimWakeForgets: 'minion_queue',
   settleWakeForget: 'minion_queue',
+  // Group D (trust tier reads)
+  listCorePageRows: 'pages',
+  listTrustScanRows: 'facts',
+  countUnscannedTrustRows: 'facts',
+  readBeliefHistoryRows: 'belief_ledger',
+  listVisibleBeliefLifetimes: 'belief_ledger',
+  listVersionTrustTiers: 'page_versions',
+  listVersionReasonWriters: 'page_versions',
+  listValidTimeIdentities: 'pages',
+  pickValidTimeEdition: 'page_versions',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;

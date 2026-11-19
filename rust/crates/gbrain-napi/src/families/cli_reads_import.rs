@@ -1,5 +1,5 @@
 //! The CLI import reads (gbrain-store `cli_reads::import`): source records, guest-source checks,
-//! page trust, the database clock, link metadata, stored timeline rows, revision checks.
+//! page and row trust, the database clock, link metadata, stored timeline rows, revision checks.
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
 
@@ -78,6 +78,18 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.read_page_trust_rows(&arg(lookup, "readPageTrustRows lookup")?)
+        })
+    }
+
+    /// `readRowTrustRows({ table, ids })`: one trust row per timeline entry found.
+    #[napi]
+    pub fn read_row_trust_rows<'env>(
+        &self,
+        env: &'env Env,
+        lookup: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_row_trust_rows(&arg(lookup, "readRowTrustRows lookup")?)
         })
     }
 

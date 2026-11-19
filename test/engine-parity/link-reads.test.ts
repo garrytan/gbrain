@@ -25,6 +25,7 @@ import type { PageInput, PageType } from '../../src/core/types.ts';
 import type { EntityTypeFilter } from '../../src/core/schema-pack/entity-types.ts';
 import { archiveSource, createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { chunk, installChunks } from './chunk-fixtures.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -330,6 +331,38 @@ describe('engine parity: link reads', () => {
       expect(m.get('running')).toEqual(['run']);
       expect(m.get('the')).toEqual([]);
       return sorted([...m].map(([w, lexemes]) => `${w}=>${lexemes.join('|')}`));
+    },
+  );
+
+  parityTest(
+    'listLivePageSummaries, listPagesTitledIn and countInboundLinks under excludePrivate apply a caller\'s reader identity and private-readable grant',
+    { methods: ['putPage', 'addLink', 'listLivePageSummaries', 'listPagesTitledIn', 'countInboundLinks'] },
+    async (engine) => {
+      const pages: Array<[string, Record<string, unknown>]> = [
+        ['notes/open', {}], ['notes/private', { visibility: 'private' }], ['notes/readers', { readable_by: ['alice-example'] }],
+        ['notes/team', { readable_by: 'group:team-a' }], ['notes/bob-only', { readable_by: ['bob-example'] }],
+        ['notes/pinned', { visibility: 'private', pinned_question: true }],
+      ];
+      await put(engine, 'people/target', 'person', {}, undefined, 'Target Example');
+      for (const [slug, frontmatter] of pages) {
+        await put(engine, slug, 'note', frontmatter, undefined, `Widget ${slug.slice(6)}`);
+        await engine.addLink(slug, 'people/target', '', 'cites', 'manual');
+      }
+      const read = (access: Parameters<typeof withCallerAccess>[0]) => withCallerAccess(access, async () => ({
+        live: sorted((await engine.listLivePageSummaries({ excludePrivate: true })).map((r) => r.slug)),
+        titled: (await engine.listPagesTitledIn('widget open widget private widget readers widget team widget bob-only widget pinned',
+          { excludePrivate: true })).map((r) => r.slug),
+        inbound: await engine.countInboundLinks('people/target', 'default', { excludePrivate: true, originSameSource: false }),
+      }));
+      const member = await read({ identity: ['member:alice-example', 'group:team-a'], hidePrivate: true });
+      const granted = await read({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true });
+      const stranger = await read({ identity: ['member:carol-example'], hidePrivate: true });
+      expect(stranger.live).toEqual(['notes/open', 'people/target']);
+      expect(member.live).toEqual(['notes/open', 'notes/readers', 'notes/team', 'people/target']);
+      expect(granted.live).toEqual(['notes/open', 'notes/private', 'notes/readers', 'people/target']);
+      expect(sorted(member.titled)).toEqual(['notes/open', 'notes/readers', 'notes/team']);
+      expect([stranger.inbound, member.inbound, granted.inbound]).toEqual([1, 3, 3]);
+      return { member, granted, stranger };
     },
   );
 });

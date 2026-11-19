@@ -42,6 +42,7 @@ import { resetFtsLanguageCache } from '../../src/core/fts-language.ts';
 import { parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -295,6 +296,49 @@ describe('engine parity: link temporal state', () => {
       const elsewhere = await readRecordMetadata(engine, [...ids.keys()], { referrerSources: ['other'], excludePrivate: false });
       expect(status).toEqual([['default:decisions/first', 'superseded'], ['default:decisions/second', 'accepted']]);
       return { status, meta: metaView, elsewhere: sorted([...elsewhere.values()].map(m => JSON.stringify(m))) };
+    },
+  );
+
+  parityTest(
+    'mentions/referrers and relationship notes under excludePrivate apply a caller\'s reader identity and private-readable grant',
+    { methods: ['putPage', 'addLink', 'readPageSnapshot', 'replaceDerivedLinks', 'listPageStatusByRef', 'listRecordMetadataRows',
+      'listRelationshipNoteRows'] },
+    async (engine) => {
+      await engine.putPage(ACME, page('Acme', { type: 'company', frontmatter: { readable_by: ['alice-example'] } }));
+      await engine.putPage(WIDGET, page('Widget', { type: 'company', frontmatter: { visibility: 'private' } }));
+      await engine.putPage(ALICE, page('Alice', { type: 'person', compiled_truth: ALICE_BODY }));
+      const snapshot = (await engine.readPageSnapshot(ALICE, { sourceId: 'default' }))!;
+      await engine.replaceDerivedLinks({ slug: ALICE, sourceId: 'default', expectedRevision: snapshot.revision,
+        sourceIncarnation: snapshot.sourceIncarnation }, [worksAt(ACME, 'CTO of Acme'), worksAt(WIDGET, 'works at Widget')]);
+      const decisions: Array<[string, Record<string, unknown>]> = [
+        ['decisions/open', { status: 'accepted' }], ['decisions/readers', { status: 'superseded', readable_by: ['alice-example'] }],
+        ['decisions/team', { status: 'accepted', readable_by: 'group:team-a' }], ['decisions/private', { status: 'accepted', visibility: 'private' }],
+        ['decisions/bob', { status: 'accepted', readable_by: ['bob-example'] }],
+      ];
+      for (const [slug, frontmatter] of decisions) await engine.putPage(slug, page(slug, { frontmatter }));
+      for (const [slug] of decisions.slice(1)) await engine.addLink(slug, 'decisions/open', `${slug} amends`, 'amends', 'manual');
+      await engine.addLink('decisions/open', 'decisions/readers', 'replaces readers', 'supersedes', 'manual');
+      const refs = decisions.map(([slug]) => ({ source_id: 'default', slug }));
+      const ids = await slugsById(engine, decisions.map(([slug]) => slug));
+      const read = (access: Parameters<typeof withCallerAccess>[0]) => withCallerAccess(access, async () => ({
+        status: [...(await readPageStatusByRef(engine, refs, { excludePrivate: true })).entries()].sort(),
+        meta: sorted([...(await readRecordMetadata(engine, [...ids.keys()], { referrerSources: ['default'], excludePrivate: true })).entries()]
+          .map(([id, m]) => JSON.stringify({ slug: ids.get(id), ...m }))),
+        notes: (await noteRows(engine, true)).map(r => `${r.to_slug}:${r.link_type}:${r.last_end}`),
+      }));
+      const member = await read({ identity: ['member:alice-example', 'group:team-a'], hidePrivate: true });
+      const granted = await read({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true });
+      const stranger = await read({ identity: ['member:carol-example'], hidePrivate: true });
+      const statusSlugs = (rows: Array<[string, string]>) => rows.map(([key]) => key);
+      expect(statusSlugs(stranger.status)).toEqual(['default:decisions/open']);
+      expect(statusSlugs(member.status)).toEqual(['default:decisions/open', 'default:decisions/readers', 'default:decisions/team']);
+      expect(statusSlugs(granted.status)).toEqual(['default:decisions/open', 'default:decisions/private', 'default:decisions/readers']);
+      expect(stranger.notes).toEqual([]);
+      expect(member.notes).toEqual([`${ACME}:works_at:2025-03-01`]);
+      expect(granted.notes).toEqual([`${ACME}:works_at:2025-03-01`, `${WIDGET}:works_at:null`]);
+      expect(member.meta).toContain(JSON.stringify({ slug: 'decisions/open', page_status: 'accepted', supersedes: [{ slug: 'decisions/readers' }] }));
+      expect(stranger.meta).toContain(JSON.stringify({ slug: 'decisions/open', page_status: 'accepted' }));
+      return { member, granted, stranger };
     },
   );
 

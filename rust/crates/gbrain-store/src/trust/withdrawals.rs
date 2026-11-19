@@ -95,6 +95,18 @@ fn at(read: &dyn KvRead, parts: &[&str]) -> Result<Option<i64>> {
 }
 
 /// Removes every withdrawal of a source, for the source delete.
+/// Whether a withdrawal of `source_id` covers the page `slug`: its subject is `*` or the slug (the
+/// `withdrawn` column of `listCorePageRows`, src/core/engine-sql/trust-tier-reads.ts).
+pub(crate) fn covers_page(read: &dyn KvRead, source_id: &str, slug: &str) -> Result<bool> {
+    let prefix = source_prefix(source_id);
+    let mut found = false;
+    scan_prefix(read, &prefix, false, &mut |k, _| {
+        found = split(k, prefix.len()).is_some_and(|(_, s, _)| s == "*" || s == slug);
+        !found
+    })?;
+    Ok(found)
+}
+
 pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
     let mut doomed = Vec::new();
     scan_prefix(tx, &source_prefix(source_id), false, &mut |k, _| {

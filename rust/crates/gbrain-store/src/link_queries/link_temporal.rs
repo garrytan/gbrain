@@ -950,6 +950,7 @@ impl Store {
         let mut pages = Pages::new(read);
         let policy = input
             .origin_policy
+            .as_ref()
             .ok_or_else(|| invalid("readLinkRelationshipEvidence needs originPolicy"))?;
         let mut evidence = RelationshipEvidence {
             assertions: Vec::new(),
@@ -979,7 +980,7 @@ impl Store {
                             .unwrap_or_else(|| "present".to_string()),
                         created_at: iso_ms(link.created_at_us),
                         source_id: from.source_id.clone(),
-                        origin_public: !page_hidden(read, &origin, &policy)?,
+                        origin_public: !page_hidden(read, &origin, policy)?,
                     });
                 }
                 for (_, t) in transitions_of(read, key)? {
@@ -987,7 +988,7 @@ impl Store {
                         None => true,
                         Some(id) => match pages.get(id)? {
                             Some(o) if live(&o) && o.source_id == from.source_id => {
-                                !page_hidden(read, &o, &policy)?
+                                !page_hidden(read, &o, policy)?
                             }
                             _ => continue,
                         },
