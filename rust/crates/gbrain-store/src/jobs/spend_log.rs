@@ -94,6 +94,15 @@ impl LogRecord {
 
 /// Append one ledger row, with its owner-index entries.
 fn append_log(tx: &mut dyn KvWrite, now: i64, mut row: LogRecord) -> Result<()> {
+    // A NUL byte is not valid text in Postgres, and the owner index uses it as the owner separator.
+    for owner in [&row.client_id, &row.budget_key].into_iter().flatten() {
+        if owner.contains('\0') {
+            return Err(StoreError::new(
+                CONSTRAINT_VIOLATION,
+                "mcp_spend_log owner: a NUL byte is not valid text",
+            ));
+        }
+    }
     row.id = next_seq(tx, "mcp_spend_log")?;
     row.created_at = now;
     let amount = row.spend.to_be_bytes();
