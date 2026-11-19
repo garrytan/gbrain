@@ -69,7 +69,8 @@ export async function removeOwnedFolder(engine: Exec, sourceId: string, opts: { 
   const rel = ownedFolderRel(sourceId);
   const files = dayFiles(record.owned);
   if (opts.keep) {
-    process.stderr.write(`[gbrain notice owned_folder_kept] ${sourceId}: --keep-storage leaves its ${files} day file(s) in ${rel}/; nothing will update or remove them.\n`);
+    const notice = '[gbrain notice owned_folder_kept]';
+    process.stderr.write(`${notice} ${sourceId}: gbrain sources remove --keep-storage leaves its ${files} day file(s) in ${rel}/; nothing will update or remove them.\n`);
     return { files, removed: 0, kept: Object.keys(record.owned.files), sha: null, kept_storage: true };
   }
   const checkout = await defaultCheckout(engine);

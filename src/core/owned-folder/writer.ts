@@ -81,7 +81,7 @@ function symlinkOnPath(root: string, checkoutRel: string): boolean {
 
 export function ownedConflict(path: string, why: string, sourceId: string): OperationError {
   return new OperationError('owned_folder_conflict', `${path} ${why}, so gbrain left it as it is and kept those pages in the database only.`,
-    `Move the file out of ${OWNED_FOLDER_ROOT}/ (or restore what gbrain wrote: git checkout -- ${path}), then run gbrain sync --source ${sourceId}.`,
+    `Move the file out of ${OWNED_FOLDER_ROOT}/ (or restore the committed file: git checkout -- ${path}), then run gbrain sync --source ${sourceId}.`,
     'docs/guides/apple-setup.md#owned_folder_conflict');
 }
 

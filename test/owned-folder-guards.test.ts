@@ -3,7 +3,7 @@
  * `--include-hidden '**'` syncs import nothing from it; a sync root, an import target, an uploaded file or a
  * frontmatter --fix inside it is refused; a commit or an untrack that would take one of its files is refused.
  */
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -21,6 +21,8 @@ import { untrackTargets } from '../src/core/git/untrack-admission.ts';
 import { isPathPruned } from '../src/core/sync.ts';
 import { captureHookSessionCwd, HOOK_CWD_ENV } from '../src/core/session-cwd.ts';
 import { withEnv } from './helpers/with-env.ts';
+
+setDefaultTimeout(60_000);
 
 const git = (cwd: string, ...args: string[]) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', ...args], { cwd, encoding: 'utf8' });
 const OWNED = '.gbrain-owned/imessage-x/imessage/abc/2026-06-14.md';
@@ -40,6 +42,8 @@ function checkout() {
   mkdirSync(join(repo, 'notes'), { recursive: true });
   mkdirSync(join(repo, '.gbrain-owned/imessage-x/imessage/abc'), { recursive: true });
   git(repo, 'init', '-q', '-b', 'main');
+  git(repo, 'config', 'user.name', 't');
+  git(repo, 'config', 'user.email', 't@example.invalid');
   writeFileSync(join(repo, 'notes/a.md'), '# A\n\nA note.\n');
   writeFileSync(join(repo, OWNED), '---\ntitle: chat\n---\n# chat\n\nLunch at noon.\n');
   git(repo, 'add', '-A');

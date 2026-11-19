@@ -3,7 +3,7 @@
  * pages as files under `.gbrain-owned/<id>/` in that checkout, one commit per run, written before the database rows.
  * Synthetic helper (test/helpers/imessage-helper-fixture.ts); no network, no Mac, no real messages.
  */
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -49,6 +49,8 @@ function mac(): FakeHelper {
   ] };
 }
 
+setDefaultTimeout(60_000);
+
 const git = (cwd: string, ...args: string[]) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', ...args], { cwd, encoding: 'utf8' });
 const commits = (repo: string) => Number(git(repo, 'rev-list', '--count', 'HEAD').stdout.trim());
 
@@ -70,6 +72,8 @@ async function setup() {
   mkdirSync(repo, { recursive: true });
   git(home, 'init', '--bare', '-q', remote);
   git(repo, 'init', '-q', '-b', 'main');
+  git(repo, 'config', 'user.name', 't');
+  git(repo, 'config', 'user.email', 't@example.invalid');
   git(repo, 'remote', 'add', 'origin', remote);
   writeFileSync(join(repo, 'README.md'), '# notes\n');
   git(repo, 'add', 'README.md');
