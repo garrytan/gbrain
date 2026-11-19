@@ -4,6 +4,7 @@
  * to count as restricted catches the error itself (`search/private-visibility.ts`).
  */
 import type { LegacyUnscopedRead } from './brands.ts';
+import { edgeTrimSql } from '../edge-whitespace.ts';
 
 /**
  * Whether a page known by its slug sits under an applied folder rule, under a pending or invalid folder prefix, or
@@ -173,4 +174,35 @@ export const AUDIENCE_KIND_MEMBERS_SQL = "SELECT id FROM access_members WHERE ki
  */
 export async function listAudienceAccessMembers(exec: MemberLookupRead): Promise<string[]> {
   return (await exec.executeRaw<{ id: string }>(AUDIENCE_KIND_MEMBERS_SQL)).map(r => r.id);
+}
+
+/**
+ * How a live member is named: by its id, by the member config mcp.stdio_member names (`key` is the config key), or by
+ * the binding of an active legacy token (`key` is the token id) or of an OAuth client that is not deleted (the client id).
+ */
+export type LiveMemberVia = 'member' | 'stdio_config' | 'legacy_token' | 'oauth_client';
+
+/** The member subquery of each `via`, as access/caller.ts memberIdentityFor and stdioMemberIdentity passed it. */
+const LIVE_MEMBER_KEY_SQL: Record<LiveMemberVia, string> = {
+  member: '$1',
+  stdio_config: `SELECT ${edgeTrimSql('value')} FROM config WHERE key = $1`,
+  legacy_token: 'SELECT member_id FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL',
+  oauth_client: 'SELECT member_id FROM oauth_clients WHERE client_id = $1 AND deleted_at IS NULL',
+};
+
+/** The statements access/caller.ts liveIdentity ran through executeRaw, one per `via`. */
+export const LIVE_MEMBER_SQL = Object.fromEntries((Object.keys(LIVE_MEMBER_KEY_SQL) as LiveMemberVia[]).map(via => [via,
+  `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
+  WHERE m.id = (${LIVE_MEMBER_KEY_SQL[via]}) AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL
+  GROUP BY m.id`])) as Record<LiveMemberVia, string>;
+
+/**
+ * The enabled, untombstoned member `via` and `key` name, with its own groups; null when none does (an unknown, disabled
+ * or removed member, a revoked token, a deleted client, an unset config key). A disabled or removed member is filtered
+ * out in the statement. A failure is thrown unchanged; the caller decides what a missing table or a database error means.
+ */
+export async function readLiveMember(exec: MemberLookupRead, via: LiveMemberVia, key: string): Promise<LiveMemberRow | null> {
+  const [row] = await exec.executeRaw<LiveMemberRow>(LIVE_MEMBER_SQL[via], [key]);
+  return row ? { id: row.id, groups: row.groups ?? [] } : null;
 }

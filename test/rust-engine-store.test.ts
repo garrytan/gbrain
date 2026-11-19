@@ -26,6 +26,7 @@ import { ENGINE_CAPABILITIES } from '../src/core/engine-capabilities.ts';
 import { withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { audienceMemberIds, boundCredentials, getMember, legacyTokenByName, listMembers, memberByEmail } from '../src/core/access/members.ts';
+import { memberIdentityFor, stdioMemberIdentity } from '../src/core/access/caller.ts';
 
 const TARGET = detectAddonTarget();
 const BUILT = join(import.meta.dir, '..', 'rust', 'target', 'addon', `gbrain_engine.${TARGET ?? 'unsupported'}.node`);
@@ -456,6 +457,31 @@ describe('access member reads on a Rust brain', () => {
     (engine as unknown as { listAudienceAccessMembers: typeof list }).listAudienceAccessMembers = async () => { const ids = await list(); listed.push(ids); return ids; };
     expect(await audienceMemberIds(engine as never)).toEqual([]);
     expect({ raw, listed }).toEqual({ raw: [], listed: [[]] });
+  });
+
+  withAddon('memberIdentityFor and stdioMemberIdentity read no raw SQL and find an empty identity: the store keeps no members', async () => {
+    const { engine } = await open();
+    const raw: string[] = [];
+    const executeRaw = engine.executeRaw.bind(engine);
+    (engine as unknown as { executeRaw: typeof executeRaw }).executeRaw = (async (sql: string, params?: unknown[]) => {
+      raw.push(sql);
+      return executeRaw(sql as never, params as never);
+    }) as typeof executeRaw;
+    const read: unknown[][] = [];
+    const live = engine.readLiveMember.bind(engine);
+    (engine as unknown as { readLiveMember: typeof live }).readLiveMember = async (via, key) => { read.push([via, key, await live(via, key)]); return live(via, key); };
+    const identities = {
+      token: await memberIdentityFor(engine as never, { principal: { kind: 'legacy_token', id: '00000000-0000-4000-8000-0000000000c1' } }),
+      client: await memberIdentityFor(engine as never, { principal: { kind: 'oauth_client', id: 'client-alice' } }),
+      stdioConfig: await memberIdentityFor(engine as never, { principal: { kind: 'local_stdio', id: 'stdio' } }),
+      stdioMember: await stdioMemberIdentity(engine as never, 'alice-example'),
+    };
+    expect(identities).toEqual({ token: [], client: [], stdioConfig: [], stdioMember: [] });
+    expect({ raw, read }).toEqual({
+      raw: [],
+      read: [['legacy_token', '00000000-0000-4000-8000-0000000000c1', null], ['oauth_client', 'client-alice', null],
+        ['stdio_config', 'mcp.stdio_member', null], ['member', 'alice-example', null]],
+    });
   });
 });
 

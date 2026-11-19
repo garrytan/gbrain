@@ -5,7 +5,7 @@
  *  - Contract: readSourceState, readAdmissionSource, sharedSkillPackTablePresent,
  *    listSharedSkillPackRoots, getWorktreeBinding, isSourceClaimed, hasExtractedEvents, listActiveAccessMembers, isFolderRestricted,
  *    listAppliedPolicyRevisions, readMayActFor, readAudiencePrincipals, readAccessMembers, readAccessCredentials,
- *    listAudienceAccessMembers, expireMemoryProposals,
+ *    listAudienceAccessMembers, readLiveMember, expireMemoryProposals,
  *    listAwaitingMemoryProposals and purgeMemoryProposals return the same observable result on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: a source-state read that differs changes whether page admission, the mirror read-only guard and
@@ -392,6 +392,85 @@ describe('engine parity: write misc', () => {
     const ids = await engine.listAudienceAccessMembers();
     expect(ids).toEqual(['alice-example', 'zed-example']);
     return ids;
+  });
+
+  parityTest('readLiveMember finds no live member by id, stdio config, token or client on a brain with none', { methods: ['readLiveMember'] }, async (engine) => {
+    const answers = {
+      member: await engine.readLiveMember('member', 'alice-example'),
+      stdioConfig: await engine.readLiveMember('stdio_config', 'mcp.stdio_member'),
+      legacyToken: await engine.readLiveMember('legacy_token', '00000000-0000-4000-8000-0000000000c1'),
+      oauthClient: await engine.readLiveMember('oauth_client', 'client-alice'),
+    };
+    expect(answers).toEqual({ member: null, stdioConfig: null, legacyToken: null, oauthClient: null });
+    return answers;
+  });
+
+  // Leak case: a disabled or removed (tombstoned) member never answers, by any route; a live member carries only its own
+  // groups; an id matches exactly one member, never a group id, another case or an injected predicate; a revoked token and
+  // a deleted client name no one; the stdio config value is edge-trimmed. The Rust store keeps no members (empty above),
+  // so the member write stops on the raw_sql refusal.
+  parityTest('readLiveMember answers only an enabled, untombstoned member with its own groups, through live bindings', { methods: ['readLiveMember'] }, async (engine, backend) => {
+    const write = await engine.executeRaw(
+      `INSERT INTO access_members (id, kind, disabled_at, tombstoned_at) VALUES
+         ('alice-example', 'person', NULL, NULL), ('bob-example', 'person', now(), NULL),
+         ('carol-example', 'person', NULL, now()), ('dave-example', 'person', NULL, NULL)`).then(() => null, (e: unknown) => e);
+    if (backend === 'rust') {
+      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
+      expect(await engine.readLiveMember('member', 'alice-example')).toBeNull();
+      throw write;
+    }
+    expect(write).toBeNull();
+    await engine.executeRaw(`INSERT INTO access_groups (id) VALUES ('team-a'), ('team-b'), ('team-c'), ('team-d')`);
+    await engine.executeRaw(`INSERT INTO access_group_members (group_id, member_id) VALUES
+      ('team-b', 'alice-example'), ('team-a', 'alice-example'), ('team-c', 'bob-example'), ('team-d', 'carol-example'), ('team-c', 'dave-example')`);
+    await engine.executeRaw(
+      `INSERT INTO access_tokens (id, name, token_hash, member_id, created_at, revoked_at) VALUES
+         ('00000000-0000-4000-8000-0000000000c1', 'laptop', 'h1', 'alice-example', '2026-01-01T00:00:00Z', NULL),
+         ('00000000-0000-4000-8000-0000000000c2', 'old', 'h2', 'alice-example', '2026-01-02T00:00:00Z', now()),
+         ('00000000-0000-4000-8000-0000000000c3', 'bobs', 'h3', 'bob-example', '2026-01-03T00:00:00Z', NULL)`);
+    await engine.executeRaw(
+      `INSERT INTO oauth_clients (client_id, client_name, member_id, deleted_at) VALUES
+         ('client-alice', 'alice-app', 'alice-example', NULL), ('client-gone', 'gone-app', 'alice-example', now()), ('client-carol', 'carol-app', 'carol-example', NULL)`);
+    const byId = {
+      alice: await engine.readLiveMember('member', 'alice-example'),
+      dave: await engine.readLiveMember('member', 'dave-example'),
+      disabled: await engine.readLiveMember('member', 'bob-example'),
+      removed: await engine.readLiveMember('member', 'carol-example'),
+      group: await engine.readLiveMember('member', 'team-a'),
+      otherCase: await engine.readLiveMember('member', 'Alice-Example'),
+      injected: await engine.readLiveMember('member', "x' OR '1'='1"),
+      unknown: await engine.readLiveMember('member', 'nobody-example'),
+    };
+    expect(byId).toEqual({
+      alice: { id: 'alice-example', groups: ['team-a', 'team-b'] }, dave: { id: 'dave-example', groups: ['team-c'] },
+      disabled: null, removed: null, group: null, otherCase: null, injected: null, unknown: null,
+    });
+    const byBinding = {
+      token: await engine.readLiveMember('legacy_token', '00000000-0000-4000-8000-0000000000c1'),
+      revokedToken: await engine.readLiveMember('legacy_token', '00000000-0000-4000-8000-0000000000c2'),
+      disabledMembersToken: await engine.readLiveMember('legacy_token', '00000000-0000-4000-8000-0000000000c3'),
+      tokenByName: await engine.readLiveMember('legacy_token', 'laptop'),
+      injectedToken: await engine.readLiveMember('legacy_token', "x' OR '1'='1"),
+      client: await engine.readLiveMember('oauth_client', 'client-alice'),
+      deletedClient: await engine.readLiveMember('oauth_client', 'client-gone'),
+      removedMembersClient: await engine.readLiveMember('oauth_client', 'client-carol'),
+      clientByName: await engine.readLiveMember('oauth_client', 'alice-app'),
+    };
+    expect(byBinding).toEqual({
+      token: { id: 'alice-example', groups: ['team-a', 'team-b'] }, revokedToken: null, disabledMembersToken: null, tokenByName: null,
+      injectedToken: null, client: { id: 'alice-example', groups: ['team-a', 'team-b'] }, deletedClient: null, removedMembersClient: null,
+      clientByName: null,
+    });
+    const unset = await engine.readLiveMember('stdio_config', 'mcp.stdio_member');
+    await engine.executeRaw(`INSERT INTO config (key, value) VALUES ('mcp.stdio_member', ' alice-example '), ('other.key', 'dave-example')`);
+    const byConfig = {
+      unset,
+      trimmed: await engine.readLiveMember('stdio_config', 'mcp.stdio_member'),
+      otherKey: await engine.readLiveMember('stdio_config', 'other.key'),
+      unknownKey: await engine.readLiveMember('stdio_config', 'no.such.key'),
+    };
+    expect(byConfig).toEqual({ unset: null, trimmed: { id: 'alice-example', groups: ['team-a', 'team-b'] }, otherKey: { id: 'dave-example', groups: ['team-c'] }, unknownKey: null });
+    return { byId, byBinding, byConfig };
   });
 
   parityTest('getWorktreeBinding is null for a source with no writer binding, on any host', { methods: ['getWorktreeBinding'] }, async (engine, backend) => {

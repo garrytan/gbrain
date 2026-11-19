@@ -551,6 +551,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readAccessMembers': OOS.callerRawSql,
   'readAccessCredentials': OOS.callerRawSql,
   'listAudienceAccessMembers': OOS.callerRawSql,
+  'readLiveMember': OOS.callerRawSql,
   // the page-write reads and upkeep that belong to no other domain
   'readSourceState': OOS.writeMisc,
   'readAdmissionSource': OOS.writeMisc,
@@ -1311,6 +1312,12 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('readAccessMembers', [['by-id', (e) => e.readAccessMembers({ id: 'alice-example' })], ['by-email', (e) => e.readAccessMembers({ email: 'alice@example.com' })], ['live', (e) => e.readAccessMembers({ includeRemoved: false })], ['all', (e) => e.readAccessMembers({ includeRemoved: true })]]),
   ...variants('readAccessCredentials', [['token-name', (e) => e.readAccessCredentials({ tokenName: 'laptop' })], ['member', (e) => e.readAccessCredentials({ memberId: 'alice-example' })]]),
   ...variants('listAudienceAccessMembers', [['default', (e) => e.listAudienceAccessMembers()]]),
+  ...variants('readLiveMember', [
+    ['member', (e) => e.readLiveMember('member', 'alice-example')],
+    ['stdio-config', (e) => e.readLiveMember('stdio_config', 'mcp.stdio_member')],
+    ['legacy-token', (e) => e.readLiveMember('legacy_token', 'tok-1')],
+    ['oauth-client', (e) => e.readLiveMember('oauth_client', 'client-1')],
+  ]),
   ...variants('readJournalLimitRows', [['default', (e) => e.readJournalLimitRows()]]),
   ...variants('readHeldPageRows', [['default', (e) => e.readHeldPageRows(['1', '2'])]]),
   ...variants('readHeldCoverageRows', [
