@@ -78,6 +78,7 @@ import * as doctorReads from './doctor-reads.ts';
 import * as doctorDerived from './doctor-derived.ts';
 import * as doctorPersistence from './doctor-persistence.ts';
 import * as doctorPages from './doctor-pages.ts';
+import * as doctorAcc from './doctor-acc.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
 const initSchema: StoreMember<[], void> = async () => undefined;
@@ -132,6 +133,7 @@ export const STORE_MEMBERS = {
   // The persistence checks' request journal and counter reads (rust/docs/store/cli-reads-doctor-per.md).
   ...doctorPersistence,
   ...doctorPages,
+  ...doctorAcc,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;
