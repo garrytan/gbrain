@@ -25,6 +25,7 @@ import { claimOwner, claimOwnerKind, claimPhaseStamp, startClaimPhase } from './
 import { CONSUMER_LIVE_MS, consumerIdentity, RESIDENT_CONSUMER_KINDS } from './consumer-heartbeat.ts';
 import { classifyHolderLiveness, syncLockId } from '../db-lock.ts';
 import { publicFailureDetail } from './publication-failure.ts';
+import { ownerWidened } from '../search/private-visibility.ts';
 import { catalogueError } from '../error-catalogue.ts';
 import { ACTIVE_REFRESH_STATES_SQL, refreshFenceClear, RELEASED_DEFERRED } from './worktree-refresh-schema.ts';
 import { refreshProgress, refreshRetryHint, seconds } from './refresh-retry-hint.ts';
@@ -1308,9 +1309,10 @@ export function receiptFor(stored: WriteRequest, facts?: WriteHealthFacts, now =
   // PR B: a deferred row reads as queued (every receipt reader, an older client's included, knows that state) plus `deferred`.
   const state: Exclude<RequestState, 'deferred'> = stored.state === 'deferred' ? 'queued' : stored.state;
   const row = { ...stored, state };
+  const outcome = row.outcome && 'private_rows_kept' in row.outcome && !ownerWidened() ? (({ private_rows_kept: _kept, ...rest }) => rest)(row.outcome) : row.outcome;
   return {
-    ...(row.outcome ?? {}),
-    ...(row.outcome ? { outcome: row.outcome } : {}),
+    ...(outcome ?? {}),
+    ...(outcome ? { outcome } : {}),
     request_id: row.request_id, ...(row.client_request_id ? { client_request_id: row.client_request_id } : {}), state,
     ...(stored.state === 'deferred' ? { deferred: { ...(stored.deferred_refresh_id ? { refresh_id: stored.deferred_refresh_id } : {}),
       ...(stored.deferred_import_from != null ? { pending_import: true } : {}) } } : {}),
