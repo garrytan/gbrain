@@ -55,6 +55,20 @@ pub struct WithdrawalKey {
     pub subject: String,
 }
 
+/// `md5('')`: the digest of an empty folder access table.
+const EMPTY_TABLE_DIGEST: &str = "d41d8cd98f00b204e9800998ecf8427e";
+
+/// `readFactCacheWatermark`: the hot-memory cache watermark of a source.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct FactCacheWatermark {
+    /// How many withdrawals the source has.
+    pub withdrawals: i64,
+    /// The newest withdrawal time as ISO text with microseconds; `None` with no withdrawal.
+    pub latest_withdrawn_at: Option<String>,
+    /// The digests of `access_rules` and `access_pending_coverage`, joined by `:`.
+    pub access_rules: String,
+}
+
 fn key(parts: &[&str]) -> Vec<u8> {
     let mut key = keys::text(keys::TRUST, parts);
     key.insert(1, WITHDRAWAL);
@@ -343,6 +357,42 @@ impl Store {
             !found
         })?;
         Ok(found)
+    }
+
+    /// `readFactCacheWatermark`: the source's withdrawal count and newest withdrawal time, and the
+    /// folder access digest. The store keeps no folder access rules or pending coverage (only raw
+    /// SQL writes them, and `executeRaw` refuses), so the digest is that of two empty tables.
+    pub fn read_fact_cache_watermark(&self, source_id: &str) -> Result<FactCacheWatermark> {
+        no_nul("readFactCacheWatermark", &[("sourceId", source_id)])?;
+        let read = self.read()?;
+        let prefix = source_prefix(source_id);
+        let mut withdrawals = 0i64;
+        let mut latest: Option<i64> = None;
+        let mut bad = None;
+        scan_prefix(
+            &*read,
+            &prefix,
+            false,
+            &mut |_, v| match serde_json::from_slice::<WithdrawalRecord>(v) {
+                Ok(r) => {
+                    withdrawals += 1;
+                    latest = Some(latest.map_or(r.withdrawn_at_us, |l| l.max(r.withdrawn_at_us)));
+                    true
+                }
+                Err(e) => {
+                    bad = Some(e);
+                    false
+                }
+            },
+        )?;
+        if let Some(e) = bad {
+            return Err(e.into());
+        }
+        Ok(FactCacheWatermark {
+            withdrawals,
+            latest_withdrawn_at: latest.map(iso),
+            access_rules: format!("{EMPTY_TABLE_DIGEST}:{EMPTY_TABLE_DIGEST}"),
+        })
     }
 
     /// `listFactWithdrawalKeys`: the source's withdrawal keys ordered by visibility, fact_hash and
