@@ -81,6 +81,12 @@ ${rows}
       expect(await active()).toEqual(ids);
     });
 
+    test('a numeric --reason-scan-limit on the purge form is not taken for a second id', async () => {
+      const run = await capture(() => runForget(engine, [String(ids[0]), '--purge', '--dry-run', '--reason-scan-limit', '100']));
+      expect(run.err + run.out).not.toContain('one fact id');
+      expect(await active()).toEqual(ids);
+    });
+
     test('one id with a numeric --reason still forgets that one fact', async () => {
       const run = await capture(() => runForget(engine, [String(ids[0]), '--reason', '42']));
       expect(run.code).toBe(0);

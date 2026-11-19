@@ -1212,7 +1212,8 @@ function factRowToJson(r: FactRow): Record<string, unknown> {
 }
 
 export async function runForget(engine: BrainEngine | (() => Promise<BrainEngine>), args: string[]): Promise<void> {
-  const valueFlags = new Set(['--reason', '--source', '--request-id', '--match']);
+  const { EQUALS_READERS } = await import('../cli/flag-equals.ts');
+  const valueFlags = new Set([...EQUALS_READERS.forget ?? [], ...EQUALS_READERS['forget --purge'] ?? []]);
   const ids = args.filter((arg, i) => /^\d+$/.test(arg) && !valueFlags.has(args[i - 1] ?? ''));
   if (ids.length > 1) {
     const { opError } = await import('../core/operations.ts');
