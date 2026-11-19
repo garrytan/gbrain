@@ -32,7 +32,7 @@ import { sanitizeRemoteBody } from '../remote-body.ts';
 import { getContentFlag } from '../quarantine.ts';
 import { fileHeldField, readHeldPages } from '../persistence/held-reads.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
-import { ownerWidened, resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs, isPrivatePageForCaller } from '../search/private-visibility.ts';
+import { ownerFenceView, resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs, isPrivatePageForCaller } from '../search/private-visibility.ts';
 import { heldRowsForCaller } from '../eligibility/fence-overlay.ts';
 import { unquoteAnyTranscriptText } from '../search/transcript-quote.ts';
 import { withIgnoredPrivacyLabelNotice } from '../search/ignored-privacy-labels.ts';
@@ -93,12 +93,11 @@ async function dropPrivateSlugs(
  * caller. Same stripping rule as compiled_truth: takes fence dropped
  * entirely, facts fence keeps only `world`-visibility rows, less those held from a world-only caller (GST-2891).
  * GST-3058 (R94): a caller bound to the brain owner speaking for itself keeps the facts fence as stored, and the takes
- * fence too when it reads every holder (readHolders), the way the local CLI reads the page.
+ * fence too when it reads every holder (ownerFenceView), the way the local CLI reads the page.
  */
 async function stripPrivacyFencesForRemoteReader(ctx: OperationContext, page: Page): Promise<Page> {
   const omitRows = await heldRowsForCaller(ctx.engine, ctx.remote, { sourceId: page.source_id, slug: page.slug, compiled_truth: page.compiled_truth, timeline: page.timeline });
-  const owner = ownerWidened() ? { keepTakes: readHolders(ctx) === undefined } : undefined;
-  const opts = { includeWithdrawn: true, keepMaterializedMarkers: true, omitRows, owner }; // #5567: markers round-trip remote edits
+  const opts = { includeWithdrawn: true, keepMaterializedMarkers: true, omitRows, owner: ownerFenceView(readHolders(ctx)) }; // #5567: markers round-trip remote edits
   return { ...page, compiled_truth: sanitizeRemoteBody(page.compiled_truth, opts), timeline: sanitizeRemoteBody(page.timeline ?? '', opts) };
 }
 
