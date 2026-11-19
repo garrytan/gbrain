@@ -74,6 +74,9 @@ export const readHeldCoverageRows: StoreMember<[sourceIds: string[] | null], Hel
 /** No hold rows exist on this engine (see readHeldPageRows), so no source has a hold record. */
 export const readGitHoldRecords: StoreMember<[opts?: GitHoldRecordsQuery], Array<{ record: never }>> = async () => [];
 
+/** No retry request exists on this engine: `gbrain sources retry-held` writes it through caller raw SQL, which refuses. */
+export const readGitHoldRetryRequest: StoreMember<[fingerprint: string], null> = async () => null;
+
 
 /** The request a principal admitted under `requestId`, or null. */
 export const readWriteRequest: StoreMember<[principalKind: string, principalId: string, requestId: string], WriteRequest | null> =

@@ -60,9 +60,8 @@ import { HOLD_ATTEMPTS_NEEDS_HUMAN, HOLD_ESCALATE_MS } from './sync-fault-class.
 import { retiredSyncSetting, type RetiredSyncKeyName } from '../sync-config-keys.ts';
 
 import { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP } from '../engine-sql/persistence-journal.ts';
-import { readGitHoldRecords as readGitHoldRecordsOver, type GitHoldRecordsQuery } from '../engine-sql/sync-hold-reads.ts';
-export { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP };
-export const GIT_HOLD_RETRY_OP = 'sync-hold-retry';
+import { GIT_HOLD_RETRY_OP, readGitHoldRecords as readGitHoldRecordsOver, readGitHoldRetryRequest as readGitHoldRetryRequestOver, type GitHoldRecordsQuery } from '../engine-sql/sync-hold-reads.ts';
+export { GIT_HOLD_OP, GIT_HOLD_RETRY_OP, GIT_HOLD_SUMMARY_OP };
 export const SYNC_IMPORT_PROVENANCE_OP = 'sync-import-provenance';
 /** One row per source incarnation: the blocked requests recent managed syncs converted in place. */
 export const SYNC_CONVERSION_OP = 'sync-conversions';
@@ -78,6 +77,8 @@ export const GIT_HOLD_ESCALATE_MIN_SCREENED = 40;
 type Exec = Pick<BrainEngine, 'executeRaw'>;
 /** An engine (its typed readGitHoldRecords) or an executeRaw-only view of one. */
 type HoldsReader = Pick<BrainEngine, 'readGitHoldRecords'> | Exec;
+/** An engine (its typed readGitHoldRetryRequest) or an executeRaw-only view of one. */
+type RetryReader = Pick<BrainEngine, 'readGitHoldRetryRequest'> | Exec;
 
 export type GitHoldCode = ContentRefusal['code'] | 'rename_held' | 'parser_regression' | 'managed_image_sync_unsupported' | 'concurrent_write' | 'preparation_stalled' | 'worktree_dirty' | 'file_drift'
   | 'legacy_slug_conflict' | 'write_interrupted' | 'origin_conflict'
@@ -1182,10 +1183,10 @@ export async function requestGitHoldRetry(engine: Exec, sourceId: string, incarn
   [GIT_HOLD_RETRY_OP, summaryFingerprint(sourceId, incarnation), sourceId, JSON.stringify(paths), incarnation]);
 }
 
-export async function readGitHoldRetryPaths(engine: Exec, sourceId: string, incarnation: string): Promise<string[]> {
-  const [row] = await engine.executeRaw<{ completed_keys: Array<{ paths?: unknown }> }>('SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2',
-    [GIT_HOLD_RETRY_OP, summaryFingerprint(sourceId, incarnation)]);
-  const paths = row?.completed_keys?.[0]?.paths;
+export async function readGitHoldRetryPaths(engine: RetryReader, sourceId: string, incarnation: string): Promise<string[]> {
+  const fingerprint = summaryFingerprint(sourceId, incarnation);
+  const keys = 'readGitHoldRetryRequest' in engine ? await engine.readGitHoldRetryRequest(fingerprint) : await readGitHoldRetryRequestOver(engine, fingerprint);
+  const paths = keys?.[0]?.paths;
   return Array.isArray(paths) ? paths.filter((p): p is string => typeof p === 'string') : [];
 }
 

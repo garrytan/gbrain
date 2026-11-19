@@ -3399,6 +3399,8 @@ export interface BrainEngine {
   readHeldCoverageRows(sourceIds: string[] | null): Promise<HeldCoverageRow[]>;
   /** The git sync hold records of each source's current incarnation, by source then fingerprint (SQL in engine-sql/sync-hold-reads.ts). */
   readGitHoldRecords<R = Record<string, unknown>>(opts?: GitHoldRecordsQuery): Promise<Array<{ record: R }>>;
+  /** The pending `sources retry-held` request's keys for one source incarnation's fingerprint, or null (SQL in engine-sql/sync-hold-reads.ts). */
+  readGitHoldRetryRequest(fingerprint: string): Promise<Array<{ paths?: unknown }> | null>;
   /** The request a principal admitted under `requestId` (a uuid), or null. */
   readWriteRequest(principalKind: string, principalId: string, requestId: string): Promise<WriteRequest | null>;
   /** The request with journal id `id`, or null; `signal` cancels the read. */

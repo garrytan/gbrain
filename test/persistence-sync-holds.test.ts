@@ -20,7 +20,7 @@ import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { readManagedSyncFailures } from '../src/core/persistence/sync-failures.ts';
 import { sha256 } from '../src/core/persistence/digest.ts';
-import { GIT_HOLD_OP, SYNC_IMPORT_PROVENANCE_OP, gitHoldItem, readGitSourceHolds, recordContentHoldRepair, requestGitHoldRetry } from '../src/core/persistence/sync-holds.ts';
+import { GIT_HOLD_OP, SYNC_IMPORT_PROVENANCE_OP, gitHoldItem, readGitHoldRetryPaths, readGitSourceHolds, recordContentHoldRepair, requestGitHoldRetry } from '../src/core/persistence/sync-holds.ts';
 import { CONTENT_REPAIR_LANE_VERSION } from '../src/core/persistence/sync-fault-class.ts';
 import { printSyncResult, type SyncOpts, type SyncResult } from '../src/commands/sync.ts';
 import { readGitHoldStatuses } from '../src/core/persistence/connector-status.ts';
@@ -455,6 +455,22 @@ test('parser regression: GBRAIN_SYNC_PARSER_REGRESSION=stop stops only when prov
   const full = await t.sync({ full: true });
   expect(full.held?.[0]).toMatchObject({ path: 'notes/b.md', code: 'invalid_frontmatter', stale: true });
 }), 240_000);
+
+test('a retry-held request is read back through the typed engine member, not caller raw SQL', () => each(async engine => {
+  const s = await source(engine, { 'notes/a.md': FOLDED, 'notes/ok.md': note('Ok') });
+  const [{ incarnation }] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [s.id]);
+  // The statement readGitHoldRetryPaths ran before it moved to readGitHoldRetryRequest; a Rust brain refuses caller raw SQL.
+  const strict = new Proxy(engine, { get(target, key) {
+    if (key === 'executeRaw') return (sql: string, params?: unknown[]) => sql === 'SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2'
+      ? Promise.reject(new Error('caller raw SQL on op_checkpoints')) : target.executeRaw(sql, params);
+    const value = Reflect.get(target, key, target);
+    return typeof value === 'function' ? value.bind(target) : value;
+  } }) as BrainEngine;
+  expect(await readGitHoldRetryPaths(strict, s.id, incarnation!)).toEqual([]);
+  await requestGitHoldRetry(engine, s.id, incarnation!, ['notes/a.md', 'notes/ok.md']);
+  expect((await readGitHoldRetryPaths(strict, s.id, incarnation!)).sort()).toEqual(['notes/a.md', 'notes/ok.md']);
+  expect(await readGitHoldRetryPaths(strict, s.id, `${incarnation}-other`)).toEqual([]);
+}));
 
 test('escalation flags a source past its threshold; sync.holds=fail restores blocking; retry-held re-screens an unchanged hold', () => each(async engine => withEnv({ GBRAIN_SYNC_HOLD_ESCALATE_COUNT: '1' }, async () => {
   const s = await source(engine, { 'notes/a.md': FOLDED, 'notes/b.md': FOLDED, 'notes/ok.md': note('Ok') });

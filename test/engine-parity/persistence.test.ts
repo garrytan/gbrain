@@ -152,6 +152,12 @@ describe('engine parity: write journal', () => {
     return answers;
   });
 
+  parityTest('readGitHoldRetryRequest finds no pending retry-held request on a brain that never asked for one', { methods: ['readGitHoldRetryRequest'] }, async (engine) => {
+    const request = await engine.readGitHoldRetryRequest('default:1');
+    expect(request).toBeNull();
+    return { request };
+  });
+
   parityTest('one request is admitted, read, claimed, locked and completed, and its counters are charged then released', {
     methods: ['readLedgerSource', 'transaction', 'lockPersistenceCounters', 'insertWriteRequest', 'readWriteRequest', 'readWriteRequestById', 'stampWriteClaim', 'lockWriteRequest', 'completeWriteRow'],
   }, async (engine) => {

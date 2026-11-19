@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 688/688
+# covered: 689/689
 # lifecycle: 9/9
 # pages: 40/40
 # search: 7/7
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 10/10
-# persistence_journal: 41/41
+# persistence_journal: 42/42
 # entity_reads: 15/15
 # cycle_locks: 7/7
 # minion_jobs: 8/8
@@ -369,6 +369,7 @@ readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldPageRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldCoverageRows	persistence_journal	yes	1	no	yes	yes	serves
 readGitHoldRecords	persistence_journal	yes	1	no	yes	yes	serves
+readGitHoldRetryRequest	persistence_journal	yes	1	no	yes	yes	serves
 readWriteRequest	persistence_journal	yes	3	no	yes	yes	serves
 readWriteRequestById	persistence_journal	yes	5	no	yes	yes	serves
 readWriteRequestProgress	persistence_journal	yes	1	no	yes	yes	serves

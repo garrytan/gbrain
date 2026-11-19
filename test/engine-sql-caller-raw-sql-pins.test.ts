@@ -394,6 +394,11 @@ const PINS: Pin[] = [
     case: { method: 'readJobSourceState', variant: 'default', run: e => e.readJobSourceState('default') },
     texts: ['SELECT archived, created_at FROM sources WHERE id = $1'],
   },
+  {
+    from: 'src/core/persistence/sync-holds.ts:1186 readGitHoldRetryPaths',
+    case: { method: 'readGitHoldRetryRequest', variant: 'default', run: e => e.readGitHoldRetryRequest('default:1') },
+    texts: ['SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2'],
+  },
 ];
 
 /** sync-holds.ts READ_HOLD_RECORD_SQL at 8bfcd19ad8, verbatim. */

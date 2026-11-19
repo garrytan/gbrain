@@ -1,10 +1,14 @@
 /**
- * The git sync hold read persistence/sync-holds.ts readGitSourceHolds ran through `executeRaw` (Rust engine lane 11).
+ * The git sync hold reads persistence/sync-holds.ts readGitSourceHolds and readGitHoldRetryPaths ran through
+ * `executeRaw` (Rust engine lane 11).
  * The statement text is the caller's, byte for byte (test/engine-sql-caller-raw-sql-pins.test.ts), so PGLite and
  * Postgres answer exactly as before. A Rust brain keeps no hold rows: its git sync path, the only hold writer, refuses
  * (src/core/rust-engine/store-members/persistence.ts).
  */
 import { GIT_HOLD_OP } from './persistence-journal.ts';
+
+/** The op_checkpoints op of a `gbrain sources retry-held` request: the held paths the next sync re-screens. */
+export const GIT_HOLD_RETRY_OP = 'sync-hold-retry';
 
 /** The engine's own executeRaw, so a statement fault a test injects on the engine reaches the hold read. */
 export interface HoldRead {
@@ -23,4 +27,13 @@ export const GIT_HOLD_RECORDS_SQL = `SELECT CASE WHEN COALESCE(s.config->>'mirro
 /** The hold records of each source's current incarnation, by source id then fingerprint. */
 export function readGitHoldRecords<R = Record<string, unknown>>(exec: HoldRead, opts: GitHoldRecordsQuery = {}): Promise<Array<{ record: R }>> {
   return exec.executeRaw<{ record: R }>(GIT_HOLD_RECORDS_SQL, [GIT_HOLD_OP, opts.sourceIds ?? null, opts.runId ?? null]);
+}
+
+/** $1 the retry op, $2 the source incarnation's fingerprint. */
+export const GIT_HOLD_RETRY_SQL = 'SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2';
+
+/** The retry request's keys for one source incarnation (`fingerprint`), or null when none is pending. */
+export async function readGitHoldRetryRequest(exec: HoldRead, fingerprint: string): Promise<Array<{ paths?: unknown }> | null> {
+  const [row] = await exec.executeRaw<{ completed_keys: Array<{ paths?: unknown }> }>(GIT_HOLD_RETRY_SQL, [GIT_HOLD_RETRY_OP, fingerprint]);
+  return row ? row.completed_keys : null;
 }
