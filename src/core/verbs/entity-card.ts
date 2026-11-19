@@ -290,7 +290,7 @@ export interface EntityLookupScope {
 export async function entityLookupScope(engine: BrainEngine, sourceId: string, remote: boolean): Promise<EntityLookupScope> {
   const { resolveExcludePrivatePages } = await import('../search/private-visibility.ts');
   const excludePrivate = await resolveExcludePrivatePages(engine, remote ? undefined : false);
-  const policy = await readMentionPolicy(engine).catch(() => undefined);
+  const policy = await readMentionPolicy(engine).catch(failOpen(undefined));
   const pack = await loadSourcePack(engine, sourceId);
   return { excludePrivate, entityTypes: new Set(policy ? linkableTypesFor(pack, policy) : []), policy, pack };
 }
@@ -504,7 +504,7 @@ export async function buildEntityCard(
     const textMentions = await readTextMentions(engine, sources, trimmed, { remote: opts.remote, excludePrivate: scope.excludePrivate, omitQuarantined: opts.omitQuarantined });
     return {
       found: false, suggestions: selected.suggestions,
-      coverage: await readMentionCoverage(engine, [...sources]).catch(() => undefined),
+      coverage: await readMentionCoverage(engine, [...sources]).catch(failOpen(undefined)),
       ...(textMentions?.total || textMentions?.unread ? { text_mentions: textMentions } : {}),
       ...ambiguous,
     };
@@ -564,7 +564,8 @@ async function cardReferences(engine: BrainEngine, sourceId: string, row: CardPa
         ...(last ? { cursor: encodeCursor(last) } : {}) }, ...(opts.surfaceCeiling === 'verbs' ? { requires_surface: 'starter' as const } : {}) } };
     });
     return { referenced_by_count: total, referenced_by, coverage };
-  } catch {
+  } catch (e) {
+    rethrowCapabilityMissing(e);
     opts.emitNotice?.(referencesUnavailableNotice('read_failed'));
     return { references_unavailable: 'read_failed' };
   }
@@ -597,7 +598,7 @@ async function assembleCard(
   const worldOnly = worldOnlyFacts(remote);
   const visibility = worldOnly ? (['world'] as ('private' | 'world')[]) : undefined;
   // Facts saved about this entity may sit under a sibling page or the bare subject slug (siblings.ts).
-  const factSlugs = await factEntitySlugs(engine, sourceId, pageSlug, { excludePrivate, title: row.title }).catch(() => [pageSlug]);
+  const factSlugs = await factEntitySlugs(engine, sourceId, pageSlug, { excludePrivate, title: row.title }).catch(failOpen([pageSlug]));
   const inboundPrivacy = (excludePrivate
     ? ` AND ${privatePagesFilterForCaller('f')} AND ${privateLinkOriginFilterForCaller('l')}`
     : '') + ` AND (l.origin_page_id IS NULL OR EXISTS (SELECT 1 FROM pages lo WHERE lo.id = l.origin_page_id AND lo.deleted_at IS NULL${remote ? ' AND lo.source_id = $2' : ''}))`;
@@ -622,7 +623,7 @@ async function assembleCard(
   // (or, for an untrusted caller, in another source) is left out the same way.
   const [aka, outLinks, inEdges, backlinkCount, timeline, facts, activeFactCount] = await Promise.all([
     readAka(engine, sourceId, pageSlug),
-    engine.getLinks(pageSlug, { ...(remote ? { sourceIds: [sourceId] } : { sourceId }), excludePrivate, temporal: { status: 'all' } }).catch(() => []),
+    engine.getLinks(pageSlug, { ...(remote ? { sourceIds: [sourceId] } : { sourceId }), excludePrivate, temporal: { status: 'all' } }).catch(failOpen([] as Link[])),
     engine
       .executeRaw<{ from_slug: string; link_type: string; context: string | null }>(
         `SELECT f.slug AS from_slug, l.link_type, l.context${TEMPORAL_LINK_SELECT_SQL}
@@ -636,11 +637,11 @@ async function assembleCard(
         [pageSlug, sourceId],
       )
       .then(rs => rs.map(r => annotateTemporalRow(r)))
-      .catch(() => [] as Array<{ from_slug: string; link_type: string; context: string | null } & TemporalAnnotation>),
+      .catch(failOpen([] as Array<{ from_slug: string; link_type: string; context: string | null } & TemporalAnnotation>)),
     engine
       .countInboundLinks(pageSlug, sourceId, { excludePrivate: !!excludePrivate, originSameSource: !!remote })
       .catch(err => { rethrowCapabilityRefusal(err); return 0; }),
-    engine.getTimeline(pageSlug, { limit: 5, sourceId, excludePrivate, eligibility }).catch(() => []),
+    engine.getTimeline(pageSlug, { limit: 5, sourceId, excludePrivate, eligibility }).catch(failOpen([] as Awaited<ReturnType<BrainEngine['getTimeline']>>)),
     Promise.all(factSlugs.map(slug => engine.listFactsByEntity(sourceId, slug, {
       activeOnly: true,
       limit: FACT_FETCH_CAP,
@@ -649,7 +650,7 @@ async function assembleCard(
       eligibility,
     })))
       .then(lists => lists.flat().sort((a, b) => factTime(b) - factTime(a)).slice(0, FACT_FETCH_CAP))
-      .catch(() => [] as FactRow[]),
+      .catch(failOpen([] as FactRow[])),
     // Exact active-fact count: the payload fetch above is capped at
     // FACT_FETCH_CAP, so facts.length silently reports the cap for bigger
     // entities. Same predicate as the fetch (active + source + caller
@@ -657,7 +658,7 @@ async function assembleCard(
     // count failure degrades to the capped payload length, never to 0.
     engine
       .countWorldFacts({ sourceId, entitySlugs: factSlugs, worldOnly: !!worldOnly, excludePrivate: !!excludePrivate, eligibility })
-      .catch(() => null),
+      .catch(failOpen(null)),
   ]);
 
   // Live relationships first so ended ones never push a current edge past the cap.
@@ -682,7 +683,7 @@ async function assembleCard(
   ].slice(0, EDGE_CAP);
   const summary = safeSynopsis(row, { keepVisibility: remote ? ['world'] : ['private', 'world'] });
   const relationshipNote = await loadRelationshipNotes(engine, [{ slug: pageSlug, source_id: sourceId, summary }], { excludePrivate })
-    .then(m => m.get(relationshipNoteKey(sourceId, pageSlug))).catch(() => undefined);
+    .then(m => m.get(relationshipNoteKey(sourceId, pageSlug))).catch(failOpen(undefined));
 
   // Open threads (best-effort v1): open-loop rows first (v0.47 — richest:
   // direction, due, loop_id), then active commitment facts NOT already
@@ -736,7 +737,8 @@ async function assembleCard(
       });
       if (openThreads.length >= OPEN_THREADS_CAP) break;
     }
-  } catch {
+  } catch (e) {
+    rethrowCapabilityMissing(e);
     /* pre-v144 brains have no open_loops table — facts path below covers it */
   }
   for (const f of facts) {
@@ -760,7 +762,7 @@ async function assembleCard(
     }
   }
 
-  const pageTrust = (await loadPageTrust(engine, [{ source_id: sourceId, slug: pageSlug }]).catch(() => null))?.byKey.get(`${sourceId}\u0000${pageSlug}`);
+  const pageTrust = (await loadPageTrust(engine, [{ source_id: sourceId, slug: pageSlug }]).catch(failOpen(null)))?.byKey.get(`${sourceId}\u0000${pageSlug}`);
   return { facts, card: {
     entity: { slug: pageSlug, title: row.title ?? pageSlug, type: row.type ?? null, source_id: sourceId },
     ...(pageTrust ?? { trust_tier: 'unknown' as const, origin: 'unrecorded' }),
@@ -794,7 +796,15 @@ export async function readAka(engine: BrainEngine, sourceId: string, slug: strin
       [sourceId, slug],
     )
     .then(rs => rs.map(r => r.alias_norm))
-    .catch(() => [] as string[]);
+    .catch(failOpen([] as string[]));
+}
+
+/**
+ * A fail-open fallback for one card read that still lets a capability refusal through: an engine that cannot serve
+ * a read refuses the whole card, never answers with that part empty (a wrong answer).
+ */
+function failOpen<T>(fallback: T): (e: unknown) => T {
+  return (e) => { rethrowCapabilityMissing(e); return fallback; };
 }
 
 function factTime(f: FactRow): number {
