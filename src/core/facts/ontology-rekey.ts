@@ -1,6 +1,5 @@
 import type { BrainEngine } from '../engine.ts';
 import { CONVERSATION_SLOT_SQL } from '../chronicle/ontology.ts';
-import { withSlotClosesReleased } from './slot-closes.ts';
 
 /**
  * B-10 (#6948 sweep): `idx_facts_ontology_stint_dedup` (v188) is UNIQUE on (source, entity_slug, dimension, value_hash,
@@ -36,13 +35,11 @@ export async function dropRekeyDuplicates(
   if (!losers.length) return 0;
   const ids = losers.map(l => Number(l.id));
   const keeps = losers.map(l => Number(l.keep));
-  await withSlotClosesReleased(tx, sourceId, ids, async () => {
-    await tx.executeRaw(`UPDATE facts f SET superseded_by = CASE WHEN f.id = x.keep THEN NULL ELSE x.keep END
-      FROM unnest($1::bigint[], $2::bigint[]) AS x(id, keep) WHERE f.superseded_by = x.id`, [ids, keeps]);
-    await tx.executeRaw(`UPDATE facts SET dimension = NULL, value = NULL, value_hash = NULL, dim_status = NULL
-      WHERE id = ANY($1::bigint[]) AND ${CONVERSATION_SLOT_SQL}`, [ids]);
-    await tx.executeRaw('DELETE FROM facts WHERE id = ANY($1::bigint[]) AND dimension IS NOT NULL', [ids]);
-  });
+  await tx.executeRaw(`UPDATE facts f SET superseded_by = CASE WHEN f.id = x.keep THEN NULL ELSE x.keep END
+    FROM unnest($1::bigint[], $2::bigint[]) AS x(id, keep) WHERE f.superseded_by = x.id`, [ids, keeps]);
+  await tx.executeRaw(`UPDATE facts SET dimension = NULL, value = NULL, value_hash = NULL, dim_status = NULL
+    WHERE id = ANY($1::bigint[]) AND ${CONVERSATION_SLOT_SQL}`, [ids]);
+  await tx.executeRaw('DELETE FROM facts WHERE id = ANY($1::bigint[]) AND dimension IS NOT NULL', [ids]);
   return ids.length;
 }
 

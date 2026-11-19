@@ -19,13 +19,12 @@ import type { Contested } from '../eligibility/labels.ts';
 import type { ReadEligibility } from '../eligibility/policy.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { privateFactFilterForCaller } from '../search/private-visibility.ts';
-import { slotCloseEndSql } from './slots.ts';
 
 export interface ContestedReadPolicy { remote: boolean; excludePrivate: boolean; eligibility?: ReadEligibility }
 /** Filled when the lookup failed: recall reports it as facts_degraded. */
 export interface ContestedLookup { degraded?: { reason: 'contested_unavailable' } }
 
-const active = (a: string) => a + '.expired_at IS NULL AND (' + a + '.valid_until IS NULL OR ' + a + '.valid_until > now() OR ' + slotCloseEndSql(a) + ')';
+const active = (a: string) => a + '.expired_at IS NULL AND (' + a + '.valid_until IS NULL OR ' + a + '.valid_until > now())';
 const readable = (a: string, policy: ContestedReadPolicy) => [
   active(a),
   ...(policy.remote ? [a + ".visibility = 'world'"] : []),

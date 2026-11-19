@@ -54,7 +54,6 @@ import { inferConversationSubject } from './conversation-subject-infer.ts';
 import { unbackedEntitySql } from './withdrawal-schema.ts';
 import { resolveStrictEntityReference } from '../entities/resolve.ts';
 import { dropRekeyDuplicates } from './ontology-rekey.ts';
-import { slotCloseEndSql } from './slots.ts';
 
 export const CONVERSATION_RELINK_INTENT = 'managed_maintenance_conversation_relink';
 /** The request slug: a dot-led segment no page can hold; the page's own key is locked with it. */
@@ -63,7 +62,7 @@ export const CONVERSATION_RELINK_ANCHOR = '.maintenance/conversation-relink';
 export const CONVERSATION_RELINK_PAGES = 50;
 /** The SQL predicate (on alias `f`, audit sources as `$audit`) of a conversation extractor's derived fact row. */
 export const derivedConversationRow = (audit: string) => `f.source LIKE 'cli:extract-conversation-facts%' AND f.source <> ALL(${audit}::text[])`;
-const LIVE = `f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now() OR ${slotCloseEndSql('f')})`;
+const LIVE = 'f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())';
 const ACTIVE = `f.entity_slug IS NULL AND ${LIVE}`;
 /** GBRA-574: a derived row on an unbacked name key (`--unbacked`). */
 const UNBACKED = `${unbackedEntitySql('f')} AND ${LIVE}`;

@@ -46,7 +46,7 @@ import { VECTOR_EXTENSION_VERSION_SQL } from './vector-statement.ts';
 import { withVectorSettings } from './vector-settings.ts';
 import type { HnswIterativeScanMode } from './hnsw-iterative-scan.ts';
 import { RETRACTION } from './saved-facts-match.ts';
-import { slotCloseEndSql, slotCloseLinkSql, type SlotRow } from '../facts/slots.ts';
+import type { SlotRow } from '../facts/slots.ts';
 
 const STOPWORDS = new Set(['the', 'and', 'for', 'who', 'what', 'when', 'where', 'which', 'with', 'from', 'that', 'this', 'are', 'was', 'were', 'our', 'your', 'their',
   'now', 'current', 'currently', 'should', 'does', 'did', 'has', 'have', 'how', 'any', 'all', 'about', 'into', 'its', 'next', 'use', 'uses', 'tell']);
@@ -180,10 +180,9 @@ async function wordStems(engine: BrainEngine, words: string[]): Promise<WordStem
  * unexpired. A fact expired with no successor (forgotten or withdrawn) never matches, nor does any fact whose claim the
  * withdrawal ledger covers, nor one whose page a purge removed: a purge expires only the page's unexpired facts
  * (gone-page-facts.ts), so a superseded fact filed on or extracted from that page would otherwise come back. Only an
- * ontology observation's page is provenance; a conversation fact's slot (GBRA-574 B2) is filed on its page. A slot
- * close the conversation publication stored (GST-3170) is not an end here: the pool reads it as open (COLS, poolPredicate).
+ * ontology observation's page is provenance; a conversation fact's slot (GBRA-574 B2) is filed on its page.
  */
-const ENDED_FACT_SQL = `((f.superseded_by IS NOT NULL AND NOT ${slotCloseLinkSql('f')}) OR (f.expired_at IS NULL AND f.valid_until <= now() AND NOT ${slotCloseEndSql('f')}))
+const ENDED_FACT_SQL = `(f.superseded_by IS NOT NULL OR (f.expired_at IS NULL AND f.valid_until <= now()))
   AND NOT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = f.source_id AND w.visibility = f.visibility
     AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact)) AND ${withdrawalCoversFactSql('w', 'f')})
   AND (f.source_markdown_slug IS NULL OR (f.dimension IS NOT NULL AND NOT ${CONVERSATION_SLOT_SQL})
@@ -191,8 +190,7 @@ const ENDED_FACT_SQL = `((f.superseded_by IS NOT NULL AND NOT ${slotCloseLinkSql
   AND (f.source_markdown_slug IS NOT NULL OR f.source NOT IN (${PAGE_EXTRACTION_SOURCE_LIST.map(s => `'${s}'`).join(', ')})
     OR EXISTS (SELECT 1 FROM pages hp WHERE hp.source_id = f.source_id AND hp.slug = ${contextHeadSql('f')}))`;
 
-/** GST-3170: a stored conversation slot close reads as open, so the block's windows stay read-time (slot-history.ts). */
-const COLS = `f.id, f.fact, f.kind, f.entity_slug, f.source_id, f.source, f.valid_from, CASE WHEN ${slotCloseEndSql('f')} THEN NULL ELSE f.valid_until END AS valid_until, f.created_at, f.claim_metric, f.claim_period, f.source_markdown_slug, f.visibility, f.attributed_to, f.dimension, f.value_hash`;
+const COLS = 'f.id, f.fact, f.kind, f.entity_slug, f.source_id, f.source, f.valid_from, f.valid_until, f.created_at, f.claim_metric, f.claim_period, f.source_markdown_slug, f.visibility, f.attributed_to, f.dimension, f.value_hash';
 
 /** The facts embedding column's type and declared dimensions, or null when there is none. */
 async function factsEmbeddingColumn(engine: BrainEngine): Promise<{ type: string; dims: number } | null> {
@@ -210,8 +208,8 @@ function poolPredicate(scope: FactPoolScope, filters: FactPoolFilters | undefine
   const params: unknown[] = [scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? 'default'], [...AUDIT_ROW_SOURCES]];
   const bind = (v: unknown) => { params.push(v); return `$${params.length}`; };
   const clauses = [
-    filters?.includeExpired ? 'f.source_id = ANY($1::text[])' : `f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND (f.superseded_by IS NULL OR ${slotCloseLinkSql('f')})`,
-    filters?.includeExpired ? 'f.source != ALL($2::text[])' : `(f.valid_until IS NULL OR f.valid_until > now() OR ${slotCloseEndSql('f')}) AND f.source != ALL($2::text[])`,
+    filters?.includeExpired ? 'f.source_id = ANY($1::text[])' : 'f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL',
+    filters?.includeExpired ? 'f.source != ALL($2::text[])' : '(f.valid_until IS NULL OR f.valid_until > now()) AND f.source != ALL($2::text[])',
     quarantinedProvenanceFilterFragment('f'),
     ...(scope.worldOnly ? [factVisibilitySql('f', ['world'])] : []),
     ...(scope.excludePrivate ? [privateProvenanceFilterUnderPolicy('f')] : []),
@@ -374,7 +372,7 @@ export async function readSlotRows(engine: BrainEngine, scope: FactPoolScope, sl
   const n = params.length;
   return engine.executeRaw<SlotRow & Omit<FactCandidate, 'entity'>>(
     `SELECT ${COLS} FROM facts f
-     WHERE ${where} AND f.expired_at IS NULL AND (f.superseded_by IS NULL OR ${slotCloseLinkSql('f')}) AND f.dimension IS NOT NULL AND f.value_hash IS NOT NULL AND COALESCE(f.dim_status, 'active') = 'active' AND ${CONVERSATION_SLOT_SQL}
+     WHERE ${where} AND f.expired_at IS NULL AND f.superseded_by IS NULL AND f.dimension IS NOT NULL AND f.value_hash IS NOT NULL AND COALESCE(f.dim_status, 'active') = 'active' AND ${CONVERSATION_SLOT_SQL}
        AND (f.source_id, f.entity_slug, f.dimension) IN (SELECT * FROM unnest($${n + 1}::text[], $${n + 2}::text[], $${n + 3}::text[]))
      ORDER BY f.valid_from, f.id`,
     [...params, slots.map(s => s.source_id), slots.map(s => s.entity_slug), slots.map(s => s.dimension)]);

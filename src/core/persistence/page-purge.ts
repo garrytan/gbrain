@@ -51,7 +51,6 @@ import { carryingNeedles, findRequestsForSlugs, JOURNAL_SWEEP_MATCH_CAP, recheck
 import { dropPurgedFenceRows } from '../facts/purge-overlay.ts';
 import { isOutcomeMarker, outcomeMarkerSql } from '../facts/audit-sources.ts';
 import { derivedRowsFrom, hideDerivedRows } from '../facts/derivation-inputs.ts';
-import { withSlotClosesReleased } from '../facts/slot-closes.ts';
 import { extractedFromPageSql } from '../facts/gone-page-facts.ts';
 import { contentHash } from '../utils.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
@@ -348,9 +347,7 @@ export async function sweepPurgedPage(tx: BrainEngine, input: PurgedPageSweep): 
   const cleared = await clearRebuildableCache(tx, 'query_cache');
   if (cleared === null) missingCaches.push('query_cache');
   removed.query_cache = cleared ?? 0;
-  const pageFacts = await tx.executeRaw<{ id: number | string }>(`SELECT id FROM facts WHERE source_id=$1 AND ${PAGE_FACTS}`, [sourceId, slug]);
-  removed.facts = await withSlotClosesReleased(tx, sourceId, pageFacts.map(row => Number(row.id)),
-    () => count(`DELETE FROM facts WHERE source_id=$1 AND ${PAGE_FACTS} RETURNING 1`, [sourceId, slug]));
+  removed.facts = await count(`DELETE FROM facts WHERE source_id=$1 AND ${PAGE_FACTS} RETURNING 1`, [sourceId, slug]);
   Object.assign(removed, await scrubPurgedSlugStores(tx, sourceId, [slug], { ifPresent: !!input.present, pageIds: [pageId] }));
   let complete = true;
   if (has('persistence_requests')) {
