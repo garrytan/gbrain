@@ -381,6 +381,12 @@ pub(super) fn save_res(
     new: &ResRecord,
 ) -> Result<()> {
     let id = new.id_bytes();
+    if res_owner(new).is_some_and(|(_, owner)| owner.contains('\0')) {
+        return Err(StoreError::new(
+            CONSTRAINT_VIOLATION,
+            "mcp_spend_reservations owner: a NUL byte is not valid text",
+        ));
+    }
     if let Some(old) = old {
         if let Some(job) = old.job_id {
             tx.delete(&res_job_key(job, &id))?;
