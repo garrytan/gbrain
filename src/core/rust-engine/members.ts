@@ -437,6 +437,10 @@ export const RUST_ENGINE_MEMBERS = {
   listFactsPageBodies: 'health',
   listBracketPathPages: 'health',
   listSlugPathCandidates: 'health',
+  // doctor search and knowledge reads (engine-sql/doctor-search.ts)
+  listOrphanedAliasCounts: 'health',
+  readSoftDeletedAliasCounts: 'health',
+  listPageTypePairs: 'health',
 
   // doctor reads, second set (engine-sql/doctor-acc.ts; rust/docs/store/cli-reads-doctor-acc.md)
   listPolicySourceIds: 'access_control',

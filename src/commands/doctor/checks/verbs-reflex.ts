@@ -113,10 +113,12 @@ export function buildRetrievalReflexCheck(skillsDir: string | null): Check {
     if (engineKind === 'postgres') {
       pathDesc = 'postgres direct';
       viablePathVisible = true;
-    } else if (engineKind === 'pglite' && cfg?.database_path) {
+    } else if ((engineKind === 'pglite' || engineKind === 'rust') && cfg?.database_path) {
+      // The Rust engine, like PGLite, keeps one local data dir and binds the same resolve socket there
+      // (resolveSocketPathForConfig), so a missing socket means the same thing on both.
       const socket = resolveSocketPath(cfg.database_path);
       viablePathVisible = existsSync(socket);
-      pathDesc = viablePathVisible ? 'pglite via serve IPC' : 'pglite — serve IPC socket not present';
+      pathDesc = viablePathVisible ? `${engineKind} via serve IPC` : `${engineKind} — serve IPC socket not present`;
     } else {
       pathDesc = `engine ${engineKind}`;
       viablePathVisible = false;
@@ -135,7 +137,7 @@ export function buildRetrievalReflexCheck(skillsDir: string | null): Check {
     const skillHint = skillInstalled
       ? ''
       : ' — policy skill not installed; run `gbrain integrations install retrieval-reflex --target <host-repo>`';
-    const noServe = status === 'warn' && engineKind === 'pglite';
+    const noServe = status === 'warn' && (engineKind === 'pglite' || engineKind === 'rust');
     return {
       name,
       status: noServe ? 'ok' : status,

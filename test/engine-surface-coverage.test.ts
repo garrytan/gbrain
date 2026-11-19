@@ -158,6 +158,10 @@ const INTERFACE_METHODS: readonly string[] = [
   'listFactsPageBodies',
   'listBracketPathPages',
   'listSlugPathCandidates',
+  // Doctor search reads (engine-sql/doctor-search.ts; covered by test/engine-parity/doctor-search.test.ts)
+  'listOrphanedAliasCounts',
+  'readSoftDeletedAliasCounts',
+  'listPageTypePairs',
   // Doctor reads, second set (engine-sql/doctor-acc.ts; covered by test/engine-parity/doctor-acc.test.ts)
   'listPolicySourceIds',
   'isAccessStateUnreadable',

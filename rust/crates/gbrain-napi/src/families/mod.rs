@@ -11,6 +11,7 @@ mod cli_reads_doctor_derived;
 mod cli_reads_doctor_derived_health;
 mod cli_reads_doctor_pages;
 mod cli_reads_doctor_persistence;
+mod cli_reads_doctor_search;
 mod cli_reads_doctor_src;
 mod cli_reads_import;
 mod cli_reads_ops;

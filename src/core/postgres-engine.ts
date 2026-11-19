@@ -182,6 +182,7 @@ import * as doctorReadsImpl from './engine-sql/doctor-reads.ts';
 import * as doctorDerivedImpl from './engine-sql/doctor-derived.ts';
 import * as doctorPersistenceImpl from './engine-sql/doctor-persistence.ts';
 import * as doctorPagesImpl from './engine-sql/doctor-pages.ts';
+import * as doctorSearchImpl from './engine-sql/doctor-search.ts';
 import * as doctorAccImpl from './engine-sql/doctor-acc.ts';
 import * as doctorCheckpointsImpl from './engine-sql/doctor-checkpoints.ts';
 import * as doctorSourcesImpl from './engine-sql/doctor-sources.ts';
@@ -1266,6 +1267,9 @@ export class PostgresEngine implements BrainEngine {
   listFactsPageBodies() { return doctorPagesImpl.listFactsPageBodies(this.executeRaw.bind(this)); }
   listBracketPathPages() { return doctorPagesImpl.listBracketPathPages(this.executeRaw.bind(this)); }
   listSlugPathCandidates(sourceIds: string[] | null) { return doctorPagesImpl.listSlugPathCandidates(this.executeRaw.bind(this), sourceIds); }
+  listOrphanedAliasCounts() { return doctorSearchImpl.listOrphanedAliasCounts(this.executeRaw.bind(this)); }
+  readSoftDeletedAliasCounts() { return doctorSearchImpl.readSoftDeletedAliasCounts(this.executeRaw.bind(this)); }
+  listPageTypePairs() { return doctorSearchImpl.listPageTypePairs(this.executeRaw.bind(this)); }
   listPolicySourceIds() { return doctorAccImpl.listPolicySourceIds(this.executeRaw.bind(this)); }
   isAccessStateUnreadable() { return doctorAccImpl.isAccessStateUnreadable(this.executeRaw.bind(this)); }
   listRawOnlyRules() { return doctorAccImpl.listRawOnlyRules(this.executeRaw.bind(this)); }

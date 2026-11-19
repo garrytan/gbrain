@@ -188,6 +188,7 @@ import * as doctorReadsImpl from './engine-sql/doctor-reads.ts';
 import * as doctorDerivedImpl from './engine-sql/doctor-derived.ts';
 import * as doctorPersistenceImpl from './engine-sql/doctor-persistence.ts';
 import * as doctorPagesImpl from './engine-sql/doctor-pages.ts';
+import * as doctorSearchImpl from './engine-sql/doctor-search.ts';
 import * as doctorAccImpl from './engine-sql/doctor-acc.ts';
 import * as doctorCheckpointsImpl from './engine-sql/doctor-checkpoints.ts';
 import * as doctorSourcesImpl from './engine-sql/doctor-sources.ts';
@@ -1615,6 +1616,9 @@ export class PGLiteEngine implements BrainEngine {
   listFactsPageBodies() { return doctorPagesImpl.listFactsPageBodies(this.rawRead); }
   listBracketPathPages() { return doctorPagesImpl.listBracketPathPages(this.rawRead); }
   listSlugPathCandidates(sourceIds: string[] | null) { return doctorPagesImpl.listSlugPathCandidates(this.rawRead, sourceIds); }
+  listOrphanedAliasCounts() { return doctorSearchImpl.listOrphanedAliasCounts(this.rawRead); }
+  readSoftDeletedAliasCounts() { return doctorSearchImpl.readSoftDeletedAliasCounts(this.rawRead); }
+  listPageTypePairs() { return doctorSearchImpl.listPageTypePairs(this.rawRead); }
   listPolicySourceIds() { return doctorAccImpl.listPolicySourceIds(this.rawRead); }
   isAccessStateUnreadable() { return doctorAccImpl.isAccessStateUnreadable(this.rawRead); }
   listRawOnlyRules() { return doctorAccImpl.listRawOnlyRules(this.rawRead); }

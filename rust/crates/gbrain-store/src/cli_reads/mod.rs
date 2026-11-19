@@ -10,6 +10,7 @@ pub mod doctor_derived_health;
 pub mod doctor_derived_ledgers;
 pub mod doctor_pages;
 pub mod doctor_persistence;
+pub mod doctor_search;
 pub mod doctor_sources;
 pub mod entities;
 pub mod import;

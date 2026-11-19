@@ -28,7 +28,6 @@ import { embeddingEnablement, type ReadinessState } from '../readiness.ts';
 import { embeddingsDisabled } from '../embedding-disabled.ts';
 import { loadConfig } from '../config.ts';
 import { MIN_ENTITY_PAGES_FOR_COVERAGE } from '../types.ts';
-import { ORPHANED_ALIAS_COUNTS_SQL, SOFT_DELETED_ALIAS_COUNT_SQL } from '../repair/aliases.ts';
 import { repairPreviewCommand } from '../repair/registry.ts';
 import { isMissingSchemaObject } from '../utils.ts';
 import { isEngineCapabilityRefusal, rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
@@ -678,16 +677,6 @@ export async function checkPackUpgradeAvailable(
   }
 }
 
-const PAGE_TYPE_PAIRS_SQL = `WITH RECURSIVE pairs AS (
-  (SELECT source_id, type FROM pages WHERE deleted_at IS NULL AND type IS NOT NULL ORDER BY source_id, type LIMIT 1)
-  UNION ALL
-  SELECT n.source_id, n.type FROM pairs, LATERAL (
-    SELECT p.source_id, p.type FROM pages p
-     WHERE p.deleted_at IS NULL AND p.type IS NOT NULL AND (p.source_id, p.type) > (pairs.source_id, pairs.type)
-     ORDER BY p.source_id, p.type LIMIT 1) n
-)
-SELECT source_id, type FROM pairs`;
-
 /**
  * type_proliferation (D16): pack-aware ratio. Warns when distinct typed
  * pages exceed pack-declared types + 5; fails at declared × 2. No false
@@ -709,7 +698,7 @@ export async function checkTypeProliferation(
     ({ check: { name: 'type_proliferation', status, message }, remediations: [] });
   let rows: Array<{ source_id: string; type: string }>;
   try {
-    rows = await engine.executeRaw<{ source_id: string; type: string }>(PAGE_TYPE_PAIRS_SQL);
+    rows = await engine.listPageTypePairs();
   } catch (e) {
     return result('warn', `type_proliferation not verified: the page type query failed (${(e as Error).message}).`);
   }
@@ -778,9 +767,8 @@ export async function checkDanglingAliases(
   let orphaned: Array<{ source_id: string; slug_redirects: number; page_aliases: number }> = [];
   let soft = { slug_redirects: 0, page_aliases: 0 };
   try {
-    orphaned = await engine.executeRaw(ORPHANED_ALIAS_COUNTS_SQL);
-    const [row] = await engine.executeRaw<typeof soft>(SOFT_DELETED_ALIAS_COUNT_SQL);
-    if (row) soft = row;
+    orphaned = await engine.listOrphanedAliasCounts();
+    soft = await engine.readSoftDeletedAliasCounts();
   } catch (error) {
     // #7145: only a pre-v105 brain (no alias tables) has nothing to report; any other failure is unknown, not clear.
     if (!isMissingSchemaObject(error, 'table', ['slug_aliases', 'page_aliases'])) {

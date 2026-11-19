@@ -78,6 +78,7 @@ import * as doctorReads from './doctor-reads.ts';
 import * as doctorDerived from './doctor-derived.ts';
 import * as doctorPersistence from './doctor-persistence.ts';
 import * as doctorPages from './doctor-pages.ts';
+import * as doctorSearch from './doctor-search.ts';
 import * as doctorAcc from './doctor-acc.ts';
 import * as doctorCheckpoints from './doctor-checkpoints.ts';
 import * as doctorSources from './doctor-sources.ts';
@@ -135,6 +136,8 @@ export const STORE_MEMBERS = {
   // The persistence checks' request journal and counter reads (rust/docs/store/cli-reads-doctor-per.md).
   ...doctorPersistence,
   ...doctorPages,
+  // Search and knowledge doctor reads (rust/docs/store/cli-reads-doctor-search.md).
+  ...doctorSearch,
   ...doctorAcc,
   // The op_checkpoints and ingest_log statements doctor ran through executeRaw (rust/docs/store/cli-reads-doctor-checkpoints.md).
   ...doctorCheckpoints,
