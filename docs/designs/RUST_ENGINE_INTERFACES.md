@@ -1807,7 +1807,9 @@ and write provenance on content rows, and the trust records.
     no floor), `findOrphanPages` and `listLinkSources`.
   - Ignored on purpose, as their SQL does: the raw-files, stats, ontology, timeline and chunk-page reads.
   - Built: `listSingleFactMetadata` (refused only under the remote floor) and `listUnpreviewedTrustFacts` read the
-    stamped tier and origin (`facts/trust_reads.rs`), and `listSupersessions` honours a read eligibility.
+    stamped tier and origin (`facts/trust_reads.rs`), and `listSupersessions` and the four fact list reads
+    (`listFactsByEntity`, `listFactsSince`, `listFactsKeyset`, `listFactsBySession`, which hot memory reads with the
+    caller's eligibility) honour a read eligibility.
   - Built: the `executeRaw` reads of `trust_tier` in core memory, the eligibility scan, belief history, page history
     (`get_versions`) and valid time are typed members (`engine-sql/trust-tier-reads.ts`). The Rust store serves
     `listCorePageRows`, the pages and facts arms of `listTrustScanRows` and `countUnscannedTrustRows`,

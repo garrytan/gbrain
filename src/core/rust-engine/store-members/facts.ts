@@ -5,8 +5,8 @@
  * pageCollapseFacts, listFenceRetireCandidates).
  *
  * Each member applies the defaults and clamps of src/core/engine-sql/facts.ts, then makes one store call. What the
- * store cannot answer exactly refuses with `engine_capability_missing`: a read eligibility policy (except on the four
- * list reads and `listSupersessions`, which send it to the store), `excludePrivate` for a
+ * store cannot answer exactly refuses with `engine_capability_missing` (a read eligibility policy goes to the store on
+ * the four list reads and `listSupersessions`): `excludePrivate` for a
  * caller other than the one the store's policy models (private-provenance.ts), the keyword arm in an FTS language other
  * than `english`, a visibility list that the member-page or grant rules widen, and inputs whose PGLite outcome the store cannot reproduce (a non-finite
  * `claim_value`, `row_num` or `superseded_by_row`, a fractional offset, a keyset time in another text form).
@@ -79,6 +79,16 @@ function offsetOf(member: string, offset: unknown): number {
 
 const kindsOf = (kinds: unknown): string[] | undefined => (Array.isArray(kinds) && kinds.length > 0 ? kinds : undefined);
 
+/**
+ * A read eligibility as the store reads it (`eligibilityClause`, engine-sql/facts.ts): any policy adds the quarantine
+ * clause (`projectionEligibleSql('facts')`), then the floor and the flag suppression it names.
+ */
+const eligibilityOf = (eligibility: FactListOpts['eligibility']) => ({
+  eligible: eligibility !== undefined,
+  minTrust: eligibility?.floor || null,
+  suppressFlagged: eligibility?.suppressFlagged === true,
+});
+
 function listQuery(member: string, sourceId: string, opts: FactListOpts | RecallFactReadOpts | undefined, recall: boolean): Row {
   const o = takeOptions(member, opts, recall ? RECALL_OPTIONS : LIST_OPTIONS) as RecallFactReadOpts;
   return {
@@ -92,10 +102,7 @@ function listQuery(member: string, sourceId: string, opts: FactListOpts | Recall
     fingerprint: o.fingerprint === true,
     limit: clampSearchLimit(o.limit, 50, MAX_SEARCH_LIMIT),
     excludePrivate: factPolicy(member, o.excludePrivate),
-    // eligibilityClause (engine-sql/facts.ts): any policy swaps the deleted-page clause for projectionEligibleSql('facts').
-    eligible: Boolean(o.eligibility),
-    minTrust: o.eligibility?.floor || null,
-    suppressFlagged: o.eligibility?.suppressFlagged === true,
+    ...eligibilityOf(o.eligibility),
     ...(recall ? {
       entitySlug: o.entitySlug ?? undefined,
       sourceMarkdownSlug: o.sourceMarkdownSlug ?? undefined,
@@ -218,10 +225,7 @@ export const listSupersessions: Member<'listSupersessions'> = async (brain, sour
     sourceId, since: o.since ? o.since.toISOString() : undefined, limit: clampSearchLimit(o.limit, 50, MAX_SEARCH_LIMIT),
     visibility: visibilityFilter('listSupersessions', o.visibility),
     excludePrivate: factPolicy('listSupersessions', o.excludePrivate),
-    // projectionEligibleSql('facts') (engine-sql/facts.ts eligibilityClause): any policy adds the quarantine clause.
-    eligible: o.eligibility !== undefined,
-    minTrust: o.eligibility?.floor || null,
-    suppressFlagged: o.eligibility?.suppressFlagged === true,
+    ...eligibilityOf(o.eligibility),
   }));
   return facts(rows);
 };

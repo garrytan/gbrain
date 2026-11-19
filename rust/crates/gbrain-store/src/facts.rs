@@ -917,7 +917,8 @@ pub struct KeysetAfter {
 }
 
 /// The filters of the four list reads. The TypeScript member clamps `limit`, builds the `grep`
-/// pattern, and passes `visibility` as the plain list (`Some(empty)` matches nothing).
+/// pattern, and passes `visibility` as the plain list (`Some(empty)` matches nothing), and the
+/// read eligibility as `eligible`, `min_trust` and `suppress_flagged` (as `SupersessionQuery`).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct FactQuery {
@@ -939,8 +940,10 @@ pub struct FactQuery {
     pub after: Option<KeysetAfter>,
     /// `excludePrivate`: the private-provenance policy (`facts/privacy.rs`).
     pub exclude_private: Option<PrivacyPolicy>,
-    /// The caller passed a read eligibility (`eligibilityClause`): `projectionEligibleSql('facts')`
-    /// replaces the deleted-page clause, so a row whose live provenance page is quarantined is hidden too.
+    /// The caller passed a read eligibility (`eligibilityClause`, engine-sql/facts.ts):
+    /// `projectionEligibleSql('facts')` replaces the deleted-page clause, so a row whose live
+    /// provenance page is quarantined is hidden too. The store keeps no `needs_rederive` queue,
+    /// so that clause hides nothing.
     pub eligible: bool,
     /// `eligibility.floor`: `trustFloorSql` over the fact's stored tier; null sets none.
     pub min_trust: Option<String>,
@@ -1267,8 +1270,8 @@ impl FactQuery {
             return Ok(false);
         }
         Ok(!hidden_by_deleted_page(read, row)?
-            && !(self.eligible && hidden_by_quarantine(read, row)?)
-            && !hidden_by_policy(read, row, &self.exclude_private)?)
+            && !hidden_by_policy(read, row, &self.exclude_private)?
+            && !(self.eligible && hidden_by_quarantine(read, row)?))
     }
 
     fn check(&self, op: &str) -> Result<()> {

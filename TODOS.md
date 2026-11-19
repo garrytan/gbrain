@@ -1,5 +1,9 @@
 # TODOS
 
+## Rust engine trust generation follow-ups (filed 2026-11-18)
+
+- [ ] **P3 — rust-trust-generation-counter: a real trust generation counter in the Rust store.** **What:** on a Rust brain, `readTrustGeneration` (`rust/crates/gbrain-store/src/trust/withdrawals.rs`) answers the store's commit sequence, which moves on every commit. The SQL engines bump `trust_policy_state.generation` only on the trust-relevant writes (eligibility/generation-schema.ts triggers). So the hot-memory cache (`src/core/facts/meta-hook.ts`, keyed on that generation) rebuilds after any Rust write, not only after a trust change. Answers stay correct; only the cache hit rate is lower. **Fix (a later speed fix):** keep a generation counter in the store that moves only on the writes that bump the SQL generation, serve it from `read_trust_generation`, and add a parity case that an unrelated write leaves it steady. **Effort:** M. **Priority:** P3.
+
 ## Rust engine relink lane follow-ups (filed 2026-11-18)
 
 - [ ] **P3 — timeline-row-delete-dedupe: one SQL helper for the two timeline row deletes.** **What:** `deleteTimelineRows` (`src/core/engine-sql/timeline-reads.ts`) and `removeTimelineRows` (`src/core/engine-sql/timeline.ts`) run the same guarded `DELETE FROM timeline_entries` (a page's non-event rows that still match on id, date, source, summary and detail, returning each date and its `removed` mark) as two copies. **Fix:** make both members call one shared SQL helper, with no change in output on any engine (the parity and engine-sql cases of both members stay green unchanged). **Effort:** S. **Priority:** P3.
