@@ -72,6 +72,31 @@ export function sameSecondTests(open: Open): void {
     } finally { await close(); }
   }, 60_000);
 
+  test('an unbound OAuth client registered after the second member, in the same second, is refused', async () => {
+    const { engine, close } = await open();
+    try {
+      await addMember(engine, 'alice-example');
+      await startOfSecond();
+      await addMember(engine, 'bob-example');
+      const issued = await sinceSecond(engine);
+      await engine.executeRaw(`INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris, grant_types, scope, token_endpoint_auth_method,
+        client_id_issued_at) VALUES ('client-after', 'x', 'client-after', '{}', '{client_credentials}', 'read', 'client_secret_post', $1)`, [issued]);
+      expect(Date.parse((await engine.getConfig('access.serves_since'))!) / 1000).toBeGreaterThan(issued);
+      const serves = await readServesPolicy(engine);
+      const auth = await credentialScopeFor(engine, { clientName: 'client-after', scopes: ['read'], principal: { kind: 'oauth_client', id: 'client-after' } } as never);
+      let answer = 'none';
+      try {
+        answer = requesterScopeGate({ name: 'get_page', mutating: false } as never, { remotePolicy: { privacyRelaxed: false, restricted: false, serves } }, auth, 'http')?.state ?? 'none';
+      } catch (e) {
+        answer = ((e as { code?: string }).code ?? 'error') + (JSON.stringify(e).includes('created_after') ? ':created_after' : '');
+      }
+      expect(answer).toBe('requester_scope_required:created_after');
+    } finally {
+      await engine.executeRaw(`DELETE FROM oauth_clients WHERE client_id = 'client-after'`);
+      await close();
+    }
+  }, 60_000);
+
   test('a token minted before the second member, in the same second, reads in its grace', async () => {
     const { engine, close } = await open();
     try {
