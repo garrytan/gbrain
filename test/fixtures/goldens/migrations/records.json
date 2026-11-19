@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 320,
+    "count": 321,
     "gaps": [
       17,
       18,
@@ -27,12 +27,13 @@
       "INGEST_LOG_MARKED_INDEX": "1099f19af7873878974239a9a6f1a627827221eebd75aea01896246e0809e91c",
       "INGEST_LOG_UNMARKED_INDEX": "c94e6b009f830527d2f1d6af1683bee94189474e8e67aa4c60165ab4abbd8726",
       "ISSUANCE_CLOCK_SLACK_SECONDS": "8f36c80392df6f9b9c754826289b63969d9d41ca8955213291e4413d614dce35",
+      "LEGACY_TITLE_BTREE_INDEX": "e686c5cb1a0f1773e0f925e35f477f20f7709e745b0e0e41092c4301bd1b65ea",
       "LINKS_SUPERSEDES_INDEX": "a1353995111ef65c1347f295081cf8336dd5da955db7e0e330558d34fd21a4c6",
       "LINK_TRANSITIONS_IDENTITY_INDEX": "2d5e1c6cc9cf17721591e55a364017be841c85022d300e8dbc3e4109353ebf96",
       "LINK_TRANSITIONS_IDENTITY_NEXT_INDEX": "d83de92fbee21a623b16f8ba4cfb35d4f51478717265323962920133ea029139",
       "OPEN_LOOPS_COUNTERPARTY_SOURCE_INDEX": "e9b472d9db37733e908ea40512ad3f9520d7a6729ce207b0d279d43d3beb5b2f",
       "PAGES_FOLDER_RULE_IDS_INDEX": "f0929fed2e69d1045a1e3a6e8b4267e4323d658c6305e5ae1f568fc71195f684",
-      "PAGES_NAME_LOOKUP_INDEXES": "1ca830342164b5606e96cf0090645364f9145d36178d90f166230189fe8d2705",
+      "PAGES_NAME_LOOKUP_INDEXES": "6095ac01105dc3f441ba85d6a3f8fd4fdf5b224b963e38fb1de9bfd98edb2866",
       "PAGES_PAGE_READERS_INDEX": "01a92fc19f866e0791bde647e7220a4666561b94888dccaa1643276c384ba057",
       "PAGES_RECONCILE_NAME_INDEXES": "8805e35341b22324b932b1cc05030cc8f2bfc95532bf810ec35330783f29c59a",
       "PAGES_SEGMENTED_BODY_BYTES_INDEX": "c904a4f68cf190cce6bc68c03219c7b62d05b77eeb557db946a4f58a4f965e57",
@@ -106,7 +107,7 @@
       "widenIdentityIndex": "86a6176bd7637d964dbc1d3cd3b1bdfa3ca0161e1ee248c37d7380a1471282e6",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 325,
+    "latest": 326,
     "records": [
       {
         "handler": {
@@ -5307,6 +5308,39 @@
         "transaction": "absent",
         "verify": "absent",
         "version": 325
+      },
+      {
+        "handler": {
+          "form": "arrow",
+          "helpers": [
+            "LEGACY_TITLE_BTREE_INDEX",
+            "PAGES_NAME_LOOKUP_INDEXES",
+            "PLANNER_REPAIR_TABLES",
+            "analyzeAfterIndexBuild",
+            "analyzeDeferred",
+            "analyzeYieldingToVacuum",
+            "buildIndexOnline",
+            "dropInvalidConcurrentIndex",
+            "lockTableForAnalyze",
+            "migrationNotice",
+            "migrationStatementTimeoutMs",
+            "quietMigrationNotices",
+            "runMigrationStatement",
+            "tableRows",
+            "withSchemaLockTimeout"
+          ],
+          "sha256": "b9ebefed56c10ccb9ebdbfe62f3ef04603f30af48f4c69709fcf936afe02f2db"
+        },
+        "idempotent": true,
+        "name": "pages_title_lower_hash_index",
+        "sql": {
+          "length": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "sqlFor": "absent",
+        "transaction": false,
+        "verify": "absent",
+        "version": 326
       }
     ],
     "versions": [
@@ -5629,7 +5663,8 @@
       322,
       323,
       324,
-      325
+      325,
+      326
     ]
   },
   "normalizer": "migrations-record-v1"

@@ -348,7 +348,7 @@ export async function runTranscriptsIngest(
           const stored = opts.dryRun
             ? { layout: 'single' as const, partTargetBytes: pageCeiling, existingSlug: null }
             : await storedTranscriptLayout(engine, opts.sourceId ?? 'default', session.meta, pageCeiling);
-          const rendered = renderSessionParts(redacted, { sourcePath: path, layout: stored.layout, partTargetBytes: stored.partTargetBytes });
+          const rendered = renderSessionParts(redacted, { sourcePath: path, layout: stored.layout, partTargetBytes: stored.partTargetBytes, existing: stored.existingSlug !== null });
           if (stored.existingSlug) adoptExistingBaseSlug(rendered, stored.existingSlug);
           outcome.baseSlug = rendered.baseSlug;
           outcome.parts = rendered.parts.length;

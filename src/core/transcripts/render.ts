@@ -83,6 +83,16 @@ export const OVERLAP_MESSAGES = 2;
 /** Adapter-schema version stamped into transcript_import frontmatter. */
 export const TRANSCRIPT_IMPORT_VERSION = 1;
 
+/**
+ * #9779: the longest title a transcript page gets, in characters. Some
+ * harnesses report a session's opening text as its title, which can run to
+ * 100 KB; the full text is already in the page body. A longer title is cut at
+ * a codepoint boundary and ends in an ellipsis, so a cut title reads as cut.
+ * A session whose page already exists (`existing`) keeps its title as given,
+ * so a re-import never rewrites a page only to shorten its title.
+ */
+export const TRANSCRIPT_TITLE_MAX_CHARS = 200;
+
 // ── Redaction ────────────────────────────────────────────────────────────────
 
 /** Default user-pattern file — the same convention skillpack harvest uses. */
@@ -361,7 +371,7 @@ export function transcriptPartId(meta: Pick<ParsedSession['meta'], 'harness' | '
  */
 export function renderSessionParts(
   redacted: RedactedSession,
-  opts: { sourcePath: string; partTargetBytes?: number; layout?: TranscriptLayout } = { sourcePath: '' },
+  opts: { sourcePath: string; partTargetBytes?: number; layout?: TranscriptLayout; existing?: boolean } = { sourcePath: '' },
 ): RenderSessionResult {
   const partTargetBytes = opts.partTargetBytes ?? PART_TARGET_BYTES;
   if (!Number.isSafeInteger(partTargetBytes) || partTargetBytes <= 0) {
@@ -415,7 +425,9 @@ export function renderSessionParts(
     throw new Error(`session ${meta.sessionId} renders ${groups.length} parts at ${partTargetBytes} bytes per part, over the ${TRANSCRIPT_MAX_PARTS}-part cap; nothing was written for it`);
   }
   const single = (opts.layout ?? 'single') === 'single' && groups.length === 1;
-  const title = meta.title?.trim() || `${meta.harness} session ${meta.sessionId.slice(0, 12)}`;
+  const cps = [...(meta.title?.trim() ?? '')];
+  const title = (cps.length > TRANSCRIPT_TITLE_MAX_CHARS && !opts.existing ? cps.slice(0, TRANSCRIPT_TITLE_MAX_CHARS - 1).join('').trimEnd() + '…' : cps.join(''))
+    || `${meta.harness} session ${meta.sessionId.slice(0, 12)}`;
 
   const parts: RenderedPart[] = groups.map((group, idx) => {
     const part = idx + 1;

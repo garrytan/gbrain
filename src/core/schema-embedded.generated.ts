@@ -285,8 +285,9 @@ CREATE INDEX IF NOT EXISTS idx_pages_type ON pages(type);
 CREATE INDEX IF NOT EXISTS idx_pages_frontmatter ON pages USING GIN(frontmatter);
 CREATE INDEX IF NOT EXISTS idx_pages_trgm ON pages USING GIN(title gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_pages_slug_basename ON pages (source_id, (regexp_replace(slug, '^.*/', '')));
--- v240: the entity name lookups (exact title, alias title check, slug suffix) as index scans.
-CREATE INDEX IF NOT EXISTS idx_pages_source_title_lower ON pages (source_id, lower(title));
+-- v240/v326: the entity name lookups (exact title, alias title check, slug suffix) as index scans. Hash, not btree:
+-- a btree entry must fit in 2,704 bytes, and a page title has no length limit (#9779).
+CREATE INDEX IF NOT EXISTS idx_pages_title_lower_hash ON pages USING hash (lower(title));
 CREATE INDEX IF NOT EXISTS idx_pages_slug_trgm ON pages USING GIN (slug gin_trgm_ops);
 -- v0.13.1 #170: avoids 14.6s seqscan on large brains when listing pages newest-first.
 CREATE INDEX IF NOT EXISTS idx_pages_updated_at_desc ON pages (updated_at DESC);
