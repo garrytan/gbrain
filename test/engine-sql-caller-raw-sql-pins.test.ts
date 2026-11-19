@@ -14,6 +14,9 @@
 import { describe, expect, test } from 'bun:test';
 import { runCase, withPinnedSqlEnvironment, type SqlCase } from './helpers/postgres-engine-sql-cases.ts';
 import { edgeTrimSql } from '../src/core/edge-whitespace.ts';
+import { budgetRowAppliesFilter } from '../src/core/page-size-policy.ts';
+import { chunkGenerationFilter } from '../src/core/search/safe-chunks.ts';
+import { quoteIdentifier } from '../src/core/search/embedding-column.ts';
 import { retiredPageSql } from '../src/core/entities/resolve.ts';
 import { rankingLinkSql } from '../src/core/link-ranking-policy.ts';
 import { boundedBodyPrefixSql } from '../src/core/page-window/bounded-lead.ts';
@@ -407,6 +410,30 @@ const PINS: Pin[] = [
       COALESCE((completed_keys->0->>'images')::int,0) AS images, COALESCE((completed_keys->0->>'fences')::int,0) AS fences, COALESCE((completed_keys->0->>'stalled')::int,0) AS stalled,
       COALESCE((completed_keys->0->>'concurrent')::int,0) AS concurrent, COALESCE((completed_keys->0->>'dirty')::int,0) AS dirty
     FROM op_checkpoints WHERE op=$1 AND fingerprint=$2`, "SELECT config->>'mirror_read_only' AS mirror FROM sources WHERE id=$1"],
+  },
+  {
+    from: 'src/core/persistence/applied-watermark.ts:88,92 readWriteWatermark',
+    case: { method: 'readWriteWatermarkRow', variant: 'default', run: e => e.readWriteWatermarkRow('default') },
+    texts: [`SELECT s.last_commit, s.last_sync_at, p.pending_min, p.pending_count, p.pending_since
+    FROM sources s LEFT JOIN LATERAL (SELECT min(r.sequence) AS pending_min, count(*) AS pending_count, min(r.created_at) AS pending_since FROM persistence_requests r
+      WHERE r.source_id=s.id AND r.source_incarnation=s.incarnation AND r.state IN ('queued','deferred','running','recovering')) p ON true WHERE s.id=$1`,
+    'SELECT max(sequence) AS sequence FROM persistence_requests'],
+  },
+  {
+    from: 'src/core/persistence/applied-watermark.ts:104 readCheckoutRoot',
+    case: { method: 'readSourceCheckoutRoot', variant: 'default', run: e => e.readSourceCheckoutRoot('default', null) },
+    texts: [`SELECT s.incarnation::text AS incarnation,
+      COALESCE((SELECT h.local_path FROM persistence_host_bindings h JOIN persistence_source_bindings b ON b.worktree_id=h.worktree_id
+        WHERE b.source_id=s.id AND h.host_id::text=$2 LIMIT 1), s.local_path) AS root FROM sources s WHERE s.id=$1`],
+  },
+  {
+    from: 'src/core/persistence/applied-watermark.ts:132 readAppliedWatermark',
+    case: { method: 'readUnembeddedPageSummary', variant: 'default', run: e => e.readUnembeddedPageSummary('default', 'embedding') },
+    texts: () => [`WITH w AS (SELECT DISTINCT p.id, p.updated_at FROM content_chunks cc
+        JOIN pages p ON p.id=cc.page_id WHERE ${`cc.${quoteIdentifier('embedding')}`} IS NULL AND p.source_id=$1 AND p.deleted_at IS NULL AND ${chunkGenerationFilter('p', 'cc')}
+          AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip'))
+      SELECT count(*) AS pages, min(w.updated_at) AS oldest,
+        (SELECT count(*) FROM w JOIN page_embedding_budget b ON b.page_id=w.id JOIN pages p ON p.id=w.id WHERE ${budgetRowAppliesFilter('b', 'p')}) AS held FROM w`],
   },
 ];
 

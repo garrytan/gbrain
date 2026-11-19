@@ -625,7 +625,6 @@ src/core/persistence/activation.ts	execute_raw	9
 src/core/persistence/admin-intent.ts	execute_raw	3
 src/core/persistence/admin-lock.ts	execute_raw	7
 src/core/persistence/administration.ts	execute_raw	8
-src/core/persistence/applied-watermark.ts	execute_raw	4
 src/core/persistence/atom-maintenance.ts	execute_raw	21
 src/core/persistence/authority.ts	execute_raw	9
 src/core/persistence/blocking-effects.ts	execute_raw	2

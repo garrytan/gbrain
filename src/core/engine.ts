@@ -19,6 +19,7 @@ import type * as FactsRepairSql from './engine-sql/facts-repair.ts';
 import type * as FactsTrustSql from './engine-sql/facts-trust.ts';
 import type { EngineCapabilities } from './engine-capabilities.ts';
 import type { GitHoldRecordsQuery, GitHoldReportInputs } from './engine-sql/sync-hold-reads.ts';
+import type { SourceCheckoutRoot, UnembeddedPageSummary, WriteWatermarkRow } from './engine-sql/applied-watermark-reads.ts';
 import type { SyncDispatchRow } from './engine-sql/sync-dispatch.ts';
 import type { GetVersionsOpts, PageVersionRows } from './page-state/version-types.ts';
 import type { PageSnapshotBatch } from './page-snapshot-batch.ts';
@@ -3403,6 +3404,12 @@ export interface BrainEngine {
   readGitHoldRetryRequest(fingerprint: string): Promise<Array<{ paths?: unknown }> | null>;
   /** A sync hold report's summary counters (null when none) and the source's `mirror_read_only` text (SQL in engine-sql/sync-hold-reads.ts). */
   readGitHoldReportInputs(sourceId: string, fingerprint: string): Promise<GitHoldReportInputs>;
+  /** A source's sync point and pending write requests, for the applied watermark (SQL in engine-sql/applied-watermark-reads.ts). */
+  readWriteWatermarkRow(sourceId: string): Promise<WriteWatermarkRow>;
+  /** A source's incarnation and its checkout on host `hostId` (else the source's path); null when absent. */
+  readSourceCheckoutRoot(sourceId: string, hostId: string | null): Promise<SourceCheckoutRoot | null>;
+  /** The source's pages still waiting for an embedding in `column`: count, oldest edit, budget-held count. */
+  readUnembeddedPageSummary(sourceId: string, column: string): Promise<UnembeddedPageSummary>;
   /** The request a principal admitted under `requestId` (a uuid), or null. */
   readWriteRequest(principalKind: string, principalId: string, requestId: string): Promise<WriteRequest | null>;
   /** The request with journal id `id`, or null; `signal` cancels the read. */
