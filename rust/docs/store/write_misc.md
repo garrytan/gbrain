@@ -28,6 +28,9 @@ The link endpoint read (`listLinkEndpointPages`) is in [link_queries.md](link_qu
 | `hasExtractedEvents(sourceId, pageId)` | `false` | The store keeps no chronicle extraction state. |
 | `listActiveAccessMembers()` | `[]` | The store keeps no access members. |
 | `notifierCoverageRecorded()` | `false` | The store keeps no notifier state: a resident notifier refuses to start on a Rust brain, so no source has recorded coverage. Search carries the freshness notice only when `sync.on_commit` is on. |
+| `readOpCheckpointKeys(op, fingerprint)` | `{ keys: [], corruptParent: false }` | The store keeps no resumable-op checkpoint: every checkpoint write is raw SQL, which this engine refuses, and its only `op_checkpoints` rows are housekeeping turns, whose ops no resumable op uses. A resumable op walks from the start, as after `clearOpCheckpoint`. |
+| `readHealthMemoClock()` | `<brain id>/<commit sequence>` | The `readProjectionReadinessGeneration` value. Every commit advances it, a page write among them, so the get_health memo reuses an answer only while nothing was written. The SQL engines answer `<brain id>:<page clock>`; only equality between two reads of one engine matters. |
+| `listSynopsisSourceIds()` | `[]` | The store keeps no source contextual-retrieval mode (only `sources` admin raw SQL writes it), so no source selects the synopsis tier. |
 | `isFolderRestricted(sourceId, slug)` | `false` | The store keeps no access state: no folder rules, no pending coverage, no row-level security. Every write of that state is raw SQL, which this engine refuses, so no slug is restricted. PGLite answers the same for a brain with no folder rules and no pending covers (`src/core/engine-sql/access-control.ts`). |
 | `expireMemoryProposals(reason)`, `purgeMemoryProposals(days)` | `0` | The store keeps no memory proposals. |
 | `listAwaitingMemoryProposals(limit)` | `[]` | The store keeps no memory proposals. |

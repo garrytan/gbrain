@@ -131,6 +131,9 @@ export const RUST_ENGINE_MEMBERS = {
   sharedSkillPackTablePresent: 'sources',
   listSharedSkillPackRoots: 'sources',
   notifierCoverageRecorded: 'sources',
+  readOpCheckpointKeys: 'persistence_journal',
+  readHealthMemoClock: 'health',
+  listSynopsisSourceIds: 'sources',
   // The writer-binding read is a persistence table read (persistence_worktrees is persistence_journal's, catalog.ts).
   getWorktreeBinding: 'persistence_journal',
   // config

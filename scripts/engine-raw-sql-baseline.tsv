@@ -507,7 +507,6 @@ src/core/guests/stamp-readable.ts	execute_raw	1
 src/core/harness/client-setup.ts	execute_raw	1
 src/core/harness/client-setup.ts	sql_template	1
 src/core/heal-audit.ts	execute_raw	3
-src/core/health-memo.ts	execute_raw	1
 src/core/held-embedding.ts	execute_raw	2
 src/core/imessage/imessage-source.ts	execute_raw	3	#9634, pre-ratchet: reads the source row (incarnation, local_path, config), checks a page slug exists, and stamps sources.last_sync_at/newest_content_at; no typed engine method exists yet
 src/core/import-chunk-reuse.ts	execute_raw	1
@@ -565,7 +564,7 @@ src/core/onboard/checks.ts	execute_raw	5
 src/core/onboard/checks.ts	sql_template	2
 src/core/onboard/impact-capture.ts	execute_raw	3
 src/core/onboard/mcp-onboarding.ts	execute_raw	1
-src/core/op-checkpoint.ts	execute_raw	7
+src/core/op-checkpoint.ts	execute_raw	6
 src/core/ops/admin.ts	execute_raw	2
 src/core/ops/attribution.ts	execute_raw	8
 src/core/ops/backlinks-paged.ts	execute_raw	3
@@ -1034,7 +1033,7 @@ src/core/sync-rename-identity.ts	execute_raw	4
 src/core/sync-status-report.ts	execute_raw	1
 src/core/sync-upstream.ts	execute_raw	2
 src/core/sync.ts	execute_raw	1
-src/core/synopsis-sweep.ts	execute_raw	4
+src/core/synopsis-sweep.ts	execute_raw	3
 src/core/take-proposals.ts	execute_raw	8
 src/core/takes-horizon.ts	execute_raw	5
 src/core/takes-quality-eval/receipt-write.ts	execute_raw	1

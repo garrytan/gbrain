@@ -531,6 +531,9 @@ export const DOMAIN_OF: Record<string, string> = {
   // the page-write reads and upkeep that belong to no other domain
   'readSourceState': OOS.writeMisc,
   'notifierCoverageRecorded': OOS.writeMisc,
+  'readOpCheckpointKeys': OOS.writeMisc,
+  'readHealthMemoClock': OOS.writeMisc,
+  'listSynopsisSourceIds': OOS.writeMisc,
   'bumpPageRetrievals': OOS.pageRetrievals,
   'readAdmissionSource': OOS.writeMisc,
   'sharedSkillPackTablePresent': OOS.writeMisc,

@@ -121,47 +121,15 @@ export async function loadOpCheckpoint(
   key: OpCheckpointKey,
 ): Promise<string[]> {
   try {
-    // v0.42.x (#1794): union the new append-only child rows (op_checkpoint_paths)
-    // with the legacy `completed_keys` JSONB array (recordCompleted consumers +
-    // pre-upgrade rows). UNION ALL — not UNION — because the JS Set below already
-    // dedupes, so we skip a server-side dedup sort over up to 204K rows on every
-    // resume. `jsonb_array_elements_text` expands the legacy array server-side,
-    // which also removes the old postgres.js-vs-PGLite string/array handling.
-    //
-    // v0.42.x (BUG 3 guard): the legacy arm is gated on
-    // `jsonb_typeof(completed_keys) = 'array'`. Without it a non-array (scalar)
-    // parent row makes jsonb_array_elements_text throw "cannot extract elements
-    // from a scalar", which kills the WHOLE union — including the valid child
-    // rows — and loses all checkpoint progress for the key. Skipping the scalar
-    // keeps the child rows; the third arm flags the corruption so we log it once
-    // (migration v119's CHECK makes this impossible going forward; a hit implies
-    // schema drift / disabled constraint / an out-of-band writer).
-    const rows = await engine.executeRaw<{ ckey: unknown; corrupt: number }>(
-      `SELECT path AS ckey, 0 AS corrupt FROM op_checkpoint_paths
-         WHERE op = $1 AND fingerprint = $2
-       UNION ALL
-       SELECT jsonb_array_elements_text(completed_keys) AS ckey, 0 AS corrupt FROM op_checkpoints
-         WHERE op = $1 AND fingerprint = $2 AND jsonb_typeof(completed_keys) = 'array'
-       UNION ALL
-       SELECT NULL AS ckey, 1 AS corrupt FROM op_checkpoints
-         WHERE op = $1 AND fingerprint = $2 AND jsonb_typeof(completed_keys) <> 'array'`,
-      [key.op, key.fingerprint],
-    );
-    const set = new Set<string>();
-    let corruptParent = false;
-    for (const r of rows) {
-      if (Number(r.corrupt) === 1) {
-        corruptParent = true;
-        continue;
-      }
-      if (typeof r.ckey === 'string') set.add(r.ckey);
-    }
+    // v0.42.x (#1794, BUG 3 guard): the child rows and the legacy array, a scalar legacy value skipped and flagged
+    // (engine-sql/write-misc.ts readOpCheckpointKeys; migration v119's CHECK makes a hit imply schema drift).
+    const { keys, corruptParent } = await engine.readOpCheckpointKeys(key.op, key.fingerprint);
     if (corruptParent) {
       console.error(
         `[op-checkpoint] WARNING: op_checkpoints.completed_keys for (${key.op}, ${key.fingerprint}) is a non-array (scalar) and was skipped to protect the load — child op_checkpoint_paths rows still applied. This implies schema drift, a disabled CHECK constraint, or an out-of-band writer.`,
       );
     }
-    return [...set];
+    return keys;
   } catch (e) {
     console.error(`[op-checkpoint] load failed (${key.op}, ${key.fingerprint}):`, (e as Error).message);
     return [];

@@ -4,6 +4,7 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: readSourceState, readAdmissionSource, sharedSkillPackTablePresent,
  *    listSharedSkillPackRoots, getWorktreeBinding, hasExtractedEvents, listActiveAccessMembers, notifierCoverageRecorded, isFolderRestricted,
+ *    readOpCheckpointKeys, readHealthMemoClock, listSynopsisSourceIds,
  *    expireMemoryProposals,
  *    listAwaitingMemoryProposals and purgeMemoryProposals return the same observable result on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
@@ -13,7 +14,7 @@
  *  - Why existing coverage misses it: the call sites ran these statements through `executeRaw`, which the parity cases
  *    cannot call (D18), so no case compared them across engines (docs/research/rust-put-write-path.md).
  *  - Seam: none. Generated values (incarnation uuids) are compared by shape, never by value. The
- *    Rust store keeps no skillpacks, chronicle state, access members, notifier state, folder rules, writer bindings or memory proposals, so those cases
+ *    Rust store keeps no skillpacks, chronicle state, access members, notifier state, op checkpoints, source synopsis modes, folder rules, writer bindings or memory proposals, so those cases
  *    compare the empty answer every arm gives on a fresh brain (rust/docs/store/write_misc.md).
  */
 import { describe, expect } from 'bun:test';
@@ -21,6 +22,9 @@ import { archiveSource, createSource, parityArms, restrictFolder } from './harne
 import { isCapabilityRefusal } from './arm-capabilities.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import { clearHealthMemo, memoizedHealth } from '../../src/core/health-memo.ts';
+import { loadOpCheckpoint } from '../../src/core/op-checkpoint.ts';
+import { readSynopsisTierConfig } from '../../src/core/synopsis-sweep.ts';
 import type { SourceStateRow, WorktreeBinding } from '../../src/core/engine-sql/write-misc.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -138,6 +142,91 @@ describe('engine parity: write misc', () => {
     const observed = await engine.notifierCoverageRecorded();
     expect({ unobserved, observed }).toEqual({ unobserved: false, observed: true });
     return { unobserved, observed };
+  });
+
+  // loadOpCheckpoint catches a failed read, logs it and answers [], so its answer alone cannot tell a refused read from an
+  // empty checkpoint: the case also asserts the load logged nothing.
+  parityTest('loadOpCheckpoint loads an empty checkpoint without a failed read', { methods: ['readOpCheckpointKeys'] }, async (engine) => {
+    const errors: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => { errors.push(args.map(String).join(' ')); };
+    let keys: string[];
+    try {
+      keys = await loadOpCheckpoint(engine, { op: 'embed', fingerprint: 'parity-f1' });
+    } finally {
+      console.error = original;
+    }
+    expect({ keys, errors }).toEqual({ keys: [], errors: [] });
+    return { keys, direct: await engine.readOpCheckpointKeys('embed', 'parity-f1') };
+  });
+
+  // A checkpoint row is raw SQL here (op-checkpoint.ts writes it); on Rust the seed refuses, because no Rust brain keeps a
+  // resumable-op checkpoint, and the member answers no keys, as the fresh-brain case.
+  parityTest('readOpCheckpointKeys unions the child rows and the legacy array, deduplicated', { methods: ['readOpCheckpointKeys'] }, async (engine) => {
+    let seeded: unknown = null;
+    try {
+      await engine.executeRaw(`INSERT INTO op_checkpoints (op, fingerprint, completed_keys) VALUES ('embed', 'parity-f2', '["b","c"]'::jsonb)`);
+    } catch (error) { seeded = error; }
+    if (seeded) {
+      expect(isCapabilityRefusal(seeded, 'raw_sql')).toBe(true);
+      expect(await engine.readOpCheckpointKeys('embed', 'parity-f2')).toEqual({ keys: [], corruptParent: false });
+      throw seeded;
+    }
+    await engine.executeRaw(`INSERT INTO op_checkpoint_paths (op, fingerprint, path) VALUES ('embed', 'parity-f2', 'a'), ('embed', 'parity-f2', 'b')`);
+    const read = await engine.readOpCheckpointKeys('embed', 'parity-f2');
+    const other = await engine.readOpCheckpointKeys('embed', 'parity-other');
+    expect({ keys: [...read.keys].sort(), corruptParent: read.corruptParent, other }).toEqual({
+      keys: ['a', 'b', 'c'], corruptParent: false, other: { keys: [], corruptParent: false },
+    });
+    return { keys: [...read.keys].sort(), other };
+  });
+
+  // memoizedHealth computes uncached when its clock read fails, so a refused read shows as a second compute.
+  parityTest('memoizedHealth reuses an answer until a page is written', { methods: ['readHealthMemoClock'] }, async (engine) => {
+    clearHealthMemo(engine);
+    let computes = 0;
+    const compute = async () => ({ n: ++computes });
+    const first = await memoizedHealth(engine, {}, compute);
+    const again = await memoizedHealth(engine, {}, compute);
+    const clockBefore = await engine.readHealthMemoClock();
+    const clockStill = await engine.readHealthMemoClock();
+    await note(engine, 'notes/health-memo');
+    const clockAfter = await engine.readHealthMemoClock();
+    const afterWrite = await memoizedHealth(engine, {}, compute);
+    clearHealthMemo(engine);
+    const view = {
+      answers: [first.n, again.n, afterWrite.n],
+      reusedComputedAt: again.computed_at === first.computed_at,
+      clockSteady: clockStill === clockBefore,
+      clockMoved: clockAfter !== clockBefore,
+    };
+    expect(view).toEqual({ answers: [1, 1, 2], reusedComputedAt: true, clockSteady: true, clockMoved: true });
+    return view;
+  });
+
+  parityTest('readSynopsisTierConfig lists no synopsis source on a fresh brain', { methods: ['listSynopsisSourceIds'] }, async (engine) => {
+    const config = await readSynopsisTierConfig(engine);
+    expect(config.synopsis_sources).toEqual([]);
+    return { config, direct: await engine.listSynopsisSourceIds() };
+  });
+
+  // A source's own contextual-retrieval mode is written by `sources` admin raw SQL; on Rust the seed refuses, because no
+  // Rust brain keeps one, and the member answers none, as the fresh-brain case.
+  parityTest('listSynopsisSourceIds lists live synopsis sources by id, not archived ones', { methods: ['listSynopsisSourceIds'] }, async (engine, backend) => {
+    for (const id of ['work', 'alt', 'old']) await createSource(engine, backend, id);
+    await archiveSource(engine, backend, 'old');
+    let seeded: unknown = null;
+    try {
+      await engine.executeRaw(`UPDATE sources SET contextual_retrieval_mode = 'per_chunk_synopsis' WHERE id IN ('work', 'alt', 'old')`);
+    } catch (error) { seeded = error; }
+    if (seeded) {
+      expect(isCapabilityRefusal(seeded, 'raw_sql')).toBe(true);
+      expect(await engine.listSynopsisSourceIds()).toEqual([]);
+      throw seeded;
+    }
+    const ids = await engine.listSynopsisSourceIds();
+    expect(ids).toEqual(['alt', 'work']);
+    return { ids, configured: (await readSynopsisTierConfig(engine)).configured };
   });
 
   // The restricted half (true under a folder rule or a pending prefix) is import-path.test.ts's case: the SQL arms answer
