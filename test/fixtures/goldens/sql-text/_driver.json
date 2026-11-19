@@ -3158,6 +3158,19 @@
       }
     },
     "pages": {
+      "bumpLastRetrieved": {
+        "default": [
+          {
+            "paramCount": 1,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "countPagesBy": {
         "grouped+since+remote": [
           {
@@ -4969,6 +4982,41 @@
       }
     },
     "sources": {
+      "advanceSourceCommit": {
+        "clearNewest": [
+          {
+            "paramCount": 3,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ],
+        "default": [
+          {
+            "paramCount": 2,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ],
+        "newest": [
+          {
+            "paramCount": 3,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "countDefaultSourceSplit": {
         "default": [
           {
@@ -5023,6 +5071,19 @@
         "default": [
           {
             "paramCount": 1,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "holdPageEmbedding": {
+        "default": [
+          {
+            "paramCount": 2,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -5097,7 +5158,7 @@
           }
         ]
       },
-      "listSourcePagePaths": {
+      "listSourcePathPages": {
         "default": [
           {
             "paramCount": 1,
@@ -5175,7 +5236,55 @@
           }
         ]
       },
-      "readRenameStoredTitles": {
+      "readPageSizeRows": {
+        "default": [
+          {
+            "paramCount": 2,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ],
+        "slugs": [
+          {
+            "paramCount": 3,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "readReasonPurgeTombstones": {
+        "default": [
+          {
+            "paramCount": 1,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ],
+        "pair": [
+          {
+            "paramCount": 3,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "readRenameIdentityRows": {
         "default": [
           {
             "paramCount": 3,
@@ -5240,34 +5349,10 @@
           }
         ]
       },
-      "writeSourceCommitAnchor": {
-        "keepNewest": [
-          {
-            "paramCount": 2,
-            "unsafeOptions": {
-              "cancelFence": false,
-              "prepare": true,
-              "simple": false
-            },
-            "via": "unsafe"
-          }
-        ],
-        "stampNewest": [
-          {
-            "paramCount": 3,
-            "unsafeOptions": {
-              "cancelFence": false,
-              "prepare": true,
-              "simple": false
-            },
-            "via": "unsafe"
-          }
-        ]
-      },
-      "writeSourceLocalPath": {
+      "writeReasonPurgeTombstones": {
         "default": [
           {
-            "paramCount": 2,
+            "paramCount": 3,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,

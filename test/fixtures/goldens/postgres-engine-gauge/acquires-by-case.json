@@ -21,8 +21,20 @@
       "raw": 1
     },
     "addTimelineEntry#default": {},
+    "advanceSourceCommit#clearNewest": {
+      "raw": 1
+    },
+    "advanceSourceCommit#default": {
+      "raw": 1
+    },
+    "advanceSourceCommit#newest": {
+      "raw": 1
+    },
     "batchLoadEmotionalInputs#default": {},
     "batchLoadEmotionalInputs#slugs": {},
+    "bumpLastRetrieved#default": {
+      "raw": 1
+    },
     "clearCodeTraversalCache#allSources": {
       "raw": 1
     },
@@ -200,6 +212,9 @@
     "getVersions#metadataOnly": {},
     "getVersions#sourceId": {},
     "getVersions#sourceIds": {},
+    "holdPageEmbedding#default": {
+      "raw": 1
+    },
     "insertFact#default": {},
     "insertFact#noEntity": {},
     "insertFact#supersedeId+embedding": {},
@@ -278,7 +293,7 @@
     "listPrefixSampledPages#default": {},
     "listPrefixSampledPages#sourceIds": {},
     "listSourceLocalPaths#default": {},
-    "listSourcePagePaths#default": {
+    "listSourcePathPages#default": {
       "raw": 1
     },
     "listSourceRoutingRows#default": {
@@ -363,10 +378,22 @@
     "readPageIdentity#default": {
       "raw": 1
     },
+    "readPageSizeRows#default": {
+      "raw": 1
+    },
+    "readPageSizeRows#slugs": {
+      "raw": 1
+    },
     "readPageSnapshot#default": {},
     "readPageSnapshot#sourceId": {},
     "readPageSnapshotsBatch#default": {},
-    "readRenameStoredTitles#default": {
+    "readReasonPurgeTombstones#default": {
+      "raw": 1
+    },
+    "readReasonPurgeTombstones#pair": {
+      "raw": 1
+    },
+    "readRenameIdentityRows#default": {
       "raw": 1
     },
     "readSourceChunkerVersion#default": {
@@ -520,13 +547,7 @@
     "upsertEventProjection#default": {},
     "upsertFile#default": {},
     "writeContradictionsRun#default": {},
-    "writeSourceCommitAnchor#keepNewest": {
-      "raw": 1
-    },
-    "writeSourceCommitAnchor#stampNewest": {
-      "raw": 1
-    },
-    "writeSourceLocalPath#default": {
+    "writeReasonPurgeTombstones#default": {
       "raw": 1
     },
     "writeSourceSyncHeartbeat#default": {

@@ -1,7 +1,7 @@
 /**
  * The page-write reads and upkeep that belong to no other domain (BrainEngine readSourceState through
  * purgeMemoryProposals, attachSourcePath, getWorktreeBinding and listAccessTokens; SQL in engine-sql/write-misc.ts; isSourceClaimed, SQL in engine-sql/sources.ts), and the folder access read beside the
- * access members (isFolderRestricted, listAppliedPolicyRevisions, readLiveMember, readFolderAccess, readMayActFor, readAudiencePrincipals and readJobPrincipal; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
+ * access members (isFolderRestricted, listAppliedPolicyRevisions, readFolderAccess, readMayActFor, readAudiencePrincipals, readLiveMember and readJobPrincipal; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
  * gbrain-store `write_misc`, the folder reads by gbrain-store `access_rules`; the rest answer for state the store does not keep. What each member answers and why:
  * rust/docs/store/write_misc.md.
  */
@@ -75,10 +75,17 @@ export const listAccessTokens: StoreMember<[], AccessTokenRow[]> = async () => [
 export const listActiveAccessMembers: StoreMember<[], string[]> = async () => [];
 
 /**
- * The store keeps no notifier state (a resident notifier refuses to start on this engine, notifier/store.ts), so no
- * source has recorded coverage and search carries the freshness notice only when `sync.on_commit` is on.
+ * The store's brain id and commit sequence (`readProjectionReadinessGeneration`). Every commit advances it, a page write
+ * among them, so a memoized health answer is reused only while nothing was written since it was read.
  */
-export const notifierCoverageRecorded: StoreMember<[], boolean> = async () => false;
+export const readHealthMemoClock: StoreMember<[], string> = async (brain) =>
+  storeCall({ member: 'readHealthMemoClock' }, () => brain.readProjectionReadinessGeneration());
+
+/**
+ * The store keeps no source contextual-retrieval mode (only `sources` admin raw SQL writes it, refused on this engine),
+ * so no source selects the synopsis tier.
+ */
+export const listSynopsisSourceIds: StoreMember<[], string[]> = async () => [];
 
 /**
  * Folder rules and pending prefixes are gbrain-store `access_rules` records (rust/docs/store/access_rules.md). A slug

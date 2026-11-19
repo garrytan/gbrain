@@ -46,11 +46,6 @@ import { readAudiencePrincipals as readAudiencePrincipalsOver, readFolderAccess 
 /** Config key binding a local stdio MCP server to one member. */
 export const STDIO_MEMBER_KEY = 'mcp.stdio_member';
 
-const MEMBERS_WHERE_SQL = (predicate: string) => `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
-  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
-  WHERE ${predicate} AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL
-  GROUP BY m.id`;
-
 /** The objects v282 added that the lookup reads: a schema without them predates the member tables. */
 const MEMBER_TABLES = ['access_members', 'access_group_members'];
 const MEMBER_COLUMN = 'member_id';

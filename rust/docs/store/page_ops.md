@@ -1,8 +1,7 @@
 # The brain store: Page operations
 
 Part of the store contract in [rust/README.md](../../README.md) ("The brain store"): the rules there apply to every method here.
-These methods work on the pages of [Pages](pages.md). The one key they add is the retrieval record (family tag `p`, see
-"Retrieval records" below).
+These methods work on the pages of [Pages](pages.md). Their one record is the retrieval stamp `p 0x03 <page id>` (family tag `p`).
 
 Every date is an ISO string with microseconds (`2026-08-10T12:00:00.000123Z`) or `null`; the
 TypeScript members turn them into `Date` where PGLite returns one. Text sorts in byte order.
@@ -29,9 +28,9 @@ with `callerReaders`; it refuses a caller whose policy the store does not model)
 | `brain.countPagesBy({ sourceId?, sourceIds?, since?, typeGroups? }?)` | `{ bySourceType, byTypeGroup, total }` over visible pages (live, source present and not archived) whose effective date (else `updated_at`) is at or after `since`, an ISO date or instant. `typeGroups` maps a type to its group; with it, only mapped types count in `byTypeGroup` and `total` | `countPagesBy` |
 | `brain.getAllSlugs({ sourceId? }?)` | every slug, deleted pages included, sorted and distinct; `''` means every source | `getAllSlugs` |
 | `brain.listAllPageRefs()` | `[{ source_id, slug, updated_at }]` of live pages, by source then slug | `listAllPageRefs` |
-| `brain.listPrefixSampledPages({ prefixes, excludeSlugs?, staleBias?, staleThresholdDays?, sourceId?, sourceIds? })` | one domain-bank row per prefix: the live inline page under it (segmented pages are left out) with the most inbound links, then the lowest slug. With `staleBias`, a page never retrieved ranks first, then one last retrieved before `staleThresholdDays` (default 90) ago, then the rest; links and slug break ties | `listPrefixSampledPages` |
+| `brain.listPrefixSampledPages({ prefixes, excludeSlugs?, staleBias?, staleThresholdDays?, sourceId?, sourceIds? })` | one domain-bank row per prefix: the live inline page under it (segmented pages are left out); with `staleBias` a never-retrieved page first, then one retrieved before `staleThresholdDays` (default 90); then the most inbound links, then the lowest slug | `listPrefixSampledPages` |
+| `brain.bumpLastRetrieved(pageIds)` | the number of pages stamped. Stamps now on each id that names a page (deleted included) and has no stamp from the last 5 minutes; unknown ids are skipped. A hard delete drops the stamp | `bumpLastRetrieved` |
 | `brain.listCorpusSample({ n, excludeSlugs?, seed?, sourceId?, sourceIds? })` | up to `n` domain-bank rows of live inline pages (segmented pages are left out), in a shuffle fixed by `seed` | `listCorpusSample` |
-| `brain.bumpPageRetrievals(ids)` | the number of records written. Records now as the last retrieval of each listed page that exists, once per id; it skips an id that is not a page, and a page whose record is less than 5 minutes old | `bumpPageRetrievals` (the throttled `page_retrievals` upsert of `src/core/engine-sql/pages.ts`) |
 | `brain.getContentFlagsByPageIds(ids, scope?)` | `[{ id, reason, detail }]` of pages whose frontmatter `content_flag.reason` is a non-empty string | `getContentFlagsByPageIds` |
 | `brain.getUnverifiedExtractionPageIds(ids, scope?)` | `[{ id, status, unverified }]` of pages with a frontmatter `status`; `unverified` is `status = 'unverified'` and `provenance = 'auto-extracted'` | `getUnverifiedExtractionPageIds` |
 | `brain.getPageTimestamps(slugs)` | `[{ slug, ts }]` (`ts` = `updated_at`) of every page with that slug, deleted included, in page id order | `getPageTimestamps` |
@@ -42,23 +41,13 @@ with `callerReaders`; it refuses a caller whose policy the store does not model)
 | `brain.revertToVersion(slug, versionId, { sourceId? }?)` | `null`. Copies the version's `compiled_truth` and `frontmatter` onto the page and sets `updated_at`; a missing page or version does nothing. When a page it would revert, or the version, is segmented, it refuses `page_body_segmented` and writes nothing; the TypeScript member throws PGLite's `segmentedRevertRefusal` | `revertToVersion` |
 
 A domain-bank row is `{ slug, prefix, connection_count, representative_chunk_id,
-last_retrieved_at }`. `last_retrieved_at` is the page's retrieval record, else `null`.
-
-## Retrieval records
-
-| Key | Value | Mirrors |
-| --- | --- | --- |
-| `p 0x01 page_id` (u64 big-endian) | microseconds since the epoch (JSON integer) | `page_retrievals.last_retrieved_at` |
-
-`gbrain search`, `query`, `get` and `fetch` call `bumpPageRetrievals` after they answer
-(`src/core/last-retrieved.ts`). A hard delete drops the page's record in the same transaction, as the
-`pages_forget_retrievals` trigger does on Postgres.
+last_retrieved_at }`.
 
 ## Differences from Postgres
 
-- `representative_chunk_id` is always `null`.
-- The store keeps no legacy `pages.last_retrieved_at` column, so the retrieval record is the only
-  source of `last_retrieved_at` (Postgres takes the later of the two).
+- `representative_chunk_id` is always `null`: no chunk has an embedding here.
+- `last_retrieved_at` comes from the `bumpLastRetrieved` stamp only. Postgres takes the later of that
+  stamp and the legacy `pages.last_retrieved_at` column, which the store does not have.
 - `listCorpusSample` uses a SplitMix64 shuffle seeded from `seed`. A seed gives a fixed pick, but not
   the pick Postgres `setseed()` + `random()` gives. The parity cases compare the set, not the order.
 - `countPagesBy` refuses a `since` that is not an ISO date or instant (Postgres also takes other
@@ -66,7 +55,7 @@ last_retrieved_at }`. `last_retrieved_at` is the page's retrieval record, else `
 - `revertToVersion` writes no new version, as PGLite. The interface spec says it snapshots first.
 - After a hard delete PGLite also scrubs ratings, weights, the volunteer log, the
   gazetteer, take proposals, open loops, core-edit notices and write-gate holds. The store keeps none
-  of those yet, so only eval candidates, retrieval records, page aliases, slug aliases and rename history change.
+  of those yet, so only eval candidates, page aliases, slug aliases, rename history and the retrieval stamp change.
 
 ## The purgeDeletedPages holds
 
@@ -98,7 +87,8 @@ applies the two that read only the page row and `config`, and the other two neve
   never match: only `executeRaw` writes those rows, through `recordIdentityDowngrades`
   (`src/core/sync-identity-downgrades.ts`) and `parkDerivedOrigin` (`derived-origin-hold.ts`,
   called from `src/core/repair/origin-carry.ts`), and the Rust engine refuses `executeRaw`. The
-  family that serves `op_checkpoints` must add both holds.
+  store serves the resumable-op checkpoints (persistence.md, "Op checkpoints"), not these rows; the
+  family that serves these writers must add both holds.
 
 Each purged page goes through `remove_page`, the eval-candidate scrub and the alias and rename-history
 scrub, as `deletePages` does.

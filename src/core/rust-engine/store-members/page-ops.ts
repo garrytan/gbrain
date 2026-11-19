@@ -2,8 +2,8 @@
  * Batch page reads and writes over the store's page_ops family (rust/docs/store/page_ops.md).
  *
  * Served: readPageSnapshotsBatch, findDuplicatePage, findDuplicatePages, deletePages, purgeDeletedPages, resolveSlugsByPaths,
- * softDeletePages, findPages, countPagesBy, getAllSlugs, listAllPageRefs, listPrefixSampledPages, listCorpusSample,
- * bumpPageRetrievals, getContentFlagsByPageIds, getUnverifiedExtractionPageIds, getPageTimestamps, getEffectiveDates, readAdmittedPageRefs,
+ * softDeletePages, findPages, countPagesBy, getAllSlugs, listAllPageRefs, listPrefixSampledPages, listCorpusSample, bumpLastRetrieved,
+ * getContentFlagsByPageIds, getUnverifiedExtractionPageIds, getPageTimestamps, getEffectiveDates, readAdmittedPageRefs,
  * readPageSynopses, readSeedTitleSlugs, revertToVersion.
  * deletePages scrubs the eval candidates' retrieved slugs in the delete's transaction, as PGLite does.
  * purgeDeletedPages (also served) keeps the pages PGLite's atom and derived retirement holds keep, reading the `retired_by`
@@ -230,6 +230,12 @@ export const listPrefixSampledPages: StoreMember<[opts: DomainBankSampleOpts], D
   return rows.map(toDomainBankRow);
 };
 
+/** The `last-retrieved.ts` write-back: a stamp per page, kept by the store's page_ops family (`p 0x03 <page id>`). */
+export const bumpLastRetrieved: StoreMember<[pageIds: number[]], void> = async (brain, pageIds) => {
+  if (pageIds.length === 0) return;
+  await storeCall({ member: 'bumpLastRetrieved' }, () => brain.bumpLastRetrieved(pageIds));
+};
+
 export const listCorpusSample: StoreMember<[opts: CorpusSampleOpts], DomainBankRow[]> = async (brain, opts) => {
   const options = takeOptions('listCorpusSample', opts, ['n', 'excludeSlugs', 'seed', 'sourceId', 'sourceIds']);
   if (!(opts.n > 0)) return [];
@@ -247,12 +253,6 @@ function pageIds(member: string, ids: number[]): number[] {
   for (const id of ids) if (!Number.isSafeInteger(id)) throw new TypeError(`${member}: page id ${String(id)} is not an integer`);
   return ids;
 }
-
-/** Records now as each page's retrieval time, 5-minute throttled (gbrain-store `page_ops/retrievals.rs`). */
-export const bumpPageRetrievals: StoreMember<[pageIds: number[]], void> = async (brain, ids) => {
-  if (!ids.length) return;
-  await storeCall({ member: 'bumpPageRetrievals' }, () => brain.bumpPageRetrievals(pageIds('bumpPageRetrievals', ids)));
-};
 
 export const getContentFlagsByPageIds: StoreMember<[pageIds: number[], opts?: PageReadScope], Map<number, { reason: string; detail: string }>> = async (
   brain,

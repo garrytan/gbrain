@@ -9,6 +9,7 @@
 //! addon method and each `StoreError::code` into a JavaScript `Error.code`.
 
 mod access_flag;
+pub mod access_migrations;
 pub mod access_policy;
 pub mod access_rules;
 mod cascade;
@@ -44,6 +45,7 @@ pub mod code_edges;
 pub mod contradictions;
 pub mod dream;
 pub mod embedding_catalog;
+pub mod embedding_holds;
 pub mod embeddings;
 pub mod entity_identities;
 pub mod eval_capture;
@@ -61,6 +63,7 @@ pub mod page_ops;
 pub mod page_visibility;
 pub mod persistence;
 pub mod raw_files;
+pub mod reason_tombstones;
 pub mod relations;
 pub mod salience;
 pub mod stats;
@@ -71,8 +74,10 @@ pub mod transactions;
 pub mod trust;
 pub mod vectors;
 pub mod wanted_links;
+pub mod write_attribution;
 pub mod write_guards;
 pub mod write_misc;
+mod write_receipt;
 pub mod write_trust;
 
 use serde::Serialize;

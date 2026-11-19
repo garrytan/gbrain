@@ -27,7 +27,7 @@ const syncWith = (r: ProbeRepo, engine: BrainEngine) => performSync(engine, { re
 function failingIdentityReads(engine: BrainEngine, error: () => unknown, when: (params: unknown[]) => boolean): BrainEngine {
   return new Proxy(engine, { get(target, prop) {
     const value = Reflect.get(target, prop);
-    if ((prop === 'readRenameStoredTitles' || prop === 'readLiveIdentityHolders') && typeof value === 'function') {
+    if ((prop === 'readRenameIdentityRows' || prop === 'readLiveIdentityHolders') && typeof value === 'function') {
       return (...params: unknown[]) => when(params) ? Promise.reject(error()) : (value as Function).apply(target, params);
     }
     return typeof value === 'function' ? value.bind(target) : value;

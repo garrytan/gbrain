@@ -287,22 +287,20 @@ fn the_sync_anchor_advances_one_source_and_survives_a_reopen() {
     store.upsert_source(&input("other", None)).unwrap();
     assert_eq!(store.get_source("wiki").unwrap().unwrap().last_commit, None);
     store
-        .write_source_commit_anchor("wiki", "c1", Some(Some("2026-01-02T03:04:05.000Z")))
+        .advance_source_commit("wiki", "c1", Some(Some("2026-01-02T03:04:05.000Z")))
         .unwrap();
+    store.advance_source_commit("wiki", "c2", None).unwrap();
     store
-        .write_source_commit_anchor("wiki", "c2", None)
+        .attach_source_path("wiki", "/srv/wiki", None, None)
         .unwrap();
-    store.write_source_local_path("wiki", "/srv/wiki").unwrap();
     // An unknown source changes nothing, as the UPDATE matches no row.
+    store.advance_source_commit("missing", "c9", None).unwrap();
     store
-        .write_source_commit_anchor("missing", "c9", None)
-        .unwrap();
-    store
-        .write_source_local_path("missing", "/srv/missing")
+        .attach_source_path("missing", "/srv/missing", None, None)
         .unwrap();
     assert!(
         store
-            .write_source_commit_anchor("wiki", "c3", Some(Some("not a time")))
+            .advance_source_commit("wiki", "c3", Some(Some("not a time")))
             .is_err()
     );
     store.close();
@@ -323,7 +321,7 @@ fn the_sync_anchor_advances_one_source_and_survives_a_reopen() {
         Some("2026-01-02T03:04:05.000000Z")
     );
     store
-        .write_source_commit_anchor("wiki", "c4", Some(None))
+        .advance_source_commit("wiki", "c4", Some(None))
         .unwrap();
     assert_eq!(
         store

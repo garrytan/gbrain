@@ -83,12 +83,13 @@ fn page_size_rows_select_embed_skip_and_over_limit_live_pages_in_slug_byte_order
     .unwrap();
     let opts: PutPageOptions = serde_json::from_value(json!({"sourceId": "default"})).unwrap();
     store.put_page("notes/b-skip", &input, &opts).unwrap();
-    let slugs = |rows: Vec<gbrain_store::large_page::PageSizeRow>| -> Vec<(String, Option<i64>)> {
-        rows.into_iter().map(|r| (r.slug, r.bytes)).collect()
-    };
+    let slugs =
+        |rows: Vec<gbrain_store::cli_reads::sources::PageSizeRow>| -> Vec<(String, Option<i64>)> {
+            rows.into_iter().map(|r| (r.slug, r.bytes)).collect()
+        };
     let big = ("café body over the limit".len() + "- € event".len()) as i64;
     assert_eq!(
-        slugs(store.list_page_size_rows("default", 12, None).unwrap()),
+        slugs(store.read_page_size_rows("default", 12, None).unwrap()),
         vec![
             ("notes/b-skip".into(), Some(4)),
             ("notes/big".into(), Some(big))
@@ -102,24 +103,24 @@ fn page_size_rows_select_embed_skip_and_over_limit_live_pages_in_slug_byte_order
     assert_eq!(
         slugs(
             store
-                .list_page_size_rows("default", 12, Some(some))
+                .read_page_size_rows("default", 12, Some(&some))
                 .unwrap()
         ),
         vec![("notes/big".into(), Some(big))]
     );
     assert!(
         store
-            .list_page_size_rows("default", 12, Some(vec![]))
+            .read_page_size_rows("default", 12, Some(&[]))
             .unwrap()
             .is_empty()
     );
     assert!(
         store
-            .list_page_size_rows("missing", 12, None)
+            .read_page_size_rows("missing", 12, None)
             .unwrap()
             .is_empty()
     );
-    let row = &store.list_page_size_rows("default", 12, None).unwrap()[0];
+    let row = &store.read_page_size_rows("default", 12, None).unwrap()[0];
     assert_eq!(
         (row.state.clone(), row.reason.clone(), row.segmented),
         (None, None, false)

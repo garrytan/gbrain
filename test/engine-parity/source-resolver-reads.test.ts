@@ -52,6 +52,10 @@ async function seed(engine: BrainEngine, sourceId: string, slugs: string[]): Pro
   for (const slug of slugs) await engine.putPage(slug, NOTE, { sourceId });
 }
 
+
+// The SQL engines return these rows in no set order and the Rust store in slug order; the cases compare in slug byte order.
+const bySlug = <T extends { slug: string }>(rows: T[]): T[] => [...rows].sort((x, y) => Buffer.compare(Buffer.from(x.slug), Buffer.from(y.slug)));
+
 describe('engine parity: source-resolution reads', () => {
   parityTest('listLocalPathSources keeps archived sources and drops sources without a path', { methods: ['listLocalPathSources'] }, async (engine, backend) => {
     const empty = await engine.listLocalPathSources();
@@ -272,8 +276,8 @@ describe('engine parity: source-resolution reads', () => {
     return { before, first, after };
   });
 
-  parityTest('writeSourceCommitAnchor advances one source\'s last commit, and its newest content time only when given', {
-    methods: ['writeSourceCommitAnchor', 'writeSourceLocalPath', 'getSource', 'readPlainSyncSource', 'listSourceRecords'],
+  parityTest('advanceSourceCommit advances one source\'s last commit, and its newest content time only when given', {
+    methods: ['advanceSourceCommit', 'attachSourcePath', 'getSource', 'readPlainSyncSource', 'listSourceRecords'],
   }, async (engine, backend) => {
     await createSource(engine, backend, 'wiki');
     await createSource(engine, backend, 'other');
@@ -287,15 +291,15 @@ describe('engine parity: source-resolution reads', () => {
       };
     };
     const before = await view('wiki');
-    await engine.writeSourceCommitAnchor('wiki', 'c1', { newestContentAt: '2026-01-02T03:04:05.000Z' });
+    await engine.advanceSourceCommit('wiki', 'c1', '2026-01-02T03:04:05.000Z');
     const stamped = await view('wiki');
-    await engine.writeSourceCommitAnchor('wiki', 'c2');
+    await engine.advanceSourceCommit('wiki', 'c2');
     const kept = await view('wiki');
-    await engine.writeSourceCommitAnchor('wiki', 'c3', { newestContentAt: null });
+    await engine.advanceSourceCommit('wiki', 'c3', null);
     const cleared = await view('wiki');
-    await engine.writeSourceLocalPath('wiki', '/srv/wiki');
-    await engine.writeSourceCommitAnchor('missing', 'c9');
-    await engine.writeSourceLocalPath('missing', '/srv/missing');
+    await engine.attachSourcePath('wiki', '/srv/wiki');
+    await engine.advanceSourceCommit('missing', 'c9');
+    await engine.attachSourcePath('missing', '/srv/missing');
     const seen = { before, stamped, kept, cleared, repointed: await view('wiki'), other: await view('other'), missing: await view('missing') };
     expect(seen).toEqual({
       before: { last_commit: null, synced: false, local_path: null, plain: null, newest: null },
@@ -310,7 +314,7 @@ describe('engine parity: source-resolution reads', () => {
   });
 
   parityTest('writeSourceSyncHeartbeat stamps one source\'s last sync and leaves its commit anchor alone', {
-    methods: ['writeSourceSyncHeartbeat', 'writeSourceCommitAnchor', 'getSource'],
+    methods: ['writeSourceSyncHeartbeat', 'advanceSourceCommit', 'getSource'],
   }, async (engine, backend) => {
     await createSource(engine, backend, 'wiki');
     await createSource(engine, backend, 'other');
@@ -321,7 +325,7 @@ describe('engine parity: source-resolution reads', () => {
     const before = await view('wiki');
     await engine.writeSourceSyncHeartbeat('wiki');
     const beat = await view('wiki');
-    await engine.writeSourceCommitAnchor('wiki', 'c1');
+    await engine.advanceSourceCommit('wiki', 'c1');
     await engine.writeSourceSyncHeartbeat('wiki');
     await engine.writeSourceSyncHeartbeat('missing');
     const seen = { before, beat, anchored: await view('wiki'), other: await view('other'), missing: await view('missing') };
@@ -336,11 +340,11 @@ describe('engine parity: source-resolution reads', () => {
   });
 
   parityTest('writeSourceUpstreamObservation records one source\'s upstream and leaves its sync anchor alone', {
-    methods: ['writeSourceUpstreamObservation', 'writeSourceCommitAnchor', 'getSource'],
+    methods: ['writeSourceUpstreamObservation', 'advanceSourceCommit', 'getSource'],
   }, async (engine, backend) => {
     await createSource(engine, backend, 'wiki');
     await createSource(engine, backend, 'other');
-    await engine.writeSourceCommitAnchor('wiki', 'c1');
+    await engine.advanceSourceCommit('wiki', 'c1');
     await engine.writeSourceUpstreamObservation('wiki', { checkedAt: '2026-01-02T03:04:05.000Z', commit: 'u1', behind: 2 });
     await engine.writeSourceUpstreamObservation('wiki', { checkedAt: '2026-01-03T03:04:05.000Z', commit: 'u2', behind: null });
     await engine.writeSourceUpstreamObservation('missing', { checkedAt: '2026-01-02T03:04:05.000Z', commit: 'u9', behind: 0 });
@@ -360,7 +364,7 @@ describe('engine parity: source-resolution reads', () => {
     return seen;
   });
 
-  parityTest('listSourcePagePaths lists one source\'s live file-backed pages in slug byte order', { methods: ['listSourcePagePaths', 'refreshPageOrigin'] }, async (engine, backend) => {
+  parityTest('listSourcePathPages lists one source\'s live file-backed pages', { methods: ['listSourcePathPages', 'refreshPageOrigin'] }, async (engine, backend) => {
     await createSource(engine, backend, 'a');
     await createSource(engine, backend, 'ab');
     await seed(engine, 'a', ['notes/b', 'notes/ab', 'notes/a-c', 'notes/no-file', 'notes/gone']);
@@ -369,7 +373,7 @@ describe('engine parity: source-resolution reads', () => {
       await engine.refreshPageOrigin(slug, { sourceId, sourcePath });
     }
     await engine.softDeletePage('notes/gone', { sourceId: 'a' });
-    const seen = { a: await engine.listSourcePagePaths('a'), ab: await engine.listSourcePagePaths('ab'), missing: await engine.listSourcePagePaths('missing') };
+    const seen = { a: bySlug(await engine.listSourcePathPages('a')), ab: bySlug(await engine.listSourcePathPages('ab')), missing: await engine.listSourcePathPages('missing') };
     expect(seen).toEqual({
       a: [{ slug: 'notes/a-c', source_path: 'notes/a-c.md' }, { slug: 'notes/ab', source_path: 'notes/ab.md' }, { slug: 'notes/b', source_path: 'notes/b.md' }],
       ab: [{ slug: 'notes/z', source_path: 'notes/z.md' }],
@@ -378,8 +382,8 @@ describe('engine parity: source-resolution reads', () => {
     return seen;
   });
 
-  parityTest('the rename confirmation reads match live pages by path, slug, frontmatter id and title in slug byte order', {
-    methods: ['putPage', 'refreshPageOrigin', 'softDeletePage', 'readRenameStoredTitles', 'readLiveIdentityHolders', 'readPageIdentity'],
+  parityTest('the rename confirmation reads match live pages by path, slug, frontmatter id and title', {
+    methods: ['putPage', 'refreshPageOrigin', 'softDeletePage', 'readRenameIdentityRows', 'readLiveIdentityHolders', 'readPageIdentity'],
   }, async (engine, backend) => {
     await createSource(engine, backend, 'a');
     await createSource(engine, backend, 'b');
@@ -394,8 +398,8 @@ describe('engine parity: source-resolution reads', () => {
     await engine.refreshPageOrigin('notes/spec', { sourceId: 'a', sourcePath: 'notes/spec.md' });
     await engine.softDeletePage('notes/gone', { sourceId: 'a' });
     const seen = {
-      titles: await engine.readRenameStoredTitles('a', ['notes/spec.md'], ['notes/plain', 'notes/gone', 'notes/missing']),
-      holders: await engine.readLiveIdentityHolders('a', ['doc-1', '7', 'doc-é'], ['Spec']),
+      titles: bySlug(await engine.readRenameIdentityRows('a', ['notes/spec.md'], ['notes/plain', 'notes/gone', 'notes/missing'])),
+      holders: bySlug(await engine.readLiveIdentityHolders('a', ['doc-1', '7', 'doc-é'], ['Spec'])),
       none: await engine.readLiveIdentityHolders('a', [], []),
       otherSource: await engine.readLiveIdentityHolders('missing', ['doc-1'], ['Spec']),
       spec: await engine.readPageIdentity(spec.id),

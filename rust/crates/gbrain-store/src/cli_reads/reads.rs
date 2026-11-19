@@ -670,6 +670,7 @@ impl Store {
             {
                 continue;
             }
+            // The privacy filter is a WHERE clause: it runs before LIMIT.
             if let Some(policy) = policy
                 && page_hidden(&*read, &page, policy)?
             {

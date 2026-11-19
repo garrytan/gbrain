@@ -1,46 +1,26 @@
 /**
- * The operation checkpoint statements of `src/core/op-checkpoint.ts` (load, record, append, clear): one SQL
- * implementation for both engines. The statement text is what op-checkpoint.ts sent through `executeRaw` (the load)
- * and `executeRawDirect` (the writes, which Postgres routes to the direct session pool, #1794). The retry, the
- * chunking and the fail-loud count stay in op-checkpoint.ts. The Rust store keeps the same rows
- * (rust/docs/store/persistence.md, "Operation checkpoints").
+ * The writes of a resumable op's checkpoint (op-checkpoint.ts): replace the parent's completed keys, append child
+ * paths, delete the parent (its paths go with it by the `ON DELETE CASCADE` foreign key), delete the paths, and the
+ * seven-day purge of stale checkpoints (`purgeStaleCheckpoints`, on `executeRaw` as op-checkpoint.ts ran it; its text is
+ * the constant in ../op-checkpoint-purge-sql.ts, built from the op-name constants it exempts). The read
+ * is `readOpCheckpointKeys` (write-misc.ts). Each statement keeps the text op-checkpoint.ts ran and runs on
+ * `executeRawDirect`, the direct session pool on Postgres (#1794), so PGLite and Postgres answer exactly as before; a
+ * Rust brain answers from its store (rust/crates/gbrain-store/src/persistence/op_checkpoint.rs,
+ * rust/docs/store/persistence.md "Op checkpoints").
  */
 import type { BrainEngine } from '../engine.ts';
+import { PURGE_STALE_CHECKPOINTS_SQL } from '../op-checkpoint-purge-sql.ts';
 
-type Raw = Pick<BrainEngine, 'executeRaw'>;
 type Direct = Pick<BrainEngine, 'executeRawDirect'>;
-
-/** One checkpoint's banked keys: the `op_checkpoint_paths` rows, then the legacy `completed_keys` elements. */
-export interface OpCheckpointRead {
-  keys: string[];
-  /** The parent's `completed_keys` is not an array: it was skipped, the child rows still count. */
-  corruptParent: boolean;
-}
+type Raw = Pick<BrainEngine, 'executeRaw'>;
 
 /**
- * UNION ALL, not UNION: the caller's Set dedupes. The legacy arm is gated on `jsonb_typeof = 'array'` so a scalar
- * parent cannot fail the whole read; the third arm reports it.
- */
-const LOAD_SQL = `SELECT path AS ckey, 0 AS corrupt FROM op_checkpoint_paths
-         WHERE op = $1 AND fingerprint = $2
-       UNION ALL
-       SELECT jsonb_array_elements_text(completed_keys) AS ckey, 0 AS corrupt FROM op_checkpoints
-         WHERE op = $1 AND fingerprint = $2 AND jsonb_typeof(completed_keys) = 'array'
-       UNION ALL
-       SELECT NULL AS ckey, 1 AS corrupt FROM op_checkpoints
-         WHERE op = $1 AND fingerprint = $2 AND jsonb_typeof(completed_keys) <> 'array'`;
-
-/** `$3::text::jsonb`, not `$3::jsonb`: a JSON string bound to a jsonb param double-encodes on postgres.js (#2339). */
-const RECORD_SQL = `INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
-       VALUES ($1, $2, $3::text::jsonb, now())
-       ON CONFLICT (op, fingerprint) DO UPDATE
-         SET completed_keys = EXCLUDED.completed_keys,
-             updated_at     = now()`;
-
-/**
- * One writable-CTE statement: ensure the parent row exists (FK target) and bump its updated_at so the 7-day purge
- * tracks activity, then insert the child rows. `ON CONFLICT DO NOTHING` makes re-appending a banked path a no-op.
- * $3 binds a string[] to text[], not a jsonb param.
+ * Single writable-CTE statement (one round-trip): ensure the parent
+ * op_checkpoints row exists (FK target) and bump its updated_at so the 7-day
+ * purge tracks activity, then INSERT the delta child rows. `ON CONFLICT DO
+ * NOTHING` makes re-appending an already-banked path a no-op. $3 binds a JS
+ * string[] to a Postgres text[] (NOT a jsonb param), which postgres.js + PGLite
+ * both handle natively — so it sidesteps executeRawJsonb's array rejection.
  */
 const APPEND_PATHS_SQL = `WITH parent AS (
   INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
@@ -51,34 +31,51 @@ INSERT INTO op_checkpoint_paths (op, fingerprint, path)
 SELECT $1, $2, unnest($3::text[])
 ON CONFLICT (op, fingerprint, path) DO NOTHING`;
 
-const CLEAR_SQL = 'DELETE FROM op_checkpoints WHERE op = $1 AND fingerprint = $2';
-/** Belt and braces: the FK cascade drops the children with the parent; this drops any whose parent was absent. */
-const CLEAR_CHILDREN_SQL = 'DELETE FROM op_checkpoint_paths WHERE op = $1 AND fingerprint = $2';
-
-/** The banked keys of checkpoint (`op`, `fingerprint`), in the order the statement returns them. */
-export async function readOpCheckpoint(exec: Raw, op: string, fingerprint: string): Promise<OpCheckpointRead> {
-  const rows = await exec.executeRaw<{ ckey: unknown; corrupt: unknown }>(LOAD_SQL, [op, fingerprint]);
-  const keys: string[] = [];
-  let corruptParent = false;
-  for (const row of rows) {
-    if (Number(row.corrupt) === 1) corruptParent = true;
-    else if (typeof row.ckey === 'string') keys.push(row.ckey);
-  }
-  return { keys, corruptParent };
+/**
+ * Replaces the parent's `completed_keys` with `keys` (the caller sorts them) and stamps it now. The child paths stay.
+ * #2339: bind through `$3::text::jsonb`, NOT `$3::jsonb`. Under postgres.js `.unsafe(sql, params)` (executeRawDirect's
+ * path) a JS string bound to a `$N::jsonb` param double-encodes into a jsonb string scalar, which fails the v119
+ * `op_checkpoints_completed_keys_array CHECK (jsonb_typeof = 'array')`. Casting through `text` first parses it into a
+ * genuine jsonb array (the positional form of the CLAUDE.md double-encode trap).
+ */
+export async function writeOpCheckpointKeys(direct: Direct, op: string, fingerprint: string, keys: string[]): Promise<void> {
+  await direct.executeRawDirect(
+    `INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
+       VALUES ($1, $2, $3::text::jsonb, now())
+       ON CONFLICT (op, fingerprint) DO UPDATE
+         SET completed_keys = EXCLUDED.completed_keys,
+             updated_at     = now()`,
+    [op, fingerprint, JSON.stringify(keys)],
+  );
 }
 
-/** Replace the parent's `completed_keys` with `keys` (the child rows stay). */
-export async function writeOpCheckpointKeys(direct: Direct, op: string, fingerprint: string, keys: readonly string[]): Promise<void> {
-  await direct.executeRawDirect(RECORD_SQL, [op, fingerprint, JSON.stringify(keys)]);
+/** Creates the parent with no keys or stamps it now, then adds each path not yet banked; one statement. */
+export async function appendOpCheckpointPaths(direct: Direct, op: string, fingerprint: string, paths: string[]): Promise<void> {
+  await direct.executeRawDirect(APPEND_PATHS_SQL, [op, fingerprint, paths]);
 }
 
-/** Bank `paths` under checkpoint (`op`, `fingerprint`), creating or stamping its parent. */
-export async function appendOpCheckpointPaths(direct: Direct, op: string, fingerprint: string, paths: readonly string[]): Promise<void> {
-  await direct.executeRawDirect(APPEND_PATHS_SQL, [op, fingerprint, [...paths]]);
-}
-
-/** Drop checkpoint (`op`, `fingerprint`): the parent, then any child left without one. */
+/** Deletes the parent; the foreign key's `ON DELETE CASCADE` deletes its paths. A missing row is a no-op. */
 export async function deleteOpCheckpoint(direct: Direct, op: string, fingerprint: string): Promise<void> {
-  await direct.executeRawDirect(CLEAR_SQL, [op, fingerprint]);
-  await direct.executeRawDirect(CLEAR_CHILDREN_SQL, [op, fingerprint]);
+  await direct.executeRawDirect(
+    `DELETE FROM op_checkpoints WHERE op = $1 AND fingerprint = $2`,
+    [op, fingerprint],
+  );
+}
+
+/** Deletes the paths only: op-checkpoint.ts's belt-and-suspenders sweep for paths whose parent was somehow absent. */
+export async function deleteOpCheckpointPaths(direct: Direct, op: string, fingerprint: string): Promise<void> {
+  await direct.executeRawDirect(
+    `DELETE FROM op_checkpoint_paths WHERE op = $1 AND fingerprint = $2`,
+    [op, fingerprint],
+  );
+}
+
+/**
+ * Deletes the checkpoints whose stamp is older than `ttlDays` days and that no exemption holds, and returns how many
+ * it deleted; the `op_checkpoint_paths` foreign key (`ON DELETE CASCADE`) drops their paths. The exemptions are listed
+ * at op-checkpoint.ts `purgeStaleCheckpoints`, the caller, which turns a failure into 0.
+ */
+export async function purgeStaleCheckpoints(raw: Raw, ttlDays: number): Promise<number> {
+  const rows = await raw.executeRaw<{ count: string | number }>(PURGE_STALE_CHECKPOINTS_SQL, [String(ttlDays)]);
+  return Number(rows[0]?.count ?? 0);
 }

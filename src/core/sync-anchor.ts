@@ -263,14 +263,9 @@ export async function writeSyncAnchor(
           return;
         }
       }
-      if (newestContentEpochMs !== undefined) {
-        const iso = newestContentEpochMs === null
-          ? null
-          : new Date(newestContentEpochMs).toISOString();
-        await engine.writeSourceCommitAnchor(sourceId, value, { newestContentAt: iso });
-      } else {
-        await engine.writeSourceCommitAnchor(sourceId, value);
-      }
+      const iso = newestContentEpochMs === undefined ? undefined
+        : newestContentEpochMs === null ? null : new Date(newestContentEpochMs).toISOString();
+      await engine.advanceSourceCommit(sourceId, value, iso);
       // GBRA-133 PR 2a: the host that advanced a classic source is the one whose resident notifier watches it.
       await (await import('./notifier/store.ts')).recordLocalSyncer(engine, sourceId);
     } else {
@@ -288,7 +283,8 @@ export async function writeSyncAnchor(
         );
         return;
       }
-      await engine.writeSourceLocalPath(sourceId, value);
+      // The plain local_path write: no name and no federated change.
+      await engine.attachSourcePath(sourceId, value);
     }
     return;
   }

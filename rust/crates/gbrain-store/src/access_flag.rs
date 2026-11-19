@@ -142,7 +142,9 @@ pub(crate) fn assumed_config(assumed: bool, key: &str, stored: Option<String>) -
 /// A store write handle that sets the flag on every put of a page record with a top-level
 /// `readable_by` key, and on every put of a folder rule or a pending prefix (`access_rules.rs`,
 /// the triggers `access_rules_mark_restricted` and `access_pending_coverage_mark_restricted`), in
-/// the same write. `Store::write` hands every write closure one.
+/// the same write. It also stamps a page record put under a new key with the folder rules that
+/// cover it (`access_policy::stamp_page_put`, the trigger `pages_access_stamp_folder_rules`).
+/// `Store::write` hands every write closure one.
 pub(crate) struct FlaggingWriter<'a>(pub(crate) &'a mut dyn KvWrite);
 
 impl KvRead for FlaggingWriter<'_> {
@@ -163,10 +165,19 @@ impl KvRead for FlaggingWriter<'_> {
 
 impl KvWrite for FlaggingWriter<'_> {
     fn put(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
+        let page = is_page_record(key);
+        let prior = if page {
+            self.0
+                .get(key)?
+                .and_then(|v| crate::access_policy::page_record_id(&v))
+        } else {
+            None
+        };
         self.0.put(key, value)?;
-        if (is_page_record(key) && record_names_readers(value))
-            || crate::access_rules::marks_restricted(key)
-        {
+        if page {
+            crate::access_policy::stamp_page_put(self.0, prior, value)?;
+        }
+        if (page && record_names_readers(value)) || crate::access_rules::marks_restricted(key) {
             set_flag(self.0)?;
         }
         Ok(())
@@ -278,8 +289,8 @@ mod tests {
         out
     }
 
-    /// `bumpPageRetrievals` and the hard-delete cascade (`cascade::remove_page_rows`) write through
-    /// the flagging handle: `bump_page_retrievals` writes with `Store::write`, `Store::write` wraps
+    /// `bumpLastRetrieved` and the hard-delete cascade (`cascade::remove_page_rows`) write through
+    /// the flagging handle: `bump_last_retrieved` writes with `Store::write`, `Store::write` wraps
     /// both of its arms in `FlaggingWriter`, and no module outside this list opens a raw write
     /// handle, so the `tx` the cascade gets is always a wrapped one. A new raw `begin_write` fails
     /// here until it is reviewed and listed.
@@ -316,13 +327,13 @@ mod tests {
             2
         );
 
-        // `bump_page_retrievals` writes with `Store::write`, never a raw handle.
-        let ops = code("page_ops/retrievals.rs");
-        let bump = &ops[ops.find("pub fn bump_page_retrievals").unwrap()..];
+        // `bump_last_retrieved` writes with `Store::write`, never a raw handle.
+        let ops = code("page_ops.rs");
+        let bump = &ops[ops.find("pub fn bump_last_retrieved").unwrap()..];
         let bump = &bump[..bump.find("\n    }\n").unwrap()];
         assert!(
             bump.contains("self.write(|tx|"),
-            "bump_page_retrievals left Store::write"
+            "bump_last_retrieved left Store::write"
         );
         assert!(!bump.contains("begin_write"));
 

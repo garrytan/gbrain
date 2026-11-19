@@ -33,7 +33,6 @@ import { resolve, sep } from 'node:path';
 import { JSON_SCHEMA } from 'js-yaml';
 import { loadBoundedYaml as yamlLoad } from './data-frontmatter.ts';
 import type { BrainEngine } from './engine.ts';
-import type { LiveIdentityHolder } from './engine-sql/sources.ts';
 import { spawn } from './spawn.ts';
 import { GIT_READ_ENV, gitChildEnv } from './git-env.ts';
 import { HARDENED_GIT_ARGS, NO_LAZY_FETCH_ENV } from './hardened-git.ts';
@@ -155,7 +154,7 @@ export function explicitIdVeto(incomingId: string | null, holderId: string | nul
 }
 
 /** A live page that shares an identity value with a renamed file; `source_path` and `slug` tell whether it belongs to a path of this range. */
-export type { LiveIdentityHolder };
+export interface LiveIdentityHolder { slug: string; source_path: string | null; fm_id: string | null; title: string | null }
 
 export interface RenameIdentityInputs {
   /** Frontmatter of the base side (deleted and renamed-from paths) and the target side (added and renamed-to paths). */
@@ -283,10 +282,7 @@ export interface ConfirmRenameOpts {
  * `decideRenameIdentities`. `target` null reads the target side from the working tree (the dirty-tree manifest,
  * whose base is HEAD).
  */
-/** The typed reads a rename confirmation runs (engine-sql/sources.ts). */
-export type RenameIdentityReads = Pick<BrainEngine, 'readRenameStoredTitles' | 'readLiveIdentityHolders'>;
-
-export async function confirmRenameIdentities(engine: RenameIdentityReads, repo: string, base: string, target: string | null,
+export async function confirmRenameIdentities(engine: Pick<BrainEngine, 'readRenameIdentityRows' | 'readLiveIdentityHolders'>, repo: string, base: string, target: string | null,
   manifest: SyncManifest, opts: ConfirmRenameOpts): Promise<ConfirmedManifest> {
   if (!needsRenameConfirmation(manifest)) return manifest;
   const readable = (path: string) => isMarkdownFilePath(path) && !path.includes('\n');
@@ -317,7 +313,7 @@ export async function confirmRenameIdentities(engine: RenameIdentityReads, repo:
       return rows;
     }
   };
-  const stored = await perPath(titled, paths => engine.readRenameStoredTitles(opts.sourceId,
+  const stored = await perPath(titled, paths => engine.readRenameIdentityRows(opts.sourceId,
     [...new Set(paths.flatMap(path => [path, sourcePathOf(path)]))], paths.map(path => resolveSlugForPath(sourcePathOf(path)))));
   for (const path of titled) {
     const row = stored.find(page => page.source_path === path || page.source_path === sourcePathOf(path))
@@ -384,7 +380,7 @@ export async function redecideHeldRename(engine: Pick<BrainEngine, 'readPageIden
 }
 
 /** `computeSyncDelta` of a commit range with its renames confirmed (the commit-range half of every incremental sync). */
-export async function confirmedSyncDelta(engine: RenameIdentityReads, repo: string, from: string, to: string, opts: ConfirmRenameOpts): Promise<Exclude<SyncDeltaResult, { status: 'ok' }> | { status: 'ok'; manifest: ConfirmedManifest }> {
+export async function confirmedSyncDelta(engine: Pick<BrainEngine, 'readRenameIdentityRows' | 'readLiveIdentityHolders'>, repo: string, from: string, to: string, opts: ConfirmRenameOpts): Promise<Exclude<SyncDeltaResult, { status: 'ok' }> | { status: 'ok'; manifest: ConfirmedManifest }> {
   const delta = computeSyncDelta(repo, from, to);
   return delta.status === 'ok' ? { status: 'ok', manifest: await confirmRenameIdentities(engine, repo, from, to, delta.manifest, opts) } : delta;
 }

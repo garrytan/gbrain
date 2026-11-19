@@ -138,9 +138,8 @@ async function readHolds(engine: BrainEngine, pageId: number): Promise<{ marker:
 }
 
 /** Hold a large page's embedding until the user approves it (`reason` names why). Idempotent; never touches open spend. */
-export async function holdPageEmbedding(engine: Pick<BrainEngine, 'executeRaw'>, pageId: number, reason: string): Promise<void> {
-  await engine.executeRaw(`INSERT INTO page_embedding_budget (page_id, state, reason) VALUES ($1, 'held', $2)
-    ON CONFLICT (page_id) DO UPDATE SET state = 'held', reason = EXCLUDED.reason, updated_at = now()`, [pageId, reason]);
+export async function holdPageEmbedding(engine: Pick<BrainEngine, 'holdPageEmbedding'>, pageId: number, reason: string): Promise<void> {
+  await engine.holdPageEmbedding(pageId, reason);
 }
 
 /**
@@ -447,16 +446,17 @@ export function pageSizeState(bytes: number, frontmatter: Record<string, unknown
  * pageSizeState for stored pages of one source with a non-null state: the given slugs, or (null) every
  * such page in the source, as a full sync walked them all.
  */
-export async function readPageSizeStates(engine: Pick<BrainEngine, 'listPageSizeRows'>, sourceId: string, slugs: readonly string[] | null): Promise<Array<{ slug: string; source_id?: string } & PageSizeState>> {
-  const rows = await engine.listPageSizeRows(sourceId, { inlineMaxBytes: PAGE_INLINE_MAX_BYTES, slugs });
+export async function readPageSizeStates(engine: Pick<BrainEngine, 'readPageSizeRows'>, sourceId: string, slugs: readonly string[] | null): Promise<Array<{ slug: string; source_id?: string } & PageSizeState>> {
+  if (slugs?.length === 0) return [];
+  const rows = await engine.readPageSizeRows(sourceId, PAGE_INLINE_MAX_BYTES, slugs);
   return rows.flatMap(row => {
-    const state = pageSizeState(Number(row.bytes), row.frontmatter, row.state ? { state: row.state as PageBudgetState, reason: row.reason } : null, row.segmented);
+    const state = pageSizeState(Number(row.bytes), row.frontmatter, row.state ? { state: row.state, reason: row.reason } : null, row.segmented === true);
     return state ? [{ slug: row.slug, ...(state.embedding === 'held' ? { source_id: sourceId } : {}), ...state }] : [];
   });
 }
 
 /** The receipt field for one written page: `{ size_state }` for a large or embed_skip page, else nothing (no query). */
-export async function sizeStateField(engine: Pick<BrainEngine, 'listPageSizeRows'>, sourceId: string, slug: string,
+export async function sizeStateField(engine: Pick<BrainEngine, 'readPageSizeRows'>, sourceId: string, slug: string,
   page: { body_storage?: BodyStorage | null; body_bytes?: number | null; compiled_truth?: string | null; timeline?: string | null; frontmatter?: Record<string, unknown> | null } | null | undefined): Promise<{ size_state?: PageSizeState }> {
   if (!page) return {};
   const bytes = pageBodyBytes(page);

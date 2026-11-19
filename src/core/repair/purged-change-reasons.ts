@@ -62,8 +62,7 @@ async function readCommit(gitRoot: string, sha: string): Promise<TrailerCommit |
 
 /** Every stored change reason of the source that is the trailer text of one of its tombstoned (commit, path) pairs. Read-only. */
 export async function findLeakedChangeReasons(engine: BrainEngine, sourceId: string): Promise<LeakedReasonScan> {
-  const tombstones = await engine.executeRaw<{ commit_sha: string; path: string }>(
-    'SELECT commit_sha, path FROM reason_purge_tombstones WHERE source_id = $1 ORDER BY commit_sha, path', [sourceId]);
+  const tombstones = await engine.readReasonPurgeTombstones(sourceId);
   const root = await checkoutRoot(engine, sourceId);
   if (!root) return { rows: [], unreadable_commit: tombstones.length, without_checkout: true };
   const repo = tombstones.length ? gitTopLevel(root) : null;

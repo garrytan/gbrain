@@ -62,7 +62,7 @@ function view(result: SyncResult) {
 
 describe('engine parity: a whole sync run', () => {
   parityTest('performSync gives the same first, incremental and up-to-date runs and advances the sync anchor', {
-    methods: ['writeSourceCommitAnchor', 'getSource', 'listSourcePagePaths'],
+    methods: ['advanceSourceCommit', 'getSource', 'listSourcePathPages'],
     timeout: 120_000,
   }, async (engine, backend) => {
     tick = 0;
@@ -94,7 +94,7 @@ describe('engine parity: a whole sync run', () => {
       const third = view(await performSync(engine, opts));
       const pages: Record<string, boolean> = {};
       for (const slug of ['notes/a', 'notes/b', 'notes/c', 'notes/skip']) pages[slug] = (await engine.getPage(slug, { sourceId: 'notes' })) !== null;
-      const paths = await engine.listSourcePagePaths('notes');
+      const paths = (await engine.listSourcePathPages('notes')).sort((x, y) => Buffer.compare(Buffer.from(x.slug), Buffer.from(y.slug)));
       const seen = { first, second, third, anchors: { afterFirst: afterFirst === c1, afterSecond: afterSecond === c2 }, pages, paths };
       expect({ statuses: [first.status, second.status, third.status], anchors: seen.anchors })
         .toEqual({ statuses: ['first_sync', 'synced', 'up_to_date'], anchors: { afterFirst: true, afterSecond: true } });

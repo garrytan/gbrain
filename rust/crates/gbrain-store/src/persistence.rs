@@ -11,13 +11,19 @@
 //! | Key | Record |
 //! |---|---|
 //! | `d 0x01 <counter key>` | one `persistence_counters` row (`CounterRecord`), JSON |
-//! | `d 0x02 <op> 0x00 <fingerprint>` | one `op_checkpoints` row (`housekeeping.rs`, `op_checkpoints.rs`), JSON |
+//! | `d 0x02 <op> 0x00 <fingerprint>` | one housekeeping `op_checkpoints` row (`housekeeping.rs`), JSON |
 //! | `d 0x03 <principal_id> 0x00 <request_id>` | one `persistence_topology_changes` row (`topology.rs`), JSON |
 //! | `d 0x04 <source incarnation> 0x00 <slug>` | one `page_projection_jobs` row (`projection_queue.rs`), JSON |
-//! | `d 0x05 <op> 0x00 <fingerprint> 0x00 <path>` | one `op_checkpoint_paths` row (`op_checkpoints.rs`), empty |
+//! | `d 0x07 <op> 0x00 <fingerprint> 0x00 <path>` | one `op_checkpoint_paths` row (`op_checkpoint.rs`), empty |
+//! | `d 0x08 0x01 <host_id>` | one `sync_notifier_leases` row (`notifier.rs`), JSON |
+//! | `d 0x08 0x02 <source_id>` | one `sync_notifier_sources` row (`notifier.rs`), JSON |
+//! | `d 0x08 0x03 <source_id> 0x00 <intent>` | one `sync_wanted_markers` row (`notifier.rs`), JSON |
 //!
-//! The `d 0x02` rows are the whole `op_checkpoints` table: the housekeeping turn and the
-//! operation checkpoints (`op_checkpoints.rs`) keep the same row shape.
+//! `d 0x05` and `d 0x06` are taken by the `persistence_effects` rows and their claim-order index
+//! (`effects.rs`) on the branches that hold them; no other family here uses them.
+//!
+//! A resumable op's checkpoint parent (`op_checkpoint.rs`) is an `op_checkpoints` row, so it is
+//! stored under `d 0x02` with the housekeeping turns, as Postgres keeps both in one table.
 //!
 //! A counter key is the text of `persistence_counters.key` (`brain`, `principal:<kind>:<id>`); it
 //! cannot hold NUL, as Postgres text cannot.
@@ -50,11 +56,15 @@ use serde_json::{Map, Value, json};
 
 mod effect_scans;
 mod housekeeping;
-mod op_checkpoints;
+mod notifier;
+mod op_checkpoint;
 mod projection_queue;
 mod topology;
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn};
-pub use op_checkpoints::OpCheckpointRead;
+pub(crate) use notifier::remove_source_rows as remove_notifier_source_rows;
+pub use notifier::{
+    NotifierCoverage, NotifierLeaseClaim, NotifierStateError, NotifierStatePatch, WantedMarkerInput,
+};
 pub use projection_queue::{
     ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };
@@ -69,6 +79,12 @@ pub(crate) const HOUSEKEEPING: u8 = 0x02;
 const TOPOLOGY: u8 = 0x03;
 /// The byte after `keys::PERSISTENCE` of a page projection job (persistence/projection_queue.rs).
 const QUEUE: u8 = 0x04;
+/// The byte after `keys::PERSISTENCE` of a resumable op's checkpoint path (persistence/op_checkpoint.rs).
+/// Not 0x05 or 0x06: those are the `persistence_effects` rows and their claim-order index.
+const CHECKPOINT_PATH: u8 = 0x07;
+/// The byte after `keys::PERSISTENCE` of a commit notifier row (persistence/notifier.rs). 0x05 to
+/// 0x07 are reserved for effect rows and operation checkpoint paths.
+const NOTIFIER: u8 = 0x08;
 
 /// `persistence_requests.state` CHECK (with `deferred`, added by a later migration).
 const REQUEST_STATES: &[&str] = &[
@@ -219,7 +235,7 @@ fn extra_bool(record: &RequestRecord, column: &str) -> bool {
 }
 
 /// A `::uuid` parameter: lower-cased; anything else is refused, as Postgres refuses the cast.
-fn uuid_param(text: &str, what: &str) -> Result<String> {
+pub(crate) fn uuid_param(text: &str, what: &str) -> Result<String> {
     if is_uuid(text) {
         Ok(text.to_lowercase())
     } else {

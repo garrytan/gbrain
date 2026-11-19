@@ -49,9 +49,9 @@ describe('engine parity: large-page write guard', () => {
     return { sizes, otherSource };
   });
 
-  parityTest('listPageSizeRows selects embed_skip, over-limit and segmented live pages in slug byte order', {
+  parityTest('readPageSizeRows selects embed_skip, over-limit and segmented live pages', {
     methods: ['putPage', 'softDeletePage', 'createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'openBodyStaging',
-      'stageSegmentTexts', 'stageManifestRows', 'flipBodyGeneration', 'setBodyStagingState', 'transaction', 'listPageSizeRows'],
+      'stageSegmentTexts', 'stageManifestRows', 'flipBodyGeneration', 'setBodyStagingState', 'transaction', 'readPageSizeRows'],
   }, async (engine) => {
     await engine.putPage('notes/sz-small', { ...NOTE, compiled_truth: 'tiny', timeline: '' });
     await engine.putPage('notes/sz-big', { ...NOTE, compiled_truth: 'café body over the limit', timeline: '- € event' });
@@ -59,14 +59,15 @@ describe('engine parity: large-page write guard', () => {
     await engine.putPage('notes/sz-gone', { ...NOTE, compiled_truth: 'gone body over the limit', timeline: '' });
     await engine.softDeletePage('notes/sz-gone');
     await publishSegmentedPage(engine, 'notes/sz-segmented', [ONE, TWO]);
-    const opts = { inlineMaxBytes: 12 };
-    const view = (rows: Awaited<ReturnType<typeof engine.listPageSizeRows>>) =>
-      rows.map(r => ({ slug: r.slug, bytes: r.bytes, segmented: r.segmented, skip: r.frontmatter?.embed_skip ?? null, state: r.state, reason: r.reason }));
+    // Compared in slug byte order: the statement's ORDER BY p.slug follows the database collation on Postgres
+    // (en_US puts notes/sz-big before notes/sz-b-skip), while PGLite and the Rust store order by bytes.
+    const view = (rows: Awaited<ReturnType<typeof engine.readPageSizeRows>>) =>
+      [...rows].sort((a, b) => Buffer.compare(Buffer.from(a.slug), Buffer.from(b.slug))).map(r => ({ slug: r.slug, bytes: r.bytes === null ? null : Number(r.bytes), segmented: r.segmented, skip: r.frontmatter?.embed_skip ?? null, state: r.state, reason: r.reason }));
     const seen = {
-      all: view(await engine.listPageSizeRows('default', { ...opts, slugs: null })),
-      some: view(await engine.listPageSizeRows('default', { ...opts, slugs: ['notes/sz-big', 'notes/sz-small', 'notes/sz-gone', 'notes/sz-missing'] })),
-      none: await engine.listPageSizeRows('default', { ...opts, slugs: [] }),
-      otherSource: await engine.listPageSizeRows('parity-missing', { ...opts, slugs: null }),
+      all: view(await engine.readPageSizeRows('default', 12, null)),
+      some: view(await engine.readPageSizeRows('default', 12, ['notes/sz-big', 'notes/sz-small', 'notes/sz-gone', 'notes/sz-missing'])),
+      none: await engine.readPageSizeRows('default', 12, []),
+      otherSource: await engine.readPageSizeRows('parity-missing', 12, null),
     };
     const big = Buffer.byteLength('café body over the limit') + Buffer.byteLength('- € event');
     expect(seen).toEqual({

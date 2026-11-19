@@ -19,13 +19,15 @@ advances them. Records written before these fields existed read them as absent.
 | `brain.setSourceArchived(id, archived)` | `boolean`, whether the source exists | `sources archive` and `restore` |
 | `brain.insertSource(id, name, localPath, config)` | the new `SourceRow`; a taken `id` or `name` refuses `constraint_violation` and writes nothing; ids are 1 to 32 of `a-z0-9-` (`invalid_argument` otherwise) | `insertSource` (`sources add`) |
 | `brain.countRepoBoundSources()` | `number`, the sources that are not archived and have a non-empty `local_path` | `countRepoBoundSources` (the readiness sync probe) |
-| `brain.listSourcePagePaths(sourceId)` | `{ slug, source_path }[]`, the source's live pages that record a source path, in slug byte order | `listSourcePagePaths` (the full sync's stale-page reconcile) |
-| `brain.readRenameStoredTitles(sourceId, paths, slugs)` | `{ slug, source_path, title }[]`, the source's live pages whose source path is in `paths` or slug in `slugs`, in slug byte order | `readRenameStoredTitles` (a sync's rename confirmation) |
-| `brain.readLiveIdentityHolders(sourceId, ids, titles)` | `{ slug, source_path, fm_id, title }[]`, the source's live pages whose frontmatter `id` (as `->>` text) is in `ids` or title in `titles`, in slug byte order | `readLiveIdentityHolders` (a sync's rename confirmation) |
+| `brain.listSourcePathPages(sourceId)` | `{ slug, source_path }[]`, the source's live pages that record a source path, in slug byte order | `listSourcePathPages` (the full sync's stale-page reconcile) |
+| `brain.readRenameIdentityRows(sourceId, paths, slugs)` | `{ slug, source_path, title }[]`, the source's live pages whose source path is in `paths` or slug in `slugs`, in slug byte order | `readRenameIdentityRows` (a sync's rename confirmation) |
+| `brain.readLiveIdentityHolders(sourceId, ids, titles)` | `{ slug, source_path, fm_id, title }[]`, the source's live pages whose frontmatter `id` (a string as is, any other value as its JSON text) is in `ids` or title in `titles`, in slug byte order | `readLiveIdentityHolders` (a sync's rename confirmation) |
 | `brain.readPageIdentity(pageId)` | `{ fm_id, title }` of a live page, or `null` | `readPageIdentity` (a held rename decided again) |
+| `brain.holdPageEmbedding(pageId, reason)` | `null`; sets the page's embedding hold to `{ state: 'held', reason }`, replacing a held reason; an unknown page id refuses `page_not_found`; a hard page delete drops the hold | `holdPageEmbedding` (page-embedding-budget.ts) |
+| `brain.readReasonPurgeTombstones(sourceId, pair)` | `{ commit_sha, path }[]`, the source's purged change-reason pairs by commit then path, or only `pair` (when not `null`) if it is stored | `readReasonPurgeTombstones` (`reason_purge_tombstones`) |
+| `brain.writeReasonPurgeTombstones(sourceId, pairs)` | `number`, the pairs added; a stored or repeated pair adds nothing; an unknown source refuses `source_not_found` and stores nothing; a source delete drops its pairs | `writeReasonPurgeTombstones` (facts purge) |
 | `brain.countSourcePages(sourceId, includeDeleted)` | `number`, the source's pages; soft-deleted pages count only with `includeDeleted`; an unknown source has none | `countSourcePages` (`sources list`, `status`, `remove`) |
-| `brain.writeSourceCommitAnchor(sourceId, commit, stampNewest, newestContentAt)` | `undefined`; sets `last_commit` and stamps `last_sync_at` now; with `stampNewest` also sets `newest_content_at` (an ISO time, or `null` to clear it); an unknown source changes nothing | `writeSourceCommitAnchor` (`writeSyncAnchor` of `src/core/sync-anchor.ts`) |
-| `brain.writeSourceLocalPath(sourceId, localPath)` | `undefined`; sets `local_path`; an unknown source changes nothing | `writeSourceLocalPath` (`writeSyncAnchor`, the `repo_path` repoint) |
+| `brain.advanceSourceCommit(sourceId, commit, setNewest, newestContentAt)` | `undefined`; sets `last_commit` and stamps `last_sync_at` now; with `setNewest` also sets `newest_content_at` (an ISO time, or `null` to clear it); an unknown source changes nothing | `advanceSourceCommit` (`writeSyncAnchor` of `src/core/sync-anchor.ts`) |
 | `brain.writeSourceSyncHeartbeat(sourceId)` | `undefined`; sets `last_sync_at` to the store clock and leaves `last_commit` alone; an unknown source changes nothing | `writeSourceSyncHeartbeat` (the 0-change sync heartbeat in preflight) |
 | `brain.writeSourceUpstreamObservation(sourceId, checkedAt, commit, behind)` | `undefined`; sets `upstream_checked_at` (an ISO time; anything else refuses `invalid`), `upstream_commit` and `upstream_behind` (null allowed); an unknown source changes nothing | `writeSourceUpstreamObservation` (`recordUpstreamObservation`, after every sync) |
 
@@ -48,8 +50,17 @@ The source members below behave differently on the Rust engine. Each difference 
   with `FOR UPDATE`; no parity case checks that lock.
 - `readSourceRow` reads from `listSourceRecords`. A caller that needs the incarnation makes one
   `readSourceIncarnation` call per source.
-- `writeSourceCommitAnchor` stamps `last_sync_at` from the process clock. The SQL engines use
-  the database clock (`now()`).
+- `advanceSourceCommit` stamps `last_sync_at` with the process clock. The SQL engines use the
+  database clock (`now()`). `getSource`, `readPlainSyncSource` and `listSourceRecords` read the
+  stored `last_commit`; `listSourceRecords` also reads the stored `newest_content_at`.
+- The store keeps only the `state` and `reason` of a page's `page_embedding_budget` row
+  (`holdPageEmbedding`, key tag `h`). The spend columns (signature, spent, reserved, cap) have no
+  record: the embedding plan that writes them still runs raw SQL and refuses on this engine.
+  `readPageSizeRows` reads the kept hold, so it reports the same `state` and `reason` as the SQL
+  engines and lists a held page of any size.
+- `readReasonPurgeTombstones` sorts pairs by commit, then path, in byte order. The SQL engines
+  sort them by the database collation. The callers put the pairs in a set or a map, so no caller
+  reaches this difference.
 - Restore-target and connector status sort sources by id in byte order on every engine.
 - `insertSource` refuses an id outside `[a-z0-9-]{1,32}` with `invalid_argument`. The SQL engines
   have no check on the id column, so they accept such an id. `sources add` validates the id

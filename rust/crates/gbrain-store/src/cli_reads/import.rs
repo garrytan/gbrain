@@ -4,7 +4,7 @@
 //! answer the same questions from the store's records.
 //!
 //! What the store does not keep, and what each read answers for it (rust/docs/store/cli-reads-import.md):
-//! - a source's `last_commit` and `newest_content_at` are the sync anchor's last advance (null before it);
+//! - a source's `last_commit` and `newest_content_at` are the ones `advance_source_commit` stored;
 //! - there are no source ingestion receipts: `hasCompanyBrainReceipt` is false;
 //! - there is no `guest_sources` table and no row-level security: a guest source is one whose
 //!   config says `guest: true`, `readGuestSourceRow` is never hidden and finds no row;

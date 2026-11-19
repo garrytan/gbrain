@@ -79,6 +79,7 @@ const VETTED_BUILDERS: Record<string, string> = {
   edgeTrimSql: 'src/core/edge-whitespace.ts: btrim of a code-provided constant expression over the constant EDGE_WHITESPACE set; no values',
 
   // trust-tier-reads.ts builders
+  versionPrivacySql: 'src/core/engine-sql/pages.ts: the get_versions excludePrivate predicate, built only from the vetted privatePagesFilterForCaller, callerReadersAllowedSql, privacyForCaller and privateSnapshotFilterFragment builders over the constant aliases p and pv, plus one constant pinned_question conjunct; no values',
   remoteReadFloorSql: 'src/core/search/private-visibility.ts: privatePagesFilterFragment, plus the constant labelledOnlySql conjunct for a labelled-only caller, over a caller page alias; no values',
 
   // facts-repair.ts builders
