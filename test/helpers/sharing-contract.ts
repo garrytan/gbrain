@@ -389,12 +389,25 @@ export function installKeylessEmbeddings(): () => void {
   return () => { __setEmbedTransportForTests(null); resetGateway(); };
 }
 
+/**
+ * The requester-scope gate gives an unbound token its grace only when it was created in an earlier whole second than
+ * access.serves_since (GST-3199: a token minted in the same second the brain starts serving several people is refused
+ * instead). That same-second refusal is a bug, not the contract, so every change starts in a later second than the
+ * last token minted, read on the database's own clock.
+ */
+async function pastMintSecond(b: Brain): Promise<void> {
+  const second = async (sql: string) => Number((await b.engine.executeRaw(sql))[0]?.s ?? 0);
+  const minted = await second('SELECT floor(extract(epoch FROM max(created_at))) AS s FROM access_tokens');
+  while (await second('SELECT floor(extract(epoch FROM clock_timestamp())) AS s') <= minted) await Bun.sleep(20);
+}
+
 /** Runs one scenario on a fresh brain and returns every cell plus what gbrain reported about the brain afterwards. */
 export async function runScenario(s: Scenario, open: EngineFactory, only?: ReadonlySet<ReadPath>): Promise<{ cells: Cell[]; archiveRescope: unknown }> {
   const b = await makeBrain({ ownerSet: s.ownerSet ?? true, otherDisabled: s.otherDisabled }, open);
   try {
     await G.softDeleteSource(b.engine, 'old-project');
     const before = await matrix(b, s.name, 'before', { shared: false, ownerSet: s.ownerSet ?? true, otherEnabled: true }, only);
+    await pastMintSecond(b);
     await s.change(b);
     if (s.mintOther && !b.tokens.member_http) await mint(b, 'member_http', OTHER);
     const after = await matrix(b, s.name, 'after', { shared: s.shared, ownerSet: true, otherEnabled: s.otherEnabledAfter ?? true }, only);
