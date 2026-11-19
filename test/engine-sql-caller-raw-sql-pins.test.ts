@@ -13,13 +13,15 @@
 import { describe, expect, test } from 'bun:test';
 import { runCase, withPinnedSqlEnvironment, type SqlCase } from './helpers/postgres-engine-sql-cases.ts';
 import { edgeTrimSql } from '../src/core/edge-whitespace.ts';
+import { retiredPageSql } from '../src/core/entities/resolve.ts';
+import { callerAccessAllowedSql, privatePagesFilterForCaller, remoteReadFloorSql } from '../src/core/search/private-visibility.ts';
 
 interface Pin {
   /** The caller site the statement came from, at 7470c703ed. */
   from: string;
   case: SqlCase;
-  /** The statement texts, in order, as the caller sent them. */
-  texts: string[];
+  /** The statement texts, in order, as the caller sent them; a function renders them in the pinned environment. */
+  texts: string[] | (() => string[]);
 }
 
 const PINS: Pin[] = [
@@ -57,15 +59,43 @@ const PINS: Pin[] = [
       UNION ALL SELECT '!unreadable', '' WHERE gbrain_access_state_unreadable()) c ORDER BY source_id, prefix`,
     ],
   },
+  ...([
+    ['none', () => ''],
+    ['caller', () => `AND ${privatePagesFilterForCaller('p')}`],
+    ['floor', () => `AND ${remoteReadFloorSql('p')}`],
+    ['member_access', () => `AND ${callerAccessAllowedSql('p')}`],
+  ] as const).map(([privacy, predicate]): Pin => ({
+    from: `src/core/entities/resolve.ts:246 followRetirement (privacy ${privacy})`,
+    case: { method: 'readRetirementHop', variant: privacy, run: e => e.readRetirementHop('default', 'people/alice-example', privacy) },
+    texts: () => [`SELECT p.slug, p.type, ${retiredPageSql('p')} AS retired,
+              COALESCE(NULLIF(btrim(p.frontmatter->>'superseded_by'), ''), NULLIF(btrim(p.frontmatter->>'merged_into'), '')) AS target
+         FROM pages p
+        WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL ${predicate()}
+        LIMIT 1`],
+  })),
+  {
+    from: 'src/core/access/owner-only.ts:56 ownerOnlySourcesPresent',
+    case: { method: 'readOwnerOnlySourcesPresent', variant: 'default', run: e => e.readOwnerOnlySourcesPresent() },
+    texts: [`SELECT EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id >= '' AND (read_source.config->>'kind' IN ('imessage') OR read_source.config->>'owner_only' = 'true')) AS present`],
+  },
+  {
+    from: 'src/core/access/owner-only.ts:66 sourceIsOwnerOnly',
+    case: { method: 'readOwnerOnlySourceConfig', variant: 'default', run: e => e.readOwnerOnlySourceConfig('default') },
+    texts: ['SELECT config FROM sources WHERE id = $1'],
+  },
 ];
 
 describe('caller raw SQL moved into typed members keeps its Postgres text byte for byte', () => {
   for (const pin of PINS) {
     test(`${pin.case.method}/${pin.case.variant} (${pin.from})`, async () => {
-      const capture = await withPinnedSqlEnvironment(undefined, () => runCase(pin.case));
+      let expected: string[] = [];
+      const capture = await withPinnedSqlEnvironment(undefined, () => {
+        expected = typeof pin.texts === 'function' ? pin.texts() : pin.texts;
+        return runCase(pin.case);
+      });
       expect(capture.error).toBeUndefined();
       const sent = capture.trace.filter(s => s.kind === 'query').map(s => s.text);
-      expect(sent).toEqual(pin.texts);
+      expect(sent).toEqual(expected);
     });
   }
 });

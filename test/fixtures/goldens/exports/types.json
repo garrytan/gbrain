@@ -561,6 +561,8 @@
           "readMentionLastPass: (sourceId?: string | null) => Promise<string | null>",
           "readOauthClient: (clientId: string) => Promise<OauthClientRow | null>",
           "readOldestWaitingAge: (queue: string, opts?: { signal?: AbortSignal; }) => Promise<number | null>",
+          "readOwnerOnlySourceConfig: (sourceId: string) => Promise<{ config: unknown; } | null>",
+          "readOwnerOnlySourcesPresent: () => Promise<boolean>",
           "readPageAliasRows: (sourceIds: readonly string[], slugs: readonly string[]) => Promise<PageAliasRow[]>",
           "readPageHiddenFromCaller: (sourceId: string, slug: string, opts: { policy: PagePolicyPart; }) => Promise<boolean>",
           "readPageOrigin: (target: PageOriginTarget) => Promise<PageOriginRow | null>",
@@ -580,6 +582,7 @@
           "readQueuedSpendRows: (spec: { legacyPrefixes: Readonly<Record<string, readonly string[]>>; waitMs: number; }) => Promise<QueuedSpendRows>",
           "readRankCoverage: (opts: RankCoverageStatementOpts, timeoutMs: number) => Promise<RankCoverageRow>",
           "readReceiptBudget: (retentionKey: string, floorDays: number) => Promise<ReceiptBudget>",
+          "readRetirementHop: (sourceId: string, slug: string, privacy: RetirementPrivacy) => Promise<RetirementHopRow | null>",
           "readRowTrustRows: (lookup: RowTrustLookup) => Promise<RowTrustRow[]>",
           "readSearchStats: (cutoffDate: string) => Promise<SearchTelemetryRow[]>",
           "readSegmentDerivations: (pageId: number, opts?: { kind?: SegmentDerivationKind; occurrenceIds?: readonly number[]; }) => Promise<SegmentDerivationRow[]>",
@@ -778,7 +781,7 @@
         "kind": "type",
         "name": "CRMode",
         "signature": [
-          "\"title\" | \"none\" | \"per_chunk_synopsis\""
+          "\"none\" | \"title\" | \"per_chunk_synopsis\""
         ]
       },
       {
@@ -1417,7 +1420,7 @@
           "body_storage?: BodyStorage | undefined",
           "compiled_truth: string",
           "content_hash?: string | undefined",
-          "contextual_retrieval_mode?: \"title\" | \"none\" | \"per_chunk_synopsis\" | null | undefined",
+          "contextual_retrieval_mode?: \"none\" | \"title\" | \"per_chunk_synopsis\" | null | undefined",
           "corpus_generation?: string | null | undefined",
           "created_at: Date",
           "deleted_at?: Date | null | undefined",
@@ -2128,6 +2131,8 @@
           "readMentionLastPass: (sourceId?: string | null) => Promise<string | null>",
           "readOauthClient: (clientId: string) => Promise<OauthClientRow | null>",
           "readOldestWaitingAge: (queue: string, opts?: { signal?: AbortSignal; }) => Promise<number | null>",
+          "readOwnerOnlySourceConfig: (sourceId: string) => Promise<{ config: unknown; } | null>",
+          "readOwnerOnlySourcesPresent: () => Promise<boolean>",
           "readPageAliasRows: (sourceIds: readonly string[], slugs: readonly string[]) => Promise<PageAliasRow[]>",
           "readPageHiddenFromCaller: (sourceId: string, slug: string, opts: { policy: PagePolicyPart; }) => Promise<boolean>",
           "readPageOrigin: (target: PageOriginTarget) => Promise<PageOriginRow | null>",
@@ -2147,6 +2152,7 @@
           "readQueuedSpendRows: (spec: { legacyPrefixes: Readonly<Record<string, readonly string[]>>; waitMs: number; }) => Promise<QueuedSpendRows>",
           "readRankCoverage: (opts: RankCoverageStatementOpts, timeoutMs: number) => Promise<RankCoverageRow>",
           "readReceiptBudget: (retentionKey: string, floorDays: number) => Promise<ReceiptBudget>",
+          "readRetirementHop: (sourceId: string, slug: string, privacy: RetirementPrivacy) => Promise<RetirementHopRow | null>",
           "readRowTrustRows: (lookup: RowTrustLookup) => Promise<RowTrustRow[]>",
           "readSearchStats: (cutoffDate: string) => Promise<SearchTelemetryRow[]>",
           "readSegmentDerivations: (pageId: number, opts?: { kind?: SegmentDerivationKind; occurrenceIds?: readonly number[]; }) => Promise<SegmentDerivationRow[]>",
@@ -5121,6 +5127,8 @@
           "readMentionLastPass: (sourceId?: string | null) => Promise<string | null>",
           "readOauthClient: (clientId: string) => Promise<OauthClientRow | null>",
           "readOldestWaitingAge: (queue: string, opts?: { signal?: AbortSignal; }) => Promise<number | null>",
+          "readOwnerOnlySourceConfig: (sourceId: string) => Promise<{ config: unknown; } | null>",
+          "readOwnerOnlySourcesPresent: () => Promise<boolean>",
           "readPageAliasRows: (sourceIds: readonly string[], slugs: readonly string[]) => Promise<PageAliasRow[]>",
           "readPageHiddenFromCaller: (sourceId: string, slug: string, opts: { policy: PagePolicyPart; }) => Promise<boolean>",
           "readPageOrigin: (target: PageOriginTarget) => Promise<PageOriginRow | null>",
@@ -5140,6 +5148,7 @@
           "readQueuedSpendRows: (spec: { legacyPrefixes: Readonly<Record<string, readonly string[]>>; waitMs: number; }) => Promise<QueuedSpendRows>",
           "readRankCoverage: (opts: RankCoverageStatementOpts, timeoutMs: number) => Promise<RankCoverageRow>",
           "readReceiptBudget: (retentionKey: string, floorDays: number) => Promise<ReceiptBudget>",
+          "readRetirementHop: (sourceId: string, slug: string, privacy: RetirementPrivacy) => Promise<RetirementHopRow | null>",
           "readRowTrustRows: (lookup: RowTrustLookup) => Promise<RowTrustRow[]>",
           "readSearchStats: (cutoffDate: string) => Promise<SearchTelemetryRow[]>",
           "readSegmentDerivations: (pageId: number, opts?: { kind?: SegmentDerivationKind; occurrenceIds?: readonly number[]; }) => Promise<SegmentDerivationRow[]>",
@@ -9276,6 +9285,8 @@
           "readMentionLastPass: (sourceId?: string | null) => Promise<string | null>",
           "readOauthClient: (clientId: string) => Promise<oauthClients.OauthClientRow | null>",
           "readOldestWaitingAge: (queue: string, opts?: { signal?: AbortSignal; }) => Promise<number | null>",
+          "readOwnerOnlySourceConfig: (sourceId: string) => Promise<{ config: unknown; } | null>",
+          "readOwnerOnlySourcesPresent: () => Promise<boolean>",
           "readPageAliasRows: (sourceIds: readonly string[], slugs: readonly string[]) => Promise<aliasFanoutReadsImpl.PageAliasRow[]>",
           "readPageHiddenFromCaller: (sourceId: string, slug: string, opts: { policy: pageVisibilityImpl.PagePolicyPart; }) => Promise<boolean>",
           "readPageOrigin: (target: writeGuardsImpl.PageOriginTarget) => Promise<writeGuardsImpl.PageOriginRow | null>",
@@ -9295,6 +9306,7 @@
           "readQueuedSpendRows: (spec: { legacyPrefixes: Readonly<Record<string, readonly string[]>>; waitMs: number; }) => Promise<jobsChecks.QueuedSpendRows>",
           "readRankCoverage: (opts: RankCoverageStatementOpts, timeoutMs: number) => Promise<cliReadsOpsImpl.RankCoverageRow>",
           "readReceiptBudget: (retentionKey: string, floorDays: number) => Promise<housekeepingImpl.ReceiptBudget>",
+          "readRetirementHop: (sourceId: string, slug: string, privacy: entityReadsImpl.RetirementPrivacy) => Promise<entityReadsImpl.RetirementHopRow | null>",
           "readRowTrustRows: (lookup: RowTrustLookup) => Promise<RowTrustRow[]>",
           "readSearchStats: (cutoffDate: string) => Promise<telemetryImpl.SearchTelemetryRow[]>",
           "readSegmentDerivations: (pageId: number, opts?: { kind?: SegmentDerivationKind; occurrenceIds?: readonly number[]; }) => Promise<SegmentDerivationRow[]>",
@@ -11533,7 +11545,7 @@
         "kind": "type",
         "name": "CRMode",
         "signature": [
-          "\"title\" | \"none\" | \"per_chunk_synopsis\""
+          "\"none\" | \"title\" | \"per_chunk_synopsis\""
         ]
       },
       {
@@ -12172,7 +12184,7 @@
           "body_storage?: BodyStorage | undefined",
           "compiled_truth: string",
           "content_hash?: string | undefined",
-          "contextual_retrieval_mode?: \"title\" | \"none\" | \"per_chunk_synopsis\" | null | undefined",
+          "contextual_retrieval_mode?: \"none\" | \"title\" | \"per_chunk_synopsis\" | null | undefined",
           "corpus_generation?: string | null | undefined",
           "created_at: Date",
           "deleted_at?: Date | null | undefined",

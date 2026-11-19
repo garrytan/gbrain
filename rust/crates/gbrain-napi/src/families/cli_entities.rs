@@ -62,6 +62,26 @@ impl Brain {
         self.run(env, move |s| s.find_exact_slug(&source_id, &slugs, retired))
     }
 
+    /// `readRetirementHop(sourceId, slug, policy)`: the live page with its retirement and redirect
+    /// target, or `null`; a `null` policy reads every page.
+    #[napi]
+    pub fn read_retirement_hop<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+        policy: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let policy = policy
+                .map(|v| {
+                    required::<gbrain_store::facts::PrivacyPolicy>(v, "readRetirementHop policy")
+                })
+                .transpose()?;
+            s.read_retirement_hop(&source_id, &slug, policy.as_ref())
+        })
+    }
+
     /// `readIgnoredPrivacyLabelPages(sourceId, { slugs } | { since })`: labelled candidate pages.
     #[napi]
     pub fn read_ignored_privacy_label_pages<'env>(

@@ -415,7 +415,7 @@ export async function selectEntityCandidates(
     const variants = opts.variants && await nameVariantsEnabled(engine)
       ? await resolveNameVariant<CardPageRow>(engine, sourceId, trimmed, {
         selectColumns: CARD_ROW_COLUMNS, privatePredicate, entityTypes: scope.entityTypes, omitQuarantined: opts.omitQuarantined,
-        retirementPrivacy: scope.excludePrivate ? ` AND ${privatePagesFilterForCaller('p')}` : '' })
+        retirementPrivacy: scope.excludePrivate ? 'caller' : 'none' })
       : { matches: [] };
     const variantSuggestions = (matches: typeof variants.matches): EntitySuggestion[] => matches.map(m => ({
       slug: m.row.slug, title: m.row.title ?? m.row.slug, create_safety: 'exists', source_id: sourceId }));
@@ -522,7 +522,7 @@ export async function buildEntityCard(
       const duplicates = await readPossibleDuplicates<CardPageRow>(engine, hitSource, row, {
         selectColumns: CARD_ROW_COLUMNS, entityTypes: scope.entityTypes, omitQuarantined: opts.omitQuarantined,
         privatePredicate: scope.excludePrivate ? ` AND ${privatePagesFilterForCaller('pages')}` : '',
-        retirementPrivacy: scope.excludePrivate ? ` AND ${privatePagesFilterForCaller('p')}` : '' });
+        retirementPrivacy: scope.excludePrivate ? 'caller' : 'none' });
       if (duplicates.length) card.possible_duplicates = duplicates;
     }
     // #7161: a thin card while mentions are behind may be a stale stub; show where the name appears in text.

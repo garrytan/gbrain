@@ -34,7 +34,7 @@ import { isJunkEntityName } from './entity-name-quality.ts';
 import { followRetirement } from './entities/resolve.ts';
 import { maintenanceTransaction } from './persistence/attribution.ts';
 import { managedPersistenceEnabled } from './persistence/ownership.ts';
-import { remoteReadPolicySql, remoteTargetHidden } from './persistence/page-visibility.ts';
+import { remoteTargetHidden } from './persistence/page-visibility.ts';
 import { resolveExcludePrivatePages } from './search/private-visibility.ts';
 import { assertUnmanagedCanonicalWriter } from './persistence/maintenance.ts';
 import { deriveTrust, derivedMaintenanceTransaction, lowerDerivedPage, lowerDerivedPageIn, lowerToDerivedTier } from './trust/taint.ts';
@@ -295,8 +295,9 @@ async function planEntity(
     }
   }
   // B-9: a retired page (canonical: false, superseded_by) answers through its canonical page, as fact resolution does (#6898).
+  // A remote caller's hops read under remoteReadPolicySql's policy: the caller's page policy, else member access alone.
   if (existingPage) {
-    const live = await followRetirement(engine, sourceId, slug, ctx && ctx.remote !== false ? `AND ${await remoteReadPolicySql(engine, 'p')}` : '');
+    const live = await followRetirement(engine, sourceId, slug, ctx && ctx.remote !== false ? (await resolveExcludePrivatePages(engine, true) ? 'caller' : 'member_access') : 'none');
     if (!live) {
       return { slug, action: 'skipped', skipped_reason: 'retired_page_unfollowable', tier, backlinkCreated: false, timelineAdded: false,
         mentionCount, mentionSources, suggestedTier, tierEscalated };

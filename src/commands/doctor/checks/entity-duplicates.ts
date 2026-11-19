@@ -59,7 +59,7 @@ async function runPersonTitleDuplicates(ctx: DoctorContext): Promise<Check[]> {
         const remainder = named ? stripLeadingTitles(named) : '';
         if (!remainder) continue;
         const res = await resolveNameVariant(engine, sourceId, remainder, {
-          selectColumns: 'slug, title, type, frontmatter', privatePredicate: '', retirementPrivacy: '', entityTypes: new Set(['person']), exclude: [stub.slug],
+          selectColumns: 'slug, title, type, frontmatter', privatePredicate: '', retirementPrivacy: 'none', entityTypes: new Set(['person']), exclude: [stub.slug],
         });
         if (res.hit && res.hit.row.slug.startsWith('people/')) pairs.push({ source_id: sourceId, stub: stub.slug, canonical: res.hit.row.slug, stub_links: 0, canonical_links: 0 });
       }

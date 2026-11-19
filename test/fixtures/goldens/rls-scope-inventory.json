@@ -3382,6 +3382,28 @@
         ],
         "flagOnScopes": []
       },
+      "readOwnerOnlySourceConfig#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readOwnerOnlySourcesPresent#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readPageSnapshot#default": {
         "flagOffLanes": [
           "pool"
@@ -3433,6 +3455,50 @@
         "flagOnScopes": []
       },
       "readReceiptBudget#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readRetirementHop#caller": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readRetirementHop#floor": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readRetirementHop#member_access": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readRetirementHop#none": {
         "flagOffLanes": [
           "pool"
         ],
@@ -5111,6 +5177,8 @@
         "readMentionLastPass": "none",
         "readOauthClient": "none",
         "readOldestWaitingAge": "none",
+        "readOwnerOnlySourceConfig": "none",
+        "readOwnerOnlySourcesPresent": "none",
         "readPageAliasRows": "none",
         "readPageHiddenFromCaller": "none",
         "readPageOrigin": "none",
@@ -5130,6 +5198,7 @@
         "readQueuedSpendRows": "none",
         "readRankCoverage": "none",
         "readReceiptBudget": "none",
+        "readRetirementHop": "none",
         "readRowTrustRows": "none",
         "readSearchStats": "none",
         "readSegmentDerivations": "none",

@@ -4,7 +4,8 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: the mention pass time, the mention-due count, identity sibling candidates (also under the private-page
  *    filter), the exact-slug lookup that splits live from retired pages, the extraction lag counts, the pages carrying
- *    an ignored privacy label and whether that notice names a git checkout return the same observable result on every
+ *    an ignored privacy label, whether that notice names a git checkout, and one retirement hop (retired, its trimmed
+ *    redirect target, under each hop privacy) return the same observable result on every
  *    engine arm.
  *  - Regression: an engine that counts deleted pages as due, matches a title that only contains the subject, reads a
  *    blank `merged_into` as retired, or returns a page with `readable_by` as an ignored label changes what extract,
@@ -183,6 +184,76 @@ describe('engine parity: entity and mention reads', () => {
       };
       expect(first).toEqual({ retiredFirst: 'people/merged', liveFirst: 'people/blank', none: null, empty: null });
       return { out, first };
+    });
+
+  parityTest('readRetirementHop reads one hop: retired or not, the trimmed redirect target, and null for deleted or missing pages',
+    { methods: ['readRetirementHop'] }, async (engine, backend) => {
+      await seed(engine, backend);
+      await engine.putPage('people/padded', { type: 'person', title: 'Padded', compiled_truth: 'Padded body.',
+        frontmatter: { superseded_by: '  people/old  ', merged_into: 'people/blank' } } as Parameters<BrainEngine['putPage']>[1], { sourceId: 'default' });
+      const out: Record<string, unknown> = {};
+      for (const slug of ['people/alice-example', 'people/old', 'people/merged', 'people/blank', 'people/not-canonical', 'people/padded', 'people/gone', 'people/missing']) {
+        out[slug] = await engine.readRetirementHop('default', slug, 'none');
+      }
+      out.other = await engine.readRetirementHop('other', 'people/merged', 'none');
+      expect(out['people/alice-example']).toEqual({ slug: 'people/alice-example', type: 'person', retired: false, target: null });
+      expect(out['people/merged']).toEqual({ slug: 'people/merged', type: 'person', retired: true, target: 'people/alice-example' });
+      expect(out['people/old']).toEqual({ slug: 'people/old', type: 'person', retired: true, target: null });
+      expect(out['people/blank']).toEqual({ slug: 'people/blank', type: 'person', retired: false, target: null });
+      expect(out['people/padded']).toEqual({ slug: 'people/padded', type: 'person', retired: true, target: 'people/old' });
+      expect(out['people/gone']).toBeNull();
+      expect(out['people/missing']).toBeNull();
+      expect(out.other).toBeNull();
+      return out;
+    });
+
+  parityTest('readRetirementHop applies the hop privacy: the caller page policy, the read floor and member access',
+    { methods: ['readRetirementHop'] }, async (engine, backend) => {
+      await seed(engine, backend);
+      const person = (frontmatter: Record<string, unknown>) =>
+        ({ type: 'person', title: 'Hop', compiled_truth: 'Hop body.', frontmatter }) as Parameters<BrainEngine['putPage']>[1];
+      await engine.putPage('people/hop-private', person({ visibility: 'private', merged_into: 'people/alice-example' }), { sourceId: 'default' });
+      await engine.putPage('people/hop-readers', person({ readable_by: ['bob-example'] }), { sourceId: 'default' });
+      const hop = async (slug: string, privacy: 'none' | 'caller' | 'floor' | 'member_access') =>
+        (await engine.readRetirementHop('default', slug, privacy))?.slug ?? null;
+      // The read floor under a caller is its own case below: the store refuses it typed.
+      const all = async (privacies: ReadonlyArray<'none' | 'caller' | 'floor' | 'member_access'> = ['none', 'caller', 'member_access']) => {
+        const r: Record<string, Record<string, string | null>> = {};
+        for (const slug of ['people/hop-private', 'people/hop-readers', 'people/alice-example']) {
+          r[slug] = {};
+          for (const privacy of privacies) r[slug][privacy] = await hop(slug, privacy);
+        }
+        return r;
+      };
+      const result = {
+        noCaller: await all(['none', 'caller', 'floor', 'member_access']),
+        stranger: await withCallerAccess({ identity: ['member:carol-example'], hidePrivate: true }, all),
+        bob: await withCallerAccess({ identity: ['member:bob-example'], hidePrivate: true }, all),
+        granted: await withCallerAccess({ identity: ['member:carol-example'], privateReadableSources: ['default'], hidePrivate: true }, all),
+      };
+      expect(result.noCaller['people/hop-private'].none).toBe('people/hop-private');
+      expect(result.noCaller['people/hop-private'].caller).toBeNull();
+      expect(result.noCaller['people/hop-private'].floor).toBeNull();
+      expect(result.stranger['people/hop-readers'].member_access).toBeNull();
+      expect(result.bob['people/hop-readers'].member_access).toBe('people/hop-readers');
+      expect(result.granted['people/hop-private'].caller).toBe('people/hop-private');
+      for (const r of Object.values(result)) expect(new Set(Object.values(r['people/alice-example']))).toEqual(new Set(['people/alice-example']));
+      return result;
+    });
+
+  // The read floor drops the folder pending-coverage clause for a remote caller, so its text is neither the no-caller
+  // page policy nor the caller's canonical one; the store refuses the hop typed rather than guess (retirementHopPolicy).
+  parityTest('readRetirementHop under the read floor for a remote caller hides a private page on the SQL engines and refuses typed on Rust',
+    { methods: ['readRetirementHop'] }, async (engine, backend) => {
+      await seed(engine, backend);
+      await engine.putPage('people/hop-private', ({ type: 'person', title: 'Hop', compiled_truth: 'Hop body.',
+        frontmatter: { visibility: 'private' } }) as Parameters<BrainEngine['putPage']>[1], { sourceId: 'default' });
+      const floor = await withCallerAccess({ identity: ['member:bob-example'], hidePrivate: true }, async () => ({
+        hidden: (await engine.readRetirementHop('default', 'people/hop-private', 'floor'))?.slug ?? null,
+        live: (await engine.readRetirementHop('default', 'people/alice-example', 'floor'))?.slug ?? null,
+      }));
+      expect(floor).toEqual({ hidden: null, live: 'people/alice-example' });
+      return floor;
     });
 
   parityTest('readIgnoredPrivacyLabelPages returns labelled pages with no readers or visibility, by slug or since a time',
