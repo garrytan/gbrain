@@ -1696,7 +1696,7 @@ impl Store {
                     "period": r.claim_period,
                     "event_type": r.event_type,
                     "text": r.fact,
-                    "source_session": r.source_session,
+                    "source_session": r.source_session.clone(),
                     "source_markdown_slug": r.source_markdown_slug,
                     "embedding": vector_json(r.embedding.as_deref().filter(|_| {
                         brain_model.as_deref().is_some_and(|m| r.embedding_model.as_deref() == Some(m))

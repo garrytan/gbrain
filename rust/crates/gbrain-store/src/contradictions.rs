@@ -333,9 +333,9 @@ impl Store {
     /// `None`.
     pub fn get_contradiction_cache_entry(
         &self,
-        key: &ContradictionCacheInput,
+        input: &ContradictionCacheInput,
     ) -> Result<Option<Value>> {
-        let Some(key) = cache_lookup_key(key)? else {
+        let Some(key) = cache_lookup_key(input)? else {
             return Ok(None);
         };
         let now = self.env.now_micros();
