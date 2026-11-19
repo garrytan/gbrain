@@ -409,8 +409,9 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
         'transcript_secret_exposure'],
       // entity_link_coverage, graph_coverage, orphan_ratio and timeline_coverage are gone from this list: the entity
       // types resolve on a Rust brain (overrideSourcesFromKeys), so those checks pass as they do on PGLite.
-      // trust_scan counts the pages and facts on Rust, then warns with the refusal of the takes count, which names
-      // the table in the member's parenthesis ("the takes table, whose rows the store does not stamp").
+      // trust_scan counts every table on Rust now, but a Rust brain has no `write_gate.scan_baseline` config row
+      // (migration v227 seeds it on the SQL engines: zero on an empty brain), so the count is not bounded and the
+      // extracted timeline entries (tier unknown) read as unscanned where PGLite counts none.
       untypedWarnings: ['backup_coverage', 'canonical_content_writes', 'child_table_orphans',
         'extract_atoms_backlog', 'fact_take_vectors', 'raw_provenance', 'retrieval_reflex_health', 'sync_failures',
         'text_projection_readiness', 'trust_scan'],

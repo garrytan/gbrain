@@ -6,6 +6,8 @@ mod memory_env;
 use gbrain_store::error::INVALID_ARGUMENT;
 use gbrain_store::facts::InsertFactsArgs;
 use gbrain_store::sources::SourceInput;
+use gbrain_store::takes::TakeInput;
+use gbrain_store::timeline::{AddTimelineOptions, TimelineInput};
 use gbrain_store::trust::tier_reads::{CorePageRowQuery, TrustScanQuery, VersionIdsQuery};
 use gbrain_store::trust::write_gate::ReceiptFields;
 use memory_env::{Brain, brain};
@@ -441,9 +443,80 @@ fn the_trust_scan_reads_facts_at_a_listed_tier() {
 }
 
 #[test]
+fn the_trust_scan_reads_takes_and_timeline_entries_with_their_page_source() {
+    let b = brain("tier-reads-scan-takes");
+    let mut page_id = 0;
+    declared(&b, None, |tx| {
+        let input: gbrain_store::pages::PageInput = args(json!({
+            "type": "note", "title": "T p", "compiled_truth": "body", "timeline": "", "frontmatter": {} }));
+        page_id = tx
+            .put_page("notes/p", &input, &args(json!({ "sourceId": "default" })))
+            .unwrap()["id"]
+            .as_u64()
+            .unwrap();
+    });
+    for (i, (claim, tier)) in [
+        ("c one", Some("agent_written")),
+        ("c two", Some("operator_curated")),
+        ("c three", None),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        declared(&b, tier, |tx| {
+            let rows: Vec<TakeInput> = args(
+                json!([{ "page_id": page_id, "row_num": i + 1, "claim": claim,
+                "kind": "take", "holder": "people/a-example", "weight": 0.5, "source": "notes", "active": true }]),
+            );
+            tx.add_takes_batch(&rows).unwrap();
+            let entry = TimelineInput {
+                date: Some(format!("2026-01-0{}", i + 1)),
+                summary: Some(format!("s {claim}")),
+                detail: Some(format!("d {claim}")),
+                source: Some("cli".into()),
+            };
+            tx.add_timeline_entry("notes/p", &entry, &AddTimelineOptions::default())
+                .unwrap();
+        });
+    }
+    let takes = scan(&b, "takes", 0, 50, &SCANNED);
+    let claims: Vec<&str> = takes.iter().map(|r| r["claim"].as_str().unwrap()).collect();
+    assert_eq!(claims, ["c one", "c three"]);
+    assert_eq!(takes[0]["source_id"], json!("default"));
+    assert_eq!(takes[0]["source"], json!("notes"));
+    assert_eq!(takes[0]["trust_tier"], json!("agent_written"));
+    assert_eq!(takes[0]["write_origin"]["channel"], json!("agent_written"));
+    assert_eq!(takes[1]["trust_tier"], json!("unknown"));
+    assert_eq!(takes[1]["write_origin"], Value::Null);
+    let entries = scan(&b, "timeline_entries", 0, 50, &SCANNED);
+    let summaries: Vec<&str> = entries
+        .iter()
+        .map(|r| r["summary"].as_str().unwrap())
+        .collect();
+    assert_eq!(summaries, ["s c one", "s c three"]);
+    assert_eq!(entries[0]["detail"], json!("d c one"));
+    assert_eq!(entries[0]["source"], json!("cli"));
+    assert_eq!(entries[0]["source_id"], json!("default"));
+    let first_take = takes[0]["id"].as_i64().unwrap();
+    assert_eq!(count(&b, "takes", 0, None, &SCANNED), 2);
+    assert_eq!(count(&b, "takes", first_take, None, &SCANNED), 1);
+    assert_eq!(
+        count(
+            &b,
+            "timeline_entries",
+            0,
+            Some(entries[0]["id"].as_i64().unwrap()),
+            &SCANNED
+        ),
+        1
+    );
+    assert_eq!(scan(&b, "takes", 0, 1, &SCANNED).len(), 1);
+}
+
+#[test]
 fn the_trust_scan_refuses_a_table_it_does_not_model_and_a_nul_tier() {
     let b = brain("tier-reads-scan-refusals");
-    for table in ["takes", "timeline_entries", "links"] {
+    for table in ["links", "chunks"] {
         let err = b
             .list_trust_scan_rows(&args::<TrustScanQuery>(
                 json!({ "table": table, "afterId": 0, "limit": 1, "tiers": [] }),
