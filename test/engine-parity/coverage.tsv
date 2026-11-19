@@ -292,11 +292,11 @@ listFileRowsForSlug	raw_files	yes	1	no	yes	yes	refuses:files
 listAllFileRows	raw_files	yes	2	no	yes	yes	refuses:files
 hasFileWithHash	raw_files	yes	1	no	yes	yes	refuses:files
 listFileRowsForVerify	raw_files	yes	1	no	yes	yes	refuses:files
-readSourceLocalPathForVerify	raw_files	yes	1	no	yes	yes	refuses:sources
+readSourceLocalPathForVerify	raw_files	yes	2	no	yes	yes	serves
 upsertCliFileRow	raw_files	yes	1	no	yes	yes	refuses:files
 upsertRawFileRow	raw_files	yes	1	no	yes	yes	refuses:files
 upsertSyncFileRow	raw_files	yes	1	no	yes	yes	refuses:files
-sourceIdExists	raw_files	yes	1	no	yes	yes	refuses:sources
+sourceIdExists	raw_files	yes	2	no	yes	yes	serves
 readPageIdInSource	raw_files	yes	7	no	yes	yes	refuses:pages
 readFileOwner	raw_files	yes	1	no	yes	yes	refuses:files
 claimFilePage	raw_files	yes	1	no	yes	yes	refuses:files
