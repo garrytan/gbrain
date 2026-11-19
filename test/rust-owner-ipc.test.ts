@@ -24,6 +24,8 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { electOwner, type OwnerRole } from '../src/core/rust-engine/owner-ipc/election.ts';
 import { ownerWholeOperations } from '../src/core/rust-engine/owner-ipc/owner-ops.ts';
+import { forwardWholeOperation } from '../src/core/rust-engine/owner-ipc/whole-op.ts';
+import { importFromContent, type ImportResult } from '../src/core/import-file.ts';
 import { connectOwner, installOwnerClient } from '../src/core/rust-engine/owner-ipc/client.ts';
 import { serveOwnerEngine } from '../src/core/rust-engine/owner-ipc/server.ts';
 import { ownerLockPath, ownerSocketPath, readFrames } from '../src/core/rust-engine/owner-ipc/protocol.ts';
@@ -197,6 +199,20 @@ describe('two or more client processes on one owner', () => {
       const remote = await engine.putPage('', { type: 'note', title: 'x', compiled_truth: 'x' }).then(() => null, e => errorShape(e));
       expect(local).not.toBeNull();
       expect(JSON.stringify(remote)).toBe(JSON.stringify(local));
+    } finally { close(); }
+  });
+
+  test('a whole import carries the client\'s holdNoncanonicalPrivate option to the owner\'s importFromContent unchanged', async () => {
+    const { engine, close } = await clientOf(ownerSocketPath(db));
+    try {
+      const content = '---\ntitle: Held upper value\ntype: note\nvisibility: Private\n---\nA note about acme-example.\n';
+      const held = await forwardWholeOperation<ImportResult>(engine, 'importFromContent', ['ipc/held-upper', content, { noEmbed: true, holdNoncanonicalPrivate: true }]);
+      // The owner's importFromContent saw the option: it held the page with the in-process refusal and stored nothing.
+      expect(held?.status).toBe('error');
+      expect(held?.refusal?.code).toBe('visibility_noncanonical');
+      expect(await owner.getPage('ipc/held-upper')).toBeNull();
+      const local = await importFromContent(owner, 'ipc/held-upper', content, { noEmbed: true, holdNoncanonicalPrivate: true });
+      expect(JSON.stringify(held)).toBe(JSON.stringify(local));
     } finally { close(); }
   });
 
