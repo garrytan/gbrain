@@ -59,7 +59,7 @@
       "out-of-scope:write-misc (born in engine-sql/write-misc.ts; pinned by test/engine-parity/write-misc.test.ts)": 11,
       "pages": 40,
       "salience": 5,
-      "sources": 14,
+      "sources": 15,
       "tags": 3,
       "takes": 20,
       "timeline": 8
@@ -322,6 +322,7 @@
       "invalidateContentDriftEmbeddings": "chunks",
       "invalidateStaleSignatureEmbeddings": "chunks",
       "isFolderRestricted": "out-of-scope:import-guards (born in engine-sql/persistence-state.ts, transaction-settings.ts, belief.ts, access-control.ts; pinned by test/engine-parity/import-path.test.ts)",
+      "isSourceClaimed": "sources",
       "jitOffRead": "out-of-scope:internal-helper (private; exercised through public callers)",
       "keywordBoundedRead": "out-of-scope:lifecycle (connection, pool, transaction, raw seams)",
       "keywordStatementTimeoutSetting": "out-of-scope:internal-helper (private; exercised through public callers)",

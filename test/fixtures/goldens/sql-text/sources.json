@@ -61,6 +61,18 @@
           }
         ]
       },
+      "isSourceClaimed": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT EXISTS(SELECT 1 FROM persistence_source_bindings WHERE source_id=s.id AND source_incarnation=s.incarnation) AS claimed FROM sources s WHERE s.id=$1",
+            "textSha256": "b5595c140845b4b7d23abf50ee5cdc02e4a210b5802b3ad6d3c85183c0ccedbb"
+          }
+        ]
+      },
       "listAllSources": {
         "default": [
           {

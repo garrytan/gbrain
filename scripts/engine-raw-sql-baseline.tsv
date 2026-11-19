@@ -791,7 +791,7 @@ src/core/persistence/staging.ts	execute_raw	4
 src/core/persistence/sync-administration.ts	execute_raw	1
 src/core/persistence/sync-admission.ts	execute_raw	4
 src/core/persistence/sync-admitted.ts	execute_raw	1
-src/core/persistence/sync-authority.ts	execute_raw	2
+src/core/persistence/sync-authority.ts	execute_raw	1
 src/core/persistence/sync-blocked.ts	execute_raw	2
 src/core/persistence/sync-concurrent-write.ts	execute_raw	2
 src/core/persistence/sync-cursor-key.ts	execute_raw	7

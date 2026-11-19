@@ -3,7 +3,7 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: readSourceState, readAdmissionSource, sharedSkillPackTablePresent,
- *    listSharedSkillPackRoots, getWorktreeBinding, hasExtractedEvents, listActiveAccessMembers, isFolderRestricted, expireMemoryProposals,
+ *    listSharedSkillPackRoots, getWorktreeBinding, isSourceClaimed, hasExtractedEvents, listActiveAccessMembers, isFolderRestricted, expireMemoryProposals,
  *    listAwaitingMemoryProposals and purgeMemoryProposals return the same observable result on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: a source-state read that differs changes whether page admission, the mirror read-only guard and
@@ -185,6 +185,32 @@ describe('engine parity: write misc', () => {
       noHost: { ...bound, ...noHostRow },
       unbound: null,
     });
+    return answers;
+  });
+
+  parityTest('isSourceClaimed is false for an unbound source and for an unknown source', { methods: ['isSourceClaimed'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'loose', { canonical: 'git' }, '/var/tmp/loose-root');
+    const answers = { loose: await engine.isSourceClaimed('loose'), unknown: await engine.isSourceClaimed('no-such-source') };
+    expect(answers).toEqual({ loose: false, unknown: false });
+    return answers;
+  });
+
+  // As getWorktreeBinding: false is constant on Rust only because no Rust brain can hold a binding, so the claim's rows
+  // must stop on the typed raw_sql refusal there and leave the source unclaimed.
+  parityTest('isSourceClaimed is true for a source claimed at its current incarnation, false once the incarnation moves', { methods: ['isSourceClaimed'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'work', { canonical: 'git' }, '/var/tmp/work-root');
+    await createSource(engine, backend, 'loose');
+    const seeded = await bindWorktree(engine, 'work').then(() => null, (e: unknown) => e);
+    if (backend === 'rust') {
+      expect(isCapabilityRefusal(seeded, 'raw_sql')).toBe(true);
+      expect(await engine.isSourceClaimed('work')).toBe(false);
+      throw seeded;
+    }
+    expect(seeded).toBeNull();
+    const claimed = { work: await engine.isSourceClaimed('work'), loose: await engine.isSourceClaimed('loose') };
+    await engine.executeRaw('UPDATE sources SET incarnation = gen_random_uuid() WHERE id = $1', ['work']);
+    const answers = { ...claimed, afterIncarnation: await engine.isSourceClaimed('work') };
+    expect(answers).toEqual({ work: true, loose: false, afterIncarnation: false });
     return answers;
   });
 
