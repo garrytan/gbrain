@@ -8,9 +8,13 @@
  *
  * The writer's tier (`gbrain.write_trust_tier`) and the opened fact ids (`gbrain.write_open_facts`) are transaction-local
  * settings the SQL reads itself; this member passes neither.
+ *
+ * `listHeldTimelineRows` is `heldRows`' read of the timeline rows a write may not delete or overwrite (rows above the
+ * writer, and rows an open `forget` contest holds), the statement `heldRows` sent through `executeRaw` for
+ * `timeline_entries`, with the named writer's rank bound as a number.
  */
 import { openedFactRowSql } from '../persistence/context.ts';
-import { trustRankSql } from '../trust/tier.ts';
+import { TRUST_TIER_RANK, trustRankSql, type TrustTier } from '../trust/tier.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { sqlFragment, trustedSql } from './fragment.ts';
 
@@ -50,4 +54,31 @@ export async function listFenceFactRows(exec: LegacyUnscopedRead, target: FenceR
         AND (${above} OR (${held}) OR ${opened})
       ORDER BY f.row_num FOR UPDATE OF f`)).rows;
   return rows;
+}
+
+/** What `heldRows` asks of timeline rows (trust/fence-guard.ts): the row ids, the writer and whether an open contest holds. */
+export interface HeldTimelineRowsSpec {
+  ids: readonly number[];
+  /** The writer's tier; the transaction's declared tier (`gbrain.write_trust_tier`, `unknown` when undeclared) when omitted. */
+  writer?: TrustTier;
+  /** Also hold a row a pending `forget` proposal targets (an open contest). */
+  pending?: boolean;
+}
+
+/** A held timeline row and its stored tier. */
+export interface HeldTimelineRow { id: number; trust_tier: string }
+
+/**
+ * Of `spec.ids`, the timeline rows a write may not delete or overwrite, by id and locked (`FOR UPDATE`): rows more trusted
+ * than the writer and, with `pending`, rows a pending `forget` proposal targets. An id with no row reads no row.
+ */
+export async function listHeldTimelineRows(exec: LegacyUnscopedRead, spec: HeldTimelineRowsSpec): Promise<HeldTimelineRow[]> {
+  if (!spec.ids.length) return [];
+  // A name that is no tier ranks 0, as `trustRankSql` does: below every tier.
+  const writer = spec.writer === undefined ? null : Object.hasOwn(TRUST_TIER_RANK, spec.writer) ? TRUST_TIER_RANK[spec.writer] : 0;
+  const contest = trustedSql(spec.pending ? ` OR EXISTS (SELECT 1 FROM trust_proposals tp WHERE tp.status = 'pending' AND tp.action = 'forget'
+      AND tp.target_table = 'timeline_entries' AND tp.target_id = x.id)` : '');
+  return exec.run<HeldTimelineRow>(sqlFragment`SELECT x.id, x.trust_tier FROM timeline_entries x WHERE x.id = ANY(${[...spec.ids]}::bigint[])
+      AND (${trustedSql(trustRankSql('x.trust_tier'))} > COALESCE(${writer}::int, ${trustedSql(WRITER_RANK_SQL)})${contest}) ORDER BY x.id FOR UPDATE`)
+    .then(result => result.rows.map(row => ({ id: Number(row.id), trust_tier: row.trust_tier })));
 }

@@ -1,6 +1,6 @@
 /**
  * The fence guard's read of a page's fact rows with their trust tier (BrainEngine listFenceFactRows;
- * engine-sql/trust-fence.ts on the SQL engines), the held fence cells of a world-only fact read (listHeldFenceCells;
+ * engine-sql/trust-fence.ts on the SQL engines), fence-guard's held timeline rows (listHeldTimelineRows; the same module), the held fence cells of a world-only fact read (listHeldFenceCells;
  * engine-sql/cli-reads-ops.ts), and the fence overlay's read of one page (readFenceOverlayRows; engine-sql/cli-reads-ops.ts).
  *
  * The store reads the writer's tier and the opened fact ids from its write trust context (rust/docs/store/write_trust.md),
@@ -9,7 +9,7 @@
  * tier yet), so only an opened row, or a writer below `unknown`, lists a row. What the read answers and why:
  * rust/docs/store/facts.md, "The fence guard's reads".
  */
-import type { FenceFactRow } from '../../engine-sql/trust-fence.ts';
+import type { FenceFactRow, HeldTimelineRow, HeldTimelineRowsSpec } from '../../engine-sql/trust-fence.ts';
 import type { FenceOverlayIncomingRow, FenceOverlayRow, HeldFenceCellKey, HeldFenceCellRow } from '../../engine-sql/cli-reads-ops.ts';
 import { callerMember, grantedPrivateFactSql, memberFactAdmitSql, memberPageSlug } from '../../access/member-facts.ts';
 import { privateFactSources, privatePagesFilterForCaller } from '../../search/private-visibility.ts';
@@ -20,6 +20,19 @@ export const listFenceFactRows: StoreMember<[target: { sourceId: string; slug: s
   const rows = await storeCall({ member: 'listFenceFactRows', slug: target.slug, sourceId: target.sourceId },
     () => brain.listFenceFactRows({ sourceId: target.sourceId, slug: target.slug, incoming: target.incoming })) as FenceFactRow[];
   return rows.map((row) => ({ ...row, id: Number(row.id), row_num: Number(row.row_num) }));
+};
+
+/**
+ * Fence-guard's held timeline rows (BrainEngine listHeldTimelineRows; engine-sql/trust-fence.ts on the SQL engines): of
+ * the listed ids, the rows more trusted than the writer and, with `pending`, the rows a pending `forget` proposal targets.
+ * The store compares each row's stamped tier; without `writer` the writer is its write trust context's tier.
+ * rust/docs/store/timeline_queries.md, "Held timeline rows".
+ */
+export const listHeldTimelineRows: StoreMember<[spec: HeldTimelineRowsSpec], HeldTimelineRow[]> = async (brain, spec) => {
+  if (!spec.ids.length) return [];
+  const input = { ids: [...spec.ids], ...(spec.writer !== undefined ? { writer: spec.writer } : {}), ...(spec.pending ? { pending: true } : {}) };
+  const rows = await storeCall({ member: 'listHeldTimelineRows' }, () => brain.listHeldTimelineRows(input)) as HeldTimelineRow[];
+  return rows.map((row) => ({ id: Number(row.id), trust_tier: row.trust_tier }));
 };
 
 /**

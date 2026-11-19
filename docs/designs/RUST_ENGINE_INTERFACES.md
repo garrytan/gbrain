@@ -548,7 +548,10 @@ store keeps the same rule in `pages.rs`.
   (`listFenceRetireCandidates`, capability `facts`, SQL in `engine-sql/facts.ts`; `listFenceFactRows`, capability
   `facts`, SQL in `engine-sql/trust-fence.ts`). The store answers them in `facts/fence.rs` in the default write
   context (no writer tier, nothing opened), so `listFenceFactRows` is empty until the Rust write context supplies the
-  writer's tier and the opened ids. See [`rust/docs/store/facts.md`](../../rust/docs/store/facts.md).
+  writer's tier and the opened ids. See [`rust/docs/store/facts.md`](../../rust/docs/store/facts.md). The fence
+  guard's read of held timeline rows is the typed member `listHeldTimelineRows` (capability `timeline`, SQL in
+  `engine-sql/trust-fence.ts`), served from `timeline/held.rs`; see "Held timeline rows" in
+  [`rust/docs/store/timeline_queries.md`](../../rust/docs/store/timeline_queries.md).
 - **Parity case:** `pages.test.ts`: putPage records source_path and refuses a second live page of the same file.
 
 #### Nullable page fields (`PageText` in `pages.rs`)

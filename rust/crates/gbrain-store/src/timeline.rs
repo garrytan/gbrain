@@ -28,8 +28,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+mod held;
 mod receipt;
 mod tier;
+pub use held::HeldTimelineSpec;
 pub(crate) use receipt::TimelineReceipt;
 pub(crate) use tier::TimelineTrust;
 

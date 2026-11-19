@@ -48,7 +48,7 @@ pub struct FenceContext {
 
 impl FenceContext {
     /// `trustRankSql(COALESCE(NULLIF(current_setting('gbrain.write_trust_tier', true), ''), 'unknown'))`.
-    fn writer_rank(&self) -> u8 {
+    pub(crate) fn writer_rank(&self) -> u8 {
         match self.writer.as_deref() {
             None | Some("") => TrustTier::Unknown.rank(),
             Some(name) => TrustTier::parse(name).map_or(0, TrustTier::rank),

@@ -48,7 +48,7 @@ import type { TimelineDetailRefresh, TimelineRowRemoval } from './engine-sql/tim
 import type { TakeFenceRow } from './engine-sql/takes.ts';
 import type { CodeTraversalCacheClear, CodeTraversalCacheKey, CodeTraversalCacheRow } from './engine-sql/code-traversal-cache.ts';
 import type { FactPreimage, FenceProjectionTarget } from './engine-sql/facts.ts';
-import type { FenceFactRow, FenceRowsTarget } from './engine-sql/trust-fence.ts';
+import type { FenceFactRow, FenceRowsTarget, HeldTimelineRow, HeldTimelineRowsSpec } from './engine-sql/trust-fence.ts';
 import type { TrustTable } from './trust/schema.ts';
 import type { NewTrustProposal, PendingContradictionFilter, PendingContradictionRow, TrustProposalFilter, TrustProposalRow, TrustProposalStatus, TrustProposalTransition } from './engine-sql/trust-proposals.ts';
 import type { GraduationGateRow, ManagedRootBindingRow, PersistenceTable, RetiredDeactivationRow } from './engine-sql/connect-gate.ts';
@@ -3109,6 +3109,12 @@ export interface BrainEngine {
    * fence still asks to widen, or opened by `gbrain repair open-facts`. Each row carries its stored `trust_tier`.
    */
   listFenceFactRows(target: FenceRowsTarget): Promise<FenceFactRow[]>;
+  /**
+   * Of `spec.ids`, the timeline rows a write may not delete or overwrite (engine-sql/trust-fence.ts), by id and locked until
+   * the transaction ends: more trusted than `spec.writer` (the transaction's declared tier when omitted) and, with
+   * `spec.pending`, targeted by a pending `forget` proposal. Each row carries its stored `trust_tier`.
+   */
+  listHeldTimelineRows(spec: HeldTimelineRowsSpec): Promise<HeldTimelineRow[]>;
   /**
    * Trust decisions (engine-sql/trust-proposals.ts): inserts a pending proposal, or returns the pending one already recorded
    * for the same (action, target, related) with `created: false`. The proposer principal and request come from the
