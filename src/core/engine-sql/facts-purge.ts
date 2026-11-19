@@ -289,6 +289,17 @@ export async function expireFactsByWithdrawal(raw: EngineRawRead, sourceId: stri
 export const KEEP_HIDDEN_AT = `CASE WHEN needs_rederive.derived_table='pages' AND EXISTS (SELECT 1 FROM pages hp
   WHERE hp.id::text=needs_rederive.derived_id AND hp.deleted_at=needs_rederive.marked_at) THEN needs_rederive.marked_at ELSE now() END`;
 
+/**
+ * The mark hideDerivedRows writes per table. Its last CASE arm is KEEP_HIDDEN_AT written out, so the statement is one
+ * static text with hand-numbered placeholders ($6, the ids hidden now, is used twice); a test pins it byte for byte and
+ * checks it still holds KEEP_HIDDEN_AT.
+ */
+export const MARK_REDERIVE_SQL = `INSERT INTO needs_rederive(derived_table,derived_id,source_id,request_id,reason,marked_at)
+      SELECT $1,d.id,$3,$4::uuid,$5,COALESCE((SELECT p.deleted_at FROM pages p WHERE d.id=ANY($6::text[]) AND p.id::text=d.id),now()) FROM unnest($2::text[]) AS d(id)
+      ON CONFLICT (derived_table,derived_id) DO UPDATE SET reason=EXCLUDED.reason,request_id=EXCLUDED.request_id,
+        marked_at=CASE WHEN EXCLUDED.derived_id=ANY($6::text[]) THEN EXCLUDED.marked_at ELSE CASE WHEN needs_rederive.derived_table='pages' AND EXISTS (SELECT 1 FROM pages hp
+  WHERE hp.id::text=needs_rederive.derived_id AND hp.deleted_at=needs_rederive.marked_at) THEN needs_rederive.marked_at ELSE now() END END`;
+
 /** releaseHiddenMoment (facts/derivation-inputs.ts): a delete of a page already hidden by hideDerivedRows ends the automatic purge's hold on it. */
 export async function releaseHiddenMoment(raw: EngineRawRead, pageId: number): Promise<void> {
   await raw(`UPDATE needs_rederive n SET marked_at=clock_timestamp() FROM pages p
@@ -320,11 +331,7 @@ export async function hideDerivedRows(raw: EngineRawRead, rows: ReadonlyArray<{ 
     }
     if (count) hidden[table] = count;
     if (count < ids.length) markedOnly[table] = ids.length - count;
-    await raw(`INSERT INTO needs_rederive(derived_table,derived_id,source_id,request_id,reason,marked_at)
-      SELECT $1,d.id,$3,$4::uuid,$5,COALESCE((SELECT p.deleted_at FROM pages p WHERE d.id=ANY($6::text[]) AND p.id::text=d.id),now()) FROM unnest($2::text[]) AS d(id)
-      ON CONFLICT (derived_table,derived_id) DO UPDATE SET reason=EXCLUDED.reason,request_id=EXCLUDED.request_id,
-        marked_at=CASE WHEN EXCLUDED.derived_id=ANY($6::text[]) THEN EXCLUDED.marked_at ELSE ${KEEP_HIDDEN_AT} END`,
-    [table, ids, mark.sourceId, mark.requestId, mark.reason, hiddenNow]);
+    await raw(MARK_REDERIVE_SQL, [table, ids, mark.sourceId, mark.requestId, mark.reason, hiddenNow]);
   }
   return { hidden, markedOnly };
 }

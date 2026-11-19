@@ -12,6 +12,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { runCase, withPinnedSqlEnvironment, type SqlCase } from './helpers/postgres-engine-sql-cases.ts';
+import { KEEP_HIDDEN_AT, MARK_REDERIVE_SQL } from '../src/core/engine-sql/facts-purge.ts';
 
 interface Pin {
   /** The caller site the statement came from, at 7470c703ed. */
@@ -75,4 +76,8 @@ describe('caller raw SQL moved into typed members keeps its Postgres text byte f
       expect(sent).toEqual(pin.texts);
     });
   }
+});
+
+test('the rederive mark hideDerivedRows writes ends with KEEP_HIDDEN_AT, so the two never drift apart', () => {
+  expect(MARK_REDERIVE_SQL.endsWith(`ELSE ${KEEP_HIDDEN_AT} END`)).toBe(true);
 });
