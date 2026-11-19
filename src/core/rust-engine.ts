@@ -252,8 +252,12 @@ export class RustEngine {
     return (await this.storeAfterElection(member)) ?? this.openStore(member);
   }
 
-  /** The open store, or null. */
-  openStoreIfOpen(): RustStore | null { return this._store; }
+  /**
+   * The open store a served member runs on, or null when none is open. It goes through `openStore`, so a
+   * transaction-bound clone (store-members/transactions.ts) answers with its transaction's handle, never the root
+   * store: a member run on the root store inside an open transaction waits for the writer that transaction holds.
+   */
+  openStoreIfOpen(member: string): RustStore | null { return this._store ? this.openStore(member) : null; }
 
   /**
    * The store a served member runs on, after any election in progress (a takeover once the owner went away). Null
@@ -403,7 +407,7 @@ for (const [member, impl] of Object.entries(STORE_MEMBERS)) {
     writable: true,
     enumerable: false,
     value: async function served(this: RustEngine, ...args: unknown[]): Promise<unknown> {
-      const store = this.openStoreIfOpen() ?? await this.storeAfterElection(member);
+      const store = this.openStoreIfOpen(member) ?? await this.storeAfterElection(member);
       if (!store) {
         // A client forwards the member with an own property (owner-ipc/client.ts); without one it cannot run here.
         if (!Object.hasOwn(this, member)) throw mapStoreError({ code: 'store_closed' }, { member });
