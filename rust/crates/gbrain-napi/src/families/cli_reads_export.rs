@@ -112,4 +112,14 @@ impl Brain {
             s.read_body_manifest_meta(page_id, &occurrence_ids, generation)
         })
     }
+
+    /// `listAccessPolicySourceIds()`: the sources with an access policy; none, as the store keeps
+    /// no folder rules.
+    #[napi]
+    pub fn list_access_policy_source_ids<'env>(
+        &self,
+        env: &'env Env,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_access_policy_source_ids())
+    }
 }

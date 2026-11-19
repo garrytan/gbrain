@@ -13,7 +13,7 @@
  *    are compared by relation or shape, never by value.
  */
 import { describe, expect } from 'bun:test';
-import { parityArms } from './harness.ts';
+import { createSource, parityArms, restrictFolder } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { flipInput, manifestRow, pageMeta, segmentText, stagingInput } from '../helpers/page-body-fixtures.ts';
@@ -220,5 +220,18 @@ describe('engine parity: export reads', () => {
       gen0: view(await engine.readBodyManifestMeta(pageId, occurrences, 0)),
       missing: view(await engine.readBodyManifestMeta(pageId + 1000, occurrences, 1)),
     };
+  });
+
+  // The sources an export of every source writes a folder rulebook for: each source with an access policy, in id
+  // order. A brain with no folder rules lists none (the Rust store keeps none; seeding one stops on its typed refusal).
+  parityTest('listAccessPolicySourceIds lists no source on a brain without folder rules', { methods: ['listAccessPolicySourceIds'] }, async (engine) => {
+    return engine.listAccessPolicySourceIds();
+  });
+
+  parityTest('listAccessPolicySourceIds lists each source with folder rules in id order', { methods: ['listAccessPolicySourceIds'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'work');
+    await restrictFolder(engine, backend, 'work', 'private/', 'rule');
+    await restrictFolder(engine, backend, 'default', 'queued/', 'pending');
+    return engine.listAccessPolicySourceIds();
   });
 });

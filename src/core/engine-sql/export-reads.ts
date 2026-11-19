@@ -156,3 +156,8 @@ export async function readBodyManifestMeta(tx: Raw, pageId: number, occurrenceId
       FROM page_body_manifest WHERE page_id=$1 AND occurrence_id=ANY($2::bigint[]) AND staging_id IS NULL AND gen_from<=$3 AND (gen_to IS NULL OR gen_to>$3)`,
   [pageId, [...occurrenceIds], generation]);
 }
+
+/** The sources with an access policy (folder rules or pending coverage), in id order: the rulebooks an export of every source carries. */
+export async function listAccessPolicySourceIds(tx: Raw): Promise<string[]> {
+  return (await tx.executeRaw<{ source_id: string }>('SELECT source_id FROM access_policy_state ORDER BY source_id')).map(r => r.source_id);
+}

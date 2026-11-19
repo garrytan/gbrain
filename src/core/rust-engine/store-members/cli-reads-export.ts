@@ -64,3 +64,7 @@ export const readBodyManifestRows: StoreMember<[pageId: number, generation: numb
 /** A segmented body read: the entry state and protected regions of the named occurrences in one generation (`cli_reads::export::read_body_manifest_meta`). */
 export const readBodyManifestMeta: StoreMember<[pageId: number, occurrenceIds: readonly number[], generation: number], BodyManifestMeta[]> = (brain, pageId, occurrenceIds, generation) =>
   storeCall({ member: 'readBodyManifestMeta' }, () => brain.readBodyManifestMeta(pageId, [...occurrenceIds], generation));
+
+/** The sources with an access policy (`cli_reads::export::list_access_policy_source_ids`): none, as the store keeps no folder rules. */
+export const listAccessPolicySourceIds: StoreMember<[], string[]> = (brain) =>
+  storeCall({ member: 'listAccessPolicySourceIds' }, () => brain.listAccessPolicySourceIds());

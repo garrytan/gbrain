@@ -470,6 +470,12 @@ impl Store {
             })
             .collect())
     }
+
+    /// `listAccessPolicySourceIds()`: the sources with an access policy. The store keeps no folder
+    /// rules, so there are none.
+    pub fn list_access_policy_source_ids(&self) -> Result<Vec<String>> {
+        Ok(Vec::new())
+    }
 }
 
 #[cfg(test)]
@@ -601,6 +607,7 @@ mod tests {
                 .is_empty()
         );
         assert!(s.read_body_manifest_meta(id, &[], 0).unwrap().is_empty());
+        assert!(s.list_access_policy_source_ids().unwrap().is_empty());
         assert_eq!(array_len(&json!([1, 2])), 2);
         assert_eq!(array_len(&Value::Null), 0);
     }
