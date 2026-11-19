@@ -21,6 +21,8 @@ import { stageGeneration } from '../helpers/page-body-fixtures.ts';
 import type { BodyFlipInput, ManifestRowInput } from '../../src/core/page-body/types.ts';
 import { confirmBodyPin, openSegmentedBody, projectedOutline } from '../../src/core/page-body/read-range.ts';
 import { REVISION_BACKFILL_PENDING } from '../../src/core/page-state/types.ts';
+import { readExportPages, readExportWithdrawals } from '../../src/core/export-snapshot.ts';
+import { parseFactsFenceFor, renderFactsTable } from '../../src/core/facts-fence.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -146,15 +148,38 @@ describe('engine parity: export reads', () => {
       .sort((a, b) => a.slug.localeCompare(b.slug));
   });
 
-  // The overlay compares fact rows in Postgres' normalized form, so every arm must lower-case and fold whitespace alike,
-  // including the classes JavaScript's \s disagrees on (U+0085 is space to Postgres, U+00A0 is not).
+  // The overlay compares fact rows in the fingerprint's normalized form, so every arm must lower-case and fold whitespace
+  // alike, by one explicit list whatever the database locale: U+0085 folds (Postgres en_US.utf8's [[:space:]] leaves it
+  // out), U+1680 and U+00A0 do not (en_US.utf8 folds U+1680).
   parityTest('normalizeFenceLines lower-cases and folds whitespace line by line', {
     methods: ['normalizeFenceLines'],
   }, async (engine) => {
-    const bodies = ['MiXeD\t  Claim\r\nSecond   LINE\n', '', 'Ünïcode\u0085x\u00a0y\u2003z', 'one'];
+    const bodies = ['MiXeD\t  Claim\r\nSecond   LINE\n', '', 'Ünïcode\u0085x\u00a0y\u2003z\u1680w', 'one'];
     const timelines = ['', 'A\n\nB', 'x', ''];
     const rows = await engine.normalizeFenceLines(bodies, timelines);
     return [...rows].map(r => ({ ...r, i: Number(r.i) })).sort((a, b) => a.i - b.i);
+  });
+
+  // A withdrawal strikes its claim in the export on every arm, whatever whitespace spells it: the ledger hash and the
+  // overlay fold one explicit whitespace list. A claim withdrawn with U+0085 matches the fence row spelled with a space
+  // (and the reverse); U+1680 is not whitespace to the fingerprint, so that row stays live.
+  parityTest('a withdrawal of a claim holding U+0085 exports its fence row struck', {
+    methods: ['insertFactWithdrawal', 'listExportWithdrawals', 'readExportWithdrawalLedgerBytes', 'readExportPageRows', 'normalizeFenceLines', 'putPage', 'getPage'],
+  }, async (engine) => {
+    const fence = (...claims: string[]) => renderFactsTable(claims.map((claim, i) => ({ rowNum: i + 1, claim, kind: 'fact', confidence: 1,
+      visibility: 'world', notability: 'medium', active: true, context: '' })));
+    await engine.insertFactWithdrawal('default', 'world', 'Alpha\u0085withdrawn claim', '*', '2026-01-03T00:00:00.000Z');
+    await engine.insertFactWithdrawal('default', 'world', 'Beta withdrawn claim', '*', '2026-01-04T00:00:00.000Z');
+    await engine.insertFactWithdrawal('default', 'world', 'Gamma kept claim', '*', '2026-01-05T00:00:00.000Z');
+    await engine.putPage('export/fenced', { type: 'note', title: 'Fenced',
+      compiled_truth: 'Lead.\n\n' + fence('Alpha withdrawn claim', 'Beta\u0085withdrawn claim', 'Gamma\u1680kept claim', 'A live claim') });
+    const page = (await engine.getPage('export/fenced'))!;
+    const withdrawals = await readExportWithdrawals(engine, 'default');
+    const [snapshot] = await readExportPages(engine, [{ id: String(page.id), source_id: 'default', slug: 'export/fenced' }], withdrawals);
+    const rows = parseFactsFenceFor(snapshot!.page.compiled_truth, { slug: 'export/fenced' }).facts
+      .map(f => ({ claim: f.claim, active: f.active, forgotten: f.forgotten ?? false, validUntil: f.validUntil ?? null }));
+    expect(rows.map(r => r.forgotten)).toEqual([true, true, false, false]);
+    return { rows, hashes: withdrawals.map(w => w.fact_hash).sort() };
   });
 
   // A segmented body read opens with the page row: its body columns and revision. An inline page reads the column
