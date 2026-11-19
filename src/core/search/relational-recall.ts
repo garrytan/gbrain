@@ -159,7 +159,8 @@ async function resolveSeedScoped(
     out.push({ source_id: sid, slug: r.slug });
   }
   if (!out.length || !hasReadPolicy(policy)) return out;
-  // The arm is handed the whole search options; the member reads the read policy alone.
+  // The policy admit: drop every seed the read policy hides before the walk (the fanout filters again, as defense
+  // in depth). The arm is handed the whole search options; the member reads the read policy alone.
   const admitted = await engine.readAdmittedPageRefs(out, readPolicyOf(policy) ?? {});
   const allowed = new Set(admitted.map(ref => `${ref.source_id}:${ref.slug}`));
   return out.filter(ref => allowed.has(`${ref.source_id}:${ref.slug}`));

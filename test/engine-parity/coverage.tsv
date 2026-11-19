@@ -83,7 +83,7 @@ getPage	pages	yes	90	yes	yes	yes	serves
 readPageSnapshot	pages	yes	24	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	376	yes	yes	yes	serves
+putPage	pages	yes	377	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	8	yes	yes	yes	serves
@@ -212,7 +212,7 @@ markPagesAttendanceBlocked	extraction	yes	2	no	yes	yes	serves
 countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
-addLink	links	yes	70	yes	yes	yes	serves
+addLink	links	yes	71	yes	yes	yes	serves
 addLinksBatch	links	yes	10	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	9	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
@@ -722,8 +722,8 @@ readPageHiddenFromCaller	page_visibility	yes	1	no	yes	yes	serves
 readCallerPageAccess	page_visibility	yes	1	no	yes	yes	serves
 readWriterSlugFence	page_visibility	yes	1	no	yes	yes	serves
 readStoredBodyBytes	large_page	yes	1	no	yes	yes	serves
-readAdmittedPageRefs	relational_reads	yes	1	no	yes	yes	serves
-readPageSynopses	relational_reads	yes	1	no	yes	yes	serves
+readAdmittedPageRefs	relational_reads	yes	2	no	yes	yes	serves
+readPageSynopses	relational_reads	yes	2	no	yes	yes	serves
 readSeedTitleSlugs	relational_reads	yes	1	no	yes	yes	serves
 listFenceFactRows	trust_fence	yes	4	no	yes	yes	serves
 insertTrustProposal	trust_proposals	yes	4	no	yes	yes	serves

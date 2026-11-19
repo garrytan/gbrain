@@ -24,6 +24,7 @@ import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { archiveSource, createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { chunk, installChunks } from './chunk-fixtures.ts';
+import { buildRelationalArm } from '../../src/core/search/relational-recall.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -201,5 +202,37 @@ describe('engine parity: relational recall page reads', () => {
     expect(answers.noTypes).toEqual([]);
     // Which two of three matching pages answer is unordered; compare only the count across arms.
     return { ...answers, widget: answers.widget.length };
+  });
+
+  parityTest('the relational arm walks only the seeds the read policy admits: a private seed in one source leaks nothing', {
+    methods: ['putPage', 'addLink', 'readAdmittedPageRefs', 'readPageSynopses'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'team');
+    await createSource(engine, backend, 'attic');
+    // One phrase resolves a seed in each source: a world page in `team`, a private page in `attic`.
+    await engine.putPage('companies/widget-co', { ...NOTE, title: 'Widget Co' }, { sourceId: 'team' });
+    await engine.putPage('companies/widget-co', { ...NOTE, title: 'Widget Co', frontmatter: { visibility: 'private' } }, { sourceId: 'attic' });
+    // Each investor is a world page whose only connection to the company is the typed edge.
+    for (const [slug, sourceId] of [['people/alice-example', 'team'], ['people/bob-example', 'attic']] as const) {
+      await engine.putPage(slug, { type: 'person', title: slug, compiled_truth: 'An investor.', timeline: '' }, { sourceId });
+      await installChunks(engine, slug, [chunk(0, 'An investor.')], { sourceId });
+      await engine.addLink(slug, 'companies/widget-co', '', 'invested_in', 'manual', undefined, undefined, { fromSourceId: sourceId, toSourceId: sourceId });
+    }
+    // `seeds` counts the seeds the arm admitted, so the case fails when the admit lets the private seed through,
+    // even though the fanout's own read filter would still drop what it links to.
+    const arm = async (opts: NonNullable<Parameters<typeof buildRelationalArm>[2]>) => {
+      let seeds = -1;
+      const rows = await buildRelationalArm(engine, 'who invested in widget-co', { ...opts, onMeta: m => { seeds = m.seeds_resolved; } });
+      return { seeds, rows: sorted(rows.map(r => `${r.slug}<-${r.relational_seed}`)) };
+    };
+    const answers = {
+      trusted: await arm({ sourceIds: ['team', 'attic'] }),
+      hidden: await arm({ sourceIds: ['team', 'attic'], excludePrivate: true }),
+    };
+    expect(answers).toEqual({
+      trusted: { seeds: 2, rows: ['people/alice-example<-companies/widget-co', 'people/bob-example<-companies/widget-co'] },
+      hidden: { seeds: 1, rows: ['people/alice-example<-companies/widget-co'] },
+    });
+    return answers;
   });
 });
