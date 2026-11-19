@@ -17,7 +17,7 @@ use super::vector_cache::{VectorKind, cached};
 use crate::chunks::{ChunkRecord, SAFE_FENCE_CHUNKER_VERSION};
 use crate::env::iso;
 use crate::error::{Result, StoreError};
-use crate::facts::{OwnerOnlySources, PrivacyPolicy, page_hidden};
+use crate::facts::{OwnerOnlySources, PrivacyPolicy, page_hidden_with};
 use crate::kv::KvRead;
 use crate::pages::PageRecord;
 use crate::sources::read_source;
@@ -168,7 +168,7 @@ impl<'a> PageFilter<'a> {
                 self.owner_only = Some(OwnerOnlySources::read(read)?);
             }
             if let Some(owner_only) = &self.owner_only
-                && page_hidden(read, page, policy, owner_only)?
+                && page_hidden_with(read, page, policy, owner_only)?
             {
                 return Ok(false);
             }
