@@ -41,8 +41,9 @@ export interface CjkKeywordCtx {
   dedup: boolean;
   /**
    * Whether the rows compute the `stale` flag (search/timeline-stale.ts), which names `timeline_entries`. Postgres
-   * passes `false` for a role without SELECT on it (postgres-engine/timeline-stale-probe.ts), so the statement names no
-   * table that role may not read and every row reads `stale: false`. Unset computes the flag.
+   * sets `false` for a role without SELECT on it (postgres-engine/timeline-stale-probe.ts, asked inside each attempt's
+   * transaction by engine-sql/cjk-search.ts), so the statement names no table that role may not read and every row
+   * reads `stale: false`. Unset computes the flag.
    */
   staleProbe?: boolean;
 }

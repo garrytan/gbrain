@@ -65,10 +65,12 @@ import type { ScopedReadRunner } from './cjk-search.ts';
 /**
  * `chunkManifest` is the chunkManifestReads probe, run inside each attempt's scoped read after its settings, so the
  * statement timeout bounds it like the title statement (#6495: a probe outside the transaction waited on a lock with
- * no bound) and it answers for the role that read runs as. Unset reads the manifest.
+ * no bound) and it answers for the role that read runs as. Unset reads the manifest. `staleProbe` as a function is the
+ * Postgres timeline privilege probe (postgres-engine/timeline-stale-probe.ts), run in the same place for the same reason.
  */
-export type SearchTitlesRunDialect = Omit<SearchTitlesDialect, 'chunkManifest'> & {
+export type SearchTitlesRunDialect = Omit<SearchTitlesDialect, 'chunkManifest' | 'staleProbe'> & {
   chunkManifest?: (exec: ScopedRead) => Promise<boolean>;
+  staleProbe: boolean | ((exec: ScopedRead) => Promise<boolean>);
   /** Transaction-local settings for every attempt (Postgres: the keyword statement's work_mem, so a common term's bitmap stays exact). */
   statementSettings?: Readonly<Record<string, string>>;
 };
@@ -87,7 +89,7 @@ export async function searchTitles(
     console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
   }
   type Attempt = { text: string; kind: 'whole' | 'title' | 'complete' };
-  const statementFor = (chunkManifest: boolean, kind: Attempt['kind'] = 'whole') => buildSearchTitlesStatement(query, opts, { ...dialect, chunkManifest, relaxed: kind === 'title', completeOnly: kind === 'complete' });
+  const statementFor = (chunkManifest: boolean, kind: Attempt['kind'] = 'whole', staleProbe = true) => buildSearchTitlesStatement(query, opts, { ...dialect, chunkManifest, staleProbe, relaxed: kind === 'title', completeOnly: kind === 'complete' });
   const statement = statementFor(true);
   /** One scoped read running one statement per attempt, in order; `top` replaces the caller's limit and offset. */
   const run = (attempts: Attempt[], anyWord: boolean, top?: number) => {
@@ -99,8 +101,9 @@ export async function searchTitles(
     };
     return scoped(async exec => {
       const manifest = await dialect.chunkManifest?.(exec) ?? true;
+      const stale = typeof dialect.staleProbe === 'function' ? await dialect.staleProbe(exec) : dialect.staleProbe;
       const lists = [];
-      for (const a of attempts) lists.push((await exec.unsafe(statementFor(manifest, a.kind).sql, [a.text, statement.params[1], ...(top === undefined ? statement.params.slice(2, 4) : [top, 0]), ...statement.params.slice(4)])).rows);
+      for (const a of attempts) lists.push((await exec.unsafe(statementFor(manifest, a.kind, stale).sql, [a.text, statement.params[1], ...(top === undefined ? statement.params.slice(2, 4) : [top, 0]), ...statement.params.slice(4)])).rows);
       return lists;
     }, Object.keys(settings).length ? settings : undefined);
   };

@@ -1527,7 +1527,7 @@ export class PostgresEngine implements BrainEngine {
           ${visibilityClause}
           ${chunk.modality}`;
     const candidates = keywordCandidatesSql(ftsLang, { excludePrivate: opts?.excludePrivate, pageFiltered: !!(typeClause || typesClause || afterDateClause || beforeDateClause), score, pageJoin, chunkFilters, pageFilters: `${excludeSlugsClause} ${sourceClause} ${hardExcludeClause} ${visibilityClause}`, scope });
-    const rawQuery = `
+    const rawQueryWith = (stale: string) => `
       WITH ranked_chunks AS (
         SELECT page_id, chunk_id, score, bounded_rows FROM (SELECT *, count(*) OVER () AS bounded_rows, row_number() OVER (PARTITION BY page_id ORDER BY score DESC, chunk_id ASC) AS page_rank FROM (${candidates}
         LIMIT ${KEYWORD_RANK_CANDIDATES}) bounded) per_page WHERE page_rank = 1
@@ -1540,7 +1540,7 @@ export class PostgresEngine implements BrainEngine {
         effective_date, effective_date_source,
         message_id, thread_id, source_subject,
         chunk_id, chunk_index, chunk_text, chunk_source, score, bounded_rows,
-        ${await this.timelineStale.sql(this, 'best_per_page.updated_at', 'best_per_page.page_id')} AS stale
+        ${stale} AS stale
       FROM best_per_page
       ORDER BY score DESC, page_id ASC, chunk_id ASC
       LIMIT ${limitParam}
@@ -1555,10 +1555,10 @@ export class PostgresEngine implements BrainEngine {
     // (postgres-engine/search-settings.ts).
     const statementTimeout = await this.keywordStatementTimeoutSetting();
     const runKeyword = (queryText: string, relaxed = false, rankText = queryText) => this.keywordTimeouts.run(opts?.keywordTimeoutCache === true, this,
-      [statementTimeout, relaxed, rawQuery, collapseWebsearchDashRuns(queryText), collapseWebsearchDashRuns(rankText), params.slice(1), opts?.sourceIds ?? null, opts?.sourceId ?? null, ...(opts?.orFill ? ['any-word fill'] : [])], () =>
-      this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, (tx) => {
+      [statementTimeout, relaxed, rawQueryWith('stale'), collapseWebsearchDashRuns(queryText), collapseWebsearchDashRuns(rankText), params.slice(1), opts?.sourceIds ?? null, opts?.sourceId ?? null, ...(opts?.orFill ? ['any-word fill'] : [])], () =>
+      this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, async (tx) => {
         const boundParams = params.map((v, i) => i === 0 ? collapseWebsearchDashRuns(queryText) : i === rankIdx && !opts?.rankQuery ? collapseWebsearchDashRuns(rankText) : v);
-        return tx.unsafe(rawQuery, boundParams as Parameters<typeof tx.unsafe>[1]);
+        return tx.unsafe(rawQueryWith(await this.timelineStale.sql(this, this.engineSqlOn(tx), 'best_per_page.updated_at', 'best_per_page.page_id')), boundParams as Parameters<typeof tx.unsafe>[1]);
       }, { alwaysTransaction: true, jitOff: true, settings: relaxed || candidates !== pageJoin ? { statement_timeout: statementTimeout, enable_seqscan: 'off', ...KEYWORD_STATEMENT_SETTINGS } : { statement_timeout: statementTimeout, ...KEYWORD_STATEMENT_SETTINGS } }));
     const strict = opts?.orFill ? [] : await runKeyword(query);
     if (Number(strict[0]?.bounded_rows) >= KEYWORD_RANK_CANDIDATES) opts?.onKeywordIncomplete?.('candidate_budget');
@@ -1601,7 +1601,7 @@ export class PostgresEngine implements BrainEngine {
       (read, settings) => this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, tx => read(scopedRead(this.engineSqlOn(tx))), { alwaysTransaction: true, jitOff: true, settings }),
       query,
       opts,
-      { statementTimeout: await this.keywordStatementTimeoutSetting(), statementSettings: KEYWORD_STATEMENT_SETTINGS, relaxedPrefersIndex: true, staleProbe: await this.timelineStale.reads(this), chunkManifest: exec => chunkManifestReads(this, exec) },
+      { statementTimeout: await this.keywordStatementTimeoutSetting(), statementSettings: KEYWORD_STATEMENT_SETTINGS, relaxedPrefersIndex: true, staleProbe: exec => this.timelineStale.reads(this, exec), chunkManifest: exec => chunkManifestReads(this, exec) },
     );
   }
 
@@ -1711,7 +1711,7 @@ export class PostgresEngine implements BrainEngine {
     // — safe to interpolate into raw SQL.
     const ftsLang = getFtsLanguage();
 
-    const rawQuery = `
+    const rawQueryWith = (stale: string) => `
       SELECT
         p.slug, p.id as page_id, p.title, p.type, p.source_id,
         p.effective_date, p.effective_date_source,
@@ -1721,7 +1721,7 @@ export class PostgresEngine implements BrainEngine {
           THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
         cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
         ts_rank(cc.search_vector, websearch_to_tsquery('${ftsLang}', $1)) * ${sourceFactorCase} AS score,
-        ${await this.timelineStale.sql(this, 'p.updated_at', 'p.id')} AS stale
+        ${stale} AS stale
       FROM content_chunks cc
       JOIN pages p ON p.id = cc.page_id
       JOIN sources s ON s.id = p.source_id
@@ -1747,7 +1747,7 @@ export class PostgresEngine implements BrainEngine {
     // scope, JIT off and the timeout are one settings statement.
     const statementTimeout = await this.keywordStatementTimeoutSetting();
     const rows = await this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId,
-      tx => tx.unsafe(rawQuery, params as Parameters<typeof tx.unsafe>[1]),
+      async tx => tx.unsafe(rawQueryWith(await this.timelineStale.sql(this, this.engineSqlOn(tx), 'p.updated_at', 'p.id')), params as Parameters<typeof tx.unsafe>[1]),
       { alwaysTransaction: true, jitOff: true, settings: { statement_timeout: statementTimeout } });
     return rows.map(rowToSearchResult);
   }
@@ -1769,7 +1769,7 @@ export class PostgresEngine implements BrainEngine {
           })));
         }, { alwaysTransaction: true, jitOff: true, settings: { statement_timeout: statementTimeout } }),
       query,
-      { ...ctx, staleProbe: await this.timelineStale.reads(this) }, // the stale flag names timeline_entries (timeline-stale-probe.ts)
+      ctx, 'postgres', exec => this.timelineStale.reads(this, exec), // the stale flag names timeline_entries (timeline-stale-probe.ts)
     );
   }
 
@@ -1781,7 +1781,7 @@ export class PostgresEngine implements BrainEngine {
     }
     // Two-stage CTE (v0.22): a pure-distance candidate ORDER BY keeps HNSW usable; outer stages re-rank by source factor.
     // Shape, freshness (#5824), pool counts and the stale flag live in search/vector-statement.ts (shared, doctor too).
-    const scope = await this.vectorScope(opts), staleProbe = await this.timelineStale.reads(this);
+    const scope = await this.vectorScope(opts), staleProbe = await this.timelineStale.reads(this, this);
     const statementFor = vectorStatementForms(chunkManifest => buildVectorSearchStatement({ dialect: 'postgres', embedding, limit, offset: opts?.offset || 0, opts, scope, chunkManifest, staleProbe }));
     const stmt = statementFor(true);
     const iterative = await this.vectorIterativeScanSupported();
@@ -1813,7 +1813,7 @@ export class PostgresEngine implements BrainEngine {
    */
   async explainVectorSearch(embedding: Float32Array, opts?: SearchOpts): Promise<Record<string, unknown>> {
     const limit = clampSearchLimit(opts?.limit, 20, searchLimitCap());
-    const scope = await this.vectorScope(opts), staleProbe = await this.timelineStale.reads(this);
+    const scope = await this.vectorScope(opts), staleProbe = await this.timelineStale.reads(this, this);
     const statementFor = vectorStatementForms(chunkManifest => buildVectorSearchStatement({ dialect: 'postgres', embedding, limit, offset: opts?.offset || 0, opts, scope, chunkManifest, staleProbe }));
     const stmt = statementFor(true);
     const iterative = await this.vectorIterativeScanSupported();

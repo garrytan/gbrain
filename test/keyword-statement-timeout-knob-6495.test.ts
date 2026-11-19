@@ -226,11 +226,13 @@ describe('search.keyword_statement_timeout_ms governs all six Postgres keyword s
     expect(reads[0].sql).toContain(`'${KEYWORD_STATEMENT_TIMEOUT_KEY}'`);
   });
 
-  test('an engine that never connected binds the default', async () => {
-    const { engine, recorded, configReads } = await recordingEngine({ dbValue: '2500', connected: false });
-    await SITES.searchKeyword(engine);
-    expect(timeoutsSet(recorded)).toEqual(['8000ms']);
-    expect(configReads()).toBe(0);
+  test('an engine that never connected binds the default at every site (no probe reaches the pool)', async () => {
+    for (const site of Object.keys(SITES)) {
+      const { engine, recorded, configReads } = await recordingEngine({ dbValue: '2500', connected: false });
+      await SITES[site](engine);
+      expect(timeoutsSet(recorded), site).toEqual(['8000ms']);
+      expect(configReads(), site).toBe(0);
+    }
   });
 });
 

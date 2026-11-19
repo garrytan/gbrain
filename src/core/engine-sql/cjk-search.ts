@@ -157,12 +157,15 @@ export async function searchKeywordCJK(
   query: string,
   ctx: CjkKeywordCtx,
   engine: 'postgres' | 'pglite' = 'postgres',
+  /** Postgres: the timeline privilege probe (postgres-engine/timeline-stale-probe.ts), run first in each attempt's transaction. */
+  staleProbe?: (exec: Exec) => Promise<boolean>,
 ): Promise<SearchResult[]> {
   if (!buildCJKKeywordSql(query, ctx)) return [];
+  const at = async (exec: Exec): Promise<CjkKeywordCtx> => (staleProbe ? { ...ctx, staleProbe: await staleProbe(exec) } : ctx);
   const started = performance.now();
   const orFallback = ctx.opts?.orFallback === true && splitCJKQueryTerms(query).length > 1;
   const run = ctx.opts?.cjkKeyword;
-  if (!run) return (await scoped(exec => fullScoring(exec, query, ctx, orFallback))).map(rowToSearchResult);
+  if (!run) return (await scoped(async exec => fullScoring(exec, query, await at(exec), orFallback))).map(rowToSearchResult);
   const cap = run.candidateCap ?? CJK_CANDIDATE_CAP;
   const report = (meta: Omit<CjkKeywordMeta, 'arm_ms'>) => run.onMeta?.({ ...meta, arm_ms: Math.round(performance.now() - started) });
   const observe = run.onStatementBudget && ((timeoutMs: number, at: number) => run.onStatementBudget!({ timeoutMs, armMs: at - started }));
@@ -179,12 +182,12 @@ export async function searchKeywordCJK(
     });
     return out.map(rowToSearchResult);
   }
-  const full = await bounded(scoped, started + (run.fullBudgetMs ?? (run.deadlineMs * 2) / 3) - performance.now(), exec => fullScoring(exec, query, ctx, orFallback), observe);
+  const full = await bounded(scoped, started + (run.fullBudgetMs ?? (run.deadlineMs * 2) / 3) - performance.now(), async exec => fullScoring(exec, query, await at(exec), orFallback), observe);
   if (full) {
     report({ incomplete: false, capped: false });
     return full.map(rowToSearchResult);
   }
-  const capped = await bounded(scoped, started + run.deadlineMs - performance.now(), exec => cappedScoring(exec, query, ctx, orFallback, cap), observe);
+  const capped = await bounded(scoped, started + run.deadlineMs - performance.now(), async exec => cappedScoring(exec, query, await at(exec), orFallback, cap), observe);
   report(!capped ? { incomplete: true, reason: 'timeout', capped: true } : capped.capHit ? { incomplete: true, reason: 'candidate_budget', capped: true } : { incomplete: false, capped: true });
   return (capped?.rows ?? []).map(rowToSearchResult);
 }

@@ -21,12 +21,6 @@
             "textSha256": "9efd937ed20b1352a9344e9229cf4e02bddf1aca4057f62ecb5bc2cd786f7310"
           },
           {
-            "lane": "pool",
-            "params": [],
-            "sql": "SELECT has_table_privilege('timeline_entries', 'SELECT') AS readable",
-            "textSha256": "6e37a56e458e1a54a8bd848bbb7410b31832c9c99e503b0dc2c1e3f3ce843ec0"
-          },
-          {
             "event": "begin",
             "lane": "tx"
           },
@@ -38,6 +32,12 @@
             ],
             "sql": "SELECT set_config('jit', $1, true), set_config('statement_timeout', $2, true)",
             "textSha256": "3f17856484987276b18d4a16a713dd25c07aa188d48e8c2a07aa2ece6739d5c7"
+          },
+          {
+            "lane": "tx",
+            "params": [],
+            "sql": "SELECT has_table_privilege('timeline_entries', 'SELECT') AS readable",
+            "textSha256": "6e37a56e458e1a54a8bd848bbb7410b31832c9c99e503b0dc2c1e3f3ce843ec0"
           },
           {
             "lane": "tx",
@@ -81,12 +81,6 @@
             "textSha256": "9efd937ed20b1352a9344e9229cf4e02bddf1aca4057f62ecb5bc2cd786f7310"
           },
           {
-            "lane": "pool",
-            "params": [],
-            "sql": "SELECT has_table_privilege('timeline_entries', 'SELECT') AS readable",
-            "textSha256": "6e37a56e458e1a54a8bd848bbb7410b31832c9c99e503b0dc2c1e3f3ce843ec0"
-          },
-          {
             "event": "begin",
             "lane": "tx"
           },
@@ -98,6 +92,12 @@
             ],
             "sql": "SELECT set_config('jit', $1, true), set_config('statement_timeout', $2, true)",
             "textSha256": "3f17856484987276b18d4a16a713dd25c07aa188d48e8c2a07aa2ece6739d5c7"
+          },
+          {
+            "lane": "tx",
+            "params": [],
+            "sql": "SELECT has_table_privilege('timeline_entries', 'SELECT') AS readable",
+            "textSha256": "6e37a56e458e1a54a8bd848bbb7410b31832c9c99e503b0dc2c1e3f3ce843ec0"
           },
           {
             "lane": "tx",
@@ -135,12 +135,6 @@
             "textSha256": "9efd937ed20b1352a9344e9229cf4e02bddf1aca4057f62ecb5bc2cd786f7310"
           },
           {
-            "lane": "pool",
-            "params": [],
-            "sql": "SELECT has_table_privilege('timeline_entries', 'SELECT') AS readable",
-            "textSha256": "6e37a56e458e1a54a8bd848bbb7410b31832c9c99e503b0dc2c1e3f3ce843ec0"
-          },
-          {
             "event": "begin",
             "lane": "tx"
           },
@@ -152,6 +146,12 @@
             ],
             "sql": "SELECT set_config('jit', $1, true), set_config('statement_timeout', $2, true)",
             "textSha256": "3f17856484987276b18d4a16a713dd25c07aa188d48e8c2a07aa2ece6739d5c7"
+          },
+          {
+            "lane": "tx",
+            "params": [],
+            "sql": "SELECT has_table_privilege('timeline_entries', 'SELECT') AS readable",
+            "textSha256": "6e37a56e458e1a54a8bd848bbb7410b31832c9c99e503b0dc2c1e3f3ce843ec0"
           },
           {
             "lane": "tx",
@@ -184,12 +184,6 @@
             "textSha256": "9efd937ed20b1352a9344e9229cf4e02bddf1aca4057f62ecb5bc2cd786f7310"
           },
           {
-            "lane": "pool",
-            "params": [],
-            "sql": "SELECT has_table_privilege('timeline_entries', 'SELECT') AS readable",
-            "textSha256": "6e37a56e458e1a54a8bd848bbb7410b31832c9c99e503b0dc2c1e3f3ce843ec0"
-          },
-          {
             "event": "begin",
             "lane": "tx"
           },
@@ -201,6 +195,12 @@
             ],
             "sql": "SELECT set_config('jit', $1, true), set_config('statement_timeout', $2, true)",
             "textSha256": "3f17856484987276b18d4a16a713dd25c07aa188d48e8c2a07aa2ece6739d5c7"
+          },
+          {
+            "lane": "tx",
+            "params": [],
+            "sql": "SELECT has_table_privilege('timeline_entries', 'SELECT') AS readable",
+            "textSha256": "6e37a56e458e1a54a8bd848bbb7410b31832c9c99e503b0dc2c1e3f3ce843ec0"
           },
           {
             "lane": "tx",
