@@ -138,7 +138,7 @@ export async function heldConceptRebuild(engine: Sql, sourceId: string, snapshot
  * purge), then hard-purges the tombstone with the expiry's own statements (engine purgeDeletedPages, onlyIds). Returns
  * why it purged nothing, or the tombstone's access and the incoming links the fresh page takes over.
  */
-async function purgeHeldConcept(tx: BrainEngine, sourceId: string, slug: string, rebuild: ConceptRebuild): Promise<string | { access: RebuildAccess; incoming: LinkBatchInput[] }> {
+async function purgeHeldConcept(tx: BrainEngine, sourceId: string, slug: string, rebuild: ConceptRebuild): Promise<string | { parked: string } | { access: RebuildAccess; incoming: LinkBatchInput[] }> {
   const [held] = await tx.executeRaw<{ id: number }>(`SELECT p.id FROM pages p WHERE p.id = $1 AND p.source_id = $2 AND p.slug = $3
     AND ${DELETED_US} = $4 AND ${HELD_SQL} FOR UPDATE OF p`, [rebuild.page_id, sourceId, slug, rebuild.deleted_us]);
   if (!held) return 'The concept is no longer held for a rebuild (a person or sync deleted, restored or purged it), so the rebuild wrote nothing.';
@@ -150,9 +150,11 @@ async function purgeHeldConcept(tx: BrainEngine, sourceId: string, slug: string,
   const incoming = await tx.executeRaw<LinkBatchInput>(`SELECT f.slug AS from_slug, $2::text AS to_slug, l.link_type, l.context, l.link_source,
     o.slug AS origin_slug, l.origin_field, f.source_id AS from_source_id, $3::text AS to_source_id, o.source_id AS origin_source_id
     FROM links l JOIN pages f ON f.id = l.from_page_id LEFT JOIN pages o ON o.id = l.origin_page_id
-    WHERE l.to_page_id = $1 AND l.from_page_id <> $1 AND f.deleted_at IS NULL`, [rebuild.page_id, slug, sourceId]);
+    WHERE l.to_page_id = $1 AND l.from_page_id <> $1 AND f.deleted_at IS NULL AND l.link_source IS DISTINCT FROM 'concept-provenance'`, [rebuild.page_id, slug, sourceId]);
   const { parkUncarriedInPurge } = await import('../repair/origin-carry.ts');
-  await parkUncarriedInPurge(tx, [rebuild.page_id]);
+  if ((await parkUncarriedInPurge(tx, [rebuild.page_id])).length) {
+    return { parked: 'A page written since depends on the concept for its privacy, so the concept is parked until the next purge labels it and the rebuild wrote nothing.' };
+  }
   const purged = await tx.purgeDeletedPages(0, { onlyIds: [rebuild.page_id] });
   if (purged.count !== 1 || !access) return 'The tombstone is held by another purge rule, so the rebuild wrote nothing and it stays held.';
   return { access, incoming };
@@ -178,17 +180,20 @@ async function finishConceptRebuild(tx: BrainEngine, sourceId: string, slug: str
  */
 export async function rebuildHeldConcept(engine: BrainEngine, sourceId: string, slug: string, rebuild: ConceptRebuild, write: (tx: BrainEngine) => Promise<unknown>): Promise<void> {
   const publicationId = randomUUID(), report = { appended: 0 };
+  let parked: string | undefined;
   await engine.transaction(async tx => {
     const slugs = [...new Set([slug, ...await linkStreamSlugs(tx, sourceId, rebuild.page_id)])].sort();
     await tx.lockPageKeys(slugs.map(key => ({ sourceId, slug: key })));
     await withBeliefBatch(tx, { sourceId, slugs, publicationId, op: 'purge_deleted_pages', hardDeleteEvent: 'page.expired', report }, async () => {
       const before = await purgeHeldConcept(tx, sourceId, slug, rebuild);
       if (typeof before === 'string') throw Object.assign(new Error(before), { code: 'revision_conflict' });
+      if ('parked' in before) { parked = before.parked; return; }
       await write(tx);
       await finishConceptRebuild(tx, sourceId, slug, before);
     });
   });
   if (report.appended) await markBeliefCommits(engine, [publicationId]).catch(() => undefined);
+  if (parked) throw Object.assign(new Error(parked), { code: 'revision_conflict' });
 }
 
 /**

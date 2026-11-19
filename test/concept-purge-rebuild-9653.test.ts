@@ -25,6 +25,8 @@ import { runMaintain } from '../src/commands/maintain.ts';
 import { runCycle } from '../src/core/cycle.ts';
 import { enableBeliefLedger } from '../src/core/belief/coverage.ts';
 import { readEvents } from './helpers/belief-ledger.ts';
+import * as originCarry from '../src/core/repair/origin-carry.ts';
+import { parkDerivedOrigin, readDerivedOriginParks } from '../src/core/persistence/derived-origin-hold.ts';
 import { managedBrain, settleManagedGitEffects } from './helpers/managed-brain.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 
@@ -176,6 +178,35 @@ for (const backend of testBackends()) {
           const expired = events.find(e => e.event_type === 'page.expired');
           expect(expired?.purged).toBe(false);
           expect(events.filter(e => e.page_lifetime !== expired!.page_lifetime).length).toBeGreaterThan(0);
+        }, { databaseUrl });
+      }, 300_000);
+
+      if (unmanaged) test('unmanaged, belief ledger on: a member that left gets its provenance edge retracted, never carried to the fresh page', async () => {
+        await managedBrain(async ({ engine, ctx, root }) => {
+          await heldConcept(engine, ctx, root);
+          await enableBeliefLedger(engine, 'default');
+          const after = Math.max(0, ...(await readEvents(engine, 'default')).map(e => e.id));
+          expect((await synthesize(engine, root, [1, 2, 3, 4], { text: NEW, unmanaged: true })).rebuilt).toEqual([CONCEPT]);
+          const left = (await readEvents(engine, 'default', after)).filter(e => e.slug === atom(5) && e.subject_kind === 'link');
+          expect(await engine.executeRaw(`SELECT 1 FROM links l JOIN pages f ON f.id = l.from_page_id JOIN pages t ON t.id = l.to_page_id
+            WHERE f.slug = $1 AND t.slug = $2 AND l.link_source = 'concept-provenance'`, [atom(5), CONCEPT])).toHaveLength(0);
+          expect(left.map(e => e.event_type)).toEqual(['link.retracted']);
+        }, { databaseUrl });
+      }, 300_000);
+
+      if (unmanaged) test('unmanaged: a park the rebuild writes for a dependent survives its refusal', async () => {
+        await managedBrain(async ({ engine, ctx, root }) => {
+          const id = await heldConcept(engine, ctx, root);
+          const spy = spyOn(originCarry, 'parkUncarriedInPurge').mockImplementation(async (tx, ids) => {
+            const park = { source_id: 'default', slug: CONCEPT, page_id: Number(ids[0]), blocking_slug: 'notes/storage-ref', code: 'dependent_written_mid_purge', reason: 'notes/storage-ref depends on it.' };
+            await parkDerivedOrigin(tx, park);
+            return [{ ...park, parked_at: new Date().toISOString() }];
+          });
+          try {
+            expect((await synthesize(engine, root, [1, 2, 3, 4, 5], { text: NEW, unmanaged: true })).rebuilt).toEqual([]);
+          } finally { spy.mockRestore(); }
+          await stillHeld(engine, id);
+          expect((await readDerivedOriginParks(engine)).map(p => p.page_id)).toEqual([id]);
         }, { databaseUrl });
       }, 300_000);
 
