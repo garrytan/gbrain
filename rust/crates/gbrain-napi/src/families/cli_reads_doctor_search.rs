@@ -10,7 +10,9 @@ use napi::Env;
 use napi::bindgen_prelude::Object;
 use napi_derive::napi;
 
-use crate::store_binding::Brain;
+use serde_json::Value;
+
+use crate::store_binding::{Brain, arg};
 
 #[napi]
 impl Brain {
@@ -94,5 +96,19 @@ impl Brain {
         source_ids: Vec<String>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.list_git_image_hold_counts(source_ids))
+    }
+
+    /// `readProjectionBacklog`: a coverage scope: the projection queue by class.
+    #[napi]
+    pub fn read_projection_backlog<'env>(
+        &self,
+        env: &'env Env,
+        scope: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let scope: gbrain_store::link_queries::CoverageScope =
+                arg(scope, "readProjectionBacklog scope")?;
+            s.read_projection_backlog(&scope)
+        })
     }
 }

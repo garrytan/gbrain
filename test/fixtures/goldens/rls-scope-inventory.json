@@ -5238,6 +5238,7 @@
         "readPersistenceBrainId": "none",
         "readPersistenceBrainIdText": "none",
         "readPrivateQueueState": "none",
+        "readProjectionBacklog": "none",
         "readProjectionReadiness": "none",
         "readProjectionReadinessGeneration": "none",
         "readPublicationRefusals": "none",

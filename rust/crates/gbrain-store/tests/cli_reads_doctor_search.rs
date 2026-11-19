@@ -327,3 +327,119 @@ fn git_image_hold_counts_read_the_summary_checkpoint_of_each_current_incarnation
         vec![json!({ "source_id": "other", "images": 4 })]
     );
 }
+
+/// Writes a page the way an import that has not indexed it yet does: its projection job stays queued.
+fn put_queued(s: &Store, slug: &str, input: Value) {
+    let mut base = json!({ "type": "note", "title": slug, "compiled_truth": "body" });
+    for (k, v) in input.as_object().unwrap() {
+        base[k] = v.clone();
+    }
+    let input: PageInput = args(base);
+    let options: PutPageOptions = args(json!({ "index": false }));
+    s.put_page(slug, &input, &options).unwrap();
+}
+
+#[test]
+fn projection_backlog_counts_the_queue_by_class_in_the_scope() {
+    use gbrain_store::chunks::{ChunkInput, UpsertChunksOptions};
+    use gbrain_store::link_queries::CoverageScope;
+    let s = brain("projection-backlog");
+    let scope = |v: Value| -> CoverageScope { args(v) };
+    // An empty queue.
+    let empty = s.read_projection_backlog(&scope(json!({}))).unwrap();
+    assert_eq!((empty.pending, empty.sealable, empty.reimport), (0, 0, 0));
+    assert_eq!(empty.oldest, None);
+    assert!(
+        empty.as_of.starts_with("2027-01-15 08:00:00"),
+        "{}",
+        empty.as_of
+    );
+
+    put_queued(&s, "notes/text", json!({}));
+    put_queued(
+        &s,
+        "images/plain",
+        json!({ "page_kind": "image", "compiled_truth": "ocr text" }),
+    );
+    put_queued(
+        &s,
+        "images/sealed",
+        json!({ "page_kind": "image", "compiled_truth": "ocr text" }),
+    );
+    put_queued(
+        &s,
+        "images/unsafe",
+        json!({ "page_kind": "image", "compiled_truth": "ocr text" }),
+    );
+    put_queued(
+        &s,
+        "images/fenced",
+        json!({ "page_kind": "image", "compiled_truth": "<!--- gbrain:facts:begin -->\nx" }),
+    );
+    let importer = |text: &str| ChunkInput {
+        chunk_index: 0,
+        chunk_text: text.to_owned(),
+        chunk_source: Some("image_asset".into()),
+        modality: Some("image".into()),
+        rest: Default::default(),
+    };
+    let options = UpsertChunksOptions::default();
+    s.upsert_chunks("images/sealed", &[importer("ocr text")], &options)
+        .unwrap();
+    s.set_chunker_version("images/sealed", "4", None).unwrap();
+    // The chunk no longer holds the page's text: only the importer can seal it.
+    s.upsert_chunks("images/unsafe", &[importer("edited")], &options)
+        .unwrap();
+    s.set_chunker_version("images/unsafe", "-1", None).unwrap();
+
+    let all = s.read_projection_backlog(&scope(json!({}))).unwrap();
+    assert_eq!(
+        (
+            all.pending,
+            all.failed,
+            all.sealable,
+            all.sealable_with_visual
+        ),
+        (1, 0, 1, 0)
+    );
+    assert_eq!(
+        (all.reimport, all.ocr_required, all.protected, all.archived),
+        (2, 1, 1, 0)
+    );
+    assert_eq!(all.oldest, Some(0.0));
+
+    // A scope on another source reads none of them; an empty `sourceIds` falls back to `sourceId`.
+    let other = s
+        .read_projection_backlog(&scope(json!({ "sourceIds": ["other"] })))
+        .unwrap();
+    assert_eq!(
+        (
+            other.pending,
+            other.sealable,
+            other.reimport,
+            other.protected
+        ),
+        (0, 0, 0, 0)
+    );
+    let fallback = s
+        .read_projection_backlog(&scope(json!({ "sourceIds": [], "sourceId": "default" })))
+        .unwrap();
+    assert_eq!(
+        (fallback.pending, fallback.sealable, fallback.reimport),
+        (1, 1, 2)
+    );
+
+    // An archived source's rows are counted, as their own class.
+    s.set_source_archived("default", true).unwrap();
+    let archived = s.read_projection_backlog(&scope(json!({}))).unwrap();
+    assert_eq!(
+        (
+            archived.archived,
+            archived.pending,
+            archived.sealable,
+            archived.reimport
+        ),
+        (5, 0, 0, 0)
+    );
+    assert_eq!(archived.oldest, None);
+}

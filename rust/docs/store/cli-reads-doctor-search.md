@@ -23,6 +23,7 @@ table the SQL reads, so the answer is what an empty table gives), or refused (th
 | `countSegmentedRecentPages(sourceIds)` | how many of those 1000 pages are segmented | served | `link_resolution_opportunity` |
 | `countPagesHiddenByPrefix(pattern, sourceIds)` | live pages with a chunk, served by search (sealed text, source not archived, no `quarantine` or `pinned_question` key), whose slug matches the escaped `LIKE` pattern, in the sources when given | served | `hidden_by_search_policy` |
 | `listGitImageHoldCounts(sourceIds)` | per source in the list, the `images` count of its current incarnation's `sync-hold-summary` checkpoint (`completed_keys[0].images`); sources with none, or a count of 0, are not listed | empty-no-writer | `image_embedding_coverage` (and the held-files check) |
+| `readProjectionBacklog(scope)` | the projection queue's jobs in a read scope (`sourceId`, `sourceIds`, private-page policy, trust floor, flagged filter) by class: `pending` (text, the Markdown, code and segmented pages) with `failed` (job reason `rebuild_failed`), `sealable` and `reimport` images with `ocr_required` (`chunker_version < 0`), `protected` and `archived`; the age of the oldest job that needs work; the store clock as `YYYY-MM-DD HH:MM:SS.fff+00` | served (an empty queue on a fresh brain; `sealable_with_visual` is always 0, `failed` is 0 until a drain writes that reason) | `text_projection_readiness`, the upgrade notice, the resident's projection status, `gbrain projections drain --dry-run` |
 
 ## How each read follows the SQL
 
@@ -44,3 +45,12 @@ table the SQL reads, so the answer is what an empty table gives), or refused (th
   where this store keeps every `op_checkpoints` row. Nothing writes the `sync-hold-summary` op on a Rust brain yet, so
   the answer is empty (as a PGLite brain with no held images answers), and a summary of an earlier incarnation of a
   source is never counted. When a writer for that op lands, this read serves its rows with no change.
+- `readProjectionBacklog` walks the queue (`d 0x04 <incarnation> 0x00 <slug>`), joins each job to its source by
+  incarnation and to the live page at the slug, and keeps the pages `pageReadFilter(..., live = false)` keeps: the scope
+  but not the live test, so an archived source's job counts as `archived` and a quarantined page still counts
+  (`link_queries/projection_backlog.rs`; the readiness reads in `retrieval_coverage.rs` apply the live test and share
+  the scope code). A non-empty `sourceIds` wins over `sourceId`; an empty one is ignored. An image is `sealable` when its
+  chunker version is at or after the safe-chunk fence and it has exactly one current chunk, at index 0, `image_asset`,
+  modality `image`, shorter than 65536 characters and equal to the body's first 65536 characters (or the title when
+  that is empty); any other live image is `reimport`. The store keeps no image vector, so `sealable_with_visual` is 0.
+  The Rust writer queues only reason `canonical_change`, so `failed` is 0 until a drain writes `rebuild_failed`.
