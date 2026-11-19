@@ -85,7 +85,7 @@ import type {
   SubagentFailureFallback, SubagentMessageInsert, SubagentMessageRow, SubagentOneshotLedgerRow, SubagentRetainedPutPage, SubagentToolInsert,
   SubagentToolOrder, SubagentToolRow, SubagentToolStart, SubagentToolTarget, SubagentWriteOutcome,
 } from './engine-sql/jobs-subagent.ts';
-import type { JunkEntityHubRow, LinkEndpointPage, LivePageSummary, TitledPage } from './engine-sql/link-reads.ts';
+import type { JunkEntityHubRow, LinkContextAsk, LinkContextMatch, LinkContextOriginPage, LinkEndpointPage, LivePageSummary, TitledPage } from './engine-sql/link-reads.ts';
 import type { CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuery, ContextualModeCandidate, FrozenHitKey, FrozenHitRow, WithdrawalChunkKey, WithdrawalChunkRow } from './engine-sql/chunk-reads.ts';
 import type { EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRow, PageTimelineRow, SegmentedTimelinePages, TimelineOrphanPage, TimelineRowDeletion } from './engine-sql/timeline-reads.ts';
 import type { CaseSensitiveAliasRow, PageAliasRow, TitleHitRow } from './engine-sql/alias-fanout-reads.ts';
@@ -1511,6 +1511,9 @@ export interface BrainEngine {
   listLinkEndpointPages(sourceId: string, slugs: string[], crossSourceSlugs: string[]): Promise<LinkEndpointPage[]>;
   listPagesTitledIn(queryLower: string, scope: PageReadScope): Promise<TitledPage[]>;
   wordLexemes(words: string[]): Promise<Map<string, string[]>>;
+  /** The stored link rows and origin page bodies behind returned link contexts, for a world-only caller (eligibility/fence-overlay.ts worldLinkContexts). */
+  readLinkContextMatches(asks: readonly LinkContextAsk[]): Promise<LinkContextMatch[]>;
+  readLinkContextOriginPages(ids: readonly number[]): Promise<LinkContextOriginPage[]>;
   /** Link temporal state: relationship evidence and state rows, temporal link rows, manual transitions and their reads (SQL and contracts in engine-sql/link-temporal.ts). */
   readLinkRelationshipEvidence(keys: readonly RelationshipKey[]): Promise<RelationshipEvidence>;
   /** Upsert and remove relationship state rows; returns how many rows changed. */

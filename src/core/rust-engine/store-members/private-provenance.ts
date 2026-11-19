@@ -39,6 +39,7 @@
  * by the schema version the context carries. The two forms are the same test, so the comparison reads both as one.
  */
 import {
+  type CallerAccess,
   currentCallerAccess,
   privacyAliasSql,
   privatePagesFilterForCaller,
@@ -196,7 +197,8 @@ export function storePagePolicy(
  * The store page policy for a read whose page fragment over `p` is `rendered` in the current context: the caller's
  * page policy, or the remote read floor (`remoteReadFloorSql('p')`, which with no labelled-only caller is the
  * no-caller page policy). A family that opts in with `callerReaders` also serves the caller's reader identities and
- * private-readable sources when the fragment is the canonical one for them. Any other fragment refuses.
+ * private-readable sources when the fragment is the canonical one for them. The caller is judged by
+ * judgeWidenedCaller; any other fragment refuses.
  */
 export function storePageTextPolicy(
   member: string,
@@ -211,26 +213,66 @@ export function storePageTextPolicy(
     // even where the premise of the flag fails. Any other read is judged as the same caller with `restricted` true.
     if (opts.callerReaders) {
       const privateReadableSources = [...outer.privateReadableSources];
-      const open = withoutCallerAccess(() => withCallerAccess(
+      const open = renderForStoreCaller(
         { identity: [], privateReadableSources, hidePrivate: true, restricted: false },
-        () => privatePagesFilterForCaller('p')));
+        () => privatePagesFilterForCaller('p'));
       if (normalizeConceptInputs(rendered()) === normalizeConceptInputs(open)) {
         return { ...pagePolicyFlags(open), identity: [], privateReadableSources };
       }
     }
     return withCallerAccess({ restricted: true }, () => storePageTextPolicy(member, rendered, opts));
   }
-  const text = normalizeConceptInputs(rendered());
-  const baseline = withoutCallerAccess(() => privatePagesFilterForCaller('p'));
-  if (text === normalizeConceptInputs(baseline)) return pagePolicyFlags(baseline);
-  if (opts.callerReaders) {
-    const access = currentCallerAccess();
-    const readers = { identity: [...access.identity], privateReadableSources: [...access.privateReadableSources] };
-    const canonical = withoutCallerAccess(() =>
-      withCallerAccess({ ...readers, hidePrivate: true }, () => privatePagesFilterForCaller('p')));
-    if (text === normalizeConceptInputs(canonical)) return { ...pagePolicyFlags(canonical), ...readers };
-  }
+  const policy = judgeWidenedCaller(readers => {
+    const text = normalizeConceptInputs(rendered());
+    const baseline = renderForStoreCaller({}, () => privatePagesFilterForCaller('p'));
+    if (text === normalizeConceptInputs(baseline)) return pagePolicyFlags(baseline);
+    if (!opts.callerReaders) return undefined;
+    const canonical = renderForStoreCaller({ ...readers, hidePrivate: true }, () => privatePagesFilterForCaller('p'));
+    return text === normalizeConceptInputs(canonical) ? { ...pagePolicyFlags(canonical), ...readers } : undefined;
+  });
+  if (policy) return policy;
   refuseMember(member, 'excludePrivate for a caller whose member pages, grants or lineage widen the policy');
+}
+
+/** The reader record a store policy carries for a widening caller (`identity` and `privateReadableSources` in privacy.rs). */
+export interface StoreCallerReaders {
+  identity: string[];
+  privateReadableSources: string[];
+}
+
+/**
+ * The widened-caller step every store privacy policy shares (page, member-access and fact policies). `judge` compares
+ * the caller's rendered text with reference renderings (renderForStoreCaller) and returns the store policy for the
+ * one it equals, or undefined. It runs with the caller's reader record (its reader identities and private-readable
+ * sources), in the caller's context.
+ *
+ * When nothing matches and the caller is anonymous (no reader identity) on a brain whose config holds no member-access
+ * restriction (restricted: false, the short member-access form the MCP stdio server's caller renders), `judge` runs
+ * again under the restricted rendering. The restricted rendering only adds conditions that need a page with readers,
+ * a folder rule or a pending folder prefix; each of those sets the store's sticky restriction flag
+ * (access.restrictions_present), which restricted: false says is unset, so it hides the same pages. Undefined when
+ * neither run matches: the member refuses.
+ */
+export function judgeWidenedCaller<T>(judge: (readers: StoreCallerReaders) => T | undefined): T | undefined {
+  const access = currentCallerAccess();
+  const readers = { identity: [...access.identity], privateReadableSources: [...access.privateReadableSources] };
+  const served = judge(readers);
+  if (served !== undefined) return served;
+  if (access.restricted || access.identity.length > 0) return undefined;
+  return withCallerAccess({ restricted: true }, () => judge(readers));
+}
+
+/**
+ * `render` for a fresh caller record of just `record`, as a reference the caller's text is compared with. The record
+ * keeps the caller's remote policy, whose schema version picks the owner-only and concept-input forms
+ * (readSchemaVersion), so a request whose engine scope has not recorded the version renders its reference in the
+ * same forms as its own text. The store reads the owner-only form off the matched text. An empty record with no
+ * remote policy renders outside any caller record, as the no-caller baseline always has.
+ */
+export function renderForStoreCaller<T>(record: Partial<CallerAccess>, render: () => T): T {
+  const remotePolicy = currentCallerAccess().remotePolicy;
+  const fresh: Partial<CallerAccess> = { ...(remotePolicy ? { remotePolicy } : {}), ...record };
+  return withoutCallerAccess(() => Object.keys(fresh).length === 0 ? render() : withCallerAccess(fresh, render));
 }
 
 /** The process-setting flags of a rendered page policy, and its owner-only form. */
