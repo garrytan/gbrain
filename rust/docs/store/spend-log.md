@@ -55,7 +55,8 @@ Differences from PGLite and PostgreSQL:
 - Atomicity: a member is one store write. An error (a job that does not exist, an amount that overflows) leaves nothing.
   A refusal is an outcome, not an error, so a member called alone keeps the sweep it ran, as the PGLite and PostgreSQL
   members do. `budget-meter.ts` calls `reserveClientSpend` and `reserveGroupSpend` inside `engine.transaction` and throws
-  on a refusal, so through the meter the sweep rolls back on every engine, a Rust brain included.
+  on a refusal, so through the meter the sweep rolls back on PGLite and PostgreSQL. A Rust brain in this release does not
+  serve `engine.transaction` (it refuses with `engine_capability_missing`), so the meter reaches neither member there.
 - No advisory lock: the store has one writer at a time, so two admissions cannot both see the same headroom.
 - The open-hold index (`0x27`) is kept from the build that adds it. A hold written by an older build is not in it and is
   not counted by an admission until it settles; there is no backfill.
