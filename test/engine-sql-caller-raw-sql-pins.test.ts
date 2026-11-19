@@ -140,6 +140,12 @@ const PINS: Pin[] = [
      FROM access_groups g LEFT JOIN access_group_members gm ON gm.group_id = g.id
      WHERE g.id = $1 GROUP BY g.id ORDER BY g.id`],
   },
+  {
+    from: 'src/core/access/members.ts:303 pagesNaming',
+    case: { method: 'listPagesNamingReader', variant: 'default', run: e => e.listPagesNamingReader('member:alice-example') },
+    texts: [`SELECT slug, source_id FROM pages WHERE frontmatter ? 'readable_by' AND gbrain_access_readers(frontmatter) @> ARRAY[$1]::text[]
+     ORDER BY source_id, slug LIMIT 51`],
+  },
 ];
 
 describe('caller raw SQL moved into typed members keeps its Postgres text byte for byte', () => {

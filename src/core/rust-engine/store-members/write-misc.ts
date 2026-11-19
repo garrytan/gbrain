@@ -1,14 +1,15 @@
 /**
  * The page-write reads and upkeep that belong to no other domain (BrainEngine readSourceState through
  * purgeMemoryProposals, attachSourcePath and getWorktreeBinding; SQL in engine-sql/write-misc.ts; isSourceClaimed, SQL in engine-sql/sources.ts), and the folder access read beside the
- * access members (isFolderRestricted, listAppliedPolicyRevisions, readMayActFor, readAudiencePrincipals, readAccessMembers, readAccessCredentials, listAudienceAccessMembers, readLiveMember and readAccessGroups; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
+ * access members (isFolderRestricted, listAppliedPolicyRevisions, readMayActFor, readAudiencePrincipals, readAccessMembers, readAccessCredentials, listAudienceAccessMembers, readLiveMember, readAccessGroups and listPagesNamingReader; SQL in engine-sql/access-control.ts). The source read, the path attach and the pages naming a reader are served by
  * gbrain-store `write_misc`; the rest answer for state the store does not keep. What each member answers and why:
  * rust/docs/store/write_misc.md.
  */
 import type {
   AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from '../../engine-sql/write-misc.ts';
-import type { AccessCredentialLookup, AccessCredentialRow, AccessGroupRow, AccessMemberLookup, AccessMemberRow, LiveMemberRow, LiveMemberVia, AppliedPolicyRevision, AudiencePrincipalRows, MayActForVia } from '../../engine-sql/access-control.ts';
+import type { AccessCredentialLookup, AccessCredentialRow, AccessGroupRow, AccessMemberLookup, AccessMemberRow, LiveMemberRow, LiveMemberVia, AppliedPolicyRevision, AudiencePrincipalRows, MayActForVia, PageNamingReaderRow } from '../../engine-sql/access-control.ts';
+import { PAGES_NAMING_READER_LIMIT } from '../../engine-sql/access-control.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 /**
@@ -116,3 +117,13 @@ export const readLiveMember: StoreMember<[via: LiveMemberVia, key: string], Live
 
 /** The store keeps no access groups (as no members, see listActiveAccessMembers), so it lists none, by id or not. */
 export const readAccessGroups: StoreMember<[id: string | null], AccessGroupRow[]> = async () => [];
+
+/**
+ * The store keeps pages, so this is a real answer: gbrain-store `write_misc` reads every page (soft-deleted ones too, as
+ * the SQL does), keeps those whose normalized readers (`gbrain_access_readers`) name exactly the principal, and returns
+ * them by (source, slug), at most PAGES_NAMING_READER_LIMIT (the SQL's LIMIT 51).
+ */
+export const listPagesNamingReader: StoreMember<[principal: string], PageNamingReaderRow[]> = async (brain, principal) => {
+  const rows = await storeCall({ member: 'listPagesNamingReader' }, () => brain.listPagesNamingReader(principal, PAGES_NAMING_READER_LIMIT)) as PageNamingReaderRow[];
+  return rows.map(r => ({ slug: r.slug, source_id: r.source_id }));
+};

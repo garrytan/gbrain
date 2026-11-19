@@ -5,7 +5,7 @@
  *  - Contract: readSourceState, readAdmissionSource, sharedSkillPackTablePresent,
  *    listSharedSkillPackRoots, getWorktreeBinding, isSourceClaimed, hasExtractedEvents, listActiveAccessMembers, isFolderRestricted,
  *    listAppliedPolicyRevisions, readMayActFor, readAudiencePrincipals, readAccessMembers, readAccessCredentials,
- *    listAudienceAccessMembers, readLiveMember, readAccessGroups, expireMemoryProposals,
+ *    listAudienceAccessMembers, readLiveMember, readAccessGroups, listPagesNamingReader, expireMemoryProposals,
  *    listAwaitingMemoryProposals and purgeMemoryProposals return the same observable result on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: a source-state read that differs changes whether page admission, the mirror read-only guard and
@@ -13,7 +13,8 @@
  *    and proposal upkeep.
  *  - Why existing coverage misses it: the call sites ran these statements through `executeRaw`, which the parity cases
  *    cannot call (D18), so no case compared them across engines (docs/research/rust-put-write-path.md).
- *  - Seam: none. Generated values (incarnation uuids) are compared by shape, never by value. The
+ *  - Seam: none. Generated values (incarnation uuids) are compared by shape, never by value. listPagesNamingReader
+ *    reads the Rust store's pages, so its cases compare a real answer on every arm. The
  *    Rust store keeps no skillpacks, chronicle state, access members, folder rules, writer bindings or memory proposals, so those cases
  *    compare the empty answer every arm gives on a fresh brain (rust/docs/store/write_misc.md).
  */
@@ -509,6 +510,60 @@ describe('engine parity: write misc', () => {
       member: [], otherCase: [], injected: [], unknown: [],
     });
     return answers;
+  });
+
+  parityTest('listPagesNamingReader finds no page on a brain with none', { methods: ['listPagesNamingReader'] }, async (engine) => {
+    const answers = { member: await engine.listPagesNamingReader('member:alice-example'), group: await engine.listPagesNamingReader('group:team-a') };
+    expect(answers).toEqual({ member: [], group: [] });
+    return answers;
+  });
+
+  // Leak case: a page counts only when its normalized readers name exactly the principal, in any source, soft-deleted
+  // or not; a page with no readable_by, another reader, a near-miss principal (bare id, other case, other kind) or an
+  // invalid readers value never counts.
+  parityTest('listPagesNamingReader lists the pages whose readers name exactly the principal, by source and slug', { methods: ['listPagesNamingReader', 'putPage', 'softDeletePage'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const put = (slug: string, frontmatter: Record<string, unknown>, sourceId = 'default') =>
+      engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `body of ${slug}`, frontmatter }, { sourceId });
+    await put('notes/b', { readable_by: ['alice-example', 'group:team-a'] });
+    await put('notes/a', { readable_by: ' Member:Alice-Example ' });
+    await put('notes/c', { readable_by: ['member:alice-example'] }, 'other');
+    await put('notes/gone', { readable_by: ['alice-example'] });
+    await engine.softDeletePage('notes/gone', { sourceId: 'default' });
+    await put('notes/bob', { readable_by: ['bob-example'] });
+    await put('notes/bad', { readable_by: ['alice-example', 7] });
+    await put('notes/open', { owner: 'alice-example' });
+    const names = (principal: string) => engine.listPagesNamingReader(principal);
+    const answers = {
+      member: await names('member:alice-example'),
+      group: await names('group:team-a'),
+      other: await names('member:bob-example'),
+      bare: await names('alice-example'),
+      otherCase: await names('member:Alice-Example'),
+      otherKind: await names('group:alice-example'),
+      invalid: await names('!nobody'),
+      unknown: await names('member:carol-example'),
+      injected: await names("x' OR '1'='1"),
+    };
+    const ref = (slug: string, source_id = 'default') => ({ slug, source_id });
+    expect(answers).toEqual({
+      member: [ref('notes/a'), ref('notes/b'), ref('notes/gone'), ref('notes/c', 'other')],
+      group: [ref('notes/b')], other: [ref('notes/bob')],
+      bare: [], otherCase: [], otherKind: [], invalid: [ref('notes/bad')], unknown: [], injected: [],
+    });
+    return answers;
+  });
+
+  // The cap: access member remove shows 50 pages and reads a 51st to know the list was cut, so 52 matching pages read
+  // as the first 51 by (source, slug).
+  parityTest('listPagesNamingReader stops at 51 pages', { methods: ['listPagesNamingReader', 'putPage'] }, async (engine) => {
+    const slugs = Array.from({ length: 52 }, (_, i) => `cap/p${String(i).padStart(2, '0')}`);
+    for (const slug of [...slugs].reverse()) {
+      await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'body', frontmatter: { readable_by: ['alice-example'] } });
+    }
+    const rows = await engine.listPagesNamingReader('member:alice-example');
+    expect(rows).toEqual(slugs.slice(0, 51).map(slug => ({ slug, source_id: 'default' })));
+    return rows;
   });
 
   parityTest('getWorktreeBinding is null for a source with no writer binding, on any host', { methods: ['getWorktreeBinding'] }, async (engine, backend) => {

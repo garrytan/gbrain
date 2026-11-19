@@ -5,13 +5,14 @@ Part of the store contract in [rust/README.md](../../README.md) ("The brain stor
 These are statements that a page write ran through `executeRaw` and that belong to no other storage domain
 ([docs/research/rust-put-write-path.md](../../../docs/research/rust-put-write-path.md)). PGLite and Postgres run the
 same SQL as before, now in `src/core/engine-sql/write-misc.ts`. The store answers the source read
-and the path attach from its source records (`crates/gbrain-store/src/write_misc.rs`) and has no keys of its own. The TypeScript
+and the path attach from its source records, and the reader-naming page list from its page records (`crates/gbrain-store/src/write_misc.rs`) and has no keys of its own. The TypeScript
 members (`src/core/rust-engine/store-members/write-misc.ts`) answer the others for state the store does not keep.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `brain.readSourceState(sourceId)` | `{ incarnation, archived, local_path, config }`, or `null` for an unknown id | `readSourceState` |
 | `brain.attachSourcePath(sourceId, localPath, name, federated)` | `true` after it sets `local_path`, replaces the name when `name` is not `null` and sets `config.federated` when `federated` is not `null`; `false`, with no change, for an unknown id | `attachSourcePath` |
+| `brain.listPagesNamingReader(principal, limit)` | `[{ slug, source_id }]`, by (source, slug), at most `limit` | `listPagesNamingReader` |
 
 The link endpoint read (`listLinkEndpointPages`) is in [link_queries.md](link_queries.md).
 
@@ -37,5 +38,6 @@ The link endpoint read (`listLinkEndpointPages`) is in [link_queries.md](link_qu
 | `listAudienceAccessMembers()` | `[]` | The store keeps no access members (see `listActiveAccessMembers`), so no member is of kind audience, as on a brain with none. On PGLite and Postgres the read is the statement `access/members.ts` `audienceMemberIds` ran through `executeRaw` (`AUDIENCE_KIND_MEMBERS_SQL`); a person, a disabled member and a removed member are filtered out in the statement. |
 | `readLiveMember(via, key)` | `null` | The store keeps no access members (see `listActiveAccessMembers`), so no member id, stdio config key, token or client names a live member, and `access/caller.ts` `memberIdentityFor` and `stdioMemberIdentity` find the empty identity, as for an unbound caller. On PGLite and Postgres the read is the statement `liveIdentity` ran through `executeRaw` (`LIVE_MEMBER_SQL`, one per route); a disabled member, a removed member, a revoked token and a deleted client are filtered out in the statement, and a member carries only its own groups. |
 | `readAccessGroups(id)` | `[]` | The store keeps no access groups, so no group is listed and no id names one, as on a brain with none. On PGLite and Postgres the read is the statement `access/members.ts` `listGroups` ran through `executeRaw` (`ACCESS_GROUP_SQL`, every group or the one `$1` names); a group carries only its own member ids, in id order, and a group with none carries an empty list. |
+| `listPagesNamingReader(principal)` | `brain.listPagesNamingReader(principal, 51)` | The pages in every source whose normalized readers (`gbrain_access_readers`, the `page_readers` column: trimmed, lower-cased, a bare id read as `member:<id>`, an invalid value read as `!nobody`) name exactly `principal`, by (source, slug), at most 51 (`PAGES_NAMING_READER_LIMIT`: `access/members.ts` shows 50 and reads one more to see a cut). A soft-deleted page counts and a page with no `readable_by` key does not, as in the statement `access/members.ts` `pagesNaming` ran through `executeRaw` on PGLite and Postgres (`PAGES_NAMING_READER_SQL`). Today no Rust path reaches it: `access member remove` and `access group remove` find no member or group first. |
 | `expireMemoryProposals(reason)`, `purgeMemoryProposals(days)` | `0` | The store keeps no memory proposals. |
 | `listAwaitingMemoryProposals(limit)` | `[]` | The store keeps no memory proposals. |
