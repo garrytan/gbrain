@@ -596,6 +596,7 @@ export const RUST_ENGINE_MEMBERS = {
   countPagesDueForMentions: 'pages',
   readIdentitySiblingCandidates: 'pages',
   findExactSlug: 'pages',
+  readLiveSlugs: 'pages',
   readRetirementHop: 'pages',
   readEntityCardRows: 'pages',
   readExtractionLagCounts: 'pages',

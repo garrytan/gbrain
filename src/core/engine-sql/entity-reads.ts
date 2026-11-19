@@ -207,3 +207,18 @@ export async function readIgnoredPrivacyLabelPages(exec: TimedRawRead, sourceId:
       LIMIT ${limit}`);
   return exec.executeRaw<IgnoredLabelPageRow>(text, params, { timeoutMs: opts.timeoutMs ?? NOTICE_READ_TIMEOUT_MS });
 }
+
+/**
+ * The slugs among `slugs` at which a live page sits in the source, retired or not, each once, in no set order
+ * (entities/resolve.ts `tryOrgDirVariant`); `limit: 2` stops at two (`findExactBasenameCandidates`).
+ */
+export async function readLiveSlugs(exec: LegacyUnscopedRead, sourceId: string, slugs: readonly string[], opts: { limit?: 2 } = {}): Promise<string[]> {
+  const rows = opts.limit === 2
+    ? await exec.executeRaw<{ slug: string }>(
+      `SELECT slug FROM pages
+        WHERE source_id = $1 AND deleted_at IS NULL AND slug = ANY($2::text[])
+        LIMIT 2`, [sourceId, [...slugs]])
+    : await exec.executeRaw<{ slug: string }>(
+      'SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND slug = ANY($2::text[])', [sourceId, [...slugs]]);
+  return rows.map(row => row.slug);
+}

@@ -62,6 +62,21 @@ impl Brain {
         self.run(env, move |s| s.find_exact_slug(&source_id, &slugs, retired))
     }
 
+    /// `readLiveSlugs(sourceId, slugs, limit)`: the live pages among `slugs`, each once; a `null`
+    /// `limit` reads them all.
+    #[napi]
+    pub fn read_live_slugs<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slugs: Vec<String>,
+        limit: Option<u32>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_live_slugs(&source_id, &slugs, limit.map(|n| n as usize))
+        })
+    }
+
     /// `readRetirementHop(sourceId, slug, policy)`: the live page with its retirement and redirect
     /// target, or `null`; a `null` policy reads every page.
     #[napi]

@@ -5445,6 +5445,7 @@
         "readLinkRelationshipEvidence": "none",
         "readLiveMember": "none",
         "readLivePageBody": "none",
+        "readLiveSlugs": "none",
         "readLocalWriterRow": "none",
         "readManagedModeRows": "none",
         "readManifest": "none",

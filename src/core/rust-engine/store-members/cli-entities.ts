@@ -29,6 +29,13 @@ export const readIdentitySiblingCandidates: StoreMember<[sourceId: string, q: Si
     excludePrivate: excludePrivate ?? null }));
 };
 
+/** entities/resolve.ts: the live pages among the slugs; `limit` 2 caps them. */
+export const readLiveSlugs: StoreMember<[sourceId: string, slugs: readonly string[], opts?: { limit?: 2 }], string[]> = (brain, sourceId, slugs, opts) => {
+  const { limit } = takeOptions('readLiveSlugs', opts, ['limit']);
+  if (limit !== undefined && limit !== 2) refuseMember('readLiveSlugs', `limit ${String(limit)}`);
+  return storeCall({ member: 'readLiveSlugs', sourceId }, () => brain.readLiveSlugs(sourceId, [...slugs], limit === 2 ? 2 : null));
+};
+
 export const findExactSlug: StoreMember<[sourceId: string, slugs: readonly string[], opts?: { retired?: boolean }], string | null> = (brain, sourceId, slugs, opts) =>
   storeCall({ member: 'findExactSlug', sourceId }, () => brain.findExactSlug(sourceId, [...slugs], opts?.retired ?? null));
 

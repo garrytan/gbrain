@@ -159,9 +159,7 @@ function orgDirVariants(raw: string): string[] {
 async function tryOrgDirVariant(engine: BrainEngine, source_id: string, raw: string): Promise<string | null> {
   const variants = orgDirVariants(raw);
   if (!variants.length) return null;
-  const rows = await engine.executeRaw<{ slug: string }>(
-    'SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND slug = ANY($2::text[])', [source_id, variants]);
-  const live = await canonicalPages(engine, source_id, rows.map(r => r.slug));
+  const live = await canonicalPages(engine, source_id, await engine.readLiveSlugs(source_id, variants));
   return live.length === 1 ? live[0].slug : null;
 }
 
@@ -355,18 +353,13 @@ async function findExactBasenameCandidates(
 ): Promise<Array<{ slug: string }>> {
   const token = slugify(raw);
   if (raw.includes('/') || !token.includes('-')) return [];
-  let rows: Array<{ slug: string }>;
+  let slugs: string[];
   try {
-    rows = await engine.executeRaw<{ slug: string }>(
-      `SELECT slug FROM pages
-        WHERE source_id = $1 AND deleted_at IS NULL AND slug = ANY($2::text[])
-        LIMIT 2`,
-      [source_id, BASENAME_DIRS.map(dir => `${dir}/${token}`)],
-    );
+    slugs = await engine.readLiveSlugs(source_id, BASENAME_DIRS.map(dir => `${dir}/${token}`), { limit: 2 });
   } catch {
     return [];
   }
-  return canonicalPages(engine, source_id, rows.map(r => r.slug));
+  return canonicalPages(engine, source_id, slugs);
 }
 
 /**
