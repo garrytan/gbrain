@@ -318,3 +318,69 @@ fn retirement_hop_reads_retirement_and_target() {
         None
     );
 }
+
+#[test]
+fn entity_card_rows_match_the_title_slugs_and_like_pattern() {
+    use gbrain_store::cli_reads::entities::EntityCardMatch;
+    let dir = TempDir::new("cli-card");
+    let store = seeded(&dir);
+    let page = |title: &str, body: &str| json!({"type": "person", "title": title, "compiled_truth": body, "frontmatter": {}});
+    put(
+        &store,
+        "default",
+        "people/under_score",
+        page("Under", "Under body."),
+    );
+    put(&store, "default", "people/underxscore", page("ÉLAN", "x"));
+    let long = "é".repeat(70_000);
+    put(&store, "default", "people/long", page("Long", &long));
+    let slugs = |m: EntityCardMatch| {
+        let mut out: Vec<String> = store
+            .read_entity_card_rows("default", &m, None)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.slug)
+            .collect();
+        out.sort();
+        out
+    };
+    // `_` is a LIKE wildcard; `lower(title)` folds É.
+    assert_eq!(
+        slugs(EntityCardMatch::Name {
+            title_lc: "élan".into(),
+            slugs: vec!["people/ada".into()],
+            slug_like: "%/under_score".into(),
+        }),
+        vec!["people/ada", "people/under_score", "people/underxscore"]
+    );
+    assert_eq!(
+        slugs(EntityCardMatch::Slugs {
+            slugs: vec!["people/merged".into(), "people/missing".into()],
+        }),
+        vec!["people/merged"]
+    );
+    let rows = store
+        .read_entity_card_rows(
+            "default",
+            &EntityCardMatch::Slugs {
+                slugs: vec!["people/long".into()],
+            },
+            None,
+        )
+        .unwrap();
+    let body = rows[0].compiled_truth.as_deref().unwrap();
+    assert_eq!(body.chars().count(), 65_536);
+    assert_eq!(rows[0].last_retrieved_at, None);
+    assert!(
+        store
+            .read_entity_card_rows(
+                "other",
+                &EntityCardMatch::Slugs {
+                    slugs: vec!["people/merged".into()],
+                },
+                None,
+            )
+            .unwrap()
+            .is_empty()
+    );
+}

@@ -14,6 +14,7 @@ import { describe, expect, test } from 'bun:test';
 import { runCase, withPinnedSqlEnvironment, type SqlCase } from './helpers/postgres-engine-sql-cases.ts';
 import { edgeTrimSql } from '../src/core/edge-whitespace.ts';
 import { retiredPageSql } from '../src/core/entities/resolve.ts';
+import { boundedBodyPrefixSql } from '../src/core/page-window/bounded-lead.ts';
 import { callerAccessAllowedSql, privatePagesFilterForCaller, remoteReadFloorSql } from '../src/core/search/private-visibility.ts';
 
 interface Pin {
@@ -73,6 +74,35 @@ const PINS: Pin[] = [
         WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL ${predicate()}
         LIMIT 1`],
   })),
+  ...([
+    ['name', ''],
+    ['name+private', `private`],
+  ] as const).map(([variant, priv]): Pin => ({
+    from: `src/core/verbs/entity-card.ts:354 selectEntityCandidates (${variant})`,
+    case: { method: 'readEntityCardRows', variant, run: e => e.readEntityCardRows('default', { titleLc: 'alice example', slugs: ['people/alice-example'], slugLike: '%/alice-example' }, { excludePrivate: priv !== '' }) },
+    texts: () => [`SELECT ${CARD_ROW_COLUMNS()}
+         FROM pages
+        WHERE deleted_at IS NULL
+          AND source_id = $1
+          AND ( lower(title) = $2
+             OR slug = ANY($3::text[])
+             OR slug LIKE $4 )${priv ? ` AND ${privatePagesFilterForCaller('pages')}` : ''}`],
+  })),
+  ...([
+    ['slugs', ''],
+    ['slugs+private', `private`],
+  ] as const).map(([variant, priv]): Pin => ({
+    from: `src/core/verbs/entity-card.ts:380 selectEntityCandidates hydrate (${variant})`,
+    case: { method: 'readEntityCardRows', variant, run: e => e.readEntityCardRows('default', { slugs: ['people/alice-example'] }, { excludePrivate: priv !== '' }) },
+    texts: () => [`SELECT ${CARD_ROW_COLUMNS()}
+           FROM pages
+          WHERE deleted_at IS NULL AND source_id = $1 AND slug = ANY($2::text[])${priv ? ` AND ${privatePagesFilterForCaller('pages')}` : ''}`],
+  })),
+  {
+    from: 'src/commands/sync/plain-directory.ts:36 plainDirectorySyncRoot',
+    case: { method: 'readPlainSyncSource', variant: 'default', run: e => e.readPlainSyncSource('default') },
+    texts: ['SELECT local_path,last_commit,config FROM sources WHERE id=$1 AND NOT archived'],
+  },
   {
     from: 'src/core/access/owner-only.ts:56 ownerOnlySourcesPresent',
     case: { method: 'readOwnerOnlySourcesPresent', variant: 'default', run: e => e.readOwnerOnlySourcesPresent() },
@@ -84,6 +114,12 @@ const PINS: Pin[] = [
     texts: ['SELECT config FROM sources WHERE id = $1'],
   },
 ];
+
+/** entity-card.ts CARD_ROW_COLUMNS at 7470c703ed, verbatim. */
+function CARD_ROW_COLUMNS(): string {
+  return `slug, source_id, title, type, frontmatter, ${boundedBodyPrefixSql('pages')} AS compiled_truth, updated_at,
+              GREATEST(last_retrieved_at, (SELECT r.last_retrieved_at FROM page_retrievals r WHERE r.page_id = pages.id)) AS last_retrieved_at`;
+}
 
 describe('caller raw SQL moved into typed members keeps its Postgres text byte for byte', () => {
   for (const pin of PINS) {

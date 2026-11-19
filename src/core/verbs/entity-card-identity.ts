@@ -20,6 +20,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { rethrowCapabilityMissing } from '../rust-engine/errors.ts';
 import { pageSnapshotKey } from '../page-snapshot-batch.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
@@ -179,11 +180,11 @@ export async function readCardIdentity(engine: BrainEngine, sourceId: string,
   if (identity_siblings) out.identity_siblings = identity_siblings;
   // Snapshot reads carry the withdrawal overlay get_page shows, so a forgotten fence row is struck and the sanitizer drops it.
   const { snapshots } = await engine.readPageSnapshotsBatch(slugs.map(slug => ({ slug, sourceId })))
-    .catch(() => ({ snapshots: new Map<string, PageSnapshot>() }));
+    .catch((e) => { rethrowCapabilityMissing(e); return { snapshots: new Map<string, PageSnapshot>() }; });
   const bodies = new Map<string, { title: string; body: string }>();
   for (const slug of slugs) {
     const snapshot = snapshots.get(pageSnapshotKey(sourceId, slug));
-    if (snapshot) bodies.set(slug, { title: snapshot.page.title ?? slug, body: await excerptSource(engine, snapshot).catch(() => '') });
+    if (snapshot) bodies.set(slug, { title: snapshot.page.title ?? slug, body: await excerptSource(engine, snapshot).catch((e) => { rethrowCapabilityMissing(e); return ''; }) });
   }
   const excerpt: IdentityExcerptLine[] = [];
   const omitted: string[] = [];

@@ -67,6 +67,24 @@ describe('engine parity: source-resolution reads', () => {
     return { empty, rows };
   });
 
+  parityTest('readPlainSyncSource reads the path, last commit and config of a source that is not archived', { methods: ['readPlainSyncSource'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'plain', { kind: null, note: 'x' }, '/srv/brain/plain');
+    await createSource(engine, backend, 'gone', {}, '/srv/brain/gone');
+    await archiveSource(engine, backend, 'gone');
+    const result = {
+      plain: await engine.readPlainSyncSource('plain'),
+      gone: await engine.readPlainSyncSource('gone'),
+      missing: await engine.readPlainSyncSource('missing'),
+      default: (await engine.readPlainSyncSource('default'))?.last_commit ?? null,
+    };
+    expect(result.plain?.local_path).toBe('/srv/brain/plain');
+    expect(result.plain?.last_commit).toBeNull();
+    expect(result.plain?.config as Record<string, unknown> | null | undefined).toEqual({ kind: null, note: 'x' });
+    expect(result.gone).toBeNull();
+    expect(result.missing).toBeNull();
+    return result;
+  });
+
   parityTest('readOwnerOnlySourcesPresent and readOwnerOnlySourceConfig find owner-only sources by kind or flag, archived ones included', { methods: ['readOwnerOnlySourcesPresent', 'readOwnerOnlySourceConfig'] }, async (engine, backend) => {
     const none = await engine.readOwnerOnlySourcesPresent();
     await createSource(engine, backend, 'plain', { note: 'x' });

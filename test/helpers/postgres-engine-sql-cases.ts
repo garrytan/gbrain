@@ -508,7 +508,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readCycleLocks': OOS.cycleLocks, 'deleteCycleLock': OOS.cycleLocks, 'deleteCycleLockIfStale': OOS.cycleLocks,
   // sources
   'listAllSources': 'sources', 'listSourceLocalPaths': 'sources', 'updateSourceConfig': 'sources',
-  'listLocalPathSources': 'sources', 'readOwnerOnlySourcesPresent': OOS.callerRawSql, 'readOwnerOnlySourceConfig': OOS.callerRawSql, 'listSourceRoutingRows': 'sources', 'countDefaultSourceSplit': 'sources', 'getSource': 'sources',
+  'listLocalPathSources': 'sources', 'readPlainSyncSource': OOS.callerRawSql, 'readOwnerOnlySourcesPresent': OOS.callerRawSql, 'readOwnerOnlySourceConfig': OOS.callerRawSql, 'listSourceRoutingRows': 'sources', 'countDefaultSourceSplit': 'sources', 'getSource': 'sources',
   'listStaleSyncSourceIds': 'sources', 'readSourceRow': 'sources', 'lockSourceRow': 'sources', 'readSourceChunkerVersion': 'sources',
   'setSourceChunkerVersion': 'sources', 'isSourceClaimed': 'sources',
   'countSourcePages': 'sources', 'insertSource': 'sources',
@@ -585,7 +585,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'stampWorktreeHeartbeats': OOS.journal,
   // entity and mention reads the CLI made through executeRaw
   'readMentionLastPass': OOS.entityReads, 'countPagesDueForMentions': OOS.entityReads, 'readIdentitySiblingCandidates': OOS.entityReads,
-  'findExactSlug': OOS.entityReads, 'readRetirementHop': OOS.callerRawSql, 'readExtractionLagCounts': OOS.entityReads, 'readIgnoredPrivacyLabelPages': OOS.entityReads,
+  'findExactSlug': OOS.entityReads, 'readRetirementHop': OOS.callerRawSql, 'readEntityCardRows': OOS.callerRawSql, 'readExtractionLagCounts': OOS.entityReads, 'readIgnoredPrivacyLabelPages': OOS.entityReads,
   'readSourceMembership': OOS.journal, 'findTopologyChanges': OOS.journal, 'renewWriteClaim': OOS.journal, 'expireStaleWriteClaims': OOS.journal,
   'hasClaimableWrite': OOS.journal, 'selectClaimableWrite': OOS.journal, 'directRawSql': OOS.helper,
   'readTopologyChange': OOS.journal, 'insertTopologyChange': OOS.journal,
@@ -1378,6 +1378,12 @@ export const EXTRA_READ_CASES: SqlCase[] = [
     ['floor', (e) => e.readRetirementHop(SRC, SLUG, 'floor')],
     ['member_access', (e) => e.readRetirementHop(SRC, SLUG, 'member_access')],
   ]),
+  ...variants('readEntityCardRows', [
+    ['name', (e) => e.readEntityCardRows(SRC, { titleLc: 'alice example', slugs: [SLUG], slugLike: '%/alice-example' })],
+    ['name+private', (e) => e.readEntityCardRows(SRC, { titleLc: 'alice example', slugs: [SLUG], slugLike: '%/alice-example' }, { excludePrivate: true })],
+    ['slugs', (e) => e.readEntityCardRows(SRC, { slugs: [SLUG] })],
+    ['slugs+private', (e) => e.readEntityCardRows(SRC, { slugs: [SLUG] }, { excludePrivate: true })],
+  ]),
   ...variants('readExtractionLagCounts', [['default', (e) => e.readExtractionLagCounts({ sourceId: SRC, versionTs: '2000-01-01T00:00:00Z', attendance: true, held: true })]]),
   ...variants('readIgnoredPrivacyLabelPages', [
     ['slugs', (e) => e.readIgnoredPrivacyLabelPages(SRC, { slugs: [SLUG] })],
@@ -1421,6 +1427,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('listGatedMirrorRequests', [['default', (e) => e.listGatedMirrorRequests(JOURNAL_REQUEST, 'segmented_mirror_writer_gate', ['segmented_mirror_writer_gate', 'withdrawal_mirror_failed'])]]),
   ...variants('listEffectRecoveries', [['default', (e) => e.listEffectRecoveries(JOURNAL_REQUEST, null, 10)], ['after', (e) => e.listEffectRecoveries(JOURNAL_REQUEST, '12', 10)]]),
   ...variants('selectClaimableEffect', [['default', (e) => e.transaction((tx: any) => tx.selectClaimableEffect(JOURNAL_REQUEST, []))], ['dead', (e) => e.transaction((tx: any) => tx.selectClaimableEffect(JOURNAL_REQUEST, ['1:n:2']))]]),
+  ...variants('readPlainSyncSource', [['default', (e) => e.readPlainSyncSource(SRC)]]),
   ...variants('readOwnerOnlySourcesPresent', [['default', (e) => e.readOwnerOnlySourcesPresent()]]),
   ...variants('readOwnerOnlySourceConfig', [['default', (e) => e.readOwnerOnlySourceConfig(SRC)]]),
   ...variants('listOverdueHeldWrites', [['refresh', (e) => e.listOverdueHeldWrites(JOURNAL_REQUEST, 60_000, 'refresh')], ['import', (e) => e.listOverdueHeldWrites(JOURNAL_REQUEST, 60_000, 'import')]]),

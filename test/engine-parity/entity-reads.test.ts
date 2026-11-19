@@ -26,6 +26,7 @@ import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
 import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 
 const { parityTest } = parityArms(testBackends());
+const tail = ' tail';
 
 async function seed(engine: BrainEngine, backend: Parameters<typeof createSource>[1]): Promise<void> {
   await createSource(engine, backend, 'other');
@@ -254,6 +255,46 @@ describe('engine parity: entity and mention reads', () => {
       }));
       expect(floor).toEqual({ hidden: null, live: 'people/alice-example' });
       return floor;
+    });
+
+  parityTest('readEntityCardRows reads the card candidates: the folded title, the exact slugs, the slug LIKE pattern and the hydrate slugs, with the bounded body prefix',
+    { methods: ['readEntityCardRows'] }, async (engine, backend) => {
+      await seed(engine, backend);
+      const page = (title: string, body: string, frontmatter: Record<string, unknown> = {}) =>
+        ({ type: 'person', title, compiled_truth: body, frontmatter }) as Parameters<BrainEngine['putPage']>[1];
+      await engine.putPage('people/under_score', page('Under', 'Under body.'), { sourceId: 'default' });
+      await engine.putPage('people/underxscore', page('UnderX', 'UnderX body.'), { sourceId: 'default' });
+      await engine.putPage('people/hidden', page('ÉLAN Hidden', 'Hidden body.', { visibility: 'private' }), { sourceId: 'default' });
+      await engine.putPage('people/long', page('Long', 'é'.repeat(70_000) + tail), { sourceId: 'default' });
+      const view = (rows: Awaited<ReturnType<BrainEngine['readEntityCardRows']>>) => sorted(rows.map(r => ({
+        slug: r.slug, source_id: r.source_id, title: r.title, type: r.type, frontmatter: r.frontmatter,
+        body: r.compiled_truth === null ? null : { chars: [...r.compiled_truth].length, head: r.compiled_truth.slice(0, 12) },
+        updated: r.updated_at !== null && !Number.isNaN(new Date(r.updated_at).getTime()),
+        retrieved: r.last_retrieved_at,
+      })), r => r.slug);
+      const slugsOf = (rows: Awaited<ReturnType<BrainEngine['readEntityCardRows']>>) => sorted(rows.map(r => r.slug));
+      const result = {
+        // `lower(title)`: the folded title matches; the slug list and the LIKE pattern add their own pages.
+        name: view(await engine.readEntityCardRows('default', { titleLc: 'alice', slugs: ['people/old', 'people/gone'], slugLike: '%/blank' })),
+        // `_` is the LIKE single-character wildcard, so both pages match.
+        like: slugsOf(await engine.readEntityCardRows('default', { titleLc: 'nobody', slugs: [], slugLike: '%/under_score' })),
+        folded: slugsOf(await engine.readEntityCardRows('default', { titleLc: 'élan hidden', slugs: [], slugLike: '%/none' })),
+        foldedPrivate: slugsOf(await engine.readEntityCardRows('default', { titleLc: 'élan hidden', slugs: [], slugLike: '%/none' }, { excludePrivate: true })),
+        hydrate: slugsOf(await engine.readEntityCardRows('default', { slugs: ['people/merged', 'people/gone', 'people/hidden', 'people/missing'] })),
+        hydratePrivate: slugsOf(await engine.readEntityCardRows('default', { slugs: ['people/merged', 'people/hidden'] }, { excludePrivate: true })),
+        other: slugsOf(await engine.readEntityCardRows('other', { slugs: ['people/alice-example', 'people/merged'] })),
+        long: view(await engine.readEntityCardRows('default', { slugs: ['people/long'] })),
+      };
+      expect(result.name.map(r => r.slug)).toEqual(['companies/alice', 'people/alice-example', 'people/alice-q', 'people/blank', 'people/old']);
+      expect(result.name.every(r => r.updated && r.retrieved === null)).toBe(true);
+      expect(result.like).toEqual(['people/under_score', 'people/underxscore']);
+      expect(result.folded).toEqual(['people/hidden']);
+      expect(result.foldedPrivate).toEqual([]);
+      expect(result.hydrate).toEqual(['people/hidden', 'people/merged']);
+      expect(result.hydratePrivate).toEqual(['people/merged']);
+      expect(result.other).toEqual(['people/alice-example']);
+      expect(result.long[0].body?.chars).toBe(65_536);
+      return result;
     });
 
   parityTest('readIgnoredPrivacyLabelPages returns labelled pages with no readers or visibility, by slug or since a time',
