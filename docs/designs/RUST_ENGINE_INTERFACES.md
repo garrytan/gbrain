@@ -1736,8 +1736,8 @@ and write provenance on content rows, and the trust records.
     and `listAmendmentsNotApplied`
     (`link_queries/link_temporal.rs`). `pageAwaitsRederive`, the purge check of `get_page`, `fetch` and `known_as_of`,
     answers false: the store keeps no `needs_rederive` queue. `beginSnapshotRead` (`engine-sql/transaction-settings.ts`) starts the valid-time,
-    fuzzy `get_page` and export transactions as one `REPEATABLE READ` snapshot; the Rust member sets nothing, because a
-    store transaction holds the one writer from its start, and it does not enforce `READ ONLY`. It refuses the takes and timeline
+    fuzzy `get_page` and export transactions as one `REPEATABLE READ` snapshot; the Rust member sets no isolation level, because a
+    store transaction holds the one writer from its start, and it enforces `READ ONLY` with Postgres's `25006` refusal. It refuses the takes and timeline
     scan tables and a pick over a history PGLite would have pruned (TODOS.md `rust-version-prune`), and the belief
     history members refuse for the missing belief ledger (TODOS.md `rust-belief-ledger`).
   - `resolveAliases` serves the floor, the flagged-page filter and `excludePrivate` on both the alias page and its

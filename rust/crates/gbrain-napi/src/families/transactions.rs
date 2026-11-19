@@ -63,6 +63,13 @@ impl Brain {
         self.run(env, move |s| s.rollback_savepoint(depth))
     }
 
+    /// `setTransactionReadOnly()`: `SET TRANSACTION READ ONLY`; every later write in the
+    /// transaction rejects `read_only_transaction`. Resolves `null`.
+    #[napi]
+    pub fn set_transaction_read_only<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, |s| s.set_transaction_read_only())
+    }
+
     /// `commitTransaction()`: commits and resolves the commit sequence.
     #[napi]
     pub fn commit_transaction<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {

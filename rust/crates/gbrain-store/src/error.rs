@@ -48,6 +48,8 @@ pub const WRITER_REJECTED: &str = "writer_rejected";
 pub const SOURCE_CHANGED: &str = "source_changed";
 /// A journal request is not in a state that allows the call.
 pub const INVALID_STATE: &str = "invalid_state";
+/// A write inside a read-only transaction (Postgres SQLSTATE 25006, `read_only_sql_transaction`).
+pub const READ_ONLY_TRANSACTION: &str = "read_only_transaction";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoreError {

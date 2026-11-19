@@ -41,13 +41,15 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
 
 use crate::env::Env;
 use crate::error::{
-    INVALID_STATE, Result, SOURCE_CHANGED, SOURCE_NOT_FOUND, STORE_CLOSED, StoreError,
+    INVALID_STATE, READ_ONLY_TRANSACTION, Result, SOURCE_CHANGED, SOURCE_NOT_FOUND, STORE_CLOSED,
+    StoreError,
 };
 use crate::kv::{Kv, KvRead, KvWrite};
 use crate::{Store, keys, sources};
@@ -119,7 +121,10 @@ pub struct Transaction {
     /// interleave on one layer stack. Readers do not take it.
     exclusive: Mutex<()>,
     kv: Arc<dyn Kv>,
-    read_only: bool,
+    /// Set at `begin_transaction` or by `set_transaction_read_only`; never cleared while it is open.
+    read_only: AtomicBool,
+    /// Opened read-only, so it never wrote and its commit writes nothing.
+    opened_read_only: bool,
 }
 
 fn closed() -> StoreError {
@@ -372,10 +377,10 @@ impl Transaction {
         {
             let mut state = lock(&self.state);
             state.base()?;
-            if self.read_only {
+            if self.read_only.load(Ordering::SeqCst) {
                 return Err(StoreError::new(
-                    INVALID_STATE,
-                    "a read-only transaction refuses writes",
+                    READ_ONLY_TRANSACTION,
+                    "cannot execute a write in a read-only transaction",
                 ));
             }
             state.statement = Some(Layer::default());
@@ -410,7 +415,7 @@ impl Store {
 
     /// Opens the write transaction and returns a store bound to it. Waits for the writer (a write
     /// that is already running) before it returns. `read_only` refuses every write with
-    /// `invalid_state`; it still holds the writer, so its reads see one consistent state.
+    /// `read_only_transaction`; it still holds the writer, so its reads see one consistent state.
     pub fn begin_transaction(&self, read_only: bool) -> Result<Store> {
         if self.bound.is_some() {
             return Err(StoreError::new(
@@ -429,9 +434,21 @@ impl Store {
             }),
             exclusive: Mutex::new(()),
             kv: self.kv.clone(),
-            read_only,
+            read_only: AtomicBool::new(read_only),
+            opened_read_only: read_only,
         });
         Ok(self.bound_to(tx))
+    }
+
+    /// `SET TRANSACTION READ ONLY`: from this call on, the bound transaction refuses every write
+    /// with `read_only_transaction`, as Postgres refuses one with SQLSTATE 25006. The writes it
+    /// already made stay; it commits nothing more. `store_closed` once the transaction ended.
+    pub fn set_transaction_read_only(&self) -> Result<()> {
+        let tx = self.transaction()?;
+        let _exclusive = lock(&tx.exclusive);
+        lock(&tx.state).base()?;
+        tx.read_only.store(true, Ordering::SeqCst);
+        Ok(())
     }
 
     /// True while the bound transaction is open.
@@ -487,7 +504,8 @@ impl Store {
     }
 
     /// Commits the transaction and returns the commit sequence. Savepoints still open are
-    /// released first. A read-only transaction commits nothing and returns the current sequence.
+    /// released first. A transaction opened read-only commits nothing and returns the current
+    /// sequence; one made read-only later commits the writes it made before.
     pub fn commit_transaction(&self) -> Result<u64> {
         let tx = self.transaction()?;
         let _exclusive = lock(&tx.exclusive);
@@ -499,7 +517,7 @@ impl Store {
         let base = state.base.take().ok_or_else(closed)?;
         state.root_locks.clear();
         state.counters.clear();
-        if tx.read_only {
+        if tx.opened_read_only {
             drop(base);
             return tx.kv.version();
         }
@@ -753,7 +771,7 @@ mod tests {
         let t = s.begin_transaction(true).unwrap();
         assert_eq!(
             t.write(|tx| tx.put(b"xa", b"v")).unwrap_err().code,
-            INVALID_STATE
+            READ_ONLY_TRANSACTION
         );
         assert!(t.read().unwrap().get(b"xa").unwrap().is_none());
         t.commit_transaction().unwrap();
@@ -763,6 +781,29 @@ mod tests {
         t.rollback_transaction().unwrap();
         // The writer was given back: a plain write goes through.
         s.write(|tx| tx.put(b"xa", b"v")).unwrap();
+    }
+
+    #[test]
+    fn set_transaction_read_only_refuses_later_writes_and_keeps_earlier_ones() {
+        let s = store();
+        let t = s.begin_transaction(false).unwrap();
+        t.write(|tx| tx.put(b"xb", b"before")).unwrap();
+        t.set_transaction_read_only().unwrap();
+        let refused = t.write(|tx| tx.put(b"xc", b"after")).unwrap_err();
+        assert_eq!(refused.code, READ_ONLY_TRANSACTION);
+        assert!(t.read().unwrap().get(b"xc").unwrap().is_none());
+        t.commit_transaction().unwrap();
+        let read = s.read().unwrap();
+        assert_eq!(read.get(b"xb").unwrap().as_deref(), Some(&b"before"[..]));
+        assert!(read.get(b"xc").unwrap().is_none());
+        assert_eq!(
+            t.set_transaction_read_only().unwrap_err().code,
+            STORE_CLOSED
+        );
+        assert_eq!(
+            s.set_transaction_read_only().unwrap_err().code,
+            INVALID_STATE
+        );
     }
 
     #[test]
