@@ -13,6 +13,31 @@ export interface SessionStateExec {
   executeRaw<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<R[]>;
 }
 
+/** The row context_pack reads: standing entities and cursor slug as stored (jsonb), and the wake time. */
+export interface SessionCursorRow {
+  standing_entities: unknown;
+  surfaced_slugs: unknown;
+  /** ISO UTC text at the column's microsecond precision, or null. */
+  last_wake_at: string | null;
+}
+
+/**
+ * ISO UTC at the column's microsecond precision (not ::text — PGLite renders local-tz text, and a JS Date round-trip
+ * would re-round the keyset cursor to milliseconds, re-delivering same-millisecond pages).
+ */
+export const SESSION_CURSOR_SQL = `SELECT standing_entities, surfaced_slugs,
+              to_char(last_wake_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS last_wake_at
+       FROM session_context_state
+       WHERE source_id = $1 AND client_id = $2 AND session_id = $3`;
+
+/** The session cursor row, or null when the session has none. */
+export async function readSessionCursor(exec: SessionStateExec, sourceId: string, clientId: string, sessionId: string): Promise<SessionCursorRow | null> {
+  const rows = await exec.executeRaw<SessionCursorRow>(SESSION_CURSOR_SQL, [sourceId, clientId, sessionId]);
+  if (!rows.length) return null;
+  const r = rows[0]!;
+  return { standing_entities: r.standing_entities, surfaced_slugs: r.surfaced_slugs, last_wake_at: r.last_wake_at ?? null };
+}
+
 /** One session cursor write. Each field mirrors a bound parameter of `UPSERT_SESSION_STATE_SQL`. */
 export interface SessionStateWrite {
   /** Stored on insert; replaces the stored set only when `replaceStanding`. */

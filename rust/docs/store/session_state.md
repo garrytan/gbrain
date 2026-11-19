@@ -10,6 +10,7 @@ behaviour on every engine. Key parts holding U+0000 are `invalid_argument`.
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `brain.upsertSessionState(sourceId, clientId, sessionId, write)` | the row's `degraded_wakes` after the write. A new row takes the given values (`degraded_wakes` 1 for `increment`, else 0). An existing row replaces `standing_entities` and `surfaced_slugs` only when `replaceStanding` / `replaceCursorSlug` is set, keeps the stored `last_wake_at` and facts cursor when the new one is null, and adds one (`increment`), sets 0 (`reset`) or keeps the counter. Time text Postgres would refuse, a non-integral `factsCursorId` and U+0000 in a JSON value are `invalid_argument`, and nothing is written | `upsertSessionState` |
+| `brain.readSessionCursor(sourceId, clientId, sessionId)` | `{ standing_entities, surfaced_slugs, last_wake_at }` or `null`; `last_wake_at` is microsecond ISO text or `null` | `readSessionCursor` |
 
 Every write sets `updated_at` to the store clock, which inside a transaction is the transaction's clock, as Postgres
 `now()` is. JSON values read back in jsonb key order. The TypeScript members apply `wellFormedJson` before the call, so

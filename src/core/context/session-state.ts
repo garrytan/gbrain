@@ -110,22 +110,8 @@ export async function getSessionContextState(
   sessionId: string,
 ): Promise<SessionContextState | null> {
   try {
-    const rows = await engine.executeRaw<{
-      standing_entities: unknown;
-      surfaced_slugs: unknown;
-      last_wake_at: string | null;
-    }>(
-      // ISO UTC at the column's microsecond precision (not ::text — PGLite
-      // renders local-tz text, and a JS Date round-trip would re-round the
-      // keyset cursor to milliseconds, re-delivering same-millisecond pages).
-      `SELECT standing_entities, surfaced_slugs,
-              to_char(last_wake_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS last_wake_at
-       FROM session_context_state
-       WHERE source_id = $1 AND client_id = $2 AND session_id = $3`,
-      [sourceId, resolveClientId(clientId), normSession(sessionId)],
-    );
-    if (!rows.length) return null;
-    const r = rows[0];
+    const r = await engine.readSessionCursor(sourceId, resolveClientId(clientId), normSession(sessionId));
+    if (!r) return null;
     return {
       standing_entities: toStringArray(r.standing_entities),
       surfaced_slugs: toStringArray(r.surfaced_slugs),

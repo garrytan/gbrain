@@ -8,7 +8,7 @@ import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
 import type { RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
 import type { AppliedPolicyRevision, FolderAccessRows, LiveMemberRow, MemberBindingVia } from './engine-sql/access-control.ts';
-import type { SessionStateWrite } from './engine-sql/session-state.ts';
+import type { SessionCursorRow, SessionStateWrite } from './engine-sql/session-state.ts';
 import type { ExtractionPendingRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
 import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
 import type { FactRelinkAttempt, FactRelinkOutcome, FactRelinkUpsertOpts } from './engine-sql/fact-relink-attempts.ts';
@@ -3477,6 +3477,8 @@ export interface BrainEngine {
   // through executeRaw. Keys arrive resolved (client id and session id capped); a failure throws unchanged.
   /** Inserts or updates one session cursor row in one statement; resolves the row's incomplete-wake counter. */
   upsertSessionState(sourceId: string, clientId: string, sessionId: string, write: SessionStateWrite): Promise<number>;
+  /** The session cursor row context_pack reads (wake time as microsecond ISO UTC text), or null when there is none. */
+  readSessionCursor(sourceId: string, clientId: string, sessionId: string): Promise<SessionCursorRow | null>;
 
   // Entity and mention reads (engine-sql/entity-reads.ts): the statements the CLI ran through executeRaw.
   /** The newest mention pass time (ISO, UTC, whole seconds) over every source or one source; null when no pass ran. */

@@ -80,6 +80,14 @@ const PINS: Pin[] = [
          updated_at        = now()
        RETURNING degraded_wakes`],
   },
+  {
+    from: 'src/core/context/session-state.ts:113 getSessionContextState, at eb30f47b89',
+    case: { method: 'readSessionCursor', variant: 'default', run: e => e.readSessionCursor('default', 'local', 's') },
+    texts: [`SELECT standing_entities, surfaced_slugs,
+              to_char(last_wake_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS last_wake_at
+       FROM session_context_state
+       WHERE source_id = $1 AND client_id = $2 AND session_id = $3`],
+  },
 ];
 
 describe('caller raw SQL moved into typed members keeps its Postgres text byte for byte', () => {

@@ -30,4 +30,18 @@ impl Brain {
             s.upsert_session_state(&source_id, &client_id, &session_id, &write)
         })
     }
+
+    /// `readSessionCursor(sourceId, clientId, sessionId)`: resolves the cursor row or null.
+    #[napi]
+    pub fn read_session_cursor<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        client_id: String,
+        session_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_session_cursor(&source_id, &client_id, &session_id)
+        })
+    }
 }

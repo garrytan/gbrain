@@ -62,4 +62,32 @@ describe('engine parity: session state', () => {
       return { counts, refused, after: await engine.upsertSessionState('default', 'local', 's', write('keep')) };
     },
   );
+
+  parityTest(
+    'readSessionCursor reads the stored sets the replace flags keep and the wake time at microsecond precision',
+    { methods: ['upsertSessionState', 'readSessionCursor'] },
+    async (engine) => {
+      const absent = await engine.readSessionCursor('default', 'local', 's');
+      await engine.upsertSessionState('default', 'local', 's', write('keep', {
+        standingEntities: ['people/alice-example', 'companies/acme-example'], surfacedSlugs: ['notes/a'],
+        lastWakeAt: '2026-11-19T01:02:03.123456Z', replaceStanding: true, replaceCursorSlug: true,
+      }));
+      const first = await engine.readSessionCursor('default', 'local', 's');
+      // No replace flags and no wake time: the stored sets and the wake time stay.
+      await engine.upsertSessionState('default', 'local', 's', write('keep', { standingEntities: ['people/bob-example'], surfacedSlugs: ['notes/b'] }));
+      const kept = await engine.readSessionCursor('default', 'local', 's');
+      // A wake time in another zone is stored as the same instant; an empty set replaces when its flag is set.
+      await engine.upsertSessionState('default', 'local', 's', write('keep', {
+        standingEntities: [], surfacedSlugs: ['notes/c'], lastWakeAt: '2026-11-19T09:00:00.5+08:00', replaceStanding: true, replaceCursorSlug: true,
+      }));
+      const replaced = await engine.readSessionCursor('default', 'local', 's');
+      const otherClient = await engine.readSessionCursor('default', 'agent-a', 's');
+      expect(first).toEqual({
+        standing_entities: ['people/alice-example', 'companies/acme-example'], surfaced_slugs: ['notes/a'], last_wake_at: '2026-11-19T01:02:03.123456Z',
+      });
+      expect(kept).toEqual(first);
+      expect(replaced).toEqual({ standing_entities: [], surfaced_slugs: ['notes/c'], last_wake_at: '2026-11-19T01:00:00.500000Z' });
+      return { absent, first, kept, replaced, otherClient };
+    },
+  );
 });

@@ -15,7 +15,9 @@
 //! JSON columns are stored as given and read back in Postgres `jsonb` key order
 //! (`crate::dream::jsonb`), which is what a PGLite read returns.
 
+use crate::dream::jsonb;
 use crate::dream::jsonb_check;
+use crate::env::iso;
 use crate::error::{INVALID_ARGUMENT, Result, StoreError};
 use crate::kv::KvWrite;
 use crate::links::no_nul;
@@ -195,6 +197,27 @@ impl Store {
             Ok(degraded)
         })
     }
+
+    /// `readSessionCursor(sourceId, clientId, sessionId)`: `{ standing_entities, surfaced_slugs,
+    /// last_wake_at }` (the wake time as microsecond ISO text), or `None` when there is no row.
+    pub fn read_session_cursor(
+        &self,
+        source_id: &str,
+        client_id: &str,
+        session_id: &str,
+    ) -> Result<Option<Value>> {
+        check_key("readSessionCursor", source_id, client_id, session_id)?;
+        let read = self.read()?;
+        let record: Option<SessionRecord> =
+            get_json(&*read, &session_key(source_id, client_id, session_id))?;
+        Ok(record.map(|r| {
+            json!({
+                "standing_entities": jsonb(&r.standing_entities),
+                "surfaced_slugs": jsonb(&r.surfaced_slugs),
+                "last_wake_at": r.last_wake_at_us.map(iso),
+            })
+        }))
+    }
 }
 
 #[cfg(test)]
@@ -274,5 +297,26 @@ mod tests {
             .upsert_session_state("default", "c", "s", &bad)
             .unwrap_err();
         assert_eq!(err.code, INVALID_ARGUMENT);
+    }
+
+    #[test]
+    fn cursor_keeps_what_the_flags_keep() {
+        let (s, _) = store();
+        s.upsert_session_state("default", "c", "s", &write("a", "keep"))
+            .unwrap();
+        let mut next = write("b", "keep");
+        next.standing_entities = json!(["people/b"]);
+        next.replace_cursor_slug = false;
+        next.last_wake_at = None;
+        s.upsert_session_state("default", "c", "s", &next).unwrap();
+        assert_eq!(
+            s.read_session_cursor("default", "c", "s").unwrap().unwrap(),
+            json!({
+                "standing_entities": ["people/a"],
+                "surfaced_slugs": ["a"],
+                "last_wake_at": "2026-11-19T00:00:00.123000Z",
+            })
+        );
+        assert_eq!(s.read_session_cursor("default", "c", "none").unwrap(), None);
     }
 }

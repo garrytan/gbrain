@@ -208,6 +208,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   // session_state: the session cursor, the checkpoint manifest and their garbage collection (engine-sql/session-state.ts)
   session_state: [
     'upsertSessionState',
+    'readSessionCursor',
   ],
   // alias_fanout_reads: search's alias fan-out reads (engine-sql/alias-fanout-reads.ts)
   alias_fanout_reads: ['findPagesByTitles', 'resolveCaseSensitiveAliases', 'readPageTitle', 'readPageAliasRows'],
