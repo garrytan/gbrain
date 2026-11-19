@@ -66,7 +66,7 @@ fn own_key_time(key: &[u8]) -> Option<i64> {
 struct LogRecord {
     id: i64,
     client_id: Option<String>,
-    budget_key: Option<String>,
+    pub budget_key: Option<String>,
     token_name: Option<String>,
     operation: String,
     /// `NUMERIC(12,4)`, scaled.
@@ -81,7 +81,7 @@ impl LogRecord {
         json!({
             "id": self.id,
             "client_id": self.client_id,
-            "budget_key": self.budget_key,
+            "budget_key": self.budget_key.clone(),
             "token_name": self.token_name,
             "operation": self.operation,
             "spend_cents": cents(self.spend),

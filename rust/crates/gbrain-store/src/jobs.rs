@@ -1512,7 +1512,7 @@ impl Store {
                     "acquired_at": iso(l.acquired_at),
                     "ttl_expires_at": iso(l.ttl_expires_at),
                     "last_refreshed_at": l.last_refreshed_at.map(iso),
-                    "acquisition_token": l.acquisition_token,
+                    "acquisition_token": l.acquisition_token.clone(),
                     "db_now": iso(now),
                 })
             })
