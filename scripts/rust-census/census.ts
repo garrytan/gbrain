@@ -149,7 +149,11 @@ function takeCensusRef<R extends Run & { response?: any }>(run: R): R {
 async function mcpCall(brain: Brain, method: string, params: Record<string, unknown>, trace?: string, serveArgs: readonly string[] = []): Promise<Run & { response?: any }> {
   const started = Date.now();
   const cmd = ['bun', ...(trace ? ['--preload', PRELOAD] : []), CLI, 'serve', ...serveArgs];
-  const proc = Bun.spawn(cmd, { cwd: brain.dir, env: childEnv(brain, trace), stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });
+  // GBRAIN_NO_ONBOARD_NUDGE: at boot `serve` starts the onboarding refresher (src/mcp/server.ts), whose first check
+  // loads the active schema pack into the pack cache. It races the tools/call on every engine, so reload_schema_pack
+  // answered [gbrain-base] or [] by timing alone. Turning the refresher off makes MCP rows depend on the call only.
+  const env = { ...childEnv(brain, trace), GBRAIN_NO_ONBOARD_NUDGE: '1' };
+  const proc = Bun.spawn(cmd, { cwd: brain.dir, env, stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });
   const send = (msg: unknown) => { proc.stdin!.write(JSON.stringify(msg) + '\n'); proc.stdin!.flush?.(); };
   send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'gbrain-rust-census', version: '1' } } });
   let timedOut = false;
@@ -200,7 +204,7 @@ async function pool<T, R>(items: T[], n: number, fn: (item: T, i: number) => Pro
 // ---- brains --------------------------------------------------------------------------------------------------
 
 async function pgExec(sql: string): Promise<void> {
-  const { default: postgres } = await import('postgres');
+  const { default: postgres } = await import('#postgres');
   const db = postgres(PG_URL!, { max: 1, onnotice: () => undefined });
   try { await db.unsafe(sql); } finally { await db.end(); }
 }
@@ -566,13 +570,19 @@ async function main(): Promise<void> {
   }
   const bases: Bases = { ref, rust, pg, pglite, useMirror };
 
-  // MCP tool list from the reference brain's stdio server (full surface).
-  const list = await mcpCall(ref, 'tools/list', {});
+  // MCP tool list from the reference brain's stdio server (full surface). Each baseline `serve` runs on a throwaway
+  // copy: stdin closes while serve may still be registering its local writers, and a registration cut short there
+  // must not ride into the base brains every case is copied from.
+  const baselineOf = async (b: Brain, name: string, trace?: string, serveArgs: readonly string[] = []) => {
+    const copy = await cloneBrain(b, join(work, `baseline-${name}`));
+    try { return await mcpCall(copy, 'tools/list', {}, trace, serveArgs); } finally { await dropBrain(copy); }
+  };
+  const list = await baselineOf(ref, 'ref');
   const tools: Array<{ name: string; inputSchema?: any }> = list.response?.result?.tools ?? [];
   if (!tools.length) throw new Error(`tools/list returned no tools: ${list.stderr.slice(-500)}`);
   const anon: McpPass = { tag: '', bases, serveArgs: [], baseline: new Set(), baselineRaw: new Set() };
   const baseTrace = join(work, 'serve-baseline.jsonl');
-  const rustList = await mcpCall(rust, 'tools/list', {}, baseTrace);
+  const rustList = await baselineOf(rust, 'rust', baseTrace);
   const bt = readTrace(baseTrace);
   for (const x of bt.all) anon.baseline.add(`${x.member}@${x.site}`);
   for (const x of bt.raw) anon.baselineRaw.add(`${x.member}@${x.site}`);
@@ -623,7 +633,7 @@ async function main(): Promise<void> {
     const pass: McpPass = { tag: '-member', bases: m, serveArgs: MEMBER_SERVE_ARGS, baseline: new Set(), baselineRaw: new Set() };
     if (ok) {
       const mt = join(work, 'serve-baseline-member.jsonl');
-      await mcpCall(m.rust, 'tools/list', {}, mt, MEMBER_SERVE_ARGS);
+      await baselineOf(m.rust, 'rust-member', mt, MEMBER_SERVE_ARGS);
       const t = readTrace(mt);
       for (const x of t.all) pass.baseline.add(`${x.member}@${x.site}`);
       for (const x of t.raw) pass.baselineRaw.add(`${x.member}@${x.site}`);
