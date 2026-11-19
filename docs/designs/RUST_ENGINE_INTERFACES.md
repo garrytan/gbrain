@@ -1327,8 +1327,9 @@ Transaction rules shared by all four:
   `RUST_ENGINE.md`). TypeScript never holds a store lock across two calls. A member that PGLite runs as
   `SELECT ... FOR UPDATE` followed by an `UPDATE` is one member here, not two.
 - **Same results, not same mechanism.** A store write transaction is serializable: today the store runs one write
-  transaction at a time, and a later store with concurrent writers must detect the conflict and retry the
-  transaction, never commit both. So "read the first eligible row in PGLite's order, then change it" inside one
+  transaction at a time by default. With concurrent writes on (`GBRAIN_RUST_CONCURRENT_WRITES=1`), the store
+  detects the conflict and runs the losing transaction again; it never commits both
+  (`tests/jobs.rs` and `test/engine-parity/jobs.test.ts` race claimers against each other). So "read the first eligible row in PGLite's order, then change it" inside one
   write gives the result `FOR UPDATE SKIP LOCKED` gives: no row is claimed twice, and a second caller gets the next
   eligible row or none.
 - **Inside a BrainEngine transaction.** A member called with a tx handle joins the open store transaction (the core
