@@ -21,6 +21,7 @@ methods in `rust/crates/gbrain-napi/src/families/chunk_queries.rs` and the membe
 | `listWithdrawalChunks`, `deleteChunksForPages` | served |
 | `listContextualModeCandidates(sourceIds)` | served |
 | `resolveFrozenHits(hits, scope)` | served; a safe-chunk, trust or flag scope refuses |
+| `hasUnsealedPages({ sourceId?, sourceIds?, excludePrivate?, types?, excludeSlugPrefixes? })` | served; true when a live page in scope is below the safe-chunk fence (`chunker_version < 4`, or none recorded) |
 
 On `getChunkPage` and `getChunkWindows`, `excludePrivate: true` applies the store page policy (`storePagePolicy`, the
 `page_hidden` test of `privatePagesFilterForCaller('p')`), and a safe-chunk read (`requiresSafeChunks`: `requireSafeChunks`,

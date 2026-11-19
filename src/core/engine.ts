@@ -85,7 +85,7 @@ import type {
   SubagentToolOrder, SubagentToolRow, SubagentToolStart, SubagentToolTarget, SubagentWriteOutcome,
 } from './engine-sql/jobs-subagent.ts';
 import type { JunkEntityHubRow, LinkEndpointPage, LivePageSummary, TitledPage } from './engine-sql/link-reads.ts';
-import type { CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuery, ContextualModeCandidate, FrozenHitKey, FrozenHitRow, WithdrawalChunkKey, WithdrawalChunkRow } from './engine-sql/chunk-reads.ts';
+import type { CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuery, ContextualModeCandidate, FrozenHitKey, FrozenHitRow, UnsealedPageScope, WithdrawalChunkKey, WithdrawalChunkRow } from './engine-sql/chunk-reads.ts';
 import type { EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRow, PageTimelineRow, SegmentedTimelinePages, TimelineOrphanPage, TimelineRowDeletion } from './engine-sql/timeline-reads.ts';
 import type { CaseSensitiveAliasRow, PageAliasRow, TitleHitRow } from './engine-sql/alias-fanout-reads.ts';
 import type { McpLifetimeUsageRow, McpLogPruneBatch, McpLogPruneCutoff, McpOpUsageRow, McpRequestLogRow, McpRollupPrunedBefore, SearchTelemetryBucket, SearchTelemetryRow } from './engine-sql/telemetry.ts';
@@ -1551,6 +1551,8 @@ export interface BrainEngine {
   countOrphanChunks(): Promise<number>;
   countCodeChunkPages(): Promise<{ chunks: number; pages: number }>;
   codeChunksExist(sourceId: string | undefined, policy?: PageReadScope): Promise<boolean>;
+  /** Whether a live page in scope is below the safe-chunk fence, under search's type and slug-prefix filters. */
+  hasUnsealedPages(scope: UnsealedPageScope): Promise<boolean>;
   currentCodeChunksExist(scope: CodeChunkScope, predicate: 'any' | 'with_symbol'): Promise<boolean>;
   listQualifiedSymbolNames(sourceId: string, symbol: string, opts: { match: 'exact' | 'contains'; limit: number }): Promise<string[]>;
   listWithdrawalChunks(sourceId: string, keys: WithdrawalChunkKey[], opts: { after: number; limit: number; subjects: string[] | null }): Promise<WithdrawalChunkRow[]>;

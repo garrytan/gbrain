@@ -191,6 +191,7 @@ export const RUST_ENGINE_MEMBERS = {
   countOrphanChunks: 'chunks',
   countCodeChunkPages: 'chunks',
   codeChunksExist: 'chunks',
+  hasUnsealedPages: 'chunks',
   currentCodeChunksExist: 'chunks',
   listQualifiedSymbolNames: 'chunks',
   listWithdrawalChunks: 'chunks',

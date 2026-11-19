@@ -224,6 +224,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'countOrphanChunks': OOS.chunkReads,
   'countCodeChunkPages': OOS.chunkReads,
   'codeChunksExist': OOS.chunkReads,
+  'hasUnsealedPages': OOS.chunkReads,
   'currentCodeChunksExist': OOS.chunkReads,
   'listQualifiedSymbolNames': OOS.chunkReads,
   'listWithdrawalChunks': OOS.chunkReads,
