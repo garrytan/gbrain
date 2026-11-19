@@ -4,12 +4,12 @@ name: OpenClaw skill resolver bench
 # request set (scripts/bench/openclaw-skill-resolver-real.ts): right skill in
 # the block, false suggestions on no-skill turns, deadline misses and the
 # plugin's p95, at 750 skills. Keyless (loopback fake model). Reports only;
-# it gates nothing. Nightly and on dispatch, on the 4-vCPU runner twice: idle,
-# and with 3 busy-loop processes as a loaded machine.
+# it gates nothing. Run by hand (workflow_dispatch) after a resolver change,
+# on the 4-vCPU runner twice: idle, and with 3 busy-loop processes as a loaded
+# machine. It has no schedule, so a slow or red run never opens a master-red
+# incident.
 
 on:
-  schedule:
-    - cron: '30 7 * * *'
   workflow_dispatch:
     inputs:
       openclaw:
