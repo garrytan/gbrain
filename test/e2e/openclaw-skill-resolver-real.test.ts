@@ -116,7 +116,7 @@ describe.skipIf(!BIN)('gbrain-skill-resolver in a real OpenClaw gateway', () => 
     expect(turnLines(oc).at(-1)).toMatchObject({ outcome: 'no_match', suggested: [] });
   }, 180_000);
 
-  test('a turn OpenClaw retries after a model error carries one block, for the user message, on every attempt', async () => {
+  test('a turn OpenClaw retries after a model error carries one block, for the user message, on every attempt, and later attempts are logged as retries of the same run', async () => {
     const lines = turnLines(oc).length;
     const message = 'Create and send a customer invoice as a PDF with line items';
     oc.replies.push({ status: 529 }, { status: 529 });
@@ -129,7 +129,7 @@ describe.skipIf(!BIN)('gbrain-skill-resolver in a real OpenClaw gateway', () => 
     const attempts = turnLines(oc).slice(lines);
     console.log('[openclaw-skill-resolver-real] retry attempts: ' + JSON.stringify(attempts.map((l) => l.outcome)));
     expect(attempts.map((l) => [l.outcome, l.suggested])[0]).toEqual(['suggested', ['invoice-example']]);
-    expect(attempts.slice(1).every((l) => l.outcome === 'retry' || (l.outcome === 'no_match' && Array.isArray(l.suggested) && l.suggested.length === 0))).toBe(true);
+    expect(attempts.slice(1).map((l) => l.outcome)).toEqual(['retry', 'retry']);
   }, 180_000);
 
   test('a skills_read of a suggested skill logs a read marked suggested', async () => {

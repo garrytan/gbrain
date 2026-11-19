@@ -204,8 +204,9 @@ paths above that wait for the next archive run,
 the same `rescope` object (`code` and `message`), and `gbrain doctor` warns on `transcript_archive_freshness` with that
 message, whether the archive is on or off:
 
-- **The audience flips from client usage, with no command.** With `brain.audience` unset, three or more people's MCP
-  clients active in 30 days make the brain read as shared. No command runs, so the code is `archive_rescope_pending`
+- **The audience flips from client usage, with no command.** With `brain.audience` unset, MCP clients active in 30 days
+  make the brain read as shared once they belong to 2 members or 3 people (clients bound to the same member count once,
+  a client bound to nobody counts by itself). No command runs, so the code is `archive_rescope_pending`
   until `gbrain transcripts archive run` or a maintenance pass runs; with automatic maintenance turned off
   (`maintenance.auto false`) no pass runs, so only the archive run does it. Declaring `gbrain config set brain.audience shared` also runs it at once.
 - **A shared brain with no owner.** The re-scope has no one to keep the pages to, so it waits with

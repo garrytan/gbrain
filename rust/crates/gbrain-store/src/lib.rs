@@ -34,6 +34,7 @@ pub mod timeline;
 // One module per planned family (docs/designs/RUST_ENGINE_INTERFACES.md). Each is listed once, here,
 // so building a family never edits this list.
 pub mod aliases;
+pub mod chat_usage;
 pub mod chunk_queries;
 pub mod code_edges;
 pub mod contradictions;
@@ -42,6 +43,7 @@ pub mod embeddings;
 pub mod eval_capture;
 pub mod extraction;
 pub mod facts;
+pub mod field_usage;
 pub mod jobs;
 pub mod keyword;
 pub mod link_queries;
@@ -54,11 +56,15 @@ pub mod relations;
 pub mod salience;
 pub mod stats;
 pub mod takes;
+pub mod telemetry;
 pub mod timeline_queries;
 pub mod transactions;
 pub mod trust;
 pub mod vectors;
 pub mod wanted_links;
+pub mod write_guards;
+pub mod write_misc;
+pub mod write_trust;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -116,6 +122,8 @@ pub struct Store {
     /// only.
     #[allow(dead_code)] // the vector search family reads it
     pub(crate) vectors: vectors::VectorCache,
+    /// The write trust context: the transaction-local trust settings (`write_trust.rs`).
+    pub(crate) write_context: write_trust::WriteContextSlot,
     info: StoreInfo,
 }
 
@@ -198,6 +206,7 @@ impl Store {
             kv,
             env,
             vectors: vectors::VectorCache::default(),
+            write_context: write_trust::WriteContextSlot::default(),
             info: StoreInfo {
                 brain_id: stored.brain_id,
                 format_version: stored.format_version,
@@ -231,7 +240,11 @@ impl Store {
     /// Runs `f` in the write transaction and commits when it returns `Ok`. An `Err` rolls back.
     pub(crate) fn write<T>(&self, f: impl FnOnce(&mut dyn KvWrite) -> Result<T>) -> Result<T> {
         let mut tx = self.kv.begin_write()?;
-        let value = f(&mut *tx)?;
+        let value = {
+            let _clock = crate::env::transaction_clock::open(self.env.clone());
+            let _trust = crate::write_trust::stamp_context::open(self.write_trust()?);
+            f(&mut *tx)?
+        };
         tx.commit()?;
         Ok(value)
     }
