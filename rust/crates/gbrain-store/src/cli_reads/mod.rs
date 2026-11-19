@@ -8,6 +8,7 @@ pub mod doctor_checkpoints;
 pub mod doctor_derived;
 pub mod doctor_pages;
 pub mod doctor_persistence;
+pub mod doctor_sources;
 pub mod entities;
 pub mod import;
 mod pg_case;

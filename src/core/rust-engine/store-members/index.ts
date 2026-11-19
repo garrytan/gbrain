@@ -80,6 +80,7 @@ import * as doctorPersistence from './doctor-persistence.ts';
 import * as doctorPages from './doctor-pages.ts';
 import * as doctorAcc from './doctor-acc.ts';
 import * as doctorCheckpoints from './doctor-checkpoints.ts';
+import * as doctorSources from './doctor-sources.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
 const initSchema: StoreMember<[], void> = async () => undefined;
@@ -137,6 +138,8 @@ export const STORE_MEMBERS = {
   ...doctorAcc,
   // The op_checkpoints and ingest_log statements doctor ran through executeRaw (rust/docs/store/cli-reads-doctor-checkpoints.md).
   ...doctorCheckpoints,
+  // The doctor reads over sources (rust/docs/store/cli-reads-doctor-src.md).
+  ...doctorSources,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;
