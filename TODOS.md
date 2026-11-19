@@ -1,5 +1,9 @@
 # TODOS
 
+## Rust engine spend-tables follow-ups (filed 2026-11-18)
+
+- [ ] **P3 — decide-prune-orphan-receipt-test: no test catches a prune that keeps the receipt record.** **What:** on the Rust store, `pruneDecideReceipts` (`rust/crates/gbrain-store/src/eval_capture/decide_store/receipts.rs`, branch `rust-engine/decide-family`) deletes each old receipt's time-index key and its receipt record. The mutant `prune-keeps-receipts` drops the record delete and survives the cargo tests and the parity suite: every read walks the time index, so the kept record is invisible, and only storage leaks (one orphan record per pruned receipt, forever). **Fix:** add a cargo test that prunes, then scans the receipt sub-tag (`Z` 0x13) and asserts no record outlives its index key (or a store-level count helper the test can call), and confirm the mutant is caught. **Effort:** S. **Priority:** P3.
+
 ## Rust engine relink lane follow-ups (filed 2026-11-18)
 
 - [ ] **P3 — rust-relink-memo: the relink on Rust runs with no tried-row memo until the facts capability is reported; recordReextractMemo still has one raw SELECT.** **What:** on the Rust engine `hasRelinkAttemptsTable` (`src/core/facts/conversation-memo.ts`) answers "absent" (the store has no `fact_relink_attempts` table until the `facts` capability is reported), so `gbrain facts relink --conversation` re-tries pages it already tried, and `recordReextractMemo` keeps a raw `SELECT` of the page's completion outcome row after the probe. **Fix:** when Rust reports `facts`, move that `SELECT` to a typed member and add a Rust-arm parity case for the memo. **Effort:** S. **Priority:** P3.

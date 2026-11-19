@@ -62,6 +62,10 @@ import type { JobInsightRows, JobInsightSpec } from './engine-sql/jobs-insight.t
 import type {
   ExpireSpendScope, JobSpendTreeSpec, LeasePressureFilter, LeasePressureInsert, LeasePressureRow, SettleSpendOutcome, SpendReservationInsert, SpendTreeRow,
 } from './engine-sql/jobs-spend.ts';
+import type {
+  AgentClientSpendRow, ClientReserveOutcome, ClientReserveSpec, GroupReserveOutcome, GroupReserveSpec, GroupSpendRow, OauthClientInsert,
+  SettleLogOutcome, SpendLogInsert,
+} from './engine-sql/spend-log.ts';
 import type { McpResolvedSpec, PurgeTakesSpec } from './engine-sql/takes-reads.ts';
 import type {
   BeliefHistoryRowQuery, CorePageRow, CorePageRowSpec, TrustScanRow, TrustScanRowSpec, UnscannedTrustSpec, ValidTimeIdentityRow,
@@ -3845,6 +3849,27 @@ export interface BrainEngine {
   settleSpendReservation(reservationId: string, actualCents: number): Promise<SettleSpendOutcome>;
   /** Record why a pending or expired hold's usage is unknown; whether a row changed. */
   markSpendUsageUnknown(reservationId: string, reason: string): Promise<boolean>;
+  // Spend ledger and client budgets (engine-sql/spend-log.ts): `mcp_spend_log` and the spend columns of `oauth_clients`.
+  /** Atomic client admission: the client's cap, the sweep, the day's ledger sum and open holds, then a refusal or the new hold. */
+  reserveClientSpend(spec: ClientReserveSpec): Promise<ClientReserveOutcome>;
+  /** Atomic group admission against a lifetime total: the sweep, the totals, then a refusal or the (bounded) new hold. */
+  reserveGroupSpend(spec: GroupReserveSpec): Promise<GroupReserveOutcome>;
+  /** A budget key's ledger sum, overdue holds and live holds, in cents. */
+  readGroupSpendTotals(budgetKey: string): Promise<GroupSpendRow>;
+  /** Settle a hold and write its ledger row as one unit (a settled hold is left alone; a missing one is reported). */
+  settleSpendWithLog(reservationId: string, actualCents: number, operation: string, tokenName: string | null): Promise<SettleLogOutcome>;
+  /** One ledger row of an unreserved paid call. */
+  insertSpendLog(row: SpendLogInsert): Promise<void>;
+  /** A client's ledger sum from an instant on, in cents. */
+  sumClientSpendSince(clientId: string, since: Date): Promise<number>;
+  /** A client's `budget_usd_per_day` as text (dollars to two decimals); null for no cap or no such client. */
+  readClientBudgetUsd(clientId: string): Promise<string | null>;
+  /** One `oauth_clients` row with the spend columns (a repeated client id is a constraint error). */
+  insertOauthClient(row: OauthClientInsert): Promise<void>;
+  /** Set or clear a client's daily cap in dollars; whether the client exists. */
+  updateOauthClientBudget(clientId: string, usd: number | null): Promise<boolean>;
+  /** The admin page's spend per live agent client: cap, today's ledger sum, open holds, unknown holds and open subagent jobs. */
+  readAgentClientSpend(): Promise<AgentClientSpendRow[]>;
   /** One rate-lease bounce appended to the lease-pressure log. */
   insertLeasePressure(row: LeasePressureInsert): Promise<void>;
   /** How many lease bounces match every given field (window in ms, job id, lease key). */
