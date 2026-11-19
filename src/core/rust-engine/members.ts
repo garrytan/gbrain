@@ -140,7 +140,6 @@ export const RUST_ENGINE_MEMBERS = {
   isSourceClaimed: 'persistence_journal',
   // config
   getConfigValues: 'config',
-  readRemotePolicyConfig: 'config',
   getConfig: 'config',
   setConfig: 'config',
   unsetConfig: 'config',

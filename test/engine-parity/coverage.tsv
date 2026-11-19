@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 674/674
+# covered: 673/673
 # lifecycle: 9/9
 # pages: 38/38
 # search: 7/7
@@ -30,7 +30,7 @@
 # versions: 3/3
 # stats_ingest: 7/7
 # sync_aliases: 10/10
-# config: 7/7
+# config: 6/6
 # import_guards: 10/10
 # persistence_journal: 40/40
 # entity_reads: 6/6
@@ -351,8 +351,7 @@ setConfig	config	yes	26	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
-getConfigValues	config	yes	5	no	yes	yes	serves
-readRemotePolicyConfig	config	yes	1	no	yes	yes	serves
+getConfigValues	config	yes	6	no	yes	yes	serves
 readManagedModeRows	import_guards	yes	1	no	yes	yes	serves
 getSourceStrictness	import_guards	yes	2	no	yes	yes	serves
 readPersistenceBrainId	import_guards	yes	2	no	yes	yes	serves

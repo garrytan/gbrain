@@ -33,7 +33,7 @@ export async function readConfigRows(engine: ConfigReader | Pick<BrainEngine, 'g
 }
 
 /** The keyed config reads an engine serves as a typed member, each with the statement it runs on PGLite and Postgres. */
-type KeyedConfigMember = 'getConfigValues' | 'readRemotePolicyConfig';
+type KeyedConfigMember = 'getConfigValues';
 
 /**
  * `keys` through the engine's typed keyed read `member`, under the bounds above; a handle without it runs `sql` (the

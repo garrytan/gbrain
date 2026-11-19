@@ -3195,9 +3195,6 @@ export interface BrainEngine {
    */
   getConfigValues(keys: readonly string[]): Promise<Array<{ key: string; value: string }>>;
 
-  /** The stored `{ key, value }` rows for the remote read policy's keys, in no set order; reads the table, not the request snapshot. */
-  readRemotePolicyConfig(keys: readonly string[]): Promise<Array<{ key: string; value: string }>>;
-
   /**
    * The `enabled` value of every `persistence_brain` singleton row, as stored (a healthy brain has exactly one boolean).
    * Callers decide what a malformed answer means; the direct-write guard refuses it (persistence/managed-mode.ts).

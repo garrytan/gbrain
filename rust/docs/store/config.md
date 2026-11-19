@@ -21,7 +21,3 @@ written with no model of its own carries the brain's model, as on PGLite. In Rus
 | `brain.unsetConfig(key)` | rows removed, `0` or `1` | `unsetConfig` |
 | `brain.listConfigKeys(prefix)` | sorted `string[]`; the prefix is literal (`%` and `_` are plain characters) | `listConfigKeys` |
 | `brain.getAllConfig()` | `{ [key]: value }` | `getAllConfig` |
-
-The engine member `readRemotePolicyConfig` (the remote read policy's keyed read,
-`src/core/search/private-visibility.ts` `readRemotePolicyNow`) has no store method of its own: the
-TypeScript member answers it with `brain.getConfigValues`, whose key order the policy does not read.

@@ -68,7 +68,7 @@ describe('engine parity: typed config reads', () => {
 
   parityTest(
     'readRemotePolicyNow reads the remote policy keys from the config table, not a fail-closed fallback',
-    { methods: ['setConfig', 'readRemotePolicyConfig'] },
+    { methods: ['setConfig', 'getConfigValues'] },
     async (engine) => {
       const fresh = await readRemotePolicyNow(engine);
       expect(fresh.servesUnknown).toBeUndefined();
@@ -81,9 +81,8 @@ describe('engine parity: typed config reads', () => {
       const set = await readRemotePolicyNow(engine);
       expect(set.restricted).toBe(true);
       expect(set.serves).toEqual({ several: true, from: 'config', since: 1767323045, enforce: false });
-      // The typed read itself: the stored rows of the named keys, in no set order, a key with no row absent.
-      const rows = (await engine.readRemotePolicyConfig(['access.serves', 'access.owner_member', 'no.such.key']))
-        .sort((a, b) => a.key.localeCompare(b.key));
+      // The keyed read the policy runs: the stored rows of the named keys, by key, a key with no row absent.
+      const rows = await engine.getConfigValues(['access.serves', 'access.owner_member', 'no.such.key']);
       expect(rows).toEqual([{ key: 'access.owner_member', value: 'owner-example' }, { key: 'access.serves', value: 'several' }]);
       const { schemaVersion: _fv, ...freshRest } = fresh;
       const { schemaVersion: _sv, ...setRest } = set;

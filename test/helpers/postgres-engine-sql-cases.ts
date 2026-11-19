@@ -543,7 +543,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'getContentFlagsByPageIds': OOS.enrichment, 'getUnverifiedExtractionPageIds': OOS.enrichment,
   'getEffectiveDates': OOS.enrichment, 'getSalienceScores': OOS.enrichment, 'resolveAliases': OOS.enrichment,
   'getStats': OOS.stats, 'getHealth': OOS.stats,
-  'getConfig': OOS.config, 'setConfig': OOS.config, 'unsetConfig': OOS.config, 'listConfigKeys': OOS.config, 'getAllConfig': OOS.config, 'getConfigValues': OOS.config, 'readRemotePolicyConfig': OOS.config,
+  'getConfig': OOS.config, 'setConfig': OOS.config, 'unsetConfig': OOS.config, 'listConfigKeys': OOS.config, 'getAllConfig': OOS.config, 'getConfigValues': OOS.config,
   // import guards (typed reads and writes the default import path runs)
   // persistence declaration (the typed protocol-2 declaration every managed write transaction runs first)
   'declarePersistence': OOS.persistenceDeclaration,
