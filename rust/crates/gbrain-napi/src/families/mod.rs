@@ -40,6 +40,7 @@ mod code_edges;
 mod contradictions;
 mod decide_store;
 mod dream;
+mod dream_config;
 mod embedding_catalog;
 mod embedding_install;
 mod embeddings;
