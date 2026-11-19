@@ -168,7 +168,7 @@ export function actorUnlinked(externalId: string, transport?: string): Operation
 export async function linkedMember(engine: Pick<BrainEngine, 'executeRaw'>, system: string, externalId: string): Promise<{ member: string; groups: string[]; identity: string[] } | null> {
   try {
     const [row] = await engine.executeRaw<{ id: string; groups: string[] | null }>(
-      `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+      `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id COLLATE "C") FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
        FROM access_member_links l JOIN access_members m ON m.id = l.member_id LEFT JOIN access_group_members g ON g.member_id = m.id
        WHERE l.system = $1 AND l.external_id = $2 AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL GROUP BY m.id`, [system, externalId]);
     if (!row) return null;

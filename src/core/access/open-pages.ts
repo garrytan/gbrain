@@ -79,6 +79,7 @@ async function memberReads(engine: BrainEngine, owner: string | null, planned: O
   const reads = new Map<string, Set<string>>();
   const privateOf = new Map<string, Set<string>>();
   const labelledOnly = new Set<string>();
+  // The member order never reaches output: the report counts the members and sorts the sources they read.
   for (const m of await engine.executeRaw<{ id: string; labelled_only: unknown }>(
     'SELECT id, labelled_only FROM access_members WHERE disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id')) {
     if (m.id === owner) continue;
@@ -164,7 +165,7 @@ export async function withOpenScope<T>(engine: BrainEngine, opts: OpenPagesOptio
     const { reads, privateSources } = await memberReads(engine, owner, opts.planned);
     const reading = [...reads.values()].filter(s => s.size > 0);
     const readSources = [...new Set(reading.flatMap(s => [...s]))].sort();
-    const sources = readSources.length ? readSources : (await engine.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id')).map(s => s.id);
+    const sources = readSources.length ? readSources : (await engine.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id COLLATE "C"')).map(s => s.id);
     if (sources.length) await readHonorAliases(engine);
     const relaxed = sources.length ? await remotePrivacyRelaxed(engine) : false;
     const scope: OpenScope = { owner, members: { reading: reading.length, counted: reads.size }, sources, relaxed, privateSources: [...privateSources].sort() };

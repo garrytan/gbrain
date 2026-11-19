@@ -34,7 +34,7 @@ async function audienceMembers(ctx: DoctorContext): Promise<Omit<Check, 'name'>>
   const name = 'access_audience_members';
   try {
     const ids = (await connectedEngine(ctx).executeRaw<{ id: string }>(
-      "SELECT id FROM access_members WHERE kind = 'audience' AND disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id")).map(r => r.id);
+      `SELECT id FROM access_members WHERE kind = 'audience' AND disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id COLLATE "C"`)).map(r => r.id);
     if (!ids.length) return infoCheck(name, 'Not applicable: no member is marked as an audience (gbrain access member kind <id> audience).', 'not_applicable');
     return infoCheck(name, `${ids.length} audience member(s) (a group chat or shared assistant): the brain owner reads each one's own member page, older versions, derived pages and facts as if they named the owner: ${ids.join(', ')}. Undo with gbrain access member kind <id> person.`, 'ok', undefined, { members: ids });
   } catch (error) {

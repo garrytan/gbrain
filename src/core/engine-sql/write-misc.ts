@@ -181,7 +181,7 @@ export async function hasExtractedEvents(exec: LegacyUnscopedRead, sourceId: str
 
 /** The ids of the access members that are neither disabled nor tombstoned, by id. */
 export async function listActiveAccessMembers(exec: LegacyUnscopedRead): Promise<string[]> {
-  const rows = await exec.executeRaw<{ id: string }>('SELECT id FROM access_members WHERE disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id');
+  const rows = await exec.executeRaw<{ id: string }>('SELECT id FROM access_members WHERE disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id COLLATE "C"');
   return rows.map(row => row.id);
 }
 

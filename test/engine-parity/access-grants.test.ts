@@ -11,8 +11,8 @@
  *    generation is decimal text that moves with a trust change, null without its row; the request-id lookup returns
  *    at most two rows across principals, so the trusted local CLI reads a receipt another principal owns only when one
  *    row has the id. Every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm through
- *    test/engine-parity/harness.ts) gives the same answers; the Rust store keeps no OAuth clients or access tokens,
- *    so those four reads stop on the typed refusal there, and the cases that set state up through raw SQL (a deleted
+ *    test/engine-parity/harness.ts) gives the same answers; the Rust store keeps OAuth clients and access tokens but
+ *    does not read their grants yet, so those four reads stop on the typed refusal there, and the cases that set state up through raw SQL (a deleted
  *    or revoked grant, a revoked writer, a missing singleton row) stop on raw SQL's refusal.
  *  - Regression: these reads ran through executeRaw, so on a Rust brain get_write_request from the local CLI ended in
  *    engine_capability_missing at the request-id lookup, and leave_brain and sync_brain_skills ended at the local

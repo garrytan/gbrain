@@ -45,7 +45,7 @@ export async function setMemberLabelledOnly(engine: BrainEngine, rawId: unknown,
 /** The enabled labelled-only members, sorted; empty when none. */
 export async function labelledOnlyMemberIds(engine: Pick<BrainEngine, 'executeRaw'>): Promise<string[]> {
   const rows = await engine.executeRaw<{ id: string }>(
-    'SELECT id FROM access_members WHERE labelled_only AND disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id');
+    'SELECT id FROM access_members WHERE labelled_only AND disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id COLLATE "C"');
   return rows.map(r => r.id);
 }
 

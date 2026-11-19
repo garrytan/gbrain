@@ -11,8 +11,8 @@
  * listAudienceAccessMembers, readLiveMember, readAccessGroups) read the same records, so a member a write added is
  * visible to the next read.
  *
- * The store keeps no access tokens and no OAuth clients, so a token bind on insert and every credential binding
- * member refuse with engine_capability_missing before anything is written; readLiveMember finds no member through a
+ * The store keeps access tokens and OAuth clients, but binds no member to them yet, so a token bind on insert and
+ * every credential binding member refuse with engine_capability_missing before anything is written; readLiveMember finds no member through a
  * token or a client.
  */
 import type { AccessGroupRow, AccessMemberLookup, AccessMemberRow, AudiencePrincipalRows, LiveMemberRow, MemberBindingVia } from '../../engine-sql/access-control.ts';
@@ -22,7 +22,7 @@ import { storeErrorCode } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
-const NO_CREDENTIALS = 'the store keeps no access tokens and no OAuth clients';
+const NO_CREDENTIALS = 'a member binding on the store\'s access tokens and OAuth clients';
 
 const PG_CODE: ReadonlyArray<[RegExp, string]> = [[/_(pkey|key)$/, '23505'], [/_check$/, '23514'], [/_fkey$/, '23503']];
 
@@ -106,8 +106,8 @@ export const listAudienceAccessMembers: StoreMember<[], string[]> = async (brain
 
 /**
  * The enabled, untombstoned member `via` and `key` name, with its groups, or null: by its id, or by the member the
- * config key names (edge whitespace trimmed, as Postgres btrims it). The store keeps no access tokens and no OAuth
- * clients, so no legacy token or client names a member.
+ * config key names (edge whitespace trimmed, as Postgres btrims it). The store binds no member to its access tokens
+ * or OAuth clients yet, so no legacy token or client names a member.
  */
 export const readLiveMember: StoreMember<[via: MemberBindingVia, key: string], LiveMemberRow | null> = async (brain, via, key) => {
   let id: string | null = key;

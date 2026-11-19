@@ -165,8 +165,8 @@ export const getFailedJobForRetry: StoreMember<[id: number], { name: string; dat
   call('getFailedJobForRetry', () => brain.getFailedJobForRetry(id));
 
 /**
- * A delegated client's open `subagent` jobs. Its pair `lockOAuthClient` is not served: the store keeps no
- * `oauth_clients` rows to lock, so a direct call refuses.
+ * A delegated client's open `subagent` jobs. Its pair `lockOAuthClient` is not served yet, though the store keeps
+ * `oauth_clients` records, so a direct call refuses.
  */
 export const countOpenJobsByOwner: StoreMember<[clientId: string], number> = (brain, clientId) =>
   call('countOpenJobsByOwner', () => brain.countOpenJobsByOwner(clientId));
