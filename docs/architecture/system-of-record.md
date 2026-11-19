@@ -283,7 +283,7 @@ or a physical projection that leaves attribution untouched):
 - `src/core/page-state/materialize.ts` (1): coordinated maintenance.
 - `src/core/page-state/rename-alias.ts` (5): the fact slug rewrite runs inside its caller's `updateSlug` transaction, and `movePageIdReferences` (#5431: page_versions, timeline_entries and links moved to the row that materialized under a fallback rename) runs inside `carryRenameIdentity`'s `maintenanceTransaction`; every caller is attributed.
 - `src/core/page-state/versions.ts` (2): `createVersion` itself and its segmented-page twin; the caller's scope supplies the actor. The pruned-history marks (`successor_pruned`, `version_history_gap_at`) are written in `src/core/engine-sql/version-prune.ts`.
-- `src/core/persistence/canonical-projections.ts` (7): fence projection inside the request's publication.
+- `src/core/persistence/canonical-projections.ts` (6): fence projection inside the request's publication.
 - `src/core/persistence/change-reason.ts` (1): stamps a page write's `reason` on the snapshot its publication archived, inside that request's publication apply.
 - `src/core/persistence/connector-google-receipts.ts` (2): request preparer.
 - `src/core/persistence/connector-sync.ts` (2): connector publication inside `withCoordinatedWrite`.
@@ -293,7 +293,6 @@ or a physical projection that leaves attribution untouched):
 - `src/core/persistence/file-repair.ts` (3): `managed_file_repair` request preparer (#5988); a GST-1601 adoption tags the page_versions rows its import wrote with `change_reason = 'adopted_local_edit'` inside the same coordinated publication, attributed to the adoption request.
 - `src/core/persistence/links-maintenance.ts` (1): coordinated maintenance.
 - `src/core/persistence/loop-fact-retirement.ts` (1): request preparer.
-- `src/core/persistence/forget-prepare.ts` (1): `forget` / `forget_fact` request preparer; the struck page files publish first, then the withdrawal's rows in the same publication.
 - `src/core/persistence/memory-prepare.ts` (2): `remember` request preparer; the fence row and its facts row go through `prepareFenceFactAppend`.
 - `src/core/persistence/page-append.ts` (1): segmented `append_page` / `edit_page` request preparer; the splice versions the page inside its request's publication.
 - `src/core/persistence/page-prepare.ts` (14): page request preparer (including the restore of a guest note (GBRA-504), which versions and restores the page inside its publication transaction, the restore of a segmented page over 24 MiB, which flips `deleted_at` without re-serializing, and the tag flip of a segmented page, which versions it and changes its tag rows and `content_hash` without re-serializing).
