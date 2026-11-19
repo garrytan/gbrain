@@ -348,7 +348,7 @@ export async function sweepPurgedPage(tx: BrainEngine, input: PurgedPageSweep): 
   if (cleared === null) missingCaches.push('query_cache');
   removed.query_cache = cleared ?? 0;
   removed.facts = await count(`DELETE FROM facts WHERE source_id=$1 AND ${PAGE_FACTS} RETURNING 1`, [sourceId, slug]);
-  Object.assign(removed, await scrubPurgedSlugStores(tx, sourceId, [slug], { ifPresent: !!input.present }));
+  Object.assign(removed, await scrubPurgedSlugStores(tx, sourceId, [slug], { ifPresent: !!input.present, pageIds: [pageId] }));
   let complete = true;
   if (has('persistence_requests')) {
     const census = await input.census();

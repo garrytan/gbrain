@@ -126,7 +126,9 @@ one `gbrain files` uses), gbrain also uploads an encrypted export of the store t
   last success and the last failure.
 - `gbrain secrets backup --restore gbrain-secret-store/<time>.json` adds the entries this brain lacks. It restores only on
   a host whose keyring holds the key the backup names (import the escrow copy first), and it skips, and lists, any row
-  that does not authenticate under it. An entry already here is left as it is, even when the backup's copy differs.
+  that does not authenticate under it. An entry already here is left as it is, even when the backup's copy differs;
+  the places the backup recorded for it that this brain lacks are added, so a later purge of one page never removes an
+  original another page still holds.
   An original whose every recorded place was on a page this brain does not hold is skipped and counted as
   `skipped_no_page` ("skipped because their page is not in this brain"): the page was purged, or is not synced yet,
   and a restore cannot tell which, so it never brings back what a page purge removed. Sync the pages, then run the
@@ -137,8 +139,11 @@ one `gbrain files` uses), gbrain also uploads an encrypted export of the store t
 
 Purging a page (`gbrain delete <slug> --purge`, or the expiry of a deleted page) removes the places the redactor
 recorded on that page, and every sealed original no other page and no publish commit still references. An original
-another page holds, or that a redacted publish commit points to, stays until those go too. A soft delete keeps
-everything, because the page can be restored.
+another page holds, or that a redacted publish commit points to, stays until those go too. A place recorded under a
+slug the page had before a rename goes with the page too. A soft delete keeps everything, because the page can be
+restored. Backups uploaded before the purge still hold the sealed original (encrypted, under the store key); delete
+those objects from the bucket when it must be gone from there too, and a restore from one never brings it back while
+the page is gone.
 
 `gbrain doctor` runs the `secret_store` check, which never prints a value. It reports entries and occurrences, where the
 store is backed up, and warns when:
