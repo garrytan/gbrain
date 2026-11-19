@@ -49,6 +49,7 @@ const CONSTANT_ALLOWLIST: Record<string, string> = {
   PAGE_SORT_SQL: 'src/core/types.ts: ORDER BY text keyed by the PageFilters sort union (whitelisted enum)',
   TEMPORAL_LINK_SELECT_SQL: 'src/core/link-validity.ts: constant select list over the lr_t relationship-state join',
   GUEST_SOURCES_HIDDEN_SQL: 'src/core/guests/note.ts: constant row-security probe of guest_sources (no input)',
+  ANY_OWNER_ONLY_SQL: 'src/core/access/owner-only.ts: constant EXISTS probe of sources for an owner-only kind or flag (code-constant OWNER_ONLY_KINDS and flag; no input)',
   RELEASE_STAGED_CTE: 'src/core/persistence/limits.ts: constant CTE releasing upload reservations of a preceding gone CTE (no input)',
 };
 

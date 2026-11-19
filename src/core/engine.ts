@@ -1350,6 +1350,9 @@ export interface BrainEngine {
   listLocalPathSources(): Promise<LocalPathSourceRow[]>;
   /** The registered path, last commit and config of a source that is not archived, or null (plain-directory sync). */
   readPlainSyncSource(sourceId: string): Promise<PlainSyncSourceRow | null>;
+  /** Owner-only reads (access/owner-only.ts): does any source carry the owner-only rule; one source's raw config, or null. */
+  readOwnerOnlySourcesPresent(): Promise<boolean>;
+  readOwnerOnlySourceConfig(sourceId: string): Promise<{ config: unknown } | null>;
   listSourceRoutingRows(): Promise<SourceRoutingRow[]>;
   countDefaultSourceSplit(): Promise<DefaultSourceSplit>;
   /** Live sources last synced more than seven days ago by the database clock, by id (engine-sql/sources.ts). */

@@ -103,6 +103,16 @@ const PINS: Pin[] = [
     case: { method: 'readPlainSyncSource', variant: 'default', run: e => e.readPlainSyncSource('default') },
     texts: ['SELECT local_path,last_commit,config FROM sources WHERE id=$1 AND NOT archived'],
   },
+  {
+    from: 'src/core/access/owner-only.ts:56 ownerOnlySourcesPresent',
+    case: { method: 'readOwnerOnlySourcesPresent', variant: 'default', run: e => e.readOwnerOnlySourcesPresent() },
+    texts: [`SELECT EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id >= '' AND (read_source.config->>'kind' IN ('imessage') OR read_source.config->>'owner_only' = 'true')) AS present`],
+  },
+  {
+    from: 'src/core/access/owner-only.ts:66 sourceIsOwnerOnly',
+    case: { method: 'readOwnerOnlySourceConfig', variant: 'default', run: e => e.readOwnerOnlySourceConfig('default') },
+    texts: ['SELECT config FROM sources WHERE id = $1'],
+  },
 ];
 
 /** entity-card.ts CARD_ROW_COLUMNS at 7470c703ed, verbatim. */

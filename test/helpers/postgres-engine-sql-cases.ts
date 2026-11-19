@@ -477,7 +477,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readCycleLocks': OOS.cycleLocks, 'deleteCycleLock': OOS.cycleLocks, 'deleteCycleLockIfStale': OOS.cycleLocks,
   // sources
   'listAllSources': 'sources', 'listSourceLocalPaths': 'sources', 'updateSourceConfig': 'sources',
-  'listLocalPathSources': 'sources', 'readPlainSyncSource': OOS.callerRawSql, 'listSourceRoutingRows': 'sources', 'countDefaultSourceSplit': 'sources', 'getSource': 'sources',
+  'listLocalPathSources': 'sources', 'readPlainSyncSource': OOS.callerRawSql, 'readOwnerOnlySourcesPresent': OOS.callerRawSql, 'readOwnerOnlySourceConfig': OOS.callerRawSql, 'listSourceRoutingRows': 'sources', 'countDefaultSourceSplit': 'sources', 'getSource': 'sources',
   'listStaleSyncSourceIds': 'sources', 'readSourceRow': 'sources', 'lockSourceRow': 'sources', 'readSourceChunkerVersion': 'sources',
   'setSourceChunkerVersion': 'sources', 'isSourceClaimed': 'sources',
   'countSourcePages': 'sources', 'insertSource': 'sources',
@@ -947,6 +947,8 @@ export const SQL_CASES: SqlCase[] = [
   ...variants('listSourceLocalPaths', [['default', (e) => e.listSourceLocalPaths()]]),
   ...variants('listLocalPathSources', [['default', (e) => e.listLocalPathSources()]]),
   ...variants('readPlainSyncSource', [['default', (e) => e.readPlainSyncSource(SRC)]]),
+  ...variants('readOwnerOnlySourcesPresent', [['default', (e) => e.readOwnerOnlySourcesPresent()]]),
+  ...variants('readOwnerOnlySourceConfig', [['default', (e) => e.readOwnerOnlySourceConfig(SRC)]]),
   ...variants('listSourceRoutingRows', [['default', (e) => e.listSourceRoutingRows()]]),
   ...variants('countDefaultSourceSplit', [['default', (e) => e.countDefaultSourceSplit()]]),
   ...variants('updateSourceConfig', [['default', (e) => e.updateSourceConfig(SRC, { federated: true })]]),

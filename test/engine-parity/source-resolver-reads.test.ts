@@ -39,6 +39,7 @@ import { archiveSource, createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { loadConnectorSourceIds } from '../../src/commands/orphans.ts';
 import { sourceConfigText, sourceRecordsRawConfig } from '../../src/core/source-rows.ts';
+import { ownerOnlySourcesPresent, sourceIsOwnerOnly } from '../../src/core/access/owner-only.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -80,6 +81,36 @@ describe('engine parity: source-resolution reads', () => {
     expect(result.gone).toBeNull();
     expect(result.missing).toBeNull();
     return result;
+  });
+
+  parityTest('readOwnerOnlySourcesPresent and readOwnerOnlySourceConfig find owner-only sources by kind or flag, archived ones included', { methods: ['readOwnerOnlySourcesPresent', 'readOwnerOnlySourceConfig'] }, async (engine, backend) => {
+    const none = await engine.readOwnerOnlySourcesPresent();
+    await createSource(engine, backend, 'plain', { note: 'x' });
+    await createSource(engine, backend, 'flagstr', { owner_only: 'false' });
+    const stillNone = await engine.readOwnerOnlySourcesPresent();
+    await createSource(engine, backend, 'phone', { kind: 'imessage' });
+    await archiveSource(engine, backend, 'phone');
+    const archivedKind = await engine.readOwnerOnlySourcesPresent();
+    await createSource(engine, backend, 'flag', { owner_only: true });
+    const configs = {
+      plain: await engine.readOwnerOnlySourceConfig('plain'),
+      phone: await engine.readOwnerOnlySourceConfig('phone'),
+      flag: await engine.readOwnerOnlySourceConfig('flag'),
+      missing: await engine.readOwnerOnlySourceConfig('missing'),
+    };
+    const verdicts = {
+      plain: await sourceIsOwnerOnly(engine, 'plain'),
+      flagstr: await sourceIsOwnerOnly(engine, 'flagstr'),
+      phone: await sourceIsOwnerOnly(engine, 'phone'),
+      flag: await sourceIsOwnerOnly(engine, 'flag'),
+      missing: await sourceIsOwnerOnly(engine, 'missing'),
+      present: await ownerOnlySourcesPresent(engine),
+    };
+    expect([none, stillNone, archivedKind]).toEqual([false, false, true]);
+    expect(configs.plain).toEqual({ config: { note: 'x' } });
+    expect(configs.missing).toBeNull();
+    expect(verdicts).toEqual({ plain: false, flagstr: false, phone: true, flag: true, missing: false, present: true });
+    return { none, stillNone, archivedKind, configs, verdicts };
   });
 
   parityTest('listSourceRoutingRows carries config, archived and whether default has a live page', { methods: ['listSourceRoutingRows'] }, async (engine, backend) => {

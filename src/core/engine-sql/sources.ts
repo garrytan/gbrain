@@ -9,7 +9,8 @@ import type { SourceDetailRow, SourceRow } from '../engine.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from '../source-config-sql.ts';
 import { jsonbParam, type SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
-import { sqlFragment, trustedSql } from './fragment.ts';
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
+import { ANY_OWNER_ONLY_SQL } from '../access/owner-only.ts';
 
 export async function listAllSources(exec: LegacyUnscopedRead, opts?: {
   includeArchived?: boolean;
@@ -166,6 +167,24 @@ export interface DefaultSourceSplit { defaultPages: number; nonDefaultPages: num
  */
 export async function listLocalPathSources(exec: LegacyUnscopedRead): Promise<LocalPathSourceRow[]> {
   return exec.executeRaw<LocalPathSourceRow>(`SELECT id, local_path, archived FROM sources WHERE local_path IS NOT NULL`);
+}
+
+/** The engine's own executeRaw (or a persistence view's), so access/owner-only.ts runs the same statement on either. */
+export interface OwnerOnlyRead {
+  executeRaw<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<R[]>;
+}
+
+/** Does the brain hold an owner-only source, archived ones included? No row counts as yes (fail closed). */
+export async function readOwnerOnlySourcesPresent(exec: OwnerOnlyRead): Promise<boolean> {
+  const { text, params } = renderFragment(sqlFragment`SELECT ${trustedSql(ANY_OWNER_ONLY_SQL)} AS present`);
+  const [row] = await exec.executeRaw<{ present: boolean }>(text, params);
+  return row?.present !== false;
+}
+
+/** One source's raw `config` for the owner-only test, or null when the source is missing (`sourceIsOwnerOnly`). */
+export async function readOwnerOnlySourceConfig(exec: OwnerOnlyRead, sourceId: string): Promise<{ config: unknown } | null> {
+  const rows = await exec.executeRaw<{ config: unknown }>('SELECT config FROM sources WHERE id = $1', [sourceId]);
+  return rows[0] ?? null;
 }
 
 /** The live (not archived) source a plain-directory sync reads (`plainDirectorySyncRoot`). */
