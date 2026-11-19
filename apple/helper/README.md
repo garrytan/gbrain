@@ -100,7 +100,7 @@ Sending is off until the owner turns it on at the Mac. The owner's agent then se
 3. On the agent's computer, make an Ed25519 key pair (`generateSendKeyPair` in `src/core/apple/send-sign.ts`) and keep the private key there. At the Mac, `gbrain-apple-helper send-key add --name <name> --public-key-file -` with the public key on stdin asks for Touch ID once.
 4. Full Disk Access (System Settings > Privacy & Security > Full Disk Access) must be on: the helper reads the Messages database to confirm each send.
 
-With nobody logged in at the Mac, the Touch ID steps fail with `owner_presence_unavailable`. Removing a key, lowering a limit and `send-setup --off` need no prompt. Sends keep working while a Touch ID dialog is open. If another settings change lands while the dialog is open, the helper applies nothing and answers `overloaded`; run the command again to see the dialog for the settings as they are now. `send-setup --off`, `send-key remove` and a lowered limit always write the keychain item, so a failed write is reported instead of being taken as done.
+With nobody logged in at the Mac, the Touch ID steps fail with `owner_presence_unavailable`. Removing a key, lowering a limit and `send-setup --off` need no prompt. Sends keep working while a Touch ID dialog is open. If another settings change lands while the dialog is open, the helper applies nothing and answers `overloaded`; run the command again to see the dialog for the settings as they are now. `send-setup --off`, `send-key remove` and a lowered limit always write the keychain item, so a failed write is reported instead of being taken as done, and a Touch ID approval still open from an earlier command can't undo them.
 
 ### Request
 

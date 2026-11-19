@@ -52,6 +52,7 @@ public final class SendService {
     let queue = DispatchQueue(label: "io.gbrain.apple-helper.send")
     let lock = NSLock()
     let stateLock: NSRecursiveLock
+    var adminSaves = 0
     var inflight = Set<String>()
     var lastRetention: Date?
 
@@ -359,19 +360,29 @@ public final class SendService {
             banners = banner.requestAuthorization()
         }
         do {
-            let seen = try locked { () throws -> SendState in
-                var state = try store.load() ?? SendState()
-                observeKill(&state)
-                return state
-            }
-            let change = try Self.change(action, fields, seen)
-            if let reason = change.reason { try confirm(reason) }
-            let state = try locked { () throws -> SendState in
+            let first = try locked { () throws -> (change: (state: SendState, reason: String?, save: Bool), seen: SendState, saves: Int) in
                 var current = try store.load() ?? SendState()
                 observeKill(&current)
-                guard current == seen else { throw Problem.overloaded }
-                if change.save { try store.save(change.state) }
-                return change.state
+                let change = try Self.change(action, fields, current)
+                if change.reason == nil, change.save {
+                    try store.save(change.state)
+                    adminSaves += 1
+                }
+                return (change, current, adminSaves)
+            }
+            var state = first.change.state
+            if let reason = first.change.reason {
+                try confirm(reason)
+                state = try locked { () throws -> SendState in
+                    var current = try store.load() ?? SendState()
+                    observeKill(&current)
+                    guard current == first.seen, adminSaves == first.saves else { throw Problem.overloaded }
+                    if first.change.save {
+                        try store.save(first.change.state)
+                        adminSaves += 1
+                    }
+                    return first.change.state
+                }
             }
             let status = SendStatus(send: state.enabled && switchedOn() ? "on" : "off", keys: state.keys.map(\.name).sorted(), limits: state.limits,
                                     automation: automation, banners: banners)

@@ -705,6 +705,26 @@ final class Harness {
         #expect(h.store.state?.keys.isEmpty == true)
     }
 
+    @Test func anOffDuringAPendingSetupIsNotUndoneByTheSetup() {
+        let h = Harness()
+        #expect(admin(h, ["action": "off"]).0 == 200)
+        h.presence.gate = DispatchSemaphore(value: 0)
+        h.presence.entered = DispatchSemaphore(value: 0)
+        let group = DispatchGroup()
+        var reply: (Int, [String: Any]) = (0, [:])
+        group.enter()
+        Thread {
+            reply = self.admin(h, ["action": "setup"])
+            group.leave()
+        }.start()
+        #expect(h.presence.entered?.wait(timeout: .now() + 10) == .success)
+        #expect(admin(h, ["action": "off"]).0 == 200)
+        h.presence.gate?.signal()
+        #expect(group.wait(timeout: .now() + 10) == .success)
+        #expect(reply.1["code"] as? String == "overloaded")
+        #expect(h.store.state?.enabled == false)
+    }
+
     @Test(arguments: [["action": "off"], ["action": "remove_key", "name": "box"], ["action": "set_limits", "max_per_day": "50"]])
     func aChangeThatCannotBeSavedIsReported(fields: [String: String]) {
         let h = Harness()

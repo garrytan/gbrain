@@ -123,11 +123,14 @@ case "send-setup":
     if off {
         print("sending is off in \(configPath)")
         let port = config.port
-        if let (status, _) = AdminClient.post(port: UInt16(port), fields: ["action": "off"], timeout: 10), status == 200 {
-            print("GBrain Helper confirmed sending is off")
-        } else {
+        guard let (status, body) = AdminClient.post(port: UInt16(port), fields: ["action": "off"], timeout: 10) else {
             print("GBrain Helper didn't answer; the config switch already stops every send")
+            exit(0)
         }
+        guard status == 200 else {
+            fail("GBrain Helper couldn't save sending off in its keychain item: \(String(decoding: body, as: UTF8.self)). The config switch already stops every send.", code: 1)
+        }
+        print("GBrain Helper confirmed sending is off")
         exit(0)
     }
     admin(["action": "setup"], timeout: 300)
