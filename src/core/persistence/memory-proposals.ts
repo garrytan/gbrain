@@ -388,11 +388,9 @@ function parseProposalCursor(cursor: string): [string, string] {
 export async function listMemoryProposals(engine: BrainEngine, opts: { sourceId?: string; all?: boolean; limit?: number; after?: string } = {}): Promise<MemoryProposal[]> {
   const [afterAt, afterId] = opts.after === undefined ? [null, null] : parseProposalCursor(opts.after);
   await runMemoryProposalUpkeep(engine);
-  const rows = await engine.executeRaw<Record<string, unknown>>(`SELECT * FROM memory_proposals WHERE ($1::text IS NULL OR source_id=$1)
-    AND ($2::boolean OR state='awaiting_owner')
-    AND ($4::timestamptz IS NULL OR (date_trunc('milliseconds', created_at), request_id) > ($4::timestamptz, $5::uuid))
-    ORDER BY date_trunc('milliseconds', created_at), request_id LIMIT $3`,
-    [opts.sourceId ?? null, opts.all === true, Math.max(1, Math.min(500, opts.limit ?? 50)), afterAt, afterId]);
+  const rows = await engine.listMemoryProposalRows({
+    sourceId: opts.sourceId ?? null, all: opts.all === true, limit: Math.max(1, Math.min(500, opts.limit ?? 50)), afterAt, afterId,
+  });
   return rows.map(normalize);
 }
 

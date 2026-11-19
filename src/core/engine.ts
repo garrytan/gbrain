@@ -52,7 +52,7 @@ import type { LedgerSource } from './engine-sql/belief.ts';
 import type { ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, MentionDueQuery, SiblingCandidateQuery, SiblingCandidateRow } from './engine-sql/entity-reads.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
 import type {
-  AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
+  AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from './engine-sql/write-misc.ts';
 import type { AdmitJobPolicy, AdmitJobResult, AdmitJobSpec, ClaimJobSpec, JobRow, ListJobsFilter } from './engine-sql/jobs.ts';
 import type { JobInsightRows, JobInsightSpec } from './engine-sql/jobs-insight.ts';
@@ -1399,6 +1399,8 @@ export interface BrainEngine {
   purgeMemoryProposals(retentionDays: number): Promise<number>;
   /** How many memory proposals await their owner unexpired, and the oldest one's age in hours; null for no row. */
   readPendingProposalSummary(): Promise<PendingProposalRow | null>;
+  /** One page of the owner's memory-proposal list, oldest first, as stored rows. */
+  listMemoryProposalRows(query: ProposalListQuery): Promise<Array<Record<string, unknown>>>;
   /** Attach a working tree to an existing path-less source (`sources add --path`); an unknown id changes nothing. */
   attachSourcePath(sourceId: string, localPath: string, opts?: AttachSourcePathOptions): Promise<void>;
   /** Every live page (of one source when given) with aliases and knowledge revision, by source then slug. */

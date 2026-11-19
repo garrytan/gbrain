@@ -17,9 +17,11 @@
 import { describe, expect } from 'bun:test';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
-import { pendingProposalSummary } from '../../src/core/persistence/memory-proposals.ts';
+import { listMemoryProposals, pendingProposalSummary, proposalCursor } from '../../src/core/persistence/memory-proposals.ts';
 
 const { parityTest } = parityArms(testBackends());
+
+const UNKNOWN = 'b0000000-0000-4000-8000-0000000000d1';
 
 /** The value, or the code it refused with. */
 async function settle(fn: () => Promise<unknown>): Promise<unknown> {
@@ -32,5 +34,17 @@ describe('engine parity: the owner reads of memory proposals', () => {
       const summary = await settle(() => pendingProposalSummary(engine));
       expect(summary).toEqual({ pending: 0, oldest_hours: null });
       return summary;
+    });
+  parityTest('the owner list is empty, with --all, --source and a cursor', { methods: ['listMemoryProposalRows'] },
+    async (engine) => {
+      const after = proposalCursor({ created_at: '2026-01-01T00:00:00.000Z', request_id: UNKNOWN });
+      const result = {
+        awaiting: await settle(() => listMemoryProposals(engine)),
+        all: await settle(() => listMemoryProposals(engine, { all: true, sourceId: 'default', limit: 5 })),
+        after: await settle(() => listMemoryProposals(engine, { all: true, after })),
+        badCursor: await settle(() => listMemoryProposals(engine, { after: 'nope' })),
+      };
+      expect(result).toEqual({ awaiting: [], all: [], after: [], badCursor: { code: 'invalid_params' } });
+      return result;
     });
 });
