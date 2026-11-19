@@ -4871,6 +4871,7 @@
         "listOriginClaims": "none",
         "listOutsideContentFenceCounts": "none",
         "listOwnedPrivateQueues": "none",
+        "listPageRefsByIds": "none",
         "listPageStatusByRef": "none",
         "listPages": "direct",
         "listPagesTitledIn": "none",
