@@ -37,9 +37,11 @@ import type { ChunkMove } from './page-state/chunk-moves.ts';
 import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence-state.ts';
 import type { DurablePersistenceSettings } from './engine-sql/persistence-declaration.ts';
-import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from './engine-sql/persistence-journal.ts';
-import type { ClaimExpiry, ClaimHeadSpec, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from './engine-sql/persistence-claims.ts';
-import type { GatedMirrorRequest, RequestEffectRow } from './engine-sql/persistence-effect-scans.ts';
+import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from './engine-sql/persistence-journal.ts';
+import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from './engine-sql/persistence-claims.ts';
+import type { GatedMirrorRequest, RequestEffectState } from './engine-sql/persistence-effect-scans.ts';
+import type { EffectClaim, EffectClaimRef, EffectWorktreeOwner, MirrorGateRow } from './engine-sql/persistence-effect-worker.ts';
+import type { IdleProbeRow, IdleProbeSpec } from './engine-sql/persistence-idle-probe.ts';
 import type { OverdueHold, OverdueHoldKind } from './engine-sql/persistence-owner-scans.ts';
 import type { CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionWindowRow, ReceiptBudget, SegmentedProjectionFilter } from './engine-sql/persistence-housekeeping.ts';
 import type { ProjectionScanCursor } from './page-state/projection-window.ts';
@@ -3419,6 +3421,8 @@ export interface BrainEngine {
    * row is missing). Outside a transaction the declaration ends with its statement. engine-sql/persistence-declaration.ts.
    */
   declarePersistence(opts?: { durable?: DurablePersistenceSettings }): Promise<string | null>;
+  /** Synchronous commit for the rest of the current transaction (engine-sql/persistence-declaration.ts); nothing outside one. */
+  requireSynchronousCommit(): Promise<void>;
 
   /** One local writer registration row (lane, credential hash, grant ceiling, revoked_at), or undefined; `lock` reads it `FOR SHARE`. */
   readLocalWriterRow(id: string, opts?: { lock?: boolean }): Promise<LocalWriterRow | undefined>;
@@ -3467,6 +3471,8 @@ export interface BrainEngine {
   completeWriteRow(completion: WriteCompletion): Promise<CompletedWriteRow | null>;
   /** Cancels a request still queued as the caller read it, in one step: lock, check, complete, release its counters; null when it does not exist. */
   cancelWriteRow(cancel: WriteCancellation): Promise<WriteCancelResult | null>;
+  /** Inserts a publication's effects in queue order (a gated one only while auto-linking is on); returns the kinds inserted. */
+  insertPublicationEffects(spec: PublicationEffectsSpec): Promise<string[]>;
   // Write-claim statements (engine-sql/persistence-claims.ts): the text journal.ts, authority.ts and consumer.ts sent through executeRaw.
   /** A source's incarnation and archive flag, or null; `lock` reads it FOR SHARE until the transaction ends. */
   readSourceMembership(sourceId: string, opts?: { lock?: boolean }): Promise<SourceMembership | null>;
@@ -3476,6 +3482,8 @@ export interface BrainEngine {
   insertTopologyChange(row: TopologyChangeInsert): Promise<TopologyChange>;
   /** Extends a claim's lease (and records its phase); true while the request is running under the token. Postgres sends it on the direct pool. */
   renewWriteClaim(renewal: ClaimRenewal, opts?: { signal?: AbortSignal }): Promise<boolean>;
+  /** Returns a claim that never began to publish to queued under its token; `direct` sends it on the Postgres direct pool. */
+  releaseUnpublishedClaim(release: ClaimRelease, opts?: { direct?: boolean }): Promise<void>;
   /** Returns expired claims and claims of dead owners to queued, at most 100; `direct` sends it on the Postgres direct pool. */
   expireStaleWriteClaims(expiry: ClaimExpiry, opts?: { signal?: AbortSignal; direct?: boolean }): Promise<void>;
   /** Whether a claim would find a row now; `priority` overrides the foreground-priority config row when set. */
@@ -3527,10 +3535,10 @@ export interface BrainEngine {
    */
   selectClaimableEffect<R = Record<string, unknown>>(hostId: string, deadOwners: readonly string[]): Promise<R | null>;
   /**
-   * Every effect of write request `requestId` (kind, state, error code, outcome, whether a recovery is open), in kind
-   * order (`publicEffectsForRequest`, a write receipt's effects). A non-uuid request id refuses.
+   * The effects of journal request `requestId` as its receipt reads them (state, error code, outcome, whether a recovery
+   * is open), in kind order, or only its Git effect when `kind` is `'git'`. A non-uuid request id refuses.
    */
-  listRequestEffects(requestId: string): Promise<RequestEffectRow[]>;
+  readRequestEffects(requestId: string, kind?: 'git'): Promise<RequestEffectState[]>;
 
   // Owner scans (engine-sql/persistence-owner-scans.ts): the reads the write owner's housekeeping sent through executeRaw.
   /**
@@ -3556,6 +3564,46 @@ export interface BrainEngine {
   listResumableRefreshes<R = Record<string, unknown>>(hostId: string, budgetMs: number): Promise<(R & { stale: boolean })[]>;
   /** The last commit of each named source that exists (null before its first sync), in source id order (the refresh resume's lag check). */
   listSourceLastCommits(sourceIds: readonly string[]): Promise<{ last_commit: string | null }[]>;
+
+  // Effect worker (engine-sql/persistence-effect-worker.ts): the claim stamp and the statements that settle a claim,
+  // which effect-journal.ts sent through executeRaw. Each settle statement matches only effect `id` still claimed under
+  // `token` (a null token matches none), so a claim that moved changes nothing.
+  /** Claims effect `id` under `token` (running, a 2-minute lease, one more attempt): the claimed row, or null when no effect has the id. */
+  stampEffectClaim<R = Record<string, unknown>>(claim: EffectClaim): Promise<R | null>;
+  /**
+   * Extends an effect claim's lease by 2 minutes; true while it is running under the token with no recovery. `direct`
+   * runs it on the Postgres direct lane (`executeRawDirect`), outside any pooled transaction.
+   */
+  renewEffectClaim(claim: EffectClaimRef, opts?: { direct?: boolean }): Promise<boolean>;
+  /** Requeues a claimed effect (no recovery) due now with its scan cursor at `slug` (`advanceEffectCursor`). */
+  advanceEffectRow(claim: EffectClaimRef & { slug: string }): Promise<void>;
+  /** Finishes a claimed effect (no recovery) with `outcomeJson`: committed, or failed `targets_parked` when it parked targets. */
+  completeEffectRow(claim: EffectClaimRef & { outcomeJson: string }): Promise<void>;
+  /** Requeues a claimed effect after `delayMs` with error code `reason`, a claim under recovery included. */
+  retryEffectRow(claim: EffectClaimRef & { reason: string; delayMs: number }): Promise<void>;
+  /** Requeues a claimed effect as `writer_busy` after `delayMs`, merging `dataJson` (the busy streak) into its data. */
+  retryBusyEffectRow(claim: EffectClaimRef & { dataJson: string; delayMs: number }): Promise<void>;
+  /** Requeues a claimed effect (no recovery) with data `dataJson`, error code `reason`, after `delayMs`. */
+  requeueEffectRow(claim: EffectClaimRef & { dataJson: string; reason: string | null; delayMs: number }): Promise<void>;
+  /** Fails a claimed effect (no recovery) as `targets_parked` with data `dataJson`. */
+  parkEffectRow(claim: EffectClaimRef & { dataJson: string }): Promise<void>;
+  /** Fails a claimed effect (no recovery) with error code `reason`. */
+  failEffectRow(claim: EffectClaimRef & { reason: string }): Promise<void>;
+  /** The withdrawal mirrors that gate these requests (`mirrorGates`): each not committed, or committed with its publications. */
+  readMirrorGateRows(requestIds: readonly string[]): Promise<MirrorGateRow[]>;
+  /**
+   * The effect guard's locks (`guardEffectSource`): share-locks the brain row, then the effect's worktree row, and
+   * returns that worktree's owner and state; null without a worktree id or when the worktree row is gone.
+   */
+  lockEffectGuard(worktreeId: string | null): Promise<EffectWorktreeOwner | null>;
+  /** Whether one of these requests has a target parked under `code` that its committed withdrawal mirror re-arms (`hasRearmableTargets`). */
+  hasRearmableTargets(requestIds: readonly string[], code: string): Promise<boolean>;
+  /**
+   * The persistence consumer's idle probe (`persistence-idle-probe.ts`): whether any worker a full tick fans out to has
+   * work now, and where the resident projection window stands. Runs on `opts.lane` (the consumer's reserved idle lane)
+   * when given, else on the Postgres direct lane when `opts.direct`, else on the engine; `opts.signal` cancels it.
+   */
+  probeIdleWork(spec: IdleProbeSpec, opts?: { signal?: AbortSignal; lane?: ReservedConnection; direct?: boolean }): Promise<IdleProbeRow | null>;
 
   /**
    * The current value of each named transaction-local setting (`current_setting(name, true)`), in `names` order, null

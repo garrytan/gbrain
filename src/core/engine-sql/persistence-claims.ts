@@ -33,11 +33,12 @@ export function foregroundPriorityText(priority: boolean | null | undefined): st
 }
 
 /**
- * `claimableWriteSql(priority)` (journal.ts) with no lane roots: the rows `claimNextWrite` may claim. `hostId` and
- * `excludeRoots` bind as $1 and $2, the text the journal writes.
+ * `claimableWriteSql(priority, lanes)` (journal.ts): the rows `claimNextWrite` may claim. `hostId` and `excludeRoots`
+ * bind as $1 and $2, the text the journal writes; with no `laneRoots` the lane list is the empty literal, as there.
  */
-export function claimableWriteFragment(priority: boolean | null | undefined, hostId: string, excludeRoots: string[]): SqlFragment {
+export function claimableWriteFragment(priority: boolean | null | undefined, hostId: string, excludeRoots: string[], laneRoots?: string[]): SqlFragment {
   const p = trustedSql(PRIORITY_SQL[priorityKey(priority)]);
+  const lanes = laneRoots === undefined ? sqlFragment`'{}'::text[]` : sqlFragment`${laneRoots}::text[]`;
   return sqlFragment`(r.state='queued' OR (r.state='deferred' AND (r.deferred_refresh_id IS NOT NULL OR r.deferred_import_from IS NOT NULL)
         AND (r.deferred_refresh_id IS NULL OR EXISTS (SELECT 1 FROM persistence_worktree_refreshes released
           WHERE released.id=r.deferred_refresh_id AND released.released_at IS NOT NULL))
@@ -56,7 +57,7 @@ export function claimableWriteFragment(priority: boolean | null | undefined, hos
         WHERE r.worktree_id IS NOT NULL AND earlier.worktree_id=r.worktree_id AND earlier.sequence<r.sequence
         AND earlier.state IN ('queued','running','recovering') AND NOT ((${p}) AND NOT COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%'
   AND (earlier.state='queued' OR (earlier.state='running' AND earlier.intent ? 'lane'
-    AND earlier.worktree_id::text=ANY('{}'::text[])))
+    AND earlier.worktree_id::text=ANY(${lanes})))
   AND earlier.recovery IS NULL AND COALESCE(earlier.intent->>'kind','') LIKE 'managed_sync_%' AND NOT (earlier.source_id=r.source_id AND (earlier.slug=r.slug
   OR earlier.page_id=r.page_id OR earlier.intent->'renameFrom'->>'slug'=r.slug))))
       AND NOT EXISTS (SELECT 1 FROM persistence_requests earlier
@@ -64,7 +65,7 @@ export function claimableWriteFragment(priority: boolean | null | undefined, hos
         AND earlier.sequence<r.sequence
         AND earlier.state IN ('queued','running','recovering') AND NOT ((${p}) AND NOT COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%'
   AND (earlier.state='queued' OR (earlier.state='running' AND earlier.intent ? 'lane'
-    AND earlier.worktree_id::text=ANY('{}'::text[])))
+    AND earlier.worktree_id::text=ANY(${lanes})))
   AND earlier.recovery IS NULL AND COALESCE(earlier.intent->>'kind','') LIKE 'managed_sync_%' AND NOT (earlier.source_id=r.source_id AND (earlier.slug=r.slug
   OR earlier.page_id=r.page_id OR earlier.intent->'renameFrom'->>'slug'=r.slug))))
       AND NOT EXISTS (SELECT 1 FROM persistence_requests earlier
@@ -88,6 +89,16 @@ export const RENEW_CLAIM_SQL = `UPDATE persistence_requests SET
     claim_expires_at=now()+($3::double precision*interval '1 millisecond'),updated_at=now(),claim_phase=COALESCE($4::text::jsonb,claim_phase)
     WHERE id=$1::uuid AND execution_token=$2::uuid AND state='running' AND set_config('gbrain.persistence_protocol','2',true)='2' RETURNING id`;
 
+/**
+ * `releaseUnpublishedClaim` (journal.ts; the protocol predicate written out): returns a claim that never began to publish
+ * to queued under its token. $3 = the blocked reason; $4 = charge one preparation attempt (and keep the claim phase).
+ */
+export const RELEASE_CLAIM_SQL = `UPDATE persistence_requests SET state='queued',execution_token=NULL,claim_expires_at=NULL,
+    blocked_reason=$3,updated_at=now(),preparation_attempts=preparation_attempts+CASE WHEN $4::boolean THEN 1 ELSE 0 END,
+    claim_phase=CASE WHEN $4::boolean THEN claim_phase END
+    WHERE id=$1::uuid AND execution_token=$2::uuid
+    AND state='running' AND recovery IS NULL AND publication_started=false AND set_config('gbrain.persistence_protocol','2',true)='2'`;
+
 /** The consumer's `expired_claims` statement (the protocol predicate and `EXPIRED_PREPARING_CHARGE_SQL('r')` written out): $1 = host id, $2 = charge a preparing claim, $3 = dead claim owners. */
 export const EXPIRE_CLAIMS_SQL = `WITH expired AS (
         SELECT r.id FROM persistence_requests r WHERE r.state='running' AND r.recovery IS NULL
@@ -105,6 +116,9 @@ export interface SourceMembership { incarnation: string; archived: boolean }
 
 /** A claim renewal: request `id`, its claim `token`, the new lease and, optionally, the phase to record (claim-phase.ts `claimPhaseStamp`). */
 export interface ClaimRenewal { id: string; token: string; leaseMs: number; phaseJson: string | null }
+
+/** A release of an unpublished claim: request `id`, its claim `token`, the blocked reason, and whether it counts a preparation attempt. */
+export interface ClaimRelease { id: string; token: string | null; reason: string; charge: boolean }
 
 /** An expired-claim release: this consumer's host id, whether a claim that expired while preparing counts an attempt, and the dead owners. */
 export interface ClaimExpiry { hostId: string; charge: boolean; deadOwners: string[] }
@@ -171,6 +185,14 @@ export async function hasClaimableWrite(exec: LegacyUnscopedRead, hostId: string
 export async function renewWriteClaim(exec: SqlExecutor, renewal: ClaimRenewal, opts?: QueryOpts): Promise<boolean> {
   const rows = await exec.executeRaw(RENEW_CLAIM_SQL, [renewal.id, renewal.token, renewal.leaseMs, renewal.phaseJson], opts);
   return rows.length === 1;
+}
+
+/**
+ * Returns a claim that never began to publish to queued. `exec` is the engine itself (its own `executeRaw`, or
+ * `executeRawDirect` on the Postgres direct lane), so the statement reaches the connection it reached before.
+ */
+export async function releaseUnpublishedClaim(exec: { executeRaw(sql: string, params?: unknown[]): Promise<unknown> }, release: ClaimRelease): Promise<void> {
+  await exec.executeRaw(RELEASE_CLAIM_SQL, [release.id, release.token, release.reason, release.charge]);
 }
 
 /** Returns expired claims (and claims of dead owners) to queued, at most 100 per call. */

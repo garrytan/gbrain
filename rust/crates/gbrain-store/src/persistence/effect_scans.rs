@@ -3,7 +3,8 @@
 //! write receipt lists (rust/docs/store/persistence.md, "Effect scans").
 //!
 //! Each scan joins `persistence_effects` to `persistence_worktrees` on the host that owns the
-//! worktree. This engine keeps no worktree and records no effect, so every scan answers no row.
+//! worktree. This engine keeps no worktree, so every scan answers no row (the claim itself is
+//! `effect_worker.rs`).
 //! The parameters are still checked as their Postgres casts check them, so an argument Postgres
 //! refuses is refused here too.
 
@@ -74,27 +75,7 @@ pub(crate) fn list_effect_recoveries(
     Ok(Vec::new())
 }
 
-/// `selectClaimableEffect(hostId, deadOwners)`: no effect is recorded here, so there is nothing
-/// to claim (null); a non-uuid host id refuses. The dead owner keys only widen which running
-/// effects match, so they change nothing.
-pub(crate) fn select_claimable_effect(host_id: &str) -> Result<Value> {
-    host_uuid(host_id)?;
-    Ok(Value::Null)
-}
-
-/// `listRequestEffects(requestId)`: no effect is recorded here, so a write request has none; a
-/// non-uuid request id refuses.
-pub(crate) fn list_request_effects(request_id: &str) -> Result<Vec<Value>> {
-    host_uuid(request_id)?;
-    Ok(Vec::new())
-}
-
 impl Store {
-    /// `listRequestEffects(requestId)`.
-    pub fn list_request_effects(&self, request_id: &str) -> Result<Vec<Value>> {
-        list_request_effects(request_id)
-    }
-
     /// `listGatedMirrorRequests(hostId, gateCode, allowedCodes)`.
     pub fn list_gated_mirror_requests(&self, host_id: &str) -> Result<Vec<Value>> {
         list_gated_mirror_requests(host_id)
@@ -108,11 +89,6 @@ impl Store {
         limit: f64,
     ) -> Result<Vec<Value>> {
         list_effect_recoveries(host_id, after, limit)
-    }
-
-    /// `selectClaimableEffect(hostId, deadOwners)`.
-    pub fn select_claimable_effect(&self, host_id: &str) -> Result<Value> {
-        select_claimable_effect(host_id)
     }
 }
 
@@ -130,32 +106,6 @@ mod tests {
                 .is_empty()
         );
         let bad = list_gated_mirror_requests("nope").unwrap_err();
-        assert_eq!(bad.message, "invalid input syntax for type uuid: \"nope\"");
-    }
-
-    #[test]
-    fn request_effects_are_empty_and_refuse_a_non_uuid_request() {
-        let request = "0f000000-0000-4000-8000-0000000000f2";
-        assert!(list_request_effects(request).unwrap().is_empty());
-        assert!(
-            list_request_effects(&request.to_uppercase())
-                .unwrap()
-                .is_empty()
-        );
-        let bad = list_request_effects("nope").unwrap_err();
-        assert_eq!(bad.message, "invalid input syntax for type uuid: \"nope\"");
-    }
-
-    #[test]
-    fn claimable_effect_is_null_and_refuses_a_non_uuid_host() {
-        let host = "0f000000-0000-4000-8000-0000000000f1";
-        assert!(select_claimable_effect(host).unwrap().is_null());
-        assert!(
-            select_claimable_effect(&host.to_uppercase())
-                .unwrap()
-                .is_null()
-        );
-        let bad = select_claimable_effect("nope").unwrap_err();
         assert_eq!(bad.message, "invalid input syntax for type uuid: \"nope\"");
     }
 

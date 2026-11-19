@@ -175,6 +175,8 @@ import * as persistenceClaimsImpl from './engine-sql/persistence-claims.ts';
 import * as housekeepingImpl from './engine-sql/persistence-housekeeping.ts';
 import * as effectScansImpl from './engine-sql/persistence-effect-scans.ts';
 import * as ownerScansImpl from './engine-sql/persistence-owner-scans.ts';
+import * as effectWorkerImpl from './engine-sql/persistence-effect-worker.ts';
+import * as idleProbeImpl from './engine-sql/persistence-idle-probe.ts';
 import type { ProjectionScanCursor } from './page-state/projection-window.ts';
 import type { TrustTable } from './trust/schema.ts';
 import * as trustProposalsImpl from './engine-sql/trust-proposals.ts';
@@ -1269,6 +1271,7 @@ export class PostgresEngine implements BrainEngine {
   getSourceStrictness(sourceId: string) { return this.preparationRead(exec => persistenceStateImpl.getSourceStrictness(unscopedExecutor(exec, 'persistence: strict-source read ran unscoped through executeRaw'), sourceId)); }
   readPersistenceBrainId() { return this.preparationRead(exec => persistenceStateImpl.readPersistenceBrainId(unscopedExecutor(exec, 'persistence: brain identity read ran unscoped through executeRaw'))); }
   declarePersistence(opts?: { durable?: DurablePersistenceSettings }) { return persistenceDeclarationImpl.declarePersistence(this, opts?.durable); }
+  requireSynchronousCommit() { return persistenceDeclarationImpl.requireSynchronousCommit(this); }
   readLocalWriterRow(id: string, opts?: { lock?: boolean }) { return this.preparationRead(exec => persistenceStateImpl.readLocalWriterRow(unscopedExecutor(exec, 'persistence: local writer read ran unscoped through executeRaw'), id, opts), opts?.lock); }
   insertLocalWriterRow(row: persistenceStateImpl.LocalWriterInsert) { return persistenceStateImpl.insertLocalWriterRow(this.autocommitSql, row); }
   readJournalLimitRows() { return this.preparationRead(exec => persistenceJournalImpl.readJournalLimitRows(unscopedExecutor(exec, 'persistence: journal limit read ran unscoped through executeRaw'))); }
@@ -1291,12 +1294,16 @@ export class PostgresEngine implements BrainEngine {
   lockWriteRequest(id: string) { return persistenceJournalImpl.lockWriteRequest(this.autocommitSql, id); }
   completeWriteRow(completion: persistenceJournalImpl.WriteCompletion) { return persistenceJournalImpl.completeWriteRow(this.autocommitSql, completion); }
   cancelWriteRow(cancel: persistenceJournalImpl.WriteCancellation) { return persistenceJournalImpl.cancelWriteRow(this.autocommitSql, cancel); }
+  insertPublicationEffects(spec: persistenceJournalImpl.PublicationEffectsSpec) { return persistenceJournalImpl.insertPublicationEffects(this.autocommitSql, spec); }
   readSourceMembership(sourceId: string, opts?: { lock?: boolean }) { return this.preparationRead(exec => persistenceClaimsImpl.readSourceMembership(exec, sourceId, opts), opts?.lock); }
   findTopologyChanges(principalId: string, requestIds: string[]) { return persistenceClaimsImpl.findTopologyChanges(unscopedExecutor(this.engineSql, 'persistence: topology probe ran unscoped through the transaction executeRaw'), principalId, requestIds); }
   readTopologyChange(principalId: string, requestId: string) { return persistenceClaimsImpl.readTopologyChange(unscopedExecutor(this.engineSql, 'persistence: topology receipt read ran unscoped through the transaction executeRaw'), principalId, requestId); }
   insertTopologyChange(row: persistenceClaimsImpl.TopologyChangeInsert) { return persistenceClaimsImpl.insertTopologyChange(this.autocommitSql, row); }
   // The renewal ran on executeRawDirect (consumer.ts); the expiry on the consumer's statement engine, direct while its route is.
   renewWriteClaim(renewal: persistenceClaimsImpl.ClaimRenewal, opts?: { signal?: AbortSignal }) { return persistenceClaimsImpl.renewWriteClaim(this.directRawSql, renewal, opts); }
+  releaseUnpublishedClaim(release: persistenceClaimsImpl.ClaimRelease, opts?: { direct?: boolean }) {
+    return persistenceClaimsImpl.releaseUnpublishedClaim(opts?.direct ? { executeRaw: (sql, params) => this.executeRawDirect(sql, params) } : this, release);
+  }
   expireStaleWriteClaims(expiry: persistenceClaimsImpl.ClaimExpiry, opts?: { signal?: AbortSignal; direct?: boolean }) { return persistenceClaimsImpl.expireStaleWriteClaims(opts?.direct ? this.directRawSql : this.autocommitSql, expiry, { signal: opts?.signal }); }
   hasClaimableWrite(hostId: string, excludeRoots: string[], opts?: { priority?: boolean | null; signal?: AbortSignal }) { return persistenceClaimsImpl.hasClaimableWrite(unscopedExecutor(this.autocommitSql, 'persistence: claim check ran unscoped through executeRaw'), hostId, excludeRoots, opts); }
   selectClaimableWrite<R = Record<string, unknown>>(spec: persistenceClaimsImpl.ClaimHeadSpec) { return persistenceClaimsImpl.selectClaimableWrite<R>(unscopedExecutor(this.engineSql, 'persistence: FIFO head read ran unscoped through the transaction executeRaw'), spec); }
@@ -1325,7 +1332,23 @@ export class PostgresEngine implements BrainEngine {
   // The refresh resume's reads ran on executeRaw (worktree-refresh.ts resumeWorktreeRefreshes).
   listResumableRefreshes<R = Record<string, unknown>>(hostId: string, budgetMs: number) { return ownerScansImpl.listResumableRefreshes<R>(unscopedExecutor(this.engineSql, 'persistence: refresh resume scan ran unscoped through executeRaw'), hostId, budgetMs); }
   listSourceLastCommits(sourceIds: readonly string[]) { return ownerScansImpl.listSourceLastCommits(unscopedExecutor(this.engineSql, 'persistence: refresh resume source read ran unscoped through executeRaw'), sourceIds); }
-  listRequestEffects(requestId: string) { return this.preparationRead(exec => effectScansImpl.listRequestEffects(unscopedExecutor(exec, 'persistence: request effects read ran unscoped through executeRaw'), requestId)); }
+  readRequestEffects(requestId: string, kind?: 'git') { return this.preparationRead(exec => effectScansImpl.readRequestEffects(unscopedExecutor(exec, 'persistence: receipt effect read ran unscoped through executeRaw'), requestId, kind)); }
+  stampEffectClaim<R = Record<string, unknown>>(claim: effectWorkerImpl.EffectClaim) { return effectWorkerImpl.stampEffectClaim<R>(this, claim); }
+  renewEffectClaim(claim: effectWorkerImpl.EffectClaimRef, opts?: { direct?: boolean }) { return effectWorkerImpl.renewEffectClaim((opts?.direct ? { executeRaw: <T = Record<string, unknown>>(sql: string, params?: unknown[]) => this.executeRawDirect<T>(sql, params) } : this), claim); }
+  advanceEffectRow(claim: effectWorkerImpl.EffectClaimRef & { slug: string }) { return effectWorkerImpl.advanceEffectRow(this, claim); }
+  completeEffectRow(claim: effectWorkerImpl.EffectClaimRef & { outcomeJson: string }) { return effectWorkerImpl.completeEffectRow(this, claim); }
+  retryEffectRow(claim: effectWorkerImpl.EffectClaimRef & { reason: string; delayMs: number }) { return effectWorkerImpl.retryEffectRow(this, claim); }
+  retryBusyEffectRow(claim: effectWorkerImpl.EffectClaimRef & { dataJson: string; delayMs: number }) { return effectWorkerImpl.retryBusyEffectRow(this, claim); }
+  requeueEffectRow(claim: effectWorkerImpl.EffectClaimRef & { dataJson: string; reason: string | null; delayMs: number }) { return effectWorkerImpl.requeueEffectRow(this, claim); }
+  parkEffectRow(claim: effectWorkerImpl.EffectClaimRef & { dataJson: string }) { return effectWorkerImpl.parkEffectRow(this, claim); }
+  failEffectRow(claim: effectWorkerImpl.EffectClaimRef & { reason: string }) { return effectWorkerImpl.failEffectRow(this, claim); }
+  readMirrorGateRows(requestIds: readonly string[]) { return effectWorkerImpl.readMirrorGateRows(unscopedExecutor(this.engineSql, 'persistence: mirror gate read ran unscoped through executeRaw'), requestIds); }
+  lockEffectGuard(worktreeId: string | null) { return effectWorkerImpl.lockEffectGuard(this, worktreeId); }
+  hasRearmableTargets(requestIds: readonly string[], code: string) { return effectWorkerImpl.hasRearmableTargets(unscopedExecutor(this.engineSql, 'persistence: rearmable target probe ran unscoped through executeRaw'), requestIds, code); }
+  probeIdleWork(spec: idleProbeImpl.IdleProbeSpec, opts?: { signal?: AbortSignal; lane?: ReservedConnection; direct?: boolean }) {
+    const exec: idleProbeImpl.IdleProbeExec = opts?.lane ?? (opts?.direct ? { executeRaw: (sql, params, o) => this.executeRawDirect(sql, params, o) } : this);
+    return idleProbeImpl.probeIdleWork(exec, spec, { signal: opts?.signal });
+  }
   readTransactionSettings(names: readonly string[]) { return transactionSettingsImpl.readTransactionSettings(unscopedExecutor(this.engineSql, 'transaction settings: read ran through the transaction executeRaw'), names); }
   readCurrentWriteTrust() { return transactionSettingsImpl.readCurrentWriteTrust(unscopedExecutor(this.engineSql, 'transaction settings: write trust read ran through the transaction executeRaw')); }
   setWriteContext(input: transactionSettingsImpl.WriteContextInput) { return transactionSettingsImpl.setWriteContext(this.autocommitSql, input); }

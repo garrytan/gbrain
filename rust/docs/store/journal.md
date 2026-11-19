@@ -74,7 +74,7 @@ connect during a graduation.
 
 The request members (`readWriteRequest`, `readWriteRequestById`, `readWriteRequestProgress`, `countOutstandingBySource`, `readCounterRows`, `readAdmissionRate`, `lockPersistenceCounters`,
 `insertWriteRequest`, `stampWriteClaim`, `lockWriteRequest`, `completeWriteRow`), the claim upkeep
-(`renewWriteClaim`, `expireStaleWriteClaims`, `hasClaimableWrite`, the FIFO head read `selectClaimableWrite`) and the admission reads
+(`renewWriteClaim`, `releaseUnpublishedClaim`, `expireStaleWriteClaims`, `hasClaimableWrite`, the FIFO head read `selectClaimableWrite`) and the admission reads
 (`readSourceMembership`, `findTopologyChanges`, `readLedgerSource`) are served from the persistence
 rows in [persistence.md](persistence.md). The journal calls most of them inside `transaction`. The consumer row
 members (`listHostConsumerRows`, `probeLiveConsumerRows`, `renewConsumerRow`, `deleteConsumerRow`,

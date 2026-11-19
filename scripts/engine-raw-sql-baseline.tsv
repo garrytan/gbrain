@@ -637,7 +637,7 @@ src/core/persistence/connector-state.ts	execute_raw	7
 src/core/persistence/connector-sync.ts	execute_raw	26
 src/core/persistence/consumer-diagnostics.ts	execute_raw	3
 src/core/persistence/consumer-lane.ts	execute_raw	2
-src/core/persistence/consumer.ts	execute_raw	4
+src/core/persistence/consumer.ts	execute_raw	3
 src/core/persistence/context.ts	execute_raw	1
 src/core/persistence/coordination-lock.ts	execute_raw	2
 src/core/persistence/coordinator.ts	execute_raw	9
@@ -651,9 +651,9 @@ src/core/persistence/diagnostics.ts	execute_raw	7
 src/core/persistence/drift-conflicts.ts	execute_raw	9
 src/core/persistence/effect-catchup.ts	execute_raw	1
 src/core/persistence/effect-facts.ts	execute_raw	7
-src/core/persistence/effect-journal.ts	execute_raw	22
+src/core/persistence/effect-journal.ts	execute_raw	9
 src/core/persistence/effect-links.ts	execute_raw	8
-src/core/persistence/effect-recovery.ts	execute_raw	18
+src/core/persistence/effect-recovery.ts	execute_raw	16
 src/core/persistence/effect-retry.ts	execute_raw	14
 src/core/persistence/effect-settle.ts	execute_raw	7
 src/core/persistence/effect-targets.ts	execute_raw	7
@@ -693,7 +693,7 @@ src/core/persistence/import-mutations.ts	execute_raw	3
 src/core/persistence/import-prepare.ts	execute_raw	1
 src/core/persistence/import-reads.ts	execute_raw	7
 src/core/persistence/intent-redaction.ts	execute_raw	10
-src/core/persistence/journal.ts	execute_raw	43
+src/core/persistence/journal.ts	execute_raw	41
 src/core/persistence/landing-gaps.ts	execute_raw	3
 src/core/persistence/legacy-locks.ts	execute_raw	1
 src/core/persistence/legacy-sync-failures.ts	execute_raw	1

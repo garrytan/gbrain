@@ -472,7 +472,7 @@ async function embedPage(engine: BrainEngine, config: GBrainConfig, effect: Pers
   await faultPoint('effect:embedding:page_read', { effectId: effect.id, requestId: effect.request_id, sourceId: effect.source_id });
   // A stale drain or another worker embedding this page finishes first; the projection read below then finds its chunks complete.
   await using pageLease = await acquirePageEmbeddingLease(engine, snapshot.page.id, { signal: opts.signal, whileWaiting: async () => {
-    if (!await renewPersistenceEffectClaim({ executeRaw: engine.executeRawDirect.bind(engine) }, effect)) throw opError('write_claim_lost', 'The embedding claim changed.',
+    if (!await renewPersistenceEffectClaim(engine, effect, { direct: true })) throw opError('write_claim_lost', 'The embedding claim changed.',
       `Another worker took over the embedding of ${snapshot.page.slug} in source ${effect.source_id}; this attempt stops without installing vectors and the owning claim finishes it.`,
       { fix: effectStatusFix(effect) });
   } });
@@ -504,7 +504,7 @@ async function embedPage(engine: BrainEngine, config: GBrainConfig, effect: Pers
     const lease = new AbortController();
     const signal = opts.signal ? AbortSignal.any([opts.signal, lease.signal]) : lease.signal;
     let renewing: Promise<void> | undefined;
-    const renew = () => renewPersistenceEffectClaim({ executeRaw: engine.executeRawDirect.bind(engine) }, effect).then(live => {
+    const renew = () => renewPersistenceEffectClaim(engine, effect, { direct: true }).then(live => {
       if (!live) lease.abort(opError('write_claim_lost', 'The embedding claim changed.',
         `Another worker took over the embedding of ${snapshot.page.slug} in source ${effect.source_id}; this attempt stops without installing vectors and the owning claim finishes it.`,
         { fix: effectStatusFix(effect) }));
@@ -609,10 +609,10 @@ async function embedSegmentedEffect(engine: BrainEngine, config: GBrainConfig, e
     { fix: effectStatusFix(effect) });
   const embed = opts.embedding?.embed ?? embedBatch;
   const result = await embedSegmentedPage(engine, page, { signature, signal: opts.signal, occurrenceIds: effect.data.occurrence_ids,
-    whileWaiting: async () => { if (!await renewPersistenceEffectClaim({ executeRaw: engine.executeRawDirect.bind(engine) }, effect)) throw claimLost(); },
+    whileWaiting: async () => { if (!await renewPersistenceEffectClaim(engine, effect, { direct: true })) throw claimLost(); },
     embedFn: (texts, o) => withAIInvocationPreflight(async () => {
       opts.signal?.throwIfAborted();
-      if (!await renewPersistenceEffectClaim({ executeRaw: engine.executeRawDirect.bind(engine) }, effect)) throw claimLost();
+      if (!await renewPersistenceEffectClaim(engine, effect, { direct: true })) throw claimLost();
       await assertEmbeddingEffectEnabled(engine, config);
     }, async () => (await embed(texts, { abortSignal: o.abortSignal, maxRetries: 0 })) as Float32Array[]),
     beforeInstall: async tx => {
