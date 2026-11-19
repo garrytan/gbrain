@@ -173,6 +173,48 @@ describe('engine parity: chunks', () => {
     },
   );
 
+  // Review finding outside-voice#2: upsertChunks matches a stored chunk to the new set by its source and text, not its
+  // index (moveDisplacedChunksAndPrune), so a chunk inserted above an embedded one shifts it down with its id and vector.
+  parityTest(
+    'upsertChunks keeps the id and vector of an embedded chunk that a new chunk above it shifts down',
+    { methods: ['upsertChunks', 'getChunks'] },
+    async (engine) => {
+      await seedPage(engine, {
+        slug: 'notes/shift',
+        input: PAGE('Shift', 'kept passage. tail passage. swap a. swap b.'),
+        chunks: [
+          chunk(0, 'kept passage.', { embedding: basisEmbedding(3) }),
+          chunk(1, 'tail passage.', { embedding: basisEmbedding(4) }),
+          chunk(2, 'swap a.', { embedding: basisEmbedding(5) }),
+          chunk(3, 'swap b.', { embedding: basisEmbedding(6) }),
+          chunk(4, 'same text, other source', { embedding: basisEmbedding(7) }),
+        ],
+      });
+      const read = () => engine.getChunks('notes/shift', { includeUnsealed: true, includeEmbedding: true });
+      const before = await read();
+      const idOf = new Map(before.map((c) => [c.chunk_text, c.id]));
+      const embeddedAt = new Map(before.map((c) => [c.chunk_text, String(c.embedded_at)]));
+      // A new intro at 0 shifts the rest down; the last two swap; a timeline chunk repeats a compiled_truth chunk's text.
+      await engine.upsertChunks('notes/shift', [
+        chunk(0, 'a new intro.'),
+        chunk(1, 'kept passage.'),
+        chunk(2, 'tail passage.'),
+        chunk(3, 'swap b.'),
+        chunk(4, 'swap a.'),
+        { chunk_index: 5, chunk_text: 'same text, other source', chunk_source: 'timeline' },
+      ]);
+      const after = (await read()).map((c) => ({
+        chunk_index: c.chunk_index,
+        chunk_text: c.chunk_text,
+        chunk_source: c.chunk_source,
+        axis: axis(c.embedding),
+        sameId: idOf.get(c.chunk_text) === c.id,
+        sameEmbeddedAt: c.embedded_at !== null && embeddedAt.get(c.chunk_text) === String(c.embedded_at),
+      }));
+      return { after };
+    },
+  );
+
   parityTest(
     'getChunks includeEmbedding returns stored vectors; getChunksWithEmbeddings reads the full rows',
     { methods: ['getChunks', 'getChunksWithEmbeddings'] },

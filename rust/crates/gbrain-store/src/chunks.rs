@@ -15,7 +15,7 @@ use crate::sources::DEFAULT_SOURCE;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 const NEXT_CHUNK_ID: &str = "next_chunk_id";
 const STATS: &str = "chunk_stats";
@@ -471,9 +471,25 @@ pub(crate) fn replace_chunks_at(
     for chunk in chunks {
         by_index.insert(chunk.chunk_index, chunk);
     }
+    // `chunkWriteInvalidations` runs on the stored rows before any move: a stored index the write leaves out changes
+    // the page.
+    let leaves_out = previous
+        .values()
+        .any(|old| !by_index.contains_key(&old.chunk_index));
+    // The rows the write lands on: on a merge, embedded rows first follow their exact chunk to its new index.
+    let placed = if merge {
+        move_displaced_chunks(&previous, &mut old_vectors, chunks, &by_index)
+    } else {
+        previous
+            .iter()
+            .filter(|(index, _)| by_index.contains_key(index))
+            .map(|(index, old)| (*index, old.clone()))
+            .collect()
+    };
+    let kept_ids: HashSet<u64> = placed.values().map(|old| old.id).collect();
     let mut removed: Vec<u64> = previous
         .values()
-        .filter(|old| !by_index.contains_key(&old.chunk_index))
+        .filter(|old| !kept_ids.contains(&old.id))
         .map(|old| old.id)
         .collect();
     removed.sort_unstable();
@@ -491,16 +507,16 @@ pub(crate) fn replace_chunks_at(
     let mut stats = read_stats(&*tx)?;
     let view_generation = segment_view_generation(&*tx, page.id)?;
     // `chunkWriteInvalidations`: a stored chunk the write leaves out (or an empty write that removes any) changes the page.
-    let mut changes_chunks = !removed.is_empty();
+    let mut changes_chunks = leaves_out;
     for (index, input) in by_index {
         let source = checked_source(input)?;
-        let text = input.chunk_text.replace('\0', "");
+        let text = stored_text(input);
         changes_chunks |= previous
             .get(&index)
             .is_none_or(|old| chunk_differs(old, input, &text, &source));
         let length = term_frequencies(&text).1;
         let new_vector = input_vector(input, dims)?;
-        let old = previous.get(&index);
+        let old = placed.get(&index);
         let id = match old {
             Some(old) => old.id,
             None => next_chunk_id(tx)?,
@@ -627,6 +643,103 @@ pub(crate) fn replace_chunks_at(
         write_page(tx, page)?;
     }
     Ok(())
+}
+
+/// The text a chunk write stores (NUL bytes dropped).
+fn stored_text(input: &ChunkInput) -> String {
+    input.chunk_text.replace('\0', "")
+}
+
+/// `moveDisplacedChunksAndPrune` (`src/core/engine-sql/chunks.ts`): a merge write matches a stored row to the new set by
+/// its exact chunk (source and text), not its index. A movable row (one with a vector whose text hash is its current
+/// text: `movableChunkSql`) whose chunk the new set holds at another index, where that index does not already hold it,
+/// moves there with its id, vector, metadata, timestamps and input provenance; a row the write leaves out or that sits
+/// on a move target is dropped. Movable rows are taken in index order and the new indexes in the order the write first
+/// names them, as the SQL's queue and `Map` do. Returns the rows by the index they land on; `old_vectors` is rekeyed.
+fn move_displaced_chunks(
+    previous: &HashMap<u32, ChunkRecord>,
+    old_vectors: &mut HashMap<u32, crate::embeddings::StoredVector>,
+    chunks: &[ChunkInput],
+    by_index: &BTreeMap<u32, &ChunkInput>,
+) -> HashMap<u32, ChunkRecord> {
+    let key = |source: &str, text: &str| (source.to_string(), crate::embeddings::text_hash(text));
+    let movable = |old: &ChunkRecord| {
+        old.embed.has_vector()
+            && old.embed.text_hash.as_deref()
+                == Some(crate::embeddings::text_hash(&old.chunk_text).as_str())
+    };
+    let mut targets: Vec<(u32, u32)> = Vec::new();
+    if previous.values().any(movable) {
+        let mut order: Vec<u32> = Vec::new();
+        for chunk in chunks {
+            if !order.contains(&chunk.chunk_index) {
+                order.push(chunk.chunk_index);
+            }
+        }
+        let incoming: HashMap<u32, (String, String)> = by_index
+            .iter()
+            .map(|(index, input)| {
+                let source = input.chunk_source.as_deref().unwrap_or("compiled_truth");
+                (*index, key(source, &stored_text(input)))
+            })
+            .collect();
+        let mut stored: Vec<&ChunkRecord> = previous.values().collect();
+        stored.sort_unstable_by_key(|old| old.chunk_index);
+        let mut candidates: HashMap<(String, String), VecDeque<u32>> = HashMap::new();
+        for old in stored.iter().filter(|old| movable(old)) {
+            let own = key(&old.chunk_source, &old.chunk_text);
+            if incoming.get(&old.chunk_index) == Some(&own) {
+                continue;
+            }
+            candidates
+                .entry(own)
+                .or_default()
+                .push_back(old.chunk_index);
+        }
+        for index in order {
+            let wanted = &incoming[&index];
+            if previous
+                .get(&index)
+                .is_some_and(|old| key(&old.chunk_source, &old.chunk_text) == *wanted)
+            {
+                continue;
+            }
+            if let Some(from) = candidates
+                .get_mut(wanted)
+                .and_then(|queue| queue.pop_front())
+            {
+                targets.push((from, index));
+            }
+        }
+    }
+    let target_indexes: HashSet<u32> = targets.iter().map(|(_, to)| *to).collect();
+    let moved_from: HashSet<u32> = targets.iter().map(|(from, _)| *from).collect();
+    let mut placed: HashMap<u32, ChunkRecord> = previous
+        .iter()
+        .filter(|(index, _)| {
+            !moved_from.contains(index)
+                && by_index.contains_key(index)
+                && !target_indexes.contains(index)
+        })
+        .map(|(index, old)| (*index, old.clone()))
+        .collect();
+    let mut vectors: HashMap<u32, crate::embeddings::StoredVector> = old_vectors
+        .iter()
+        .filter(|(index, _)| placed.contains_key(index))
+        .map(|(index, v)| (*index, v.clone()))
+        .collect();
+    for (from, to) in targets {
+        let mut row = previous[&from].clone();
+        row.chunk_index = to;
+        placed.insert(to, row);
+        if let Some(vector) = old_vectors.get(&from) {
+            let mut vector = vector.clone();
+            vector.chunk_index = to;
+            vectors.insert(to, vector);
+        }
+    }
+    *old_vectors = vectors;
+    placed
 }
 
 /// `SAFE_FENCE_CHUNKER_VERSION` (`src/core/search/safe-chunks.ts`): a page sealed at this version or later holds only
