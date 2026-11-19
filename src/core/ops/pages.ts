@@ -387,6 +387,11 @@ const put_page: Operation = {
       }
       return { dry_run: true, action: 'put_page', slug: p.slug };
     }
+    // A second process on a Rust brain sends the whole write to the brain's owner (rust-engine/owner-ipc/whole-op.ts).
+    if ((ctx.engine.kind as string) === 'rust') {
+      const forwarded = await (await import('../rust-engine/owner-ipc/whole-op.ts')).forwardOwnerOperation(ctx, 'put_page', p);
+      if (forwarded) return forwarded.result;
+    }
     if (ctx.remote !== false && typeof p.slug === 'string') await assertLargePageAdmission(ctx.engine, p.slug, sourceId, p);
     (await import('../persistence/page-visibility.ts')).assertSubmittedReaders(ctx.remote, p.slug, p.content);
     return submitPageMutation(ctx, { operation: 'put_page', params: p }).then(funnelPassThrough('save')).catch(error => rethrowNamingRevisionSource(ctx, sourceId, p, error)).then(result => withIgnoredPrivacyLabelNotice(ctx, sourceId, p, result)).then(result => withImplicitPlacement(ctx, sourceId, p, result));

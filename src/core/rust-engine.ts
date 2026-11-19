@@ -19,6 +19,7 @@
 import type { BrainEngine } from './engine.ts';
 import type { Capability, EngineCapabilities } from './engine-capabilities.ts';
 import type { EngineConfig } from './types.ts';
+import type { GBrainConfig } from './config.ts';
 import { capabilityMissing } from './rust-engine/errors.ts';
 import { RUST_ENGINE_MEMBERS } from './rust-engine/members.ts';
 import { openRustStore, type RustStore } from './rust-engine/store.ts';
@@ -111,7 +112,7 @@ export class RustEngine {
   private async _runElection(generation: number): Promise<void> {
     let opened: RustStore | null = null;
     const role = await electOwner(this as unknown as BrainEngine, this.databasePath, {
-      wholeOperations: ownerWholeOperations(),
+      wholeOperations: ownerWholeOperations({ config: (this._savedConfig ?? undefined) as GBrainConfig | undefined }),
       ...(this._ownerWaitMs !== undefined ? { waitMs: this._ownerWaitMs } : {}),
       // Holding the owner lock: stop forwarding to any owner that went away, then open the store before the socket
       // serves, so no call reaches this engine without it. A call that comes meanwhile waits for this election.
