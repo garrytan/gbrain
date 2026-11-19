@@ -279,4 +279,178 @@ impl Brain {
             s.refresh_page_body(&slug, &source_id, &compiled_truth, &timeline, &content_hash)
         })
     }
+    /// `lockBodyStagingState(stagingId)`: the staging's state, null when there is none.
+    #[napi]
+    pub fn lock_body_staging_state<'env>(
+        &self,
+        env: &'env Env,
+        staging_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.lock_body_staging_state(&staging_id))
+    }
+
+    /// `deleteUnstagedSegmentChunks(pageId, generation, keepIndexes)`: the number of rows deleted.
+    #[napi]
+    pub fn delete_unstaged_segment_chunks<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        generation: i64,
+        keep_indexes: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let keep: Vec<i64> = required(keep_indexes, "deleteUnstagedSegmentChunks keepIndexes")?;
+            s.delete_unstaged_segment_chunks(page_id, generation, &keep)
+        })
+    }
+
+    /// `readSegmentedLivePage(pageId)`: `{ id, body_generation, body_storage, title, type,
+    /// body_flags }` or null.
+    #[napi]
+    pub fn read_segmented_live_page<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_segmented_live_page(page_id))
+    }
+
+    /// `readSegmentedSealed(sourceId, slug)`: whether the live page is sealed at its revision.
+    #[napi]
+    pub fn read_segmented_sealed<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_segmented_sealed(&source_id, &slug))
+    }
+
+    /// `listChunkedOccurrences(pageId, occurrences, generation)`: the occurrences with a chunk row
+    /// at or below the generation.
+    #[napi]
+    pub fn list_chunked_occurrences<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        occurrences: Value,
+        generation: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let occurrences: Vec<i64> =
+                required(occurrences, "listChunkedOccurrences occurrences")?;
+            s.list_chunked_occurrences(page_id, &occurrences, generation)
+        })
+    }
+
+    /// `hasStaleSegmentChunks(pageId, generation, live)`.
+    #[napi]
+    pub fn has_stale_segment_chunks<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        generation: i64,
+        live: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let live: Vec<i64> = required(live, "hasStaleSegmentChunks live")?;
+            s.has_stale_segment_chunks(page_id, generation, &live)
+        })
+    }
+
+    /// `retireStaleSegmentChunks(pageId, generation, live, maxRows)`: the number of rows deleted.
+    #[napi]
+    pub fn retire_stale_segment_chunks<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        generation: i64,
+        live: Value,
+        max_rows: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let live: Vec<i64> = required(live, "retireStaleSegmentChunks live")?;
+            s.retire_stale_segment_chunks(page_id, generation, &live, max_rows)
+        })
+    }
+
+    /// `readSegmentedProjectionPage(sourceId, slug)`: the live segmented page row or null.
+    #[napi]
+    pub fn read_segmented_projection_page<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_segmented_projection_page(&source_id, &slug)
+        })
+    }
+
+    /// `listSegmentedRechunkCandidates(chunkerVersion, { sourceId?, slug? }?)`: page ids.
+    #[napi]
+    pub fn list_segmented_rechunk_candidates<'env>(
+        &self,
+        env: &'env Env,
+        chunker_version: i64,
+        scope: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_segmented_rechunk_candidates(
+                chunker_version,
+                &arg(scope, "listSegmentedRechunkCandidates scope")?,
+            )
+        })
+    }
+
+    /// `readSegmentedRechunkPage(pageId)`: the segmented page row a re-chunk reads, or null.
+    #[napi]
+    pub fn read_segmented_rechunk_page<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_segmented_rechunk_page(page_id))
+    }
+
+    /// `listOccurrenceChunks(pageId, occurrences)`: the visible chunk rows of those occurrences.
+    #[napi]
+    pub fn list_occurrence_chunks<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        occurrences: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let occurrences: Vec<i64> = required(occurrences, "listOccurrenceChunks occurrences")?;
+            s.list_occurrence_chunks(page_id, &occurrences)
+        })
+    }
+
+    /// `restorePageUpdatedAt(pageId, updatedUs)`: `updatedUs` as microseconds since the epoch.
+    #[napi]
+    pub fn restore_page_updated_at<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        updated_us: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.restore_page_updated_at(page_id, &updated_us)
+        })
+    }
+
+    /// `readPageTrustStamp({ sourceId, slug } | { id })`: `{ id, trust_tier, write_origin }` or null.
+    #[napi]
+    pub fn read_page_trust_stamp<'env>(
+        &self,
+        env: &'env Env,
+        page: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let page: gbrain_store::page_body::PageTrustRef =
+                required(page, "readPageTrustStamp page")?;
+            s.read_page_trust_stamp(&page)
+        })
+    }
 }

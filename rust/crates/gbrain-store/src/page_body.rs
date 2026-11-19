@@ -47,6 +47,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+mod segmented_writes;
+pub use segmented_writes::{
+    OccurrenceChunkRow, PageTrustRef, PageTrustStamp, RechunkCandidateScope, SegmentedLivePageRow,
+    SegmentedProjectionPage, SegmentedRechunkPage,
+};
+
 const TEXT: u8 = 0x01;
 const MANIFEST: u8 = 0x02;
 const STAGING: u8 = 0x03;
@@ -339,6 +345,12 @@ pub struct BodyFlipInput {
     pub retire_max_rows: i64,
     pub body: SegmentedBodyColumns,
     pub meta: SegmentedPageMeta,
+    /// The `gbrain.materializing_revision` transaction setting of the caller (the TypeScript store
+    /// member reads it from its transaction scope). When it names the page's revision and the flip
+    /// leaves the page's identity, type, kind, title, frontmatter and deletion as they were, the flip
+    /// keeps the revision and the seal, as Postgres's `gbrain_advance_page_revision` trigger does.
+    #[serde(default)]
+    pub keep_revision: Option<String>,
 }
 
 /// `BodyFlipResult`.
@@ -705,6 +717,20 @@ fn meta_chunker_version(meta: &SegmentedPageMeta) -> Option<i64> {
 }
 
 /// The page row's `chunker_version`, a SMALLINT column: Postgres refuses a value outside 16 bits.
+/// Postgres's `gbrain_advance_page_revision` exception: the revision stays when the
+/// `gbrain.materializing_revision` setting equals the old revision and source_id, slug, type,
+/// page_kind, title, frontmatter and deleted_at did not change.
+fn keeps_revision(setting: Option<&str>, before: &PageRecord, after: &PageRecord) -> bool {
+    setting.is_some_and(|s| !s.is_empty() && s == before.knowledge_revision)
+        && before.source_id == after.source_id
+        && before.slug == after.slug
+        && before.page_type == after.page_type
+        && before.page_kind == after.page_kind
+        && before.title == after.title
+        && before.frontmatter == after.frontmatter
+        && before.deleted_at_us == after.deleted_at_us
+}
+
 fn smallint_chunker_version(meta: &SegmentedPageMeta) -> Result<Option<i16>> {
     meta_chunker_version(meta)
         .map(|v| {
@@ -1398,6 +1424,7 @@ impl Store {
             }
             let meta = &input.meta;
             let body = &input.body;
+            let before = page.clone();
             page.page_type = page_type.clone();
             page.page_kind = meta_page_kind(meta);
             page.title = clean(&meta.title);
@@ -1418,9 +1445,12 @@ impl Store {
             if meta_ingested(meta) {
                 page.ingested_at_us = Some(now);
             }
-            // The body generation moved, so Postgres's revision trigger always advances it.
-            page.knowledge_revision = self.env.new_uuid();
-            page.text_projection_revision = None;
+            // The body generation moved, so Postgres's revision trigger advances the revision, unless the
+            // caller materializes the page's own revision and the flip changed none of its tracked columns.
+            if !keeps_revision(input.keep_revision.as_deref(), &before, &page) {
+                page.knowledge_revision = self.env.new_uuid();
+                page.text_projection_revision = None;
+            }
             let state = BodyState {
                 body_storage: "segmented".into(),
                 body_generation: input.new_generation,
@@ -2504,15 +2534,15 @@ mod segment_chunk_tests {
     use super::*;
     use crate::chunks::{SegmentChunkInput, visible_chunks};
 
-    const STAGING: &str = "11111111-1111-4111-8111-111111111111";
-    const STAGING_2: &str = "22222222-2222-4222-8222-222222222222";
+    pub(super) const STAGING: &str = "11111111-1111-4111-8111-111111111111";
+    pub(super) const STAGING_2: &str = "22222222-2222-4222-8222-222222222222";
 
     fn sha(text: &str) -> String {
         use sha2::{Digest, Sha256};
         to_hex(&Sha256::digest(text.as_bytes()))
     }
 
-    fn text(body: &str) -> SegmentTextInput {
+    pub(super) fn text(body: &str) -> SegmentTextInput {
         SegmentTextInput {
             sha256: sha(body),
             body: to_hex(body.as_bytes()),
@@ -2520,7 +2550,7 @@ mod segment_chunk_tests {
         }
     }
 
-    fn staging(id: &str, page_id: i64, client: &str) -> BodyStagingInput {
+    pub(super) fn staging(id: &str, page_id: i64, client: &str) -> BodyStagingInput {
         serde_json::from_value(json!({
             "id": id, "kind": "put", "principalKind": "local", "principalId": "cli",
             "clientRequestId": client, "sourceId": "default",
@@ -2531,7 +2561,7 @@ mod segment_chunk_tests {
         .unwrap()
     }
 
-    fn row(
+    pub(super) fn row(
         page_id: i64,
         occurrence: i64,
         gen_from: i64,
@@ -2551,7 +2581,7 @@ mod segment_chunk_tests {
         .unwrap()
     }
 
-    fn flip(
+    pub(super) fn flip(
         page_id: i64,
         expected: i64,
         staging: &str,
@@ -2574,7 +2604,7 @@ mod segment_chunk_tests {
         serde_json::from_value(input).unwrap()
     }
 
-    fn chunk(occurrence: i64, ordinal: i64, body: &str) -> SegmentChunkInput {
+    pub(super) fn chunk(occurrence: i64, ordinal: i64, body: &str) -> SegmentChunkInput {
         serde_json::from_value(json!({
             "chunk_text": body, "chunk_source": "compiled_truth", "model": "m",
             "occurrence_id": occurrence, "local_ordinal": ordinal,
@@ -2592,12 +2622,12 @@ mod segment_chunk_tests {
     }
 
     /// A shell published at generation 1 from occurrences 1 ("one\n" at 0) and 2 ("two\n" at 4).
-    fn published(store: &Store) -> i64 {
+    pub(super) fn published(store: &Store) -> i64 {
         published_with(store, json!({}))
     }
 
     /// `published`, the flip's input changed by `extra` (as `flip` takes it).
-    fn published_with(store: &Store, extra: Value) -> i64 {
+    pub(super) fn published_with(store: &Store, extra: Value) -> i64 {
         let id = store
             .create_segmented_page_shell(
                 "notes/a",
@@ -2667,7 +2697,7 @@ mod segment_chunk_tests {
 
     /// Generation 2 staged: occurrence 3 replaces occurrence 2 at byte 4, with a chunk for
     /// occurrence 3 and one for occurrence 9, which has no row in generation 2.
-    fn second_generation(store: &Store, id: i64) {
+    pub(super) fn second_generation(store: &Store, id: i64) {
         store
             .open_body_staging(&staging(
                 STAGING_2,
