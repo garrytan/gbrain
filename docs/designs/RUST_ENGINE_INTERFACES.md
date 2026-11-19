@@ -1618,7 +1618,9 @@ Trust tiers, the write gate, trust review, fact withdrawal and the belief ledger
     `guardFenceFactRows`.
   - Withdrawal: `insertFactWithdrawal`, `isFactWithdrawn` (one member for the current and v1 forms), `isFactPurged`,
     `planFactWithdrawal`, `listWithdrawals` (one filtered list for the discovery, dates and export readers),
-    `hasSourcePurges`.
+    `hasSourcePurges`, `readFactCacheWatermark` (the hot-memory cache watermark: the source's withdrawal count, the
+    newest withdrawal in UTC with microseconds, and the folder access digest, which the store reports as the digest of
+    two empty tables because it keeps no folder rules).
   - Review: `insertWithdrawReviewItem`, `countPurgeReviewQueueRefs`.
   - Beliefs (`belief_ledger`): `readCoverageIntervals`, `listCoveredSources`, `readOpenLifetimes`,
     `mintBeliefLifetime`, `resolveBeliefLifetimes`, `readBeliefRedactions`, `readBeliefState`.

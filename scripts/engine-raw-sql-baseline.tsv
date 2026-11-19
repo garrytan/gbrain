@@ -430,7 +430,6 @@ src/core/facts/forget.ts	execute_raw	4
 src/core/facts/fts-index.ts	execute_raw	3
 src/core/facts/gone-page-facts.ts	execute_raw	4
 src/core/facts/held-fact-move.ts	execute_raw	12
-src/core/facts/meta-hook.ts	execute_raw	1
 src/core/facts/ontology-rekey.ts	execute_raw	4
 src/core/facts/proposal-review.ts	execute_raw	3
 src/core/facts/proposal-supersede.ts	execute_raw	4

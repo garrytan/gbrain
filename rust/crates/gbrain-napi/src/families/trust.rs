@@ -109,6 +109,17 @@ impl Brain {
         self.run(env, move |s| s.list_fact_withdrawal_keys(&source_id, limit))
     }
 
+    /// `readFactCacheWatermark(sourceId)`: resolves `{ withdrawals, latest_withdrawn_at,
+    /// access_rules }`.
+    #[napi]
+    pub fn read_fact_cache_watermark<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_fact_cache_watermark(&source_id))
+    }
+
     /// `upsertWriteGateReceipt(input)`: resolves the receipt id.
     #[napi]
     pub fn upsert_write_gate_receipt<'env>(

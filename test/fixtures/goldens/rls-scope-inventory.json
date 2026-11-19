@@ -5018,6 +5018,7 @@
         "readEmbedBackfillBySource": "none",
         "readEmbeddingStateCounts": "direct",
         "readExtractionLagCounts": "none",
+        "readFactCacheWatermark": "none",
         "readFactForOwnerAction": "none",
         "readFactSubject": "none",
         "readFieldUsageSamples": "none",
