@@ -33,6 +33,7 @@ import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { OperationContext } from '../../src/core/ops/contract.ts';
+import type { LocalGrant } from '../../src/core/engine-sql/persistence-state.ts';
 import { registerServeLocalWriters } from '../../src/core/persistence/provider.ts';
 import { persistenceOperations } from '../../src/core/ops/persistence.ts';
 import { brainMembershipOperations } from '../../src/core/ops/brain-membership.ts';
@@ -42,7 +43,7 @@ const { parityTest } = parityArms(testBackends());
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const WRITER = 'a0000000-0000-4000-8000-0000000000a7';
-const GRANT = { scopes: ['read', 'write'], sourceIds: ['default'], operations: ['put_page'] };
+const GRANT: LocalGrant = { scopes: ['read', 'write'], sourceIds: ['default'], operations: ['put_page'], slugPrefixes: null };
 const SHARED = 'b0000000-0000-4000-8000-0000000000e1';
 const SINGLE = 'b0000000-0000-4000-8000-0000000000e2';
 const UNKNOWN = 'b0000000-0000-4000-8000-0000000000e3';
@@ -56,7 +57,7 @@ async function inFreshHome<T>(fn: () => Promise<T>): Promise<T> {
 
 function local(engine: BrainEngine): OperationContext {
   return { engine, config: { engine: engine.kind }, remote: false, dryRun: false,
-    logger: { info() {}, warn() {}, error() {} } } as OperationContext;
+    logger: { info() {}, warn() {}, error() {} } } as unknown as OperationContext;
 }
 
 /** The handler's answer, or the code it refused with. */
