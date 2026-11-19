@@ -1,0 +1,406 @@
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import { randomUUID } from 'node:crypto';
+import type { ChatOpts, ChatResult } from '../src/core/ai/gateway.ts';
+import { __setChatTransportForTests } from '../src/core/ai/gateway.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
+import type { OperationContext, AuthInfo } from '../src/core/ops/contract.ts';
+import { runPhaseSynthesizeConcepts } from '../src/core/cycle/synthesize-concepts.ts';
+import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
+import { purgeDeletedPagesCoordinated, rebuildNote, selectPurgeCandidates } from '../src/core/persistence/purge-deleted.ts';
+import { disposePersistenceConsumer, waitForWrite } from '../src/core/persistence/service.ts';
+import type { WriteRequest } from '../src/core/persistence/model.ts';
+import { REBUILD_STORES } from '../src/core/persistence/concept-rebuild.ts';
+import { installFaultHook } from '../src/core/persistence/fault-points.ts';
+import { __setMaintenanceWriteWaitForTests } from '../src/core/persistence/maintenance-wait.ts';
+import { proposeRevision } from '../src/core/access/policy.ts';
+import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
+import { sqlQueryForEngine } from '../src/core/sql-query.ts';
+import { mintLegacyToken } from '../src/core/token-mint.ts';
+import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
+import { setOwner } from '../src/core/access/owner.ts';
+import { bindCredential } from '../src/core/access/members.ts';
+import { runPages } from '../src/commands/pages.ts';
+import { runMaintain } from '../src/commands/maintain.ts';
+import { runCycle } from '../src/core/cycle.ts';
+import { managedBrain, settleManagedGitEffects } from './helpers/managed-brain.ts';
+import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
+
+// #9653: a concept hidden by an input purge is rebuilt by purging its tombstone and writing a fresh page at the slug from
+// its current members. Synthetic data only.
+const MODEL = 'anthropic:claude-sonnet-4-6';
+const CONCEPT = 'concepts/storage-example';
+const OLD = 'A narrative built from atoms';
+const NEW = 'Rebuilt narrative canaryrebuilt.';
+const atom = (i: number) => `atoms/storage-${i}`;
+const members = (ids: number[]) => ids.map(i => ({ slug: atom(i), concept_refs: [CONCEPT], body: `Atom ${i} about storage.`, title: `storage atom ${i}`, visibility: 'world' as const }));
+const reply = (text: string): ChatResult => ({ text, blocks: [{ type: 'text', text }], stopReason: 'end',
+  usage: { input_tokens: 10, output_tokens: 10, cache_read_tokens: 0, cache_creation_tokens: 0 }, model: MODEL, providerId: 'anthropic' });
+
+afterEach(() => { installFaultHook(undefined); __setChatTransportForTests(null); });
+
+async function put(ctx: OperationContext, slug: string, body: string, type = 'atom'): Promise<void> {
+  await submitPageMutation(ctx, { operation: 'put_page', params: { slug, request_id: randomUUID(), content: `---\ntitle: ${slug}\ntype: ${type}\nvisibility: world\n---\n${body}` } });
+}
+async function deletePage(engine: BrainEngine, ctx: OperationContext, slug: string): Promise<Record<string, unknown>> {
+  const snapshot = await engine.readPageSnapshot(slug, { sourceId: 'default', includeDeleted: true });
+  return await submitPageMutation(ctx, { operation: 'delete_page', params: { slug, expected_revision: snapshot!.revision, request_id: randomUUID() } }) as Record<string, unknown>;
+}
+async function unmanagedWhile<T>(engine: BrainEngine, on: boolean, fn: () => Promise<T>): Promise<T> {
+  await disposePersistenceConsumer(engine);
+  if (on) await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+  try { return await fn(); } finally {
+    if (on) await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    await disposePersistenceConsumer(engine);
+  }
+}
+/** Moves a tombstone (and its rederive mark, which time moves with it) `hours` into the past. */
+async function age(engine: BrainEngine, slug: string, hours = 100): Promise<void> {
+  await unmanagedWhile(engine, true, async () => {
+    await engine.executeRaw(`UPDATE needs_rederive n SET marked_at = n.marked_at - ($2 || ' hours')::interval FROM pages p
+      WHERE n.derived_table='pages' AND n.derived_id=p.id::text AND p.source_id='default' AND p.slug=$1`, [slug, String(hours)]);
+    await engine.executeRaw(`UPDATE pages SET deleted_at=deleted_at - ($2 || ' hours')::interval WHERE source_id='default' AND slug=$1`, [slug, String(hours)]);
+  });
+}
+async function raw(engine: BrainEngine, sql: string, params: unknown[] = []): Promise<void> {
+  await unmanagedWhile(engine, true, async () => { await engine.executeRaw(sql, params); });
+}
+/** What a member who is neither the owner nor a reader gets from get_page over the remote path. */
+async function remoteRead(engine: BrainEngine): Promise<string> {
+  const minted = await unmanagedWhile(engine, true, async () => {
+    await engine.executeRaw("INSERT INTO access_members (id) VALUES ('bob-example') ON CONFLICT DO NOTHING");
+    await engine.executeRaw("INSERT INTO access_members (id) VALUES ('owner-example') ON CONFLICT DO NOTHING");
+    await setOwner(engine, 'owner-example');
+    const token = await mintLegacyToken(engine, { name: `bob-${randomUUID().slice(0, 8)}`, scopes: ['read'], takesHolders: ['world'], sourceGrant: ['default'] });
+    await bindCredential(engine, { kind: 'token', id: token.id }, { member: 'bob-example' });
+    await engine.executeRaw(`UPDATE access_tokens SET private_pages = 'granted_sources' WHERE id = $1`, [token.id]);
+    return token.token;
+  });
+  __resetPrivateVisibilityCacheForTests();
+  const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
+  const auth = await provider.verifyAccessToken(minted) as unknown as AuthInfo;
+  const out = await dispatchToolCall(engine, 'get_page', { slug: CONCEPT }, { remote: true, transport: 'http', auth, sourceId: 'default', takesHoldersAllowList: ['world'] });
+  return out.content.map(c => c.text).join('\n');
+}
+async function printedJson(run: () => Promise<unknown>): Promise<Record<string, any>> {
+  const lines: string[] = [];
+  const log = spyOn(console, 'log').mockImplementation((...parts: unknown[]) => { lines.push(parts.join(' ')); });
+  try { await run(); } finally { log.mockRestore(); }
+  return JSON.parse(lines.join('\n'));
+}
+async function purge(engine: BrainEngine, automatic: boolean): Promise<string[]> {
+  return unmanagedWhile(engine, false, async () => (await purgeDeletedPagesCoordinated(engine, 72, { automatic })).slugs);
+}
+async function synthesize(engine: BrainEngine, root: string, ids: number[], opts: { text?: string; unmanaged?: boolean; during?: () => Promise<void>;
+  read?: Record<string, string>; requests?: ChatOpts[]; settle?: boolean } = {}) {
+  const chat = async (request: ChatOpts): Promise<ChatResult> => { opts.requests?.push(request); await opts.during?.(); return reply(opts.text ?? `${OLD} ${ids.join(', ')}.`); };
+  const result = await unmanagedWhile(engine, !!opts.unmanaged, () => runPhaseSynthesizeConcepts(engine, { sourceId: 'default', brainDir: root,
+    _atoms: members(ids).map(m => ({ ...m, revision: opts.read?.[m.slug] })), _chat: chat as never }));
+  if (opts.settle !== false) await settleManagedGitEffects(engine);
+  return result.details as Record<string, any>;
+}
+async function state(engine: BrainEngine) {
+  const [row] = await engine.executeRaw<{ id: number | null; live: boolean | null; links_in: number; marks: number; versions: number; old_versions: number; old_chunks: number; old_journal: number; body: string | null }>(`SELECT
+    (SELECT id FROM pages WHERE source_id='default' AND slug=$1) AS id,
+    (SELECT deleted_at IS NULL FROM pages WHERE source_id='default' AND slug=$1) AS live,
+    (SELECT compiled_truth FROM pages WHERE source_id='default' AND slug=$1) AS body,
+    (SELECT count(*)::int FROM links l JOIN pages n ON n.id=l.from_page_id JOIN pages c ON c.id=l.to_page_id WHERE c.slug=$1 AND n.slug='notes/storage-ref') AS links_in,
+    (SELECT count(*)::int FROM needs_rederive n JOIN pages c ON n.derived_id=c.id::text WHERE n.derived_table='pages' AND c.slug=$1) AS marks,
+    (SELECT count(*)::int FROM page_versions v JOIN pages c ON c.id=v.page_id WHERE c.slug=$1) AS versions,
+    (SELECT count(*)::int FROM page_versions WHERE compiled_truth LIKE '%' || $2 || '%') AS old_versions,
+    (SELECT count(*)::int FROM content_chunks WHERE chunk_text LIKE '%' || $2 || '%') AS old_chunks,
+    (SELECT count(*)::int FROM persistence_requests WHERE intent::text LIKE '%' || $2 || '%') AS old_journal`, [CONCEPT, OLD]);
+  return row!;
+}
+/** A concept built from atoms 0 to 4 and rebuilt from 1 to 5; a note links to it; atom 0's purge hides it. */
+async function heldConcept(engine: BrainEngine, ctx: OperationContext, root: string, live?: () => Promise<void>): Promise<number> {
+  await engine.setConfig('models.dream.synthesize', MODEL);
+  for (const i of [0, 1, 2, 3, 4, 5]) await put(ctx, atom(i), `Atom ${i} about storage.`);
+  await synthesize(engine, root, [0, 1, 2, 3, 4]);
+  await put(ctx, 'notes/storage-ref', 'See [[concepts/storage-example]] for the overview.', 'note');
+  await deletePage(engine, ctx, atom(0));
+  await age(engine, atom(0));
+  await synthesize(engine, root, [1, 2, 3, 4, 5]);
+  await live?.();
+  expect(await purge(engine, true)).toEqual([atom(0)]);
+  const held = await state(engine);
+  expect(held).toMatchObject({ live: false, marks: 1, links_in: 1 });
+  expect(held.versions).toBeGreaterThan(0);
+  return Number(held.id);
+}
+const stillHeld = async (engine: BrainEngine, id: number, links = 1) => {
+  const now = await state(engine);
+  expect(now).toMatchObject({ id, live: false, marks: 1, links_in: links });
+  expect(now.versions).toBeGreaterThan(0);
+};
+
+for (const backend of testBackends()) {
+  const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
+  describe(`a concept hidden by an input purge is rebuilt as a fresh page (${backend})`, () => {
+    for (const unmanaged of [false, true]) {
+      const mode = unmanaged ? 'unmanaged' : 'managed';
+      test(`${mode}: the tombstone is purged and a fresh page written; nothing of the old body reaches the model or stays`, async () => {
+        await managedBrain(async ({ engine, ctx, root }) => {
+          const id = await heldConcept(engine, ctx, root);
+          const requests: ChatOpts[] = [];
+          const details = await synthesize(engine, root, [1, 2, 3, 4, 5], { text: NEW, unmanaged, requests });
+          expect(details.rebuilt).toEqual([CONCEPT]);
+          expect(requests).toHaveLength(1);
+          expect(JSON.stringify(requests[0]!.messages)).not.toContain(OLD);
+          expect(JSON.stringify(requests[0]!.messages)).toContain('Atom 5 about storage.');
+          const rebuilt = await state(engine);
+          expect(rebuilt).toMatchObject({ live: true, marks: 0, old_versions: 0, old_chunks: 0 });
+          expect(rebuilt.id).not.toBe(id);
+          expect(rebuilt.body).toContain('canaryrebuilt');
+          if (!unmanaged) expect(rebuilt.old_journal).toBe(0);
+          expect(await engine.executeRaw('SELECT 1 FROM pages WHERE slug=$1 AND deleted_at IS NOT NULL', [CONCEPT])).toHaveLength(0);
+          expect(await engine.executeRaw('SELECT 1 FROM page_purges WHERE slug=$1', [CONCEPT])).toHaveLength(0);
+          // the incoming link: unmanaged in the rebuild's transaction; managed at the extract phase of the same cycle
+          expect(rebuilt.links_in).toBe(unmanaged ? 1 : 0);
+          if (!unmanaged) {
+            await runCycle(engine, { brainDir: root, phases: ['extract'], sourceId: 'default' });
+            expect((await state(engine)).links_in).toBe(1);
+          }
+        }, { databaseUrl });
+      }, 300_000);
+
+      test(`${mode}: a failed synthesis leaves it hidden and held`, async () => {
+        await managedBrain(async ({ engine, ctx, root }) => {
+          const id = await heldConcept(engine, ctx, root);
+          const details = await synthesize(engine, root, [1, 2, 3, 4, 5], { text: '', unmanaged });
+          expect(details.rebuild_deferred.map((d: { concept: string }) => d.concept)).toEqual([CONCEPT]);
+          await stillHeld(engine, id);
+        }, { databaseUrl });
+      }, 300_000);
+
+      test(`${mode}: during the model call, a person's delete, a released hold or a second input purge writes nothing`, async () => {
+        await managedBrain(async ({ engine, ctx, root }) => {
+          await heldConcept(engine, ctx, root);
+          const details = await synthesize(engine, root, [1, 2, 3, 4, 5], { text: NEW, unmanaged, during: async () => { await deletePage(engine, ctx, CONCEPT); } });
+          expect(details.rebuilt).toEqual([]);
+          expect(await state(engine)).toMatchObject({ live: false });
+          expect(await engine.executeRaw('SELECT 1 FROM pages WHERE slug=$1 AND compiled_truth LIKE $2', [CONCEPT, '%canaryrebuilt%'])).toHaveLength(0);
+        }, { databaseUrl });
+        await managedBrain(async ({ engine, ctx, root }) => {
+          await heldConcept(engine, ctx, root);
+          await age(engine, CONCEPT);
+          await synthesize(engine, root, [1, 2, 3, 4, 5], { text: NEW, unmanaged, during: async () => { expect(await purge(engine, false)).toEqual([CONCEPT]); } });
+          expect(await engine.executeRaw('SELECT 1 FROM pages WHERE slug=$1 AND compiled_truth LIKE $2', [CONCEPT, '%canaryrebuilt%'])).toHaveLength(0);
+        }, { databaseUrl });
+        await managedBrain(async ({ engine, ctx, root }) => {
+          const id = await heldConcept(engine, ctx, root);
+          const details = await synthesize(engine, root, [1, 2, 3, 4, 5], { text: NEW, unmanaged, during: async () => {
+            await deletePage(engine, ctx, atom(1));
+            await age(engine, atom(1));
+            expect(await purge(engine, true)).toEqual([atom(1)]);
+          } });
+          expect(details.rebuilt).toEqual([]);
+          expect(await state(engine)).toMatchObject({ id, live: false, marks: 1 });
+          expect((await synthesize(engine, root, [2, 3, 4, 5], { text: NEW, unmanaged })).rebuilt).toEqual([CONCEPT]);
+        }, { databaseUrl });
+      }, 900_000);
+
+      test(`${mode}: a folder rule still covers the fresh page and a remote non-owner reads nothing`, async () => {
+        await managedBrain(async ({ engine, ctx, root }) => {
+          await heldConcept(engine, ctx, root, () => unmanagedWhile(engine, true, async () => {
+            const rule = await proposeRevision(engine, 'default', [{ id: 'concepts', prefix: 'concepts/', readable_by: ['member:alice-example'] }], { origin: 'cli', store: 'database' });
+            expect(rule.state).toBe('applied');
+          }));
+          const [before] = await engine.executeRaw<{ rules: string[] | null }>('SELECT folder_rule_ids AS rules FROM pages WHERE slug=$1', [CONCEPT]);
+          expect(before!.rules).not.toBeNull();
+          expect((await synthesize(engine, root, [1, 2, 3, 4, 5], { text: NEW, unmanaged })).rebuilt).toEqual([CONCEPT]);
+          const [after] = await engine.executeRaw<{ rules: string[] | null }>('SELECT folder_rule_ids AS rules FROM pages WHERE slug=$1', [CONCEPT]);
+          expect(after!.rules).toEqual(before!.rules);
+          expect(await remoteRead(engine)).not.toContain('canaryrebuilt');
+        }, { databaseUrl });
+      }, 600_000);
+
+      test(`${mode}: what a person stated keeps it hidden and held, and the purge deletes none of it`, async () => {
+        const stated: Array<[string, (engine: BrainEngine, ctx: OperationContext, id: number) => Promise<void>]> = [
+          ['labels', async engine => raw(engine, 'UPDATE pages SET frontmatter = frontmatter || $2::text::jsonb WHERE source_id = $3 AND slug = $1', [CONCEPT, JSON.stringify({ readable_by: ['alice-example'] }), 'default'])],
+          ['links', async (engine, _ctx, id) => raw(engine, "INSERT INTO links (from_page_id, to_page_id, link_type, link_source, context) SELECT n.id, $1, 'mentions', 'manual', 'added by hand' FROM pages n WHERE n.slug = 'notes/storage-ref'", [id])],
+          ['facts', async engine => raw(engine, "INSERT INTO facts (source_id, fact, source, entity_slug) VALUES ('default', 'A stated fact about storage.', 'mcp:remember', $1)", [CONCEPT])],
+          ['tags', async (engine, _ctx, id) => raw(engine, "INSERT INTO tags (page_id, tag) VALUES ($1, 'hand-tag')", [id])],
+          ['timeline_entries', async (engine, _ctx, id) => raw(engine, "INSERT INTO timeline_entries (page_id, date, summary) VALUES ($1, '2026-01-01', 'a stated event')", [id])],
+        ];
+        for (const [kind, add] of stated) await managedBrain(async ({ engine, ctx, root }) => {
+          const id = await heldConcept(engine, ctx, root);
+          await add(engine, ctx, id);
+          const details = await synthesize(engine, root, [1, 2, 3, 4, 5], { text: NEW, unmanaged });
+          expect(details.rebuilt).toEqual([]);
+          expect(details.rebuild_kept).toEqual([{ source_id: 'default', slug: CONCEPT, reason: 'stated', kinds: [kind] }]);
+          await stillHeld(engine, id, kind === 'links' ? 2 : 1);
+        }, { databaseUrl });
+      }, 1_500_000);
+    }
+
+    test('access: a hidden concept no caller could read stays hidden when its current members are all world-readable', async () => {
+      await managedBrain(async ({ engine, ctx, root }) => {
+        const id = await heldConcept(engine, ctx, root);
+        await raw(engine, "UPDATE pages SET frontmatter = frontmatter || '{\"visibility\":\"private\"}'::jsonb WHERE id = $1", [id]);
+        const details = await synthesize(engine, root, [1, 2, 3, 4, 5], { text: NEW });
+        expect(details.rebuild_kept).toMatchObject([{ slug: CONCEPT, reason: 'access' }]);
+        await stillHeld(engine, id);
+      }, { databaseUrl });
+    }, 300_000);
+
+    test('managed: the publish waits on the purge receipt; a pending purge writes nothing more this cycle and the next one recovers', async () => {
+      await managedBrain(async ({ engine, ctx, root }) => {
+        await heldConcept(engine, ctx, root);
+        let release!: () => void;
+        const stalled = new Promise<void>(resolve => { release = resolve; });
+        installFaultHook(async (point, detail) => { if (point === 'consumer:prepared' && (detail as { operation?: string }).operation === 'delete_page') await stalled; });
+        const restore = __setMaintenanceWriteWaitForTests(300);
+        try {
+          const details = (await runPhaseSynthesizeConcepts(engine, { sourceId: 'default', brainDir: root, _atoms: members([1, 2, 3, 4, 5]), _chat: (async () => reply(NEW)) as never })).details as Record<string, any>;
+          expect(details.rebuilt).toEqual([]);
+          expect(details.rebuild_deferred).toMatchObject([{ concept: CONCEPT }]);
+          expect(details.rebuild_deferred[0].reason).toContain('still pending');
+          expect(await engine.executeRaw('SELECT 1 FROM pages WHERE slug=$1 AND deleted_at IS NULL', [CONCEPT])).toHaveLength(0);
+        } finally { release(); restore(); installFaultHook(undefined); }
+        const open = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE source_id='default' AND state NOT IN ('committed','failed','cancelled')");
+        for (const row of open) await waitForWrite(engine, row, { engine: engine.kind }, 20_000);
+        await settleManagedGitEffects(engine);
+        await synthesize(engine, root, [1, 2, 3, 4, 5], { text: NEW });
+        const recovered = await state(engine);
+        expect(recovered).toMatchObject({ live: true, old_versions: 0, old_chunks: 0 });
+        expect(recovered.body).toContain('canaryrebuilt');
+      }, { databaseUrl });
+    }, 600_000);
+
+    test('managed: a person who restores, edits or deletes the tombstone before the purge is submitted refuses it', async () => {
+      const moves: Array<(engine: BrainEngine, ctx: OperationContext) => Promise<void>> = [
+        async (_engine, ctx) => { await submitPageMutation(ctx, { operation: 'restore_page', params: { slug: CONCEPT, request_id: randomUUID() } }); },
+        async (engine, ctx) => {
+          const at = await engine.readPageSnapshot(CONCEPT, { sourceId: 'default', includeDeleted: true });
+          await submitPageMutation(ctx, { operation: 'put_page', params: { slug: CONCEPT, request_id: randomUUID(), expected_revision: at!.revision,
+            content: '---\ntitle: storage example\ntype: concept\n---\nWritten by a person.' } });
+        },
+        async (engine, ctx) => { await deletePage(engine, ctx, CONCEPT); },
+      ];
+      for (const move of moves) await managedBrain(async ({ engine, ctx, root }) => {
+        await heldConcept(engine, ctx, root);
+        const details = await synthesize(engine, root, [1, 2, 3, 4, 5], { text: NEW, during: () => move(engine, ctx) });
+        expect(details.rebuilt).toEqual([]);
+        expect(await engine.executeRaw('SELECT 1 FROM pages WHERE slug=$1 AND compiled_truth LIKE $2', [CONCEPT, '%canaryrebuilt%'])).toHaveLength(0);
+        expect(await engine.executeRaw('SELECT 1 FROM pages WHERE slug=$1', [CONCEPT])).toHaveLength(1);
+      }, { databaseUrl });
+    }, 900_000);
+
+    test('the single-page purge deletes exactly what the cutoff purge deletes', async () => {
+      await managedBrain(async ({ engine, ctx }) => {
+        const slugs = ['notes/purge-a', 'notes/purge-b'];
+        for (const slug of slugs) {
+          await put(ctx, slug, `Body of ${slug} with [[notes/purge-other]].`, 'note');
+          const at = await engine.readPageSnapshot(slug, { sourceId: 'default' });
+          await submitPageMutation(ctx, { operation: 'put_page', params: { slug, request_id: randomUUID(), expected_revision: at!.revision,
+            content: `---\ntitle: ${slug}\ntype: note\nvisibility: world\n---\nSecond body of ${slug} with [[notes/purge-other]].` } });
+        }
+        await put(ctx, 'notes/purge-other', 'Links to [[notes/purge-a]] and [[notes/purge-b]].', 'note');
+        await unmanagedWhile(engine, true, async () => {
+          for (const slug of slugs) {
+            const [page] = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE source_id='default' AND slug=$1", [slug]);
+            await engine.executeRaw("INSERT INTO tags (page_id, tag) VALUES ($1, 't')", [page!.id]);
+            await engine.executeRaw("INSERT INTO timeline_entries (page_id, date, summary) VALUES ($1, '2026-01-01', 'e')", [page!.id]);
+            await engine.executeRaw("INSERT INTO facts (source_id, fact, source, source_markdown_slug) VALUES ('default', $2, 'test', $1)", [slug, `A fact on ${slug}.`]);
+            await engine.executeRaw("INSERT INTO page_aliases (source_id, slug, alias_norm) VALUES ('default', $1, $2)", [slug, `alias ${slug}`]);
+            await engine.executeRaw("INSERT INTO open_loops (source_id, page_slug, kind, summary) VALUES ('default', $1, 'promise', 'x')", [slug]).catch(() => undefined);
+          }
+        });
+        await raw(engine, "UPDATE pages SET deleted_at = now() - interval '100 hours' WHERE source_id = 'default' AND slug = ANY($1::text[])", [slugs]);
+        const counts = async (slug: string) => (await engine.executeRaw<Record<string, number>>(`SELECT
+          (SELECT count(*)::int FROM pages WHERE slug=$1) AS pages,
+          (SELECT count(*)::int FROM content_chunks c JOIN pages p ON p.id=c.page_id WHERE p.slug=$1) AS chunks,
+          (SELECT count(*)::int FROM page_versions v JOIN pages p ON p.id=v.page_id WHERE p.slug=$1) AS versions,
+          (SELECT count(*)::int FROM links l JOIN pages p ON p.id IN (l.from_page_id, l.to_page_id) WHERE p.slug=$1) AS links,
+          (SELECT count(*)::int FROM facts WHERE source_markdown_slug=$1 AND expired_at IS NULL) AS live_facts,
+          (SELECT count(*)::int FROM page_aliases WHERE slug=$1) AS aliases,
+          (SELECT count(*)::int FROM open_loops WHERE page_slug=$1) AS loops`, [slug]))[0]!;
+        const before = [await counts(slugs[0]!), await counts(slugs[1]!)];
+        expect(before[0]).toEqual(before[1]!);
+        expect(before[0]!.versions).toBeGreaterThan(0);
+        await unmanagedWhile(engine, true, async () => {
+          const [a] = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE slug=$1", [slugs[0]]);
+          expect((await engine.purgeDeletedPages(0, { onlyIds: [Number(a!.id)] })).slugs).toEqual([slugs[0]!]);
+          expect(await counts(slugs[1]!)).toEqual(before[1]!);
+          expect((await engine.purgeDeletedPages(72)).slugs).toEqual([slugs[1]!]);
+        });
+        expect(await counts(slugs[0]!)).toEqual(await counts(slugs[1]!));
+        expect((await counts(slugs[0]!)).pages).toBe(0);
+      }, { databaseUrl });
+    }, 300_000);
+
+    test('every store a page purge removes rows from is classified stated or derived', async () => {
+      await managedBrain(async ({ engine, ctx, root }) => {
+        await heldConcept(engine, ctx, root);
+        const snapshot = await engine.readPageSnapshot(CONCEPT, { sourceId: 'default', includeDeleted: true });
+        const receipt = await submitPageMutation(ctx, { operation: 'delete_page', params: { slug: CONCEPT, purge: true, expected_revision: snapshot!.revision, request_id: randomUUID() } }) as { purge: { removed: Record<string, number> } };
+        for (const store of Object.keys(receipt.purge.removed)) expect([store, REBUILD_STORES[store]]).toEqual([store, expect.stringMatching(/^(stated|derived)$/)]);
+      }, { databaseUrl });
+    }, 300_000);
+
+    test('a concept a person deleted stays deleted, also after an input purge marks it', async () => {
+      await managedBrain(async ({ engine, ctx, root }) => {
+        await engine.setConfig('models.dream.synthesize', MODEL);
+        for (const i of [0, 1, 2, 3, 4]) await put(ctx, atom(i), `Atom ${i} about storage.`);
+        await synthesize(engine, root, [0, 1, 2, 3, 4]);
+        await deletePage(engine, ctx, CONCEPT);
+        await deletePage(engine, ctx, atom(0));
+        await age(engine, atom(0));
+        expect(await purge(engine, true)).toEqual([atom(0)]);
+        const details = await synthesize(engine, root, [1, 2, 3, 4], { text: NEW });
+        expect(details.skipped_deleted).toEqual([CONCEPT]);
+        expect(await state(engine)).toMatchObject({ live: false });
+      }, { databaseUrl });
+    }, 300_000);
+
+    test('a held concept a person then deletes stays deleted', async () => {
+      await managedBrain(async ({ engine, ctx, root }) => {
+        await heldConcept(engine, ctx, root);
+        await deletePage(engine, ctx, CONCEPT);
+        const details = await synthesize(engine, root, [1, 2, 3, 4, 5], { text: NEW });
+        expect(details.skipped_deleted).toEqual([CONCEPT]);
+        expect(await state(engine)).toMatchObject({ live: false });
+      }, { databaseUrl });
+    }, 300_000);
+
+    test('the purge previews name each held concept and, for one kept hidden, why', async () => {
+      await managedBrain(async ({ engine, ctx, root }) => {
+        const id = await heldConcept(engine, ctx, root);
+        const held = [{ source_id: 'default', slug: CONCEPT }];
+        expect((await selectPurgeCandidates(engine, 72, { automatic: true, model: false })).rebuild).toEqual({ held, kept: [{ ...held[0]!, reason: 'no_model' }] });
+        __setChatTransportForTests(async () => reply(NEW));
+        for (const automatic of [true, false]) expect((await selectPurgeCandidates(engine, 72, { automatic, model: true })).rebuild).toEqual({ held, kept: [] });
+        const note = rebuildNote({ held, kept: [] });
+        expect(note).toContain(`1 of them are rebuilt by the next concept synthesis from their current members: default/${CONCEPT}`);
+        const explicit = await printedJson(() => runPages(engine, ['purge-deleted', '--dry-run', '--json']));
+        expect(explicit).toMatchObject({ rebuild: { held } });
+        expect(explicit.rebuild_note).toEndWith('This purge removes any of them listed above instead.');
+        const automatic = await printedJson(() => runMaintain(engine, ['--purge', '--json']));
+        expect(automatic).toMatchObject({ mode: 'preview', rebuild: { held }, rebuild_note: note });
+        await raw(engine, "INSERT INTO tags (page_id, tag) VALUES ($1, 'hand-tag')", [id]);
+        const kept = (await selectPurgeCandidates(engine, 72, { automatic: true, model: true })).rebuild;
+        expect(kept.kept).toEqual([{ ...held[0]!, reason: 'stated', kinds: ['tags'] }]);
+        expect(rebuildNote(kept)).toContain(`default/${CONCEPT}: stays hidden, it carries what a person or an agent stated (tags)`);
+        const phase = (await runCycle(engine, { brainDir: root, phases: ['purge'], sourceId: 'default' })).phases.find(p => p.phase === 'purge')!;
+        expect(phase.details).toMatchObject({ purged_pages_kept_for_rebuild: held, kept_hidden: kept.kept });
+        expect(phase.summary).toContain('1 concept(s) hidden by an input purge kept for the next concept synthesis (1 of them stay hidden');
+        expect(await state(engine)).toMatchObject({ live: false, marks: 1 });
+      }, { databaseUrl });
+    }, 300_000);
+
+    for (const aged of [100, 10]) test(`deleting a held concept aged ${aged}h: the receipt states the true expiry and the tombstone keeps its date`, async () => {
+      await managedBrain(async ({ engine, ctx, root }) => {
+        await heldConcept(engine, ctx, root);
+        await age(engine, CONCEPT, aged);
+        const [before] = await engine.executeRaw<{ at: string; until: string }>(`SELECT deleted_at::text AS at,
+          to_char((deleted_at + interval '72 hours') AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS until FROM pages WHERE slug=$1`, [CONCEPT]);
+        const receipt = await deletePage(engine, ctx, CONCEPT);
+        const [after] = await engine.executeRaw<{ at: string }>('SELECT deleted_at::text AS at FROM pages WHERE slug=$1', [CONCEPT]);
+        expect(after!.at).toBe(before!.at);
+        expect(String(receipt.recoverable_until)).toStartWith(aged > 72 ? `the next purge (its 72h window ended ${before!.until})` : `${before!.until} via restore_page`);
+        expect(await purge(engine, true)).toEqual(aged > 72 ? [CONCEPT] : []);
+      }, { databaseUrl });
+    }, 300_000);
+  });
+}
