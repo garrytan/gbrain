@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 643/643
+# covered: 646/646
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -39,7 +39,7 @@
 # minion_queue: 70/70
 # minion_status: 11/11
 # minion_subagent: 17/17
-# cli_reads_ops: 7/7
+# cli_reads_ops: 10/10
 # facts_doctor: 10/10
 # fact_relink_attempts: 3/3
 # fact_relink_writes: 3/3
@@ -79,7 +79,7 @@ getPage	pages	yes	76	yes	yes	yes	serves
 readPageSnapshot	pages	yes	17	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	310	yes	yes	yes	serves
+putPage	pages	yes	312	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
@@ -174,7 +174,7 @@ deleteChunksForPages	chunks	yes	1	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	3	no	yes	yes	serves
 upsertChunks	chunks	yes	24	yes	yes	yes	serves
-sealChunks	chunks	yes	42	no	yes	yes	serves
+sealChunks	chunks	yes	43	no	yes	yes	serves
 getChunks	chunks	yes	27	yes	yes	yes	serves
 getChunkPage	chunks	yes	5	no	yes	yes	serves
 getChunkWindows	chunks	yes	3	no	yes	yes	serves
@@ -190,14 +190,14 @@ readEmbeddingStateCounts	chunks	yes	1	no	yes	yes	serves
 listEmbeddingStateRows	chunks	yes	1	no	yes	yes	serves
 deleteChunks	chunks	yes	3	no	yes	yes	serves
 deleteChunksExcept	chunks	yes	3	no	yes	yes	serves
-setChunkerVersion	chunks	yes	11	no	yes	yes	serves
+setChunkerVersion	chunks	yes	12	no	yes	yes	serves
 writeTextProjectionSeal	chunks	yes	2	no	yes	yes	serves
 moveChunkIndexes	chunks	yes	2	no	yes	yes	serves
 getChunkReuseRows	chunks	yes	4	no	yes	yes	serves
 getChunksWithEmbeddings	chunks	yes	1	no	yes	yes	serves
 countStalePagesForExtraction	extraction	yes	4	yes	yes	yes	serves
 listStalePagesForExtraction	extraction	yes	3	yes	yes	yes	serves
-markPagesExtractedBatch	extraction	yes	5	yes	yes	yes	serves
+markPagesExtractedBatch	extraction	yes	6	yes	yes	yes	serves
 markPagesAttendanceBlocked	extraction	yes	2	no	yes	yes	serves
 countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
@@ -516,6 +516,9 @@ scanExactBatch	cli_reads_ops	yes	5	no	yes	yes	serves
 nextLivePageAfter	cli_reads_ops	yes	1	no	yes	yes	serves
 listExactIdentityCandidates	cli_reads_ops	yes	5	no	yes	yes	serves
 rankEntities	cli_reads_ops	yes	4	no	yes	yes	serves
+readRankCoverage	cli_reads_ops	yes	1	no	yes	yes	serves
+readExactSnippetChunks	cli_reads_ops	yes	1	no	yes	yes	serves
+listExactRescanChunks	cli_reads_ops	yes	1	no	yes	yes	serves
 listExtractionPendingPages	cli_reads_ops	yes	2	no	yes	yes	serves
 listUnattributedFacts	cli_reads_ops	yes	3	no	yes	yes	serves
 listWantedPages	cli_reads_ops	yes	6	no	yes	yes	serves

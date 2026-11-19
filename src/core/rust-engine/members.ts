@@ -210,6 +210,8 @@ export const RUST_ENGINE_MEMBERS = {
   // keyword_search
   searchKeyword: 'keyword_search',
   scanExactBatch: 'keyword_search',
+  readExactSnippetChunks: 'keyword_search',
+  listExactRescanChunks: 'keyword_search',
   countKeywordPages: 'keyword_search',
   searchKeywordPages: 'keyword_search',
   searchTitles: 'keyword_search',
@@ -295,6 +297,7 @@ export const RUST_ENGINE_MEMBERS = {
   // graph
   traverseGraph: 'graph',
   rankEntities: 'graph',
+  readRankCoverage: 'graph',
   traversePaths: 'graph',
   traversePathsDetailed: 'graph',
   relationalFanout: 'graph',

@@ -576,7 +576,6 @@ src/core/ops/context.ts	execute_raw	1
 src/core/ops/facts.ts	execute_raw	1
 src/core/ops/files.ts	execute_raw	13
 src/core/ops/get-page-body.ts	execute_raw	2
-src/core/ops/graph-rank.ts	execute_raw	2
 src/core/ops/jobs.ts	execute_raw	4
 src/core/ops/known-as-of.ts	execute_raw	3
 src/core/ops/links.ts	execute_raw	1
@@ -586,7 +585,6 @@ src/core/ops/persistence.ts	execute_raw	4
 src/core/ops/put-page-revision-source.ts	execute_raw	1
 src/core/ops/qm-memory.ts	execute_raw	2
 src/core/ops/request-tools.ts	execute_raw	2
-src/core/ops/search-exact.ts	execute_raw	2	came from master #9574 (held private restatements), which landed before this ratchet
 src/core/ops/search-type-filter.ts	execute_raw	1
 src/core/ops/search.ts	execute_raw	2
 src/core/ops/storage-manifest.ts	execute_raw	1

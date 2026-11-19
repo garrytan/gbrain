@@ -4,10 +4,12 @@ Part of the store contract in [rust/README.md](../../README.md) ("The brain stor
 
 These are the read-command statements that the ops layer ran through `executeRaw`
 ([docs/research/rust-cli-executeraw-map.md](../../../docs/research/rust-cli-executeraw-map.md)):
-`search_exact`, `whois`, `rank_entities` and `extraction_pending`. PGLite and Postgres run the same SQL as before
-(`src/core/engine-sql/cli-reads-ops.ts`, `exact-identity.ts`, `graph-rank.ts` and `src/core/search/exact-scan.ts`).
-The store answers from its page, chunk, link and source records (`crates/gbrain-store/src/cli_reads/reads.rs`) and has
-no keys of its own. The TypeScript side is `src/core/rust-engine/store-members/cli-reads-ops.ts`.
+`search_exact`, `whois`, `rank_entities` and `extraction_pending`, plus the two remote-caller reads around them:
+`rank_entities`' per-source coverage and the chunks `search_exact` reads again to take out held fence rows. PGLite and
+Postgres run the same SQL as before (`src/core/engine-sql/cli-reads-ops.ts`, `exact-identity.ts`, `graph-rank.ts` and
+`src/core/search/exact-scan.ts`; the remote-read statements are pinned by `test/remote-read-statements-golden.test.ts`).
+The store answers from its page, chunk, link, extraction, wanted-link and source records
+(`crates/gbrain-store/src/cli_reads/reads.rs` and `remote_reads.rs`) and has no keys of its own. The TypeScript side is `src/core/rust-engine/store-members/cli-reads-ops.ts`.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
@@ -15,6 +17,9 @@ no keys of its own. The TypeScript side is `src/core/rust-engine/store-members/c
 | `brain.nextLivePageAfter(afterPageId)` | the first live page with a larger id, in any source (archived ones too): `{ id, slug, source_id }`, or `null` | `nextLivePageAfter` |
 | `brain.listExactIdentityCandidates({ probes, sourceIds, types, remote, limit })` | live pages in `sourceIds` whose title, slug basename, page alias or frontmatter email equals a probe, by `(source_id, slug)` in byte order: `{ slug, source_id, title, type, email, emails, aliases }` | `listExactIdentityCandidates` |
 | `brain.rankEntities({ direction, types, sourceIds, linkType, includeMentions, limit, foldedCap, remote })` | pages ranked by distinct in-scope edges, retired pages folded in: `{ slug, title, type, source_id, inbound, outbound, neighbors, folded_total, folded }` | `rankEntities` |
+| `brain.readRankCoverage({ sourceId, versionTs, mentionTypes, excludePrivate })` | over the pages of the source the caller may read: `{ link_behind, mention_due }` | `readRankCoverage` |
+| `brain.readExactSnippetChunks({ keys, excludePrivate })` | per `{ pageId, chunkIndex, snippet }` key, its visible chunk when the chunk holds the snippet, in key order: `{ i, chunk_text }` (`i` from 1) | `readExactSnippetChunks` |
+| `brain.listExactRescanChunks({ pageIds, excludePrivate })` | the visible chunks of the safe-fenced pages, by page id then chunk index: `{ page_id, chunk_index, chunk_source, chunk_text }` | `listExactRescanChunks` |
 | `brain.listExtractionPendingPages({ sourceIds, sourceId, limit, offset })` | unverified auto-extracted pages in scope, newest first: `{ slug, title, type, source_id, extracted_from, created_at }` | `listExtractionPendingPages` |
 
 The TypeScript member of `scanExactBatch` splits the phrase into words as `phrasePattern` does (JavaScript `trim` and
@@ -56,6 +61,17 @@ negative `LIMIT` or `OFFSET` is an `invalid_argument` error, as Postgres rejects
   the page is live, served, has no `quarantine` or `pinned_question` key, is in scope and its source exists and is not
   archived. `extracted_from` is frontmatter `source` as `->>` reads it. `created_at` is `timestamptz::text` in UTC.
 
+- **readRankCoverage.** A readable page is live, in `sourceId`, has no `quarantine` key, its source exists and is not
+  archived, and the caller's page policy (when sent) does not hide it. `link_behind` is true when a readable page outside
+  a guest source owes link extraction (`staleForExtractionSql`): no extraction stamp, a stamp older than `versionTs` or
+  than the page, or a wanted-link target that changed after the page last resolved it; and its attendance marker is not
+  at its knowledge revision. `mention_due` needs `mentionTypes`.
+- **readExactSnippetChunks.** A key at position `i` gives a row when its page exists, serves its text projection, the
+  caller's policy does not hide it, and the chunk at `chunkIndex` is visible at the page's segment generation and holds
+  `snippet` (`strpos > 0`). The safe-chunk fence is not checked, as the SQL does not check it.
+- **listExactRescanChunks.** Each named page (duplicates once, by id) that exists, serves its projection, is at the
+  safe-chunk fence and is not hidden, gives each of its visible chunks.
+
 ## Text semantics
 
 The store reproduces how PGLite (PostgreSQL 18.6, libc provider, ctype `C.UTF-8`, time zone UTC) evaluates text
@@ -87,6 +103,11 @@ Each answer below is what Postgres gives for a brain that never wrote the missin
   `rankEntities` drops a hidden page from the ranked set and from every edge count. With `excludePrivate` and no
   policy the store method rejects the call with `invalid_argument`. `scanExactBatch` with `excludePrivate` reads the
   same policy as `excludePrivate` and leaves hidden pages out of the batch.
+  `readRankCoverage`, `readExactSnippetChunks` and `listExactRescanChunks` with `excludePrivate` read the same policy.
+- **Mention-pass state.** The store has no `page_mention_state` rows, so with `mentionTypes` every readable page owes a
+  mention pass and `mention_due` is true whenever a page is readable, as Postgres gives for a brain with no rows.
+- **Held link extraction.** The store keeps no `links_extract_failure`, so no page is held and `readRankCoverage` counts
+  every stale page.
 - **Trust tiers.** `scanExactBatch` with `minTrust` refuses.
 - **The safe-chunk fence.** `scanExactBatch` with `remote: true` matches only chunks of a page whose
   `chunker_version` is at the fence (4) or above, and reports a page below it with no match as `unsealed`. A record
