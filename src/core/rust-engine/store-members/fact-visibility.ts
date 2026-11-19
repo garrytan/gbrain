@@ -7,7 +7,7 @@
  * 'private' also admits, per row, a private fact on the caller's own member page (memberFactAdmitSql) and a private fact
  * in a source of the caller's private-facts grant whose pages keep it private for no reason (grantedPrivateFactSql).
  * The member serves that widened list only when its text equals the one rendered for a fresh caller record of just the
- * caller's reader identity, private-readable sources and private-facts grant (judgeWidenedFactCaller), and sends the
+ * caller's reader identity, private-readable sources and private-facts grant (judgeWidenedCaller), and sends the
  * store what that record reads (`VisibilityWidening` in rust/crates/gbrain-store/src/facts/widen.rs): the member, the
  * page policy its member page is judged by, and the granted sources. Any other caller (an audience, an attested actor
  * whose text differs, a folder rule, a relaxed read) refuses with `engine_capability_missing`.
@@ -15,7 +15,7 @@
 import { callerMember, factVisibilitySql } from '../../access/member-facts.ts';
 import { currentCallerAccess, privateFactSources } from '../../search/private-visibility.ts';
 import { refuseMember } from './common.ts';
-import { callerReadersPagePolicy, judgeWidenedFactCaller, renderForStoreCaller, type StorePrivacyPolicy } from './private-provenance.ts';
+import { callerReadersPagePolicy, judgeWidenedCaller, renderForStoreCaller, type StorePrivacyPolicy } from './private-provenance.ts';
 
 /** What the store reads to widen a visibility list without 'private' (`VisibilityWidening` in widen.rs). */
 export interface StoreVisibilityWidening {
@@ -44,7 +44,7 @@ export function storeVisibility(member: string, visibility: readonly string[] | 
   // A caller on a brain that never named readers renders the member page's policy in the short form, which hides
   // every page that names readers (storePrivacyPolicy); its member page policy carries `open` to match.
   const openFlag = currentCallerAccess().restricted === false ? { open: true } : {};
-  const widen = judgeWidenedFactCaller<StoreVisibilityWidening>((readers) => {
+  const widen = judgeWidenedCaller<StoreVisibilityWidening>((readers) => {
     const text = factVisibilitySql('facts', visibility);
     const fresh = { ...readers, privateFactSources: [...privateFactSources()], hidePrivate: true };
     const canonical = renderForStoreCaller(fresh, () => ({ sql: factVisibilitySql('facts', visibility), member: callerMember() }));

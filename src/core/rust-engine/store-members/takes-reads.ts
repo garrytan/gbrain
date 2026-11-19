@@ -32,7 +32,7 @@ export const listTakeRowsForPage: StoreMember<[pageId: number], Array<{ row_num:
 export const listHeldFenceTakeRows: StoreMember<[spec: HeldFenceTakeSpec], HeldFenceTakeRow[]> = async () => [];
 
 export const countMcpResolvedTakes: StoreMember<[spec: McpResolvedSpec], number> = (brain, spec) => {
-  const excludePrivate = storePagePolicy('countMcpResolvedTakes', spec.excludePrivate);
+  const excludePrivate = storePagePolicy('countMcpResolvedTakes', spec.excludePrivate, { callerReaders: true });
   return storeCall({ member: 'countMcpResolvedTakes' }, () => brain.countMcpResolvedTakes({
     sourceIds: spec.sourceIds ? [...spec.sourceIds] : null,
     holders: spec.holders ? [...spec.holders] : null,

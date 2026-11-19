@@ -185,14 +185,24 @@ the family adds no key prefix. Versions have no by-id index: the version reads s
 
 - `beginSnapshotRead` has no store method: a store transaction holds the one writer from its start, so its reads see
   one state. It does not enforce `READ ONLY`; a write in that transaction lands.
-- The TypeScript members refuse a caller page policy that is not the no-caller one, the `takes` and
+- `listCorePageRows` serves a caller with a reader identity or a private-readable grant: with `forCaller` its
+  `excludePrivate` policy carries them (`callerReaders`), and the remote floor is the no-reader policy (`noReaders`).
+  Pinned by `test/engine-parity/core-page-member-reads.test.ts`.
+- `listValidTimeIdentities` serves a caller with a reader identity or a private-readable grant: its `excludePrivate`
+  policy carries them (`callerReaders`), and the `world` mark, which never reads the caller's readers, is the
+  no-reader policy (`noReaders`). `pickValidTimeEdition` serves the same callers when the caller's snapshot policy is
+  the canonical one for those readers: a version that names readers is visible when one of them is in the policy's
+  identity, and a private version when the page's source is a private-readable source and the page is not a pinned
+  question. Both pinned by `test/engine-parity/valid-time-member-reads.test.ts` and `tests/valid_time.rs`.
+- The other TypeScript members refuse a caller page policy that is not the no-caller one, the `takes` and
   `timeline_entries` scan tables, and a cursor, limit or id that is not an integer. The store refuses any other
   table and a NUL byte with `invalid_argument`.
 - The belief history reads (`readBeliefHistoryRows`, `listVisibleBeliefLifetimes`) refuse in their TypeScript
   members before any store call, for every input: the store keeps no belief ledger, so it could only answer an empty
   one (TODOS.md `rust-belief-ledger`).
-- `listAmendmentsNotApplied` refuses a date that is not `YYYY-MM-DD`, a non-integer page id or limit and a caller page
-  policy other than the no-caller one. A failure is an error: the old read answered an empty list for any failure.
+- `listAmendmentsNotApplied` refuses a date that is not `YYYY-MM-DD`, a non-integer page id or limit and a caller
+  whose remote floor is not the page policy of no readers (a labelled-only caller); any other caller reads the floor
+  (`test/engine-parity/valid-time-member-reads.test.ts`). A failure is an error: the old read answered an empty list for any failure.
 - `pickValidTimeEdition` also refuses a date that is not `YYYY-MM-DD` and a history PGLite would have pruned
   (`history_unpruned`: more large inline versions than PGLite keeps, a segmented version, or a holding page over the
   kept count; TODOS.md `rust-version-prune`). The store keeps no change reason, so `reason` and

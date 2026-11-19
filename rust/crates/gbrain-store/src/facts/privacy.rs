@@ -210,16 +210,23 @@ fn private_source_open(page: &PageRecord, policy: &PrivacyPolicy) -> bool {
         && !page.frontmatter.contains_key("pinned_question")
 }
 
-/// Whether the no-caller policy hides a page version (`callerReadersAllowedSql(pv, 'snapshot') AND
-/// privacyForCaller(p, privateSnapshotFilterFragment(pv))`): the version names readers, or, with
-/// `entity_privacy`, its own fields are private. Only the version's type and frontmatter count.
+/// Whether the policy hides a version of `page` (`callerReadersAllowedSql(pv, 'snapshot') AND
+/// privacyForCaller(p, privateSnapshotFilterFragment(pv))`): the version names readers none of
+/// which is in the policy's identity, or, with `entity_privacy`, its own fields are private and
+/// the page is not open through the private-readable grant (judged on the page, as
+/// `orPrivateReadableSource(p, …)` is). Only the version's type and frontmatter count otherwise.
 pub(crate) fn version_hidden(
+    page: &PageRecord,
     page_type: &str,
     fm: &Map<String, Value>,
     policy: &PrivacyPolicy,
 ) -> bool {
-    fm.contains_key("readable_by")
-        || (policy.entity_privacy && !snapshot_fields_allow(page_type, fm, policy.honor_aliases))
+    let readers_allow = !fm.contains_key("readable_by")
+        || access_readers(fm).is_some_and(|r| r.iter().any(|id| policy.identity.contains(id)));
+    let privacy_allows = !policy.entity_privacy
+        || private_source_open(page, policy)
+        || snapshot_fields_allow(page_type, fm, policy.honor_aliases);
+    !(readers_allow && privacy_allows)
 }
 
 /// Whether `getVersions` under a caller page policy hides a version of `page`:
