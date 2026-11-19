@@ -24,6 +24,7 @@ import { PageRevisionConflictError } from '../src/core/page-state/types.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { ENGINE_CAPABILITIES } from '../src/core/engine-capabilities.ts';
 import { withCallerAccess } from '../src/core/search/private-visibility.ts';
+import { bindCredential } from '../src/core/access/members.ts';
 
 const TARGET = detectAddonTarget();
 const BUILT = join(import.meta.dir, '..', 'rust', 'target', 'addon', `gbrain_engine.${TARGET ?? 'unsupported'}.node`);
@@ -270,6 +271,23 @@ describe('Rust engine on the store', () => {
     expect(file!.metadata).toEqual({});
     expect(file!.created_at).toBeInstanceOf(Date);
     expect((await engine.getFile('default', 'f/a.png'))?.page_id).toBe(created.id);
+  });
+
+  withAddon('access members: a token bind and every credential binding member refuse before anything is written', async () => {
+    const { engine } = await open();
+    const spec = { id: 'alice-example', displayName: null, email: null, kind: 'person' as const, groups: ['team-a'], bindTokenId: 'c0000000-0000-4000-8000-0000000000e9' };
+    expect(await code(() => engine.insertAccessMember(spec))).toBe('engine_capability_missing');
+    expect(await engine.listActiveAccessMembers()).toEqual([]);
+    expect(await engine.getConfig('access.restrictions_present')).toBeNull();
+    const target = { kind: 'token' as const, id: spec.bindTokenId };
+    expect(await code(() => engine.readCredentialBindingForUpdate(target, { readsUnscoped: false }))).toBe('engine_capability_missing');
+    expect(await code(() => engine.writeCredentialBinding(target, { member: null, mayActFor: null, attestActor: null, attestOps: null, attestSources: null, attestRead: null }))).toBe('engine_capability_missing');
+    expect(await code(() => engine.writeCredentialReadsUnscoped(target, true))).toBe('engine_capability_missing');
+    // bindCredential (gbrain auth rescope --member none) stops at the locked read, so applyAttestSources never runs.
+    expect(await code(() => bindCredential(engine, target, { member: null }))).toBe('engine_capability_missing');
+    // Without a token the same insert writes the member.
+    expect(await engine.insertAccessMember({ ...spec, bindTokenId: null })).toEqual({ groupsCreated: ['team-a'] });
+    expect(await engine.listActiveAccessMembers()).toEqual(['alice-example']);
   });
 
   withAddon('a brain on a partial capability set reports exactly what the store serves', async () => {
