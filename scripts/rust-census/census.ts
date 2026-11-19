@@ -382,8 +382,13 @@ async function runCliCase(cs: CliCase, i: number, bases: Bases): Promise<Row> {
   for (const [k, b] of Object.entries(arms)) clones[k] = await cloneBrain(b, join(caseDir, k));
   const trace = join(caseDir, 'rust-trace.jsonl');
   const runs: Record<string, Run> = {};
+  const beforeFailed: string[] = [];
   await Promise.all(Object.entries(clones).map(async ([k, b]) => {
     const repo = makeRepo(b.dir); mkdirSync(join(b.dir, 'scratch'), { recursive: true });
+    for (const step of cs.before ?? []) {
+      const r = await spawnCli(b, expand(step.slice(), b.dir, repo));
+      if (r.exitCode !== 0) beforeFailed.push(`${k}: before step \`${labelOf(step)}\` exited ${r.exitCode}`);
+    }
     runs[k] = await spawnCli(b, expand(cs.args.slice(), b.dir, repo), { trace: k === 'rust' ? trace : undefined, stdin: cs.stdin });
   }));
   const refOut = normalize(parseOut(runs.ref!.stdout), pathsOf(clones.ref!));
@@ -400,7 +405,7 @@ async function runCliCase(cs: CliCase, i: number, bases: Bases): Promise<Row> {
   return { surface: 'cli', name: cs.cmd, invocation: label, status: verdict.status, pgStatus, refExit: runs.ref!.exitCode, rustExit: runs.rust!.exitCode,
     decisive: verdict.decisive, endSite: endSiteOf(t, verdict.decisive, runs.rust!.censusRef), first: t.first, sites: t.all.slice(0, 40).map((x) => `${x.member}@${x.site}`), refusals: t.refusals, members: t.members, raw: t.raw,
     rustExcerpt: excerpt(runs.rust!, clones.rust!), refExcerpt: excerpt(runs.ref!, clones.ref!),
-    note: [verdict.note, verdict.status !== 'equal' && runs.ref!.exitCode !== 0 ? `reference exit ${runs.ref!.exitCode}: ${snippet(runs.ref!)}` : ''].filter(Boolean).join('; ') };
+    note: [...beforeFailed.sort(), verdict.note, verdict.status !== 'equal' && runs.ref!.exitCode !== 0 ? `reference exit ${runs.ref!.exitCode}: ${snippet(runs.ref!)}` : ''].filter(Boolean).join('; ') };
 }
 
 function fillParams(tool: { name: string; inputSchema?: any }): Record<string, unknown> {
