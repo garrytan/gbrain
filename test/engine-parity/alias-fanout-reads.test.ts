@@ -1,7 +1,8 @@
 /**
  * BrainEngine parity: the alias fan-out reads of engine-sql/alias-fanout-reads.ts (findPagesByTitles,
  * resolveCaseSensitiveAliases, readPageTitle, readPageAliasRows), which search's alias fan-out
- * (src/core/search/alias-fanout.ts) used to run through `engine.executeRaw`.
+ * (src/core/search/alias-fanout.ts) used to run through `engine.executeRaw`, and readEntityAliasRows, the entity
+ * card's alias read (verbs/entity-card.ts, entity-card-identity.ts).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: each member returns the same rows in the same order on every engine arm (PGLite always; Postgres with
@@ -195,6 +196,44 @@ describe('engine parity: alias fan-out reads', () => {
         'companies/widget-co|wgco|subject|WGCO',
       ]);
       return { caseRows, aliasRows };
+    },
+  );
+
+  parityTest(
+    'readEntityAliasRows returns every alias row of the listed slugs in one source, by alias',
+    { methods: ['putPage', 'setPageAliases', 'replaceDerivedAliases', 'readEntityAliasRows'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      // Written out of alias order, with a same-named page in `other` and an unlisted page in `default`.
+      await engine.putPage('people/alice-example', page('person', 'Alice Example'), { sourceId: 'other' });
+      await engine.setPageAliases('people/alice-example', 'other', ['foreign']);
+      await engine.putPage('people/alice-example', page('person', 'Alice Example'));
+      await engine.setPageAliases('people/alice-example', 'default', ['zed', 'alice']);
+      await engine.replaceDerivedAliases('people/alice-example', 'default', [
+        { alias_norm: 'mike', origin: 'declared', case_sensitive: false, alias_text: 'Mike' },
+      ]);
+      await engine.putPage('people/al-twin', page('person', 'Al Twin'));
+      await engine.setPageAliases('people/al-twin', 'default', ['bravo']);
+      await engine.putPage('people/unlisted', page('person', 'Unlisted'));
+      await engine.setPageAliases('people/unlisted', 'default', ['able']);
+      const both = await engine.readEntityAliasRows('default', ['people/alice-example', 'people/al-twin', 'people/missing']);
+      const one = await engine.readEntityAliasRows('default', ['people/alice-example']);
+      const other = await engine.readEntityAliasRows('other', ['people/alice-example']);
+      const none = await engine.readEntityAliasRows('default', []);
+      const row = (r: { slug: string; alias_norm: string; origin: string | null; alias_text: string | null }) => `${r.slug}|${r.alias_norm}|${r.origin}|${r.alias_text}`;
+      const result = { both: both.map(row), one: one.map(row), other: other.map(row), none: none.map(row) };
+      expect(result).toEqual({
+        both: [
+          'people/alice-example|alice|frontmatter|null',
+          'people/al-twin|bravo|frontmatter|null',
+          'people/alice-example|mike|declared|Mike',
+          'people/alice-example|zed|frontmatter|null',
+        ],
+        one: ['people/alice-example|alice|frontmatter|null', 'people/alice-example|mike|declared|Mike', 'people/alice-example|zed|frontmatter|null'],
+        other: ['people/alice-example|foreign|frontmatter|null'],
+        none: [],
+      });
+      return result;
     },
   );
 

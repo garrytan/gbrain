@@ -106,6 +106,7 @@ export const RUST_ENGINE_MEMBERS = {
   resolveCaseSensitiveAliases: 'pages',
   readPageTitle: 'pages',
   readPageAliasRows: 'pages',
+  readEntityAliasRows: 'pages',
   readPageTrustRows: 'pages',
   listLinkPageMetadata: 'pages',
   filterPagesAtRevision: 'pages',
@@ -243,6 +244,7 @@ export const RUST_ENGINE_MEMBERS = {
   countForeignEdges: 'links',
   listLivePageSummaries: 'links',
   countInboundLinks: 'links',
+  readEntityInboundEdges: 'links',
   listLinkEndpointPages: 'links',
   listPagesTitledIn: 'links',
   wordLexemes: 'links',
@@ -525,6 +527,7 @@ export const RUST_ENGINE_MEMBERS = {
   // open loops (engine-sql/open-loops.ts)
   upsertOpenLoop: 'facts',
   listOpenLoops: 'facts',
+  readEntityOpenLoops: 'facts',
   closeOpenLoop: 'facts',
   // persistence_journal
   readManagedModeRows: 'persistence_journal',

@@ -33,6 +33,7 @@ Code: `rust/crates/gbrain-store/src/link_queries.rs`, the napi methods in
 | `countForeignEdges(slug, sourceId, direction)` | served |
 | `listLivePageSummaries(scope?)` | served |
 | `countInboundLinks(slug, sourceId, { excludePrivate, originSameSource })` | served |
+| `readEntityInboundEdges(slug, sourceId, { excludePrivate, originSameSource })` | served |
 | `listLinkEndpointPages(sourceId, slugs, crossSourceSlugs)` | served |
 | `listPagesTitledIn(queryLower, scope)` | served |
 | `wordLexemes(words)` | served under the English text search configuration |
@@ -146,6 +147,9 @@ alone unless the statement also applies `pageReadFilter(.., live)`.
   `pageReadFilter(.., scope)`, in page id order.
 - `countInboundLinks`: inbound links from live pages of the same source, `mentions` left out. With `excludePrivate`
   the referrer and the link origin must be readable; with `originSameSource` an origin must be live and in the source.
+- `readEntityInboundEdges`: the links `countInboundLinks` counts, in link id order, with the referrer's slug and the
+  temporal columns of the link's relationship in the `world` scope with `excludePrivate`, else `all`; all null when
+  there is no relationship row. The shim turns the two timestamps into `Date`, as Postgres returns them.
 - `listLinkEndpointPages`: the live pages of `sourceId` named in `slugs` (by slug), then, for slugs in
   `crossSourceSlugs` or with no row in `sourceId`, the live pages of other sources (source order, then slug). The SQL
   leaves the row order to the plan.

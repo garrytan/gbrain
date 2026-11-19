@@ -3,7 +3,8 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: each member sends Postgres exactly the statement text its caller ran through `executeRaw` before the
- *    move. Each expected text below is copied verbatim from the caller at 7470c703ed.
+ *    move. Each expected text below is copied verbatim from the caller at 7470c703ed, except where a pin's comment
+ *    names an equivalent statement.
  *  - Regression: an edited statement changes what Postgres and PGLite answer while the parity cases may still pass on
  *    a small fixture.
  *  - Why existing coverage misses it: the sql-text goldens cover the W1 domains only (test/engine-sql-sql-text.test.ts),
@@ -15,7 +16,7 @@ import { runCase, withPinnedSqlEnvironment, type SqlCase } from './helpers/postg
 import { edgeTrimSql } from '../src/core/edge-whitespace.ts';
 import { retiredPageSql } from '../src/core/entities/resolve.ts';
 import { boundedBodyPrefixSql } from '../src/core/page-window/bounded-lead.ts';
-import { callerAccessAllowedSql, privatePagesFilterForCaller, remoteReadFloorSql } from '../src/core/search/private-visibility.ts';
+import { callerAccessAllowedSql, privateLinkOriginFilterForCaller, privatePagesFilterForCaller, remoteReadFloorSql } from '../src/core/search/private-visibility.ts';
 
 interface Pin {
   /** The caller site the statement came from, at 7470c703ed. */
@@ -102,6 +103,52 @@ const PINS: Pin[] = [
     from: 'src/commands/sync/plain-directory.ts:36 plainDirectorySyncRoot',
     case: { method: 'readPlainSyncSource', variant: 'default', run: e => e.readPlainSyncSource('default') },
     texts: ['SELECT local_path,last_commit,config FROM sources WHERE id=$1 AND NOT archived'],
+  },
+  {
+    from: 'src/core/verbs/entity-card-identity.ts:141 readSiblingIdentity',
+    case: { method: 'readEntityAliasRows', variant: 'siblings', run: e => e.readEntityAliasRows('default', ['people/alice-example', 'people/alice-twin']) },
+    texts: ['SELECT slug, alias_norm, origin, alias_text FROM page_aliases WHERE source_id = $1 AND slug = ANY($2::text[]) ORDER BY alias_norm'],
+  },
+  {
+    // readAka ran `SELECT alias_norm FROM page_aliases WHERE source_id = $1 AND slug = $2 ORDER BY alias_norm`. It now
+    // sends the sibling statement with a one-slug array: the same rows in the same order (one slug, so no tie).
+    from: 'src/core/verbs/entity-card.ts:783 readAka (one slug)',
+    case: { method: 'readEntityAliasRows', variant: 'aka', run: e => e.readEntityAliasRows('default', ['people/alice-example']) },
+    texts: ['SELECT slug, alias_norm, origin, alias_text FROM page_aliases WHERE source_id = $1 AND slug = ANY($2::text[]) ORDER BY alias_norm'],
+  },
+  // The caller bound the source once as $2 and named it three times (four for a remote read). The member binds it at
+  // each use (engine-sql numbers every value once: check-engine-sql-dynamic), so the source is $2, $3 and $4: the same
+  // value at each place, so the same rows in the same order.
+  ...([[false, false], [true, true]] as const).map(([excludePrivate, remote]): Pin => ({
+    from: 'src/core/verbs/entity-card.ts:617 assembleCard incoming edges',
+    case: {
+      method: 'readEntityInboundEdges', variant: excludePrivate ? 'remote+private' : 'local',
+      run: e => e.readEntityInboundEdges('people/alice-example', 'default', { excludePrivate, originSameSource: remote }),
+    },
+    texts: () => [`SELECT f.slug AS from_slug, l.link_type, l.context, lr_t.valid_ranges::text AS temporal_ranges, lr_t.semantics AS temporal_semantics,
+      lr_t.disputed AS temporal_disputed, lr_t.undated_past AS temporal_undated_past, lr_t.first_start::text AS temporal_first_start,
+      lr_t.recorded_at AS temporal_recorded_at, lr_t.retired_at AS temporal_retired_at
+           FROM links l
+           JOIN pages f ON f.id = l.from_page_id
+           JOIN pages t ON t.id = l.to_page_id
+           LEFT JOIN link_relationships lr_t ON lr_t.from_page_id = l.from_page_id
+      AND lr_t.to_page_id = l.to_page_id AND lr_t.link_type = l.link_type
+      AND lr_t.scope = '${excludePrivate ? 'world' : 'all'}'
+          WHERE t.slug = $1 AND t.source_id = $2 AND f.source_id = $3 AND f.deleted_at IS NULL
+            AND COALESCE(l.link_source, '') <> 'mentions'${excludePrivate
+    ? ` AND ${privatePagesFilterForCaller('f')} AND ${privateLinkOriginFilterForCaller('l')}`
+    : ''} AND (l.origin_page_id IS NULL OR EXISTS (SELECT 1 FROM pages lo WHERE lo.id = l.origin_page_id AND lo.deleted_at IS NULL${remote ? ' AND lo.source_id = $4' : ''}))
+          ORDER BY l.id`],
+  })),
+  {
+    from: 'src/core/verbs/entity-card.ts:691 assembleCard open loops',
+    case: { method: 'readEntityOpenLoops', variant: 'default', run: e => e.readEntityOpenLoops('people/alice-example', 'default', 3) },
+    texts: [`SELECT id, loop_type, summary, due_at, last_activity_at, fact_id
+       FROM open_loops
+       WHERE status = 'open' AND counterparty_slug = $1
+         AND COALESCE(counterparty_source_id, source_id) = $2
+       ORDER BY last_activity_at DESC
+       LIMIT 3`],
   },
   {
     from: 'src/core/access/owner-only.ts:56 ownerOnlySourcesPresent',

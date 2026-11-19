@@ -5,7 +5,7 @@
 //! and findOrphanPages, and the search-reads link reads hasSupersedeEdges, supersedingPageSlugs
 //! and pagesLinkingTo. rewriteLinks needs no store call. The link reads of
 //! src/core/engine-sql/link-reads.ts: inboundLinkCoverage, listJunkEntityHubs, countEntityPages,
-//! entityGraphCoverage, countForeignEdges, listLivePageSummaries, countInboundLinks,
+//! entityGraphCoverage, countForeignEdges, listLivePageSummaries, countInboundLinks, readEntityInboundEdges,
 //! listLinkEndpointPages, listPagesTitledIn and wordLexemes, each with one JSON input.
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
@@ -265,6 +265,20 @@ impl Brain {
             let input: gbrain_store::link_queries::InboundCountInput =
                 arg(input, "countInboundLinks input")?;
             s.count_inbound_links(&input)
+        })
+    }
+
+    /// `readEntityInboundEdges(input)`: the entity card's inbound edge rows.
+    #[napi]
+    pub fn read_entity_inbound_edges<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::link_queries::InboundCountInput =
+                arg(input, "readEntityInboundEdges input")?;
+            s.read_entity_inbound_edges(&input)
         })
     }
 

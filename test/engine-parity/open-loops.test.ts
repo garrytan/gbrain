@@ -3,8 +3,10 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: upsertOpenLoop's insert, its manual-close and mute guards and the columns an update keeps or takes;
- *    listOpenLoops' source, status, type, counterparty and id filters, its limit clamp and its order; and
- *    closeOpenLoop's open-only, source-scoped close return the same observable result on every engine arm (PGLite
+ *    listOpenLoops' source, status, type, counterparty and id filters, its limit clamp and its order;
+ *    readEntityOpenLoops' card read (open loops whose counterparty page is the card's source and slug, newest first,
+ *    at most the limit; an email that equals the slug does not count); and closeOpenLoop's open-only, source-scoped
+ *    close return the same observable result on every engine arm (PGLite
  *    always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: an engine that reopens a loop the owner closed on a re-render with no newer activity, reopens a
  *    muted loop for the same counterparty, overwrites the thread or detector, drops the counterparty source when a
@@ -140,6 +142,34 @@ describe('engine parity: open loops', () => {
         byIdOutOfScope: await ids({ loopId: loopId.at(3), sourceIds: ['default'] }),
         limitZero: await ids({ limit: 0 }),
         limitTwo: await ids({ limit: 2 }),
+      };
+    },
+  );
+
+  parityTest(
+    'readEntityOpenLoops reads the open loops whose counterparty page is the card, newest first, at most the limit',
+    { methods: ['upsertOpenLoop', 'closeOpenLoop', 'readEntityOpenLoops'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'work');
+      const T0 = '2026-02-20T10:00:00.000Z';
+      const loopId = loopIds(await engine.upsertOpenLoop(loop({ dedupKey: 'k1', counterpartySlug: 'people/alice-example', lastActivityAt: T2, dueAt: T3 })));
+      await engine.upsertOpenLoop(loop({ dedupKey: 'k2', counterpartySlug: 'people/alice-example', counterpartySourceId: 'work', lastActivityAt: T3 }));
+      await engine.upsertOpenLoop(loop({ dedupKey: 'k3', sourceId: 'work', counterpartyEmail: 'people/alice-example', lastActivityAt: T3 }));
+      await engine.upsertOpenLoop(loop({ dedupKey: 'k4', sourceId: 'work', counterpartySlug: 'people/alice-example', counterpartySourceId: 'default', loopType: 'commitment_owed_by_me', summary: 'owed', lastActivityAt: T3 }));
+      await engine.upsertOpenLoop(loop({ dedupKey: 'k5', counterpartySlug: 'people/alice-example', lastActivityAt: T1 }));
+      await engine.upsertOpenLoop(loop({ dedupKey: 'k6', counterpartySlug: 'people/alice-example', loopType: 'decision_pending', lastActivityAt: T0 }));
+      await engine.upsertOpenLoop(loop({ dedupKey: 'k7', sourceId: 'work', counterpartySlug: 'people/alice-example', lastActivityAt: T2 }));
+      await engine.closeOpenLoop(null, loopId.at(5), 'done', 'manual');
+      const read = async (slug: string, sourceId: string, limit: number) =>
+        (await engine.readEntityOpenLoops(slug, sourceId, limit)).map(r => observe(loopId, r as unknown as Record<string, unknown>));
+      const card = await read('people/alice-example', 'default', 3);
+      expect(card.map(r => r?.id)).toEqual([4, 1, 6]);
+      return {
+        card,
+        one: await read('people/alice-example', 'default', 1),
+        all: await read('people/alice-example', 'default', 10),
+        work: await read('people/alice-example', 'work', 3),
+        none: await read('people/bob-example', 'default', 3),
       };
     },
   );

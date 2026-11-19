@@ -16,6 +16,7 @@ import { privateLinkOriginFilterForCaller, privatePagesFilterForCaller } from '.
 import { quarantineFilterFragment } from '../quarantine.ts';
 import { CONNECTOR_SOURCE_KINDS } from '../persistence/connector-kinds.ts';
 import { getFtsLanguage } from '../fts-language.ts';
+import { TEMPORAL_LINK_SELECT_SQL, temporalLinkJoinSql } from '../link-validity.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 import { readFilter, rows } from './search-reads.ts';
@@ -184,6 +185,39 @@ export async function countInboundLinks(exec: LegacyUnscopedRead, slug: string, 
       WHERE t.slug = ${slug} AND t.source_id = ${sourceId} AND f.source_id = ${sourceId} AND f.deleted_at IS NULL
         AND COALESCE(l.link_source, '') <> 'mentions'${privacy} AND (l.origin_page_id IS NULL OR EXISTS (SELECT 1 FROM pages lo WHERE lo.id = l.origin_page_id AND lo.deleted_at IS NULL${originSource}))`);
   return Number(found[0]?.n ?? 0);
+}
+
+/** One inbound edge of the entity card, with the raw temporal columns of `TEMPORAL_LINK_SELECT_SQL` (annotateTemporalRow). */
+export interface EntityInboundEdgeRow {
+  from_slug: string;
+  link_type: string;
+  context: string | null;
+  temporal_ranges: string | null;
+  temporal_semantics: string | null;
+  temporal_disputed: boolean | null;
+  temporal_undated_past: number | null;
+  temporal_first_start: string | null;
+  temporal_recorded_at: Date | string | null;
+  temporal_retired_at: Date | string | null;
+}
+
+/**
+ * The links countInboundLinks counts, by link id, each with its referrer's slug and its relationship's temporal
+ * columns in the `world` scope with `excludePrivate`, else `all` (the entity card's incoming edges).
+ */
+export async function readEntityInboundEdges(exec: LegacyUnscopedRead, slug: string, sourceId: string, opts: { excludePrivate: boolean; originSameSource: boolean }): Promise<EntityInboundEdgeRow[]> {
+  const privacy = opts.excludePrivate
+    ? sqlFragment` AND ${trustedSql(privatePagesFilterForCaller('f'))} AND ${trustedSql(privateLinkOriginFilterForCaller('l'))}`
+    : sqlFragment``;
+  const originSource = opts.originSameSource ? sqlFragment` AND lo.source_id = ${sourceId}` : sqlFragment``;
+  return rows<EntityInboundEdgeRow>(exec, sqlFragment`SELECT f.slug AS from_slug, l.link_type, l.context${trustedSql(TEMPORAL_LINK_SELECT_SQL)}
+           FROM links l
+           JOIN pages f ON f.id = l.from_page_id
+           JOIN pages t ON t.id = l.to_page_id
+           ${trustedSql(temporalLinkJoinSql('l', opts.excludePrivate))}
+          WHERE t.slug = ${slug} AND t.source_id = ${sourceId} AND f.source_id = ${sourceId} AND f.deleted_at IS NULL
+            AND COALESCE(l.link_source, '') <> 'mentions'${privacy} AND (l.origin_page_id IS NULL OR EXISTS (SELECT 1 FROM pages lo WHERE lo.id = l.origin_page_id AND lo.deleted_at IS NULL${originSource}))
+          ORDER BY l.id`);
 }
 
 /**
