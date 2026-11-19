@@ -9,6 +9,7 @@ import * as path from 'node:path';
 import { withEnv } from './helpers/with-env.ts';
 import { logRerankFailure } from '../src/core/rerank-audit.ts';
 import { doctorSource, doctorFileSource } from './helpers/doctor-source.ts';
+import { DOCTOR_SEARCH_SQL } from '../src/core/engine-sql/doctor-search.ts';
 import { surfaceFileSource } from './helpers/source-surface.ts';
 
 // Health fixtures configure fake provider keys. Clear the gateway snapshot as
@@ -1764,7 +1765,9 @@ describe('issue #972 — link_resolution_opportunity check', () => {
     expect(source).toContain("progress.heartbeat('link_resolution_opportunity')");
     // Issue #972 (T3): scan is bounded to a most-recent sample, not a full
     // per-page getPage walk.
-    expect(source).toMatch(/ORDER BY id DESC LIMIT \$\{?SAMPLE_LIMIT\}?|ORDER BY id DESC LIMIT 1000/);
+    // The read is the typed engine member; its statement carries the bound.
+    expect(source).toContain('listRecentPageBodies(');
+    expect(DOCTOR_SEARCH_SQL.recentPageBodies).toMatch(/ORDER BY id DESC LIMIT 1000$/);
     expect(source).not.toMatch(/await engine\.getPage\(ref\.slug/);
   });
 });

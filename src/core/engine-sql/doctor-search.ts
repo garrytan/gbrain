@@ -18,11 +18,20 @@ export type { EngineRawRead } from './cli-reads-ops.ts';
  */
 export const DOCTOR_SEARCH_MEMBERS: readonly string[] = [
   'listOrphanedAliasCounts', 'readSoftDeletedAliasCounts', 'listPageTypePairs',
+  'listTruncatedMarkdownBodies', 'countSegmentedMarkdownBodies', 'listRecentPageBodies', 'countSegmentedRecentPages',
+  'countPagesHiddenByPrefix',
 ];
+
+/** Rows `listTruncatedMarkdownBodies` reads: the list limit of the markdown_body_completeness check plus one (a full list means a floor). */
+export const TRUNCATED_BODY_ROWS = 101;
+/** Pages `listRecentPageBodies` samples: the SAMPLE_LIMIT of the link_resolution_opportunity check. */
+export const RECENT_PAGE_SAMPLE = 1000;
 
 export interface OrphanedAliasCount { source_id: string; slug_redirects: number; page_aliases: number }
 export interface SoftDeletedAliasCounts { slug_redirects: number; page_aliases: number }
 export interface PageTypePair { source_id: string; type: string }
+export interface TruncatedMarkdownBody { slug: string; body_len: number; raw_len: number }
+export interface RecentPageBody { compiled_truth: string | null; timeline: string | null }
 
 // moved from core/repair/aliases.ts ORPHANED_ALIAS_COUNTS_SQL unchanged (MISSING('sa', 'canonical_slug') and MISSING('pa', 'slug') written out)
 const ORPHANED_ALIAS_COUNTS_SQL = `SELECT source_id,sum(slug_redirects)::int AS slug_redirects,sum(page_aliases)::int AS page_aliases FROM (
@@ -45,11 +54,64 @@ const PAGE_TYPE_PAIRS_SQL = `WITH RECURSIVE pairs AS (
 )
 SELECT source_id, type FROM pairs`;
 
+// moved from doctor/checks/data-integrity.ts runMarkdownBody unchanged (LISTED_PAGE_LIMIT + 1 written out)
+const TRUNCATED_MARKDOWN_BODIES_SQL = `SELECT p.slug,
+              length(p.compiled_truth) AS body_len,
+              length(rd.data ->> 'content') AS raw_len
+       FROM pages p
+       JOIN raw_data rd ON rd.page_id = p.id
+       WHERE rd.data ? 'content'
+         AND length(rd.data ->> 'content') > 1000
+         AND length(p.compiled_truth) < length(rd.data ->> 'content') * 0.3
+         AND (rd.data ->> 'content') ~ '(^|\n)##+ '
+       LIMIT 101`;
+
+// moved from doctor/checks/data-integrity.ts runMarkdownBody unchanged: segmented pages the length comparison above passes by
+const SEGMENTED_MARKDOWN_BODIES_SQL = `SELECT COUNT(DISTINCT p.id)::int AS n
+       FROM pages p
+       JOIN raw_data rd ON rd.page_id = p.id
+       WHERE p.body_storage = 'segmented'
+         AND rd.data ? 'content'
+         AND length(rd.data ->> 'content') > 1000
+         AND (rd.data ->> 'content') ~ '(^|\n)##+ '`;
+
+// moved from doctor/checks/calibration.ts checkLinkResolutionOpportunity unchanged (`scope` and SAMPLE_LIMIT written out)
+const RECENT_PAGE_BODIES_SQL = `SELECT compiled_truth, timeline FROM pages WHERE deleted_at IS NULL ORDER BY id DESC LIMIT 1000`;
+const RECENT_PAGE_BODIES_IN_SOURCES_SQL = `SELECT compiled_truth, timeline FROM pages WHERE deleted_at IS NULL AND source_id = ANY($1::text[]) ORDER BY id DESC LIMIT 1000`;
+const SEGMENTED_RECENT_PAGES_SQL = `SELECT COUNT(*)::int AS n FROM (SELECT body_storage FROM pages WHERE deleted_at IS NULL ORDER BY id DESC LIMIT 1000) s WHERE s.body_storage = 'segmented'`;
+const SEGMENTED_RECENT_PAGES_IN_SOURCES_SQL = `SELECT COUNT(*)::int AS n FROM (SELECT body_storage FROM pages WHERE deleted_at IS NULL AND source_id = ANY($1::text[]) ORDER BY id DESC LIMIT 1000) s WHERE s.body_storage = 'segmented'`;
+
+// moved from doctor/checks/calibration.ts checkHiddenBySearchPolicy: its one statement counted every prefix with a FILTER; this counts one
+// (the LIKE pattern is $1), with buildVisibilityClause('p', 's') written out.
+// chunk-visibility-ok: counts pages that have a chunk (the EXISTS), for the exclude-policy audit
+const PAGES_HIDDEN_BY_PREFIX_SQL = `SELECT COUNT(DISTINCT p.id)::int AS n
+       FROM pages p
+       JOIN sources s ON s.id = p.source_id
+       WHERE EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id)
+         AND p.deleted_at IS NULL AND ((p.text_projection_revision = p.knowledge_revision) IS TRUE OR (p.text_projection_revision = '00000000-0000-0000-0000-000000000153'::uuid) IS TRUE) AND NOT s.archived AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'pinned_question')
+         AND p.slug LIKE $1 ESCAPE '\\'`;
+// chunk-visibility-ok: the same statement scoped to the caller's sources
+const PAGES_HIDDEN_BY_PREFIX_IN_SOURCES_SQL = `SELECT COUNT(DISTINCT p.id)::int AS n
+       FROM pages p
+       JOIN sources s ON s.id = p.source_id
+       WHERE EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id)
+         AND p.deleted_at IS NULL AND ((p.text_projection_revision = p.knowledge_revision) IS TRUE OR (p.text_projection_revision = '00000000-0000-0000-0000-000000000153'::uuid) IS TRUE) AND NOT s.archived AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'pinned_question')
+         AND p.slug LIKE $1 ESCAPE '\\'
+         AND p.source_id = ANY($2::text[])`;
+
 /** The statement of each read, for the test that pins them to the text the checks built. */
 export const DOCTOR_SEARCH_SQL = {
   orphanedAliasCounts: ORPHANED_ALIAS_COUNTS_SQL,
   softDeletedAliasCount: SOFT_DELETED_ALIAS_COUNT_SQL,
   pageTypePairs: PAGE_TYPE_PAIRS_SQL,
+  truncatedMarkdownBodies: TRUNCATED_MARKDOWN_BODIES_SQL,
+  segmentedMarkdownBodies: SEGMENTED_MARKDOWN_BODIES_SQL,
+  recentPageBodies: RECENT_PAGE_BODIES_SQL,
+  recentPageBodiesInSources: RECENT_PAGE_BODIES_IN_SOURCES_SQL,
+  segmentedRecentPages: SEGMENTED_RECENT_PAGES_SQL,
+  segmentedRecentPagesInSources: SEGMENTED_RECENT_PAGES_IN_SOURCES_SQL,
+  pagesHiddenByPrefix: PAGES_HIDDEN_BY_PREFIX_SQL,
+  pagesHiddenByPrefixInSources: PAGES_HIDDEN_BY_PREFIX_IN_SOURCES_SQL,
 } as const;
 
 /** Alias rows (both tables) whose target page row is absent, per source, in source order. */
@@ -67,4 +129,39 @@ export async function readSoftDeletedAliasCounts(raw: EngineRawRead): Promise<So
 /** Every distinct (source, type) among live typed pages, in source then type order. */
 export async function listPageTypePairs(raw: EngineRawRead): Promise<PageTypePair[]> {
   return raw<PageTypePair>(PAGE_TYPE_PAIRS_SQL);
+}
+
+/** Pages whose body is under 30% of their raw `content` (which has H2/H3 headings and is over 1000 characters), at most TRUNCATED_BODY_ROWS. */
+export async function listTruncatedMarkdownBodies(raw: EngineRawRead): Promise<TruncatedMarkdownBody[]> {
+  const rows = await raw<{ slug: string; body_len: string | number; raw_len: string | number }>(TRUNCATED_MARKDOWN_BODIES_SQL);
+  return rows.map((row) => ({ slug: row.slug, body_len: Number(row.body_len), raw_len: Number(row.raw_len) }));
+}
+
+/** Segmented pages whose raw `content` is over 1000 characters with H2/H3 headings (the length comparison skips them). */
+export async function countSegmentedMarkdownBodies(raw: EngineRawRead): Promise<number> {
+  const [row] = await raw<{ n: string | number }>(SEGMENTED_MARKDOWN_BODIES_SQL);
+  return Number(row?.n ?? 0);
+}
+
+/** The bodies of the RECENT_PAGE_SAMPLE newest live pages (a segmented page's columns are NULL), within `sourceIds` when given. */
+export async function listRecentPageBodies(raw: EngineRawRead, sourceIds: string[] | null): Promise<RecentPageBody[]> {
+  return sourceIds
+    ? raw<RecentPageBody>(RECENT_PAGE_BODIES_IN_SOURCES_SQL, [sourceIds])
+    : raw<RecentPageBody>(RECENT_PAGE_BODIES_SQL);
+}
+
+/** How many of those RECENT_PAGE_SAMPLE newest live pages are stored in segments. */
+export async function countSegmentedRecentPages(raw: EngineRawRead, sourceIds: string[] | null): Promise<number> {
+  const [row] = sourceIds
+    ? await raw<{ n: string | number }>(SEGMENTED_RECENT_PAGES_IN_SOURCES_SQL, [sourceIds])
+    : await raw<{ n: string | number }>(SEGMENTED_RECENT_PAGES_SQL);
+  return Number(row?.n ?? 0);
+}
+
+/** Chunked pages search serves (live, projected, unarchived source, not quarantined or pinned) whose slug matches the LIKE `pattern` (`\` escapes). */
+export async function countPagesHiddenByPrefix(raw: EngineRawRead, pattern: string, sourceIds: string[] | null): Promise<number> {
+  const [row] = sourceIds
+    ? await raw<{ n: string | number }>(PAGES_HIDDEN_BY_PREFIX_IN_SOURCES_SQL, [pattern, sourceIds])
+    : await raw<{ n: string | number }>(PAGES_HIDDEN_BY_PREFIX_SQL, [pattern]);
+  return Number(row?.n ?? 0);
 }

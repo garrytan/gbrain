@@ -437,6 +437,11 @@ export const RUST_ENGINE_MEMBERS = {
   listFactsPageBodies: 'health',
   listBracketPathPages: 'health',
   listSlugPathCandidates: 'health',
+  listTruncatedMarkdownBodies: 'health',
+  countSegmentedMarkdownBodies: 'health',
+  listRecentPageBodies: 'health',
+  countSegmentedRecentPages: 'health',
+  countPagesHiddenByPrefix: 'health',
   // doctor search and knowledge reads (engine-sql/doctor-search.ts)
   listOrphanedAliasCounts: 'health',
   readSoftDeletedAliasCounts: 'health',

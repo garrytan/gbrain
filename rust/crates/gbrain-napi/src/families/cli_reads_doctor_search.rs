@@ -34,4 +34,55 @@ impl Brain {
     pub fn list_page_type_pairs<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.list_page_type_pairs())
     }
+
+    /// `listTruncatedMarkdownBodies`.
+    #[napi]
+    pub fn list_truncated_markdown_bodies<'env>(
+        &self,
+        env: &'env Env,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_truncated_markdown_bodies())
+    }
+
+    /// `countSegmentedMarkdownBodies`.
+    #[napi]
+    pub fn count_segmented_markdown_bodies<'env>(
+        &self,
+        env: &'env Env,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.count_segmented_markdown_bodies())
+    }
+
+    /// `listRecentPageBodies`.
+    #[napi]
+    pub fn list_recent_page_bodies<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Option<Vec<String>>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_recent_page_bodies(source_ids))
+    }
+
+    /// `countSegmentedRecentPages`.
+    #[napi]
+    pub fn count_segmented_recent_pages<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Option<Vec<String>>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.count_segmented_recent_pages(source_ids))
+    }
+
+    /// `countPagesHiddenByPrefix`.
+    #[napi]
+    pub fn count_pages_hidden_by_prefix<'env>(
+        &self,
+        env: &'env Env,
+        pattern: String,
+        source_ids: Option<Vec<String>>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.count_pages_hidden_by_prefix(pattern, source_ids)
+        })
+    }
 }
