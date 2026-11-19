@@ -1658,6 +1658,8 @@ export interface BrainEngine {
   listRecordMetadataRows(pageIds: readonly number[], scope: { referrerSources: readonly string[]; excludePrivate: boolean; includeQuarantined?: boolean }): Promise<LinkTemporalSql.RecordMetadataRows>;
   readReferrerGroupRows(target: { sources: readonly string[]; slugs: readonly string[] }, scope: LinkTemporalSql.ReferrerGroupScope): Promise<LinkTemporalSql.ReferrerGroupRow[]>;
   readReferrerPageDetails(ids: readonly number[]): Promise<LinkTemporalSql.ReferrerPageDetailRow[]>;
+  readReferrerTargetCounts(target: { sources: readonly string[]; slugs: readonly string[]; indexes: readonly number[] },
+    scope: LinkTemporalSql.ReferrerTargetCountScope): Promise<LinkTemporalSql.ReferrerTargetCountRow[]>;
   /** reindex-search-vector's steps (SQL in engine-sql/search-vector.ts and search-vector-backfill.ts). */
   countSearchVectorRows(): Promise<{ pages: number; chunks: number }>;
   replaceSearchVectorTriggerFunction(target: 'pages' | 'chunks', lang: string): Promise<void>;

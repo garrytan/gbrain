@@ -114,6 +114,16 @@ export const readReferrerGroupRows: StoreMember<[target: { sources: readonly str
 export const readReferrerPageDetails: StoreMember<[ids: readonly number[]], LinkTemporalSql.ReferrerPageDetailRow[]> = async (brain, pageIds) =>
   pageIds.length === 0 ? [] : storeCall({ member: 'readReferrerPageDetails' }, () => brain.readReferrerPageDetails({ ids: ids(pageIds) }));
 
+export const readReferrerTargetCounts: StoreMember<[target: { sources: readonly string[]; slugs: readonly string[]; indexes: readonly number[] },
+  scope: LinkTemporalSql.ReferrerTargetCountScope], LinkTemporalSql.ReferrerTargetCountRow[]> = async (brain, target, scope) => {
+    const excludePrivate = storePagePolicy('readReferrerTargetCounts', scope?.excludePrivate, { callerReaders: true }) ?? null;
+    return storeCall({ member: 'readReferrerTargetCounts' }, () => brain.readReferrerTargetCounts({
+      targetSources: [...target.sources], targetSlugs: [...target.slugs], targetIndexes: [...target.indexes],
+      referrerSources: [...scope.referrerSources], storedTypes: [...scope.storedTypes], canonicalTypes: [...scope.canonicalTypes],
+      recordTypes: [...scope.recordTypes], excludePrivate, minTrust: scope.eligibility?.floor ?? null,
+      suppressFlagged: scope.eligibility?.suppressFlagged === true, includeQuarantined: scope.includeQuarantined === true }));
+  };
+
 // ---------------------------------------------------------------------------------------------------------------------
 // reindex-search-vector: the store keeps one keyword index, built for the language PGLite's default `english` names.
 // Rebuilding it for `english` changes nothing; any other language refuses rather than claiming a rebuild.

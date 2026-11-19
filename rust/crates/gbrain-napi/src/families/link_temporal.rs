@@ -223,6 +223,21 @@ impl Brain {
         })
     }
 
+    /// `readReferrerTargetCounts`: `{ targetSources, targetSlugs, targetIndexes, referrerSources, storedTypes,
+    /// canonicalTypes, recordTypes, excludePrivate, minTrust, suppressFlagged, includeQuarantined }`: count rows.
+    #[napi]
+    pub fn read_referrer_target_counts<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::link_queries::ReferrerTargetCountInput =
+                arg(input, "readReferrerTargetCounts input")?;
+            s.read_referrer_target_counts(&input)
+        })
+    }
+
     /// `countSearchVectorRows`: `{ pages, chunks }`.
     #[napi]
     pub fn count_search_vector_rows<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {

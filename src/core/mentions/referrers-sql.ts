@@ -1,7 +1,7 @@
 /**
  * The SQL text of the referrer reads (mentions/referrers.ts): the shared `typed` CTE, its filters, and the full
- * statements the engines run for the entity card's referrer groups and their page details (engine-sql/link-temporal.ts
- * readReferrerGroupRows, readReferrerPageDetails). The text is master's, byte for byte: the single-target CTE numbers its parameters by hand
+ * statements the engines run for the entity card's referrer groups and their page details and the batched card counts
+ * (engine-sql/link-temporal.ts readReferrerGroupRows, readReferrerPageDetails, readReferrerTargetCounts). The text is master's, byte for byte: the single-target CTE numbers its parameters by hand
  * ($1..$5 fixed, $6 the per-group cap), so it is spliced as constant text, never rebuilt with sqlFragment (which
  * would renumber a repeated parameter). Every builder here takes only code-provided aliases and the caller's read
  * scope flags; no value reaches the text. scripts/check-engine-sql-dynamic.ts vets the builders engine-sql calls.
@@ -55,6 +55,43 @@ export function referrersCte(scope: ReferrerSqlScope): string {
          AND f.deleted_at IS NULL AND f.source_id = ANY($3::text[])
          AND f.id NOT IN (SELECT id FROM tgt)${pagePriv}${pageTrust}
     )`;
+}
+
+/**
+ * The batched variant of `referrersCte`: the same membership, filters and
+ * date, with a target index `i` on every row so many entities are read in
+ * one statement. Params $1..$3 are the targets (sources, slugs, indexes);
+ * $4 referrer sources; $5/$6 the stored type aliases and their canonical types.
+ */
+export function referrersCteBatched(scope: ReferrerSqlScope): string {
+  const { targetPriv, linkPriv, pagePriv, pageTrust } = referrerFilters(scope);
+  return `WITH tgt AS MATERIALIZED (
+      SELECT k.i, t.id FROM pages t JOIN unnest($1::text[], $2::text[], $3::int[]) AS k(s, g, i) ON t.source_id = k.s AND t.slug = k.g
+       WHERE t.deleted_at IS NULL${targetPriv}
+    ),
+    refs AS MATERIALIZED (
+      SELECT DISTINCT tg.i, l.from_page_id AS id FROM links l JOIN tgt tg ON l.to_page_id = tg.id WHERE true${linkPriv}
+    ),
+    typed AS MATERIALIZED (
+      SELECT r.i, f.id, f.slug, f.source_id, f.type,
+             COALESCE(f.effective_date, f.updated_at) AS d,
+             COALESCE(($6::text[])[array_position($5::text[], f.type)], NULLIF(f.type, ''), 'untyped') AS canonical_type
+        FROM refs r JOIN pages f ON f.id = r.id
+       WHERE f.deleted_at IS NULL AND f.source_id = ANY($4::text[])
+         AND NOT EXISTS (SELECT 1 FROM tgt x WHERE x.i = r.i AND x.id = f.id)${pagePriv}${pageTrust}
+    )`;
+}
+
+/**
+ * The batched card counts (engine-sql/link-temporal.ts readReferrerTargetCounts): per target index its referrer total
+ * (`canonical_type` NULL) and its total for each record type. Params: the six of `referrersCteBatched`, then $7 the
+ * canonical record types.
+ */
+export function referrerTargetCountsSql(scope: ReferrerSqlScope): string {
+  return `${referrersCteBatched(scope)}
+     SELECT i, NULL::text AS canonical_type, count(*)::int AS n FROM typed GROUP BY i
+     UNION ALL
+     SELECT i, canonical_type, count(*)::int AS n FROM typed WHERE canonical_type = ANY($7::text[]) GROUP BY i, canonical_type`;
 }
 
 /** A timestamp as UTC ISO text with microseconds (a cursor compares at full precision). */

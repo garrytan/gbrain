@@ -8,7 +8,7 @@ use gbrain_store::link_queries::{
     ApplyTemporalInput, EdgeValidityInput, EvidenceInput, InboundCountInput, KeysForOriginInput,
     KeysForPagesInput, KeysTouchingInput, ManualRelationship, ManualWriteInput, NoteRowsInput,
     PageStatusInput, RecordMetadataInput, ReferrerGroupInput, ReferrerPageDetailsInput,
-    RelationshipKey, StaleKeysInput, StateWrite,
+    ReferrerTargetCountInput, RelationshipKey, StaleKeysInput, StateWrite,
 };
 use gbrain_store::links::AddLinkOptions;
 use gbrain_store::pages::{PageInput, PutPageOptions};
@@ -649,4 +649,71 @@ fn referrer_page_details_bound_the_body_and_name_the_date_source() {
                "frontmatter": {}})
     );
     assert!(read(vec![]).as_array().unwrap().is_empty());
+}
+
+#[test]
+fn referrer_target_counts_per_index_exclude_only_that_index() {
+    let b = Brain::new("lt-referrer-counts");
+    let typed = |slug: &str, page_type: &str, frontmatter: Value| {
+        let input: PageInput = de(json!({
+            "type": page_type, "title": slug, "compiled_truth": format!("{slug} body"), "frontmatter": frontmatter,
+        }));
+        let options: PutPageOptions = de(json!({"sourceId": "default", "index": false}));
+        b.store.put_page(slug, &input, &options).unwrap();
+    };
+    typed("acme", "company", json!({}));
+    typed("acme-alt", "company", json!({}));
+    typed("alice", "person", json!({}));
+    typed("standup", "call", json!({}));
+    typed("review", "meeting", json!({}));
+    typed("n1", "note", json!({}));
+    typed("secret", "note", json!({"visibility": "private"}));
+    typed("held", "note", json!({"quarantine": true}));
+    for (from, to) in [
+        ("standup", "acme"),
+        ("review", "acme"),
+        ("n1", "acme"),
+        ("n1", "acme-alt"),
+        ("secret", "acme"),
+        ("held", "acme"),
+        ("alice", "acme"),
+        ("acme-alt", "acme"),
+        ("acme", "alice"),
+        ("review", "alice"),
+    ] {
+        b.link(from, to, "mentions");
+    }
+    let read = |exclude: Value, record_types: Value| {
+        let input: ReferrerTargetCountInput = de(json!({
+            "targetSources": ["default", "default", "default", "default"],
+            "targetSlugs": ["acme", "acme-alt", "alice", "nobody"], "targetIndexes": [0, 0, 1, 2],
+            "referrerSources": ["default"], "storedTypes": ["call"], "canonicalTypes": ["meeting"],
+            "recordTypes": record_types, "excludePrivate": exclude,
+        }));
+        let rows =
+            serde_json::to_value(b.store.read_referrer_target_counts(&input).unwrap()).unwrap();
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .map(|r| {
+                format!(
+                    "{}:{}:{}",
+                    r["i"],
+                    r["canonical_type"].as_str().unwrap_or("*"),
+                    r["n"]
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        read(Value::Null, json!(["person", "meeting"])),
+        ["0:*:5", "0:meeting:2", "0:person:1", "1:*:2", "1:meeting:1"]
+    );
+    assert_eq!(
+        read(
+            json!({"honorAliases": false, "entityPrivacy": true}),
+            json!([])
+        ),
+        ["0:*:4", "1:*:2"]
+    );
 }

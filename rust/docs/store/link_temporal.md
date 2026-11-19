@@ -26,6 +26,7 @@ writes the rows the builder returns.
 | `brain.listPageStatusByRef(...)` / `brain.listRecordMetadataRows(...)` | the frontmatter `status` of each ref / the status and supersession links of referring pages | `listPageStatusByRef` / `listRecordMetadataRows` |
 | `brain.readReferrerGroupRows(input)` | the live pages that link to the targets, grouped by canonical type (a pack alias maps to its canonical type, an empty type is `untyped`), newest first (`effective_date`, else `updated_at`; ties by source and slug), at most `perGroup` per group, each with its group's total | `readReferrerGroupRows` |
 | `brain.readReferrerPageDetails({ ids })` | the title, body (its first 4000 characters), date source, trust tier, write origin, activation flag and frontmatter of each page id that exists, soft-deleted pages too | `readReferrerPageDetails` |
+| `brain.readReferrerTargetCounts(input)` | per target index (`targetIndexes`; an index may hold several pages), the referrers of its live pages other than its own pages, read as `readReferrerGroupRows` reads them: the total (no canonical type), then the total of each canonical type in `recordTypes` that has any; an index with no referrer has no row | `readReferrerTargetCounts` |
 | `brain.countSearchVectorRows()` | `{ pages, chunks }`: every page (deleted ones too) and every chunk | `countSearchVectorRows` |
 | `brain.countPendingProjectionPages({ scope, relevance })` | `{ total, could_affect, capped, top_counted?, could_affect_images }`: the live pages in scope whose text projection waits and needs work, at most 1000 | `countPendingProjectionPages` |
 | `brain.projectionRebuildProgress(scope)` | `{ done, total, pages_per_second }` while `protocol_activation` jobs are queued, else null | `projectionRebuildProgress` |
@@ -39,10 +40,10 @@ writes the rows the builder returns.
 - `valid_ranges` is stored and returned in the text form Postgres prints for a `datemultirange` (`{[2019-02-01,2025-03-01)}`).
 - The privacy policy of the world scope (`originPolicy`, `excludePrivate`) uses the store's page privacy rules
   (`facts::page_hidden`), the same rules `privatePagesFilterFragment` composes in SQL. `listRelationshipNoteRows`, `listPageStatusByRef`,
-  `listRecordMetadataRows` and `readReferrerGroupRows` carry a caller's reader identity and private-readable grant in the policy (the
+  `listRecordMetadataRows`, `readReferrerGroupRows` and `readReferrerTargetCounts` carry a caller's reader identity and private-readable grant in the policy (the
   `callerReaders` opt-in of `storePagePolicy`); any other caller whose policy differs (folder grants, lineage, an owner
   read) refuses.
-- `readReferrerGroupRows` applies the read-eligibility trust floor (`minTrust`) and hides quarantined referrers unless
+- `readReferrerGroupRows` and `readReferrerTargetCounts` apply the read-eligibility trust floor (`minTrust`) and hide quarantined referrers unless
   `includeQuarantined`; under `excludePrivate`, a referrer whose only links come from a hidden origin page is not counted.
 - A repeated refresh over unchanged evidence writes nothing and returns 0.
 - `applyLinkTemporalRows` replaces the origin's derived transitions: the old rows go before the new rows are written. On
@@ -57,7 +58,7 @@ writes the rows the builder returns.
 | `link-temporal-apply.ts` | linkRelationshipKeysForOrigin, applyLinkTemporalRows, writeManualLinkTransitions, removeManualLinkTransitions | equal |
 | `link-relationship-notes.ts` | listRelationshipNoteRows | equal |
 | `doctor/checks/edge-validity.ts` | edgeValidityCounts | equal |
-| `mentions/referrers.ts` | listPageStatusByRef, listRecordMetadataRows, readReferrerGroupRows, readReferrerPageDetails | equal |
+| `mentions/referrers.ts` | listPageStatusByRef, listRecordMetadataRows, readReferrerGroupRows, readReferrerPageDetails, readReferrerTargetCounts | equal |
 | `search/retrieval-coverage.ts` | countEmbeddingHeldPages | equal (always 0: the store keeps no embedding budget rows) |
 | `search/retrieval-coverage.ts` | countPendingProjectionPages, projectionRebuildProgress | equal (a capped count refuses: see Known differences) |
 | `search/projection-readiness.ts` | readProjectionReadinessGeneration, readProjectionReadiness | equal statuses, cached until the next write |

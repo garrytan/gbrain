@@ -29,7 +29,7 @@ import { stripFactsFence } from '../facts-fence.ts';
 import { redactFindings } from '../secret-scan.ts';
 import { typeAliasPairs, type PackTypes } from './policy.ts';
 import { isQuarantined } from '../quarantine.ts';
-import { dateText, referrerFilters, referrersCte } from './referrers-sql.ts';
+import { dateText, referrersCte, referrersCteBatched } from './referrers-sql.ts';
 import { trustFields, type TrustFields } from '../eligibility/labels.ts';
 import type { ReadEligibility } from '../eligibility/policy.ts';
 
@@ -266,31 +266,6 @@ export function canonicalRecordTypes(types: string[], pack: PackTypes | null): s
   return [...new Set(types.map(t => pairs.canonical[pairs.stored.indexOf(t)] ?? t))];
 }
 
-/**
- * The batched variant of `referrersCte`: the same membership, filters and
- * date, with a target index `i` on every row so many entities are read in
- * one statement. Params $1..$3 are the targets (sources, slugs, indexes);
- * $4 referrer sources; $5/$6 the stored type aliases and their canonical types.
- */
-function referrersCteBatched(scope: Pick<ReferrerScope, 'excludePrivate' | 'eligibility' | 'includeQuarantined'>): string {
-  const { targetPriv, linkPriv, pagePriv, pageTrust } = referrerFilters(scope);
-  return `WITH tgt AS MATERIALIZED (
-      SELECT k.i, t.id FROM pages t JOIN unnest($1::text[], $2::text[], $3::int[]) AS k(s, g, i) ON t.source_id = k.s AND t.slug = k.g
-       WHERE t.deleted_at IS NULL${targetPriv}
-    ),
-    refs AS MATERIALIZED (
-      SELECT DISTINCT tg.i, l.from_page_id AS id FROM links l JOIN tgt tg ON l.to_page_id = tg.id WHERE true${linkPriv}
-    ),
-    typed AS MATERIALIZED (
-      SELECT r.i, f.id, f.slug, f.source_id, f.type,
-             COALESCE(f.effective_date, f.updated_at) AS d,
-             COALESCE(($6::text[])[array_position($5::text[], f.type)], NULLIF(f.type, ''), 'untyped') AS canonical_type
-        FROM refs r JOIN pages f ON f.id = r.id
-       WHERE f.deleted_at IS NULL AND f.source_id = ANY($4::text[])
-         AND NOT EXISTS (SELECT 1 FROM tgt x WHERE x.i = r.i AND x.id = f.id)${pagePriv}${pageTrust}
-    )`;
-}
-
 /** A frontmatter `status` as `page_status`: a string, trimmed, at most PAGE_STATUS_MAX_CHARS; anything else is not shown. */
 export function pageStatusValue(raw: unknown): string | undefined {
   const value = typeof raw === 'string' ? raw.trim() : '';
@@ -385,12 +360,11 @@ export async function readTargetReferences(engine: BrainEngine,
   const recordTypes = canonicalRecordTypes(opts.recordTypes, scope.pack);
   const base = [sources, slugs, idx, scope.referrerSources, pairs.stored, pairs.canonical];
   const expired = () => opts.isExpired?.() === true;
-  const counts = await engine.executeRaw<{ i: number; canonical_type: string | null; n: number }>(
-    `${referrersCteBatched(scope)}
-     SELECT i, NULL::text AS canonical_type, count(*)::int AS n FROM typed GROUP BY i
-     UNION ALL
-     SELECT i, canonical_type, count(*)::int AS n FROM typed WHERE canonical_type = ANY($7::text[]) GROUP BY i, canonical_type`,
-    [...base, recordTypes]);
+  // Per-target totals and record-type totals (engine-sql/link-temporal.ts readReferrerTargetCounts).
+  const counts = await engine.readReferrerTargetCounts({ sources, slugs, indexes: idx }, {
+    referrerSources: scope.referrerSources, storedTypes: pairs.stored, canonicalTypes: pairs.canonical,
+    excludePrivate: scope.excludePrivate, eligibility: scope.eligibility, includeQuarantined: scope.includeQuarantined, recordTypes,
+  });
   if (expired()) throw new ReferencesDeadlineError();
   const perTarget = opts.perTarget ?? RECORD_ROWS_PER_TARGET;
   const candidates = recordTypes.length ? await engine.executeRaw<RecordCandidate>(
