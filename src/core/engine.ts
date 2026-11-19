@@ -1,6 +1,7 @@
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type * as DecideStoreSql from './engine-sql/decide-store.ts';
 import type * as TrustWithdrawalsSql from './engine-sql/trust-withdrawals.ts';
+import type * as BeliefLedgerSql from './engine-sql/belief-ledger.ts';
 import type * as OpenLoopsSql from './engine-sql/open-loops.ts';
 import type * as CalibrationProfilesSql from './engine-sql/calibration-profiles.ts';
 import type { WriteContextInput, WriteContextResult } from './engine-sql/transaction-settings.ts';
@@ -3548,6 +3549,32 @@ export interface BrainEngine {
    * replaced, and switches the transaction to generic plans when coverage is active.
    */
   readLedgerSource(sourceId: string, opts?: { batch?: boolean }): Promise<LedgerSource | null>;
+
+  // Belief ledger writes (engine-sql/belief-ledger.ts). Each runs the statement its caller in src/core/belief/ ran through executeRaw.
+  /** The fingerprints among `factFps` and `takeFps` that a fact or take purge of the source tombstoned (subject '*' included). No set order. */
+  readBeliefTombstones(sourceId: string, factFps: readonly string[], takeFps: readonly string[]): Promise<string[]>;
+  /** The source's suppressions on any of `subjectKeys` or on a field whose text hashes to one of `fieldHashes`. No set order. */
+  readBeliefRedactions(sourceId: string, subjectKeys: readonly string[], fieldHashes: readonly string[]): Promise<BeliefLedgerSql.BeliefSuppression[]>;
+  /** Copies one suppression onto a successor subject; returns the new suppression's id. */
+  insertBeliefRedaction(row: BeliefLedgerSql.BeliefRedactionInsert): Promise<number>;
+  /** An owner release: binds the suppressions `ids` to `publicationId` and the hash of the value that replaced the redacted text. */
+  releaseBeliefRedactions(ids: readonly number[], publicationId: string, releasedHash: string): Promise<void>;
+  /** The source's purge epoch, or null for an unknown source. */
+  readSourcePurgeEpoch(sourceId: string): Promise<number | null>;
+  /** Inserts the event rows in `ord` order, skipping an event key already recorded; returns how many were inserted. */
+  insertBeliefEvents(rows: readonly BeliefLedgerSql.BeliefEventInsertRow[]): Promise<number>;
+  /** The post-commit mark of each publication with a committed event: one observation time, never below its newest event, never replaced. */
+  markBeliefCommits(publicationIds: readonly string[]): Promise<void>;
+  /** The open page lifetime at each (incarnation, slug) pair that has one. No set order. */
+  readOpenBeliefLifetimes(pairs: readonly { incarnation: string; slug: string }[]): Promise<BeliefLedgerSql.BeliefLifetimeRow[]>;
+  /** Ends the page lifetime if it is still open. */
+  endBeliefLifetime(lifetime: string): Promise<void>;
+  /** Opens the page lifetime `mint.lifetime` at its pair; when one is already open there, returns that one instead. */
+  mintBeliefLifetime(mint: BeliefLedgerSql.BeliefLifetimeMint): Promise<string>;
+  /** A rename keeps the page lifetime: it moves to `slug`, with `pageId` as its new hint. */
+  renameBeliefLifetime(lifetime: string, slug: string, pageId: number): Promise<void>;
+  /** The open lifetime of each of `pageIds` whose page still has the lifetime's slug. No set order. */
+  readMovedBeliefLifetimes(pageIds: readonly number[]): Promise<BeliefLedgerSql.BeliefMovedLifetimeRow[]>;
 
   /**
    * Whether a page known by its slug sits under an applied folder rule, a pending or invalid folder prefix, or the

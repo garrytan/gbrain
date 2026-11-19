@@ -177,6 +177,9 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'readFactForOwnerAction', 'listStandingPreferences', 'listLexicalContestCandidates', 'listRestatedPrivateCopies', 'countDerivedFactTaint'],
 
   // trust_tier_reads: stamped-tier reads of core memory, the trust scan, belief history, page history and valid time
+  // belief ledger writes: lifetimes, event appends, commit marks, redactions (engine-sql/belief-ledger.ts)
+  belief_ledger: ['readBeliefTombstones', 'readBeliefRedactions', 'insertBeliefRedaction', 'releaseBeliefRedactions', 'readSourcePurgeEpoch', 'insertBeliefEvents',
+    'markBeliefCommits', 'readOpenBeliefLifetimes', 'endBeliefLifetime', 'mintBeliefLifetime', 'renameBeliefLifetime', 'readMovedBeliefLifetimes'],
   trust_tier_reads: ['listCorePageRows', 'listTrustScanRows', 'countUnscannedTrustRows', 'readBeliefHistoryRows', 'listVisibleBeliefLifetimes',
     'listVersionTrustTiers', 'listVersionReasonWriters', 'listValidTimeIdentities', 'pickValidTimeEdition',
     'listAmendmentsNotApplied', 'readPageVersionEdition', 'readCursorEdition', 'pageAwaitsRederive'],
