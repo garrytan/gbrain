@@ -2,9 +2,11 @@
 //! (src/core/search/private-visibility.ts), which PGLite adds to a read that passes
 //! `excludePrivate`. rust/docs/store/facts.md names the file and line of every rule below.
 //!
-//! The policy is the one PGLite renders with no caller record: the empty identity, no folder
-//! rule satisfied, no lineage read. The TypeScript member refuses any other caller before it
-//! reads. Two process settings change that rendering, and the member passes both:
+//! The policy is the one PGLite renders with no caller record (the empty identity, no folder
+//! rule satisfied, no lineage read), or for a record of only a reader identity and a
+//! private-readable grant: the entity gate then judges by both, and the provenance page by the
+//! identity on the caller's own member page only (`member_page`). The TypeScript member refuses
+//! any other caller before it reads. Two process settings change that rendering, and the member passes both:
 //! `honor_aliases` (`visibility.honor_aliases`) and `entity_privacy` (false when an operator
 //! relaxed remote privacy, which drops the privacy part of the entity-page gate only).
 //!
@@ -38,10 +40,17 @@ pub struct PrivacyPolicy {
     /// `privacyForCaller`: the entity and holding pages are judged by the privacy part too.
     pub entity_privacy: bool,
     /// The caller's reader identity (`member:<id>` and `group:<g>` principals) that the page
-    /// policy judges a page's readers by (`readersAllowedSql`). Empty for the no-caller rendering,
-    /// and for the fact policy, which the TypeScript member serves only with no caller record.
+    /// policy judges a page's readers by (`readersAllowedSql`). Empty for the no-caller rendering.
+    /// The fact policy judges the entity and holding pages by it, and the provenance page only
+    /// when that page is `member_page`.
     #[serde(default)]
     pub identity: Vec<String>,
+    /// The fact policy's member-page case (`privateProvenanceFilterUnderPolicy`): the caller's own
+    /// member page (`memory/members/<member>`), the one provenance page judged by `identity`;
+    /// every other provenance page keeps the empty identity. None for a page read, for the
+    /// no-caller rendering and for `privateFactFilterForCaller`, which has no such case.
+    #[serde(default)]
+    pub member_page: Option<String>,
     /// The caller's private-readable grant (`orPrivateReadableSource`): a page of one of these
     /// sources that is not a pinned question passes the privacy part.
     #[serde(default)]
@@ -74,7 +83,7 @@ pub(crate) fn hidden_by_private_provenance(
 ) -> Result<bool> {
     if let Some(slug) = &row.source_markdown_slug
         && let Some(page) = read_page(read, &row.source_id, slug)?
-        && !(readers_allowed(read, &page, &[])?
+        && !(readers_allowed(read, &page, provenance_identity(policy, slug))?
             && privacy_allows(read, &page, policy.honor_aliases)?)
     {
         return Ok(true);
@@ -93,6 +102,16 @@ pub(crate) fn hidden_by_private_provenance(
     }
     // `sharedHeldRuledSql` hides a held fact only under a folder rule or pending coverage.
     Ok(false)
+}
+
+/// The identity the provenance page at `slug` is judged by: the caller's on its own member page,
+/// else the empty identity (`readPolicyFragment('pp', [], ...)`).
+fn provenance_identity<'a>(policy: &'a PrivacyPolicy, slug: &str) -> &'a [String] {
+    if policy.member_page.as_deref() == Some(slug) {
+        &policy.identity
+    } else {
+        &[]
+    }
 }
 
 /// Whether the page policy `privatePagesFilterForCaller(p)` hides `page`: the member-access part

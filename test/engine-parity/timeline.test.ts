@@ -23,6 +23,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import type { ChronicleTimelineRow, OntologyConflict } from '../../src/core/types.ts';
 import { createSource, parityArms, pick, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { CALLER_ENTITIES, CALLER_PROVENANCE, OPEN_PAGE, putCallerPages, readAsCallers } from './fact-callers.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -672,6 +673,54 @@ describe('engine parity: ontology', () => {
       expect(defaultOnly.find((d) => d.dimension === 'role')?.entities).toBe(2);
       expect(missing).toEqual([]);
       return { all, defaultOnly, federated, missing };
+    },
+  );
+
+  parityTest(
+    'getOntology and findOntologyConflicts under excludePrivate apply a caller\'s reader identity and private-readable grant',
+    { methods: ['putPage', 'mergeOntologyFact', 'getOntology', 'findOntologyConflicts'] },
+    async (engine) => {
+      await putCallerPages(engine);
+      const merge = (entitySlug: string, dimension: string, value: string, source: string, validFrom: string) =>
+        engine.mergeOntologyFact({ entitySlug, dimension, value, source, validFrom, visibility: 'world' });
+      // A newer value merged first and an older one merged after both stay current: a conflict that shows only while
+      // both values are visible. Each provenance page holds the older role and an employer of an entity with no page;
+      // each entity page's entity holds two roles from two open pages.
+      const provEntity = (i: number) => `people/prov-${i}-example`;
+      for (const [i, [slug]] of CALLER_PROVENANCE.entries()) {
+        await merge(provEntity(i), 'role', 'open', OPEN_PAGE, '2026-05-01');
+        await merge(provEntity(i), 'role', 'page', slug, '2026-01-01');
+        await merge(provEntity(i), 'employer', 'page', slug, '2025-01-01');
+      }
+      const SECOND_OPEN = 'notes/second-open';
+      await engine.putPage(SECOND_OPEN, { type: 'note', title: SECOND_OPEN, compiled_truth: 'Open.', timeline: '', frontmatter: {} });
+      for (const [slug] of CALLER_ENTITIES) {
+        await merge(slug, 'role', 'newer', OPEN_PAGE, '2026-05-01');
+        await merge(slug, 'role', 'older', SECOND_OPEN, '2026-01-01');
+      }
+      const kept = await readAsCallers(async () => {
+        const ontology: string[] = [];
+        for (const [i, [slug]] of CALLER_PROVENANCE.entries()) {
+          for (const r of await engine.getOntology(provEntity(i), { excludePrivate: true })) ontology.push(`${slug}:${r.dimension}=${r.value}`);
+        }
+        for (const [slug] of CALLER_ENTITIES) {
+          for (const r of await engine.getOntology(slug, { excludePrivate: true })) ontology.push(`${slug}:${r.dimension}=${r.value}`);
+        }
+        const conflicts = conflictView(await engine.findOntologyConflicts({ excludePrivate: true }))
+          .map((c) => `${c.entity_slug}:${c.dimension}`);
+        return { ontology: ontology.sort(), conflicts: conflicts.sort() };
+      });
+      // This policy reads no identity on the provenance page: only the open page's employer shows, for every caller.
+      const provenance = [...CALLER_PROVENANCE.map(([slug]) => `${slug}:role=open`), `${OPEN_PAGE}:employer=page`];
+      const view = (entities: string[]) => ({
+        ontology: [...provenance, ...entities.map((e) => `${e}:role=newer`)].sort(),
+        conflicts: entities.map((e) => `${e}:role`).sort(),
+      });
+      expect(kept.none).toEqual(view(['people/open-example']));
+      expect(kept.stranger).toEqual(kept.none);
+      expect(kept.member).toEqual(view(['people/open-example', 'people/readers-example', 'people/team-example']));
+      expect(kept.granted).toEqual(view(['people/open-example', 'people/readers-example', 'people/private-example']));
+      return kept;
     },
   );
 

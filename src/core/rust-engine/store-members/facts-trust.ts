@@ -35,7 +35,8 @@ function poolArgs(member: string, scope: FactPoolScope, filters: FactPoolFilters
   return {
     sourceIds: [...new Set(scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? 'default'])],
     worldOnly: scope.worldOnly,
-    excludePrivate: storePrivacyPolicy(member, scope.excludePrivate, () => privateProvenanceFilterUnderPolicy('facts')),
+    // A caller with a reader identity and a private-readable grant is served (`callerReaders`).
+    excludePrivate: storePrivacyPolicy(member, scope.excludePrivate, () => privateProvenanceFilterUnderPolicy('facts'), { callerReaders: true }),
     minTrust: scope.minTrust || null,
     suppressFlagged: scope.suppressFlagged === true,
     ...(filters?.entities ? { entities: filters.entities.map(e => ({ sourceId: e.sourceId, slug: e.slug })) } : {}),
