@@ -106,7 +106,7 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
   report.brain_id = brain.brain_id;
   const publication = await legacyPublication(ctx);
   const limits = await readInventoryLimits(ctx.engine);
-  const roots = await ctx.engine.executeRaw<{ id: string; incarnation: string; local_path: string | null }>('SELECT id,incarnation,local_path FROM sources WHERE NOT archived ORDER BY id');
+  const roots = await ctx.engine.executeRaw<{ id: string; incarnation: string; local_path: string | null }>('SELECT id,incarnation,local_path FROM sources WHERE NOT archived ORDER BY id COLLATE "C"');
   const fallback = await ctx.engine.getConfig('sync.repo_path');
   for (const source of roots) {
     const sourcePolicy = await sharedSkillSourcePolicyOrPreserve(ctx.engine, source.id);

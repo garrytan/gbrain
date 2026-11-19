@@ -155,7 +155,7 @@ export async function classifyManagedSyncOrphans(engine: SqlEngine, sourceIds: s
       AND r.principal_kind=c.completed_keys->0->'authority'->'writer'->'principal'->>'kind'
     WHERE c.op='managed-sync' AND COALESCE(c.completed_keys->0->>'done','false')<>'true'
       AND ($1::text[] IS NULL OR s.id=ANY($1::text[]))
-    ORDER BY s.id,c.updated_at,c.fingerprint`, [sourceIds, CHECKPOINT_MOVED_MESSAGE]);
+    ORDER BY s.id COLLATE "C",c.updated_at,c.fingerprint`, [sourceIds, CHECKPOINT_MOVED_MESSAGE]);
   const orphans: ManagedSyncOrphan[] = [];
   const retained: ManagedSyncOrphanClassification['retained'] = [];
   for (const row of cursors) {
@@ -174,7 +174,7 @@ export async function classifyManagedSyncOrphans(engine: SqlEngine, sourceIds: s
     JOIN sources s ON s.id=f.completed_keys->0->>'source_id' AND s.incarnation::text=f.completed_keys->0->>'source_incarnation' AND NOT COALESCE(s.archived,false)
     WHERE f.op='managed-sync-failure' AND ($1::text[] IS NULL OR s.id=ANY($1::text[]))
       AND NOT EXISTS(SELECT 1 FROM op_checkpoints c WHERE c.op IN ('managed-sync','managed-sync-pass') AND c.fingerprint=f.fingerprint)
-    ORDER BY s.id,f.fingerprint`, [sourceIds]);
+    ORDER BY s.id COLLATE "C",f.fingerprint`, [sourceIds]);
   for (const row of failures) {
     orphans.push({ kind: 'failure_row', cursor_key: row.cursor_key, source_id: row.source_id, source_incarnation: row.source_incarnation, run_id: row.run_id,
       principal: null, pending_request_id: row.request_id, pending_state: null, reason: 'no_cursor', updated_at: row.updated_at });
@@ -186,7 +186,7 @@ export async function classifyManagedSyncOrphans(engine: SqlEngine, sourceIds: s
     FROM op_checkpoints p
     JOIN sources s ON p.fingerprint=s.id||':'||s.incarnation::text AND NOT COALESCE(s.archived,false)
     WHERE p.op='managed-sync-pass' AND ($1::text[] IS NULL OR s.id=ANY($1::text[])) AND ${passSlugModeRefusedSql(passStampSql)}
-    ORDER BY s.id`, [sourceIds]);
+    ORDER BY s.id COLLATE "C"`, [sourceIds]);
   for (const row of passes) {
     orphans.push({ kind: 'unfinished_cursor', cursor_key: row.cursor_key, source_id: row.source_id, source_incarnation: row.source_incarnation, run_id: row.run_id,
       principal: null, pending_request_id: row.request_id, pending_state: row.state, reason: 'slug_mode_refused', updated_at: row.updated_at });
@@ -204,7 +204,7 @@ export async function classifyManagedSyncOrphans(engine: SqlEngine, sourceIds: s
     LEFT JOIN persistence_requests r ON r.source_id=s.id AND r.request_id=(c.completed_keys->0->'pending'->>'requestId')::uuid
     WHERE c.op='managed-sync' AND COALESCE(c.completed_keys->0->>'done','false')<>'true'
       AND ($1::text[] IS NULL OR s.id=ANY($1::text[]))
-    ORDER BY s.id,c.updated_at,c.fingerprint`, [sourceIds]);
+    ORDER BY s.id COLLATE "C",c.updated_at,c.fingerprint`, [sourceIds]);
   for (const row of retiredCursors) {
     if (row.pending_request_id && row.pending_state && !TERMINAL.includes(row.pending_state)) { retained.push({ cursor_key: row.cursor_key, source_id: row.source_id, why: 'pending_request_live' }); continue; }
     orphans.push({ kind: 'unfinished_cursor', cursor_key: row.cursor_key, source_id: row.source_id, source_incarnation: row.source_incarnation, run_id: row.run_id,
@@ -219,7 +219,7 @@ export async function classifyManagedSyncOrphans(engine: SqlEngine, sourceIds: s
     JOIN sources s ON s.id=f.completed_keys->0->>'source_id' AND s.incarnation::text<>f.completed_keys->0->>'source_incarnation' AND NOT COALESCE(s.archived,false)
     WHERE f.op='managed-sync-failure' AND ($1::text[] IS NULL OR s.id=ANY($1::text[]))
       AND NOT EXISTS(SELECT 1 FROM op_checkpoints c WHERE c.op='managed-sync' AND c.fingerprint=f.fingerprint AND COALESCE(c.completed_keys->0->>'done','false')<>'true')
-    ORDER BY s.id,f.fingerprint`, [sourceIds]);
+    ORDER BY s.id COLLATE "C",f.fingerprint`, [sourceIds]);
   for (const row of retiredFailures) {
     orphans.push({ kind: 'failure_row', cursor_key: row.cursor_key, source_id: row.source_id, source_incarnation: row.source_incarnation, run_id: row.run_id,
       principal: null, pending_request_id: row.request_id, pending_state: null, reason: 'incarnation_retired', updated_at: row.updated_at });

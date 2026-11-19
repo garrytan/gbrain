@@ -74,7 +74,7 @@ export async function listHostSources(engine: BrainEngine, hostId: string, env: 
        LEFT JOIN persistence_worktrees w ON w.id = b.worktree_id
        LEFT JOIN persistence_host_bindings h ON h.worktree_id = w.id AND h.host_id = w.owner_host_id
        LEFT JOIN sync_notifier_sources n ON n.source_id = s.id
-      WHERE NOT s.archived ORDER BY s.id`);
+      WHERE NOT s.archived ORDER BY s.id COLLATE "C"`);
   const bind = classicBinding(env);
   const sources: NotifierSource[] = [];
   const skipped: SkippedSource[] = [];

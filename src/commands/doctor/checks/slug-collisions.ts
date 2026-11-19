@@ -20,7 +20,7 @@ import { isImageFilePath } from '../../../core/import-file.ts';
 export async function slugCollisionsCheck(engine: BrainEngine): Promise<Check> {
   try {
     const sources = await engine.executeRaw<{ id: string; local_path: string | null; config: { strategy?: SyncStrategy } | null }>(
-      `SELECT id, local_path, config FROM sources WHERE archived IS NOT TRUE AND local_path IS NOT NULL ORDER BY id`);
+      `SELECT id, local_path, config FROM sources WHERE archived IS NOT TRUE AND local_path IS NOT NULL ORDER BY id COLLATE "C"`);
     const groups: Array<{ source: string; slug: string; paths: string[]; indexed?: string }> = [];
     let walked = 0;
     const metafilePages = await readMetafilePagesMode(engine);

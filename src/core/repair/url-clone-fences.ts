@@ -123,7 +123,7 @@ async function survey(engine: BrainEngine, sourceIds: string[]): Promise<{ files
   const files: ClonedFile[] = [];
   const listing: RepairListing[] = [];
   const sources = await engine.executeRaw<{ id: string; incarnation: string; local_path: string | null; config: unknown }>(
-    'SELECT id, incarnation::text AS incarnation, local_path, config FROM sources WHERE id = ANY($1::text[]) ORDER BY id', [sourceIds]);
+    'SELECT id, incarnation::text AS incarnation, local_path, config FROM sources WHERE id = ANY($1::text[]) ORDER BY id COLLATE "C"', [sourceIds]);
   for (const source of sources) {
     const root = canonicalRoot(source.local_path);
     if (!root || !isOwnedClone(source)) continue;

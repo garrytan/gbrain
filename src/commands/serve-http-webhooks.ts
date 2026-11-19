@@ -192,7 +192,7 @@ async function handleGitHubItemEvent(
          WHERE archived = false
            AND ((config->>'github_repo' = $1)
              OR (config->>'kind' = 'github' AND config->>'webhook_secret' IS NOT NULL))
-         ORDER BY id`,
+         ORDER BY id COLLATE "C"`,
       [ref.repo],
     );
     const { verified, legacyMatched } = selectGitHubItemSources(rows, ref.repo, (cfg) =>

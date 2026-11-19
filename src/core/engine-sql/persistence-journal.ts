@@ -141,7 +141,7 @@ export function readHeldCoverageRows(exec: LegacyUnscopedRead, sourceIds: string
       FROM op_checkpoints h JOIN sources s ON h.fingerprint=s.id||':'||s.incarnation::text
       WHERE h.op=$1 AND s.archived IS NOT TRUE AND ($2::text[] IS NULL OR s.id=ANY($2::text[]))
         AND COALESCE((h.completed_keys->0->>'count')::int,0)>0
-      ORDER BY s.id`, [GIT_HOLD_SUMMARY_OP, sourceIds]);
+      ORDER BY s.id COLLATE "C"`, [GIT_HOLD_SUMMARY_OP, sourceIds]);
 }
 
 /** The request a principal admitted under `requestId`, or null. */

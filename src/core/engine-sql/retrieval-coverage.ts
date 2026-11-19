@@ -117,7 +117,7 @@ export async function readProjectionReadinessGeneration(raw: EngineRawRead): Pro
   try {
     const [row] = await raw<{ generation: string | null; quiescent: boolean }>(
       `SELECT (SELECT last_value FROM page_generation_clock_seq)::text || '/' || pg_relation_filenode('pages')::text || '/'
-          || md5(COALESCE((SELECT string_agg(id || ':' || archived::text, ',' ORDER BY id) FROM sources), '')) AS generation,
+          || md5(COALESCE((SELECT string_agg(id || ':' || archived::text, ',' ORDER BY id COLLATE "C") FROM sources), '')) AS generation,
         pg_snapshot_xmin(pg_current_snapshot()) = pg_snapshot_xmax(pg_current_snapshot()) AS quiescent`);
     return row?.quiescent === true && typeof row.generation === 'string' ? row.generation : null;
   } catch {

@@ -39,7 +39,7 @@ function previewCommand(scope: RepairScope, selection: Selection): string {
 }
 
 const sourcesOf = (engine: BrainEngine, scope: RepairScope) => engine.executeRaw<{ id: string; incarnation: string }>(
-  'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+  'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id COLLATE "C"', [scope.source_ids]);
 
 const hashOf = async (engine: BrainEngine, scope: RepairScope, selection: Selection, pages: PlannedPage[]) =>
   previewHash({ kind: 'provenance-v1', brain_id: scope.brain_id, sources: await sourcesOf(engine, scope), selection,

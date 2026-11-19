@@ -50,7 +50,7 @@ export async function runUnindexedFilesPhase(engine: BrainEngine | null, opts: U
   if (timeBudgetMs <= 0) return { ...base, status: 'skipped', summary: 'no maintenance-job time left to look for unindexed files; the next run continues', details: { reason: 'deadline' } };
   const deadlineAt = start + timeBudgetMs;
   const rows = await engine.executeRaw<{ id: string; config: Record<string, unknown> | null; incarnation: string }>(
-    "SELECT id, config, incarnation::text AS incarnation FROM sources WHERE archived IS NOT TRUE AND local_path IS NOT NULL AND (config->>'kind') IS NULL ORDER BY id");
+    "SELECT id, config, incarnation::text AS incarnation FROM sources WHERE archived IS NOT TRUE AND local_path IS NOT NULL AND (config->>'kind') IS NULL ORDER BY id COLLATE \"C\"");
   const stored = await readUnindexedFiles(engine, rows.map(row => row.id));
   const scannedAt = (row: { id: string; incarnation: string }) => { const record = stored.get(row.id); return record?.incarnation === row.incarnation ? record.computed_at : ''; };
   rows.sort((a, b) => scannedAt(a).localeCompare(scannedAt(b)));

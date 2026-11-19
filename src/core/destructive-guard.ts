@@ -483,7 +483,7 @@ export interface PurgeExpiredResult {
  * return is what every caller + test in this tree consumes.)
  */
 async function unverifiedArchives(engine: BrainEngine): Promise<PurgeExpiredResult['blocked']> {
-  const rows = await engine.executeRaw<{ id: string }>(`SELECT id FROM sources WHERE ${UNVERIFIED_ARCHIVE_SQL} ORDER BY id`);
+  const rows = await engine.executeRaw<{ id: string }>(`SELECT id FROM sources WHERE ${UNVERIFIED_ARCHIVE_SQL} ORDER BY id COLLATE "C"`);
   return rows.map(({ id }) => ({ id, reason: unverifiedArchiveReason(id) }));
 }
 
@@ -492,7 +492,7 @@ export async function purgeExpiredSources(
 ): Promise<PurgeExpiredResult> {
   if(await managedPersistenceEnabled(engine)){
     const {runManagedSourceLifecycle}=await import('./persistence/source-lifecycle.ts');
-    const candidates=await engine.executeRaw<{id:string;incarnation:string}>(`SELECT id,incarnation FROM sources WHERE ${EXPIRED_ARCHIVE_SQL} ORDER BY id`);
+    const candidates=await engine.executeRaw<{id:string;incarnation:string}>(`SELECT id,incarnation FROM sources WHERE ${EXPIRED_ARCHIVE_SQL} ORDER BY id COLLATE "C"`);
     const result:PurgeExpiredResult={purged:[],blocked:await unverifiedArchives(engine)};
     for(const source of candidates){
       try{const receipt=await runManagedSourceLifecycle(engine,{operation:'purge',sourceId:source.id,expectedIncarnation:source.incarnation,confirmDestructive:true,expiredOnly:true});if(!receipt.noop)result.purged.push(source.id);}
@@ -505,7 +505,7 @@ export async function purgeExpiredSources(
   }
   await assertUnmanagedCanonicalWriter(engine, 'sources purge');
   const candidates = await engine.executeRaw<{ id: string; config: unknown; local_path: string | null }>(
-    `SELECT id, config, local_path FROM sources WHERE ${EXPIRED_ARCHIVE_SQL} ORDER BY id`,
+    `SELECT id, config, local_path FROM sources WHERE ${EXPIRED_ARCHIVE_SQL} ORDER BY id COLLATE "C"`,
   );
   const purged: string[] = [];
   const blocked: PurgeExpiredResult['blocked'] = await unverifiedArchives(engine);

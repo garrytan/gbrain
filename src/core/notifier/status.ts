@@ -79,7 +79,7 @@ async function readRows(engine: Exec, sourceIds: string[] | null): Promise<Row[]
                AND (m.intent <> 'freshness' OR m.wanted_head IS NULL OR m.wanted_head IS DISTINCT FROM s.last_commit)) AS due_markers
        FROM sources s LEFT JOIN sync_notifier_sources n ON n.source_id = s.id
       WHERE NOT s.archived AND ($1::text[] IS NULL OR s.id = ANY($1::text[]))
-      ORDER BY s.id LIMIT 200`, [sourceIds]);
+      ORDER BY s.id COLLATE "C" LIMIT 200`, [sourceIds]);
 }
 
 function ownerLive(engine: Exec, row: Pick<Row, 'owner_host_id' | 'owner_pid' | 'lease_live'>): boolean {

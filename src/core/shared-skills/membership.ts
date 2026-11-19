@@ -98,7 +98,7 @@ async function bindPolicy(ctx: OperationContext, sourceIds: string[] | null): Pr
   const scope = sourceScopeOpts(ctx);
   const allowed = scope.sourceIds ?? (scope.sourceId ? [scope.sourceId] : null);
   const rows = await ctx.engine.executeRaw<{ id: string; incarnation: string }>(`SELECT id,incarnation FROM sources
-    WHERE NOT archived AND ($1::text[] IS NULL OR id=ANY($1::text[])) AND ($2::text[] IS NULL OR id=ANY($2::text[])) ORDER BY id LIMIT 65`, [allowed, sourceIds]);
+    WHERE NOT archived AND ($1::text[] IS NULL OR id=ANY($1::text[])) AND ($2::text[] IS NULL OR id=ANY($2::text[])) ORDER BY id COLLATE "C" LIMIT 65`, [allowed, sourceIds]);
   if (rows.length > 64) fail('invalid_params', 'Narrow the enrollment to at most 64 sources.',
     'This connection can see more than 64 sources: name at most 64 of them in follow_policy.source_ids.', { fix: catalogFix });
   const published = await publicationEnabled(ctx);

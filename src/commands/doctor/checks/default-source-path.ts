@@ -30,7 +30,7 @@ type PathRow = { id: string; local_path: string };
 /** Every other live source whose local_path is relative on this host (not absolute here or on another OS). */
 async function relativeSources(engine: BrainEngine): Promise<PathRow[]> {
   return (await engine.executeRaw<PathRow>(
-    `SELECT id, local_path FROM sources WHERE id <> 'default' AND local_path IS NOT NULL AND local_path <> '' AND archived IS NOT TRUE ORDER BY id`,
+    `SELECT id, local_path FROM sources WHERE id <> 'default' AND local_path IS NOT NULL AND local_path <> '' AND archived IS NOT TRUE ORDER BY id COLLATE "C"`,
   )).filter(row => !isHostAbsolutePath(row.local_path) && !isForeignAbsolutePath(row.local_path));
 }
 
@@ -104,7 +104,7 @@ export async function defaultSourceLocalPathCheck(engine: BrainEngine): Promise<
     const globalRepo = repoPath ?? ((await engine.getConfig('sync.repo_path')) || null);
     if (globalRepo && isHostAbsolutePath(globalRepo)) {
       pathless = (await engine.executeRaw<{ id: string }>(
-        `SELECT id FROM sources WHERE (local_path IS NULL OR local_path = '') AND archived IS NOT TRUE ORDER BY id`,
+        `SELECT id FROM sources WHERE (local_path IS NULL OR local_path = '') AND archived IS NOT TRUE ORDER BY id COLLATE "C"`,
       )).map(row => row.id);
     }
   }

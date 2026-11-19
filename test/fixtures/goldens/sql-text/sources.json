@@ -121,8 +121,8 @@
           {
             "lane": "pool",
             "params": [],
-            "sql": "SELECT id, local_path, archived, config, EXISTS (SELECT 1 FROM pages WHERE source_id = 'default' AND deleted_at IS NULL) AS default_has_pages FROM sources ORDER BY id",
-            "textSha256": "054aca20c098f544c08e897c04f7b4e40a1d032830a5ccfa14d9f93aa06bb3fc"
+            "sql": "SELECT id, local_path, archived, config, EXISTS (SELECT 1 FROM pages WHERE source_id = 'default' AND deleted_at IS NULL) AS default_has_pages FROM sources ORDER BY id COLLATE \"C\"",
+            "textSha256": "c2c644440a48b94de0b819d28567064c4a6053966b63589d64ff24d3f4cd95b2"
           }
         ]
       },
@@ -131,8 +131,8 @@
           {
             "lane": "pool",
             "params": [],
-            "sql": "SELECT id FROM sources WHERE last_sync_at IS NOT NULL AND last_sync_at < now() - interval '7 days' AND NOT archived ORDER BY id",
-            "textSha256": "cc41a39850838d726cd1cfbe062bd2c0ade08a63d214f1c9c4ab9068d21281c6"
+            "sql": "SELECT id FROM sources WHERE last_sync_at IS NOT NULL AND last_sync_at < now() - interval '7 days' AND NOT archived ORDER BY id COLLATE \"C\"",
+            "textSha256": "4edc2e898dac8dba21b8ea23ddb40cda602cc5630c7931dc26c9062b7388af7c"
           }
         ]
       },

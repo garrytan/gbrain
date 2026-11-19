@@ -318,7 +318,7 @@ async function residualScan(engine: BrainEngine, sourceId: string, slug: string,
 }
 
 const sourcesOf = (engine: BrainEngine, selection: Selection) => engine.executeRaw<{ id: string; incarnation: string }>(
-  'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [selection.source_ids]);
+  'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id COLLATE "C"', [selection.source_ids]);
 
 const hashOf = async (engine: BrainEngine, scope: RepairScope, selection: Selection, pages: PlannedPage[]) =>
   previewHash({ kind: 'secret-spans-v1', brain_id: scope.brain_id, sources: await sourcesOf(engine, selection), selection,

@@ -54,7 +54,7 @@ function coordinationLockStatus(root: string, binding: WorktreeBinding | null, h
 export async function writerOnboardingPreflight(engine: BrainEngine, sourceId?: string) {
   const managed = await readManagedMode(engine);
   const rows = await engine.executeRaw<{ id: string; local_path: string | null; incarnation: string; kind: string | null }>(
-    "SELECT id,local_path,incarnation,config->>'kind' AS kind FROM sources WHERE NOT archived AND ($1::text IS NULL OR id=$1) ORDER BY id", [sourceId ?? null]);
+    "SELECT id,local_path,incarnation,config->>'kind' AS kind FROM sources WHERE NOT archived AND ($1::text IS NULL OR id=$1) ORDER BY id COLLATE \"C\"", [sourceId ?? null]);
   const fallback = await engine.getConfig('sync.repo_path'), host = existingHostIdFor(engine);
   const writeThrough = writeThroughConfigured(await engine.getConfig('sync.write_through'));
   const sources = [];

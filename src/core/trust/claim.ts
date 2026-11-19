@@ -66,7 +66,7 @@ const add = (into: TierCounts, from: TierCounts | undefined) => { if (from) for 
 interface SourceRow { id: string; name: string; local_path: string | null; config: unknown; archived: boolean }
 
 async function sourceRows(engine: BrainEngine): Promise<SourceRow[]> {
-  return engine.executeRaw<SourceRow>('SELECT id, name, local_path, config, archived FROM sources ORDER BY id');
+  return engine.executeRaw<SourceRow>('SELECT id, name, local_path, config, archived FROM sources ORDER BY id COLLATE "C"');
 }
 
 /**
@@ -214,7 +214,7 @@ export async function hasUnclaimedLegacySources(engine: Pick<BrainEngine, 'execu
 async function claimCandidates(engine: Pick<BrainEngine, 'executeRaw'>): Promise<{ candidates: string[]; pending: string[] }> {
   const rows = await engine.executeRaw<{ id: string; claimed: boolean; lifted: boolean }>(
     `SELECT s.id, ${claimedSourceSql('s')} AS claimed, (s.config ? '${TRUST_CLAIM_LIFTED_AT_KEY}') AS lifted
-       FROM sources s WHERE NOT s.archived AND ${notConnectorSourceSql('s')} ORDER BY s.id`);
+       FROM sources s WHERE NOT s.archived AND ${notConnectorSourceSql('s')} ORDER BY s.id COLLATE "C"`);
   return { candidates: rows.filter(r => !r.claimed).map(r => r.id), pending: rows.filter(r => r.claimed && !r.lifted).map(r => r.id) };
 }
 

@@ -307,10 +307,10 @@ async function listSources(engine: BrainEngine, sourceId?: string): Promise<Sour
   // targeting above stays deliberate.
   try {
     return await engine.executeRaw<SourceRow>(
-      `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE ORDER BY id`,
+      `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE ORDER BY id COLLATE "C"`,
     );
   } catch {
-    return engine.executeRaw<SourceRow>(`SELECT id, local_path FROM sources WHERE local_path IS NOT NULL ORDER BY id`);
+    return engine.executeRaw<SourceRow>(`SELECT id, local_path FROM sources WHERE local_path IS NOT NULL ORDER BY id COLLATE "C"`);
   }
 }
 

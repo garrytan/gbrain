@@ -92,7 +92,7 @@ interface CensusSource { id: string; incarnation: string; local_path: string | n
 
 async function censusSources(engine: Exec, sourceIds?: readonly string[]): Promise<CensusSource[]> {
   return engine.executeRaw<CensusSource>(`SELECT id, incarnation::text AS incarnation, local_path FROM sources
-    WHERE archived IS NOT TRUE AND incarnation IS NOT NULL AND ($1::text[] IS NULL OR id=ANY($1::text[])) ORDER BY id`, [sourceIds ? [...sourceIds] : null]);
+    WHERE archived IS NOT TRUE AND incarnation IS NOT NULL AND ($1::text[] IS NULL OR id=ANY($1::text[])) ORDER BY id COLLATE "C"`, [sourceIds ? [...sourceIds] : null]);
 }
 
 const hasCheckout = (source: CensusSource) => !!source.local_path && isAbsolute(source.local_path) && existsSync(source.local_path) && statSync(source.local_path).isDirectory();

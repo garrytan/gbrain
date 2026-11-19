@@ -21,7 +21,7 @@ async function runManagedSyncConvergenceCheck(ctx: DoctorContext): Promise<Check
       return checks;
     }
     const sources = await engine.executeRaw<{ id: string }>(`SELECT s.id FROM sources s JOIN persistence_source_bindings b ON b.source_id=s.id
-      JOIN persistence_worktrees w ON w.id=b.worktree_id WHERE NOT s.archived AND s.config->>'kind' IS NULL AND w.owner_host_id=$1::uuid ORDER BY s.id`, [localHostId()]);
+      JOIN persistence_worktrees w ON w.id=b.worktree_id WHERE NOT s.archived AND s.config->>'kind' IS NULL AND w.owner_host_id=$1::uuid ORDER BY s.id COLLATE "C"`, [localHostId()]);
     const rows = [];
     for (const { id } of sources) {
       const receipt = await statusConvergence(engine, id);

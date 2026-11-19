@@ -331,7 +331,7 @@ function previewCommand(scope: RepairScope, all: string[], opts: AgentSessionOpt
 }
 
 async function activeSources(engine: BrainEngine): Promise<string[]> {
-  return (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(row => row.id);
+  return (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id COLLATE "C"')).map(row => row.id);
 }
 
 async function brainId(engine: BrainEngine): Promise<string> {
