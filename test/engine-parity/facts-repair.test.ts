@@ -10,19 +10,22 @@
  *  - Regression: an engine that answers one of these differently changes what the repair commands classify and
  *    repair, which loops_close retires and which world facts the visibility check flags; the Rust engine has no SQL,
  *    so each read has to exist as a typed method it can implement or refuse. The Rust store serves the four that read
- *    only `facts` and `pages`, and closedLoopWithActiveFact over its open loops; the other five read a table it does
- *    not hold and refuse (rust/docs/store/facts.md).
+ *    only `facts` and `pages`, closedLoopWithActiveFact and loopFactDrift over its open loops, countLabelFacts and
+ *    countPurgedPageFacts over its `page_purges` ledger; the other two refuse (rust/docs/store/facts.md).
  *  - Why existing coverage misses it: these statements ran through `executeRaw`, which the parity cases cannot call
  *    (D18), so no case compared them across engines (docs/research/rust-cli-executeraw-map.md).
- *  - Seam: none. Every fact, page and loop is seeded through the typed members. The tables behind the five refused members
- *    (open_loops, fact_withdrawals, persistence_requests, page_purges, derived_generations) have no typed writer on the
- *    engine, so those cases seed the facts the statement joins from and assert the answer an empty table gives; the
- *    Rust arm counts each as a typed refusal. Generated values (ids) are compared by relation, never by value.
+ *  - Seam: recordPagePurge and recordFenceRetirement (harness.ts) write a page_purges row and a facts-fence generation
+ *    with SQL, as the page purge sweep and the fence writer do; the Rust arm stops there on the typed raw_sql refusal,
+ *    because no member writes either ledger on Rust. Every fact, page, loop and withdrawal is seeded through the typed
+ *    members. The table behind the refused member (persistence_requests, the write journal) has no typed writer on the
+ *    engine, so its case seeds the facts the statement joins from and asserts the answer an empty table gives; the Rust
+ *    arm counts it as a typed refusal. Generated values (ids) are compared by relation, never by value.
  */
 import { describe, expect } from 'bun:test';
-import { createSource, parityArms } from './harness.ts';
+import { createSource, parityArms, recordFenceRetirement, recordPagePurge } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine, NewFact } from '../../src/core/engine.ts';
+import { METADATA_LABELS } from '../../src/core/conversation-parser/builtins.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -63,6 +66,60 @@ describe('engine parity: group 5 facts repair statements', () => {
     const none = await engine.loopFactDrift([], null);
     expect({ all, one, none }).toEqual({ all: [], one: [], none: [] });
     return { all, one, none };
+  });
+
+  parityTest('loopFactDrift lists the closed loops of the sources whose fact is active and held by no open loop, in id order', {
+    methods: ['insertFact', 'insertFacts', 'expireFact', 'upsertOpenLoop', 'closeOpenLoop', 'loopFactDrift'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const live = await fenced(engine, 'send the deck', { kind: 'commitment', source_markdown_slug: 'notes/deck' });
+    const held = await fact(engine, 'call back', { kind: 'commitment' });
+    const gone = await fact(engine, 'book the room', { kind: 'commitment' });
+    const elsewhere = await fact(engine, 'pay the invoice', { kind: 'commitment' }, 'other');
+    const at = '2026-03-01T10:00:00.000Z';
+    const open = async (dedupKey: string, factId: number | null, sourceId = 'default') => Number((await engine.upsertOpenLoop({ sourceId, dedupKey,
+      loopType: 'commitment_owed_by_me', counterpartyEmail: 'a@example.com', summary: dedupKey, evidence: [], detector: 'manual',
+      factId, lastActivityAt: at, openedAt: at })).id);
+    const ids: Record<string, string> = {};
+    const name = async (key: string, factId: number | null, sourceId = 'default') => { const id = await open(key, factId, sourceId); ids[id] = key; return id; };
+    const done = await name('done', live);
+    const dropped = await name('dropped', live);
+    const heldClosed = await name('held-closed', held);
+    await name('held-open', held);
+    const expired = await name('expired', gone);
+    const stale = await name('stale', live);
+    const noFact = await name('no-fact', null);
+    const other = await name('other', elsewhere, 'other');
+    const crossed = await name('crossed', elsewhere);
+    await engine.closeOpenLoop('default', done, 'done', 'manual');
+    await engine.closeOpenLoop('default', dropped, 'dropped', 'manual');
+    await engine.closeOpenLoop('default', heldClosed, 'done', 'manual');
+    await engine.closeOpenLoop('default', expired, 'done', 'manual');
+    await engine.closeOpenLoop('default', stale, 'stale', 'manual');
+    await engine.closeOpenLoop('default', noFact, 'done', 'manual');
+    await engine.closeOpenLoop('other', other, 'dropped', 'manual');
+    await engine.closeOpenLoop('default', crossed, 'done', 'manual');
+    expect(await engine.expireFact(gone)).toBe(true);
+    const facts: Record<string, string> = { [live]: 'live', [held]: 'held', [gone]: 'gone', [elsewhere]: 'elsewhere' };
+    const view = (rows: Awaited<ReturnType<BrainEngine['loopFactDrift']>>) =>
+      rows.map(r => ({ loop: ids[Number(r.loop_id)] ?? String(r.loop_id), source_id: r.source_id, fact: facts[Number(r.fact_id)] ?? String(r.fact_id), status: r.status, slug: r.slug }));
+    const out = {
+      both: view(await engine.loopFactDrift(['other', 'default'], null)),
+      one: view(await engine.loopFactDrift(['default'], dropped)),
+      notInSource: view(await engine.loopFactDrift(['other'], done)),
+      held: view(await engine.loopFactDrift(['default'], heldClosed)),
+    };
+    expect(out).toEqual({
+      both: [
+        { loop: 'done', source_id: 'default', fact: 'live', status: 'done', slug: 'notes/deck' },
+        { loop: 'dropped', source_id: 'default', fact: 'live', status: 'dropped', slug: 'notes/deck' },
+        { loop: 'other', source_id: 'other', fact: 'elsewhere', status: 'dropped', slug: null },
+      ],
+      one: [{ loop: 'dropped', source_id: 'default', fact: 'live', status: 'dropped', slug: 'notes/deck' }],
+      notInSource: [],
+      held: [],
+    });
+    return out;
   });
 
   parityTest('closedLoopWithActiveFact finds no loop that does not exist, scoped or not', { methods: ['closedLoopWithActiveFact'] }, async (engine) => {
@@ -204,6 +261,77 @@ describe('engine parity: group 5 facts repair statements', () => {
     return { counted, capped, none };
   });
 
+  parityTest('countLabelFacts folds case, allows spaces before the colon, needs the label at a line start and skips covered facts', {
+    methods: ['putPage', 'softDeletePage', 'insertFacts', 'expireFact', 'insertFactWithdrawal', 'upsertOpenLoop', 'countLabelFacts'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const page = (slug: string, body: string, timeline = '', sourceId = 'default') =>
+      engine.putPage(slug, { ...note(slug, body), timeline }, { sourceId });
+    await page('chats/fold', 'intro\n**DATE\u2003\t :** today');
+    await page('chats/first', '**Action Items:** call back');
+    await page('chats/timeline', 'no label in the body', '- 2026-01-01 a call\n**Organiser:** someone');
+    await page('chats/crlf', 'intro\r\n**notes:**\r\nmore');
+    await page('chats/mid', 'see **Date:** inline');
+    await page('chats/near', '**Dates:** soon\n**Dat:** x');
+    await page('chats/audited', '**Date:** done');
+    await page('chats/audit-open', '**Date:** not done');
+    await page('chats/gone', '**Date:** gone');
+    await page('chats/away', '**Date:** elsewhere', '', 'other');
+    await engine.softDeletePage('chats/gone');
+    const ctx = 'segment 1970-01-01 x';
+    const label = (slug: string, text: string, extra: Record<string, unknown> = {}, sourceId = 'default') =>
+      fenced(engine, text, { source: EXTRACTOR, visibility: 'private', source_markdown_slug: slug, context: ctx, ...extra }, sourceId);
+    await label('chats/fold', 'fold counted');
+    await label('chats/first', 'first counted');
+    await label('chats/timeline', 'timeline counted');
+    await label('chats/crlf', 'crlf counted');
+    await label('chats/mid', 'mid not counted');
+    await label('chats/near', 'near not counted');
+    await label('chats/audited', 'audited not counted');
+    await label('chats/audit-open', 'audit-open counted');
+    await label('chats/gone', 'gone not counted');
+    await label('chats/missing', 'missing page not counted');
+    await label('chats/away', 'away counted in other', {}, 'other');
+    await label('chats/fold', 'wrong context', { context: 'segment 2020-01-01' });
+    await label('chats/fold', 'no context', { context: null });
+    await label('chats/fold', 'versioned source', { source: `${EXTRACTOR}:v1` });
+    const expired = await label('chats/fold', 'expired');
+    expect(await engine.expireFact(expired)).toBe(true);
+    await label('chats/fold', 'withdrawn for all');
+    await label('chats/fold', 'withdrawn for its entity', { entity_slug: 'people/a' });
+    await label('chats/fold', 'withdrawn for another entity', { entity_slug: 'people/b' });
+    await label('chats/fold', 'withdrawn in world only');
+    const looped = await label('chats/fold', 'held by a loop');
+    const [r1, r2] = [nextRow(engine), nextRow(engine)];
+    await engine.insertFacts([
+      { row_num: r1, source_markdown_slug: 'chats/first', fact: 'superseded', entity_slug: null, kind: 'fact', visibility: 'private', source: EXTRACTOR, context: ctx, superseded_by_row: r2 },
+      { row_num: r2, source_markdown_slug: 'chats/first', fact: 'the successor', entity_slug: null, kind: 'fact', visibility: 'private', source: EXTRACTOR, context: ctx },
+    ] as never, { source_id: 'default' });
+    const audit = (slug: string, source: string, context: string) => fenced(engine, `audit ${slug} ${context}`, { source, visibility: 'private', source_markdown_slug: slug, context });
+    await audit('chats/audited', 'audit:terminal', 'decided extractor_version=3');
+    await audit('chats/audit-open', 'audit:terminal', 'extractor_version=3 later');
+    await audit('chats/audit-open', 'audit:other', 'decided extractor_version=3');
+    expect(await engine.insertFactWithdrawal('default', 'private', 'withdrawn for all', '*', null)).toBe(true);
+    expect(await engine.insertFactWithdrawal('default', 'private', 'withdrawn for its entity', 'people/a', null)).toBe(true);
+    expect(await engine.insertFactWithdrawal('default', 'private', 'withdrawn for another entity', 'people/c', null)).toBe(true);
+    expect(await engine.insertFactWithdrawal('default', 'world', 'withdrawn in world only', '*', null)).toBe(true);
+    const at = '2026-03-01T10:00:00.000Z';
+    await engine.upsertOpenLoop({ sourceId: 'default', dedupKey: 'loop', loopType: 'commitment_owed_by_me', counterpartyEmail: 'a@example.com',
+      summary: 'loop', evidence: [], detector: 'manual', factId: looped, lastActivityAt: at, openedAt: at });
+    const labelLine = `(^|\\n)\\*\\*(${METADATA_LABELS.join('|')})[[:space:]]*:\\*\\*`;
+    const args = { segmentSource: EXTRACTOR, contextLike: '%segment 1970-01-01%', labelLine, terminalSource: 'audit:terminal', nonExtractableSource: 'audit:non-extractable' };
+    const counted = await engine.countLabelFacts(['default'], 100, args);
+    const both = await engine.countLabelFacts(['other', 'default', 'other'], 100, args);
+    const atCap = await engine.countLabelFacts(['default'], 7, args);
+    const under = await engine.countLabelFacts(['default'], 6, args);
+    const other = await engine.countLabelFacts(['other'], 100, args);
+    expect({ counted, both, atCap, under, other }).toEqual({
+      counted: { count: 7, capped: false }, both: { count: 8, capped: false }, atCap: { count: 7, capped: false },
+      under: { count: 6, capped: true }, other: { count: 1, capped: false },
+    });
+    return { counted, both, atCap, under, other };
+  });
+
   parityTest('listExtractorFactsForClassification lists the expired fenceless extractor facts with their evidence', {
     methods: ['putPage', 'insertFacts', 'expireFact', 'listExtractorFactsForClassification'],
   }, async (engine) => {
@@ -230,6 +358,88 @@ describe('engine parity: group 5 facts repair statements', () => {
     return { counted, capped };
   });
 
+  parityTest('countPurgedPageFacts counts the active page-extraction facts of a gone page that nothing else holds', {
+    methods: ['putPage', 'softDeletePage', 'insertFact', 'insertFacts', 'expireFact', 'insertFactWithdrawal', 'upsertOpenLoop', 'countPurgedPageFacts'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    await engine.putPage('notes/open', note('Open', 'a page'));
+    await engine.putPage('notes/soft', note('Soft', 'a page'));
+    await engine.softDeletePage('notes/soft');
+    const gone = (context: string | null, text: string, extra: Record<string, unknown> = {}, sourceId = 'default') =>
+      fact(engine, text, { source: 'mcp:put_page', context, ...extra }, sourceId);
+    // Counted: a gone page with a '/' in its slug, by every page-extraction source.
+    await gone('notes/gone \u2014 a note', 'put page fact');
+    await gone('notes/gone', 'sync fact', { source: 'sync:import' });
+    await gone('notes/other-gone \u2014 x', 'upload fact', { source: 'file_upload' });
+    await gone('code/gone.ts \u2014 x', 'code fact', { source: 'code_import' });
+    await gone('notes/x \u2014 a \u2014 b', 'two separators');
+    // Not counted: no '/' and no purge record, an empty or missing context, white space in the head, a page row
+    // (live or soft-deleted), another source of the fact, an expired fact.
+    await gone('gone \u2014 x', 'no slash');
+    await gone('', 'empty context');
+    await gone(null, 'no context');
+    await gone('notes/a b \u2014 x', 'a space');
+    await gone('notes/a\u2003b', 'an em space');
+    await gone('notes/gone \u2014x', 'no space after the dash');
+    await gone('notes/open \u2014 x', 'live page');
+    await gone('notes/soft \u2014 x', 'soft-deleted page');
+    await gone('notes/gone \u2014 x', 'a lane fact', { source: LANE });
+    expect(await engine.expireFact(await gone('notes/gone \u2014 x', 'expired'))).toBe(true);
+    // Filed on a page: not a gone-page fact.
+    await fenced(engine, 'filed', { source: 'mcp:put_page', context: 'notes/filed', source_markdown_slug: 'notes/filed', visibility: 'private' });
+    // Withdrawals: '*' and the fact's entity exclude; another entity and the other visibility do not.
+    await gone('notes/gone \u2014 x', 'withdrawn for all');
+    await gone('notes/gone \u2014 x', 'withdrawn for its entity', { entity_slug: 'people/a' });
+    await gone('notes/gone \u2014 x', 'withdrawn for another entity', { entity_slug: 'people/b' });
+    await gone('notes/gone \u2014 x', 'withdrawn in world only');
+    expect(await engine.insertFactWithdrawal('default', 'private', 'withdrawn for all', '*', null)).toBe(true);
+    expect(await engine.insertFactWithdrawal('default', 'private', 'withdrawn for its entity', 'people/a', null)).toBe(true);
+    expect(await engine.insertFactWithdrawal('default', 'private', 'withdrawn for another entity', 'people/c', null)).toBe(true);
+    expect(await engine.insertFactWithdrawal('default', 'world', 'withdrawn in world only', '*', null)).toBe(true);
+    const looped = await gone('notes/gone \u2014 x', 'held by a loop');
+    const at = '2026-03-01T10:00:00.000Z';
+    await engine.upsertOpenLoop({ sourceId: 'default', dedupKey: 'loop', loopType: 'commitment_owed_by_me', counterpartyEmail: 'a@example.com',
+      summary: 'loop', evidence: [], detector: 'manual', factId: looped, lastActivityAt: at, openedAt: at });
+    await gone('notes/gone \u2014 x', 'elsewhere', {}, 'other');
+    const counted = await engine.countPurgedPageFacts(['default'], 100);
+    const both = await engine.countPurgedPageFacts(['other', 'default', 'other'], 100);
+    const atCap = await engine.countPurgedPageFacts(['default'], 7);
+    const under = await engine.countPurgedPageFacts(['default'], 6);
+    const zero = await engine.countPurgedPageFacts(['default'], 0);
+    const other = await engine.countPurgedPageFacts(['other'], 100);
+    const none = await engine.countPurgedPageFacts([], 100);
+    expect({ counted, both, atCap, under, zero, other, none }).toEqual({
+      counted: { evidenced: 0, ambiguous: 7, capped: false },
+      both: { evidenced: 0, ambiguous: 8, capped: false },
+      atCap: { evidenced: 0, ambiguous: 7, capped: false },
+      under: { evidenced: 0, ambiguous: 6, capped: true },
+      zero: { evidenced: 0, ambiguous: 0, capped: true },
+      other: { evidenced: 0, ambiguous: 1, capped: false },
+      none: { evidenced: 0, ambiguous: 0, capped: false },
+    });
+    return { counted, both, atCap, under, zero, other, none };
+  });
+
+  parityTest('countPurgedPageFacts takes a purge record of the head slug written after the fact as evidence', {
+    methods: ['insertFact', 'countPurgedPageFacts'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const gone = (context: string, text: string) => fact(engine, text, { source: 'mcp:put_page', context });
+    await recordPagePurge(engine, backend, 'default', 'early', 'h-early', '2000-01-01T00:00:00Z');
+    await recordPagePurge(engine, backend, 'default', 'notes/early', 'h-notes-early', '2000-01-01T00:00:00Z');
+    await gone('purged \u2014 x', 'no slash, purged after');
+    await gone('notes/purged \u2014 x', 'slash, purged after');
+    await gone('early \u2014 x', 'no slash, purged before');
+    await gone('notes/early \u2014 x', 'slash, purged before');
+    await gone('elsewhere \u2014 x', 'purged in another source');
+    await recordPagePurge(engine, backend, 'default', 'purged', 'h-purged');
+    await recordPagePurge(engine, backend, 'default', 'notes/purged', 'h-notes-purged');
+    await recordPagePurge(engine, backend, 'other', 'elsewhere', 'h-elsewhere');
+    const counted = await engine.countPurgedPageFacts(['default'], 100);
+    expect(counted).toEqual({ evidenced: 2, ambiguous: 1, capped: false });
+    return { counted };
+  });
+
   parityTest('listUnwithdrawnFacts lists no fact when no facts-fence generation retired one', { methods: ['putPage', 'insertFacts', 'expireFact', 'listUnwithdrawnFacts'] }, async (engine) => {
     await engine.putPage('notes/open', note('Open', 'a page'));
     const id = await fenced(engine, 'a retired fact', { source_markdown_slug: 'notes/open', visibility: 'world' });
@@ -238,6 +448,67 @@ describe('engine parity: group 5 facts repair statements', () => {
     const one = await engine.listUnwithdrawnFacts(['default'], 'notes/open', 'fact_fence');
     expect({ all, one }).toEqual({ all: [], one: [] });
     return { all, one };
+  });
+
+  parityTest('listUnwithdrawnFacts lists the expired facts a fence generation retired, by source and page in C order, with withdrawal and duplicate', {
+    methods: ['putPage', 'softDeletePage', 'insertFact', 'insertFacts', 'expireFact', 'insertFactWithdrawal', 'listUnwithdrawnFacts'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    await engine.putPage('notes/bb', note('BB', 'a page'));
+    await engine.putPage('notes/b-c', note('BC', 'a page'));
+    await engine.putPage('notes/gone', note('Gone', 'a page'));
+    await engine.softDeletePage('notes/gone');
+    const retire = async (slug: string, text: string, opts: { visibility?: string; extra?: Record<string, unknown>; expire?: boolean; sourceId?: string;
+      state?: 'live' | 'held' | 'superseded'; preimage?: Record<string, unknown> } = {}) => {
+      const visibility = opts.visibility ?? 'world';
+      const sourceId = opts.sourceId ?? 'default';
+      const id = await fact(engine, text, { visibility, source_markdown_slug: slug, ...opts.extra }, sourceId);
+      if (opts.expire !== false) expect(await engine.expireFact(id)).toBe(true);
+      await recordFenceRetirement(engine, backend, sourceId, slug, id, { fact: text, visibility, state: opts.state, preimage: opts.preimage });
+      return id;
+    };
+    await retire('notes/bb', 'retired on bb');
+    await retire('notes/b-c', 'retired on b-c');
+    await retire('notes/b-c', 'withdrawn on b-c', { visibility: 'private' });
+    expect(await engine.insertFactWithdrawal('default', 'private', 'withdrawn on b-c', '*', null)).toBe(true);
+    await retire('notes/bb', 'still active', { expire: false });
+    await retire('notes/bb', 'held generation', { state: 'held' });
+    await retire('notes/bb', 'expired in the preimage', { preimage: { expired_at: '2026-01-01T00:00:00Z' } });
+    await retire('notes/bb', 'no row number in the preimage', { preimage: { row_num: null } });
+    await retire('notes/bb', 'changed text', { preimage: { fact: 'other text' } });
+    await retire('notes/bb', 'a conversation fact', { extra: { source: EXTRACTOR } });
+    await retire('notes/gone', 'on a deleted page');
+    await retire('notes/none', 'on no page');
+    await retire('notes/bb', 'in another source', { sourceId: 'other' });
+    const twin = await retire('notes/bb', 'has an active twin');
+    await fenced(engine, 'has an active twin', { source_markdown_slug: 'notes/bb' });
+    const newer = await retire('notes/b-c', 'retired twice');
+    await recordFenceRetirement(engine, backend, 'default', 'notes/b-c', newer, { fact: 'retired twice', visibility: 'world', generation: 7, state: 'live' });
+    const view = (rows: Awaited<ReturnType<BrainEngine['listUnwithdrawnFacts']>>) => rows.map(r => ({
+      source: r.source_id, slug: r.slug, fact: r.fact, visibility: r.visibility, superseded: r.superseded, generation: Number(r.generation),
+      same_id: Number(r.preimage.id) === Number(r.id), withdrawn: r.withdrawn, active_duplicate: r.active_duplicate, history_gap: r.history_gap,
+      page: r.page_id === null ? (r.page_deleted === false ? 'none' : 'bad') : r.page_deleted ? 'deleted' : 'live', dated: typeof r.retired_at === 'string' && typeof r.expired_at === 'string',
+    }));
+    const all = view(await engine.listUnwithdrawnFacts(['default', 'other'], null, 'fact_fence'));
+    const one = view(await engine.listUnwithdrawnFacts(['default'], 'notes/b-c', 'fact_fence'));
+    const takes = await engine.listUnwithdrawnFacts(['default'], null, 'take_fence');
+    const row = (source: string, slug: string, text: string, more: Record<string, unknown> = {}) => ({
+      source, slug, fact: text, visibility: 'world', superseded: false, generation: 1, same_id: true, withdrawn: false, active_duplicate: false,
+      history_gap: false, page: 'live', dated: true, ...more,
+    });
+    expect(all).toEqual([
+      row('default', 'notes/b-c', 'retired on b-c'),
+      row('default', 'notes/b-c', 'withdrawn on b-c', { visibility: 'private', withdrawn: true }),
+      row('default', 'notes/b-c', 'retired twice', { generation: 7 }),
+      row('default', 'notes/bb', 'retired on bb'),
+      row('default', 'notes/bb', 'has an active twin', { active_duplicate: true }),
+      row('default', 'notes/gone', 'on a deleted page', { page: 'deleted' }),
+      row('default', 'notes/none', 'on no page', { page: 'none' }),
+      row('other', 'notes/bb', 'in another source', { page: 'none' }),
+    ]);
+    expect(one).toEqual(all.filter(r => r.source === 'default' && r.slug === 'notes/b-c'));
+    expect({ twin: twin > 0, takes }).toEqual({ twin: true, takes: [] });
+    return { all, one, takes };
   });
 
   parityTest('listWorldFactsFromPrivateSources follows the holding page and the page a fact was extracted from', {

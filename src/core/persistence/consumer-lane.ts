@@ -56,7 +56,7 @@ export function consumerConnectionRoute(engine: BrainEngine): ConsumerConnection
 
 /**
  * The engine the consumer's own statements run through: `executeRaw` goes to `executeRawDirect` while the direct route is
- * active, every other member reaches the engine unchanged. Non-Postgres engines and engines without a direct route are
+ * active, and so does `releaseUnpublishedClaim` (its `direct` option); every other member reaches the engine unchanged. Non-Postgres engines and engines without a direct route are
  * returned as they are.
  */
 export function consumerStatementEngine(engine: BrainEngine): BrainEngine {
@@ -64,9 +64,20 @@ export function consumerStatementEngine(engine: BrainEngine): BrainEngine {
   return registerEngineView(new Proxy(engine, { get(target, key) {
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal; timeoutMs?: number }) =>
       consumerConnectionRoute(target).lane === 'direct' && opts?.timeoutMs === undefined ? target.executeRawDirect(sql, params, opts) : target.executeRaw(sql, params, opts);
+    if (key === 'releaseUnpublishedClaim') return (release: Parameters<BrainEngine['releaseUnpublishedClaim']>[0]) =>
+      target.releaseUnpublishedClaim(release, { direct: consumerConnectionRoute(target).lane === 'direct' });
     const member = Reflect.get(target, key, target);
     return typeof member === 'function' ? member.bind(target) : member;
   } }), viewedEngine(engine));
+}
+
+/**
+ * Whether the consumer's statements take the Postgres direct lane now. A typed engine member does not pass through
+ * consumerStatementEngine's executeRaw routing, so its caller passes this as the member's `direct` option. Only the
+ * Postgres engine has a direct lane (`executeRawDirect`); the other engines ignore the option.
+ */
+export function consumerOnDirectLane(engine: BrainEngine): boolean {
+  return typeof engine.executeRawDirect === 'function' && consumerConnectionRoute(engine).lane === 'direct';
 }
 
 /** The one loud line a consumer prints when it starts on a transaction-mode pooler with no direct route. */

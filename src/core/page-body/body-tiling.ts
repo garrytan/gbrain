@@ -102,7 +102,7 @@ export async function untiledSegmentedPages(engine: Pick<BrainEngine, 'executeRa
        FROM pages p JOIN sources s ON s.id = p.source_id AND s.archived IS NOT TRUE CROSS JOIN LATERAL (${liveTilingSql('p')}) t
       WHERE p.body_storage = 'segmented' AND p.deleted_at IS NULL AND ($1::text[] IS NULL OR p.source_id = ANY($1::text[]))
         AND ($2::text[] IS NULL OR p.slug = ANY($2::text[])) AND ${untiledSql('p', 't')}
-      ORDER BY p.source_id, p.slug LIMIT $3`, [opts.sourceIds ? [...opts.sourceIds] : null, opts.slugs ? [...opts.slugs] : null, opts.limit ?? 1000]);
+      ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C" LIMIT $3`, [opts.sourceIds ? [...opts.sourceIds] : null, opts.slugs ? [...opts.slugs] : null, opts.limit ?? 1000]);
   return rows.map(row => ({ source_id: row.source_id, slug: row.slug, page_id: Number(row.id), revision: row.revision, body_generation: Number(row.body_generation),
     body_bytes: Number(row.body_bytes), segment_count: row.segment_count === null ? null : Number(row.segment_count), source_path: row.source_path,
     rows: Number(row.n), covered_bytes: row.gapless ? Number(row.covered) : null }));

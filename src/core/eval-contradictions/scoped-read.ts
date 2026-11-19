@@ -49,7 +49,7 @@ type LabeledTake = LiveTake & Labels;
 const finiteIds = (values: Array<number | null | undefined>) =>
   [...new Set(values.map(Number).filter(n => Number.isSafeInteger(n) && n > 0))];
 
-async function loadChunks(engine: Pick<BrainEngine, 'executeRaw' | 'readPageTrustRows'>, ids: number[], policy: PageReadPolicy, floor: TrustTier | undefined) {
+async function loadChunks(engine: Pick<BrainEngine, 'executeRaw' | 'readPageTrustRows' | 'readRowTrustRows'>, ids: number[], policy: PageReadPolicy, floor: TrustTier | undefined) {
   if (!ids.length) return new Map<number, LabeledChunk>();
   const params: unknown[] = [ids];
   const pageSql = pageReadFilter('p', { ...policy, ...(floor ? { minTrust: floor } : {}) }, params, true);
@@ -63,7 +63,7 @@ async function loadChunks(engine: Pick<BrainEngine, 'executeRaw' | 'readPageTrus
   return new Map(stamped.map((r): [number, LabeledChunk] => [r.id, { ...r, trust_tier: storedTrustTier(r.trust_tier), origin: r.origin ?? 'unrecorded' }]));
 }
 
-async function loadTakes(engine: Pick<BrainEngine, 'executeRaw'>, ids: number[], policy: PageReadPolicy, floor: TrustTier | undefined) {
+async function loadTakes(engine: Pick<BrainEngine, 'executeRaw' | 'readRowTrustRows'>, ids: number[], policy: PageReadPolicy, floor: TrustTier | undefined) {
   if (!ids.length) return new Map<number, LabeledTake>();
   const params: unknown[] = [ids];
   const pageSql = pageReadFilter('p', policy, params, true);
@@ -103,7 +103,7 @@ function supersedeSides(f: ScopedFinding): { target: ScopedMember; winner: Scope
 
 /** Resolve stored findings for a scoped reader; findings with a hidden, missing or changed side are dropped. */
 export async function resolveScopedFindings(
-  engine: Pick<BrainEngine, 'executeRaw' | 'readPageTrustRows'>,
+  engine: Pick<BrainEngine, 'executeRaw' | 'readPageTrustRows' | 'readRowTrustRows'>,
   findings: ContradictionFinding[],
   policy: PageReadPolicy,
   floor: TrustTier | undefined,

@@ -73,7 +73,7 @@ export const getRecentSalience: StoreMember<[opts: SalienceOpts], SalienceResult
   const o = takeOptions('getRecentSalience', opts,
     ['sourceId', 'sourceIds', 'days', 'limit', 'slugPrefix', 'recency_bias', 'takesHoldersAllowList', 'excludePrivate'],
     ['minTrust', 'suppressFlagged', 'requireSafeChunks']);
-  const excludePrivate = storePagePolicy('getRecentSalience', o.excludePrivate);
+  const excludePrivate = storePagePolicy('getRecentSalience', o.excludePrivate, { callerReaders: true });
   const days = Math.max(0, (o.days as number | undefined) ?? 14);
   const limit = clampSearchLimit(o.limit as number | undefined, 20, 100);
   const slugPrefix = o.slugPrefix as string | undefined;
@@ -99,7 +99,7 @@ export const getSalienceScores: StoreMember<[refs: Array<{ slug: string; source_
   if (!refs.length) return new Map();
   const o = takeOptions('getSalienceScores', opts,
     ['sourceId', 'sourceIds', 'takesHoldersAllowList', 'excludePrivate', 'minTrust', 'suppressFlagged'], ['requireSafeChunks', ...SEARCH_KEYS]);
-  const excludePrivate = storePagePolicy('getSalienceScores', o.excludePrivate);
+  const excludePrivate = storePagePolicy('getSalienceScores', o.excludePrivate, { callerReaders: true });
   const rows = (await storeCall({ member: 'getSalienceScores' }, () => brain.getSalienceScores({
     refs: refs.map((r) => ({ slug: r.slug, source_id: r.source_id })),
     source_ids: sourceScope(o),

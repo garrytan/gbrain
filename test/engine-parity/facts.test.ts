@@ -20,6 +20,7 @@ import { describe, expect } from 'bun:test';
 import type { BrainEngine, FactRow } from '../../src/core/engine.ts';
 import { basisEmbedding, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { OPEN_ENTITY, callerFactRows, putCallerPages, readAsCallers } from './fact-callers.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -1122,6 +1123,33 @@ describe('engine parity: facts', () => {
       expect(trajectoryKept).toContain('page:notes/open');
       expect(trajectoryKept).not.toContain('page:notes/private');
       return { supersessions, supersessionsKept, trajectory, trajectoryKept };
+    },
+  );
+
+  parityTest(
+    'excludePrivate applies a caller\'s reader identity, own member page and private-readable grant to the fact reads',
+    { methods: ['putPage', 'insertFacts', 'listFactsSince', 'listFactsByEntity'] },
+    async (engine) => {
+      await putCallerPages(engine);
+      await engine.insertFacts(callerFactRows().map((r) => ({
+        ...r, kind: 'fact' as const, visibility: 'world' as const, source: 'fence', valid_from: at('2026-03-01T00:00:00Z'),
+      })) as never, { source_id: SRC });
+      const since = at('2020-01-01T00:00:00Z');
+      const kept = await readAsCallers(async () => ({
+        since: sorted(texts(await engine.listFactsSince(SRC, since, { limit: 500, excludePrivate: true }))),
+        byEntity: sorted(texts(await engine.listFactsByEntity(SRC, OPEN_ENTITY, { limit: 500, excludePrivate: true }))),
+      }));
+      const open = ['entity:people/open-example', 'prov:notes/open'];
+      const member = 'prov:memory/members/alice-example';
+      expect(kept.none.since).toEqual(open);
+      expect(kept.stranger).toEqual(kept.none);
+      // The provenance gate reads the identity only on the caller's own member page; the entity gate reads it on
+      // every entity page, and the grant opens the source's private entity pages.
+      expect(kept.member.since).toEqual(sorted([...open, member, 'entity:people/readers-example', 'entity:people/team-example']));
+      expect(kept.granted.since).toEqual(sorted([...open, member, 'entity:people/readers-example', 'entity:people/private-example']));
+      expect(kept.member.byEntity).toEqual(sorted([...open, member]));
+      expect(kept.granted.byEntity).toEqual(kept.member.byEntity);
+      return kept;
     },
   );
 

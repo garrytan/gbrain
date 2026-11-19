@@ -49,10 +49,11 @@ becomes visible to the brain in one commit, or not at all.
     `readTransactionSettings(names)` are `set_config(name, value, true)` and
     `current_setting(name, true)`:
     - Inside a transaction, a setting reads back what was last applied in it. The six write trust
-      settings go to the write trust context on the transaction's handle
-      ([`write_trust.md`](write_trust.md)). `gbrain.write_sources`, `gbrain.write_request`,
-      `gbrain.write_principal_kind`, `gbrain.write_principal_id` and `gbrain.git_protocol` stay
-      on the transaction in TypeScript (`RustTransactionScope.settings`).
+      settings and the three attribution settings (`gbrain.write_request`,
+      `gbrain.write_principal_kind`, `gbrain.write_principal_id`) go to the write context on the
+      transaction's handle ([`write_trust.md`](write_trust.md)). `gbrain.write_sources`,
+      `gbrain.git_protocol` and `gbrain.persistence_protocol` stay on the transaction in
+      TypeScript (`RustTransactionScope.settings`).
     - They end with the transaction. A savepoint rollback restores them; a release keeps them.
     - Outside a transaction an apply keeps nothing, as a lone `set_config(..., true)` on PGLite.
     - A name never set reads `null`. A name set before on the engine reads `''`, as Postgres
@@ -63,6 +64,16 @@ becomes visible to the brain in one commit, or not at all.
     - Two transactions never see each other's settings. The store admits one write transaction at
       a time: a second `begin_transaction` waits for the writer, and each transaction's handle has
       its own context, which starts empty.
+    - `readCurrentWriteTrust()` (`store-members/write-context.ts`) is `readTransactionSettings`
+      for `gbrain.write_trust_tier` and `gbrain.write_origin`, returned as `{ tier, origin }`.
+      PGLite and Postgres send the text `persistence/context.ts` `currentWriteTrust` always sent
+      (`CURRENT_WRITE_TRUST_SQL` in `src/core/engine-sql/transaction-settings.ts`).
+    - `setWriteContext(input)` (same file) is the coordinated write's context in steps: it reads the
+      seven `WRITE_CONTEXT_SETTINGS` ('' where unset) and the persistence identity, and sets nothing
+      when there is none. Otherwise it applies the source scope and `gbrain.git_protocol = '1'`, keeps
+      an enclosing actor (one with a principal kind), and, for a declared tier, keeps an enclosing tier
+      of lower nonzero rank and takes the declared origin or the enclosing one. PGLite and Postgres
+      send `SET_WRITE_CONTEXT_SQL`, the one statement `withCoordinatedWrite` always sent.
 
 An `AbortSignal` in `opts` is honoured before the transaction starts and while it waits at the
 gate (`cancelled`); once `fn` runs the signal is ignored, as on PGLite.

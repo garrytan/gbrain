@@ -43,6 +43,7 @@ import type { AdjacencyRow } from '../types.ts';
 import type { BrainEngine } from '../engine.ts';
 import { hasReadPolicy } from './read-policy-sql.ts';
 import { createAuditWriter } from '../audit/audit-writer.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 // ===========================================================================
 // Constants (D14=B halved magnitudes; the score-distribution probe feeds the
@@ -346,6 +347,8 @@ export async function applyGraphSignals(
       ? await opts.adjacencyFn(uniquePageIds)
       : await engine.getAdjacencyBoosts(uniquePageIds, hasReadPolicy(opts) ? opts : undefined);
   } catch (err) {
+    // A refused engine capability is not a stage failure: it propagates, unlogged.
+    rethrowCapabilityRefusal(err);
     const msg = err instanceof Error ? err.message : String(err);
     failureWriter.log({
       error_summary: truncateErrorSummary(msg),

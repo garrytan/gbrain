@@ -3,8 +3,9 @@
  *
  * These are the statements `src/core/persistence/journal.ts`, `limits.ts` and `held-reads.ts` sent through
  * `executeRaw`: the journal limit read, the two hold reads, the request reads, the counter lock, the admission
- * insert, the claim stamp and the completion. The text is unchanged, written out in full so this module imports no
- * persistence code (journal.ts pulls in most of the codebase, which an engine must not load).
+ * insert, the claim stamp, the completion and the publication's effects insert (effect-journal.ts). The text is
+ * unchanged, written out in full so this module imports no persistence code (journal.ts pulls in most of the
+ * codebase, which an engine must not load).
  * `test/persistence-journal-statements.test.ts` checks each written-out statement against the journal's builders.
  * Decisions (who may claim, whether a write fits, what a refusal says) stay with the callers.
  */
@@ -12,6 +13,9 @@ import type { LegacyUnscopedRead } from './brands.ts';
 import type { SqlExecutor, QueryOpts } from './executor.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { JOURNAL_LIMITS_SQL } from '../persistence/limits.ts';
+import { COMPACTED_RECEIPT_BYTES_SQL, EFFECT_BYTES_SQL } from '../persistence/receipt-bytes.ts';
+import { TOKEN_GRANT_ROW_COLUMNS, type TokenGrantRow } from '../grants/model.ts';
+import { sqlFragment, trustedSql } from './fragment.ts';
 
 /** The op of a held file's checkpoint row (sync-holds.ts re-exports it). */
 export const GIT_HOLD_OP = 'sync-hold';
@@ -156,6 +160,116 @@ export async function readWriteRequestById(exec: LegacyUnscopedRead, id: string,
   return row ?? null;
 }
 
+/** #5984: the columns a waiter needs while a request is unfinished; the full row is read once it is terminal. */
+export type WriteRequestProgress = Pick<WriteRequest, 'state' | 'error_code' | 'error_message' | 'completed_at' | 'updated_at' | 'blocked_reason' | 'outcome' | 'deferred_refresh_id' | 'deferred_import_from'>;
+/** The progress columns of request `id` (the wait loop's poll). */
+export const WRITE_PROGRESS_SQL = 'SELECT state,error_code,error_message,completed_at,updated_at,blocked_reason,outcome,deferred_refresh_id,deferred_import_from FROM persistence_requests WHERE id=$1::uuid';
+export async function readWriteRequestProgress(exec: LegacyUnscopedRead, id: string, opts?: QueryOpts): Promise<WriteRequestProgress | null> {
+  const [row] = await exec.executeRaw<WriteRequestProgress>(WRITE_PROGRESS_SQL, [id], opts);
+  return row ?? null;
+}
+
+/** One source holding outstanding requests of a principal, and how many. */
+export interface OutstandingBySource { source_id: string; n: number }
+/** The sources holding requests of one principal that are queued, deferred, running or recovering: the most first, a tie in byte order of the source id. */
+export const OUTSTANDING_BY_SOURCE_SQL = `SELECT source_id,count(*) AS n FROM persistence_requests
+    WHERE principal_kind=$1 AND principal_id=$2 AND state IN ('queued','deferred','running','recovering') GROUP BY source_id ORDER BY count(*) DESC,source_id COLLATE "C"`;
+export async function countOutstandingBySource(exec: LegacyUnscopedRead, principalKind: string, principalId: string): Promise<OutstandingBySource[]> {
+  const rows = await exec.executeRaw<{ source_id: string; n: number | string }>(OUTSTANDING_BY_SOURCE_SQL, [principalKind, principalId]);
+  return rows.map(row => ({ source_id: row.source_id, n: Number(row.n) }));
+}
+
+/** Whether this connection's role is a member of the role that owns the gbrain tables (`sources` stands for them). */
+export const OWNS_SCHEMA_TABLES_SQL = `SELECT pg_has_role(current_user, c.relowner, 'USAGE') AS owns FROM pg_class c WHERE c.oid = to_regclass('sources')`;
+/** `ownsSchemaTables()`: false only when the role provably does not own the tables; a missing table reads as owned. */
+export async function ownsSchemaTables(exec: LegacyUnscopedRead): Promise<boolean> {
+  const [owner] = await exec.executeRaw<{ owns: boolean | null }>(OWNS_SCHEMA_TABLES_SQL);
+  return owner?.owns !== false;
+}
+
+/**
+ * The live grant of the OAuth client that owns a write (persistence/authority.ts `authorizeWrite`): the columns the
+ * write re-check reads. Every value is the stored column as the driver returns it; the caller decides what it permits.
+ */
+export type OAuthClientWriteGrant = {
+  deleted_at: unknown; scope: unknown; source_id: unknown; source_grant: unknown; allowed_operations: unknown;
+  bound_slug_prefixes: unknown; bound_tools: unknown; delegated_namespace: unknown; delegated_slug_prefixes: unknown;
+};
+/** The live grant of the legacy token that owns a write: the token grant columns this brain has, and `revoked_at`. */
+export type AccessTokenWriteGrant = TokenGrantRow & { revoked_at: unknown };
+
+/** The OAuth client grant read `authorizeWrite` has always sent, plain and with `FOR SHARE` (written out: static text only). */
+export const OAUTH_CLIENT_GRANT_SQL = `SELECT deleted_at,scope,source_id,source_grant,allowed_operations,
+      bound_slug_prefixes,bound_tools,delegated_namespace,delegated_slug_prefixes FROM oauth_clients WHERE client_id=$1`;
+export const OAUTH_CLIENT_GRANT_SHARE_SQL = `SELECT deleted_at,scope,source_id,source_grant,allowed_operations,
+      bound_slug_prefixes,bound_tools,delegated_namespace,delegated_slug_prefixes FROM oauth_clients WHERE client_id=$1 FOR SHARE`;
+/** `readOAuthClientWriteGrant(clientId, { lock })`: the client's grant row or null; `lock` holds it `FOR SHARE` so a revocation waits. */
+export async function readOAuthClientWriteGrant(exec: LegacyUnscopedRead, clientId: string, opts: { lock?: boolean } = {}): Promise<OAuthClientWriteGrant | null> {
+  const [row] = await exec.executeRaw<OAuthClientWriteGrant>(opts.lock ? OAUTH_CLIENT_GRANT_SHARE_SQL : OAUTH_CLIENT_GRANT_SQL, [clientId]);
+  return row ?? null;
+}
+
+/** The access_tokens columns this brain has (a column a pending migration adds reads as absent). */
+export const ACCESS_TOKEN_COLUMNS_SQL = "SELECT attname FROM pg_attribute WHERE attrelid=to_regclass('access_tokens') AND attnum>0 AND NOT attisdropped";
+/** The select list of the token grant columns (grants/model.ts `TOKEN_GRANT_ROW_COLUMNS`, constant names) present in `present`. */
+export function tokenGrantSelectList(present: ReadonlySet<string>): string {
+  return TOKEN_GRANT_ROW_COLUMNS.filter(c => present.has(c)).join(',');
+}
+/**
+ * `readAccessTokenWriteGrant(tokenId, { lock })`: the token's grant row or null, named columns only (GST-2314: a
+ * prepared SELECT * cached before a migration added a column fails 0A000 inside the transaction); `lock` holds it
+ * `FOR SHARE`. The same two statements grants/model.ts `tokenGrantRowSelect` and authority.ts sent.
+ */
+export async function readAccessTokenWriteGrant(exec: LegacyUnscopedRead, tokenId: string, opts: { lock?: boolean } = {}): Promise<AccessTokenWriteGrant | null> {
+  const present = new Set((await exec.executeRaw<{ attname: string }>(ACCESS_TOKEN_COLUMNS_SQL)).map(c => c.attname));
+  const { rows: [row] } = await exec.run<AccessTokenWriteGrant>(
+    sqlFragment`SELECT ${trustedSql(tokenGrantSelectList(present))},revoked_at FROM access_tokens WHERE id=${tokenId}${opts.lock ? trustedSql(' FOR SHARE') : sqlFragment``}`);
+  return row ?? null;
+}
+
+/** The credential locks `authorizeWrite` takes before it re-reads an attest right (GST-1113). */
+export const LOCK_OAUTH_CLIENT_SHARE_SQL = 'SELECT 1 FROM oauth_clients WHERE client_id=$1 FOR SHARE';
+export const LOCK_ACCESS_TOKEN_SHARE_SQL = 'SELECT 1 FROM access_tokens WHERE id=$1 FOR SHARE';
+/** `shareLockWriteCredential(kind, id)`: holds the credential row `FOR SHARE` for the caller's transaction, so a concurrent removal commits before or after. */
+export async function shareLockWriteCredential(exec: LegacyUnscopedRead, kind: 'oauth_client' | 'legacy_token', id: string): Promise<void> {
+  await exec.executeRaw(kind === 'oauth_client' ? LOCK_OAUTH_CLIENT_SHARE_SQL : LOCK_ACCESS_TOKEN_SHARE_SQL, [id]);
+}
+
+/** The counter rows of `keys` that exist, unlocked (`readCounterRows`). */
+export const READ_COUNTERS_SQL = 'SELECT * FROM persistence_counters WHERE key=ANY($1::text[]) ORDER BY key COLLATE "C"';
+/** `readCounterRows(keys)`: the existing counter rows of `keys` in key byte order, without a lock; a missing key has no row. */
+export async function readCounterRows(exec: LegacyUnscopedRead, keys: readonly string[]): Promise<CounterRow[]> {
+  return exec.executeRaw<CounterRow>(READ_COUNTERS_SQL, [[...keys]]);
+}
+
+/**
+ * The admission rate a one-year cap value projects (`readAdmissionRate`): the brain's first request id (so a reused engine
+ * on another brain ignores rates cached for this one) and a sample of the latest 1,000 admissions, of one principal or of
+ * the whole brain: how many, the age of the oldest in seconds, their mean reservation (`gross`) and mean compacted
+ * receipt size (`net`). The three are null when nothing was admitted. With `{ sample: false }` it reads only the first
+ * request id (the statement oneYearCapacity sends when cached forecast rates may apply, so a refusal under the counter
+ * locks does not walk the sample) and answers no admissions.
+ */
+export interface AdmissionRate { first_request_id: string | null; admissions: number; age_seconds: number | null; gross: number | null; net: number | null }
+const ADMISSION_RATE_SQL = (principal: boolean) => `WITH recent AS (
+      SELECT id,created_at,terminal_reservation,authority,outcome,error_detail,client_request_id FROM persistence_requests
+      ${principal ? 'WHERE principal_kind=$1 AND principal_id=$2' : ''} ORDER BY sequence DESC LIMIT 1000),
+    e AS (SELECT request_id,SUM(${EFFECT_BYTES_SQL}) AS bytes FROM persistence_effects WHERE request_id IN (SELECT id FROM recent) GROUP BY request_id)
+    SELECT (SELECT id::text FROM persistence_requests ORDER BY sequence LIMIT 1) AS first_request_id,
+      count(*)::int AS admissions,EXTRACT(EPOCH FROM (now()-min(created_at)))::float8 AS age_seconds,avg(terminal_reservation)::float8 AS gross,
+      avg(${COMPACTED_RECEIPT_BYTES_SQL('recent', 'e')})::float8 AS net FROM recent LEFT JOIN e ON e.request_id=recent.id`;
+const FIRST_REQUEST_SQL = 'SELECT id::text AS first_request_id FROM persistence_requests ORDER BY sequence LIMIT 1';
+export async function readAdmissionRate(exec: LegacyUnscopedRead, principal: { kind: string; id: string } | null, opts?: { sample?: boolean }): Promise<AdmissionRate> {
+  if (opts?.sample === false) {
+    const [first] = await exec.executeRaw<{ first_request_id: string }>(FIRST_REQUEST_SQL);
+    return { first_request_id: first?.first_request_id ?? null, admissions: 0, age_seconds: null, gross: null, net: null };
+  }
+  const [row] = await exec.executeRaw<AdmissionRate>(ADMISSION_RATE_SQL(principal !== null), principal ? [principal.kind, principal.id] : []);
+  const num = (v: number | string | null | undefined) => v === null || v === undefined ? null : Number(v);
+  return { first_request_id: row?.first_request_id ?? null, admissions: Number(row?.admissions ?? 0), age_seconds: num(row?.age_seconds),
+    gross: num(row?.gross), net: num(row?.net) };
+}
+
 /**
  * Creates the missing counter rows and locks all of them in key order. On Postgres both statements are sent before
  * either is awaited (one round trip); a statement sent after the one that failed reports 25P02, so the error
@@ -202,4 +316,44 @@ export async function completeWriteRow(exec: SqlExecutor, c: WriteCompletion): P
     JSON.stringify(c.outcome), c.errorCode, c.errorMessage, c.consumerVersion, c.consumerHostId,
     c.errorDetail ? JSON.stringify(c.errorDetail) : null, c.resultBytes, c.counterKeys, c.intentBytes, c.retainedBytes, c.terminalReservation]);
   return done ?? null;
+}
+
+/** The config key that turns a remote write's mention links off (effect-model.ts `REMOTE_AUTO_LINKS_KEY`; the statement test pins the two). */
+export const REMOTE_AUTO_LINKS_CONFIG_KEY = 'mcp.remote_auto_links';
+
+/**
+ * #6007: a publication's effects, inserted together in queue order by one statement. A `gated` effect (the mention
+ * `links` effect) inserts nothing while config `auto_link` or `mcp.remote_auto_links` is off; unset is on. An effect
+ * already queued for the request keeps its row. The config value test is edge-whitespace.ts `asciiLowerSql(edgeTrimSql('value'))`
+ * written out; test/persistence-journal-statements.test.ts checks it against that fragment.
+ */
+export const PUBLICATION_EFFECTS_SQL = `INSERT INTO persistence_effects (request_id,kind,revision,data,source_id,source_incarnation,worktree_id)
+    SELECT $1::uuid,t.e->>'kind',$2::uuid,t.e->'data',$3,$4::uuid,$5::uuid FROM jsonb_array_elements($6::text::jsonb) WITH ORDINALITY AS t(e,n)
+    WHERE NOT (COALESCE((t.e->>'gated')::boolean,false) AND EXISTS (SELECT 1 FROM config
+      WHERE key IN ('auto_link',$7) AND translate(btrim(value, (E'\\u0020\\u0009\\u000a\\u000b\\u000c\\u000d' || CASE WHEN current_setting('server_encoding') = 'UTF8' THEN convert_from(decode('c2a0e19a80e28080e28081e28082e28083e28084e28085e28086e28087e28088e28089e2808ae280a8e280a9e280afe2819fe38080efbbbf', 'hex'), 'UTF8') ELSE '' END)), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz') IN ('false','0','no','off')))
+    ORDER BY t.n ON CONFLICT(request_id,kind) DO NOTHING RETURNING kind`;
+
+/** One effect a publication queues: its kind, its data, and whether the auto-link switches gate it. */
+export interface QueuedPublicationEffect { kind: string; data: Record<string, unknown>; gated?: boolean }
+
+/** What `insertPublicationEffects` inserts: the request's identity columns and its effects in queue order (at least one). */
+export interface PublicationEffectsSpec {
+  requestId: string;
+  /** The revision the publication wrote, or null when it wrote none. */
+  revision: string | null;
+  sourceId: string;
+  sourceIncarnation: string;
+  worktreeId: string | null;
+  effects: readonly QueuedPublicationEffect[];
+}
+
+/** The effects insert's parameters for one spec. */
+export function publicationEffectsParams(spec: PublicationEffectsSpec): unknown[] {
+  return [spec.requestId, spec.revision, spec.sourceId, spec.sourceIncarnation, spec.worktreeId, JSON.stringify(spec.effects), REMOTE_AUTO_LINKS_CONFIG_KEY];
+}
+
+/** Inserts a publication's effects; returns the kinds it inserted, in queue order (a gated or already queued kind is missing). */
+export async function insertPublicationEffects(exec: SqlExecutor, spec: PublicationEffectsSpec): Promise<string[]> {
+  const rows = await exec.executeRaw<{ kind: string }>(PUBLICATION_EFFECTS_SQL, publicationEffectsParams(spec));
+  return rows.map(row => row.kind);
 }

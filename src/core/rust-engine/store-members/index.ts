@@ -55,9 +55,11 @@ import * as factsRepair from './facts-repair.ts';
 import * as factsTrust from './facts-trust.ts';
 import * as factsTrustReads from './facts-trust-reads.ts';
 import * as trustTierReads from './trust-tier-reads.ts';
+import * as memoryMutationReads from './memory-mutation-reads.ts';
 import * as jobs from './jobs.ts';
 import * as housekeeping from './housekeeping.ts';
 import * as effectScans from './effect-scans.ts';
+import * as ownerScans from './owner-scans.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeMisc from './write-misc.ts';
 import * as linkTemporal from './link-temporal.ts';
@@ -66,10 +68,16 @@ import * as writeGuards from './write-guards.ts';
 import * as trustFence from './trust-fence.ts';
 import * as trustProposals from './trust-proposals.ts';
 import * as factRelinkAttempts from './fact-relink-attempts.ts';
+import * as factRelinkWrites from './fact-relink-writes.ts';
 import * as connectGate from './connect-gate.ts';
 import * as telemetry from './telemetry.ts';
 import * as importMembers from './import-members.ts';
+import * as calibrationProfiles from './calibration-profiles.ts';
+// Group C: decide proposals and review proposals (rust/docs/store/decide-proposals.md).
+import * as decideProposals from './decide-proposals.ts';
 import * as fieldUsage from './field-usage.ts';
+import * as decideStore from './decide-store.ts';
+import * as writeContext from './write-context.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
 const initSchema: StoreMember<[], void> = async () => undefined;
@@ -82,7 +90,7 @@ export const STORE_MEMBERS = {
   // Planned families: a member is served once its family file exports it.
   ...pageOps, ...extraction, ...aliases, ...pageBody, ...facts, ...ontology, ...takes, ...contradictions, ...dream,
   ...evalCapture, ...codeEdges, ...salience, ...stats, ...rawFiles, ...linkQueries, ...timelineQueries, ...keyword,
-  ...chunkQueries, ...vectors, ...embeddings, ...transactions, ...relations, ...wantedLinks, ...trustWithdrawals, ...trustWriteGate, ...openLoops,
+  ...chunkQueries, ...vectors, ...embeddings, ...transactions, ...writeContext, ...relations, ...wantedLinks, ...trustWithdrawals, ...trustWriteGate, ...openLoops,
   // The minion queue and its cycle locks (rust/crates/gbrain-store/src/jobs.rs).
   ...jobs,
   // Typed reads that replace raw SQL in CLI paths (rust/crates/gbrain-store/src/cli_reads/).
@@ -92,8 +100,11 @@ export const STORE_MEMBERS = {
   ...cliEntities,
   // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
   ...factsDoctor, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust, ...factsTrustReads, ...factRelinkAttempts,
+  ...factRelinkWrites,
   // Typed reads of stamped trust tiers (rust/docs/store/trust.md, "Tier reads").
   ...trustTierReads,
+  // The reads remember and forget make before admission (rust/docs/store/memory_mutation_reads.md).
+  ...memoryMutationReads,
   // The persistence brain identity the store already keeps (rust/docs/store/journal.md).
   ...persistenceIdentity,
   // Search telemetry (rust/docs/store/telemetry.md).
@@ -102,7 +113,7 @@ export const STORE_MEMBERS = {
   ...linkTemporal,
   // Alias fan-out reads (rust/docs/store/alias_fanout_reads.md).
   ...aliasFanoutReads,
-  ...persistence, ...housekeeping, ...effectScans,
+  ...persistence, ...housekeeping, ...effectScans, ...ownerScans,
   ...writeMisc,
   // The page write guards a page write runs around the page row (rust/docs/store/write-guards.md).
   ...writeGuards, ...trustFence, ...trustProposals,
@@ -110,8 +121,14 @@ export const STORE_MEMBERS = {
   ...connectGate,
   // The page and chunk statements a page import runs around its chunk write (rust/docs/store/import-members.md).
   ...importMembers,
+  // Decide family, group B: calibration profiles (rust/docs/store/calibration-profiles.md).
+  ...calibrationProfiles,
+  // Group C: the decide proposal tables (rust/docs/store/decide-proposals.md).
+  ...decideProposals,
   // The field usage sample read of schema detect --fields (rust/docs/store/field-usage.md).
   ...fieldUsage,
+  // Group A: the decide store (rust/docs/store/decide-store.md).
+  ...decideStore,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

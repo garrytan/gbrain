@@ -2,9 +2,11 @@
 //! (src/core/search/private-visibility.ts), which PGLite adds to a read that passes
 //! `excludePrivate`. rust/docs/store/facts.md names the file and line of every rule below.
 //!
-//! The policy is the one PGLite renders with no caller record: the empty identity, no folder
-//! rule satisfied, no lineage read. The TypeScript member refuses any other caller before it
-//! reads. Two process settings change that rendering, and the member passes both:
+//! The policy is the one PGLite renders with no caller record (the empty identity, no folder
+//! rule satisfied, no lineage read), or for a record of only a reader identity and a
+//! private-readable grant: the entity gate then judges by both, and the provenance page by the
+//! identity on the caller's own member page only (`member_page`). The TypeScript member refuses
+//! any other caller before it reads. Two process settings change that rendering, and the member passes both:
 //! `honor_aliases` (`visibility.honor_aliases`) and `entity_privacy` (false when an operator
 //! relaxed remote privacy, which drops the privacy part of the entity-page gate only).
 //!
@@ -29,7 +31,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 
 /// The policy settings the TypeScript member read from the rendered SQL.
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PrivacyPolicy {
     /// `honorAliases()`: a page with no `visibility` and a private `access` or
@@ -37,6 +39,26 @@ pub struct PrivacyPolicy {
     pub honor_aliases: bool,
     /// `privacyForCaller`: the entity and holding pages are judged by the privacy part too.
     pub entity_privacy: bool,
+    /// The caller's reader identity (`member:<id>` and `group:<g>` principals) that the page
+    /// policy judges a page's readers by (`readersAllowedSql`). Empty for the no-caller rendering.
+    /// The fact policy judges the entity and holding pages by it, and the provenance page only
+    /// when that page is `member_page`.
+    #[serde(default)]
+    pub identity: Vec<String>,
+    /// The fact policy's member-page case (`privateProvenanceFilterUnderPolicy`): the caller's own
+    /// member page (`memory/members/<member>`), the one provenance page judged by `identity`;
+    /// every other provenance page keeps the empty identity. None for a page read, for the
+    /// no-caller rendering and for `privateFactFilterForCaller`, which has no such case.
+    #[serde(default)]
+    pub member_page: Option<String>,
+    /// The caller's private-readable grant (`orPrivateReadableSource`): a page of one of these
+    /// sources that is not a pinned question passes the privacy part.
+    #[serde(default)]
+    pub private_readable_sources: Vec<String>,
+    /// `remoteProvenanceFloorSql('facts')`, the remote floor: only the provenance page is judged
+    /// (`privateProvenanceFilterFragment`), with no entity or holding-page gate.
+    #[serde(default)]
+    pub provenance_only: bool,
 }
 
 /// `PRIVACY_ALIASES`: the keys a page may carry instead of `visibility`, with their private values.
@@ -63,11 +85,11 @@ pub(crate) fn hidden_by_private_provenance(
     row: &FactRecord,
     policy: &PrivacyPolicy,
 ) -> Result<bool> {
-    if let Some(slug) = &row.source_markdown_slug
-        && let Some(page) = read_page(read, &row.source_id, slug)?
-        && !(readers_allowed(read, &page)? && privacy_allows(read, &page, policy.honor_aliases)?)
-    {
+    if hidden_by_provenance_page(read, row, policy, true)? {
         return Ok(true);
+    }
+    if policy.provenance_only {
+        return Ok(false);
     }
     let held = match (&row.entity_slug, &row.source_markdown_slug) {
         (Some(_), Some(slug)) if holding_slug(slug) => Some(slug),
@@ -85,17 +107,63 @@ pub(crate) fn hidden_by_private_provenance(
     Ok(false)
 }
 
+/// Whether the row's provenance page (`source_markdown_slug`) fails the page policy: the
+/// provenance half of the policy above, and by itself `privateProvenanceFilterFragment` (the
+/// remote provenance floor, `remoteProvenanceFloorSql`, for a caller that is not labelled-only),
+/// which judges no entity or holding page. A missing page hides nothing. `restricted` is the
+/// caller record's flag: false (a brain that holds no member-access restrictions) renders the
+/// member-access part as `page_readers IS NULL AND folder_rule_ids IS NULL`, with no origin test.
+pub(crate) fn hidden_by_provenance_page(
+    read: &dyn KvRead,
+    row: &FactRecord,
+    policy: &PrivacyPolicy,
+    restricted: bool,
+) -> Result<bool> {
+    let Some(slug) = &row.source_markdown_slug else {
+        return Ok(false);
+    };
+    let Some(page) = read_page(read, &row.source_id, slug)? else {
+        return Ok(false);
+    };
+    let access = if restricted {
+        readers_allowed(read, &page, provenance_identity(policy, slug))?
+    } else {
+        !names_readers(&page)
+    };
+    Ok(!(access && privacy_allows(read, &page, policy.honor_aliases)?))
+}
+
+/// The identity the provenance page at `slug` is judged by: the caller's on its own member page,
+/// else the empty identity (`readPolicyFragment('pp', [], ...)`).
+fn provenance_identity<'a>(policy: &'a PrivacyPolicy, slug: &str) -> &'a [String] {
+    if policy.member_page.as_deref() == Some(slug) {
+        &policy.identity
+    } else {
+        &[]
+    }
+}
+
 /// Whether the page policy `privatePagesFilterForCaller(p)` hides `page`: the member-access part
-/// for the empty identity, then the privacy part unless `entity_privacy` is false. It is the test
-/// the entity gate puts on an entity page.
+/// for the policy's identity, then the privacy part unless `entity_privacy` is false, which a page
+/// of a private-readable source passes unless it is a pinned question. It is the test the entity
+/// gate puts on an entity page.
 pub(crate) fn page_hidden(
     read: &dyn KvRead,
     page: &PageRecord,
     policy: &PrivacyPolicy,
 ) -> Result<bool> {
-    let allowed = readers_allowed(read, page)?
-        && (!policy.entity_privacy || privacy_allows(read, page, policy.honor_aliases)?);
+    let allowed = readers_allowed(read, page, &policy.identity)?
+        && (!policy.entity_privacy
+            || private_source_open(page, policy)
+            || privacy_allows(read, page, policy.honor_aliases)?);
     Ok(!allowed)
+}
+
+/// `orPrivateReadableSource`: the page's source is in the private-readable grant and the page
+/// does not carry `pinned_question`.
+fn private_source_open(page: &PageRecord, policy: &PrivacyPolicy) -> bool {
+    policy.private_readable_sources.contains(&page.source_id)
+        && !page.frontmatter.contains_key("pinned_question")
 }
 
 /// Whether the no-caller policy hides a page version (`callerReadersAllowedSql(pv, 'snapshot') AND
@@ -226,10 +294,61 @@ fn explicitly_private(page: &PageRecord) -> bool {
     text(&page.frontmatter, "visibility").as_deref() == Some("private")
 }
 
-/// The member-access part for the empty identity (`accessAllowedSql`): no readers of its own,
-/// and no origin that names readers.
-fn readers_allowed(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
-    if names_readers(page) {
+/// `NOBODY`: the readers of a `readable_by` value that is present but malformed.
+const NOBODY: &str = "!nobody";
+
+/// `ACCESS_ID_RE`, `^[a-z0-9][a-z0-9._-]{0,63}$`.
+fn access_id(id: &str) -> bool {
+    let bytes = id.as_bytes();
+    (1..=64).contains(&bytes.len())
+        && (bytes[0].is_ascii_lowercase() || bytes[0].is_ascii_digit())
+        && bytes[1..].iter().all(|b| {
+            b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'_' | b'-')
+        })
+}
+
+/// `gbrain_access_norm_readers` for one entry: trimmed of ASCII spaces and ASCII lower-cased, a
+/// bare or `member:` id reads as `member:<id>`, a `group:` id as itself; anything else is none.
+fn norm_reader(raw: &str) -> Option<String> {
+    let v = raw.trim_matches(' ').to_ascii_lowercase();
+    if let Some(group) = v.strip_prefix("group:") {
+        return access_id(group).then(|| v.clone());
+    }
+    let id = v.strip_prefix("member:").unwrap_or(&v);
+    access_id(id).then(|| format!("member:{id}"))
+}
+
+/// `gbrain_access_readers(frontmatter)` (schema migration v282), the `page_readers` column: none
+/// without a `readable_by` key; the sorted, distinct principals of a string or of a list of 1 to
+/// 256 strings that all normalize; `['!nobody']` for any other value.
+pub(crate) fn access_readers(frontmatter: &Map<String, Value>) -> Option<Vec<String>> {
+    let value = frontmatter.get("readable_by")?;
+    let items: Option<Vec<&str>> = match value {
+        Value::String(one) => Some(vec![one.as_str()]),
+        Value::Array(items) if (1..=256).contains(&items.len()) => {
+            items.iter().map(Value::as_str).collect()
+        }
+        _ => None,
+    };
+    let readers: Option<Vec<String>> =
+        items.and_then(|items| items.into_iter().map(norm_reader).collect());
+    Some(match readers {
+        Some(mut readers) => {
+            readers.sort();
+            readers.dedup();
+            readers
+        }
+        None => vec![NOBODY.to_string()],
+    })
+}
+
+/// The member-access part (`accessAllowedSql`) for `identity`: no readers of its own or readers
+/// that name one of its principals (`readersAllowedSql`), and no origin that names readers.
+fn readers_allowed(read: &dyn KvRead, page: &PageRecord, identity: &[String]) -> Result<bool> {
+    if names_readers(page)
+        && !access_readers(&page.frontmatter)
+            .is_some_and(|readers| readers.iter().any(|r| identity.contains(r)))
+    {
         return Ok(false);
     }
     let plain = !matches!(
@@ -402,5 +521,57 @@ fn declared_lineage_private(read: &dyn KvRead, page: &PageRecord) -> Result<bool
     match declared_slugs(&page.frontmatter) {
         Some(slugs) => any_page_where(read, &page.source_id, &slugs, explicitly_private),
         None => Ok(false),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::access_readers;
+    use serde_json::{Map, Value, json};
+
+    fn readers(value: Value) -> Option<Vec<String>> {
+        let mut frontmatter = Map::new();
+        frontmatter.insert("readable_by".to_string(), value);
+        access_readers(&frontmatter)
+    }
+
+    #[test]
+    fn access_readers_normalizes_as_gbrain_access_readers() {
+        assert_eq!(access_readers(&Map::new()), None);
+        assert_eq!(
+            readers(json!([
+                "bob-example",
+                " Member:Alice-Example ",
+                "group:team-a",
+                "bob-example"
+            ])),
+            Some(vec![
+                "group:team-a".to_string(),
+                "member:alice-example".to_string(),
+                "member:bob-example".to_string(),
+            ])
+        );
+        assert_eq!(
+            readers(json!("group:team-a")),
+            Some(vec!["group:team-a".to_string()])
+        );
+        let nobody = Some(vec!["!nobody".to_string()]);
+        for bad in [
+            json!([]),
+            json!([42]),
+            json!(["alice-example", "not valid!"]),
+            json!(null),
+            json!({"a": 1}),
+            json!(["group:"]),
+            json!(["-alice"]),
+            json!([format!("a{}", "b".repeat(64))]),
+            Value::Array(vec![json!("a"); 257]),
+        ] {
+            assert_eq!(readers(bad), nobody);
+        }
+        assert_eq!(
+            readers(json!([format!("a{}", "b".repeat(63))])).map(|r| r[0].len()),
+            Some("member:".len() + 64)
+        );
     }
 }

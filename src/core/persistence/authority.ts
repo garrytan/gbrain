@@ -6,7 +6,7 @@ import { slugUnderBoundPrefixes, matchesSlugAllowList, noSourceGrantError } from
 import { NO_SOURCES } from '../source-id.ts';
 import { hasScope } from '../scope.ts';
 import { normalizeTokenScopes } from '../legacy-token-scope.ts';
-import { authSourcesFromGrant, grantFromTokenRow, tokenGrantRowSelect, type TokenGrantRow } from '../grants/model.ts';
+import { authSourcesFromGrant, grantFromTokenRow } from '../grants/model.ts';
 import { readLocalWriter, currentVerifiedLocalWriter, takeRegisteredWriterRow, verifyLocalWriter, type LocalGrant } from './identity.ts';
 import { authorizedSlug, type Principal, type SqlEngine, type WriteAuthority, type WriteRequest } from './model.ts';
 import { authorizePageVisibility, excludesPrivateWritesAtAdmission } from './page-visibility.ts';
@@ -101,7 +101,7 @@ export async function submissionAuthority(ctx: OperationContext, operation: stri
  * registration check just made answers the authorization that follows it (`withRegisteredLocalWriter`, once).
  */
 /** The engine authorization reads through: its raw statements plus the typed local writer and source membership reads. */
-export type AuthorityEngine = SqlEngine & Pick<BrainEngine, 'readLocalWriterRow' | 'readSourceMembership'>;
+export type AuthorityEngine = SqlEngine & Pick<BrainEngine, 'readLocalWriterRow' | 'readSourceMembership' | 'readOAuthClientWriteGrant' | 'readAccessTokenWriteGrant' | 'shareLockWriteCredential'>;
 function localWriterRow(engine: AuthorityEngine, id: string, lock: boolean): Promise<Array<{ lane: string; revoked_at: unknown; grant_ceiling: LocalGrant }>> {
   const registered = lock ? undefined : takeRegisteredWriterRow(id);
   if (registered) return Promise.resolve([registered]);
@@ -180,17 +180,14 @@ export async function authorizeWrite(engine: AuthorityEngine, a: WriteAuthority,
     const actor = parseStoredActor(a.actingFor);
     if (!actor) deny('The accepted attested actor is malformed.');
     // GST-1113: lock the credential row before reading its attest right, so a concurrent removal commits before or after this publication.
-    if (lock && a.principal.kind === 'oauth_client') await engine.executeRaw('SELECT 1 FROM oauth_clients WHERE client_id=$1 FOR SHARE', [a.principal.id]);
-    if (lock && a.principal.kind === 'legacy_token') await engine.executeRaw('SELECT 1 FROM access_tokens WHERE id=$1 FOR SHARE', [a.principal.id]);
+    if (lock && (a.principal.kind === 'oauth_client' || a.principal.kind === 'legacy_token')) await engine.shareLockWriteCredential(a.principal.kind, a.principal.id);
     await storedActorIdentity(engine, a.principal, actor, a.attestedOp ?? operation, storedPerCallWriteSource(a, slug) ?? undefined);
   }
   // GST-1113: the one exception to the owner's single write source (the scope page), re-checked against the live attest_sources above.
   // A live grant of no sources writes nothing, so it refuses before that exception.
   const ownSource = (source: unknown, sourcesNone: boolean) => !sourcesNone && (source === a.sourceId || storedPerCallWriteSource(a, slug) !== null);
-  const suffix = lock ? ' FOR SHARE' : '';
   if (a.principal.kind === 'oauth_client') {
-    const [row] = await engine.executeRaw<Record<string, unknown>>(`SELECT deleted_at,scope,source_id,source_grant,allowed_operations,
-      bound_slug_prefixes,bound_tools,delegated_namespace,delegated_slug_prefixes FROM oauth_clients WHERE client_id=$1${suffix}`, [a.principal.id]);
+    const row = await engine.readOAuthClientWriteGrant(a.principal.id, { lock });
     if (!row || row.deleted_at != null || !ownSource(row.source_id, row.source_grant === 'none')) deny('The owning OAuth client is revoked or its source changed.');
     const scopes = typeof row.scope === 'string' ? row.scope.split(/\s+/) : [];
     assertSkillWriteScopes(scopes, operation, a.remote);
@@ -204,8 +201,8 @@ export async function authorizeWrite(engine: AuthorityEngine, a: WriteAuthority,
     return;
   }
   if (a.principal.kind === 'legacy_token') {
-    // GST-2314: named columns, not SELECT *: inside this transaction a plan cached before a migration added a column fails 0A000.
-    const [row] = await engine.executeRaw<TokenGrantRow & { revoked_at: unknown }>(`SELECT ${await tokenGrantRowSelect(engine)},revoked_at FROM access_tokens WHERE id=$1${suffix}`, [a.principal.id]);
+    // GST-2314: the member reads named columns, not SELECT *: inside this transaction a plan cached before a migration added a column fails 0A000.
+    const row = await engine.readAccessTokenWriteGrant(a.principal.id, { lock });
     if (!row || row.revoked_at != null) deny('The owning token is revoked.');
     const grant = grantFromTokenRow(row);
     if (grant.permissionsMalformed) deny('The current legacy grant is malformed.');
@@ -287,18 +284,29 @@ async function authorizeStoredTakeHolders(engine: AuthorityEngine, row: WriteReq
 }
 /**
  * #6007: one access check answers identical read-only statements once (the
- * current and the stored authority read the same writer row and visibility).
+ * current and the stored authority read the same writer row and visibility),
+ * and the plain typed writer read (`readLocalWriterRow`) once too.
  * The memo lives for that single check and holds no locking reads.
  */
 function onceReads(engine: BrainEngine): BrainEngine {
-  const reads = new Map<string, Promise<unknown[]>>();
+  const reads = new Map<string, Promise<unknown>>();
+  const once = <T>(id: string, read: () => Promise<T>): Promise<T> => {
+    let value = reads.get(id) as Promise<T> | undefined;
+    if (!value) { value = read(); reads.set(id, value); value.catch(() => reads.delete(id)); }
+    return value;
+  };
   return new Proxy(engine, { get(target, key) {
+    // The writer row is the typed readLocalWriterRow member, answered once like the statement text it replaced.
+    if (key === 'readLocalWriterRow') return sharedWriterRow(target, reads, once);
+    // The credential grant rows are typed members too; a plain read is answered once, a locking one always runs.
+    if (key === 'readOAuthClientWriteGrant') return (id: string, opts?: { lock?: boolean }) =>
+      opts?.lock ? target.readOAuthClientWriteGrant(id, opts) : once(JSON.stringify([key, id]), () => target.readOAuthClientWriteGrant(id));
+    if (key === 'readAccessTokenWriteGrant') return (id: string, opts?: { lock?: boolean }) =>
+      opts?.lock ? target.readAccessTokenWriteGrant(id, opts) : once(JSON.stringify([key, id]), () => target.readAccessTokenWriteGrant(id));
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) => {
       if (/\bFOR (?:SHARE|UPDATE)\b/i.test(sql)) return target.executeRaw(sql, params, opts);
       const id = JSON.stringify([sql, params ?? null]);
-      let read = reads.get(id);
-      if (!read) { read = target.executeRaw(sql, params, opts); reads.set(id, read); read.catch(() => reads.delete(id)); }
-      return read;
+      return once(id, () => target.executeRaw(sql, params, opts));
     };
     const value = Reflect.get(target, key, target);
     return typeof value === 'function' ? value.bind(target) : value;

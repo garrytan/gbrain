@@ -17,6 +17,8 @@ import { openRustEngine, RustEngine } from '../src/core/rust-engine.ts';
 import { RUST_ENGINE_MEMBERS } from '../src/core/rust-engine/members.ts';
 import { servedCapabilities } from '../src/core/rust-engine/store-capabilities.ts';
 import { STORE_MEMBERS } from '../src/core/rust-engine/store-members/index.ts';
+import { labelsOf } from '../src/core/rust-engine/store-members/label-line.ts';
+import { METADATA_LABELS } from '../src/core/conversation-parser/builtins.ts';
 import { toGetPage, toListPage } from '../src/core/rust-engine/store-codec.ts';
 import { PageRevisionConflictError } from '../src/core/page-state/types.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
@@ -158,16 +160,60 @@ describe('Rust engine on the store', () => {
     expect(await tag(true)).toBeUndefined();
   });
 
-  withAddon('excludePrivate refuses for a caller whose member identity changes the page policy PGLite renders', async () => {
+  withAddon('excludePrivate refuses for a caller whose folder-rule grants change the page policy PGLite renders', async () => {
     const { engine } = await open();
     await engine.putPage('notes/a', page);
-    const asMember = <T>(fn: () => Promise<T>) => withCallerAccess({ identity: ['member:alice-example'] }, fn);
+    // A reader identity alone is served (the callerReaders opt-in); a satisfied folder rule still refuses.
+    const asReader = <T>(fn: () => Promise<T>) => withCallerAccess({ identity: ['member:alice-example'] }, fn);
+    expect(await code(() => asReader(() => engine.getRecentSalience({ days: 7, excludePrivate: true })))).toBeUndefined();
+    const asMember = <T>(fn: () => Promise<T>) =>
+      withCallerAccess({ identity: ['member:alice-example'], satisfiedRuleIds: ['default:team-notes'] }, fn);
     const refs = [{ slug: 'notes/a', source_id: 'default' }];
     expect(await code(() => asMember(() => engine.getRecentSalience({ days: 7, excludePrivate: true })))).toBe('engine_capability_missing');
     expect(await code(() => asMember(() => engine.getSalienceScores(refs, { excludePrivate: true })))).toBe('engine_capability_missing');
     expect(await code(() => asMember(() => engine.findAnomalies({ since: '2026-01-02', excludePrivate: true })))).toBe('engine_capability_missing');
     // Without excludePrivate the caller's record does not matter: the read applies no page policy.
     expect(await code(() => asMember(() => engine.getRecentSalience({ days: 7 })))).toBeUndefined();
+  });
+
+  withAddon('excludePrivate on the fact reads serves a reader identity and grant but refuses folder rules, audiences, lineage and labelled-only', async () => {
+    const { engine } = await open();
+    await engine.putPage('notes/a', page);
+    await engine.insertFacts([{ fact: 'f', entity_slug: 'people/a-example', source_markdown_slug: 'notes/a', row_num: 1, kind: 'fact', visibility: 'world', source: 'fence' }] as never, { source_id: 'default' });
+    const reads: Record<string, () => Promise<unknown>> = {
+      listFactsSince: () => engine.listFactsSince('default', new Date('2020-01-01T00:00:00Z'), { excludePrivate: true }),
+      countWorldFacts: () => engine.countWorldFacts({ sourceId: 'default', entitySlugs: ['people/a-example'], worldOnly: false, excludePrivate: true }),
+      getOntology: () => engine.getOntology('people/a-example', { excludePrivate: true }),
+    };
+    const reader = { identity: ['member:alice-example'], privateReadableSources: ['default'] };
+    // Option C scope: each of these changes the fact policy text, and the store has no form for it.
+    const refused = {
+      folderRule: { ...reader, satisfiedRuleIds: ['default:team-notes'] },
+      audience: { audience: ['member:alice-example', 'member:bob-example'], audienceIdentities: [['member:alice-example'], ['member:bob-example']] },
+      lineage: { ...reader, lineage: true },
+      labelledOnly: { ...reader, labelledOnly: true },
+    };
+    for (const [name, read] of Object.entries(reads)) {
+      expect([name, await code(() => withCallerAccess(reader, read))]).toEqual([name, undefined]);
+      for (const [kind, access] of Object.entries(refused)) {
+        expect([name, kind, await code(() => withCallerAccess(access, read))]).toEqual([name, kind, 'engine_capability_missing']);
+      }
+    }
+  });
+
+  withAddon('readRemoteForgetTier under the remote floor serves no caller record, a restricted or unrestricted brain and the owner, and refuses labelled-only and folder coverage', async () => {
+    const { engine } = await open();
+    await engine.putPage('notes/a', page);
+    const { ids } = await engine.insertFacts([{ fact: 'f', entity_slug: 'people/a-example', source_markdown_slug: 'notes/a', row_num: 1, kind: 'fact', visibility: 'world', source: 'fence' }] as never, { source_id: 'default' });
+    const read = () => engine.readRemoteForgetTier({ factId: ids[0]!, sourceId: 'default', remoteFloor: true });
+    const served = { restricted: { restricted: true }, unrestricted: { restricted: false }, owner: { owner: true }, ownerUnrestricted: { owner: true, restricted: false } };
+    for (const [kind, access] of Object.entries(served)) {
+      expect([kind, await withCallerAccess(access, read)]).toEqual([kind, expect.any(String)]);
+    }
+    expect(await read()).toEqual(expect.any(String));
+    // A labelled-only caller or pending folder coverage renders a floor the store has no form for.
+    expect(await code(() => withCallerAccess({ labelledOnly: true }, read))).toBe('engine_capability_missing');
+    expect(await code(() => withCallerAccess({ folderCoverage: [{ source_id: 'default', prefix: 'team/' }] }, read))).toBe('engine_capability_missing');
   });
 
   withAddon('a chunk vector of the wrong width is refused, and writes nothing', async () => {
@@ -306,6 +352,45 @@ describe('Rust store members', () => {
     expect(error).toBeInstanceOf(OperationError);
     expect((error as OperationError).code).toBe('page_body_segmented');
     expect((error as Error).message).toBe('Page notes/a or its version 7 is stored in segments, so revert_version cannot restore it yet; nothing was changed.');
+  });
+
+  test('countLabelFacts reads the label line into its literal labels, caps the store count, and refuses any other pattern', async () => {
+    const line = (alts: string) => `(^|\\n)\\*\\*(${alts})[[:space:]]*:\\*\\*`;
+    const labels = labelsOf(line(METADATA_LABELS.join('|')))!;
+    expect(labels).toContain('organiser');
+    expect(labels).toContain('organizer');
+    expect(labels).toContain('action item');
+    expect(labels).toContain('action items');
+    expect(labels).not.toContain('dates');
+    expect(labelsOf(line('Date|Time'))).toEqual(['date', 'time']);
+    for (const bad of ['Date|', 'Dat.', 'Da+te', '[^a]te', 'd??', '(date)', 'déjà', 'x\\y']) expect(labelsOf(line(bad))).toBeNull();
+    expect(labelsOf(`(^|\\n)\\*\\*(Date):\\*\\*`)).toBeNull();
+    const sent: unknown[] = [];
+    const brain = { countLabelFacts: async (q: unknown) => { sent.push(q); return 3; } };
+    const count = STORE_MEMBERS.countLabelFacts as unknown as (brain: unknown, sourceIds: string[], cap: number, args: Record<string, string>) => Promise<unknown>;
+    const args = { segmentSource: 's', contextLike: '%seg 1%', labelLine: line('Date'), terminalSource: 't', nonExtractableSource: 'n' };
+    expect(await count(brain, ['default'], 2, args)).toEqual({ count: 2, capped: true });
+    expect(await count(brain, ['default'], 3, args)).toEqual({ count: 3, capped: false });
+    expect(sent[0]).toEqual({ sourceIds: ['default'], limit: 3, segmentSource: 's', contextContains: 'seg 1', labels: ['date'], terminalSource: 't', nonExtractableSource: 'n' });
+    const code = async (run: () => Promise<unknown>) => { try { await run(); return 'ran'; } catch (e) { return (e as { code?: string }).code; } };
+    expect(await code(() => count(brain, ['default'], 1.5, args))).toBe('engine_capability_missing');
+    expect(await code(() => count(brain, ['default'], -2, args))).toBe('engine_capability_missing');
+    expect(await code(() => count(brain, ['default'], 2, { ...args, labelLine: line('Da.e') }))).toBe('engine_capability_missing');
+    for (const contextLike of ['seg%', '%se_g%', '%a%b%', '%a\\b%']) expect(await code(() => count(brain, ['default'], 2, { ...args, contextLike }))).toBe('engine_capability_missing');
+    expect(sent).toHaveLength(2);
+  });
+
+  test('countPurgedPageFacts sends LIMIT cap + 1, counts the first cap rows by class, and refuses a cap that is not an integer', async () => {
+    const sent: unknown[] = [];
+    const brain = { countPurgedPageFacts: async (q: unknown) => { sent.push(q); return [true, false, true]; } };
+    const count = STORE_MEMBERS.countPurgedPageFacts as unknown as (brain: unknown, sourceIds: string[], cap: number) => Promise<unknown>;
+    expect(await count(brain, ['default'], 2)).toEqual({ evidenced: 1, ambiguous: 1, capped: true });
+    expect(await count(brain, ['default'], 3)).toEqual({ evidenced: 2, ambiguous: 1, capped: false });
+    expect(sent[0]).toEqual({ sourceIds: ['default'], limit: 3 });
+    const code = async (run: () => Promise<unknown>) => { try { await run(); return 'ran'; } catch (e) { return (e as { code?: string }).code; } };
+    expect(await code(() => count(brain, ['default'], 1.5))).toBe('engine_capability_missing');
+    expect(await code(() => count(brain, ['default'], -2))).toBe('engine_capability_missing');
+    expect(sent).toHaveLength(2);
   });
 });
 

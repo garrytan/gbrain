@@ -1,10 +1,12 @@
 /**
  * The write-journal members the Rust store answers: the state reads (readManagedModeRows, readLocalWriterRow,
  * insertLocalWriterRow, readJournalLimitRows, readHeldPageRows, readHeldCoverageRows), the request rows the put path
- * reads and writes (readWriteRequest, readWriteRequestById, lockPersistenceCounters, insertWriteRequest,
+ * reads and writes (readWriteRequest, readWriteRequestById, readWriteRequestProgress, countOutstandingBySource, ownsSchemaTables, readOAuthClientWriteGrant, readAccessTokenWriteGrant, shareLockWriteCredential, readCounterRows, readAdmissionRate, lockPersistenceCounters, insertWriteRequest,
  * stampWriteClaim, lockWriteRequest, completeWriteRow), the claim upkeep (renewWriteClaim, expireStaleWriteClaims,
- * hasClaimableWrite), the admission reads (readSourceMembership, findTopologyChanges), the lifecycle receipts
- * (readTopologyChange, insertTopologyChange) and readLedgerSource.
+ * hasClaimableWrite), the consumer rows (listHostConsumerRows, probeLiveConsumerRows, renewConsumerRow,
+ * deleteConsumerRow, stampWorktreeHeartbeats), the admission reads (readSourceMembership, findTopologyChanges), the lifecycle receipts
+ * (readTopologyChange, insertTopologyChange) and readLedgerSource. insertPublicationEffects always refuses: the store
+ * records no effect.
  *
  * Each store call is one store write transaction, so the row locks PGLite takes (FOR SHARE, FOR UPDATE, the counter
  * lock) change nothing here: no other write can run between the read and the write that follows it. The callers that
@@ -14,8 +16,8 @@
  * rust/docs/store/persistence.md.
  */
 import type { LocalWriterInsert, LocalWriterRow } from '../../engine-sql/persistence-state.ts';
-import type { ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, WriteCompletion, WriteRequestInsert } from '../../engine-sql/persistence-journal.ts';
-import type { ClaimExpiry, ClaimRenewal, SourceMembership, TopologyChange, TopologyChangeInsert } from '../../engine-sql/persistence-claims.ts';
+import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WriteCompletion, WriteRequestInsert, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
+import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from '../../engine-sql/persistence-claims.ts';
 import type { LedgerSource } from '../../engine-sql/belief.ts';
 import type { WriteRequest } from '../../persistence/model.ts';
 import { PAGE_BODY_CONFIG_KEYS } from '../../page-body/limits.ts';
@@ -78,6 +80,44 @@ export const readWriteRequest: StoreMember<[principalKind: string, principalId: 
 export const readWriteRequestById: StoreMember<[id: string, opts?: { signal?: AbortSignal }], WriteRequest | null> =
   async (brain, id) => requestRow(await storeCall({ member: 'readWriteRequestById' }, () => brain.readWriteRequestById(id)));
 
+/**
+ * The progress columns of request `id`, or null: the columns PGLite's WRITE_PROGRESS_SQL selects, taken from the
+ * stored row. `signal` changes nothing, as for readWriteRequestById.
+ */
+export const readWriteRequestProgress: StoreMember<[id: string, opts?: { signal?: AbortSignal }], WriteRequestProgress | null> = async (brain, id) => {
+  const row = requestRow<WriteRequest>(await storeCall({ member: 'readWriteRequestProgress' }, () => brain.readWriteRequestById(id)));
+  if (!row) return null;
+  return { state: row.state, error_code: row.error_code, error_message: row.error_message, completed_at: row.completed_at, updated_at: row.updated_at,
+    blocked_reason: row.blocked_reason, outcome: row.outcome, deferred_refresh_id: row.deferred_refresh_id, deferred_import_from: row.deferred_import_from };
+};
+
+/** The sources holding outstanding requests of one principal, most first; a tie in byte order of the source id, as Postgres sorts `COLLATE "C"`. */
+export const countOutstandingBySource: StoreMember<[principalKind: string, principalId: string], OutstandingBySource[]> = (brain, principalKind, principalId) =>
+  storeCall({ member: 'countOutstandingBySource' }, () => brain.countOutstandingBySource(principalKind, principalId));
+
+/** The brain's one process opens its store file, so it owns every table and may apply migrations. */
+export const ownsSchemaTables: StoreMember<[], boolean> = async () => true;
+
+/**
+ * The Rust store keeps no OAuth clients or legacy access tokens (its writers are local_cli and local_stdio), so a
+ * write owned by either finds no live grant row, as a Postgres or PGLite brain without that credential does.
+ */
+export const readOAuthClientWriteGrant: StoreMember<[clientId: string, opts?: { lock?: boolean }], OAuthClientWriteGrant | null> = async () => null;
+export const readAccessTokenWriteGrant: StoreMember<[tokenId: string, opts?: { lock?: boolean }], AccessTokenWriteGrant | null> = async () => null;
+/** No credential row exists to hold, so the lock holds nothing (a missing row locks nothing on Postgres either). */
+export const shareLockWriteCredential: StoreMember<[kind: 'oauth_client' | 'legacy_token', id: string], void> = async () => {};
+
+/** The existing counter rows of `keys` in key byte order (`COLLATE "C"`), unlocked; a missing key has no row. */
+export const readCounterRows: StoreMember<[keys: readonly string[]], CounterRow[]> = (brain, keys) =>
+  storeCall({ member: 'readCounterRows' }, () => brain.readCounterRows([...keys]));
+
+/** The brain's first request id and the latest 1,000 admissions' sample. This engine records no effect row, so `net` counts none. */
+export const readAdmissionRate: StoreMember<[principal: { kind: string; id: string } | null, opts?: { sample?: boolean }], AdmissionRate> = async (brain, principal, opts) => {
+  const rate = await storeCall({ member: 'readAdmissionRate' }, () => brain.readAdmissionRate(principal?.kind ?? null, principal?.id ?? null)) as AdmissionRate;
+  // `{ sample: false }` saves the sample statement on Postgres; the store answers both from its rows, so only the first id is kept.
+  return opts?.sample === false ? { first_request_id: rate.first_request_id, admissions: 0, age_seconds: null, gross: null, net: null } : rate;
+};
+
 /** Request `id`, or null. FOR UPDATE changes nothing in one store write (see the header). */
 export const lockWriteRequest: StoreMember<[id: string], WriteRequest | null> =
   async (brain, id) => requestRow(await storeCall({ member: 'lockWriteRequest' }, () => brain.readWriteRequestById(id)));
@@ -102,9 +142,28 @@ export const stampWriteClaim: StoreMember<[id: string, token: string, leaseMs: n
 export const completeWriteRow: StoreMember<[completion: WriteCompletion], CompletedWriteRow | null> = async (brain, completion) =>
   requestRow<CompletedWriteRow>(await storeCall({ member: 'completeWriteRow' }, () => brain.completeWriteRow(completion)));
 
+/**
+ * Synchronous commit for the current transaction: nothing to set. A store commit makes every write durable before it
+ * returns (gbrain-store kv.rs `commit`), so each commit already waits for the flush.
+ */
+export const requireSynchronousCommit: StoreMember<[], void> = async () => undefined;
+
+/**
+ * Stores a publication's effects (rust/docs/store/persistence.md, "Publication effects"): every kind is stored, a
+ * gated kind is left out while `auto_link` or `mcp.remote_auto_links` is off, and a kind already queued for the
+ * request is kept. Returns the kinds inserted, in queue order.
+ */
+export const insertPublicationEffects: StoreMember<[spec: PublicationEffectsSpec], string[]> = async (brain, spec) =>
+  await storeCall({ member: 'insertPublicationEffects' }, () => brain.insertPublicationEffects(spec)) as string[];
+
 /** Extends a claim's lease; true while request `id` is running under `token`. */
 export const renewWriteClaim: StoreMember<[renewal: ClaimRenewal, opts?: { signal?: AbortSignal }], boolean> = (brain, renewal) =>
   storeCall({ member: 'renewWriteClaim' }, () => brain.renewWriteClaim(renewal));
+
+/** Returns a claim that never began to publish to queued under its token, so the writer retries it. One writer: no direct lane. */
+export const releaseUnpublishedClaim: StoreMember<[release: ClaimRelease, opts?: { direct?: boolean }], void> = async (brain, release) => {
+  await storeCall({ member: 'releaseUnpublishedClaim' }, () => brain.releaseUnpublishedClaim(release));
+};
 
 /** Returns expired claims, and claims of dead owners, to queued (at most 100). Every request here is unbound, so the host check passes. */
 export const expireStaleWriteClaims: StoreMember<[expiry: ClaimExpiry, opts?: { signal?: AbortSignal; direct?: boolean }], void> = async (brain, expiry) => {
@@ -115,6 +174,27 @@ export const expireStaleWriteClaims: StoreMember<[expiry: ClaimExpiry, opts?: { 
 export const hasClaimableWrite: StoreMember<[hostId: string, excludeRoots: string[], opts?: { priority?: boolean | null; signal?: AbortSignal }], boolean> =
   (brain, _hostId, excludeRoots, opts) =>
     storeCall({ member: 'hasClaimableWrite' }, () => brain.hasClaimableWrite({ excludeRoots, priority: opts?.priority ?? null }));
+
+/**
+ * The request a FIFO claim takes next, or null. The host id, nonce, sync-seen map and lease holder select worktree and
+ * managed-sync rows, which this engine never has; one process owns the store, so no row is locked against another.
+ */
+export const selectClaimableWrite: StoreMember<[spec: ClaimHeadSpec], WriteRequest | null> = async (brain, spec) =>
+  requestRow<WriteRequest>(await storeCall({ member: 'selectClaimableWrite' },
+    () => brain.selectClaimableWrite({ excludeRoots: spec.excludeRoots, fifoRoots: spec.fifoRoots, laneRoots: spec.laneRoots, priority: spec.priority })));
+
+// The consumer rows. One process owns this engine's brain, so the store keeps no consumer heartbeat rows and no
+// worktrees: the reads answer none (PGLite's callers answer the same without a read) and the writes change nothing.
+/** The host's consumer rows; none here. */
+export const listHostConsumerRows: StoreMember<[hostId: string, opts?: { signal?: AbortSignal; direct?: boolean }], ConsumerRowRead[]> = async () => [];
+/** The host's live full consumers other than the caller; none here. */
+export const probeLiveConsumerRows: StoreMember<[probe: ConsumerProbe, opts?: { signal?: AbortSignal; direct?: boolean }], ConsumerRowRead[]> = async () => [];
+/** The heartbeat renewal; no row is kept. */
+export const renewConsumerRow: StoreMember<[renewal: ConsumerRenewal, opts?: { signal?: AbortSignal }], void> = async () => undefined;
+/** The heartbeat's row delete; there is no row. */
+export const deleteConsumerRow: StoreMember<[key: ConsumerRowKey, opts?: { signal?: AbortSignal }], void> = async () => undefined;
+/** The worktree heartbeat stamp; this engine has no worktrees. */
+export const stampWorktreeHeartbeats: StoreMember<[hostId: string, opts?: { signal?: AbortSignal }], void> = async () => undefined;
 
 /** A source's incarnation and archive flag, or null. FOR SHARE changes nothing in one store write. */
 export const readSourceMembership: StoreMember<[sourceId: string, opts?: { lock?: boolean }], SourceMembership | null> = (brain, sourceId) =>

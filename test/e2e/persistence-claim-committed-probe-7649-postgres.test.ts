@@ -15,6 +15,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import postgres from '#postgres';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import { claimHeadStatement, type ClaimHeadSpec } from '../../src/core/engine-sql/persistence-claims.ts';
 import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { claimNextLaneHead, claimNextWrite } from '../../src/core/persistence/journal.ts';
 import { readRequestIndexStates } from '../../src/core/persistence/checkpoint-validation.ts';
@@ -67,12 +68,19 @@ async function claimPlans(): Promise<Record<'write' | 'laneHead', PlanNode>> {
   const original = engine.transactionDirect;
   engine.transactionDirect = ((fn: (tx: BrainEngine) => Promise<unknown>, opts?: unknown) => original.call(engine, async (tx: BrainEngine) => {
     const raw = tx.executeRaw.bind(tx);
-    tx.executeRaw = (async (sql: string, params?: unknown[], options?: unknown) => {
-      const label = sql.startsWith('WITH waiting AS MATERIALIZED') ? 'write'
-        : /^SELECT r\.\* FROM persistence_requests r\s+JOIN persistence_worktrees/.test(sql) ? 'laneHead' : null;
-      if (!label) return raw(sql, params as never, options as never);
+    const explain = async (label: 'write' | 'laneHead', sql: string, params?: unknown[], options?: unknown) => {
       const [row] = await raw<{ 'QUERY PLAN': Array<{ Plan: PlanNode }> }>(`EXPLAIN (ANALYZE, FORMAT JSON) ${sql}`, params as never, options as never);
       plans[label] = row!['QUERY PLAN'][0]!.Plan;
+    };
+    // The FIFO head read is the typed selectClaimableWrite member; plan exactly the statement it sends.
+    tx.selectClaimableWrite = (async (spec: ClaimHeadSpec) => {
+      const { sql, params } = claimHeadStatement(spec);
+      await explain('write', sql, params);
+      return null;
+    }) as BrainEngine['selectClaimableWrite'];
+    tx.executeRaw = (async (sql: string, params?: unknown[], options?: unknown) => {
+      if (!/^SELECT r\.\* FROM persistence_requests r\s+JOIN persistence_worktrees/.test(sql)) return raw(sql, params as never, options as never);
+      await explain('laneHead', sql, params, options);
       return [];
     }) as BrainEngine['executeRaw'];
     return fn(tx);

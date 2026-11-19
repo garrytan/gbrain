@@ -7,7 +7,7 @@ import { opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import { fileContentHash } from './large-file.ts';
-import { PARK_AFTER_FAILURES, REMOTE_AUTO_LINKS_KEY, REMOTE_MENTION_OPERATIONS, WITHHELD_BY_MIRROR, type EffectKind, type PersistenceEffect, type EffectRequest } from './effect-model.ts';
+import { PARK_AFTER_FAILURES, REMOTE_MENTION_OPERATIONS, WITHHELD_BY_MIRROR, type EffectKind, type PersistenceEffect, type EffectRequest } from './effect-model.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
 import { recordChronicleDecision } from '../chronicle/ledger.ts';
 import { isFactsExtractionEnabled } from '../facts/extract.ts';
@@ -18,7 +18,6 @@ import { claimOwner, EXPIRED_PREPARING_CHARGE_SQL } from './claim-phase.ts';
 import { refreshFenceClear } from './worktree-refresh-schema.ts';
 import { pageBatchChildRequestIds } from './page-batch-id.ts';
 import { EFFECT_FAULT_POINTS, faultPoint } from './fault-points.ts';
-import { asciiLowerSql, edgeTrimSql } from '../edge-whitespace.ts';
 
 /**
  * `snapshot` is the publication's final read of the page, including deleted rows, in this transaction.
@@ -66,14 +65,10 @@ export async function queuePublicationEffects(tx: BrainEngine, row: EffectReques
     // #5876: the Life Chronicle decision is a ledger row, not an effect; the `chronicle` cycle phase executes it.
     await recordChronicleDecision(tx, row, snapshot, outcome);
   } else if (opts.pageTargets?.length && !prepared?.deferEmbedding) queue('embedding', { version: 2, targets: opts.pageTargets });
-  const inserted = queued.length ? await tx.executeRaw<{ kind: string }>(`INSERT INTO persistence_effects (request_id,kind,revision,data,source_id,source_incarnation,worktree_id)
-    SELECT $1::uuid,t.e->>'kind',$2::uuid,t.e->'data',$3,$4::uuid,$5::uuid FROM jsonb_array_elements($6::text::jsonb) WITH ORDINALITY AS t(e,n)
-    WHERE NOT (COALESCE((t.e->>'gated')::boolean,false) AND EXISTS (SELECT 1 FROM config
-      WHERE key IN ('auto_link',$7) AND ${asciiLowerSql(edgeTrimSql('value'))} IN ('false','0','no','off')))
-    ORDER BY t.n ON CONFLICT(request_id,kind) DO NOTHING RETURNING kind`,
-  [row.id, revision ?? null, row.source_id, row.source_incarnation, row.worktree_id, JSON.stringify(queued), REMOTE_AUTO_LINKS_KEY]) : [];
+  const inserted = queued.length ? await tx.insertPublicationEffects({ requestId: row.id, revision: revision ?? null, sourceId: row.source_id,
+    sourceIncarnation: row.source_incarnation, worktreeId: row.worktree_id, effects: queued }) : [];
   if (queued.some(effect => effect.kind === 'links')) {
-    if (inserted.some(effect => effect.kind === 'links')) outcome.auto_links = { ...(outcome.auto_links as Record<string, unknown> | undefined), mention_links: 'queued' };
+    if (inserted.includes('links')) outcome.auto_links = { ...(outcome.auto_links as Record<string, unknown> | undefined), mention_links: 'queued' };
     if (!opts.deferBatchReconcile) await reconcileFinishedBatch(tx, row);
   }
 }
@@ -142,7 +137,7 @@ export const EFFECT_OWNER_KEY_SQL = (e: string) =>
  * the Git and mirror kinds still take the worktree's native lock first. An effect holding a recovery record keeps its own
  * path (`selectEffectRecoveries` under the native lock).
  */
-const DEAD_OWNER_EFFECT_SQL = (e: string, param: string) => `${e}.state='running' AND ${e}.recovery IS NULL
+export const DEAD_OWNER_EFFECT_SQL = (e: string, param: string) => `${e}.state='running' AND ${e}.recovery IS NULL
   AND ${e}.claim_owner->>'token'=${e}.execution_token::text AND ${EFFECT_OWNER_KEY_SQL(e)}=ANY(${param}::text[])`;
 /** The `claim_owner` stamp of the claim minting `token`: this process (`claimOwner`). */
 export const effectClaimStamp = (token: string) => JSON.stringify({ token, owner: claimOwner() });
@@ -154,17 +149,7 @@ export const effectClaimStamp = (token: string) => JSON.stringify({ token, owner
 export async function claimPersistenceEffect(engine: BrainEngine, hostId: string, deadOwners: readonly string[] = []): Promise<PersistenceEffect | null> {
   return engine.transactionDirect(async tx => {
     await declarePersistenceProtocol(tx);
-    const [candidate] = await tx.executeRaw<PersistenceEffect>(`SELECT e.* FROM persistence_effects e
-      LEFT JOIN persistence_worktrees w ON w.id=e.worktree_id
-      WHERE (e.state='queued' OR e.state='running' AND e.claim_expires_at<now() OR ${DEAD_OWNER_EFFECT_SQL('e', '$2')}) AND e.next_attempt_at<=now()
-      AND (e.worktree_id IS NULL OR w.owner_host_id=$1::uuid) AND (e.worktree_id IS NULL OR ${refreshFenceClear('e')})
-      AND e.recovery IS NULL AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked
-        WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
-      AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked
-        WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
-      AND (e.kind='withdrawal-mirror' OR NOT EXISTS (SELECT 1 FROM persistence_effects mirror
-        WHERE mirror.request_id=e.request_id AND mirror.kind='withdrawal-mirror' AND mirror.state IN ('queued','running')))
-      ORDER BY e.next_attempt_at,e.id LIMIT 1 FOR UPDATE OF e SKIP LOCKED`, [hostId, [...deadOwners]]);
+    const candidate = await tx.selectClaimableEffect<PersistenceEffect>(hostId, deadOwners);
     if (!candidate) return null;
     const token = randomUUID();
     const [claimed] = await tx.executeRaw<PersistenceEffect>(`UPDATE persistence_effects SET state='running',execution_token=$2::uuid,claim_owner=$3::text::jsonb,
@@ -423,9 +408,8 @@ export async function failEffect(engine: SqlEngine, effect: PersistenceEffect, r
  * with the last attempt's error, `running`, `recovering`, and `queued` only while the effect is queued. Null when the
  * request has no Git effect row.
  */
-export async function gitReceiptState(engine: SqlEngine, requestId: string): Promise<{ git_state: string; git_commit?: string; git_reason?: string } | null> {
-  const [row] = await engine.executeRaw<{ state: string; error_code: string | null; recovering: boolean; outcome: Record<string, unknown> | null }>(
-    `SELECT state,error_code,outcome,recovery IS NOT NULL AS recovering FROM persistence_effects WHERE request_id=$1::uuid AND kind='git' ORDER BY id DESC LIMIT 1`, [requestId]);
+export async function gitReceiptState(engine: Pick<BrainEngine, 'readRequestEffects'>, requestId: string): Promise<{ git_state: string; git_commit?: string; git_reason?: string } | null> {
+  const [row] = await engine.readRequestEffects(requestId, 'git');
   if (!row) return null;
   const reason = (value: unknown) => typeof value === 'string' && /^[a-z_]{1,80}$/.test(value) ? { git_reason: value } : {};
   if (row.recovering) return { git_state: 'recovering' };
@@ -439,11 +423,10 @@ export async function gitReceiptState(engine: SqlEngine, requestId: string): Pro
 }
 
 /** Only public kind/state/reason, aggregated so withdrawal page counts cannot leak. */
-export async function publicEffectsForRequest(engine: SqlEngine, requestId: string): Promise<Array<{ kind: EffectKind; state: string; reason?: string; push?: string; added?: number; removed?: number;
+export async function publicEffectsForRequest(engine: Pick<BrainEngine, 'readRequestEffects'>, requestId: string): Promise<Array<{ kind: EffectKind; state: string; reason?: string; push?: string; added?: number; removed?: number;
   invalid_targets?: Array<{ slug: string; reason: 'invalid_slug' }> }>> {
-  const rows = await engine.executeRaw<{ kind: EffectKind; state: string; error_code: string | null; recovering: boolean; outcome: Record<string, unknown> | null }>(
-    'SELECT kind,state,error_code,outcome,recovery IS NOT NULL AS recovering FROM persistence_effects WHERE request_id=$1::uuid ORDER BY kind', [requestId]);
-  return rows.filter(row => ['git', 'embedding', 'withdrawal-mirror', 'facts-backstop', 'links'].includes(row.kind)).map(row => {
+  const rows = await engine.readRequestEffects(requestId);
+  return rows.filter((row): row is typeof row & { kind: EffectKind } => ['git', 'embedding', 'withdrawal-mirror', 'facts-backstop', 'links'].includes(row.kind)).map(row => {
     const reason = row.error_code ?? row.outcome?.reason;
     const push = row.outcome?.push;
     const invalid = Array.isArray(row.outcome?.skipped_targets) ? (row.outcome.skipped_targets as Array<{ slug: string; reason: string }>)

@@ -23,6 +23,10 @@
 //!   NULLs distinct).
 //! - `F 0x08` and `F 0x09`: the `open_loops` table (`facts/loops.rs` lists them).
 //! - `F 0x0A` and `F 0x0B`: the `fact_relink_attempts` table (`facts/relink.rs` lists them).
+//! - `F 0x0C`: the `page_purges` ledger (`facts/page_purges.rs`), read only.
+//! - `F 0x0D page_id`: the `page_facts_reconcile` watermark (`facts/reconcile.rs`), read only.
+//! - `F 0x0E generation_id`: the `derived_generations` ledger with its items
+//!   (`facts/generations.rs`), read only.
 //! - meta `next_facts_id`: the id sequence. An insert that `ON CONFLICT DO NOTHING` skips still
 //!   takes an id, as `nextval` does.
 //!
@@ -40,10 +44,14 @@ pub mod cycle;
 pub mod doctor;
 mod embedding;
 mod fence;
+pub mod generations;
 pub mod loops;
+mod page_purges;
 mod privacy;
 pub mod purge;
+pub mod reconcile;
 pub mod relink;
+pub mod relink_writes;
 pub mod repair;
 pub mod trust;
 pub mod trust_reads;
@@ -51,7 +59,7 @@ pub mod trust_reads;
 pub use fence::{FenceContext, FenceTarget};
 pub use privacy::PrivacyPolicy;
 use privacy::hidden_by_private_provenance;
-pub(crate) use privacy::{page_hidden, version_hidden};
+pub(crate) use privacy::{hidden_by_provenance_page, page_hidden, version_hidden};
 
 use crate::chunks::embedding_dimensions;
 use crate::config::read_config;
@@ -1210,7 +1218,7 @@ pub(crate) fn hidden_by_policy(
 }
 
 /// `quarantinedProjectionHiddenSql('facts')`: the row's live page carries a `quarantine` key.
-fn hidden_by_quarantine(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
+pub(crate) fn hidden_by_quarantine(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
     let Some(slug) = &row.source_markdown_slug else {
         return Ok(false);
     };

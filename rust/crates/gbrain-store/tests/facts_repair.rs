@@ -534,3 +534,134 @@ fn world_facts_from_private_sources_follow_the_holding_and_provenance_pages() {
     assert!(world(&store, &[], None, true).is_empty());
     assert!(world(&store, &["other"], None, true).is_empty());
 }
+
+fn label_page(store: &Store, slug: &str, body: &str, timeline: &str) {
+    let input: PageInput = serde_json::from_value(json!({
+        "type": "note", "title": slug, "compiled_truth": body, "timeline": timeline, "frontmatter": {},
+    }))
+    .unwrap();
+    let options: PutPageOptions = serde_json::from_value(json!({ "sourceId": "default" })).unwrap();
+    store.put_page(slug, &input, &options).unwrap();
+}
+
+#[test]
+fn label_facts_count_the_uncovered_segment_facts_of_pages_with_a_label_line() {
+    let (_d, store) = brain("label-facts");
+    label_page(&store, "chats/body", "intro\n**DATE :** today", "");
+    label_page(&store, "chats/timeline", "none", "- entry\n**Notes:** x");
+    label_page(&store, "chats/mid", "see **Date:** inline", "");
+    label_page(&store, "chats/audited", "**Date:** done", "");
+    let seg = "cli:extract-conversation-facts";
+    let ctx = "segment 1970-01-01 x";
+    let label = |slug: &str, text: &str, extra: Value| {
+        let mut row = json!({ "source": seg, "source_markdown_slug": slug, "context": ctx });
+        for (k, v) in extra.as_object().unwrap() {
+            row[k] = v.clone();
+        }
+        fact(&store, "default", text, row)
+    };
+    label("chats/body", "counted", json!({}));
+    label("chats/timeline", "counted too", json!({}));
+    label("chats/mid", "mid-line label", json!({}));
+    label("chats/audited", "decided page", json!({}));
+    label(
+        "chats/body",
+        "other context",
+        json!({ "context": "segment 2020" }),
+    );
+    label(
+        "chats/body",
+        "withdrawn",
+        json!({ "entity_slug": "people/a" }),
+    );
+    fact(
+        &store,
+        "default",
+        "audit",
+        json!({ "source": "audit:t", "source_markdown_slug": "chats/audited", "context": "extractor_version=2" }),
+    );
+    assert!(
+        store
+            .insert_fact_withdrawal("default", "private", "withdrawn", "people/a", None)
+            .unwrap()
+    );
+    let count = |limit: u64, sources: &[&str]| {
+        store
+            .count_label_facts(&args(json!({
+                "sourceIds": sources, "limit": limit, "segmentSource": seg, "contextContains": "segment 1970-01-01",
+                "labels": ["date", "note", "notes"], "terminalSource": "audit:t", "nonExtractableSource": "audit:n",
+            })))
+            .unwrap()
+    };
+    assert_eq!(count(100, &["default"]), 2);
+    assert_eq!(count(1, &["default"]), 1);
+    assert_eq!(count(0, &["default"]), 0);
+    assert_eq!(count(100, &["other"]), 0);
+    assert_eq!(count(100, &[]), 0);
+}
+
+#[test]
+fn purged_page_facts_are_the_uncovered_gone_page_facts_and_an_empty_ledger_leaves_each_ambiguous() {
+    let (_d, store) = brain("purged-page-facts");
+    put(&store, "notes/live", "note", json!({}), "default");
+    let gone = |source: &str, text: &str, context: Option<&str>, extra: Value| {
+        let mut row = json!({ "source": "mcp:put_page", "context": context });
+        for (k, v) in extra.as_object().unwrap() {
+            row[k] = v.clone();
+        }
+        fact(&store, source, text, row)
+    };
+    gone(
+        "default",
+        "counted",
+        Some("notes/gone \u{2014} a"),
+        json!({}),
+    );
+    gone(
+        "default",
+        "counted too",
+        Some("code/x.ts"),
+        json!({ "source": "code_import" }),
+    );
+    gone("other", "other source", Some("notes/gone"), json!({}));
+    gone("default", "no slash", Some("gone \u{2014} a"), json!({}));
+    gone("default", "space", Some("notes/a\u{2003}b"), json!({}));
+    gone("default", "live page", Some("notes/live"), json!({}));
+    gone("default", "no context", None, json!({}));
+    gone(
+        "default",
+        "lane",
+        Some("notes/gone"),
+        json!({ "source": LANE }),
+    );
+    gone(
+        "default",
+        "filed",
+        Some("notes/gone"),
+        json!({ "source_markdown_slug": "notes/gone" }),
+    );
+    gone(
+        "default",
+        "withdrawn",
+        Some("notes/gone"),
+        json!({ "entity_slug": "people/a" }),
+    );
+    assert!(
+        store
+            .insert_fact_withdrawal("default", "private", "withdrawn", "people/a", None)
+            .unwrap()
+    );
+    let count = |limit: u64, sources: &[&str]| {
+        store
+            .count_purged_page_facts(&args(json!({ "sourceIds": sources, "limit": limit })))
+            .unwrap()
+    };
+    assert_eq!(count(100, &["default"]), vec![false, false]);
+    assert_eq!(count(1, &["default"]), vec![false]);
+    assert!(count(0, &["default"]).is_empty());
+    assert_eq!(
+        count(100, &["other", "default", "other"]),
+        vec![false, false, false]
+    );
+    assert!(count(100, &[]).is_empty());
+}

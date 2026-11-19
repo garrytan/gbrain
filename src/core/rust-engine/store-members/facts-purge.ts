@@ -3,16 +3,20 @@
  * store (rust/crates/gbrain-store/src/facts/purge.rs). Each member sends the arguments of its BrainEngine member and
  * turns the ISO times the store returns into `Date`s, as PGLite returns them.
  *
- * A member not exported here refuses with `engine_capability_missing`: `listFactsReconcileBacklog` reads
- * `page_facts_reconcile`, a table the store does not have. `listSingleFactMetadata` is served by facts-trust-reads.ts.
- * `findActiveSingleFact` refuses the remote provenance floor and `listSimilarActiveFacts` refuses `excludePrivate`
- * for a caller whose policy the store does not model (private-provenance.ts).
+ * `listFactsReconcileBacklog`, `settleFactsReconcile` and `selectFactsReconcileDrain` read and write the store's
+ * `page_facts_reconcile` watermark (facts/reconcile.rs). `lockReconcileRevision` reads the page inside the caller's store
+ * transaction, whose single writer is the lock, so the extract_facts commit step (lock, then 'complete' settle) runs whole.
+ * `listSingleFactMetadata` is served by facts-trust-reads.ts.
+ * `findActiveSingleFact` serves the remote provenance floor for a caller that does not change it (storeFloorPolicy);
+ * it and `listSimilarActiveFacts` refuse a caller whose policy the store does not model (private-provenance.ts).
  */
 import type { BrainEngine } from '../../engine.ts';
 import { privateProvenanceFilterUnderPolicy } from '../../search/private-visibility.ts';
 import { withDates } from '../store-codec.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
-import { storePrivacyPolicy } from './private-provenance.ts';
+import { FACTS_FENCE_BEGIN } from '../../facts-fence.ts';
+import { FACTLESS_SETTLE_LIMIT } from '../../engine-sql/facts-purge.ts';
+import { storeCall, type StoreMember } from './common.ts';
+import { storeFloorPolicy, storePrivacyPolicy } from './private-provenance.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 type Row = Record<string, unknown>;
@@ -30,6 +34,25 @@ export const loadPurgeTarget: Member<'loadPurgeTarget'> = (brain, id, sourceId) 
 export const planFactPurgeIds: Member<'planFactPurgeIds'> = (brain, sourceId, visibility, factHash, subject) =>
   storeCall({ member: 'planFactPurgeIds' }, () => brain.planFactPurgeIds({ sourceId, visibility, factHash, subject }));
 
+/** `listFactsReconcileBacklog`: the store matches the fence marker as plain text, as the SQL's `LIKE '%marker%'` does. */
+export const listFactsReconcileBacklog: Member<'listFactsReconcileBacklog'> = (brain) =>
+  storeCall({ member: 'listFactsReconcileBacklog' }, () => brain.listFactsReconcileBacklog({ marker: FACTS_FENCE_BEGIN }));
+
+/** `settleFactsReconcile`: an `undefined` revision settles at the page's current revision, as the SQL's `$5` flag does. */
+export const settleFactsReconcile: Member<'settleFactsReconcile'> = (brain, sourceId, slug, outcome, revision) =>
+  storeCall({ member: 'settleFactsReconcile' }, async () => {
+    await brain.settleFactsReconcile({ sourceId, slug, outcome, revision: revision ?? null, anyRevision: revision === undefined });
+  });
+
+/** `lockReconcileRevision`: the store's transaction holds its single writer until commit, which is the row lock. */
+export const lockReconcileRevision: Member<'lockReconcileRevision'> = (brain, sourceId, slug, revision) =>
+  storeCall({ member: 'lockReconcileRevision' }, () => brain.lockReconcileRevision({ sourceId, slug, revision }));
+
+/** `selectFactsReconcileDrain`: the store matches the fence marker as plain text and settles at most FACTLESS_SETTLE_LIMIT pages, as the SQL does. */
+export const selectFactsReconcileDrain: Member<'selectFactsReconcileDrain'> = (brain, sourceId, pageLimit) =>
+  storeCall({ member: 'selectFactsReconcileDrain' }, () => brain.selectFactsReconcileDrain({
+    sourceId, marker: FACTS_FENCE_BEGIN, settleLimit: FACTLESS_SETTLE_LIMIT, pageLimit }));
+
 export const listRelinkCandidateRows: Member<'listRelinkCandidateRows'> = (brain, opts) =>
   storeCall({ member: 'listRelinkCandidateRows' }, () => brain.listRelinkCandidateRows({
     sourceId: opts.sourceId, afterId: opts.afterId, since: opts.since ? opts.since.toISOString() : null, limit: opts.limit }));
@@ -38,16 +61,18 @@ export const countRelinkCandidates: Member<'countRelinkCandidates'> = (brain, so
   storeCall({ member: 'countRelinkCandidates' }, () => brain.countRelinkCandidates({ sourceId }));
 
 export const listSimilarActiveFacts: Member<'listSimilarActiveFacts'> = (brain, opts) => {
-  const excludePrivate = storePrivacyPolicy('listSimilarActiveFacts', opts.excludePrivate, () => privateProvenanceFilterUnderPolicy('facts'));
+  // A caller with a reader identity and a private-readable grant is served (`callerReaders`).
+  const excludePrivate = storePrivacyPolicy('listSimilarActiveFacts', opts.excludePrivate, () => privateProvenanceFilterUnderPolicy('facts'),
+    { callerReaders: true });
   return storeCall({ member: 'listSimilarActiveFacts' }, () => brain.listSimilarActiveFacts({
     sourceId: opts.sourceId, factId: opts.factId, remote: opts.remote, minCosine: opts.minCosine, limit: opts.limit, excludePrivate }));
 };
 
 export const findActiveSingleFact: Member<'findActiveSingleFact'> = async (brain, opts) => {
-  if (opts.remoteFloor) refuseMember('findActiveSingleFact', 'the remote provenance floor');
+  const remoteFloor = opts.remoteFloor ? storeFloorPolicy('findActiveSingleFact') : undefined;
   const row: Row | null = await storeCall({ member: 'findActiveSingleFact' }, () => brain.findActiveSingleFact({
     sourceId: opts.sourceId, entitySlug: opts.entitySlug, visibility: opts.visibility, fact: opts.fact,
-    attributedTo: opts.attributedTo, pageSlug: opts.pageSlug }));
+    attributedTo: opts.attributedTo, pageSlug: opts.pageSlug, remoteFloor }));
   return row === null ? null : withDates(row, FACT_DATES) as never;
 };
 

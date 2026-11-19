@@ -111,7 +111,7 @@ export async function previewMarkerRepair(engine: BrainEngine, opts: { sourceId?
   const rows = await engine.executeRaw<{ id: number; source_id: string; slug: string; trust_tier: string }>(
     `SELECT id, source_id, slug, trust_tier FROM pages
       WHERE deleted_at IS NULL AND ${markerSql('frontmatter')} AND trust_tier IS NOT NULL AND trust_tier <> 'unknown'
-        AND ($1::text IS NULL OR source_id = $1) ORDER BY source_id, slug`, [opts.sourceId ?? null]);
+        AND ($1::text IS NULL OR source_id = $1) ORDER BY source_id COLLATE "C", slug COLLATE "C"`, [opts.sourceId ?? null]);
   const candidates: MarkerRepairCandidate[] = [];
   for (const row of rows) {
     const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
@@ -141,7 +141,7 @@ export async function previewMarkerRepair(engine: BrainEngine, opts: { sourceId?
     `SELECT tp.id, p.source_id, p.slug, tp.before_state->>'prior_tier' AS prior_tier FROM trust_proposals tp JOIN pages p ON p.id = tp.target_id
       WHERE tp.status = 'pending' AND tp.action = 'lower_page' AND tp.target_table = 'pages' AND p.deleted_at IS NULL
         AND p.trust_tier = 'unknown' AND ${markerSql('p.frontmatter')} AND COALESCE(tp.before_state->>'prior_tier', 'unknown') <> 'unknown'
-        AND ($1::text IS NULL OR p.source_id = $1) ORDER BY p.source_id, p.slug`, [opts.sourceId ?? null]))
+        AND ($1::text IS NULL OR p.source_id = $1) ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C"`, [opts.sourceId ?? null]))
     .map(r => ({ page: pageRef(r.source_id, r.slug), ref: trustProposalRef(Number(r.id)), prior_tier: storedTrustTier(r.prior_tier), revert: ['gbrain', 'trust', 'revert', trustProposalRef(Number(r.id))] }));
   const preview_hash = `mr_${createHash('sha256').update(JSON.stringify(candidates.map(c => [c.source_id, c.slug, c.revision, c.stored_tier]))).digest('hex').slice(0, 16)}`;
   const named = candidates.filter(c => c.assessment === 'consistent_with_6550');

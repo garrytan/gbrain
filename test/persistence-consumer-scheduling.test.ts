@@ -13,6 +13,7 @@ import { publishMutation } from '../src/core/persistence/coordinator.ts';
 import { acquireWorktree } from '../src/core/persistence/ownership.ts';
 import { admission, assertCommittedSnapshot, assertConservation, fixtures, initializeFixtures, prepared, selectFixtureHost, type HarnessConfig } from '../scripts/persistence/harness.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
 import { waitFor } from './helpers/wait-for.ts';
 import { awaitWrite, disposePersistenceConsumer, registerMutationPreparer, startPersistenceConsumer, waitForWrite, WRITE_POLL_START_MS } from '../src/core/persistence/service.ts';
 
@@ -41,7 +42,8 @@ afterAll(async () => {
 test('simultaneous bounded waiters retain one unresolved receipt read until settlement', async () => withEnv(env, async () => {
   const release = Promise.withResolvers<never[]>();
   let reads = 0;
-  const proxy = new Proxy(engine, { get(target, key) {
+  const proxy = new Proxy(engine, { get(target, key, receiver) {
+    if (key === 'readWriteRequestProgress') return progressThroughRaw(receiver);
     if (key === 'executeRaw') return async (sql: string, params?: unknown[]) => {
       if (sql === WRITE_PROGRESS_SQL) { reads++; return release.promise; }
       return target.executeRaw(sql, params);
@@ -67,7 +69,8 @@ test('simultaneous bounded waiters retain one unresolved receipt read until sett
 test('shutdown drains an uncancellable receipt read without scheduling another', async () => withEnv(env, async () => {
   const release = Promise.withResolvers<never[]>();
   let reads = 0, stopped = false;
-  const proxy = new Proxy(engine, { get(target, key) {
+  const proxy = new Proxy(engine, { get(target, key, receiver) {
+    if (key === 'readWriteRequestProgress') return progressThroughRaw(receiver);
     if (key === 'executeRaw') return async (sql: string, params?: unknown[]) => {
       if (sql === WRITE_PROGRESS_SQL) { reads++; return release.promise; }
       return target.executeRaw(sql, params);
@@ -93,7 +96,8 @@ test('shutdown drains an uncancellable receipt read without scheduling another',
 
 test.each(['queued', 'committed'] as const)('coalesced receipt reads preserve each result while the first waiter is %s', firstState => withEnv(env, async () => {
   const rows = Array.from({ length: 2 }, () => ({ id: randomUUID(), request_id: randomUUID(), state: 'queued' } as import('../src/core/persistence/model.ts').WriteRequest));
-  const proxy = new Proxy(engine, { get(target, key) {
+  const proxy = new Proxy(engine, { get(target, key, receiver) {
+    if (key === 'readWriteRequestProgress') return progressThroughRaw(receiver);
     if (key === 'executeRaw') return async (sql: string, params?: unknown[]) => {
       if (sql === WRITE_PROGRESS_SQL) {
         await Bun.sleep(20);
@@ -117,7 +121,8 @@ test('a stalled receipt read does not hide another request that already committe
   const release = Promise.withResolvers<never[]>();
   const rows = Array.from({ length: 2 }, () => ({ id: randomUUID(), request_id: randomUUID(), state: 'queued' } as import('../src/core/persistence/model.ts').WriteRequest));
   let entered = false;
-  const proxy = new Proxy(engine, { get(target, key) {
+  const proxy = new Proxy(engine, { get(target, key, receiver) {
+    if (key === 'readWriteRequestProgress') return progressThroughRaw(receiver);
     if (key === 'executeRaw') return async (sql: string, params?: unknown[]) => {
       if (sql === WRITE_PROGRESS_SQL) {
         if (params?.[0] === rows[0].id) { entered = true; return release.promise; }
@@ -144,7 +149,8 @@ test.each([false, true])('a shorter receipt waiter cannot abort another caller\'
   const row = { id: randomUUID(), request_id: randomUUID(), state: 'queued' } as import('../src/core/persistence/model.ts').WriteRequest;
   const other = sameId ? row : { ...row, id: randomUUID(), request_id: randomUUID() };
   let ownerSignal: AbortSignal | undefined;
-  const proxy = new Proxy(engine, { get(target, key) {
+  const proxy = new Proxy(engine, { get(target, key, receiver) {
+    if (key === 'readWriteRequestProgress') return progressThroughRaw(receiver);
     if (key === 'kind') return 'postgres';
     if (key === 'executeRaw') return async (...args: Parameters<typeof engine.executeRaw>) => {
       if (args[0] === WRITE_PROGRESS_SQL) {
@@ -169,7 +175,8 @@ test.each([false, true])('a shorter receipt waiter cannot abort another caller\'
 test('distinct stalled receipt reads stay capped and shutdown drains every retained read', async () => withEnv(env, async () => {
   const releases = Array.from({ length: 4 }, () => Promise.withResolvers<never[]>());
   let reads = 0, stopped = false;
-  const proxy = new Proxy(engine, { get(target, key) {
+  const proxy = new Proxy(engine, { get(target, key, receiver) {
+    if (key === 'readWriteRequestProgress') return progressThroughRaw(receiver);
     if (key === 'executeRaw') return async (sql: string, params?: unknown[]) => {
       if (sql === WRITE_PROGRESS_SQL) {
         const release = releases[reads++];
@@ -554,7 +561,8 @@ test('process-local diagnostic errors never retain arbitrary driver codes or mes
 test('an uncancellable PGLite scheduler phase stays observed and awaited through stop', async () => withEnv(env, async () => {
   const release = Promise.withResolvers<never[]>();
   let entered = false, stopped = false;
-  const proxy = new Proxy(engine, { get(target, key) {
+  const proxy = new Proxy(engine, { get(target, key, receiver) {
+    if (key === 'readWriteRequestProgress') return progressThroughRaw(receiver);
     if (key === 'executeRaw') return async (...args: Parameters<typeof engine.executeRaw>) => {
       if (String(args[0]).startsWith('SELECT brain_id,enabled,to_jsonb(persistence_brain)')) {
         expect(args[2]?.signal).toBeUndefined();
@@ -882,9 +890,21 @@ test('a local waiter wakes an idle owner for a claim-only tick instead of waitin
 }), 5000);
 
 /** #5984 (CEO-A7, DX-A3): classified waits with an in-process completion handoff. */
+/**
+ * The progress poll is the typed readWriteRequestProgress member; these proxies script the statement it runs
+ * (WRITE_PROGRESS_SQL), so the member goes through the proxy's executeRaw with the same text and arguments.
+ */
+function progressThroughRaw(engine: { executeRaw: PGLiteEngine['executeRaw'] }) {
+  return async (id: string, opts?: { signal?: AbortSignal }) => {
+    const [row] = await engine.executeRaw(WRITE_PROGRESS_SQL, [id], opts as never);
+    return row ?? null;
+  };
+}
+
 function countingProxy(target: PGLiteEngine, onRead?: (sql: string, params?: unknown[]) => unknown) {
   const counts = { progress: 0, full: 0 };
-  const proxy = new Proxy(target, { get(base, key) {
+  const proxy = new Proxy(target, { get(base, key, receiver) {
+    if (key === 'readWriteRequestProgress') return progressThroughRaw(receiver);
     if (key === 'executeRaw') return async (sql: string, params?: unknown[], opts?: unknown) => {
       if (sql === WRITE_PROGRESS_SQL) counts.progress++;
       const replaced = onRead?.(sql, params);
@@ -974,6 +994,24 @@ test('an authentication failure during a wait is classified, not reported as sti
     const waited = await awaitWrite(proxy, row, { engine: 'pglite' }, { waitMs: 5000 });
     expect(performance.now() - started).toBeLessThan(2000);
     expect(waited).toMatchObject({ kind: 'read_failed', request_id: row.request_id, reason: 'auth_failed', transient: false, attempts: 1 });
+    expect(counts.progress).toBe(1);
+  } finally {
+    await disposePersistenceConsumer(proxy);
+    await cancelWriteRequest(engine, { kind: 'local_cli', id: config.principalIds[0] }, row.request_id);
+  }
+}), 10_000);
+
+test('a refused progress read ends the wait with the refusal instead of polling again', async () => withEnv(env, async () => {
+  const sources = await fixtures(engine, config);
+  const row = await admitWrite(engine, admission(config, sources[0], 'wait-capability-refused', 'refused body'));
+  // An engine that does not serve the progress read (the Rust engine before readWriteRequestProgress) refuses by name.
+  const refusal = capabilityMissing('persistence_journal', 'readWriteRequestProgress');
+  const { proxy, counts } = countingProxy(engine, sql => { if (sql === WRITE_PROGRESS_SQL) throw refusal; });
+  (startPersistenceConsumer(proxy, { engine: 'pglite' }) as unknown as { doTick(): Promise<void> }).doTick = async () => {};
+  try {
+    const started = performance.now();
+    await expect(awaitWrite(proxy, row, { engine: 'pglite' }, { waitMs: 3000 })).rejects.toBe(refusal);
+    expect(performance.now() - started).toBeLessThan(2000);
     expect(counts.progress).toBe(1);
   } finally {
     await disposePersistenceConsumer(proxy);
