@@ -1,0 +1,4 @@
+---
+kind: default
+---
+The gemini model alias, the Google provider's default chat and query-expansion model, and the Google judge on the eval takes-quality default panel now use gemini-3.5-flash-lite instead of gemini-2.5-flash, which Google retires on 2026-12-01 and already routes to gemini-3.5-flash-lite from that date. The price per token is the same. A config that says gemini, or that relies on the Google default, gets the new model after upgrading; one that names google:gemini-2.5-flash explicitly keeps it until Google switches it off, and gemini-2.5-flash-lite is still offered. Because gemini-3.5-flash-lite cannot switch its reasoning fully off, the takes-quality judge call to it is now capped and priced at the 32,000-token reasoning headroom, so an eval takes-quality --budget-usd that passed before can refuse earlier. Usage logged against gemini-2.5-flash still prices as before.
