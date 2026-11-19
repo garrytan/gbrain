@@ -171,6 +171,26 @@ export async function readBodyManifestOutline(tx: Raw, pageId: number, occurrenc
   [pageId, [...occurrenceIds], generation]);
 }
 
+/** The seqs of generation `generation`'s published rows of page `pageId` that end at a forced cut, in seq order. */
+export async function listForcedCutSeqs(tx: Raw, pageId: number, generation: number): Promise<number[]> {
+  return (await tx.executeRaw<{ seq: number }>(`SELECT seq FROM page_body_manifest WHERE page_id=$1 AND staging_id IS NULL
+      AND gen_from<=$2 AND (gen_to IS NULL OR gen_to>$2) AND cut_kind='forced' ORDER BY seq`, [pageId, generation])).map(row => Number(row.seq));
+}
+
+/** The seq of generation `generation`'s published row of page `pageId` holding stored byte `byteOffset` (the last row starting at or before it), or null. */
+export async function readManifestSeqAt(tx: Raw, pageId: number, generation: number, byteOffset: number): Promise<number | null> {
+  const [row] = await tx.executeRaw<{ seq: number }>(`SELECT seq FROM page_body_manifest WHERE page_id=$1 AND staging_id IS NULL AND gen_from<=$2
+      AND (gen_to IS NULL OR gen_to>$2) AND byte_start<=$3 ORDER BY byte_start DESC, seq DESC LIMIT 1`, [pageId, generation, byteOffset]);
+  return row ? Number(row.seq) : null;
+}
+
+/** body_bytes of the newest segmented version of page `pageId` that references generation `generation` and records a size, or null. */
+export async function readSegmentedVersionBodyBytes(tx: Raw, pageId: number, generation: number): Promise<number | null> {
+  const [row] = await tx.executeRaw<{ body_bytes: number | string }>(`SELECT body_bytes FROM page_versions
+      WHERE page_id=$1 AND body_generation=$2 AND body_storage='segmented' AND body_bytes IS NOT NULL ORDER BY id DESC LIMIT 1`, [pageId, generation]);
+  return row ? Number(row.body_bytes) : null;
+}
+
 /** The sources with an access policy (folder rules or pending coverage), in id order: the rulebooks an export of every source carries. */
 export async function listAccessPolicySourceIds(tx: Raw): Promise<string[]> {
   return (await tx.executeRaw<{ source_id: string }>('SELECT source_id FROM access_policy_state ORDER BY source_id')).map(r => r.source_id);

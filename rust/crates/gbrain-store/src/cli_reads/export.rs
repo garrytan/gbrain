@@ -510,6 +510,64 @@ impl Store {
             .collect())
     }
 
+    /// The published rows of generation `generation` of page `page_id`, in no set order.
+    fn generation_rows(&self, page_id: i64, generation: i64) -> Result<Vec<ManifestRow>> {
+        let Some(page) = page_u64(page_id) else {
+            return Ok(Vec::new());
+        };
+        let read = self.read()?;
+        Ok(manifest_rows(&*read, page)?
+            .into_iter()
+            .map(|(_, row)| row)
+            .filter(|row| in_generation(row, generation))
+            .collect())
+    }
+
+    /// `listForcedCutSeqs(pageId, generation)`: the seqs of generation `generation`'s published
+    /// rows that end at a forced cut (`cut_kind = 'forced'`), in seq order.
+    pub fn list_forced_cut_seqs(&self, page_id: i64, generation: i64) -> Result<Vec<i64>> {
+        let mut seqs: Vec<i64> = self
+            .generation_rows(page_id, generation)?
+            .into_iter()
+            .filter(|row| row.cut_kind == "forced")
+            .map(|row| row.seq)
+            .collect();
+        seqs.sort_unstable();
+        Ok(seqs)
+    }
+
+    /// `readManifestSeqAt(pageId, generation, byteOffset)`: the seq of generation `generation`'s
+    /// published row holding stored byte `byte_offset`, the last row starting at or before it
+    /// (`ORDER BY byte_start DESC, seq DESC LIMIT 1`). `None` when no row starts that early.
+    pub fn read_manifest_seq_at(
+        &self,
+        page_id: i64,
+        generation: i64,
+        byte_offset: i64,
+    ) -> Result<Option<i64>> {
+        Ok(self
+            .generation_rows(page_id, generation)?
+            .into_iter()
+            .filter(|row| row.byte_start <= byte_offset)
+            .max_by_key(|row| (row.byte_start, row.seq))
+            .map(|row| row.seq))
+    }
+
+    /// `readSegmentedVersionBodyBytes(pageId, generation)`: the `body_bytes` of the newest
+    /// segmented version of page `page_id` that references generation `generation` and records
+    /// a size, or `None` when none does.
+    pub fn read_segmented_version_body_bytes(
+        &self,
+        page_id: i64,
+        generation: i64,
+    ) -> Result<Option<i64>> {
+        let Some(page) = page_u64(page_id) else {
+            return Ok(None);
+        };
+        let read = self.read()?;
+        crate::pages::segmented_version_body_bytes(&*read, page, generation)
+    }
+
     /// `listAccessPolicySourceIds()`: the sources with an access policy. The store keeps no folder
     /// rules, so there are none.
     pub fn list_access_policy_source_ids(&self) -> Result<Vec<String>> {
@@ -676,6 +734,11 @@ mod tests {
                 .is_empty()
         );
         assert!(s.read_body_manifest_outline(id, &[], 0).unwrap().is_empty());
+        assert!(s.list_forced_cut_seqs(id, 1).unwrap().is_empty());
+        assert!(s.list_forced_cut_seqs(-1, 1).unwrap().is_empty());
+        assert_eq!(s.read_manifest_seq_at(id, 1, 0).unwrap(), None);
+        assert_eq!(s.read_segmented_version_body_bytes(id, 1).unwrap(), None);
+        assert_eq!(s.read_segmented_version_body_bytes(-1, 1).unwrap(), None);
         assert!(s.list_access_policy_source_ids().unwrap().is_empty());
         assert_eq!(array_len(&json!([1, 2])), 2);
         assert_eq!(array_len(&Value::Null), 0);

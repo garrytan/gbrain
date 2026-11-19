@@ -72,3 +72,15 @@ export const listAccessPolicySourceIds: StoreMember<[], string[]> = (brain) =>
 /** A segmented outline read: the facts slots and stored outline of the named occurrences in one generation (`cli_reads::export::read_body_manifest_outline`). */
 export const readBodyManifestOutline: StoreMember<[pageId: number, occurrenceIds: readonly number[], generation: number], BodyManifestOutline[]> = (brain, pageId, occurrenceIds, generation) =>
   storeCall({ member: 'readBodyManifestOutline' }, () => brain.readBodyManifestOutline(pageId, [...occurrenceIds], generation));
+
+/** A segmented body read: the seqs of one generation's rows that end at a forced cut (`cli_reads::export::list_forced_cut_seqs`). */
+export const listForcedCutSeqs: StoreMember<[pageId: number, generation: number], number[]> = (brain, pageId, generation) =>
+  storeCall({ member: 'listForcedCutSeqs' }, () => brain.listForcedCutSeqs(pageId, generation));
+
+/** A segmented body read: the seq of the row holding a stored byte (`cli_reads::export::read_manifest_seq_at`). */
+export const readManifestSeqAt: StoreMember<[pageId: number, generation: number, byteOffset: number], number | null> = async (brain, pageId, generation, byteOffset) =>
+  (await storeCall({ member: 'readManifestSeqAt' }, () => brain.readManifestSeqAt(pageId, generation, byteOffset))) ?? null;
+
+/** A segmented body read: the size the newest segmented version of a generation records (`cli_reads::export::read_segmented_version_body_bytes`). */
+export const readSegmentedVersionBodyBytes: StoreMember<[pageId: number, generation: number], number | null> = async (brain, pageId, generation) =>
+  (await storeCall({ member: 'readSegmentedVersionBodyBytes' }, () => brain.readSegmentedVersionBodyBytes(pageId, generation))) ?? null;

@@ -1753,6 +1753,33 @@ pub(crate) fn version_generations(read: &dyn KvRead, page_id: u64) -> Result<Vec
     failure.map_or(Ok(out), Err)
 }
 
+/// The `body_bytes` of the newest segmented snapshot of page `page_id` that references body
+/// generation `generation` and records a size (`page_versions ... ORDER BY id DESC LIMIT 1`).
+pub(crate) fn segmented_version_body_bytes(
+    read: &dyn KvRead,
+    page_id: u64,
+    generation: i64,
+) -> Result<Option<i64>> {
+    let mut best: Option<(u64, i64)> = None;
+    let mut failure = None;
+    scan_prefix(read, &keys::version_prefix(page_id), false, &mut |_, v| {
+        match serde_json::from_slice::<VersionRecord>(v) {
+            Ok(row) => {
+                if row.body_storage.as_deref() == Some("segmented")
+                    && row.body_generation == Some(generation)
+                    && let Some(bytes) = row.body_bytes
+                    && best.is_none_or(|(id, _)| row.id > id)
+                {
+                    best = Some((row.id, bytes));
+                }
+            }
+            Err(e) => failure = Some(StoreError::from(e)),
+        }
+        failure.is_none()
+    })?;
+    failure.map_or(Ok(best.map(|(_, bytes)| bytes)), Err)
+}
+
 /// Saves a version snapshot of `page` (PGLite's `createPageVersion` insert), then prunes the page's
 /// history as PGLite does after the insert (`version_prune::prune_after_snapshot`), which can
 /// rewrite the page record (`version_history_gap_at`): a caller that writes the page afterwards

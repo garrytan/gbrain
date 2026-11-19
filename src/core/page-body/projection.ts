@@ -79,9 +79,8 @@ export const STALE_CHUNKS_SQL = `WITH RECURSIVE occ(o) AS (
   WHERE c.page_id=$1 AND c.occurrence_id IS NULL AND (c.body_generation IS NULL OR (cardinality($3::bigint[])=0 AND c.body_generation<=$2::bigint))`;
 
 /** The occurrence ids of page $1's manifest at generation $2. */
-export async function liveOccurrenceIds(engine: Pick<BrainEngine, 'executeRaw'>, pageId: number, generation: number): Promise<number[]> {
-  return (await engine.executeRaw<{ occurrence_id: number | string }>(`SELECT occurrence_id FROM page_body_manifest WHERE page_id=$1 AND staging_id IS NULL
-    AND gen_from <= $2 AND (gen_to IS NULL OR gen_to > $2)`, [pageId, generation])).map(row => Number(row.occurrence_id));
+export async function liveOccurrenceIds(engine: Pick<BrainEngine, 'readBodyManifestRows'>, pageId: number, generation: number): Promise<number[]> {
+  return (await engine.readBodyManifestRows(pageId, generation)).map(row => Number(row.occurrence_id));
 }
 
 /** The page still stores a chunk row its live generation does not hold (a deferred retirement): sealing it would show the row. */
@@ -100,7 +99,7 @@ async function retireStaleChunks(engine: BrainEngine, ref: { sourceId: string; s
   for (;;) {
     const deleted = await engine.transaction(async tx => {
       await tx.lockPageKeys([ref]);
-      const [page] = await tx.executeRaw<{ body_generation: number | string; body_storage: string }>('SELECT body_generation, body_storage FROM pages WHERE id=$1', [pageId]);
+      const page = await tx.readSegmentedPageHead(pageId);
       if (page?.body_storage !== 'segmented' || Number(page.body_generation) !== generation) return null;
       return (await tx.executeRaw<{ id: number }>(`DELETE FROM content_chunks c WHERE c.id=ANY(ARRAY(${STALE_CHUNKS_SQL} LIMIT $4)) RETURNING c.id`,
         [pageId, generation, live, PROJECTION_RETIRE_MAX_ROWS])).length;

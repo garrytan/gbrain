@@ -113,6 +113,47 @@ impl Brain {
         })
     }
 
+    /// `listForcedCutSeqs(pageId, generation)`: the seqs of one published generation's rows that
+    /// end at a forced cut, in seq order.
+    #[napi]
+    pub fn list_forced_cut_seqs<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        generation: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_forced_cut_seqs(page_id, generation))
+    }
+
+    /// `readManifestSeqAt(pageId, generation, byteOffset)`: the seq of the published row holding
+    /// stored byte `byteOffset`, or null.
+    #[napi]
+    pub fn read_manifest_seq_at<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        generation: i64,
+        byte_offset: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_manifest_seq_at(page_id, generation, byte_offset)
+        })
+    }
+
+    /// `readSegmentedVersionBodyBytes(pageId, generation)`: the size the newest segmented version
+    /// of the generation records, or null.
+    #[napi]
+    pub fn read_segmented_version_body_bytes<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        generation: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_segmented_version_body_bytes(page_id, generation)
+        })
+    }
+
     /// `readBodyManifestOutline(pageId, occurrenceIds, generation)`: the facts slots and stored
     /// outline of the named occurrences in one published generation.
     #[napi]

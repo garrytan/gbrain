@@ -319,4 +319,37 @@ describe('engine parity: export reads', () => {
       past: await projectedOutline(engine, body, 5, 1),
     };
   });
+
+  // The segmented body's small typed reads: the forced cuts of a generation, the row holding a byte offset, and the
+  // size a segmented version records for a generation. Each answers null or empty outside the published rows.
+  parityTest('segmented reads find forced cuts, the row at an offset and a version\'s recorded size', {
+    methods: ['listForcedCutSeqs', 'readManifestSeqAt', 'readSegmentedVersionBodyBytes', 'createVersion', 'createSegmentedPageShell',
+      'allocateBodyOccurrenceIds', 'openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'flipBodyGeneration', 'setBodyStagingState',
+      'transaction'],
+  }, async (engine) => {
+    const { pageId } = await publishSegmented(engine, 'notes/big', { row: seq => ({ cutKind: seq === 1 ? 'forced' : 'heading' }) });
+    const first = SEGMENTS[0]!.body.byteLength;
+    const forced = await engine.listForcedCutSeqs(pageId, 1);
+    const seqAt = {
+      start: await engine.readManifestSeqAt(pageId, 1, 0),
+      lastOfFirst: await engine.readManifestSeqAt(pageId, 1, first - 1),
+      second: await engine.readManifestSeqAt(pageId, 1, first),
+      past: await engine.readManifestSeqAt(pageId, 1, 100000),
+      before: await engine.readManifestSeqAt(pageId, 1, -1),
+      unpublished: await engine.readManifestSeqAt(pageId, 0, 0),
+    };
+    const unversioned = await engine.readSegmentedVersionBodyBytes(pageId, 1);
+    await engine.createVersion('notes/big');
+    const versioned = await engine.readSegmentedVersionBodyBytes(pageId, 1);
+    const otherGeneration = await engine.readSegmentedVersionBodyBytes(pageId, 2);
+    expect(forced).toEqual([1]);
+    expect(seqAt).toEqual({ start: 0, lastOfFirst: 0, second: 1, past: 1, before: null, unpublished: null });
+    expect(unversioned).toBeNull();
+    expect(versioned).toBe(SEGMENTS.reduce((n, t) => n + t.body.byteLength, 0));
+    expect(otherGeneration).toBeNull();
+    return {
+      forced, seqAt, unversioned, versioned, otherGeneration,
+      missing: [await engine.listForcedCutSeqs(999999, 1), await engine.readManifestSeqAt(999999, 1, 0), await engine.readSegmentedVersionBodyBytes(999999, 1)],
+    };
+  });
 });
