@@ -38,7 +38,6 @@ const EXEMPT: Record<string, string> = {
   'src/core/facts/proposal-supersede.ts': 'checked supersede of existing rows (lifecycle)',
   'src/core/facts/purge.ts': 'purge deletes rows',
   'src/core/facts/relink-publish.ts': 'relinks existing facts to an entity (placement)',
-  'src/core/facts/unfenced-facts.ts': 'repairs fence positions of existing rows',
   'src/core/page-state/materialize.ts': 'writes stored timeline rows back into the page body; no new text',
   'src/core/page-state/rename-alias.ts': 'slug alias (placement only)',
   'src/core/page-state/versions.ts': 'page_versions snapshots copy the live row',

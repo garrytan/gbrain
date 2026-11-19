@@ -201,6 +201,9 @@ test('extract_atoms records a credentials abort as provider_auth; an extract_fac
     async countLegacyFactsPending() { return [{ entity_slug: 'people/held', n: '3' }]; },
     // The fence step lists unfenced rows through the typed member; the raw stub answered that read with no rows.
     async listUnfencedFactRows() { return []; },
+    // The ontology-hold and deleted-page reads moved off executeRaw onto typed members; the raw stub answered both with no rows.
+    async listOntologyObservationSlugs() { return []; },
+    async listDeletedPageSlugsWithActiveFacts() { return []; },
     async getAllSlugs() { return []; }, async getPage() { return null; },
     async deleteFactsForPage() { return { deleted: 0 }; }, async insertFacts() { return { inserted: 0, ids: [], warnings: [], deleted: 0 }; },
     async transaction<T>(fn: (tx: BrainEngine) => Promise<T>): Promise<T> { return fn(stub); },

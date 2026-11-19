@@ -123,7 +123,7 @@ src/core/cycle/extract-atoms.ts	discoverExtractablePages	sql	STREAM	minCompiledT
 src/core/cycle/extract-atoms.ts	minCompiledTruthChars	sql	STREAM	false for a segmented page (NULL body): skip
 src/core/cycle/extract-atoms.ts	runPhaseExtractAtoms	call:serializeMarkdown	SEGW	
 src/core/cycle/extract-facts.ts	canonicalCacheState	field	INLINE	inline arm; a segmented page compares its stored regions with the canonical file by length and SHA-256 (segmentedBodyMatchesFile)
-src/core/cycle/extract-facts.ts	expireDeletedPageFacts	sql	INLINE	reads the deleted page's stored fence through readFenceBlocks, which reads a segmented page as segmented: no fence proof, so its rows expire only when a live generation recorded them (GBRA-161 PR 2)
+src/core/engine-sql/facts-cycle.ts	readDeletedPageBody	sql	INLINE	lane 4 facts-cycle sites (item 4.2): moved from expireDeletedPageFacts, same statement. reads the deleted page's stored fence through readFenceBlocks, which reads a segmented page as segmented: no fence proof, so its rows expire only when a live generation recorded them (GBRA-161 PR 2)
 src/core/cycle/extract-facts.ts	planFenceReconcile	field	NONE	view.timeline is the parsed facts fence of the timeline section (FactsFenceView); a segmented page reads it from its marker segments (segmentedFactsFenceView)
 src/core/cycle/extract-facts.ts	sameBody	field	INLINE	inline arm; segmented pages compare content_hash and body_bytes
 src/core/cycle/extract-takes.ts	readPageTakes	field	INLINE	inline arm; a segmented page streams through parseTakesFenceBlocks (page-body/segment-takes.ts)
@@ -245,11 +245,12 @@ src/core/facts/fence-fact-append.ts	prepareFenceRowRetirement	call:serializePage
 src/core/facts/fence-write.ts	writeFactsToFence	field	NONE	reads compiled_truth back from the object withHeldFactsFence returns for the file text already in hand; a segmented page returned database-only (page_body_segmented) before the file was compared
 src/core/facts/file-body-guard.ts	fileBodyMatchesStored	field	SEGW	a segmented page reads NULL inline columns, never matches, and the caller holds it (nothing written)
 src/core/facts/file-body-guard.ts	mirroredBody	field	NONE	the parsed checkout file body, not a page row
-src/core/facts/file-body-guard.ts	readStoredBody	sql	SEGW	reads the inline columns only; a segmented page reads NULL and every caller holds it
+src/core/engine-sql/facts-cycle.ts	LIVE_STORED_BODY_SQL	sql	SEGW	lane 4 facts-cycle sites (item 4.2): moved from readStoredBody (the plain and FOR UPDATE texts). reads the inline columns only; a segmented page reads NULL and every caller holds it
+src/core/engine-sql/facts-cycle.ts	LIVE_STORED_BODY_LOCKED_SQL	sql	SEGW	lane 4 facts-cycle sites (item 4.2): moved from readStoredBody (the plain and FOR UPDATE texts). reads the inline columns only; a segmented page reads NULL and every caller holds it
 src/core/facts/file-body-guard.ts	replaceStoredBody	call:contentHash	META	hash of the inline file body being mirrored
 src/core/facts/file-body-guard.ts	replaceStoredBody	call:refreshPageBody	SEGW	runs only after fileBodyMatchesStored matched the inline row under the lock, so never on a segmented page
 src/core/facts/file-body-guard.ts	replaceStoredBody	field	SEGW	runs only after fileBodyMatchesStored matched the inline row under the lock, so never on a segmented page
-src/core/facts/file-body-guard.ts	replaceableFile	sql	SEGW	a segmented page reads NULL inline columns, so its file is never replaceable and the caller holds it
+src/core/engine-sql/facts-cycle.ts	listPageStates	sql	SEGW	lane 4 facts-cycle sites (item 4.2): moved from replaceableFile, same statement. a segmented page reads NULL inline columns, so its file is never replaceable and the caller holds it
 src/core/facts/file-body-guard.ts	storedBodyUnchanged	field	SEGW	compares the inline preimage only after the fence and forget callers have refused a segmented page
 src/core/facts/forget.ts	forgetFactInFence	call:contentHash	META	inline pages only
 src/core/facts/forget.ts	forgetFactInFence	call:refreshPageBody	SEGW	assertInlineBody first

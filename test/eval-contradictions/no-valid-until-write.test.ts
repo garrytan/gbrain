@@ -81,13 +81,13 @@ import { join } from 'node:path';
 //     CLI, explicit-only, preview-bound, and the contradiction probe never
 //     calls it.
 const VALID_UNTIL_WRITE_ALLOWLIST: ReadonlySet<string> = new Set([
-  'src/core/cycle/extract-facts.ts',
   'src/core/cycle/phases/consolidate.ts',
   'src/core/engine-sql/facts.ts', // #7214: insertFact's supersede closes the retired interval at the replacement's valid_from
   'src/core/facts/forget.ts',
   'src/core/facts/insert-guard-schema.ts',
   'src/core/facts/proposal-supersede.ts',
   'src/core/facts/withdrawal.ts',
+  'src/core/engine-sql/facts-cycle.ts', // the fence row's cells statement (updateFenceFactCells), moved from cycle/extract-facts.ts
   'src/core/engine-sql/facts-purge.ts', // the withdrawal expiry statement (expireFactsByWithdrawal), moved from facts/withdrawal.ts
   'src/core/facts/withdrawal-schema.ts',
   'src/core/generations/adapters/fact-rows.ts',
