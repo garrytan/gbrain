@@ -1688,11 +1688,17 @@ addon, and refusing a missing or mismatched one, belong to the loader (below), n
   (`src/core/rust-engine/owner-ipc/`); `ownerRole` reads `'owner'`. Any other process becomes a client (`ownerRole`
   `'client'`): it never opens the store, forwards each member call over the socket, and reports the capabilities in
   the owner's hello, so a member the owner lacks refuses at the client with the error the owner's own engine gives.
-  `transaction`, `transactionDirect`, `withReservedConnection`, `holdSchemaMigrationLock` and `keywordBoundedRead` take
-  a callback that cannot cross the socket and refuse `engine_capability_missing` with `via=owner_ipc` on a client.
+  `transaction`, `transactionDirect`, `withReservedConnection` and `keywordBoundedRead` take a callback that cannot
+  cross the socket. On a client of a Rust owner they refuse `engine_capability_missing` as the owner's own engine does
+  (reason `transactions` or `raw_sql`, because the owner's hello does not report them). `holdSchemaMigrationLock`, and
+  any call whose arguments hold a function other than a search metadata hook, refuse `engine_capability_missing` with
+  `via=owner_ipc`; nothing runs.
   `importFromContent`, `importFromFile`, `importImageFile` and `importManagedFiles` are forwarded whole and run their
-  transaction in the owner (a remote caller or a function option refuses). The owner runs 32 calls at once and queues
-  the rest; a call carries its deadline, and a frame over 128 MiB ends `response_too_large`. When the owner exits,
+  transaction in the owner (a remote caller or a function option refuses). A call carries its caller's access record,
+  so a restricted caller reads no more through the socket than in process. The owner runs 32 calls at once and queues
+  the rest; a call carries its deadline and ends `timeout` there, with reason `not_sent`, `not_started` (it waited in
+  the queue and never ran) or `outcome_unknown` (the owner had started it, so a write may have committed). An owner
+  reply over 128 MiB ends `response_too_large`, and a call whose arguments are over it refuses with `via=owner_ipc`. When the owner exits,
   a call in flight ends `owner_unavailable` with reason `outcome_unknown` and a later call ends `not_sent`; no client
   takes the brain over. A process that is neither owner nor client within 5 seconds ends `owner_unavailable` with reason
   `not_sent`. `disconnect()` on the owner stops the server, waits for running calls, closes the store and releases the

@@ -110,12 +110,19 @@ counter is `M next_facts_id`.
   against `^facts/[0-9]{1,18}$` first.
 - `remove_source_rows` (`cascade::remove_source_rows`): deletes every fact of a deleted
   source, as `facts_source_id_fkey ... ON DELETE CASCADE` does.
-- `rename_slug_rows` (`cascade::rename_slug_rows`): the facts half of PGLite's
+- `move_slug_rows` (called by `cascade::rename_slug_rows`): the facts half of PGLite's
   `moveSlugBindings`, in its order. The fact-withdrawal move has nothing to move: only
   `executeRaw` writes `fact_withdrawals`, and the Rust engine refuses it. Then the ontology
   duplicates of the entity move are dropped, `entity_slug` moves, the rows at the new page
   whose `row_num` the old page holds are deleted, the ontology duplicates of the page move are
   dropped, and `source_markdown_slug` moves.
+- `expire_gone_page_facts`: `purgeDeletedPages` calls it in its write, after the page rows are
+  removed, as PGLite's `expireGonePageFacts` (`src/core/facts/gone-page-facts.ts`) runs its four
+  updates, in their order: facts filed on a purged page, the slot facts of a filed conversation
+  (dimension, value and status cleared too), facts extracted from the page by a page-extraction
+  source (`mcp:put_page`, `sync:import`, `file_upload`, `code_import`) and filed on no page, and
+  facts about the page that no remaining page row holds. A row is expired (`expired_at` now,
+  `row_num` cleared), never deleted.
 
 ## Not modeled
 

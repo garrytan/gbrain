@@ -72,7 +72,7 @@ Where this engine differs from PGLite:
   origins, so a later writer needs no reader change.
 - A rename calls core's `cascade::rename_slug_rows` for the records other families key by slug
   (PGLite `moveSlugBindings` steps 1-6: fact withdrawals, `facts.entity_slug`,
-  `facts.source_markdown_slug`). The facts entry is `facts::rename_slug_rows`, so fact bindings move
+  `facts.source_markdown_slug`). The facts entry is `facts::move_slug_rows`, so fact bindings move
   with the page (see [facts.md](facts.md)).
 - `putPage` with `contextualRetrieval` does not write the state; that option belongs to the page
   family.

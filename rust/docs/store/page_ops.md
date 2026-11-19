@@ -104,8 +104,9 @@ Other differences:
   filed conversation (dimension, value and status cleared), facts extracted from the page and facts
   about the page whose entity no longer has a page. `deletePages` does not expire facts, on either
   engine.
-  PGLite also deletes the pages' body stagings and orphaned segment texts; the store keeps neither
-  yet, and the `page_body` family's `remove_page_rows` hook must remove them when it lands.
+- The purge also deletes the body stagings at each purged source and slug, and then each segment text
+  the purged pages named that no manifest row or live staging still needs, in the same write, as
+  PGLite does (see [page_body.md](page_body.md)).
 - The parity cases cannot stand a tombstone days in the past (the Rust arm reads the system clock),
   so every stamped page there is inside its window. The store unit tests in
   `crates/gbrain-store/src/page_ops.rs` set `deleted_at` directly and cover the windows closing,
