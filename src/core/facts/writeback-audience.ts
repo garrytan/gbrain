@@ -7,10 +7,10 @@
  * config key ('personal' | 'shared'), set by the operator, by
  * company-brainify's Phase-5 handoff (shared), or from the bootstrap
  * interview's SURFACE_MULTIUSER answer. The heuristic exists only for
- * undeclared brains and is deliberately conservative: client count measures
- * surface breadth, not human count (Claude Code + Codex + a phone client is
- * three clients and one human), so only ≥3 DISTINCT non-automation MCP
- * clients active in the last 30 days reads as shared evidence — and
+ * undeclared brains and counts people, not clients (GST-3180): the
+ * non-automation MCP clients active in the last 30 days that are bound to the
+ * same member count once, and a client bound to nobody counts by itself, so
+ * 2 members or 3 people read as shared evidence — and
  * `reasons[]` always names what decided, so doctor can surface a
  * misclassification and the one-line fix (`gbrain config set brain.audience
  * personal|shared`).
@@ -80,11 +80,11 @@ export async function classifyBrainAudience(
     const humans = usage.filter((u) => !u.likely_automation);
     const names = humans.map((u) => u.token_name);
     const bindings = names.length === 0 ? [] : await engine.executeRaw<{ name: string; member_id: string | null }>(
-      `SELECT name, member_id FROM access_tokens WHERE name = ANY($1::text[])
-       UNION ALL SELECT client_id AS name, member_id FROM oauth_clients WHERE client_id = ANY($1::text[])`, [names],
-    ).catch(() => []);
+      `SELECT name, member_id FROM access_tokens WHERE name = ANY($1::text[]) AND revoked_at IS NULL
+       UNION ALL SELECT client_id AS name, member_id FROM oauth_clients WHERE client_id = ANY($1::text[]) AND deleted_at IS NULL`, [names],
+    ).catch(() => null);
     const membersOf = new Map<string, Set<string | null>>();
-    for (const b of bindings) membersOf.set(b.name, (membersOf.get(b.name) ?? new Set()).add(b.member_id ?? null));
+    for (const b of bindings ?? []) membersOf.set(b.name, (membersOf.get(b.name) ?? new Set()).add(b.member_id ?? null));
     const members = new Set<string>();
     let unbound = 0;
     for (const name of names) {
@@ -93,7 +93,7 @@ export async function classifyBrainAudience(
       else unbound++;
     }
     const people = members.size + unbound;
-    const counted = `${people} ${people === 1 ? 'person' : 'people'} (${members.size} member(s), ${unbound} unbound client(s))`;
+    const counted = `${people} ${people === 1 ? 'person' : 'people'} (${members.size} member(s), ${unbound} unbound client(s)${bindings === null ? ', member bindings unreadable' : ''})`;
     if (members.size >= 2 || people >= SHARED_CLIENT_THRESHOLD) {
       return {
         audience: 'shared',

@@ -87,6 +87,18 @@ describe('brain audience counts people, not credentials', () => {
     expect(r.reasons.join(' ')).toContain('1 member(s), 2 unbound client(s)');
   });
 
+  test('a revoked twin of a member-bound token name does not make it unbound', async () => {
+    await client('alice-laptop', 'alice-example');
+    await engine.executeRaw(`UPDATE access_tokens SET revoked_at = now() WHERE name = 'alice-laptop'`);
+    await client('alice-laptop', 'alice-example');
+    await engine.executeRaw(`UPDATE access_tokens SET member_id = NULL WHERE name = 'alice-laptop' AND revoked_at IS NOT NULL`);
+    await client('alice-phone', 'alice-example');
+    await client('alice-agent', 'alice-example', 'client');
+    const r = await classifyBrainAudience(engine);
+    expect(r.audience).toBe('personal');
+    expect(r.reasons.join(' ')).toContain('1 person (1 member(s), 0 unbound client(s))');
+  });
+
   test('when the member bindings cannot be read, every client counts by itself', async () => {
     await client('alice-laptop', 'alice-example');
     await client('alice-phone', 'alice-example');
@@ -103,6 +115,6 @@ describe('brain audience counts people, not credentials', () => {
     });
     const r = await classifyBrainAudience(failing);
     expect(r.audience).toBe('shared');
-    expect(r.reasons.join(' ')).toContain('0 member(s), 3 unbound client(s)');
+    expect(r.reasons.join(' ')).toContain('0 member(s), 3 unbound client(s), member bindings unreadable');
   });
 });
