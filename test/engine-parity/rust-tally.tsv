@@ -57,7 +57,7 @@ test/engine-parity/search-privacy-retention.test.ts	5	0
 test/engine-parity/search-privacy.test.ts	24	1
 test/engine-parity/search-private-fence.test.ts	5	0
 test/engine-parity/search-reads.test.ts	15	1
-test/engine-parity/search.test.ts	20	2
+test/engine-parity/search.test.ts	20	3
 test/engine-parity/segmented-body.test.ts	17	0
 test/engine-parity/source-resolver-reads.test.ts	11	0
 test/engine-parity/stats-vectors.test.ts	2	0

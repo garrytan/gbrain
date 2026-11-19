@@ -2022,6 +2022,7 @@
           "private searchRead",
           "private telemetryRead",
           "private timelineRead",
+          "private timelineStale",
           "private transactionOn",
           "private vectorIterativeScan",
           "private vectorIterativeScanSupported",

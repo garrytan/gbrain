@@ -92,6 +92,7 @@ import {
 import { getFtsLanguage, applyFtsLanguagePolicy } from './fts-language.ts';
 import { splitEmbeddingSignature, currentSpaceChunkPredicate, lockEmbeddingSources } from './embedding-invalidation.ts';
 import { SAFE_FENCE_CHUNKER_VERSION, bodyWriteChunkVersion, chunkManifestReads, currentTextProjectionFilter, requiresSafeChunks, safeChunksFilter } from './search/safe-chunks.ts';
+import { TimelineStaleProbe } from './postgres-engine/timeline-stale-probe.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
   Chunk, ChunkInput, ChunkReuseRow, StaleChunkRow, StalePageRow, ChunklessPageRow,
@@ -306,6 +307,7 @@ export class PostgresEngine implements BrainEngine {
   readonly [ENGINE_ROOT]: object = this;
   private vectorIterativeScan?: Promise<boolean>;
   private keywordStatementTimeout?: Promise<string>;
+  private readonly timelineStale = new TimelineStaleProbe(); // the search stale flag (search/timeline-stale.ts)
   private keywordTimeouts = new KeywordTimeoutNegativeCache(Date.now, undefined, () => keywordRerunPoolIdle(enginePoolStats(this), this._disconnectPromise)); // #7082
   private readonly vectorScope = vectorScopeLoader(() => this.executeRaw<PageSourceStats>(PAGE_SOURCE_STATS_SQL), ids => this.executeRaw<ScopeChunkCount>(SCOPE_CHUNKS_SQL, [ids]));
   /** Transaction clones keep chunk invalidation and replacement atomic. */
@@ -1538,7 +1540,7 @@ export class PostgresEngine implements BrainEngine {
         effective_date, effective_date_source,
         message_id, thread_id, source_subject,
         chunk_id, chunk_index, chunk_text, chunk_source, score, bounded_rows,
-        false AS stale
+        ${await this.timelineStale.sql(this, 'best_per_page.updated_at', 'best_per_page.page_id')} AS stale
       FROM best_per_page
       ORDER BY score DESC, page_id ASC, chunk_id ASC
       LIMIT ${limitParam}
@@ -1599,7 +1601,7 @@ export class PostgresEngine implements BrainEngine {
       (read, settings) => this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, tx => read(scopedRead(this.engineSqlOn(tx))), { alwaysTransaction: true, jitOff: true, settings }),
       query,
       opts,
-      { statementTimeout: await this.keywordStatementTimeoutSetting(), statementSettings: KEYWORD_STATEMENT_SETTINGS, relaxedPrefersIndex: true, staleProbe: false, chunkManifest: exec => chunkManifestReads(this, exec) },
+      { statementTimeout: await this.keywordStatementTimeoutSetting(), statementSettings: KEYWORD_STATEMENT_SETTINGS, relaxedPrefersIndex: true, staleProbe: await this.timelineStale.reads(this), chunkManifest: exec => chunkManifestReads(this, exec) },
     );
   }
 
@@ -1719,7 +1721,7 @@ export class PostgresEngine implements BrainEngine {
           THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
         cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
         ts_rank(cc.search_vector, websearch_to_tsquery('${ftsLang}', $1)) * ${sourceFactorCase} AS score,
-        false AS stale
+        ${await this.timelineStale.sql(this, 'p.updated_at', 'p.id')} AS stale
       FROM content_chunks cc
       JOIN pages p ON p.id = cc.page_id
       JOIN sources s ON s.id = p.source_id
@@ -1777,12 +1779,10 @@ export class PostgresEngine implements BrainEngine {
     if (opts?.limit && opts.limit > searchLimitCap()) {
       console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
     }
-    // Two-stage CTE (v0.22): the candidate CTE keeps a pure-distance ORDER BY
-    // so the HNSW index stays usable; the outer stages re-rank by source
-    // factor. Statement shape, freshness placement (#5824) and pool counts
-    // live in search/vector-statement.ts, shared with PGLite and doctor.
-    const scope = await this.vectorScope(opts);
-    const statementFor = vectorStatementForms(chunkManifest => buildVectorSearchStatement({ dialect: 'postgres', embedding, limit, offset: opts?.offset || 0, opts, scope, chunkManifest }));
+    // Two-stage CTE (v0.22): a pure-distance candidate ORDER BY keeps HNSW usable; outer stages re-rank by source factor.
+    // Shape, freshness (#5824), pool counts and the stale flag live in search/vector-statement.ts (shared, doctor too).
+    const scope = await this.vectorScope(opts), staleProbe = await this.timelineStale.reads(this);
+    const statementFor = vectorStatementForms(chunkManifest => buildVectorSearchStatement({ dialect: 'postgres', embedding, limit, offset: opts?.offset || 0, opts, scope, chunkManifest, staleProbe }));
     const stmt = statementFor(true);
     const iterative = await this.vectorIterativeScanSupported();
     const walked = await searchIndexWalk(stmt, limit, async walk => readVectorPool(await this.runVectorAttempt(statementFor, walk, iterative, opts, (tx, sql, bound) => tx.unsafe(sql, bound))));
@@ -1813,8 +1813,8 @@ export class PostgresEngine implements BrainEngine {
    */
   async explainVectorSearch(embedding: Float32Array, opts?: SearchOpts): Promise<Record<string, unknown>> {
     const limit = clampSearchLimit(opts?.limit, 20, searchLimitCap());
-    const scope = await this.vectorScope(opts);
-    const statementFor = vectorStatementForms(chunkManifest => buildVectorSearchStatement({ dialect: 'postgres', embedding, limit, offset: opts?.offset || 0, opts, scope, chunkManifest }));
+    const scope = await this.vectorScope(opts), staleProbe = await this.timelineStale.reads(this);
+    const statementFor = vectorStatementForms(chunkManifest => buildVectorSearchStatement({ dialect: 'postgres', embedding, limit, offset: opts?.offset || 0, opts, scope, chunkManifest, staleProbe }));
     const stmt = statementFor(true);
     const iterative = await this.vectorIterativeScanSupported();
     const attempt = { innerLimit: stmt.innerLimit, maxScanTuples: stmt.indexWalkSql || stmt.scopeScanSql ? Math.max(2_000, stmt.innerLimit * stmt.indexWalkOverfetch) : POOL_MAX_SCAN_TUPLES, remainingMs: 8_000, exact: false, indexWalk: !!stmt.indexWalkSql, scopeScan: !stmt.indexWalkSql && !!stmt.scopeScanSql };

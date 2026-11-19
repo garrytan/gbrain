@@ -704,9 +704,9 @@ describe('engine parity: search', () => {
   );
 
   parityTest(
-    'keyword search marks a page stale as each SQL engine does when a timeline entry is newer than the page',
+    'keyword search marks a page stale when a timeline entry is newer than the page, and page search never does',
     { methods: ['searchKeyword', 'searchKeywordChunks', 'searchKeywordPages'] },
-    async (engine, backend) => {
+    async (engine) => {
       for (const slug of ['notes/otter-fresh', 'notes/otter-stale']) {
         const page = { type: 'note' as const, title: slug, compiled_truth: 'otter colony survey', timeline: '' };
         await seedPage(engine, { slug, input: page, chunks: [chunk(0, 'otter colony survey')] });
@@ -720,41 +720,56 @@ describe('engine parity: search', () => {
         chunks: view(await engine.searchKeywordChunks('otter colony', { limit: 10 })),
         pages: view(await engine.searchKeywordPages('otter colony', undefined, { limit: 10 })),
       };
-      // The SQL engines disagree, and the Rust arm matches PGLite: PGLite's keyword and chunk arms read the newest timeline
-      // entry, Postgres reads no timeline_entries (a read role may have no SELECT on it) and reports false, and the page
-      // search (keyword-statement.ts, shared by both) always reports false.
+      // Every engine's keyword and chunk arms read the newest timeline entry (search/timeline-stale.ts; Postgres only
+      // when the role may read timeline_entries, test/e2e/search-stale-reader-role-postgres.test.ts), and the page search
+      // (keyword-statement.ts, shared by both SQL engines) always reports false.
       const marked = ['notes/otter-fresh false', 'notes/otter-stale true'];
       const unmarked = ['notes/otter-fresh false', 'notes/otter-stale false'];
-      const arm = backend === 'postgres' ? unmarked : marked;
-      expect(out).toEqual({ keyword: arm, chunks: arm, pages: unmarked });
-      // The stale flag differs by engine by design (above), so the arms compare only the pages each search found.
-      const slugs = (rows: string[]) => rows.map((r) => r.split(' ')[0]);
-      return { keyword: slugs(out.keyword), chunks: slugs(out.chunks), pages: out.pages };
+      expect(out).toEqual({ keyword: marked, chunks: marked, pages: unmarked });
+      return out;
+    },
+  );
+
+  /** Two pages under `prefix`, each with one chunk on basis vector 3; a timeline entry newer than `${prefix}-stale`. */
+  async function seedStalePair(engine: BrainEngine, prefix: string, words: string) {
+    for (const slug of [`${prefix}-fresh`, `${prefix}-stale`]) {
+      const page = { type: 'note' as const, title: `${words} ${slug.slice(prefix.length + 1)}`, compiled_truth: `${words} census`, timeline: '' };
+      await seedPage(engine, { slug, input: page, chunks: [chunk(0, `${words} census`, { embedding: basisEmbedding(3) })] });
+    }
+    // The entry's created_at must be later than the page's updated_at, as when extraction adds a derived row.
+    await new Promise((r) => setTimeout(r, 5));
+    await engine.addTimelineEntry(`${prefix}-stale`, { date: '2026-01-02', summary: 'census count', detail: '' });
+  }
+  const staleView = (rows: SearchResult[]) => sorted(rows.map((r) => `${r.slug} ${r.stale === true}`));
+
+  parityTest(
+    'keyword, chunk and title search mark a page stale on every engine when a timeline entry is newer than the page',
+    { methods: ['searchKeyword', 'searchKeywordChunks', 'searchTitles'] },
+    async (engine) => {
+      await seedStalePair(engine, 'notes/heron', 'Heron rookery');
+      const out = {
+        keyword: staleView(await engine.searchKeyword('heron rookery', { limit: 10 })),
+        chunks: staleView(await engine.searchKeywordChunks('heron rookery', { limit: 10 })),
+        titles: staleView(await engine.searchTitles('heron rookery', { limit: 10 })),
+      };
+      // The contract is the real flag: `gbrain search` prints "(stale)" for it (search-row-format.ts). Both SQL engines
+      // computed it until v0.9.1 replaced the Postgres statements with `false AS stale`; Postgres computes it again
+      // when the role may read timeline_entries (search/timeline-stale.ts).
+      const marked = ['notes/heron-fresh false', 'notes/heron-stale true'];
+      expect(out).toEqual({ keyword: marked, chunks: marked, titles: marked });
+      return out;
     },
   );
 
   parityTest(
-    'keyword and chunk search mark a page stale on every engine when a timeline entry is newer than the page',
-    { methods: ['searchKeyword', 'searchKeywordChunks'] },
+    'vector search marks a page stale on every engine when a timeline entry is newer than the page',
+    { methods: ['searchVector'] },
     async (engine) => {
-      for (const slug of ['notes/heron-fresh', 'notes/heron-stale']) {
-        const page = { type: 'note' as const, title: slug, compiled_truth: 'heron rookery census', timeline: '' };
-        await seedPage(engine, { slug, input: page, chunks: [chunk(0, 'heron rookery census')] });
-      }
-      // The entry's created_at must be later than the page's updated_at, as when extraction adds a derived row.
-      await new Promise((r) => setTimeout(r, 5));
-      await engine.addTimelineEntry('notes/heron-stale', { date: '2026-01-02', summary: 'heron count', detail: '' });
-      const view = (rows: SearchResult[]) => sorted(rows.map((r) => `${r.slug} ${r.stale === true}`));
-      const out = {
-        keyword: view(await engine.searchKeyword('heron rookery', { limit: 10 })),
-        chunks: view(await engine.searchKeywordChunks('heron rookery', { limit: 10 })),
-      };
-      // The contract is the real flag: `gbrain search` prints "(stale)" for it (search-row-format.ts) and both SQL
-      // engines computed it until v0.9.1 replaced the Postgres keyword statement with `false AS stale`. PGLite and
-      // the Rust arm report it; Postgres reports false, so this case fails on the Postgres arm only.
-      const marked = ['notes/heron-fresh false', 'notes/heron-stale true'];
-      expect(out).toEqual({ keyword: marked, chunks: marked });
-      return out;
+      await seedStalePair(engine, 'notes/kingfisher', 'Kingfisher bank');
+      const vector = staleView(await engine.searchVector(basisEmbedding(3), { limit: 10 }));
+      // The same rule as keyword search, kept apart so an engine that refuses vector search still compares the others.
+      expect(vector).toEqual(['notes/kingfisher-fresh false', 'notes/kingfisher-stale true']);
+      return vector;
     },
   );
 

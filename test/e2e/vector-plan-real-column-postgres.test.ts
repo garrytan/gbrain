@@ -225,7 +225,7 @@ function axis(d: number): Float32Array {
     const [explained, searched] = statements.slice(start);
     expect(explained.sql).toBe(`EXPLAIN (FORMAT JSON) ${searched.sql}`);
     expect(explained.params).toEqual(searched.params);
-    expect(searched.sql).toBe(buildVectorSearchStatement({ dialect: 'postgres', embedding: query, limit: 20, offset: 0, opts: { embeddingColumn: column } }).indexWalkSql!);
+    expect(searched.sql).toBe(buildVectorSearchStatement({ dialect: 'postgres', embedding: query, limit: 20, offset: 0, opts: { embeddingColumn: column }, staleProbe: true }).indexWalkSql!);
 
     // Diagnostic only: the generic plan (no parameter values), PG16+.
     const generic = await engine.executeRaw(`EXPLAIN (GENERIC_PLAN, FORMAT JSON) ${searched.sql}`).catch(error => String(error));
@@ -424,7 +424,7 @@ function axis(d: number): Float32Array {
     const scope = sourceScope(stats, opts)!;
     expect(scope.share).toBeLessThan(INDEX_WALK_MIN_SCOPE_SHARE);
     expect(scope.chunks!).toBeLessThanOrEqual(SCOPE_SCAN_FIRST_MAX_CHUNKS);
-    const stmt = buildVectorSearchStatement({ dialect: 'postgres', embedding: query, limit: 10, offset: 0, opts, scope });
+    const stmt = buildVectorSearchStatement({ dialect: 'postgres', embedding: query, limit: 10, offset: 0, opts, scope, staleProbe: true });
     expect(stmt.indexWalkSql).toBeUndefined();
     expect(stmt.scopeScanSql).toBeDefined();
 

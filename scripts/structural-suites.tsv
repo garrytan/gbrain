@@ -155,6 +155,7 @@ test/e2e/bootstrap-real-codex.serial.test.ts	bootstrap rendered protocol — amb
 test/e2e/codex-plugin-install-real.serial.test.ts	(file-level)	2	readFileSync
 test/e2e/migration-flow.test.ts	(file-level)	4	readFileSync
 test/e2e/openclaw-reference-compat.test.ts	OpenClaw reference workspace compat (W1 + W2 + W3)	8	readFileSync
+test/e2e/search-stale-reader-role-postgres.test.ts	(file-level)	2	readFileSync
 test/e2e/segmented-rls-scope.test.ts	(file-level)	6	readFileSync
 test/e2e/workspace-generic-compat.test.ts	generic agent-workspace compat (INSTALL_FOR_AGENTS.md flow)	6	readFileSync
 test/embedding-dim-check-facts.test.ts	doctor checkFactsEmbeddingWidthConsistency wiring (T6)	4	doctor-source-helper
