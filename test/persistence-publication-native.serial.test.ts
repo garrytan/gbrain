@@ -116,7 +116,7 @@ test('native root aliases produce confined bindings and replay the same managed 
     .rejects.toMatchObject({ code: 'overlapping_path' });
   expect(await engine.executeRaw('SELECT id FROM sources WHERE id=$1', [duplicate])).toEqual([]);
   const { row, receipt, effect } = await publish(f, 'notes/native-alias');
-  const target = f.caseInsensitive ? 'Notes/native-alias.md' : 'notes/native-alias.md';
+  const target = 'Notes/native-alias.md';
   expect(effect.data.relative_path).toBe(target);
   expect(await run(effect.id)).toMatchObject({ state: 'committed', outcome: { git: 'committed', push: 'committed' } });
   expectBlob(f, target);
@@ -176,7 +176,7 @@ for (const stamped of [false, true]) test(`legacy native root reservation keeps 
 test('new-page preparation and journal publication use actual native directory spelling', async () => {
   const f = await fixture();
   const { file, row, receipt, effect } = await publish(f, 'notes/new');
-  const target = f.caseInsensitive ? 'Notes/new.md' : 'notes/new.md';
+  const target = 'Notes/new.md';
   expect(await run(effect.id)).toMatchObject({ state: 'committed', outcome: { git: 'committed', push: 'committed' } });
   expectBlob(f, target);
   expect(git(f.remote, 'ls-tree', '-r', '-z', '--name-only', 'refs/heads/main').split('\0').filter(Boolean).sort())
