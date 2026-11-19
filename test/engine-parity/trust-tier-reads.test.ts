@@ -460,4 +460,30 @@ describe('engine parity: typed trust tier reads', () => {
       return { edition, wrongPage, unknown };
     },
   );
+  parityTest(
+    'readCursorEdition says whether the page is still at a revision and names its newest version at it, and null for a gone page',
+    { methods: ['putPage', 'createVersion', 'getPage', 'readPageVersionEdition', 'readCursorEdition', 'softDeletePage'] },
+    async (engine) => {
+      await engine.putPage('vt/cursor', { type: 'note', title: 'Cursor', compiled_truth: 'first body', timeline: '', frontmatter: { valid_from: '2026-01-01' } });
+      const pageId = (await engine.getPage('vt/cursor', { sourceId: 'default' }))!.id;
+      const v1 = Number((await engine.createVersion('vt/cursor', { sourceId: 'default' })).id);
+      const v2 = Number((await engine.createVersion('vt/cursor', { sourceId: 'default' })).id);
+      const first = (await engine.readPageVersionEdition({ pageId, versionId: v1 }))!.revision!;
+      const atFirst = await engine.readCursorEdition({ pageId, revision: first });
+      await engine.putPage('vt/cursor', { type: 'note', title: 'Cursor', compiled_truth: 'second body', timeline: '', frontmatter: { valid_from: '2026-06-01' } });
+      const moved = await engine.readCursorEdition({ pageId, revision: first });
+      const unknown = await engine.readCursorEdition({ pageId, revision: '00000000-0000-0000-0000-000000000000' });
+      await engine.softDeletePage('vt/cursor', { sourceId: 'default' });
+      const deleted = await engine.readCursorEdition({ pageId, revision: first });
+      const gone = await engine.readCursorEdition({ pageId: pageId + 1000, revision: first });
+      expect(atFirst).toEqual({ current: true, version_id: v2 });
+      expect(moved).toEqual({ current: false, version_id: v2 });
+      expect(unknown).toEqual({ current: false, version_id: null });
+      expect(deleted?.version_id).toBe(v2);
+      expect(gone).toBeNull();
+      // Version ids differ per engine; name them.
+      const named = (r: { current: boolean; version_id: number | null } | null) => r && { current: r.current, version: r.version_id === v2 ? 'v2' : r.version_id };
+      return { atFirst: named(atFirst), moved: named(moved), unknown: named(unknown), deleted: named(deleted), gone };
+    },
+  );
 });

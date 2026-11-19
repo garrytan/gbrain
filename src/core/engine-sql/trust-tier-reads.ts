@@ -13,6 +13,7 @@
  * - `pickValidTimeEdition`: the edition of one page in force on a date, over the page and its retained versions.
  * - `listAmendmentsNotApplied`: the amendment records an as-of edition does not fold in.
  * - `readPageVersionEdition`: the retained version an as-of read loads as its edition.
+ * - `readCursorEdition`: where the edition a window cursor pinned stands now.
  *
  * Every function takes the engine (or transaction) it runs on. Ids come back as numbers; ordered text sorts
  * `COLLATE "C"`.
@@ -414,4 +415,20 @@ export async function readPageVersionEdition(tx: Raw, spec: { pageId: number; ve
     revision: v.revision == null ? null : String(v.revision), body_storage: v.body_storage == null ? null : String(v.body_storage),
     body_generation: v.body_generation == null ? null : Number(v.body_generation),
   };
+}
+
+/** Where a window cursor's revision stands (`readCursorEdition`): still the page's, or the newest version with it. */
+export interface CursorEditionRow { current: boolean; version_id: number | null }
+
+/**
+ * Whether the page (deleted or not) is still at `revision`, and the newest retained version recorded at it; null
+ * when the page is gone.
+ */
+export async function readCursorEdition(tx: Raw, spec: { pageId: number; revision: string }): Promise<CursorEditionRow | null> {
+  const [r] = await rows<{ current: boolean | null; version_id: number | string | null }>(tx, sqlFragment`SELECT
+           (p.knowledge_revision::text = ${spec.revision}) AS current,
+           (SELECT max(v.id) FROM page_versions v WHERE v.page_id = p.id AND v.knowledge_revision::text = ${spec.revision}) AS version_id
+      FROM pages p WHERE p.id = ${spec.pageId}`);
+  if (!r) return null;
+  return { current: r.current === true, version_id: r.version_id == null ? null : Number(r.version_id) };
 }

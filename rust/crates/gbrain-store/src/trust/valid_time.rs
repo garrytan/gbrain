@@ -8,6 +8,8 @@
 //!
 //! - [`Store::read_page_version_edition`]: one version record of the page, as the as-of read loads
 //!   it as its edition.
+//! - [`Store::read_cursor_edition`]: whether the page is still at a window cursor's revision, and the
+//!   newest version record at it.
 //!
 //! The store keeps no change reason and never prunes a version, so the pick answers a null reason
 //! and no gap. It reports the history PGLite would have pruned (`history_unpruned`): more large
@@ -76,6 +78,14 @@ pub struct AmendmentsQuery {
 pub struct VersionEditionQuery {
     pub page_id: i64,
     pub version_id: i64,
+}
+
+/// `readCursorEdition(spec)`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CursorEditionQuery {
+    pub page_id: i64,
+    pub revision: String,
 }
 
 /// `pickValidTimeEdition(spec)`.
@@ -317,6 +327,27 @@ impl Store {
             "body_storage": v.body_storage.as_deref().unwrap_or("inline"),
             "body_generation": v.body_generation,
         }))
+    }
+
+    /// Whether the page (deleted or not) is still at the revision, and the newest version record at
+    /// it; null when the page is gone.
+    pub fn read_cursor_edition(&self, q: &CursorEditionQuery) -> Result<Value> {
+        no_nul("readCursorEdition", &[("revision", &q.revision)])?;
+        let read = self.read()?;
+        let Some(page) = u64::try_from(q.page_id)
+            .ok()
+            .map(|id| read_page_by_id(&*read, id))
+            .transpose()?
+            .flatten()
+        else {
+            return Ok(Value::Null);
+        };
+        let version_id = page_versions(&*read, page.id)?
+            .iter()
+            .filter(|v| v.knowledge_revision == q.revision)
+            .map(|v| v.id)
+            .max();
+        Ok(json!({ "current": page.knowledge_revision == q.revision, "version_id": version_id }))
     }
 
     pub fn pick_valid_time_edition(&self, q: &ValidTimePickQuery) -> Result<Value> {

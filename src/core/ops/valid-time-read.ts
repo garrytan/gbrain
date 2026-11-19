@@ -248,9 +248,8 @@ async function pinnedOrd(tx: BrainEngine, ctx: OperationContext, identity: Ident
     throw opError('invalid_params', `get_page: cursor is not an as_of window cursor for page ${identity.slug}.`, 'Pass the next_cursor of the previous as_of read, with the same slug, source_id and as_of.');
   }
   if (c.revision.startsWith('v:')) return { ord: Number(c.revision.slice(2)), offset: c.offset, maxBytes: c.max_bytes };
-  const [row] = await tx.executeRaw<{ current: boolean; version_id: number | null }>(`SELECT (p.knowledge_revision::text = $2) AS current,
-      (SELECT max(v.id) FROM page_versions v WHERE v.page_id = p.id AND v.knowledge_revision::text = $2) AS version_id FROM pages p WHERE p.id = $1`, [identity.id, c.revision]);
-  const ord = row?.current === true ? CURRENT_ORD : row?.version_id != null ? Number(row.version_id) : -1;
+  const row = await tx.readCursorEdition({ pageId: identity.id, revision: c.revision });
+  const ord = row?.current === true ? CURRENT_ORD : row?.version_id != null ? row.version_id : -1;
   return { ord, offset: c.offset, maxBytes: c.max_bytes };
 }
 

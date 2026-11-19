@@ -15,7 +15,8 @@ use serde_json::Value;
 use crate::store_binding::{Brain, required};
 use gbrain_store::trust::tier_reads::{CorePageRowQuery, TrustScanQuery, VersionIdsQuery};
 use gbrain_store::trust::valid_time::{
-    AmendmentsQuery, ValidTimeIdentityQuery, ValidTimePickQuery, VersionEditionQuery,
+    AmendmentsQuery, CursorEditionQuery, ValidTimeIdentityQuery, ValidTimePickQuery,
+    VersionEditionQuery,
 };
 
 #[napi]
@@ -134,6 +135,19 @@ impl Brain {
         self.run(env, move |s| {
             let a: VersionEditionQuery = required(spec, "readPageVersionEdition spec")?;
             s.read_page_version_edition(&a)
+        })
+    }
+
+    /// `readCursorEdition(spec)`: resolves where a window cursor's revision stands, or null.
+    #[napi]
+    pub fn read_cursor_edition<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: CursorEditionQuery = required(spec, "readCursorEdition spec")?;
+            s.read_cursor_edition(&a)
         })
     }
 }

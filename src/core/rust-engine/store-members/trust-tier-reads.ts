@@ -3,7 +3,8 @@
  * (rust/crates/gbrain-store/src/trust/tier_reads.rs): `listCorePageRows`, `listTrustScanRows` and
  * `countUnscannedTrustRows` over pages and facts, `listVersionTrustTiers` and `listVersionReasonWriters`; and the
  * valid-time reads (trust/valid_time.rs) `listValidTimeIdentities` and `pickValidTimeEdition`, and
- * `listAmendmentsNotApplied` (link_queries/link_temporal.rs), and `readPageVersionEdition` (trust/valid_time.rs).
+ * `listAmendmentsNotApplied` (link_queries/link_temporal.rs), `readPageVersionEdition` and
+ * `readCursorEdition` (trust/valid_time.rs).
  *
  * Refused (`engine_capability_missing`); the members this file does not export refuse as every unserved member does:
  *  - `listCorePageRows` under `excludePrivate` for a caller whose page policy is not the no-caller one (a member
@@ -152,4 +153,10 @@ export const readPageVersionEdition: Member<'readPageVersionEdition'> = (brain, 
   requireInteger(member, 'page id', spec.pageId);
   requireInteger(member, 'version id', spec.versionId);
   return storeCall({ member }, () => brain.readPageVersionEdition({ pageId: spec.pageId, versionId: spec.versionId }));
+};
+
+export const readCursorEdition: Member<'readCursorEdition'> = (brain, spec) => {
+  const member = 'readCursorEdition';
+  requireInteger(member, 'page id', spec.pageId);
+  return storeCall({ member }, () => brain.readCursorEdition({ pageId: spec.pageId, revision: String(spec.revision) }));
 };
