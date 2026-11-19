@@ -183,13 +183,15 @@
       "workflow": "test.yml",
       "events": ["workflow_dispatch", "push"],
       "jobs": ["full-suite"],
-      "artifact": "full-suite-tree"
+      "artifact": "full-suite-tree",
+      "os": "Linux"
     },
     "e2e": {
       "workflow": "e2e.yml",
       "events": ["workflow_dispatch", "push"],
       "jobs": ["e2e-full-suite"],
-      "artifact": "e2e-full-suite-tree"
+      "artifact": "e2e-full-suite-tree",
+      "os": "Linux"
     },
     "native-locks.yml/native": {
       "workflow": "test.yml",
