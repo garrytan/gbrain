@@ -170,6 +170,7 @@ Reserved tags:
 | telemetry | `a`, one sub-tag per table (below) | `TELEMETRY` | no |
 | jobs, the `dream_synthesis_completions` archive | `f` | `DREAM_SYNTHESIS_COMPLETION` | no |
 | entity_identities | `i` | `ENTITY_IDENTITY` | yes |
+| access_members | `x`, sub-tags `0x01` members, `0x02` groups, `0x03` group members | `ACCESS_MEMBERS` | no |
 
 The telemetry family (`telemetry.rs`) holds search telemetry (`src/core/search/telemetry.ts`), MCP usage
 (`src/core/mcp-usage.ts`), retrieval feedback (`src/core/feedback/`) and the budget ledger
@@ -1464,7 +1465,7 @@ the same rows into one member, so the member counts here are smaller than the si
 
 These four sections are design only. No file, tag, constant or list entry below exists yet. The tags are proposed:
 core adds them to the reserved block in `keys.rs` and to the reserved tag table above in one reviewed change, and
-until then no family writes under them. The free lowercase bytes today are `h i x y z` (`g` is the code traversal cache) (`d`, `m` and `t` are now reserved above, `a` is telemetry and `f` is the dream synthesis completion archive).
+until then no family writes under them. The free lowercase bytes today are `h i y z` (`g` is the code traversal cache) (`d`, `m` and `t` are now reserved above, `a` is telemetry, `f` is the dream synthesis completion archive and `x` is access_members).
 
 | Family | Proposed tag | Proposed constant | Cascade on page delete | Owner |
 |---|---|---|---|---|
