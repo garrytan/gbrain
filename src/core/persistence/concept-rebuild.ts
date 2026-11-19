@@ -63,7 +63,7 @@ export const REBUILD_STORES: Readonly<Record<string, 'stated' | 'derived'>> = {
   derived_generation_items: 'derived', retrieval_event_pages: 'derived', retrieval_event_links: 'derived', retrieval_feedback: 'derived',
   retrieval_weights: 'derived', 'eval_candidates.retrieved_slugs': 'derived', mention_gazetteer_entries: 'derived',
   context_volunteer_events: 'derived', op_checkpoints: 'derived', belief_events: 'derived',
-  page_body_manifest: 'derived', page_body_stagings: 'derived', page_segment_texts: 'derived',
+  page_body_manifest: 'derived', page_body_stagings: 'derived', page_segment_texts: 'derived', secret_store: 'derived', secret_store_occurrence: 'derived',
 };
 
 /**
