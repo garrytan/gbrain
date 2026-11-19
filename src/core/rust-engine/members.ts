@@ -136,6 +136,7 @@ export const RUST_ENGINE_MEMBERS = {
   getWorktreeBinding: 'persistence_journal',
   // config
   getConfigValues: 'config',
+  readRemotePolicyConfig: 'config',
   getConfig: 'config',
   setConfig: 'config',
   unsetConfig: 'config',

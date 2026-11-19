@@ -8,3 +8,11 @@ import type { LegacyUnscopedRead } from './brands.ts';
 export async function getConfigValues(exec: LegacyUnscopedRead, keys: readonly string[]): Promise<Array<{ key: string; value: string }>> {
   return exec.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key', [[...keys]]);
 }
+
+/**
+ * The stored `{ key, value }` rows for the remote read policy's keys (search/private-visibility.ts `readRemotePolicyNow`),
+ * in no set order; a key with no row is absent. The statement that read ran through executeRaw, kept as it was.
+ */
+export async function readRemotePolicyConfig(exec: LegacyUnscopedRead, keys: readonly string[]): Promise<Array<{ key: string; value: string }>> {
+  return exec.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key = ANY($1::text[])', [[...keys]]);
+}

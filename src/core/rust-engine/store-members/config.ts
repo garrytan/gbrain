@@ -19,3 +19,7 @@ export const getAllConfig: StoreMember<[], Record<string, string>> = (brain) =>
 
 export const getConfigValues: StoreMember<[keys: readonly string[]], Array<{ key: string; value: string }>> = (brain, keys) =>
   storeCall({ member: 'getConfigValues' }, () => brain.getConfigValues([...keys]));
+
+/** The remote read policy's keyed read; the store answers it as getConfigValues, whose key order the policy does not read. */
+export const readRemotePolicyConfig: StoreMember<[keys: readonly string[]], Array<{ key: string; value: string }>> = (brain, keys) =>
+  storeCall({ member: 'readRemotePolicyConfig' }, () => brain.getConfigValues([...keys]));
