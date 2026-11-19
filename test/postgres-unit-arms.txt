@@ -24,6 +24,7 @@ test/access-hidden-page-writes.test.ts
 test/access-labelled-only-fail-closed.test.ts
 test/access-labelled-only.test.ts
 test/access-member-facts.test.ts
+test/access-member-handover.test.ts
 test/access-member-sweep.test.ts
 test/access-members-read-lineage.test.ts
 test/access-members.test.ts
@@ -104,6 +105,7 @@ test/derived-origin-carry-managed.test.ts
 test/derived-origin-carry-private.test.ts
 test/derived-origin-recheck-plan.test.ts
 test/direct-pool-profile.test.ts
+test/doctor-access-pages-read-by-nobody.test.ts
 test/doctor-attest-read-shared-scope.test.ts
 test/doctor-database-encoding.test.ts
 test/doctor-frontmatter-holds.test.ts
@@ -162,6 +164,7 @@ test/engine-parity/title-fuzzy-unicode.test.ts
 test/engine-parity/versions-raw.test.ts
 test/engine-sql-facts-keyset.test.ts
 test/entity-dedupe-decisions.test.ts
+test/entity-dedupe-person-confirm.test.ts
 test/entity-duplicates-finder.test.ts
 test/eval-log-tables-parity.test.ts
 test/extract-all-stamp-intersection.serial.test.ts
@@ -450,6 +453,8 @@ test/overwritten-edits-6712.test.ts
 test/owner-facts-d1-gst2346.test.ts
 test/owner-label-guard.test.ts
 test/owner-member-boundary.test.ts
+test/owner-private-fact-edits-gst3064.test.ts
+test/owner-private-fact-reads-gst3064.test.ts
 test/owner-reads-restricted.test.ts
 test/owner-refusal.test.ts
 test/owner-remote-private-writes-gst2091.test.ts

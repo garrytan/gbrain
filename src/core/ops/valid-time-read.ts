@@ -14,13 +14,13 @@ import type { OperationContext, ParamDef } from './contract.ts';
 import { opError } from './contract.ts';
 import { hostFix, opTransport, readFix } from './op-fix.ts';
 import { renderAction, type Action } from '../agent-output.ts';
-import { assertExplicitSourceLive, federatedSearchScope, pageNotFoundError, parseSourceIdParam, validatePageSlug } from './context.ts';
+import { assertExplicitSourceLive, federatedSearchScope, pageNotFoundError, parseSourceIdParam, readHolders, validatePageSlug } from './context.ts';
 import { inlineBodyBytes } from './get-page-body.ts';
 import { pageTrustForRead, readQuarantined } from './get-page-projection.ts';
 import { admitsTrust, type TrustTier } from '../trust/tier.ts';
 import { isCalendarDate } from '../link-validity.ts';
 import { replacedBecauseSql } from '../engine-sql/pages.ts';
-import { callerReadersAllowedSql, privacyForCaller, privateLinkOriginFilterFragment, privatePagesFilterForCaller, privatePagesFilterFragment, privateSnapshotFilterFragment, remoteReadFloorSql, resolveExcludePrivatePages, worldOnlyFacts } from '../search/private-visibility.ts';
+import { callerReadersAllowedSql, ownerFenceView, privacyForCaller, privateLinkOriginFilterFragment, privatePagesFilterForCaller, privatePagesFilterFragment, privateSnapshotFilterFragment, remoteReadFloorSql, resolveExcludePrivatePages, worldOnlyFacts } from '../search/private-visibility.ts';
 import { fenceTranscriptText, isQuotedPageType, neutralizeToolCalls, quotesStored } from '../search/transcript-quote.ts';
 import { quotedPageMeta } from './get-page-projection.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
@@ -260,7 +260,7 @@ async function editionView(ctx: OperationContext, identity: Identity, e: Edition
   const omitRows = e.segmented ? undefined : await heldRowsForCaller(ctx.engine, ctx.remote, { sourceId: identity.source_id, slug: identity.slug, compiled_truth: e.compiled_truth, timeline: e.timeline });
   const clean = (s: string) => {
     if (ctx.remote === false) return s;
-    const safe = sanitizeRemoteBody(s, { includeWithdrawn: true, keepMaterializedMarkers: true, omitRows });
+    const safe = sanitizeRemoteBody(s, { includeWithdrawn: true, keepMaterializedMarkers: true, omitRows, owner: ownerFenceView(readHolders(ctx)) });
     return neutralize ? neutralizeToolCalls(safe) : safe;
   };
   const fence = (s: string) => quote && s ? fenceTranscriptText(s, identity.slug) : s;
