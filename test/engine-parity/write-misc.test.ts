@@ -18,7 +18,7 @@
  *    cannot call (D18), so no case compared them across engines (docs/research/rust-put-write-path.md).
  *  - Seam: none. Generated values (incarnation uuids) are compared by shape, never by value. Folder rules,
  *    pending prefixes and policy revisions come from the restrictFolder and seedAccessPolicy fixtures (the policy writes
- *    have no typed member). The Rust store keeps no skillpacks, chronicle state, access members, access tokens, source
+ *    themselves are compared in access-policy.test.ts). The Rust store keeps no skillpacks, chronicle state, access members, access tokens, source
  *    synopsis modes, writer bindings or memory proposals, so those cases compare the empty answer every arm gives on a fresh brain
  *    (rust/docs/store/write_misc.md, rust/docs/store/access_rules.md). It keeps op checkpoints
  *    (rust/docs/store/persistence.md, "Op checkpoints"), so a resumable op stopped on it resumes; keys compare sorted,
@@ -356,21 +356,13 @@ describe('engine parity: write misc', () => {
     return answers;
   });
 
-  // While the production rule write (`gbrain access rule add` runs proposeRevision) has no typed path on Rust, it must
-  // stop on a typed refusal there, never record nothing and report success, and the caller's folder access must stay
-  // empty afterwards.
-  parityTest('the folder-rule write (proposeRevision) refuses typed on Rust and applies the rule on the SQL engines',
+  // The production rule write (`gbrain access rule add` runs proposeRevision) applies the rule on every arm, Rust
+  // included (access-policy.test.ts compares the policy writes themselves), and the caller's folder access then names it.
+  parityTest('the folder-rule write (proposeRevision) applies the rule, and readFolderAccess and isFolderRestricted see it',
     { methods: ['readFolderAccess', 'isFolderRestricted'] }, async (engine, backend) => {
       await createSource(engine, backend, 'work');
-      const write = await proposeRevision(engine, 'work', [{ id: 'team', prefix: 'drafts/', readable_by: ['group:team-a'] }],
-        { origin: 'cli', store: 'database' }).then(() => null, (e: unknown) => e);
-      if (backend === 'rust') {
-        expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
-        expect(await engine.readFolderAccess(['group:team-a'])).toEqual({ rules: [], coverage: [] });
-        expect(await engine.isFolderRestricted('work', 'drafts/plan')).toBe(false);
-        throw write;
-      }
-      expect(write).toBeNull();
+      await proposeRevision(engine, 'work', [{ id: 'team', prefix: 'drafts/', readable_by: ['group:team-a'] }],
+        { origin: 'cli', store: 'database' });
       const rules = (await engine.readFolderAccess(['group:team-a'])).rules.map(r => ({ source_id: r.source_id, rule_id: r.rule_id }));
       expect(rules).toEqual([{ source_id: 'work', rule_id: 'team' }]);
       const restricted = await engine.isFolderRestricted('work', 'drafts/plan');

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 744/744
+# covered: 770/776
 # lifecycle: 9/9
 # pages: 47/47
 # search: 7/7
@@ -58,7 +58,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 13/13
 # wanted_links: 2/2
-# write_misc: 27/27
+# write_misc: 53/59
 # write_attribution: 5/5
 # telemetry: 10/10
 # field_usage: 1/1
@@ -85,7 +85,7 @@ getPage	pages	yes	97	yes	yes	yes	serves
 readPageSnapshot	pages	yes	30	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	420	yes	yes	yes	serves
+putPage	pages	yes	421	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	8	yes	yes	yes	serves
@@ -349,7 +349,7 @@ getStats	stats_ingest	yes	4	yes	yes	yes	serves
 getHealth	stats_ingest	yes	5	yes	yes	yes	serves
 logIngest	stats_ingest	yes	2	no	yes	yes	serves
 getIngestLog	stats_ingest	yes	2	no	yes	yes	serves
-updateSlug	sync_aliases	yes	18	no	yes	yes	serves
+updateSlug	sync_aliases	yes	19	no	yes	yes	serves
 rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
 resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
@@ -747,7 +747,39 @@ listAppliedPolicyRevisions	write_misc	yes	3	no	yes	yes	serves
 readLiveMember	write_misc	yes	3	no	yes	yes	serves
 readMayActFor	write_misc	yes	3	no	yes	yes	serves
 readAudiencePrincipals	write_misc	yes	2	no	yes	yes	serves
-readFolderAccess	write_misc	yes	6	no	yes	yes	serves
+readFolderAccess	write_misc	yes	7	no	yes	yes	serves
+readAccessStoreConfig	write_misc	no	0	no	-	-	-
+writeAccessStoreConfig	write_misc	no	0	no	-	-	-
+ensureAccessPolicyState	write_misc	no	0	no	-	-	-
+lockAccessPolicy	write_misc	yes	1	no	yes	yes	serves
+listAccessRules	write_misc	yes	1	no	yes	yes	serves
+readAccessPolicyRevisions	write_misc	yes	1	no	yes	yes	serves
+listAccessCoverage	write_misc	yes	1	no	yes	yes	serves
+readAccessStateUnreadable	write_misc	no	0	no	-	-	-
+applyAccessRuleChanges	write_misc	yes	5	no	yes	yes	serves
+restampAccessWindow	write_misc	yes	2	no	yes	yes	serves
+finishAccessRestamp	write_misc	yes	2	no	yes	yes	serves
+insertAccessPolicyRevision	write_misc	yes	3	no	yes	yes	serves
+markAccessRevisionsApplied	write_misc	yes	1	no	yes	yes	serves
+approveAccessPolicyRevision	write_misc	yes	1	no	yes	yes	serves
+hasAccessPolicyState	write_misc	no	0	no	-	-	-
+listAccessPrefixSlugs	write_misc	yes	1	no	yes	yes	serves
+readAccessPolicyMarks	write_misc	yes	1	no	yes	yes	serves
+replaceAccessInvalidCoverage	write_misc	no	0	no	-	-	-
+listUnboundTokenNames	write_misc	yes	1	no	yes	yes	serves
+listUnboundClientIds	write_misc	yes	1	no	yes	yes	serves
+readLiveAccessToken	write_misc	yes	1	no	yes	yes	serves
+listUnarchivedSourceIds	write_misc	yes	1	no	yes	yes	serves
+recordTokenSetupReads	write_misc	yes	1	no	yes	yes	serves
+listKeysReadingSource	write_misc	yes	1	no	yes	yes	serves
+countCompanyPages	write_misc	yes	1	no	yes	yes	serves
+revokeAccessTokenById	write_misc	yes	1	no	yes	yes	serves
+readUnfinishedAccessMigration	write_misc	yes	1	no	yes	yes	serves
+insertAccessMigration	write_misc	yes	1	no	yes	yes	serves
+recordAccessMigrationPhase	write_misc	yes	1	no	yes	yes	serves
+switchAccessMigration	write_misc	yes	1	no	yes	yes	serves
+listAccessPolicySources	write_misc	yes	1	no	yes	yes	serves
+countPeopleFolderPages	write_misc	yes	1	no	yes	yes	serves
 readAccessMembers	write_misc	yes	2	no	yes	yes	serves
 readWriteAttributionNames	write_attribution	yes	4	no	yes	yes	serves
 readPageRevisionAttribution	write_attribution	yes	2	no	yes	yes	serves
@@ -765,7 +797,7 @@ readMcpLifetimeUsage	telemetry	yes	1	no	yes	yes	serves
 logChatUsage	telemetry	yes	2	no	yes	yes	serves
 readChatUsage	telemetry	yes	2	no	yes	yes	serves
 readFieldUsageSamples	field_usage	yes	3	no	yes	yes	serves
-findPagesByTitles	alias_fanout_reads	yes	6	no	yes	yes	serves
+findPagesByTitles	alias_fanout_reads	yes	7	no	yes	yes	serves
 resolveCaseSensitiveAliases	alias_fanout_reads	yes	4	no	yes	yes	serves
 readPageTitle	alias_fanout_reads	yes	1	no	yes	yes	serves
 readPageAliasRows	alias_fanout_reads	yes	3	no	yes	yes	serves
