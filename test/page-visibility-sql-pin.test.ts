@@ -2,14 +2,16 @@
  * The page visibility guards (engine-sql/page-visibility.ts) send Postgres the statement persistence/page-visibility.ts
  * sent through `executeRaw` before they became typed members: the same text and the same bound values.
  *
- * Protects: remoteTargetHidden, remotePageAccess and storedOwnerSpeaksForItself keep their exact Postgres statements,
+ * Protects: remoteTargetHidden, remotePageAccess, authorizePageVisibility's probe and storedOwnerSpeaksForItself keep
+ * their exact Postgres statements,
  * under the no-caller rendering and under a caller with a reader identity and a private-readable grant.
  * Fails when a member's text or parameter order drifts from the statement the caller wrote by hand.
  * No database: the engine runs on the recording fake.
  */
 import { describe, expect, test } from 'bun:test';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
-import { callerAccessAllowedSql, privatePagesFilterForCaller, withCallerAccess } from '../src/core/search/private-visibility.ts';
+import { callerAccessAllowedSql, privatePagesFilterForCaller, readPolicyFragment, withCallerAccess } from '../src/core/search/private-visibility.ts';
+import { ANY_OWNER_ONLY_SQL, ownerOnlySourceSql } from '../src/core/access/owner-only.ts';
 import { makeFakeSql } from './helpers/fake-postgres-sql.ts';
 
 const CALLERS = {
@@ -49,6 +51,22 @@ describe('page visibility guards send the hand-written Postgres statement', () =
         expect(typed).toEqual(old);
       });
     }
+  }
+
+  for (const [name, caller] of Object.entries(CALLERS)) {
+    test(`readWriteVisibilityProbe, ${name} caller`, async () => {
+      const under = <T>(fn: () => Promise<T>) => (caller ? withCallerAccess(caller, fn) : fn());
+      const old = await sent(/access_members/, e => under(() => e.executeRaw(
+        `SELECT EXISTS (SELECT 1 FROM access_members WHERE labelled_only) AS any_labelled, (${`SELECT (page_readers IS NOT NULL OR folder_rule_ids IS NOT NULL) FROM pages
+      WHERE source_id=$1 AND slug=$2 AND NOT (${readPolicyFragment('pages', [], true)}) LIMIT 1`}) AS identity_may_open,
+          ${ownerOnlySourceSql('$1')} AS owner_only_source, ${ANY_OWNER_ONLY_SQL} AS owner_only_any`, ['default', 'notes/a'])));
+      const typed = await sent(/access_members/, e => under(() => e.readWriteVisibilityProbe('default', 'notes/a')));
+      expect(old).toHaveLength(1);
+      // The same statement, with the source id bound again for the owner-only source test instead of reusing $1.
+      const owner = `read_source.id = $1 AND`;
+      expect(old[0].text.split(owner)).toHaveLength(2);
+      expect(typed).toEqual([{ text: old[0].text.replace(owner, 'read_source.id = $3 AND'), params: [...old[0].params, 'default'] }]);
+    });
   }
 
   test('readWriterSlugFence reads the OAuth client or local writer row, and nothing for another kind', async () => {

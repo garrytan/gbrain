@@ -14,10 +14,13 @@ import type { PagePolicyPart } from '../engine-sql/page-visibility.ts';
 import { noGrantFloorReads } from '../source-resolver.ts';
 import { hasScope } from '../scope.ts';
 import { viewedEngine } from './switches.ts';
-import { ANY_OWNER_ONLY_SQL, ownerOnlySourceSql, ownerOnlySourcesPresent, sourceIsOwnerOnly } from '../access/owner-only.ts';
+import { ownerOnlySourcesPresent, sourceIsOwnerOnly } from '../access/owner-only.ts';
 
 /** An engine that also reads a stored writer's slug fence (storedOwnerSpeaksForItself and the checks that call it). */
 export type FenceEngine = SqlEngine & Pick<BrainEngine, 'readWriterSlugFence'>;
+
+/** An engine that also runs the opening probe of a page write's visibility check (authorizePageVisibility). */
+export type VisibilityEngine = FenceEngine & Pick<BrainEngine, 'readWriteVisibilityProbe'>;
 
 /** Publication uses fresh policy, independent of the read-side telemetry cache (read through the resolver). */
 export async function excludesPrivateWrites(engine: SqlEngine, remote: boolean): Promise<boolean> {
@@ -40,7 +43,7 @@ export async function excludesPrivateWritesAtAdmission(engine: SqlEngine, remote
  * member disabled or unbound after submission (a queued job, a replay) loses the page before commit, and the
  * member-access part applies even when an operator relaxed privacy.
  */
-export async function authorizePageVisibility(engine: FenceEngine, authority: WriteAuthority, page: string): Promise<void> {
+export async function authorizePageVisibility(engine: VisibilityEngine, authority: WriteAuthority, page: string): Promise<void> {
   if (!authority.remote) return;
   const slug = authorizedSlug(authority, page);
   // GBRA-108 design 1: a labelled-only writer reads only pages that name it, so the empty-identity shortcut (a page every
@@ -55,9 +58,7 @@ export async function authorizePageVisibility(engine: FenceEngine, authority: Wr
   let probe: { any_labelled?: boolean; identity_may_open: boolean | null; owner_only_source?: boolean; owner_only_any?: boolean } | undefined;
   if (excludePrivate) {
     try {
-      [probe] = await engine.executeRaw<{ any_labelled: boolean; identity_may_open: boolean | null; owner_only_source: boolean; owner_only_any: boolean }>(
-        `SELECT EXISTS (SELECT 1 FROM access_members WHERE labelled_only) AS any_labelled, (${hiddenSql}) AS identity_may_open,
-          ${ownerOnlySourceSql('$1')} AS owner_only_source, ${ANY_OWNER_ONLY_SQL} AS owner_only_any`, [authority.sourceId, slug]);
+      probe = await engine.readWriteVisibilityProbe(authority.sourceId, slug);
     } catch {
       probe = undefined;
     }

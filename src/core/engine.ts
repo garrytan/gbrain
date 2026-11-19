@@ -48,7 +48,7 @@ import type { TrustTable } from './trust/schema.ts';
 import type { NewTrustProposal, TrustProposalFilter, TrustProposalRow, TrustProposalStatus, TrustProposalTransition } from './engine-sql/trust-proposals.ts';
 import type { GraduationGateRow, ManagedRootBindingRow, PersistenceTable, RetiredDeactivationRow } from './engine-sql/connect-gate.ts';
 import type { ImportedPageSeal, LivePageBodyRow, OriginClaimRow, PageIngestStamp, PageOriginRow, PageOriginTarget } from './engine-sql/write-guards.ts';
-import type { CallerPageAccessRow, PagePolicyPart } from './engine-sql/page-visibility.ts';
+import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from './engine-sql/page-visibility.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type { ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, MentionDueQuery, SiblingCandidateQuery, SiblingCandidateRow } from './engine-sql/entity-reads.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
@@ -3039,6 +3039,8 @@ export interface BrainEngine {
   readPageHiddenFromCaller(sourceId: string, slug: string, opts: { policy: PagePolicyPart }): Promise<boolean>;
   /** For each (source_id, slug) that names a page row, whether a live row of it passes the current caller's policy; in no set order. */
   readCallerPageAccess(pages: readonly { source_id: string; slug: string }[], opts: { policy: PagePolicyPart }): Promise<CallerPageAccessRow[]>;
+  /** The opening read of a remote page write's visibility check: labelled-only members, what a reader identity could open on the page the empty-identity policy hides, owner-only sources. */
+  readWriteVisibilityProbe(sourceId: string, slug: string): Promise<WriteVisibilityProbe | undefined>;
   /** A stored writer's slug fence now (an OAuth client's bound prefixes, a local writer's grant ceiling), or null. */
   readWriterSlugFence(principal: { kind: string; id: string }): Promise<unknown>;
   /** A live page's stored body size (segmented `body_bytes`, else the UTF-8 bytes of its body columns), or null (engine-sql/large-page.ts). */
