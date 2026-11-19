@@ -6656,6 +6656,7 @@
         "setAccessMemberDisabled": "none",
         "setAccessMemberEmail": "none",
         "setAccessMemberKind": "none",
+        "setAccessMemberLabelledOnly": "none",
         "setBodyStagingState": "none",
         "setChunkerVersion": "none",
         "setConfig": "none",

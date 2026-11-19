@@ -1424,6 +1424,8 @@ export interface BrainEngine {
   setAccessMemberEmail(id: string, email: string | null): Promise<boolean>;
   /** Sets the kind of a member that is not removed. */
   setAccessMemberKind(id: string, kind: AccessMembersSql.AccessMemberKind): Promise<void>;
+  /** Sets or clears the labelled-only grant of a member that is not removed. */
+  setAccessMemberLabelledOnly(id: string, labelledOnly: boolean): Promise<void>;
   /** Marks a member removed (and disabled), clears its email and drops its group memberships, in one transaction. */
   tombstoneAccessMember(id: string): Promise<void>;
   /** Creates the group when missing and adds each member, in one transaction; true when the group was created. */

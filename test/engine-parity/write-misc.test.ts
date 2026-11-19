@@ -19,8 +19,8 @@
  *    Rust store keeps no skillpacks, chronicle state, folder rules, writer bindings or memory proposals, so those cases
  *    compare the empty answer every arm gives on a fresh brain (rust/docs/store/write_misc.md). The access member
  *    fixtures write through the typed member writers (insertAccessMember, setAccessMemberDisabled,
- *    tombstoneAccessMember), which every engine serves. Fixtures for tokens, clients and the labelled-only flag still
- *    write raw SQL, which a Rust brain refuses, so those cases stop on the raw_sql refusal.
+ *    setAccessMemberLabelledOnly, tombstoneAccessMember), which every engine serves. Fixtures for tokens and clients
+ *    still write raw SQL, which a Rust brain refuses, so those cases stop on the raw_sql refusal.
  */
 import { describe, expect } from 'bun:test';
 import { archiveSource, createSource, parityArms, restrictFolder } from './harness.ts';
@@ -311,17 +311,12 @@ describe('engine parity: write misc', () => {
     return { live, all, byId, byEmail };
   });
 
-  // The labelled-only flag has no typed writer yet: `gbrain access member labelled-only` sets it with raw SQL
-  // (src/core/access/labelled-only.ts), which a Rust brain refuses, so this case stops on the raw_sql refusal there.
-  parityTest('readAccessMembers reads a labelled-only grant on its own member only', { methods: ['readAccessMembers', 'insertAccessMember'] }, async (engine, backend) => {
+  // The flag is set through setAccessMemberLabelledOnly, the writer `gbrain access member labelled-only` calls
+  // (src/core/access/labelled-only.ts), so every arm compares the same answer.
+  parityTest('readAccessMembers reads a labelled-only grant on its own member only', { methods: ['readAccessMembers', 'insertAccessMember', 'setAccessMemberLabelledOnly'] }, async (engine) => {
     await seedMember(engine, 'alice-example');
     await seedMember(engine, 'bob-example');
-    const write = await engine.executeRaw(`UPDATE access_members SET labelled_only = true WHERE id = 'alice-example'`).then(() => null, (e: unknown) => e);
-    if (backend === 'rust') {
-      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
-      throw write;
-    }
-    expect(write).toBeNull();
+    await engine.setAccessMemberLabelledOnly('alice-example', true);
     const flags = (await engine.readAccessMembers({ includeRemoved: true })).map(r => [r.id, r.labelled_only]);
     expect(flags).toEqual([['alice-example', true], ['bob-example', false]]);
     return flags;

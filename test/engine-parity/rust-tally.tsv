@@ -1,7 +1,7 @@
 file	equal	stopped
 test/engine-parity/access-flag.test.ts	1	0
 test/engine-parity/access-grants.test.ts	3	3
-test/engine-parity/access-members.test.ts	12	2
+test/engine-parity/access-members.test.ts	13	2
 test/engine-parity/alias-fanout-reads.test.ts	10	0
 test/engine-parity/alias-trust.test.ts	5	0
 test/engine-parity/chunk-reads.test.ts	11	0
@@ -89,7 +89,7 @@ test/engine-parity/versions-raw.test.ts	9	0
 test/engine-parity/wanted-links.test.ts	5	0
 test/engine-parity/whoami-embedding-fix.test.ts	1	0
 test/engine-parity/write-guards.test.ts	8	0
-test/engine-parity/write-misc.test.ts	29	10
+test/engine-parity/write-misc.test.ts	30	9
 test/engine-parity/write-request-cancel.test.ts	2	0
 test/engine-parity/write-request-reads.test.ts	3	0
 test/engine-parity/writer-registration.test.ts	2	0

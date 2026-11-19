@@ -63,6 +63,11 @@ export async function setAccessMemberKind(exec: SqlExecutor, id: string, kind: A
   await exec.executeRaw('UPDATE access_members SET kind = $2, updated_at = now() WHERE id = $1 AND tombstoned_at IS NULL', [id, kind]);
 }
 
+/** Sets or clears the labelled-only grant of a member that is not removed. */
+export async function setAccessMemberLabelledOnly(exec: SqlExecutor, id: string, labelledOnly: boolean): Promise<void> {
+  await exec.executeRaw('UPDATE access_members SET labelled_only = $2, updated_at = now() WHERE id = $1 AND tombstoned_at IS NULL', [id, labelledOnly]);
+}
+
 /** Marks the member removed (and disabled), clears its email and drops its group memberships, in one transaction. */
 export async function tombstoneAccessMember(exec: SqlExecutor, id: string): Promise<void> {
   await exec.transaction(async tx => {

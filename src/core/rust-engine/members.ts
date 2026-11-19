@@ -697,6 +697,7 @@ export const RUST_ENGINE_MEMBERS = {
   setAccessMemberDisabled: 'access_control',
   setAccessMemberEmail: 'access_control',
   setAccessMemberKind: 'access_control',
+  setAccessMemberLabelledOnly: 'access_control',
   tombstoneAccessMember: 'access_control',
   addAccessGroupMembers: 'access_control',
   removeAccessGroupMembers: 'access_control',
