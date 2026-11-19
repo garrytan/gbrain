@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 914/914
+# covered: 915/915
 # lifecycle: 9/9
 # pages: 48/48
 # search: 7/7
@@ -46,7 +46,7 @@
 # fact_relink_attempts: 3/3
 # fact_relink_writes: 3/3
 # facts_cycle: 12/12
-# facts_purge: 18/18
+# facts_purge: 19/19
 # facts_repair: 10/10
 # facts_trust: 10/10
 # belief_ledger: 11/11
@@ -90,11 +90,11 @@ transaction	lifecycle	yes	116	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	127	yes	yes	yes	serves
+getPage	pages	yes	128	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	542	yes	yes	yes	serves
+putPage	pages	yes	543	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	21	yes	yes	yes	serves
@@ -300,16 +300,16 @@ upsertFile	raw_files	yes	3	no	yes	yes	serves
 getFile	raw_files	yes	2	no	yes	yes	serves
 listFilesForPage	raw_files	yes	1	no	yes	yes	serves
 listFiles	raw_files	yes	1	no	yes	yes	serves
-addTakesBatch	takes	yes	46	yes	yes	yes	serves
+addTakesBatch	takes	yes	47	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	3	no	yes	yes	serves
-listTakes	takes	yes	22	no	yes	yes	serves
+listTakes	takes	yes	23	no	yes	yes	serves
 searchTakes	takes	yes	3	no	yes	yes	serves
 searchTakesVector	takes	yes	2	no	yes	yes	serves
 getTakeEmbeddings	takes	yes	1	no	yes	yes	serves
 countStaleTakes	takes	yes	1	no	yes	yes	serves
 listStaleTakes	takes	yes	1	no	yes	yes	serves
-updateTake	takes	yes	2	no	yes	yes	serves
-supersedeTake	takes	yes	2	no	yes	yes	serves
+updateTake	takes	yes	3	no	yes	yes	serves
+supersedeTake	takes	yes	3	no	yes	yes	serves
 resolveTake	takes	yes	13	no	yes	yes	serves
 getScorecard	takes	yes	4	no	yes	yes	serves
 getCalibrationCurve	takes	yes	4	no	yes	yes	serves
@@ -337,7 +337,7 @@ getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
 insertFact	facts	yes	61	yes	yes	yes	serves
-insertFacts	facts	yes	95	no	yes	yes	serves
+insertFacts	facts	yes	96	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	36	no	yes	yes	serves
 listFactsByEntity	facts	yes	28	yes	yes	yes	serves
@@ -694,7 +694,7 @@ readFenceRowOccupant	facts_cycle	yes	1	no	yes	yes	serves
 listStoredFenceFactRows	facts_cycle	yes	1	no	yes	yes	serves
 countWorldFacts	facts_cycle	yes	5	no	yes	yes	serves
 countFactFingerprintLeftovers	facts_purge	yes	1	no	yes	yes	serves
-loadPurgeTarget	facts_purge	yes	12	no	yes	yes	serves
+loadPurgeTarget	facts_purge	yes	13	no	yes	yes	serves
 planFactPurgeIds	facts_purge	yes	1	no	yes	yes	serves
 listFactsReconcileBacklog	facts_purge	yes	7	no	yes	yes	serves
 settleFactsReconcile	facts_purge	yes	4	no	yes	yes	serves
@@ -710,6 +710,7 @@ listHeldFenceFactRows	facts_purge	yes	1	no	yes	yes	serves
 listWithdrawalSlugs	facts_purge	yes	4	no	yes	yes	serves
 expireFactsByWithdrawal	facts_purge	yes	5	no	yes	yes	serves
 insertFactPurge	facts_purge	yes	8	no	yes	yes	serves
+insertTakePurge	facts_purge	yes	2	no	yes	yes	serves
 listDerivedRows	facts_purge	yes	1	no	yes	yes	serves
 loopFactDrift	facts_repair	yes	2	no	yes	yes	serves
 closedLoopWithActiveFact	facts_repair	yes	2	no	yes	yes	serves
@@ -811,7 +812,7 @@ hasFactWithdrawalForSubject	trust	yes	1	no	yes	yes	serves
 listFactWithdrawalKeys	trust	yes	3	no	yes	yes	serves
 readFactCacheWatermark	trust	yes	3	no	yes	yes	serves
 readTrustGeneration	trust	yes	1	no	yes	yes	serves
-readSourcePurgeFlags	trust	yes	3	no	yes	yes	serves
+readSourcePurgeFlags	trust	yes	4	no	yes	yes	serves
 lockFactForWithdrawal	trust	yes	1	no	yes	yes	serves
 queueWithdrawalReview	trust	yes	1	no	yes	yes	serves
 listSegmentedPagesBySlug	trust	yes	1	no	yes	yes	serves

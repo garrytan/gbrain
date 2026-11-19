@@ -169,6 +169,7 @@ counter is `M next_facts_id`.
 | `F 0x0A source fact_id` | `AttemptRecord` (JSON) | One `fact_relink_attempts` row (primary key `(source_id, fact_id)`). `fact_id` is sign-flipped big-endian, so key order is numeric order. |
 | `F 0x0B source tier target_slug fact_id` | empty | Attempts that carry both a tier and a target page, for `deleteFactRelinkMemos` and the paid memo read. |
 | `F 0x0F source visibility subject fact_hash` | `PurgeRecord` (JSON: `request_id`, `actor`, `reason`, `purged_at_us`) | One `fact_purges` row (primary key `(source_id, visibility, subject, fact_hash)`); `facts/purge_ledger.rs`. |
+| `F 0x10 source subject claim_hash` | `TakePurgeRecord` (JSON: `request_id`, `purged_at_us`) | One `take_purges` row (primary key `(source_id, subject, claim_hash)`); `facts/take_purges.rs`. |
 
 ### Relink attempts (`facts/relink.rs`)
 
@@ -634,6 +635,27 @@ name key. On insert it skips an extraction outcome marker (`gbrain_guard_inserte
 trigger when the statement sets one of those columns, even to the same value; the store fires it only on a change,
 which refuses nothing a no-op update would not already have kept. The refusal rolls back the whole write, as the
 trigger's exception does. Deleting a source removes its tombstones.
+
+## The take purge ledger
+
+`facts/take_purges.rs` keeps `take_purges` (key `F 0x10 source subject claim_hash`, the row after `F 0x0F`).
+`insertTakePurge({ sourceId, subject, claimHash, requestId })` stores a tombstone and answers true, or false when the
+key exists (`ON CONFLICT DO NOTHING`; the stored row keeps its columns). A `requestId` that is not a UUID or a NUL
+character refuses with `invalid_argument`; a missing source refuses as the foreign key does. Its SQL is the statement
+`purge_fact` and the page purge send through `executeRaw`, with `RETURNING`; those callers still use `executeRaw`, so
+on Rust only the typed member writes a take tombstone yet.
+
+Readers: `readSourcePurgeFlags`'s `takes` (any tombstone of the source, read in the same snapshot as `facts`) and the
+belief ledger's tombstone read (`tombstoned_hashes`: the hashes among the asked ones that a tombstone of the source
+names, under any subject).
+
+The guard (`refuse_purged_take`, the `takes_refuse_purged` trigger's `gbrain_refuse_purged_take`): the page the row's
+`page_id` names gives the source and the subject; a tombstone of that source under subject `*` or the page's slug
+that names the claim's fingerprint refuses with `purged_content` (`purged_content: this take claim was purged from this
+source and cannot be saved again`). A missing page, or a null page id or claim, refuses nothing. The trigger runs
+`BEFORE INSERT`, so `addTakesBatch` checks every proposed row, an unchanged upsert row too, before its NOT NULL, CHECK
+and conflict checks; `supersedeTake` checks the new row. `updateTake` sets no claim and page id and is not checked.
+The refusal rolls back the whole write. Deleting a source removes its take tombstones.
 
 ## Not modeled
 

@@ -214,6 +214,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'deleteFactRelinkMemos': OOS.factRelinkAttempts,
   'expireFactsByWithdrawal': OOS.factsPurge,
   'insertFactPurge': OOS.factsPurge,
+  'insertTakePurge': OOS.factsPurge,
   'listDerivedRows': OOS.factsPurge,
   'findActiveSingleFact': OOS.factsPurge,
   'findBulkFactDays': OOS.factsCycle,

@@ -5985,6 +5985,7 @@
         "insertSpendLog": "none",
         "insertSpendReservation": "none",
         "insertSubagentMessage": "none",
+        "insertTakePurge": "none",
         "insertTopologyChange": "none",
         "insertTrustProposal": "none",
         "insertWithdrawalEffects": "none",

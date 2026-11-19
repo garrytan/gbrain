@@ -97,6 +97,9 @@ export const expireFactsByWithdrawal: Member<'expireFactsByWithdrawal'> = (brain
 export const insertFactPurge: Member<'insertFactPurge'> = (brain, row) =>
   storeCall({ member: 'insertFactPurge', sourceId: row.sourceId }, () => brain.insertFactPurge(row));
 
+export const insertTakePurge: Member<'insertTakePurge'> = (brain, row) =>
+  storeCall({ member: 'insertTakePurge', sourceId: row.sourceId }, () => brain.insertTakePurge(row));
+
 /**
  * The store keeps no `derivation_inputs` (its only writer, recordDerivationInputs, goes through `executeRaw`, which this
  * engine refuses), so one hop of the walk reaches no rows (facts/purge.rs list_derived_rows). A limit or id that is not

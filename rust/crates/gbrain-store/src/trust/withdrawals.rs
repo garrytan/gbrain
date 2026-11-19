@@ -479,13 +479,15 @@ impl Store {
         Ok(found)
     }
 
-    /// `readSourcePurgeFlags`: whether the source has a fact purge tombstone (the store's fact
-    /// purge ledger, `facts/purge_ledger.rs`) and a take purge tombstone. The store keeps no take
-    /// purge ledger (`take_purges` has no Rust writer), so the second is false.
+    /// `readSourcePurgeFlags`: whether the source has a fact purge tombstone (the fact purge
+    /// ledger, `facts/purge_ledger.rs`) and a take purge tombstone (the take purge ledger,
+    /// `facts/take_purges.rs`), read in one snapshot.
     pub fn read_source_purge_flags(&self, source_id: &str) -> Result<(bool, bool)> {
         no_nul("readSourcePurgeFlags", &[("sourceId", source_id)])?;
-        let facts = crate::facts::purge_ledger::has_fact_purges(&*self.read()?, source_id)?;
-        Ok((facts, false))
+        let read = self.read()?;
+        let facts = crate::facts::purge_ledger::has_fact_purges(&*read, source_id)?;
+        let takes = crate::facts::take_purges::has_take_purges(&*read, source_id)?;
+        Ok((facts, takes))
     }
 
     /// `readTrustGeneration`: the trust policy generation as decimal text. The store keeps no
@@ -594,7 +596,7 @@ mod tests {
     }
 
     #[test]
-    fn source_purge_flags_read_the_fact_purge_ledger() {
+    fn source_purge_flags_read_both_purge_ledgers() {
         let s = store();
         source(&s, "default");
         source(&s, "work");
@@ -614,6 +616,16 @@ mod tests {
         .unwrap();
         assert_eq!(s.read_source_purge_flags("default").unwrap(), (true, false));
         assert_eq!(s.read_source_purge_flags("work").unwrap(), (false, false));
+        let take = crate::facts::take_purges::TakePurgeInsert {
+            source_id: "work".into(),
+            subject: "*".into(),
+            claim_hash: fact_fingerprint("Acme will win."),
+            request_id: None,
+        };
+        assert!(s.insert_take_purge(&take).unwrap());
+        assert!(!s.insert_take_purge(&take).unwrap());
+        assert_eq!(s.read_source_purge_flags("work").unwrap(), (false, true));
+        assert_eq!(s.read_source_purge_flags("default").unwrap(), (true, false));
         assert_eq!(
             s.read_source_purge_flags("missing").unwrap(),
             (false, false)

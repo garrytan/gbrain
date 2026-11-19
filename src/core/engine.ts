@@ -3542,6 +3542,8 @@ export interface BrainEngine {
   expireFactsByWithdrawal(sourceId: string, visibility: string, fact: string, subject: string): Promise<Array<{ id: number }>>;
   /** Stores a fact purge tombstone; false when the same (source, visibility, subject, fingerprint) one exists. */
   insertFactPurge(row: FactsPurgeSql.FactPurgeInsert): Promise<boolean>;
+  /** Stores a take purge tombstone; false when the same (source, subject, fingerprint) one exists. */
+  insertTakePurge(row: FactsPurgeSql.TakePurgeInsert): Promise<boolean>;
   /** One hop of the derivation walk: the rows a `derivation_inputs` edge derives from a frontier row, distinct, by (table, id), at most `limit`. */
   listDerivedRows(frontier: ReadonlyArray<{ table: string; id: string }>, limit: number): Promise<Array<{ derived_table: string; derived_id: string }>>;
 

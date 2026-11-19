@@ -17,6 +17,7 @@ use gbrain_store::facts::purge::{
 };
 use gbrain_store::facts::purge_ledger::FactPurgeInsert;
 use gbrain_store::facts::reconcile::{BacklogArgs, DrainArgs, LockArgs, SettleArgs};
+use gbrain_store::facts::take_purges::TakePurgeInsert;
 
 #[napi]
 impl Brain {
@@ -239,6 +240,19 @@ impl Brain {
         self.run(env, move |s| {
             let a: FactPurgeInsert = required(row, "insertFactPurge row")?;
             s.insert_fact_purge(&a)
+        })
+    }
+
+    /// `insertTakePurge(row)`: resolves whether the take tombstone was stored.
+    #[napi]
+    pub fn insert_take_purge<'env>(
+        &self,
+        env: &'env Env,
+        row: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: TakePurgeInsert = required(row, "insertTakePurge row")?;
+            s.insert_take_purge(&a)
         })
     }
 

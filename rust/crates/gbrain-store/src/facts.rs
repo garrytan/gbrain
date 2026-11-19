@@ -29,6 +29,7 @@
 //!   (`facts/generations.rs`), read only.
 //! - `F 0x0F source visibility subject fact_hash`: the `fact_purges` ledger
 //!   (`facts/purge_ledger.rs`).
+//! - `F 0x10 source subject claim_hash`: the `take_purges` ledger (`facts/take_purges.rs`).
 //! - meta `next_facts_id`: the id sequence. An insert that `ON CONFLICT DO NOTHING` skips still
 //!   takes an id, as `nextval` does.
 //!
@@ -62,6 +63,7 @@ pub mod relink;
 pub mod relink_writes;
 pub mod repair;
 pub mod saved_match;
+pub mod take_purges;
 pub mod trust;
 pub mod trust_owner;
 pub mod trust_reads;
@@ -741,7 +743,8 @@ pub(crate) fn fact_exists(read: &dyn KvRead, id: u64, source_ids: &[String]) -> 
 
 /// Deletes this family's records keyed by a source that is deleted (`cascade::remove_source_rows`):
 /// every fact row of the source, as `facts_source_id_fkey ... ON DELETE CASCADE` does, and its fact
-/// purge tombstones (`fact_purges_source_id_fkey`, [`purge_ledger::remove_source_rows`]). A row of
+/// purge tombstones (`fact_purges_source_id_fkey`, [`purge_ledger::remove_source_rows`]) and take
+/// purge tombstones (`take_purges_source_id_fkey`, [`take_purges::remove_source_rows`]). A row of
 /// another source that named one of them as its successor keeps its row with `superseded_by`
 /// cleared (`ON DELETE SET NULL`).
 ///
@@ -752,7 +755,8 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
     for row in source_rows(tx, source_id)? {
         delete_fact(tx, trust, &row)?;
     }
-    purge_ledger::remove_source_rows(tx, source_id)
+    purge_ledger::remove_source_rows(tx, source_id)?;
+    take_purges::remove_source_rows(tx, source_id)
 }
 
 // ---------------------------------------------------------------------------------------------

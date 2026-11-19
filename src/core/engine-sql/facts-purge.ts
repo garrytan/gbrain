@@ -279,6 +279,16 @@ export async function insertFactPurge(raw: EngineRawRead, row: FactPurgeInsert):
   return rows.length > 0;
 }
 
+/** A take purge tombstone, the row purge_fact and the page purge write into `take_purges`. */
+export interface TakePurgeInsert { sourceId: string; subject: string; claimHash: string; requestId: string | null }
+
+/** purge_fact's take tombstone: stores it; false when one already holds the same (source, subject, fingerprint). */
+export async function insertTakePurge(raw: EngineRawRead, row: TakePurgeInsert): Promise<boolean> {
+  const rows = await raw<{ inserted: number }>(`INSERT INTO take_purges(source_id,subject,claim_hash,request_id) VALUES ($1,$2,$3,$4::uuid) ON CONFLICT DO NOTHING RETURNING 1 AS inserted`,
+    [row.sourceId, row.subject, row.claimHash, row.requestId]);
+  return rows.length > 0;
+}
+
 export async function expireFactsByWithdrawal(raw: EngineRawRead, sourceId: string, visibility: string, fact: string, subject: string): Promise<Array<{ id: number }>> {
   const { text, params } = renderFragment(sqlFragment`UPDATE facts SET expired_at=now(),valid_until=LEAST(COALESCE(valid_until,now()),now()) FROM ${subjectOf(subject)}
     WHERE facts.source_id=${sourceId} AND facts.visibility=${visibility} AND gbrain_fact_fingerprint(facts.fact)=gbrain_fact_fingerprint(${fact})
