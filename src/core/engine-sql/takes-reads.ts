@@ -118,6 +118,27 @@ export const TAKE_PREIMAGE_SQL = `jsonb_build_object('id', k.id, 'page_id', k.pa
   'resolved_at', k.resolved_at, 'resolved_outcome', k.resolved_outcome, 'resolved_value', k.resolved_value, 'resolved_unit', k.resolved_unit,
   'resolved_source', k.resolved_source, 'resolved_by', k.resolved_by, 'resolved_quality', k.resolved_quality)`;
 
+/**
+ * The two before-state statements, written out in full (no composition, so each `$n` is a static placeholder);
+ * `TAKE_PREIMAGE_SQL` is the column list both carry, pinned byte-for-byte by test/engine-sql-caller-raw-sql-pins.test.ts.
+ */
+const TAKE_PREIMAGES_SQL = {
+  id: `SELECT jsonb_build_object('id', k.id, 'page_id', k.page_id, 'row_num', k.row_num, 'claim', k.claim, 'kind', k.kind, 'holder', k.holder,
+  'weight', k.weight, 'since_date', k.since_date, 'until_date', k.until_date, 'source', k.source, 'superseded_by', k.superseded_by, 'active', k.active,
+  'resolved_at', k.resolved_at, 'resolved_outcome', k.resolved_outcome, 'resolved_value', k.resolved_value, 'resolved_unit', k.resolved_unit,
+  'resolved_source', k.resolved_source, 'resolved_by', k.resolved_by, 'resolved_quality', k.resolved_quality) AS preimage, k.id = ANY($2::bigint[]) AS gone FROM takes k
+      LEFT JOIN jsonb_to_recordset($3::text::jsonb) AS n(row_num integer, claim text, kind text, holder text) ON n.row_num = k.row_num
+     WHERE k.page_id = $1 AND (k.id = ANY($2::bigint[]) OR (n.row_num IS NOT NULL AND (k.claim, k.kind, k.holder) IS DISTINCT FROM (n.claim, n.kind, n.holder)))
+     ORDER BY k.row_num`,
+  rowNum: `SELECT jsonb_build_object('id', k.id, 'page_id', k.page_id, 'row_num', k.row_num, 'claim', k.claim, 'kind', k.kind, 'holder', k.holder,
+  'weight', k.weight, 'since_date', k.since_date, 'until_date', k.until_date, 'source', k.source, 'superseded_by', k.superseded_by, 'active', k.active,
+  'resolved_at', k.resolved_at, 'resolved_outcome', k.resolved_outcome, 'resolved_value', k.resolved_value, 'resolved_unit', k.resolved_unit,
+  'resolved_source', k.resolved_source, 'resolved_by', k.resolved_by, 'resolved_quality', k.resolved_quality) AS preimage, k.row_num = ANY($2::integer[]) AS gone FROM takes k
+      LEFT JOIN jsonb_to_recordset($3::text::jsonb) AS n(row_num integer, claim text, kind text, holder text) ON n.row_num = k.row_num
+     WHERE k.page_id = $1 AND (k.row_num = ANY($2::integer[]) OR (n.row_num IS NOT NULL AND (k.claim, k.kind, k.holder) IS DISTINCT FROM (n.claim, n.kind, n.holder)))
+     ORDER BY k.row_num`,
+} as const;
+
 /** A take's before-state (`TAKE_PREIMAGE_SQL`): `resolved_at` is the jsonb text of the instant (`…+00:00`). */
 export interface TakePreimage {
   id: number; page_id: number; row_num: number; claim: string; kind: string; holder: string; weight: number;
@@ -164,14 +185,8 @@ export async function readTakePreimages(tx: Raw, read: TakePreimageRead): Promis
   const incoming = JSON.stringify(read.incoming.map(take => ({ row_num: take.row_num, claim: take.claim, kind: take.kind, holder: take.holder })));
   if (read.by === 'id') {
     return tx.executeRaw<{ preimage: TakePreimage; gone: boolean }>(
-    `SELECT ${TAKE_PREIMAGE_SQL} AS preimage, k.id = ANY($2::bigint[]) AS gone FROM takes k
-      LEFT JOIN jsonb_to_recordset($3::text::jsonb) AS n(row_num integer, claim text, kind text, holder text) ON n.row_num = k.row_num
-     WHERE k.page_id = $1 AND (k.id = ANY($2::bigint[]) OR (n.row_num IS NOT NULL AND (k.claim, k.kind, k.holder) IS DISTINCT FROM (n.claim, n.kind, n.holder)))
-     ORDER BY k.row_num`, [read.pageId, [...read.gone], incoming]);
+    TAKE_PREIMAGES_SQL.id, [read.pageId, [...read.gone], incoming]);
   }
   return tx.executeRaw<{ preimage: TakePreimage; gone: boolean }>(
-    `SELECT ${TAKE_PREIMAGE_SQL} AS preimage, k.row_num = ANY($2::integer[]) AS gone FROM takes k
-      LEFT JOIN jsonb_to_recordset($3::text::jsonb) AS n(row_num integer, claim text, kind text, holder text) ON n.row_num = k.row_num
-     WHERE k.page_id = $1 AND (k.row_num = ANY($2::integer[]) OR (n.row_num IS NOT NULL AND (k.claim, k.kind, k.holder) IS DISTINCT FROM (n.claim, n.kind, n.holder)))
-     ORDER BY k.row_num`, [read.pageId, [...read.gone], incoming]);
+    TAKE_PREIMAGES_SQL.rowNum, [read.pageId, [...read.gone], incoming]);
 }
