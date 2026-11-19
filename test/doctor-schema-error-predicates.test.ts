@@ -49,6 +49,7 @@ const TYPED_SQL_READS = new Set<PropertyKey>([
   'countZeroWeightWithTakes', // the salience count
   'listTrustScanRows', 'countUnscannedTrustRows', // trust_scan (src/core/eligibility/scan.ts)
   'listOauthClientAuthShapes', 'listDanglingFederatedReads', 'listPrivilegedDcrClients', 'listVolunteerChannels', // doctor-acc reads
+  'listFactsAbsorbFailureGroups', // facts_extraction_health (src/core/engine-sql/doctor-checkpoints.ts)
 ]);
 
 /** The real engine, except every SQL read (executeRaw, the raw PGLite handle, the typed reads above) throws `error`. */

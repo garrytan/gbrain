@@ -39,7 +39,7 @@ export interface IdentityDowngrade extends DowngradedRename {
   restore_available?: boolean;
 }
 
-type RestoreProbeEngine = Pick<BrainEngine, 'executeRaw' | 'getConfig' | 'kind'>;
+type RestoreProbeEngine = Pick<BrainEngine, 'executeRaw' | 'getConfig' | 'kind' | 'listOpenIdentityDowngrades'>;
 
 /**
  * Whether a restore of a page that came from a canonical file can be admitted on this source, by the rule page writes
@@ -110,14 +110,8 @@ export async function recordIdentityDowngrades(engine: BrainEngine, sourceId: st
  * `new_slug` is read live: the live page at the new path now (a held new file that was fixed later counts once it imports).
  */
 export async function listIdentityDowngrades(engine: RestoreProbeEngine, sourceIds?: readonly string[]): Promise<IdentityDowngrade[]> {
-  const rows = await engine.executeRaw<{ record: IdentityDowngrade | string; new_slugs: string[] | null }>(
-    `SELECT dg.completed_keys->0 AS record, np.slugs AS new_slugs FROM op_checkpoints dg JOIN pages p ON p.id::text = dg.fingerprint
-      LEFT JOIN LATERAL (SELECT array_agg(slug ORDER BY slug) AS slugs FROM pages WHERE source_id = p.source_id AND deleted_at IS NULL AND source_path = dg.completed_keys->0->>'to') np ON true
-      WHERE dg.op = $1 AND p.deleted_at IS NOT NULL AND ${identityDowngradeOpen('p')}
-        AND p.source_id = dg.completed_keys->0->>'source_id' AND ($2::text[] IS NULL OR p.source_id = ANY($2::text[]))
-      ORDER BY dg.completed_keys->0->>'recorded_at', dg.fingerprint`, [IDENTITY_DOWNGRADE_OP, sourceIds ? [...sourceIds] : null]);
-  const records = rows.map(row => {
-    const record = typeof row.record === 'string' ? JSON.parse(row.record) as IdentityDowngrade : row.record;
+  const rows = await engine.listOpenIdentityDowngrades(IDENTITY_DOWNGRADE_OP, sourceIds);
+  const records = rows.map(({ record, ...row }) => {
     const owner = pickCanonicalOrigin((row.new_slugs ?? []).map(slug => ({ slug })), record.to);
     return { ...record, new_slug: owner && !('ambiguous' in owner) ? owner.slug : null };
   });
