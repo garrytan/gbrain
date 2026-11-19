@@ -52,3 +52,52 @@ export function normalize(value: unknown, paths: Array<[string, string]>, key = 
   }
   return value;
 }
+
+/**
+ * Where an arm's output first differs from the reference's: a JSON path and both values, each cut to 120 characters.
+ * Two strings that differ are named at the first differing character (`path@offset`), with the text from 20
+ * characters before it, so a long MCP text body still shows the difference.
+ */
+export interface FirstDiff { path: string; ref: string; arm: string }
+
+const shortValue = (v: unknown): string => (v === undefined ? '<missing>' : JSON.stringify(v) ?? String(v)).slice(0, 120);
+
+function diffAt(a: unknown, b: unknown, path: string): FirstDiff | null {
+  if (a === b) return null;
+  if (typeof a === 'string' && typeof b === 'string') {
+    let i = 0;
+    while (i < a.length && i < b.length && a[i] === b[i]) i++;
+    const from = Math.max(0, i - 20);
+    return { path: `${path}@${i}`, ref: JSON.stringify(a.slice(from, from + 120)), arm: JSON.stringify(b.slice(from, from + 120)) };
+  }
+  if (Array.isArray(a) && Array.isArray(b)) {
+    for (let i = 0; i < Math.max(a.length, b.length); i++) {
+      const d = i < a.length && i < b.length ? diffAt(a[i], b[i], `${path}[${i}]`) : { path: `${path}[${i}]`, ref: shortValue(a[i]), arm: shortValue(b[i]) };
+      if (d) return d;
+    }
+    return null;
+  }
+  if (a && b && typeof a === 'object' && typeof b === 'object' && !Array.isArray(a) && !Array.isArray(b)) {
+    const x = a as Record<string, unknown>, y = b as Record<string, unknown>;
+    for (const k of [...new Set([...Object.keys(x), ...Object.keys(y)])].sort()) {
+      const d = Object.hasOwn(x, k) && Object.hasOwn(y, k) ? diffAt(x[k], y[k], `${path}.${k}`)
+        : { path: `${path}.${k}`, ref: shortValue(Object.hasOwn(x, k) ? x[k] : undefined), arm: shortValue(Object.hasOwn(y, k) ? y[k] : undefined) };
+      if (d) return d;
+    }
+    return null;
+  }
+  return { path, ref: shortValue(a), arm: shortValue(b) };
+}
+
+/**
+ * The first place an arm's answer differs from the reference's, both already normalised: `$.exit` when the exit
+ * codes differ, else the first `$.out...` path in sorted-key, array-index order. null when the two are equal.
+ */
+export function firstDiff(ref: { exit: number; out: unknown }, arm: { exit: number; out: unknown }): FirstDiff | null {
+  return diffAt({ exit: ref.exit, out: ref.out }, { exit: arm.exit, out: arm.out }, '$');
+}
+
+/** An arm's raw output for the JSON report: the temp paths masked, cut to `limit` characters. */
+export function maskedExcerpt(text: string, paths: Array<[string, string]>, limit = 600): string {
+  return paths.reduce((t, [path, mark]) => t.split(path).join(mark), text.trim()).slice(0, limit);
+}
