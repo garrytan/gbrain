@@ -401,12 +401,12 @@ fn page_passes(
             .source_ids
             .as_ref()
             .is_some_and(|ids| !ids.contains(&page.source_id))
-        // A store page that records no version was chunked by this store's chunker, which seals (as
-        // `chunk_queries` reads it); only a recorded version below the safe fence chunker is unsafe.
+        // `safeChunksFilter` is `chunker_version >= 4`: a page that records no version is not safe (the SQL
+        // comparison is NULL), the same rule as the keyword gate and the relational evidence gate.
         || (options.require_safe_chunks
-            && page
+            && !page
                 .chunker_version
-                .is_some_and(|v| v < SAFE_FENCE_CHUNKER_VERSION));
+                .is_some_and(|v| v >= SAFE_FENCE_CHUNKER_VERSION));
     if hidden {
         return Ok(false);
     }
@@ -1045,19 +1045,29 @@ mod tests {
             .search_vector(&q(&axis(0, 4)), &opts(json!({"detail": "low"})))
             .unwrap();
         assert!(names(&low).contains(&"d-multi#0 0.0000".to_string()));
-        // A page that records no version was chunked by this store and counts as safe; a page recorded as
-        // chunked before the safe fence chunker drops out when safe chunks are required.
+        // Safe readers see a page only when its recorded chunker is at or above the safe fence chunker. A page
+        // that records no version (a store written before chunks were stamped) is not certified safe: SQL's
+        // `chunker_version >= 4` is NULL, and the keyword gate refuses it too.
         assert_eq!(
             top(json!({"require_safe_chunks": true, "limit": 1})),
             ["a-exact"]
         );
-        s.write(|tx| {
-            let mut p = crate::pages::read_page(&*tx, "default", "a-exact")?.unwrap();
-            p.chunker_version = Some(3);
-            crate::pages::write_page(tx, &p)?;
-            Ok(())
-        })
-        .unwrap();
+        let stamp = |version: Option<i16>| {
+            s.write(|tx| {
+                let mut p = crate::pages::read_page(&*tx, "default", "a-exact")?.unwrap();
+                p.chunker_version = version;
+                crate::pages::write_page(tx, &p)?;
+                Ok(())
+            })
+            .unwrap();
+        };
+        stamp(None);
+        assert_eq!(
+            top(json!({"require_safe_chunks": true, "limit": 1})),
+            ["f-srcb"]
+        );
+        // A page recorded as chunked before the safe fence chunker drops out too.
+        stamp(Some(3));
         assert_eq!(
             top(json!({"require_safe_chunks": true, "limit": 1})),
             ["f-srcb"]
