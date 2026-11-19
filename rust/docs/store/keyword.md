@@ -121,7 +121,9 @@ PostgreSQL walks a tsquery recursively and calls `check_stack_depth()`, so a que
 facts OR builder recurse the same way, once per item, and the stack of the thread that calls them is not ours to size.
 
 - A query with more than 1,024 items runs those walks on a scoped thread with a 256 MiB stack (address space is reserved,
-  not committed). Smaller queries run in place.
+  not committed). Smaller queries run in place. A search starts that thread once for its whole walk over the
+  candidates (the page search, each title attempt, the facts keyword arm), not once per candidate, and a walk that is
+  already on the deep thread runs in place.
 - A query is refused with `invalid_argument` ("stack depth limit exceeded: a tsquery holds at most 131072 items") when
   the parser holds more than 131,072 items, counted before stopword cleanup. Repeated stopwords count, because a
   stopword placeholder carries no lexeme bytes and so never reaches the `MAXSTRPOS` check ("value is too big in

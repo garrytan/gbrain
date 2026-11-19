@@ -9,4 +9,5 @@
 - The salience and anomaly reads hide private pages on a Rust brain as they do on PGLite.
 - A title search hit on a Rust brain no longer shows the text of a chunk that a deferred retire left on a segmented page; it shows the chunk PGLite shows, or none.
 - On a Rust brain, `getChunkPage` and the chunk windows serve a page whose pre-upgrade index the v153 activation kept serving, as PGLite does.
+- A keyword search on a Rust brain with a very long query (more than 1,024 query items) now starts one large-stack worker thread for its whole walk, not one for each page, title or fact it checks.
 - The keyword-search golden scripts install PGLite 0.5.16 from npm's tarball checked against its published integrity hash, into a new directory for each run.

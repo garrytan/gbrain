@@ -46,7 +46,9 @@ use crate::config::read_config;
 use crate::dream::int4;
 use crate::env::{iso, parse_iso};
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
-use crate::keyword::{or_of_lexemes, plainto_tsquery, to_tsvector, ts_matches, ts_rank_cd};
+use crate::keyword::{
+    or_of_lexemes, plainto_tsquery, to_tsvector, ts_matches, ts_rank_cd, with_query_stack,
+};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::{next_id, read_page};
@@ -1546,13 +1548,17 @@ impl Store {
                 .map(|r| r.to_json(false, false))
                 .collect());
         };
-        let mut ranked = Vec::new();
-        for row in rows {
-            let vector = to_tsvector(&row.fact)?;
-            if ts_matches(&vector, &query) {
-                ranked.push((ts_rank_cd(&vector, &query), row));
+        // One deep-stack thread for the whole walk when the query is deep, not one per fact.
+        let mut ranked = with_query_stack(query.items.len(), || -> Result<Vec<_>> {
+            let mut ranked = Vec::new();
+            for row in rows {
+                let vector = to_tsvector(&row.fact)?;
+                if ts_matches(&vector, &query) {
+                    ranked.push((ts_rank_cd(&vector, &query), row));
+                }
             }
-        }
+            Ok(ranked)
+        })?;
         // Postgres sorts `real` with NaN above every number, as `total_cmp` does for a positive NaN.
         ranked.sort_by(|(sa, a), (sb, b)| {
             sb.total_cmp(sa)
@@ -2344,6 +2350,34 @@ mod tests {
                 .unwrap()
                 .len(),
             4
+        );
+    }
+
+    #[test]
+    fn a_deep_keyword_duplicate_query_walks_every_fact_on_one_deep_thread() {
+        // Minder row 3: one deep-query thread for the walk, not one per fact.
+        let store = crate::test_support::store();
+        let words: Vec<String> = (0..1100).map(|i| format!("alpha{i}")).collect();
+        let text = words.join(" ");
+        for _ in 0..12 {
+            let input = json!({ "fact": text, "source": "s", "entity_slug": "people/eve" });
+            store
+                .insert_fact(
+                    &serde_json::from_value(json!({ "input": input, "sourceId": "default" }))
+                        .unwrap(),
+                )
+                .unwrap();
+        }
+        let q: DuplicateQuery = serde_json::from_value(json!({ "sourceId": "default",
+            "entitySlug": "people/eve", "k": 50, "keyword": true, "factText": text }))
+        .unwrap();
+        crate::keyword::reset_deep_spawns();
+        assert_eq!(store.find_candidate_duplicates(&q).unwrap().len(), 12);
+        let spawned = crate::keyword::deep_spawns();
+        // Building the query takes a fixed few; the walk over the 12 facts adds one.
+        assert!(
+            spawned <= 4,
+            "the duplicate search started {spawned} deep-query threads"
         );
     }
 }
