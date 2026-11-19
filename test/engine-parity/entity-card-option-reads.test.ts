@@ -26,6 +26,15 @@
  *  - Regression: the Rust arm refused the read (raw SQL), so the card's `referenced_by` failed open to empty on a Rust
  *    brain and `gbrain entity --json` differed from PGLite.
  *  - Why existing coverage misses it: no parity case reads the referrer groups; mentions tests run PGLite only.
+ *  - Contract: under `eligibility.suppressFlagged` every referrer read (the card groups, the `group: page` referrer page
+ *    and its total, the batched counts and records) leaves out a referrer at or below agent_written that carries a
+ *    write-gate flag in an instruction family; a flagged referrer above that tier stays, with no label. Without the
+ *    filter the flagged agent referrer stays, labelled `unconfirmed`. A referrer with an empty type is its own `untyped`
+ *    group with a null `type`.
+ *  - Regression: an engine that drops the flag test, or files an empty type under `''`, shows a flagged agent page to
+ *    a proactive surface or an extra unnamed group, and the Rust arm differs from PGLite.
+ *  - Why existing coverage misses it: the group case above reads no flagged and no untyped referrer; alias-trust.test.ts
+ *    reads the flag filter on aliases only.
  *  - Contract: a search records when it surfaced each page (last-retrieved.ts bumpLastRetrievedAt), and the entity card
  *    shows that time as `last_touched.last_retrieved_at` (readEntityCardRows); a page no search surfaced shows null.
  *  - Regression: the Rust arm's readEntityCardRows always answered null, so after a search `gbrain entity --json` showed
@@ -40,7 +49,7 @@ import type { Link, PageInput } from '../../src/core/types.ts';
 import { createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { TERMINAL_AUDIT_SOURCE } from '../../src/core/facts/audit-sources.ts';
-import { readReferrerGroups, type ReferrerScope } from '../../src/core/mentions/referrers.ts';
+import { readReferrerGroups, readReferrerPage, readTargetReferences, type ReferrerScope } from '../../src/core/mentions/referrers.ts';
 import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { operations } from '../../src/core/operations.ts';
 import { awaitPendingLastRetrievedWrites } from '../../src/core/last-retrieved.ts';
@@ -321,6 +330,74 @@ describe('engine parity: the entity card last_touched after a search', () => {
       const out = { hits: hits.map(h => h.slug), alice: await touched('Alice Example'), bob: await touched('Bob Example') };
       expect(out).toEqual({ hits: [ALICE], alice: { retrieved: 'string', retrievedAfterWrite: true, timeline: null },
         bob: { retrieved: null, retrievedAfterWrite: null, timeline: null } });
+      return out;
+    },
+  );
+});
+
+/** Acme's referrers for the flag filter: a flagged agent note, a flagged curated note, a clean agent note and an untyped one. */
+async function seedFlaggedReferrers(engine: BrainEngine): Promise<void> {
+  await engine.putPage(ACME, page('Acme', { type: 'company' }));
+  const dated = (date: string, extra: Partial<PageInput> = {}): PageInput =>
+    page(extra.title ?? 'x', { ...extra, effective_date: new Date(`${date}T00:00:00Z`), effective_date_source: 'date' });
+  const rows: Array<[slug: string, tier: string, flag: boolean, date: string, type: string]> = [
+    ['notes/flagged-agent', 'agent_written', true, '2026-03-04', 'note'],
+    ['notes/flagged-curated', 'operator_curated', true, '2026-03-03', 'note'],
+    ['notes/clean-agent', 'agent_written', false, '2026-03-02', 'note'],
+    ['notes/loose', 'agent_written', false, '2026-03-01', ''],
+  ];
+  for (const [slug, tier, flag, date, type] of rows) {
+    await declared(engine, tier, tx => tx.putPage(slug, dated(date, { title: slug.slice(6), type })));
+    if (flag) {
+      await engine.upsertPageWriteGateReceipt('default', slug, {
+        content_hash: 'h1', tier: 'agent_written', detector_version: 1, verdict: 'flag', reason_families: ['override'],
+        reasons: ['override'], detector_error: false, request_id: null,
+      });
+    }
+  }
+  await engine.addLinksBatch(rows.map(([from]) => ({ from_slug: from, to_slug: ACME, link_type: 'mentions', context: 'Acme',
+    link_source: 'manual', from_source_id: 'default', to_source_id: 'default' })));
+}
+
+describe('engine parity: the referrer reads under the flag filter and with an untyped referrer', () => {
+  parityTest(
+    'every referrer read drops a flagged agent referrer under suppressFlagged, labels it unconfirmed without the filter, keeps a flagged curated one, and names the untyped group',
+    { methods: ['putPage', 'transaction', 'applyTransactionSettings', 'upsertPageWriteGateReceipt', 'addLinksBatch', 'readReferrerGroupRows',
+      'readReferrerPageDetails', 'countReferrerRows', 'readReferrerRows', 'readReferrerTargetCounts', 'readReferrerRecordCandidates', 'readReferrerRecordPages'] },
+    async (engine: BrainEngine) => {
+      await seedFlaggedReferrers(engine);
+      const scope = (suppressFlagged: boolean): ReferrerScope => ({ slug: ACME, sourceId: 'default', referrerSources: ['default'],
+        excludePrivate: false, pack: PACK, keepVisibility: ['private', 'world'], eligibility: suppressFlagged ? { suppressFlagged: true } : {} });
+      const row = (r: { slug: string; type: string | null; canonical_type: string; unconfirmed?: true }) =>
+        `${r.canonical_type}:${r.type ?? 'null'}:${r.slug}${r.unconfirmed ? ':unconfirmed' : ''}`;
+      const read = async (suppressFlagged: boolean) => {
+        const groups = await readReferrerGroups(engine, scope(suppressFlagged));
+        const all = await readReferrerPage(engine, scope(suppressFlagged), { limit: 10 });
+        const untyped = await readReferrerPage(engine, scope(suppressFlagged), { type: 'untyped', limit: 10 });
+        const { slug: _s, sourceId: _i, ...batch } = scope(suppressFlagged);
+        const [target] = await readTargetReferences(engine, batch, [{ slug: ACME, sourceId: 'default' }], { recordTypes: ['note'] });
+        return {
+          groups: groups.groups.map(g => `${g.canonical_type}:${g.total}:${g.rows.map(row).join(',')}`),
+          page: { total: all.total, rows: all.rows.map(row) },
+          untyped: { total: untyped.total, rows: untyped.rows.map(row) },
+          records: { count: target!.referenced_by_count, notes: (target!.records ?? []).map(g => `${g.canonical_type}:${g.total}:${g.rows.map(x => x.slug).join(',')}`) },
+        };
+      };
+      const out = { open: await read(false), suppressed: await read(true) };
+      expect(out).toEqual({
+        open: {
+          groups: ['note:3:note:note:notes/flagged-agent:unconfirmed,note:note:notes/flagged-curated,note:note:notes/clean-agent', 'untyped:1:untyped:null:notes/loose'],
+          page: { total: 4, rows: ['note:note:notes/flagged-agent:unconfirmed', 'note:note:notes/flagged-curated', 'note:note:notes/clean-agent', 'untyped:null:notes/loose'] },
+          untyped: { total: 1, rows: ['untyped:null:notes/loose'] },
+          records: { count: 4, notes: ['note:3:notes/flagged-agent,notes/flagged-curated,notes/clean-agent'] },
+        },
+        suppressed: {
+          groups: ['note:2:note:note:notes/flagged-curated,note:note:notes/clean-agent', 'untyped:1:untyped:null:notes/loose'],
+          page: { total: 3, rows: ['note:note:notes/flagged-curated', 'note:note:notes/clean-agent', 'untyped:null:notes/loose'] },
+          untyped: { total: 1, rows: ['untyped:null:notes/loose'] },
+          records: { count: 3, notes: ['note:2:notes/flagged-curated,notes/clean-agent'] },
+        },
+      });
       return out;
     },
   );
