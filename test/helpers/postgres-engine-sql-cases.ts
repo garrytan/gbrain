@@ -58,7 +58,7 @@ const OOS = {
   trustProposals: 'out-of-scope:trust-proposals (born in engine-sql/trust-proposals.ts; pinned by test/engine-parity/trust-proposals.test.ts and test/engine-parity/trust-fence.test.ts)',
   connectGate: 'out-of-scope:connect-gate (born in engine-sql/connect-gate.ts; pinned by test/engine-parity/connect-gate.test.ts and test/cold-read-folded-statements.test.ts)',
   pageBody: 'out-of-scope:page-body (Wave B segmented storage, born in engine-sql/page-body.ts; pinned by test/engine-sql-page-body.test.ts)',
-  segmentedWrites: 'out-of-scope:segmented-writes (moved from the segmented import, re-chunk and fence-rewrite callers into engine-sql/segmented-writes.ts; pinned by test/engine-sql-segmented-writes.test.ts)',
+  segmentedWrites: 'out-of-scope:segmented-writes (moved from the segmented import, re-chunk, fence-rewrite and segmented-embed callers into engine-sql/segmented-writes.ts; pinned by test/engine-sql-segmented-writes.test.ts)',
   cycleLocks: 'out-of-scope:cycle-locks (gbrain_cycle_locks leases, born in engine-sql/cycle-locks.ts; pinned by test/engine-parity/cycle-locks.test.ts)',
   linkReads: 'out-of-scope:link-reads (born in engine-sql/link-reads.ts; pinned by test/engine-parity/link-reads.test.ts)',
   linkTemporal: 'out-of-scope:link-temporal (born in engine-sql/link-temporal.ts, search-vector.ts, retrieval-coverage.ts; pinned by test/engine-parity/link-temporal.test.ts)',
@@ -560,6 +560,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'hasStaleSegmentChunks': OOS.segmentedWrites, 'retireStaleSegmentChunks': OOS.segmentedWrites, 'readSegmentedProjectionPage': OOS.segmentedWrites, 'listSegmentedRechunkCandidates': OOS.segmentedWrites, 'readSegmentedRechunkPage': OOS.segmentedWrites,
   'listOccurrenceChunks': OOS.segmentedWrites, 'readMaterializingRevision': OOS.segmentedWrites, 'setMaterializingRevision': OOS.segmentedWrites, 'restorePageUpdatedAt': OOS.segmentedWrites, 'readPageTrustStamp': OOS.segmentedWrites,
   'readSegmentedRewritePage': OOS.segmentedWrites, 'restorePageDeletedAt': OOS.segmentedWrites, 'lockSegmentedGenerationPage': OOS.segmentedWrites, 'splitManifestGeneration': OOS.segmentedWrites, 'publishRebuiltGeneration': OOS.segmentedWrites, 'setSegmentedVersionHash': OOS.segmentedWrites, 'deleteRewrittenDerivationRows': OOS.segmentedWrites,
+  'readSegmentedEmbedPage': OOS.segmentedWrites, 'hasLiveSegmentedPage': OOS.segmentedWrites, 'countSegmentedEmbedRows': OOS.segmentedWrites, 'listSegmentedStaleRows': OOS.segmentedWrites, 'readSegmentChunkInputHashes': OOS.segmentedWrites, 'installSegmentedVectors': OOS.segmentedWrites, 'listLiveEmbedSegments': OOS.segmentedWrites, 'listSegmentChunkRows': OOS.segmentedWrites,
   'getEmbeddingsByChunkIds': 'chunks', 'getChunksWithEmbeddings': 'chunks',
   // facts (incl. the ontology rows of the facts table)
   'insertFact': 'facts', 'expireFact': 'facts', 'insertFacts': 'facts', 'deleteFactsForPage': 'facts',

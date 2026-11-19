@@ -3,12 +3,14 @@
  * parameters its caller sent before the statement moved behind a typed member (segmented-apply.ts, searchable.ts,
  * ingest.ts, import-chunk-reuse.ts, projection.ts, rechunk.ts, fence-append.ts at 1e1cfaabc2; segment-rewrite.ts and
  * segment-derive.ts at 8a7ded1c6d). The expected texts
- * below are those callers' own expressions, copied verbatim, so a drift in either direction fails here.
+ * below are those callers' own expressions, copied verbatim, so a drift in either direction fails here. The
+ * segmented-embed members (segmented-embedding.ts at 91d7196870) keep each old clause, but the composed ones number
+ * their placeholders in order, so those pins hold the renumbered text.
  */
 import { describe, expect, test } from 'bun:test';
 import * as sw from '../src/core/engine-sql/segmented-writes.ts';
 import { quoteIdentifier } from '../src/core/search/embedding-column.ts';
-import { chunkGenerationFilter } from '../src/core/search/safe-chunks.ts';
+import { chunkGenerationFilter, currentTextProjectionFilter } from '../src/core/search/safe-chunks.ts';
 
 const OLD_STALE_CHUNKS_SQL = `WITH RECURSIVE occ(o) AS (
     SELECT (SELECT c.occurrence_id FROM content_chunks c WHERE c.page_id=$1 AND c.occurrence_id IS NOT NULL ORDER BY c.occurrence_id LIMIT 1)
@@ -141,6 +143,49 @@ describe('engine-sql/segmented-writes sends each caller its old statement', () =
       OR (pipeline = ANY($4::text[]) AND NOT (occurrence_id = ANY($5::bigint[])))) RETURNING 1`, params: [7, [4], [5], ['links', 'mentions'], [4, 5, 6]] }]);
   });
 
+  test('segmented-embedding.ts: the embed reads and the vector install', async () => {
+    const gen = chunkGenerationFilter('p', 'cc'), sealed = currentTextProjectionFilter('p');
+    const page = `SELECT p.id, p.slug, p.source_id, p.title, p.contextual_retrieval_mode, p.body_bytes
+       FROM pages p JOIN sources s ON s.id = p.source_id
+      WHERE `;
+    const pageTail = ` AND p.body_storage = 'segmented' AND p.deleted_at IS NULL AND NOT s.archived AND ${sealed}`;
+    expect(await sends(tx => sw.readSegmentedEmbedPage(tx, { id: 7 }))).toEqual([{ sql: `${page}p.id = $1${pageTail}`, params: [7] }]);
+    expect(await sends(tx => sw.readSegmentedEmbedPage(tx, { sourceId: 'default', slug: 'a' }))).toEqual([
+      { sql: `${page}p.source_id = $1 AND p.slug = $2${pageTail}`, params: ['default', 'a'] }]);
+    expect(await sends(tx => sw.hasLiveSegmentedPage(tx, 'default', 'a'))).toEqual([{ sql: `SELECT 1 FROM pages p JOIN sources s ON s.id = p.source_id
+    WHERE p.source_id = $1 AND p.slug = $2 AND p.body_storage = 'segmented' AND p.deleted_at IS NULL AND NOT s.archived`, params: ['default', 'a'] }]);
+    expect(await sends(tx => sw.countSegmentedEmbedRows(tx, 7, 'embedding'))).toEqual([{ sql: `SELECT count(*)::int AS total, count(*) FILTER (WHERE cc.${quoteIdentifier('embedding')} IS NULL)::int AS stale
+       FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+      WHERE cc.page_id = $1 AND ${sealed} AND ${gen}`, params: [7] }]);
+    expect(await sends(tx => sw.listSegmentedStaleRows(tx, 7, 'embedding', { beforeChunkIndex: 9, limit: 5, occurrenceIds: [4], includeEmbedded: true }))).toEqual([
+      { sql: `SELECT cc.chunk_index, cc.chunk_text, cc.chunk_source
+       FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+      WHERE cc.page_id = $1 AND ($2::boolean OR cc.${quoteIdentifier('embedding')} IS NULL)
+        AND ($3::int IS NULL OR cc.chunk_index < $4::int)
+        AND ($5::bigint[] IS NULL OR cc.occurrence_id = ANY($6::bigint[]))
+        AND ${sealed} AND ${gen}
+      ORDER BY cc.chunk_index DESC LIMIT $7`, params: [7, true, 9, 9, [4], [4], 5] }]);
+    expect((await sends(tx => sw.listSegmentedStaleRows(tx, 7, 'embedding', { beforeChunkIndex: null, limit: 5 })))[0]!.params).toEqual([7, false, null, null, null, null, 5]);
+    expect(await sends(tx => sw.readSegmentChunkInputHashes(tx, 7, [1, 2]))).toEqual([{ sql: `SELECT cc.chunk_index, cc.embedding_input_hash FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+      WHERE cc.page_id = $1 AND cc.chunk_index = ANY($2::int[]) AND ${gen}`, params: [7, [1, 2]] }]);
+    expect(await sends(tx => sw.installSegmentedVectors(tx, 7, { name: 'embedding', type: 'vector', dimensions: 2 } as never, 'm',
+      [{ chunk_index: 1, chunk_text: 't', vector: new Float32Array([0.5, 1]), hash: 'h', expected: null }]))).toEqual([
+      { sql: `UPDATE content_chunks cc SET ${quoteIdentifier('embedding')} = v.embedding::vector,
+          embedding_input_hash = v.hash, embedded_at = now(), embedded_text_hash = md5(cc.chunk_text), model = COALESCE($1, cc.model),
+          embedding_pending_since = NULL
+        FROM jsonb_to_recordset($2::text::jsonb) AS v(chunk_index int, chunk_text text, embedding text, hash text, expected text), pages p
+        WHERE cc.page_id = $3 AND p.id = cc.page_id AND cc.chunk_index = v.chunk_index AND cc.chunk_text = v.chunk_text
+          AND cc.embedding_input_hash IS NOT DISTINCT FROM v.expected AND ${gen}
+        RETURNING cc.id`, params: ['m', JSON.stringify([{ chunk_index: 1, chunk_text: 't', embedding: '[0.5,1]', hash: 'h', expected: null }]), 7] }]);
+    expect(await sends(tx => sw.listLiveEmbedSegments(tx, 7))).toEqual([{ sql: `SELECT m.occurrence_id, m.sha256, m.entry_state FROM page_body_manifest m JOIN pages p ON p.id = m.page_id
+      WHERE m.page_id = $1 AND m.staging_id IS NULL AND m.gen_from <= p.body_generation AND (m.gen_to IS NULL OR m.gen_to > p.body_generation)
+      ORDER BY m.seq DESC`, params: [7] }]);
+    expect(await sends(tx => sw.listSegmentChunkRows(tx, 7, 4))).toEqual([{ sql: `SELECT cc.chunk_index, cc.chunk_text, cc.chunk_source, cc.embedding_input_hash
+       FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+      WHERE cc.page_id = $1 AND cc.occurrence_id = $2 AND ${sealed} AND ${gen}
+      ORDER BY cc.chunk_index`, params: [7, 4] }]);
+  });
+
   test('results keep the callers\' shapes', async () => {
     const { tx } = recorder([]);
     expect(await sw.lockBodyStagingState(tx, 'u-1')).toBeNull();
@@ -153,6 +198,11 @@ describe('engine-sql/segmented-writes sends each caller its old statement', () =
     expect(await sw.readSegmentedSealed(recorder([{ sealed: true }]).tx, 'default', 'a')).toBe(true);
     expect(await sw.readSegmentedRewritePage(tx, 7)).toBeNull();
     expect(await sw.lockSegmentedGenerationPage(tx, 7)).toBeNull();
+    expect(await sw.readSegmentedEmbedPage(tx, { id: 7 })).toBeNull();
+    expect(await sw.hasLiveSegmentedPage(tx, 'default', 'a')).toBe(false);
+    expect(await sw.countSegmentedEmbedRows(recorder([{ total: '3', stale: '1' }]).tx, 7, 'embedding')).toEqual({ total: 3, stale: 1 });
+    expect(await sw.installSegmentedVectors(recorder([{ id: 1 }]).tx, 7, { name: 'embedding', type: 'vector', dimensions: 1 } as never, null,
+      [{ chunk_index: 1, chunk_text: 't', vector: new Float32Array([1]), hash: 'h', expected: null }])).toBe(1);
     expect(await sw.deleteRewrittenDerivationRows(recorder([{ '?column?': 1 }, { '?column?': 1 }]).tx, 7, { touched: [4], reach: [], unpaidKinds: [], live: [4] })).toBe(2);
   });
 });

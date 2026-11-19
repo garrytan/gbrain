@@ -202,6 +202,7 @@ test/engine-parity/search-reads.test.ts
 test/engine-parity/search.test.ts
 test/engine-parity/segmented-body.test.ts
 test/engine-parity/segmented-callers.test.ts
+test/engine-parity/segmented-embedding.test.ts
 test/engine-parity/segmented-rewrite.test.ts
 test/engine-parity/source-resolver-reads.test.ts
 test/engine-parity/spend-log.test.ts

@@ -118,8 +118,12 @@ above "Segment chunks" in `rust/crates/gbrain-store/src/chunks.rs`). In one stor
 
 The chunks stay out of `getChunks` and keyword search until a flip publishes their generation. The
 TypeScript member normalises them as `upsertChunks` does (`prepareChunks`), refuses a chunk that
-carries a vector (`engine_capability_missing`: vectors are not stored) and takes the default model
-label from `opts.embeddingColumn` as PGLite does. The option is served for the store's one vector
+carries an image vector (`engine_capability_missing`: image vectors are not stored) and takes the
+default model label from `opts.embeddingColumn` as PGLite does. A chunk that carries a text vector
+(a vector a re-chunk reuses) is stored with it: the store checks its dimensions against the brain's,
+labels it with the chunk's model (a vector with no model refuses), and stamps it embedded now with
+its recorded input. A chunk without one reads as pending, but with no pending time; Postgres stamps
+`embedding_pending_since` there. The option is served for the store's one vector
 column only, as on `upsertChunks` (embeddings.md, "Chunk writes"). Deleting a page for good
 also deletes the chunks family's segment view of the page (`chunks::forget_segment_view`).
 
@@ -149,7 +153,9 @@ delete in `page-body/segment-derive.ts`) make reads and writes around the flip t
 `src/core/engine-sql/segmented-writes.ts`. The store serves each one from
 `rust/crates/gbrain-store/src/page_body/segmented_writes.rs`, through
 `src/core/rust-engine/store-members/segmented-writes.ts`. Each write is one store write. The
-fence-rewrite members are in `rust/crates/gbrain-store/src/page_body/segment_rewrite.rs`.
+fence-rewrite members are in `rust/crates/gbrain-store/src/page_body/segment_rewrite.rs`; the
+segmented-embed members (`page-body/segmented-embedding.ts`) are in
+`rust/crates/gbrain-store/src/page_body/segmented_embedding.rs`.
 
 | Member | Serves |
 | --- | --- |
@@ -158,7 +164,7 @@ fence-rewrite members are in `rust/crates/gbrain-store/src/page_body/segment_rew
 | `readSegmentedLivePage(pageId)` | the page a write diffs against, deleted or not: id, generation, storage, title, type, body flags |
 | `readSegmentedSealed(sourceId, slug)` | whether the live page's text projection is sealed at its revision |
 | `listChunkedOccurrences(pageId, occurrenceIds, generation)` | the members of `occurrenceIds`, in order, with a chunk row at or below `generation` |
-| `readRetiredChunkVectors(pageId, occurrences, column)` | `[]`: the store keeps chunk vectors (`embeddings.rs`), but this read does not look them up yet and `stageSegmentChunks` refuses a chunk that carries one, so a re-chunked text waits for the embed sweep |
+| `readRetiredChunkVectors(pageId, occurrences, column)` | each chunk of those occurrences with a stored vector and recorded input, newest generation first: its text, vector, recorded input and model, so a re-chunk reuses the vector of an unchanged text |
 | `hasStaleSegmentChunks(pageId, generation, live)` | whether a chunk row exists that `generation` does not hold |
 | `retireStaleSegmentChunks(pageId, generation, live, maxRows)` | deletes up to `maxRows` of those rows and returns the count |
 | `readSegmentedProjectionPage(sourceId, slug)` | the live segmented page row a projection builds from |
@@ -175,6 +181,19 @@ fence-rewrite members are in `rust/crates/gbrain-store/src/page_body/segment_rew
 | `publishRebuiltGeneration(pageId, generation, stagingId)` | publishes the staging's rows; the rows that start at `generation` end at `generation + 1` |
 | `setSegmentedVersionHash(pageId, generation, contentHash, bodyBytes)` | sets the content hash and byte count of the segmented version of `generation` |
 | `deleteRewrittenDerivationRows(pageId, scope)` | deletes the derivations of the touched occurrences, the `links` rows of the reach, and the unpaid kinds' rows of occurrences not live; returns the count |
+| `readSegmentedEmbedPage(ref)` | the segmented page an embed reads, by `{ id }` or `{ sourceId, slug }`: live, sealed and in a live source; `null` otherwise |
+| `hasLiveSegmentedPage(sourceId, slug)` | whether that page is segmented, live and in a live source, sealed or not |
+| `countSegmentedEmbedRows(pageId, column)` | a sealed page's visible chunk rows and those without a vector |
+| `listSegmentedStaleRows(pageId, column, opts)` | a sealed page's visible rows without a vector (any with `includeEmbedded`), newest index first, below `beforeChunkIndex`, in `occurrenceIds`, at most `limit` |
+| `readSegmentChunkInputHashes(pageId, chunkIndexes)` | the recorded input of the visible rows at those indexes, sealed or not |
+| `installSegmentedVectors(pageId, column, model, vectors)` | stores each vector on the visible row with the same index and text whose recorded input is still `expected`, in one store write; returns the count. The dimensions must be the brain's; the model is `model`, else the brain's |
+| `listLiveEmbedSegments(pageId)` | the live manifest rows, highest `seq` first: occurrence, digest and entry state |
+| `listSegmentChunkRows(pageId, occurrenceId)` | a sealed page's visible rows of one occurrence in index order, with their recorded inputs |
+
+The embed members serve the column `embedding` only (the store's one vector column); another column
+refuses `engine_capability_missing`. The embed lease and budget (`page-embedding-lease.ts`,
+`page-embedding-budget.ts`) still run raw SQL, so `embedSegmentedRows` and `embedSegmentedPage`
+refuse on a Rust brain end to end.
 
 A chunk row is stale for generation `g` with live occurrences `live` as in Postgres's
 `STALE_CHUNKS_SQL`: a segment chunk of a live occurrence when its generation is below the newest

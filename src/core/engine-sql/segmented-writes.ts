@@ -1,15 +1,17 @@
 /**
  * The statements a segmented write, a segmented re-chunk and a fence rewrite ran through executeRaw
  * (persistence/segmented-apply.ts, persistence/searchable.ts, page-body/ingest.ts, page-body/projection.ts,
- * page-body/rechunk.ts, page-body/segment-rewrite.ts, page-body/segment-derive.ts, import-chunk-reuse.ts and
- * trust/fence-append.ts), one function per BrainEngine member. PGLite and Postgres run the
+ * page-body/rechunk.ts, page-body/segment-rewrite.ts, page-body/segment-derive.ts, page-body/segmented-embedding.ts,
+ * import-chunk-reuse.ts and trust/fence-append.ts), one function per BrainEngine member. PGLite and Postgres run the
  * same text the callers ran before; the Rust engine answers from its store (rust/docs/store/page_body.md). Each runs on
  * the engine it is given, so a call on a transaction engine reads and writes inside that transaction.
  */
 import type { BrainEngine } from '../engine.ts';
 import type { JsonObject } from '../page-body/types.ts';
-import { quoteIdentifier } from '../search/embedding-column.ts';
-import { chunkGenerationFilter } from '../search/safe-chunks.ts';
+import type { ResolvedColumn } from '../types.ts';
+import { jsonRowBatches } from '../batch-rows.ts';
+import { quoteIdentifier, vectorCastSuffix } from '../search/embedding-column.ts';
+import { chunkGenerationFilter, currentTextProjectionFilter } from '../search/safe-chunks.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
@@ -297,4 +299,113 @@ export async function deleteRewrittenDerivationRows(tx: Raw, pageId: number, sco
     AND (occurrence_id = ANY($2::bigint[]) OR (pipeline = 'links' AND occurrence_id = ANY($3::bigint[]))
       OR (pipeline = ANY($4::text[]) AND NOT (occurrence_id = ANY($5::bigint[])))) RETURNING 1`,
   [pageId, [...scope.touched], [...scope.reach], [...scope.unpaidKinds], [...scope.live]])).length;
+}
+
+/** The page fields a segmented embed reads (metadata only, never the body). */
+export interface SegmentedEmbedPageRow {
+  id: number; slug: string; source_id: string; title: string; contextual_retrieval_mode: string | null; body_bytes: number | string;
+}
+
+/** Which page a segmented embed reads: by id, or the page at a source and slug. */
+export type SegmentedEmbedRef = { id: number } | { sourceId: string; slug: string };
+
+/** A segmented page's live row in keyset order, as an embed lists it. */
+export interface SegmentedStaleRowRow { chunk_index: number; chunk_text: string; chunk_source: string }
+
+/** The options of `listSegmentedStaleRows`: below `beforeChunkIndex` (null: from the newest), at most `limit`. */
+export interface SegmentedStaleRowsOpts { beforeChunkIndex: number | null; limit: number; occurrenceIds?: readonly number[]; includeEmbedded?: boolean }
+
+/** One vector to install: the row's chunk_index and text, the vector, its recorded input and the input read before. */
+export interface SegmentedVectorInstall { chunk_index: number; chunk_text: string; vector: Float32Array; hash: string; expected: string | null }
+
+/** A live manifest row of a segmented page, as an embed walks its segments. */
+export interface LiveEmbedSegmentRow { occurrence_id: number | string; sha256: Uint8Array; entry_state: unknown }
+
+/** One live chunk row of a segment with its recorded embedding input. */
+export interface SegmentChunkRowRow { chunk_index: number; chunk_text: string; chunk_source: string; embedding_input_hash: string | null }
+
+/** A segmented page that is live, sealed and in a live source, by id or by source and slug; null otherwise. */
+export async function readSegmentedEmbedPage(tx: Raw, ref: SegmentedEmbedRef): Promise<SegmentedEmbedPageRow | null> {
+  const where = 'id' in ref ? sqlFragment`p.id = ${ref.id}` : sqlFragment`p.source_id = ${ref.sourceId} AND p.slug = ${ref.slug}`;
+  const { text, params } = renderFragment(sqlFragment`SELECT p.id, p.slug, p.source_id, p.title, p.contextual_retrieval_mode, p.body_bytes
+       FROM pages p JOIN sources s ON s.id = p.source_id
+      WHERE ${where} AND p.body_storage = 'segmented' AND p.deleted_at IS NULL AND NOT s.archived AND ${trustedSql(currentTextProjectionFilter('p'))}`);
+  const [row] = await tx.executeRaw<SegmentedEmbedPageRow>(text, params);
+  return row ?? null;
+}
+
+/** Whether the page at `sourceId`/`slug` is segmented, not deleted and in a live source, sealed or not. */
+export async function hasLiveSegmentedPage(tx: Raw, sourceId: string, slug: string): Promise<boolean> {
+  return (await tx.executeRaw(`SELECT 1 FROM pages p JOIN sources s ON s.id = p.source_id
+    WHERE p.source_id = $1 AND p.slug = $2 AND p.body_storage = 'segmented' AND p.deleted_at IS NULL AND NOT s.archived`, [sourceId, slug])).length > 0;
+}
+
+/** A sealed segmented page's live rows and those without a vector in `column`. */
+export async function countSegmentedEmbedRows(tx: Raw, pageId: number, column: string): Promise<{ total: number; stale: number }> {
+  const col = quoteIdentifier(column);
+  const { text, params } = renderFragment(sqlFragment`SELECT count(*)::int AS total, count(*) FILTER (WHERE cc.${trustedSql(col)} IS NULL)::int AS stale
+       FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+      WHERE cc.page_id = ${pageId} AND ${trustedSql(currentTextProjectionFilter('p'))} AND ${trustedSql(chunkGenerationFilter('p', 'cc'))}`);
+  const [row] = await tx.executeRaw<{ total: number; stale: number }>(text, params);
+  return { total: Number(row?.total ?? 0), stale: Number(row?.stale ?? 0) };
+}
+
+/** A sealed segmented page's live rows without a vector in `column` (any with `includeEmbedded`), newest first. */
+export async function listSegmentedStaleRows(tx: Raw, pageId: number, column: string, opts: SegmentedStaleRowsOpts): Promise<SegmentedStaleRowRow[]> {
+  const col = quoteIdentifier(column);
+  const { text, params } = renderFragment(sqlFragment`SELECT cc.chunk_index, cc.chunk_text, cc.chunk_source
+       FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+      WHERE cc.page_id = ${pageId} AND (${opts.includeEmbedded ?? false}::boolean OR cc.${trustedSql(col)} IS NULL)
+        AND (${opts.beforeChunkIndex}::int IS NULL OR cc.chunk_index < ${opts.beforeChunkIndex}::int)
+        AND (${opts.occurrenceIds ? [...opts.occurrenceIds] : null}::bigint[] IS NULL OR cc.occurrence_id = ANY(${opts.occurrenceIds ? [...opts.occurrenceIds] : null}::bigint[]))
+        AND ${trustedSql(currentTextProjectionFilter('p'))} AND ${trustedSql(chunkGenerationFilter('p', 'cc'))}
+      ORDER BY cc.chunk_index DESC LIMIT ${opts.limit}`);
+  return tx.executeRaw<SegmentedStaleRowRow>(text, params);
+}
+
+/** The recorded embedding input of a segmented page's live rows at `chunkIndexes`, sealed or not. */
+export async function readSegmentChunkInputHashes(tx: Raw, pageId: number, chunkIndexes: readonly number[]): Promise<Array<{ chunk_index: number; embedding_input_hash: string | null }>> {
+  const { text, params } = renderFragment(sqlFragment`SELECT cc.chunk_index, cc.embedding_input_hash FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+      WHERE cc.page_id = ${pageId} AND cc.chunk_index = ANY(${[...chunkIndexes]}::int[]) AND ${trustedSql(chunkGenerationFilter('p', 'cc'))}`);
+  return tx.executeRaw<{ chunk_index: number; embedding_input_hash: string | null }>(text, params);
+}
+
+/**
+ * Put each vector, with its recorded input, in `column` of the live row with the same chunk_index and text whose
+ * recorded input is still `expected`, embedded now, labelled `model` (the row's own label when null). Returns how many
+ * rows took a vector. The caller holds the page lock and checks the page and write target first.
+ */
+export async function installSegmentedVectors(tx: Raw, pageId: number, column: ResolvedColumn, model: string | null,
+  vectors: readonly SegmentedVectorInstall[]): Promise<number> {
+  const col = quoteIdentifier(column.name);
+  const cast = vectorCastSuffix(column);
+  const updates = vectors.map(v => ({ chunk_index: v.chunk_index, chunk_text: v.chunk_text, embedding: `[${Array.from(v.vector).join(',')}]`, hash: v.hash, expected: v.expected }));
+  let installed = 0;
+  for (const batch of jsonRowBatches(updates, update => update)) {
+    const { text, params } = renderFragment(sqlFragment`UPDATE content_chunks cc SET ${trustedSql(col)} = v.embedding${trustedSql(cast)},
+          embedding_input_hash = v.hash, embedded_at = now(), embedded_text_hash = md5(cc.chunk_text), model = COALESCE(${model}, cc.model),
+          embedding_pending_since = NULL
+        FROM jsonb_to_recordset(${batch}::text::jsonb) AS v(chunk_index int, chunk_text text, embedding text, hash text, expected text), pages p
+        WHERE cc.page_id = ${pageId} AND p.id = cc.page_id AND cc.chunk_index = v.chunk_index AND cc.chunk_text = v.chunk_text
+          AND cc.embedding_input_hash IS NOT DISTINCT FROM v.expected AND ${trustedSql(chunkGenerationFilter('p', 'cc'))}
+        RETURNING cc.id`);
+    installed += (await tx.executeRaw(text, params)).length;
+  }
+  return installed;
+}
+
+/** A segmented page's live manifest rows, newest (highest seq) first. */
+export async function listLiveEmbedSegments(tx: Raw, pageId: number): Promise<LiveEmbedSegmentRow[]> {
+  return tx.executeRaw<LiveEmbedSegmentRow>(`SELECT m.occurrence_id, m.sha256, m.entry_state FROM page_body_manifest m JOIN pages p ON p.id = m.page_id
+      WHERE m.page_id = $1 AND m.staging_id IS NULL AND m.gen_from <= p.body_generation AND (m.gen_to IS NULL OR m.gen_to > p.body_generation)
+      ORDER BY m.seq DESC`, [pageId]);
+}
+
+/** A sealed segmented page's live rows of one occurrence in chunk_index order, with their recorded inputs. */
+export async function listSegmentChunkRows(tx: Raw, pageId: number, occurrenceId: number): Promise<SegmentChunkRowRow[]> {
+  const { text, params } = renderFragment(sqlFragment`SELECT cc.chunk_index, cc.chunk_text, cc.chunk_source, cc.embedding_input_hash
+       FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+      WHERE cc.page_id = ${pageId} AND cc.occurrence_id = ${occurrenceId} AND ${trustedSql(currentTextProjectionFilter('p'))} AND ${trustedSql(chunkGenerationFilter('p', 'cc'))}
+      ORDER BY cc.chunk_index`);
+  return tx.executeRaw<SegmentChunkRowRow>(text, params);
 }

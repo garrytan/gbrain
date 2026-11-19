@@ -544,4 +544,124 @@ impl Brain {
             s.delete_rewritten_derivation_rows(page_id, &scope)
         })
     }
+
+    /// `readSegmentedEmbedPage({ id } | { sourceId, slug })`: the sealed segmented page an embed
+    /// reads, or null.
+    #[napi]
+    pub fn read_segmented_embed_page<'env>(
+        &self,
+        env: &'env Env,
+        page: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let page: gbrain_store::page_body::SegmentedEmbedRef =
+                required(page, "readSegmentedEmbedPage page")?;
+            s.read_segmented_embed_page(&page)
+        })
+    }
+
+    /// `hasLiveSegmentedPage(sourceId, slug)`: a boolean.
+    #[napi]
+    pub fn has_live_segmented_page<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.has_live_segmented_page(&source_id, &slug))
+    }
+
+    /// `countSegmentedEmbedRows(pageId)`: `{ total, stale }` of the `embedding` column.
+    #[napi]
+    pub fn count_segmented_embed_rows<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.count_segmented_embed_rows(page_id))
+    }
+
+    /// `listSegmentedStaleRows(pageId, opts)`: `{ chunk_index, chunk_text, chunk_source }` rows.
+    #[napi]
+    pub fn list_segmented_stale_rows<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        opts: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let opts: gbrain_store::page_body::SegmentedStaleRowsOpts =
+                required(opts, "listSegmentedStaleRows opts")?;
+            s.list_segmented_stale_rows(page_id, &opts)
+        })
+    }
+
+    /// `readSegmentChunkInputHashes(pageId, chunkIndexes)`: `{ chunk_index, embedding_input_hash }` rows.
+    #[napi]
+    pub fn read_segment_chunk_input_hashes<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        chunk_indexes: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let indexes: Vec<i64> =
+                required(chunk_indexes, "readSegmentChunkInputHashes chunkIndexes")?;
+            s.read_segment_chunk_input_hashes(page_id, &indexes)
+        })
+    }
+
+    /// `installSegmentedVectors(pageId, model, updates)`: how many rows took a vector.
+    #[napi]
+    pub fn install_segmented_vectors<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        model: Option<String>,
+        updates: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let updates: Vec<gbrain_store::page_body::SegmentedVectorInput> =
+                required(updates, "installSegmentedVectors updates")?;
+            s.install_segmented_vectors(page_id, model.as_deref(), &updates)
+        })
+    }
+
+    /// `listLiveEmbedSegments(pageId)`: `{ occurrence_id, sha256, entry_state }` rows, sha256 as hex.
+    #[napi]
+    pub fn list_live_embed_segments<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_live_embed_segments(page_id))
+    }
+
+    /// `listSegmentChunkRows(pageId, occurrenceId)`: the sealed page's rows of one occurrence.
+    #[napi]
+    pub fn list_segment_chunk_rows<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        occurrence_id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_segment_chunk_rows(page_id, occurrence_id)
+        })
+    }
+
+    /// `readRetiredChunkVectors(pageId, occurrences)`: the vectors of those occurrences' rows.
+    #[napi]
+    pub fn read_retired_chunk_vectors<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        occurrences: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let occurrences: Vec<i64> =
+                required(occurrences, "readRetiredChunkVectors occurrences")?;
+            s.read_retired_chunk_vectors(page_id, &occurrences)
+        })
+    }
 }

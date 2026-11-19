@@ -256,6 +256,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'readSegmentedPageHead', 'readBodyManifestRows', 'readBodyManifestMeta', 'readBodyManifestOutline', 'listAccessPolicySourceIds',
   'setLocalStatementTimeout',
   'readSegmentedRewritePage', 'restorePageDeletedAt', 'lockSegmentedGenerationPage', 'splitManifestGeneration', 'publishRebuiltGeneration', 'setSegmentedVersionHash', 'deleteRewrittenDerivationRows',
+  'readSegmentedEmbedPage', 'hasLiveSegmentedPage', 'countSegmentedEmbedRows', 'listSegmentedStaleRows', 'readSegmentChunkInputHashes', 'installSegmentedVectors', 'listLiveEmbedSegments', 'listSegmentChunkRows',
   // Trust: the fact withdrawal ledger (engine-sql/trust-withdrawals.ts)
   'hasCoveringFactWithdrawal', 'insertFactWithdrawal', 'listFactWithdrawalDates', 'moveFactWithdrawalSubject',
   'hasFactWithdrawalForSubject', 'listFactWithdrawalKeys',

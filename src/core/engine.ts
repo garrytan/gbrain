@@ -1,4 +1,4 @@
-import type { OccurrenceChunkRow, PageTrustRef, PageTrustStamp, RechunkCandidateScope, RetiredChunkVectorRow, RewrittenDerivationScope, SegmentedGenerationLock, SegmentedLivePageRow, SegmentedProjectionPage, SegmentedRechunkPageRow, SegmentedRewritePageRow } from './engine-sql/segmented-writes.ts';
+import type { LiveEmbedSegmentRow, OccurrenceChunkRow, PageTrustRef, PageTrustStamp, RechunkCandidateScope, RetiredChunkVectorRow, RewrittenDerivationScope, SegmentChunkRowRow, SegmentedEmbedPageRow, SegmentedEmbedRef, SegmentedGenerationLock, SegmentedLivePageRow, SegmentedProjectionPage, SegmentedRechunkPageRow, SegmentedRewritePageRow, SegmentedStaleRowRow, SegmentedStaleRowsOpts, SegmentedVectorInstall } from './engine-sql/segmented-writes.ts';
 import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead, BodyManifestRow, BodyManifestMeta, BodyManifestOutline } from './engine-sql/export-reads.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type * as DecideStoreSql from './engine-sql/decide-store.ts';
@@ -3284,6 +3284,22 @@ export interface BrainEngine {
   setSegmentedVersionHash(pageId: number, generation: number, contentHash: string, bodyBytes: number): Promise<void>;
   /** A fence rewrite: delete the derivation rows that may hold replaced text; returns how many it deleted (engine-sql/segmented-writes.ts). */
   deleteRewrittenDerivationRows(pageId: number, scope: RewrittenDerivationScope): Promise<number>;
+  /** A segmented embed: the segmented page that is live, sealed and in a live source, by id or by source and slug, or null (engine-sql/segmented-writes.ts). */
+  readSegmentedEmbedPage(ref: SegmentedEmbedRef): Promise<SegmentedEmbedPageRow | null>;
+  /** A segmented embed: whether the page at `sourceId`/`slug` is segmented, live and in a live source, sealed or not (engine-sql/segmented-writes.ts). */
+  hasLiveSegmentedPage(sourceId: string, slug: string): Promise<boolean>;
+  /** A segmented embed: a sealed page's live rows and those without a vector in `column` (engine-sql/segmented-writes.ts). */
+  countSegmentedEmbedRows(pageId: number, column: string): Promise<{ total: number; stale: number }>;
+  /** A segmented embed: a sealed page's live rows without a vector in `column`, newest first, keyset by chunk_index (engine-sql/segmented-writes.ts). */
+  listSegmentedStaleRows(pageId: number, column: string, opts: SegmentedStaleRowsOpts): Promise<SegmentedStaleRowRow[]>;
+  /** A segmented embed: the recorded embedding input of the page's live rows at `chunkIndexes` (engine-sql/segmented-writes.ts). */
+  readSegmentChunkInputHashes(pageId: number, chunkIndexes: readonly number[]): Promise<Array<{ chunk_index: number; embedding_input_hash: string | null }>>;
+  /** A segmented embed: install vectors on the live rows whose text and recorded input still match; returns how many took one (engine-sql/segmented-writes.ts). */
+  installSegmentedVectors(pageId: number, column: ResolvedColumn, model: string | null, vectors: readonly SegmentedVectorInstall[]): Promise<number>;
+  /** A segmented embed: the page's live manifest rows, newest first (engine-sql/segmented-writes.ts). */
+  listLiveEmbedSegments(pageId: number): Promise<LiveEmbedSegmentRow[]>;
+  /** A segmented embed: a sealed page's live rows of one occurrence with their recorded inputs, in chunk_index order (engine-sql/segmented-writes.ts). */
+  listSegmentChunkRows(pageId: number, occurrenceId: number): Promise<SegmentChunkRowRow[]>;
   /** gbrain export: the sources with an access policy, in id order, whose folder rulebooks an export carries (engine-sql/export-reads.ts). */
   listAccessPolicySourceIds(): Promise<string[]>;
   /** whois candidates by title, slug basename, alias and email (engine-sql/exact-identity.ts), at most `opts.limit`. */

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 770/770
+# covered: 778/778
 # lifecycle: 9/9
 # pages: 40/40
 # search: 7/7
@@ -26,7 +26,7 @@
 # dream: 3/3
 # contradictions: 5/5
 # facts: 15/15
-# segmented_body: 38/38
+# segmented_body: 46/46
 # versions: 5/5
 # stats_ingest: 5/5
 # sync_aliases: 10/10
@@ -77,21 +77,21 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	79	no	yes	yes	serves
+transaction	lifecycle	yes	81	no	yes	yes	serves
 transactionDirect	lifecycle	yes	5	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	90	yes	yes	yes	serves
+getPage	pages	yes	92	yes	yes	yes	serves
 readPageSnapshot	pages	yes	19	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
-lockPageKeys	pages	yes	2	no	yes	yes	serves
+lockPageKeys	pages	yes	4	no	yes	yes	serves
 putPage	pages	yes	335	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	10	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	107	yes	yes	yes	serves
+softDeletePage	pages	yes	108	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -319,7 +319,7 @@ stageSegmentTexts	segmented_body	yes	11	no	yes	yes	serves
 readSegmentTexts	segmented_body	yes	8	no	yes	yes	serves
 stageManifestRows	segmented_body	yes	12	no	yes	yes	serves
 readManifest	segmented_body	yes	12	no	yes	yes	serves
-stageSegmentChunks	segmented_body	yes	10	no	yes	yes	serves
+stageSegmentChunks	segmented_body	yes	11	no	yes	yes	serves
 createSegmentedPageShell	segmented_body	yes	19	no	yes	yes	serves
 flipBodyGeneration	segmented_body	yes	20	no	yes	yes	serves
 sealSegmentedPage	segmented_body	yes	6	no	yes	yes	serves
@@ -334,7 +334,7 @@ deleteUnstagedSegmentChunks	segmented_body	yes	1	no	yes	yes	serves
 readSegmentedLivePage	segmented_body	yes	1	no	yes	yes	serves
 readSegmentedSealed	segmented_body	yes	1	no	yes	yes	serves
 listChunkedOccurrences	segmented_body	yes	1	no	yes	yes	serves
-readRetiredChunkVectors	segmented_body	yes	1	no	yes	yes	serves
+readRetiredChunkVectors	segmented_body	yes	2	no	yes	yes	serves
 hasStaleSegmentChunks	segmented_body	yes	1	no	yes	yes	serves
 retireStaleSegmentChunks	segmented_body	yes	1	no	yes	yes	serves
 readSegmentedProjectionPage	segmented_body	yes	1	no	yes	yes	serves
@@ -352,7 +352,15 @@ splitManifestGeneration	segmented_body	yes	1	no	yes	yes	serves
 publishRebuiltGeneration	segmented_body	yes	1	no	yes	yes	serves
 setSegmentedVersionHash	segmented_body	yes	1	no	yes	yes	serves
 deleteRewrittenDerivationRows	segmented_body	yes	1	no	yes	yes	serves
-createVersion	versions	yes	19	no	yes	yes	serves
+readSegmentedEmbedPage	segmented_body	yes	2	no	yes	yes	serves
+hasLiveSegmentedPage	segmented_body	yes	1	no	yes	yes	serves
+countSegmentedEmbedRows	segmented_body	yes	1	no	yes	yes	serves
+listSegmentedStaleRows	segmented_body	yes	2	no	yes	yes	serves
+readSegmentChunkInputHashes	segmented_body	yes	1	no	yes	yes	serves
+installSegmentedVectors	segmented_body	yes	2	no	yes	yes	serves
+listLiveEmbedSegments	segmented_body	yes	1	no	yes	yes	serves
+listSegmentChunkRows	segmented_body	yes	1	no	yes	yes	serves
+createVersion	versions	yes	20	no	yes	yes	serves
 getVersions	versions	yes	9	no	yes	yes	serves
 readLatestVersionId	versions	yes	1	no	yes	yes	serves
 stampVersionChangeReason	versions	yes	1	no	yes	yes	serves
@@ -373,7 +381,7 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
 getConfig	config	yes	10	no	yes	yes	serves
-setConfig	config	yes	27	no	yes	yes	serves
+setConfig	config	yes	29	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves

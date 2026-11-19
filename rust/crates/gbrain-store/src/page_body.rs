@@ -48,9 +48,15 @@ use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod segment_rewrite;
+mod segmented_embedding;
 mod segmented_writes;
 pub use segment_rewrite::{
     RewrittenDerivationScope, SegmentedGenerationLock, SegmentedRewritePage,
+};
+pub use segmented_embedding::{
+    LiveEmbedSegment, RetiredChunkVector, SegmentChunkInputHash, SegmentChunkRow,
+    SegmentedEmbedCounts, SegmentedEmbedPageRow, SegmentedEmbedRef, SegmentedStaleRow,
+    SegmentedStaleRowsOpts, SegmentedVectorInput,
 };
 pub use segmented_writes::{
     OccurrenceChunkRow, PageTrustRef, PageTrustStamp, RechunkCandidateScope, SegmentedLivePageRow,
@@ -1554,7 +1560,7 @@ impl Store {
             }
             // Not stale, so the generation is at or above the page's, which is at least 0.
             let at = u64::try_from(generation).unwrap_or(0);
-            crate::chunks::append_segment_chunks(tx, page.id, at, chunks)
+            crate::chunks::append_segment_chunks(tx, page.id, at, chunks, self.env.now_micros())
         })
     }
 
@@ -3356,8 +3362,14 @@ mod segment_chunk_tests {
             // A late batch at the live generation (the flip went to another write first).
             store
                 .write(|tx| {
-                    crate::chunks::append_segment_chunks(tx, id as u64, 1, &[chunk(7, 0, "late")])
-                        .map(|_| ())
+                    crate::chunks::append_segment_chunks(
+                        tx,
+                        id as u64,
+                        1,
+                        &[chunk(7, 0, "late")],
+                        0,
+                    )
+                    .map(|_| ())
                 })
                 .unwrap();
             if abort {

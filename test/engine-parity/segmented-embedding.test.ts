@@ -90,7 +90,9 @@ async function allRows(engine: BrainEngine, pageId: number, includeEmbedded: boo
 
 describe('engine parity: segmented embedding', () => {
   parityTest('a segmented embed reads the sealed page, lists its stale rows, installs vectors and refuses a stale install',
-    { methods: ['setConfig', 'getPage', 'transaction', 'softDeletePage', 'lockPageKeys'], timeout: 600_000 },
+    { methods: ['setConfig', 'getPage', 'transaction', 'softDeletePage', 'lockPageKeys', 'readSegmentedEmbedPage', 'hasLiveSegmentedPage',
+      'countSegmentedEmbedRows', 'listSegmentedStaleRows', 'readSegmentChunkInputHashes', 'installSegmentedVectors', 'listLiveEmbedSegments',
+      'listSegmentChunkRows'], timeout: 600_000 },
     async (engine) => {
       await engine.setConfig('pages.segmented_storage', 'on');
       await stagedPage(engine, 'notes/embed', conversationBody(1300 * 1024, { seed: 41 }));
@@ -118,11 +120,15 @@ describe('engine parity: segmented embedding', () => {
         stale: rowsView(await listSegmentedStaleRows(engine, page.id, 'embedding', { beforeChunkIndex: null, limit: 5 })),
         withEmbedded: rowsView(await listSegmentedStaleRows(engine, page.id, 'embedding', { beforeChunkIndex: null, limit: 5, includeEmbedded: true })),
         newest: (await listSegmentChunkRows(engine, page.id, segments[0]!.occurrenceId)).map(row => row.embedding_input_hash !== null),
+        inputs: (await engine.readSegmentChunkInputHashes(page.id, [...first, next[0]!].map(row => row.chunk_index)))
+          .map(row => ({ chunk_index: Number(row.chunk_index), hash: row.embedding_input_hash })).sort((x, y) => x.chunk_index - y.chunk_index),
+        live: { page: await engine.hasLiveSegmentedPage('default', 'notes/embed'), missing: await engine.hasLiveSegmentedPage('default', 'notes/none') },
       };
       // A title change after the read moves the page, so the install refuses the whole batch.
       const moved = await install(engine, { ...page, title: 'another title' }, next);
       await engine.softDeletePage('notes/embed');
-      const deleted = { read: await readSegmentedEmbedPage(engine, { id: page.id }), sealed: await readSealedSegmentedEmbedPage(engine, ref, true) };
+      const deleted = { read: await readSegmentedEmbedPage(engine, { id: page.id }), sealed: await readSealedSegmentedEmbedPage(engine, ref, true),
+        live: await engine.hasLiveSegmentedPage('default', 'notes/embed') };
       return {
         page: pageView(page), byId: pageView(byId), counts, first: rowsView(first), next: rowsView(next),
         keyset: first[first.length - 1]!.chunk_index > next[0]!.chunk_index,
@@ -135,7 +141,8 @@ describe('engine parity: segmented embedding', () => {
     });
 
   parityTest('a replace that keeps half the body carries the vectors of the unchanged retired rows onto the new rows',
-    { methods: ['setConfig', 'getPage', 'transaction', 'createVersion', 'lockPageKeys'], timeout: 600_000 },
+    { methods: ['setConfig', 'getPage', 'transaction', 'createVersion', 'lockPageKeys', 'readSegmentedEmbedPage', 'listSegmentedStaleRows',
+      'installSegmentedVectors', 'readRetiredChunkVectors', 'stageSegmentChunks'], timeout: 600_000 },
     async (engine) => {
       await engine.setConfig('pages.segmented_storage', 'on');
       const half = conversationBody(700 * 1024, { seed: 51 });

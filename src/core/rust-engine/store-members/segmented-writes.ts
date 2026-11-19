@@ -4,9 +4,9 @@
  * write statements"). PGLite and Postgres run
  * them from engine-sql/segmented-writes.ts. Each store write is one store transaction.
  *
- * readRetiredChunkVectors returns no rows: the store keeps chunk vectors (gbrain-store embeddings.rs), but this read
- * does not look them up yet and stageSegmentChunks refuses a chunk that carries one, so a re-chunked text waits for the
- * embed sweep, as a new text does elsewhere.
+ * The segmented embed members and readRetiredChunkVectors are served by gbrain-store `page_body::segmented_embedding`.
+ * The store keeps one vector column, `embedding`; a member asked for another column refuses, and vectors cross as
+ * number arrays.
  * The materializing-revision members keep the setting in the transaction's own settings map, which flipBodyGeneration
  * reads (page-body.ts); outside a transaction the read is null and the set does nothing, as on PGLite, where the
  * setting ends with its statement.
@@ -15,11 +15,13 @@
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served.
  */
 import type { RustEngine } from '../../rust-engine.ts';
-import type { OccurrenceChunkRow, PageTrustRef, PageTrustStamp, RechunkCandidateScope, RetiredChunkVectorRow, RewrittenDerivationScope,
-  SegmentedGenerationLock, SegmentedLivePageRow, SegmentedProjectionPage, SegmentedRechunkPageRow, SegmentedRewritePageRow } from '../../engine-sql/segmented-writes.ts';
+import type { LiveEmbedSegmentRow, OccurrenceChunkRow, PageTrustRef, PageTrustStamp, RechunkCandidateScope, RetiredChunkVectorRow, RewrittenDerivationScope,
+  SegmentChunkRowRow, SegmentedEmbedPageRow, SegmentedEmbedRef, SegmentedGenerationLock, SegmentedLivePageRow, SegmentedProjectionPage,
+  SegmentedRechunkPageRow, SegmentedRewritePageRow, SegmentedStaleRowRow, SegmentedStaleRowsOpts, SegmentedVectorInstall } from '../../engine-sql/segmented-writes.ts';
+import type { ResolvedColumn } from '../../types.ts';
 import type { StoreBrain } from '../store.ts';
 import { mapStoreError } from '../store-errors.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
 /** The transaction setting a re-chunk sets so its flip keeps the page's revision. */
 const MATERIALIZING_REVISION = 'gbrain.materializing_revision';
@@ -42,8 +44,17 @@ export const listChunkedOccurrences: StoreMember<[pageId: number, occurrenceIds:
   (brain, pageId, occurrenceIds, generation) =>
     storeCall({ member: 'listChunkedOccurrences' }, () => brain.listChunkedOccurrences(pageId, [...occurrenceIds], generation));
 
+/** The one vector column the store keeps; a member asked for another refuses. */
+function storeColumn(member: string, column: string): void {
+  if (column !== 'embedding') refuseMember(member, `column ${column}`);
+}
+
 export const readRetiredChunkVectors: StoreMember<[pageId: number, occurrences: readonly number[], column: string], RetiredChunkVectorRow[]> =
-  async () => [];
+  async (brain, pageId, occurrences, column) => {
+    storeColumn('readRetiredChunkVectors', column);
+    if (occurrences.length === 0) return [];
+    return storeCall({ member: 'readRetiredChunkVectors' }, () => brain.readRetiredChunkVectors(pageId, [...occurrences]));
+  };
 
 export const hasStaleSegmentChunks: StoreMember<[pageId: number, generation: number, live: readonly number[]], boolean> =
   (brain, pageId, generation, live) =>
@@ -117,3 +128,44 @@ export const setMaterializingRevision = async function setMaterializingRevision(
   if (scope?.ended) throw mapStoreError({ code: 'store_closed' }, { member: 'setMaterializingRevision' });
   scope?.settings.set(MATERIALIZING_REVISION, revision);
 };
+
+export const readSegmentedEmbedPage: StoreMember<[ref: SegmentedEmbedRef], SegmentedEmbedPageRow | null> = (brain, ref) =>
+  storeCall({ member: 'readSegmentedEmbedPage' }, () => brain.readSegmentedEmbedPage('id' in ref ? { id: ref.id } : { sourceId: ref.sourceId, slug: ref.slug }));
+
+export const hasLiveSegmentedPage: StoreMember<[sourceId: string, slug: string], boolean> = (brain, sourceId, slug) =>
+  storeCall({ member: 'hasLiveSegmentedPage', sourceId, slug }, () => brain.hasLiveSegmentedPage(sourceId, slug));
+
+export const countSegmentedEmbedRows: StoreMember<[pageId: number, column: string], { total: number; stale: number }> = async (brain, pageId, column) => {
+  storeColumn('countSegmentedEmbedRows', column);
+  return storeCall({ member: 'countSegmentedEmbedRows' }, () => brain.countSegmentedEmbedRows(pageId));
+};
+
+export const listSegmentedStaleRows: StoreMember<[pageId: number, column: string, opts: SegmentedStaleRowsOpts], SegmentedStaleRowRow[]> =
+  async (brain, pageId, column, opts) => {
+    storeColumn('listSegmentedStaleRows', column);
+    return storeCall({ member: 'listSegmentedStaleRows' }, () => brain.listSegmentedStaleRows(pageId, {
+      beforeChunkIndex: opts.beforeChunkIndex, limit: opts.limit, includeEmbedded: opts.includeEmbedded ?? false,
+      ...(opts.occurrenceIds ? { occurrenceIds: [...opts.occurrenceIds] } : {}),
+    }));
+  };
+
+export const readSegmentChunkInputHashes: StoreMember<[pageId: number, chunkIndexes: readonly number[]], Array<{ chunk_index: number; embedding_input_hash: string | null }>> =
+  (brain, pageId, chunkIndexes) =>
+    storeCall({ member: 'readSegmentChunkInputHashes' }, () => brain.readSegmentChunkInputHashes(pageId, [...chunkIndexes]));
+
+export const installSegmentedVectors: StoreMember<[pageId: number, column: ResolvedColumn, model: string | null, vectors: readonly SegmentedVectorInstall[]], number> =
+  async (brain, pageId, column, model, vectors) => {
+    storeColumn('installSegmentedVectors', column.name);
+    if (vectors.length === 0) return 0;
+    const updates = vectors.map(v => ({ chunk_index: v.chunk_index, chunk_text: v.chunk_text, vector: Array.from(v.vector), hash: v.hash, expected: v.expected }));
+    return storeCall({ member: 'installSegmentedVectors' }, () => brain.installSegmentedVectors(pageId, model ?? undefined, updates));
+  };
+
+export const listLiveEmbedSegments: StoreMember<[pageId: number], LiveEmbedSegmentRow[]> = async (brain, pageId) => {
+  const rows: Array<{ occurrence_id: number; sha256: string; entry_state: unknown }> =
+    await storeCall({ member: 'listLiveEmbedSegments' }, () => brain.listLiveEmbedSegments(pageId));
+  return rows.map(row => ({ occurrence_id: row.occurrence_id, sha256: new Uint8Array(Buffer.from(row.sha256, 'hex')), entry_state: row.entry_state }));
+};
+
+export const listSegmentChunkRows: StoreMember<[pageId: number, occurrenceId: number], SegmentChunkRowRow[]> = (brain, pageId, occurrenceId) =>
+  storeCall({ member: 'listSegmentChunkRows' }, () => brain.listSegmentChunkRows(pageId, occurrenceId));
