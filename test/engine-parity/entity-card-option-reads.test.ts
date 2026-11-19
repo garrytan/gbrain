@@ -164,4 +164,32 @@ describe('engine parity: the entity card and recall fact reads', () => {
       return out;
     },
   );
+  parityTest(
+    'listFactsByEntity in the recall entity shape drops audit rows, honors grep and include-expired, and applies the default eligibility',
+    { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'insertFact', 'insertFacts', 'listFactsByEntity'] },
+    async (engine: BrainEngine) => {
+      await seedFacts(engine);
+      // commands/recall.ts, the entity arm with no --since window.
+      const recall = (flags: { includeExpired?: boolean; grep?: string; limit?: number }) =>
+        engine.listFactsByEntity('default', ALICE, {
+          sessionId: undefined, activeOnly: !flags.includeExpired, limit: flags.limit ?? 20, grep: flags.grep ?? undefined,
+          excludeAuditRows: true, eligibility: {},
+        }).then(texts);
+      const out = {
+        plain: await recall({}),
+        expired: await recall({ includeExpired: true }),
+        grep: await recall({ grep: 'widget' }),
+        limited: await recall({ limit: 2 }),
+      };
+      expect(out).toEqual({
+        plain: ['Alice is said to be leaving', 'Alice keeps a private diary', 'Alice prefers async reviews', 'Alice moved to Widget',
+          'Alice leads the platform team'],
+        expired: ['Alice is said to be leaving', 'Alice was on call last spring', 'Alice keeps a private diary', 'Alice prefers async reviews',
+          'Alice moved to Widget', 'Alice leads the platform team'],
+        grep: ['Alice moved to Widget'],
+        limited: ['Alice is said to be leaving', 'Alice keeps a private diary'],
+      });
+      return out;
+    },
+  );
 });
