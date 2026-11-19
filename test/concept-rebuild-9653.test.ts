@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import type { ChatResult } from '../src/core/ai/gateway.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -8,6 +8,7 @@ import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { purgeDeletedPagesCoordinated, rebuildNote, selectPurgeCandidates } from '../src/core/persistence/purge-deleted.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { beginConceptRevive, heldConceptRevive } from '../src/core/persistence/concept-revive.ts';
+import { publishClassicConcept } from '../src/core/cycle/concept-publication.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
@@ -18,6 +19,9 @@ import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/privat
 import { setOwner } from '../src/core/access/owner.ts';
 import { bindCredential } from '../src/core/access/members.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
+import { runPages } from '../src/commands/pages.ts';
+import { runMaintain } from '../src/commands/maintain.ts';
+import { runCycle } from '../src/core/cycle.ts';
 import { managedBrain, settleManagedGitEffects } from './helpers/managed-brain.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 
@@ -55,12 +59,19 @@ async function age(engine: BrainEngine, slug: string, hours = 100): Promise<void
     await engine.executeRaw(`UPDATE pages SET deleted_at=deleted_at - ($2 || ' hours')::interval WHERE source_id='default' AND slug=$1`, [slug, String(hours)]);
   });
 }
+async function printedJson(run: () => Promise<unknown>): Promise<Record<string, any>> {
+  const lines: string[] = [];
+  const log = spyOn(console, 'log').mockImplementation((...parts: unknown[]) => { lines.push(parts.join(' ')); });
+  try { await run(); } finally { log.mockRestore(); }
+  return JSON.parse(lines.join('\n'));
+}
 async function purge(engine: BrainEngine, automatic: boolean): Promise<string[]> {
   return unmanagedWhile(engine, false, async () => (await purgeDeletedPagesCoordinated(engine, 72, { automatic })).slugs);
 }
-async function synthesize(engine: BrainEngine, root: string, ids: number[], opts: { text?: string; unmanaged?: boolean; during?: () => Promise<void> } = {}) {
+async function synthesize(engine: BrainEngine, root: string, ids: number[], opts: { text?: string; unmanaged?: boolean; during?: () => Promise<void>; read?: Record<string, string> } = {}) {
   const chat = async (): Promise<ChatResult> => { await opts.during?.(); return reply(opts.text ?? `${OLD} ${ids.join(', ')}.`); };
-  const result = await unmanagedWhile(engine, !!opts.unmanaged, () => runPhaseSynthesizeConcepts(engine, { sourceId: 'default', brainDir: root, _atoms: members(ids), _chat: chat }));
+  const result = await unmanagedWhile(engine, !!opts.unmanaged, () => runPhaseSynthesizeConcepts(engine, { sourceId: 'default', brainDir: root,
+    _atoms: members(ids).map(m => ({ ...m, revision: opts.read?.[m.slug] })), _chat: chat }));
   await settleManagedGitEffects(engine);
   return result.details as Record<string, unknown>;
 }
@@ -151,7 +162,41 @@ for (const backend of testBackends()) {
           expect(details.rebuilt).toEqual([CONCEPT]);
         }, { databaseUrl });
       }, 900_000);
+
+      test(`${mode}: a member rewritten after its body was read for the narrative writes nothing`, async () => {
+        await managedBrain(async ({ engine, ctx, root }) => {
+          await heldConcept(engine, ctx, root);
+          const read = Object.fromEntries((await engine.executeRaw<{ slug: string; revision: string }>(
+            "SELECT slug, knowledge_revision::text AS revision FROM pages WHERE source_id='default' AND slug LIKE 'atoms/%' AND deleted_at IS NULL")).map(r => [r.slug, r.revision]));
+          const at = await engine.readPageSnapshot(atom(2), { sourceId: 'default' });
+          await submitPageMutation(ctx, { operation: 'put_page', params: { slug: atom(2), request_id: randomUUID(), expected_revision: at!.revision,
+            content: `---\ntitle: ${atom(2)}\ntype: atom\nvisibility: world\n---\nAtom 2, rewritten.` } });
+          const details = await synthesize(engine, root, [1, 2, 3, 4, 5], { text: NEW, unmanaged, read });
+          expect(details.rebuilt ?? []).toEqual([]);
+          expect(await state(engine)).toMatchObject({ live: false, marks: 1 });
+          expect((await state(engine)).versions).toBeGreaterThan(0);
+          expect((await synthesize(engine, root, [1, 2, 3, 4, 5], { text: NEW, unmanaged })).rebuilt).toEqual([CONCEPT]);
+        }, { databaseUrl });
+      }, 600_000);
     }
+
+    test('unmanaged: an import that refuses the rebuilt page without throwing rolls the rebuild back and keeps the hold', async () => {
+      await managedBrain(async ({ engine, ctx, root }) => {
+        await heldConcept(engine, ctx, root);
+        await unmanagedWhile(engine, true, async () => {
+          const snapshot = await engine.readPageSnapshot(CONCEPT, { sourceId: 'default', includeDeleted: true });
+          const revive = await heldConceptRevive(engine, 'default', snapshot!, [1, 2, 3, 4, 5].map(atom));
+          expect(revive).not.toBeNull();
+          const publication = publishClassicConcept(engine, CONCEPT, 'default', { type: 'concept', synthesized_by: 'synthesize_concepts' }, NEW, '',
+            { writeThrough: false, revive: revive!, importPage: async () => ({ slug: CONCEPT, status: 'error', chunks: 0 }) });
+          await expect(publication).rejects.toMatchObject({ code: 'revision_conflict' });
+        });
+        const held = await state(engine);
+        expect(held).toMatchObject({ live: false, marks: 1, links_in: 1 });
+        expect(held.versions).toBeGreaterThan(0);
+        expect(await purge(engine, true)).toEqual([]);
+      }, { databaseUrl });
+    }, 300_000);
 
     test('the publication re-checks the hold and the members under the lock: each race refuses and clears nothing', async () => {
       const races: Array<(engine: BrainEngine, ctx: OperationContext) => Promise<void>> = [
@@ -258,6 +303,16 @@ for (const backend of testBackends()) {
         const note = rebuildNote([{ source_id: 'default', slug: CONCEPT }]);
         expect(note).toContain(`default/${CONCEPT}`);
         expect(note).toContain('no model key they stay hidden');
+        expect(note).not.toContain('This purge removes');
+        const explicit = await printedJson(() => runPages(engine, ['purge-deleted', '--dry-run', '--json']));
+        expect(explicit).toMatchObject({ rebuild: [{ source_id: 'default', slug: CONCEPT }] });
+        expect(explicit.rebuild_note).toEndWith('This purge removes any of them listed above instead.');
+        const automatic = await printedJson(() => runMaintain(engine, ['--purge', '--json']));
+        expect(automatic).toMatchObject({ mode: 'preview', rebuild: [{ source_id: 'default', slug: CONCEPT }], rebuild_note: note });
+        const phase = (await runCycle(engine, { brainDir: root, phases: ['purge'], sourceId: 'default' })).phases.find(p => p.phase === 'purge')!;
+        expect(phase.details).toMatchObject({ purged_pages_kept_for_rebuild: [{ source_id: 'default', slug: CONCEPT }] });
+        expect(phase.summary).toContain('1 concept(s) hidden by an input purge kept for the next concept synthesis to rebuild');
+        expect(await state(engine)).toMatchObject({ live: false, marks: 1 });
       }, { databaseUrl });
     }, 300_000);
 

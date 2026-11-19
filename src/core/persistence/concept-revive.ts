@@ -127,15 +127,18 @@ const DELETED_US = `floor(extract(epoch FROM p.deleted_at)*1000000)::bigint::tex
 
 /**
  * The revive a synthesis would publish for `snapshot`, a tombstone: null unless the concept is held (hidden only by an
- * input purge, still written by synthesis, with an inline body). Reads the members' revisions the narrative is built from.
+ * input purge, still written by synthesis, with an inline body). Records each member at `read`, the revision its body was
+ * read at for the narrative (else its current one), so the publication refuses when a member changed after that read.
  */
-export async function heldConceptRevive(engine: Sql, sourceId: string, snapshot: PageSnapshot, members: readonly string[]): Promise<ConceptRevive | null> {
+export async function heldConceptRevive(engine: Sql, sourceId: string, snapshot: PageSnapshot, members: readonly string[],
+  read: ReadonlyArray<string | undefined> = []): Promise<ConceptRevive | null> {
   const [held] = await engine.executeRaw<{ deleted_us: string }>(`SELECT ${DELETED_US} AS deleted_us FROM pages p WHERE p.id = $1 AND ${HELD_SQL}`, [snapshot.page.id]);
   if (!held) return null;
   const rows = await engine.executeRaw<{ slug: string; revision: string }>(`SELECT slug, knowledge_revision::text AS revision FROM pages
     WHERE source_id = $1 AND slug = ANY($2::text[]) AND deleted_at IS NULL`, [sourceId, [...new Set(members)]]);
   if (!rows.length || rows.length !== new Set(members).size) return null;
-  return { page_id: Number(snapshot.page.id), deleted_us: held.deleted_us, members: rows.map(({ slug, revision }) => ({ slug, revision })) };
+  const readAt = new Map(members.flatMap((slug, i) => read[i] === undefined ? [] : [[slug, read[i]!] as const]));
+  return { page_id: Number(snapshot.page.id), deleted_us: held.deleted_us, members: rows.map(({ slug, revision }) => ({ slug, revision: readAt.get(slug) ?? revision })) };
 }
 
 /** Whether `revive` still names a held tombstone at the same delete (admission's check; the publication confirms it again under the lock). */
@@ -199,5 +202,9 @@ export async function tombstoneWindow(tx: Sql, pageId: number, hours: number): P
 /** After the page write, in the same transaction: drops every version archived before the revive and closes the mark. */
 export async function finishConceptRevive(tx: Sql, revive: ConceptRevive): Promise<void> {
   await tx.executeRaw('DELETE FROM page_versions WHERE page_id = $1', [revive.page_id]);
-  await tx.executeRaw("DELETE FROM needs_rederive WHERE derived_table = 'pages' AND derived_id = $1", [String(revive.page_id)]);
+  const closed = await tx.executeRaw(`DELETE FROM needs_rederive WHERE derived_table = 'pages' AND derived_id = $1
+    AND EXISTS (SELECT 1 FROM pages WHERE id = $2 AND deleted_at IS NULL) RETURNING 1`, [String(revive.page_id), revive.page_id]);
+  if (!closed.length) {
+    throw Object.assign(new Error('The rebuilt concept was not written (the import refused it), so the rebuild published nothing and the concept stays held.'), { code: 'revision_conflict' });
+  }
 }

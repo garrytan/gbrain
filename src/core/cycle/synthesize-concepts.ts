@@ -139,7 +139,7 @@ export interface SynthesizeConceptsOpts {
   /** Test seam: alternative chat function. */
   _chat?: typeof gatewayChat;
   /** Test seam: skip DB query; cluster these atoms directly. */
-  _atoms?: Array<{ slug: string; concept_refs: string[]; body: string; title: string; visibility?: Visibility }>;
+  _atoms?: Array<{ slug: string; concept_refs: string[]; body: string; title: string; visibility?: Visibility; revision?: string }>;
 }
 
 interface AtomGroup {
@@ -148,6 +148,8 @@ interface AtomGroup {
   atomSlugs: string[];
   atomTitles: string[];
   atomBodies: string[];
+  /** #9653: each member's knowledge_revision when its body was read (a held concept's rebuild refuses if it moved). */
+  atomRevisions: Array<string | undefined>;
   /** #5525: strictest effective visibility of the member atoms. */
   visibility: Visibility;
   tier: 'T1' | 'T2' | 'T3' | 'T4';
@@ -180,13 +182,14 @@ export async function runPhaseSynthesizeConcepts(
         slug: string;
         title: string;
         compiled_truth: string;
+        revision: string;
         frontmatter: { concepts?: string[]; imported_from?: string };
         private: boolean;
       }>(
         // Codex P2: scoped to the cycle source — the provenance edges below
         // are pinned to it, so a brain-global scan grouped same-slug atoms
         // from OTHER sources into this source's concepts.
-        `SELECT slug, title, compiled_truth, frontmatter, NOT (${privatePagesFilterFragment('pages')}) AS private
+        `SELECT slug, title, compiled_truth, knowledge_revision::text AS revision, frontmatter, NOT (${privatePagesFilterFragment('pages')}) AS private
            FROM pages
           WHERE type = 'atom'
             AND source_id = $1
@@ -200,6 +203,7 @@ export async function runPhaseSynthesizeConcepts(
           slug: r.slug,
           title: r.title,
           body: r.compiled_truth,
+          revision: r.revision,
           concept_refs: r.frontmatter!.concepts!,
           visibility: r.private ? 'private' as const : 'world' as const,
         }));
@@ -220,13 +224,14 @@ export async function runPhaseSynthesizeConcepts(
 
   // 2. Group atoms by concept stem (#6161 human redirects, then #5965 spelling folds; see resolveAtomConceptStems); one atom counts once per concept.
   const { atomStems, foldedSpellings } = await resolveAtomConceptStems(engine, opts.sourceId ?? 'default', atoms);
-  const groups = new Map<string, { slugs: string[]; titles: string[]; bodies: string[]; visibilities: Visibility[] }>();
+  const groups = new Map<string, { slugs: string[]; titles: string[]; bodies: string[]; revisions: Array<string | undefined>; visibilities: Visibility[] }>();
   for (const [i, atom] of atoms.entries()) {
     for (const conceptSlug of atomStems[i]!) {
-      const existing = groups.get(conceptSlug) ?? { slugs: [], titles: [], bodies: [], visibilities: [] };
+      const existing = groups.get(conceptSlug) ?? { slugs: [], titles: [], bodies: [], revisions: [], visibilities: [] };
       existing.slugs.push(atom.slug);
       existing.titles.push(atom.title);
       existing.bodies.push(atom.body);
+      existing.revisions.push(atom.revision);
       // An atom with no recorded visibility is private (derived pages fail closed).
       existing.visibilities.push(atom.visibility ?? 'private');
       groups.set(conceptSlug, existing);
@@ -245,6 +250,7 @@ export async function runPhaseSynthesizeConcepts(
       atomSlugs: data.slugs,
       atomTitles: data.titles,
       atomBodies: data.bodies,
+      atomRevisions: data.revisions,
       visibility: strictestVisibility(data.visibilities),
       tier,
     });
@@ -373,7 +379,7 @@ export async function runPhaseSynthesizeConcepts(
     const existingSnapshot = await engine.readPageSnapshot(conceptSlug, { sourceId: opts.sourceId ?? 'default', includeDeleted: true });
     // #6161: a deleted concept is never resurrected, except (#9653) one hidden only by an input purge, which is rebuilt
     // from its current members as a first publication over the same row (concept-revive.ts).
-    const revive = existingSnapshot?.page.deleted_at ? await heldConceptRevive(engine, src, existingSnapshot, group.atomSlugs) : null;
+    const revive = existingSnapshot?.page.deleted_at ? await heldConceptRevive(engine, src, existingSnapshot, group.atomSlugs, group.atomRevisions) : null;
     if (existingSnapshot?.page.deleted_at && !revive) { skippedDeleted.push(conceptSlug); continue; }
     const existing = revive ? null : existingSnapshot?.page ?? null;
     if (existing && !String(existing.frontmatter?.synthesized_by ?? '').startsWith('synthesize_concepts')) {
