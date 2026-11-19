@@ -237,7 +237,8 @@ const PINS: Pin[] = [
     texts: () => [`${pinnedReferrersCte(excludePrivate, floored)} SELECT count(*)::int AS n FROM typed WHERE ($6::text IS NULL OR canonical_type = $6 OR type = $6)`],
   })),
   ...([[false, false, false], [true, true, true]] as const).map(([excludePrivate, floored, cursor]): Pin => ({
-    from: `src/core/mentions/referrers.ts:151 readReferrerPage rows (${cursor ? 'after a cursor' : 'first page'}; at 97bf5544dd)`,
+    // The cursor date binds as text ($7::text::timestamptz): bound as timestamptz, postgres.js cut it to milliseconds.
+    from: `src/core/mentions/referrers.ts:151 readReferrerPage rows (${cursor ? 'after a cursor, its date bound as text since a4198fc65a' : 'first page'}; at 97bf5544dd)`,
     case: {
       method: 'readReferrerRows', variant: cursor ? 'remote+floor+cursor' : 'local',
       run: e => e.readReferrerRows({ sources: ['default'], slugs: ['companies/acme-example'] }, {
@@ -248,8 +249,8 @@ const PINS: Pin[] = [
     },
     texts: () => [`${pinnedReferrersCte(excludePrivate, floored)}
      SELECT id, slug, source_id, type, canonical_type, to_char(d AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS d FROM typed
-      WHERE ($6::text IS NULL OR canonical_type = $6 OR type = $6)${cursor ? ` AND ((d IS NOT DISTINCT FROM $7::timestamptz AND (source_id, slug) > ($8::text, $9::text))
-                OR ($7::timestamptz IS NOT NULL AND (d < $7::timestamptz OR d IS NULL)))` : ''}
+      WHERE ($6::text IS NULL OR canonical_type = $6 OR type = $6)${cursor ? ` AND ((d IS NOT DISTINCT FROM $7::text::timestamptz AND (source_id, slug) > ($8::text, $9::text))
+                OR ($7::text::timestamptz IS NOT NULL AND (d < $7::text::timestamptz OR d IS NULL)))` : ''}
       ORDER BY d DESC NULLS LAST, source_id, slug LIMIT $${cursor ? 10 : 7}`],
   })),
   ...([[false, false], [true, true]] as const).map(([excludePrivate, floored]): Pin => ({
