@@ -530,6 +530,10 @@ export const RUST_ENGINE_MEMBERS = {
   listOwnedContentRows: 'persistence_journal',
   countDefaultSourceFiles: 'sources',
 
+  // doctor facts, fence and trust reads (engine-sql/doctor-facts-trust.ts)
+  countConversationPipelinePages: 'pages',
+  listPersistentWriterContention: 'ingest_log',
+
   // facts: relink attempts (engine-sql/fact-relink-attempts.ts)
   upsertFactRelinkAttempt: 'facts',
   listFactRelinkOutcomes: 'facts',

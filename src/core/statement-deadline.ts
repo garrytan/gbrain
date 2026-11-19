@@ -38,6 +38,7 @@ import { DOCTOR_CHECKPOINT_MEMBERS } from './engine-sql/doctor-checkpoints.ts';
 import { DOCTOR_TERMINAL_MEMBERS } from './engine-sql/doctor-terminal.ts';
 import { DOCTOR_BRAIN_MEMBERS } from './engine-sql/doctor-brain.ts';
 import { DOCTOR_SYNC_MEMBERS } from './engine-sql/doctor-sync.ts';
+import { DOCTOR_FACTS_TRUST_MEMBERS } from './engine-sql/doctor-facts-trust.ts';
 import { DOCTOR_SRC_MEMBERS } from './engine-sql/doctor-sources.ts';
 
 export interface StatementDeadline {
@@ -103,7 +104,7 @@ const JOURNAL_TYPED_READS: ReadonlySet<string> = new Set(['readJournalLimitRows'
 /** Those reads, the writer-binding read (engine-sql/write-misc.ts `getWorktreeBinding`) and the doctor reads (engine-sql/doctor-*.ts), which also replaced bounded statements. */
 const BOUNDED_TYPED_READS: ReadonlySet<string> = new Set([
   ...JOURNAL_TYPED_READS, 'getWorktreeBinding', ...DOCTOR_READ_MEMBERS, ...DOCTOR_DERIVED_MEMBERS, ...DOCTOR_PERSISTENCE_MEMBERS, ...DOCTOR_PAGES_MEMBERS, ...DOCTOR_SEARCH_MEMBERS, ...DOCTOR_ACC_MEMBERS,
-  ...DOCTOR_CHECKPOINT_MEMBERS, ...DOCTOR_TERMINAL_MEMBERS, ...DOCTOR_BRAIN_MEMBERS, ...DOCTOR_SYNC_MEMBERS, ...DOCTOR_SRC_MEMBERS,
+  ...DOCTOR_CHECKPOINT_MEMBERS, ...DOCTOR_TERMINAL_MEMBERS, ...DOCTOR_BRAIN_MEMBERS, ...DOCTOR_SYNC_MEMBERS, ...DOCTOR_SRC_MEMBERS, ...DOCTOR_FACTS_TRUST_MEMBERS,
 ]);
 
 type RawCall = (sql: string, params?: unknown[], opts?: Record<string, unknown> & { signal?: AbortSignal; timeoutMs?: number }) => Promise<unknown[]>;
