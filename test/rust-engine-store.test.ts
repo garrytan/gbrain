@@ -25,7 +25,7 @@ import { OperationError } from '../src/core/ops/contract.ts';
 import { ENGINE_CAPABILITIES } from '../src/core/engine-capabilities.ts';
 import { withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
-import { getMember, listMembers, memberByEmail } from '../src/core/access/members.ts';
+import { boundCredentials, getMember, legacyTokenByName, listMembers, memberByEmail } from '../src/core/access/members.ts';
 
 const TARGET = detectAddonTarget();
 const BUILT = join(import.meta.dir, '..', 'rust', 'target', 'addon', `gbrain_engine.${TARGET ?? 'unsupported'}.node`);
@@ -427,6 +427,19 @@ describe('access member reads on a Rust brain', () => {
     expect(await listMembers(engine as never)).toEqual([]);
     expect(await listMembers(engine as never, { includeRemoved: true })).toEqual([]);
     expect(await code(() => memberByEmail(engine as never, 'alice@example.com'))).toBe('not_found');
+    expect(raw).toEqual([]);
+  });
+
+  withAddon('legacyTokenByName and boundCredentials read no raw SQL and find no credential: the store keeps no tokens or clients', async () => {
+    const { engine } = await open();
+    const raw: string[] = [];
+    const executeRaw = engine.executeRaw.bind(engine);
+    (engine as unknown as { executeRaw: typeof executeRaw }).executeRaw = (async (sql: string, params?: unknown[]) => {
+      raw.push(sql);
+      return executeRaw(sql as never, params as never);
+    }) as typeof executeRaw;
+    expect(await code(() => legacyTokenByName(engine as never, 'laptop'))).toBe('invalid_params');
+    expect(await boundCredentials(engine as never, 'alice-example')).toEqual([]);
     expect(raw).toEqual([]);
   });
 });

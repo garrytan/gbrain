@@ -133,3 +133,33 @@ export async function readAccessMembers(exec: MemberLookupRead, by: AccessMember
   if ('email' in by) return exec.executeRaw<AccessMemberRow>(ACCESS_MEMBER_SQL.by_email, [by.email]);
   return exec.executeRaw<AccessMemberRow>(by.includeRemoved ? ACCESS_MEMBER_SQL.all : ACCESS_MEMBER_SQL.live);
 }
+
+/** One live credential: an active (not revoked) legacy token or an OAuth client that is not deleted. */
+export interface AccessCredentialRow {
+  kind: 'token' | 'client';
+  id: string;
+  name: string;
+}
+
+/** Which credentials to read: the active legacy tokens named `tokenName`, or the credentials bound to member `memberId`. */
+export type AccessCredentialLookup = { tokenName: string } | { memberId: string };
+
+/** The statements access/members.ts legacyTokenByName and boundCredentials (tokens, then clients) ran through executeRaw. */
+export const ACCESS_CREDENTIAL_SQL = {
+  token_by_name: 'SELECT id::text AS id, name FROM access_tokens WHERE name = $1 AND revoked_at IS NULL ORDER BY created_at',
+  tokens_by_member: 'SELECT id::text AS id, name FROM access_tokens WHERE member_id = $1 AND revoked_at IS NULL ORDER BY name',
+  clients_by_member: "SELECT client_id AS id, client_name AS name FROM oauth_clients WHERE member_id = $1 AND (to_jsonb(oauth_clients)->>'deleted_at') IS NULL ORDER BY client_id",
+} as const;
+
+/**
+ * The live credentials `by` names: the active legacy tokens whose name is exactly `tokenName` (oldest first), or the
+ * active tokens (by name) and then the clients that are not deleted (by client id) whose stored binding is exactly
+ * `memberId`. Revoked tokens and deleted clients are filtered out in the statement. A failure is thrown unchanged.
+ */
+export async function readAccessCredentials(exec: MemberLookupRead, by: AccessCredentialLookup): Promise<AccessCredentialRow[]> {
+  type Row = { id: string; name: string };
+  if ('tokenName' in by) return (await exec.executeRaw<Row>(ACCESS_CREDENTIAL_SQL.token_by_name, [by.tokenName])).map(r => ({ kind: 'token', id: r.id, name: r.name }));
+  const tokens = await exec.executeRaw<Row>(ACCESS_CREDENTIAL_SQL.tokens_by_member, [by.memberId]);
+  const clients = await exec.executeRaw<Row>(ACCESS_CREDENTIAL_SQL.clients_by_member, [by.memberId]);
+  return [...tokens.map(t => ({ kind: 'token' as const, id: t.id, name: t.name })), ...clients.map(c => ({ kind: 'client' as const, id: c.id, name: c.name }))];
+}

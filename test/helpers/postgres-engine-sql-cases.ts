@@ -549,6 +549,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readMayActFor': OOS.callerRawSql,
   'readAudiencePrincipals': OOS.callerRawSql,
   'readAccessMembers': OOS.callerRawSql,
+  'readAccessCredentials': OOS.callerRawSql,
   // the page-write reads and upkeep that belong to no other domain
   'readSourceState': OOS.writeMisc,
   'readAdmissionSource': OOS.writeMisc,
@@ -1307,6 +1308,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ]),
   ...variants('readAudiencePrincipals', [['members-and-groups', (e) => e.readAudiencePrincipals(['alice-example'], ['team-a'])]]),
   ...variants('readAccessMembers', [['by-id', (e) => e.readAccessMembers({ id: 'alice-example' })], ['by-email', (e) => e.readAccessMembers({ email: 'alice@example.com' })], ['live', (e) => e.readAccessMembers({ includeRemoved: false })], ['all', (e) => e.readAccessMembers({ includeRemoved: true })]]),
+  ...variants('readAccessCredentials', [['token-name', (e) => e.readAccessCredentials({ tokenName: 'laptop' })], ['member', (e) => e.readAccessCredentials({ memberId: 'alice-example' })]]),
   ...variants('readJournalLimitRows', [['default', (e) => e.readJournalLimitRows()]]),
   ...variants('readHeldPageRows', [['default', (e) => e.readHeldPageRows(['1', '2'])]]),
   ...variants('readHeldCoverageRows', [

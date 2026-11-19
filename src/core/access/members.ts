@@ -193,9 +193,8 @@ async function ensureGroups(engine: BrainEngine, groups: readonly string[]): Pro
 
 /** The one active legacy token named `name`; refuses none or several. */
 export async function legacyTokenByName(engine: BrainEngine, name: string): Promise<CredentialRef> {
-  const rows = await engine.executeRaw<{ id: string; name: string }>(
-    'SELECT id::text AS id, name FROM access_tokens WHERE name = $1 AND revoked_at IS NULL ORDER BY created_at', [name]);
-  if (rows.length === 1) return { kind: 'token', id: rows[0]!.id, name: rows[0]!.name };
+  const rows = await engine.readAccessCredentials({ tokenName: name });
+  if (rows.length === 1) return rows[0]!;
   throw opError('invalid_params', rows.length === 0 ? `No active token named "${name}".` : `${rows.length} active tokens are named "${name}".`,
     rows.length === 0 ? 'List tokens with gbrain auth list, then bind one by name.' : 'Bind one of them by id: gbrain auth rescope --id <uuid> --member <id> (ids from gbrain auth list).',
     { why: 'A binding names exactly one credential.' });
@@ -299,11 +298,7 @@ export async function audienceMemberIds(engine: Pick<BrainEngine, 'executeRaw'>)
 
 /** Credentials whose stored binding names `id` (active tokens, clients not deleted). */
 export async function boundCredentials(engine: BrainEngine, id: string): Promise<CredentialRef[]> {
-  const tokens = await engine.executeRaw<{ id: string; name: string }>(
-    'SELECT id::text AS id, name FROM access_tokens WHERE member_id = $1 AND revoked_at IS NULL ORDER BY name', [id]);
-  const clients = await engine.executeRaw<{ id: string; name: string }>(
-    "SELECT client_id AS id, client_name AS name FROM oauth_clients WHERE member_id = $1 AND (to_jsonb(oauth_clients)->>'deleted_at') IS NULL ORDER BY client_id", [id]);
-  return [...tokens.map(t => ({ kind: 'token' as const, ...t })), ...clients.map(c => ({ kind: 'client' as const, ...c }))];
+  return engine.readAccessCredentials({ memberId: id });
 }
 
 /** Pages whose readers name `principal` (member:<id> or group:<g>), bounded. */

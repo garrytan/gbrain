@@ -4,7 +4,7 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: readSourceState, readAdmissionSource, sharedSkillPackTablePresent,
  *    listSharedSkillPackRoots, getWorktreeBinding, isSourceClaimed, hasExtractedEvents, listActiveAccessMembers, isFolderRestricted,
- *    listAppliedPolicyRevisions, readMayActFor, readAudiencePrincipals, readAccessMembers, expireMemoryProposals,
+ *    listAppliedPolicyRevisions, readMayActFor, readAudiencePrincipals, readAccessMembers, readAccessCredentials, expireMemoryProposals,
  *    listAwaitingMemoryProposals and purgeMemoryProposals return the same observable result on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: a source-state read that differs changes whether page admission, the mirror read-only guard and
@@ -310,6 +310,63 @@ describe('engine parity: write misc', () => {
     };
     expect(byEmail).toEqual({ declared: [['alice-example', ['team-a', 'team-b']]], otherCase: [], undeclared: [] });
     return { live, all, byId, byEmail };
+  });
+
+  parityTest('readAccessCredentials finds no token by name and no credential bound to a member on a brain with none', { methods: ['readAccessCredentials'] }, async (engine) => {
+    const answers = {
+      byName: await engine.readAccessCredentials({ tokenName: 'laptop' }),
+      byMember: await engine.readAccessCredentials({ memberId: 'alice-example' }),
+    };
+    expect(answers).toEqual({ byName: [], byMember: [] });
+    return answers;
+  });
+
+  // Leak case: a revoked token and a deleted client never answer; a token name matches only tokens with exactly that
+  // name (never a client's name, another case or an injected predicate); a member binding answers only that member's
+  // credentials. The Rust store keeps no tokens or clients (empty above), so the token write stops on the raw_sql refusal.
+  parityTest('readAccessCredentials answers only live credentials with the exact token name or member binding', { methods: ['readAccessCredentials'] }, async (engine, backend) => {
+    const write = await engine.executeRaw(
+      `INSERT INTO access_tokens (id, name, token_hash, member_id, created_at, revoked_at) VALUES
+         ('00000000-0000-4000-8000-0000000000b1', 'laptop', 'h1', 'alice-example', '2026-01-01T00:00:00Z', NULL),
+         ('00000000-0000-4000-8000-0000000000b2', 'laptop', 'h2', 'alice-example', '2026-01-02T00:00:00Z', now()),
+         ('00000000-0000-4000-8000-0000000000b3', 'alpha', 'h3', 'alice-example', '2026-01-03T00:00:00Z', NULL),
+         ('00000000-0000-4000-8000-0000000000b4', 'shared', 'h4', 'bob-example', '2026-01-05T00:00:00Z', NULL),
+         ('00000000-0000-4000-8000-0000000000b5', 'shared', 'h5', NULL, '2026-01-04T00:00:00Z', NULL)`).then(() => null, (e: unknown) => e);
+    if (backend === 'rust') {
+      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
+      expect(await engine.readAccessCredentials({ memberId: 'alice-example' })).toEqual([]);
+      throw write;
+    }
+    expect(write).toBeNull();
+    await engine.executeRaw(
+      `INSERT INTO oauth_clients (client_id, client_name, member_id, deleted_at) VALUES
+         ('client-alice', 'alice-app', 'alice-example', NULL), ('client-gone', 'gone-app', 'alice-example', now()), ('client-bob', 'bob-app', 'bob-example', NULL)`);
+    const ids = (rows: Awaited<ReturnType<BrainEngine['readAccessCredentials']>>) => rows.map(r => [r.kind, r.id, r.name]);
+    const byName = {
+      laptop: ids(await engine.readAccessCredentials({ tokenName: 'laptop' })),
+      shared: ids(await engine.readAccessCredentials({ tokenName: 'shared' })),
+      otherCase: await engine.readAccessCredentials({ tokenName: 'Laptop' }),
+      clientName: await engine.readAccessCredentials({ tokenName: 'alice-app' }),
+      injected: await engine.readAccessCredentials({ tokenName: "x' OR '1'='1" }),
+    };
+    expect(byName).toEqual({
+      laptop: [['token', '00000000-0000-4000-8000-0000000000b1', 'laptop']],
+      shared: [['token', '00000000-0000-4000-8000-0000000000b5', 'shared'], ['token', '00000000-0000-4000-8000-0000000000b4', 'shared']],
+      otherCase: [], clientName: [], injected: [],
+    });
+    const byMember = {
+      alice: ids(await engine.readAccessCredentials({ memberId: 'alice-example' })),
+      bob: ids(await engine.readAccessCredentials({ memberId: 'bob-example' })),
+      otherCase: await engine.readAccessCredentials({ memberId: 'Alice-Example' }),
+      injected: await engine.readAccessCredentials({ memberId: "x' OR '1'='1" }),
+      unknown: await engine.readAccessCredentials({ memberId: 'nobody-example' }),
+    };
+    expect(byMember).toEqual({
+      alice: [['token', '00000000-0000-4000-8000-0000000000b3', 'alpha'], ['token', '00000000-0000-4000-8000-0000000000b1', 'laptop'], ['client', 'client-alice', 'alice-app']],
+      bob: [['token', '00000000-0000-4000-8000-0000000000b4', 'shared'], ['client', 'client-bob', 'bob-app']],
+      otherCase: [], injected: [], unknown: [],
+    });
+    return { byName, byMember };
   });
 
   parityTest('getWorktreeBinding is null for a source with no writer binding, on any host', { methods: ['getWorktreeBinding'] }, async (engine, backend) => {
