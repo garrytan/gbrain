@@ -17,7 +17,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { spawn } from 'node:child_process';
 import net from 'node:net';
-import { mkdtempSync, rmSync, symlinkSync } from 'node:fs';
+import { chmodSync, mkdtempSync, rmSync, statSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -698,4 +698,35 @@ describe('gbrain CLI in a second process on a Rust brain', () => {
       expect((await engine.getPage('notes/second'))?.title).toBe('Second process');
     }, 120_000);
   });
+});
+
+describe('owner socket file modes', () => {
+  // The bind-to-chmod window on the socket file is closed by its parent: the owner sets the brain
+  // directory to 0700 before it binds (prepareLocalIpcPath in src/core/context/ipc-path.ts), so no
+  // other OS user can reach the socket while it still has the umask mode, and it is 0600 after listen.
+  test.skipIf(process.platform === 'win32')(
+    'the owner sets the brain directory to 0700 before it binds, and the socket to 0600 after listen',
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), 'gbrain-owner-mode-'));
+      const databasePath = join(root, 'brain.rust');
+      mkdirSync(databasePath);
+      chmodSync(databasePath, 0o755);
+      const engine = new PGLiteEngine();
+      await engine.connect({});
+      await engine.initSchema();
+      const role = await electOwner(engine, databasePath, {});
+      try {
+        expect(role.role).toBe('owner');
+        if (role.role !== 'owner') return;
+        expect(role.server.socketPath).toBe(ownerSocketPath(databasePath));
+        expect(statSync(databasePath).mode & 0o777).toBe(0o700);
+        expect(statSync(role.server.socketPath).mode & 0o777).toBe(0o600);
+      } finally {
+        if (role.role === 'owner') { await role.server.close(); await role.lock.release(); }
+        await engine.disconnect();
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+    60_000,
+  );
 });
