@@ -396,6 +396,53 @@ describe('engine parity: chunks', () => {
   );
 
   parityTest(
+    'turning a page from a contextual retrieval tier back to none drops its vectors and signature',
+    { methods: ['putPage', 'sealChunks', 'setPageEmbeddingSignature', 'updatePageContextualRetrievalState', 'getChunks', 'countStaleChunks', 'searchVector'] },
+    async (engine) => {
+      const NEW = 'model-new:1536';
+      const embedded = (text: string, axisIdx: number) => [chunk(0, text, { embedding: basisEmbedding(axisIdx) })];
+      // titled: title -> none, the tier's vectors go. plain: none with no tier before, nothing goes.
+      // skipped: an embed_skip page keeps its rows. resynopsis: per_chunk_synopsis -> none, like titled.
+      await seedPage(engine, { slug: 'notes/cr-titled', input: PAGE('Titled', 'x'), chunks: embedded('titled', 1) });
+      await seedPage(engine, { slug: 'notes/cr-plain', input: PAGE('Plain', 'x'), chunks: embedded('plain', 2) });
+      await seedPage(engine, { slug: 'notes/cr-skipped', input: { ...PAGE('Skipped', 'x'), frontmatter: { embed_skip: true } }, chunks: embedded('skipped', 3) });
+      await seedPage(engine, { slug: 'notes/cr-synopsis', input: PAGE('Synopsis', 'x'), chunks: embedded('synopsis', 4) });
+      for (const slug of ['notes/cr-titled', 'notes/cr-plain', 'notes/cr-skipped', 'notes/cr-synopsis']) {
+        await engine.setPageEmbeddingSignature(slug, { signature: NEW });
+      }
+      const query = basisEmbedding(1);
+      const hits = async () => sorted((await engine.searchVector(query, { limit: 10 })).map((r) => r.slug));
+      // The first search warms whatever the engine keeps between reads.
+      const searchBefore = await hits();
+      await engine.updatePageContextualRetrievalState('notes/cr-titled', 'default', 'title', 'gen-1');
+      await engine.updatePageContextualRetrievalState('notes/cr-skipped', 'default', 'title', 'gen-1');
+      await engine.updatePageContextualRetrievalState('notes/cr-synopsis', 'default', 'per_chunk_synopsis', 'gen-1');
+      const staleWhileTiered = await engine.countStaleChunks({ signature: NEW });
+      for (const slug of ['notes/cr-titled', 'notes/cr-plain', 'notes/cr-skipped', 'notes/cr-synopsis']) {
+        await engine.updatePageContextualRetrievalState(slug, 'default', 'none', null);
+      }
+      const vectorless = async (slug: string) => view(await engine.getChunks(slug)).map((c) => c.embedding_is_null);
+      const after = {
+        titled: await vectorless('notes/cr-titled'),
+        plain: await vectorless('notes/cr-plain'),
+        skipped: await vectorless('notes/cr-skipped'),
+        synopsis: await vectorless('notes/cr-synopsis'),
+        // a NULL signature is grandfathered unless asked for, so the reset pages count only with includeNullSignature
+        stale: await engine.countStaleChunks({ signature: NEW }),
+        staleWithNull: await engine.countStaleChunks({ signature: NEW, includeNullSignature: true }),
+        search: await hits(),
+      };
+      expect(staleWhileTiered).toBe(0);
+      expect(after.titled).toEqual([true]);
+      expect(after.synopsis).toEqual([true]);
+      expect(after.plain).toEqual([false]);
+      expect(after.stale).toBe(2);
+      expect(after.search).not.toContain('notes/cr-titled');
+      return { searchBefore, staleWhileTiered, after };
+    },
+  );
+
+  parityTest(
     'invalidateContentDriftEmbeddings leaves vectors whose text still matches their embed-time hash',
     { methods: ['invalidateContentDriftEmbeddings', 'countStaleChunks', 'upsertChunks'] },
     async (engine) => {

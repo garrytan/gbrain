@@ -332,6 +332,27 @@ pub(crate) fn remove_chunk_vector(
     bump_generation(tx)
 }
 
+/// Resets what a contextual retrieval tier embedded on a page (`updatePageContextualRetrievalState` to `none`): its
+/// embedding signature goes, and every chunk with a vector, staged or not, loses it, its embed time and its text and
+/// input hashes and is stamped pending at `now_us`. Each dropped vector raises the vector generation.
+pub(crate) fn reset_page_vectors(tx: &mut dyn KvWrite, page_id: u64, now_us: i64) -> Result<()> {
+    tx.delete(&signature_key(page_id))?;
+    for mut chunk in read_chunks(&*tx, page_id)? {
+        if !chunk.embed.has_vector() {
+            continue;
+        }
+        let embed = EmbedState {
+            dims: 0,
+            embedded_at_us: None,
+            text_hash: None,
+            input_hash: None,
+            pending_since_us: Some(now_us),
+        };
+        drop_vector(tx, &mut chunk, embed)?;
+    }
+    Ok(())
+}
+
 /// Deletes this family's records of a page that is deleted for good (`cascade::remove_page_rows`).
 pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()> {
     tx.delete(&signature_key(page.id))?;

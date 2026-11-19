@@ -394,6 +394,9 @@ fn move_page_aliases(tx: &mut dyn KvWrite, source: &str, old: &str, new: &str) -
     Ok(())
 }
 
+/// The frontmatter key that marks a page whose chunks get no vectors.
+const EMBED_SKIP_KEY: &str = "embed_skip";
+
 fn read_cr(read: &dyn KvRead, page_id: u64) -> Result<Option<CrState>> {
     get_json(read, &cr_key(page_id))
 }
@@ -673,9 +676,12 @@ impl Store {
 
     /// `updatePageContextualRetrievalState(slug, sourceId, mode, corpusGeneration)`: stamps the
     /// live page at `(sourceId, slug)` and sets its `updated_at`; anything else is left alone. The
-    /// knowledge revision does not move (neither column is in the revision trigger's list). The
-    /// `none` tier's reset of `embedding_signature` and chunk vectors is a no-op here: this store
-    /// keeps neither.
+    /// knowledge revision does not move (neither column is in the revision trigger's list). Moving a
+    /// page from the `title` or `per_chunk_synopsis` tier to `none` resets what the tier embedded, as
+    /// the SQL engines do: the page's `embedding_signature` goes, and every chunk with a vector loses
+    /// it, its embed time and its text and input hashes and is stamped pending now
+    /// (`embeddings::reset_page_vectors`, which raises the vector generation). An `embed_skip` page
+    /// keeps both, as does a page that had no tier.
     pub fn update_page_contextual_retrieval_state(
         &self,
         slug: &str,
@@ -693,12 +699,20 @@ impl Store {
             else {
                 return Ok(());
             };
+            let now = self.env.now_micros();
+            let old_mode = read_cr(&*tx, page.id)?.map(|cr| cr.mode);
+            if mode == "none"
+                && matches!(old_mode.as_deref(), Some("title" | "per_chunk_synopsis"))
+                && !page.frontmatter.contains_key(EMBED_SKIP_KEY)
+            {
+                crate::embeddings::reset_page_vectors(tx, page.id, now)?;
+            }
             let state = CrState {
                 mode: mode.to_string(),
                 corpus_generation: corpus_generation.map(str::to_string),
             };
             put_json(tx, &cr_key(page.id), &state)?;
-            page.updated_at_us = self.env.now_micros();
+            page.updated_at_us = now;
             write_page(tx, &page)
         })
     }
