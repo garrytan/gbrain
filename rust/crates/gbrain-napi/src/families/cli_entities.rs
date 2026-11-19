@@ -21,6 +21,20 @@ impl Brain {
         self.run(env, move |s| s.read_mention_last_pass(source_id.as_deref()))
     }
 
+    /// `readMentionIndexStatus({ sourceIds })`: the status rows of those sources, always empty on the store.
+    #[napi]
+    pub fn read_mention_index_status<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let q: gbrain_store::cli_reads::entities::MentionIndexStatusQuery =
+                required(query, "readMentionIndexStatus query")?;
+            s.read_mention_index_status(&q)
+        })
+    }
+
     /// `countPagesDueForMentions({ sourceId? })`: the live pages in scope.
     #[napi]
     pub fn count_pages_due_for_mentions<'env>(

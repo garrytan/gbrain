@@ -69,7 +69,7 @@ import type { PageEmbeddingBudgetRow, PageEmbeddingReservation, PageEmbeddingRes
 import type { EmbeddingCompletionOpts, EmbeddingCompletionRow } from './engine-sql/embedding-install.ts';
 import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from './engine-sql/page-visibility.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
-import type { EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, FuzzyEntityCandidateRow, IgnoredLabelPageRow, MentionDueQuery, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow } from './engine-sql/entity-reads.ts';
+import type { EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, FuzzyEntityCandidateRow, IgnoredLabelPageRow, MentionDueQuery, MentionIndexStatusRow, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow } from './engine-sql/entity-reads.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, PlainSyncSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
 import type {
   AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
@@ -3934,6 +3934,8 @@ export interface BrainEngine {
   // Entity and mention reads (engine-sql/entity-reads.ts): the statements the CLI ran through executeRaw.
   /** The newest mention pass time (ISO, UTC, whole seconds) over every source or one source; null when no pass ran. */
   readMentionLastPass(sourceId?: string | null): Promise<string | null>;
+  /** The mention-index status rows of `sourceIds` (mentions/coverage.ts), in no defined order; a source with no row has none. */
+  readMentionIndexStatus(sourceIds: readonly string[]): Promise<MentionIndexStatusRow[]>;
   /**
    * Live pages due for the mention pass (no mention state, or state behind the page's content or `mentionVersion`), in
    * one source or every source; `aliases` also counts pages of those types whose derived aliases are behind.

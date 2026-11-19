@@ -38,10 +38,9 @@ const toIso = (v: unknown): string | null => {
 };
 
 /** Coverage over `sourceIds` (the caller's permitted sources). */
-export async function readMentionCoverage(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig' | 'countPagesDueForMentions'>, sourceIds: string[]): Promise<MentionCoverage> {
+export async function readMentionCoverage(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig' | 'countPagesDueForMentions' | 'readMentionIndexStatus'>, sourceIds: string[]): Promise<MentionCoverage> {
   const policy = await readMentionPolicy(engine);
-  const rows = await engine.executeRaw<{ source_id: string; state: string; pending: number; counted_at: unknown; last_pass_at: unknown; policy_fingerprint: string | null }>(
-    `SELECT source_id, state, pending, counted_at, last_pass_at, policy_fingerprint FROM mention_index_status WHERE source_id = ANY($1::text[])`, [sourceIds]);
+  const rows = await engine.readMentionIndexStatus(sourceIds);
   const bySource = new Map(rows.map(r => [r.source_id, r]));
   let pending = 0;
   let failed = false;

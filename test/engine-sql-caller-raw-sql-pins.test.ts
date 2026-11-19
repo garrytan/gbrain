@@ -36,6 +36,11 @@ interface Pin {
 
 const PINS: Pin[] = [
   {
+    from: 'src/core/mentions/coverage.ts:43 readMentionCoverage',
+    case: { method: 'readMentionIndexStatus', variant: 'default', run: e => e.readMentionIndexStatus(['default', 'other']) },
+    texts: [`SELECT source_id, state, pending, counted_at, last_pass_at, policy_fingerprint FROM mention_index_status WHERE source_id = ANY($1::text[])`],
+  },
+  {
     from: 'src/core/reason-trailers.ts:151 scanSyncReasons',
     case: { method: 'readReasonPurgeTombstones', variant: 'default', run: e => e.readReasonPurgeTombstones('default') },
     texts: ['SELECT commit_sha, path FROM reason_purge_tombstones WHERE source_id = $1'],

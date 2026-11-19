@@ -39,6 +39,22 @@ export interface MentionDueQuery {
   aliases?: { types: readonly string[]; version: number };
 }
 
+/** One source's mention-index status row (mentions/coverage.ts); the times are what the driver returns. */
+export interface MentionIndexStatusRow {
+  source_id: string;
+  state: string;
+  pending: number;
+  counted_at: Date | string | null;
+  last_pass_at: Date | string | null;
+  policy_fingerprint: string | null;
+}
+
+/** The mention-index status rows of `sourceIds`, in no defined order; a source with no row has none. */
+export async function readMentionIndexStatus(exec: LegacyUnscopedRead, sourceIds: readonly string[]): Promise<MentionIndexStatusRow[]> {
+  return exec.executeRaw<MentionIndexStatusRow>(
+    `SELECT source_id, state, pending, counted_at, last_pass_at, policy_fingerprint FROM mention_index_status WHERE source_id = ANY($1::text[])`, [sourceIds]);
+}
+
 /** Live pages due for the mention pass: no mention state, or state behind the page's content or the extractor version. */
 export async function countPagesDueForMentions(exec: LegacyUnscopedRead, q: MentionDueQuery): Promise<number> {
   const source = q.sourceId ?? null;

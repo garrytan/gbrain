@@ -66,7 +66,7 @@ const codes = (notices: Notice[]) => notices.map(n => n.code).sort();
 describe('engine parity: mention-index coverage', () => {
   parityTest(
     'readMentionCoverage before any pass counts every live page of each listed source as pending, and is disabled when mention linking is off',
-    { methods: ['putPage', 'softDeletePage', 'setPageAliases', 'setConfig'] },
+    { methods: ['putPage', 'softDeletePage', 'setPageAliases', 'setConfig', 'readMentionIndexStatus'] },
     async (engine: BrainEngine, backend) => {
       await seed(engine, backend);
       const on = {
