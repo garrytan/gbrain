@@ -346,6 +346,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'rlsScopeBindingEnabled': OOS.helper,
   'withScopedReadTransaction': OOS.helper,
   'preparationRead': OOS.helper,
+  'ownRawRead': OOS.helper,
+  'lockingPreparationRead': OOS.helper,
   'jitOffRead': OOS.helper,
   'readTransaction': OOS.helper,
   'connect': OOS.lifecycle,
