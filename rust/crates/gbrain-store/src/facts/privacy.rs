@@ -55,6 +55,10 @@ pub struct PrivacyPolicy {
     /// sources that is not a pinned question passes the privacy part.
     #[serde(default)]
     pub private_readable_sources: Vec<String>,
+    /// `remoteProvenanceFloorSql('facts')`, the remote floor: only the provenance page is judged
+    /// (`privateProvenanceFilterFragment`), with no entity or holding-page gate.
+    #[serde(default)]
+    pub provenance_only: bool,
 }
 
 /// `PRIVACY_ALIASES`: the keys a page may carry instead of `visibility`, with their private values.
@@ -87,6 +91,9 @@ pub(crate) fn hidden_by_private_provenance(
             && privacy_allows(read, &page, policy.honor_aliases)?)
     {
         return Ok(true);
+    }
+    if policy.provenance_only {
+        return Ok(false);
     }
     let held = match (&row.entity_slug, &row.source_markdown_slug) {
         (Some(_), Some(slug)) if holding_slug(slug) => Some(slug),
