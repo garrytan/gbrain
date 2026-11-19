@@ -7,11 +7,11 @@
  */
 import { expect, test } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
-import { addMember } from '../../src/core/access/members.ts';
+import { addMember, bindCredential } from '../../src/core/access/members.ts';
 import { credentialScopeFor, requesterScopeGate } from '../../src/core/access/requester-scope.ts';
 import { readServesPolicy } from '../../src/core/search/private-visibility.ts';
 import { mintLegacyToken } from '../../src/core/token-mint.ts';
-import { v327 } from '../../src/core/schema-migrations/v327-serves-since-subsecond.ts';
+import { v329 } from '../../src/core/schema-migrations/v329-serves-since-subsecond.ts';
 
 export type Open = () => Promise<{ engine: BrainEngine; close: () => Promise<void> }>;
 
@@ -23,11 +23,11 @@ async function mintUnbound(engine: BrainEngine, name: string): Promise<string> {
   return (await mintLegacyToken(engine, { name, scopes: ['read'], takesHolders: ['world'] })).id;
 }
 
-async function gate(engine: BrainEngine, id: string, name: string): Promise<string> {
+async function gate(engine: BrainEngine, id: string, name: string, member?: string): Promise<string> {
   const serves = await readServesPolicy(engine);
   const auth = await credentialScopeFor(engine, { clientName: name, scopes: ['read'], principal: { kind: 'legacy_token', id } } as never);
   try {
-    return requesterScopeGate({ name: 'get_page', mutating: false } as never, { remotePolicy: { privacyRelaxed: false, restricted: false, serves } }, auth, 'http')?.state ?? 'none';
+    return requesterScopeGate({ name: 'get_page', mutating: false } as never, { remotePolicy: { privacyRelaxed: false, restricted: false, serves }, ...(member ? { identity: ['member:' + member] } : {}) }, auth, 'http')?.state ?? 'none';
   } catch (e) {
     const err = e as { code?: string };
     return (err.code ?? 'error') + (JSON.stringify(e).includes('created_after') ? ':created_after' : '');
@@ -46,6 +46,32 @@ async function sinceSecond(engine: BrainEngine): Promise<number> {
 }
 
 export function sameSecondTests(open: Open): void {
+  test('against the whole-second answer for the same instant, the only caller whose answer changes is an unbound token minted before the switch in that second, and it moves from refused to its grace', async () => {
+    const { engine, close } = await open();
+    try {
+      await addMember(engine, 'alice-example');
+      const owner = await mintUnbound(engine, 'tok-owner');
+      await bindCredential(engine, { kind: 'token', id: owner }, { member: 'alice-example' });
+      const optedOut = await mintUnbound(engine, 'tok-reads-unscoped');
+      await engine.executeRaw('UPDATE access_tokens SET reads_unscoped = now() WHERE id::text = $1', [optedOut]);
+      const member = await mintUnbound(engine, 'tok-member');
+      await startOfSecond();
+      const before = await mintUnbound(engine, 'tok-before');
+      await addMember(engine, 'bob-example');
+      const after = await mintUnbound(engine, 'tok-after');
+      await bindCredential(engine, { kind: 'token', id: member }, { member: 'bob-example' });
+      expect(await createdSecond(engine, before)).toBe(await sinceSecond(engine));
+      expect(await createdSecond(engine, after)).toBe(await sinceSecond(engine));
+      const callers: Array<[string, string, string?]> = [[owner, 'tok-owner', 'alice-example'], [member, 'tok-member', 'bob-example'], [optedOut, 'tok-reads-unscoped'], [before, 'tok-before'], [after, 'tok-after']];
+      const answers = async () => Object.fromEntries(await Promise.all(callers.map(async ([id, name, m]) => [name, await gate(engine, id, name, m)] as const)));
+      const subSecond = await answers();
+      await engine.setConfig('access.serves_since', new Date(await sinceSecond(engine) * 1000).toISOString().replace('.000Z', 'Z'));
+      const wholeSecond = await answers();
+      expect(wholeSecond).toEqual({ 'tok-owner': 'none', 'tok-member': 'none', 'tok-reads-unscoped': 'none', 'tok-before': 'requester_scope_required:created_after', 'tok-after': 'requester_scope_required:created_after' });
+      expect(subSecond).toEqual({ ...wholeSecond, 'tok-before': 'grace' });
+    } finally { await close(); }
+  }, 60_000);
+
   test('a token minted before the second member, in the same second, reads in its grace', async () => {
     const { engine, close } = await open();
     try {
@@ -71,7 +97,7 @@ export function sameSecondTests(open: Open): void {
     } finally { await close(); }
   }, 60_000);
 
-  test('a whole-second serves_since an older gbrain stored keeps the whole-second answer, and v327 leaves it as it is', async () => {
+  test('a whole-second serves_since an older gbrain stored keeps the whole-second answer, and v329 leaves it as it is', async () => {
     const { engine, close } = await open();
     try {
       await addMember(engine, 'alice-example');
@@ -80,7 +106,7 @@ export function sameSecondTests(open: Open): void {
       await addMember(engine, 'bob-example');
       const whole = new Date(await sinceSecond(engine) * 1000).toISOString().replace('.000Z', 'Z');
       await engine.setConfig('access.serves_since', whole);
-      await engine.executeRaw(v327.sql);
+      await engine.executeRaw(v329.sql);
       await addMember(engine, 'carol-example');
       expect(await engine.getConfig('access.serves_since')).toBe(whole);
       expect(await createdSecond(engine, id)).toBe(await sinceSecond(engine));

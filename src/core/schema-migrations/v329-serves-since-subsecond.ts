@@ -13,8 +13,8 @@ import type { Migration } from './types.ts';
 // once and never cleared: a value an older gbrain wrote at whole seconds is kept
 // as it is, and against it the gate answers exactly as before. The function body
 // is v309's with only the format changed; the triggers already call it.
-export const v327: Migration = {
-  version: 327,
+export const v329: Migration = {
+  version: 329,
   name: 'serves_since_subsecond',
   idempotent: true,
   sql: `

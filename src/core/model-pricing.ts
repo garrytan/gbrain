@@ -130,6 +130,9 @@ export const ANTHROPIC_CACHE_READ_MULT_OVERRIDES: Record<string, number> = {
   // Opus 5.5 bills cache hits at 0.05x base input ($0.20/MTok on $4),
   // verified 2026-10-01 against the published Opus 5.5 price list.
   'anthropic:claude-opus-5-5': 0.05,
+  // Sonnet 5.5 bills cache hits at 0.05x base input ($0.10/MTok on $2),
+  // checked 2026-11-19 against the published Sonnet 5.5 price list (#9775).
+  'anthropic:claude-sonnet-5-5': 0.05,
 };
 
 /**
@@ -161,7 +164,7 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   // price the standard rate — the scheduled 2026-09-01 increase to $3/$15
   // did not happen (pricing page footnote). Sonnet 5.5 (released
   // 2026-09-28) ships at the same rate.
-  'anthropic:claude-sonnet-5-5':          anthro( 2.00, 10.00),
+  'anthropic:claude-sonnet-5-5':          anthro( 2.00, 10.00, ANTHROPIC_CACHE_READ_MULT_OVERRIDES['anthropic:claude-sonnet-5-5']),
   'anthropic:claude-sonnet-5':            anthro( 2.00, 10.00),
   'anthropic:claude-sonnet-4-6':          anthro( 3.00, 15.00),
   // Haiku 5.5: $0.10 in / $0.50 out for prompts up to 100,000 tokens
@@ -218,10 +221,15 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   // lockstep (the drift guard asserts they agree).
   'google:gemini-2.0-flash':              { input:  0.10, output:  0.40 },
   'google:gemini-2-flash':                { input:  0.10, output:  0.40 },
-  // Gemini 2.5 Flash / Flash-Lite: the live successors, and what the recipe
-  // lists today. Rates from Google's published pricing (2026-08-02).
+  // Gemini 2.5 Flash / Flash-Lite. Rates from Google's published pricing
+  // (2026-08-02). 2.5-flash retires 2026-12-01 (#9776) and leaves the recipe's
+  // chat list; its row stays so historical usage/audit rows still price.
   'google:gemini-2.5-flash':              { input:  0.30, output:  2.50 },
   'google:gemini-2.5-flash-lite':         { input:  0.10, output:  0.40 },
+  // Gemini 3.5 Flash-Lite: Google's named replacement for 2.5-flash and the
+  // recipe's chat default. Standard paid tier, checked 2026-11-19 at
+  // https://ai.google.dev/gemini-api/docs/pricing.
+  'google:gemini-3.5-flash-lite':         { input:  0.30, output:  2.50 },
 
   // ── Together / DeepSeek (cross-modal-eval panel) ───────────────────────
   'together:meta-llama/Llama-3.3-70B-Instruct-Turbo': { input: 0.88, output: 0.88 },

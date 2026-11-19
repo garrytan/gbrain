@@ -68,7 +68,7 @@ export function judgeCallCostUsd(modelId: string, overrides?: PricingOverrides):
 export const DEFAULT_MODEL_PANEL = [
   'openai:gpt-5.2',
   'anthropic:claude-opus-4-7',
-  'google:gemini-2.5-flash',
+  'google:gemini-3.5-flash-lite',
 ] as const;
 
 export interface RunOpts {
