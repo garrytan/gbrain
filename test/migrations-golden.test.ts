@@ -28,12 +28,13 @@ describe('migrations full-record golden', () => {
     expectGolden('migrations/records', golden, normalizer);
   }, 60_000);
 
-  test('versions are unique and the runner applies them ascending; gaps 17-19 and 100 stay gaps', () => {
+  test('versions are unique and the runner applies them ascending; gaps 17-19, 100 and 327 stay gaps', () => {
     const versions = MIGRATIONS.map((m) => m.version);
     expect(new Set(versions).size).toBe(versions.length);
     const sorted = [...versions].sort((a, b) => a - b);
     const golden = buildMigrationsGolden(MIGRATIONS);
-    expect(golden.gaps).toEqual([17, 18, 19, 100]);
+    // 327 is master's access_handovers migration (#9684), which this branch does not carry yet; drop it from this list when master is merged.
+    expect(golden.gaps).toEqual([17, 18, 19, 100, 327]);
     expect(sorted[0]).toBe(2);
     expect(sorted[sorted.length - 1]).toBe(LATEST_VERSION);
   }, 60_000);
