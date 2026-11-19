@@ -123,6 +123,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'listUnattributedFacts', 'listWantedPages', 'readRankCoverage', 'readExactSnippetChunks', 'listExactRescanChunks', 'listHeldFenceCells', 'readFenceOverlayRows',
   // Op checkpoints, health memo clock, synopsis sources (engine-sql/write-misc.ts; covered by test/engine-parity/write-misc.test.ts)
   'readOpCheckpointKeys', 'writeOpCheckpointKeys', 'appendOpCheckpointPaths', 'deleteOpCheckpoint', 'deleteOpCheckpointPaths',
+  'readOpCheckpointRecord', 'writeOpCheckpointRecord',
   'readHealthMemoClock', 'listSynopsisSourceIds',
   // Write attribution reads (engine-sql/write-attribution.ts; covered by test/engine-parity/write-attribution.test.ts)
   'readWriteAttributionNames', 'readPageRevisionAttribution', 'readVersionAttributions', 'readOldestVersionAttribution', 'readRowAttribution',

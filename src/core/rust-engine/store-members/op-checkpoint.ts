@@ -5,6 +5,7 @@
  * rust/docs/store/persistence.md, "Op checkpoints".
  */
 import { storeCall, type StoreMember } from './common.ts';
+import type { OpCheckpointRecord } from '../../engine-sql/write-misc.ts';
 
 /**
  * The op's completed keys: the child paths in path order, then the parent's array, each key once. `corruptParent` is
@@ -32,3 +33,17 @@ export const deleteOpCheckpoint: StoreMember<[op: string, fingerprint: string], 
 export const deleteOpCheckpointPaths: StoreMember<[op: string, fingerprint: string], void> = async (brain, op, fingerprint) => {
   await storeCall({ member: 'deleteOpCheckpointPaths' }, () => brain.deleteOpCheckpointPaths(op, fingerprint));
 };
+
+/**
+ * A checkpoint parent whose keys are JSON records (the repair cursor, the preview-approval sets), or null; its stamp in
+ * ISO 8601 with milliseconds, and `fresh` against the store clock when `freshWithinDays` is given.
+ */
+export const readOpCheckpointRecord: StoreMember<[op: string, fingerprint: string, opts?: { freshWithinDays?: number }], OpCheckpointRecord | null> =
+  (brain, op, fingerprint, opts) => storeCall({ member: 'readOpCheckpointRecord' }, () =>
+    brain.readOpCheckpointRecord(op, fingerprint, opts?.freshWithinDays ?? null));
+
+/** The parent's records replaced and stamped now; `null` deletes the parent and its paths. */
+export const writeOpCheckpointRecord: StoreMember<[op: string, fingerprint: string, completedKeys: readonly unknown[] | null], void> =
+  async (brain, op, fingerprint, completedKeys) => {
+    await storeCall({ member: 'writeOpCheckpointRecord' }, () => brain.writeOpCheckpointRecord(op, fingerprint, completedKeys));
+  };

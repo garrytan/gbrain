@@ -719,7 +719,6 @@ src/core/persistence/pre-activation-release.ts	execute_raw	7
 src/core/persistence/preadmit-cache.ts	execute_raw	3
 src/core/persistence/preparation-budget.ts	execute_raw	1
 src/core/persistence/prepared-maintenance.ts	execute_raw	13
-src/core/persistence/preview-approval.ts	execute_raw	3
 src/core/persistence/protocol.ts	execute_raw	1
 src/core/persistence/publication-deadline.ts	execute_raw	1
 src/core/persistence/purge-deleted.ts	execute_raw	8	#9653: the automatic purge's read of concepts hidden by an input purge, beside the sync-tombstone hold it mirrors
@@ -843,7 +842,6 @@ src/core/repair/consolidate-ties.ts	execute_raw	3
 src/core/repair/contact-rows.ts	execute_raw	4
 src/core/repair/content-receipt-root.ts	execute_raw	4
 src/core/repair/conversation-labels.ts	execute_raw	13
-src/core/repair/core.ts	execute_raw	5
 src/core/repair/duplicate-facts.ts	execute_raw	6
 src/core/repair/extractor-facts.ts	execute_raw	8
 src/core/repair/fact-claim-dates.ts	execute_raw	3

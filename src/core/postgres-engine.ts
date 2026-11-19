@@ -1532,6 +1532,8 @@ export class PostgresEngine implements BrainEngine {
   appendOpCheckpointPaths(op: string, fingerprint: string, paths: string[]) { return opCheckpointImpl.appendOpCheckpointPaths(this, op, fingerprint, paths); }
   deleteOpCheckpoint(op: string, fingerprint: string) { return opCheckpointImpl.deleteOpCheckpoint(this, op, fingerprint); }
   deleteOpCheckpointPaths(op: string, fingerprint: string) { return opCheckpointImpl.deleteOpCheckpointPaths(this, op, fingerprint); }
+  readOpCheckpointRecord(op: string, fingerprint: string, opts?: { freshWithinDays?: number }) { return writeMiscImpl.readOpCheckpointRecord(this.writeMiscReads, op, fingerprint, opts); }
+  writeOpCheckpointRecord(op: string, fingerprint: string, completedKeys: readonly unknown[] | null) { return opCheckpointImpl.writeOpCheckpointRecord(this, op, fingerprint, completedKeys); }
   /** Write attribution reads (engine-sql/write-attribution.ts). */
   private get attributionReads() { return unscopedExecutor(this.engineSql, 'write attribution: get_write_attribution ran these unscoped through executeRaw'); }
   readWriteAttributionNames(ids: WriteAttributionNameIds) { return writeAttributionImpl.readWriteAttributionNames(this.attributionReads, ids); }

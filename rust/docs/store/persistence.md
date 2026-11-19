@@ -156,6 +156,8 @@ their parent's op and fingerprint, so deleting a parent deletes its paths in the
 | `brain.appendOpCheckpointPaths(op, fingerprint, paths)` | the parent created with no keys or stamped now, then each path not yet stored added | `appendOpCheckpointPaths` (`appendCompleted`, `appendCompletedOnce`) |
 | `brain.deleteOpCheckpoint(op, fingerprint)` | the parent and its paths deleted; a missing parent is a no-op | `deleteOpCheckpoint` (`clearOpCheckpoint`) |
 | `brain.deleteOpCheckpointPaths(op, fingerprint)` | the paths deleted, the parent kept | `deleteOpCheckpointPaths` (`clearOpCheckpoint`) |
+| `brain.readOpCheckpointRecord(op, fingerprint, freshWithinDays)` | `{ completed_keys, updated_at, fresh }` or null: the parent's JSON as stored, its stamp in ISO 8601 with milliseconds (truncated, as `to_char(.., 'MS')` truncates), and whether the stamp is within `freshWithinDays` of the store clock (null when not given) | `readOpCheckpointRecord` (the repair cursor, `loadApprovedSet`) |
+| `brain.writeOpCheckpointRecord(op, fingerprint, completedKeys)` | the parent's JSON replaced and stamped now; null deletes the parent and its paths. A payload that is not an array, or that holds NUL in any string or key, refuses with `invalid_input` | `writeOpCheckpointRecord` (the repair cursor, `saveApprovedSet`, `clearApprovedSet`) |
 
 Differences from the SQL engines:
 
@@ -165,6 +167,9 @@ Differences from the SQL engines:
   checkpoint that no run clears stays until an op clears it.
 - The other `op_checkpoints` writers (sync identity downgrades, sync holds, fence repair, the
   persistence receipts) are still raw SQL. Their rows are not in this store.
+- `fresh` compares the stamp with the store clock; Postgres compares it with `now()`, the start of
+  the reading transaction.
+
 ## Writer versions
 
 Which binaries admitted and published the retained requests (`writer-versions.ts`), from the

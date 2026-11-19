@@ -72,7 +72,8 @@ import type { LedgerSource } from './engine-sql/belief.ts';
 import type { EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, FuzzyEntityCandidateRow, IgnoredLabelPageRow, MentionDueQuery, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow } from './engine-sql/entity-reads.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, PlainSyncSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
 import type {
-  AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
+  AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, OpCheckpointRecord, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow,
+  WorktreeBinding,
 } from './engine-sql/write-misc.ts';
 import type {
   ActorAttributionRow, PageRevisionAttributionRow, RowAttributionRow, RowAttributionTarget, VersionAttributionRow, VersionRef,
@@ -1494,6 +1495,13 @@ export interface BrainEngine {
   deleteOpCheckpoint(op: string, fingerprint: string): Promise<void>;
   /** The checkpoint's paths deleted, its parent kept (op-checkpoint.ts clearOpCheckpoint's second sweep). */
   deleteOpCheckpointPaths(op: string, fingerprint: string): Promise<void>;
+  /**
+   * A checkpoint parent whose keys are JSON records (the repair runner's cursor, the preview-approval sets), or null.
+   * `fresh` answers whether its stamp is within `freshWithinDays` of the database clock (null when not asked).
+   */
+  readOpCheckpointRecord(op: string, fingerprint: string, opts?: { freshWithinDays?: number }): Promise<OpCheckpointRecord | null>;
+  /** The parent's records replaced and stamped now, in the caller's transaction; `null` deletes it with its paths. */
+  writeOpCheckpointRecord(op: string, fingerprint: string, completedKeys: readonly unknown[] | null): Promise<void>;
   /** The request, OAuth client, legacy token and local writer rows that name write attributions (ops/attribution.ts). */
   readWriteAttributionNames(ids: WriteAttributionNameIds): Promise<WriteAttributionNames>;
   /** A page's live revision with the actor that wrote it, its trust tier and write origin; null for no page. */

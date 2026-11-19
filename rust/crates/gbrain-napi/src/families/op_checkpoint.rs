@@ -74,4 +74,35 @@ impl Brain {
             s.delete_op_checkpoint_paths(&op, &fingerprint)
         })
     }
+
+    /// `readOpCheckpointRecord(op, fingerprint, freshWithinDays)`: `{ completed_keys, updated_at,
+    /// fresh }` or null.
+    #[napi]
+    pub fn read_op_checkpoint_record<'env>(
+        &self,
+        env: &'env Env,
+        op: String,
+        fingerprint: String,
+        fresh_within_days: Option<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_op_checkpoint_record(&op, &fingerprint, fresh_within_days)
+        })
+    }
+
+    /// `writeOpCheckpointRecord(op, fingerprint, completedKeys)`: the records replaced; null
+    /// deletes the parent and its paths.
+    #[napi]
+    pub fn write_op_checkpoint_record<'env>(
+        &self,
+        env: &'env Env,
+        op: String,
+        fingerprint: String,
+        completed_keys: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let completed = (!completed_keys.is_null()).then_some(&completed_keys);
+            s.write_op_checkpoint_record(&op, &fingerprint, completed)
+        })
+    }
 }
