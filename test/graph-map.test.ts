@@ -23,7 +23,7 @@ const link = (from: number, to: number, link_source: string | null = 'markdown',
   ({ from_page_id: from, to_page_id: to, link_source, link_type, link_kind });
 
 describe('edgeEvidence', () => {
-  test('written links are stated, gbrain-derived ones inferred, MCP tool mentions tool_output', () => {
+  test('written links are stated, foresights-derived ones inferred, MCP tool mentions tool_output', () => {
     for (const s of ['markdown', 'frontmatter', 'wikilink-resolved', 'manual', null, '']) expect(edgeEvidence(s)).toBe('stated');
     for (const s of ['mentions', 'atom-provenance', 'concept-provenance', 'citation-graph']) expect(edgeEvidence(s)).toBe('inferred');
     expect(edgeEvidence('mcp-remote-mention')).toBe('tool_output');

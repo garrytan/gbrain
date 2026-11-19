@@ -12,7 +12,7 @@
  * Evidence (a label, never a filter that hides anything):
  *   stated       written by a person: a markdown or wiki link, a frontmatter
  *                field, `add_link`
- *   inferred     worked out by gbrain: mentions, typed NER links, atom and
+ *   inferred     worked out by foresights: mentions, typed NER links, atom and
  *                concept provenance, dream phases, any other producer
  *   tool_output  reported by an outside tool over MCP (`mcp-remote-mention`)
  *

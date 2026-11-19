@@ -1,9 +1,9 @@
 /**
- * gbrain graph-map — the brain's pages and concepts as one graph.
+ * foresights graph-map — the brain's pages and concepts as one graph.
  *
- *   gbrain graph-map [show] [--source <id>] [--json]
- *   gbrain graph-map clusters [--limit <n>] [--source <id>] [--json]
- *   gbrain graph-map export [--out <file.html>] [--max-nodes <n>] [--source <id>] [--json]
+ *   foresights graph-map [show] [--source <id>] [--json]
+ *   foresights graph-map clusters [--limit <n>] [--source <id>] [--json]
+ *   foresights graph-map export [--out <file.html>] [--max-nodes <n>] [--source <id>] [--json]
  *
  * Reads the source's live pages and links (core/graph/graph-map.ts builds the
  * two-level map, labels each edge stated / inferred / tool output and finds
@@ -20,7 +20,7 @@ import {
   type GraphLinkRow, type GraphMap, type GraphPageRow,
 } from '../core/graph/graph-map.ts';
 
-const USAGE = `Usage: gbrain graph-map [show | clusters | export] [--source <id>] [--json]
+const USAGE = `Usage: foresights graph-map [show | clusters | export] [--source <id>] [--json]
   show                 nodes, links by evidence, the largest clusters, concept coverage (default)
   clusters             every cluster with its best-connected members (--limit <n>, default 20)
   export               one self-contained HTML map you can open or share
