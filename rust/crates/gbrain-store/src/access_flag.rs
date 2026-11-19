@@ -240,4 +240,87 @@ mod tests {
         tx.rollback_transaction().unwrap();
         assert_eq!(store.get_config(FLAG).unwrap(), None);
     }
+
+    /// The source of every non-test module under `src/`, keyed by its path from `src/`.
+    fn crate_sources() -> Vec<(String, String)> {
+        fn walk(dir: &std::path::Path, root: &std::path::Path, out: &mut Vec<(String, String)>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    walk(&path, root, out);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    // The unit tests open their own handles; only the module code counts.
+                    let code = text
+                        .split("\n#[cfg(test)]\nmod tests {")
+                        .next()
+                        .unwrap()
+                        .to_string();
+                    let name = path
+                        .strip_prefix(root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    out.push((name, code));
+                }
+            }
+        }
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut out = Vec::new();
+        walk(&root, &root, &mut out);
+        out.sort();
+        out
+    }
+
+    /// `bumpLastRetrieved` and the hard-delete cascade (`cascade::remove_page_rows`) write through
+    /// the flagging handle: `bump_last_retrieved` writes with `Store::write`, `Store::write` wraps
+    /// both of its arms in `FlaggingWriter`, and no module outside this list opens a raw write
+    /// handle, so the `tx` the cascade gets is always a wrapped one. A new raw `begin_write` fails
+    /// here until it is reviewed and listed.
+    #[test]
+    fn every_store_write_handle_stays_wrapped_in_the_flagging_writer() {
+        let sources = crate_sources();
+        let code = |name: &str| &sources.iter().find(|(n, _)| n == name).unwrap().1;
+
+        // Raw write handles, each reviewed: the kv layer itself, the brain-create write and
+        // `Store::write` (lib.rs), a transaction's base handle (its statements run through the
+        // bound arm of `Store::write`) and its counter flush, this module's open-time scan, and
+        // job admission (no page records).
+        let allowed: &[(&str, usize)] = &[
+            ("access_flag.rs", 1),
+            ("jobs.rs", 1),
+            ("kv.rs", 1),
+            ("lib.rs", 2),
+            ("redb_kv.rs", 3),
+            ("transactions.rs", 2),
+        ];
+        let raw: Vec<(&str, usize)> = sources
+            .iter()
+            .map(|(n, c)| (n.as_str(), c.matches("begin_write(").count()))
+            .filter(|(_, count)| *count > 0)
+            .collect();
+        assert_eq!(raw, allowed, "a raw write handle skips the flagging writer");
+
+        // Both arms of `Store::write` hand the closure a `FlaggingWriter`.
+        let lib = code("lib.rs");
+        let write = &lib[lib.find("pub(crate) fn write<T>").unwrap()..];
+        let write = &write[..write.find("\n    }\n").unwrap()];
+        assert_eq!(
+            write.matches("f(&mut access_flag::FlaggingWriter(").count(),
+            2
+        );
+
+        // `bump_last_retrieved` writes with `Store::write`, never a raw handle.
+        let ops = code("page_ops.rs");
+        let bump = &ops[ops.find("pub fn bump_last_retrieved").unwrap()..];
+        let bump = &bump[..bump.find("\n    }\n").unwrap()];
+        assert!(
+            bump.contains("self.write(|tx|"),
+            "bump_last_retrieved left Store::write"
+        );
+        assert!(!bump.contains("begin_write"));
+
+        // The cascade takes the caller's handle; it opens none of its own.
+        assert!(code("cascade.rs").contains("crate::page_ops::remove_page_rows(tx, page)?"));
+    }
 }
