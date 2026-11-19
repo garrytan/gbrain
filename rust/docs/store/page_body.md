@@ -141,6 +141,43 @@ sanitizes it with `sanitizeRemoteBody`, and calls `seal_segmented_page`. In one 
 PGLite overlays the page's withdrawals and global purges on the stored lead first. The store keeps no
 withdrawal ledger or purge markers, so here that overlay is the identity.
 
+## Segmented write statements
+
+A streamed segmented import (`importStreamedMarkdownFile`) and the segmented re-chunk
+(`runSegmentedRechunk`) make reads and writes around the flip that PGLite and Postgres run from
+`src/core/engine-sql/segmented-writes.ts`. The store serves each one from
+`rust/crates/gbrain-store/src/page_body/segmented_writes.rs`, through
+`src/core/rust-engine/store-members/segmented-writes.ts`. Each write is one store write.
+
+| Member | Serves |
+| --- | --- |
+| `lockBodyStagingState(stagingId)` | the staging's state, or `null`. Writes are serialized, so no row lock |
+| `deleteUnstagedSegmentChunks(pageId, generation, keepIndexes)` | deletes the page's segment chunks of `generation` whose index is not kept |
+| `readSegmentedLivePage(pageId)` | the page a write diffs against, deleted or not: id, generation, storage, title, type, body flags |
+| `readSegmentedSealed(sourceId, slug)` | whether the live page's text projection is sealed at its revision |
+| `listChunkedOccurrences(pageId, occurrenceIds, generation)` | the members of `occurrenceIds`, in order, with a chunk row at or below `generation` |
+| `readRetiredChunkVectors(pageId, occurrences, column)` | `[]`: the store keeps no vectors, so a re-chunked text waits for the embed sweep |
+| `hasStaleSegmentChunks(pageId, generation, live)` | whether a chunk row exists that `generation` does not hold |
+| `retireStaleSegmentChunks(pageId, generation, live, maxRows)` | deletes up to `maxRows` of those rows and returns the count |
+| `readSegmentedProjectionPage(sourceId, slug)` | the live segmented page row a projection builds from |
+| `listSegmentedRechunkCandidates(chunkerVersion, scope)` | ids of live, sealed segmented pages below `chunkerVersion`, by source, then slug |
+| `readSegmentedRechunkPage(pageId)` | the segmented page row a re-chunk plans and flips from |
+| `listOccurrenceChunks(pageId, occurrences)` | the visible chunk rows of those occurrences, by occurrence, then ordinal |
+| `readMaterializingRevision()`, `setMaterializingRevision(revision)` | the `gbrain.materializing_revision` setting, kept in the transaction's settings map; `null` and a no-op outside a transaction |
+| `restorePageUpdatedAt(pageId, updatedUs)` | sets `updated_at` back (a re-chunk is not an edit); a missing page is a no-op |
+| `readPageTrustStamp(ref)` | `trust_tier` (`unknown` when none) and `write_origin`; `{ sourceId, slug }` names a live page, `{ id }` any page |
+
+A chunk row is stale for generation `g` with live occurrences `live` as in Postgres's
+`STALE_CHUNKS_SQL`: a segment chunk of a live occurrence when its generation is below the newest
+generation at or below `g` among that occurrence's chunks; a chunk of any other occurrence when its
+generation is at or below `g`; an inline chunk always.
+
+`flipBodyGeneration` sends the transaction's materializing revision as `keepRevision`. When it names
+the page's revision and the flip leaves the page's source, slug, type, kind, title, frontmatter and
+deletion unchanged, the flip keeps the revision and the seal, as Postgres's
+`gbrain_advance_page_revision` trigger does. Otherwise the flip gives the page a new revision and
+unseals its text projection.
+
 ## The sweep
 
 `sweepSegments` is PGLite's garbage collection, step for step, in one store write. Its roots are a
