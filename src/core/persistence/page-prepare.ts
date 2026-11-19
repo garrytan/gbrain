@@ -1353,10 +1353,10 @@ function preparedConceptRevive(row: WriteRequest, snapshot: PageSnapshot | null)
 /** The rebuild's apply: under the publication's lock, re-check and clear, publish, then drop the old versions and the mark. */
 function revivingApply(apply: PreparedMutation['apply'], row: WriteRequest, revive: ConceptRevive): PreparedMutation['apply'] {
   return async (tx, preimage) => {
-    const refused = await beginConceptRevive(tx, row.source_id, row.slug, revive, { journal: true });
-    if (refused) throw pageRefusal('revision_conflict', 'The concept is no longer held for a rebuild.', row, refused);
+    const before = await beginConceptRevive(tx, row.source_id, row.slug, revive, { journal: true });
+    if (typeof before === 'string') throw pageRefusal('revision_conflict', 'The concept is no longer held for a rebuild.', row, before);
     const outcome = await apply(tx, preimage);
-    await finishConceptRevive(tx, revive);
+    await finishConceptRevive(tx, revive, before);
     return outcome;
   };
 }

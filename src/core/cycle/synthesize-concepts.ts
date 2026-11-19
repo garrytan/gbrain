@@ -41,7 +41,7 @@ import { derivedWriteThrough, reportDerivedWriteThrough } from './derived-write-
 import { addSpellingRedirects, canonicalConceptStem, loadConceptRedirects, loadLiveConceptStems } from './concept-redirects.ts';
 import { conceptProvenanceCovers, conceptPublicationHold, stripFenceSections } from './concept-publication.ts';
 import { conceptWriter, type ConceptWrite } from './concept-writes.ts';
-import { heldConceptRevive } from '../persistence/concept-revive.ts';
+import { heldConceptRevive, withTombstoneAccess } from '../persistence/concept-revive.ts';
 import { readPhaseConfigNumber, SYNTHESIZE_CONCEPTS_BUDGET_KEY, SYNTHESIZE_CONCEPTS_DEFAULT_BUDGET_USD } from './phase-config-values.ts';
 import { ConceptRetryBound, MAX_CONCEPT_ATTEMPTS } from './concept-retry-bound.ts';
 import { ConceptDriftSkips } from '../persistence/drift-conflicts.ts';
@@ -528,12 +528,13 @@ export async function runPhaseSynthesizeConcepts(
     if (!opts.dryRun) {
       // #5525: tighten-only — a concept already private stays private.
       const prior = await engine.getPage(conceptSlug, { sourceId: src });
-      const visibility = strictestVisibility([group.visibility, prior?.frontmatter?.visibility === 'private' ? 'private' : 'world']);
+      const tombstone = revive ? existingSnapshot!.page.frontmatter ?? {} : null;
+      const visibility = strictestVisibility([group.visibility, (tombstone ?? prior?.frontmatter)?.visibility === 'private' ? 'private' : 'world']);
       // #2163: serialize to markdown and import via the canonical pipeline so
       // the page is chunked (+ embedded when a provider is configured) —
       // mirrors put_page's isAvailable('embedding') → noEmbed gate.
       const synthesizedAt = grandfathered ? String(existing!.frontmatter.synthesized_at ?? new Date().toISOString()) : new Date().toISOString();
-      const synthesized = (pageVisibility: Visibility) => ({
+      const synthesizedFields = (pageVisibility: Visibility) => ({
         tier: group.tier,
         mention_count: group.atomTitles.length,
         composite_score: group.atomTitles.length,
@@ -543,6 +544,8 @@ export async function runPhaseSynthesizeConcepts(
         synthesized_by: 'synthesize_concepts-v0.41',
         visibility: pageVisibility, ...(unverifiedClaims.length ? { unverified_claims: unverifiedClaims.map(c => ({ ...c, sources: ['member atoms'], detected_at: synthesizedAt.slice(0, 10) })) } : {}),
       });
+      // #9653: a rebuilt concept is never readable by anyone who could not read the hidden one (concept-revive.ts).
+      const synthesized = (pageVisibility: Visibility) => tombstone ? withTombstoneAccess(synthesizedFields(pageVisibility), tombstone) : synthesizedFields(pageVisibility);
       // #5525: a world concept stays private until every member's provenance
       // edge is durable, because a later private flip reaches it through them.
       // GBRA-60: one whose edges already cover every member publishes once, at

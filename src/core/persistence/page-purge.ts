@@ -89,7 +89,7 @@ const PURGE_CONTEXT_LIMIT = 64;
 const purgeReceipts = new Map<string, { receipt: Record<string, unknown>; purge: Record<string, unknown> }>();
 
 /** #8859: the page's facts, $1 its source and $2 its slug: those filed on it and those extracted from it and filed on none. */
-const PAGE_FACTS = `(source_markdown_slug=$2 OR ${extractedFromPageSql('facts', '$2')})`;
+export const PAGE_FACTS = `(source_markdown_slug=$2 OR ${extractedFromPageSql('facts', '$2')})`;
 
 /** The page's claims (facts filed on it, its takes) that the journal sweep searches for, bounded, trimmed, deduplicated. */
 export async function readPurgeClaims(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string, pageId: number) {

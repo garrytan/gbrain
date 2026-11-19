@@ -19,11 +19,49 @@ import { clearRebuildableCache } from './rebuildable-cache.ts';
 import { findRequestsForSlugs, redactRequestIntents } from './intent-redaction.ts';
 import { stripPageGitNotes } from '../facts/purge-reasons.ts';
 import { scrubGenerationLedger } from '../generations/ledger-scrub.ts';
+import { PAGE_FACTS } from './page-purge.ts';
+import { refreshRelationships, relationshipKeysForPages } from '../link-relationships.ts';
+import { PRIVACY_ALIASES, privacyPartSql, privatePagesFilterFragment } from '../search/private-visibility.ts';
 
 /** The tombstone a synthesis rebuilds, and the members (with the revisions it read) its narrative was built from. */
 export interface ConceptRevive { page_id: number; deleted_us: string; members: Array<{ slug: string; revision: string }> }
 
 type Sql = Pick<BrainEngine, 'executeRaw'>;
+
+/**
+ * The frontmatter keys the read predicate (search/private-visibility.ts) reads off a page to decide who may read it:
+ * visibility and its aliases, readers, a pinned question and a declared origin. A rebuild carries each from the tombstone.
+ */
+export const REVIVE_ACCESS_KEYS: readonly string[] = ['visibility', ...Object.keys(PRIVACY_ALIASES), 'readable_by', 'pinned_question', 'derived_from'];
+
+/** A rebuilt concept's frontmatter with the tombstone's access labels: the tombstone's value for each key, private when either is. */
+export function withTombstoneAccess(synthesized: Record<string, unknown>, tombstone: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...synthesized };
+  for (const key of REVIVE_ACCESS_KEYS) {
+    if (tombstone[key] === undefined || (key === 'visibility' && out.visibility === 'private')) continue;
+    out[key] = tombstone[key];
+  }
+  return out;
+}
+
+/** Who may read a page, as the read predicate decides it: compared before and after a rebuild (reviveWidens). */
+export interface ReviveAccess { open: boolean; public_part: boolean; names_readers: boolean; readers: string[] | null; page_readers: string[] | null; folder_rule_ids: string[] | null; guard: string | null }
+const accessJson = (id: string) => `(SELECT row_to_json(a) FROM (SELECT ${privatePagesFilterFragment('p')} AS open, ${privacyPartSql('p')} AS public_part,
+  (p.frontmatter ? 'readable_by') AS names_readers, gbrain_access_readers(p.frontmatter) AS readers, p.page_readers, p.folder_rule_ids,
+  (SELECT g.tier FROM page_label_guards g WHERE g.page_id = p.id) AS guard FROM pages p WHERE p.id = ${id}) a)`;
+
+/** Why the rebuilt page would be readable by someone who could not read the tombstone, or null. Anything it cannot tell widens. */
+export function reviveWidens(before: ReviveAccess | null | undefined, after: ReviveAccess | null | undefined): string | null {
+  if (!before || !after) return 'its access could not be read';
+  const within = (inner: readonly string[] | null, outer: readonly string[] | null) => (inner ?? []).every(id => (outer ?? []).includes(id));
+  if (!before.open && after.open) return 'it would be readable by any caller';
+  if (!before.public_part && after.public_part) return 'it would no longer be private';
+  if (before.names_readers && (!after.names_readers || !within(after.readers, before.readers))) return 'it would name readers the hidden concept did not';
+  if (before.page_readers && (!after.page_readers || !within(after.page_readers, before.page_readers))) return 'its stored readers would widen';
+  if (before.folder_rule_ids && (!after.folder_rule_ids || !within(before.folder_rule_ids, after.folder_rule_ids))) return 'a folder rule would stop covering it';
+  if (before.guard && after.guard !== before.guard) return 'its label guard would change';
+  return null;
+}
 
 /** The revive a stored maintenance intent carries (`concept_revive`), or null when absent or malformed. */
 export function readConceptRevive(value: unknown): ConceptRevive | null {
@@ -51,11 +89,11 @@ export const REVIVE_PAGE_REFERENCES: Readonly<Record<string, readonly ['cleared'
   'link_edge_proposals.b_to_page_id': ['kept', 'proposals written from another page\'s text'],
   'link_edge_proposals.ending_to_page_id': ['kept', 'proposals written from another page\'s text'],
   'link_edge_proposals.from_page_id': ['cleared', 'proposals generated from the old body'],
-  'link_relationships.from_page_id': ['kept', 'relationship state: link types and evidence hashes, no page text'],
-  'link_relationships.to_page_id': ['kept', 'relationship state: link types and evidence hashes, no page text'],
-  'link_transitions.from_page_id': ['kept', 'transition ledger: line hashes, no page text'],
-  'link_transitions.origin_page_id': ['kept', 'transition ledger: line hashes, no page text'],
-  'link_transitions.to_page_id': ['kept', 'transition ledger: line hashes, no page text'],
+  'link_relationships.from_page_id': ['kept', 'relationship state, refreshed after the write from the evidence that remains'],
+  'link_relationships.to_page_id': ['kept', 'relationship state, refreshed after the write from the evidence that remains'],
+  'link_transitions.from_page_id': ['kept', 'transitions other pages assert about this page (origin_page_id is theirs)'],
+  'link_transitions.origin_page_id': ['cleared', 'transitions the old body asserted (its links fence or timeline); they would still date the relationship'],
+  'link_transitions.to_page_id': ['kept', 'transitions other pages assert about this page (origin_page_id is theirs)'],
   'links.from_page_id': ['cleared', 'links the old body wrote (concept-provenance edges stay; the publication reconciles them to the current members)'],
   'links.origin_page_id': ['cleared', 'links the old body wrote between other pages'],
   'links.to_page_id': ['kept', 'incoming links: other pages\' text, kept with the row'],
@@ -151,16 +189,16 @@ export async function conceptReviveHeld(engine: Sql, revive: ConceptRevive): Pro
  * and every member is live at the revision the narrative read (locking them against a purge), then clears the stores
  * REVIVE_PAGE_REFERENCES and REVIVE_SLUG_STORES name. Returns why it published nothing, or null.
  */
-export async function beginConceptRevive(tx: BrainEngine, sourceId: string, slug: string, revive: ConceptRevive, opts: { journal: boolean }): Promise<string | null> {
-  const [held] = await tx.executeRaw<{ id: number }>(`SELECT p.id FROM pages p WHERE p.id = $1 AND p.source_id = $2 AND p.slug = $3
-    AND ${DELETED_US} = $4 AND ${HELD_SQL} FOR UPDATE`, [revive.page_id, sourceId, slug, revive.deleted_us]);
+export async function beginConceptRevive(tx: BrainEngine, sourceId: string, slug: string, revive: ConceptRevive, opts: { journal: boolean }): Promise<string | ReviveAccess> {
+  const [held] = await tx.executeRaw<{ id: number; access: ReviveAccess | string }>(`SELECT p.id, ${accessJson('$1')} AS access FROM pages p WHERE p.id = $1 AND p.source_id = $2 AND p.slug = $3
+    AND ${DELETED_US} = $4 AND ${HELD_SQL} FOR UPDATE OF p`, [revive.page_id, sourceId, slug, revive.deleted_us]);
   if (!held) return 'The concept is no longer held for a rebuild (a person or sync deleted it, a purge removed it, or it was published), so the rebuild published nothing.';
   const members = revive.members.map(member => member.slug);
   const live = await tx.executeRaw<{ slug: string }>(`SELECT m.slug FROM pages m JOIN jsonb_to_recordset($2::text::jsonb) AS r(slug text, revision text)
     ON m.slug = r.slug AND m.knowledge_revision::text = r.revision WHERE m.source_id = $1 AND m.deleted_at IS NULL FOR SHARE OF m`,
   [sourceId, JSON.stringify(revive.members)]);
   if (!members.length || live.length !== members.length) return 'A member the rebuilt narrative was built from changed or was removed during synthesis, so the rebuild published nothing; the next run builds it again.';
-  const facts = (await tx.executeRaw<{ id: number }>(`SELECT id FROM facts WHERE source_id = $1 AND (source_markdown_slug = $2 OR entity_slug = $2)`, [sourceId, slug])).map(row => Number(row.id));
+  const facts = (await tx.executeRaw<{ id: number }>(`SELECT id FROM facts WHERE source_id = $1 AND ${PAGE_FACTS}`, [sourceId, slug])).map(row => Number(row.id));
   const takes = (await tx.executeRaw<{ id: number }>('SELECT id FROM takes WHERE page_id = $1', [revive.page_id])).map(row => Number(row.id));
   const refs = facts.map(String);
   await tx.executeRaw('DELETE FROM decide_review_queue WHERE source_id = $1 AND (a_ref = ANY($2::text[]) OR b_ref = ANY($2::text[]))', [sourceId, refs]);
@@ -189,7 +227,7 @@ export async function beginConceptRevive(tx: BrainEngine, sourceId: string, slug
     await stripPageGitNotes(tx, sourceId, slug);
   }
   await scrubGenerationLedger(tx, sourceId, { slug });
-  return null;
+  return typeof held.access === 'string' ? JSON.parse(held.access) as ReviveAccess : held.access;
 }
 
 /** When a tombstone's recovery window ends: its own delete plus `hours` (UTC, to the second), and whether that has passed. */
@@ -200,11 +238,16 @@ export async function tombstoneWindow(tx: Sql, pageId: number, hours: number): P
 }
 
 /** After the page write, in the same transaction: drops every version archived before the revive and closes the mark. */
-export async function finishConceptRevive(tx: Sql, revive: ConceptRevive): Promise<void> {
+export async function finishConceptRevive(tx: Sql, revive: ConceptRevive, before: ReviveAccess): Promise<void> {
   await tx.executeRaw('DELETE FROM page_versions WHERE page_id = $1', [revive.page_id]);
-  const closed = await tx.executeRaw(`DELETE FROM needs_rederive WHERE derived_table = 'pages' AND derived_id = $1
-    AND EXISTS (SELECT 1 FROM pages WHERE id = $2 AND deleted_at IS NULL) RETURNING 1`, [String(revive.page_id), revive.page_id]);
-  if (!closed.length) {
+  const [closed] = await tx.executeRaw<{ access: ReviveAccess | string | null }>(`DELETE FROM needs_rederive WHERE derived_table = 'pages' AND derived_id = $1
+    AND EXISTS (SELECT 1 FROM pages WHERE id = $2 AND deleted_at IS NULL) RETURNING ${accessJson('$2')} AS access`, [String(revive.page_id), revive.page_id]);
+  if (!closed) {
     throw Object.assign(new Error('The rebuilt concept was not written (the import refused it), so the rebuild published nothing and the concept stays held.'), { code: 'revision_conflict' });
+  }
+  await refreshRelationships(tx, await relationshipKeysForPages(tx, [revive.page_id]));
+  const widened = reviveWidens(before, typeof closed.access === 'string' ? JSON.parse(closed.access) as ReviveAccess : closed.access);
+  if (widened) {
+    throw Object.assign(new Error(`The rebuilt concept would be readable more widely than the hidden one (${widened}), so the rebuild published nothing and the concept stays held.`), { code: 'revision_conflict' });
   }
 }

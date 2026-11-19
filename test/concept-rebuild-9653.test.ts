@@ -9,6 +9,9 @@ import { purgeDeletedPagesCoordinated, rebuildNote, selectPurgeCandidates } from
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { beginConceptRevive, heldConceptRevive } from '../src/core/persistence/concept-revive.ts';
 import { publishClassicConcept } from '../src/core/cycle/concept-publication.ts';
+import { raisePageLabelGuard } from '../src/core/trust/page-write.ts';
+import { proposeRevision } from '../src/core/access/policy.ts';
+import { refreshRelationships } from '../src/core/link-relationships.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
@@ -59,6 +62,38 @@ async function age(engine: BrainEngine, slug: string, hours = 100): Promise<void
     await engine.executeRaw(`UPDATE pages SET deleted_at=deleted_at - ($2 || ' hours')::interval WHERE source_id='default' AND slug=$1`, [slug, String(hours)]);
   });
 }
+const LABELS = { visibility: 'private', readable_by: ['alice-example'] };
+/** The owner's labels on the live concept: private, one reader, the label guard, and a folder rule over concepts/. */
+async function label(engine: BrainEngine): Promise<void> {
+  await unmanagedWhile(engine, true, async () => {
+    await engine.executeRaw('UPDATE pages SET frontmatter = frontmatter || $2::text::jsonb WHERE source_id = $3 AND slug = $1', [CONCEPT, JSON.stringify(LABELS), 'default']);
+    await raisePageLabelGuard(engine, 'default', CONCEPT);
+    const rule = await proposeRevision(engine, 'default', [{ id: 'concepts', prefix: 'concepts/', readable_by: ['member:alice-example'] }], { origin: 'cli', store: 'database' });
+    expect(rule.state).toBe('applied');
+  });
+}
+async function access(engine: BrainEngine) {
+  const [row] = await engine.executeRaw<{ frontmatter: Record<string, unknown>; folder_rule_ids: string[] | null; guard: string | null }>(`SELECT p.frontmatter, p.folder_rule_ids,
+    (SELECT tier FROM page_label_guards g WHERE g.page_id = p.id) AS guard FROM pages p WHERE p.source_id = 'default' AND p.slug = $1`, [CONCEPT]);
+  return row!;
+}
+/** What a member who is neither the owner nor a reader gets from get_page over the remote path. */
+async function remoteRead(engine: BrainEngine): Promise<string> {
+  const minted = await unmanagedWhile(engine, true, async () => {
+    await engine.executeRaw("INSERT INTO access_members (id) VALUES ('bob-example') ON CONFLICT DO NOTHING");
+    await engine.executeRaw("INSERT INTO access_members (id) VALUES ('owner-example') ON CONFLICT DO NOTHING");
+    await setOwner(engine, 'owner-example');
+    const token = await mintLegacyToken(engine, { name: `bob-${randomUUID().slice(0, 8)}`, scopes: ['read'], takesHolders: ['world'], sourceGrant: ['default'] });
+    await bindCredential(engine, { kind: 'token', id: token.id }, { member: 'bob-example' });
+    await engine.executeRaw(`UPDATE access_tokens SET private_pages = 'granted_sources' WHERE id = $1`, [token.id]);
+    return token.token;
+  });
+  __resetPrivateVisibilityCacheForTests();
+  const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
+  const auth = await provider.verifyAccessToken(minted) as unknown as AuthInfo;
+  const out = await dispatchToolCall(engine, 'get_page', { slug: CONCEPT }, { remote: true, transport: 'http', auth, sourceId: 'default', takesHoldersAllowList: ['world'] });
+  return out.content.map(c => c.text).join('\n');
+}
 async function printedJson(run: () => Promise<unknown>): Promise<Record<string, any>> {
   const lines: string[] = [];
   const log = spyOn(console, 'log').mockImplementation((...parts: unknown[]) => { lines.push(parts.join(' ')); });
@@ -86,7 +121,7 @@ async function state(engine: BrainEngine) {
   return row!;
 }
 /** A concept built from atoms 0 to 4 and rebuilt from 1 to 5; a note links to it; atom 0's purge hides it. */
-async function heldConcept(engine: BrainEngine, ctx: OperationContext, root: string): Promise<number> {
+async function heldConcept(engine: BrainEngine, ctx: OperationContext, root: string, live?: () => Promise<void>): Promise<number> {
   await engine.setConfig('models.dream.synthesize', MODEL);
   for (const i of [0, 1, 2, 3, 4, 5]) await put(ctx, atom(i), `Atom ${i} about storage.`);
   await synthesize(engine, root, [0, 1, 2, 3, 4]);
@@ -94,6 +129,7 @@ async function heldConcept(engine: BrainEngine, ctx: OperationContext, root: str
   await deletePage(engine, ctx, atom(0));
   await age(engine, atom(0));
   await synthesize(engine, root, [1, 2, 3, 4, 5]);
+  await live?.();
   expect(await purge(engine, true)).toEqual([atom(0)]);
   const held = await state(engine);
   expect(held).toMatchObject({ live: false, marks: 1, links_in: 1 });
@@ -163,6 +199,35 @@ for (const backend of testBackends()) {
         }, { databaseUrl });
       }, 900_000);
 
+      test(`${mode}: the rebuilt page is readable by nobody who could not read the hidden one (labels, guard, folder rule, a remote non-owner)`, async () => {
+        await managedBrain(async ({ engine, ctx, root }) => {
+          await heldConcept(engine, ctx, root, () => label(engine));
+          const before = await access(engine);
+          expect(before.frontmatter).toMatchObject(LABELS);
+          expect(before.guard).toBeString();
+          expect(before.folder_rule_ids).not.toBeNull();
+          const details = await synthesize(engine, root, [1, 2, 3, 4, 5], { text: NEW, unmanaged });
+          expect(details.rebuilt).toEqual([CONCEPT]);
+          const after = await access(engine);
+          expect(after.frontmatter).toMatchObject(LABELS);
+          expect(after.guard).toBe(before.guard);
+          expect(after.folder_rule_ids).toEqual(before.folder_rule_ids);
+          expect(await state(engine)).toMatchObject({ live: true, marks: 0 });
+          expect(await remoteRead(engine)).not.toContain('canaryrebuilt');
+        }, { databaseUrl });
+      }, 600_000);
+
+      test(`${mode}: labels narrowed on the hidden concept while the model runs: the rebuild publishes nothing`, async () => {
+        await managedBrain(async ({ engine, ctx, root }) => {
+          await heldConcept(engine, ctx, root);
+          const details = await synthesize(engine, root, [1, 2, 3, 4, 5], { text: NEW, unmanaged, during: async () => {
+            await engine.executeRaw('UPDATE pages SET frontmatter = frontmatter || $2::text::jsonb WHERE source_id = $3 AND slug = $1', [CONCEPT, JSON.stringify({ readable_by: ['alice-example'] }), 'default']);
+          } });
+          expect(details.rebuilt ?? []).toEqual([]);
+          expect(await state(engine)).toMatchObject({ live: false, marks: 1 });
+        }, { databaseUrl });
+      }, 600_000);
+
       test(`${mode}: a member rewritten after its body was read for the narrative writes nothing`, async () => {
         await managedBrain(async ({ engine, ctx, root }) => {
           await heldConcept(engine, ctx, root);
@@ -179,6 +244,44 @@ for (const backend of testBackends()) {
         }, { databaseUrl });
       }, 600_000);
     }
+
+    test('review rows: a fact about the concept that another live page holds keeps them; a fact extracted from the concept loses them', async () => {
+      await managedBrain(async ({ engine, ctx, root }) => {
+        await heldConcept(engine, ctx, root);
+        const [held, own] = await unmanagedWhile(engine, true, async () => {
+          const insert = async (markdown: string) => (await engine.executeRaw<{ id: number }>(`INSERT INTO facts (source_id, fact, source, entity_slug, source_markdown_slug)
+            VALUES ('default', $1, 'test', $2, $3) RETURNING id`, [`A fact from ${markdown}.`, CONCEPT, markdown]))[0]!.id;
+          const ids = [await insert('notes/storage-ref'), await insert(CONCEPT)];
+          for (const id of ids) await engine.executeRaw("INSERT INTO decide_review_queue (kind, source_id, a_ref) VALUES ('supersede', 'default', $1)", [String(id)]);
+          return ids;
+        });
+        expect((await synthesize(engine, root, [1, 2, 3, 4, 5], { text: NEW })).rebuilt).toEqual([CONCEPT]);
+        const queued = (await engine.executeRaw<{ a_ref: string }>("SELECT a_ref FROM decide_review_queue WHERE source_id = 'default'")).map(row => row.a_ref);
+        expect(queued).toContain(String(held));
+        expect(queued).not.toContain(String(own));
+      }, { databaseUrl });
+    }, 300_000);
+
+    for (const unmanaged of [false, true]) test(`${unmanaged ? 'unmanaged' : 'managed'}: transitions the old body asserted are dropped and the relationship no longer reports them`, async () => {
+      await managedBrain(async ({ engine, ctx, root }) => {
+        let key = { from_page_id: 0, to_page_id: 0, link_type: 'works_at' };
+        const ended = () => engine.executeRaw("SELECT status_now FROM link_relationships WHERE from_page_id = $1 AND to_page_id = $2 AND link_type = 'works_at' AND status_now = 'ended'", [key.from_page_id, key.to_page_id]);
+        const id = await heldConcept(engine, ctx, root, () => unmanagedWhile(engine, true, async () => {
+          const [note] = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE source_id = 'default' AND slug = 'notes/storage-ref'");
+          const [concept] = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE source_id = 'default' AND slug = $1", [CONCEPT]);
+          const k = { from_page_id: Number(concept!.id), to_page_id: Number(note!.id), link_type: 'works_at' };
+          await engine.executeRaw(`INSERT INTO link_transitions (source_id, from_page_id, to_page_id, link_type, kind, occurred_on, producer, origin_page_id)
+            VALUES ('default', $1, $2, 'works_at', 'end', '2020-01-01', 'manual', $1)`, [k.from_page_id, k.to_page_id]);
+          await engine.executeRaw(`INSERT INTO links (from_page_id, to_page_id, link_type, link_source, origin_page_id, context) VALUES ($1, $2, 'works_at', 'manual', $1, 'old body')`, [k.from_page_id, k.to_page_id]);
+          await refreshRelationships(engine, [k]);
+          key = k;
+          expect(await ended()).not.toHaveLength(0);
+        }));
+        expect((await synthesize(engine, root, [1, 2, 3, 4, 5], { text: NEW, unmanaged })).rebuilt).toEqual([CONCEPT]);
+        expect(await engine.executeRaw('SELECT 1 FROM link_transitions WHERE origin_page_id = $1', [id])).toHaveLength(0);
+        expect(await ended()).toHaveLength(0);
+      }, { databaseUrl });
+    }, 300_000);
 
     test('unmanaged: an import that refuses the rebuilt page without throwing rolls the rebuild back and keeps the hold', async () => {
       await managedBrain(async ({ engine, ctx, root }) => {

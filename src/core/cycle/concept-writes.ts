@@ -79,9 +79,11 @@ export function conceptWriter(deps: ConceptWriterDeps) {
   };
   const publishClassic = async (write: ConceptWrite, pageVisibility: Visibility): Promise<boolean> => {
     try {
+      // #9653: a rebuild imports inside its locked transaction, so its chunks wait for the embedding backlog instead.
+      const reviving = !!write.revive;
       write.baseline = await publishClassicConcept(engine, write.conceptSlug, src, write.synthesized(pageVisibility), write.narrative,
         write.baseline, { writeThrough: deps.writeThrough, members: write.atomSlugs, revive: write.revive, importPage: (markdown, tx) => importFromContent(tx ?? engine, write.conceptSlug, markdown, {
-          noEmbed: !isAvailable('embedding'), sourceId: deps.importSourceId, preserveGateMarkers: true,
+          noEmbed: reviving || !isAvailable('embedding'), sourceId: deps.importSourceId, preserveGateMarkers: true,
         }) });
       write.revive = undefined;
       return true;

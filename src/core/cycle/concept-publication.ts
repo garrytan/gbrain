@@ -286,10 +286,10 @@ export async function publishClassicConcept(engine: BrainEngine, slug: string, s
       : serializeMarkdown(synthesized, narrative, '', { type: 'concept', title, tags: [] });
     if (revive) {
       await engine.transaction(async tx => {
-        const refused = await beginConceptRevive(tx, sourceId, slug, revive, { journal: false });
-        if (refused) throw Object.assign(new Error(refused), { code: 'revision_conflict' });
+        const before = await beginConceptRevive(tx, sourceId, slug, revive, { journal: false });
+        if (typeof before === 'string') throw Object.assign(new Error(before), { code: 'revision_conflict' });
         await opts.importPage(markdown, tx);
-        await finishConceptRevive(tx, revive);
+        await finishConceptRevive(tx, revive, before);
       });
     } else await opts.importPage(markdown);
     // The import stamps the page by its own channel; the derivation lowers it to the members' taint and records the edges.
