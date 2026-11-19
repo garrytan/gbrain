@@ -1,4 +1,4 @@
-import { fenceClaimHashes, overlayWithdrawalBody } from '../facts/withdrawal-overlay.ts';
+import { fenceClaimHashes, overlayWithdrawalBody, withLegacyLedgerRows } from '../facts/withdrawal-overlay.ts';
 import { FACT_SPACE_CLASS } from '../facts/withdrawal-schema.ts';
 import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
 import type { ReadQuery } from '../search/read-enrichment.ts';
@@ -46,7 +46,7 @@ export async function overlayCanonicalBodies(query: ReadQuery, body: string, tim
     (SELECT string_agg(regexp_replace(lower(line),'${FACT_SPACE_CLASS}+',' ','g'),chr(10) ORDER BY ord)
       FROM unnest(string_to_array($2::text,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS timeline`, [body, timeline]);
   const resolved = pending ? await resolveGlobalPurges(query, pending.sourceId, pending.marker, [normalized.body ?? '', normalized.timeline ?? '']) : [];
-  const all = resolved.length ? [...withdrawals, ...resolved] : withdrawals;
+  const all = await withLegacyLedgerRows(query, [body, timeline], resolved.length ? [...withdrawals, ...resolved] : withdrawals, pending);
   return { compiled_truth: overlayWithdrawalBody(body, normalized.body ?? '', all),
     timeline: overlayWithdrawalBody(timeline, normalized.timeline ?? '', all) };
 }
@@ -129,8 +129,9 @@ async function readSnapshotStatement(query: ReadQuery, slug: string, opts?: Page
   const withdrawals = [...row.snapshot_withdrawals as PageWithdrawal[], ...await resolveGlobalPurges(query, page.source_id, globalPurges,
     [String(row.fingerprint_body ?? ''), String(row.fingerprint_timeline ?? '')])];
   if (!isSegmentedPage(page)) {
-    page.compiled_truth = overlayWithdrawalBody(page.compiled_truth, String(row.fingerprint_body ?? ''), withdrawals);
-    page.timeline = overlayWithdrawalBody(page.timeline, String(row.fingerprint_timeline ?? ''), withdrawals);
+    const overlay = await withLegacyLedgerRows(query, [page.compiled_truth, page.timeline], withdrawals, { sourceId: page.source_id, marker: globalPurges });
+    page.compiled_truth = overlayWithdrawalBody(page.compiled_truth, String(row.fingerprint_body ?? ''), overlay);
+    page.timeline = overlayWithdrawalBody(page.timeline, String(row.fingerprint_timeline ?? ''), overlay);
   }
   return { page, tags: row.snapshot_tags as string[], revision: row.knowledge_revision == null ? REVISION_BACKFILL_PENDING : String(row.knowledge_revision),
     sourceIncarnation: String(row.source_incarnation), withdrawals, ...(globalPurges.count > 0 ? { globalPurges } : {}),
