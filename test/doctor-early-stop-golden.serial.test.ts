@@ -87,6 +87,8 @@ function statsRejectingEngine(err: Error): BrainEngine {
       if (prop === 'getConfig') return async () => null;
       // Single-row reads answer null (no row), not the list default below.
       if (prop === 'getSource') return async () => null;
+      // The atom provenance counts are one row too; null is the no-row answer the raw read gave before the typed member.
+      if (prop === 'readAtomProvenanceCounts') return async () => null;
       return async () => [];
     },
   }) as unknown as BrainEngine;

@@ -104,8 +104,9 @@ function makeEngine(sourcePaths: Array<{ id: string; local_path: string }>, page
   }));
   return {
     kind: 'pglite',
-    // loadAllSources reads the typed member; the page count still runs executeRaw.
+    // loadAllSources and countLivePages read typed members.
     listSourceRecords: async () => sources(),
+    countLivePages: async () => pageCount,
     executeRaw: async (sql: string) => {
       if (/FROM sources/i.test(sql)) return sources().map((s) => ({ ...s, config: '{}' }));
       if (/FROM pages/i.test(sql)) return [{ n: pageCount }];
@@ -217,6 +218,9 @@ describe('checkBackupCoverage — localOnly (trusted, probes run)', () => {
       kind: 'pglite',
       executeRaw: async (sql: string) => {
         if (/FROM sources/i.test(sql)) return [];
+        throw new Error('pages unreadable');
+      },
+      countLivePages: async () => {
         throw new Error('pages unreadable');
       },
     } as unknown as BrainEngine;
@@ -410,6 +414,7 @@ function makeCountingEngine(kind: 'pglite' | 'postgres', sources: Array<{ id: st
   return {
     kind,
     listSourceRecords: listing.listSourceRecords,
+    countLivePages: listing.countLivePages,
     executeRaw: async (sql: string) => {
       if (/AS pages/i.test(sql)) return [{ pages, facts, since: new Date(Date.now() - 60_000).toISOString() }];
       return listing.executeRaw(sql);

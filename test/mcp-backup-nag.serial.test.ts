@@ -91,6 +91,8 @@ const engineStub = {
   readPageTitle: async () => null,
   readPageAliasRows: async () => [],
   listSourceRecords: async () => { sourceListings++; return []; },
+  // countLivePages treats a non-number as UNESTABLISHED (degraded verdict, never persisted); answer a real count.
+  countLivePages: async () => 0,
   executeRaw: async (sql: string) => {
     rawCalls.push(String(sql));
     // countLivePages treats an EMPTY rowset as UNESTABLISHED (null → degraded
