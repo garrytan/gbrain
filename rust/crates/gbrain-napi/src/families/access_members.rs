@@ -13,7 +13,7 @@ use crate::store_binding::{Brain, required};
 
 #[napi]
 impl Brain {
-    /// `insertAccessMember({ id, displayName?, email?, kind?, groups? })`: `{ groupsCreated }`.
+    /// `insertAccessMember({ id, displayName?, email?, kind?, groups?, bindTokenId? })`: `{ groupsCreated }`.
     #[napi]
     pub fn insert_access_member<'env>(
         &self,

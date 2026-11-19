@@ -35,7 +35,8 @@ import { GBrainOAuthProvider } from '../../src/core/oauth-provider.ts';
 import { OAuthGrants } from '../../src/core/oauth-grants.ts';
 import { createHash } from 'node:crypto';
 import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
-import { parityArms } from './harness.ts';
+import { addMember, bindCredential } from '../../src/core/access/members.ts';
+import { createSource, parityArms } from './harness.ts';
 import type { Server } from 'node:http';
 import express from 'express';
 import { buildServeHttpApp } from '../../src/commands/serve-http.ts';
@@ -515,6 +516,76 @@ describe('engine parity: access_tokens members', () => {
         }
       }
       if (JSON.stringify(out.firstPlain) !== JSON.stringify(out.secondPlain)) throw new Error('the converted row authorizes differently');
+      return out;
+    });
+  parityTest('a token bound to a member: the bearer check carries the live member and its groups, and refuses a token whose member is disabled or removed; a binding is read, written and cleared by id, revoked or not',
+    { methods: ['insertAccessToken', 'insertAccessMember', 'setAccessMemberDisabled', 'tombstoneAccessMember', 'readCredentialBindingForUpdate', 'writeCredentialBinding',
+      'writeCredentialReadsUnscoped', 'readAccessMembers', 'readLiveMember', 'readActiveAccessTokenByHash', 'revokeAccessToken', 'readScopeSourceConfigs'] }, async (engine, backend) => {
+      const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), engine });
+      await engine.insertAccessMember({ id: 'alice-example', displayName: null, email: null, kind: 'person', groups: ['team-a'], bindTokenId: null });
+      await engine.insertAccessMember({ id: 'bob-example', displayName: null, email: null, kind: 'person', groups: [], bindTokenId: null });
+      await createSource(engine, backend, 'scope-a');
+      const alice = await insert(engine, 'alice-tok', 'tok-alice');
+      const bob = await insert(engine, 'bob-tok', 'tok-bob');
+      const plain = await insert(engine, 'plain-tok', 'tok-plain');
+      const retired = await insert(engine, 'retired-tok', 'tok-retired');
+      const names = new Map([[alice.id, 'alice-tok'], [bob.id, 'bob-tok'], [plain.id, 'plain-tok'], [retired.id, 'retired-tok']]);
+      const verify = async (token: string) => {
+        try {
+          const { expiresAt, createdAt, principal, ...rest } = await provider.verifyAccessToken(token) as unknown as Record<string, unknown>;
+          const p = principal as { kind: string; id: string };
+          return { ...rest, principal: { kind: p.kind, id: names.get(p.id) ?? p.id } };
+        } catch (error) {
+          if ((error as { code?: unknown }).code === 'engine_capability_missing') throw error;
+          return { refused: (error as Error).constructor.name, message: (error as Error).message };
+        }
+      };
+      const binding = async (id: string, readsUnscoped = true) => {
+        const row = await engine.transaction(tx => tx.readCredentialBindingForUpdate({ kind: 'token', id }, { readsUnscoped }));
+        return row && { ...row, ...(readsUnscoped ? { reads_unscoped: row.reads_unscoped == null ? null : 'set' } : {}) };
+      };
+      const out: Record<string, unknown> = {};
+      out.missing = { binding: await binding('00000000-0000-4000-8000-00000000dead'), live: await engine.readLiveMember('legacy_token', '00000000-0000-4000-8000-00000000dead') };
+      out.before = { alice: await binding(alice.id), bearer: await verify('tok-alice') };
+      out.bound = {
+        alice: await bindCredential(engine, { kind: 'token', id: alice.id }, { member: 'alice-example', mayActFor: ['alice-example'], readsUnscoped: true }),
+        bob: await bindCredential(engine, { kind: 'token', id: bob.id }, { member: 'bob-example' }),
+        retired: await bindCredential(engine, { kind: 'token', id: retired.id }, { member: 'alice-example' }),
+      };
+      out.afterBind = { alice: await binding(alice.id), bob: await binding(bob.id, false), plain: await binding(plain.id) };
+      out.bearerLive = { alice: await verify('tok-alice'), bob: await verify('tok-bob'), plain: await verify('tok-plain') };
+      out.row = await (async () => {
+        const r = (await engine.readActiveAccessTokenByHash(hashToken('tok-alice'), 'provider'))!;
+        return { member_id: r.member_id, may_act_for: r.may_act_for, reads_unscoped: r.reads_unscoped ? 'set' : null };
+      })();
+      out.listed = (await engine.listAccessTokens()).map(t => [names.get(t.id), t.member_id]).sort();
+      out.live = { alice: await engine.readLiveMember('legacy_token', alice.id), plain: await engine.readLiveMember('legacy_token', plain.id) };
+      await engine.setAccessMemberDisabled('bob-example', true);
+      out.bobDisabled = { bearer: await verify('tok-bob'), live: await engine.readLiveMember('legacy_token', bob.id), bobsTokenStillBound: (await binding(bob.id, false))?.member_id };
+      await engine.setAccessMemberDisabled('bob-example', false);
+      out.bobBack = await verify('tok-bob');
+      await revokeLegacyTokenById(engine, retired.id);
+      out.retired = { bearer: await verify('tok-retired'), live: await engine.readLiveMember('legacy_token', retired.id), binding: (await binding(retired.id, false))?.member_id };
+      out.rebound = await bindCredential(engine, { kind: 'token', id: retired.id }, { member: null });
+      await engine.tombstoneAccessMember('alice-example');
+      out.aliceRemoved = { bearer: await verify('tok-alice'), live: await engine.readLiveMember('legacy_token', alice.id) };
+      out.cleared = {
+        alice: await bindCredential(engine, { kind: 'token', id: alice.id }, { member: null, mayActFor: null, readsUnscoped: false }),
+        binding: await binding(alice.id), bearer: await verify('tok-alice'),
+      };
+      // The attest right: a token with no member lists the scope sources it may write, and the mark commits with the binding.
+      out.attest = await bindCredential(engine, { kind: 'token', id: plain.id }, { attestActor: 'qm', attestOps: ['memory_write'], attestSources: ['scope-a'] });
+      out.attested = { binding: await binding(plain.id), scope: (await engine.readScopeSourceConfigs(['scope-a']))[0]?.config, bearer: await verify('tok-plain') };
+      // `gbrain access member add --bind-token` binds the token in the member's own write; an id no token has binds nothing.
+      const carol = await insert(engine, 'carol-tok', 'tok-carol');
+      names.set(carol.id, 'carol-tok');
+      await addMember(engine, 'carol-example', { bindToken: 'carol-tok' });
+      await engine.insertAccessMember({ id: 'dave-example', displayName: null, email: null, kind: 'person', groups: [], bindTokenId: '00000000-0000-4000-8000-00000000dead' });
+      out.memberAdd = { carol: (await binding(carol.id, false))?.member_id, bearer: await verify('tok-carol'), dave: (await engine.readAccessMembers({ id: 'dave-example' })).length };
+      // Not vacuous: the live member authenticates with its identity, and the disabled and removed members' tokens are refused.
+      const live = out.bearerLive as Record<string, Record<string, unknown>>;
+      if ('refused' in live.alice! || !live.alice!.member) throw new Error(`the bound token carries no member: ${JSON.stringify(live.alice)}`);
+      if (!('refused' in (out.bobDisabled as { bearer: object }).bearer) || !('refused' in (out.aliceRemoved as { bearer: object }).bearer)) throw new Error('a token of a disabled or removed member authenticated');
       return out;
     });
   parityTest('bearer check stamps last_used_at: null before, set after, unchanged by a second check inside 60 seconds; the unified stamp leaves a row with no source_grant alone',

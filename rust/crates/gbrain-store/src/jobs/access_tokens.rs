@@ -12,15 +12,17 @@
 //! columns, grant_revision, min_trust, revoked_at, created_at, last_used_at) and the table's constraints on them: the unique
 //! `token_hash` (`access_tokens_token_hash_key`, found by scanning the table, as the secondary indexes are not kept), the
 //! `source_grant` list and the `min_trust` list. A refusal is `constraint_violation` with the Postgres message.
-//! Not kept: the member, attest and private columns, and the `trust_generation_update` trigger: a listed
-//! row reads them as the table's defaults (`member_id` NULL, `private_pages` and `private_facts`
-//! `'none'`). `last_used_at` is stamped by the bearer check (`touch_access_token_last_used`) and NULL before. No member
+//! Kept too: the binding columns (member_id, may_act_for, the attest columns, reads_unscoped) that
+//! `writeCredentialBinding` and `writeCredentialReadsUnscoped` set. Not kept: the private columns, and the
+//! `trust_generation_update` trigger: a listed row reads them as the table's defaults (`private_pages` and
+//! `private_facts` `'none'`). `last_used_at` is stamped by the bearer check (`touch_access_token_last_used`) and NULL before. No member
 //! returns `token_hash`. Setting
 //! the floor of an id no token has changes nothing (Postgres also refuses an id that is not a UUID with 22P02; the
 //! caller here always passes the id `findActiveAccessTokens` returned).
 
 use super::*;
 use crate::env::{iso, parse_iso};
+use crate::kv::KvWrite;
 
 const TOKEN: u8 = 0x2B;
 const TABLE: &str = "access_tokens";
@@ -61,6 +63,22 @@ struct TokenRecord {
     /// Stamped by the bearer check, at most once a minute; a record written before the field existed reads NULL.
     #[serde(default)]
     last_used_at: Option<i64>,
+    /// The binding columns (`writeCredentialBinding`): the member, who it may act for, the attest right and the
+    /// unscoped-read opt-out time. A record written before they were kept reads NULL.
+    #[serde(default)]
+    member_id: Option<String>,
+    #[serde(default)]
+    may_act_for: Option<Vec<String>>,
+    #[serde(default)]
+    attest_actor: Option<String>,
+    #[serde(default)]
+    attest_ops: Option<Vec<String>>,
+    #[serde(default)]
+    attest_sources: Option<Vec<String>>,
+    #[serde(default)]
+    attest_read: Option<String>,
+    #[serde(default)]
+    reads_unscoped: Option<i64>,
 }
 
 fn refuse_check(constraint: &str) -> StoreError {
@@ -179,6 +197,13 @@ impl Store {
                 revoked_at,
                 created_at: self.env.now_micros(),
                 last_used_at: None,
+                member_id: None,
+                may_act_for: None,
+                attest_actor: None,
+                attest_ops: None,
+                attest_sources: None,
+                attest_read: None,
+                reads_unscoped: None,
             };
             record.check()?;
             if all_tokens(&*tx)?
@@ -227,8 +252,8 @@ impl Store {
 }
 
 impl TokenRecord {
-    /// The whole row (`SELECT *` or `RETURNING *`) less `token_hash`: the columns not kept read as the table's defaults
-    /// (NULL, and `'none'` for the two private grants).
+    /// The whole row (`SELECT *` or `RETURNING *`) less `token_hash`: the private columns, which are not kept, read as
+    /// the table's default (`'none'`).
     fn whole_row(&self) -> Value {
         let t = self;
         json!({
@@ -237,9 +262,19 @@ impl TokenRecord {
             "source_grant": t.source_grant, "source_id": t.source_id, "federated_read": t.federated_read,
             "allowed_operations": t.allowed_operations, "takes_holders": t.takes_holders,
             "grant_revision": t.grant_revision, "min_trust": t.min_trust, "private_pages": "none",
-            "member_id": Value::Null, "may_act_for": Value::Null, "attest_actor": Value::Null,
-            "attest_ops": Value::Null, "attest_sources": Value::Null, "attest_read": Value::Null,
-            "reads_unscoped": Value::Null, "private_facts": "none",
+            "member_id": t.member_id, "may_act_for": t.may_act_for, "attest_actor": t.attest_actor,
+            "attest_ops": t.attest_ops, "attest_sources": t.attest_sources, "attest_read": t.attest_read,
+            "reads_unscoped": t.reads_unscoped.map(iso), "private_facts": "none",
+        })
+    }
+
+    /// The binding columns `readCredentialBindingForUpdate` reads (`reads_unscoped` included; the caller ignores it
+    /// when it did not ask).
+    fn binding_row(&self) -> Value {
+        json!({
+            "member_id": self.member_id, "may_act_for": self.may_act_for, "attest_actor": self.attest_actor,
+            "attest_ops": self.attest_ops, "attest_sources": self.attest_sources, "attest_read": self.attest_read,
+            "reads_unscoped": self.reads_unscoped.map(iso),
         })
     }
 
@@ -254,7 +289,7 @@ impl TokenRecord {
             "revoked_at": self.revoked_at.map(iso),
             "private_pages": "none",
             "private_facts": "none",
-            "member_id": Value::Null,
+            "member_id": self.member_id,
         })
     }
 }
@@ -398,8 +433,8 @@ impl Store {
 
 impl Store {
     /// `readLiveAccessTokenRows()`: the whole row (`SELECT *`, no hash) of every token not revoked, by id, for the
-    /// grant checks that read every credential's source grant. Shaped as `read_active_access_token_by_hash` shapes it:
-    /// the columns not kept read as the table's defaults.
+    /// grant checks that read every credential's source grant. Shaped as `read_active_access_token_by_hash` shapes it
+    /// (`last_used_at` and the binding columns as stored).
     pub fn read_live_access_token_rows(&self) -> Result<Value> {
         let read = self.read()?;
         let mut tokens: Vec<TokenRecord> = all_tokens(&*read)?
@@ -408,21 +443,66 @@ impl Store {
             .collect();
         tokens.sort_by(|a, b| a.id.cmp(&b.id));
         Ok(Value::Array(
-            tokens
-                .into_iter()
-                .map(|t| {
-                    json!({
-                        "id": t.id, "name": t.name, "scopes": t.scopes, "created_at": iso(t.created_at),
-                        "last_used_at": Value::Null, "revoked_at": Value::Null, "permissions": t.permissions,
-                        "source_grant": t.source_grant, "source_id": t.source_id, "federated_read": t.federated_read,
-                        "allowed_operations": t.allowed_operations, "takes_holders": t.takes_holders,
-                        "grant_revision": t.grant_revision, "min_trust": t.min_trust, "private_pages": "none",
-                        "member_id": Value::Null, "may_act_for": Value::Null, "attest_actor": Value::Null,
-                        "attest_ops": Value::Null, "attest_sources": Value::Null, "attest_read": Value::Null,
-                        "reads_unscoped": Value::Null, "private_facts": "none",
-                    })
-                })
-                .collect(),
+            tokens.into_iter().map(|t| t.whole_row()).collect(),
         ))
     }
+}
+
+impl Store {
+    /// `readCredentialBindingForUpdate({ kind: 'token', id })`: the token's binding columns, or None. The id is matched
+    /// exactly (Postgres compares `id::text = $1`) and a revoked token is read too: a binding is kept past a revoke.
+    pub fn read_access_token_binding(&self, id: &str) -> Result<Option<Value>> {
+        let read = self.read()?;
+        Ok(get_json::<TokenRecord>(&*read, &token_key(id))?.map(|t| t.binding_row()))
+    }
+
+    /// `writeCredentialBinding({ kind: 'token', id }, binding)`: sets the token's member, may_act_for and attest
+    /// columns; whether the token exists. A revoked token is written too.
+    pub fn write_token_binding(&self, id: &str, binding: &BindingWrite) -> Result<bool> {
+        self.write(|tx| {
+            let Some(mut t) = get_json::<TokenRecord>(tx, &token_key(id))? else {
+                return Ok(false);
+            };
+            t.member_id = binding.member.clone();
+            t.may_act_for = binding.may_act_for.clone();
+            t.attest_actor = binding.attest_actor.clone();
+            t.attest_ops = binding.attest_ops.clone();
+            t.attest_sources = binding.attest_sources.clone();
+            t.attest_read = binding.attest_read.clone();
+            put_json(tx, &token_key(id), &t)?;
+            Ok(true)
+        })
+    }
+
+    /// `writeCredentialReadsUnscoped({ kind: 'token', id }, on)`: sets `reads_unscoped` to now (on) or clears it;
+    /// whether the token exists.
+    pub fn write_token_reads_unscoped(&self, id: &str, on: bool) -> Result<bool> {
+        self.write(|tx| {
+            let Some(mut t) = get_json::<TokenRecord>(tx, &token_key(id))? else {
+                return Ok(false);
+            };
+            t.reads_unscoped = on.then(|| self.env.now_micros());
+            put_json(tx, &token_key(id), &t)?;
+            Ok(true)
+        })
+    }
+
+    /// `readLiveMember('legacy_token', id)`'s first step: the member a token not revoked is bound to (None for no
+    /// token, a revoked token or an unbound one).
+    pub fn read_live_token_member(&self, id: &str) -> Result<Option<String>> {
+        let read = self.read()?;
+        Ok(get_json::<TokenRecord>(&*read, &token_key(id))?
+            .filter(|t| t.revoked_at.is_none())
+            .and_then(|t| t.member_id))
+    }
+}
+
+/// `UPDATE access_tokens SET member_id = $2 WHERE id::text = $1` inside the caller's write (`insertAccessMember` with
+/// a `bindTokenId`): binds the token, revoked or not, and does nothing for an id no token has.
+pub(crate) fn bind_token_member(tx: &mut dyn KvWrite, id: &str, member: &str) -> Result<()> {
+    if let Some(mut t) = get_json::<TokenRecord>(&*tx, &token_key(id))? {
+        t.member_id = Some(member.to_string());
+        put_json(tx, &token_key(id), &t)?;
+    }
+    Ok(())
 }

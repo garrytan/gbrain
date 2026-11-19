@@ -23,10 +23,10 @@
  *    read back through getMember, listMembers and readAudiencePrincipals on every arm.
  *    The credential binding members (gbrain access member add --bind-token, gbrain auth rescope --member) lock and
  *    write access_tokens and oauth_clients rows. A client binding, with the attest-sources marks, runs on every arm
- *    (the last case); a token binding still stops on the Rust arm on engine_capability_missing, because the Rust
- *    store keeps no access tokens (test/rust-engine-store.test.ts pins that nothing is written first).
- *  - Seam: none. Timestamps are reduced to their shape; the credential fixture rows are harness-only SQL behind the
- *    backend switch, as test/engine-parity/access-grants.test.ts seeds them.
+ *    (the last case), and so does a token binding (test/engine-parity/access-tokens.test.ts runs it through the
+ *    bearer check).
+ *  - Seam: none. Timestamps are reduced to their shape; the credential rows are written through the typed token and
+ *    client members, and the sources through the harness helpers.
  */
 import { describe, expect } from 'bun:test';
 import { archiveSource, createSource, parityArms, type ParityBackend } from './harness.ts';
@@ -38,6 +38,8 @@ import { addMember, bindCredential, disableMember, enableMember, getMember, list
 const { parityTest } = parityArms(testBackends());
 
 const SINCE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
+
+const TOKEN_GRANT = { source_grant: 'default', source_id: null, federated_read: null, allowed_operations: null, takes_holders: null };
 
 function member(id: string, extra: Partial<AccessMemberInsert> = {}): AccessMemberInsert {
   return { id, displayName: null, email: null, kind: 'person', groups: [], bindTokenId: null, ...extra };
@@ -200,16 +202,11 @@ describe('access member writes', () => {
   });
 
   parityTest('a credential binding locks the row, writes member and attest columns, and stamps reads_unscoped', {
-    methods: ['insertAccessMember', 'readCredentialBindingForUpdate', 'writeCredentialBinding', 'writeCredentialReadsUnscoped', 'transaction'],
-  }, async (engine, backend: ParityBackend) => {
+    methods: ['insertAccessMember', 'insertAccessToken', 'insertOauthClient', 'readCredentialBindingForUpdate', 'writeCredentialBinding', 'writeCredentialReadsUnscoped', 'transaction'],
+  }, async (engine) => {
     await engine.insertAccessMember(member('alice-example'));
-    let token = 'c0000000-0000-4000-8000-0000000000e9';
-    if (backend !== 'rust') {
-      token = (await engine.executeRaw<{ id: string }>(
-        `INSERT INTO access_tokens (name, token_hash, scopes) VALUES ('token-a', 'hash-a', ARRAY['read']::text[]) RETURNING id::text AS id`))[0]!.id;
-      await engine.executeRaw(`INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris, grant_types, scope, token_endpoint_auth_method,
-        client_id_issued_at, source_id) VALUES ('client-a', NULL, 'client-a', '{}', '{authorization_code}', 'read', 'none', 0, 'default')`);
-    }
+    const { id: token } = await engine.insertAccessToken({ name: 'token-a', token_hash: 'hash-a', scopes: ['read'], permissions: {}, ...TOKEN_GRANT });
+    await engine.insertOauthClient({ client_id: 'client-a', client_name: 'client-a', grant_types: ['authorization_code'], scope: 'read', source_id: 'default' });
     const tokenTarget = { kind: 'token' as const, id: token };
     const clientTarget = { kind: 'client' as const, id: 'client-a' };
     const strip = (row: CredentialBindingRow | undefined) => row && { ...row, reads_unscoped: row.reads_unscoped == null ? null : 'set' };
@@ -224,6 +221,7 @@ describe('access member writes', () => {
         tokenNarrow: await tx.readCredentialBindingForUpdate(tokenTarget, { readsUnscoped: false }),
         client: await tx.readCredentialBindingForUpdate(clientTarget, { readsUnscoped: false }),
         missing: await tx.readCredentialBindingForUpdate({ kind: 'client', id: 'client-none' }, { readsUnscoped: false }),
+        missingToken: await tx.readCredentialBindingForUpdate({ kind: 'token', id: '00000000-0000-4000-8000-00000000dead' }, { readsUnscoped: false }),
       };
     });
     const bound = { member_id: 'alice-example', may_act_for: ['alice-example'], attest_actor: 'alice-example', attest_ops: ['query'], attest_sources: ['default'], attest_read: 'scope' };
@@ -234,6 +232,7 @@ describe('access member writes', () => {
       tokenNarrow: bound,
       client: { ...none, member_id: 'alice-example', grant_types: ['authorization_code'], confidential: false },
       missing: undefined,
+      missingToken: undefined,
     });
     return out;
   });
@@ -431,12 +430,25 @@ describe('access member and group reads after the typed writes', () => {
     return out;
   });
 
-  parityTest('readLiveMember finds a live member by id or by the trimmed stdio config value, and nothing else', {
-    methods: ['insertAccessMember', 'setAccessMemberDisabled', 'tombstoneAccessMember', 'setConfig', 'readLiveMember'],
+  parityTest('readLiveMember finds a live member by id, by the trimmed stdio config value, or through a token not revoked or a client not deleted bound to it, and nothing else', {
+    methods: ['insertAccessMember', 'setAccessMemberDisabled', 'tombstoneAccessMember', 'setConfig', 'readLiveMember', 'insertAccessToken', 'insertOauthClient', 'revokeAccessToken', 'writeCredentialBinding'],
   }, async (engine) => {
     await seedMembers(engine);
     await engine.setConfig('mcp.stdio_member', ' zed-example ');
     await engine.setConfig('other.key', 'bob-example');
+    const tokenFor = async (name: string, memberId: string | null, revoked = false) => {
+      const { id } = await engine.insertAccessToken({ name, token_hash: `hash-${name}`, scopes: ['read'], permissions: {}, ...TOKEN_GRANT });
+      if (memberId) await engine.transaction(tx => tx.writeCredentialBinding({ kind: 'token', id }, { member: memberId, mayActFor: null, attestActor: null, attestOps: null, attestSources: null, attestRead: null }));
+      if (revoked) await engine.revokeAccessToken(id);
+      return id;
+    };
+    const tokens = {
+      live: await tokenFor('t-live', 'zed-example'), unbound: await tokenFor('t-unbound', null), disabled: await tokenFor('t-disabled', 'bob-example'),
+      removed: await tokenFor('t-removed', 'carol-example'), revoked: await tokenFor('t-revoked', 'zed-example', true),
+    };
+    await engine.insertOauthClient({ client_id: 'client-live', client_name: 'client-live', member_id: 'zed-example' });
+    await engine.insertOauthClient({ client_id: 'client-disabled', client_name: 'client-disabled', member_id: 'bob-example' });
+    await engine.insertOauthClient({ client_id: 'client-deleted', client_name: 'client-deleted', member_id: 'zed-example', deleted_at: new Date('2026-01-01T00:00:00Z') });
     const out = {
       zed: await engine.readLiveMember('member', 'zed-example'),
       disabled: await engine.readLiveMember('member', 'bob-example'),
@@ -447,10 +459,20 @@ describe('access member and group reads after the typed writes', () => {
       stdioUnset: await engine.readLiveMember('stdio_config', 'no.such.key'),
       token: await engine.readLiveMember('legacy_token', '00000000-0000-4000-8000-0000000000c1'),
       client: await engine.readLiveMember('oauth_client', 'client-alice'),
+      tokenLive: await engine.readLiveMember('legacy_token', tokens.live),
+      tokenUnbound: await engine.readLiveMember('legacy_token', tokens.unbound),
+      tokenDisabled: await engine.readLiveMember('legacy_token', tokens.disabled),
+      tokenRemoved: await engine.readLiveMember('legacy_token', tokens.removed),
+      tokenRevoked: await engine.readLiveMember('legacy_token', tokens.revoked),
+      clientLive: await engine.readLiveMember('oauth_client', 'client-live'),
+      clientDisabled: await engine.readLiveMember('oauth_client', 'client-disabled'),
+      clientDeleted: await engine.readLiveMember('oauth_client', 'client-deleted'),
     };
     expect(out).toEqual({
       zed: { id: 'zed-example', groups: ['team-a', 'team-b'] }, disabled: null, removed: null, group: null,
       stdioTrimmed: { id: 'zed-example', groups: ['team-a', 'team-b'] }, stdioDisabled: null, stdioUnset: null, token: null, client: null,
+      tokenLive: { id: 'zed-example', groups: ['team-a', 'team-b'] }, tokenUnbound: null, tokenDisabled: null, tokenRemoved: null, tokenRevoked: null,
+      clientLive: { id: 'zed-example', groups: ['team-a', 'team-b'] }, clientDisabled: null, clientDeleted: null,
     });
     return out;
   });

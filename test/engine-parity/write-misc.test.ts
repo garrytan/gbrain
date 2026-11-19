@@ -726,25 +726,27 @@ describe('engine parity: write misc', () => {
 
   // Leak case: a revoked token and a deleted client never answer; a token name matches only tokens with exactly that
   // name (never a client's name, another case or an injected predicate); a member binding answers only that member's
-  // credentials. The Rust store keeps no tokens or clients (empty above), so the token write stops on the raw_sql refusal.
-  parityTest('readAccessCredentials answers only live credentials with the exact token name or member binding', { methods: ['readAccessCredentials'] }, async (engine, backend) => {
-    const write = await engine.executeRaw(
-      `INSERT INTO access_tokens (id, name, token_hash, member_id, created_at, revoked_at) VALUES
-         ('00000000-0000-4000-8000-0000000000b1', 'laptop', 'h1', 'alice-example', '2026-01-01T00:00:00Z', NULL),
-         ('00000000-0000-4000-8000-0000000000b2', 'laptop', 'h2', 'alice-example', '2026-01-02T00:00:00Z', now()),
-         ('00000000-0000-4000-8000-0000000000b3', 'alpha', 'h3', 'alice-example', '2026-01-03T00:00:00Z', NULL),
-         ('00000000-0000-4000-8000-0000000000b4', 'shared', 'h4', 'bob-example', '2026-01-05T00:00:00Z', NULL),
-         ('00000000-0000-4000-8000-0000000000b5', 'shared', 'h5', NULL, '2026-01-04T00:00:00Z', NULL)`).then(() => null, (e: unknown) => e);
-    if (backend === 'rust') {
-      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
-      expect(await engine.readAccessCredentials({ memberId: 'alice-example' })).toEqual([]);
-      throw write;
-    }
-    expect(write).toBeNull();
-    await engine.executeRaw(
-      `INSERT INTO oauth_clients (client_id, client_name, member_id, deleted_at) VALUES
-         ('client-alice', 'alice-app', 'alice-example', NULL), ('client-gone', 'gone-app', 'alice-example', now()), ('client-bob', 'bob-app', 'bob-example', NULL)`);
-    const ids = (rows: Awaited<ReturnType<BrainEngine['readAccessCredentials']>>) => rows.map(r => [r.kind, r.id, r.name]);
+  // credentials. The rows are written through the typed token and client members, so every arm compares a real answer.
+  parityTest('readAccessCredentials answers only live credentials with the exact token name or member binding',
+    { methods: ['readAccessCredentials', 'insertAccessToken', 'insertOauthClient', 'writeCredentialBinding', 'revokeAccessToken'] }, async (engine) => {
+    const grant = { source_grant: 'default', source_id: null, federated_read: null, allowed_operations: null, takes_holders: null };
+    const labels = new Map<string, string>();
+    const token = async (label: string, name: string, member: string | null, revoked = false) => {
+      const { id } = await engine.insertAccessToken({ name, token_hash: `hash-${label}`, scopes: ['read'], permissions: {}, ...grant });
+      labels.set(id, label);
+      if (member) await engine.transaction(tx => tx.writeCredentialBinding({ kind: 'token', id }, { member, mayActFor: null, attestActor: null, attestOps: null, attestSources: null, attestRead: null }));
+      if (revoked) await engine.revokeAccessToken(id);
+      await new Promise(resolve => setTimeout(resolve, 5));
+    };
+    await token('laptop', 'laptop', 'alice-example');
+    await token('laptop-revoked', 'laptop', 'alice-example', true);
+    await token('alpha', 'alpha', 'alice-example');
+    await token('shared-unbound', 'shared', null);
+    await token('shared-bob', 'shared', 'bob-example');
+    await engine.insertOauthClient({ client_id: 'client-alice', client_name: 'alice-app', member_id: 'alice-example' });
+    await engine.insertOauthClient({ client_id: 'client-gone', client_name: 'gone-app', member_id: 'alice-example', deleted_at: new Date('2026-01-01T00:00:00Z') });
+    await engine.insertOauthClient({ client_id: 'client-bob', client_name: 'bob-app', member_id: 'bob-example' });
+    const ids = (rows: Awaited<ReturnType<BrainEngine['readAccessCredentials']>>) => rows.map(r => [r.kind, labels.get(r.id) ?? r.id, r.name]);
     const byName = {
       laptop: ids(await engine.readAccessCredentials({ tokenName: 'laptop' })),
       shared: ids(await engine.readAccessCredentials({ tokenName: 'shared' })),
@@ -753,8 +755,8 @@ describe('engine parity: write misc', () => {
       injected: await engine.readAccessCredentials({ tokenName: "x' OR '1'='1" }),
     };
     expect(byName).toEqual({
-      laptop: [['token', '00000000-0000-4000-8000-0000000000b1', 'laptop']],
-      shared: [['token', '00000000-0000-4000-8000-0000000000b5', 'shared'], ['token', '00000000-0000-4000-8000-0000000000b4', 'shared']],
+      laptop: [['token', 'laptop', 'laptop']],
+      shared: [['token', 'shared-unbound', 'shared'], ['token', 'shared-bob', 'shared']],
       otherCase: [], clientName: [], injected: [],
     });
     const byMember = {
@@ -765,8 +767,8 @@ describe('engine parity: write misc', () => {
       unknown: await engine.readAccessCredentials({ memberId: 'nobody-example' }),
     };
     expect(byMember).toEqual({
-      alice: [['token', '00000000-0000-4000-8000-0000000000b3', 'alpha'], ['token', '00000000-0000-4000-8000-0000000000b1', 'laptop'], ['client', 'client-alice', 'alice-app']],
-      bob: [['token', '00000000-0000-4000-8000-0000000000b4', 'shared'], ['client', 'client-bob', 'bob-app']],
+      alice: [['token', 'alpha', 'alpha'], ['token', 'laptop', 'laptop'], ['client', 'client-alice', 'alice-app']],
+      bob: [['token', 'shared-bob', 'shared'], ['client', 'client-bob', 'bob-app']],
       otherCase: [], injected: [], unknown: [],
     });
     return { byName, byMember };

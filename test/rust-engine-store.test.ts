@@ -281,26 +281,29 @@ describe('Rust engine on the store', () => {
     expect((await engine.getFile('default', 'f/a.png'))?.page_id).toBe(created.id);
   });
 
-  withAddon('access members: a token bind and every credential binding member refuse before anything is written', async () => {
+  withAddon('access members: a token binds on a member insert and through the binding members, and an id no token has binds nothing', async () => {
     const { engine } = await open();
-    const spec = { id: 'alice-example', displayName: null, email: null, kind: 'person' as const, groups: ['team-a'], bindTokenId: 'c0000000-0000-4000-8000-0000000000e9' };
-    expect(await code(() => engine.insertAccessMember(spec))).toBe('engine_capability_missing');
-    expect(await engine.listActiveAccessMembers()).toEqual([]);
-    expect(await engine.getConfig('access.restrictions_present')).toBeNull();
-    const target = { kind: 'token' as const, id: spec.bindTokenId };
-    expect(await code(() => engine.readCredentialBindingForUpdate(target, { readsUnscoped: false }))).toBe('engine_capability_missing');
-    expect(await code(() => engine.writeCredentialBinding(target, { member: null, mayActFor: null, attestActor: null, attestOps: null, attestSources: null, attestRead: null }))).toBe('engine_capability_missing');
-    expect(await code(() => engine.writeCredentialReadsUnscoped(target, true))).toBe('engine_capability_missing');
-    // bindCredential (gbrain auth rescope --member none) stops at the locked read, so applyAttestSources never runs.
-    expect(await code(() => bindCredential(engine, target, { member: null }))).toBe('engine_capability_missing');
-    // gbrain access member add --bind-token looks the token up first. The store keeps no tokens, so the lookup finds none
-    // and the command refuses before it writes.
-    expect(await code(() => addMember(engine, 'alice-example', { groups: ['team-a'], bindToken: 'laptop' }))).toBe('invalid_params');
-    expect(await getMember(engine, 'alice-example')).toBeNull();
-    expect(await engine.getConfig('access.restrictions_present')).toBeNull();
-    // Without a token the same insert writes the member.
-    expect(await engine.insertAccessMember({ ...spec, bindTokenId: null })).toEqual({ groupsCreated: ['team-a'] });
-    expect(await engine.listActiveAccessMembers()).toEqual(['alice-example']);
+    const grant = { source_grant: 'default', source_id: null, federated_read: null, allowed_operations: null, takes_holders: null };
+    const { id: tokenId } = await engine.insertAccessToken({ name: 'laptop', token_hash: 'hash-laptop', scopes: ['read'], permissions: {}, ...grant });
+    const spec = { id: 'alice-example', displayName: null, email: null, kind: 'person' as const, groups: ['team-a'], bindTokenId: tokenId };
+    // A bind to an id no token has writes the member and binds nothing, as the UPDATE finding no row does.
+    expect(await engine.insertAccessMember({ ...spec, id: 'zed-example', bindTokenId: 'c0000000-0000-4000-8000-0000000000e9' })).toEqual({ groupsCreated: ['team-a'] });
+    expect(await engine.readLiveMember('legacy_token', tokenId)).toBeNull();
+    // gbrain access member add --bind-token finds the token by name and binds it in the member's own write.
+    expect((await addMember(engine, 'alice-example', { groups: ['team-a'], bindToken: 'laptop' })).bound).toEqual({ kind: 'token', id: tokenId, name: 'laptop' });
+    expect(await engine.readLiveMember('legacy_token', tokenId)).toEqual({ id: 'alice-example', groups: ['team-a'] });
+    expect(await engine.readAccessCredentials({ memberId: 'alice-example' })).toEqual([{ kind: 'token', id: tokenId, name: 'laptop' }]);
+    // The binding members lock, write and clear the token's columns, and a binding to no token finds none.
+    const target = { kind: 'token' as const, id: tokenId };
+    expect(await engine.transaction(tx => tx.readCredentialBindingForUpdate(target, { readsUnscoped: false }))).toMatchObject({ member_id: 'alice-example' });
+    expect((await bindCredential(engine, target, { member: null })).member).toBeNull();
+    expect(await engine.readLiveMember('legacy_token', tokenId)).toBeNull();
+    expect(await code(() => bindCredential(engine, { kind: 'token', id: 'c0000000-0000-4000-8000-0000000000e9' }, { member: null }))).toBe('invalid_params');
+    // A member that is not live ends the binding's reach, and the token keeps the binding.
+    await bindCredential(engine, target, { member: 'alice-example' });
+    await engine.setAccessMemberDisabled('alice-example', true);
+    expect(await engine.readLiveMember('legacy_token', tokenId)).toBeNull();
+    expect(await engine.transaction(tx => tx.readCredentialBindingForUpdate(target, { readsUnscoped: false }))).toMatchObject({ member_id: 'alice-example' });
   });
 
   withAddon('access members: gbrain access member add keeps the archive pages to the owner first, then adds the member', async () => {

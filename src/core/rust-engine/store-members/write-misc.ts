@@ -16,6 +16,8 @@ import type { AccessCredentialLookup, AccessCredentialRow, AppliedPolicyRevision
 import { PAGES_NAMING_READER_LIMIT } from '../../engine-sql/access-control.ts';
 import type { ScopeSourceLock } from '../../engine-sql/access-credentials.ts';
 import { storeCall, type StoreMember } from './common.ts';
+import { listAccessTokens } from './jobs-access-tokens.ts';
+import { listOauthClients } from './jobs-oauth-clients.ts';
 
 /**
  * The source's incarnation, archived flag, local path and config, or null. `lock: 'share'` asks the SQL engines to hold
@@ -156,10 +158,26 @@ export const listMemoryProposalRows: StoreMember<[query: ProposalListQuery], Arr
 export const listOwnerProposalRows: StoreMember<[requestId: string], Array<Record<string, unknown>>> = async () => [];
 
 /**
- * The store keeps tokens and clients without member bindings and without the may_act_for list (see readMayActFor), and
- * this lookup is not served from them yet: no name or member binding names a live credential.
+ * The live credentials `by` names, read from the token and client lists: the tokens not revoked whose name is exactly
+ * `tokenName` (oldest first, a tie by id); or the tokens not revoked (by name, then id) and then the clients not deleted
+ * (by client id) whose stored binding is exactly `memberId`. Names and ids sort in byte order, where Postgres sorts in
+ * the database collation.
  */
-export const readAccessCredentials: StoreMember<[by: AccessCredentialLookup], AccessCredentialRow[]> = async () => [];
+export const readAccessCredentials: StoreMember<[by: AccessCredentialLookup], AccessCredentialRow[]> = async (brain, by) => {
+  const byText = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+  const tokens = (await listAccessTokens(brain)).filter(t => t.revoked_at === null);
+  if ('tokenName' in by) {
+    return tokens.filter(t => t.name === by.tokenName)
+      .sort((a, b) => a.created_at.getTime() - b.created_at.getTime() || byText(a.id, b.id))
+      .map(t => ({ kind: 'token' as const, id: t.id, name: t.name }));
+  }
+  const bound = tokens.filter(t => t.member_id === by.memberId).sort((a, b) => byText(a.name, b.name) || byText(a.id, b.id));
+  const clients = (await listOauthClients(brain)).filter(c => c.deleted_at === null && c.member_id === by.memberId).sort((a, b) => byText(a.client_id, b.client_id));
+  return [
+    ...bound.map(t => ({ kind: 'token' as const, id: t.id, name: t.name })),
+    ...clients.map(c => ({ kind: 'client' as const, id: c.client_id, name: c.client_name })),
+  ];
+};
 
 
 /**

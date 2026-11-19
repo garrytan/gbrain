@@ -21,7 +21,7 @@ there is no reverse index.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
-| `insertAccessMember({ id, displayName, email, kind, groups })` | `{ groupsCreated }`: the groups this call created, in the order named | the `addMember` transaction: the member `INSERT`, `INSERT INTO access_groups ... ON CONFLICT DO NOTHING RETURNING id` per group, `INSERT INTO access_group_members ... ON CONFLICT DO NOTHING` per group |
+| `insertAccessMember({ id, displayName, email, kind, groups, bindTokenId })` | `{ groupsCreated }`: the groups this call created, in the order named | the `addMember` transaction: the member `INSERT`, `INSERT INTO access_groups ... ON CONFLICT DO NOTHING RETURNING id` per group, `INSERT INTO access_group_members ... ON CONFLICT DO NOTHING` per group |
 | `setAccessMemberDisabled(id, disabled)` | null | `UPDATE access_members SET disabled_at = COALESCE(disabled_at, now())` (or `NULL`), `updated_at = now()` |
 | `setAccessMemberEmail(id, email)` | true when a member that is not removed changed | `UPDATE ... SET email = $2 ... WHERE id = $1 AND tombstoned_at IS NULL RETURNING id` |
 | `setAccessMemberKind(id, kind)` | null | `UPDATE ... SET kind = $2 ... WHERE id = $1 AND tombstoned_at IS NULL` |
@@ -67,9 +67,10 @@ into the error Postgres throws: `code` `23505` (unique), `23514` (check) or `235
 
 - Credentials: the binding members (`readCredentialBindingForUpdate`, `writeCredentialBinding`,
   `writeCredentialReadsUnscoped`, so `bindCredential` and `gbrain auth rescope --member`) run on an OAuth client, whose
-  binding is columns of its row ([oauth-clients.md](oauth-clients.md)). The store keeps no access-token binding columns,
-  so `insertAccessMember` with a `bindTokenId` (`gbrain access member add --bind-token`) and the three binding members
-  on a token target refuse with `engine_capability_missing` before anything is written.
+  binding is columns of its row ([oauth-clients.md](oauth-clients.md)), and on an access token
+  ([access-tokens.md](access-tokens.md)). `insertAccessMember` with a `bindTokenId` (`gbrain access member add
+  --bind-token`) binds that token in the member's own write; an id no token has binds nothing, as the `UPDATE` finding
+  no row does.
 - Order: ids sort in byte order. Postgres sorts `ORDER BY m.id` and `array_agg(... ORDER BY g.group_id)` in the
   database collation, so ids with `.`, `_` or `-` can order differently from an `en_US` database.
 

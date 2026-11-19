@@ -81,6 +81,7 @@ mod sweeps;
 mod synthesis_completions;
 mod wake;
 
+pub(crate) use access_tokens::bind_token_member;
 pub use access_tokens::{TokenGrantColumns, TokenInsert};
 pub use attachments::AttachmentInput;
 pub use checks::{

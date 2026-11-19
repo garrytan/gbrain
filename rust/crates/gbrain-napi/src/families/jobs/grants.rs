@@ -121,4 +121,49 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.write_client_reads_unscoped(&client_id, on))
     }
+
+    /// `readAccessTokenBinding(id)`: the token's binding columns, or null.
+    #[napi]
+    pub fn read_access_token_binding<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_access_token_binding(&id))
+    }
+
+    /// `writeTokenBinding(id, binding)`: whether the token exists.
+    #[napi]
+    pub fn write_token_binding<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+        binding: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let binding: BindingWrite = required(binding, "writeTokenBinding binding")?;
+            s.write_token_binding(&id, &binding)
+        })
+    }
+
+    /// `writeTokenReadsUnscoped(id, on)`: whether the token exists.
+    #[napi]
+    pub fn write_token_reads_unscoped<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+        on: bool,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.write_token_reads_unscoped(&id, on))
+    }
+
+    /// `readLiveTokenMember(id)`: the member a token not revoked is bound to, or null.
+    #[napi]
+    pub fn read_live_token_member<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_live_token_member(&id))
+    }
 }

@@ -4,7 +4,8 @@
 
 mod memory_env;
 
-use gbrain_store::jobs::TokenInsert;
+use gbrain_store::access_members::AccessMemberInsert;
+use gbrain_store::jobs::{BindingWrite, TokenInsert};
 use memory_env::{Brain, brain};
 use serde_json::{Value, json};
 
@@ -360,5 +361,128 @@ fn a_legacy_token_converts_once_with_one_more_revision_and_a_bad_kind_leaves_it(
         )
         .unwrap(),
         None
+    );
+}
+
+#[test]
+fn a_token_binding_is_kept_on_the_row_every_read_shows_it_and_a_revoke_ends_only_the_live_member_read()
+ {
+    let b = brain("tokens-binding");
+    let id = insert(&b, token("bound", "hash-b", json!({}))).unwrap();
+    let other = insert(&b, token("other", "hash-o", json!({}))).unwrap();
+    let before = b.read_access_token_binding(&id).unwrap().unwrap();
+    assert_eq!(before["member_id"], Value::Null);
+    assert_eq!(before["reads_unscoped"], Value::Null);
+    assert_eq!(b.read_access_token_binding("missing").unwrap(), None);
+
+    let binding: BindingWrite = serde_json::from_value(json!({
+        "member": "alice-example", "may_act_for": ["alice-example"], "attest_actor": "qm",
+        "attest_ops": ["memory_write"], "attest_sources": ["scope-a"], "attest_read": "scope",
+    }))
+    .unwrap();
+    assert!(!b.write_token_binding("missing", &binding).unwrap());
+    assert!(b.write_token_binding(&id, &binding).unwrap());
+    let after = b.read_access_token_binding(&id).unwrap().unwrap();
+    assert_eq!(after["member_id"], "alice-example");
+    assert_eq!(after["may_act_for"], json!(["alice-example"]));
+    assert_eq!(after["attest_sources"], json!(["scope-a"]));
+    assert_eq!(after["attest_read"], "scope");
+    assert_eq!(
+        b.read_access_token_binding(&other).unwrap().unwrap()["member_id"],
+        Value::Null,
+        "another token is untouched"
+    );
+
+    let row = b
+        .read_active_access_token_by_hash("hash-b")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        row["member_id"], "alice-example",
+        "the bearer read carries the member"
+    );
+    assert_eq!(row["attest_actor"], "qm");
+    let listed = b.list_access_tokens().unwrap();
+    let listed: Vec<_> = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["id"] == id.as_str())
+        .collect();
+    assert_eq!(
+        listed[0]["member_id"], "alice-example",
+        "the listing carries the member"
+    );
+    let live = b.read_live_access_token_rows().unwrap();
+    let live = live
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == id.as_str())
+        .unwrap()
+        .clone();
+    assert_eq!(live["member_id"], "alice-example");
+    assert_eq!(live["may_act_for"], json!(["alice-example"]));
+
+    assert!(b.write_token_reads_unscoped(&id, true).unwrap());
+    assert!(!b.read_access_token_binding(&id).unwrap().unwrap()["reads_unscoped"].is_null());
+    assert!(b.write_token_reads_unscoped(&id, false).unwrap());
+    let cleared = b.read_access_token_binding(&id).unwrap().unwrap();
+    assert_eq!(cleared["reads_unscoped"], Value::Null);
+    assert_eq!(
+        cleared["member_id"], "alice-example",
+        "the binding is untouched"
+    );
+    assert!(!b.write_token_reads_unscoped("missing", true).unwrap());
+
+    assert_eq!(
+        b.read_live_token_member(&id).unwrap().as_deref(),
+        Some("alice-example")
+    );
+    assert_eq!(
+        b.read_live_token_member(&other).unwrap(),
+        None,
+        "an unbound token names no member"
+    );
+    assert_eq!(b.read_live_token_member("missing").unwrap(), None);
+    b.revoke_access_token(&id).unwrap();
+    assert_eq!(
+        b.read_live_token_member(&id).unwrap(),
+        None,
+        "a revoked token names no member"
+    );
+    assert!(
+        b.read_access_token_binding(&id).unwrap().is_some(),
+        "the binding is still read under a lock after a revoke"
+    );
+}
+
+#[test]
+fn a_member_insert_binds_its_token_in_the_same_write_and_a_refused_insert_binds_nothing() {
+    let b = brain("tokens-member-bind");
+    let id = insert(&b, token("bound", "hash-m", json!({}))).unwrap();
+    let spec = |member: &str, token: &str| -> AccessMemberInsert {
+        serde_json::from_value(json!({ "id": member, "groups": [], "bindTokenId": token })).unwrap()
+    };
+    b.insert_access_member(&spec("alice-example", &id)).unwrap();
+    assert_eq!(
+        b.read_live_token_member(&id).unwrap().as_deref(),
+        Some("alice-example")
+    );
+    b.insert_access_member(&spec("bob-example", "no-such-token"))
+        .unwrap();
+    assert!(
+        b.insert_access_member(&spec("alice-example", &id)).is_err(),
+        "a duplicate member is refused"
+    );
+    let other = insert(&b, token("other", "hash-p", json!({}))).unwrap();
+    assert!(
+        b.insert_access_member(&spec("alice-example", &other))
+            .is_err()
+    );
+    assert_eq!(
+        b.read_live_token_member(&other).unwrap(),
+        None,
+        "the refused insert left the other token unbound"
     );
 }

@@ -101,7 +101,7 @@ pub(crate) struct GroupRecord {
     pub created_at_us: i64,
 }
 
-/// `insertAccessMember(spec)`: the member row and the groups it joins.
+/// `insertAccessMember(spec)`: the member row, the groups it joins and the token it binds.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AccessMemberInsert {
@@ -110,6 +110,8 @@ pub struct AccessMemberInsert {
     pub email: Option<String>,
     pub kind: Option<String>,
     pub groups: Vec<String>,
+    /// The id of an access token to bind to the new member in the same write (`gbrain access member add --bind-token`).
+    pub bind_token_id: Option<String>,
 }
 
 /// `readAccessMembers(lookup)`: one member by exact id (any status); every member that declares
@@ -351,6 +353,9 @@ impl Store {
             }
             for group in &spec.groups {
                 add_group_member(tx, group, &spec.id)?;
+            }
+            if let Some(token) = &spec.bind_token_id {
+                crate::jobs::bind_token_member(tx, token, &spec.id)?;
             }
             Ok(json!({ "groupsCreated": created }))
         })
