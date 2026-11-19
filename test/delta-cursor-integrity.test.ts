@@ -23,6 +23,7 @@ import {
   SESSION_CURSOR_SQL,
   DELTA_SESSION_SQL,
   CHECKPOINT_MANIFEST_SQL,
+  WRITE_CHECKPOINT_MANIFEST_SQL,
   UPSERT_SESSION_STATE_SQL,
 } from '../src/core/engine-sql/session-state.ts';
 
@@ -47,6 +48,7 @@ const STATE_MEMBER_SQL: Record<string, string> = {
   readSessionCursor: SESSION_CURSOR_SQL,
   readDeltaSessionRow: DELTA_SESSION_SQL,
   readCheckpointManifestRow: CHECKPOINT_MANIFEST_SQL,
+  writeCheckpointManifest: WRITE_CHECKPOINT_MANIFEST_SQL,
 };
 
 function faulty(engine: BrainEngine, faults: Faults): BrainEngine {

@@ -103,6 +103,16 @@ const PINS: Pin[] = [
        FROM session_context_state
        WHERE source_id = $1 AND client_id = $2 AND session_id = $3`],
   },
+  {
+    from: 'src/core/context/session-state.ts:355 appendCheckpointManifest, at eb30f47b89',
+    case: { method: 'writeCheckpointManifest', variant: 'default', run: e => e.writeCheckpointManifest('default', 'local', 's', [{ slug: 'notes/a', title: 'A' }]) },
+    texts: [`INSERT INTO session_context_state
+         (source_id, client_id, session_id, checkpoint_manifest, updated_at)
+       VALUES ($1, $2, $3, $4::text::jsonb, now())
+       ON CONFLICT (source_id, client_id, session_id) DO UPDATE SET
+         checkpoint_manifest = EXCLUDED.checkpoint_manifest,
+         updated_at          = now()`],
+  },
 ];
 
 describe('caller raw SQL moved into typed members keeps its Postgres text byte for byte', () => {

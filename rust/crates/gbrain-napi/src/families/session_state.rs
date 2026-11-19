@@ -73,4 +73,19 @@ impl Brain {
             s.read_checkpoint_manifest_row(&source_id, &client_id, &session_id)
         })
     }
+
+    /// `writeCheckpointManifest(sourceId, clientId, sessionId, manifest)`: resolves null.
+    #[napi]
+    pub fn write_checkpoint_manifest<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        client_id: String,
+        session_id: String,
+        manifest: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.write_checkpoint_manifest(&source_id, &client_id, &session_id, &manifest)
+        })
+    }
 }

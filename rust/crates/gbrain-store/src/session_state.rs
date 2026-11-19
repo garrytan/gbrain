@@ -261,6 +261,28 @@ impl Store {
             get_json(&*read, &session_key(source_id, client_id, session_id))?;
         Ok(record.map(|r| json!({ "checkpoint_manifest": jsonb(&r.checkpoint_manifest) })))
     }
+
+    /// `writeCheckpointManifest(sourceId, clientId, sessionId, manifest)`: replaces the manifest
+    /// (and `updated_at`), creating the row with column defaults when there is none.
+    pub fn write_checkpoint_manifest(
+        &self,
+        source_id: &str,
+        client_id: &str,
+        session_id: &str,
+        manifest: &Value,
+    ) -> Result<()> {
+        const OP: &str = "writeCheckpointManifest";
+        check_key(OP, source_id, client_id, session_id)?;
+        jsonb_check(OP, "checkpoint_manifest", manifest)?;
+        let key = session_key(source_id, client_id, session_id);
+        self.write(|tx| {
+            let now = self.env.now_micros();
+            let old: Option<SessionRecord> = get_json(&*tx, &key)?;
+            let mut record = old.unwrap_or_else(SessionRecord::empty);
+            record.checkpoint_manifest = manifest.clone();
+            put_record(tx, &key, record, now)
+        })
+    }
 }
 
 #[cfg(test)]
@@ -384,6 +406,35 @@ mod tests {
                 "facts_cursor_id": 42,
                 "degraded_wakes": 1,
             })
+        );
+    }
+
+    #[test]
+    fn manifest_write_keeps_the_cursor() {
+        let (s, _) = store();
+        s.write_checkpoint_manifest("default", "c", "new", &json!([{ "slug": "a" }]))
+            .unwrap();
+        assert_eq!(
+            s.read_session_cursor("default", "c", "new")
+                .unwrap()
+                .unwrap(),
+            json!({ "standing_entities": [], "surfaced_slugs": [], "last_wake_at": null })
+        );
+        s.upsert_session_state("default", "c", "s", &write("a", "increment"))
+            .unwrap();
+        s.write_checkpoint_manifest("default", "c", "s", &json!([{ "slug": "b", "at": 1 }]))
+            .unwrap();
+        assert_eq!(
+            s.read_checkpoint_manifest_row("default", "c", "s")
+                .unwrap()
+                .unwrap(),
+            json!({ "checkpoint_manifest": [{ "at": 1, "slug": "b" }] })
+        );
+        assert_eq!(
+            s.read_delta_session_row("default", "c", "s")
+                .unwrap()
+                .unwrap()["degraded_wakes"],
+            1
         );
     }
 }

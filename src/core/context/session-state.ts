@@ -293,15 +293,7 @@ export async function appendCheckpointManifest(
       0,
       CHECKPOINT_MANIFEST_CAP,
     );
-    await engine.executeRaw(
-      `INSERT INTO session_context_state
-         (source_id, client_id, session_id, checkpoint_manifest, updated_at)
-       VALUES ($1, $2, $3, $4::text::jsonb, now())
-       ON CONFLICT (source_id, client_id, session_id) DO UPDATE SET
-         checkpoint_manifest = EXCLUDED.checkpoint_manifest,
-         updated_at          = now()`,
-      [sourceId, resolveClientId(clientId), normSession(sessionId), JSON.stringify(merged)],
-    );
+    await engine.writeCheckpointManifest(sourceId, resolveClientId(clientId), normSession(sessionId), merged);
     return true;
   } catch {
     /* fail-open: a manifest-write failure must never THROW into the harvest */

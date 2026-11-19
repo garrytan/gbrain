@@ -138,3 +138,15 @@ export async function readCheckpointManifestRow(exec: SessionStateExec, sourceId
   const rows = await exec.executeRaw<{ checkpoint_manifest: unknown }>(CHECKPOINT_MANIFEST_SQL, [sourceId, clientId, sessionId]);
   return rows.length ? { checkpoint_manifest: rows[0]!.checkpoint_manifest } : null;
 }
+
+export const WRITE_CHECKPOINT_MANIFEST_SQL = `INSERT INTO session_context_state
+         (source_id, client_id, session_id, checkpoint_manifest, updated_at)
+       VALUES ($1, $2, $3, $4::text::jsonb, now())
+       ON CONFLICT (source_id, client_id, session_id) DO UPDATE SET
+         checkpoint_manifest = EXCLUDED.checkpoint_manifest,
+         updated_at          = now()`;
+
+/** Replaces the session's checkpoint manifest, creating the row when there is none. */
+export async function writeCheckpointManifest(exec: SessionStateExec, sourceId: string, clientId: string, sessionId: string, manifest: readonly unknown[]): Promise<void> {
+  await exec.executeRaw(WRITE_CHECKPOINT_MANIFEST_SQL, [sourceId, clientId, sessionId, JSON.stringify(manifest)]);
+}

@@ -470,6 +470,7 @@ export const RUST_ENGINE_MEMBERS = {
   readSessionCursor: 'session_state',
   readDeltaSessionRow: 'session_state',
   readCheckpointManifestRow: 'session_state',
+  writeCheckpointManifest: 'session_state',
   // contradictions
   writeContradictionsRun: 'contradictions',
   loadContradictionsTrend: 'contradictions',

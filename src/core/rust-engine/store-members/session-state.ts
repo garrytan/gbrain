@@ -19,3 +19,7 @@ export const readDeltaSessionRow: StoreMember<Key, DeltaSessionRow | null> = (br
 
 export const readCheckpointManifestRow: StoreMember<Key, { checkpoint_manifest: unknown } | null> = (brain, sourceId, clientId, sessionId) =>
   storeCall({ member: 'readCheckpointManifestRow' }, () => brain.readCheckpointManifestRow(sourceId, clientId, sessionId));
+
+export const writeCheckpointManifest: StoreMember<[...Key, manifest: readonly unknown[]], void> = async (brain, sourceId, clientId, sessionId, manifest) => {
+  await storeCall({ member: 'writeCheckpointManifest' }, () => brain.writeCheckpointManifest(sourceId, clientId, sessionId, wellFormedJson([...manifest])));
+};

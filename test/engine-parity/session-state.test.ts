@@ -128,4 +128,33 @@ describe('engine parity: session state', () => {
       return { absent, empty, otherSource: await engine.readCheckpointManifestRow('other', 'local', 's') };
     },
   );
+
+  parityTest(
+    'writeCheckpointManifest replaces the manifest, creates a row with an empty cursor, and leaves the cursor alone',
+    { methods: ['upsertSessionState', 'writeCheckpointManifest', 'readCheckpointManifestRow', 'readSessionCursor', 'readDeltaSessionRow'] },
+    async (engine) => {
+      const link = (slug: string, n: number) => ({ slug, title: `Title ${slug}`, at: '2026-11-19T00:00:00.000Z', n, seg: 'seg-1' });
+      await engine.writeCheckpointManifest('default', 'local', 'new', [link('notes/a', 1)]);
+      const created = {
+        manifest: await engine.readCheckpointManifestRow('default', 'local', 'new'),
+        cursor: await engine.readSessionCursor('default', 'local', 'new'),
+        delta: await engine.readDeltaSessionRow('default', 'local', 'new'),
+      };
+      await engine.upsertSessionState('default', 'local', 's', write('increment', {
+        standingEntities: ['people/alice-example'], surfacedSlugs: ['notes/x'], replaceStanding: true, replaceCursorSlug: true,
+        lastWakeAt: '2026-11-19T00:00:00Z',
+      }));
+      await engine.writeCheckpointManifest('default', 'local', 's', [link('notes/a', 1), link('notes/b', 1)]);
+      await engine.writeCheckpointManifest('default', 'local', 's', [link('notes/c', 2), { slug: 'notes/d', nested: { k: [1, 2] } }]);
+      const rewritten = {
+        manifest: await engine.readCheckpointManifestRow('default', 'local', 's'),
+        cursor: await engine.readSessionCursor('default', 'local', 's'),
+        delta: await engine.readDeltaSessionRow('default', 'local', 's'),
+      };
+      expect(created.cursor).toEqual({ standing_entities: [], surfaced_slugs: [], last_wake_at: null });
+      expect(rewritten.manifest).toEqual({ checkpoint_manifest: [link('notes/c', 2), { slug: 'notes/d', nested: { k: [1, 2] } }] });
+      expect(rewritten.delta?.degraded_wakes).toBe(1);
+      return { created, rewritten };
+    },
+  );
 });

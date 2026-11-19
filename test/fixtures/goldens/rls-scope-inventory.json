@@ -5348,6 +5348,7 @@
         "withReservedConnection": "none",
         "withScopedReadTransaction": "none",
         "wordLexemes": "none",
+        "writeCheckpointManifest": "none",
         "writeContradictionsRun": "none",
         "writeLinkRelationshipState": "none",
         "writeManualLinkTransitions": "none",
