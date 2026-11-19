@@ -170,6 +170,25 @@ impl KvWrite for FlaggingWriter<'_> {
         self.0.delete(key)
     }
 
+    // The counter calls go to the inner handle's own method: a concurrent store adds and raises
+    // without reading, and the trait defaults would read and put instead. None writes a page
+    // record, so none can name readers or set the flag.
+    fn allocate(&mut self, key: &[u8], count: u64) -> Result<u64> {
+        self.0.allocate(key, count)
+    }
+
+    fn raise_counter(&mut self, key: &[u8], value: u64) -> Result<()> {
+        self.0.raise_counter(key, value)
+    }
+
+    fn add_i64(&mut self, key: &[u8], delta: i64) -> Result<()> {
+        self.0.add_i64(key, delta)
+    }
+
+    fn counter_below(&mut self, key: &[u8], cap: i64) -> Result<Option<i64>> {
+        self.0.counter_below(key, cap)
+    }
+
     fn commit(self: Box<Self>) -> Result<u64> {
         Err(StoreError::new(
             INVALID_STATE,
@@ -333,5 +352,80 @@ mod tests {
         }
         drop(store);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An inner write handle that records which method it was called through, so a test can
+    /// tell a forwarded call from the trait default (which reads and puts instead).
+    #[derive(Default)]
+    struct Recording(Vec<&'static str>);
+
+    impl crate::kv::KvRead for Recording {
+        fn get(&self, _key: &[u8]) -> crate::error::Result<Option<Vec<u8>>> {
+            Ok(None)
+        }
+
+        fn scan(
+            &self,
+            _start: &[u8],
+            _end: &[u8],
+            _reverse: bool,
+            _f: &mut dyn FnMut(&[u8], &[u8]) -> bool,
+        ) -> crate::error::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl crate::kv::KvWrite for Recording {
+        fn put(&mut self, _key: &[u8], _value: &[u8]) -> crate::error::Result<()> {
+            self.0.push("put");
+            Ok(())
+        }
+
+        fn delete(&mut self, _key: &[u8]) -> crate::error::Result<()> {
+            self.0.push("delete");
+            Ok(())
+        }
+
+        fn commit(self: Box<Self>) -> crate::error::Result<u64> {
+            Ok(0)
+        }
+
+        fn allocate(&mut self, _key: &[u8], _count: u64) -> crate::error::Result<u64> {
+            self.0.push("allocate");
+            Ok(41)
+        }
+
+        fn raise_counter(&mut self, _key: &[u8], _value: u64) -> crate::error::Result<()> {
+            self.0.push("raise_counter");
+            Ok(())
+        }
+
+        fn add_i64(&mut self, _key: &[u8], _delta: i64) -> crate::error::Result<()> {
+            self.0.push("add_i64");
+            Ok(())
+        }
+
+        fn counter_below(&mut self, _key: &[u8], _cap: i64) -> crate::error::Result<Option<i64>> {
+            self.0.push("counter_below");
+            Ok(Some(7))
+        }
+    }
+
+    /// The four counter calls reach the inner handle's own method, not the trait default: a
+    /// concurrent store (`occ_kv`) overrides them to add and raise without reading, so a wrapper
+    /// that falls back to get-then-put turns every counter bump into a read conflict.
+    #[test]
+    fn counter_calls_pass_through_to_the_inner_handle() {
+        use crate::kv::KvWrite;
+        let mut inner = Recording::default();
+        let mut writer = super::FlaggingWriter(&mut inner);
+        assert_eq!(writer.allocate(b"seq", 3).unwrap(), 41);
+        writer.raise_counter(b"seq", 9).unwrap();
+        writer.add_i64(b"n", 2).unwrap();
+        assert_eq!(writer.counter_below(b"n", 5).unwrap(), Some(7));
+        assert_eq!(
+            inner.0,
+            ["allocate", "raise_counter", "add_i64", "counter_below"]
+        );
     }
 }
