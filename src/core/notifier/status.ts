@@ -17,7 +17,7 @@ import { SYNC_ON_COMMIT_KEY } from '../sync-config-keys.ts';
 import { HOLDER_STALL_MS, holderStalled, publicDrainHolder, readLiveDrainLease, type DrainHolder } from '../persistence/sync-lease.ts';
 
 type Exec = Pick<BrainEngine, 'executeRaw' | 'kind'>;
-type FreshnessExec = Exec & Pick<BrainEngine, 'getConfig'>;
+type FreshnessExec = Exec & Pick<BrainEngine, 'getConfig' | 'notifierCoverageRecorded'>;
 
 export type FreshnessState = 'current' | 'behind' | 'syncing' | 'unknown' | 'not_monitored';
 
@@ -105,11 +105,8 @@ function freshnessOf(engine: Exec, row: Row, held: number): SourceFreshness {
  * once the notice is on, a source nobody watches still reads not_monitored.
  */
 async function freshnessReported(engine: FreshnessExec): Promise<boolean> {
-  const [flag, [covered]] = await Promise.all([
-    engine.getConfig(SYNC_ON_COMMIT_KEY),
-    engine.executeRaw<{ covered: unknown }>('SELECT EXISTS (SELECT 1 FROM sync_notifier_sources WHERE observed_at IS NOT NULL) AS covered'),
-  ]);
-  return parseOnCommit(flag) || truthy(covered?.covered);
+  const [flag, covered] = await Promise.all([engine.getConfig(SYNC_ON_COMMIT_KEY), engine.notifierCoverageRecorded()]);
+  return parseOnCommit(flag) || covered;
 }
 
 /**

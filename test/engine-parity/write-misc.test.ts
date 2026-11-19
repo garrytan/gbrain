@@ -3,8 +3,9 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: readSourceState, readAdmissionSource, sharedSkillPackTablePresent,
- *    listSharedSkillPackRoots, getWorktreeBinding, isSourceClaimed, hasExtractedEvents, listActiveAccessMembers, isFolderRestricted,
- *    listAppliedPolicyRevisions, readLiveMember, readFolderAccess, expireMemoryProposals,
+ *    listSharedSkillPackRoots, getWorktreeBinding, isSourceClaimed, hasExtractedEvents, listActiveAccessMembers,
+ *    notifierCoverageRecorded, isFolderRestricted, listAppliedPolicyRevisions, readLiveMember, readFolderAccess,
+ *    expireMemoryProposals,
  *    listAwaitingMemoryProposals and purgeMemoryProposals return the same observable result on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: a source-state read that differs changes whether page admission, the mirror read-only guard and
@@ -13,7 +14,7 @@
  *  - Why existing coverage misses it: the call sites ran these statements through `executeRaw`, which the parity cases
  *    cannot call (D18), so no case compared them across engines (docs/research/rust-put-write-path.md).
  *  - Seam: none. Generated values (incarnation uuids) are compared by shape, never by value. The
- *    Rust store keeps no skillpacks, chronicle state, access members, folder rules, writer bindings or memory proposals, so those cases
+ *    Rust store keeps no skillpacks, chronicle state, access members, notifier state, folder rules, writer bindings or memory proposals, so those cases
  *    compare the empty answer every arm gives on a fresh brain (rust/docs/store/write_misc.md).
  */
 import { describe, expect } from 'bun:test';
@@ -116,6 +117,31 @@ describe('engine parity: write misc', () => {
     const members = await engine.listActiveAccessMembers();
     expect(members).toEqual([]);
     return { members };
+  });
+
+  parityTest('notifierCoverageRecorded answers false on a fresh brain', { methods: ['notifierCoverageRecorded'] }, async (engine) => {
+    const covered = await engine.notifierCoverageRecorded();
+    expect(covered).toBe(false);
+    return { covered };
+  });
+
+  // A notifier row is raw SQL here (the resident writes it); on Rust the seed refuses, because no Rust brain keeps
+  // notifier state, and the member answers false, as the fresh-brain case.
+  parityTest('notifierCoverageRecorded answers true once a source has an observed head', { methods: ['notifierCoverageRecorded'] }, async (engine) => {
+    let seeded: unknown = null;
+    try {
+      await engine.executeRaw("INSERT INTO sync_notifier_sources (source_id, state) VALUES ('default', 'idle')");
+    } catch (error) { seeded = error; }
+    if (seeded) {
+      expect(isCapabilityRefusal(seeded, 'raw_sql')).toBe(true);
+      expect(await engine.notifierCoverageRecorded()).toBe(false);
+      throw seeded;
+    }
+    const unobserved = await engine.notifierCoverageRecorded();
+    await engine.executeRaw("UPDATE sync_notifier_sources SET observed_head = 'abc', observed_at = now() WHERE source_id = 'default'");
+    const observed = await engine.notifierCoverageRecorded();
+    expect({ unobserved, observed }).toEqual({ unobserved: false, observed: true });
+    return { unobserved, observed };
   });
 
   // The restricted half (true under a folder rule or a pending prefix) is import-path.test.ts's case: the SQL arms answer

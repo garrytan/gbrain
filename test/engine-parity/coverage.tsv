@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 669/669
+# covered: 670/670
 # lifecycle: 9/9
 # pages: 39/39
 # search: 7/7
@@ -56,7 +56,7 @@
 # open_loops: 4/4
 # cli_reads_import: 12/12
 # wanted_links: 2/2
-# write_misc: 15/15
+# write_misc: 16/16
 # telemetry: 10/10
 # field_usage: 1/1
 # alias_fanout_reads: 5/5
@@ -672,6 +672,7 @@ listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
 getWorktreeBinding	write_misc	yes	2	no	yes	yes	serves
 hasExtractedEvents	write_misc	yes	1	no	yes	yes	serves
 listActiveAccessMembers	write_misc	yes	1	no	yes	yes	serves
+notifierCoverageRecorded	write_misc	yes	2	no	yes	yes	serves
 expireMemoryProposals	write_misc	yes	1	no	yes	yes	serves
 listAwaitingMemoryProposals	write_misc	yes	1	no	yes	yes	serves
 purgeMemoryProposals	write_misc	yes	1	no	yes	yes	serves
