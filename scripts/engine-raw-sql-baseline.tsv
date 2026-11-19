@@ -608,7 +608,7 @@ src/core/page-body/segment-derive.ts	execute_raw	33
 src/core/page-body/segment-facts.ts	execute_raw	1
 src/core/page-body/segment-ledger.ts	execute_raw	1
 src/core/page-body/segment-rewrite.ts	execute_raw	9
-src/core/page-body/segmented-embedding.ts	execute_raw	8
+src/core/page-body/segmented-embedding.ts	execute_raw	7
 src/core/page-body/splice.ts	execute_raw	2
 src/core/page-body/streamed-import.ts	execute_raw	1
 src/core/page-body/tail-digest.ts	execute_raw	1

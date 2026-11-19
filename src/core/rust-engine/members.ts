@@ -150,6 +150,7 @@ export const RUST_ENGINE_MEMBERS = {
   readSegmentTexts: 'page_body',
   stageManifestRows: 'page_body',
   readManifest: 'page_body',
+  readSegmentedEmbedPage: 'page_body',
   stageSegmentChunks: 'page_body',
   createSegmentedPageShell: 'page_body',
   flipBodyGeneration: 'page_body',

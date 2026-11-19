@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 665/665
+# covered: 666/666
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -26,7 +26,7 @@
 # dream: 3/3
 # contradictions: 5/5
 # facts: 15/15
-# segmented_body: 15/15
+# segmented_body: 16/16
 # versions: 3/3
 # stats_ingest: 5/5
 # sync_aliases: 10/10
@@ -85,7 +85,7 @@ findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	92	yes	yes	yes	serves
+softDeletePage	pages	yes	93	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -309,10 +309,11 @@ stageSegmentTexts	segmented_body	yes	4	no	yes	yes	serves
 readSegmentTexts	segmented_body	yes	5	no	yes	yes	serves
 stageManifestRows	segmented_body	yes	5	no	yes	yes	serves
 readManifest	segmented_body	yes	9	no	yes	yes	serves
+readSegmentedEmbedPage	segmented_body	yes	1	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	4	no	yes	yes	serves
 createSegmentedPageShell	segmented_body	yes	7	no	yes	yes	serves
 flipBodyGeneration	segmented_body	yes	7	no	yes	yes	serves
-sealSegmentedPage	segmented_body	yes	2	no	yes	yes	serves
+sealSegmentedPage	segmented_body	yes	3	no	yes	yes	serves
 openBodyStaging	segmented_body	yes	7	no	yes	yes	serves
 setBodyStagingState	segmented_body	yes	6	no	yes	yes	serves
 sweepSegments	segmented_body	yes	3	no	yes	yes	serves

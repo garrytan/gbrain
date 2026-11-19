@@ -485,7 +485,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'invalidateContentDriftEmbeddings': 'chunks', 'listStaleChunks': 'chunks',
   'countChunklessPagesWithContent': 'chunks', 'listChunklessPagesWithContent': 'chunks', 'deleteChunks': 'chunks',
   'readEmbeddingStateCounts': 'chunks', 'listEmbeddingStateRows': 'chunks',
-  'allocateBodyOccurrenceIds': OOS.pageBody, 'stageSegmentTexts': OOS.pageBody, 'readSegmentTexts': OOS.pageBody, 'stageManifestRows': OOS.pageBody, 'readManifest': OOS.pageBody, 'stageSegmentChunks': OOS.pageBody, 'createSegmentedPageShell': OOS.pageBody, 'flipBodyGeneration': OOS.pageBody, 'sealSegmentedPage': OOS.pageBody, 'openBodyStaging': OOS.pageBody, 'setBodyStagingState': OOS.pageBody, 'sweepSegments': OOS.pageBody,
+  'allocateBodyOccurrenceIds': OOS.pageBody, 'stageSegmentTexts': OOS.pageBody, 'readSegmentTexts': OOS.pageBody, 'stageManifestRows': OOS.pageBody, 'readManifest': OOS.pageBody, 'readSegmentedEmbedPage': OOS.pageBody, 'stageSegmentChunks': OOS.pageBody, 'createSegmentedPageShell': OOS.pageBody, 'flipBodyGeneration': OOS.pageBody, 'sealSegmentedPage': OOS.pageBody, 'openBodyStaging': OOS.pageBody, 'setBodyStagingState': OOS.pageBody, 'sweepSegments': OOS.pageBody,
   'readSegmentDerivations': OOS.pageBody, 'upsertSegmentDerivations': OOS.pageBody, 'retireSegmentDerivations': OOS.pageBody,
   'getEmbeddingsByChunkIds': 'chunks', 'getChunksWithEmbeddings': 'chunks',
   // facts (incl. the ontology rows of the facts table)
@@ -1383,4 +1383,5 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('lockNoopEmbeddingWindow', [['default', (e) => e.transaction((tx: any) => tx.lockNoopEmbeddingWindow({ from: '0', limit: 50 }))]]),
   ...variants('readNoopEmbeddingCandidates', [['default', (e) => e.transaction((tx: any) => tx.readNoopEmbeddingCandidates({ hostId: 'f0000000-0000-4000-8000-0000000000e2', signature: 'sig', expectedModel: 'model-a', column: 'embedding', window: ['1'], pageIds: [1] }))]]),
   ...variants('settleNoopEmbeddingRows', [['default', (e) => e.transaction((tx: any) => tx.settleNoopEmbeddingRows(['1']))]]),
+  ...variants('readSegmentedEmbedPage', [['id', (e) => e.readSegmentedEmbedPage({ id: 1 })], ['slug', (e) => e.readSegmentedEmbedPage({ sourceId: 'default', slug: 'notes/a' })]]),
 ];
