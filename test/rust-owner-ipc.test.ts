@@ -26,10 +26,13 @@ import { electOwner, type OwnerRole } from '../src/core/rust-engine/owner-ipc/el
 import { ownerWholeOperations } from '../src/core/rust-engine/owner-ipc/owner-ops.ts';
 import { connectOwner, installOwnerClient } from '../src/core/rust-engine/owner-ipc/client.ts';
 import { serveOwnerEngine } from '../src/core/rust-engine/owner-ipc/server.ts';
-import { ownerSocketPath } from '../src/core/rust-engine/owner-ipc/protocol.ts';
+import { ownerSocketPath, readFrames } from '../src/core/rust-engine/owner-ipc/protocol.ts';
+import { EventEmitter } from 'node:events';
 import { decodeError, decodeValue, encodeValue } from '../src/core/rust-engine/owner-ipc/codec.ts';
 import { withRequestSignal } from '../src/core/request-signal.ts';
 import { withReadDeadline } from '../src/core/read-deadline.ts';
+import { callerAccessRecord, currentCallerAccess, withCallerAccess } from '../src/core/search/private-visibility.ts';
+import { storePagePolicy } from '../src/core/rust-engine/store-members/private-provenance.ts';
 import { requestSignal } from '../src/core/request-signal.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { maybeDelegateLocalOperation } from '../src/core/persistence/local-client.ts';
@@ -91,6 +94,15 @@ describe('owner socket codec', () => {
     expect(Number.isNaN(back.nan)).toBe(true);
     expect(Object.is(back.neg0, -0)).toBe(true);
     expect(back.nested).toEqual([{ deep: null }]);
+  });
+
+  test('keeps an own __proto__ field, top level and nested, as JSON.parse made it', () => {
+    const value = JSON.parse('{"__proto__":{"polluted":1},"keep":true,"nested":[{"__proto__":"x","$t":"tag"}]}');
+    const back = decodeValue(JSON.parse(JSON.stringify(encodeValue(value)))) as Record<string, unknown>;
+    expect(JSON.stringify(back)).toBe(JSON.stringify(value));
+    expect(Object.hasOwn(back, '__proto__')).toBe(true);
+    expect(Object.getPrototypeOf(back)).toBe(Object.prototype);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 });
 
@@ -198,6 +210,12 @@ describe('deadlines, cancel and permits', () => {
     (owner as unknown as Record<string, unknown>).getHealth = () => new Promise((_resolve, reject) => {
       requestSignal()?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
     });
+    // getRecentSalience answers with the caller access the owner ran it under, after the Rust store's own privacy gate.
+    (owner as unknown as Record<string, unknown>).getRecentSalience = async (opts?: { excludePrivate?: boolean }) => {
+      storePagePolicy('getRecentSalience', opts?.excludePrivate);
+      const record = callerAccessRecord();
+      return record ? { identity: [...record.identity], labelledOnly: record.labelledOnly, owner: record.owner } : null;
+    };
     const served = await serveOwnerEngine(owner, join(dir, 'owner.sock'), { permits: 2 });
     if (!served) throw new Error('no socket');
     server = served;
@@ -227,6 +245,24 @@ describe('deadlines, cancel and permits', () => {
       expect(await settled()).toMatchObject({ active: 0, queued: 0 });
       // The pool still serves: a fast call after the timeouts completes.
       expect(await engine.getPage('nothing-here')).toBeNull();
+    } finally { close(); }
+  });
+
+  test('a labelled-only caller reads under its own access on the owner, and is refused as it is in process', async () => {
+    const { engine, close } = await clientOf(server.socketPath);
+    const labelled = { identity: ['member:alice-example'], labelledOnly: true, owner: false, applyRemoteReadPolicy: true, restricted: true };
+    try {
+      // No record in the caller: none on the owner either.
+      expect(await engine.getRecentSalience({ excludePrivate: false } as never)).toBeNull();
+      // The record crosses the socket: the owner sees the same member and the same labelled-only flag.
+      const seen: unknown = await withCallerAccess(labelled, () => engine.getRecentSalience({ excludePrivate: false } as never));
+      expect(seen).toEqual({ identity: ['member:alice-example'], labelledOnly: true, owner: false });
+      // excludePrivate under that record: the owner refuses with the error the same call gets in process.
+      const local = await withCallerAccess(labelled, async () => { storePagePolicy('getRecentSalience', true); return currentCallerAccess(); })
+        .then(() => null, e => errorShape(e));
+      const remote = await withCallerAccess(labelled, () => engine.getRecentSalience({ excludePrivate: true } as never)).then(() => null, e => errorShape(e));
+      expect(local).not.toBeNull();
+      expect(JSON.stringify(remote)).toBe(JSON.stringify(local));
     } finally { close(); }
   });
 
@@ -278,6 +314,54 @@ describe('deadlines, cancel and permits', () => {
     await call;
     expect(await settled()).toMatchObject({ active: 0, queued: 0 });
   });
+});
+
+describe('frame caps', () => {
+  /** A stand-in socket: readFrames only listens for data and calls destroy. */
+  const fakeSocket = () => Object.assign(new EventEmitter(), { destroyed: false, destroy() { this.destroyed = true; } });
+
+  test.each([false, true])('a finished frame over the cap is refused, not parsed (split=%p)', split => {
+    const socket = fakeSocket();
+    const frames: unknown[] = [];
+    const errors: string[] = [];
+    readFrames(socket as unknown as net.Socket, f => frames.push(f), why => errors.push(why), 16);
+    const line = Buffer.from('{"x":"12345678"}\n'); // 17 bytes with the newline
+    if (split) { socket.emit('data', line.subarray(0, 15)); socket.emit('data', line.subarray(15)); }
+    else socket.emit('data', line);
+    expect(frames).toEqual([]);
+    expect(errors).toEqual(['frame_too_large']);
+    expect(socket.destroyed).toBe(true);
+  });
+
+  test('a frame exactly at the cap, newline included, is read', () => {
+    const socket = fakeSocket();
+    const frames: unknown[] = [];
+    const errors: string[] = [];
+    readFrames(socket as unknown as net.Socket, f => frames.push(f), why => errors.push(why), 16);
+    socket.emit('data', Buffer.from('{"x":"1234567"}\n')); // 16 bytes with the newline
+    expect(frames).toEqual([{ x: '1234567' }]);
+    expect(errors).toEqual([]);
+  });
+
+  test('a result over the cap ends the call with response_too_large and does not hang', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-ipc-cap-'));
+    // A stand-in owner engine: only getConfig is called, and it answers more than the cap.
+    const owner = { kind: 'pglite', getConfig: async () => 'x'.repeat(8192) } as unknown as BrainEngine;
+    const served = await serveOwnerEngine(owner, join(dir, 'owner.sock'), { maxFrameBytes: 4096 });
+    if (!served) throw new Error('no socket');
+    const { engine, close } = await clientOf(served.socketPath);
+    try {
+      const outcome = await Promise.race([
+        engine.getConfig('large').then(() => 'resolved', e => (e as OperationError).code),
+        Bun.sleep(2_000).then(() => 'hung'),
+      ]);
+      expect(outcome).toBe('response_too_large');
+    } finally {
+      close();
+      await served.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
 });
 
 describe('closing the owner server', () => {

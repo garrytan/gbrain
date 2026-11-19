@@ -17,6 +17,7 @@ import { engineKey } from '../../engine-key.ts';
 import { requestSignal } from '../../request-signal.ts';
 import { readDeadline } from '../../read-deadline.ts';
 import { currentStatementDeadline } from '../../statement-deadline.ts';
+import { callerAccessRecord } from '../../search/private-visibility.ts';
 import { prepareLocalIpcPath } from '../../context/ipc-path.ts';
 import type { Capability } from '../../engine-capabilities.ts';
 import { capabilityMissing } from '../errors.ts';
@@ -162,9 +163,13 @@ export function connectOwner(legacySocketPath: string, opts: { timeoutMs?: numbe
         if (signal.aborted) return Promise.reject(abortError(member, signal, startedAt, false));
       }
       const { deadlineAt, readDeadlineAt } = callDeadline();
+      // The caller's access record (who it is, what it may read) goes with the call, so the owner reads as this caller.
+      const record = callerAccessRecord();
+      const access = record ? encodeValue(record) : undefined;
       const line = frameLine({ t: kind, id, [kind === 'fn' ? 'name' : 'member']: member, args: wireArgs,
         ...(deadlineAt !== undefined ? { deadline_at: deadlineAt } : {}),
-        ...(readDeadlineAt !== undefined ? { read_deadline_at: readDeadlineAt } : {}) });
+        ...(readDeadlineAt !== undefined ? { read_deadline_at: readDeadlineAt } : {}),
+        ...(access ? { access } : {}) });
       if (line === null) return Promise.reject(ownerIpcRefusal(member, `its arguments are larger than ${OWNER_IPC_MAX_FRAME_BYTES} bytes, the most the owner socket carries`));
       return new Promise((resolveCall, rejectCall) => {
         let grace: ReturnType<typeof setTimeout> | undefined;

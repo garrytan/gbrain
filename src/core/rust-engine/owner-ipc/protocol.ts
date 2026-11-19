@@ -3,11 +3,14 @@
  * each frame is one JSON object on one line, and every call has an id the reply and any cancel name.
  *
  *   client -> owner  { t: 'hello', version }                       first frame; the owner answers with its hello
- *   client -> owner  { t: 'call', id, member, args, deadline_at?, read_deadline_at? }  one BrainEngine member
- *   client -> owner  { t: 'fn', id, name, args, deadline_at?, read_deadline_at? }     one whole operation (whole-op.ts)
+ *   client -> owner  { t: 'call', id, member, args, deadline_at?, read_deadline_at?, access? }  one BrainEngine member
+ *   client -> owner  { t: 'fn', id, name, args, deadline_at?, read_deadline_at?, access? }     one whole operation (whole-op.ts)
  *
  * `deadline_at` (epoch ms) is the caller's deadline: the owner ends the call with `timeout` there, queued or running.
  * `read_deadline_at` is the caller's read deadline (read-deadline.ts), restored around the call in the owner.
+ * `access` is the caller's access record (search/private-visibility.ts CallerAccess), absent when it had none; the owner
+ * runs the call under it, so a restricted caller (a labelled-only member, a remote grant) reads no more over the socket
+ * than in process. The socket is owner-only (mode 0600), so a client is as trusted as the CLI that could open the brain.
  *   client -> owner  { t: 'cancel', id }                            the caller's AbortSignal fired
  *   owner -> client  { t: 'hello', version, pid, kind, capabilities, serve }
  *   owner -> client  { t: 'cb', id, key, args }                     a void notification callback of call `id`
@@ -48,8 +51,8 @@ export interface OwnerHello {
 
 export type ClientFrame =
   | { t: 'hello'; version: number }
-  | { t: 'call'; id: number; member: string; args: Wire; deadline_at?: number; read_deadline_at?: number }
-  | { t: 'fn'; id: number; name: string; args: Wire; deadline_at?: number; read_deadline_at?: number }
+  | { t: 'call'; id: number; member: string; args: Wire; deadline_at?: number; read_deadline_at?: number; access?: Wire }
+  | { t: 'fn'; id: number; name: string; args: Wire; deadline_at?: number; read_deadline_at?: number; access?: Wire }
   | { t: 'cancel'; id: number };
 
 export type OwnerFrame =
@@ -65,7 +68,7 @@ export function frameLine(frame: object, maxBytes = OWNER_IPC_MAX_FRAME_BYTES): 
 }
 
 /**
- * Reads newline-delimited frames from a socket. A partial frame over the cap, or a line that is not JSON, calls
+ * Reads newline-delimited frames from a socket. A frame over the cap (partial or finished), or a line that is not JSON, calls
  * `onBad` once and the socket is destroyed: the peer is a different release or not a gbrain process.
  */
 export function readFrames(socket: Socket, onFrame: (frame: Record<string, unknown>) => void, onBad: (why: string) => void,
@@ -90,6 +93,9 @@ export function readFrames(socket: Socket, onFrame: (frame: Record<string, unkno
         if (chunk.length) chunks.push(chunk);
         return;
       }
+      // The cap counts the newline, as frameLine does: a finished frame over it is refused like a partial one.
+      bytes += newline + 1;
+      if (bytes > maxBytes) { fail('frame_too_large'); return; }
       chunks.push(chunk.subarray(0, newline));
       const line = Buffer.concat(chunks).toString('utf8');
       chunks = [];

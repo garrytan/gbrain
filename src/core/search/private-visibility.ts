@@ -455,6 +455,11 @@ function lineageReads(owner: boolean, single: boolean, lineage: boolean, readsRe
     audienceKindMembers: Object.freeze(ownerRead && audienceKind.every(id => ACCESS_ID_RE.test(id)) ? [...new Set(audienceKind)].sort() : []) };
 }
 
+/** The current read's own caller-access record, or null outside one (currentCallerAccess fills in a default instead). */
+export function callerAccessRecord(): CallerAccess | null {
+  return callerAccessStore.getStore() ?? null;
+}
+
 /** Runs `fn` outside any caller's record, for work a request spawns that must not inherit its view. */
 export function withoutCallerAccess<T>(fn: () => T): T {
   return callerAccessStore.exit(fn);

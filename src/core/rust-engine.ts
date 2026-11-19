@@ -59,6 +59,12 @@ export class RustEngine {
   private _connected = false;
   private _store: RustStore | null = null;
   private _opening: Promise<void> | null = null;
+  /**
+   * Settles as soon as the owner's store open ends, before the open gives up its role. A served member waits on this,
+   * never on `_opening`: giving up the role drains the running members, so a member waiting on the whole open would
+   * wait for itself.
+   */
+  private _storeReady: Promise<void> | null = null;
   /** Bumped by every `disconnect`, so an open that started before it knows it was abandoned. */
   private _generation = 0;
   private readonly _beforeDisconnect = new Set<() => Promise<void>>();
@@ -113,23 +119,33 @@ export class RustEngine {
       return;
     }
     // The owner socket already answers; a call that reaches it before the store is open waits for it (`storeFor`).
+    let storeSettled!: () => void;
+    const storeReady = new Promise<void>(resolve => { storeSettled = resolve; });
+    this._storeReady = storeReady;
     this._owner = role;
-    let store: RustStore;
     try {
-      store = await openRustStore(this.addon, this.databasePath);
-    } catch (error) {
-      if (this._owner === role) this._owner = null;
-      await leaveRole(role);
-      throw error;
+      let store: RustStore;
+      try {
+        store = await openRustStore(this.addon, this.databasePath);
+      } catch (error) {
+        if (this._owner === role) this._owner = null;
+        storeSettled();
+        await leaveRole(role);
+        throw error;
+      }
+      if (generation !== this._generation) {
+        storeSettled();
+        await store.close().catch(() => undefined);
+        if (this._owner === role) this._owner = null;
+        await leaveRole(role);
+        throw abandoned();
+      }
+      this._store = store;
+      this._connected = true;
+    } finally {
+      storeSettled();
+      if (this._storeReady === storeReady) this._storeReady = null;
     }
-    if (generation !== this._generation) {
-      await store.close().catch(() => undefined);
-      if (this._owner === role) this._owner = null;
-      await leaveRole(role);
-      throw abandoned();
-    }
-    this._store = store;
-    this._connected = true;
   }
 
   async disconnect(): Promise<void> {
@@ -166,7 +182,7 @@ export class RustEngine {
 
   /** The open store a served member runs on, waiting for an open in progress; rejects `engine_closed` otherwise. */
   async storeFor(member: string): Promise<RustStore> {
-    if (!this._store && this._opening && this._owner?.role === 'owner') await this._opening.catch(() => undefined);
+    if (!this._store && this._storeReady && this._owner?.role === 'owner') await this._storeReady;
     return this.openStore(member);
   }
 
