@@ -86,12 +86,12 @@ export interface NormalizedFenceLines { i: number; body: string | null; timeline
  */
 export async function normalizeFenceLines(tx: Raw, bodies: readonly string[], timelines: readonly string[]): Promise<NormalizedFenceLines[]> {
   return tx.executeRaw<NormalizedFenceLines>(`SELECT t.i::int AS i,
-    (SELECT string_agg(regexp_replace(lower(line),'${FACT_SPACE_CLASS}+',' ','g'),chr(10) ORDER BY ord)
+    (SELECT string_agg(regexp_replace(lower(line),$3::text,' ','g'),chr(10) ORDER BY ord)
       FROM unnest(string_to_array(t.body,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS body,
-    (SELECT string_agg(regexp_replace(lower(line),'${FACT_SPACE_CLASS}+',' ','g'),chr(10) ORDER BY ord)
+    (SELECT string_agg(regexp_replace(lower(line),$3::text,' ','g'),chr(10) ORDER BY ord)
       FROM unnest(string_to_array(t.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS timeline
     FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS t(body, timeline, i)`,
-  [bodies, timelines]);
+  [bodies, timelines, `${FACT_SPACE_CLASS}+`]);
 }
 
 /** A segmented page's head row. Bigint columns come back as numbers on PGLite and strings on Postgres. */
