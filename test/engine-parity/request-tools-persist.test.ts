@@ -58,7 +58,7 @@ describe('engine parity: request_tools surface persist', () => {
       const audits = (await engine.readClientOpUsage(1))
         .filter(r => r.operation === 'surface_change')
         .map(r => ({ token_name: r.token_name, operation: r.operation, n: r.n }))
-        .sort((a, b) => (a.token_name < b.token_name ? -1 : 1));
+        .sort((a, b) => ((a.token_name ?? '') < (b.token_name ?? '') ? -1 : 1));
       expect(warnings).toEqual([]);
       expect(audits).toEqual([{ token_name: 'free', operation: 'surface_change', n: 1 }, { token_name: 'self-pinned', operation: 'surface_change', n: 1 }]);
       expect(rows).toEqual([

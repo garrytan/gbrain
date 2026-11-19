@@ -29,9 +29,9 @@ returns every column, so a caller that named columns checks the ones it needs wi
 raises the undefined-column error (42703) a SELECT of a missing column raises. `patchOauthClient` serves the writers
 `min-trust.ts` (`setMinTrust`), `request-tools.ts` (the surface persist) and `agent-register.ts` (`rotateClientSecret`).
 `rotateClientSecret` names the hash it read in `client_secret_hash_is`, so it needs no advisory lock (rotation changes no
-name) and two concurrent reissues end with one winner and one `reissue_conflict` on every engine. A function that also
-runs a raw statement keeps refusing on a Rust brain at that statement (the access-token statements in `setMinTrust`, the
-audit write after the surface persist).
+name) and two concurrent reissues end with one winner and one `reissue_conflict` on every engine. `setMinTrust` on a
+token target goes through the `access_tokens` members ([access-tokens.md](access-tokens.md)). A function that also runs a
+raw statement keeps refusing on a Rust brain at that statement.
 
 ## Constraints
 

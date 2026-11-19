@@ -63,6 +63,7 @@ import type {
   SettleLogOutcome, SpendLogInsert,
 } from './engine-sql/spend-log.ts';
 import type { OauthClientPatch, OauthClientPatchGuard, OauthClientPatched, OauthClientRow } from './engine-sql/oauth-clients.ts';
+import type { AccessTokenInsert, ActiveAccessTokenRow } from './engine-sql/access-tokens.ts';
 import type { McpResolvedSpec, PurgeTakesSpec } from './engine-sql/takes-reads.ts';
 import type {
   BeliefHistoryRowQuery, CorePageRow, CorePageRowSpec, TrustScanRow, TrustScanRowSpec, UnscannedTrustSpec, ValidTimeIdentityRow,
@@ -3828,6 +3829,12 @@ export interface BrainEngine {
   readAgentClientSpend(): Promise<AgentClientSpendRow[]>;
   readOauthClient(clientId: string): Promise<OauthClientRow | null>;
   patchOauthClient(clientId: string, patch: OauthClientPatch, guard?: OauthClientPatchGuard): Promise<OauthClientPatched | null>;
+  /** One `access_tokens` row at grant revision 1; its generated id. A repeated token hash is a constraint error (23505). */
+  insertAccessToken(row: AccessTokenInsert): Promise<{ id: string }>;
+  /** The tokens not yet revoked whose id or name is `target`, by id (names are not unique, so there may be several). */
+  findActiveAccessTokens(target: string): Promise<ActiveAccessTokenRow[]>;
+  /** Set or clear one token's read floor by row id. A tier outside the six is a constraint error (23514). */
+  setAccessTokenMinTrust(id: string, tier: string | null): Promise<void>;
   /** One rate-lease bounce appended to the lease-pressure log. */
   insertLeasePressure(row: LeasePressureInsert): Promise<void>;
   /** How many lease bounces match every given field (window in ms, job id, lease key). */

@@ -1044,7 +1044,7 @@ src/core/think/persist-take.ts	execute_raw	1
 src/core/timeline-dedup-repair.ts	execute_raw	11
 src/core/timeline-extract.ts	execute_raw	9
 src/core/timeline-write-through.ts	execute_raw	1
-src/core/token-mint.ts	execute_raw	3
+src/core/token-mint.ts	execute_raw	2
 src/core/token-mint.ts	sql_template	1
 src/core/transcripts/archive.ts	execute_raw	12
 src/core/transcripts/discover.ts	execute_raw	2
@@ -1062,7 +1062,6 @@ src/core/trust/fence-guard.ts	execute_raw	8
 src/core/trust/held-removals.ts	execute_raw	4
 src/core/trust/label-lowerings.ts	execute_raw	1
 src/core/trust/marker-repair.ts	execute_raw	4
-src/core/trust/min-trust.ts	execute_raw	2
 src/core/trust/owner-actions.ts	execute_raw	6
 src/core/trust/page-handlers.ts	execute_raw	7
 src/core/trust/page-write.ts	execute_raw	9

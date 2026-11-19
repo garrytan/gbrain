@@ -456,6 +456,10 @@ export const DOMAIN_OF: Record<string, string> = {
   // oauth_clients rows (engine-sql/oauth-clients.ts)
   'readOauthClient': OOS.minionJobs,
   'patchOauthClient': OOS.minionJobs,
+  // access_tokens rows (engine-sql/access-tokens.ts)
+  'insertAccessToken': OOS.minionJobs,
+  'findActiveAccessTokens': OOS.minionJobs,
+  'setAccessTokenMinTrust': OOS.minionJobs,
   // group B (subagent transcript and tool ledger)
   'listSubagentMessages': OOS.minionJobs,
   'countSubagentMessages': OOS.minionJobs,
