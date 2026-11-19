@@ -13,7 +13,7 @@
  *  - Why existing coverage misses it: test/fence-chunk-overlay.test.ts runs the SQL engines only, and no parity case
  *    read the overlay.
  *  - Seam: none. Real engines, typed methods only; the caller context is the default one (no member, no grant).
- *    Fact purges are not seeded: they are written through `executeRaw` only, which the Rust engine refuses.
+ *    Fact purges are not seeded here; test/engine-parity/fact-purge-ledger.test.ts reads `purged`.
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';

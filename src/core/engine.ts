@@ -3291,6 +3291,8 @@ export interface BrainEngine {
   listHeldFenceFactRows(sourceId: string, slug: string): Promise<FactsPurgeSql.HeldFenceFactRow[]>;
   listWithdrawalSlugs(sourceId: string, visibility: string, factHash: string, subject: string): Promise<Array<{ slug: string }>>;
   expireFactsByWithdrawal(sourceId: string, visibility: string, fact: string, subject: string): Promise<Array<{ id: number }>>;
+  /** Stores a fact purge tombstone; false when the same (source, visibility, subject, fingerprint) one exists. */
+  insertFactPurge(row: FactsPurgeSql.FactPurgeInsert): Promise<boolean>;
 
   // Facts statements, repair classifiers and loop retirement (engine-sql/facts-repair.ts). Each runs the statement its caller ran through executeRaw.
   /** Closed loops whose commitment fact is still active and retirable (same source, no other open loop references it), in id order; `loopId` null is every loop. Reads open_loops. */

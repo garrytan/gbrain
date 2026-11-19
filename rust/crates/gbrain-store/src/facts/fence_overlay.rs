@@ -5,8 +5,9 @@
 //! One answer row per incoming row, in incoming order: the live page's tier, the tier of the page's newest fact at the
 //! row number (expired facts count, as the SQL reads `facts` with no `expired_at` filter) and whether that fact is
 //! activation-suppressed, whether a held fact hold of the page carries the row's fingerprint, and, with `hideHeld`,
-//! whether the row is held from a world-only fact reader (`held_cells::held` for an uncut claim). `purged` is always
-//! false: fact purges are written through `executeRaw` only, which the Rust engine refuses, so the store keeps none.
+//! whether the row is held from a world-only fact reader (`held_cells::held` for an uncut claim). `purged` is whether a
+//! fact purge tombstone at the row's visibility names its fingerprint under subject `*` or the page
+//! (`purge_ledger::purged_for_page`).
 //! See rust/docs/store/facts.md, "The fence overlay".
 
 use super::{FactRecord, held_cells, page_rows};
@@ -18,7 +19,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 /// One world fence row of the page body (`FenceOverlayIncomingRow`). `visibility` is read only by the fact purge
-/// check, which the store does not model.
+/// check.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FenceOverlayIncomingRow {
@@ -106,6 +107,13 @@ impl Store {
                 ),
                 None => (None, None),
             };
+            let purged = super::purge_ledger::purged_for_page(
+                &*read,
+                &input.source_id,
+                &row.visibility,
+                &input.slug,
+                &row.claim,
+            )?;
             let held = row.fp.as_ref().is_some_and(|fp| held_fps.contains(fp));
             let narrower = input.hide_held
                 && held_cells::held(
@@ -124,7 +132,7 @@ impl Store {
                 "page_tier": page_tier,
                 "row_tier": row_tier,
                 "row_flagged": row_flagged,
-                "purged": false,
+                "purged": purged,
                 "held": held,
                 "narrower": narrower,
             }));

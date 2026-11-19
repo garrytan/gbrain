@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 659/659
+# covered: 660/660
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -44,7 +44,7 @@
 # fact_relink_attempts: 3/3
 # fact_relink_writes: 3/3
 # facts_cycle: 11/11
-# facts_purge: 13/13
+# facts_purge: 14/14
 # facts_repair: 10/10
 # facts_trust: 8/8
 # trust_tier_reads: 13/13
@@ -81,7 +81,7 @@ getPage	pages	yes	93	yes	yes	yes	serves
 readPageSnapshot	pages	yes	27	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	394	yes	yes	yes	serves
+putPage	pages	yes	396	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
@@ -293,11 +293,11 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	41	yes	yes	yes	serves
-insertFacts	facts	yes	46	no	yes	yes	serves
+insertFact	facts	yes	42	yes	yes	yes	serves
+insertFacts	facts	yes	48	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	27	no	yes	yes	serves
-listFactsByEntity	facts	yes	19	yes	yes	yes	serves
+listFactsByEntity	facts	yes	20	yes	yes	yes	serves
 listFactsSince	facts	yes	11	yes	yes	yes	serves
 listFactsKeyset	facts	yes	3	no	yes	yes	serves
 listFactsBySession	facts	yes	5	yes	yes	yes	serves
@@ -355,7 +355,7 @@ insertLocalWriterRow	import_guards	yes	2	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	12	no	yes	yes	serves
 applyTransactionSettings	import_guards	yes	36	no	yes	yes	serves
 beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
-readLedgerSource	import_guards	yes	8	no	yes	yes	serves
+readLedgerSource	import_guards	yes	9	no	yes	yes	serves
 isFolderRestricted	import_guards	yes	3	no	yes	yes	serves
 declarePersistence	persistence_journal	yes	5	no	yes	yes	serves
 readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves
@@ -524,7 +524,7 @@ readRankCoverage	cli_reads_ops	yes	1	no	yes	yes	serves
 readExactSnippetChunks	cli_reads_ops	yes	1	no	yes	yes	serves
 listExactRescanChunks	cli_reads_ops	yes	1	no	yes	yes	serves
 listHeldFenceCells	cli_reads_ops	yes	2	no	yes	yes	serves
-readFenceOverlayRows	cli_reads_ops	yes	2	no	yes	yes	serves
+readFenceOverlayRows	cli_reads_ops	yes	3	no	yes	yes	serves
 listExtractionPendingPages	cli_reads_ops	yes	2	no	yes	yes	serves
 listUnattributedFacts	cli_reads_ops	yes	5	no	yes	yes	serves
 listWantedPages	cli_reads_ops	yes	8	no	yes	yes	serves
@@ -556,7 +556,7 @@ maxFenceRowNum	facts_cycle	yes	1	no	yes	yes	serves
 listStoredFenceFactRows	facts_cycle	yes	1	no	yes	yes	serves
 countWorldFacts	facts_cycle	yes	5	no	yes	yes	serves
 countFactFingerprintLeftovers	facts_purge	yes	1	no	yes	yes	serves
-loadPurgeTarget	facts_purge	yes	5	no	yes	yes	serves
+loadPurgeTarget	facts_purge	yes	7	no	yes	yes	serves
 planFactPurgeIds	facts_purge	yes	1	no	yes	yes	serves
 listFactsReconcileBacklog	facts_purge	yes	1	no	yes	yes	refuses:facts
 listRelinkCandidateRows	facts_purge	yes	1	no	yes	yes	serves
@@ -568,6 +568,7 @@ listUnfencedFactRows	facts_purge	yes	1	no	yes	yes	serves
 listHeldFenceFactRows	facts_purge	yes	1	no	yes	yes	serves
 listWithdrawalSlugs	facts_purge	yes	2	no	yes	yes	serves
 expireFactsByWithdrawal	facts_purge	yes	1	no	yes	yes	serves
+insertFactPurge	facts_purge	yes	2	no	yes	yes	serves
 loopFactDrift	facts_repair	yes	2	no	yes	yes	serves
 closedLoopWithActiveFact	facts_repair	yes	2	no	yes	yes	serves
 listSessionFactsForClassification	facts_repair	yes	1	no	yes	yes	serves

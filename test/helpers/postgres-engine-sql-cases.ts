@@ -140,6 +140,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'countWorldFacts': OOS.factsCycle,
   'deleteFactRelinkMemos': OOS.factRelinkAttempts,
   'expireFactsByWithdrawal': OOS.factsPurge,
+  'insertFactPurge': OOS.factsPurge,
   'findActiveSingleFact': OOS.factsPurge,
   'findBulkFactDays': OOS.factsCycle,
   'linkConversationFact': OOS.factRelinkWrites,
