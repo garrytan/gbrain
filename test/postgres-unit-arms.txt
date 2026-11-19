@@ -72,6 +72,7 @@ test/capture-consent-admission.test.ts
 test/capture-dispatch-provenance-6524.test.ts
 test/chronicle-backfill-max-usd.test.ts
 test/claim-fifo-foreground-waiting.test.ts
+test/claim-head-deferred-decisions.test.ts
 test/claim-lease-holder-only-6712.test.ts
 test/claude-cli-output-cap.test.ts
 test/cli-page-writes.test.ts
