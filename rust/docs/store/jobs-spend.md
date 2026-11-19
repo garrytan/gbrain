@@ -41,17 +41,14 @@ Rules each member keeps from the SQL:
   `limit` is `invalid_argument`.
 - Deleting a job keeps its holds and its bounces and sets their `job_id` to NULL (`ON DELETE SET NULL`).
 
-Keys (tag `m`, sub-tags 0x20 to 0x27): `0x20 reservation_id -> record`; `0x21 job id reservation_id` (the holds of a job);
+Keys (tag `m`, sub-tags 0x20 to 0x27): `0x27 kind owner \0 reservation_id` indexes the holds that are not settled (kept by every write of a hold; the admissions in spend-log.md sum it); `0x20 reservation_id -> record`; `0x21 job id reservation_id` (the holds of a job);
 `0x22 expires_at reservation_id` (pending holds only, for the sweep); `0x24 id -> record`, `0x25 bounced_at id` and
 `0x26 job id` (the bounce log, newest first and by job). Sequence: `lease_pressure`.
 
 Differences from PGLite and PostgreSQL:
 
-- Not built: the statements that read or write `mcp_spend_log` or `oauth_clients`, the tables beside these two that belong to
-  the OAuth family. `budget-meter.ts` keeps them as raw SQL, so on a Rust brain `reserve`, the capped `reserveGroup` read,
-  the `mcp_spend_log` insert inside `settle`, and `getClientDailyCapCents` are refused (`engine_capability_missing`). An
-  uncapped group reservation (`capCents` null) and a hold that is only marked unknown are served in full. The OAuth admin
-  spend view (`src/commands/serve-http-admin-api.ts`) also reads those tables and stays raw.
+- `mcp_spend_log` and the spend columns of `oauth_clients` are in [spend-log.md](spend-log.md): the per-client and the
+  capped group admission, the settle with its ledger row, the day's sum and the admin spend view.
 - An amount that is NaN or infinite is `invalid_argument`; PostgreSQL's `numeric` accepts NaN.
 - A refused bounce does not use up an id here; PostgreSQL spends a sequence value on an insert its foreign key refuses.
 - Timestamps are ISO text across the binding; the TypeScript members turn `expires_at` into text and `bounced_at` back into a `Date`.

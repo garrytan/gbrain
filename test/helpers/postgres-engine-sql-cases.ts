@@ -423,6 +423,17 @@ export const DOMAIN_OF: Record<string, string> = {
   'insertLeasePressure': OOS.minionJobs,
   'countLeasePressure': OOS.minionJobs,
   'listRecentLeasePressure': OOS.minionJobs,
+  // spend ledger and client budgets (engine-sql/spend-log.ts)
+  'reserveClientSpend': OOS.minionJobs,
+  'reserveGroupSpend': OOS.minionJobs,
+  'readGroupSpendTotals': OOS.minionJobs,
+  'settleSpendWithLog': OOS.minionJobs,
+  'insertSpendLog': OOS.minionJobs,
+  'sumClientSpendSince': OOS.minionJobs,
+  'readClientBudgetUsd': OOS.minionJobs,
+  'insertOauthClient': OOS.minionJobs,
+  'updateOauthClientBudget': OOS.minionJobs,
+  'readAgentClientSpend': OOS.minionJobs,
   // group B (subagent transcript and tool ledger)
   'listSubagentMessages': OOS.minionJobs,
   'countSubagentMessages': OOS.minionJobs,

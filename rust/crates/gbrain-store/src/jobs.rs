@@ -38,7 +38,8 @@
 //! - `m 0x20 reservation_uuid -> record`: one spend reservation (`mcp_spend_reservations`); `0x21 job
 //!   reservation_uuid` indexes it by job, `0x22 expires_at reservation_uuid` by expiry (pending only).
 //!   `0x24 id -> record` is one lease-pressure row (sequence `lease_pressure`), `0x25 bounced_at id` its time
-//!   order and `0x26 job id` its job. The layout is in `spend.rs`.
+//!   order and `0x26 job id` its job. The layout is in `spend.rs`; `0x27` indexes the open holds by owner, and
+//!   `0x28`/`0x29` (the spend ledger, `spend_log.rs`) and `0x2A` (the client caps, `oauth_clients.rs`) follow.
 //! - `m 0x18..=0x1C`: the subagent messages, tool rows and their three indexes (see `subagent.rs`).
 //!
 //! Integers are big-endian; a signed one has its sign bit flipped so byte order is numeric order.
@@ -63,9 +64,11 @@ mod health;
 mod inbox;
 mod insight;
 mod mutations;
+mod oauth_clients;
 mod private_queues;
 mod reads;
 mod spend;
+mod spend_log;
 mod status;
 mod subagent;
 mod sweeps;
@@ -79,9 +82,11 @@ pub use checks::{
 pub use health::{DivergenceSpec, HealthSpec};
 pub use insight::InsightSpec;
 pub use mutations::{DelayOpts, TokenDelta};
+pub use oauth_clients::ClientInsert;
 pub use private_queues::PrivateQueueState;
 pub use reads::{JobPageCursor, JobPageSpec, OverdueSpec};
 pub use spend::{ExpireScope, LeaseFilter, LeaseInsert, SpendInsert, SpendTreeSpec};
+pub use spend_log::{ClientReserve, GroupReserve, LogInsert};
 pub use status::StatusFilter;
 pub use subagent::{FailureFallback, MessageInsert, ToolInsert, ToolStart, ToolTarget};
 pub use sweeps::{CancelOpts, PruneOutcome, PruneSpec};
