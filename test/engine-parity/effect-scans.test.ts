@@ -1,10 +1,12 @@
 /**
  * BrainEngine parity — the effect worker's scans (engine-sql/persistence-effect-scans.ts): `listGatedMirrorRequests`
  * (persistence/segmented-mirror-gate.ts `resumeGatedMirrors`) and `listEffectRecoveries`
- * (persistence/effect-recovery-scan.ts `selectEffectRecoveries`).
+ * (persistence/effect-recovery-scan.ts `selectEffectRecoveries`), and the claim's candidate read `selectClaimableEffect`
+ * (persistence/effect-journal.ts `claimPersistenceEffect`).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: on a brain with no worktree, each scan answers no row for any uuid host id (lowercase or uppercase),
+ *  - Contract: on a brain with no worktree and no published write, each scan answers no row (the claim read null, in
+ *    the claim's own direct transaction, with and without dead owner keys) for any uuid host id (lowercase or uppercase),
  *    also after a write request is admitted and queued; a host id that is not a uuid refuses with the `::uuid` cast's
  *    message, never with an empty answer; so does a recovery cursor that is not a bigint (syntax or range) and a limit
  *    that is fractional or negative. On every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm
@@ -97,6 +99,23 @@ describe('engine parity: effect scans', () => {
       negative: 'LIMIT must not be negative',
       fraction: 'invalid input syntax for type bigint: "1.5"',
     } });
+    return answers;
+  });
+
+  parityTest('selectClaimableEffect finds no effect before a write is published and refuses a non-uuid host', {
+    methods: ['selectClaimableEffect', 'transactionDirect', 'readSourceMembership'],
+    timeout: 60_000,
+  }, async (engine) => {
+    const claim = (hostId: string, deadOwners: readonly string[]) =>
+      engine.transactionDirect(tx => tx.selectClaimableEffect(hostId, deadOwners));
+    const empty = await claim(HOST, []);
+    await registerLocalWriter(engine, 'cli');
+    await admitPut(engine, 'notes/effect-claim', REQUEST);
+    const queued = await claim(HOST, []);
+    const dead = await claim(HOST.toUpperCase(), ['1:nonce:2']);
+    const bad = await outcome(() => claim('not-a-host', []), /invalid input syntax for type uuid: "[^"]*"/);
+    const answers = { empty, queued, dead, bad };
+    expect(answers).toEqual({ empty: null, queued: null, dead: null, bad: 'invalid input syntax for type uuid: "not-a-host"' });
     return answers;
   });
 });

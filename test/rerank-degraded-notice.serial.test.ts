@@ -48,6 +48,7 @@ const engineStub = {
   countKeywordPages: async () => 0,
   // No pages and no saved facts in this fake brain: the typed trust and saved-facts reads find nothing.
   readPageTrustRows: async () => [],
+  readRowTrustRows: async () => [],
   matchSavedFacts: async () => [],
   // Alias fan-out reads titles and aliases through typed members; this fake brain has no pages, so each finds nothing.
   findPagesByTitles: async () => [],

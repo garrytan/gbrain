@@ -33,7 +33,8 @@ function checkBatch(member: string, n: number): void {
 /**
  * A `PageReadScope` as the store reads it (`pageReadFilter`, search/read-policy-sql.ts). Any scope object turns on
  * PGLite's live filter (not deleted, not quarantined, source not archived), so `live` says one was passed.
- * `excludePrivate` applies the page policy (private-provenance.ts `storePagePolicy`); `minTrust` and `suppressFlagged`
+ * `excludePrivate` applies the page policy (private-provenance.ts `storePagePolicy`), a caller's reader identity and
+ * private-readable grant included; `minTrust` and `suppressFlagged`
  * apply the page's stored trust tier and its write-gate flag receipts (`pageEligibleSql`). `requireSafeChunks` changes
  * nothing on these reads.
  */
@@ -42,7 +43,7 @@ function readScope(member: string, opts: PageReadScope | undefined): Record<stri
   const taken = takeOptions(member, opts, ['sourceId', 'sourceIds', 'excludePrivate', 'minTrust', 'suppressFlagged'], ['requireSafeChunks']);
   return {
     sourceId: taken.sourceId, sourceIds: taken.sourceIds, live: true,
-    excludePrivate: storePagePolicy(member, taken.excludePrivate) ?? null,
+    excludePrivate: storePagePolicy(member, taken.excludePrivate, { callerReaders: true }) ?? null,
     minTrust: taken.minTrust || null,
     suppressFlagged: taken.suppressFlagged === true,
   };

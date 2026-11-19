@@ -1,0 +1,131 @@
+/**
+ * The typed reads of stamped trust tiers (src/core/engine-sql/trust-tier-reads.ts), served from the trust store
+ * (rust/crates/gbrain-store/src/trust/tier_reads.rs): `listCorePageRows`, `listTrustScanRows` and
+ * `countUnscannedTrustRows` over pages and facts, `listVersionTrustTiers` and `listVersionReasonWriters`; and the
+ * valid-time reads (trust/valid_time.rs) `listValidTimeIdentities` and `pickValidTimeEdition`.
+ *
+ * Refused (`engine_capability_missing`); the members this file does not export refuse as every unserved member does:
+ *  - `listCorePageRows` under `excludePrivate` for a caller whose page policy is not the no-caller one (a member
+ *    page, a grant, a lineage read, a labelled-only caller), as `storePagePolicy` refuses it;
+ *  - the trust scan over `takes` and `timeline_entries`, which the store does not stamp yet;
+ *  - `readBeliefHistoryRows` and `listVisibleBeliefLifetimes`, always and before any store call: the store keeps no
+ *    belief ledger (every `belief_events` and `belief_page_lifetimes` write goes through `executeRaw`), so a read could
+ *    only answer an empty list where PGLite has events (TODOS.md `rust-belief-ledger`);
+ *  - `listValidTimeIdentities` under `excludePrivate`, and `pickValidTimeEdition` always, for a caller whose page or
+ *    snapshot policy is not the no-caller one (the pick reports every row's visibility);
+ *  - `pickValidTimeEdition` on a date that is not `YYYY-MM-DD`, rather than guess at Postgres's text order, and over
+ *    a history PGLite would have pruned (more large inline versions than it keeps, a segmented version, a long
+ *    holding page): the store never prunes, so its answer would count editions PGLite no longer has and miss the gap
+ *    it records (TODOS.md `rust-version-prune`). The store keeps no change reason, so `reason` and
+ *    `introduced_because` read null where PGLite may have one (TODOS.md `rust-version-change-reason`);
+ *  - a limit, cursor or id that is not an integer, rather than guess at PGLite's bind error.
+ */
+import type { BrainEngine } from '../../engine.ts';
+import { LARGE_PAGE_VERSIONS_KEPT } from '../../page-body/limits.ts';
+import { PAGE_INLINE_MAX_BYTES } from '../../page-size-policy.ts';
+import {
+  callerReadersAllowedSql, privacyForCaller, privatePagesFilterForCaller, privatePagesFilterFragment, privateSnapshotFilterFragment,
+  remoteReadFloorSql, withoutCallerAccess,
+} from '../../search/private-visibility.ts';
+import { validDate } from '../../valid-time.ts';
+import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { storePagePolicy, storePageTextPolicy } from './private-provenance.ts';
+
+type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
+
+const SCAN_TABLES = new Set(['pages', 'facts']);
+
+function requireCount(member: string, name: string, value: number): void {
+  if (!Number.isSafeInteger(value) || value < 0) refuseMember(member, `a ${name} that is not a non-negative integer`);
+}
+
+function requireInteger(member: string, name: string, value: number): void {
+  if (!Number.isSafeInteger(value)) refuseMember(member, `a ${name} that is not an integer`);
+}
+
+export const listCorePageRows: Member<'listCorePageRows'> = (brain, spec) => {
+  const member = 'listCorePageRows';
+  requireCount(member, 'limit', spec.limit);
+  const policy = spec.excludePrivate
+    ? storePageTextPolicy(member, () => (spec.forCaller ? privatePagesFilterForCaller('p') : remoteReadFloorSql('p')))
+    : null;
+  const e = spec.eligibility;
+  return storeCall({ member }, () => brain.listCorePageRows({
+    sourceIds: spec.sourceIds ? [...spec.sourceIds] : null,
+    exclude: spec.exclude ?? null,
+    excludePrivate: policy,
+    eligible: e !== undefined,
+    minTrust: e?.floor || null,
+    suppressFlagged: e?.suppressFlagged === true,
+    limit: spec.limit,
+  }));
+};
+
+export const listTrustScanRows: Member<'listTrustScanRows'> = (brain, spec) => {
+  const member = 'listTrustScanRows';
+  if (!SCAN_TABLES.has(spec.table)) refuseMember(member, `the ${spec.table} table, whose rows the store does not stamp`);
+  requireInteger(member, 'cursor', spec.afterId);
+  requireCount(member, 'limit', spec.limit);
+  return storeCall({ member }, () => brain.listTrustScanRows({ table: spec.table, afterId: spec.afterId, limit: spec.limit, tiers: [...spec.tiers] }));
+};
+
+export const countUnscannedTrustRows: Member<'countUnscannedTrustRows'> = (brain, spec) => {
+  const member = 'countUnscannedTrustRows';
+  if (!SCAN_TABLES.has(spec.table)) refuseMember(member, `the ${spec.table} table, whose rows the store does not stamp`);
+  requireInteger(member, 'cursor', spec.afterId);
+  if (spec.until !== null) requireInteger(member, 'ceiling', spec.until);
+  return storeCall({ member }, () => brain.countUnscannedTrustRows({ table: spec.table, afterId: spec.afterId, until: spec.until, tiers: [...spec.tiers] }));
+};
+
+export const listVersionTrustTiers: Member<'listVersionTrustTiers'> = (brain, ids) => {
+  const member = 'listVersionTrustTiers';
+  for (const id of ids) requireInteger(member, 'version id', id);
+  return storeCall({ member }, () => brain.listVersionTrustTiers({ ids: [...ids] }));
+};
+
+export const listVersionReasonWriters: Member<'listVersionReasonWriters'> = (brain, ids) => {
+  const member = 'listVersionReasonWriters';
+  for (const id of ids) requireInteger(member, 'version id', id);
+  return storeCall({ member }, () => brain.listVersionReasonWriters({ ids: [...ids] }));
+};
+
+/** Why the belief reads refuse: an answer from the store would be an empty ledger, never the one PGLite keeps. */
+const NO_BELIEF_LEDGER = 'the belief ledger, which the store does not keep yet';
+
+export const readBeliefHistoryRows: Member<'readBeliefHistoryRows'> = async () => refuseMember('readBeliefHistoryRows', NO_BELIEF_LEDGER);
+
+export const listVisibleBeliefLifetimes: Member<'listVisibleBeliefLifetimes'> = async () => refuseMember('listVisibleBeliefLifetimes', NO_BELIEF_LEDGER);
+
+export const listValidTimeIdentities: Member<'listValidTimeIdentities'> = (brain, spec) => {
+  const member = 'listValidTimeIdentities';
+  const excludePrivate = storePagePolicy(member, spec.excludePrivate) ?? null;
+  const world = storePageTextPolicy(member, () => privatePagesFilterFragment('p'));
+  return storeCall({ member }, () => brain.listValidTimeIdentities({
+    slug: spec.slug, sourceId: spec.sourceId, sourceIds: spec.sourceIds ? [...spec.sourceIds] : null, excludePrivate, world,
+  }));
+};
+
+/** The snapshot visibility the pick reports for a version row, in the current context. */
+const snapshotVisibleSql = () => `${callerReadersAllowedSql('pv', 'snapshot')} AND ${privacyForCaller('p', privateSnapshotFilterFragment('pv'))}`;
+
+const asDate = (v: unknown): Date | null => (typeof v === 'string' ? new Date(v) : null);
+
+export const pickValidTimeEdition: Member<'pickValidTimeEdition'> = async (brain, spec) => {
+  const member = 'pickValidTimeEdition';
+  requireInteger(member, 'page id', spec.pageId);
+  if (spec.pinOrd !== null) requireInteger(member, 'pinned ordinal', spec.pinOrd);
+  requireCount(member, 'inline byte limit', spec.inlineMaxBytes);
+  if (validDate(spec.asOf) !== spec.asOf) refuseMember(member, 'an as-of date that is not YYYY-MM-DD');
+  const policy = storePageTextPolicy(member, () => privatePagesFilterForCaller('p'));
+  if (snapshotVisibleSql() !== withoutCallerAccess(snapshotVisibleSql)) {
+    refuseMember(member, 'a caller whose readers or grants widen the snapshot policy');
+  }
+  const got = await storeCall({ member }, () => brain.pickValidTimeEdition({
+    pageId: spec.pageId, asOf: spec.asOf, excludePrivate: spec.excludePrivate, pinOrd: spec.pinOrd, inlineMaxBytes: spec.inlineMaxBytes,
+    policy, pruneMaxBytes: PAGE_INLINE_MAX_BYTES, pruneKept: LARGE_PAGE_VERSIONS_KEPT,
+  })) as { row: Record<string, unknown> | null; history_unpruned: boolean };
+  if (got.history_unpruned) refuseMember(member, 'a version history PGLite would have pruned, which the store keeps whole');
+  if (!got.row) return null;
+  const row = got.row;
+  return { ...row, replaced_at: asDate(row.replaced_at), recorded_since: asDate(row.recorded_since), created_at: asDate(row.created_at) };
+};

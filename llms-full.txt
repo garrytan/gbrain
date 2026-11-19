@@ -6296,13 +6296,17 @@ that is not connected refuses `engine_closed`. These members run on the store (`
   `getBacklinks`, `traverseGraph`, `traversePaths`, `traversePathsDetailed`, `addTimelineEntry`,
   `addTimelineEntriesBatch`, `getTimeline`. These capabilities stay unreported, because other members of the same
   capability (`revertToVersion`, `getChunkPage`, `searchTitles`, `getBacklinkCounts`, `getTimelineForDate`, ...) still refuse.
+- Vector search: `searchVector`, `searchTakesVector` and `cosinesByChunkIds` (an exact scan over the stored vectors,
+  scored as pgvector scores them; `rust/docs/store/vectors.md`, `rust/docs/store/embeddings.md`). The `vector_search`
+  capability is reported, so hybrid search reads its vector arm. The store has one vector column, PGLite's `embedding`.
 
 A served member never drops what it cannot keep. An option or input the store has no home for, or cannot answer the
 way PGLite does, refuses `engine_capability_missing` and writes nothing. These are refused today:
 
-- a chunk that carries a vector or an image vector, and a Rust brain whose config sets `search_embedding_column` or
-  `embedding_columns` (the store keeps no vectors yet, so a Rust brain has no vector search and no embeddings until it
-  does; this arrives later);
+- a chunk that carries an image vector, and a Rust brain whose config sets `search_embedding_column` or
+  `embedding_columns` (the store keeps one vector column, `embedding`);
+- a vector search with `where`, a date bound, `minTrust` or `suppressFlagged`, or on a column other than `embedding`,
+  and a take vector search with `eligibility.floor` or `eligibility.suppressFlagged` (`rust/docs/store/vectors.md`);
 - a `putPage` that claims a `source_path` (the store has no such claim);
 - `listPages` with `listColumnsOnly`;
 - `resolveSlugs` when no live page has exactly that slug, because PGLite goes on to a fuzzy title match the store does

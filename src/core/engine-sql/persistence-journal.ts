@@ -12,6 +12,7 @@ import type { LegacyUnscopedRead } from './brands.ts';
 import type { SqlExecutor, QueryOpts } from './executor.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { JOURNAL_LIMITS_SQL } from '../persistence/limits.ts';
+import { COMPACTED_RECEIPT_BYTES_SQL, EFFECT_BYTES_SQL } from '../persistence/receipt-bytes.ts';
 
 /** The op of a held file's checkpoint row (sync-holds.ts re-exports it). */
 export const GIT_HOLD_OP = 'sync-hold';
@@ -154,6 +155,68 @@ export async function readWriteRequest(exec: LegacyUnscopedRead, principalKind: 
 export async function readWriteRequestById(exec: LegacyUnscopedRead, id: string, opts?: QueryOpts): Promise<WriteRequest | null> {
   const [row] = await exec.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid', [id], opts);
   return row ?? null;
+}
+
+/** #5984: the columns a waiter needs while a request is unfinished; the full row is read once it is terminal. */
+export type WriteRequestProgress = Pick<WriteRequest, 'state' | 'error_code' | 'error_message' | 'completed_at' | 'updated_at' | 'blocked_reason' | 'outcome' | 'deferred_refresh_id' | 'deferred_import_from'>;
+/** The progress columns of request `id` (the wait loop's poll). */
+export const WRITE_PROGRESS_SQL = 'SELECT state,error_code,error_message,completed_at,updated_at,blocked_reason,outcome,deferred_refresh_id,deferred_import_from FROM persistence_requests WHERE id=$1::uuid';
+export async function readWriteRequestProgress(exec: LegacyUnscopedRead, id: string, opts?: QueryOpts): Promise<WriteRequestProgress | null> {
+  const [row] = await exec.executeRaw<WriteRequestProgress>(WRITE_PROGRESS_SQL, [id], opts);
+  return row ?? null;
+}
+
+/** One source holding outstanding requests of a principal, and how many. */
+export interface OutstandingBySource { source_id: string; n: number }
+/** The sources holding requests of one principal that are queued, deferred, running or recovering: the most first, a tie in byte order of the source id. */
+export const OUTSTANDING_BY_SOURCE_SQL = `SELECT source_id,count(*) AS n FROM persistence_requests
+    WHERE principal_kind=$1 AND principal_id=$2 AND state IN ('queued','deferred','running','recovering') GROUP BY source_id ORDER BY count(*) DESC,source_id COLLATE "C"`;
+export async function countOutstandingBySource(exec: LegacyUnscopedRead, principalKind: string, principalId: string): Promise<OutstandingBySource[]> {
+  const rows = await exec.executeRaw<{ source_id: string; n: number | string }>(OUTSTANDING_BY_SOURCE_SQL, [principalKind, principalId]);
+  return rows.map(row => ({ source_id: row.source_id, n: Number(row.n) }));
+}
+
+/** Whether this connection's role is a member of the role that owns the gbrain tables (`sources` stands for them). */
+export const OWNS_SCHEMA_TABLES_SQL = `SELECT pg_has_role(current_user, c.relowner, 'USAGE') AS owns FROM pg_class c WHERE c.oid = to_regclass('sources')`;
+/** `ownsSchemaTables()`: false only when the role provably does not own the tables; a missing table reads as owned. */
+export async function ownsSchemaTables(exec: LegacyUnscopedRead): Promise<boolean> {
+  const [owner] = await exec.executeRaw<{ owns: boolean | null }>(OWNS_SCHEMA_TABLES_SQL);
+  return owner?.owns !== false;
+}
+
+/** The counter rows of `keys` that exist, unlocked (`readCounterRows`). */
+export const READ_COUNTERS_SQL = 'SELECT * FROM persistence_counters WHERE key=ANY($1::text[]) ORDER BY key COLLATE "C"';
+/** `readCounterRows(keys)`: the existing counter rows of `keys` in key byte order, without a lock; a missing key has no row. */
+export async function readCounterRows(exec: LegacyUnscopedRead, keys: readonly string[]): Promise<CounterRow[]> {
+  return exec.executeRaw<CounterRow>(READ_COUNTERS_SQL, [[...keys]]);
+}
+
+/**
+ * The admission rate a one-year cap value projects (`readAdmissionRate`): the brain's first request id (so a reused engine
+ * on another brain ignores rates cached for this one) and a sample of the latest 1,000 admissions, of one principal or of
+ * the whole brain: how many, the age of the oldest in seconds, their mean reservation (`gross`) and mean compacted
+ * receipt size (`net`). The three are null when nothing was admitted. With `{ sample: false }` it reads only the first
+ * request id (the statement oneYearCapacity sends when cached forecast rates may apply, so a refusal under the counter
+ * locks does not walk the sample) and answers no admissions.
+ */
+export interface AdmissionRate { first_request_id: string | null; admissions: number; age_seconds: number | null; gross: number | null; net: number | null }
+const ADMISSION_RATE_SQL = (principal: boolean) => `WITH recent AS (
+      SELECT id,created_at,terminal_reservation,authority,outcome,error_detail,client_request_id FROM persistence_requests
+      ${principal ? 'WHERE principal_kind=$1 AND principal_id=$2' : ''} ORDER BY sequence DESC LIMIT 1000),
+    e AS (SELECT request_id,SUM(${EFFECT_BYTES_SQL}) AS bytes FROM persistence_effects WHERE request_id IN (SELECT id FROM recent) GROUP BY request_id)
+    SELECT (SELECT id::text FROM persistence_requests ORDER BY sequence LIMIT 1) AS first_request_id,
+      count(*)::int AS admissions,EXTRACT(EPOCH FROM (now()-min(created_at)))::float8 AS age_seconds,avg(terminal_reservation)::float8 AS gross,
+      avg(${COMPACTED_RECEIPT_BYTES_SQL('recent', 'e')})::float8 AS net FROM recent LEFT JOIN e ON e.request_id=recent.id`;
+const FIRST_REQUEST_SQL = 'SELECT id::text AS first_request_id FROM persistence_requests ORDER BY sequence LIMIT 1';
+export async function readAdmissionRate(exec: LegacyUnscopedRead, principal: { kind: string; id: string } | null, opts?: { sample?: boolean }): Promise<AdmissionRate> {
+  if (opts?.sample === false) {
+    const [first] = await exec.executeRaw<{ first_request_id: string }>(FIRST_REQUEST_SQL);
+    return { first_request_id: first?.first_request_id ?? null, admissions: 0, age_seconds: null, gross: null, net: null };
+  }
+  const [row] = await exec.executeRaw<AdmissionRate>(ADMISSION_RATE_SQL(principal !== null), principal ? [principal.kind, principal.id] : []);
+  const num = (v: number | string | null | undefined) => v === null || v === undefined ? null : Number(v);
+  return { first_request_id: row?.first_request_id ?? null, admissions: Number(row?.admissions ?? 0), age_seconds: num(row?.age_seconds),
+    gross: num(row?.gross), net: num(row?.net) };
 }
 
 /**

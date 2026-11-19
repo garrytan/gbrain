@@ -1,7 +1,8 @@
 /**
  * Alias fan-out reads (BrainEngine findPagesByTitles, resolveCaseSensitiveAliases, readPageTitle, readPageAliasRows;
  * SQL in engine-sql/alias-fanout-reads.ts). `findPagesByTitles` reads `excludePrivate` through the page policy
- * (private-provenance.ts `storePagePolicy`): a caller whose member pages, grants or lineage widen the policy refuses.
+ * (private-provenance.ts `storePagePolicy`), the caller's reader identity and private-readable grant included; any other
+ * caller whose policy differs (folder rules, lineage, an owner read) refuses.
  * The alias reads return the `case_sensitive` flag and `alias_text` the store keeps on a derived alias row
  * (`replaceDerivedAliases`); a `frontmatter` row is never case-sensitive and has a null `alias_text`
  * (rust/docs/store/alias_fanout_reads.md).
@@ -17,7 +18,7 @@ export const findPagesByTitles: StoreMember<
 > = async (brain, titleNorms, sourceIds, types, opts) => {
   const o = takeOptions('findPagesByTitles', opts, ['excludePrivate']);
   if (!titleNorms.length || !sourceIds.length || !types.length) return [];
-  const excludePrivate = storePagePolicy('findPagesByTitles', o.excludePrivate);
+  const excludePrivate = storePagePolicy('findPagesByTitles', o.excludePrivate, { callerReaders: true });
   return storeCall({ member: 'findPagesByTitles' }, () => brain.findPagesByTitles({
     title_norms: [...titleNorms], source_ids: [...sourceIds], types: [...types], exclude_private: excludePrivate ?? null,
   }));

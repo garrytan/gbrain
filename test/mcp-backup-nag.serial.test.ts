@@ -82,6 +82,7 @@ const engineStub = {
   getConfig: async () => null,
   // Search reads result trust through this typed member; the stub has no pages.
   readPageTrustRows: async () => [],
+  readRowTrustRows: async () => [],
   countEmbeddingHeldPages: async () => null,
   // Alias fan-out reads titles and aliases through typed members; the stub has no pages, so each finds nothing.
   findPagesByTitles: async () => [],

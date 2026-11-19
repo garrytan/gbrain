@@ -83,6 +83,44 @@ export function personTypesFromPack(pack: SchemaPackManifest): string[] {
 }
 
 const SOURCE_OVERRIDE_PREFIX = 'schema_pack.source.';
+/** `c.key LIKE 'schema_pack.source.%'`: the `_` is a LIKE wildcard, the dots are literal. */
+const SOURCE_OVERRIDE_LIKE = /^schema[\s\S]pack\.source\./;
+
+/** The engine a type-filter reading needs: config reads, plus the override-source read for its dialect. */
+export type TypeFilterEngine = Pick<BrainEngine, 'getConfig' | 'executeRaw'>
+  & Partial<Pick<BrainEngine, 'kind' | 'listConfigKeys' | 'listAllSources'>>;
+
+/**
+ * The source ids a brain-wide reading resolves: each config key under the override prefix whose tail names a
+ * registered source (archived ones count). The typed twin of the SQL in `resolveTypeFilter`; the tail is cut by code
+ * point, as `substr` does.
+ */
+export function overrideSourcesFromKeys(keys: readonly string[], sourceIds: ReadonlySet<string>): string[] {
+  return keys
+    .filter((key) => SOURCE_OVERRIDE_LIKE.test(key))
+    .map((key) => [...key].slice(SOURCE_OVERRIDE_PREFIX.length).join(''))
+    .filter((id) => sourceIds.has(id));
+}
+
+/**
+ * The override-source read. A Rust brain has no SQL dialect (`executeRaw` refuses `raw_sql`), so it answers from its
+ * typed config keys and sources; the SQL engines run the one query.
+ */
+async function overrideSources(engine: TypeFilterEngine): Promise<string[]> {
+  if (engine.kind === 'rust' && engine.listConfigKeys && engine.listAllSources) {
+    const [keys, sources] = await Promise.all([
+      engine.listConfigKeys('schema'),
+      engine.listAllSources({ includeArchived: true }),
+    ]);
+    return overrideSourcesFromKeys(keys, new Set(sources.map((s) => s.id)));
+  }
+  const rows = await engine.executeRaw<{ source_id: string }>(
+    `SELECT substr(c.key, length($2::text) + 1) AS source_id FROM config c
+      WHERE c.key LIKE $1 AND substr(c.key, length($2::text) + 1) IN (SELECT id FROM sources)`,
+    [`${SOURCE_OVERRIDE_PREFIX}%`, SOURCE_OVERRIDE_PREFIX],
+  );
+  return rows.map((r) => r.source_id);
+}
 
 /**
  * Resolve the entity type filter for a reading: `scope` is the requested
@@ -90,7 +128,7 @@ const SOURCE_OVERRIDE_PREFIX = 'schema_pack.source.';
  * loader caches by pack name); never throws.
  */
 export async function resolveEntityTypes(
-  engine: Pick<BrainEngine, 'getConfig' | 'executeRaw'>,
+  engine: TypeFilterEngine,
   scope: readonly string[] | null,
 ): Promise<EntityTypeResolution> {
   return resolveTypeFilter(engine, scope, entityTypesFromPack);
@@ -98,14 +136,14 @@ export async function resolveEntityTypes(
 
 /** The person-like type filter (personTypesFromPack) for a reading, resolved per source like resolveEntityTypes. */
 export async function resolvePersonTypes(
-  engine: Pick<BrainEngine, 'getConfig' | 'executeRaw'>,
+  engine: TypeFilterEngine,
   scope: readonly string[] | null,
 ): Promise<EntityTypeResolution> {
   return resolveTypeFilter(engine, scope, personTypesFromPack);
 }
 
 async function resolveTypeFilter(
-  engine: Pick<BrainEngine, 'getConfig' | 'executeRaw'>,
+  engine: TypeFilterEngine,
   scope: readonly string[] | null,
   fromPack: (pack: SchemaPackManifest) => string[],
 ): Promise<EntityTypeResolution> {
@@ -120,13 +158,9 @@ async function resolveTypeFilter(
   if (scope === null) {
     defaults = await typesFor();
     if (defaults === null) unresolved.push('');
-    const rows = await engine.executeRaw<{ source_id: string }>(
-      `SELECT substr(c.key, length($2::text) + 1) AS source_id FROM config c
-        WHERE c.key LIKE $1 AND substr(c.key, length($2::text) + 1) IN (SELECT id FROM sources)`,
-      [`${SOURCE_OVERRIDE_PREFIX}%`, SOURCE_OVERRIDE_PREFIX],
-    ).catch(() => null);
-    if (rows === null) return { status: 'pack_unavailable', filter: EMPTY_ENTITY_TYPE_FILTER, unresolved: [''] };
-    sources = rows.map((r) => r.source_id);
+    const found = await overrideSources(engine).catch(() => null);
+    if (found === null) return { status: 'pack_unavailable', filter: EMPTY_ENTITY_TYPE_FILTER, unresolved: [''] };
+    sources = found;
   } else {
     sources = [...new Set(scope)];
     defaults = null;

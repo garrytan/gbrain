@@ -290,6 +290,29 @@ describe('engine parity: doctor-check facts statements', () => {
   const slugOpts = (fix: 'relink' | 'reextract' | 'manual', windowPerSource: number, hasAttempts = false) =>
     ({ sourceId: 'default', auditSources: [TERMINAL], windowPerSource, fix, hasAttempts });
 
+  parityTest('listOutsideContentFenceCounts and listUnlinkedConversationSlugs sort sources and slugs in byte order', { methods: ['listOutsideContentFenceCounts', 'listUnlinkedConversationSlugs'] }, async (engine, backend) => {
+    // Byte order and a linguistic collation disagree on each pair here: '-' < '.' < '_' < 'a', and 'B' < '_' < 'a'.
+    await createSource(engine, backend, 'ab', { kind: 'github' });
+    await createSource(engine, backend, 'a-z', { kind: 'github' });
+    for (const src of ['ab', 'a-z']) {
+      await engine.putPage('repo/x', note('X'), { sourceId: src });
+      await pageFact(engine, 'repo/x', `g-${src}`, { visibility: 'world' }, src);
+    }
+    for (const slug of ['calls/ab', 'calls/a_b', 'calls/a.d', 'calls/a-c']) {
+      await engine.putPage(slug, note(slug, { transcript_import: true }));
+      await pageFact(engine, slug, `s-${slug}`);
+    }
+    for (const slug of ['conv/b', 'conv/B', 'conv/_b', 'conv/a-b']) await pageFact(engine, slug, `c-${slug}`, { source: CONVERSATION });
+    await pageFact(engine, 'conv/z', 'z1', { source: CONVERSATION });
+    await pageFact(engine, 'conv/z', 'z2', { source: CONVERSATION });
+    const fences = (await engine.listOutsideContentFenceCounts()).map(r => `${r.source_id}:${r.slug}`);
+    const slugs = (await engine.listUnlinkedConversationSlugs(slugOpts('relink', 100))).map(r => r.slug);
+    expect(fences).toEqual(['a-z:repo/x', 'ab:repo/x', 'default:calls/a-c', 'default:calls/a.d', 'default:calls/a_b', 'default:calls/ab']);
+    // conv/z has two rows and ranks first; the one-row pages tie on the count and fall back to byte order.
+    expect(slugs).toEqual(['conv/z', 'conv/B', 'conv/_b', 'conv/a-b', 'conv/b']);
+    return { fences, slugs };
+  });
+
   parityTest('listUnlinkedConversationSlugs ranks the pages of the targeted unlinked conversation rows by row count', { methods: ['listUnlinkedConversationSlugs'] }, async (engine, backend) => {
     await seedWindow(engine, backend);
     const relink = await engine.listUnlinkedConversationSlugs(slugOpts('relink', 100));

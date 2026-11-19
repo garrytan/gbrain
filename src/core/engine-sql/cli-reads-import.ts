@@ -5,11 +5,11 @@
  * brain answers from its store (rust/crates/gbrain-store/src/cli_reads/import.rs).
  */
 import type {
-  GuestSourceLookupRow, LinkPageMetadataRow, PageAtRevisionRef, PageTrustLookup, PageTrustRow,
+  GuestSourceLookupRow, LinkPageMetadataRow, PageAtRevisionRef, PageTrustLookup, PageTrustRow, RowTrustLookup, RowTrustRow,
   SourceIncarnationRow, SourceRecordRow, StoredTimelineRow,
 } from '../engine.ts';
 import { GUEST_SOURCES_HIDDEN_SQL, guestSourceSql } from '../guests/note.ts';
-import { activationSuppressedSql } from '../eligibility/sql.ts';
+import { activationSuppressedSql, contestedRefSql } from '../eligibility/sql.ts';
 import { isMissingSchemaObject } from '../utils.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
@@ -87,6 +87,21 @@ const CONFIG_GUEST_SQL = "COALESCE(s.config->>'guest' = 'true', false)";
 
 const trustColumns = (tableGuest: boolean) => sqlFragment`pages.id, pages.source_id, pages.slug, trust_tier, write_origin, ${trustedSql(activationSuppressedSql('pages', 'pages'))} AS flagged,
   ${trustedSql(tableGuest ? guestSourceSql('s.config', 'pages.source_id') : CONFIG_GUEST_SQL)} AS guest FROM pages LEFT JOIN sources s ON s.id = pages.source_id`;
+
+const ROW_TRUST_TABLES = { facts: 'facts', takes: 'takes', timeline_entries: 'timeline_entries' } as const;
+
+/**
+ * The trust rows of fact, take or timeline rows by id: the statement `stampRowTrust` (eligibility/stamp.ts) ran through
+ * `executeRaw`. A timeline row has no supersede proposals, so its `contested` is null.
+ */
+export async function readRowTrustRows(exec: LegacyUnscopedRead, lookup: RowTrustLookup): Promise<RowTrustRow[]> {
+  const table = ROW_TRUST_TABLES[lookup.table];
+  if (!table) throw new Error(`readRowTrustRows: unknown table ${JSON.stringify(lookup.table)}`);
+  if (lookup.ids.length === 0) return [];
+  const { text, params } = renderFragment(sqlFragment`SELECT r.id, r.trust_tier, r.write_origin, ${trustedSql(activationSuppressedSql(table, 'r'))} AS flagged,
+    ${trustedSql(table === 'timeline_entries' ? 'NULL' : contestedRefSql(table, 'r'))} AS contested FROM ${trustedSql(table)} r WHERE r.id = ANY(${[...lookup.ids]}::bigint[])`);
+  return (await exec.executeRaw<RowTrustRow>(text, params)).map(row => ({ ...row, id: Number(row.id) }));
+}
 
 /**
  * The trust rows of pages by id and by (source_id, slug): `byId` marks the rows found by id. A brain whose schema is

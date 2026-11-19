@@ -21,7 +21,7 @@ import { throwIfAborted as throwIfQueryAborted } from '../../engine-sql/executor
 import { computeAnomaliesFromBuckets, type CohortDayRow, type CohortTodayRow } from '../../cycle/anomaly.ts';
 import { effectiveLinkExtractorWatermark } from '../../link-extraction-watermark.ts';
 import { loadOrphanPolicyOverrides, shouldExcludeFromOrphanReporting } from '../../orphan-policy.ts';
-import { resolveEntityTypes, type EntityTypeFilter } from '../../schema-pack/entity-types.ts';
+import { resolveEntityTypes, type EntityTypeFilter, type TypeFilterEngine } from '../../schema-pack/entity-types.ts';
 import { loadTimelineGradedPredicate } from '../../timeline-grading.ts';
 import { withDates } from '../store-codec.ts';
 import type { StoreBrain } from '../store.ts';
@@ -53,27 +53,17 @@ export const getStats: StoreMember<[opts?: ScopeOpts], BrainStats> = async (brai
   return storeCall({ member: 'getStats' }, () => brain.getStats({ scope }));
 };
 
-const SOURCE_OVERRIDE_PREFIX = 'schema_pack.source.';
-/** `c.key LIKE 'schema_pack.source.%'`: the `_` is a LIKE wildcard. */
-const SOURCE_OVERRIDE_LIKE = /^schema[\s\S]pack\.source\./;
-
 /**
- * The engine `resolveEntityTypes` reads: getConfig, and the one `executeRaw` it runs for a brain-wide reading (the
- * registered sources with a schema pack override), answered from the store's config keys and sources.
+ * The engine `resolveEntityTypes` reads, over the store: getConfig, and the typed override-source read a Rust brain
+ * takes (config keys and sources). `executeRaw` is never reached on that path; it refuses like the engine member.
  */
-function entityTypeEngine(brain: StoreBrain) {
+function entityTypeEngine(brain: StoreBrain): TypeFilterEngine {
   return {
+    kind: 'rust',
     getConfig: (key: string) => getConfig(brain, key),
-    executeRaw: async <T>(_sql: string, params?: unknown[]): Promise<T[]> => {
-      if (params?.[1] !== SOURCE_OVERRIDE_PREFIX) refuseMember('getHealth', 'a schema pack query the store does not answer');
-      const sources = new Set((await listAllSources(brain, { includeArchived: true })).map((s) => s.id));
-      const keys = await listConfigKeys(brain, 'schema');
-      return keys
-        .filter((key) => SOURCE_OVERRIDE_LIKE.test(key))
-        .map((key) => [...key].slice(SOURCE_OVERRIDE_PREFIX.length).join(''))
-        .filter((id) => sources.has(id))
-        .map((source_id) => ({ source_id }) as T);
-    },
+    listConfigKeys: (prefix: string) => listConfigKeys(brain, prefix),
+    listAllSources: (opts) => listAllSources(brain, opts),
+    executeRaw: async () => refuseMember('getHealth', 'a schema pack query the store does not answer'),
   };
 }
 
@@ -236,7 +226,7 @@ export const findAnomalies: StoreMember<[opts: AnomaliesOpts], AnomalyResult[]> 
   // PGLite reads only excludePrivate of the read scope here: minTrust, suppressFlagged and requireSafeChunks change nothing.
   const o = takeOptions('findAnomalies', opts, ['sourceId', 'sourceIds', 'since', 'lookback_days', 'sigma', 'excludePrivate'],
     ['minTrust', 'suppressFlagged', 'requireSafeChunks']);
-  const excludePrivate = storePagePolicy('findAnomalies', o.excludePrivate);
+  const excludePrivate = storePagePolicy('findAnomalies', o.excludePrivate, { callerReaders: true });
   const sigma = (o.sigma as number | undefined) ?? 3.0;
   const lookbackDays = Math.max(1, (o.lookback_days as number | undefined) ?? 30);
   const sinceIso = (o.since as string | undefined) ?? new Date().toISOString().slice(0, 10);

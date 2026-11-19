@@ -36,6 +36,7 @@ import { archiveSource, createSource, parityArms } from './harness.ts';
 import { chunk, installChunks } from './chunk-fixtures.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -314,6 +315,34 @@ describe('engine parity: retrieval coverage', () => {
       expect((counts.agentSuppressed as { total: number }).total).toBe(4);
       expect((counts.confirmedOnly as { total: number }).total).toBe(0);
       return { counts, rebuild, probes };
+    },
+  );
+
+  parityTest(
+    'search/retrieval-coverage: under excludePrivate the pending count, the rebuild and the probe apply a caller\'s reader identity and private-readable grant',
+    { methods: ['putPage', 'countPendingProjectionPages', 'projectionRebuildProgress', 'readProjectionReadiness'] },
+    async (engine) => {
+      for (const [slug, frontmatter] of [
+        ['notes/open', {}], ['notes/private', { visibility: 'private' }], ['notes/readers', { readable_by: ['alice-example'] }],
+        ['notes/team', { readable_by: 'group:team-a' }], ['notes/bob-only', { readable_by: ['bob-example'] }],
+        ['notes/pinned', { visibility: 'private', pinned_question: true }],
+      ] as const) await engine.putPage(slug, page(slug, { frontmatter }));
+      const scope: ProjectionReadinessScope = { excludePrivate: true };
+      const read = (access: Parameters<typeof withCallerAccess>[0]) => withCallerAccess(access, async () => {
+        __resetProjectionReadinessCacheForTests();
+        return {
+          count: await countPendingProjections(engine, scope, ALL),
+          rebuild: await countProjectionRebuild(engine, scope),
+          probe: await withEnv({ [PROJECTION_READINESS_CACHE_ENV]: '0' }, () => probe(engine, scope)),
+        };
+      });
+      const member = await read({ identity: ['member:alice-example', 'group:team-a'], hidePrivate: true });
+      const granted = await read({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true });
+      const stranger = await read({ identity: ['member:carol-example'], hidePrivate: true });
+      expect(stranger.count?.total).toBe(1);
+      expect(member.count?.total).toBe(3);
+      expect(granted.count?.total).toBe(3);
+      return { member, granted, stranger };
     },
   );
 });
