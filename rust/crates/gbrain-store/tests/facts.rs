@@ -865,6 +865,30 @@ fn a_widening_record_admits_own_member_and_granted_open_private_facts_only() {
         trajectory(json!({ "privateFactSources": ["default"] })),
         ["granted", "world"]
     );
+    // The fact relevance pool's world-only rule widens the same way.
+    let pool = |widen: Value| {
+        let rows = b
+            .list_facts_for_relevance(&args::<gbrain_store::facts::trust::RelevanceQuery>(json!({
+                "arm": "entity", "limit": 50,
+                "entity": { "sourceId": "default", "slug": "subject" },
+                "pool": { "sourceIds": ["default"], "worldOnly": true, "widen": widen } })))
+            .unwrap();
+        let mut kept: Vec<String> = rows
+            .iter()
+            .map(|r| r["fact"].as_str().unwrap().to_string())
+            .collect();
+        kept.sort_unstable();
+        kept
+    };
+    assert_eq!(pool(Value::Null), trajectory(Value::Null));
+    assert_eq!(
+        pool(json!({ "member": "alice-example", "memberPagePolicy": policy })),
+        ["own member", "world"]
+    );
+    assert_eq!(
+        pool(json!({ "privateFactSources": ["default"] })),
+        ["granted", "world"]
+    );
     // listSupersessions widens the same way.
     batch(
         &b,
