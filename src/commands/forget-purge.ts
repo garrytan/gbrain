@@ -23,6 +23,7 @@ import { isInteractive, readLine } from '../core/interaction.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { CONFIRMATION_REQUIRED_EXIT_CODE } from '../core/exit-codes.ts';
 import { resolveSourceId } from '../core/source-resolver.ts';
+import { EQUALS_READERS } from '../cli/equals-readers.ts';
 
 export const PURGE_FAMILY_HELP = `Purge family (remove content from live stores; never physical erasure):
   gbrain forget <id> --purge            purge one fact's claim (dry-run receipt, then a typed token)
@@ -93,7 +94,6 @@ export interface PurgeCliIo { interactive?: () => boolean; readToken?: (prompt: 
 
 /** #9738: the fact ids among `gbrain forget` arguments: every all-digit argument that is not the value of one of its flags (`--reason 42`). */
 export async function forgetFactIds(args: readonly string[]): Promise<string[]> {
-  const { EQUALS_READERS } = await import('../cli/flag-equals.ts');
   const valueFlags = new Set([...EQUALS_READERS.forget ?? [], ...EQUALS_READERS['forget --purge'] ?? []]);
   return args.filter((arg, i) => /^\d+$/.test(arg) && !valueFlags.has(args[i - 1] ?? ''));
 }
