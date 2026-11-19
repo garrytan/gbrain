@@ -50,7 +50,7 @@ import type { GraduationGateRow, ManagedRootBindingRow, PersistenceTable, Retire
 import type { ImportedPageSeal, LivePageBodyRow, OriginClaimRow, PageIngestStamp, PageOriginRow, PageOriginTarget } from './engine-sql/write-guards.ts';
 import type { CallerPageAccessRow, PagePolicyPart } from './engine-sql/page-visibility.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
-import type { ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, MentionDueQuery, SiblingCandidateQuery, SiblingCandidateRow } from './engine-sql/entity-reads.ts';
+import type { ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, MentionDueQuery, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow } from './engine-sql/entity-reads.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
 import type {
   AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
@@ -3487,6 +3487,12 @@ export interface BrainEngine {
   readIdentitySiblingCandidates(sourceId: string, q: SiblingCandidateQuery): Promise<SiblingCandidateRow[]>;
   /** The first of `slugs` holding a live page that is (`retired: true`), is not (`false`) or is either (omitted) a retired page (`retiredPageSql`). */
   findExactSlug(sourceId: string, slugs: readonly string[], opts?: { retired?: boolean }): Promise<string | null>;
+  /**
+   * One hop of a retirement chain (entities/resolve.ts `followRetirement`): the live page at `slug`, whether it is
+   * retired (`retiredPageSql`) and its trimmed `superseded_by` (else `merged_into`) target; null when no live page sits
+   * there or the `privacy` page policy, rendered in the caller's access record, hides it.
+   */
+  readRetirementHop(sourceId: string, slug: string, privacy: RetirementPrivacy): Promise<RetirementHopRow | null>;
   /** The link-extraction lag row (`extractionLagStatement`) under a `timeoutMs` bound (default 10 s; PGLite ignores it). */
   readExtractionLagCounts(q: ExtractionLagQuery): Promise<ExtractionLagCounts | undefined>;
   /**

@@ -3487,6 +3487,50 @@
         ],
         "flagOnScopes": []
       },
+      "readRetirementHop#caller": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readRetirementHop#floor": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readRetirementHop#member_access": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readRetirementHop#none": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readSourceChunkerVersion#default": {
         "flagOffLanes": [
           "pool"
@@ -5156,6 +5200,7 @@
         "readQueuedPageChars": "none",
         "readQueuedSpendRows": "none",
         "readReceiptBudget": "none",
+        "readRetirementHop": "none",
         "readRowTrustRows": "none",
         "readSearchStats": "none",
         "readSegmentDerivations": "none",

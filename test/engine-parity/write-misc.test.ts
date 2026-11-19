@@ -23,6 +23,7 @@ import { isCapabilityRefusal } from './arm-capabilities.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { folderAccessFor, folderAccessForAll, memberIdentityFor, stdioMemberIdentity } from '../../src/core/access/caller.ts';
+import { proposeRevision } from '../../src/core/access/policy.ts';
 import type { SourceStateRow, WorktreeBinding } from '../../src/core/engine-sql/write-misc.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -147,6 +148,28 @@ describe('engine parity: write misc', () => {
     expect(underRule).toBe(true);
     return { underRule };
   });
+
+  // readFolderAccess answers no rules and no coverage on Rust (folder access opens) only because no Rust brain can hold a
+  // folder rule: the production rule write (`gbrain access rule add` runs proposeRevision) must stop on a typed refusal
+  // there, never record nothing and report success, and the caller's folder access must stay empty afterwards.
+  parityTest('the folder-rule write (proposeRevision) refuses typed on Rust and applies the rule on the SQL engines',
+    { methods: ['readFolderAccess', 'isFolderRestricted'] }, async (engine, backend) => {
+      await createSource(engine, backend, 'work');
+      const write = await proposeRevision(engine, 'work', [{ id: 'team', prefix: 'drafts/', readable_by: ['group:team-a'] }],
+        { origin: 'cli', store: 'database' }).then(() => null, (e: unknown) => e);
+      if (backend === 'rust') {
+        expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
+        expect(await engine.readFolderAccess(['group:team-a'])).toEqual({ rules: [], coverage: [] });
+        expect(await engine.isFolderRestricted('work', 'drafts/plan')).toBe(false);
+        throw write;
+      }
+      expect(write).toBeNull();
+      const rules = (await engine.readFolderAccess(['group:team-a'])).rules.map(r => ({ source_id: r.source_id, rule_id: r.rule_id }));
+      expect(rules).toEqual([{ source_id: 'work', rule_id: 'team' }]);
+      const restricted = await engine.isFolderRestricted('work', 'drafts/plan');
+      expect(restricted).toBe(true);
+      return { rules, restricted };
+    });
 
   parityTest('listAppliedPolicyRevisions lists no source on a brain with no folder access state', { methods: ['listAppliedPolicyRevisions'] }, async (engine, backend) => {
     await createSource(engine, backend, 'work');

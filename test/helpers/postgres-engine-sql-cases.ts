@@ -552,7 +552,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'stampWorktreeHeartbeats': OOS.journal,
   // entity and mention reads the CLI made through executeRaw
   'readMentionLastPass': OOS.entityReads, 'countPagesDueForMentions': OOS.entityReads, 'readIdentitySiblingCandidates': OOS.entityReads,
-  'findExactSlug': OOS.entityReads, 'readExtractionLagCounts': OOS.entityReads, 'readIgnoredPrivacyLabelPages': OOS.entityReads,
+  'findExactSlug': OOS.entityReads, 'readRetirementHop': OOS.callerRawSql, 'readExtractionLagCounts': OOS.entityReads, 'readIgnoredPrivacyLabelPages': OOS.entityReads,
   'readSourceMembership': OOS.journal, 'findTopologyChanges': OOS.journal, 'renewWriteClaim': OOS.journal, 'expireStaleWriteClaims': OOS.journal,
   'hasClaimableWrite': OOS.journal, 'directRawSql': OOS.helper,
   'readTopologyChange': OOS.journal, 'insertTopologyChange': OOS.journal,
@@ -1328,6 +1328,12 @@ export const EXTRA_READ_CASES: SqlCase[] = [
     ['default', (e) => e.findExactSlug(SRC, [SLUG], { retired: false })],
     ['retired', (e) => e.findExactSlug(SRC, [SLUG], { retired: true })],
     ['any', (e) => e.findExactSlug(SRC, [SLUG, 'other/slug'])],
+  ]),
+  ...variants('readRetirementHop', [
+    ['none', (e) => e.readRetirementHop(SRC, SLUG, 'none')],
+    ['caller', (e) => e.readRetirementHop(SRC, SLUG, 'caller')],
+    ['floor', (e) => e.readRetirementHop(SRC, SLUG, 'floor')],
+    ['member_access', (e) => e.readRetirementHop(SRC, SLUG, 'member_access')],
   ]),
   ...variants('readExtractionLagCounts', [['default', (e) => e.readExtractionLagCounts({ sourceId: SRC, versionTs: '2000-01-01T00:00:00Z', attendance: true, held: true })]]),
   ...variants('readIgnoredPrivacyLabelPages', [

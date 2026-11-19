@@ -289,3 +289,32 @@ fn label_pages_carry_a_label_key_and_no_readers() {
             .is_err()
     );
 }
+
+#[test]
+fn retirement_hop_reads_retirement_and_target() {
+    let dir = TempDir::new("cli-hop");
+    let store = seeded(&dir);
+    let hop = |slug: &str| store.read_retirement_hop("default", slug, None).unwrap();
+    let ada = hop("people/ada").unwrap();
+    assert!(!ada.retired);
+    assert_eq!(ada.target, None);
+    assert_eq!(ada.page_type, "person");
+    let merged = hop("people/merged").unwrap();
+    assert!(merged.retired);
+    assert_eq!(merged.target.as_deref(), Some("people/ada"));
+    // Retired by status alone: no target to follow.
+    let old = hop("people/old").unwrap();
+    assert!(old.retired);
+    assert_eq!(old.target, None);
+    // A blank `merged_into` neither retires the page nor names a target.
+    let blank = hop("people/blank").unwrap();
+    assert!(!blank.retired);
+    assert_eq!(blank.target, None);
+    assert_eq!(hop("people/ghost"), None);
+    assert_eq!(
+        store
+            .read_retirement_hop("no-such-source", "people/ada", None)
+            .unwrap(),
+        None
+    );
+}

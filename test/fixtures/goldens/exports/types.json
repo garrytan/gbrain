@@ -557,6 +557,7 @@
           "readQueuedPageChars: (spec: { name: string; queue: string; maxChars: number; }) => Promise<number | null>",
           "readQueuedSpendRows: (spec: { legacyPrefixes: Readonly<Record<string, readonly string[]>>; waitMs: number; }) => Promise<QueuedSpendRows>",
           "readReceiptBudget: (retentionKey: string, floorDays: number) => Promise<ReceiptBudget>",
+          "readRetirementHop: (sourceId: string, slug: string, privacy: RetirementPrivacy) => Promise<RetirementHopRow | null>",
           "readRowTrustRows: (lookup: RowTrustLookup) => Promise<RowTrustRow[]>",
           "readSearchStats: (cutoffDate: string) => Promise<SearchTelemetryRow[]>",
           "readSegmentDerivations: (pageId: number, opts?: { kind?: SegmentDerivationKind; occurrenceIds?: readonly number[]; }) => Promise<SegmentDerivationRow[]>",
@@ -748,7 +749,7 @@
         "kind": "type",
         "name": "CRMode",
         "signature": [
-          "\"title\" | \"none\" | \"per_chunk_synopsis\""
+          "\"none\" | \"title\" | \"per_chunk_synopsis\""
         ]
       },
       {
@@ -1387,7 +1388,7 @@
           "body_storage?: BodyStorage | undefined",
           "compiled_truth: string",
           "content_hash?: string | undefined",
-          "contextual_retrieval_mode?: \"title\" | \"none\" | \"per_chunk_synopsis\" | null | undefined",
+          "contextual_retrieval_mode?: \"none\" | \"title\" | \"per_chunk_synopsis\" | null | undefined",
           "corpus_generation?: string | null | undefined",
           "created_at: Date",
           "deleted_at?: Date | null | undefined",
@@ -2094,6 +2095,7 @@
           "readQueuedPageChars: (spec: { name: string; queue: string; maxChars: number; }) => Promise<number | null>",
           "readQueuedSpendRows: (spec: { legacyPrefixes: Readonly<Record<string, readonly string[]>>; waitMs: number; }) => Promise<QueuedSpendRows>",
           "readReceiptBudget: (retentionKey: string, floorDays: number) => Promise<ReceiptBudget>",
+          "readRetirementHop: (sourceId: string, slug: string, privacy: RetirementPrivacy) => Promise<RetirementHopRow | null>",
           "readRowTrustRows: (lookup: RowTrustLookup) => Promise<RowTrustRow[]>",
           "readSearchStats: (cutoffDate: string) => Promise<SearchTelemetryRow[]>",
           "readSegmentDerivations: (pageId: number, opts?: { kind?: SegmentDerivationKind; occurrenceIds?: readonly number[]; }) => Promise<SegmentDerivationRow[]>",
@@ -5057,6 +5059,7 @@
           "readQueuedPageChars: (spec: { name: string; queue: string; maxChars: number; }) => Promise<number | null>",
           "readQueuedSpendRows: (spec: { legacyPrefixes: Readonly<Record<string, readonly string[]>>; waitMs: number; }) => Promise<QueuedSpendRows>",
           "readReceiptBudget: (retentionKey: string, floorDays: number) => Promise<ReceiptBudget>",
+          "readRetirementHop: (sourceId: string, slug: string, privacy: RetirementPrivacy) => Promise<RetirementHopRow | null>",
           "readRowTrustRows: (lookup: RowTrustLookup) => Promise<RowTrustRow[]>",
           "readSearchStats: (cutoffDate: string) => Promise<SearchTelemetryRow[]>",
           "readSegmentDerivations: (pageId: number, opts?: { kind?: SegmentDerivationKind; occurrenceIds?: readonly number[]; }) => Promise<SegmentDerivationRow[]>",
@@ -9182,6 +9185,7 @@
           "readQueuedPageChars: (spec: { name: string; queue: string; maxChars: number; }) => Promise<number | null>",
           "readQueuedSpendRows: (spec: { legacyPrefixes: Readonly<Record<string, readonly string[]>>; waitMs: number; }) => Promise<jobsChecks.QueuedSpendRows>",
           "readReceiptBudget: (retentionKey: string, floorDays: number) => Promise<housekeepingImpl.ReceiptBudget>",
+          "readRetirementHop: (sourceId: string, slug: string, privacy: entityReadsImpl.RetirementPrivacy) => Promise<entityReadsImpl.RetirementHopRow | null>",
           "readRowTrustRows: (lookup: RowTrustLookup) => Promise<RowTrustRow[]>",
           "readSearchStats: (cutoffDate: string) => Promise<telemetryImpl.SearchTelemetryRow[]>",
           "readSegmentDerivations: (pageId: number, opts?: { kind?: SegmentDerivationKind; occurrenceIds?: readonly number[]; }) => Promise<SegmentDerivationRow[]>",
@@ -11413,7 +11417,7 @@
         "kind": "type",
         "name": "CRMode",
         "signature": [
-          "\"title\" | \"none\" | \"per_chunk_synopsis\""
+          "\"none\" | \"title\" | \"per_chunk_synopsis\""
         ]
       },
       {
@@ -12052,7 +12056,7 @@
           "body_storage?: BodyStorage | undefined",
           "compiled_truth: string",
           "content_hash?: string | undefined",
-          "contextual_retrieval_mode?: \"title\" | \"none\" | \"per_chunk_synopsis\" | null | undefined",
+          "contextual_retrieval_mode?: \"none\" | \"title\" | \"per_chunk_synopsis\" | null | undefined",
           "corpus_generation?: string | null | undefined",
           "created_at: Date",
           "deleted_at?: Date | null | undefined",

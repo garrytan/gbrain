@@ -50,6 +50,17 @@ pub struct SiblingCandidateRow {
     pub identity: Option<String>,
 }
 
+/// One retirement hop (`readRetirementHop`): the page, whether it is retired (`retiredPageSql`),
+/// and its trimmed `superseded_by`, else `merged_into`, value as the redirect target.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RetirementHopRow {
+    pub slug: String,
+    #[serde(rename = "type")]
+    pub page_type: String,
+    pub retired: bool,
+    pub target: Option<String>,
+}
+
 /// `readIgnoredPrivacyLabelPages` scope: the run's own slugs, or pages updated since an ISO time.
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
@@ -143,6 +154,42 @@ impl Store {
             }
         }
         Ok(None)
+    }
+
+    /// `readRetirementHop(sourceId, slug, privacy)`: the live page at `slug` in the source with its
+    /// retirement and redirect target, or `None` when no live page sits there or `policy` hides it
+    /// (`page_hidden`). `None` policy reads every page.
+    pub fn read_retirement_hop(
+        &self,
+        source_id: &str,
+        slug: &str,
+        policy: Option<&PrivacyPolicy>,
+    ) -> Result<Option<RetirementHopRow>> {
+        let read = self.read()?;
+        let Some(p) =
+            crate::pages::read_page(&*read, source_id, slug)?.filter(|p| p.deleted_at_us.is_none())
+        else {
+            return Ok(None);
+        };
+        if let Some(policy) = policy
+            && page_hidden(&*read, &p, policy)?
+        {
+            return Ok(None);
+        }
+        // `NULLIF(btrim(x), '')`: btrim trims spaces only.
+        let target = |key: &str| {
+            p.frontmatter
+                .get(key)
+                .and_then(arrow_text)
+                .map(|v| v.trim_matches(' ').to_string())
+                .filter(|v| !v.is_empty())
+        };
+        Ok(Some(RetirementHopRow {
+            retired: is_retired(&p),
+            target: target("superseded_by").or_else(|| target("merged_into")),
+            slug: p.slug.clone(),
+            page_type: p.page_type.clone(),
+        }))
     }
 
     /// `readIgnoredPrivacyLabelPages(sourceId, scope)`: the live pages of the source in the scope
