@@ -216,6 +216,9 @@ async function cloneBrain(base: Brain, dir: string): Promise<Brain> {
     const name = `census_case_${process.pid}_${++pgSeq}`;
     await pgExec(`CREATE DATABASE ${name} TEMPLATE ${dbName(base.url!)}`);
     const b = newBrain('postgres', dir, withDb(PG_URL!, name));
+    // The database template copies the brain but not the local writer the setup registered in the home.
+    const persistence = join(base.home, '.gbrain', 'persistence');
+    if (existsSync(persistence)) cpSync(persistence, join(b.home, '.gbrain', 'persistence'), { recursive: true, filter: (src: string) => !lstatSync(src).isSocket() });
     return b;
   }
   // Stale owner/resolve sockets a finished `serve` left behind cannot be copied and belong to no case.
@@ -568,7 +571,7 @@ async function main(): Promise<void> {
     await pgExec(`CREATE DATABASE ${name}`);
     pg = newBrain('postgres', join(base, 'postgres'), withDb(PG_URL, name));
   }
-  const SETUP = [['import', FIXTURE, '--no-embed', '--json'], ['extract', 'all', '--source', 'db', '--json']];
+  const SETUP = [['import', FIXTURE, '--no-embed', '--json'], ['extract', 'all', '--source', 'db', '--json'], ['auth', 'local-writer', 'register', 'cli', '--json']];
   const setup: string[] = [];
   const rustDone: string[][] = [];
   let useMirror = false;
