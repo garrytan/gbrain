@@ -22,6 +22,7 @@ import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { authorizeWrite, submissionAuthority } from '../../src/core/persistence/authority.ts';
+import { withAdmissionOrigin } from '../../src/core/persistence/admission-origin.ts';
 import { registerLocalWriter } from '../../src/core/persistence/identity.ts';
 import { admitWrite, assertWriteHeadroom, readOutstandingRoom } from '../../src/core/persistence/journal.ts';
 import { principalKey, type WriteAuthority } from '../../src/core/persistence/model.ts';
@@ -36,13 +37,14 @@ const REQUESTS = ['b0000000-0000-4000-8000-0000000000b1', 'b0000000-0000-4000-80
 const WORKTREE = 'd0000000-0000-4000-8000-0000000000d1';
 
 /** Admits one put_page request for `slug` on `sourceId` through the real admission path, as a CLI put does. */
-async function admitPut(engine: BrainEngine, slug: string, requestId: string, sourceId = 'default') {
+async function admitPut(engine: BrainEngine, slug: string, requestId: string, sourceId = 'default',
+  operation = 'put_page', intent: Record<string, unknown> = { body: slug }) {
   const source = await engine.readSourceMembership(sourceId);
   const ctx: OperationContext = { engine, config: { engine: engine.kind }, remote: false, dryRun: false, sourceId,
     logger: { info() {}, warn() {}, error() {} } } as OperationContext;
-  const authority = await submissionAuthority(ctx, 'put_page', sourceId, source!.incarnation, slug);
-  return admitWrite(engine, { principal: authority.principal, authority, operation: 'put_page', sourceId,
-    sourceIncarnation: source!.incarnation, slug, requestId, callerIntent: { body: slug }, intent: { body: slug } });
+  const authority = await submissionAuthority(ctx, operation, sourceId, source!.incarnation, slug);
+  return admitWrite(engine, { principal: authority.principal, authority, operation, sourceId,
+    sourceIncarnation: source!.incarnation, slug, requestId, callerIntent: intent, intent });
 }
 
 /** Outstanding count and intent bytes per counter, read under the counter lock. */
@@ -223,5 +225,32 @@ describe('engine parity: persistence declaration', () => {
     // An engine with it checks the shared-skill owner; none was activated, so nothing is accepted.
     expect(refusal?.code).toBe('writer_not_quiesced');
     return { code: refusal?.code, message: refusal?.message };
+  });
+
+  parityTest('every admission branch a plain write reaches ends typed: admit, replay, changed replay, background pause, and a managed sync job past the cap', {
+    requires: 'managed_persistence',
+    methods: ['declarePersistence', 'transaction', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'readWriteRequest', 'readAdmissionRate', 'getConfigValues'],
+    timeout: 60_000,
+  }, async (engine) => {
+    await registerLocalWriter(engine, 'cli');
+    const first = await admitPut(engine, 'notes/parity-replay', REQUESTS[0]!);
+    const replay = await admitPut(engine, 'notes/parity-replay', REQUESTS[0]!);
+    const changed = await admitPut(engine, 'notes/parity-replay-other', REQUESTS[0]!).then(() => null, (e: { code?: string }) => e.code);
+    await engine.setConfig('persistence.limits.principal_lifetime_ids', '10');
+    await engine.setConfig('persistence.capacity.background_pause_pct', '10');
+    const paused = await withAdmissionOrigin('background', () => admitPut(engine, 'notes/parity-background', REQUESTS[1]!))
+      .then(() => null, (e: { code?: string }) => e.code);
+    expect(replay.id).toBe(first.id);
+    expect(changed).toBe('idempotency_conflict');
+    expect(paused).toBe('write_capacity_backpressure');
+    // A managed sync job past the outstanding cap counts the writes held behind its import, which needs managed persistence.
+    await engine.setConfig('persistence.limits.principal_outstanding', '1');
+    const sync = await admitPut(engine, 'jobs/parity-sync', 'b0000000-0000-4000-8000-0000000000b5', 'default', 'submit_job', { kind: 'managed_sync_import' })
+      .then(() => null, (e: { code?: string; reason?: string }) => e);
+    if (!engine.capabilities.has('managed_persistence')) {
+      expect(sync).toMatchObject({ code: 'engine_capability_missing', reason: 'managed_persistence' });
+      throw sync;
+    }
+    return { replayed: true, state: replay.state, changed, paused, sync: sync?.code };
   });
 });
