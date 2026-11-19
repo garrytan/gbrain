@@ -22,7 +22,8 @@ page from search until the store's indexing `putPage` or a seal indexes it again
 | `brain.countChunks()` | number of chunks in the brain | none |
 | `brain.searchKeyword(query, opts?)` | `SearchResult[]` (`slug, page_id, title, type, source_id, chunk_text, chunk_source, chunk_id, chunk_index, score, stale`, plus `effective_date` when set). `stale` is PGLite's rule: the page's `updated_at` is older than the newest `created_at` of its timeline entries | `searchKeyword` |
 
-`searchKeyword` is not parity with PGLite. Ranking is BM25 over chunks with index-wide statistics
+This is the core BM25 method. The TypeScript `searchKeyword` member no longer calls it: it runs the `ts_rank` arm in
+`keyword.md`, and this method stays in the addon unused. `searchKeyword` here is not parity with PGLite. Ranking is BM25 over chunks with index-wide statistics
 (`k1` 1.2, `b` 0.75), not the Postgres `ts_rank`, so scores and order differ. There is no stemming;
 the English stop words are dropped from the query (a query of only stop words keeps them); each CJK
 character is its own term; `websearch` syntax (quotes, `or`, `-`) is not interpreted. Like PGLite:
