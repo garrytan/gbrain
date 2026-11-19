@@ -13,7 +13,7 @@ pages whose frontmatter has a `quarantine` key and pages of a missing or archive
 TypeScript members send `live: true` whenever the caller passes a scope object. `excludePrivate` applies the page
 policy of `facts/privacy.rs`, a caller's reader identity and private-readable grant included (`storePagePolicy`
 with `callerReaders`; it refuses a caller whose policy the store does not model).
-`minTrust` (the page's stamped tier at or above the floor) and `suppressFlagged` (no instruction-family write-gate receipt on an agent-written-or-lower page) apply `pageEligibleSql` through `trust::TrustPolicy` (`trust/eligibility.rs`); an unknown tier name is `invalid_argument`. `requireSafeChunks` is ignored, as these statements never read it.
+`minTrust` (the page's stamped tier at or above the floor) and `suppressFlagged` (no instruction-family write-gate receipt on an agent-written-or-lower page) apply `pageEligibleSql` through `trust::TrustPolicy` (`trust/eligibility.rs`); an unknown tier name is `invalid_argument`. `requireSafeChunks` and `takesHoldersAllowList` are ignored, as these statements never read them. Hybrid search passes its whole option object as the scope; the members take only the `PageReadPolicy` keys from it, so a paging or ranking key (`limit`, `offset`, `detail`, `type`) only turns on the live filter, as on PGLite.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |

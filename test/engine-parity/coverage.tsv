@@ -79,13 +79,13 @@ getPage	pages	yes	82	yes	yes	yes	serves
 readPageSnapshot	pages	yes	23	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	320	yes	yes	yes	serves
+putPage	pages	yes	321	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	106	yes	yes	yes	serves
+softDeletePage	pages	yes	107	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -219,8 +219,8 @@ relationalFanout	links	yes	4	yes	yes	yes	serves
 relationalChainHop	links	yes	4	no	yes	yes	serves
 getBacklinkCounts	links	yes	4	no	yes	yes	serves
 getAdjacencyBoosts	links	yes	4	no	yes	yes	serves
-getContentFlagsByPageIds	links	yes	3	no	yes	yes	serves
-getUnverifiedExtractionPageIds	links	yes	3	no	yes	yes	serves
+getContentFlagsByPageIds	links	yes	4	no	yes	yes	serves
+getUnverifiedExtractionPageIds	links	yes	4	no	yes	yes	serves
 getPageTimestamps	links	yes	1	no	yes	yes	serves
 getEffectiveDates	links	yes	3	no	yes	yes	serves
 getSalienceScores	links	yes	4	yes	yes	yes	serves
