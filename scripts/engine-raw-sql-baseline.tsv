@@ -511,7 +511,6 @@ src/core/import-chunk-reuse.ts	execute_raw	1
 src/core/import-file.ts	execute_raw	1
 src/core/import-identity.ts	execute_raw	1
 src/core/ingestion/applied-captures.ts	execute_raw	5
-src/core/last-retrieved.ts	execute_raw	1
 src/core/line-grammar-config.ts	execute_raw	2
 src/core/link-extraction.ts	execute_raw	1
 src/core/link-reconciliation.ts	execute_raw	4

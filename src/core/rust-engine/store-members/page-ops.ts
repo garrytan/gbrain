@@ -3,7 +3,7 @@
  *
  * Served: readPageSnapshotsBatch, findDuplicatePage, findDuplicatePages, deletePages, purgeDeletedPages, resolveSlugsByPaths,
  * softDeletePages, findPages, countPagesBy, getAllSlugs, listAllPageRefs, listPrefixSampledPages, listCorpusSample,
- * getContentFlagsByPageIds, getUnverifiedExtractionPageIds, getPageTimestamps, getEffectiveDates, revertToVersion.
+ * bumpPageRetrievals, getContentFlagsByPageIds, getUnverifiedExtractionPageIds, getPageTimestamps, getEffectiveDates, revertToVersion.
  * deletePages scrubs the eval candidates' retrieved slugs in the delete's transaction, as PGLite does.
  * purgeDeletedPages (also served) keeps the pages PGLite's atom and derived retirement holds keep, reading the `retired_by`
  * stamp on the page row, and removes and scrubs the rest as deletePages does (rust/docs/store/page_ops.md).
@@ -238,6 +238,12 @@ function pageIds(member: string, ids: number[]): number[] {
   for (const id of ids) if (!Number.isSafeInteger(id)) throw new TypeError(`${member}: page id ${String(id)} is not an integer`);
   return ids;
 }
+
+/** Records now as each page's retrieval time, 5-minute throttled (gbrain-store `page_ops/retrievals.rs`). */
+export const bumpPageRetrievals: StoreMember<[pageIds: number[]], void> = async (brain, ids) => {
+  if (!ids.length) return;
+  await storeCall({ member: 'bumpPageRetrievals' }, () => brain.bumpPageRetrievals(pageIds('bumpPageRetrievals', ids)));
+};
 
 export const getContentFlagsByPageIds: StoreMember<[pageIds: number[], opts?: PageReadScope], Map<number, { reason: string; detail: string }>> = async (
   brain,

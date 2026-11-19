@@ -112,8 +112,9 @@ readSourceRow	pages	yes	1	no	yes	yes	serves
 lockSourceRow	pages	yes	1	no	yes	yes	serves
 countSourcePages	pages	yes	1	no	yes	yes	serves
 insertSource	pages	yes	1	no	yes	yes	serves
-listPrefixSampledPages	pages	yes	1	no	yes	yes	serves
-listCorpusSample	pages	yes	1	no	yes	yes	serves
+listPrefixSampledPages	pages	yes	2	no	yes	yes	serves
+listCorpusSample	pages	yes	2	no	yes	yes	serves
+bumpPageRetrievals	pages	yes	1	no	yes	yes	serves
 getPageSealState	pages	yes	5	no	yes	yes	serves
 refreshPageOrigin	pages	yes	2	no	yes	yes	serves
 searchKeyword	search	yes	17	yes	yes	yes	serves

@@ -1268,3 +1268,26 @@ export async function refreshPageOrigin(exec: SqlExecutor, slug: string, opts: {
         AND deleted_at IS NULL AND (source_path IS DISTINCT FROM $1 OR source_uri IS DISTINCT FROM COALESCE($4::text, source_uri))`,
   [opts.sourcePath, opts.sourceId, slug, opts.sourceUri ?? null]);
 }
+
+/**
+ * The retrieval bump of `bumpLastRetrievedAt` (last-retrieved.ts): records now in page_retrievals for each id that
+ * names a page. Ids of pages that do not exist are skipped, as the UPDATE of `pages` skipped them. The SELECT drops
+ * rows still inside the 5-minute window before the upsert, because ON CONFLICT locks (and so dirties) a conflicting
+ * row even when its WHERE then skips it; the ON CONFLICT test keeps a concurrent bump from moving a row twice.
+ */
+function bumpRetrievalsFragment(pageIds: number[]): SqlFragment {
+  return sqlFragment`INSERT INTO page_retrievals (page_id, last_retrieved_at)
+  SELECT p.id, NOW() FROM pages p LEFT JOIN page_retrievals r ON r.page_id = p.id
+   WHERE p.id = ANY(${pageIds}::int[]) AND (r.page_id IS NULL OR r.last_retrieved_at < NOW() - INTERVAL '5 minutes')
+  ON CONFLICT (page_id) DO UPDATE SET last_retrieved_at = EXCLUDED.last_retrieved_at
+    WHERE page_retrievals.last_retrieved_at < NOW() - INTERVAL '5 minutes'`;
+}
+
+/** The bump statement's text, with `$1` the page ids (tests run it with RETURNING). */
+export const BUMP_LAST_RETRIEVED_SQL = renderFragment(bumpRetrievalsFragment([])).text;
+
+/** Runs the retrieval bump for `pageIds`; an empty list writes nothing. */
+export async function bumpPageRetrievals(exec: SqlExecutor, pageIds: number[]): Promise<void> {
+  if (pageIds.length === 0) return;
+  await exec.run(bumpRetrievalsFragment(pageIds));
+}

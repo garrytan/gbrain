@@ -1367,6 +1367,8 @@ export class PostgresEngine implements BrainEngine {
     return pagesImpl.listCorpusSample(read => this.withScopedReadTransaction(opts.sourceIds, opts.sourceId, tx => read(scopedRead(this.engineSqlOn(tx))), { alwaysTransaction: typeof opts.seed === 'number' }), opts);
   }
 
+  bumpPageRetrievals(pageIds: number[]) { return pagesImpl.bumpPageRetrievals(this.engineSql, pageIds); }
+
   async resolveSlugs(partial: string, opts?: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean }): Promise<string[]> {
     return pagesImpl.resolveSlugs(unscopedExecutor(this.engineSql, 'pages: unscoped on master (EO4 inventory)'), partial, opts);
   }

@@ -1448,6 +1448,13 @@ export interface BrainEngine {
    */
   listCorpusSample(opts: CorpusSampleOpts): Promise<DomainBankRow[]>;
 
+  /**
+   * Records now as the retrieval time of each page id that names a page (last-retrieved.ts bumpLastRetrievedAt),
+   * unless its record is under 5 minutes old. The samplers above read it as `last_retrieved_at`. An empty list
+   * writes nothing.
+   */
+  bumpPageRetrievals(pageIds: number[]): Promise<void>;
+
   // Search
   searchKeyword(query: string, opts?: SearchOpts): Promise<SearchResult[]>;
   /** Cat 40 Hard F2: pages matching searchKeyword's strict query (never the OR retry), capped at KEYWORD_COUNT_CAP + 1; `timeoutMs` bounds the Postgres statement. */
