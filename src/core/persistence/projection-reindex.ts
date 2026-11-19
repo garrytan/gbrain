@@ -8,6 +8,7 @@ import { loadConfig } from '../config.ts';
 import { readProjectionSnapshot, preparePageProjection, installPageProjection, installPageEmbeddings, retryProjectionConflict } from '../page-state/projections.ts';
 import { PageRevisionConflictError } from '../page-state/types.ts';
 import { embedBatchWithBackoff } from '../embed-retry.ts';
+import { embeddingSendBlocked } from '../embedding-disabled.ts';
 import { submissionAuthority } from './authority.ts';
 import { currentVerifiedLocalWriter, registerLocalWriter } from './identity.ts';
 import { getWorktreeBinding, managedPersistenceEnabled } from './ownership.ts';
@@ -77,7 +78,7 @@ export async function reindexCodeProjection(engine: BrainEngine, slug: string, s
       return { status: 'imported' as const, chunks: projection.chunks.length };
     });
   }
-  if (!opts.noEmbed && result.status === 'imported') {
+  if (!opts.noEmbed && result.status === 'imported' && !await embeddingSendBlocked(engine)) {
     const prepared = await readProjectionSnapshot(engine, slug, sourceId);
     if (!prepared) throw opError('revision_conflict', 'Code changed before embedding preparation.',
       `Code page ${slug} in source ${sourceId} changed after its text was reindexed, so no vectors were computed; the reindexed text is committed. Run gbrain reindex-code --source ${sourceId} again to embed the current revision.`,
