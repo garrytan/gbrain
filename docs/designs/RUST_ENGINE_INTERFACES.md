@@ -538,8 +538,9 @@ store keeps the same rule in `pages.rs`.
   [`rust/docs/store/large-page.md`](../../rust/docs/store/large-page.md).
 - **Member-access flag.** The store sets config `access.restrictions_present` to `'1'` when it writes a page whose
   frontmatter has a top-level `readable_by` key, as the v282 trigger `pages_access_mark_restricted` does on PGLite and
-  Postgres (`access_flag.rs`, called from the page write hook). The store keeps no access members, so the
-  `access_members` trigger has no store half. See
+  Postgres (`access_flag.rs`). It sets it from the page write hook, from every store write handle on the put of such
+  a page record, and once at open from the page records already stored, as v282 does when it runs. The store keeps
+  no access members, so the `access_members` trigger has no store half. See
   [`rust/docs/store/access-flag.md`](../../rust/docs/store/access-flag.md).
 - **Fence reads.** The fence projection's retire read and the fence guard's trust read are typed engine members
   (`listFenceRetireCandidates`, capability `facts`, SQL in `engine-sql/facts.ts`; `listFenceFactRows`, capability
@@ -891,8 +892,10 @@ Facts and their supersession chains.
     (`eligibility/stamp.ts` `heldFenceLines`, under get_page, get_chunks, think and search_exact) is the typed member
     `listHeldFenceCells` (capability `facts`, SQL in `engine-sql/cli-reads-ops.ts`, one statement for PGLite and
     Postgres pinned by `test/fixtures/goldens/remote-reads/statements.json`). The store answers it in
-    `facts/held_cells.rs` for the caller with no member page and no private-facts grant; the TypeScript member refuses
-    any other caller, and `heldFenceLines` then holds every fence line (fail closed). Before the member existed the
+    `facts/held_cells.rs` for a caller with no private-facts grant. For a member caller the TypeScript member passes the
+    caller's member page, principal and page policy, and the store admits that page's private facts as
+    `memberFactAdmitSql` does; it refuses a grant, or a page policy the store does not render, and `heldFenceLines`
+    then holds every fence line (fail closed). Before the member existed the
     check ran through `executeRaw`, which the Rust engine refuses, so a Rust brain held every fence line. Parity:
     `held-fence-cells.test.ts`.
 - **Depends on:** None for the core members. Three cases also read takes (`countUnconsolidatedFacts`, `getFactsHealth`, the `listFactsByEntity` consolidation filter) and one needs the transactions family (keyset across a shared timestamp inside `transaction`). `findCandidateDuplicates` with an embedding refuses until vectors land; the keyword arm uses the keyword family's ranker. Source delete is not served yet (see "Page delete cascade"). A page rename moves facts and withdrawals keyed by the old slug: fill in `facts::rename_slug_rows` ("Rename slug rows").
@@ -922,7 +925,7 @@ Facts and their supersession chains.
   - `facts.test.ts`: getFactsHealth partitions active/expired/consolidated and ranks top entities
   - `sync-aliases.test.ts`: migrateFactsToCanonical moves active phantom facts, leaves expired ones, and is idempotent
 
-#### Design note: the short member-access form (not built)
+#### Design note: the short member-access form (premise closed, policy change not built)
 
 A remote read on a brain whose config `access.restrictions_present` was unset when the request began
 (`CallerAccess.restricted` false) renders the member-access part of every page and fact policy as the short form
@@ -944,13 +947,16 @@ itself, so that mapping can go.
   (`access_rules`, `access_policy_state`), stamped at insert, rename and policy apply. The store keeps no access tables,
   so the value is NULL on every Rust page by construction. A later rulebook family must stamp it on the same writes and
   set the flag as v283 does, or the short form would show a folder-restricted page.
-- **Where the premise can fail on a Rust brain.** The store sets the flag only from `pages::write_page`
-  (`access_flag.rs`). A page record with `readable_by` that reached the store another way (a build before
-  `access_flag.rs`, or a future restore or import path that skips `write_page`) leaves the flag unset. The short form
-  still hides that page (its `page_readers` is not NULL), but it shows an atom, question, concept or event page
-  derived from it, which the full form's origin test hides. The store must close that gap first: one scan at open
-  (or a store migration) that sets the flag when any live page has `readable_by`, and a `mark_restricted` call on every
-  path that writes a page record outside `write_page`.
+- **Where the premise could fail on a Rust brain, and how the store closes it.** A page record with `readable_by`
+  that reached the store without setting the flag (a build before `access_flag.rs`, or a later write path that
+  skips `pages::write_page`) would leave the flag unset. The short form still hides that page (its `page_readers` is
+  not NULL), but it shows an atom, question, concept or event page derived from it, which the full form's origin
+  test hides. The store closes this in `access_flag.rs`: every store write handle (`Store::write`) sets the flag on
+  the put of a page record that names readers, whatever path made the put, and the first open of a brain with no
+  scan record reads every page record (soft-deleted ones too, as v282) and sets the flag if one names readers.
+  The scan runs once per brain, so a flag an operator unsets by hand stays unset, as on Postgres. When the scan
+  cannot write, the open goes on and that process reads the flag as `'1'` if a page names readers or the read
+  does not finish (`Store::flag_assumed`).
 - **The change.** `PrivacyPolicy` gains `restricted: bool` (default true). When false, the member-access part is
   `!names_readers(page)` (the folder test is always true) and `origin_restricted` is not read. The TypeScript members
   (`storePrivacyPolicy`, `storePagePolicy`) render their no-caller comparison texts with the caller's own `restricted`
@@ -958,11 +964,11 @@ itself, so that mapping can go.
   form reads live columns, so a page that gains readers during the request is still hidden.
 - **Parity.** `restriction-flag-reads.test.ts` runs both forms; a new case pins that an unflagged brain serves the
   short form without the mapping, and that a flagged brain still hides a page derived from a `readable_by` origin.
-  Postgres cannot seed the failed-premise brain (its trigger sets the flag), so the open-time scan needs a store test.
+  Postgres cannot seed the failed-premise brain (its trigger sets the flag), so the open-time scan and the write
+  handle have store tests (`tests/access_flag.rs`, the unit tests in `access_flag.rs`).
 - **Size.** About one day for one lane: about 40 lines in `facts/privacy.rs` and the flag field, about 30 lines in
-  `private-provenance.ts`, the open-time scan with its store test, and the parity cases. The gain is honest text
-  equality (no mapped caller) and no origin reads on unflagged Rust brains; the risk is the premise gap above, which
-  is why the mapping stays until the scan lands.
+  `private-provenance.ts`, and the parity cases (the open-time scan and the write handle are built). The gain is
+  honest text equality (no mapped caller) and no origin reads on unflagged Rust brains.
 
 ### ontology
 

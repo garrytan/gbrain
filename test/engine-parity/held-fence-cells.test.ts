@@ -13,11 +13,15 @@
  *    held or not, while the SQL engines dropped only the held ones.
  *  - Why existing coverage misses it: test/held-row-*-2891.test.ts run the SQL engines only, and no parity case read
  *    the held lookup.
- *  - Seam: none. Real engines, typed methods only; the caller context is the default one (no member, no grant).
+ *  - Seam: none. Real engines, typed methods only; the caller context is the default one (no member, no grant), and a
+ *    member caller (`withCallerAccess` with a `member:` identity), whose own member page's private facts are not held.
+ *  - Member regression: the Rust member refused a member caller, so heldFenceLines held every fence row line of the
+ *    member's own page, while the SQL engines showed the member the rows of its own private facts.
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { dropHeldFenceRows } from '../../src/core/eligibility/stamp.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
@@ -101,5 +105,66 @@ describe('engine parity: the held fence cells of a world-only fact read', () => 
     ]));
     expect(await engine.listHeldFenceCells([])).toEqual([]);
     return cells;
+  });
+
+  // A member caller: its own member page's private facts are admitted (memberFactAdmitSql), only while it may read that
+  // live page; another member's page and an ordinary page stay held.
+  const OWN = 'memory/members/alice-example';
+  const BOB = 'memory/members/bob-example';
+  const ALICE = { hidePrivate: true, identity: ['member:alice-example'] };
+  const memberPage = (engine: BrainEngine, slug: string, readers: string[]) =>
+    engine.putPage(slug, { type: 'note', title: 'Member memory', compiled_truth: 'body', timeline: '', frontmatter: { readable_by: readers } });
+  const memberFacts = (engine: BrainEngine) => engine.insertFacts([
+    { fact: 'Alice drinks tea', entity_slug: OWN, source_markdown_slug: OWN, row_num: 1, kind: 'fact', visibility: 'private', source: 'fence' },
+    { fact: 'Bob drinks tea', entity_slug: BOB, source_markdown_slug: BOB, row_num: 1, kind: 'fact', visibility: 'private', source: 'fence' },
+  ] as never, { source_id: SRC });
+  const memberKeys = [
+    { sourceId: SRC, slug: OWN, rowNum: 1, claim: 'Alice drinks tea', partial: false },
+    { sourceId: SRC, slug: OWN, rowNum: -1, claim: 'drinks', partial: true },
+    { sourceId: SRC, slug: BOB, rowNum: 1, claim: 'Bob drinks tea', partial: false },
+    { sourceId: SRC, slug: SLUG, rowNum: 2, claim: 'Ana keeps bees tapirheld', partial: false },
+  ];
+  const cellsOf = (found: { source_id: string; slug: string; row_num: number; claim: string }[]) =>
+    sorted(found.map((f) => `${f.source_id}|${f.slug}|${f.row_num}|${f.claim}`));
+
+  parityTest('a member caller sees the fence rows of its own member page facts', {
+    methods: ['putPage', 'insertFacts', 'expireFact', 'listHeldFenceCells'],
+  }, async (engine) => {
+    await seed(engine);
+    await memberPage(engine, OWN, ['alice-example']);
+    await memberPage(engine, BOB, ['bob-example']);
+    await memberFacts(engine);
+    const cells = cellsOf(await withCallerAccess(ALICE, () => engine.listHeldFenceCells(memberKeys)));
+    expect(cells).toEqual(sorted([
+      `${SRC}|${BOB}|1|Bob drinks tea`,
+      `${SRC}|${SLUG}|2|Ana keeps bees tapirheld`,
+    ]));
+    // The same keys with no member caller hold every private cell.
+    const plain = cellsOf(await engine.listHeldFenceCells(memberKeys));
+    expect(plain).toEqual(sorted([
+      `${SRC}|${OWN}|1|Alice drinks tea`,
+      `${SRC}|${OWN}|-1|drinks`,
+      `${SRC}|${BOB}|1|Bob drinks tea`,
+      `${SRC}|${SLUG}|2|Ana keeps bees tapirheld`,
+    ]));
+    return [cells, plain];
+  });
+
+  parityTest('a member caller whose own page does not name it, or is soft-deleted, sees those rows held', {
+    methods: ['putPage', 'insertFacts', 'softDeletePage', 'listHeldFenceCells'],
+  }, async (engine) => {
+    await memberPage(engine, OWN, ['bob-example']);
+    await memberPage(engine, BOB, ['bob-example']);
+    await memberFacts(engine);
+    const unnamed = cellsOf(await withCallerAccess(ALICE, () => engine.listHeldFenceCells(memberKeys.slice(0, 2))));
+    await memberPage(engine, OWN, ['alice-example']);
+    const named = cellsOf(await withCallerAccess(ALICE, () => engine.listHeldFenceCells(memberKeys.slice(0, 2))));
+    await engine.softDeletePage(OWN);
+    const deleted = cellsOf(await withCallerAccess(ALICE, () => engine.listHeldFenceCells(memberKeys.slice(0, 2))));
+    const held = sorted([`${SRC}|${OWN}|1|Alice drinks tea`, `${SRC}|${OWN}|-1|drinks`]);
+    expect(unnamed).toEqual(held);
+    expect(named).toEqual([]);
+    expect(deleted).toEqual(held);
+    return [unnamed, named, deleted];
   });
 });

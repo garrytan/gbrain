@@ -21,7 +21,7 @@ typed claims. Each member gives the answer PGLite gives today, odd behavior incl
 | `listUnattributedFacts` | The review-list read of `src/core/review-lists.ts`: active rows with no `entity_slug` in any of `sourceIds` (duplicates read once), less rows whose page or entity page is soft-deleted, `worldOnly` keeping `visibility = 'world'`, newest id first, then `offset` and `limit`. Each row is `id, fact, kind, visibility, source_id, created_at, source`, `created_at` in the `timestamptz::text` form (`2026-06-18 09:00:00.5+00`). `excludePrivate` applies the private-provenance policy below, as `src/core/review-lists.ts:30` does. The `BrainEngine` member `listUnattributedFacts` (`src/core/rust-engine/store-members/facts.ts`) calls it in place of the SQL of `src/core/engine-sql/cli-reads-ops.ts`; its `excludePrivateProvenance` becomes this policy. |
 | `pageCollapseFacts` | The collapse-stage read of hybrid search (`facts/collapse.rs`, SQL in `src/core/engine-sql/search-reads.ts`): one `{ id, target, body_chars, body, lead }` row per page row whose id is in `ids`, soft-deleted pages and every source included, by id (the SQL has no `ORDER BY`); a missing id has no row. `target` is the first of `redirect_to`, `redirect` and `merged_into` that is a non-empty string after trimming spaces, then `superseded_by` when the lower-cased `status` holds the word `alias`, `redirect` or `redirected`. `BODY` is the first 65,536 code points of `compiled_truth`, spaces trimmed; `body_chars` is its length in code points, `body` its md5 hex for an id in `bodyIds` with at least 200 code points, `lead` its first 4,000 code points for an id in `bodyIds`. The TypeScript member refuses an id that is not a 32-bit integer, as the SQL casts both lists to `int[]`. It reads pages, not facts; it sits here because its `BrainEngine` capability class is `facts`. |
 | `listFenceRetireCandidates`, `listFenceFactRows` | The fence guard's two reads of a page's fence rows (`facts/fence.rs`): the rows a publication would retire, and the live rows the writer may not supersede. See "The fence guard's reads". |
-| `listHeldFenceCells` | The fence row lines a caller with world-only fact reads may not see (`facts/held_cells.rs`), for the caller with no member page and no private-facts grant. See "Held fence cells". |
+| `listHeldFenceCells` | The fence row lines a caller with world-only fact reads may not see (`facts/held_cells.rs`), for a caller with no private-facts grant, member callers included. See "Held fence cells". |
 | `migrateFactsToCanonical` | Moves a phantom page's active rows onto the canonical slug, `row_num` offset past the canonical page's largest. The ontology duplicates the move would make are dropped first, in its own write, as PGLite runs the two statements outside one transaction. |
 
 Rows go out with dates as microsecond ISO text, `embedding` as a number list (or null), and the
@@ -408,19 +408,29 @@ before state (`trust::proposals::held_narrower`, [trust.md](trust.md#trust-propo
 
 ## Held fence cells (`facts/held_cells.rs`)
 
-`list_held_fence_cells({ keys })` (`engine-sql/cli-reads-ops.ts` `listHeldFenceCells`): which facts-fence
+`list_held_fence_cells({ keys, member })` (`engine-sql/cli-reads-ops.ts` `listHeldFenceCells`): which facts-fence
 row lines of a page's text a caller with world-only fact reads may not see. get_page, get_chunks, think
 and search_exact ask it through `eligibility/stamp.ts` `heldFenceLines` and drop the held lines. A key
 is `{ sourceId, slug, rowNum, claim, partial }`: the page, the line's row number (-1 when the line names
 none), its claim, and whether a chunk boundary cut it.
 
-The store answers the form of `eligibility/fence-overlay.ts` `heldRowSql` for a caller with no member
-page and no private-facts grant (`memberFactAdmitSql` and `grantedPrivateFactSql` both `FALSE`); the
-TypeScript member refuses any other caller with `unsupported`, and `heldFenceLines` then holds every
-line. Over the page's live rows (by-page index, `expired_at` null), a key is held when a row that is not
-`world` sits at its row number, or when a row that is not `world` states its claim and no `world` row
-states it. A row states a claim when its fact equals it, or, for a cut claim, contains it
-(`strpos(fact, claim) > 0`). The answer is `[{ source_id, slug, row_num, claim }]`, one row per distinct
+The store answers the form of `eligibility/fence-overlay.ts` `heldRowSql` for a caller with no
+private-facts grant (`grantedPrivateFactSql` `FALSE`); the TypeScript member refuses a grant with
+`unsupported`, and `heldFenceLines` then holds every line. Over the page's live rows (by-page index,
+`expired_at` null), a key is held when a narrower row sits at its row number, or when a narrower row
+states its claim and no `world` row states it. A row states a claim when its fact equals it, or, for a
+cut claim, contains it (`strpos(fact, claim) > 0`).
+
+A row that is not `world` is narrower unless the member admission takes it (`memberFactAdmitSql`). For a
+member caller (`callerMember()`) the TypeScript member passes `member: { slug, principal, policy }`: the
+caller's page `memory/members/<member>`, its principal `member:<member>`, and its page policy, which
+`storePageTextPolicy` reads from `privatePagesFilterForCaller` with the caller's readers (a policy the
+store does not render refuses, and every line is held). A `private` row of that page is admitted when
+the page is live (`deleted_at` null), its readers (`readable_by`, as `page_readers`) name the principal,
+and the policy shows the page (`page_hidden`). Every other page, and every page for a caller with no
+member identity, admits nothing.
+
+The answer is `[{ source_id, slug, row_num, claim }]`, one row per distinct
 held cell, in first-key order (SQL leaves the order open). A NUL character or a row number outside
 `integer` refuses with `invalid_argument`, as Postgres raises for the same parameters. No keys answer
 `[]` without a read.
