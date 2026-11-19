@@ -43,8 +43,10 @@ negative `LIMIT` or `OFFSET` is an `invalid_argument` error, as Postgres rejects
   that holds it. A number or other value never matches an email probe. A probe or source id with a NUL byte is refused
   (`invalid_argument`), as Postgres refuses it in a text parameter. Then: live, the source exists
   and is not archived, the type passes the entity type filter (the first `per_source` entry for the page's source, else
-  `types`), and for a remote caller no `quarantine` key. `email`, `emails` and `aliases` are the frontmatter values, or
-  `null`.
+  `types`), and for a remote caller no `quarantine` key. With `remote.excludePrivate`, the member sends the caller's page
+  policy (`storePagePolicy` over `privatePagesFilterForCaller('p')`, with the caller's readers) as `remote.policy`, and
+  the store drops each page `page_hidden` hides before the limit. `email`, `emails` and `aliases` are the frontmatter
+  values, or `null`.
 - **rankEntities.** A readable page is live and in `sourceIds` (all sources when absent, none when empty). For a remote
   caller it also has no `quarantine` key and its source exists and is not archived. A retired page
   (`retiredPageSql`: `canonical` false or no, a non-blank `superseded_by` or `merged_into`, or a `status` that names

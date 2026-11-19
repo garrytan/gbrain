@@ -186,8 +186,10 @@ test/engine-parity/links.test.ts
 test/engine-parity/memory-proposal-reads.test.ts
 test/engine-parity/oauth-clients.test.ts
 test/engine-parity/open-loops.test.ts
+test/engine-parity/owner-only-reads.test.ts
 test/engine-parity/owner-recovery-scans.test.ts
 test/engine-parity/page-embedding-budget.test.ts
+test/engine-parity/page-read-options.test.ts
 test/engine-parity/page-snapshot-alias.test.ts
 test/engine-parity/page-visibility.test.ts
 test/engine-parity/pages.test.ts
@@ -228,6 +230,7 @@ test/engine-parity/unrestricted-member-page-reads.test.ts
 test/engine-parity/valid-time-member-reads.test.ts
 test/engine-parity/versions-raw.test.ts
 test/engine-parity/wanted-links.test.ts
+test/engine-parity/write-attribution.test.ts
 test/engine-parity/write-guards.test.ts
 test/engine-parity/write-misc.test.ts
 test/engine-parity/write-request-cancel.test.ts

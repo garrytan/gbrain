@@ -61,8 +61,10 @@ test/engine-parity/links.test.ts	36	0
 test/engine-parity/memory-proposal-reads.test.ts	3	0
 test/engine-parity/oauth-clients.test.ts	6	0
 test/engine-parity/open-loops.test.ts	6	0
+test/engine-parity/owner-only-reads.test.ts	3	0
 test/engine-parity/owner-recovery-scans.test.ts	5	0
 test/engine-parity/page-embedding-budget.test.ts	4	0
+test/engine-parity/page-read-options.test.ts	3	0
 test/engine-parity/page-snapshot-alias.test.ts	2	0
 test/engine-parity/page-visibility.test.ts	6	0
 test/engine-parity/pages.test.ts	37	0
@@ -101,10 +103,11 @@ test/engine-parity/unrestricted-caller-reads.test.ts	2	0
 test/engine-parity/unrestricted-fact-list-reads.test.ts	2	0
 test/engine-parity/unrestricted-member-page-reads.test.ts	1	0
 test/engine-parity/valid-time-member-reads.test.ts	3	0
-test/engine-parity/versions-raw.test.ts	10	0
+test/engine-parity/versions-raw.test.ts	12	0
 test/engine-parity/wanted-links.test.ts	5	0
+test/engine-parity/write-attribution.test.ts	4	2
 test/engine-parity/write-guards.test.ts	10	0
-test/engine-parity/write-misc.test.ts	22	9
+test/engine-parity/write-misc.test.ts	28	10
 test/engine-parity/write-request-cancel.test.ts	2	0
 test/engine-parity/write-request-reads.test.ts	3	0
 test/engine-parity/writer-registration.test.ts	2	0

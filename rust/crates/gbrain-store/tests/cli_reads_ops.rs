@@ -97,7 +97,7 @@ fn exact_batch_needs_a_word_and_a_non_negative_limit() {
 }
 
 #[test]
-fn identity_and_rank_refuse_private_filters_the_store_does_not_keep() {
+fn identity_and_rank_refuse_exclude_private_without_a_page_policy() {
     let dir = TempDir::new("cli-reads-ops-private");
     let store = open(&dir);
     // excludePrivate with no page policy is refused: the store never guesses the caller.

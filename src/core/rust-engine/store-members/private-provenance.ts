@@ -86,6 +86,7 @@ export function ownerOnlyFormIn(sql: string, table: 'pages' | 'facts', alias: st
   return sql.includes(ANY_OWNER_ONLY_SQL) ? 'closed' : 'off';
 }
 
+
 /** The page aliases the policies judge: the fact policy's two, and `p` of a page read. */
 const PAGE_ALIASES = ['pp', 'entity_pp', 'p'] as const;
 

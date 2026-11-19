@@ -84,10 +84,11 @@ fn days_before(env: &dyn Env, days: f64) -> i64 {
 // The host's housekeeping turn.
 
 /// One housekeeping `op_checkpoints` row: `completed_keys` and `updated_at`.
+/// The resumable-op checkpoints of `op_checkpoint.rs` share the row shape and the key.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct HousekeepingRow {
-    completed_keys: Value,
-    updated_at_us: i64,
+pub(super) struct HousekeepingRow {
+    pub(super) completed_keys: Value,
+    pub(super) updated_at_us: i64,
 }
 
 fn turn_key(op: &str, fingerprint: &str) -> Result<Vec<u8>> {
