@@ -49,6 +49,22 @@ pub trait KvWrite: KvRead + Send {
         Ok(first)
     }
 
+    /// Raises the id sequence under `key` (8-byte big-endian) to at least `value` without
+    /// reading it, so it never conflicts. A transaction that rolls back writes its sequences
+    /// forward with this, so no id it handed out is handed out again.
+    fn raise_counter(&mut self, key: &[u8], value: u64) -> Result<()> {
+        let current = match self.get(key)? {
+            Some(bytes) => crate::keys::be8(&bytes).ok_or_else(|| {
+                crate::error::StoreError::new(crate::error::STORE_CORRUPT, "bad id counter")
+            })?,
+            None => 0,
+        };
+        if current < value {
+            self.put(key, &value.to_be_bytes())?;
+        }
+        Ok(())
+    }
+
     /// Adds `delta` to the counter under `key` (8-byte little-endian i64, 0 when absent) without
     /// reading it, so concurrent adds never conflict.
     fn add_i64(&mut self, key: &[u8], delta: i64) -> Result<()> {
@@ -89,6 +105,12 @@ pub trait Kv: Send + Sync {
         keys: &std::collections::BTreeSet<Vec<u8>>,
     ) -> Result<Box<dyn KvWrite>> {
         let _ = keys;
+        self.begin_write()
+    }
+    /// Begins a write that holds the store's writer until it ends: nothing else commits while it
+    /// is open, so it never conflicts and is never run again. An explicit transaction runs on
+    /// one. A single-writer store's `begin_write` already is one.
+    fn begin_write_exclusive(&self) -> Result<Box<dyn KvWrite>> {
         self.begin_write()
     }
     /// The commit sequence of the latest commit (0 on a database nothing was committed to).

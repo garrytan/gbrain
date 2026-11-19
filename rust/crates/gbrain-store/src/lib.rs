@@ -92,6 +92,10 @@ pub struct OpenOptions {
     pub engine_abi: u32,
     pub catalog_version: u32,
     pub created_by: String,
+    /// Opt-in: let many write transactions run at once (`occ_kv`). Off, the brain admits one
+    /// writer at a time, as before. The binding turns it on with
+    /// `GBRAIN_RUST_CONCURRENT_WRITES=1`.
+    pub concurrent_writes: bool,
 }
 
 impl Default for OpenOptions {
@@ -101,6 +105,7 @@ impl Default for OpenOptions {
             engine_abi: 1,
             catalog_version: 0,
             created_by: format!("gbrain-store {}", env!("CARGO_PKG_VERSION")),
+            concurrent_writes: false,
         }
     }
 }
@@ -116,8 +121,9 @@ pub struct StoreInfo {
 }
 
 /// One open brain. All methods take `&self` and the store is shared across threads. A brain opened
-/// with `open_dir` runs any number of write transactions at once (`occ_kv`): conflicting writes
-/// serialize as under Postgres row locks, disjoint writes do not wait. A brain opened over another
+/// with `open_dir` and `concurrent_writes` runs any number of write transactions at once
+/// (`occ_kv`): conflicting writes serialize as under Postgres row locks, disjoint writes do not
+/// wait. Without it the brain admits one write transaction at a time. A brain opened over another
 /// `Kv` with `open_kv` gets that `Kv`'s concurrency. Reads are snapshot reads and never wait.
 pub struct Store {
     pub(crate) kv: Arc<dyn Kv>,
@@ -159,8 +165,12 @@ impl Store {
         // FORMAT is judged before the record file is opened: a newer brain is never touched.
         let existing = format::read(dir)?;
         let kv = redb_kv::RedbKv::open_path(&dir.join(format::RECORDS_FILE))?;
-        let kv = occ_kv::OccKv::new(kv)?;
-        let store = Store::open_kv(Arc::new(kv), Arc::new(SystemEnv), options.clone())?;
+        let kv: Arc<dyn Kv> = if options.concurrent_writes {
+            Arc::new(occ_kv::OccKv::new(kv)?)
+        } else {
+            Arc::new(kv)
+        };
+        let store = Store::open_kv(kv, Arc::new(SystemEnv), options.clone())?;
         // FORMAT follows the records: written when missing (a crash before it, or a deleted
         // file) and repaired when it is behind the records.
         let record = store.format_record(&options)?;
@@ -371,7 +381,11 @@ mod concurrency_tests {
             .join("../../target/test-tmp")
             .join(format!("{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let store = Store::open_dir(&dir.join("brain"), OpenOptions::default()).unwrap();
+        let options = OpenOptions {
+            concurrent_writes: true,
+            ..OpenOptions::default()
+        };
+        let store = Store::open_dir(&dir.join("brain"), options).unwrap();
         (store, dir)
     }
 

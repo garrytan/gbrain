@@ -4,7 +4,7 @@
 
 mod common;
 
-use common::{TempDir, open};
+use common::{TempDir, open_concurrent as open};
 use gbrain_store::Store;
 use gbrain_store::chunks::{ChunkInput, UpsertChunksOptions};
 use gbrain_store::error::*;
@@ -294,4 +294,90 @@ fn concurrent_submissions_to_disjoint_pages_all_commit() {
     assert_eq!(store.count_pages(None).unwrap(), (WRITERS * 8) as u64);
     assert_eq!(store.count_chunks().unwrap(), (WRITERS * 8) as u64);
     assert_eq!(store.journal_outstanding().unwrap()["brain"], 0);
+}
+
+fn page_id(page: &Value) -> u64 {
+    page["id"].as_u64().unwrap()
+}
+
+#[test]
+fn explicit_transactions_commit_beside_concurrent_writers_and_ids_stay_unique() {
+    let dir = TempDir::new("conc-tx");
+    let store = Arc::new(open(&dir));
+    let s = store.clone();
+    let ids = together(WRITERS, move |i| {
+        let mut ids = Vec::new();
+        for round in 0..6 {
+            let slug = format!("p/{i}-{round}");
+            if i % 2 == 0 {
+                // An explicit transaction holds the writer: it must never fail with a
+                // conflict, because the caller cannot run it again.
+                let tx = s.begin_transaction(false).unwrap();
+                ids.push(page_id(&put(&tx, &slug, "inside a transaction")));
+                // Read-modify-write of a page another writer also updates.
+                put(&tx, "shared/hot", &format!("tx {i} {round}"));
+                if round % 3 == 2 {
+                    tx.rollback_transaction().unwrap();
+                    ids.pop();
+                } else {
+                    tx.commit_transaction().unwrap();
+                }
+            } else {
+                ids.push(page_id(&put(&s, &slug, "outside a transaction")));
+                put(&s, "shared/hot", &format!("plain {i} {round}"));
+            }
+        }
+        ids
+    });
+    let all: Vec<u64> = ids.into_iter().flatten().collect();
+    let unique: BTreeSet<u64> = all.iter().copied().collect();
+    assert_eq!(
+        unique.len(),
+        all.len(),
+        "an id was handed out twice: {all:?}"
+    );
+    // 8 transaction writers commit 4 of 6 rounds; 8 plain writers commit all 6; plus shared/hot.
+    assert_eq!(store.count_pages(None).unwrap(), (8 * 4 + 8 * 6 + 1) as u64);
+    // An id a rolled-back transaction took is not reused by the next writer.
+    let next = page_id(&put(&store, "p/after", "after"));
+    assert!(
+        unique.iter().all(|id| *id < next),
+        "{next} is not past {unique:?}"
+    );
+}
+
+#[test]
+fn an_open_transaction_holds_off_other_commits_until_it_ends() {
+    let dir = TempDir::new("conc-tx-exclusive");
+    let store = Arc::new(open(&dir));
+    put(&store, "notes/a", "before");
+    let tx = store.begin_transaction(false).unwrap();
+    put(&tx, "notes/a", "from the transaction");
+    let s = store.clone();
+    let other = thread::spawn(move || put(&s, "notes/b", "from another writer"));
+    thread::sleep(std::time::Duration::from_millis(100));
+    assert!(
+        !other.is_finished(),
+        "a commit landed while a transaction was open"
+    );
+    tx.commit_transaction().unwrap();
+    other.join().unwrap();
+    let page = store
+        .read_page_snapshot("notes/a", &ReadScope::default())
+        .unwrap()
+        .unwrap();
+    assert!(page.to_string().contains("from the transaction"), "{page}");
+}
+
+#[test]
+fn a_dropped_transaction_lets_the_other_writers_go_on() {
+    let dir = TempDir::new("conc-tx-drop");
+    let store = Arc::new(open(&dir));
+    let tx = store.begin_transaction(false).unwrap();
+    put(&tx, "notes/a", "never committed");
+    let s = store.clone();
+    let other = thread::spawn(move || put(&s, "notes/b", "after the drop"));
+    drop(tx);
+    other.join().unwrap();
+    assert_eq!(store.count_pages(None).unwrap(), 1);
 }

@@ -30,6 +30,13 @@
 //! retried behind the lock. Many writers of one page then wait in line, as on a Postgres row
 //! lock, instead of all retrying together.
 //!
+//! An exclusive write (`Kv::begin_write_exclusive`, the base of an explicit transaction) stops the
+//! pipeline after the commits queued before it and holds it until the exclusive write commits or
+//! is dropped. It reads the latest state, nothing else commits while it is open, so it never
+//! conflicts and never runs again; commits that arrive meanwhile wait, then are checked against
+//! it. Its id allocations still come from the shared sequences, so a concurrent writer never gets
+//! the same id.
+//!
 //! A failed record-file commit stops the pipeline: every later commit fails with `store_io` until
 //! the brain is opened again (the Postgres answer to a failed WAL flush is the same: stop).
 
@@ -312,6 +319,17 @@ impl ConflictIndex {
 // Shared state and the pipeline
 // ---------------------------------------------------------------------------------------------
 
+/// What the pipeline receives.
+enum Msg {
+    Commit(Request),
+    /// Stop after everything queued before this, send the published sequence on `granted`, and
+    /// wait on `end` for the exclusive write's commit (or its drop).
+    Exclusive {
+        granted: SyncSender<u64>,
+        end: Receiver<Request>,
+    },
+}
+
 struct Request {
     snapshot: u64,
     reads: Vec<(Vec<u8>, Vec<u8>)>,
@@ -323,7 +341,7 @@ struct Request {
 
 struct Shared {
     base: Arc<dyn OccBase>,
-    sender: Mutex<Option<Sender<Request>>>,
+    sender: Mutex<Option<Sender<Msg>>>,
     locks: Arc<KeyLocks>,
     /// Next id to hand out per sequence key, once loaded from the record file.
     sequences: Mutex<HashMap<Vec<u8>, u64>>,
@@ -365,20 +383,50 @@ struct Pipeline {
 }
 
 impl Pipeline {
-    fn run(mut self, rx: Receiver<Request>) {
-        while let Ok(first) = rx.recv() {
+    fn run(mut self, rx: Receiver<Msg>) {
+        let mut pending: Option<Msg> = None;
+        loop {
+            let first = match pending.take() {
+                Some(m) => m,
+                None => match rx.recv() {
+                    Ok(m) => m,
+                    Err(_) => return,
+                },
+            };
+            let first = match first {
+                Msg::Commit(req) => req,
+                Msg::Exclusive { granted, end } => {
+                    self.exclusive(granted, end);
+                    continue;
+                }
+            };
+            let mut bytes = approx_bytes(&first);
             let mut batch = vec![first];
-            let mut bytes = approx_bytes(&batch[0]);
             while batch.len() < MAX_BATCH_TXNS && bytes < MAX_BATCH_BYTES {
                 match rx.try_recv() {
-                    Ok(next) => {
+                    Ok(Msg::Commit(next)) => {
                         bytes += approx_bytes(&next);
                         batch.push(next);
+                    }
+                    Ok(exclusive) => {
+                        // Everything queued before the exclusive write commits first.
+                        pending = Some(exclusive);
+                        break;
                     }
                     Err(_) => break,
                 }
             }
             self.commit_batch(batch);
+        }
+    }
+
+    /// Holds the pipeline for one exclusive write: nothing else commits until it ends.
+    fn exclusive(&mut self, granted: SyncSender<u64>, end: Receiver<Request>) {
+        if granted.send(self.version).is_err() {
+            return;
+        }
+        if let Ok(req) = end.recv() {
+            self.commit_batch(vec![req]);
         }
     }
 
@@ -427,6 +475,22 @@ impl Pipeline {
         })();
         match outcome {
             Ok(seq) if seq == next => {
+                // A sequence raised by a direct write (a transaction rolling its counters
+                // forward) is never handed out again from memory.
+                {
+                    let mut sequences = self
+                        .shared
+                        .sequences
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner());
+                    for (key, value) in &resolved {
+                        if let (Some(n), Some(v)) = (sequences.get_mut(key), value.as_deref())
+                            && let Ok(Some(v)) = decode_u64_be(Some(v))
+                        {
+                            *n = (*n).max(v);
+                        }
+                    }
+                }
                 self.version = next;
                 self.shared.published.store(next, Ordering::Release);
                 let n = accepted.len() as u64;
@@ -545,7 +609,7 @@ impl OccKv {
 
     pub(crate) fn over(base: Arc<dyn OccBase>) -> Result<OccKv> {
         let version = base.version()?;
-        let (tx, rx) = channel::<Request>();
+        let (tx, rx) = channel::<Msg>();
         let shared = Arc::new(Shared {
             base,
             sender: Mutex::new(Some(tx)),
@@ -578,7 +642,48 @@ impl OccKv {
         self.shared.stats.clone()
     }
 
+    /// Begins an exclusive write (see the module docs). Waits for the commits queued before it.
+    fn begin_exclusive(&self) -> Result<Box<dyn KvWrite>> {
+        let (granted_tx, granted) = sync_channel(1);
+        let (end_tx, end) = sync_channel(1);
+        {
+            let sender = self.shared.sender.lock().unwrap_or_else(|p| p.into_inner());
+            let Some(sender) = sender.as_ref() else {
+                return Err(StoreError::new(STORE_CLOSED, "the brain is closing"));
+            };
+            sender
+                .send(Msg::Exclusive {
+                    granted: granted_tx,
+                    end,
+                })
+                .map_err(|_| StoreError::new(STORE_CLOSED, "the brain is closing"))?;
+        }
+        let version = granted
+            .recv()
+            .map_err(|_| StoreError::new(STORE_CLOSED, "the brain is closing"))?;
+        let mut txn = self.begin_inner(None, Some(end_tx))?;
+        if txn.version != version {
+            return Err(StoreError::new(
+                STORE_CORRUPT,
+                format!(
+                    "the exclusive write sees sequence {}, the pipeline published {version}",
+                    txn.version
+                ),
+            ));
+        }
+        txn.reads.get_mut().clear();
+        Ok(txn)
+    }
+
     fn begin(&self, locks: Option<LockGuard>) -> Result<Box<dyn KvWrite>> {
+        Ok(self.begin_inner(locks, None)?)
+    }
+
+    fn begin_inner(
+        &self,
+        locks: Option<LockGuard>,
+        exclusive: Option<SyncSender<Request>>,
+    ) -> Result<Box<OccTxn>> {
         // Register before the snapshot, with a sequence no newer than the snapshot's, so the
         // index never forgets a write this transaction could conflict with.
         let floor = self.shared.published.load(Ordering::Acquire);
@@ -599,6 +704,7 @@ impl OccKv {
             writes: BTreeMap::new(),
             guards: Vec::new(),
             locks,
+            exclusive,
         }))
     }
 }
@@ -630,6 +736,10 @@ impl Kv for OccKv {
         self.begin(Some(guard))
     }
 
+    fn begin_write_exclusive(&self) -> Result<Box<dyn KvWrite>> {
+        self.begin_exclusive()
+    }
+
     fn version(&self) -> Result<u64> {
         Ok(self.shared.published.load(Ordering::Acquire))
     }
@@ -649,6 +759,8 @@ struct OccTxn {
     writes: BTreeMap<Vec<u8>, Op>,
     guards: Vec<(Vec<u8>, i64)>,
     locks: Option<LockGuard>,
+    /// Set on an exclusive write: its commit goes here, and dropping it lets the pipeline go on.
+    exclusive: Option<SyncSender<Request>>,
 }
 
 impl Drop for OccTxn {
@@ -659,13 +771,18 @@ impl Drop for OccTxn {
 
 impl OccTxn {
     fn record(&self, start: Vec<u8>, end: Vec<u8>) {
+        // Nothing commits while an exclusive write is open: its reads cannot go stale.
+        if self.exclusive.is_some() {
+            return;
+        }
         self.reads.borrow_mut().push((start, end));
     }
 
     fn check_lock(&self, key: &[u8]) -> Result<()> {
         // A transaction that holds key locks never stops here: it took its locks in key order
         // before it started, so stopping could only cost it a retry.
-        if self.locks.is_none() && self.shared.locks.held_by_other(key) {
+        if self.locks.is_none() && self.exclusive.is_none() && self.shared.locks.held_by_other(key)
+        {
             self.shared.stats.conflict_on(key);
             return Err(conflict(key));
         }
@@ -851,6 +968,23 @@ impl KvWrite for OccTxn {
         Ok(first)
     }
 
+    fn raise_counter(&mut self, key: &[u8], value: u64) -> Result<()> {
+        reject_reserved(key)?;
+        let op = match self.writes.get(key) {
+            None => Op::Max(value),
+            Some(Op::Max(m)) => Op::Max((*m).max(value)),
+            Some(op @ (Op::Put(_) | Op::Delete)) => {
+                let current = decode_u64_be(apply(op, None)?.as_deref())?.unwrap_or(0);
+                Op::Put(current.max(value).to_be_bytes().to_vec())
+            }
+            Some(Op::Add(_)) => {
+                return Err(StoreError::invalid("an id sequence key is also a counter"));
+            }
+        };
+        self.writes.insert(key.to_vec(), op);
+        Ok(())
+    }
+
     fn add_i64(&mut self, key: &[u8], delta: i64) -> Result<()> {
         reject_reserved(key)?;
         let op = match self.writes.get(key) {
@@ -904,13 +1038,16 @@ impl KvWrite for OccTxn {
             writes: std::mem::take(&mut this.writes),
             reply,
         };
-        {
+        if let Some(end) = this.exclusive.take() {
+            end.send(request)
+                .map_err(|_| StoreError::new(STORE_CLOSED, "the brain is closing"))?;
+        } else {
             let sender = this.shared.sender.lock().unwrap_or_else(|p| p.into_inner());
             let Some(sender) = sender.as_ref() else {
                 return Err(StoreError::new(STORE_CLOSED, "the brain is closing"));
             };
             sender
-                .send(request)
+                .send(Msg::Commit(request))
                 .map_err(|_| StoreError::new(STORE_CLOSED, "the brain is closing"))?;
         }
         let result = answer
