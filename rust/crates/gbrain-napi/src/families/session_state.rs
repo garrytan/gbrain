@@ -58,4 +58,19 @@ impl Brain {
             s.read_delta_session_row(&source_id, &client_id, &session_id)
         })
     }
+
+    /// `readCheckpointManifestRow(sourceId, clientId, sessionId)`: resolves
+    /// `{ checkpoint_manifest }` or null.
+    #[napi]
+    pub fn read_checkpoint_manifest_row<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        client_id: String,
+        session_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_checkpoint_manifest_row(&source_id, &client_id, &session_id)
+        })
+    }
 }

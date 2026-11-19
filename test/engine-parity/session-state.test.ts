@@ -115,4 +115,17 @@ describe('engine parity: session state', () => {
       return { absent, first, keptPair, moved };
     },
   );
+
+  parityTest(
+    'readCheckpointManifestRow reads an empty manifest for a cursor-only row and null for no row',
+    { methods: ['upsertSessionState', 'readCheckpointManifestRow'] },
+    async (engine) => {
+      const absent = await engine.readCheckpointManifestRow('default', 'local', 's');
+      await engine.upsertSessionState('default', 'local', 's', write('keep'));
+      const empty = await engine.readCheckpointManifestRow('default', 'local', 's');
+      expect(absent).toBeNull();
+      expect(empty).toEqual({ checkpoint_manifest: [] });
+      return { absent, empty, otherSource: await engine.readCheckpointManifestRow('other', 'local', 's') };
+    },
+  );
 });

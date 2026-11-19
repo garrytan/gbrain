@@ -128,3 +128,13 @@ export async function upsertSessionState(exec: SessionStateExec, sourceId: strin
   ]);
   return Number(rows[0]?.degraded_wakes ?? 0);
 }
+
+export const CHECKPOINT_MANIFEST_SQL = `SELECT checkpoint_manifest
+       FROM session_context_state
+       WHERE source_id = $1 AND client_id = $2 AND session_id = $3`;
+
+/** The session's checkpoint manifest as stored (jsonb), or null when the session has no row. */
+export async function readCheckpointManifestRow(exec: SessionStateExec, sourceId: string, clientId: string, sessionId: string): Promise<{ checkpoint_manifest: unknown } | null> {
+  const rows = await exec.executeRaw<{ checkpoint_manifest: unknown }>(CHECKPOINT_MANIFEST_SQL, [sourceId, clientId, sessionId]);
+  return rows.length ? { checkpoint_manifest: rows[0]!.checkpoint_manifest } : null;
+}

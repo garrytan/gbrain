@@ -3142,6 +3142,17 @@
         ],
         "flagOnScopes": []
       },
+      "readCheckpointManifestRow#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readDeltaSessionRow#default": {
         "flagOffLanes": [
           "pool"
@@ -5123,6 +5134,7 @@
         "readCallerPageAccess": "none",
         "readCapacityForecastInputs": "none",
         "readChatUsage": "none",
+        "readCheckpointManifestRow": "none",
         "readChildCompletions": "none",
         "readClientOpUsage": "none",
         "readCounterRows": "none",

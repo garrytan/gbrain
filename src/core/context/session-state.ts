@@ -243,14 +243,8 @@ export async function getCheckpointManifest(
   sessionId: string,
 ): Promise<CheckpointLink[] | null> {
   try {
-    const rows = await engine.executeRaw<{ checkpoint_manifest: unknown }>(
-      `SELECT checkpoint_manifest
-       FROM session_context_state
-       WHERE source_id = $1 AND client_id = $2 AND session_id = $3`,
-      [sourceId, resolveClientId(clientId), normSession(sessionId)],
-    );
-    if (!rows.length) return [];
-    return toCheckpointLinks(rows[0].checkpoint_manifest);
+    const row = await engine.readCheckpointManifestRow(sourceId, resolveClientId(clientId), normSession(sessionId));
+    return row ? toCheckpointLinks(row.checkpoint_manifest) : [];
   } catch {
     return null;
   }

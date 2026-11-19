@@ -3481,6 +3481,8 @@ export interface BrainEngine {
   readSessionCursor(sourceId: string, clientId: string, sessionId: string): Promise<SessionCursorRow | null>;
   /** delta's session row (both cursors as microsecond ISO UTC text, the counter as a number), or null when there is none. */
   readDeltaSessionRow(sourceId: string, clientId: string, sessionId: string): Promise<DeltaSessionRow | null>;
+  /** The session's stored checkpoint manifest, or null when the session has no row. */
+  readCheckpointManifestRow(sourceId: string, clientId: string, sessionId: string): Promise<{ checkpoint_manifest: unknown } | null>;
 
   // Entity and mention reads (engine-sql/entity-reads.ts): the statements the CLI ran through executeRaw.
   /** The newest mention pass time (ISO, UTC, whole seconds) over every source or one source; null when no pass ran. */

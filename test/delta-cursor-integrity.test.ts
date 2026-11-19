@@ -22,6 +22,7 @@ import { testBackends } from './helpers/test-backends.ts';
 import {
   SESSION_CURSOR_SQL,
   DELTA_SESSION_SQL,
+  CHECKPOINT_MANIFEST_SQL,
   UPSERT_SESSION_STATE_SQL,
 } from '../src/core/engine-sql/session-state.ts';
 
@@ -45,6 +46,7 @@ const STATE_MEMBER_SQL: Record<string, string> = {
   upsertSessionState: UPSERT_SESSION_STATE_SQL,
   readSessionCursor: SESSION_CURSOR_SQL,
   readDeltaSessionRow: DELTA_SESSION_SQL,
+  readCheckpointManifestRow: CHECKPOINT_MANIFEST_SQL,
 };
 
 function faulty(engine: BrainEngine, faults: Faults): BrainEngine {

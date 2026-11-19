@@ -96,6 +96,13 @@ const PINS: Pin[] = [
        FROM session_context_state
        WHERE source_id = $1 AND client_id = $2 AND session_id = $3`],
   },
+  {
+    from: 'src/core/context/session-state.ts:299 getCheckpointManifest, at eb30f47b89',
+    case: { method: 'readCheckpointManifestRow', variant: 'default', run: e => e.readCheckpointManifestRow('default', 'local', 's') },
+    texts: [`SELECT checkpoint_manifest
+       FROM session_context_state
+       WHERE source_id = $1 AND client_id = $2 AND session_id = $3`],
+  },
 ];
 
 describe('caller raw SQL moved into typed members keeps its Postgres text byte for byte', () => {

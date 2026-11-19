@@ -16,3 +16,6 @@ export const readSessionCursor: StoreMember<Key, SessionCursorRow | null> = (bra
 
 export const readDeltaSessionRow: StoreMember<Key, DeltaSessionRow | null> = (brain, sourceId, clientId, sessionId) =>
   storeCall({ member: 'readDeltaSessionRow' }, () => brain.readDeltaSessionRow(sourceId, clientId, sessionId));
+
+export const readCheckpointManifestRow: StoreMember<Key, { checkpoint_manifest: unknown } | null> = (brain, sourceId, clientId, sessionId) =>
+  storeCall({ member: 'readCheckpointManifestRow' }, () => brain.readCheckpointManifestRow(sourceId, clientId, sessionId));

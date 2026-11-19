@@ -241,6 +241,26 @@ impl Store {
             })
         }))
     }
+
+    /// `readCheckpointManifestRow(sourceId, clientId, sessionId)`: `{ checkpoint_manifest }`, or
+    /// `None` when there is no row.
+    pub fn read_checkpoint_manifest_row(
+        &self,
+        source_id: &str,
+        client_id: &str,
+        session_id: &str,
+    ) -> Result<Option<Value>> {
+        check_key(
+            "readCheckpointManifestRow",
+            source_id,
+            client_id,
+            session_id,
+        )?;
+        let read = self.read()?;
+        let record: Option<SessionRecord> =
+            get_json(&*read, &session_key(source_id, client_id, session_id))?;
+        Ok(record.map(|r| json!({ "checkpoint_manifest": jsonb(&r.checkpoint_manifest) })))
+    }
 }
 
 #[cfg(test)]
