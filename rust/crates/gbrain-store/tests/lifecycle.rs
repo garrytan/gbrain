@@ -364,8 +364,9 @@ fn a_format_1_brain_is_upgraded_on_open_and_keeps_its_counts() {
 
 #[test]
 fn an_older_build_refuses_a_brain_in_the_new_format() {
-    // What a format-1-only build does with this build's brains: `check_version` refuses any
-    // version it does not list. This build lists both; the oldest one is 1.
+    // What an older build does with this build's brains: `check_version` refuses any version it
+    // does not list. This build lists 1 to 4; the oldest one is 1.
+    assert_eq!(gbrain_store::FORMAT_VERSIONS, &[1, 2, 3, 4]);
     assert_eq!(gbrain_store::FORMAT_VERSIONS.first(), Some(&1));
     assert_eq!(gbrain_store::FORMAT_VERSIONS.last(), Some(&FORMAT_VERSION));
 }
@@ -483,7 +484,8 @@ fn a_format_2_brain_keeps_its_projection_jobs_and_commit_sequence_through_the_up
     );
     downgrade_to_format_2(&brain);
 
-    let store = open(&dir);
+    // No background keyword build, so the commit count below is the upgrade's alone.
+    let store = open_without_builder(&dir);
     assert_eq!(store.info().format_version, FORMAT_VERSION);
     const { assert!(FORMAT_VERSION > 2, "the compact jobs need a format after 2") };
     // The sequence carries over from `\0seq`; the upgrade is one more counted commit.
@@ -520,4 +522,178 @@ fn the_commit_sequence_key_is_reserved_and_hidden_from_scans() {
     let all = collect_prefix(&*kv.snapshot().unwrap(), b"M", false, usize::MAX).unwrap();
     let keys: Vec<&[u8]> = all.iter().map(|(k, _)| k.as_slice()).collect();
     assert_eq!(keys, vec![b"Ma".as_slice(), b"Mb".as_slice()]);
+}
+
+fn open_without_builder(dir: &TempDir) -> Store {
+    let options = OpenOptions {
+        keyword_index_builder: false,
+        ..OpenOptions::default()
+    };
+    Store::open_dir(&dir.path().join("brain"), options).unwrap()
+}
+
+/// Rewrites a brain into format 3, the layout before keyword postings: no `R` records, and the
+/// format record and `FORMAT` say 3.
+/// Rewrites a brain as format 3. With `drop_index` its `R` records are deleted, as a format-3
+/// build keeps none; without it they stay, as records a format-3 store must not be trusted with.
+fn downgrade_to_format_3(brain: &std::path::Path, drop_index: bool) {
+    use gbrain_store::keys;
+    use gbrain_store::kv::scan_prefix;
+    let kv = RedbKv::open_path(&brain.join("records.redb")).unwrap();
+    let mut tx = kv.begin_write().unwrap();
+    let mut index = Vec::new();
+    scan_prefix(&*tx, &[keys::TRIGRAM], false, &mut |k, _| {
+        index.push(k.to_vec());
+        true
+    })
+    .unwrap();
+    assert!(index.len() > 1, "the brain kept postings");
+    for key in index.into_iter().filter(|_| drop_index) {
+        tx.delete(&key).unwrap();
+    }
+    let mut format: serde_json::Value =
+        serde_json::from_slice(&tx.get(&keys::meta("format")).unwrap().unwrap()).unwrap();
+    format["format_version"] = 3.into();
+    tx.put(&keys::meta("format"), &serde_json::to_vec(&format).unwrap())
+        .unwrap();
+    tx.commit().unwrap();
+    let path = brain.join("FORMAT");
+    let mut file: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    file["format_version"] = 3.into();
+    std::fs::write(&path, serde_json::to_vec_pretty(&file).unwrap()).unwrap();
+}
+
+fn keyword_answers(store: &Store) -> String {
+    let options = serde_json::from_value(serde_json::json!({})).unwrap();
+    let chunks = store.search_keyword_chunks("apple", &options).unwrap();
+    let pages = store.search_keyword_pages("apple", &options).unwrap();
+    serde_json::to_string(&(chunks, pages)).unwrap()
+}
+
+#[test]
+fn a_format_3_brain_builds_its_keyword_index_in_the_background_after_the_upgrade() {
+    use gbrain_store::pages::{PageInput, PutPageOptions};
+    let dir = TempDir::new("format-3-upgrade");
+    let brain = dir.path().join("brain");
+    let answers = {
+        let store = open(&dir);
+        for i in 0..40 {
+            let page: PageInput = serde_json::from_value(serde_json::json!({
+                "type": "note", "title": format!("Apple {i}"),
+                "compiled_truth": format!("apple body {i} with pear words"),
+            }))
+            .unwrap();
+            store
+                .put_page(&format!("notes/p{i}"), &page, &PutPageOptions::default())
+                .unwrap();
+        }
+        let answers = keyword_answers(&store);
+        store.close();
+        answers
+    };
+    downgrade_to_format_3(&brain, true);
+
+    // The upgrade leaves an empty, incomplete index; nothing serves until the build ends.
+    let store = open_without_builder(&dir);
+    assert_eq!(store.info().format_version, FORMAT_VERSION);
+    const { assert!(FORMAT_VERSION > 3, "keyword postings need a format after 3") };
+    let state = store.keyword_index_state().unwrap().unwrap();
+    assert!(!state.complete && state.cursor == Some(0), "{state:?}");
+    assert_eq!(
+        keyword_answers(&store),
+        answers,
+        "the scan answers while incomplete"
+    );
+    store.close();
+    let file: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(brain.join("FORMAT")).unwrap()).unwrap();
+    assert_eq!(file["format_version"], FORMAT_VERSION);
+
+    // A default open runs the build in the background.
+    let store = open(&dir);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while !store.keyword_index_state().unwrap().unwrap().complete {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the build did not finish"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let report = store.keyword_index_verify(None).unwrap();
+    assert!(report.ok && report.pages == 40, "{report:?}");
+    assert_eq!(keyword_answers(&store), answers);
+    store.close();
+    // Closing stops the build thread and releases the brain.
+    open(&dir).close();
+}
+
+#[test]
+fn a_rebuild_interrupted_by_close_resumes_on_the_next_open() {
+    use gbrain_store::pages::{PageInput, PutPageOptions};
+    let dir = TempDir::new("index-rebuild-close");
+    let store = open_without_builder(&dir);
+    for i in 0..30 {
+        let page: PageInput = serde_json::from_value(serde_json::json!({
+            "type": "note", "title": format!("Page {i}"), "compiled_truth": format!("apple {i}"),
+        }))
+        .unwrap();
+        store
+            .put_page(&format!("notes/p{i}"), &page, &PutPageOptions::default())
+            .unwrap();
+    }
+    store.keyword_index_rebuild().unwrap();
+    let state = store.keyword_index_build_step(7).unwrap().unwrap();
+    assert!(!state.complete);
+    store.close();
+    let store = open_without_builder(&dir);
+    assert_eq!(store.keyword_index_state().unwrap().unwrap(), state);
+    while !store.keyword_index_build_step(7).unwrap().unwrap().complete {}
+    assert!(store.keyword_index_verify(None).unwrap().ok);
+}
+
+/// The upgrade to format 4 clears whatever `R` records a format-3 store holds, even a complete
+/// state of the current index version, and starts the build from page 0: a format-3 build did
+/// not keep them, so they may be stale.
+#[test]
+fn the_upgrade_does_not_trust_index_records_in_a_format_3_brain() {
+    use gbrain_store::keys;
+    use gbrain_store::kv::scan_prefix;
+    use gbrain_store::pages::{PageInput, PutPageOptions};
+    let dir = TempDir::new("format-3-stale-index");
+    let brain = dir.path().join("brain");
+    {
+        let store = open_without_builder(&dir);
+        let page: PageInput = serde_json::from_value(serde_json::json!({
+            "type": "note", "title": "Apple", "compiled_truth": "apple pear",
+        }))
+        .unwrap();
+        store
+            .put_page("notes/apple", &page, &PutPageOptions::default())
+            .unwrap();
+        assert!(store.keyword_index_state().unwrap().unwrap().complete);
+        store.close();
+    }
+    downgrade_to_format_3(&brain, false);
+    let store = open_without_builder(&dir);
+    let state = store.keyword_index_state().unwrap().unwrap();
+    assert!(!state.complete && state.cursor == Some(0), "{state:?}");
+    store.close();
+    let kv = RedbKv::open_path(&brain.join("records.redb")).unwrap();
+    let mut left = Vec::new();
+    scan_prefix(
+        &*kv.snapshot().unwrap(),
+        &[keys::TRIGRAM],
+        false,
+        &mut |k, _| {
+            left.push(k.to_vec());
+            true
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        left,
+        [keys::keyword_index_state()],
+        "only the new state is left"
+    );
 }

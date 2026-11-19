@@ -43,6 +43,11 @@ impl FileBackend for MemFile {
     }
 }
 
+/// An empty record file in memory, to open and reopen a brain on.
+pub(crate) fn mem_kv() -> Arc<dyn crate::kv::Kv> {
+    Arc::new(RedbKv::open_backend(Box::<MemFile>::default()).unwrap())
+}
+
 /// A fresh brain on an in-memory file, with the `default` source.
 pub(crate) fn store() -> Store {
     let kv = RedbKv::open_backend(Box::<MemFile>::default()).unwrap();

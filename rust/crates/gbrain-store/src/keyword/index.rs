@@ -188,13 +188,18 @@ fn chunk_doc(page_id: u64, index: u32) -> [u8; 12] {
     doc
 }
 
-/// Rebuilds the postings of chunk `(page_id, index)` from its record as `w` holds it.
-pub(crate) fn reindex_chunk(w: &mut dyn KvWrite, page_id: u64, index: u32) -> Result<()> {
-    let record: Option<ChunkRecord> = get_json(&*w, &keys::chunk(page_id, index))?;
-    let postings = match record.as_ref().and_then(readable_chunk_vector) {
+/// The postings chunk `(page_id, index)` owns, from its record as `read` holds it.
+fn chunk_postings(read: &dyn KvRead, page_id: u64, index: u32) -> Result<Vec<Posting>> {
+    let record: Option<ChunkRecord> = get_json(read, &keys::chunk(page_id, index))?;
+    Ok(match record.as_ref().and_then(readable_chunk_vector) {
         Some(vector) => vector_postings(KW_CHUNK_POSTING, &vector),
         None => Vec::new(),
-    };
+    })
+}
+
+/// Rebuilds the postings of chunk `(page_id, index)` from its record as `w` holds it.
+pub(crate) fn reindex_chunk(w: &mut dyn KvWrite, page_id: u64, index: u32) -> Result<()> {
+    let postings = chunk_postings(&*w, page_id, index)?;
     replace_postings(
         w,
         &keys::chunk_forward(page_id, index),
@@ -208,12 +213,12 @@ pub(crate) fn basename(slug: &str) -> &str {
     slug.rsplit('/').next().unwrap_or(slug)
 }
 
-/// Rebuilds the postings of page `page_id` (its vector lexemes, its title trigrams and its
-/// basename) from the page as `w` holds it.
-pub(crate) fn reindex_page(w: &mut dyn KvWrite, page_id: u64) -> Result<()> {
+/// The postings page `page_id` owns (its vector lexemes, its title trigrams and its basename),
+/// from the page as `read` holds it.
+fn page_postings(read: &dyn KvRead, page_id: u64) -> Result<Vec<Posting>> {
     let mut postings = Vec::new();
-    if let Some(page) = read_page_by_id(&*w, page_id)? {
-        if let Some(vector) = readable_page_vector(&*w, &page)? {
+    if let Some(page) = read_page_by_id(read, page_id)? {
+        if let Some(vector) = readable_page_vector(read, &page)? {
             postings = vector_postings(KW_PAGE_POSTING, &vector);
         }
         postings.extend(trigram_bytes(&page.title).into_iter().map(|t| Posting {
@@ -230,12 +235,73 @@ pub(crate) fn reindex_page(w: &mut dyn KvWrite, page_id: u64) -> Result<()> {
             });
         }
     }
+    Ok(postings)
+}
+
+/// Rebuilds the postings of page `page_id` from the page as `w` holds it.
+pub(crate) fn reindex_page(w: &mut dyn KvWrite, page_id: u64) -> Result<()> {
+    let postings = page_postings(&*w, page_id)?;
     replace_postings(
         w,
         &keys::page_forward(page_id),
         &page_id.to_be_bytes(),
         postings,
     )
+}
+
+/// The chunk indexes page `page_id` has (`K page_id ...`), ascending.
+pub(crate) fn chunk_indexes(read: &dyn KvRead, page_id: u64) -> Result<Vec<u32>> {
+    let prefix = keys::chunk_prefix(page_id);
+    let mut indexes = Vec::new();
+    scan_prefix(read, &prefix, false, &mut |k, _| {
+        if let Some(i) = keys::be4(&k[prefix.len()..]) {
+            indexes.push(i);
+        }
+        true
+    })?;
+    Ok(indexes)
+}
+
+/// Rebuilds every posting of page `page_id` and its chunks (the build's unit of work).
+pub(crate) fn reindex_page_and_chunks(w: &mut dyn KvWrite, page_id: u64) -> Result<()> {
+    for index in chunk_indexes(&*w, page_id)? {
+        reindex_chunk(w, page_id, index)?;
+    }
+    reindex_page(w, page_id)
+}
+
+/// The records a document's postings are stored as, its forward record last; empty when it has
+/// none.
+fn stored_records(forward: Vec<u8>, doc: &[u8], postings: &[Posting]) -> Vec<(Vec<u8>, Vec<u8>)> {
+    if postings.is_empty() {
+        return Vec::new();
+    }
+    let mut out: Vec<(Vec<u8>, Vec<u8>)> = postings
+        .iter()
+        .map(|p| (posting_key(p.kind, &p.term, doc), p.value.clone()))
+        .collect();
+    out.push((forward, encode_forward(postings)));
+    out
+}
+
+/// The records page `page_id` and its chunks should hold, from the page as `read` holds it.
+pub(crate) fn expected_records(read: &dyn KvRead, page_id: u64) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+    let mut out = Vec::new();
+    for index in chunk_indexes(read, page_id)? {
+        let postings = chunk_postings(read, page_id, index)?;
+        out.extend(stored_records(
+            keys::chunk_forward(page_id, index),
+            &chunk_doc(page_id, index),
+            &postings,
+        ));
+    }
+    let postings = page_postings(read, page_id)?;
+    out.extend(stored_records(
+        keys::page_forward(page_id),
+        &page_id.to_be_bytes(),
+        &postings,
+    ));
+    Ok(out)
 }
 
 /// A document: `(page_id, chunk_index)`; a page document has chunk index 0.

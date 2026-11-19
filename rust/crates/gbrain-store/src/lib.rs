@@ -77,7 +77,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::fs;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 pub use crate::env::{Env, SystemEnv};
 pub use crate::error::{Result, StoreError};
@@ -101,6 +101,10 @@ pub struct OpenOptions {
     /// writer at a time, as before. The binding turns it on with
     /// `GBRAIN_RUST_CONCURRENT_WRITES=1`.
     pub concurrent_writes: bool,
+    /// Run the keyword index build on a background thread while the index is incomplete
+    /// (`keyword/index_build.rs`). Off, the index is built only by
+    /// [`Store::keyword_index_build_step`]; writes keep it in step either way.
+    pub keyword_index_builder: bool,
 }
 
 impl Default for OpenOptions {
@@ -111,6 +115,7 @@ impl Default for OpenOptions {
             catalog_version: 0,
             created_by: format!("gbrain-store {}", env!("CARGO_PKG_VERSION")),
             concurrent_writes: false,
+            keyword_index_builder: true,
         }
     }
 }
@@ -143,6 +148,11 @@ pub struct Store {
     /// The open transaction this store runs on (`transactions.rs`); `None` for the brain's own
     /// store, whose writes each commit on their own.
     pub(crate) bound: Option<Arc<transactions::Transaction>>,
+    /// The keyword index build this store runs (`keyword/index_build.rs`); dropping the store
+    /// stops it after its current batch. `None` on a bound store and on the builder's own store.
+    builder: Mutex<Option<keyword::Builder>>,
+    /// `OpenOptions::keyword_index_builder` as this store was opened (false on the stores above).
+    runs_builder: bool,
 }
 
 /// The record file of a brain directory, with one writer or many. Only for the storage bake-off:
@@ -269,6 +279,7 @@ impl Store {
                 }
             }
         };
+        let index = keyword::open_index(&*kv)?;
         // The schema version is the config the TypeScript migrations keep; a brain that has none
         // (it never was seeded) reports 0.
         let schema_version = config::read_config(&*kv.snapshot()?, "version")?
@@ -286,7 +297,72 @@ impl Store {
                 created,
             },
             bound: None,
+            builder: Mutex::new(None),
+            runs_builder: options.keyword_index_builder,
         })
+        .inspect(|store| {
+            if index.needs_build && store.runs_builder {
+                store.start_keyword_index_builder();
+            }
+        })
+    }
+
+    /// A store on the same records with no transaction and no builder: the build thread's handle.
+    fn sibling(&self) -> Store {
+        Store {
+            kv: self.kv.clone(),
+            env: self.env.clone(),
+            vectors: vectors::VectorCache::default(),
+            write_context: write_trust::WriteContextSlot::default(),
+            info: self.info.clone(),
+            bound: None,
+            builder: Mutex::new(None),
+            runs_builder: false,
+        }
+    }
+
+    /// Starts the background build unless one is running on this store.
+    fn start_keyword_index_builder(&self) {
+        let mut slot = self.builder.lock().unwrap_or_else(|e| e.into_inner());
+        if slot.as_ref().is_some_and(|b| !b.finished()) {
+            return;
+        }
+        *slot = Some(keyword::Builder::start(self.sibling()));
+    }
+
+    /// The keyword index state (`None`: this store keeps no index state).
+    pub fn keyword_index_state(&self) -> Result<Option<keyword::KeywordIndexState>> {
+        Ok(keyword::read_index_state(&*self.read()?)?.map(Into::into))
+    }
+
+    /// Runs one build batch of at most `max_pages` pages in its own write transaction and returns
+    /// the state it leaves: what the background build does, for callers that step it themselves.
+    pub fn keyword_index_build_step(
+        &self,
+        max_pages: usize,
+    ) -> Result<Option<keyword::KeywordIndexState>> {
+        Ok(self
+            .write(|w| keyword::build_batch(w, max_pages))?
+            .map(Into::into))
+    }
+
+    /// Compares the stored keyword postings with the postings rebuilt from the first `max_pages`
+    /// pages (every page when `None`). Reads one snapshot; writes nothing.
+    pub fn keyword_index_verify(
+        &self,
+        max_pages: Option<u64>,
+    ) -> Result<keyword::KeywordIndexReport> {
+        keyword::verify_index(&*self.read()?, max_pages)
+    }
+
+    /// Drops every keyword posting and marks the index incomplete in one transaction, then starts
+    /// the build (when this store runs builds). Searches scan until the build completes.
+    pub fn keyword_index_rebuild(&self) -> Result<()> {
+        self.write(keyword::reset_index)?;
+        if self.runs_builder {
+            self.start_keyword_index_builder();
+        }
+        Ok(())
     }
 
     /// A store on the same brain whose reads and writes run inside `tx` (`transactions.rs`).
@@ -305,6 +381,8 @@ impl Store {
             write_context: write_trust::WriteContextSlot::default(),
             info: self.info.clone(),
             bound: Some(tx),
+            builder: Mutex::new(None),
+            runs_builder: false,
         }
     }
 
@@ -429,12 +507,11 @@ pub(crate) struct StoredFormat {
     pub created_at_us: i64,
 }
 
-/// Records a fresh brain starts with, written in the same transaction as its format record: the
-/// schema version config (`getConfig('version')`) and the `default` source.
 /// Upgrades a brain in an older format to `FORMAT_VERSION` in one write transaction, so a crash
 /// leaves either the old brain or the new one. Format 1 to 2 folds the JSON counter records into
 /// the per-counter records; 2 to 3 rewrites the projection jobs in their compact form
-/// (`format.rs`). The format record is re-read inside the transaction:
+/// (`format.rs`); every upgrade to format 4 starts an empty, incomplete keyword index
+/// (`keyword/index_build.rs`). The format record is re-read inside the transaction:
 /// another handle on the same records may have upgraded the brain first.
 fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     let mut tx = kv.begin_write_exclusive()?;
@@ -451,18 +528,25 @@ fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     if stored.format_version <= 2 {
         persistence::projection_queue::compact_format_2_jobs(&mut *tx)?;
     }
+    // Format 4 keeps keyword postings: the build starts from an empty, incomplete index.
+    keyword::reset_index(&mut *tx)?;
     stored.format_version = FORMAT_VERSION;
     put_json(&mut *tx, &keys::meta("format"), &stored)?;
     tx.commit()?;
     Ok(stored)
 }
 
+/// Records a fresh brain starts with, written in the same transaction as its format record: the
+/// schema version config (`getConfig('version')`), the `default` source and a complete, empty
+/// keyword index.
 fn seed(tx: &mut dyn KvWrite, env: &dyn Env, options: &OpenOptions) -> Result<()> {
     tx.put(
         &keys::text(keys::CONFIG, &["version"]),
         options.schema_version.to_string().as_bytes(),
     )?;
-    sources::seed_default_source(tx, env)
+    sources::seed_default_source(tx, env)?;
+    // No documents yet, so the keyword index is complete.
+    keyword::seed_complete_index(tx)
 }
 
 #[cfg(test)]

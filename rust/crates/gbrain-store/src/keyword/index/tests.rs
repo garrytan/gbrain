@@ -66,7 +66,7 @@ fn text<T: Serialize>(result: Result<T>) -> String {
 
 /// Runs `f` with the scan forced, then through the postings; asserts the two answers are the
 /// same text and returns whether the postings served the second run.
-fn same<T: Serialize>(label: &str, f: impl Fn() -> Result<T>) -> bool {
+pub(crate) fn same<T: Serialize>(label: &str, f: impl Fn() -> Result<T>) -> bool {
     FORCE_SCAN.with(|s| s.set(true));
     let scan_before = served();
     let scan = text(f());
@@ -82,11 +82,18 @@ fn same<T: Serialize>(label: &str, f: impl Fn() -> Result<T>) -> bool {
     served() > before
 }
 
-fn opts(v: Value) -> KeywordOptions {
+pub(crate) fn opts(v: Value) -> KeywordOptions {
     serde_json::from_value(v).unwrap()
 }
 
-fn put(store: &Store, slug: &str, title: &str, body: &str, timeline: &str, frontmatter: Value) {
+pub(crate) fn put(
+    store: &Store,
+    slug: &str,
+    title: &str,
+    body: &str,
+    timeline: &str,
+    frontmatter: Value,
+) {
     let input: PageInput = serde_json::from_value(json!({
         "type": "note", "title": title, "compiled_truth": body, "timeline": timeline,
         "frontmatter": frontmatter,
@@ -136,7 +143,7 @@ fn timeline(store: &Store, slug: &str, summary: &str) {
 
 /// Pages for every shape the members admit or skip: filtered, hidden and boosted pages, a
 /// person page a handle names, a non-text chunk, a timeline, a seal and a segmented lead.
-fn corpus(store: &Store) {
+pub(crate) fn corpus(store: &Store) {
     put(
         store,
         "notes/one",
@@ -296,7 +303,7 @@ fn attempts(q: &str) -> Vec<TitleAttempt> {
 
 /// Every member on every query: asserts each answer is the scan's and returns how many reads
 /// the postings served.
-fn members(store: &Store) -> usize {
+pub(crate) fn members(store: &Store) -> usize {
     let mut by_index = 0;
     let mut check = |_: String, served: bool| by_index += usize::from(served);
     for q in QUERIES {
@@ -374,7 +381,7 @@ fn members(store: &Store) -> usize {
 }
 
 /// Every `R` record but the state.
-fn postings(store: &Store) -> BTreeMap<Vec<u8>, Vec<u8>> {
+pub(crate) fn postings(store: &Store) -> BTreeMap<Vec<u8>, Vec<u8>> {
     let read = store.read().unwrap();
     let mut out = BTreeMap::new();
     scan_prefix(&*read, &[keys::TRIGRAM], false, &mut |k, v| {
@@ -516,6 +523,8 @@ fn an_incomplete_or_foreign_state_scans() {
     }
     // Without a state the writes keep no postings.
     let bare = crate::test_support::store();
+    bare.write(|w| w.delete(&keys::keyword_index_state()))
+        .unwrap();
     put(&bare, "notes/a", "A", "apple", "", json!({}));
     assert!(postings(&bare).is_empty());
 }

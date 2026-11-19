@@ -91,8 +91,8 @@ keyword arm does; `searchTitles` reads `onKeywordIncomplete`. `searchTitles` ans
 The family owns the `R` tag and reads pages, chunks, segment views and sources through their families' readers. Each
 chunk-grain member and the title arm scan the live pages, or read the keyword index (below) when it serves.
 
-`R 0x00` is the keyword index state (`keys::keyword_index_state`, JSON `version`, `complete`, `cursor`). No build
-writes it yet. While it exists, every
+`R 0x00` is the keyword index state (`keys::keyword_index_state`, JSON `version`, `complete`, `cursor`). While it
+exists, every
 `Store::write` handle tracks what a write touches (`keyword/index_writer.rs`, `IndexingWriter`, the outer wrapper of the
 write handle chain in `lib.rs` `write_chain`): `K` chunk records mark the chunk; `P` page records mark the page, with
 the record stored before the statement's first write of the key; `M page_search_timeline/<id>`, `b 0x05 page_id` and
@@ -123,8 +123,32 @@ each candidate a sparse vector of those lexemes. `ts_matches`, `ts_rank` and `ts
 lexemes, so the sparse vector gives the full vector's answer and score bits. `keyword/walk.rs` reads the candidate
 pages, applies each member's page and chunk predicates before it reads a chunk, and reads every chunk of a handle page
 with its full vector. `keyword_rare_term_pages` visits the pages in `P` key order, as its cap counts in that order;
-the other members sort their own results with total tie-breaks. No build writes a complete state yet, so stores in use
-still scan; tests seed a complete state on a fresh store.
+the other members sort their own results with total tie-breaks.
+
+### Build, verify and rebuild
+
+Store format 4 means the store keeps the postings (`format.rs`). A fresh store is created with a complete, empty
+index. The upgrade from formats 1 to 3 deletes every `R` record and writes an incomplete state with cursor 0 in its
+own transaction, so a crash leaves the old store or the new one. Every open reads the state
+(`keyword/index_build.rs` `open_index`): a state of a newer `INDEX_VERSION` refuses the open with `format_unknown`
+before any write; a missing state or an older version is reset the same way; an incomplete state starts the build.
+
+The build runs on a background thread the `Store` owns (`Builder`; off with `OpenOptions::keyword_index_builder`).
+Each batch (`build_batch`, 256 pages) reads the next page ids from the `I` family past the cursor, rebuilds each
+page's page, trigram and basename postings and its chunks' postings, and writes the new cursor in the same
+transaction through `Store::write` and its OCC retry. Only the batch that finds no page past its last one marks the
+state complete. Writes during the build keep the documents they touch current, so a page behind the cursor is
+current and a page ahead is rebuilt by its batch. Dropping the `Store` stops the thread after its current batch
+(waiting up to 30 s); the next open resumes from the cursor. Until the state is complete, every member scans.
+
+| Store API | What it does |
+|---|---|
+| `keyword_index_state()` | the state (`None` when the store keeps none) |
+| `keyword_index_build_step(max_pages)` | runs one batch in its own transaction, for callers that step the build |
+| `keyword_index_verify(max_pages)` | rebuilds the expected records of the first `max_pages` pages (all when `None`) and counts the `missing` and `changed` ones; `orphan` counts stored records no page's rebuild has, only after a walk of every page |
+| `keyword_index_rebuild()` | deletes every `R` record and writes an incomplete state in one transaction, then starts the build |
+
+The binding and `gbrain doctor` do not expose `verify` or `rebuild` yet.
 
 ## The vector cache
 
