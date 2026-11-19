@@ -11,7 +11,7 @@ import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { purgeDeletedPagesCoordinated, rebuildNote, selectPurgeCandidates } from '../src/core/persistence/purge-deleted.ts';
 import { disposePersistenceConsumer, waitForWrite } from '../src/core/persistence/service.ts';
 import type { WriteRequest } from '../src/core/persistence/model.ts';
-import { REBUILD_STORES, __setManagedConceptRebuildForTests } from '../src/core/persistence/concept-rebuild.ts';
+import { REBUILD_LINK_COLUMNS, REBUILD_STORES, __setManagedConceptRebuildForTests } from '../src/core/persistence/concept-rebuild.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { __setMaintenanceWriteWaitForTests } from '../src/core/persistence/maintenance-wait.ts';
 import { proposeRevision } from '../src/core/access/policy.ts';
@@ -250,6 +250,39 @@ for (const backend of testBackends()) {
         }, { databaseUrl });
       }, 300_000);
 
+      test(`${mode}: anything on the page synthesis did not write keeps it hidden and held${unmanaged ? ' (no git repository)' : ''}`, async () => {
+        const authored: Array<[string, string, unknown[]]> = [
+          ['title', "UPDATE pages SET title = 'Storage, renamed by hand' WHERE source_id='default' AND slug=$1", [CONCEPT]],
+          ['frontmatter', "UPDATE pages SET frontmatter = frontmatter || '{\"aliases\":[\"storage-alt-example\"]}'::jsonb WHERE source_id='default' AND slug=$1", [CONCEPT]],
+          ['timeline', "UPDATE pages SET timeline = '- 2026-01-01: a curated event' WHERE source_id='default' AND slug=$1", [CONCEPT]],
+          ['source_path', "UPDATE pages SET source_path = 'concepts/storage-renamed.md' WHERE source_id='default' AND slug=$1", [CONCEPT]],
+        ];
+        for (const [kind, sql, params] of authored) await managedBrain(async ({ engine, ctx, root }) => {
+          const id = await heldConcept(engine, ctx, root);
+          await raw(engine, sql, params);
+          if (unmanaged) {
+            rmSync(join(root, '.git'), { recursive: true, force: true });
+            await raw(engine, "UPDATE sources SET local_path=NULL WHERE id='default'");
+          }
+          const details = await synthesize(engine, root, [1, 2, 3, 4, 5], { text: NEW, unmanaged, settle: !unmanaged });
+          expect(details.rebuilt).toEqual([]);
+          expect(details.rebuild_kept).toEqual([{ source_id: 'default', slug: CONCEPT, reason: 'stated', kinds: [kind] }]);
+          await stillHeld(engine, id);
+        }, { databaseUrl });
+      }, 1_500_000);
+
+      if (unmanaged) test('unmanaged: an incoming link keeps every column it had, pointed at the fresh page', async () => {
+        await managedBrain(async ({ engine, ctx, root }) => {
+          const id = await heldConcept(engine, ctx, root);
+          const pick = "SELECT l.link_type, l.context, l.link_source, l.link_kind, l.origin_field, l.resolution_type, l.assertion_tense, l.created_at::text AS created_at, o.slug AS origin FROM links l JOIN pages n ON n.id = l.from_page_id JOIN pages c ON c.id = l.to_page_id LEFT JOIN pages o ON o.id = l.origin_page_id WHERE n.slug = 'notes/storage-ref' AND c.slug = $1";
+          await raw(engine, "UPDATE links SET link_kind = 'typed_ner', resolution_type = 'qualified', assertion_tense = 'past' WHERE to_page_id = $1", [id]);
+          const before = await engine.executeRaw(pick, [CONCEPT]);
+          expect(before).toHaveLength(1);
+          expect((await synthesize(engine, root, [1, 2, 3, 4, 5], { text: NEW, unmanaged: true })).rebuilt).toEqual([CONCEPT]);
+          expect(await engine.executeRaw(pick, [CONCEPT])).toEqual(before);
+        }, { databaseUrl });
+      }, 300_000);
+
       test(`${mode}: a failed synthesis leaves it hidden and held`, async () => {
         await managedBrain(async ({ engine, ctx, root }) => {
           const id = await heldConcept(engine, ctx, root);
@@ -415,6 +448,25 @@ for (const backend of testBackends()) {
         expect((await counts(slugs[0]!)).pages).toBe(0);
       }, { databaseUrl });
     }, 300_000);
+
+    test('every column of links and of the rewritten page is carried, regenerated or held on by the rebuild', async () => {
+      const PAGE_COLUMNS: Record<string, 'held' | 'regenerated'> = Object.fromEntries([
+        ...['title', 'compiled_truth', 'timeline', 'frontmatter', 'source_path', 'source_uri', 'withheld_source_path', 'page_readers', 'folder_rule_ids',
+          'body_storage', 'truth_lead', 'timeline_lead'].map(c => [c, 'held'] as const),
+        ...['id', 'source_id', 'slug', 'type', 'page_kind', 'content_hash', 'emotional_weight', 'created_at', 'updated_at', 'deleted_at', 'effective_date',
+          'effective_date_source', 'import_filename', 'salience_touched_at', 'last_retrieved_at', 'links_extracted_at', 'database_only_reason',
+          'contextual_retrieval_mode', 'corpus_generation', 'generation', 'search_vector', 'knowledge_revision', 'text_projection_revision',
+          'emotional_weight_recomputed_at', 'chunker_version', 'ingested_via', 'ingested_at', 'source_kind', 'embedding_signature',
+          'links_attendance_blocked_revision', 'links_attendance_blocked_at', 'revision_write_request_id', 'revision_principal_kind',
+          'revision_principal_id', 'trust_tier', 'write_origin', 'body_bytes', 'truth_bytes', 'body_lines', 'body_generation', 'segment_count',
+          'segmenter_version', 'body_flags', 'links_extract_failure', 'version_history_gap_at'].map(c => [c, 'regenerated'] as const),
+      ]);
+      await managedBrain(async ({ engine }) => {
+        const columns = async (table: string) => (await engine.executeRaw<{ c: string }>("SELECT column_name AS c FROM information_schema.columns WHERE table_name = $1 AND table_schema = current_schema()", [table])).map(r => r.c).sort();
+        expect(await columns('links')).toEqual(Object.keys(REBUILD_LINK_COLUMNS).sort());
+        expect(await columns('pages')).toEqual(Object.keys(PAGE_COLUMNS).sort());
+      }, { databaseUrl });
+    }, 120_000);
 
     test('every store a page purge removes rows from is classified stated or derived', async () => {
       await managedBrain(async ({ engine, ctx, root }) => {
