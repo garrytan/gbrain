@@ -8,6 +8,7 @@
 //! This crate has no JavaScript types. `gbrain-napi` turns each `Store` method into an async
 //! addon method and each `StoreError::code` into a JavaScript `Error.code`.
 
+mod access_flag;
 mod cascade;
 pub mod chunks;
 pub mod cli_reads;

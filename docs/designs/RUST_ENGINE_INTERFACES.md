@@ -535,6 +535,11 @@ store keeps the same rule in `pages.rs`.
   member (`readStoredBodyBytes`, capability `pages`, SQL in `engine-sql/large-page.ts`). The store answers it in
   `large_page.rs`: a segmented page's `body_bytes`, else the UTF-8 bytes of its body columns. See
   [`rust/docs/store/large-page.md`](../../rust/docs/store/large-page.md).
+- **Member-access flag.** The store sets config `access.restrictions_present` to `'1'` when it writes a page whose
+  frontmatter has a top-level `readable_by` key, as the v282 trigger `pages_access_mark_restricted` does on PGLite and
+  Postgres (`access_flag.rs`, called from the page write hook). The store keeps no access members, so the
+  `access_members` trigger has no store half. See
+  [`rust/docs/store/access-flag.md`](../../rust/docs/store/access-flag.md).
 - **Fence reads.** The fence projection's retire read and the fence guard's trust read are typed engine members
   (`listFenceRetireCandidates`, capability `facts`, SQL in `engine-sql/facts.ts`; `listFenceFactRows`, capability
   `facts`, SQL in `engine-sql/trust-fence.ts`). The store answers them in `facts/fence.rs` in the default write
