@@ -41,6 +41,7 @@ test/engine-parity/lifecycle.test.ts	10	1
 test/engine-parity/link-reads.test.ts	9	0
 test/engine-parity/link-temporal.test.ts	13	0
 test/engine-parity/links.test.ts	30	0
+test/engine-parity/memory-proposal-reads.test.ts	3	0
 test/engine-parity/open-loops.test.ts	4	0
 test/engine-parity/page-visibility.test.ts	5	0
 test/engine-parity/pages.test.ts	24	1
