@@ -282,7 +282,7 @@ pub(crate) fn count_outstanding_by_source_in(
     }
     let mut rows: Vec<(String, u64)> = by_source.into_iter().collect();
     // The map is in byte order of the source id; a stable sort by count keeps it within a tie.
-    rows.sort_by(|a, b| b.1.cmp(&a.1));
+    rows.sort_by_key(|r| std::cmp::Reverse(r.1));
     Ok(rows
         .into_iter()
         .map(|(source_id, n)| json!({ "source_id": source_id, "n": n }))
