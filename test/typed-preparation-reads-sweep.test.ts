@@ -31,6 +31,7 @@ const members: ReadonlyArray<readonly [string, string, (e: BrainEngine) => Promi
   ['listCorePageRows', 'FROM pages p WHERE p.deleted_at IS NULL AND p.frontmatter @>', e => e.listCorePageRows({ limit: 10 })],
   ['lockRegisteredSourceIds', 'FROM sources WHERE id = ANY($1::text[]) ORDER BY id FOR SHARE', e => e.lockRegisteredSourceIds(['default'])],
   ['getConfig', 'SELECT value FROM config WHERE key = $1', e => e.getConfig('a.key')],
+  ['getAllConfig', 'SELECT key, value FROM config', e => e.getAllConfig()],
 ];
 const views = [['managed sync (engineReads)', { engineReads: true }], ['page/maintenance preparer', {}]] as const;
 const never = () => new Promise<never>(() => {});

@@ -3321,8 +3321,8 @@ export class PostgresEngine implements BrainEngine {
   async getAllConfig(): Promise<Record<string, string>> {
     const held = await requestConfigRows(this);
     if (held) return held;
-    return this.connRetry(async () => {
-      const rows = await this.sql<{ key: string; value: string }[]>`
+    return this.configRead(async sql => {
+      const rows = await sql<{ key: string; value: string }[]>`
         SELECT key, value FROM config
       `;
       const out: Record<string, string> = {};
