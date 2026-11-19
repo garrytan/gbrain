@@ -106,8 +106,8 @@ export const listVisibleBeliefLifetimes: Member<'listVisibleBeliefLifetimes'> = 
 
 export const listValidTimeIdentities: Member<'listValidTimeIdentities'> = (brain, spec) => {
   const member = 'listValidTimeIdentities';
-  const excludePrivate = storePagePolicy(member, spec.excludePrivate) ?? null;
-  const world = storePageTextPolicy(member, () => privatePagesFilterFragment('p'));
+  const excludePrivate = storePagePolicy(member, spec.excludePrivate, { callerReaders: true }) ?? null;
+  const world = storePageTextPolicy(member, () => privatePagesFilterFragment('p'), { noReaders: true });
   return storeCall({ member }, () => brain.listValidTimeIdentities({
     slug: spec.slug, sourceId: spec.sourceId, sourceIds: spec.sourceIds ? [...spec.sourceIds] : null, excludePrivate, world,
   }));

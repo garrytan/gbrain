@@ -188,19 +188,22 @@ export function storePagePolicy(
  * The store page policy for a read whose page fragment over `p` is `rendered` in the current context: the caller's
  * page policy, or the remote read floor (`remoteReadFloorSql('p')`, which with no labelled-only caller is the
  * no-caller page policy). A family that opts in with `callerReaders` also serves the caller's reader identities and
- * private-readable sources when the fragment is the canonical one for them. The caller is judged by
- * judgeWidenedCaller; any other fragment refuses.
+ * private-readable sources when the fragment is the canonical one for them. A family whose fragment never reads the
+ * caller's readers (`privatePagesFilterFragment`, the no-caller policy a `world` mark reports) opts in with
+ * `noReaders`: inside a caller record that fragment renders as the canonical policy of a record with no readers, which
+ * it is served as. The caller is judged by judgeWidenedCaller; any other fragment refuses.
  */
 export function storePageTextPolicy(
   member: string,
   rendered: () => string,
-  opts: { callerReaders?: boolean } = {},
+  opts: { callerReaders?: boolean; noReaders?: boolean } = {},
 ): StorePrivacyPolicy {
-  const policy = judgeWidenedCaller(readers => {
+  const policy = judgeWidenedCaller(callerReaders => {
     const text = normalizeConceptInputs(rendered());
     const baseline = renderForStoreCaller({}, () => privatePagesFilterForCaller('p'));
     if (text === normalizeConceptInputs(baseline)) return pagePolicyFlags(baseline);
-    if (!opts.callerReaders) return undefined;
+    if (!opts.callerReaders && !opts.noReaders) return undefined;
+    const readers = opts.noReaders ? { identity: [], privateReadableSources: [] } : callerReaders;
     const canonical = renderForStoreCaller({ ...readers, hidePrivate: true }, () => privatePagesFilterForCaller('p'));
     return text === normalizeConceptInputs(canonical) ? callerReadersPagePolicy(readers) : undefined;
   });

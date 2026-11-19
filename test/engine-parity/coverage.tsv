@@ -81,7 +81,7 @@ getPage	pages	yes	81	yes	yes	yes	serves
 readPageSnapshot	pages	yes	21	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	363	yes	yes	yes	serves
+putPage	pages	yes	364	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
@@ -586,7 +586,7 @@ readBeliefHistoryRows	trust_tier_reads	yes	1	no	yes	yes	serves
 listVisibleBeliefLifetimes	trust_tier_reads	yes	1	no	yes	yes	serves
 listVersionTrustTiers	trust_tier_reads	yes	1	no	yes	yes	serves
 listVersionReasonWriters	trust_tier_reads	yes	1	no	yes	yes	serves
-listValidTimeIdentities	trust_tier_reads	yes	3	no	yes	yes	serves
+listValidTimeIdentities	trust_tier_reads	yes	4	no	yes	yes	serves
 pickValidTimeEdition	trust_tier_reads	yes	6	no	yes	yes	serves
 listAmendmentsNotApplied	trust_tier_reads	yes	2	no	yes	yes	serves
 readPageVersionEdition	trust_tier_reads	yes	3	no	yes	yes	serves
