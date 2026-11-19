@@ -30,6 +30,7 @@ import { getCliOptions } from '../core/cli-options.ts';
 import { VERB_NAMES, MEMORY_VERBS_VERSION } from '../core/verbs.ts';
 import { cliRenderContext, orderNotices, redactForTransport, renderAction, renderNotice, toAgentError, toolErrorResult, toolResultWithNotices, type Notice, type RenderContext } from '../core/agent-output.ts';
 import { cliOnlyRefusal, isCallable } from '../core/ops/callable.ts';
+import { isAllMissingPageBatch } from '../core/ops/get-page-batch.ts';
 import { hostFix, scopeDeniedError } from '../core/ops/op-fix.ts';
 import { mutedNoticeCodes, processNoticeLedger, __resetProcessNoticeLedgerForTests, type NoticeLedger, type NoticeAudience } from '../core/notice-ledger.ts';
 import { logVerbUsage, recordsFiring, type RecordsFiring } from '../core/verbs/usage-log.ts';
@@ -995,6 +996,7 @@ export function buildOperationContext(
     ...(opts.thinClient ? { thinClient: true } : {}),
     ...(opts.mcpCaller ? { mcpCaller: opts.mcpCaller } : {}),
     isCallable: (opName: string, args?: Record<string, unknown>) => (render ??= dispatchRenderContext(opts)).isCallable(opName, args),
+    renderError: (e: unknown, op: string) => JSON.parse(errorResult(e, opts, { op, mutating: false, idempotent: true }).content[0]!.text) as Record<string, unknown>,
     auth: opts.auth,
   };
 }
@@ -1147,6 +1149,12 @@ export function audienceRefusal(op: string, opts: Pick<DispatchOpts, 'auth' | 't
   const e = actorNotAttested('audience_not_supported', { auth: opts.auth }, { op, transport: opts.transport });
   return { result: actorRefusal(e, { remote: true, ...opts }, op, undefined, undefined),
     rpc: { code: -32600, message: `actor_not_attested: ${e.message}`, data: { code: 'actor_not_attested', reason: 'audience_not_supported', message: e.message } } };
+}
+
+/** A remember batch with a failed item, or a get_page batch whose every entry missed (GBRA-650), is an MCP error. */
+function isBatchErrorResult(name: string, result: unknown): boolean {
+  if (name === 'get_page') return isAllMissingPageBatch(result);
+  return name === 'remember' && typeof result === 'object' && result !== null && (result as { status?: unknown }).status === 'error' && Array.isArray((result as { items?: unknown }).items);
 }
 
 /** The response-meta hook's keys, or its failure message; never rejects (a hook failure degrades to no keys). */
@@ -1459,8 +1467,7 @@ async function dispatchResolvedCall(
       } catch { /* a pointer, never a failure */ }
     }
     maybeBackupNotice(notices, opts);
-    // GST-1387: a remember batch with a failed item is an MCP error; its body keeps every item's receipt.
-    const batchError = name === 'remember' && typeof result === 'object' && result !== null && (result as { status?: unknown }).status === 'error' && Array.isArray((result as { items?: unknown }).items);
+    const batchError = isBatchErrorResult(name, result);
     if (opts.transport === 'stdio' && opts.remote !== false && !batchError) { const up = takePostUpgradeMcpNotice(); if (up) notices.push(up); } // F7
     if (opts.transport === 'stdio' && opts.remote !== false && !batchError) notices.push(...await mcpOnboardingNotices({ engine, op: name, result, meta: responseMeta, config: ctx.config, render: dispatchRenderContext(opts) }));
     if (opts.transport === 'stdio' && opts.remote !== false && !batchError) { const drain = takeFactsDrainNotice(); if (drain) notices.push(drain); } // Lane D facts drain

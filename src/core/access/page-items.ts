@@ -39,6 +39,11 @@ export function keepRoomBody<T extends object>(result: T, strips: () => Promise<
   Object.defineProperty(result, ROOM_BODY, { value: strips, enumerable: false });
   return result;
 }
+/** The body check keepRoomBody attached to a get_page result, so a projected copy can carry it. */
+export function roomBodyOf(result: unknown): (() => Promise<boolean>) | undefined {
+  const strips = isObj(result) ? (result as Record<symbol, unknown>)[ROOM_BODY] : undefined;
+  return typeof strips === 'function' ? strips as () => Promise<boolean> : undefined;
+}
 /** The page slot of a get_page result, with its body check (keepRoomBody) when it has one. */
 export function bodyPageSlot(r: unknown, src: string, original: unknown): Slot | null {
   const slot = pageSlot(r, src);

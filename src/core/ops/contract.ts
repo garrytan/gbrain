@@ -564,6 +564,11 @@ export interface OperationContext {
   /** Wakeshift: a handler's addition, rendered as the result's last text block plus `_meta` keys. A credential: never log it. */
   emitToolTail?: (tail: { text?: string; meta?: Record<string, unknown> }) => void;
   /**
+   * GBRA-650: the error envelope this transport returns when `op` throws `e`, so a get_page batch entry for a missing
+   * page carries exactly the single read's error. Set by MCP dispatch; unset on the local CLI, which renders for itself.
+   */
+  renderError?: (e: unknown, op: string) => Record<string, unknown>;
+  /**
    * WP4 (D2): the SERVER surface ceiling for this transport (force-clamped),
    * threaded by the MCP dispatch layer. Consumed by `request_tools`: the
    * catalog never names ops above the ceiling, and the persist branch
@@ -941,6 +946,8 @@ export interface Operation {
      */
     aliases?: string[];
     positional?: string[];
+    /** An array param that takes every positional when there are more than `positional` names (GBRA-650: `gbrain get a b c`). */
+    variadic?: string;
     stdin?: string;
     hidden?: boolean;
   };

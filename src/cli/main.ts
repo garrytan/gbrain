@@ -584,8 +584,10 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
   // NOT supplied. The runtime altRequired check below overrides the
   // generic required-flag check for that op.
   const queryHasAlt = op.name === 'query' && typeof params.image === 'string' && params.image.length > 0;
+  const variadic = op.cliHints?.variadic;
   for (const [key, def] of Object.entries(op.params)) {
-    if (def.required && params[key] === undefined) {
+    const needed = def.required || (variadic !== undefined && key === op.cliHints?.positional?.[0] && params[variadic] === undefined);
+    if (needed && params[key] === undefined) {
       if (queryHasAlt && key === 'query') continue;
       const cliName = op.cliHints?.name || op.name;
       const positional = op.cliHints?.positional || [];
@@ -835,7 +837,9 @@ async function runThinClientRouted(
 
   try {
     const { callRemoteTool, unpackToolResult } = await import('../core/mcp-client.ts');
-    const raw = await timeCliPhase('remote', () => callRemoteTool(cfg, op.name, params, {
+    const batch = op.name === 'get_page' && Array.isArray(params.slugs); // GBRA-650: `gbrain get a b c`, every omitted slug read on
+    const raw = batch ? { content: [{ type: 'text', text: JSON.stringify(await (await import('./page-render.ts')).readBatchRemote(async p => unpackToolResult(await callRemoteTool(cfg, 'get_page', p, { timeoutMs, signal: sigintController.signal })), params)) }] }
+      : await timeCliPhase('remote', () => callRemoteTool(cfg, op.name, params, {
       timeoutMs,
       signal: sigintController.signal,
       ...(op.mutating ? { writeWaitMs: currentCliWriteWait().waitMs } : {}), ...(cliOpts.room !== undefined ? { meta: { room: cliOpts.room } } : {}),
@@ -1086,6 +1090,7 @@ export function parseOpArgs(op: OperationMeta, args: string[]): Record<string, u
   const params: Record<string, unknown> = (op.name === 'search' || op.name === 'query') && (getCliOptions().explain || args.includes('--explain')) ? { explain: true } : {};
   const positional = op.cliHints?.positional || [];
   let posIdx = 0;
+  const extra: string[] = [];
 
   let endOfOptions = false; // D6: a bare `--` ends options (as in findUnknownOpFlag); later tokens are positionals
   for (let i = 0; i < args.length; i++) {
@@ -1173,7 +1178,13 @@ export function parseOpArgs(op: OperationMeta, args: string[]): Record<string, u
       const key = positional[posIdx++];
       const paramDef = op.params[key];
       params[key] = opParamValue(op, key, paramDef, arg, true);
+    } else if (op.cliHints?.variadic) {
+      extra.push(arg);
     }
+  }
+  if (extra.length > 0) {
+    params[op.cliHints!.variadic!] = [...positional.map(key => params[key]), ...extra];
+    for (const key of positional) delete params[key];
   }
 
   for (const [key, def] of Object.entries(op.params)) {
@@ -1568,7 +1579,8 @@ export function formatResult(
       const { formatVolunteeredPage } = require('../core/context/volunteer.ts');
       return pages.map((p) => formatVolunteeredPage(p)).join('\n') + '\n';
     }
-    case 'get_page': return require('./page-render.ts').formatGetPage(result as Record<string, any>);
+    case 'get_page': return Array.isArray((result as { pages?: unknown })?.pages)
+      ? require('./page-render.ts').formatGetPageBatch(result) : require('./page-render.ts').formatGetPage(result as Record<string, any>);
     case 'search_exact': return formatSearchExact(result as Parameters<typeof formatSearchExact>[0]);
     case 'list_pages': {
       const pages = result as any[];

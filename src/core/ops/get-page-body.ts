@@ -69,7 +69,7 @@ export const INLINE_BODY_BYTES_KEY = 'mcp.inline_body_bytes';
 /** `auto` returns the whole body up to this many bytes of compiled truth plus timeline. */
 export { DEFAULT_INLINE_BODY_BYTES };
 /** Room a partial response keeps for its metadata, notices and escaping inside the egress cap. */
-const ENVELOPE_RESERVE_BYTES = 64 * 1024;
+export const ENVELOPE_RESERVE_BYTES = 64 * 1024;
 /** The first window `auto` returns next to the outline. */
 const AUTO_WINDOW_BYTES = 16_000;
 

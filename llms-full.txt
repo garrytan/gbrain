@@ -670,7 +670,7 @@ instead of the CLI (one connection, no per-call startup).
 | Count pages by kind or source | `gbrain stats --by source,type [--since 30d] [--collapse-aliases]` | `get_stats` (needs an admin-scope token) |
 | Answer a question, search a topic | `gbrain query "<question>" [--types '["meeting"]'] [--since 30d]` | `query` |
 | Pages with these words | `gbrain search "<words>" [--match keyword] [--source S]` | `search` |
-| Read a known page | `gbrain get <slug>` | `get_page` |
+| Read a known page, or several | `gbrain get <slug> [<slug>...]` | `get_page` (`slugs`, up to 50) |
 | Read only the part a search hit points at | `gbrain get <slug> --around-chunk-id <chunk_id>` or `--lines '{"from":1,"count":200}'` | `get_page` |
 | What the brain knows about a person or company | `gbrain entity <slug>`, then `gbrain recall "<topic>" --json` | `entity`, `recall` |
 | Links, dated events, every page of a type | `gbrain backlinks <slug>`, `gbrain timeline <slug>`, `gbrain list --type T` | `get_backlinks`, `get_timeline`, `list_pages` |
@@ -1932,7 +1932,7 @@ instead of the CLI (one connection, no per-call startup).
 | Count pages by kind or source | `gbrain stats --by source,type [--since 30d] [--collapse-aliases]` | `get_stats` (needs an admin-scope token) |
 | Answer a question, search a topic | `gbrain query "<question>" [--types '["meeting"]'] [--since 30d]` | `query` |
 | Pages with these words | `gbrain search "<words>" [--match keyword] [--source S]` | `search` |
-| Read a known page | `gbrain get <slug>` | `get_page` |
+| Read a known page, or several | `gbrain get <slug> [<slug>...]` | `get_page` (`slugs`, up to 50) |
 | Read only the part a search hit points at | `gbrain get <slug> --around-chunk-id <chunk_id>` or `--lines '{"from":1,"count":200}'` | `get_page` |
 | What the brain knows about a person or company | `gbrain entity <slug>`, then `gbrain recall "<topic>" --json` | `entity`, `recall` |
 | Links, dated events, every page of a type | `gbrain backlinks <slug>`, `gbrain timeline <slug>`, `gbrain list --type T` | `get_backlinks`, `get_timeline`, `list_pages` |
@@ -4011,7 +4011,7 @@ instead of the CLI (one connection, no per-call startup).
 | Count pages by kind or source | `gbrain stats --by source,type [--since 30d] [--collapse-aliases]` | `get_stats` (needs an admin-scope token) |
 | Answer a question, search a topic | `gbrain query "<question>" [--types '["meeting"]'] [--since 30d]` | `query` |
 | Pages with these words | `gbrain search "<words>" [--match keyword] [--source S]` | `search` |
-| Read a known page | `gbrain get <slug>` | `get_page` |
+| Read a known page, or several | `gbrain get <slug> [<slug>...]` | `get_page` (`slugs`, up to 50) |
 | Read only the part a search hit points at | `gbrain get <slug> --around-chunk-id <chunk_id>` or `--lines '{"from":1,"count":200}'` | `get_page` |
 | What the brain knows about a person or company | `gbrain entity <slug>`, then `gbrain recall "<topic>" --json` | `entity`, `recall` |
 | Links, dated events, every page of a type | `gbrain backlinks <slug>`, `gbrain timeline <slug>`, `gbrain list --type T` | `get_backlinks`, `get_timeline`, `list_pages` |

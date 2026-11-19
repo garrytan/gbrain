@@ -277,6 +277,8 @@ export const STARTER_CALLABLE_PARAMS: Readonly<Record<string, Readonly<Record<st
     body: WINDOW, lines: WINDOW, bytes: WINDOW, around_chunk_id: WINDOW, context_lines: WINDOW, cursor: WINDOW, max_bytes: WINDOW,
     view: WINDOW, outline_from: WINDOW, section: WINDOW, grep: WINDOW, context: WINDOW,
     grammar_diagnostics: 'The line-grammar findings for the page being read; put_page and capture receipts on starter point at it.',
+    token_budget: 'GBRA-650: sizes a slugs batch, which only splits it across calls (omitted.next carries it); every page stays readable one call later.',
+    fields: 'GBRA-650: full returns the batch pages exactly as a single get_page returns them; lean only drops fields.',
   },
   edit_page: { within: 'Narrows an edit to the byte range a get_page window hands back as edit_target.' },
   put_page: { drop_timeline: 'Confirms a timeline removal the starter schema already allows by omitting the section; put_page\'s own refusal names it.' },

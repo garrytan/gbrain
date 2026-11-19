@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 301442,
-    "stdoutSha256": "75d5b3e9ae6e8072f3c5bec08c12f68958e19f3663c1049f59e2569431e07e49",
+    "stdoutBytes": 302028,
+    "stdoutSha256": "da8068cb569455b2157b8c18942956f314eb8d218f7e9f2397cc83c6f833adcb",
     "toolNames": [
       "remember",
       "entity",
@@ -467,7 +467,7 @@
         "scope": "write"
       },
       {
-        "description": "Read a page; `section`/`grep` reads one part. Window selector order: cursor, around_chunk_id, lines, bytes (context only with grep). Edit: include_content:true, `content` to put_page, or edit_page. >256 KB: outline+window, then `next`.",
+        "description": "Read a page, or up to 50 with `slugs`; `section`/`grep` reads one part. Window selector order: cursor, around_chunk_id, lines, bytes (context only with grep). Edit: include_content:true, `content` to put_page, or edit_page. >256 KB: outline+window, then `next`.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -481,6 +481,7 @@
           "context": "number?",
           "context_lines": "number?",
           "cursor": "string?",
+          "fields": "string?",
           "fuzzy": "boolean?",
           "grammar_diagnostics": "boolean?",
           "grep": "string?",
@@ -494,8 +495,10 @@
           "min_trust": "string?",
           "outline_from": "number?",
           "section": "string?",
-          "slug": "string",
+          "slug": "string?",
+          "slugs": "array?",
           "source_id": "string?",
+          "token_budget": "number?",
           "view": "string?"
         },
         "required_scopes": [],
@@ -551,6 +554,14 @@
             },
             "cursor": {
               "description": "next_cursor: read on.",
+              "type": "string"
+            },
+            "fields": {
+              "description": "With slugs: full keeps every page field.",
+              "enum": [
+                "lean",
+                "full"
+              ],
               "type": "string"
             },
             "fuzzy": {
@@ -630,9 +641,20 @@
               "description": "Page slug.",
               "type": "string"
             },
+            "slugs": {
+              "description": "Up to 50, instead of slug.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
             "source_id": {
               "description": "One source, or '__all__'.",
               "type": "string"
+            },
+            "token_budget": {
+              "description": "With slugs: token cap (12000).",
+              "type": "number"
             },
             "view": {
               "description": "markdown: page the round-trip content.",
@@ -643,9 +665,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "slug"
-          ],
+          "required": [],
           "type": "object"
         },
         "scope": "read"

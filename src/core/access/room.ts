@@ -102,7 +102,10 @@ export function readRoomDeclaration(channels: RoomChannels | undefined, args: Re
  * kept off the response). Every other op answers op_not_covered.
  */
 const EXTRACTORS: Record<string, (result: unknown, src: string, original: unknown) => Array<Slot | null>> = {
-  get_page: (r, src, original) => [bodyPageSlot(r, src, original)],
+  // GBRA-650: a batch marks each entry that holds a page, with that page's body check; a miss is no item at all.
+  get_page: (r, src, original) => isObj(r) && Array.isArray(r.pages)
+    ? r.pages.map((e, i) => isObj(e) && isObj(e.page) ? bodyPageSlot(e.page, src, (original as { pages: Array<{ page?: unknown }> }).pages[i]?.page) : null)
+    : [bodyPageSlot(r, src, original)],
   search: (r, src) => listOf(r).map(i => pageSlot(i, src)),
   query: (r, src) => listOf(r).map(i => pageSlot(i, src)),
   list_pages: (r, src) => listOf(r).map(i => pageSlot(i, src)),

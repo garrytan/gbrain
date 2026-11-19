@@ -497,6 +497,26 @@ for (const kind of testBackends()) {
       expect(out.stamped.map(n => n.code)).toEqual(['room_hints_unavailable']);
     }, 30_000);
 
+    test('GBRA-650: a get_page batch marks each page entry as its single read is marked, and a miss is no item', async () => {
+      const room = { room: { header: 'group:team-a' } };
+      const keys: Key[] = ['open', 'quiet', 'mine', 'team', 'folder'];
+      const missingSlug = 'notes/never-written';
+      const out = await call('owner', 'get_page', { slugs: [...keys.map(k => PAGES[k].slug), missingSlug], fields: 'full' }, room);
+      const pages = (out.json as { pages: Array<Record<string, any>> }).pages;
+      expect(out.isError).toBe(false);
+      for (const [i, key] of keys.entries()) {
+        const single = await call('owner', 'get_page', { slug: PAGES[key].slug }, room);
+        expect({ key, mark: pages[i]!.page.room_access }).toEqual({ key, mark: (single.json as { room_access: unknown }).room_access });
+      }
+      expect(pages[5]).not.toHaveProperty('room_access');
+      expect(out.meta?.room).toMatchObject({ complete: true, counts: { items: 5 } });
+      const hidden = await call('bob-room', 'get_page', { slugs: [PAGES.team.slug, PAGES.quiet.slug, missingSlug] }, room);
+      const missing = await call('bob-room', 'get_page', { slugs: [PAGES.team.slug, missingSlug, missingSlug] }, room);
+      expect((hidden.json as { pages: Array<{ page?: unknown }> }).pages[0]!.page).toBeDefined();
+      expect(JSON.parse(JSON.stringify(hidden.json).replaceAll(PAGES.quiet.slug, missingSlug))).toEqual(missing.json);
+      expect(hidden.meta?.room).toEqual(missing.meta?.room);
+    }, 120_000);
+
     test('whoami advertises room support', async () => {
       const out = await call('owner', 'whoami', {});
       expect((out.json as { features?: unknown }).features).toEqual({ room: true });

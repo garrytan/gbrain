@@ -265,12 +265,32 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "outputRedaction": {
       "exempt": "explicit page read by slug/id; governed by page visibility, not output redaction (CEO-17 raw-read exception)"
     },
-    "description": "Read a page; `section`/`grep` reads one part. Window selector order: cursor, around_chunk_id, lines, bytes (context only with grep). Edit: include_content:true, `content` to put_page, or edit_page. >256 KB: outline+window, then `next`.",
+    "description": "Read a page, or up to 50 with `slugs`; `section`/`grep` reads one part. Window selector order: cursor, around_chunk_id, lines, bytes (context only with grep). Edit: include_content:true, `content` to put_page, or edit_page. >256 KB: outline+window, then `next`.",
     "params": {
       "slug": {
         "type": "string",
-        "description": "Page slug.",
-        "required": true
+        "description": "Page slug."
+      },
+      "slugs": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Up to 50, instead of slug."
+      },
+      "token_budget": {
+        "type": "number",
+        "description": "With slugs: token cap (12000).",
+        "fullSurfaceOnly": true
+      },
+      "fields": {
+        "type": "string",
+        "enum": [
+          "lean",
+          "full"
+        ],
+        "description": "With slugs: full keeps every page field.",
+        "fullSurfaceOnly": true
       },
       "fuzzy": {
         "type": "boolean",
@@ -441,7 +461,8 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "name": "get",
       "positional": [
         "slug"
-      ]
+      ],
+      "variadic": "slugs"
     },
     "area": "pages"
   },

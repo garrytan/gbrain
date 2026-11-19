@@ -21,6 +21,34 @@ This guide covers who gets what, the parameters, and the four refusals.
 The inline size is `mcp.inline_body_bytes` (default 256 KB). Hosts advertise the
 contract in `get_brain_identity` as `capabilities: ["large_pages_v1"]`.
 
+## Several pages in one call
+
+`get_page` with `slugs` (up to 50, instead of `slug`) reads each page as a single
+`get_page` would, in the order asked, and answers `{summary?, pages, omitted?}`:
+
+- Each entry is `{requested_slug, page}` or, for a page this connection can't
+  read, `{requested_slug, error, message, suggestion, fix}`: the same error a
+  single read returns. A missing page and a page the caller may not read give
+  the same entry. A repeated slug is read once and its entry repeats.
+- Remote callers get lean pages: the body, title, type, dates, source, revision
+  and every safety and trust marker, without the raw frontmatter and storage
+  fields. `fields: "full"` returns each page exactly as a single read does; the
+  local CLI and gbrain's thin client always get full pages.
+- `token_budget` (default `mcp.batch_read_token_budget`, 12,000; at most 32,000
+  over MCP) caps the reply. Reading stops at the first page that doesn't fit, or
+  that would pass the connection's egress cap, and that page and every later
+  slug are listed in `omitted {slugs, reason, next}`; `next` is the call that
+  reads on. The first page is always delivered (a large one as outline plus
+  window, as above), so every `next` makes progress.
+- `fuzzy`, `as_of`, `known_as_of` and the window parameters below are refused
+  with `slugs`; read one page's part with a single call. `include_content`,
+  `include_deleted`, `min_trust` and `source_id` apply to every slug.
+- Over MCP, a batch where every page missed is an error result, as one missed
+  read is; a partial batch is not, and its `summary` names the misses.
+- `gbrain get a b c` prints the pages in order on stdout, each miss on stderr,
+  and exits 1 when any slug was not read. Against a host older than `slugs`,
+  the thin client reads each page on its own.
+
 ## get_page body modes
 
 | Parameter | Meaning |

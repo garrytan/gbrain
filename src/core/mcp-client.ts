@@ -193,7 +193,11 @@ export function extractToolErrorCode(message: string): string | undefined {
 
 /** Keep only validated public receipt fields from a tool's JSON error body. */
 function isBatchErrorBody(text: string): boolean {
-  try { const body = JSON.parse(text) as { items?: unknown; status?: unknown }; return Array.isArray(body?.items) && body.status === 'error'; } catch { return false; }
+  try {
+    const body = JSON.parse(text) as { items?: unknown; status?: unknown; pages?: unknown };
+    // GBRA-650: a get_page batch whose every entry missed is an error whose body keeps every entry.
+    return (Array.isArray(body?.items) && body.status === 'error') || Array.isArray(body?.pages);
+  } catch { return false; }
 }
 
 export function extractToolErrorDetail(message: string): RemoteMcpErrorDetail {

@@ -12,7 +12,7 @@ import { describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ACTOR_REASON_FIXES, QM_CONTRACT_PATH, QM_CONTRACT_PATHS, renderQmMemoryContract } from '../scripts/build-qm-memory-contract.ts';
+import { ACTOR_REASON_FIXES, BEFORE_V6, QM_CONTRACT_PATH, QM_CONTRACT_PATHS, renderQmMemoryContract } from '../scripts/build-qm-memory-contract.ts';
 import { CODES } from '../src/core/error-registry.ts';
 import { operations } from '../src/core/operations.ts';
 import { buildToolDefs } from '../src/mcp/tool-defs.ts';
@@ -204,7 +204,12 @@ describe('QM memory-provider contract v3 (GST-1158 F1: personal tools, frozen re
     const served = buildToolDefs(operations.filter(o => QM_PERSONAL_OPS.has(o.name)));
     for (const tool of fixture.personal_tools.tools) {
       const def = served.find(d => d.name === tool.name)!;
-      expect({ description: tool.description, ...tool.input_schema }).toEqual({ description: def.description, ...def.inputSchema });
+      // A tool that changed after this version was published is served as published plus its later parameters only.
+      const later = BEFORE_V6[tool.name];
+      const servedAsPublished = later
+        ? { description: later.description, ...def.inputSchema, properties: Object.fromEntries(Object.entries(def.inputSchema.properties).filter(([k]) => !later.omit.includes(k))), required: [...later.required] }
+        : { description: def.description, ...def.inputSchema };
+      expect({ description: tool.description, ...tool.input_schema }).toEqual(servedAsPublished);
       expect(tool.personal_only).toBe(true);
       expect(tool.result.structured_content).toBeDefined();
     }

@@ -20,6 +20,7 @@ import { neutralizesBody, pageTrustForRead, projectFetchText, projectGetPage, qu
 import { assertLargePageAdmission } from '../persistence/large-page-guard.ts';
 import { assertFullReadFits, bodyBytes, bodyStripsFor, fetchWindowResult, GET_PAGE_BODY_PARAMS, inlineBodyBytes, parseBodyRequest, partialBodyStrips, readPartialBody, segmentedFullReadError, authorizedReadPin } from './get-page-body.ts';
 import { keepRoomBody } from '../access/page-items.ts';
+import { GET_PAGE_BATCH_PARAMS, getPageOrPages } from './get-page-batch.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { MIN_TRUST_PARAM } from '../eligibility/policy.ts';
 import { getPageKnownAsOf, KNOWN_AS_OF_PARAM } from './known-as-of.ts';
@@ -106,9 +107,10 @@ const get_page: Operation = {
   name: 'get_page',
   idempotent: true,
   outputRedaction: { exempt: 'explicit page read by slug/id; governed by page visibility, not output redaction (CEO-17 raw-read exception)' },
-  description: 'Read a page; `section`/`grep` reads one part. Window selector order: cursor, around_chunk_id, lines, bytes (context only with grep). Edit: include_content:true, `content` to put_page, or edit_page. >256 KB: outline+window, then `next`.',
+  description: 'Read a page, or up to 50 with `slugs`; `section`/`grep` reads one part. Window selector order: cursor, around_chunk_id, lines, bytes (context only with grep). Edit: include_content:true, `content` to put_page, or edit_page. >256 KB: outline+window, then `next`.',
   params: {
-    slug: { type: 'string', description: 'Page slug.', required: true },
+    slug: { type: 'string', description: 'Page slug.' },
+    ...GET_PAGE_BATCH_PARAMS,
     fuzzy: { type: 'boolean', description: 'Fuzzy match.', fullSurfaceOnly: true },
     include_content: { type: 'boolean', description: 'Markdown + revision.' },
     content_only: { type: 'boolean', description: 'Round-trip fields.', fullSurfaceOnly: true },
@@ -122,154 +124,156 @@ const get_page: Operation = {
     known_as_of: KNOWN_AS_OF_PARAM,
     as_of: AS_OF_PARAM,
   },
-  handler: async (ctx, p) => {
-    if (p.as_of !== undefined) return getPageAsOf(ctx, p);
-    if (p.known_as_of !== undefined) return getPageKnownAsOf(ctx, p);
-    const slug = p.slug as string;
-    const fuzzy = (p.fuzzy as boolean) || false;
-    const includeDeleted = (p.include_deleted as boolean) === true;
-    // Large pages: resolve the body mode first, so a malformed selector fails before any read.
-    const bodyRequest = parseBodyRequest(ctx, p);
-    const contentOnly = p.content_only === true;
-    const includeContent = p.include_content === true;
-    const includeTimelineEntries = (p.include_timeline_entries as boolean) === true;
-    // #4329: honor a per-call source_id (pre-fix it was silently dropped).
-    // resolveRequestedScope (inside federatedSearchScope) enforces the remote
-    // caller's grant on the explicit value.
-    const sourceIdParam = parseSourceIdParam(p.source_id, 'get_page', { allowAll: true });
-    // #1393: route BOTH the exact-match read and the fuzzy resolveSlugs through
-    // the canonical precedence ladder (federated array > scalar > nothing). The
-    // exact path previously used scalar `ctx.sourceId` only, so a remote client
-    // with a federated `allowedSources` grant (and no single ctx.sourceId) got
-    // an UNSCOPED exact lookup — a cross-source read of any page by slug. getPage
-    // now honors sourceIds[] (both engines), so the same scope closes both paths.
-    // #3242: federatedSearchScope (not bare sourceScopeOpts) so an unqualified
-    // read sees pages in `federated: true` sources, matching search/query.
-    const sourceOpts = federatedSearchScope(ctx, sourceIdParam);
-    // #4620: an explicit source_id must name a live source (after the grant check).
-    await assertExplicitSourceLive(ctx, sourceIdParam);
-    const fuzzyScope = sourceOpts;
-
-    // #4352 remediation: untrusted callers never read `visibility: private`
-    // bodies — the same resolveExcludePrivatePages gate search/recall/entity
-    // already apply (trusted local + the operator opt-outs resolve to false).
-    // A gated private page behaves exactly like a missing one (no existence
-    // oracle), composing with — not replacing — the source-grant scope above.
-    const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
-
-    let snapshot = await ctx.engine.readPageSnapshot(slug, { includeDeleted, excludePrivate, ...sourceOpts, resolveAlias: true });
-    let page = snapshot?.page ?? null;
-    if (page && excludePrivate && isPrivatePageForCaller(page)) page = null;
-    let resolved_slug: string | undefined = page && page.slug !== slug ? page.slug : undefined;
-
-    if (!page && fuzzy) {
-      const fallback = await ctx.engine.transaction(async tx => {
-        await tx.executeRaw('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
-        let candidates = await tx.resolveSlugs(slug, { ...fuzzyScope, excludePrivate });
-        if (excludePrivate && candidates.length > 0) {
-          candidates = await dropPrivateSlugs(tx, candidates, fuzzyScope, includeDeleted);
-        }
-        return { candidates, snapshot: candidates.length === 1
-          ? await tx.readPageSnapshot(candidates[0], { includeDeleted, excludePrivate, ...sourceOpts }) : null };
-      });
-      if (fallback.candidates.length > 1) return { error: 'ambiguous_slug', candidates: fallback.candidates };
-      if (fallback.snapshot && !(excludePrivate && isPrivatePageForCaller(fallback.snapshot.page))) {
-        snapshot = fallback.snapshot;
-        page = snapshot.page;
-        resolved_slug = page.slug;
-      }
-    }
-
-    if (!page) {
-      let elsewhereSource: string | undefined;
-      // #4516: source scoping is by-design isolation, but the miss diagnostic
-      // should say WHERE the slug actually lives. Trusted local callers only
-      // (`ctx.remote === false`) — for a remote caller the probe would be a
-      // cross-source existence oracle outside its grant. Only when the lookup
-      // was actually scoped (an unscoped read already spanned every source).
-      if (ctx.remote === false && (sourceOpts.sourceId !== undefined || sourceOpts.sourceIds !== undefined)) {
-        try {
-          // gbrain-allow-unscoped-getpage: read-only diagnostic existence probe —
-          // deliberately spans all sources to name where the slug lives.
-          const elsewhere = await ctx.engine.getPage(slug, { includeDeleted });
-          if (elsewhere && !(excludePrivate && isPrivatePage(elsewhere))) {
-            elsewhereSource = elsewhere.source_id;
-          }
-        } catch {
-          // Diagnostic only — a probe failure must never mask the real error.
-        }
-      }
-      throw pageNotFoundError(ctx, slug, { includeDeleted, sourceIdParam, elsewhereSource });
-    }
-    const readable = await pageTrustForRead(ctx, page, p.min_trust); // #5575: below the read floor reads as missing
-    if (!readable) throw pageNotFoundError(ctx, slug, { includeDeleted, sourceIdParam });
-
-    // v0.37.0 (D11): op-layer write-back for the `last_retrieved_at` stale
-    // signal. Fire-and-forget — caller does NOT await. Internal callers
-    // (sync, migrations, dream cycle) bypass this op handler so the signal
-    // stays clean. Throttled to ~1 write / 5 min per page via the SQL clause
-    // inside bumpLastRetrievedAt (D2).
-    bumpLastRetrievedAt(ctx.engine, [page.id]);
-
-    // #2200: tags come from the concrete page's source: federated `sourceOpts` has no
-    // scalar sourceId, and getTags would fall back to 'default' (the wrong source).
-    const tags = snapshot!.tags;
-    // Only explicitly trusted local reads and the brain owner's own credential
-    // retain protected body sections (GST-3058). Holder grants and
-    // page-visibility opt-outs do not bypass this boundary.
-    const isUntrustedReader = ctx.remote !== false;
-    const visibleBody = isUntrustedReader && page.body_storage !== 'segmented' ? await stripPrivacyFencesForRemoteReader(ctx, page) : page;
-    // v0.42 (#1699) agent-warning channel: surface the page's content_flag
-    // marker as a top-level field (parallel to SearchResult.content_flag) so
-    // an agent reading a page directly gets the same "this looks odd, examine
-    // it" signal it would get from search. The marker is also in frontmatter;
-    // this is the clean, documented accessor.
-    const content_flag = getContentFlag(page.frontmatter as Record<string, unknown> | null);
-    // #5988: sync holds the page's newer file (one indexed lookup, fail-open).
-    const held = (await readHeldPages(ctx.engine, [page.id], ctx).catch(() => null))?.get(page.id);
-    // #2225: `content` is the canonical serialized markdown (frontmatter +
-    // compiled_truth + `<!-- timeline -->` sentinel + timeline). Clients that
-    // edit-and-put_page this field round-trip losslessly; hand-concatenating
-    // compiled_truth + timeline without the sentinel used to silently destroy
-    // pages.timeline on the next write. Built from visibleBody so the
-    // privacy-fence strip above applies to untrusted readers here too.
-    // Opt-in (include_content: true): get_page is the most-called read op, and
-    // `content` roughly duplicates compiled_truth + timeline — always emitting
-    // it would double every reader's payload for the round-trip minority.
-    const timelineEntries = includeTimelineEntries
-      ? await quoteTimelineRows(ctx, page.slug, await stampRowTrust(ctx.engine, 'timeline_entries', await ctx.engine.getTimeline(page.slug, { ...await readPolicyOpts(ctx, { sourceId: page.source_id }), eligibility: readable.eligibility }), e => e.id)) : undefined;
-    // Read-only, over the same visibility-filtered body the reader gets.
-    const lineGrammar = p.grammar_diagnostics !== true ? undefined : await (await import('../line-grammar-report.ts')).grammarDiagnosticsForPage(ctx.engine, page, visibleBody);
-    const quarantined = readQuarantined(ctx, page, p.include_quarantined === true); // #6259
-    unverifiedOriginNotice(ctx, page, readable.trust);
-    const fenceHeld = (await (await import('../generations/fence.ts')).fenceHoldEntries(ctx.engine, [page.source_id], { slug: page.slug }).catch(() => [])).map(({ source_id: _s, slug: _g, ...hold }) => hold); const fileHeld = { ...(held ? { file_held: fileHeldField(held, isUntrustedReader) } : {}), ...(fenceHeld.length ? { fence_held: fenceHeld } : {}) };
-    const segmented = isSegmentedPage(page);
-    // GBRA-217 (B7): a current page not in force today says so; a page with no valid_from / valid_until reads as before.
-    const validTime = currentValidTime(page.frontmatter as Record<string, unknown> | null);
-    const pin = authorizedReadPin(ctx, page, snapshot!.bodyGeneration, p.min_trust, () => pageNotFoundError(ctx, slug, { includeDeleted, sourceIdParam }));
-    const whole = bodyRequest.mode === 'full'
-      || (bodyRequest.mode === 'auto' && !segmented && bodyBytes(visibleBody) <= await inlineBodyBytes(ctx));
-    if (!whole) {
-      const partial = await readPartialBody(ctx, { page, visibleBody, revision: snapshot!.revision, tags, quarantined, trust: readable.trust, pin, quote: quotesBody(ctx, page, readable.trust), neutralize: neutralizesBody(ctx, page),
-        extras: { ...(quarantined ? { quarantined } : {}), ...(timelineEntries ? { timeline_entries: timelineEntries } : {}), ...fileHeld,
-          ...(resolved_slug ? { resolved_slug } : {}), ...(content_flag ? { content_flag } : {}), ...(validTime ? { valid_time: validTime } : {}) } }, bodyRequest);
-      const strips = partialBodyStrips(ctx, { page, visibleBody, pin, revision: snapshot!.revision }, bodyRequest);
-      const out = lineGrammar ? { ...partial, line_grammar: lineGrammar } : partial;
-      return strips ? keepRoomBody(out, strips) : out;
-    }
-    if (segmented) throw await segmentedFullReadError(ctx, page, bodyRequest, { ...pin, revision: snapshot!.revision });
-    const projected = projectGetPage(visibleBody, {
-      revision: snapshot!.revision, tags, includeContent, contentOnly, resolved_slug, content_flag, quarantined, trust: readable.trust, quote: quotesBody(ctx, page, readable.trust), neutralize: neutralizesBody(ctx, page),
-      ...(timelineEntries ? { timeline_entries: timelineEntries } : {}),
-      ...fileHeld,
-    });
-    if (ctx.remote !== false) await assertFullReadFits(ctx, visibleBody, projected, bodyRequest);
-    const withValidTime = validTime ? { ...projected, valid_time: validTime } : projected;
-    return keepRoomBody(lineGrammar ? { ...withValidTime, line_grammar: lineGrammar } : withValidTime, bodyStripsFor(ctx, page, visibleBody));
-  },
+  handler: (ctx, p) => getPageOrPages(ctx, p, readOnePage),
   scope: 'read', mutating: false,
-  cliHints: { name: 'get', positional: ['slug'] },
+  cliHints: { name: 'get', positional: ['slug'], variadic: 'slugs' },
 };
+
+async function readOnePage(ctx: OperationContext, p: Record<string, unknown>): Promise<unknown> {
+  if (p.as_of !== undefined) return getPageAsOf(ctx, p);
+  if (p.known_as_of !== undefined) return getPageKnownAsOf(ctx, p);
+  const slug = p.slug as string;
+  const fuzzy = (p.fuzzy as boolean) || false;
+  const includeDeleted = (p.include_deleted as boolean) === true;
+  // Large pages: resolve the body mode first, so a malformed selector fails before any read.
+  const bodyRequest = parseBodyRequest(ctx, p);
+  const contentOnly = p.content_only === true;
+  const includeContent = p.include_content === true;
+  const includeTimelineEntries = (p.include_timeline_entries as boolean) === true;
+  // #4329: honor a per-call source_id (pre-fix it was silently dropped).
+  // resolveRequestedScope (inside federatedSearchScope) enforces the remote
+  // caller's grant on the explicit value.
+  const sourceIdParam = parseSourceIdParam(p.source_id, 'get_page', { allowAll: true });
+  // #1393: route BOTH the exact-match read and the fuzzy resolveSlugs through
+  // the canonical precedence ladder (federated array > scalar > nothing). The
+  // exact path previously used scalar `ctx.sourceId` only, so a remote client
+  // with a federated `allowedSources` grant (and no single ctx.sourceId) got
+  // an UNSCOPED exact lookup — a cross-source read of any page by slug. getPage
+  // now honors sourceIds[] (both engines), so the same scope closes both paths.
+  // #3242: federatedSearchScope (not bare sourceScopeOpts) so an unqualified
+  // read sees pages in `federated: true` sources, matching search/query.
+  const sourceOpts = federatedSearchScope(ctx, sourceIdParam);
+  // #4620: an explicit source_id must name a live source (after the grant check).
+  await assertExplicitSourceLive(ctx, sourceIdParam);
+  const fuzzyScope = sourceOpts;
+
+  // #4352 remediation: untrusted callers never read `visibility: private`
+  // bodies — the same resolveExcludePrivatePages gate search/recall/entity
+  // already apply (trusted local + the operator opt-outs resolve to false).
+  // A gated private page behaves exactly like a missing one (no existence
+  // oracle), composing with — not replacing — the source-grant scope above.
+  const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
+
+  let snapshot = await ctx.engine.readPageSnapshot(slug, { includeDeleted, excludePrivate, ...sourceOpts, resolveAlias: true });
+  let page = snapshot?.page ?? null;
+  if (page && excludePrivate && isPrivatePageForCaller(page)) page = null;
+  let resolved_slug: string | undefined = page && page.slug !== slug ? page.slug : undefined;
+
+  if (!page && fuzzy) {
+    const fallback = await ctx.engine.transaction(async tx => {
+      await tx.executeRaw('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+      let candidates = await tx.resolveSlugs(slug, { ...fuzzyScope, excludePrivate });
+      if (excludePrivate && candidates.length > 0) {
+        candidates = await dropPrivateSlugs(tx, candidates, fuzzyScope, includeDeleted);
+      }
+      return { candidates, snapshot: candidates.length === 1
+        ? await tx.readPageSnapshot(candidates[0], { includeDeleted, excludePrivate, ...sourceOpts }) : null };
+    });
+    if (fallback.candidates.length > 1) return { error: 'ambiguous_slug', candidates: fallback.candidates };
+    if (fallback.snapshot && !(excludePrivate && isPrivatePageForCaller(fallback.snapshot.page))) {
+      snapshot = fallback.snapshot;
+      page = snapshot.page;
+      resolved_slug = page.slug;
+    }
+  }
+
+  if (!page) {
+    let elsewhereSource: string | undefined;
+    // #4516: source scoping is by-design isolation, but the miss diagnostic
+    // should say WHERE the slug actually lives. Trusted local callers only
+    // (`ctx.remote === false`) — for a remote caller the probe would be a
+    // cross-source existence oracle outside its grant. Only when the lookup
+    // was actually scoped (an unscoped read already spanned every source).
+    if (ctx.remote === false && (sourceOpts.sourceId !== undefined || sourceOpts.sourceIds !== undefined)) {
+      try {
+        // gbrain-allow-unscoped-getpage: read-only diagnostic existence probe —
+        // deliberately spans all sources to name where the slug lives.
+        const elsewhere = await ctx.engine.getPage(slug, { includeDeleted });
+        if (elsewhere && !(excludePrivate && isPrivatePage(elsewhere))) {
+          elsewhereSource = elsewhere.source_id;
+        }
+      } catch {
+        // Diagnostic only — a probe failure must never mask the real error.
+      }
+    }
+    throw pageNotFoundError(ctx, slug, { includeDeleted, sourceIdParam, elsewhereSource });
+  }
+  const readable = await pageTrustForRead(ctx, page, p.min_trust); // #5575: below the read floor reads as missing
+  if (!readable) throw pageNotFoundError(ctx, slug, { includeDeleted, sourceIdParam });
+
+  // v0.37.0 (D11): op-layer write-back for the `last_retrieved_at` stale
+  // signal. Fire-and-forget — caller does NOT await. Internal callers
+  // (sync, migrations, dream cycle) bypass this op handler so the signal
+  // stays clean. Throttled to ~1 write / 5 min per page via the SQL clause
+  // inside bumpLastRetrievedAt (D2).
+  bumpLastRetrievedAt(ctx.engine, [page.id]);
+
+  // #2200: tags come from the concrete page's source: federated `sourceOpts` has no
+  // scalar sourceId, and getTags would fall back to 'default' (the wrong source).
+  const tags = snapshot!.tags;
+  // Only explicitly trusted local reads and the brain owner's own credential
+  // retain protected body sections (GST-3058). Holder grants and
+  // page-visibility opt-outs do not bypass this boundary.
+  const isUntrustedReader = ctx.remote !== false;
+  const visibleBody = isUntrustedReader && page.body_storage !== 'segmented' ? await stripPrivacyFencesForRemoteReader(ctx, page) : page;
+  // v0.42 (#1699) agent-warning channel: surface the page's content_flag
+  // marker as a top-level field (parallel to SearchResult.content_flag) so
+  // an agent reading a page directly gets the same "this looks odd, examine
+  // it" signal it would get from search. The marker is also in frontmatter;
+  // this is the clean, documented accessor.
+  const content_flag = getContentFlag(page.frontmatter as Record<string, unknown> | null);
+  // #5988: sync holds the page's newer file (one indexed lookup, fail-open).
+  const held = (await readHeldPages(ctx.engine, [page.id], ctx).catch(() => null))?.get(page.id);
+  // #2225: `content` is the canonical serialized markdown (frontmatter +
+  // compiled_truth + `<!-- timeline -->` sentinel + timeline). Clients that
+  // edit-and-put_page this field round-trip losslessly; hand-concatenating
+  // compiled_truth + timeline without the sentinel used to silently destroy
+  // pages.timeline on the next write. Built from visibleBody so the
+  // privacy-fence strip above applies to untrusted readers here too.
+  // Opt-in (include_content: true): get_page is the most-called read op, and
+  // `content` roughly duplicates compiled_truth + timeline — always emitting
+  // it would double every reader's payload for the round-trip minority.
+  const timelineEntries = includeTimelineEntries
+    ? await quoteTimelineRows(ctx, page.slug, await stampRowTrust(ctx.engine, 'timeline_entries', await ctx.engine.getTimeline(page.slug, { ...await readPolicyOpts(ctx, { sourceId: page.source_id }), eligibility: readable.eligibility }), e => e.id)) : undefined;
+  // Read-only, over the same visibility-filtered body the reader gets.
+  const lineGrammar = p.grammar_diagnostics !== true ? undefined : await (await import('../line-grammar-report.ts')).grammarDiagnosticsForPage(ctx.engine, page, visibleBody);
+  const quarantined = readQuarantined(ctx, page, p.include_quarantined === true); // #6259
+  unverifiedOriginNotice(ctx, page, readable.trust);
+  const fenceHeld = (await (await import('../generations/fence.ts')).fenceHoldEntries(ctx.engine, [page.source_id], { slug: page.slug }).catch(() => [])).map(({ source_id: _s, slug: _g, ...hold }) => hold); const fileHeld = { ...(held ? { file_held: fileHeldField(held, isUntrustedReader) } : {}), ...(fenceHeld.length ? { fence_held: fenceHeld } : {}) };
+  const segmented = isSegmentedPage(page);
+  // GBRA-217 (B7): a current page not in force today says so; a page with no valid_from / valid_until reads as before.
+  const validTime = currentValidTime(page.frontmatter as Record<string, unknown> | null);
+  const pin = authorizedReadPin(ctx, page, snapshot!.bodyGeneration, p.min_trust, () => pageNotFoundError(ctx, slug, { includeDeleted, sourceIdParam }));
+  const whole = bodyRequest.mode === 'full'
+    || (bodyRequest.mode === 'auto' && !segmented && bodyBytes(visibleBody) <= await inlineBodyBytes(ctx));
+  if (!whole) {
+    const partial = await readPartialBody(ctx, { page, visibleBody, revision: snapshot!.revision, tags, quarantined, trust: readable.trust, pin, quote: quotesBody(ctx, page, readable.trust), neutralize: neutralizesBody(ctx, page),
+      extras: { ...(quarantined ? { quarantined } : {}), ...(timelineEntries ? { timeline_entries: timelineEntries } : {}), ...fileHeld,
+        ...(resolved_slug ? { resolved_slug } : {}), ...(content_flag ? { content_flag } : {}), ...(validTime ? { valid_time: validTime } : {}) } }, bodyRequest);
+    const strips = partialBodyStrips(ctx, { page, visibleBody, pin, revision: snapshot!.revision }, bodyRequest);
+    const out = lineGrammar ? { ...partial, line_grammar: lineGrammar } : partial;
+    return strips ? keepRoomBody(out, strips) : out;
+  }
+  if (segmented) throw await segmentedFullReadError(ctx, page, bodyRequest, { ...pin, revision: snapshot!.revision });
+  const projected = projectGetPage(visibleBody, {
+    revision: snapshot!.revision, tags, includeContent, contentOnly, resolved_slug, content_flag, quarantined, trust: readable.trust, quote: quotesBody(ctx, page, readable.trust), neutralize: neutralizesBody(ctx, page),
+    ...(timelineEntries ? { timeline_entries: timelineEntries } : {}),
+    ...fileHeld,
+  });
+  if (ctx.remote !== false) await assertFullReadFits(ctx, visibleBody, projected, bodyRequest);
+  const withValidTime = validTime ? { ...projected, valid_time: validTime } : projected;
+  return keepRoomBody(lineGrammar ? { ...withValidTime, line_grammar: lineGrammar } : withValidTime, bodyStripsFor(ctx, page, visibleBody));
+}
 
 const fetch_page: Operation = {
   name: 'fetch',

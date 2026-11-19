@@ -132,6 +132,51 @@ export function asOfExitCode(r: GetPageResult | null | undefined): number {
   return r.compiled_truth === undefined && !r.window ? 1 : 0;
 }
 
+/**
+ * GBRA-650: a thin client's `gbrain get a b c`: one batch call, then each `omitted.next` until every slug is read. A host
+ * older than `slugs` refuses the call for its missing `slug`; then each page is read on its own, a miss kept as an entry.
+ */
+export async function readBatchRemote(call: (p: Record<string, unknown>) => Promise<Record<string, any>>, params: Record<string, unknown>): Promise<Record<string, any>> {
+  let result: Record<string, any>;
+  try {
+    result = await call(params);
+  } catch (e) {
+    const message = String((e as { detail?: { message?: unknown } })?.detail?.message ?? (e as Error)?.message ?? '');
+    if (remoteErrorCode(e) !== 'invalid_params' || !/\bslug\b/.test(message) || /\bslugs\b/.test(message)) throw e;
+    const { slugs, token_budget: _b, fields: _f, ...rest } = params;
+    const pages: Array<Record<string, unknown>> = [];
+    for (const slug of slugs as string[]) {
+      try { pages.push({ requested_slug: slug, page: await call({ ...rest, slug }) }); }
+      catch (err) {
+        if (remoteErrorCode(err) !== 'page_not_found') throw err;
+        pages.push({ requested_slug: slug, error: 'page_not_found', message: (err as { detail?: { message?: string } }).detail?.message ?? `Page not found: ${slug}` });
+      }
+    }
+    return { pages };
+  }
+  while (result.omitted?.next?.args) {
+    const more = await call(result.omitted.next.args);
+    if (!Array.isArray(more.pages) || more.pages.length === 0) break;
+    result = { pages: [...result.pages, ...more.pages], ...(more.omitted ? { omitted: more.omitted } : {}) };
+  }
+  return result;
+}
+
+/**
+ * GBRA-650: stdout text for a get_page batch (`gbrain get a b c`): each page in request order on stdout, each miss and
+ * any omitted slugs on stderr, and exit 1 when a slug was not read.
+ */
+export function formatGetPageBatch(r: { pages: Array<Record<string, any>>; omitted?: { slugs: string[]; reason: string } }): string {
+  const out: string[] = [];
+  for (const e of r.pages) {
+    if (e.page) out.push(formatGetPage(e.page));
+    else process.stderr.write(`${e.requested_slug}: ${e.message ?? e.error}\n`);
+  }
+  if (r.omitted) process.stderr.write(`Not read (${r.omitted.reason}): ${r.omitted.slugs.join(' ')}\n`);
+  if (r.omitted || r.pages.some(e => !e.page)) setCliExitVerdict(1);
+  return out.join('\n');
+}
+
 /** stdout text for one get_page result; partial responses add a stderr note. A guest page's text starts with its warning line (GBRA-504). */
 export function formatGetPage(r: GetPageResult): string {
   if (r.guest) {

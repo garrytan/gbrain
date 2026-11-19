@@ -166,15 +166,27 @@ const V2_REASON_FIXES: Partial<typeof ACTOR_REASON_FIXES> = {
   argument_without_attestation: { fixed_by: 'calling_harness', fix: 'Remove acting_user, or send the x-qm-actor header from a credential holding the attest right; a credential bound to no member never sends acting_user alone. detail missing=<attest_right|x-qm-actor, comma-separated> names what this call lacked.' },
 };
 
+/**
+ * Tools as v1 to v5 published them where the operation changed after v5, frozen: GBRA-650's get_page `slugs` batch
+ * (which made `slug` optional) appears from the next version on.
+ */
+export const BEFORE_V6: Record<string, { description: string; omit: readonly string[]; required: readonly string[] }> = {
+  get_page: {
+    description: 'Read a page; `section`/`grep` reads one part. Window selector order: cursor, around_chunk_id, lines, bytes (context only with grep). Edit: include_content:true, `content` to put_page, or edit_page. >256 KB: outline+window, then `next`.',
+    omit: ['slugs', 'token_budget', 'fields'], required: ['slug'],
+  },
+};
+
 function toolEntry(name: string, version: QmContractVersion) {
   const op = operations.find(o => o.name === name);
   if (!op) throw new Error(name + ' is not in the operation registry');
   const frozen = version === 1 ? V1_PARAMS[name] : version === 2 ? V2_PARAMS[name] : undefined;
-  const params = Object.entries(op.params).filter(([k]) => !frozen || frozen.includes(k));
+  const published = version <= 5 ? BEFORE_V6[name] : undefined;
+  const params = Object.entries(op.params).filter(([k]) => (!frozen || frozen.includes(k)) && !published?.omit.includes(k));
   return {
-    name, description: op.description, scope: op.scope ?? 'read', mutating: op.mutating === true,
+    name, description: published?.description ?? op.description, scope: op.scope ?? 'read', mutating: op.mutating === true,
     input_schema: { type: 'object', properties: Object.fromEntries(params.map(([k, v]) => [k, paramDefToSchema(v)])),
-      required: params.filter(([, v]) => v.required).map(([k]) => k) },
+      required: published ? [...published.required] : params.filter(([, v]) => v.required).map(([k]) => k) },
   };
 }
 

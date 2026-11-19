@@ -173,6 +173,23 @@ describe('guest marks reach only callers who can read the note', () => {
     expect(stamps((await preview('bob-example', 'get_raw_data', { slug: HOST })).text).map(s => s.at).sort()).toEqual([GONE, GUEST, String(ids[GUEST])].sort());
   });
 
+  test('(h) GBRA-650: a get_page batch stamps a guest note as its single read does, and a hidden note is a plain miss', async () => {
+    const missing = 'notes/guest-never';
+    for (const who of ['dave', 'carol'] as const) {
+      const batch = await call(who, 'get_page', { slugs: [GUEST, GONE, missing], source_id: SRC, include_deleted: true });
+      const misses = await call(who, 'get_page', { slugs: [missing, missing, missing], source_id: SRC, include_deleted: true });
+      expect(stamps(batch.text)).toEqual([]);
+      for (const leak of ['"origin":"guest"', SENDER, 'team-a', 'external_untrusted']) expect(batch.text).not.toContain(leak);
+      expect({ who, body: JSON.parse(batch.text.replaceAll(GUEST, missing).replaceAll(GONE, missing)) }).toEqual({ who, body: JSON.parse(misses.text) });
+    }
+    for (const who of ['bob', 'owner'] as const) {
+      const batch = JSON.parse((await call(who, 'get_page', { slugs: [GUEST, missing], source_id: SRC, fields: 'full' })).text) as { pages: Array<{ page?: unknown }> };
+      const single = JSON.parse((await call(who, 'get_page', { slug: GUEST, source_id: SRC })).text);
+      expect({ who, page: batch.pages[0]!.page }).toEqual({ who, page: single });
+      expect({ who, stamped: stamps(JSON.stringify(batch)).map(s => s.at) }).toEqual({ who, stamped: [GUEST] });
+    }
+  });
+
   test("(g) a result the stamp cannot copy refuses the read and leaves the handler's own object unmarked", async () => {
     const own = { source_id: SRC, slug: GUEST, title: 'held by the handler', render: () => 'not cloneable' };
     const outcome = await stampGuestNotes({ engine, remote: false, sourceId: SRC } as never, own).then(() => 'stamped', (e: Error) => e.message);
