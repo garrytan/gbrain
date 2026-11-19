@@ -278,6 +278,17 @@ const PINS: Pin[] = [
        LEFT JOIN persistence_host_bindings h ON h.worktree_id = w.id AND h.host_id = w.owner_host_id
       WHERE s.id = $1 AND NOT s.archived LIMIT 1`],
   },
+  {
+    from: 'src/core/sync-pending.ts:101 readFirstDue (at 87bd59b208)',
+    case: { method: 'readNotifierFirstDue', variant: 'default', run: e => e.readNotifierFirstDue(['source-a']) },
+    texts: [`SELECT s.id AS source_id, n.observed_head,
+              LEAST(CASE WHEN n.state <> 'idle' THEN n.first_due_at END,
+                    (SELECT min(m.first_due_at) FROM sync_wanted_markers m WHERE m.source_id = s.id AND m.intent = 'freshness'
+                       AND m.source_incarnation IS NOT DISTINCT FROM s.incarnation::text
+                       AND (m.wanted_head IS NULL OR m.wanted_head IS DISTINCT FROM s.last_commit))) AS first_due_at
+         FROM sources s LEFT JOIN sync_notifier_sources n ON n.source_id = s.id AND n.source_incarnation IS NOT DISTINCT FROM s.incarnation::text
+        WHERE s.id = ANY($1::text[])`],
+  },
 ];
 
 describe('caller raw SQL moved into typed members keeps its Postgres text byte for byte', () => {

@@ -1745,6 +1745,10 @@ export class PGLiteEngine implements BrainEngine {
     return notifierImpl.readSourceSyncShape(this.engineSql, sourceId);
   }
 
+  async readNotifierFirstDue(sourceIds: string[]): Promise<notifierImpl.NotifierFirstDueRow[]> {
+    return notifierImpl.readNotifierFirstDue(this.engineSql, sourceIds);
+  }
+
   async listSourceLocalPaths(): Promise<string[]> {
     return sourcesImpl.listSourceLocalPaths(unscopedExecutor(this.engineSql, 'sources: unscoped on master (the filesystem lock read it through executeRaw)'));
   }

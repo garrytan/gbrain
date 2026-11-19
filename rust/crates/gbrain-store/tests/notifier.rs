@@ -627,3 +627,67 @@ fn the_sync_shape_is_a_live_sources_path_with_no_binding_and_none_for_a_missing_
     assert_eq!(store.read_source_sync_shape("gone").unwrap(), None);
     assert_eq!(store.read_source_sync_shape("missing").unwrap(), None);
 }
+
+#[test]
+fn the_first_due_clock_is_the_earlier_of_a_busy_row_and_a_due_freshness_marker_per_existing_source()
+{
+    let dir = TempDir::new("notifier-first-due");
+    let store = open(&dir);
+    for id in ["alpha", "beta", "gamma", "delta", "gone"] {
+        source(&store, id);
+    }
+    store.set_source_archived("gone", true).unwrap();
+    state(
+        &store,
+        "beta",
+        json!({ "state": "due", "reason": "commit", "firstDue": "keep" }),
+    )
+    .unwrap();
+    coverage(&store, "beta", Some("b"), HOST, 1);
+    std::thread::sleep(Duration::from_millis(5));
+    mark(&store, "beta", "freshness", None, "lock_busy", None).unwrap();
+    coverage(&store, "gamma", Some("c"), HOST, 2);
+    mark(&store, "gamma", "freshness", Some("c"), "notifier", None).unwrap();
+    state(
+        &store,
+        "delta",
+        json!({ "state": "idle", "firstDue": "clear" }),
+    )
+    .unwrap();
+    mark(&store, "delta", "pull", None, "sync_trigger", None).unwrap();
+    state(
+        &store,
+        "gone",
+        json!({ "state": "retry", "reason": "sync_failed", "firstDue": "keep" }),
+    )
+    .unwrap();
+    let markers = store.read_wanted_markers(None).unwrap();
+    let marker_due = |id: &str| {
+        markers
+            .iter()
+            .find(|m| m["source_id"] == json!(id) && m["intent"] == json!("freshness"))
+            .unwrap()["first_due_at"]
+            .clone()
+    };
+    let ids: Vec<String> = ["gone", "beta", "missing", "alpha", "gamma", "delta", "beta"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let got = store.read_notifier_first_due(&ids).unwrap();
+    assert_eq!(
+        got,
+        vec![
+            json!({ "source_id": "alpha", "observed_head": null, "first_due_at": null }),
+            json!({ "source_id": "beta", "observed_head": "b", "first_due_at": row(&store, "beta")["first_due_at"] }),
+            json!({ "source_id": "delta", "observed_head": null, "first_due_at": null }),
+            json!({ "source_id": "gamma", "observed_head": "c", "first_due_at": marker_due("gamma") }),
+            json!({ "source_id": "gone", "observed_head": null, "first_due_at": row(&store, "gone")["first_due_at"] }),
+        ]
+    );
+    for clock in [row(&store, "beta"), row(&store, "gone")] {
+        assert!(clock["first_due_at"].is_string(), "{clock}");
+    }
+    assert!(marker_due("gamma").is_string());
+    assert!(row(&store, "beta")["first_due_at"].as_str() < marker_due("beta").as_str());
+    assert!(store.read_notifier_first_due(&[]).unwrap().is_empty());
+}

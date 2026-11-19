@@ -43,7 +43,7 @@
 use crate::env::{Env, iso};
 use crate::error::{Result, StoreError};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
-use crate::sources::{all_sources, read_source};
+use crate::sources::{SourceRecord, all_sources, read_source};
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -675,6 +675,17 @@ fn is_due(_m: &Marker) -> bool {
     true
 }
 
+/// A freshness marker still asks for work while its `wanted_head` is null or differs from the
+/// source's `last_commit` (`wanted_head IS NULL OR wanted_head IS DISTINCT FROM s.last_commit`).
+fn freshness_due(m: &Marker, last_commit: Option<&str>) -> bool {
+    m.record.wanted_head.is_none() || m.record.wanted_head.as_deref() != last_commit
+}
+
+/// The source's `last_commit`. The store keeps none yet, so every source reads null.
+fn last_commit_of(_source: &SourceRecord) -> Option<&str> {
+    None
+}
+
 /// A marker row as `SELECT *` returns it.
 fn marker_row(m: &Marker) -> Value {
     let r = &m.record;
@@ -902,6 +913,46 @@ pub(crate) fn read_source_sync_shape_in(
         .map(|r| json!({ "local_path": r.local_path, "root": Value::Null, "bound": false })))
 }
 
+/// The SELECT of `readNotifierFirstDue(sourceIds)`: one row per existing source of `ids` (archived
+/// included), in id order. `observed_head` comes from the notifier row at the source's current
+/// incarnation; `first_due_at` is the earlier of that row's `first_due_at` when its state is not
+/// idle and the oldest freshness marker at the current incarnation whose `wanted_head` is null or
+/// differs from the source's `last_commit`.
+pub(crate) fn read_notifier_first_due_in(read: &dyn KvRead, ids: &[String]) -> Result<Vec<Value>> {
+    let mut seen: Vec<&String> = ids.iter().collect();
+    seen.sort();
+    seen.dedup();
+    let mut out = Vec::new();
+    for id in seen {
+        let Some(source) = read_source(read, id)? else {
+            continue;
+        };
+        let incarnation = Some(source.incarnation.as_str());
+        let row = get_json::<NotifierSourceRecord>(read, &source_row_key(id))?
+            .filter(|n| n.source_incarnation.as_deref() == incarnation);
+        let from_row = row
+            .as_ref()
+            .filter(|n| n.state != "idle")
+            .and_then(|n| n.first_due_at_us);
+        let from_marker = source_markers(read, id)?
+            .iter()
+            .filter(|m| {
+                m.intent == "freshness"
+                    && m.record.source_incarnation.as_deref() == incarnation
+                    && freshness_due(m, last_commit_of(&source))
+            })
+            .map(|m| m.record.first_due_at_us)
+            .min();
+        let first_due = [from_row, from_marker].into_iter().flatten().min();
+        out.push(json!({
+            "source_id": source.id,
+            "observed_head": row.and_then(|n| n.observed_head),
+            "first_due_at": first_due.map(iso),
+        }));
+    }
+    Ok(out)
+}
+
 impl Store {
     /// `claimNotifierLease(l)`.
     pub fn claim_notifier_lease(&self, claim: &NotifierLeaseClaim) -> Result<Value> {
@@ -1021,6 +1072,11 @@ impl Store {
     /// `readSourceSyncShape(sourceId)`.
     pub fn read_source_sync_shape(&self, source_id: &str) -> Result<Option<Value>> {
         read_source_sync_shape_in(&*self.read()?, source_id)
+    }
+
+    /// `readNotifierFirstDue(sourceIds)`.
+    pub fn read_notifier_first_due(&self, ids: &[String]) -> Result<Vec<Value>> {
+        read_notifier_first_due_in(&*self.read()?, ids)
     }
 }
 

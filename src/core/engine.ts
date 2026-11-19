@@ -55,7 +55,7 @@ import type { ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, Ment
 import type { DefaultSourceSplit, LocalPathSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
 import type {
   Coverage as NotifierCoverage, MarkerIntent, NotifierHostSourceRow, NotifierLeaseClaim, NotifierLeaseClaimInput, NotifierLeaseHolder, NotifierSourceRow, NotifierStatusRow,
-  PendingWantedMarker, SourceSyncShapeRow, StatePatch as NotifierStatePatch, WantedMarker, WantedMarkerInput,
+  NotifierFirstDueRow, PendingWantedMarker, SourceSyncShapeRow, StatePatch as NotifierStatePatch, WantedMarker, WantedMarkerInput,
 } from './engine-sql/notifier.ts';
 import type {
   AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
@@ -1432,6 +1432,9 @@ export interface BrainEngine {
 
   /** A live source as a sync request sees it (local path, managed checkout root, bound to a worktree), or null when it is missing or archived. notifier/nudge.ts sourceSyncShape. */
   readSourceSyncShape(sourceId: string): Promise<SourceSyncShapeRow | null>;
+
+  /** Each existing source's persisted first-due clock: the earlier of its notifier row's first_due_at (not idle) and its oldest due freshness marker, with the observed head. sync-pending.ts readFirstDue. */
+  readNotifierFirstDue(sourceIds: string[]): Promise<NotifierFirstDueRow[]>;
 
   /** Source resolution reads (SQL and contracts in engine-sql/sources.ts): sources with a local path and `archived`; every source row with `default`'s emptiness flag; the default-write guard's page split. */
   listLocalPathSources(): Promise<LocalPathSourceRow[]>;

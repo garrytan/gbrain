@@ -3613,6 +3613,17 @@
         ],
         "flagOnScopes": []
       },
+      "readNotifierFirstDue#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readNotifierLease#default": {
         "flagOffLanes": [
           "pool"
@@ -5512,6 +5523,7 @@
         "readMcpLogPruneCutoff": "none",
         "readMcpRollupPrunedBefore": "none",
         "readMentionLastPass": "none",
+        "readNotifierFirstDue": "none",
         "readNotifierLease": "none",
         "readNotifierSources": "none",
         "readNotifierStatusRows": "none",
