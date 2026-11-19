@@ -350,9 +350,9 @@ export async function listFactsFromQuotedPages(raw: EngineRawRead,
 /** Of `ids`, the facts whose stored tier ranks at or above `floor`; an id with no row is not among them. */
 export async function listOwnerTierFacts(raw: EngineRawRead, opts: { ids: readonly number[]; floor: TrustTier }): Promise<number[]> {
   if (!opts.ids.length) return [];
-  const rows = await raw<{ id: number | string }>(
-    `SELECT id FROM facts WHERE id = ANY($1::bigint[]) AND ${trustRankSql('trust_tier')} >= $2`,
-    [[...new Set(opts.ids.map(Number))], TRUST_TIER_RANK[opts.floor]]);
+  const ids = [...new Set(opts.ids.map(Number))];
+  const { text, params } = renderFragment(sqlFragment`SELECT id FROM facts WHERE id = ANY(${ids}::bigint[]) AND ${trustedSql(trustRankSql('trust_tier'))} >= ${TRUST_TIER_RANK[opts.floor]}::int`);
+  const rows = await raw<{ id: number | string }>(text, params);
   return rows.map(r => Number(r.id));
 }
 
