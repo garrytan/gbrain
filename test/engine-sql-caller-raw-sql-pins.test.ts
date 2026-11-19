@@ -140,6 +140,7 @@ const PINS: Pin[] = [
     : ''} AND (l.origin_page_id IS NULL OR EXISTS (SELECT 1 FROM pages lo WHERE lo.id = l.origin_page_id AND lo.deleted_at IS NULL${remote ? ' AND lo.source_id = $4' : ''}))
           ORDER BY l.id`],
   })),
+  // Not the caller's text: the statement adds `id DESC` as the last ORDER BY key, so tied loops read in one order.
   {
     from: 'src/core/verbs/entity-card.ts:691 assembleCard open loops',
     case: { method: 'readEntityOpenLoops', variant: 'default', run: e => e.readEntityOpenLoops('people/alice-example', 'default', 3) },
@@ -147,7 +148,7 @@ const PINS: Pin[] = [
        FROM open_loops
        WHERE status = 'open' AND counterparty_slug = $1
          AND COALESCE(counterparty_source_id, source_id) = $2
-       ORDER BY last_activity_at DESC
+       ORDER BY last_activity_at DESC, id DESC
        LIMIT 3`],
   },
   ...([[true, 'canonical'], [null, 'keep']] as const).map(([canonical, variant]): Pin => ({
