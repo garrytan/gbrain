@@ -1283,7 +1283,7 @@ export class PostgresEngine implements BrainEngine {
   heldEntityPageDeleted(sourceId: string, slug: string) { return factsPurgeImpl.heldEntityPageDeleted(this.executeRaw.bind(this), sourceId, slug); }
   readHeldAccessState(sourceId: string, entity: string) { return factsPurgeImpl.readHeldAccessState(this.executeRaw.bind(this), sourceId, entity); }
   heldTargetPageLive(sourceId: string, slug: string) { return factsPurgeImpl.heldTargetPageLive(this.executeRaw.bind(this), sourceId, slug); }
-  listHeldFactRows(sourceId: string) { return factsPurgeImpl.listHeldFactRows(this.executeRaw.bind(this), sourceId); }
+  listHeldMoveRows(sourceId: string) { return factsPurgeImpl.listHeldMoveRows(this.executeRaw.bind(this), sourceId); }
   listStruckHeldRows(sourceId: string) { return factsPurgeImpl.listStruckHeldRows(this.executeRaw.bind(this), sourceId); }
   readHeldRowVisibility(sourceId: string, slug: string) { return factsPurgeImpl.readHeldRowVisibility(this.executeRaw.bind(this), sourceId, slug); }
   heldMoveDue(sourceId: string) { return factsPurgeImpl.heldMoveDue(this.executeRaw.bind(this), sourceId); }

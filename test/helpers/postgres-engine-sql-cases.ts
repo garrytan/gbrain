@@ -216,7 +216,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'heldEntityPageDeleted': OOS.factsPurgeSites,
   'readHeldAccessState': OOS.factsPurgeSites,
   'heldTargetPageLive': OOS.factsPurgeSites,
-  'listHeldFactRows': OOS.factsPurgeSites,
+  'listHeldMoveRows': OOS.factsPurgeSites,
   'listStruckHeldRows': OOS.factsPurgeSites,
   'readHeldRowVisibility': OOS.factsPurgeSites,
   'heldMoveDue': OOS.factsPurgeSites,

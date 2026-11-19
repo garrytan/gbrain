@@ -140,7 +140,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'listHeldFenceFactRows', 'listWithdrawalSlugs', 'expireFactsByWithdrawal', 'insertFactPurge', 'loopFactDrift', 'closedLoopWithActiveFact',
   'expireFactsOfGonePages', 'readPurgeSourceLocalPath', 'insertReasonPurgeTombstones', 'listGitEffectsCarryingReason', 'listPageGitEffectsForStrip',
   'setPurgeEffectData', 'listPageChangeReasons', 'listRequestsRecordingReasons', 'heldEntityPageDeleted', 'readHeldAccessState',
-  'heldTargetPageLive', 'listHeldFactRows', 'listStruckHeldRows', 'readHeldRowVisibility', 'heldMoveDue', 'readHeldConfigValue',
+  'heldTargetPageLive', 'listHeldMoveRows', 'listStruckHeldRows', 'readHeldRowVisibility', 'heldMoveDue', 'readHeldConfigValue',
   'readHeldPageLocation', 'readHeldVersionsEdited', 'listSegmentedPageBodies', 'listSegmentedVersionBodies', 'setPurgeProbeTimeout',
   'probePurgeDerivations', 'listBeliefEventsForPurgeProbe', 'listFactContextsForPurgeProbe', 'listPageSourcePathsForPurge',
   'listNearestFactsForPurge', 'countLegacyDerivedPages', 'vacuumPurgedTables', 'listPageProseHits', 'readPurgeReceiptSourcePath',

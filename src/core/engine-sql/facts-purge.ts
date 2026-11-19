@@ -409,7 +409,7 @@ export async function heldTargetPageLive(raw: EngineRawRead, sourceId: string, s
 }
 
 /** planHeldMoves: every live held row on every holding page, in the order the move runs them. */
-export async function listHeldFactRows(raw: EngineRawRead, sourceId: string): Promise<HeldFactRow[]> {
+export async function listHeldMoveRows(raw: EngineRawRead, sourceId: string): Promise<HeldFactRow[]> {
   const { text } = renderFragment(sqlFragment`SELECT id, source_id, entity_slug, fact, kind, visibility, notability, context, valid_from, valid_until, source, confidence,
             claim_metric, claim_value, claim_unit, claim_period, attributed_to, true AS page_exists, source_markdown_slug AS from_slug
        FROM facts f WHERE ${onHolding} AND f.expired_at IS NULL ORDER BY f.source_markdown_slug, f.entity_slug, f.id`);

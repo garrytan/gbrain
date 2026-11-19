@@ -1632,7 +1632,7 @@ export class PGLiteEngine implements BrainEngine {
   heldEntityPageDeleted(sourceId: string, slug: string) { return factsPurgeImpl.heldEntityPageDeleted(this.rawRead, sourceId, slug); }
   readHeldAccessState(sourceId: string, entity: string) { return factsPurgeImpl.readHeldAccessState(this.rawRead, sourceId, entity); }
   heldTargetPageLive(sourceId: string, slug: string) { return factsPurgeImpl.heldTargetPageLive(this.rawRead, sourceId, slug); }
-  listHeldFactRows(sourceId: string) { return factsPurgeImpl.listHeldFactRows(this.rawRead, sourceId); }
+  listHeldMoveRows(sourceId: string) { return factsPurgeImpl.listHeldMoveRows(this.rawRead, sourceId); }
   listStruckHeldRows(sourceId: string) { return factsPurgeImpl.listStruckHeldRows(this.rawRead, sourceId); }
   readHeldRowVisibility(sourceId: string, slug: string) { return factsPurgeImpl.readHeldRowVisibility(this.rawRead, sourceId, slug); }
   heldMoveDue(sourceId: string) { return factsPurgeImpl.heldMoveDue(this.rawRead, sourceId); }

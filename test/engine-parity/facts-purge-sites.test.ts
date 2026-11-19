@@ -5,7 +5,7 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: expireFactsOfGonePages, readPurgeSourceLocalPath, insertReasonPurgeTombstones, listGitEffectsCarryingReason,
  *    listPageGitEffectsForStrip, setPurgeEffectData, listPageChangeReasons, listRequestsRecordingReasons, heldEntityPageDeleted,
- *    heldTargetPageLive, readHeldAccessState, listHeldFactRows, listStruckHeldRows, readHeldRowVisibility, heldMoveDue,
+ *    heldTargetPageLive, readHeldAccessState, listHeldMoveRows, listStruckHeldRows, readHeldRowVisibility, heldMoveDue,
  *    readHeldConfigValue, readHeldPageLocation, readHeldVersionsEdited, listSegmentedPageBodies, listSegmentedVersionBodies,
  *    setPurgeProbeTimeout, probePurgeDerivations, listBeliefEventsForPurgeProbe, listFactContextsForPurgeProbe,
  *    listPageSourcePathsForPurge, listNearestFactsForPurge, countLegacyDerivedPages, vacuumPurgedTables, listPageProseHits,
@@ -247,8 +247,8 @@ describe('engine parity: purge, purge receipt and held-fact move statements of t
     return answers;
   });
 
-  parityTest('listHeldFactRows lists a holding page\'s live held rows and listStruckHeldRows its struck ones, keyed by page and entity', {
-    methods: ['putPage', 'insertFacts', 'expireFact', 'listHeldFactRows', 'listStruckHeldRows'],
+  parityTest('listHeldMoveRows lists a holding page\'s live held rows and listStruckHeldRows its struck ones, keyed by page and entity', {
+    methods: ['putPage', 'insertFacts', 'expireFact', 'listHeldMoveRows', 'listStruckHeldRows'],
   }, async (engine, backend) => {
     await createSource(engine, backend, 'other');
     await engine.putPage(HOLDING, note('Held', 'holding page'));
@@ -266,12 +266,12 @@ describe('engine parity: purge, purge receipt and held-fact move statements of t
     await fenced(engine, 'on another page', { source_markdown_slug: 'people/a', entity_slug: 'people/a', visibility: 'private' });
     await fenced(engine, 'a slot', { source_markdown_slug: HOLDING, entity_slug: 'people/a', source: `${CONVERSATION_FACTS_SOURCE_PREFIX}:parity`, dimension: 'city', value: 'Paris', visibility: 'private' });
     await held('in another source', 'people/a', {}, 'other');
-    const liveRows = await engine.listHeldFactRows(SRC);
+    const liveRows = await engine.listHeldMoveRows(SRC);
     const struckRows = await engine.listStruckHeldRows(SRC);
     const answers = {
       live: liveRows.map(r => ({ fact: r.fact, entity: r.entity_slug, from: r.from_slug, source: r.source_id, pageExists: r.page_exists })),
       struck: struckRows.map(r => ({ fact: r.fact, entity: r.entity_slug, from: r.from_slug, row: typeof r.row_num })),
-      otherSource: (await engine.listHeldFactRows('other')).map(r => r.fact),
+      otherSource: (await engine.listHeldMoveRows('other')).map(r => r.fact),
     };
     expect(answers.live.map(r => r.fact)).toEqual(['live for a', 'live for b']);
     expect(answers.struck.map(r => r.fact).sort()).toEqual(['struck once', 'struck then reused']);

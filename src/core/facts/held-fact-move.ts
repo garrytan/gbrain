@@ -158,7 +158,7 @@ export interface HeldMoveGroup {
  */
 export async function planHeldMoves(engine: BrainEngine, sourceId: string, opts: { home?: (key: string) => Promise<HoldingHome>; hidden?: (slug: string) => boolean } = {}):
   Promise<{ groups: HeldMoveGroup[]; unmovable: HeldFactMoveOutcome['unmovable'] }> {
-  const rows = await engine.listHeldFactRows(sourceId);
+  const rows = await engine.listHeldMoveRows(sourceId);
   // A struck row keeps its facts row (expired) at its row number; one an active fact reuses is not struck.
   const struck = await engine.listStruckHeldRows(sourceId);
   const keys = new Map<string, { from: string; key: string; group: HeldRow[]; struck: HeldDrop[] }>();
@@ -211,7 +211,7 @@ export async function moveRuledSharedHeld(engine: BrainEngine, sourceId: string)
  * holdingHome's config read included, ends on the server at `deadlineAt`, and one ended there rejects as a
  * PreparationDeadlineError. PGLite plans on the engine.
  */
-const DEADLINE_BOUND: ReadonlySet<PropertyKey> = new Set(['resolveAliases', 'heldEntityPageDeleted', 'readHeldAccessState', 'heldTargetPageLive', 'listHeldFactRows',
+const DEADLINE_BOUND: ReadonlySet<PropertyKey> = new Set(['resolveAliases', 'heldEntityPageDeleted', 'readHeldAccessState', 'heldTargetPageLive', 'listHeldMoveRows',
   'listStruckHeldRows', 'readHeldRowVisibility', 'heldMoveDue', 'readHeldConfigValue']);
 
 function planningView(engine: BrainEngine, deadlineAt: number): BrainEngine {

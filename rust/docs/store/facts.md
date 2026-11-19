@@ -727,7 +727,7 @@ Postgres text of each statement is pinned byte for byte by `test/facts-purge-sit
 | `heldEntityPageDeleted` | Whether a soft-deleted page holds the slug. Reads pages. |
 | `readHeldAccessState` | Whether the access state is readable, an exact page rule covers the entity and a folder rule restricts it. Reads access_rules, access_pending_coverage and the access functions; the caller decides what a failed read means. |
 | `heldTargetPageLive` | Whether a live page holds the slug. Reads pages. |
-| `listHeldFactRows` | Every live held row on every holding page of the source, by holding page, entity and id. Reads facts and pages. |
+| `listHeldMoveRows` | Every live held row on every holding page of the source, by holding page, entity and id. Reads facts and pages. |
 | `listStruckHeldRows` | The struck held rows, one per holding page and row number, none an active fact reuses. Reads facts and pages. |
 | `readHeldRowVisibility` | Whether every reader of the source can read the live page; null for no live page. Reads pages and the access rules. |
 | `heldMoveDue` | Whether a rule now narrows a held row's entity below its holding page's readers. Reads facts, pages and the access functions. |

@@ -3614,7 +3614,7 @@ export interface BrainEngine {
   /** Whether a live page holds the slug. Reads pages. */
   heldTargetPageLive(sourceId: string, slug: string): Promise<boolean>;
   /** Every live held row on every holding page of the source, by holding page, entity and id. Reads facts and pages. */
-  listHeldFactRows(sourceId: string): Promise<FactsPurgeSql.HeldFactRow[]>;
+  listHeldMoveRows(sourceId: string): Promise<FactsPurgeSql.HeldFactRow[]>;
   /** The struck held rows, one per holding page and row number, none an active fact reuses. Reads facts and pages. */
   listStruckHeldRows(sourceId: string): Promise<FactsPurgeSql.StruckHeldRow[]>;
   /** Whether every reader of the source can read the live page; null for no live page. Reads pages and the access rules. */

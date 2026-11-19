@@ -460,7 +460,7 @@ export const RUST_ENGINE_MEMBERS = {
   heldEntityPageDeleted: 'facts',
   readHeldAccessState: 'facts',
   heldTargetPageLive: 'facts',
-  listHeldFactRows: 'facts',
+  listHeldMoveRows: 'facts',
   listStruckHeldRows: 'facts',
   readHeldRowVisibility: 'facts',
   heldMoveDue: 'facts',

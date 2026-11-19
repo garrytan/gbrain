@@ -149,8 +149,8 @@ const PINS: Pin[] = [
   },
   {
     from: 'src/core/facts/held-fact-move.ts:169 planHeldMoves (held rows)',
-    member: 'listHeldFactRows',
-    run: e => e.listHeldFactRows('src-a'),
+    member: 'listHeldMoveRows',
+    run: e => e.listHeldMoveRows('src-a'),
     texts: [`SELECT id, source_id, entity_slug, fact, kind, visibility, notability, context, valid_from, valid_until, source, confidence,
             claim_metric, claim_value, claim_unit, claim_period, attributed_to, true AS page_exists, source_markdown_slug AS from_slug
        FROM facts f WHERE ${onHolding} AND f.expired_at IS NULL ORDER BY f.source_markdown_slug, f.entity_slug, f.id`],

@@ -205,7 +205,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'listHeldFenceFactRows', 'listWithdrawalSlugs', 'expireFactsByWithdrawal', 'insertFactPurge',
     'expireFactsOfGonePages', 'readPurgeSourceLocalPath', 'insertReasonPurgeTombstones', 'listGitEffectsCarryingReason', 'listPageGitEffectsForStrip',
     'setPurgeEffectData', 'listPageChangeReasons', 'listRequestsRecordingReasons', 'heldEntityPageDeleted', 'readHeldAccessState',
-    'heldTargetPageLive', 'listHeldFactRows', 'listStruckHeldRows', 'readHeldRowVisibility', 'heldMoveDue',
+    'heldTargetPageLive', 'listHeldMoveRows', 'listStruckHeldRows', 'readHeldRowVisibility', 'heldMoveDue',
     'readHeldConfigValue', 'readHeldPageLocation', 'readHeldVersionsEdited', 'listSegmentedPageBodies', 'listSegmentedVersionBodies',
     'setPurgeProbeTimeout', 'probePurgeDerivations', 'listBeliefEventsForPurgeProbe', 'listFactContextsForPurgeProbe', 'listPageSourcePathsForPurge',
     'listNearestFactsForPurge', 'countLegacyDerivedPages', 'vacuumPurgedTables', 'listPageProseHits', 'readPurgeReceiptSourcePath',
