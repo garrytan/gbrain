@@ -71,6 +71,11 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
       renameSync(join(b.root, 'companies/moved-example.md'), join(b.root, 'companies/closed-a-example.md'));
       await b.put('companies/closed-a-example', beliefPage({ prose: 'Lifetime A closed.', frontmatter: { visibility: 'private', readable_by: '[bob-example]' } }));
       await b.put('companies/moved-example', beliefPage({ prose: 'Lifetime B open.' }));
+      // A purged lifetime and the one recreated at its slug: world history the other callers list.
+      await b.put('companies/purged-example', beliefPage({ prose: 'Before the purge.' }));
+      const purgedRevision = (await b.engine.executeRaw<{ r: string }>('SELECT knowledge_revision::text AS r FROM pages WHERE source_id = $1 AND slug = $2', [b.sourceId, 'companies/purged-example']))[0]!.r;
+      await b.op('delete_page', { slug: 'companies/purged-example', purge: true, expected_revision: purgedRevision });
+      await b.put('companies/purged-example', beliefPage({ prose: 'After the purge.' }));
       await b.put('companies/secret-example', priv('Secret second draft.'));
       await b.put('companies/opening-example', beliefPage({ prose: 'Now public.' }));
       const t2 = await at(b);
@@ -129,6 +134,12 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
       const moved = await history('owner', 'companies/moved-example', t2);
       expect({ error: moved.isError, b: moved.text.includes('Lifetime B open.'), a: moved.text.includes('Lifetime A') }).toEqual({ error: false, b: true, a: false });
       expect(await listed('owner', 'companies/moved-example', t2)).toBe(1);
+      // The owner never lists less than the world-only rule lists every other remote caller.
+      for (const slug of ['companies/purged-example', 'companies/opening-example', 'companies/handover-example', 'companies/moved-example']) {
+        const [ownerCount, bobCount, unboundCount] = [await listed('owner', slug, t2), await listed('bob', slug, t2), await listed('unbound', slug, t2)];
+        expect({ slug, ownerAtLeastBob: ownerCount >= bobCount, ownerAtLeastUnbound: ownerCount >= unboundCount }).toEqual({ slug, ownerAtLeastBob: true, ownerAtLeastUnbound: true });
+      }
+      expect(await listed('owner', 'companies/purged-example', t2)).toBe(await listed('unbound', 'companies/purged-example', t2));
 
       // Every other remote caller reads no more than before: world-only history, no private fence rows.
       for (const who of ['bob', 'unbound']) {

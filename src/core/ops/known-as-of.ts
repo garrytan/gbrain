@@ -86,7 +86,8 @@ type GatedInterval = PageInterval & { quarantined?: QuarantinedView; live?: { so
  * current read keeps none (the same view and notice as get_page). GST-2891: each carries the live page's source and slug,
  * where its held rows are looked up (a rename moves a page's facts to its new slug). GST-3252 (R94): the owner reads an
  * interval when its current-time read shows the page of the interval's own lifetime, and the edition's own readers admit
- * it, as get_page as_of judges a stored edition; an edition whose frontmatter was not loaded must have been world.
+ * it, as get_page as_of judges a stored edition (an edition whose frontmatter was not loaded must have been world), and
+ * never less than the world-only rule shows every remote caller.
  */
 async function readable(ctx: OperationContext, read: PageAtTime, intervals: PageInterval[], minTrust: unknown, owner: string | null): Promise<GatedInterval[]> {
   if (ctx.remote === false) return intervals;
@@ -100,8 +101,8 @@ async function readable(ctx: OperationContext, read: PageAtTime, intervals: Page
   const quarantine = historyQuarantine(ctx, live);
   const out: GatedInterval[] = [];
   for (const i of intervals) {
-    if (owner !== null ? !ownerReads.has(i.lifetime) || !(i.page ? callerReadersAllow(i.page.frontmatter, i.slug) : i.event.visibility === 'world')
-      : !(await remoteMayRead(ctx.engine, read.page_id, i))) continue;
+    const ownerSees = owner !== null && ownerReads.has(i.lifetime) && (i.page ? callerReadersAllow(i.page.frontmatter, i.slug) : i.event.visibility === 'world');
+    if (!ownerSees && !(await remoteMayRead(ctx.engine, read.page_id, i))) continue;
     const view = quarantine(i.page?.frontmatter);
     const held = { sourceId: live.source_id, slug: live.slug };
     out.push(view?.body_omitted && i.page
