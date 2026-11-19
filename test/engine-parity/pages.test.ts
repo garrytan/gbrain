@@ -446,13 +446,12 @@ describe('engine parity: pages', () => {
   });
 
   // PGLite binds the limit as text for `LIMIT $n` (a bigint): null is no limit, a negative integer is refused, and a
-  // fraction, NaN or an infinity fails to parse (#9823 review note 9). postgres.js refuses an undefined parameter, so the
-  // missing-limit read runs on PGLite and Rust only; on Postgres it reads null, which PGLite answers the same way.
-  parityTest('findPages reads a missing, null, non-integer or negative limit as PGLite does', { methods: ['findPages'] }, async (engine, backend) => {
+  // fraction, NaN or an infinity fails to parse (#9823 review note 9). A missing limit is no limit on every engine.
+  parityTest('findPages reads a missing, null, non-integer or negative limit as PGLite does', { methods: ['findPages'] }, async (engine) => {
     await seed(engine, [['notes/a', NOTE], ['notes/b', NOTE], ['notes/c', NOTE]]);
     const find = (limit: unknown) => engine.findPages({ pattern: parseFindPattern('notes/'), limit: limit as number, excludeSlugPrefixes: [] })
       .then((f) => ({ total: f.total, rows: f.rows.map((r) => r.slug) }), (e: unknown) => ({ error: e instanceof Error ? e.message : String(e) }));
-    const missing = await find(backend === 'postgres' ? null : undefined);
+    const missing = await find(undefined);
     expect(missing).toEqual({ total: 3, rows: ['notes/a', 'notes/b', 'notes/c'] });
     const out: Record<string, unknown> = { missing };
     for (const limit of [null, 2, 0, -0, 2 ** 53, -1, 1.5, 0.5, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, 1e21, 2 ** 63]) {

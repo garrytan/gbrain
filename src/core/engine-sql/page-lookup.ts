@@ -40,6 +40,7 @@ function visiblePages(scope: { sourceId?: string; sourceIds?: string[]; untruste
 
 const normalizeFound = compileRowNormalizer<FoundPage & { total: number }>({ total: 'bigint' });
 
+/** A missing limit binds `LIMIT NULL`, which is no limit (postgres.js refuses an undefined parameter). */
 export async function findPages(exec: ScopedRead, query: FindPagesQuery): Promise<FoundPages> {
   const like = query.pattern.like;
   const match = query.pattern.kind === 'name'
@@ -55,7 +56,7 @@ export async function findPages(exec: ScopedRead, query: FindPagesQuery): Promis
       JOIN sources s ON s.id = p.source_id
      WHERE ${match} AND ${visiblePages(query)} ${types} ${hidden}
      ORDER BY p.slug COLLATE "C", p.source_id COLLATE "C"
-     LIMIT ${query.limit}
+     LIMIT ${query.limit ?? null}
   `);
   const found = rows.map(normalizeFound);
   return {
