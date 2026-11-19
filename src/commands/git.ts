@@ -20,6 +20,7 @@ import { commitAndPush, checkoutRoot, previewPaths, previewUntrack, pullShared, 
 import { readUntrackPageVerdict, UNTRACK_PAGE_READ_TIMEOUT_MS, type UntrackPageVerdict } from '../core/git/untrack-admission.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { capabilitiesForEngineKind } from '../core/engine-capabilities.ts';
+import { isSqlEngineKind } from '../core/sql-engine-kind.ts';
 import type { ManagedFilesystemRoot } from '../core/persistence/filesystem-guard.ts';
 import { guardStatus, installGuard, uninstallGuard } from '../core/git/commit-guard.ts';
 import { appendPushLog } from '../core/brain-repo-durability.ts';
@@ -284,7 +285,7 @@ async function withLocalBrain<T>(fn: (engine: BrainEngine) => Promise<T>, timeou
   if (!config || (isThinClient(config) && !config.database_url)) return null;
   let engine: BrainEngine | null = null, timer: ReturnType<typeof setTimeout> | undefined;
   const work = (async () => {
-    const engineConfig = capabilitiesForEngineKind(config.engine).has('single_owner') ? { ...toEngineConfig(config), pglite_shared_buffers: '32MB' } : { ...toEngineConfig(config), pool_max: 1 };
+    const engineConfig = isSqlEngineKind(config.engine) && capabilitiesForEngineKind(config.engine).has('single_owner') ? { ...toEngineConfig(config), pglite_shared_buffers: '32MB' } : { ...toEngineConfig(config), pool_max: 1 };
     engine = await createEngine(engineConfig);
     await engine.connect(engineConfig);
     return fn(engine);
