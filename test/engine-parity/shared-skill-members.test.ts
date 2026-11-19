@@ -9,8 +9,10 @@
  *    sync_brain_skills issues one batch per view (a repeat sync reuses it), records an acknowledgment once, replays
  *    the same evidence and refuses a batch from another epoch; leave_brain ends only the current epoch. Every engine
  *    arm (PGLite always; Postgres with DATABASE_URL; the Rust arm through test/engine-parity/harness.ts) gives the
- *    same answers. The Rust store keeps no catalog heads and no stored publication policies, so every arm here runs
- *    with an empty catalog and the legacy policy.
+ *    same answers. A stored publication policy and a stored head bind a source on every arm, a new batch leases each
+ *    revision it names, a refused issue changes nothing (its prune included), and a malformed uuid fails with 22P02.
+ *    A Rust brain cannot activate shared publication, so writeSharedSkillRevision refuses there as the SQL guard
+ *    refuses on a brain without it (42501 writer_not_quiesced); fixtures seed heads under the guard.
  *  - Regression: these reads and writes ran through executeRaw, so on a Rust brain join_brain ended in
  *    engine_capability_missing at the brain-id lock, and sync_brain_skills and leave_brain could never reach a member.
  *    Each filter is an access cut: a case puts the row a dropped clause would let through (another principal's
@@ -22,6 +24,7 @@
  *    tokens, timestamps) are reduced to their shape in the returned values.
  */
 import { describe, expect } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -30,7 +33,11 @@ import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { OperationContext } from '../../src/core/ops/contract.ts';
-import type { SharedSkillBatchIssue } from '../../src/core/engine-sql/shared-skill-members.ts';
+import type { SharedSkillBatchIssue, SharedSkillRevisionWrite } from '../../src/core/engine-sql/shared-skill-members.ts';
+import type { RustEngine } from '../../src/core/rust-engine.ts';
+import { declarePersistenceProtocol } from '../../src/core/persistence/protocol.ts';
+import { getSharedSkillPolicy, setSharedSkillPolicy } from '../../src/core/shared-skills/policy.ts';
+import { getSharedSkill } from '../../src/core/shared-skills/catalog.ts';
 import { registerServeLocalWriters } from '../../src/core/persistence/provider.ts';
 import { brainMembershipOperations } from '../../src/core/ops/brain-membership.ts';
 
@@ -79,6 +86,32 @@ async function installSingletons(engine: BrainEngine, backend: ParityBackend): P
 async function enroll(engine: BrainEngine, installationId: string, principalId: string, adapter = 'generic'): Promise<void> {
   const brainId = (await engine.transaction(tx => tx.lockSharedSkillBrainId()))!;
   await engine.enrollSharedSkillMember({ installationId, principalKind: 'local_writer', principalId, adapter, brainId, followPolicy: POLICY });
+}
+
+const REVISION = 'e0000000-0000-4000-8000-0000000000c1';
+const OTHER_REVISION = 'e0000000-0000-4000-8000-0000000000c3';
+const BODY = '---\nname: notes\ndescription: Take notes.\n---\nTake notes.\n';
+
+/** One published skill revision: a SKILL.md of class prose for readers. */
+function skillRevision(incarnation: string, policyEpoch: string, revision = REVISION): SharedSkillRevisionWrite {
+  const file = { path: 'skills/notes/SKILL.md', file_class: 'prose' as const, audience: ['readers'], media_type: 'text/markdown', size: Buffer.byteLength(BODY),
+    sha256: createHash('sha256').update(BODY).digest('hex'), depends_on: [], content: Buffer.from(BODY).toString('base64') };
+  return { sourceId: 'default', incarnation, packId: 'pack', name: 'notes', revision, deleted: false, policyEpoch, requestId: 'e0000000-0000-4000-8000-0000000000c2',
+    metadata: { description: 'Take notes.', triggers: [], requirements: [], private: false, audience: ['readers'], writes_pages: false, mutating: false,
+      file_policy: [{ file_class: 'prose', audience: ['readers'] }], tools_declared: false },
+    files: [file] };
+}
+
+/**
+ * Fixture: store a revision and its head. The SQL arms write it under the publication guard (no arm here activates
+ * shared publication); the Rust arm writes it to the store, since its engine member refuses as that guard does.
+ */
+async function seedRevision(engine: BrainEngine, backend: ParityBackend, write: SharedSkillRevisionWrite): Promise<void> {
+  if (backend === 'rust') { await (engine as unknown as RustEngine).openStore('seedRevision').brain.writeSharedSkillRevision(write); return; }
+  await engine.transaction(async tx => {
+    await tx.executeRaw('SET LOCAL session_replication_role = replica');
+    await tx.writeSharedSkillRevision(write);
+  });
 }
 
 function issueSpec(over: Partial<SharedSkillBatchIssue>): SharedSkillBatchIssue {
@@ -196,8 +229,13 @@ describe('engine parity: shared-skill membership', () => {
     // A batch under the next epoch prunes every batch of the previous one.
     const next = await engine.issueSharedSkillDeliveryBatch(issueSpec({ epoch: 2, issuedSequence: 0 }));
     let refused: unknown = null;
-    try { await engine.issueSharedSkillDeliveryBatch(issueSpec({ epoch: 2, issuedSequence: 1, viewToken: 'v9', revisions: ['brain/default/x/pack/skill@missing'] })); }
+    // retainedBatches 1 would prune `next`; the refusal rolls the prune back with the batch.
+    try { await engine.issueSharedSkillDeliveryBatch(issueSpec({ epoch: 2, issuedSequence: 1, viewToken: 'v9', retainedBatches: 1, revisions: ['brain/default/x/pack/skill@missing'] })); }
     catch (error) { refused = { code: (error as { code?: string }).code, retained: (error as Error).message.includes('revision_unavailable: delivery revision is no longer retained') }; }
+    const kept2 = await engine.readSharedSkillDeliveryBatch(next.batch.token, A, 2);
+    const after = await engine.readSharedSkillMember({ installationId: A, principalKind: 'local_writer', principalId: 'writer-a' });
+    const afterRefusal = { view: kept2?.view_token ?? null, revisions: kept2?.revisions ?? null, acked: kept2?.acknowledged_at ?? null,
+      issued: after?.issued_sequence, desired: after?.desired_view, acknowledged: after?.acknowledged_sequence };
     const result = {
       one: { created: one.created, seq: one.issuedSequence, batch: one.batch.sequence, epoch: one.batch.epoch, token: UUID.test(one.batch.token) },
       again: { created: again.created, seq: again.issuedSequence, same: again.batch.token === one.batch.token },
@@ -213,7 +251,7 @@ describe('engine parity: shared-skill membership', () => {
       three: three.issuedSequence,
       kept,
       next: { seq: next.issuedSequence, previous: await engine.readSharedSkillDeliveryBatch(three.batch.token, A, 1) ?? null },
-      refused,
+      refused, afterRefusal,
     };
     expect(result).toEqual({
       one: { created: true, seq: 1, batch: 1, epoch: 1, token: true },
@@ -228,6 +266,7 @@ describe('engine parity: shared-skill membership', () => {
       kept: [false, true, true],
       next: { seq: 1, previous: null },
       refused: { code: '23503', retained: true },
+      afterRefusal: { view: 'v1', revisions: [], acked: null, issued: 1, desired: 'v1', acknowledged: 2 },
     });
     return result;
   });
@@ -294,4 +333,94 @@ describe('engine parity: shared-skill membership', () => {
     });
     return result;
   }));
+
+  parityTest('a stored policy and head bind a source end to end; get_skill reads the revision and a new batch leases it', {
+    methods: ['readSharedSkillCatalogIdentity', 'listSharedSkillCatalogHeads', 'listSharedSkillFollowSources', 'lockSharedSkillBrainId', 'readSharedSkillMember',
+      'countSharedSkillMembers', 'enrollSharedSkillMember', 'issueSharedSkillDeliveryBatch', 'readSharedSkillDeliveryBatch',
+      'readSharedSkillServingEpoch', 'readPersistenceBrainId', 'insertLocalWriterRow', 'readLocalWriterRow', 'readLocalWriterMemberGrant', 'readSourceMembership', 'readSharedSkillPolicyRow', 'writeSharedSkillPolicy', 'readSharedSkillRevision', 'transaction'],
+  }, (engine, backend) => inFreshHome(async () => {
+    await installSingletons(engine, backend);
+    await registerServeLocalWriters(engine);
+    const policy = { version: 1 as const, enabled: true, classes: ['prose' as const], audiences: ['readers'], requirements: [], allow_follow: true };
+    const set = await setSharedSkillPolicy(local(engine), 'default', policy, null);
+    let stale: unknown = null;
+    try { await setSharedSkillPolicy(local(engine), 'default', policy, null); }
+    catch (error) { stale = (error as { code?: string }).code; }
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    await seedRevision(engine, backend, skillRevision(incarnation, set.policy_epoch));
+    const heads = await engine.listSharedSkillCatalogHeads({ sourceIds: null, limit: 101, sourceId: null, sourceIncarnation: null, packId: null, name: null, hidePrivate: true });
+    const head = heads[0] as any;
+    const key = { sourceId: 'default', incarnation, packId: 'pack', name: 'notes', revision: REVISION };
+    const stored = await engine.readSharedSkillRevision(key);
+    const join = await answer(engine, 'join_brain', { adapter: 'generic', follow_policy: { approved: true } });
+    const detail = await getSharedSkill(local(engine), { source_id: 'default', name: 'notes' });
+    // The lease: a batch that names the retained revision issues; one that names an unknown revision is refused.
+    const brainId = await engine.readPersistenceBrainId();
+    const item = `${brainId}/default/${incarnation}/pack/notes@${REVISION}`;
+    const installationId = join.ok.installation_id as string;
+    const leased = await engine.issueSharedSkillDeliveryBatch(issueSpec({ installationId, issuedSequence: 1, viewToken: 'v-leased', revisions: [item] }));
+    let unknown: unknown = null;
+    try { await engine.issueSharedSkillDeliveryBatch(issueSpec({ installationId, issuedSequence: 2, viewToken: 'v-unknown', revisions: [item.replace(REVISION, OTHER_REVISION)] })); }
+    catch (error) { unknown = (error as { code?: string }).code; }
+    const result = {
+      set: UUID.test(set.policy_epoch), stale,
+      get: await getSharedSkillPolicy(local(engine), 'default').then(g => ({ ...g, source_incarnation: g.source_incarnation === incarnation,
+        policy_epoch: g.policy_epoch === set.policy_epoch })),
+      row: await engine.readSharedSkillPolicyRow('default', incarnation, false).then(r => r && { epoch: r.epoch === set.policy_epoch, policy: r.policy }),
+      heads: heads.map((h: any) => ({ source: h.source_id, incarnation: h.source_incarnation === incarnation, pack: h.pack_id, name: h.name, revision: h.revision,
+        deleted: h.deleted, policyEpoch: h.policy_epoch === set.policy_epoch, current: h.current_policy, currentEpoch: h.current_epoch === set.policy_epoch,
+        updated: h.updated_at instanceof Date, description: h.metadata?.description })),
+      head: head && { files: 'files' in head },
+      stored: stored && { revision: stored.revision, deleted: stored.deleted, files: stored.files.map(f => f.path), description: stored.metadata.description },
+      otherRevision: await engine.readSharedSkillRevision({ ...key, revision: OTHER_REVISION }) ?? null,
+      otherSource: await engine.readSharedSkillRevision({ ...key, sourceId: 'missing' }) ?? null,
+      join: shape(join),
+      followed: join.ok.skills.map((s: any) => `${s.source_id}/${s.pack_id}/${s.name}@${s.revision}`),
+      detail: { revision: (detail as any).revision, files: (detail as any).files.map((f: any) => f.path), description: (detail as any).description },
+      leased: { created: leased.created, revisions: JSON.stringify((await engine.readSharedSkillDeliveryBatch(leased.batch.token, installationId, 1))?.revisions) === JSON.stringify([item]) },
+      unknown,
+    };
+    expect(result).toEqual({
+      set: true, stale: 'revision_conflict',
+      get: { schema_version: 2, source_id: 'default', source_incarnation: true, publication_enabled: false, policy_epoch: true, policy },
+      row: { epoch: true, policy },
+      heads: [{ source: 'default', incarnation: true, pack: 'pack', name: 'notes', revision: REVISION, deleted: false, policyEpoch: true, current: policy, currentEpoch: true,
+        updated: true, description: 'Take notes.' }],
+      head: { files: false },
+      stored: { revision: REVISION, deleted: false, files: ['skills/notes/SKILL.md'], description: 'Take notes.' },
+      otherRevision: null, otherSource: null,
+      join: { status: 'catalog_visible', complete: true, epoch: 1, sequence: 1, skills: 1, blocked: 0, installation: 'unverified', ack: null, ids: true },
+      followed: [`default/pack/notes@${REVISION}`],
+      detail: { revision: REVISION, files: ['skills/notes/SKILL.md'], description: 'Take notes.' },
+      leased: { created: true, revisions: true },
+      unknown: '23503',
+    });
+    return result;
+  }));
+
+  parityTest('a malformed uuid fails with 22P02; writeSharedSkillRevision refuses on a brain without shared publication', {
+    methods: ['readSharedSkillRevision', 'readSharedSkillDeliveryBatch', 'writeSharedSkillRevision', 'readSourceMembership', 'declarePersistence', 'transaction'],
+  }, async (engine, backend) => {
+    await installSingletons(engine, backend);
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    const code = async (run: () => Promise<unknown>) => {
+      try { await run(); return null; }
+      catch (error) { return { code: (error as { code?: string }).code, message: (error as Error).message.split('\n')[0] }; }
+    };
+    const result = {
+      revision: await code(() => engine.readSharedSkillRevision({ sourceId: 'default', incarnation, packId: 'pack', name: 'notes', revision: 'not-a-uuid' })),
+      incarnation: await code(() => engine.readSharedSkillRevision({ sourceId: 'default', incarnation: 'not-a-uuid', packId: 'pack', name: 'notes', revision: REVISION })),
+      batch: await code(() => engine.readSharedSkillDeliveryBatch('not-a-uuid', A, 1)),
+      installation: await code(() => engine.readSharedSkillDeliveryBatch(UNKNOWN, 'not-a-uuid', 1)),
+      publish: await code(() => engine.transaction(async tx => {
+        await declarePersistenceProtocol(tx);
+        await tx.writeSharedSkillRevision(skillRevision(incarnation, 'epoch'));
+      })),
+      stored: await engine.readSharedSkillRevision({ sourceId: 'default', incarnation, packId: 'pack', name: 'notes', revision: REVISION }) ?? null,
+    };
+    const malformed = { code: '22P02', message: 'invalid input syntax for type uuid: "not-a-uuid"' };
+    expect(result).toEqual({ revision: malformed, incarnation: malformed, batch: malformed, installation: malformed,
+      publish: { code: '42501', message: 'writer_not_quiesced: shared publication is disabled' }, stored: null });
+    return result;
+  });
 });
