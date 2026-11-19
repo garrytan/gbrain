@@ -489,6 +489,38 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
       });
     }, 120_000);
 
+    test('a restore ties a place to the page it checked, never to one that took the slug while it ran', async () => {
+      await brain(async b => {
+        const bucket = mkdtempSync(join(tmpdir(), 'gbrain-ss-pin-'));
+        try {
+          const storage = await createStorage({ backend: 'local', bucket: 'b', localPath: bucket });
+          await b.engine.executeRaw('DELETE FROM secret_store_occurrence WHERE source_id = $1', [b.sourceId]);
+          await b.engine.executeRaw('DELETE FROM secret_store WHERE source_id = $1', [b.sourceId]);
+          const tag = randomUUID().slice(0, 6), slug = 'notes/pinned-' + tag, other = 'notes/taker-' + tag;
+          const pinned = (await seal(b.engine, { sourceId: b.sourceId, rule: 'github_token', value: value('pn' + tag) })).id;
+          await b.engine.putPage(slug, { type: 'note', title: 'Pinned', compiled_truth: 'Pinned ' + markerOf('github_token', pinned), timeline: '', frontmatter: {} }, { sourceId: b.sourceId });
+          await b.engine.putPage(other, { type: 'note', title: 'Taker', compiled_truth: 'No marker', timeline: '', frontmatter: {} }, { sourceId: b.sourceId });
+          const kept = (await seal(b.engine, { sourceId: b.sourceId, rule: 'github_token', value: value('kq' + tag) })).id;
+          await b.engine.putPage('notes/kept-' + tag, { type: 'note', title: 'Kept', compiled_truth: 'Kept ' + markerOf('github_token', kept), timeline: '', frontmatter: {} }, { sourceId: b.sourceId });
+          await recordOccurrence(b.engine, { entryId: pinned, sourceId: b.sourceId, slug, field: 'compiled_truth', origin: 'repair' });
+          await recordOccurrence(b.engine, { entryId: kept, sourceId: b.sourceId, slug: 'notes/kept-' + tag, field: 'compiled_truth', origin: 'repair' });
+          const out = await backupStore(b.engine, storage);
+          await b.engine.executeRaw('DELETE FROM secret_store_occurrence WHERE source_id = $1', [b.sourceId]);
+          await b.engine.executeRaw('DELETE FROM secret_store WHERE source_id = $1', [b.sourceId]);
+          await b.engine.executeRaw(`CREATE FUNCTION test_take_slug() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id = '${pinned}' THEN UPDATE pages SET slug = '${slug}-moved' WHERE slug = '${slug}'; UPDATE pages SET slug = '${slug}' WHERE slug = '${other}'; END IF; RETURN NEW; END $$`);
+          await b.engine.executeRaw('CREATE TRIGGER test_take_slug AFTER INSERT ON secret_store FOR EACH ROW EXECUTE FUNCTION test_take_slug()');
+          try {
+            expect(await restoreBackup(b.engine, storage, out.object)).toMatchObject({ inserted: 1, skipped_no_page: 1 });
+          } finally {
+            await b.engine.executeRaw('DROP TRIGGER test_take_slug ON secret_store');
+            await b.engine.executeRaw('DROP FUNCTION test_take_slug()');
+          }
+          expect(await b.engine.executeRaw('SELECT entry_id FROM secret_store_occurrence WHERE entry_id = $1', [pinned])).toEqual([]);
+          expect(await b.engine.executeRaw('SELECT id FROM secret_store WHERE id = $1', [pinned])).toEqual([]);
+        } finally { rmSync(bucket, { recursive: true, force: true }); }
+      });
+    }, 120_000);
+
     test('a rename that fails partway leaves the page and its secret occurrences where they were', async () => {
       await brain(async b => {
         const foo = `notes/foo-${randomUUID().slice(0, 6)}`, bar = `notes/bar-${randomUUID().slice(0, 6)}`;

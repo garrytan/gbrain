@@ -133,8 +133,11 @@ one `gbrain files` uses), gbrain also uploads an encrypted export of the store t
   the places the backup recorded for it that this brain lacks are added, so a later purge of one page never removes an
   original another page still holds. A restore only adds rows and never deletes one it did not write, and it ties a restored place to
   the page at its backed-up slug only when that page holds the entry's marker (`<REDACTED:<rule>:<id>>`), so a page
-  that merely took an old slug, or quotes the id, never gets the original, and neither does another page a copy of
-  the marker sits on. A page whose body is stored in segments is read segment by segment.
+  that merely took an old slug, or quotes the id, never gets the original. The marker counts when it sits in the page
+  itself or in a timeline entry or fact filed on or about that page, so a copy another page wrote into that page's
+  timeline counts too. A page whose body is stored in segments is read segment by segment. The restore ties the place
+  to the exact page it checked and holds that page until it commits, so a rename running at the same time cannot hand
+  the original to a page that takes the slug.
   An original recorded only on pages, none of which at its backed-up slugs holds its marker, is skipped and counted as
   `skipped_no_page` ("skipped because no page in this brain holds their marker"): the page was purged, is not synced
   yet, or was renamed before the backup named it by its current slug (a backup from before 0.60.744.0),
