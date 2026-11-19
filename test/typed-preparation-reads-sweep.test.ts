@@ -35,6 +35,7 @@ const members: ReadonlyArray<readonly [string, string, (e: BrainEngine) => Promi
   ['listConfigKeys', 'SELECT key FROM config WHERE key LIKE', e => e.listConfigKeys('a.')],
   ['readPageSnapshot', 'WITH chosen AS (', e => e.readPageSnapshot('a', { sourceId: 'default' })],
   ['getPage', 'WITH chosen AS (', e => e.getPage('a', { sourceId: 'default' })],
+  ['findDuplicatePage', 'SELECT id, slug FROM pages', e => e.findDuplicatePage!('default', { hash: 'h' })],
 ];
 const views = [['managed sync (engineReads)', { engineReads: true }], ['page/maintenance preparer', {}]] as const;
 const never = () => new Promise<never>(() => {});
