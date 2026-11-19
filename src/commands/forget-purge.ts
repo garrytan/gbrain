@@ -92,6 +92,13 @@ export function renderPurgeReceipt(r: Record<string, unknown>): string {
 export interface PurgeCliIo { interactive?: () => boolean; readToken?: (prompt: string) => Promise<string | null> }
 
 /** `gbrain forget` argv this module handles: a purge, its help, and a --dry-run (which a plain forget refuses here, since it has none). */
+/** #9738: the fact ids among `gbrain forget` arguments: every all-digit argument that is not the value of one of its flags (`--reason 42`). */
+export async function forgetFactIds(args: readonly string[]): Promise<string[]> {
+  const { EQUALS_READERS } = await import('../cli/flag-equals.ts');
+  const valueFlags = new Set([...EQUALS_READERS.forget ?? [], ...EQUALS_READERS['forget --purge'] ?? []]);
+  return args.filter((arg, i) => /^\d+$/.test(arg) && !valueFlags.has(args[i - 1] ?? ''));
+}
+
 export function routesToForgetPurge(args: readonly string[]): boolean {
   return args.includes('--purge') || args.includes('--dry-run') || args.includes('--help') || args.includes('-h');
 }
@@ -104,7 +111,7 @@ export async function runForgetPurge(engine: BrainEngine | (() => Promise<BrainE
   const out = (value: Record<string, unknown>, human: string) => process.stdout.write(json ? `${JSON.stringify(value, null, 2)}\n` : human);
   try {
     if (args.includes('--help') || args.includes('-h')) { process.stdout.write(USAGE); return; }
-    const idArg = args.find(a => /^\d+$/.test(a));
+    const idArg = (await forgetFactIds(args))[0];
     if (!args.includes('--purge')) {
       throw opError('invalid_params', '--dry-run previews a purge only; a plain forget has no dry run, so nothing was forgotten.',
         idArg ? `Run gbrain forget ${idArg} --purge --dry-run to preview a purge, or gbrain forget ${idArg} to forget the fact.` : 'Run gbrain forget --help for the forget and purge forms.');

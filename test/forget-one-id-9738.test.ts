@@ -81,14 +81,18 @@ ${rows}
       expect(await active()).toEqual(ids);
     });
 
-    test('a numeric --reason-scan-limit on the purge form is not taken for a second id', async () => {
-      const run = await capture(() => runForget(engine, [String(ids[0]), '--purge', '--dry-run', '--reason-scan-limit', '100']));
-      expect(run.err + run.out).not.toContain('one fact id');
+    test('a numeric flag value before or after the id is not taken for the purge target', async () => {
+      for (const argv of [[String(ids[0]), '--purge', '--dry-run', '--json', '--reason-scan-limit', String(ids[1])],
+        ['--purge', '--dry-run', '--json', '--reason-scan-limit', String(ids[1]), String(ids[0])]]) {
+        const run = await capture(() => runForget(engine, argv));
+        expect(run.code).toBe(0);
+        expect(JSON.parse(run.out)).toMatchObject({ fact_id: ids[0] });
+      }
       expect(await active()).toEqual(ids);
     });
 
     test('one id with a numeric --reason still forgets that one fact', async () => {
-      const run = await capture(() => runForget(engine, [String(ids[0]), '--reason', '42']));
+      const run = await capture(() => runForget(engine, ['--reason', String(ids[1]), String(ids[0])]));
       expect(run.code).toBe(0);
       expect(run.out).toContain(`Forgot fact id=${ids[0]}`);
       expect(await active()).toEqual(ids.slice(1));
