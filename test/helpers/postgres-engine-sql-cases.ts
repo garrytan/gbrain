@@ -70,6 +70,7 @@ const OOS = {
   aliasFanoutReads: 'out-of-scope:alias-fanout-reads (born in engine-sql/alias-fanout-reads.ts; pinned by test/engine-parity/alias-fanout-reads.test.ts)',
   cliReadsOps: 'out-of-scope:cli-reads (born in engine-sql/cli-reads-ops.ts; pinned by test/engine-parity/cli-reads-ops.test.ts)',
   cliReadsImport: 'out-of-scope:cli-import-reads (born in engine-sql/cli-reads-import.ts; pinned by test/engine-parity/cli-reads-import.test.ts)',
+  cliReadsExport: 'out-of-scope:cli-export-reads (born in engine-sql/export-reads.ts and transaction-settings.ts; pinned by test/engine-parity/cli-reads-export.test.ts)',
   wantedLinks: 'out-of-scope:wanted-links (born in engine-sql/wanted-links.ts; pinned by test/engine-parity/wanted-links.test.ts)',
   factsDoctor: 'out-of-scope:facts-doctor (born in engine-sql/facts-doctor.ts; pinned by test/engine-parity/facts-doctor.test.ts)',
   factsCycle: 'out-of-scope:facts-cycle (born in engine-sql/facts-cycle.ts; pinned by test/engine-parity/facts-cycle.test.ts)',
@@ -204,6 +205,10 @@ export const DOMAIN_OF: Record<string, string> = {
   'listExtractionPendingPages': OOS.cliReadsOps,
   'listUnattributedFacts': OOS.cliReadsOps,
   'listWantedPages': OOS.cliReadsOps,
+  // the export reads: the page walk, withdrawals, and the segmented body reads an export and the segmented writers share
+  'readSegmentedPageHead': OOS.cliReadsExport, 'readBodyManifestMeta': OOS.cliReadsExport, 'readBodyManifestOutline': OOS.cliReadsExport, 'readBodyManifestRows': OOS.cliReadsExport, 'readManifestSeqAt': OOS.cliReadsExport,
+  'readSegmentedVersionBodyBytes': OOS.cliReadsExport, 'listForcedCutSeqs': OOS.cliReadsExport, 'listAccessPolicySourceIds': OOS.cliReadsExport, 'listExportPageKeys': OOS.cliReadsExport, 'listExportWithdrawals': OOS.cliReadsExport,
+  'normalizeFenceLines': OOS.cliReadsExport, 'readExportPageRows': OOS.cliReadsExport, 'readExportWithdrawalLedgerBytes': OOS.cliReadsExport, 'setLocalStatementTimeout': OOS.cliReadsExport,
   'listSourceRecords': OOS.cliReadsImport,
   'readSourceIncarnation': OOS.cliReadsImport,
   'hasCompanyBrainReceipt': OOS.cliReadsImport,
