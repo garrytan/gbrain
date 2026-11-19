@@ -769,7 +769,7 @@ impl Store {
 /// hide (the `titleFilter` of `readAliases`).
 fn live_titles(
     read: &dyn KvRead,
-    exclude_private: Option<&PrivacyPolicy>,
+    page_policy: Option<&PrivacyPolicy>,
     owner_only: &mut OwnerOnlyCache,
 ) -> Result<BTreeMap<String, Vec<(String, String)>>> {
     let mut out: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
@@ -787,7 +787,7 @@ fn live_titles(
             }
         };
         if !gone
-            && !match exclude_private {
+            && !match page_policy {
                 Some(policy) => owner_only.page_hidden(read, &page, policy)?,
                 None => false,
             }

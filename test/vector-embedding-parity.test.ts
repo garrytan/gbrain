@@ -29,8 +29,15 @@
  *   The hybridSearch slug order is exact too: fusion runs in TypeScript on
  *   the engine's vector and keyword rows, so a Rust engine that matches the
  *   rows above gives the same fused order.
- * No difference by design was found: past the score rounding, both engines
- * give one answer for every case below. Shapes Rust must keep: a
+ * One difference by design: a query vector of the wrong width is refused by
+ * pgvector's HNSW index scan, and the message depends on the pgvector build.
+ * Before 0.8.7 the scan's distance call says "different vector dimensions
+ * <query> and <stored>"; from 0.8.7 the scan checks the width first and says
+ * "expected <stored> dimensions, not <query>" (both SQLSTATE 22000). PGLite
+ * bundles pgvector 0.8.1; the pgvector/pgvector:pg16 image ships 0.8.7, so the
+ * Postgres arm reads the installed version and expects that build's message.
+ * Past that and the score rounding, both engines give one answer for every
+ * case below. Shapes Rust must keep: a
  * listStaleChunks row carries updated_at (a Date) only in the 'updated_desc'
  * order; readEmbeddingStateCounts names covering_index
  * 'content_chunks_stale_idx' in 'ops' mode and null in 'full' mode.
@@ -226,6 +233,18 @@ for (const kind of arms) {
     let close: () => Promise<void>;
     let dims = 0;
     let q: Float32Array = new Float32Array(0);
+    /** The installed pgvector version on the SQL arms (PGLite bundles its own); unset on Rust. */
+    let pgvector: string | undefined;
+    /**
+     * The refusal message for a query of `query` dimensions against `stored`-dimension vectors, read through the HNSW
+     * index (the default searchVector plan). pgvector 0.8.7 added a width check to the HNSW scan, so its message differs
+     * from every earlier build's; the Rust store gives the earlier wording, which PGLite's bundled 0.8.1 gives.
+     */
+    const wrongWidthMessage = (query: number, stored: number) => {
+      const m = pgvector?.match(/^(\d+)\.(\d+)\.(\d+)/);
+      const checksWidth = !!m && (Number(m[1]) > 0 || Number(m[2]) > 8 || (Number(m[2]) === 8 && Number(m[3]) >= 7));
+      return checksWidth ? `expected ${stored} dimensions, not ${query}` : `different vector dimensions ${query} and ${stored}`;
+    };
     const raw = (sql: string) => engine.executeRaw<Record<string, unknown>>(sql);
     /** Every stored vector by `slug#chunk_index`, for the expected scores. */
     const stored = new Map<string, Float32Array>();
@@ -262,6 +281,7 @@ for (const kind of arms) {
         close = async () => { await engine.disconnect(); removeBrainDir(brain.dir); };
       } else { engine = new PGLiteEngine(); await engine.connect({ engine: 'pglite' } as never); await engine.initSchema(); close = () => engine.disconnect(); }
       dims = rust ? RUST_DIMS : await embeddingDims(engine);
+      if (!rust) pgvector = String((await raw(`SELECT extversion FROM pg_extension WHERE extname = 'vector'`))[0]?.extversion);
       q = v(0);
       if (rust) {
         await createRustSource(engine, 'src-b', {});
@@ -410,9 +430,11 @@ for (const kind of arms) {
       expect(cases.allNaN).toEqual({ refused: badInput('22000'), message: 'NaN not allowed in vector' });
       expect(cases.oneNaN).toEqual({ refused: badInput('22000'), message: 'NaN not allowed in vector' });
       expect(cases.infinity).toEqual({ refused: badInput('22000'), message: 'infinite value not allowed in vector' });
-      expect(cases.wrongDimension).toEqual({ refused: badInput('22000'), message: `different vector dimensions 8 and ${dims}` });
+      expect(cases.wrongDimension).toEqual({ refused: badInput('22000'), message: wrongWidthMessage(8, dims) });
       expect(cases.empty).toEqual({ refused: badInput('22000'), message: 'vector must have at least 1 dimension' });
-      record(kind, 'badVectors', cases);
+      // The wrong-width wording follows each engine's pgvector build (checked exactly above), so the cross-engine
+      // comparison takes its code and the fact that it is that build's width refusal, not the build's words.
+      record(kind, 'badVectors', { ...cases, wrongDimension: { refused: (cases.wrongDimension as { refused: string }).refused, message: 'pgvector width refusal for this build' } });
     });
 
     test('searchVector: model and text-hash guard', async () => {
