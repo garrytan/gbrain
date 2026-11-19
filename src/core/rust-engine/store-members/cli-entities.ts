@@ -23,6 +23,10 @@ export const readMentionIndexStatus: StoreMember<[sourceIds: readonly string[]],
 export const countLivePagesInSource: StoreMember<[sourceId: string], number> = async (brain, sourceId) =>
   Number(await storeCall({ member: 'countLivePagesInSource', sourceId }, () => brain.countPagesDueForMentions({ sourceId })));
 
+/** With no mention state every live page is unscanned, so this counts the source's live pages written at or after `since`. */
+export const countMentionDueSince: StoreMember<[sourceId: string, since: string, mentionVersion: number], number> = async (brain, sourceId, since) =>
+  Number(await storeCall({ member: 'countMentionDueSince', sourceId }, () => brain.countMentionDueSince({ sourceId, since })));
+
 export const countPagesDueForMentions: StoreMember<[q: MentionDueQuery], number> = async (brain, q) => {
   const opts = takeOptions('countPagesDueForMentions', q, ['sourceId', 'mentionVersion', 'aliases']);
   return Number(await storeCall({ member: 'countPagesDueForMentions', sourceId: q.sourceId ?? undefined }, () =>

@@ -24,6 +24,7 @@ import { operations } from '../../src/core/operations.ts';
 import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { readMentionCoverage } from '../../src/core/mentions/coverage.ts';
+import { MENTION_EXTRACTOR_VERSION } from '../../src/core/mentions/pass.ts';
 import { buildEntityCard } from '../../src/core/verbs/entity-card.ts';
 import { lookupEntityNames } from '../../src/core/verbs/entity-names.ts';
 
@@ -87,6 +88,26 @@ describe('engine parity: mention-index coverage', () => {
         },
         off: { state: 'disabled', pending_pages: 0, last_pass_at: null, degraded: true },
       });
+      return out;
+    },
+  );
+
+  parityTest(
+    'countMentionDueSince counts the live pages of a source written at or after the bound, none past a future bound',
+    { methods: ['putPage', 'softDeletePage', 'setPageAliases', 'countMentionDueSince'] },
+    async (engine: BrainEngine, backend) => {
+      await seed(engine, backend);
+      const due = (sourceId: string, since: string) => engine.countMentionDueSince(sourceId, since, MENTION_EXTRACTOR_VERSION);
+      // Not '-infinity': postgres.js binds a timestamptz parameter through Date and refuses it ("Invalid Date").
+      // Coverage passes it only for a status row with no counted_at, which the mention pass never writes.
+      const past = '2000-01-01T00:00:00.000Z';
+      const out = {
+        other: await due('other', past),
+        ghost: await due('ghost', past),
+        past: await due('default', past),
+        future: await due('default', '2999-01-01T00:00:00.000Z'),
+      };
+      expect(out).toEqual({ other: 2, ghost: 0, past: 4, future: 0 });
       return out;
     },
   );

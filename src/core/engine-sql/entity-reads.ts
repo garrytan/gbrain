@@ -61,6 +61,20 @@ export async function countLivePagesInSource(exec: LegacyUnscopedRead, sourceId:
   return Number(n?.n ?? 0);
 }
 
+/**
+ * Live pages of one source written at or after `since` (a timestamptz text, `-infinity` for no
+ * bound) that are not scanned at their current content or at `mentionVersion`: what mention
+ * coverage adds to a status row's saved count.
+ */
+export async function countMentionDueSince(exec: LegacyUnscopedRead, sourceId: string, since: string, mentionVersion: number): Promise<number> {
+  const [n] = await exec.executeRaw<{ n: number }>(
+      `SELECT count(*)::int AS n FROM pages p LEFT JOIN page_mention_state s ON s.page_id = p.id
+        WHERE p.source_id = $1 AND p.updated_at >= $2::timestamptz AND p.deleted_at IS NULL
+          AND (s.page_id IS NULL OR s.mention_revision IS DISTINCT FROM p.knowledge_revision OR s.mention_version IS DISTINCT FROM $3)`,
+      [sourceId, since, mentionVersion]);
+  return Number(n?.n ?? 0);
+}
+
 /** Live pages due for the mention pass: no mention state, or state behind the page's content or the extractor version. */
 export async function countPagesDueForMentions(exec: LegacyUnscopedRead, q: MentionDueQuery): Promise<number> {
   const source = q.sourceId ?? null;

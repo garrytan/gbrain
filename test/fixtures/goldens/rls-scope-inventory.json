@@ -4862,6 +4862,7 @@
         "countLegacyFactsPending": "none",
         "countLivePagesInSource": "none",
         "countMcpResolvedTakes": "none",
+        "countMentionDueSince": "none",
         "countOffGridTakeWeights": "none",
         "countOnboardSignal": "none",
         "countOpenJobsByOwner": "none",

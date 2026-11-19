@@ -35,6 +35,20 @@ impl Brain {
         })
     }
 
+    /// `countMentionDueSince({ sourceId, since })`: the source's live pages written at or after `since`.
+    #[napi]
+    pub fn count_mention_due_since<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let q: gbrain_store::cli_reads::entities::MentionDueSinceQuery =
+                required(query, "countMentionDueSince query")?;
+            s.count_mention_due_since(&q)
+        })
+    }
+
     /// `countPagesDueForMentions({ sourceId? })`: the live pages in scope.
     #[napi]
     pub fn count_pages_due_for_mentions<'env>(
