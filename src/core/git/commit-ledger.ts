@@ -22,7 +22,7 @@ import { gitChildEnv } from '../git-env.ts';
 import { acquireNativeLock, acquireNativeLockSync } from '../persistence/native-lock.ts';
 import { existingLocalHostId } from '../persistence/identity.ts';
 
-export type LedgerWriter = 'commit_push' | 'door' | 'merge' | 'replay' | 'effect' | 'sync_init' | 'workspace_push' | 'bootstrap' | 'hosted_repo';
+export type LedgerWriter = 'commit_push' | 'door' | 'merge' | 'replay' | 'effect' | 'sync_init' | 'workspace_push' | 'bootstrap' | 'hosted_repo' | 'redact_rebuild';
 
 export const LEDGER_DIR = 'gbrain';
 export const LEDGER_FILE = 'commit-ledger.jsonl';
@@ -32,12 +32,17 @@ export const LEDGER_ROTATE_BYTES = 4 * 1024 * 1024;
 const LINE_MAX_BYTES = 1023;
 const LOCK_WAIT_MS = 2_000;
 
-export interface LedgerCommit { sha: string; writer: LedgerWriter; ref?: string | null; request_id?: string | null; worktree_id?: string | null; supersedes?: string[]; adopted?: string[]; verified?: true }
+/**
+ * GST-2988: a `redact_rebuild` record names the commit a publish redaction rebuilt (`supersedes`, one sha); `verified` says
+ * its own diff is unchanged, so a page-write exemption carries over; `held` marks the one local commit holding the files
+ * that publish held back.
+ */
+export interface LedgerCommit { sha: string; writer: LedgerWriter; ref?: string | null; request_id?: string | null; worktree_id?: string | null; supersedes?: string[]; adopted?: string[]; verified?: true; held?: true }
 export interface LedgerIntent { writer: LedgerWriter; head_before: string | null; message: string }
 
 export type LedgerRecord =
   | { v: 1; e: 'start'; t: string }
-  | { v: 1; e: 'commit'; t: string; sha: string; writer: LedgerWriter; request_id: string | null; worktree: string | null; worktree_id: string | null; ref: string | null; pid: number; host: string | null; supersedes?: string[]; adopted?: string[]; verified?: true }
+  | { v: 1; e: 'commit'; t: string; sha: string; writer: LedgerWriter; request_id: string | null; worktree: string | null; worktree_id: string | null; ref: string | null; pid: number; host: string | null; supersedes?: string[]; adopted?: string[]; verified?: true; held?: true }
   | { v: 1; e: 'intent'; t: string; writer: LedgerWriter; head_before: string | null; msg_sha256: string; worktree: string | null; pid: number; host: string | null };
 
 interface Location { common: string; gitDir: string; worktree: string | null }
@@ -111,7 +116,7 @@ function commitRecord(loc: Location, entry: LedgerCommit): LedgerRecord {
   return { v: 1, e: 'commit', t: new Date().toISOString(), sha: entry.sha, writer: entry.writer, request_id: entry.request_id ?? null,
     worktree: loc.worktree, worktree_id: entry.worktree_id ?? null, ref: entry.ref === undefined ? headRef(loc.gitDir) : entry.ref, pid: process.pid, host: hostId(),
     ...(entry.supersedes?.length ? { supersedes: entry.supersedes } : {}), ...(entry.adopted?.length ? { adopted: entry.adopted } : {}),
-    ...(entry.verified ? { verified: true } : {}) };
+    ...(entry.verified ? { verified: true } : {}), ...(entry.held ? { held: true } : {}) };
 }
 
 function intentRecord(loc: Location, intent: LedgerIntent): LedgerRecord {
@@ -194,6 +199,27 @@ export function readLedger(common: string): LedgerRecord[] {
     }
   }
   return out;
+}
+
+/**
+ * GST-2988: the local commits a publish redaction made to hold back files it could not push (ledger `held` records).
+ * A publish pushes the commit below them; an unreadable ledger names none.
+ */
+export function heldCommits(root: string): Set<string> {
+  const loc = ledgerLocation(root);
+  if (!loc) return new Set();
+  try { return new Set(readLedger(loc.common).flatMap(record => record.e === 'commit' && record.writer === 'redact_rebuild' && record.held ? [record.sha] : [])); }
+  catch { return new Set(); }
+}
+
+/** The commit a publish pushes for `head`: below any held commits on top of it (GST-2988 D10). */
+export function pushableHead(root: string, head: string): string {
+  const held = heldCommits(root);
+  let sha = head;
+  for (let i = 0; i < 16 && held.has(sha); i++) {
+    sha = execFileSync('git', ['-C', root, 'rev-parse', '--verify', `${sha}^1`], { stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: gitChildEnv({ LC_ALL: 'C' }) }).toString().trim();
+  }
+  return sha;
 }
 
 /** Test seam: forget cached locations (a test that re-inits a directory) and the one-time warning. */

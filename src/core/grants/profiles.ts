@@ -2,6 +2,7 @@ import { operations } from '../operations.ts';
 import { BRAIN_TOOL_ALLOWLIST } from '../minions/tools/brain-allowlist.ts';
 import { operationScopesAllowed } from '../scope.ts';
 import { opAllowedForBoundClient } from '../ops/context.ts';
+import { addedOnlyByName } from '../ops/execution-prerequisites.ts';
 import { GrantError, type ClientGrant, type GrantPatch, type GrantProfileId, type GrantValidationContext } from './model.ts';
 import { VERSION } from '../../version.ts';
 import { INSTALL_SURFACE_SET_BY } from '../../mcp/surface.ts';
@@ -57,6 +58,7 @@ export function resolveGrantProfile(opts: {
   if (opts.profile === 'coding-agent' && !directPrefixes?.length) throw new GrantError('invalid_grant', 'coding-agent requires an explicit isolated write namespace');
   const allowedOperations = operations.filter(op => !op.localOnly
     && operationScopesAllowed(scopes, op)
+    && (!addedOnlyByName(op.name) || !!opts.existing?.allowedOperations?.includes(op.name))
     && opAllowedForBoundClient({ boundSlugPrefixes: directPrefixes ?? undefined }, op)).map(op => op.name).sort();
   return {
     profile: opts.profile, scopes, sourceId: opts.sourceId,

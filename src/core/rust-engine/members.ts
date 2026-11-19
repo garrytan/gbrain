@@ -29,6 +29,7 @@ export const RUST_ENGINE_MEMBERS = {
   // Optional on BrainEngine: only Postgres defines it. The Rust engine leaves it undefined, so a migration serializes
   // in-process (schema-migration-lock.ts), as on PGLite, and `schema` can be reported.
   holdSchemaMigrationLock: 'implemented',
+  ownerOnlyMarkTriggers: 'schema',
   // transactions
   readTransactionSettings: 'transactions',
   applyTransactionSettings: 'transactions',
@@ -72,6 +73,7 @@ export const RUST_ENGINE_MEMBERS = {
   resolveSlugs: 'pages',
   getAllSlugs: 'pages',
   listAllPageRefs: 'pages',
+  listEntityKeyRows: 'pages',
   listPrefixSampledPages: 'pages',
   listCorpusSample: 'pages',
   // schema detect --fields (engine-sql/field-usage.ts; rust/docs/store/field-usage.md).

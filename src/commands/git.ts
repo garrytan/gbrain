@@ -12,12 +12,14 @@
  *   gbrain git commit-push --pending [--path <dir>] [-m <msg>]
  *   gbrain git guard [--install | --uninstall] [--path <dir>] [--json]
  *   gbrain git scan [--path <dir>] [--from <rev>] [--to <rev>] [--scan-timeout <s>] [--json]
+ *   gbrain git redact-unpushed [--source <id> | --path <dir>] [--apply --expect <hash>] [--json]
  */
 import { existsSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { commitAndPush, checkoutRoot, previewPaths, previewUntrack, pullShared, scopePaths, COMMIT_LOCK_NAME, SOURCE_ROOT_CONFIG, type Resolution } from '../core/git/commit-push.ts';
 import { readUntrackPageVerdict, UNTRACK_PAGE_READ_TIMEOUT_MS, type UntrackPageVerdict } from '../core/git/untrack-admission.ts';
 import type { BrainEngine } from '../core/engine.ts';
+import { capabilitiesForEngineKind } from '../core/engine-capabilities.ts';
 import type { ManagedFilesystemRoot } from '../core/persistence/filesystem-guard.ts';
 import { guardStatus, installGuard, uninstallGuard } from '../core/git/commit-guard.ts';
 import { appendPushLog } from '../core/brain-repo-durability.ts';
@@ -39,6 +41,7 @@ const HELP = `Usage: gbrain git commit-push [--path <dir>] -m <msg> [--json] [--
        gbrain git commit-push --untrack [--path <dir>] -m <msg> [--] <paths...>
        gbrain git guard [--install | --uninstall] [--path <dir>] [--json]
        gbrain git scan [--path <dir>] [--from <rev>] [--to <rev>] [--scan-timeout <s>] [--json]
+       gbrain git redact-unpushed [--source <id> | --path <dir>] [--apply --expect <hash>] [--json]
 
 Commit only the named paths and push them, safely, in a checkout other agents
 share: a short commit lock and a separate push lock per checkout, no
@@ -102,17 +105,26 @@ upstream as last fetched, ..HEAD), with the checkout's .gbrain-scan-allow. It
 fetches, locks, writes and pushes nothing. It prints what a push would refuse
 (would_refuse) and each finding's path, line, rule, commit and fingerprint, never
 the value; a finding's fingerprint line in .gbrain-scan-allow accepts that value.
-Exit 0 when the scan ran, whatever it found.`;
+Exit 0 when the scan ran, whatever it found.
+
+gbrain git redact-unpushed: what a publish does (secrets.on_push redact, the
+default) with values the scan names in the checked-out branch's unpushed commits:
+lists the files, messages and held-back paths and a preview hash, writing nothing.
+--apply --expect <hash> rebuilds the commits now with secret store markers (the
+originals go to the store), keeps the old ones under refs/gbrain/backup/, and does
+not push. Commits a remote-tracking ref reaches are never rewritten. Guide:
+docs/guides/shared-checkout-git.md#publish_secret_redacted`;
 
 interface Parsed {
   sub?: string; path?: string; message?: string; branch?: string; expectRemote?: string; json: boolean; pushOnly: boolean; pull: boolean;
   requireClean: boolean; dryRun: boolean; help: boolean; keepCheckout: boolean; paths: string[]; resolve: string[]; base: string[]; untrack: boolean;
   pending: boolean; allowOutside: boolean; install: boolean; uninstall: boolean; scanSecrets: boolean; scanTimeout?: string; from?: string; to?: string;
+  source?: string; apply: boolean; expect?: string;
 }
 
 function parse(args: string[]): Parsed {
   const p: Parsed = { json: false, pushOnly: false, pull: false, requireClean: false, dryRun: false, help: false, keepCheckout: false, paths: [], resolve: [], base: [], untrack: false,
-    pending: false, allowOutside: false, install: false, uninstall: false, scanSecrets: false };
+    pending: false, allowOutside: false, install: false, uninstall: false, scanSecrets: false, apply: false };
   let rest = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -138,6 +150,9 @@ function parse(args: string[]): Parsed {
     else if (a === '--allow-outside-source-root') p.allowOutside = true;
     else if (a === '--install') p.install = true;
     else if (a === '--uninstall') p.uninstall = true;
+    else if (a === '--apply') p.apply = true;
+    else if (a === '--source' || a.startsWith('--source=')) p.source = take('--source');
+    else if (a === '--expect' || a.startsWith('--expect=')) p.expect = take('--expect');
     else if (a === '--path' || a.startsWith('--path=') || a === '--repo' || a.startsWith('--repo=')) p.path = take('--path');
     else if (a === '-m' || a === '--message' || a.startsWith('--message=')) { const m = take('--message'); p.message = p.message === undefined ? m : `${p.message}\n\n${m}`; }
     else if (a === '--resolve' || a.startsWith('--resolve=')) p.resolve.push(take('--resolve'));
@@ -261,6 +276,63 @@ async function untrackPagesFor(repo: string, paths: string[]): Promise<UntrackPa
   return managed && paths.length ? untrackPageVerdict(managed, repo, paths) : undefined;
 }
 
+/** Opens this machine's brain with no migration or startup step for `fn`, then closes it; null when there is no brain or it cannot be opened in time. */
+async function withLocalBrain<T>(fn: (engine: BrainEngine) => Promise<T>, timeoutMs = 30_000): Promise<T | null> {
+  const { isThinClient, loadConfig, toEngineConfig } = await import('../core/config.ts');
+  const { createEngine } = await import('../core/engine-factory.ts');
+  const config = loadConfig();
+  if (!config || (isThinClient(config) && !config.database_url)) return null;
+  let engine: BrainEngine | null = null, timer: ReturnType<typeof setTimeout> | undefined;
+  const work = (async () => {
+    const engineConfig = capabilitiesForEngineKind(config.engine).has('single_owner') ? { ...toEngineConfig(config), pglite_shared_buffers: '32MB' } : { ...toEngineConfig(config), pool_max: 1 };
+    engine = await createEngine(engineConfig);
+    await engine.connect(engineConfig);
+    return fn(engine);
+  })();
+  try {
+    return await Promise.race([work.catch(() => null), new Promise<null>(done => { timer = setTimeout(() => done(null), timeoutMs); })]);
+  } finally {
+    clearTimeout(timer);
+    void work.catch(() => {}).finally(() => (engine as BrainEngine | null)?.disconnect().catch(() => {}));
+  }
+}
+
+/**
+ * `gbrain git redact-unpushed` (GST-2988): what a publish's redaction would do to the checked-out branch's unpushed
+ * commits (read-only preview with a hash), or, with --apply --expect <hash>, do it now without pushing.
+ */
+async function runRedactUnpushed(p: Parsed): Promise<number> {
+  const { redactUnpushed, spoolSealer } = await import('../core/git/redact-unpushed.ts');
+  const { allowedLocally } = await import('../core/secret-store/spool.ts');
+  if (p.apply && !p.expect) throw opError('commit_paths_invalid', '--apply needs --expect <hash> from the preview.', `Preview first: gbrain git redact-unpushed ${p.source ? `--source ${p.source}` : '--path <dir>'}`);
+  let dir = p.path;
+  if (!dir && p.source) {
+    const rows = await withLocalBrain(engine => engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1', [p.source]));
+    dir = rows?.[0]?.local_path ?? undefined;
+    if (!dir) throw opError('commit_paths_invalid', `Source ${p.source} has no checkout on this machine (or the brain could not be opened).`, 'Pass the checkout with --path <dir>.');
+  }
+  const repo = checkoutRoot(dir ?? process.cwd());
+  let base = '';
+  try { base = execFileSync('git', ['-C', repo, 'rev-parse', '--verify', '--quiet', '@{upstream}'], { stdio: ['ignore', 'pipe', 'ignore'], env: gitChildEnv({ ...GIT_ENV }) }).toString().trim(); } catch { /* no upstream: every unreached commit is unpushed */ }
+  const target = p.source ? ['--source', p.source] : ['--path', repo];
+  if (!p.apply) {
+    const preview = redactUnpushed(repo, { base, allowed: allowedLocally, sourceId: p.source ?? null });
+    if (!preview) { emit(p.json, { repo, base, redact: false }, `nothing to redact: the unpushed commits in ${repo} hold no value the scan names`); return 0; }
+    const apply = ['gbrain', 'git', 'redact-unpushed', ...target, '--apply', '--expect', preview.hash];
+    emit(p.json, { ...preview, apply }, [`${preview.commits} unpushed commit(s) on ${preview.branch} would be rebuilt (preview ${preview.hash}); nothing was written`,
+      ...preview.paths.map(x => `  ${x.path}: ${x.spans} value(s) replaced by store markers`), ...preview.messages.map(sha => `  commit message of ${sha.slice(0, 12)}`),
+      ...preview.held.map(h => `  ${h.path}: held back (${h.reason})`), ...(preview.signed.length ? [`  ${preview.signed.length} signed commit(s) lose their signature`] : []),
+      `Apply: ${apply.join(' ')}`].join('\n'));
+    return 0;
+  }
+  const outcome = redactUnpushed(repo, { base, sealer: spoolSealer(repo, p.source ?? null), expect: p.expect, sourceId: p.source ?? null });
+  if (!outcome || !('redacted' in outcome)) { emit(p.json, { repo, base, redact: false }, 'nothing to redact'); return 0; }
+  await withLocalBrain(async engine => (await import('../core/git/redact-finish.ts')).settlePublishRedactions(engine, repo));
+  emit(p.json, { ...outcome, pushed: false }, [`rebuilt ${outcome.rebuilt} commit(s): ${outcome.old_head.slice(0, 12)} -> ${outcome.new_head.slice(0, 12)}; ${outcome.values} value(s) sealed; nothing pushed (gbrain git commit-push --push-only publishes it)`,
+    ...outcome.notices.map(n => `[gbrain notice] ${n.code}: ${n.why}`)].join('\n'));
+  return 0;
+}
+
 function emit(json: boolean, doc: Record<string, unknown>, human: string): void {
   if (json) void writeStdoutFinal(`${JSON.stringify(doc)}\n`);
   else console.log(human);
@@ -274,6 +346,7 @@ export async function runGit(args: string[]): Promise<number> {
     if (p.help || !p.sub) { console.log(HELP); return p.sub || p.help ? 0 : 2; }
     if (p.sub === 'guard') return runGuard(p);
     if (p.sub === 'scan') return runScan(p);
+    if (p.sub === 'redact-unpushed') return await runRedactUnpushed(p);
     if (p.sub !== 'commit-push') throw opError('commit_paths_invalid', `Unknown subcommand: gbrain git ${p.sub}.`, HELP.split('\n')[0]);
     if (p.install || p.uninstall) throw opError('commit_paths_invalid', '--install and --uninstall belong to gbrain git guard.', 'Run gbrain git guard --install.');
     const repo = checkoutRoot(p.path ?? process.cwd());
@@ -361,6 +434,7 @@ export async function runGit(args: string[]): Promise<number> {
     if (result.quarantined && !json) {
       process.stderr.write(`[gbrain notice] quarantine: the remote also changed ${result.quarantined.paths.join(', ')}; its version was published and this machine's version is kept under ${result.quarantined.ref}. gbrain doctor lists it (quarantined_changes).\n`);
     }
+    if (!json) for (const n of result.notices ?? []) process.stderr.write(`[gbrain notice] ${n.code}: ${n.why}\n`);
     if (result.superseded_remote_paths && !json) {
       process.stderr.write(`[gbrain notice] kept this machine's version of ${result.superseded_remote_paths.join(', ')}: the remote held a version this checkout had already replaced. See docs/guides/shared-checkout-git.md#conflicts.\n`);
     }

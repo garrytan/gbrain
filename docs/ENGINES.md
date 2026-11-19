@@ -404,11 +404,10 @@ CREATE POLICY page_segment_derivation_purge_pages_scope_filter ON page_segment_d
   USING (current_setting('app.scopes', true) = '*'
          OR EXISTS (SELECT 1 FROM page_segment_derivation_purges r WHERE r.request_id = page_segment_derivation_purge_pages.request_id));
 
--- A read role that searches and reads pages. Search also reads
--- timeline_entries for each result's `stale` flag. The other tables it reads
+-- A read role that searches and reads pages. The other tables it reads
 -- (config, timeline_entries, facts, ...) need policies of their own.
 GRANT SELECT ON pages, content_chunks, page_body_manifest, page_segment_texts,
-  page_view_digests, sources, timeline_entries TO <reader-role>;
+  page_view_digests, sources TO <reader-role>;
 
 -- If the runtime role OWNS these tables, as for pages:
 ALTER TABLE page_segment_texts FORCE ROW LEVEL SECURITY;
@@ -438,6 +437,70 @@ imports, their embedding and the unchanged-file check) do not, while it sees no
 segmented chunk (`test/e2e/segmented-switch-off-write-role.test.ts`). With the
 policies above it creates segmented pages and sees only its sources' rows
 (`test/e2e/segmented-rls-scope.test.ts`).
+
+<a id="owner-only-delete-triggers"></a>
+**Owner-only delete triggers.** Rows derived from an owner-only source (an `imessage` source, or
+one with `owner_only: true`) stay owner-only after their origin is gone. Since migration v322
+(GST-3032) a `BEFORE DELETE` trigger on `sources`, `pages`, `facts`, `takes` and
+`timeline_entries` records the deleted row and every row derived from it in `owner_only_marks`,
+and reads treat a marked row, or one derived from a marked row, as owner-only. Nothing derived
+is deleted. A take or timeline row counts as owner-only by its own lineage as well as its page's.
+The first owner-only source (or mark) sets a one-way flag, a comment on `owner_only_marks`;
+from then on the guard stays on even after the last owner-only source is removed. A brain that
+never held owner-only data never reads `owner_only_marks`, so its logins need no new grant.
+The triggers run as the deleting role. A role whose reads row-level security limits (a scoped
+writer, or `FORCE ROW LEVEL SECURITY` on a table it owns) could miss derived rows: its delete
+of a row it sees as owner-only is refused with `owner_only_lineage_unreadable` (delete it as
+the table owner without `FORCE`, or as a `BYPASSRLS` login, and the derived rows are marked),
+and its delete of a row it sees as open goes through but sets the `('*', 'row_security')`
+mark, which closes owner-only lineage the way a missing trigger does. `CREATE TRIGGER` needs the table's owner: a table another role owns gets
+no trigger, the migration run and `gbrain doctor` (`owner_only_marks_triggers`) name it with
+`ALTER TABLE ... OWNER TO`, and `gbrain apply-migrations --force-schema` run by its owner
+creates it. While a trigger is missing or disabled on a brain that holds an owner-only source or
+a mark, owner-only lineage reads closed: every row with a recorded derivation input and every
+synthesized concept or question counts as owner-only. It stays closed after the triggers are
+back (a delete in the gap left no marks) until the owner, having checked what was deleted in
+the gap, deletes the `('*', 'unguarded')` row by hand; the closed mode itself never adds a mark.
+
+A scoped writer that keeps making permanent deletes (the recipe above) keeps owner-only lineage
+closed: while a login whose reads row-level security limits makes permanent deletes on a brain
+that holds owner-only data, every derived row and synthesized concept stays owner-only for
+everyone but the owner. Deleting the `('*', 'row_security')` row does not end it, because that
+login's next permanent delete sets it again. The ways out are to run permanent deletes as the
+table owner (without `FORCE`) or a `BYPASSRLS` login, or to stop holding owner-only data:
+remove the owner-only source and, once the rows derived from it may be read by others again,
+its marks.
+
+<a id="owner-only-marks-privileges"></a>**Privileges on `owner_only_marks`.** The table follows
+the sibling pattern: row-level security on and no policy, so a role with only table privileges
+(Supabase's `anon` and `authenticated`) neither reads nor adds a mark. No migration grants
+anything. On a brain that has held owner-only data, every non-owner login that reads `sources`
+needs `SELECT` (to read owner-only lineage exactly) and, if it makes permanent deletes,
+`INSERT` on `owner_only_marks`, each with a permissive policy. Without them the login reads
+owner-only lineage closed, never open and never an error, and its permanent deletes are
+refused with `owner_only_marks_unwritable`, which names the grant. Nobody but the owner
+removes a mark, and only the owner of `owner_only_marks` sets the flag, so the first
+owner-only source is added by that role. `gbrain doctor` (`owner_only_marks_triggers`) names
+each login that still needs the statements and prints them; the owner runs:
+
+<!-- gbrain:owner-only-marks-recipe:begin (applied verbatim by test/e2e/owner-only-marks-scoped-login.test.ts) -->
+```sql
+-- A login that reads and makes permanent deletes (the writer role above):
+GRANT SELECT, INSERT ON owner_only_marks TO <writer-role>;
+CREATE POLICY owner_only_marks_read_<writer-role> ON owner_only_marks FOR SELECT TO <writer-role> USING (true);
+CREATE POLICY owner_only_marks_add_<writer-role> ON owner_only_marks FOR INSERT TO <writer-role> WITH CHECK (true);
+-- A read-only login (the reader role above) needs the read half only:
+GRANT SELECT ON owner_only_marks TO <reader-role>;
+CREATE POLICY owner_only_marks_read_<reader-role> ON owner_only_marks FOR SELECT TO <reader-role> USING (true);
+```
+<!-- gbrain:owner-only-marks-recipe:end -->
+
+A login that cannot read `derivation_inputs`, `facts`, `links`, `takes` and `timeline_entries`
+(the reader role above reads none of them) cannot walk owner-only lineage, so on a brain that has
+held owner-only data it reads every row closed: it sees no page or fact as open, with no error,
+also after the last owner-only source is removed. Do not grant it `SELECT` on those tables
+without a policy that shows it every row: under row-level security it would miss derivation rows
+and read rows open that are owner-only.
 
 <a id="purge-and-withdrawal-guards"></a>
 **Purge and withdrawal guards.** The guards that refuse purged content and keep withdrawn

@@ -79,6 +79,7 @@ const OOS = {
   openLoops: 'out-of-scope:open-loops (born in engine-sql/open-loops.ts; pinned by test/engine-parity/open-loops.test.ts)',
   minionJobs: 'out-of-scope:minion-jobs (born in engine-sql/jobs.ts and engine-sql/jobs-queue.ts; pinned by test/engine-parity/jobs.test.ts and jobs-queue.test.ts)',
   takesReads: 'out-of-scope:takes-reads (born in engine-sql/takes-reads.ts; pinned by test/engine-parity/takes.test.ts, code-eval-salience.test.ts and test/engine-sql-takes-reads.test.ts)',
+  ownerOnly: 'out-of-scope:owner-only-marks (catalog and trigger DDL, born in engine-sql/owner-only-marks.ts; pinned by test/engine-parity/owner-only-marks.test.ts)',
 } as const;
 
 export const DOMAIN_OF: Record<string, string> = {
@@ -315,6 +316,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'disconnectInternal': OOS.helper,
   'initSchema': OOS.lifecycle,
   'holdSchemaMigrationLock': OOS.lifecycle,
+  'ownerOnlyMarkTriggers': OOS.ownerOnly,
   'applyForwardReferenceBootstrap': OOS.helper,
   'transaction': OOS.lifecycle,
   'transactionDirect': OOS.lifecycle,
@@ -345,7 +347,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'softDeletePage': 'pages', 'softDeletePages': 'pages', 'restorePage': 'pages', 'purgeDeletedPages': 'pages',
   'refreshPageBody': 'pages', 'updatePageContextualRetrievalState': 'pages', 'listPages': 'pages',
   'findPages': 'pages', 'countPagesBy': 'pages',
-  'getAllSlugs': 'pages', 'listAllPageRefs': 'pages', 'listPrefixSampledPages': 'pages', 'listCorpusSample': 'pages',
+  'getAllSlugs': 'pages', 'listAllPageRefs': 'pages', 'listEntityKeyRows': 'pages', 'listPrefixSampledPages': 'pages', 'listCorpusSample': 'pages',
   'resolveSlugs': 'pages', 'findByTitleFuzzy': 'pages', 'getPageTimestamps': 'pages',
   'createVersion': 'pages', 'getVersions': 'pages', 'revertToVersion': 'pages', 'updateSlug': 'pages',
   'resolveSlugWithAlias': 'pages', 'resolveSlugWithAliasDetailed': 'pages', 'setPageAliases': 'pages',
@@ -744,6 +746,10 @@ export const SQL_CASES: SqlCase[] = [
     ['sourceId', (e) => e.getAllSlugs({ sourceId: SRC })],
   ]),
   ...variants('listAllPageRefs', [['default', (e) => e.listAllPageRefs()]]),
+  ...variants('listEntityKeyRows', [
+    ['default', (e) => e.listEntityKeyRows({ types: ['person', 'company'], keys: ['email'], limit: 10 })],
+    ['after', (e) => e.listEntityKeyRows({ types: ['person'], keys: ['email', 'external_id'], after: { source_id: SRC, slug: 'people/alice-example' }, limit: 10 })],
+  ]),
   ...variants('listPrefixSampledPages', [
     ['default', (e) => e.listPrefixSampledPages({ prefixes: ['people/alice-example'] })],
     ['sourceIds', (e) => e.listPrefixSampledPages({ prefixes: ['people/alice-example'], sourceIds: SRCS, staleBias: true })],

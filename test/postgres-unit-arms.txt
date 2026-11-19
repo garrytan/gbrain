@@ -163,6 +163,7 @@ test/engine-parity/link-reads.test.ts
 test/engine-parity/link-temporal.test.ts
 test/engine-parity/links.test.ts
 test/engine-parity/open-loops.test.ts
+test/engine-parity/owner-only-marks.test.ts
 test/engine-parity/pages.test.ts
 test/engine-parity/persistence-declaration.test.ts
 test/engine-parity/persistence.test.ts
@@ -194,6 +195,7 @@ test/engine-parity/write-guards.test.ts
 test/engine-parity/write-misc.test.ts
 test/engine-sql-fact-relink-attempts.test.ts
 test/engine-sql-facts-keyset.test.ts
+test/entity-duplicates-finder.test.ts
 test/eval-log-tables-parity.test.ts
 test/extract-all-stamp-intersection.serial.test.ts
 test/extract-atoms-concurrent-run-7923.test.ts
@@ -641,6 +643,7 @@ test/privacy-label-ignored.test.ts
 test/projection-rebuild-progress-9192.test.ts
 test/provenance-drift-7891.test.ts
 test/provenance-stamps-7873.test.ts
+test/publish-redact-unpushed-gst2988.test.ts
 test/purge-context-facts-8859.test.ts
 test/purge-expires-page-facts.test.ts
 test/purge-fact.test.ts
@@ -726,7 +729,6 @@ test/search-entity-facts-eligibility.test.ts
 test/search-keyword-evidence-label-gbra449.test.ts
 test/search-read-keyword-bound.test.ts
 test/search-remote-page-cap.test.ts
-test/search-stale-parity.test.ts
 test/search-transcript-quote-8384.test.ts
 test/search-transcript-quote-8384b.test.ts
 test/search-transcript-quote-budget.test.ts
@@ -739,6 +741,7 @@ test/search-vector-scope-parity.test.ts
 test/search/page-rank-cut.test.ts
 test/search/rerank-gate-hybrid.test.ts
 test/search/rerank-gate-telemetry.test.ts
+test/secret-store.test.ts
 test/segmented-untiled-hold-gst1209.test.ts
 test/serve-head-watcher-managed.serial.test.ts
 test/serve-http-access.test.ts

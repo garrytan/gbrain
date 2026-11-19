@@ -53,7 +53,7 @@ checks ([below](#full-ci-on-pull-requests)), never per-cell matrix names.
 | `nightly-watch.yml` | `workflow_run` event guard | Not a test scope: it files issues from qualifying scheduled and push-to-master runs | — |
 | `fix-wave-gate.yml`, `fix-wave-closeout.yml` | Pull-request action and merge state | Not a test scope: merge-process automation | — |
 | `harness-check.yml` | `pull_request` only; a missing `HARNESS_EVALS_READ_TOKEN` skips the job (succeeds with a notice); a fork head is refused | Named exception: advisory, non-required check ([below](#harness-check)) | None: pushes to master and schedules do not run it; the pin bump runs its steps by hand on master |
-| `full-ci.yml` | `full-ci` label, later pushes to a labeled pull request, same-repository head | Not a test scope: dispatches the full profile on the head | — |
+| `full-ci.yml` | `full-ci` label, same-repository head; the label comes off once both dispatches are accepted | Not a test scope: dispatches the full profile on the head | — |
 | `test.yml`, `scale-tier.yml` | `dynamic-ci` filter (Trunk Dynamic CI) on pull requests; its gated jobs run unless the verdict is exactly `'false'` | Named exception ([below](#trunk-dynamic-ci)): pull requests only, Learning mode skips nothing | The full-ci dispatch, every push to master, the merge queue and the nightly schedules, which never run the filter |
 
 ## Full CI on pull requests
@@ -73,8 +73,12 @@ The full suite runs on the exact head before merge, with the same shape as a
 push to master: every unit shard, serial, slow, both PostgreSQL arms and the
 whole E2E corpus. A maintainer adds the `full-ci` label (a label needs triage
 access, so contributors cannot add one). `full-ci.yml` then dispatches Test
-and E2E on the head branch, and again on every later push while the label
-stays. A fork's branch is never dispatched. A thread that wants the full suite
+and E2E on the head branch and removes the label once both dispatches were
+accepted, so a later push does not start a full run nobody asked for. A refused
+or failed dispatch leaves the label on, where it shows. To gate a later head, add
+the label again at that head. A head that moved after the label was added keeps
+the label, and the push that moved it dispatches and removes it. A fork's branch
+is never dispatched. A thread that wants the full suite
 earlier, for a risky change, dispatches it itself:
 `gh workflow run test.yml --ref <branch> && gh workflow run e2e.yml --ref <branch>`.
 
@@ -244,11 +248,13 @@ inventory:
   Tier 2 file (`test/e2e/skills.test.ts`): a VM has neither the keys nor
   openclaw, so every test in it would skip.
 - gstack accepts only `push` and `workflow_dispatch` runs whose newest attempt
-  succeeded. **A flaky job means re-running the whole workflow.** "Re-run failed
-  jobs" carries every job that passed, the ledger job that writes the manifest
-  included, over from the older attempt, so the new attempt has no manifest of
-  its own and its `tree.json` has no `files` (`inventory_uncovered`); a
-  `tree.json` left from an older attempt is refused too (`artifact_mismatch`).
+  succeeded. After "Re-run failed jobs", the failed jobs and the jobs that need
+  them (the ledger job that writes the manifest included) run again; the
+  manifest counts each job at its newest attempt, so `tree.json` still lists
+  every test file, and it names the files that passed only on the re-run in
+  `rerun_files`, with the run's `attempts`. A failing test left in the newest
+  attempt of any job means `tree.json` has no `files` (`inventory_uncovered`);
+  a `tree.json` left from an older attempt is refused too (`artifact_mismatch`).
 - The profiles live in `.gstack/pregate.json`: `run_profiles` `test`
   (`test.yml`, job `full-suite`, artifact `full-suite-tree`) and `e2e`
   (`e2e.yml`, job `e2e-full-suite`, artifact `e2e-full-suite-tree`), each

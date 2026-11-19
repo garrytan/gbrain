@@ -71,7 +71,6 @@ import { chunkGenerationProbe } from './safe-chunks.ts';
 export const VECTOR_EXTENSION_VERSION_SQL = `SELECT extversion FROM pg_extension WHERE extname = 'vector'`;
 
 export interface VectorSearchStatementInput {
-  /** The calling engine. Both engines build the same statement text, `stale` included. */
   dialect: 'postgres' | 'pglite';
   embedding: Float32Array;
   limit: number;
@@ -309,7 +308,7 @@ export function vectorStatementForms(build: (chunkManifest: boolean) => VectorSe
 }
 
 export function buildVectorSearchStatement(input: VectorSearchStatementInput): VectorSearchStatement {
-  const { limit, offset, opts } = input;
+  const { dialect, limit, offset, opts } = input;
   const resolvedCol = normalizeEngineColumn(opts?.embeddingColumn);
   const indexed = hnswIndexExpected(resolvedCol.type, resolvedCol.dimensions);
   // innerLimit scales with offset to preserve the pagination contract.
@@ -390,7 +389,7 @@ export function buildVectorSearchStatement(input: VectorSearchStatementInput): V
           ${visibilityClause}`;
   const freshFilter = `${modelParam}::text IS NULL OR hash_current`;
 
-  const candidateColumns = `p.slug, p.id as page_id, p.title, p.type, p.source_id, p.updated_at,
+  const candidateColumns = `p.slug, p.id as page_id, p.title, p.type, p.source_id,${dialect === 'pglite' ? ' p.updated_at,' : ''}
           p.effective_date, p.effective_date_source,
           CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
             THEN p.frontmatter->>'message_id' END AS message_id, p.frontmatter->>'thread_id' AS thread_id,
@@ -493,9 +492,9 @@ export function buildVectorSearchStatement(input: VectorSearchStatementInput): V
         bpp.message_id, bpp.thread_id, bpp.source_subject,
         bpp.chunk_id, bpp.chunk_index, bpp.chunk_text, bpp.chunk_source,
         bpp.score,
-        CASE WHEN bpp.updated_at < (
+        ${dialect === 'pglite' ? `CASE WHEN bpp.updated_at < (
           SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = bpp.page_id
-        ) THEN true ELSE false END AS stale
+        ) THEN true ELSE false END` : 'false'} AS stale
       FROM best_per_page bpp
       -- v0.41.13: stable tiebreaker for tied scores (planner-independent order).
       ORDER BY bpp.score DESC, bpp.page_id ASC, bpp.chunk_id ASC
