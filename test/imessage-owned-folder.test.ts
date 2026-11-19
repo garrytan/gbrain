@@ -23,6 +23,8 @@ import { connectorIdentity } from '../src/core/persistence/connector-identity.ts
 import { withEnv } from './helpers/with-env.ts';
 import { readPagesIn, pagesInLine } from '../src/core/owned-folder/status.ts';
 import { rebindOwnedSource } from '../src/commands/sources-rebind.ts';
+import { removeSource } from '../src/core/sources-ops.ts';
+import { purgeExpiredSources } from '../src/core/destructive-guard.ts';
 import { slugifyPath } from '../src/core/sync.ts';
 
 const DAY = 86_400_000;
@@ -231,6 +233,42 @@ for (const kind of testBackends()) describe(`owned folder (${kind})`, () => {
     expect(commits(repo)).toBe(c1);
     expect(await pageCount(id)).toBe(2);
     await expect(runIMessageSync(engine, id, cfg, { ...options }, { helper: down, now: () => NOW + 180_000 })).rejects.toMatchObject({ code: 'apple_helper_not_running' });
+  });
+
+  test('removing the source removes its files in one commit and keeps a hand-edited one; --keep-storage leaves them', async () => {
+    const { repo, id, cfg, folder } = await setup();
+    await run(id, cfg, mac());
+    writeFileSync(join(folder, dayFile(ALICE, 1)), 'my own notes\n');
+    const c1 = commits(repo);
+    const preview = await removeSource(engine, { id, dryRun: true });
+    expect(preview.owned_files).toBe(3);
+    expect(commits(repo)).toBe(c1);
+    const removed = await removeSource(engine, { id, yes: true });
+    expect(removed.owned_files).toBe(3);
+    expect(commits(repo)).toBe(c1 + 1);
+    expect(git(repo, 'log', '-1', '--format=%s').stdout.trim()).toBe(`imessage(${id}): remove the source's 3 chat-day file(s) from .gbrain-owned/${id}`);
+    expect(existsSync(join(folder, dayFile(ALICE, 2)))).toBe(false);
+    expect(existsSync(join(folder, 'OWNER.json'))).toBe(false);
+    expect(readFileSync(join(folder, dayFile(ALICE, 1)), 'utf8')).toBe('my own notes\n');
+    expect(await pageCount(id)).toBe(0);
+
+    const kept = await setup();
+    await run(kept.id, kept.cfg, mac());
+    const c2 = commits(kept.repo);
+    await removeSource(engine, { id: kept.id, yes: true, keepStorage: true });
+    expect(commits(kept.repo)).toBe(c2);
+    expect(existsSync(join(kept.folder, dayFile(ALICE, 2)))).toBe(true);
+  });
+
+  test('the expired-archive purge takes the files out the same way', async () => {
+    const { repo, id, cfg, folder } = await setup();
+    await run(id, cfg, mac());
+    await engine.executeRaw("UPDATE sources SET archived=true, archived_at=now() - interval '5 days', archive_expires_at=now() - interval '1 day' WHERE id=$1", [id]);
+    const c1 = commits(repo);
+    const result = await purgeExpiredSources(engine);
+    expect(result.purged).toContain(id);
+    expect(commits(repo)).toBe(c1 + 1);
+    expect(existsSync(folder)).toBe(false);
   });
 
   test('a mass removal removes nothing and keeps the days', async () => {

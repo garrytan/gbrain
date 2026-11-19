@@ -58,9 +58,9 @@ export const samePushUrls = (a: readonly string[], b: readonly string[]): boolea
   a.length === b.length && [...a].sort().every((v, i) => v === [...b].sort()[i]);
 
 /** The default source's checkout root when it qualifies as a place for files, else why not. */
-async function defaultCheckout(engine: BrainEngine): Promise<{ root: string } | { reason: OwnedDatabaseOnlyReason; detail: string }> {
+export async function defaultCheckout(engine: Pick<BrainEngine, 'executeRaw'> & Partial<Pick<BrainEngine, 'getConfig'>>): Promise<{ root: string } | { reason: OwnedDatabaseOnlyReason; detail: string }> {
   const [row] = await engine.executeRaw<{ local_path: string | null; config: unknown }>("SELECT local_path, config FROM sources WHERE id = 'default'");
-  const anchor = row?.local_path?.trim() || (await engine.getConfig('sync.repo_path').catch(() => null))?.trim() || '';
+  const anchor = row?.local_path?.trim() || (await engine.getConfig?.('sync.repo_path').catch(() => null))?.trim() || '';
   if (!anchor) return { reason: 'no_repository', detail: 'the brain has no repository' };
   if (!isAbsolute(anchor) || !existsSync(anchor)) return { reason: 'no_repository', detail: `the default source's checkout ${anchor} is not an absolute path that exists` };
   const top = git(anchor, ['rev-parse', '--show-toplevel']);

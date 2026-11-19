@@ -787,8 +787,7 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
   const yes = args.includes('--yes');
   const dryRun = args.includes('--dry-run');
   const confirmDestructive = args.includes('--confirm-destructive');
-  const _keepStorage = args.includes('--keep-storage');
-  void _keepStorage;
+  const keepStorage = args.includes('--keep-storage');
 
   if (id === 'default') {
     console.error('Error: cannot remove the "default" source (it backs the pre-v0.17 brain).');
@@ -805,6 +804,8 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
   const impact = await assessDestructiveImpact(engine, id);
   if (impact) {
     console.log(formatImpact(impact));
+    const ownedFiles = await (await import('../core/owned-folder/remove.ts')).previewOwnedRemoval(engine, id);
+    if (ownedFiles) console.log(`  ${ownedFiles} chat-day file(s) in .gbrain-owned/${id}/ ${keepStorage ? 'stay (--keep-storage)' : 'are removed in one commit; the remote history still holds what was pushed'}.`);
 
     if (dryRun) {
       console.log('(dry-run; no side effects)');
@@ -853,7 +854,7 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
         );
         if (Number(rows[0]?.n ?? 0) > 0) throw new SourceReferencedError();
       }
-      await deleteSourceRow(tx, id);
+      await deleteSourceRow(tx, id, { keepOwnedFiles: keepStorage });
     });
   } catch (e) {
     const code = typeof e === 'object' && e !== null && 'code' in e ? String((e as { code?: unknown }).code) : '';

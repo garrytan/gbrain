@@ -44,13 +44,17 @@ const PAGES_CASCADE_SQL = `EXISTS (
  * was deleted.
  */
 export async function deleteSourceRow(
-  engine: Pick<BrainEngine, 'executeRaw'>,
+  engine: Pick<BrainEngine, 'executeRaw'> & Partial<Pick<BrainEngine, 'getConfig'>>,
   id: string,
-  opts: { expiredArchiveOnly?: boolean } = {},
+  opts: { expiredArchiveOnly?: boolean; keepOwnedFiles?: boolean } = {},
 ): Promise<boolean> {
   const expired = opts.expiredArchiveOnly
     ? `AND ${EXPIRED_ARCHIVE_SQL}`
     : '';
+  // GST-3022: an owned-folder source's files leave its folder in one commit first; a failure keeps the row.
+  if ((await engine.executeRaw(`SELECT 1 FROM sources WHERE id = $1 ${expired}`, [id])).length) {
+    await (await import('./owned-folder/remove.ts')).removeOwnedFolder(engine, id, { keep: opts.keepOwnedFiles });
+  }
   const rows = await engine.executeRaw<{ id: string | null; stranded: number }>(
     `WITH stranded AS (SELECT count(*)::int AS n FROM pages WHERE source_id = $1 AND NOT ${PAGES_CASCADE_SQL}),
        gone AS (DELETE FROM sources WHERE id = $1 ${expired} AND (SELECT n FROM stranded) = 0 RETURNING id, incarnation),
