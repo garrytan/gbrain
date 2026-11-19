@@ -20,6 +20,8 @@ import {
 } from '../../engine-sql/generation-repair.ts';
 import type { FenceVersionBodyRow } from '../../engine-sql/generation-fence-evidence.ts';
 import { checkGenerationPageRowsQuery, type GenerationPageRow, type GenerationPageRowsQuery } from '../../engine-sql/generation-page-rows.ts';
+import { checkGenerationVersionProducer, type AtomOriginInputRow, type AtomWriteReceiptRow, type GenerationVersionProducer, type ProducerVersionRow }
+  from '../../engine-sql/generation-atom-reads.ts';
 import type { GenerationFenceBlockRow, GenerationOwnedItemRow } from '../../engine-sql/generation-fence-restore.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
@@ -199,3 +201,18 @@ export const readGenerationPageRows: StoreMember<[query: GenerationPageRowsQuery
   checkGenerationPageRowsQuery(query);
   return storeCall({ member: 'readGenerationPageRows', sourceId: query.sourceId }, () => brain.readGenerationPageRows(query));
 };
+
+/** A live page origin's input pin row, or null (`generations/atom_reads.rs`). */
+export const readAtomOriginInput: StoreMember<[sourceId: string, slug: string], AtomOriginInputRow | null> = async (brain, sourceId, slug) =>
+  storeCall({ member: 'readAtomOriginInput', sourceId }, () => brain.readAtomOriginInput(sourceId, slug));
+
+/** The stored versions `producer` wrote of the pages `slugs`, in no set order. */
+export const listProducerVersionRows: StoreMember<[sourceId: string, slugs: readonly string[], producer: GenerationVersionProducer], ProducerVersionRow[]> =
+  async (brain, sourceId, slugs, producer) => {
+    checkGenerationVersionProducer(producer);
+    return storeCall({ member: 'listProducerVersionRows', sourceId }, () => brain.listProducerVersionRows(sourceId, [...slugs], producer));
+  };
+
+/** The committed managed atom write receipts with content of the pages `slugs`, in no set order. */
+export const listAtomWriteReceipts: StoreMember<[sourceId: string, slugs: readonly string[]], AtomWriteReceiptRow[]> = async (brain, sourceId, slugs) =>
+  storeCall({ member: 'listAtomWriteReceipts', sourceId }, () => brain.listAtomWriteReceipts(sourceId, [...slugs]));

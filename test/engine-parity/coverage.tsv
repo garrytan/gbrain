@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 748/748
+# covered: 751/751
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 12/12
-# persistence_journal: 106/106
+# persistence_journal: 109/109
 # entity_reads: 6/6
 # cycle_locks: 10/10
 # minion_jobs: 8/8
@@ -74,15 +74,15 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	81	no	yes	yes	serves
+transaction	lifecycle	yes	82	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	103	yes	yes	yes	serves
+getPage	pages	yes	104	yes	yes	yes	serves
 readPageSnapshot	pages	yes	28	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	404	yes	yes	yes	serves
+putPage	pages	yes	405	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
@@ -337,7 +337,7 @@ sweepSegments	segmented_body	yes	3	no	yes	yes	serves
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
-createVersion	versions	yes	19	no	yes	yes	serves
+createVersion	versions	yes	20	no	yes	yes	serves
 getVersions	versions	yes	9	no	yes	yes	serves
 revertToVersion	versions	yes	2	no	yes	yes	serves
 countOnboardSignal	stats_ingest	yes	2	no	yes	yes	serves
@@ -384,7 +384,7 @@ lockGenerationKey	persistence_journal	yes	2	no	yes	yes	serves
 clearFenceHoldRows	persistence_journal	yes	1	no	yes	yes	serves
 readFenceHoldFiles	persistence_journal	yes	1	no	yes	yes	serves
 readLiveGenerationRow	persistence_journal	yes	4	no	yes	yes	serves
-activateGenerationRows	persistence_journal	yes	13	no	yes	yes	serves
+activateGenerationRows	persistence_journal	yes	14	no	yes	yes	serves
 recordHeldGenerationRow	persistence_journal	yes	9	no	yes	yes	serves
 heldGenerationRowsForInput	persistence_journal	yes	1	no	yes	yes	serves
 readHeldGenerationContext	persistence_journal	yes	5	no	yes	yes	serves
@@ -397,8 +397,8 @@ readGenerationValve	persistence_journal	yes	1	no	yes	yes	serves
 bumpGenerationValve	persistence_journal	yes	1	no	yes	yes	serves
 scrubGenerationPageRows	persistence_journal	yes	1	no	yes	yes	serves
 scrubGenerationTextRows	persistence_journal	yes	3	no	yes	yes	serves
-recordGenerationActivation	persistence_journal	yes	3	no	yes	yes	serves
-markGenerationActivated	persistence_journal	yes	1	no	yes	yes	serves
+recordGenerationActivation	persistence_journal	yes	4	no	yes	yes	serves
+markGenerationActivated	persistence_journal	yes	2	no	yes	yes	serves
 readGenerationActivationState	persistence_journal	yes	1	no	yes	yes	serves
 settleGenerationMember	persistence_journal	yes	1	no	yes	yes	serves
 listPendingGenerationMembers	persistence_journal	yes	2	no	yes	yes	serves
@@ -416,7 +416,10 @@ moveKeptFactRows	persistence_journal	yes	1	no	yes	yes	serves
 readGenerationFenceBlocks	persistence_journal	yes	3	no	yes	yes	serves
 listOwnedGenerationItems	persistence_journal	yes	2	no	yes	yes	serves
 readLiveGenerationId	persistence_journal	yes	1	no	yes	yes	serves
-readGenerationPageRows	persistence_journal	yes	1	no	yes	yes	serves
+readGenerationPageRows	persistence_journal	yes	2	no	yes	yes	serves
+readAtomOriginInput	persistence_journal	yes	1	no	yes	yes	serves
+listProducerVersionRows	persistence_journal	yes	1	no	yes	yes	serves
+listAtomWriteReceipts	persistence_journal	yes	1	no	yes	yes	serves
 readWriteRequest	persistence_journal	yes	3	no	yes	yes	serves
 readWriteRequestById	persistence_journal	yes	8	no	yes	yes	serves
 readWriteRequestProgress	persistence_journal	yes	1	no	yes	yes	serves
@@ -426,12 +429,12 @@ readCounterRows	persistence_journal	yes	3	no	yes	yes	serves
 readAdmissionRate	persistence_journal	yes	2	no	yes	yes	serves
 lockPersistenceCounters	persistence_journal	yes	30	no	yes	yes	serves
 insertWriteRequest	persistence_journal	yes	30	no	yes	yes	serves
-stampWriteClaim	persistence_journal	yes	19	no	yes	yes	serves
+stampWriteClaim	persistence_journal	yes	20	no	yes	yes	serves
 lockWriteRequest	persistence_journal	yes	3	no	yes	yes	serves
 completeWriteRow	persistence_journal	yes	14	no	yes	yes	serves
 insertPublicationEffects	persistence_journal	yes	7	no	yes	yes	serves
 insertWithdrawalEffects	persistence_journal	yes	1	no	yes	yes	serves
-readSourceMembership	persistence_journal	yes	32	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	33	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	2	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	2	no	yes	yes	serves
 insertTopologyChange	persistence_journal	yes	4	no	yes	yes	serves

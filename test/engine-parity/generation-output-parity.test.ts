@@ -32,11 +32,15 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { submissionAuthority } from '../../src/core/persistence/authority.ts';
 import { registerLocalWriter } from '../../src/core/persistence/identity.ts';
-import { admitWrite } from '../../src/core/persistence/journal.ts';
 import { takePreimages } from '../../src/core/generations/adapters/take-rows.ts';
 import { EXTRACTED_FACTS_KIND, extractedFactsAdapter } from '../../src/core/generations/adapters/extracted-facts.ts';
 import { DREAM_SUMMARY_KIND, dreamSummaryAdapter, publishSinglePage, singlePageOwnerKey } from '../../src/core/generations/adapters/single-page.ts';
 import { SYNTHESIS_KIND, synthesisAdapter, synthesisOwnerKey } from '../../src/core/generations/adapters/synthesis.ts';
+import { ATOM_KIND, atomGenerationAdapter, atomOwnerKey } from '../../src/core/generations/adapters/atoms.ts';
+import { importPageItem } from '../../src/core/generations/adapters/page.ts';
+import { admitWrite, completeWrite } from '../../src/core/persistence/journal.ts';
+import type { WriteRequest } from '../../src/core/persistence/model.ts';
+import { serializeMarkdown } from '../../src/core/markdown.ts';
 import { CONSOLIDATION_KIND, clearConsolidationTies, consolidationOwnerKey, consolidationRestored, factPreimages, restoreFactRow }
   from '../../src/core/generations/adapters/fact-rows.ts';
 
@@ -63,13 +67,13 @@ const held = (holdId: string, context: string, proposal: string | null) => ({ ho
   reason: 'no_proof', context, proposal, proposalBytes: 2 });
 
 /** Admits one put_page request for `slug` through the real admission path, as a CLI put does. It stays queued. */
-async function admitPut(engine: BrainEngine, slug: string, requestId: string) {
+async function admitPut(engine: BrainEngine, slug: string, requestId: string, intent: Record<string, unknown> = { body: slug }) {
   const source = await engine.readSourceMembership('default');
   const ctx: OperationContext = { engine, config: { engine: engine.kind }, remote: false, dryRun: false, sourceId: 'default',
     logger: { info() {}, warn() {}, error() {} } } as OperationContext;
   const authority = await submissionAuthority(ctx, 'put_page', 'default', source!.incarnation, slug);
   return admitWrite(engine, { principal: authority.principal, authority, operation: 'put_page', sourceId: 'default',
-    sourceIncarnation: source!.incarnation, slug, requestId, callerIntent: { body: slug }, intent: { body: slug } });
+    sourceIncarnation: source!.incarnation, slug, requestId, callerIntent: intent, intent });
 }
 
 describe('engine parity: generation ledger output', () => {
@@ -506,6 +510,71 @@ describe('engine parity: generation ledger output', () => {
         'synth/textual live not-owned'],
       noLocator: ['synth/recorded live owned'],
       absent: [],
+    });
+    return answers;
+  });
+  parityTest('the atom adapter reads its page origin input, its atom rows, and the version and receipt evidence of atoms written before the ledger', {
+    methods: ['readAtomOriginInput', 'readGenerationPageRows', 'listProducerVersionRows', 'listAtomWriteReceipts', 'putPage', 'getPage', 'createVersion',
+      'transaction', 'readSourceMembership', 'stampWriteClaim', 'recordGenerationActivation', 'activateGenerationRows', 'markGenerationActivated'],
+  }, async (engine) => {
+    // Slugs of lowercase letters after one shared prefix, so byte order and en_US order agree.
+    const origin = 'notes/origin';
+    await engine.putPage(origin, { type: 'note', title: 'Origin', compiled_truth: 'héllo', timeline: 'ab' });
+    const key = { kind: ATOM_KIND, sourceId: 'default', ownerKey: atomOwnerKey({ kind: 'page', slug: origin }) };
+    const atom = (slug: string, by: string) => serializeMarkdown({ source_slug: origin, extracted_by: by }, `${slug} body`, '', { type: 'atom', title: slug, tags: [] });
+    const imported = (slug: string, by: string) => engine.transaction(tx => importPageItem(tx, 'default', slug, atom(slug, by)));
+    // Version evidence: an unedited extractor version (its live page later stamped private), an edited one, another producer's.
+    await imported('atoms/versioned', 'extract_atoms:v1');
+    await engine.createVersion('atoms/versioned');
+    const live = (await engine.getPage('atoms/versioned'))!;
+    await engine.putPage('atoms/versioned', { type: live.type, title: live.title, compiled_truth: live.compiled_truth, timeline: live.timeline,
+      frontmatter: { ...live.frontmatter, visibility: 'private' } });
+    await imported('atoms/edited', 'extract_atoms');
+    await engine.createVersion('atoms/edited');
+    await engine.putPage('atoms/edited', { type: 'atom', title: 'edited', compiled_truth: 'edited by hand', frontmatter: { source_slug: origin, extracted_by: 'extract_atoms' } });
+    await imported('atoms/lookalike', 'xextract_atoms');
+    await engine.createVersion('atoms/lookalike');
+    // Receipt evidence: a committed managed atom write, one whose activation activated, one whose activation never did.
+    const activationKey = { sourceId: 'default', kind: ATOM_KIND, ownerKey: 'source_slug:notes/elsewhere' };
+    const record = (activationId: string) => engine.transaction(tx => tx.recordGenerationActivation(activationKey,
+      { activationId, expectedGeneration: 0, inputPin: 'p', setHash: 'h', members: [] }));
+    await record('00000000-0000-8000-a000-0000000000c1');
+    await record('00000000-0000-8000-a000-0000000000c2');
+    const generation = await engine.transaction(tx => tx.activateGenerationRows(activationKey, null,
+      activation(1, 'atom-act', '{}', '00000000-0000-8000-a000-0000000000c1'), ledger(['atoms/elsewhere'])));
+    await engine.markGenerationActivated('00000000-0000-8000-a000-0000000000c1', generation);
+    const receipt = async (slug: string, requestId: string, activationId?: string) => {
+      const content = atom(slug, 'extract_atoms');
+      await engine.transaction(tx => importPageItem(tx, 'default', slug, content));
+      const admitted = await admitPut(engine, slug, requestId, { kind: 'managed_atom_page', content, ...(activationId ? { activationId } : {}) });
+      const claimed = await engine.stampWriteClaim(admitted.id, 'c0000000-0000-4000-8000-0000000000c1', 60_000, JSON.stringify({ phase: 'parity' }));
+      await engine.transaction(tx => completeWrite(tx, claimed as WriteRequest, 'committed', { slug }));
+    };
+    await registerLocalWriter(engine, 'cli');
+    await receipt('atoms/receipt', 'b0000000-0000-4000-8000-0000000000e1');
+    await receipt('atoms/activated', 'b0000000-0000-4000-8000-0000000000e2', '00000000-0000-8000-a000-0000000000c1');
+    await receipt('atoms/pending', 'b0000000-0000-4000-8000-0000000000e3', '00000000-0000-8000-a000-0000000000c2');
+    const input = await atomGenerationAdapter.readInput(engine, key, undefined);
+    const stored = (await engine.getPage(origin))!;
+    const items = await atomGenerationAdapter.readItems(engine, key, [], undefined);
+    const rows = [...items.values()].sort((a, b) => a.key < b.key ? -1 : 1);
+    const evidence = await atomGenerationAdapter.legacyEvidence(engine, key, rows);
+    const answers = {
+      input: { size: input?.size, hash: input?.pin.startsWith(`${stored.content_hash}:${stored.id}:`), parts: input?.pin.split(':').length },
+      absent: await atomGenerationAdapter.readInput(engine, { ...key, ownerKey: atomOwnerKey({ kind: 'page', slug: 'notes/absent' }) }, undefined),
+      items: rows.map(row => `${row.key} ${row.live} ${row.owned}`),
+      evidence: [...evidence].sort(),
+      noRows: [...await atomGenerationAdapter.legacyEvidence(engine, key, [])],
+      producer: await outcome(() => engine.listProducerVersionRows('default', ['atoms/versioned'], 'synthetic' as never), /not a version producer: "synthetic"/),
+    };
+    expect(answers).toEqual({
+      input: { size: 8, hash: true, parts: 3 },
+      absent: null,
+      items: ['atoms/activated true true', 'atoms/edited true true', 'atoms/lookalike true true', 'atoms/pending true true', 'atoms/receipt true true',
+        'atoms/versioned true true'],
+      evidence: ['atoms/activated', 'atoms/receipt', 'atoms/versioned'],
+      noRows: [],
+      producer: 'not a version producer: "synthetic"',
     });
     return answers;
   });

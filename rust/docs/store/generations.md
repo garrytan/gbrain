@@ -94,6 +94,14 @@ so `dream_generated: true` matches `'true'`. Rows come in slug byte order and ta
 by the database collation, and the adapters key the rows by slug. `segmented` is true when both body columns are
 NULL, as `body_storage = 'segmented'` is on PGLite.
 
+The atom reads (`generations/atom_reads.rs`) add no keys either. `readAtomOriginInput` reads one live page record; its
+size is the segmented body's byte count, or the byte length of `compiled_truth` and `timeline` (NULL counts 0).
+`listProducerVersionRows` reads each listed page (deleted or not) and its `page_versions` rows, and keeps a version whose
+`compiled_truth` is set and whose `frontmatter.extracted_by` starts with `extract_atoms`; any other producer refuses
+`INVALID_ARGUMENT`. `listAtomWriteReceipts` scans the write request records for committed `managed_atom_page` intents
+that hold `content`, and keeps one whose `activationId` is absent or names an activated activation. Rows come in slug
+byte order; the SQL has no `ORDER BY`, and the callers fold the rows into a set.
+
 JSON values (`completeness`, `held_context`, `proposal`, `preimage`) read back in jsonb key order. A source delete
 removes the source's rows of all five tables (`cascade.rs`).
 

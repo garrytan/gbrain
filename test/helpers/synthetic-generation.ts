@@ -4,9 +4,10 @@
  * can move the input under a producer. Retirements carry the extract-atoms stamp, so the derived purge hold applies.
  */
 import type { BrainEngine } from '../../src/core/engine.ts';
+import type { ProducerVersionRow } from '../../src/core/engine-sql/generation-atom-reads.ts';
 import type { GenerationAdapter, GenerationKey, InputState, ProposedItem } from '../../src/core/generations/contract.ts';
 import { registerGenerationAdapter } from '../../src/core/generations/adapters/index.ts';
-import { importPageItem, markdownItem, pageItemRow, pageVersionEvidence, preimageIdentity, preimageMarkdown, type PageRowData } from '../../src/core/generations/adapters/page.ts';
+import { importPageItem, markdownItem, pageItemRow, preimageIdentity, preimageMarkdown, versionEvidence, type PageRowData } from '../../src/core/generations/adapters/page.ts';
 import { retireDerivedPagesInTransaction } from '../../src/core/persistence/derived-retirement-hold.ts';
 import { serializeMarkdown } from '../../src/core/markdown.ts';
 
@@ -26,6 +27,16 @@ async function readSyntheticRows(engine: BrainEngine, sourceId: string, where: s
   return rows.map(row => ({ ...row, page_id: Number(row.page_id), tags: row.tags ?? [] }));
 }
 
+/** The synthetic producer's retained versions (a test-only read; the real adapters use engine.listProducerVersionRows). */
+async function readSyntheticVersions(engine: BrainEngine, sourceId: string, slugs: string[]): Promise<ProducerVersionRow[]> {
+  if (!slugs.length) return [];
+  return engine.executeRaw<ProducerVersionRow>(
+    `SELECT p.slug, v.type, v.title, v.compiled_truth, v.timeline, v.frontmatter, v.tags, p.frontmatter->'visibility' AS live_visibility
+       FROM page_versions v JOIN pages p ON p.id = v.page_id
+      WHERE p.source_id = $1 AND p.slug = ANY($2::text[]) AND v.compiled_truth IS NOT NULL AND v.title IS NOT NULL
+        AND v.frontmatter->>'synthetic_producer' = 'synthetic'`, [sourceId, slugs]);
+}
+
 export const syntheticAdapter: GenerationAdapter<undefined> = {
   kind: SYNTHETIC_KIND,
   retiredBy: 'extract-atoms',
@@ -36,7 +47,7 @@ export const syntheticAdapter: GenerationAdapter<undefined> = {
     const rows = await readSyntheticRows(engine, key.sourceId, `p.slug = ANY($2::text[]) OR (p.deleted_at IS NULL AND p.frontmatter->>'synthetic_owner' = $3)`, [[...itemKeys], key.ownerKey]);
     return new Map(rows.map(row => [row.slug, pageItemRow(row, row.frontmatter?.synthetic_owner === key.ownerKey)]));
   },
-  legacyEvidence: (engine, key, rows) => pageVersionEvidence(engine, key.sourceId, rows, "v.frontmatter->>'synthetic_producer' = 'synthetic'"),
+  legacyEvidence: (engine, key, rows) => readSyntheticVersions(engine, key.sourceId, rows.map(row => row.key)).then(versions => versionEvidence(rows, versions)),
   async publishItems(tx, key, items) { for (const item of items) await importPageItem(tx, key.sourceId, item.key, item.content); },
   retireItems: (tx, key, itemKeys, retiredBy) => retireDerivedPagesInTransaction(tx, key.sourceId, itemKeys, retiredBy),
   restoreItem: (tx, key, itemKey, preimage) => importPageItem(tx, key.sourceId, itemKey, preimageMarkdown(preimage)),

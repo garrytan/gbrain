@@ -2328,6 +2328,17 @@
         ],
         "flagOnScopes": []
       },
+      "listAtomWriteReceipts#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listChunklessPagesWithContent#afterPageId+sourceId": {
         "flagOffLanes": [
           "pool"
@@ -2983,6 +2994,17 @@
           "src-a,src-b"
         ]
       },
+      "listProducerVersionRows#extract-atoms": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listRecordedFenceItemKeys#default": {
         "flagOffLanes": [
           "pool"
@@ -3625,6 +3647,17 @@
         "flagOnScopes": [
           "default"
         ]
+      },
+      "readAtomOriginInput#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
       },
       "readCapacityForecastInputs#default": {
         "flagOffLanes": [
@@ -5921,6 +5954,7 @@
         "listAllSources": "none",
         "listAmendmentsNotApplied": "none",
         "listAppliedPolicyRevisions": "none",
+        "listAtomWriteReceipts": "none",
         "listAwaitingMemoryProposals": "none",
         "listBuildSkewStacktraceLines": "none",
         "listCapturedFactsForClassification": "none",
@@ -5996,6 +6030,7 @@
         "listPendingSegmentedProjections": "none",
         "listPrefixSampledPages": "direct",
         "listPrivateQueueHealth": "none",
+        "listProducerVersionRows": "none",
         "listQualifiedSymbolNames": "none",
         "listQueueWedgeCounts": "none",
         "listRecentFailedJobErrors": "none",
@@ -6142,6 +6177,7 @@
         "rawTransaction": "none",
         "readAdmissionRate": "none",
         "readAdmissionSource": "none",
+        "readAtomOriginInput": "none",
         "readBeliefHistoryRows": "none",
         "readCallerPageAccess": "none",
         "readCapacityForecastInputs": "none",

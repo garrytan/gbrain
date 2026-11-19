@@ -146,7 +146,7 @@ impl<'q> Match<'q> {
 }
 
 /// `object->>'key'`.
-fn text_of(object: &Map<String, Value>, key: &str) -> Option<String> {
+pub(super) fn text_of(object: &Map<String, Value>, key: &str) -> Option<String> {
     match object.get(key)? {
         Value::Null => None,
         Value::String(text) => Some(text.clone()),

@@ -63,6 +63,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
 mod activations;
+mod atom_reads;
 mod fence_evidence;
 mod fence_restore;
 mod page_rows;

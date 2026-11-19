@@ -473,4 +473,42 @@ impl Brain {
             s.read_generation_page_rows(&query)
         })
     }
+
+    /// `readAtomOriginInput(sourceId, slug)`: resolves the live page origin's input row, or null.
+    #[napi]
+    pub fn read_atom_origin_input<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_atom_origin_input(&source_id, &slug))
+    }
+
+    /// `listProducerVersionRows(sourceId, slugs, producer)`: resolves the stored versions the
+    /// producer wrote of those pages.
+    #[napi]
+    pub fn list_producer_version_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slugs: Vec<String>,
+        producer: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_producer_version_rows(&source_id, &slugs, &producer)
+        })
+    }
+
+    /// `listAtomWriteReceipts(sourceId, slugs)`: resolves the committed managed atom write
+    /// receipts with content of those pages.
+    #[napi]
+    pub fn list_atom_write_receipts<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slugs: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_atom_write_receipts(&source_id, &slugs))
+    }
 }
