@@ -46,13 +46,12 @@ export const getChunkPage: StoreMember<[slug: string, opts: PageReadScope & { fr
       ['sourceId', 'sourceIds', 'fromIndex', 'limit', 'excludePrivate', 'requireSafeChunks'], UNREAD_SCOPE) as
       { sourceId?: unknown; sourceIds?: unknown[]; fromIndex?: number; limit?: number; excludePrivate?: unknown };
     // The scope resolves as getChunks resolves it: `sourceIds` when not empty, else `sourceId` (default `default`). A
-    // scope that names no source matches nothing, and a read over several sources is refused (the chunk order ties).
+    // scope that names no source matches nothing, and a read over several sources reads the page in each.
     const requested = sourceIds?.length ? sourceIds : [sourceId ?? 'default'];
     const named = namedSourceIds(requested);
     if (named.length === 0) return { chunks: [], total_chunks: 0, max_chunk_index: null };
-    if (named.length > 1) refuseMember('getChunkPage', 'a read over several sources');
     const options = {
-      sourceId: named[0]!, fromIndex, limit,
+      sourceId: named[0]!, ...(named.length > 1 ? { sourceIds: named } : {}), fromIndex, limit,
       excludePrivate: storePagePolicy('getChunkPage', excludePrivate, { callerReaders: true }) ?? null,
       requireSafeChunks: requiresSafeChunks(opts),
     };

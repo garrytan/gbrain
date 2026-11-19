@@ -59,8 +59,11 @@ document order (manifest `byte_start`, then `local_ordinal`, then `chunk_index`;
 does not follow the document): `chunks` holds the positions `fromIndex <= position < fromIndex + limit` and
 `max_chunk_index` is the visible count less one.
 
-A scope that names no source answers no chunks without a store call. A scope of several sources refuses: the SQL
-engines sum the counts of every matching page and order the chunks by a key that ties across sources.
+A scope that names no source answers no chunks without a store call. A scope of several sources reads the page of
+the slug in each, as the SQL engines do: `total_chunks` is the sum of their counts, the range applies to each page
+(by position in each page's order when any of them has a segmented chunk, and `max_chunk_index` is then the largest
+page's count less one), and the chunks merge in document order with the source id, in byte order, breaking a tie
+(`ORDER BY chunkDocumentOrder, p.source_id COLLATE "C"`). `getChunks` over several sources merges the same way.
 
 ## getChunkWindows
 

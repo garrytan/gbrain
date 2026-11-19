@@ -81,6 +81,7 @@ fn texts(page: &Value) -> Vec<String> {
 fn page_opts(source: &str, from: f64, limit: f64) -> ChunkPageOptions {
     ChunkPageOptions {
         source_id: source.into(),
+        source_ids: Vec::new(),
         from_index: from,
         limit,
         exclude_private: None,
@@ -144,6 +145,61 @@ fn chunk_page_reads_an_index_range_with_totals() {
             .unwrap(),
         none
     );
+}
+
+/// A read over several sources merges the pages in document order and breaks a tie by source id in byte order
+/// (`co-op` before `cob`), as `ORDER BY chunkDocumentOrder, p.source_id COLLATE "C"` does; the count is the sum.
+#[test]
+fn chunk_reads_over_several_sources_break_a_tie_by_source_id_bytes() {
+    let b = Brain::new("chunk-page-sources");
+    for id in ["cob", "co-op"] {
+        b.source(id);
+    }
+    b.page("notes/tie", "cob", json!({}));
+    b.seal(
+        "notes/tie",
+        "cob",
+        &[
+            (0, "cob 0", "compiled_truth"),
+            (1, "cob 1", "compiled_truth"),
+            (2, "cob 2", "compiled_truth"),
+        ],
+    );
+    b.page("notes/tie", "co-op", json!({}));
+    b.seal(
+        "notes/tie",
+        "co-op",
+        &[
+            (0, "co-op 0", "compiled_truth"),
+            (1, "co-op 1", "compiled_truth"),
+        ],
+    );
+    let several = |from: f64, limit: f64| ChunkPageOptions {
+        source_ids: vec!["cob".into(), "co-op".into(), "cob".into()],
+        ..page_opts("default", from, limit)
+    };
+    let page = b
+        .store
+        .get_chunk_page("notes/tie", &several(1.0, 5.0))
+        .unwrap();
+    assert_eq!(texts(&page), ["co-op 1", "cob 1", "cob 2"]);
+    assert_eq!(
+        (
+            page["total_chunks"].clone(),
+            page["max_chunk_index"].clone()
+        ),
+        (json!(5), json!(2))
+    );
+    let options: gbrain_store::chunks::GetChunksOptions =
+        serde_json::from_value(json!({"sourceIds": ["cob", "co-op"]})).unwrap();
+    let all: Vec<String> = b
+        .store
+        .get_chunks_with("notes/tie", &options)
+        .unwrap()
+        .iter()
+        .map(|c| c["chunk_text"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(all, ["co-op 0", "cob 0", "co-op 1", "cob 1", "cob 2"]);
 }
 
 fn req(page_id: u64, from: i64, to: i64, priority: i64) -> ChunkWindowRequest {

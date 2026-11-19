@@ -3,3 +3,4 @@
 ### Fixed
 - On a Rust brain, the synopsis tier's configuration read (used by `gbrain doctor` and `gbrain search modes`) no longer stops on the raw SQL refusal. It reports a page whose trusted frontmatter picks the per-chunk synopsis tier, as PGLite and Postgres do.
 - On a Postgres database with a linguistic collation (for example en_US), the synopsis sources now list in byte order, as on PGLite: a hyphenated source id no longer sorts as if the hyphen were missing.
+- A page's chunks read over several sources (`get_chunks` under a token that reads more than one source) now come back in one order on every engine: chunks at the same place in the document are ordered by source id in byte order. A Rust brain answers this read instead of refusing it.

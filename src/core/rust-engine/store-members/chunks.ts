@@ -71,11 +71,9 @@ export const getChunks: StoreMember<[slug: string, opts?: { sourceId?: string; s
     const requested = sourceIds?.length ? sourceIds : [sourceId ?? 'default'];
     const named = namedSourceIds(requested);
     if (named.length === 0) return [];
-    // Chunks of one slug from several sources come back in an order PGLite leaves to the database (the sort key ties
-    // across sources), so a read over more than one source is refused, not guessed.
-    if (named.length > 1) refuseMember('getChunks', 'a read over several sources');
+    // Chunks of one slug from several sources merge in document order, the source id (byte order) breaking a tie.
     // `requireSafeChunks` (safeChunksFilter): a page chunked before the fence chunker version has no chunks to read.
-    const scope = { sourceId: named[0]!, includeEmbedding: includeEmbedding === true, includeUnsealed: includeUnsealed === true,
+    const scope = { ...(named.length > 1 ? { sourceIds: named } : { sourceId: named[0]! }), includeEmbedding: includeEmbedding === true, includeUnsealed: includeUnsealed === true,
       requireSafeChunks: requireSafeChunks === true };
     const rows: Chunk[] = await storeCall({ member: 'getChunks', slug }, () => brain.getChunks(slug, scope));
     return rows.map((row) => toChunk(row));
