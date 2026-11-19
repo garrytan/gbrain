@@ -30,6 +30,8 @@ import { setPackRelationSemantics } from '../../src/core/link-validity.ts';
 import { EXAMPLE_PACK, useExamplePack } from '../helpers/amends-ranking-scenarios.ts';
 import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { operations } from '../../src/core/operations.ts';
+import { WRITE_GATE_DETECTOR_VERSION, WRITE_GATE_SCAN_BASELINE_KEY } from '../../src/core/write-gate-schema.ts';
+import { SCAN_TABLES, SCAN_TIERS } from '../../src/core/eligibility/scan.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -190,6 +192,31 @@ describe('engine parity: typed trust tier reads', () => {
         await engine.countUnscannedTrustRows({ table: 'timeline_entries', afterId: 0, until: 5, tiers })];
       expect({ takes, timeline, counts }).toEqual({ takes: [], timeline: [], counts: [0, 0] });
       return { takes, timeline, counts };
+    },
+  );
+
+  parityTest(
+    'a fresh brain holds the write gate scan baseline, so the trust scan counts no row written after it',
+    { methods: ['getConfig', 'putPage', 'addTimelineEntry', 'countUnscannedTrustRows'] },
+    async (engine) => {
+      const raw = await engine.getConfig(WRITE_GATE_SCAN_BASELINE_KEY);
+      const baseline = JSON.parse(raw ?? 'null') as { detector_version: number; until: Record<string, number> } | null;
+      await engine.putPage('scan/later', { type: 'note', title: 'Later', compiled_truth: 'l', timeline: '' });
+      await engine.addTimelineEntry('scan/later', { date: '2026-01-02', source: 'cal', summary: 'Written after the gate' });
+      // What doctor trust_scan counts before the first `gbrain trust scan` (readTrustScanState with no cursor): each
+      // table's rows at a scan tier, up to the baseline when there is one. Its cursor read is raw SQL (op_checkpoints),
+      // so the case counts here instead of calling the check.
+      const unscanned: Record<string, number> = {};
+      for (const table of SCAN_TABLES) {
+        unscanned[table] = await engine.countUnscannedTrustRows({ table, afterId: 0, until: baseline ? Number(baseline.until[table] ?? 0) : null, tiers: SCAN_TIERS });
+      }
+      const out = { raw, baseline, unscanned };
+      expect(out).toEqual({
+        raw: `{"until": {"facts": 0, "pages": 0, "takes": 0, "timeline_entries": 0}, "detector_version": ${WRITE_GATE_DETECTOR_VERSION}}`,
+        baseline: { detector_version: WRITE_GATE_DETECTOR_VERSION, until: { pages: 0, facts: 0, takes: 0, timeline_entries: 0 } },
+        unscanned: { pages: 0, facts: 0, takes: 0, timeline_entries: 0 },
+      });
+      return out;
     },
   );
 

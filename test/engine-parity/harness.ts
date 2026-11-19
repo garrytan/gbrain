@@ -34,6 +34,7 @@ import type { EngineConfig } from '../../src/core/types.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { resetPgliteState, truncateCascade } from '../helpers/reset-pglite.ts';
+import { WRITE_GATE_DETECTOR_VERSION, WRITE_GATE_SCAN_BASELINE_KEY } from '../../src/core/write-gate-schema.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import type { TestBackend } from '../helpers/test-backends.ts';
 import { armHas, isCapabilityRefusal, missingCapability, type EngineCapability } from './arm-capabilities.ts';
@@ -162,7 +163,19 @@ async function resetPostgres(engine: BrainEngine): Promise<void> {
   );
 }
 
-/** Return the arm to an empty brain (default source only). Harness-only SQL: cases never use it. */
+/**
+ * The reset empties `config`; put back the write gate's scan baseline that migration v227 records on
+ * a fresh brain (zero for every table), which a new Rust brain also starts with.
+ */
+async function seedScanBaseline(engine: BrainEngine): Promise<void> {
+  await engine.executeRaw(
+    `INSERT INTO config (key, value) SELECT $1, jsonb_build_object('detector_version', $2::int, 'until',
+       jsonb_build_object('pages', 0, 'facts', 0, 'takes', 0, 'timeline_entries', 0))::text ON CONFLICT (key) DO NOTHING`,
+    [WRITE_GATE_SCAN_BASELINE_KEY, WRITE_GATE_DETECTOR_VERSION],
+  );
+}
+
+/** Return the arm to an empty brain (default source and scan baseline only). Harness-only SQL: cases never use it. */
 async function resetArm(arm: ParityArm): Promise<void> {
   switch (arm.backend) {
     case 'rust':
@@ -170,9 +183,11 @@ async function resetArm(arm: ParityArm): Promise<void> {
       return;
     case 'pglite':
       await resetPgliteState(arm.engine as PGLiteEngine);
+      await seedScanBaseline(arm.engine);
       return;
     case 'postgres':
       await resetPostgres(arm.engine);
+      await seedScanBaseline(arm.engine);
       return;
     default:
       return assertNever(arm.backend);

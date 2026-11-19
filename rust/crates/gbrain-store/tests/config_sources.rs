@@ -44,6 +44,43 @@ fn the_schema_version_comes_from_the_caller_on_a_fresh_brain_and_from_the_record
 }
 
 #[test]
+fn a_fresh_brain_records_the_write_gate_scan_baseline_under_the_callers_detector() {
+    let dir = TempDir::new("cfg-baseline");
+    let path = dir.path().join("brain");
+    let options = OpenOptions {
+        write_gate_detector_version: Some(2),
+        ..OpenOptions::default()
+    };
+    let store = Store::open_dir(&path, options).unwrap();
+    // The text Postgres prints for the jsonb migration v227 stores on an empty brain.
+    let baseline = r#"{"until": {"facts": 0, "pages": 0, "takes": 0, "timeline_entries": 0}, "detector_version": 2}"#;
+    assert_eq!(
+        store
+            .get_config("write_gate.scan_baseline")
+            .unwrap()
+            .as_deref(),
+        Some(baseline)
+    );
+    store.close();
+    // A later open with another detector does not rewrite it, and without one no brain gets it.
+    let options = OpenOptions {
+        write_gate_detector_version: Some(3),
+        ..OpenOptions::default()
+    };
+    let store = Store::open_dir(&path, options).unwrap();
+    assert_eq!(
+        store
+            .get_config("write_gate.scan_baseline")
+            .unwrap()
+            .as_deref(),
+        Some(baseline)
+    );
+    let plain = TempDir::new("cfg-no-baseline");
+    let other = open(&plain);
+    assert_eq!(other.get_config("write_gate.scan_baseline").unwrap(), None);
+}
+
+#[test]
 fn set_replaces_unset_reports_rows_and_values_survive_a_reopen() {
     let dir = TempDir::new("cfg-set");
     let store = open(&dir);

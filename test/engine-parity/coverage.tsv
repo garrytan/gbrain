@@ -79,7 +79,7 @@ getPage	pages	yes	81	yes	yes	yes	serves
 readPageSnapshot	pages	yes	17	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	327	yes	yes	yes	serves
+putPage	pages	yes	328	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
@@ -239,7 +239,7 @@ storedTimelineRowsByPageIds	timeline	yes	1	no	yes	yes	serves
 countSegmentedTimelinePages	timeline	yes	1	no	yes	yes	serves
 countTimelineCommentMarkupRows	timeline	yes	1	no	yes	yes	serves
 listTimelineOrphanPages	timeline	yes	1	no	yes	yes	serves
-addTimelineEntry	timeline	yes	29	yes	yes	yes	serves
+addTimelineEntry	timeline	yes	30	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	3	no	yes	yes	serves
 getTimeline	timeline	yes	15	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	4	no	yes	yes	serves
@@ -339,7 +339,7 @@ replaceDerivedAliases	sync_aliases	yes	11	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
-getConfig	config	yes	9	no	yes	yes	serves
+getConfig	config	yes	10	no	yes	yes	serves
 setConfig	config	yes	22	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
@@ -597,7 +597,7 @@ listRestatedPrivateCopies	facts_trust	yes	1	no	yes	yes	refuses:facts
 countDerivedFactTaint	facts_trust	yes	1	no	yes	yes	refuses:facts
 listCorePageRows	trust_tier_reads	yes	1	no	yes	yes	serves
 listTrustScanRows	trust_tier_reads	yes	2	no	yes	yes	serves
-countUnscannedTrustRows	trust_tier_reads	yes	2	no	yes	yes	serves
+countUnscannedTrustRows	trust_tier_reads	yes	3	no	yes	yes	serves
 readBeliefHistoryRows	trust_tier_reads	yes	1	no	yes	yes	serves
 listVisibleBeliefLifetimes	trust_tier_reads	yes	1	no	yes	yes	serves
 listVersionTrustTiers	trust_tier_reads	yes	1	no	yes	yes	serves

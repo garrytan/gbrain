@@ -57,6 +57,9 @@ pub struct BrainOpenOptions {
     pub schema_version: Option<u32>,
     /// Recorded in `FORMAT` when the brain is created.
     pub created_by: Option<String>,
+    /// A fresh brain records the write gate's scan baseline under this detector version (the
+    /// TypeScript `WRITE_GATE_DETECTOR_VERSION`).
+    pub write_gate_detector_version: Option<u32>,
 }
 
 #[napi]
@@ -162,6 +165,7 @@ impl Brain {
                 if let Some(by) = options.created_by {
                     opts.created_by = by;
                 }
+                opts.write_gate_detector_version = options.write_gate_detector_version;
             }
             // Holding the slot while opening makes a second `open` on this handle wait, then see
             // the brain open.

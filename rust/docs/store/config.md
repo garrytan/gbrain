@@ -2,9 +2,12 @@
 
 Part of the store contract in [rust/README.md](../../README.md) ("The brain store"): the rules there apply to every method here.
 
-A fresh brain has one config entry, `version`, set to the `schemaVersion` given to `open`
-(`getConfig('version')` equals `LATEST_SCHEMA_VERSION`, 319 today). Values are strings and keys
-cannot contain NUL.
+A fresh brain has the config entry `version`, set to the `schemaVersion` given to `open`
+(`getConfig('version')` equals `LATEST_SCHEMA_VERSION`, 319 today). When `open` also gets
+`writeGateDetectorVersion` (the engine passes `WRITE_GATE_DETECTOR_VERSION`), the fresh brain records
+`write_gate.scan_baseline` the way migration v227 does on an empty SQL brain: every table at `0`, so
+doctor `trust_scan` counts no row written later. A brain made before this has no baseline and counts
+its unscanned rows from the start. Values are strings and keys cannot contain NUL.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |

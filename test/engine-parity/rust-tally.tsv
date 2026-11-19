@@ -71,7 +71,7 @@ test/engine-parity/traversal-cache.test.ts	7	0
 test/engine-parity/trust-fence.test.ts	4	0
 test/engine-parity/trust-proposals.test.ts	3	0
 test/engine-parity/trust-reads.test.ts	9	0
-test/engine-parity/trust-tier-reads.test.ts	12	3
+test/engine-parity/trust-tier-reads.test.ts	13	3
 test/engine-parity/trust-withdrawals.test.ts	4	0
 test/engine-parity/trust-write-gate.test.ts	4	0
 test/engine-parity/typed-config-reads.test.ts	2	0

@@ -4,6 +4,7 @@
  * reaches the store through it (rust-engine/store-members/).
  */
 import { LATEST_SCHEMA_VERSION } from '../schema-migrations/latest.generated.ts';
+import { WRITE_GATE_DETECTOR_VERSION } from '../write-gate-schema.ts';
 import { mapStoreError } from './store-errors.ts';
 
 /** Worker threads the store's pool runs its calls on. One write runs at a time; reads overlap. */
@@ -14,7 +15,7 @@ const STORE_SHUTDOWN_WAIT_MS = 5_000;
 /** The napi `Brain`: every method returns a promise and rejects with an `Error` carrying a `code`. */
 export interface StoreBrain {
   readonly isOpen: boolean;
-  open(path: string, options?: { schemaVersion?: number; createdBy?: string }): Promise<unknown>;
+  open(path: string, options?: { schemaVersion?: number; createdBy?: string; writeGateDetectorVersion?: number }): Promise<unknown>;
   close(): Promise<void>;
   // The store's methods are documented in rust/README.md; each member module types what it sends and reads.
   [method: string]: any;
@@ -35,7 +36,7 @@ export async function openRustStore(addon: object, databasePath: string): Promis
   const pool = new Pool(STORE_POOL_THREADS);
   const brain = new Brain(pool);
   try {
-    await brain.open(databasePath, { schemaVersion: LATEST_SCHEMA_VERSION, createdBy: 'gbrain' });
+    await brain.open(databasePath, { schemaVersion: LATEST_SCHEMA_VERSION, createdBy: 'gbrain', writeGateDetectorVersion: WRITE_GATE_DETECTOR_VERSION });
   } catch (error) {
     await pool.shutdown(0).catch(() => undefined);
     throw mapStoreError(error, { member: 'connect' });

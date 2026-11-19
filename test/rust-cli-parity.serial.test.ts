@@ -409,12 +409,11 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
         'transcript_secret_exposure'],
       // entity_link_coverage, graph_coverage, orphan_ratio and timeline_coverage are gone from this list: the entity
       // types resolve on a Rust brain (overrideSourcesFromKeys), so those checks pass as they do on PGLite.
-      // trust_scan counts every table on Rust now, but a Rust brain has no `write_gate.scan_baseline` config row
-      // (migration v227 seeds it on the SQL engines: zero on an empty brain), so the count is not bounded and the
-      // extracted timeline entries (tier unknown) read as unscanned where PGLite counts none.
+      // trust_scan is not listed: the store scans pages, facts, takes and timeline entries, and a new Rust brain
+      // records the write gate's scan baseline as v227 does, so it counts what PGLite counts.
       untypedWarnings: ['backup_coverage', 'canonical_content_writes', 'child_table_orphans',
         'extract_atoms_backlog', 'fact_take_vectors', 'raw_provenance', 'retrieval_reflex_health', 'sync_failures',
-        'text_projection_readiness', 'trust_scan'],
+        'text_projection_readiness'],
       // The imported fixture has no embeddings, so both engines score it below 100 and count its chunks stale; the pack
       // reads are served, so the successor notice is the same. embeddings is not here: Rust cannot read the backlog
       // age, so it warns with that typed refusal where PGLite reads the age and passes.

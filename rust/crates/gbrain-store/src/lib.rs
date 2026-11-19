@@ -91,6 +91,10 @@ pub struct OpenOptions {
     pub engine_abi: u32,
     pub catalog_version: u32,
     pub created_by: String,
+    /// The caller's write-gate detector version (the TypeScript `WRITE_GATE_DETECTOR_VERSION`). A fresh
+    /// brain records the write gate's scan baseline under it, as migration v227 does on the SQL engines;
+    /// `None` seeds no baseline.
+    pub write_gate_detector_version: Option<u32>,
 }
 
 impl Default for OpenOptions {
@@ -100,6 +104,7 @@ impl Default for OpenOptions {
             engine_abi: 1,
             catalog_version: 0,
             created_by: format!("gbrain-store {}", env!("CARGO_PKG_VERSION")),
+            write_gate_detector_version: None,
         }
     }
 }
@@ -304,12 +309,30 @@ pub(crate) struct StoredFormat {
     pub created_at_us: i64,
 }
 
+/// The config key of the write gate's scan baseline (TypeScript `WRITE_GATE_SCAN_BASELINE_KEY`).
+pub const WRITE_GATE_SCAN_BASELINE_KEY: &str = "write_gate.scan_baseline";
+
 /// Records a fresh brain starts with, written in the same transaction as its format record: the
-/// schema version config (`getConfig('version')`) and the `default` source.
+/// schema version config (`getConfig('version')`), the write gate's scan baseline when the caller
+/// gives a detector version, and the `default` source.
 fn seed(tx: &mut dyn KvWrite, env: &dyn Env, options: &OpenOptions) -> Result<()> {
     tx.put(
         &keys::text(keys::CONFIG, &["version"]),
         options.schema_version.to_string().as_bytes(),
     )?;
+    if let Some(detector) = options.write_gate_detector_version {
+        tx.put(
+            &keys::text(keys::CONFIG, &[WRITE_GATE_SCAN_BASELINE_KEY]),
+            scan_baseline(detector).as_bytes(),
+        )?;
+    }
     sources::seed_default_source(tx, env)
+}
+
+/// The scan baseline of an empty brain, as Postgres prints the `jsonb` that migration v227 stores
+/// (shorter keys first): the gate is live from the first row, so the legacy scan has nothing to read.
+fn scan_baseline(detector: u32) -> String {
+    format!(
+        r#"{{"until": {{"facts": 0, "pages": 0, "takes": 0, "timeline_entries": 0}}, "detector_version": {detector}}}"#
+    )
 }
