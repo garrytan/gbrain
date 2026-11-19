@@ -1305,7 +1305,7 @@ async function runStatus(engine: BrainEngine, rawArgs: string[]): Promise<void> 
   const movement = new Map((await movementView.readSourceMovement(engine, { sourceIds: sources.map(source => source.id) }).catch(() => [])).map(m => [m.source_id, m]));
   const upstreamView = await import('../core/sync-upstream-rewrite.ts'), upstream = new Map((await upstreamView.readUpstreamDivergences(engine, sources.map(source => source.id))).map(u => [u.source_id, upstreamView.renderUpstreamDivergence(u)])); const watermarkView = await import('../core/persistence/applied-watermark.ts'), watermarks = new Map(await Promise.all(sources.map(async source => [source.id, await watermarkView.readAppliedWatermark(engine, source.id).catch(() => null)] as const)));
   const publishOff = new Set(await (await import('../core/persistence/worktree-refresh.ts')).publishOptedOut(engine, sources.map(source => source.id)));
-  const pagesView = await import('../core/owned-folder/status.ts'), pagesIn = await pagesView.readPagesIn(engine, sources.map(source => source.id));
+  const pagesView = await import('../core/owned-folder/status.ts'), pagesIn = await pagesView.readPagesIn(engine, sources.map(source => source.id)).catch(() => new Map<string, never>());
   if (json) {
     const enriched = metrics.map((m) => ({
       ...m,

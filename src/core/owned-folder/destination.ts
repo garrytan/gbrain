@@ -21,7 +21,7 @@ import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { parseSourceConfig } from '../sources-load.ts';
 import { ownedFolderRel } from './paths.ts';
 
-export type OwnedDatabaseOnlyReason = 'no_repository' | 'not_personal' | 'managed' | 'ignored' | 'remote_changed' | 'read_only_root' | 'conflict';
+export type OwnedDatabaseOnlyReason = 'no_repository' | 'not_personal' | 'managed' | 'ignored' | 'remote_changed' | 'read_only_root' | 'conflict' | 'git_error';
 
 export type OwnedDestination =
   | { record: 'folder'; root: string; rel: string; folder: string; pushUrls: string[] }
@@ -99,10 +99,11 @@ export async function resolveOwnedDestination(engine: BrainEngine, sourceId: str
   const personal = await brainIsPersonal(engine);
   if (!personal.personal) return db('not_personal', personal.detail, root);
   const rel = ownedFolderRel(sourceId);
-  const probe = `${rel}/probe.md`;
-  if (git(root, ['check-ignore', '-q', '--no-index', '--', probe]).code === 0) return db('ignored', `Git ignores ${rel}/`, root);
-  const attr = git(root, ['check-attr', 'filter', '--', probe]).stdout.trim();
-  if (attr && !/: filter: (unspecified|unset)$/.test(attr)) return db('ignored', `a Git filter applies to ${rel}/`, root);
+  for (const probe of [`${rel}/probe.md`, `${rel}/imessage/probe/2000-01-01.md`]) {
+    if (git(root, ['check-ignore', '-q', '--no-index', '--', probe]).code === 0) return db('ignored', `Git ignores ${rel}/`, root);
+    const attr = git(root, ['check-attr', 'filter', '--', probe]).stdout.trim();
+    if (attr && !/: filter: (unspecified|unset)$/.test(attr)) return db('ignored', `a Git filter applies to ${rel}/`, root);
+  }
   const pushUrls = branchPushUrls(root);
   if (recordedPushUrls && !samePushUrls(recordedPushUrls, pushUrls)) {
     return db('remote_changed', `the checkout now pushes to ${pushUrls.join(', ') || 'no remote'}, not ${recordedPushUrls.join(', ') || 'no remote'}`, root, pushUrls);

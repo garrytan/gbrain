@@ -103,6 +103,11 @@ async function helperPort(engine: BrainEngine): Promise<number | null> {
   return Number.isSafeInteger(port) && port >= 1024 && port <= 65535 ? port : null;
 }
 
+/** A committed day file a run changes in the database only is stale: held, so the next folder run rewrites it and a rebuild skips it. */
+function staleHolds(recorded: Record<string, string>, paths: string[], detail: string): Record<string, OwnedHold> {
+  return Object.fromEntries(paths.filter(p => recorded[p]).map(p => [p, { code: 'owned_folder_conflict' as const, detail }]));
+}
+
 export async function runIMessageSync(engine: BrainEngine, sourceId: string, cfg: IMessageSourceConfig, opts: SyncOpts, deps: IMessageSyncDeps = {}): Promise<SyncResult> {
   return withConnectorSync(engine, sourceId, 'imessage', cfg, opts,
     async (managed, options) => options.dryRun ? connectorDryRunResult('iMessage', sourceId) : runIMessageSyncInner(engine, sourceId, cfg, options, managed, deps), pendingConnectorResult);
@@ -301,13 +306,13 @@ async function runIMessageSyncInner(engine: BrainEngine, sourceId: string, cfg: 
    * the chat and read the window), a mass removal is held whole, and a held file still imports its day to the database.
    */
   const commitAndApply = async () => {
+    const recorded = owned?.files ?? {};
     if (destination.record !== 'folder') {
+      if (owned) state.owned = { ...owned, held: { ...owned.held, ...staleHolds(recorded, ops.map(op => op.relPath), `changed while pages were database-only (${destination.reason})`) } };
       for (const op of ops) await handle(op.key, () => applyOp(op), slugifyPath(op.relPath));
       forgetClosedDays();
       return;
     }
-    const recorded = owned?.files ?? {};
-    const dayFiles = ownedDays;
     const writes = new Map<string, string>();
     const removes: string[] = [];
     const apply: DayOp[] = [];
@@ -316,11 +321,12 @@ async function runIMessageSyncInner(engine: BrainEngine, sourceId: string, cfg: 
       if (!recorded[op.relPath]) { apply.push(op); continue; }
       if (op.positive) { removes.push(op.relPath); apply.push(op); }
     }
-    if (removes.length > OWNED_MASS_REMOVAL_DAYS || (removes.length > 2 && removes.length > dayFiles * OWNED_MASS_REMOVAL_SHARE)) {
-      process.stderr.write(`[gbrain notice owned_mass_removal_held] iMessage source ${sourceId}: this run would remove ${removes.length} of ${dayFiles} day files from ${ownedFolderRel(sourceId)}/, so it removed none and kept those days in the database. The next run tries again; if the chats really were deleted on the Mac, run: gbrain sources remove ${sourceId}\n`);
-      const held = new Set(removes);
+    const massHeld = new Set<string>();
+    if (removes.length > OWNED_MASS_REMOVAL_DAYS || (removes.length > 2 && removes.length > ownedDays * OWNED_MASS_REMOVAL_SHARE)) {
+      process.stderr.write(`[gbrain notice owned_mass_removal_held] iMessage source ${sourceId}: this run would remove ${removes.length} of ${ownedDays} day files from ${ownedFolderRel(sourceId)}/, so it removed none and kept those days in the database. The next run tries again; if the chats really were deleted on the Mac, run: gbrain sources remove ${sourceId}\n`);
+      for (const p of removes) massHeld.add(p);
       removes.length = 0;
-      for (let i = apply.length - 1; i >= 0; i--) if (held.has(apply[i]!.relPath) && apply[i]!.op === 'delete') apply.splice(i, 1);
+      for (let i = apply.length - 1; i >= 0; i--) if (massHeld.has(apply[i]!.relPath) && apply[i]!.op === 'delete') apply.splice(i, 1);
     }
     const days = writes.size + removes.length;
     const where = destination.pushUrls.length ? destination.pushUrls.join(', ') : 'this checkout only';
@@ -332,15 +338,16 @@ async function runIMessageSyncInner(engine: BrainEngine, sourceId: string, cfg: 
       message: owned?.last_batch ? `imessage(${sourceId}): ${writes.size} chat-days updated, ${removes.length} removed`
         : `imessage(${sourceId}): import ${days} chat-days into ${destination.rel} (${where})` }, owned ?? null);
     } catch (error) {
-      if (!(error instanceof OperationError) || error.code !== 'owned_folder_conflict') throw error;
+      if (!(error instanceof OperationError)) throw error;
       folderRefused = true;
-      // The folder itself is not this source's (another OWNER.json, a symlink, foreign files): nothing is written there
-      // this run, every day goes to the database, and each written day is retried in the folder next run.
-      state.record_status = { ...state.record_status!, record: 'database', folder: null, reason: 'conflict', detail: error.message };
-      process.stderr.write(`[gbrain notice owned_folder_database_only] iMessage source ${sourceId}: pages stay in the database only because ${error.message} ${error.suggestion ?? ''}\n`);
+      // The folder is not this source's, or Git refused the commit (a rebase, a hook, the lock, no identity): every day
+      // goes to the database this run, and each changed day is retried in the folder next run.
+      const reason = error.code === 'owned_folder_conflict' ? 'conflict' as const : 'git_error' as const;
+      state.record_status = { ...state.record_status!, record: 'database', folder: null, reason, detail: error.message };
+      process.stderr.write(`[gbrain notice owned_folder_database_only] iMessage source ${sourceId}: pages stay in the database only because ${reason === 'git_error' ? `Git refused the commit (${error.code}): ` : ''}${error.message} ${error.suggestion ?? ''}\n`);
       batch = { sha: null, written: {}, removed: [], firstWrite: false,
-        held: Object.fromEntries([...writes.keys()].map(p => [p, { code: 'owned_folder_conflict' as const, detail: error.message }])) };
-      apply.splice(0, apply.length, ...ops.filter(op => op.op === 'write' || !recorded[op.relPath] || op.positive));
+        held: { ...Object.fromEntries([...writes.keys()].map(p => [p, { code: 'owned_folder_conflict' as const, detail: error.message }])), ...staleHolds(recorded, removes, error.message) } };
+      apply.splice(0, apply.length, ...ops.filter(op => op.op === 'write' || !recorded[op.relPath] || (op.positive && !massHeld.has(op.relPath))));
     }
     const files = { ...recorded, ...batch.written };
     for (const p of batch.removed) delete files[p];
@@ -362,7 +369,7 @@ async function runIMessageSyncInner(engine: BrainEngine, sourceId: string, cfg: 
     for (const op of apply) await handle(op.key, () => applyOp(op), slugifyPath(op.relPath));
     forgetClosedDays();
     const live = new Set(Object.values(state.chats).flatMap(c => Object.values(c.days).map(d => d.path)));
-    for (const p of Object.keys(held)) if (!live.has(p)) delete held[p];
+    for (const p of Object.keys(held)) if (!live.has(p) && !files[p]) delete held[p];
   };
 
   try {

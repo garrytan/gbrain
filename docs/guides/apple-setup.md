@@ -71,7 +71,9 @@ Pages imported before this change stay in the database until their day changes o
 
 On a brain without a repository, a shared or managed brain, or a checkout whose Git ignores or filters
 `.gbrain-owned/`, the pages stay in the database only, and each sync prints
-`[gbrain notice owned_folder_database_only]` with the reason.
+`[gbrain notice owned_folder_database_only]` with the reason. When Git refuses the commit (a rebase in progress,
+a hook, a busy commit lock, no Git identity), that run's pages go to the database and the next run writes the days
+it changed to the folder.
 
 ### What a push carries
 

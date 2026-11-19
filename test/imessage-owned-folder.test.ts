@@ -357,6 +357,56 @@ for (const kind of testBackends()) describe(`owned folder (${kind})`, () => {
     expect(commits(repo)).toBe(c1);
     expect(existsSync(folder)).toBe(false);
     expect((await stateOf(id)).record_status).toMatchObject({ record: 'database', reason: 'ignored' });
+    const filtered = await setup();
+    writeFileSync(join(filtered.repo, '.gitattributes'), '.gbrain-owned/*/imessage/** filter=example\n');
+    expect(await resolveOwnedDestination(engine, filtered.id, null)).toMatchObject({ record: 'database', reason: 'ignored' });
+  });
+
+  test('a commit Git refuses keeps the sync going in the database; the next run writes the folder, also after a database-only spell', async () => {
+    const { repo, id, cfg, folder } = await setup();
+    const fake = mac();
+    await run(id, cfg, fake);
+    const file = join(folder, dayFile(ALICE, 1));
+    mkdirSync(join(repo, '.git', 'rebase-merge'));
+    const c1 = commits(repo);
+    fake.chats[0]!.messages[2]!.text = 'Running twenty minutes late.';
+    await run(id, cfg, fake, { now: NOW + 60_000 });
+    expect(commits(repo)).toBe(c1);
+    expect((await stateOf(id)).record_status).toMatchObject({ record: 'database', reason: 'git_error' });
+    const [row] = await engine.executeRaw<{ body: string }>('SELECT compiled_truth AS body FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [id, slugifyPath(dayFile(ALICE, 1))]);
+    expect(row!.body).toContain('twenty minutes');
+    rmSync(join(repo, '.git', 'rebase-merge'), { recursive: true });
+    await run(id, cfg, fake, { now: NOW + 120_000 });
+    expect(commits(repo)).toBe(c1 + 1);
+    expect(readFileSync(file, 'utf8')).toContain('twenty minutes');
+    expect((await stateOf(id)).owned!.held ?? {}).toEqual({});
+
+    await engine.setConfig('access.serves', 'several');
+    try {
+      fake.chats[0]!.messages[2]!.text = 'Running an hour late.';
+      await run(id, cfg, fake, { now: NOW + 180_000 });
+    } finally {
+      await engine.setConfig('access.serves', 'one');
+    }
+    expect(Object.keys((await stateOf(id)).owned!.held!)).toEqual([dayFile(ALICE, 1)]);
+    await run(id, cfg, fake, { now: NOW + 240_000 });
+    expect(commits(repo)).toBe(c1 + 2);
+    expect(readFileSync(file, 'utf8')).toContain('an hour late');
+  });
+
+  test('a run that committed and stopped before saving its record adopts its own files instead of holding them', async () => {
+    const { repo, id, cfg, folder } = await setup();
+    const fake = mac();
+    await run(id, cfg, fake);
+    const c1 = commits(repo);
+    await writeConnectorDbCursor(engine, await cursorKey(id), {});
+    await run(id, cfg, fake, { now: NOW + 60_000 });
+    expect(commits(repo)).toBe(c1);
+    const state = await stateOf(id);
+    expect(state.owned!.held ?? {}).toEqual({});
+    expect(Object.keys(state.owned!.files).sort()).toEqual(['OWNER.json', 'README.md', dayFile(ALICE, 1), dayFile(ALICE, 2), dayFile(GROUP, 1)].sort());
+    await removeSource(engine, { id, yes: true });
+    expect(existsSync(folder)).toBe(false);
   });
 
   test('a managed brain resolves to database-only (D1: managed brains are the next PR)', async () => {

@@ -48,10 +48,10 @@ export async function readPagesIn(engine: BrainEngine, sourceIds: string[]): Pro
   if (!sourceIds.length) return out;
   const rows = await engine.executeRaw<{ id: string; incarnation: string; local_path: string | null; config: Record<string, unknown> | null }>(
     'SELECT id, incarnation::text AS incarnation, local_path, config FROM sources WHERE id = ANY($1::text[])', [sourceIds]);
-  const checkout = await defaultCheckout(engine);
-  const root = 'root' in checkout ? checkout.root : null;
+  let root: string | null | undefined;
   for (const row of rows) {
     if (!isOwnedFolderKind(row.config)) continue;
+    if (root === undefined) { const checkout = await defaultCheckout(engine); root = 'root' in checkout ? checkout.root : null; }
     const kind = row.config!.kind as ConnectorKind;
     const state = (await readConnectorDbCursor(engine, connectorDbCursorKey(row.id, row.incarnation, connectorIdentity(kind, row.config!, row.local_path))).catch(() => null))?.state as StoredState | null;
     const stored = state?.owned?.incarnation === row.incarnation ? state.owned : undefined;

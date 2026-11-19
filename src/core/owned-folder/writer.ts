@@ -158,6 +158,10 @@ export function commitOwnedBatch(input: OwnedBatchInput, state: OwnedFolderState
       let found: Record<string, unknown> | null = null;
       try { found = JSON.parse(readFileSync(ownerPath, 'utf8')); } catch { /* unreadable reads as not ours */ }
       if (found?.source_id !== sourceId || found?.incarnation !== input.incarnation) throw ownedConflict(`${rel}/${OWNER_FILE}`, 'names another source or an earlier one with this id', sourceId);
+      for (const p of [OWNER_FILE, README_FILE]) {
+        const path = `${rel}/${p}`, blob = headBlob(root, path);
+        if (!state?.files[p] && blob && blobOf(root, path) === blob && indexBlob(root, path) === blob) result.written[p] = blob;
+      }
     } else {
       if (holdsFiles(folder)) throw ownedConflict(`${rel}/`, 'holds files and no OWNER.json', sourceId);
       mkdirSync(folder, { recursive: true, mode: 0o700 });
@@ -180,7 +184,18 @@ export function commitOwnedBatch(input: OwnedBatchInput, state: OwnedFolderState
       if (blobOf(root, path) !== want || indexBlob(root, path) !== want) return 'was changed by hand';
       return null;
     };
+    const writePaths = [...input.writes.keys()].map(p => `${rel}/${p}`);
+    const attrs = writePaths.length ? git(root, ['check-attr', '-z', 'filter', '--', ...writePaths]).stdout.split('\0') : [];
+    const filtered = new Set<string>();
+    for (let i = 0; i + 2 < attrs.length; i += 3) if (attrs[i + 2] !== 'unspecified' && attrs[i + 2] !== 'unset') filtered.add(attrs[i]!);
     for (const [p, content] of input.writes) {
+      if (filtered.has(`${rel}/${p}`)) { result.held[p] = { code: 'owned_folder_conflict', detail: `${rel}/${p} has a Git filter` }; continue; }
+      // A batch committed by a run that stopped before its record was saved: the same day, the same bytes, all committed.
+      if (!recorded[p] && existsSync(join(folder, p))) {
+        const blob = git(root, ['hash-object', '--stdin'], { input: content }).stdout.trim();
+        const path = `${rel}/${p}`;
+        if (!symlinkOnPath(root, path) && blobOf(root, path) === blob && indexBlob(root, path) === blob && headBlob(root, path) === blob) { result.written[p] = blob; continue; }
+      }
       const why = ours(p);
       if (why) { result.held[p] = { code: 'owned_folder_conflict', detail: `${rel}/${p} ${why}` }; continue; }
       const findings = refuse ? scanText(content) : [];
