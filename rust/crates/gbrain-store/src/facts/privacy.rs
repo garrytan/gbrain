@@ -228,9 +228,36 @@ pub(crate) fn hidden_by_private_provenance(
             return Ok(true);
         }
     }
+    // GBRA-574: a bare name key reads as the page later written at `<dir>/<key>`, so that page's
+    // privacy covers the fact too (`privateEntityFilterForCaller`'s `keyed`).
+    if let Some(entity) = row.entity_slug.as_deref()
+        && !entity.contains('/')
+    {
+        for dir in NAME_KEY_PAGE_DIRS {
+            let Some(page) = read_page(read, &row.source_id, &format!("{dir}/{entity}"))? else {
+                continue;
+            };
+            if page_hidden_with(read, &page, policy, owner_only)? {
+                return Ok(true);
+            }
+        }
+    }
     // `sharedHeldRuledSql` hides a held fact only under a folder rule or pending coverage.
     Ok(false)
 }
+
+/// `NAME_KEY_PAGE_DIRS` (src/core/entities/basename-dirs.ts): the directories whose page at
+/// `<dir>/<key>` covers a bare name key's facts for privacy.
+const NAME_KEY_PAGE_DIRS: [&str; 8] = [
+    "people",
+    "companies",
+    "hosts",
+    "projects",
+    "concepts",
+    "funds",
+    "orgs",
+    "organizations",
+];
 
 /// Whether the row's provenance page (`source_markdown_slug`) fails the page policy: the
 /// provenance half of the policy above, and by itself `privateProvenanceFilterFragment` (the

@@ -242,3 +242,61 @@ fn a_receipt_reads_each_effect_state_in_kind_order_or_only_the_git_effect() {
         INVALID_ARGUMENT
     );
 }
+
+#[test]
+fn an_uppercase_request_id_names_the_same_effects_as_its_lowercase_spelling() {
+    let dir = TempDir::new("effects-case");
+    let store = open(&dir);
+    let id = admit(&store, REQ);
+    let upper = id.to_uppercase();
+    let first = store
+        .insert_publication_effects(&spec(
+            &store,
+            &upper,
+            json!([{ "kind": "embedding", "data": {} }]),
+        ))
+        .unwrap();
+    assert_eq!(first, ["embedding"]);
+    let again = store
+        .insert_publication_effects(&spec(
+            &store,
+            &id,
+            json!([{ "kind": "embedding", "data": {} }]),
+        ))
+        .unwrap();
+    assert!(
+        again.is_empty(),
+        "the lowercase spelling queued a second row"
+    );
+    let rows = store.read_request_effects(&id).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["request_id"], json!(id));
+    assert_eq!(store.read_request_effects(&upper).unwrap().len(), 1);
+}
+
+#[test]
+fn a_true_up_listing_counts_a_queued_effect_as_unfinished_work() {
+    let dir = TempDir::new("effects-true-up");
+    let store = open(&dir);
+    let id = admit(&store, REQ);
+    store
+        .insert_publication_effects(&spec(
+            &store,
+            &id,
+            json!([{ "kind": "embedding", "data": {} }]),
+        ))
+        .unwrap();
+    let completion: WriteCompletion = serde_json::from_value(json!({
+        "id": id, "state": "committed", "outcome": {}, "errorCode": null, "errorMessage": null,
+        "consumerVersion": "v-consumer", "consumerHostId": HOST, "errorDetail": null, "resultBytes": 100,
+        "counterKeys": KEYS, "intentBytes": 10, "retainedBytes": 0, "terminalReservation": 4096,
+        "probePurges": true,
+    }))
+    .unwrap();
+    store.complete_write_row(&completion).unwrap().unwrap();
+    let rows = store.list_true_up_requests(&[id]).unwrap();
+    assert_eq!(rows.len(), 1);
+    // `{}` (2) + "embedding" (9) + the 1024 every effect row carries
+    assert_eq!(rows[0]["effect_bytes"], json!("1035"), "{rows:?}");
+    assert_eq!(rows[0]["unfinished"], json!(true), "{rows:?}");
+}

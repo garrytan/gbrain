@@ -94,6 +94,39 @@ fn at(read: &dyn KvRead, parts: &[&str]) -> Result<Option<i64>> {
     Ok(get_json::<WithdrawalRecord>(read, &key(parts))?.map(|r| r.withdrawn_at_us))
 }
 
+/// Every withdrawal of `source_id` at `visibility` whose fingerprint is `claim`'s fingerprint or
+/// its v1 fingerprint, as its subject and the time it was made: the rows
+/// `gbrain_preserve_fact_withdrawal` reads.
+pub(crate) fn withdrawals_of(
+    read: &dyn KvRead,
+    source_id: &str,
+    visibility: &str,
+    claim: &str,
+) -> Result<Vec<(String, i64)>> {
+    let hashes = [fact_fingerprint(claim), fact_fingerprint_v1(claim)];
+    let mut prefix = key(&[source_id, visibility]);
+    prefix.push(0);
+    let mut found = Vec::new();
+    scan_prefix(read, &prefix, false, &mut |k, _| {
+        if let Some(rest) = k
+            .get(prefix.len()..)
+            .and_then(|b| std::str::from_utf8(b).ok())
+            && let Some((subject, hash)) = rest.rsplit_once('\0')
+            && hashes.iter().any(|h| h == hash)
+        {
+            found.push((subject.to_string(), hash.to_string()));
+        }
+        true
+    })?;
+    let mut out = Vec::with_capacity(found.len());
+    for (subject, hash) in found {
+        if let Some(at) = at(read, &[source_id, visibility, &subject, &hash])? {
+            out.push((subject, at));
+        }
+    }
+    Ok(out)
+}
+
 /// `EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = $source AND w.visibility =
 /// $visibility AND w.fact_hash IN (gbrain_fact_fingerprint(claim), gbrain_fact_fingerprint_v1(claim))
 /// AND (w.subject = '*' OR w.subject = entity))`: a NULL entity matches only `*`.

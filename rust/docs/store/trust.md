@@ -103,8 +103,11 @@ Rust guesses and gaps (1x parity):
 
 Not built (they still run through `executeRaw`, which the Rust engine refuses): the reads that also read `fact_purges`
 (`isFactWithdrawn`, the ambiguous-fence check, the export snapshot), the reads that join `facts` (the effect-target
-request, the single-fact prepare, the repair and review lanes), the meta-hook watermark, and the `facts` insert guard
-`gbrain_preserve_fact_withdrawal` (the facts family's insert calls it once the facts family lands on this line).
+request, the single-fact prepare, the repair and review lanes), and the meta-hook watermark. The `facts` insert guard
+`gbrain_preserve_fact_withdrawal` is built: every fact write (`write_fact`) saves a row that is not expired and matches a
+withdrawal of its claim as expired at the earliest such withdrawal, with `valid_until` no later than it
+(`facts::purge::earliest_withdrawal`; a member-page row matches only its page's withdrawals, an unbacked name key any
+subject but an owned memory page).
 
 Rust guesses and gaps (1x parity):
 
