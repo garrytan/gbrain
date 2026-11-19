@@ -365,6 +365,30 @@ describe('engine parity: graph traversal', () => {
   );
 
   parityTest(
+    'traversePaths breaks a depth/from/to tie by link_type in byte order',
+    { methods: ['traversePaths', 'addLink', 'putPage'] },
+    async (engine) => {
+      await seedPages(engine, ['tie/a', 'tie/b']);
+      // Inserted out of byte order, with case and ASCII punctuation that a
+      // locale collation would fold or skip.
+      for (const type of ['mentions', 'Mentions', 'men_tions', 'founded', 'men-tions', 'MENTIONS.x']) {
+        await engine.addLink('tie/a', 'tie/b', `${type}-ctx`, type, 'manual');
+      }
+      const byteOrder = ['MENTIONS.x', 'Mentions', 'founded', 'men-tions', 'men_tions', 'mentions'];
+      const shapes: Record<string, string[]> = {};
+      for (const [seed, direction] of [['tie/a', 'out'], ['tie/b', 'in'], ['tie/a', 'both']] as const) {
+        const paths = await engine.traversePaths(seed, { depth: 1, direction });
+        // Every row differs before the link id key, so the link id never decides.
+        const keys = paths.map((p) => [p.depth, p.from_slug, p.to_slug, p.from_source_id, p.to_source_id, p.link_type].join('|'));
+        expect(new Set(keys).size).toBe(keys.length);
+        expect(paths.map((p) => p.link_type)).toEqual(byteOrder);
+        shapes[`${direction}`] = edgeShape(paths);
+      }
+      return shapes;
+    },
+  );
+
+  parityTest(
     'traversePaths source scope: scalar and federated grants stop at the source boundary',
     { methods: ['traversePaths', 'addLink', 'putPage'] },
     async (engine, backend) => {
@@ -558,6 +582,38 @@ describe('engine parity: backlink and page signal reads', () => {
       expect(emptyFlags.size).toBe(0);
       expect(emptyUnverified.size).toBe(0);
       return { flags: bySlug(ids, flags), unverified: bySlug(ids, unverified) };
+    },
+  );
+
+  parityTest(
+    'getContentFlagsByPageIds and getUnverifiedExtractionPageIds take the whole hybrid search options and read only the page policy',
+    { methods: ['getContentFlagsByPageIds', 'getUnverifiedExtractionPageIds', 'putPage'] },
+    async (engine) => {
+      const ids = new Map<string, number>();
+      const marks = { content_flag: { reason: 'markup_heavy', detail: 'tags' }, provenance: 'auto-extracted', status: 'unverified' };
+      for (const [slug, frontmatter] of [['hs/open', {}], ['hs/private', { visibility: 'private' }], ['hs/other', { type: 'person' }]] as const) {
+        ids.set(slug, (await engine.putPage(slug, page(slug, { frontmatter: { ...frontmatter, ...marks } }))).id);
+      }
+      const all = [...ids.values()];
+      // What stampContentFlags and stampUnverifiedExtractions pass (search/hybrid.ts): the caller's whole
+      // HybridSearchOpts. The search filters already ran in the arms; the stamp reads apply only the page policy.
+      const hybrid = {
+        limit: 5, offset: 0, type: 'note', types: ['note'], exclude_slugs: ['hs/other'], exclude_slug_prefixes: ['hs/x'],
+        include_slug_prefixes: ['hs/'], detail: 'medium', where: { status: ['active'] }, afterDate: '2020-01-01',
+        expansion: true, mode: 'balanced', explain: true, onMeta: () => undefined, dedupOpts: { maxPerPage: 2 },
+        takesHoldersAllowList: ['alice-example'], requireSafeChunks: true, excludePrivate: true,
+      } as never;
+      const out = {
+        flags: bySlug(ids, await engine.getContentFlagsByPageIds(all, hybrid)).map(([slug]) => slug),
+        unverified: bySlug(ids, await engine.getUnverifiedExtractionPageIds(all, hybrid)).map(([slug]) => slug),
+      };
+      const policy = {
+        flags: bySlug(ids, await engine.getContentFlagsByPageIds(all, { excludePrivate: true })).map(([slug]) => slug),
+        unverified: bySlug(ids, await engine.getUnverifiedExtractionPageIds(all, { excludePrivate: true })).map(([slug]) => slug),
+      };
+      expect(out).toEqual(policy);
+      expect(out.flags).toEqual(['hs/open', 'hs/other']);
+      return out;
     },
   );
 

@@ -126,13 +126,15 @@ impl FileRecord {
     }
 }
 
-/// `getRawData` options: the page scope of `PageReadScope` plus `includeDeleted`.
+/// `getRawData` options: the page scope of `PageReadScope`, `includeDeleted`, and the page policy
+/// `excludePrivate` names (`privatePagesFilterForCaller('p')`): a page it hides has no raw data.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct RawDataScope {
     pub source_id: Option<String>,
     pub source_ids: Option<Vec<String>>,
     pub include_deleted: bool,
+    pub exclude_private: Option<crate::facts::PrivacyPolicy>,
 }
 
 /// `FileSpec`. Numbers arrive as JSON numbers (whole or not) so a bad one fails as Postgres
@@ -382,10 +384,10 @@ impl Store {
         })
     }
 
-    /// `getRawData(slug, source?, { sourceId?, sourceIds?, includeDeleted? })`: the raw data of
-    /// every page by that slug in scope (`sourceIds` when not empty, else `sourceId` when not
-    /// empty, else every source), only `source` when one is given (not empty). Pages that are
-    /// soft deleted are skipped unless `includeDeleted`. PGLite gives no order; the store
+    /// `getRawData(slug, source?, { sourceId?, sourceIds?, includeDeleted?, excludePrivate? })`: the
+    /// raw data of every page by that slug in scope (`sourceIds` when not empty, else `sourceId`
+    /// when not empty, else every source), only `source` when one is given (not empty). Pages that
+    /// are soft deleted are skipped unless `includeDeleted`, and pages the page policy hides always. PGLite gives no order; the store
     /// returns scope order (`default` first, then by id), then source name.
     pub fn get_raw_data(
         &self,
@@ -407,6 +409,11 @@ impl Store {
                 continue;
             };
             if page.deleted_at_us.is_some() && !scope.include_deleted {
+                continue;
+            }
+            if let Some(policy) = &scope.exclude_private
+                && crate::facts::page_hidden(&*read, &page, policy)?
+            {
                 continue;
             }
             let rows: Vec<(Vec<u8>, RawRecord)> =
@@ -584,6 +591,41 @@ impl Store {
             }
         }
         files.sort_by_key(|f| (f.created_at_us, f.id));
+        Ok(files.iter().map(FileRecord::to_json).collect())
+    }
+
+    /// `listFiles({ pageSlug?, limit })`: with a `page_slug`, the files of that slug in any source,
+    /// by `filename`; without one, every file, by `page_slug` (files with no slug last), then
+    /// `filename`. Ties go by id, and text sorts by bytes. At most `limit` rows. `limit` must be a
+    /// whole number in the `integer` range and not negative (`invalid_argument` otherwise).
+    pub fn list_files(&self, page_slug: Option<&str>, limit: &Value) -> Result<Vec<Value>> {
+        if let Some(slug) = page_slug {
+            no_nul("listFiles", &[("pageSlug", slug)])?;
+        }
+        let limit = int4("listFiles", "limit", limit)?;
+        if limit < 0 {
+            return Err(StoreError::invalid(
+                "listFiles: limit must not be negative".to_string(),
+            ));
+        }
+        let read = self.read()?;
+        let all: Vec<(Vec<u8>, FileRecord)> = collect_values(&*read, &[keys::RAW_FILES, FILE])?;
+        let mut files: Vec<FileRecord> = all
+            .into_iter()
+            .map(|(_, f)| f)
+            .filter(|f| page_slug.is_none_or(|slug| f.page_slug.as_deref() == Some(slug)))
+            .collect();
+        files.sort_by(|a, b| {
+            let slug = match (&a.page_slug, &b.page_slug) {
+                (Some(x), Some(y)) => x.as_bytes().cmp(y.as_bytes()),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            };
+            slug.then_with(|| a.filename.as_bytes().cmp(b.filename.as_bytes()))
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        files.truncate(limit as usize);
         Ok(files.iter().map(FileRecord::to_json).collect())
     }
 }

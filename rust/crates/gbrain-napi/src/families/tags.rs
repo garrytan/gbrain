@@ -13,7 +13,7 @@ use crate::store_binding::{Brain, arg, required};
 
 #[napi]
 impl Brain {
-    /// `getTags(slug, { sourceId?, sourceIds? }?)`: sorted tags.
+    /// `getTags(slug, { sourceId?, sourceIds?, liveOnly?, excludePrivate? }?)`: sorted tags.
     #[napi]
     pub fn get_tags<'env>(
         &self,
@@ -22,7 +22,7 @@ impl Brain {
         options: Option<Value>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.get_tags(&slug, &arg(options, "getTags options")?)
+            s.get_tags_query(&slug, &arg(options, "getTags options")?)
         })
     }
 

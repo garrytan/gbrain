@@ -3,7 +3,8 @@
  *
  * Served: readPageSnapshotsBatch, findDuplicatePage, findDuplicatePages, deletePages, purgeDeletedPages, resolveSlugsByPaths,
  * softDeletePages, findPages, countPagesBy, getAllSlugs, listAllPageRefs, listPrefixSampledPages, listCorpusSample,
- * bumpPageRetrievals, getContentFlagsByPageIds, getUnverifiedExtractionPageIds, getPageTimestamps, getEffectiveDates, revertToVersion.
+ * bumpPageRetrievals, getContentFlagsByPageIds, getUnverifiedExtractionPageIds, getPageTimestamps, getEffectiveDates, readAdmittedPageRefs,
+ * readPageSynopses, readSeedTitleSlugs, revertToVersion.
  * deletePages scrubs the eval candidates' retrieved slugs in the delete's transaction, as PGLite does.
  * purgeDeletedPages (also served) keeps the pages PGLite's atom and derived retirement holds keep, reading the `retired_by`
  * stamp on the page row, and removes and scrubs the rest as deletePages does (rust/docs/store/page_ops.md).
@@ -20,21 +21,17 @@ import type { PageSnapshot } from '../../page-state/types.ts';
 import { pickCanonicalOrigin } from '../../persistence/origin-guard.ts';
 import { segmentedRevertRefusal } from '../../page-state/versions.ts';
 import type { CorpusSampleOpts, DomainBankRow, DomainBankSampleOpts, PageReadPolicy, PageReadScope } from '../../types.ts';
+import type { PageRefRow, RelationalPageRow } from '../../engine-sql/relational-reads.ts';
 import { toGetPage } from '../store-codec.ts';
 import { storeErrorCode } from '../store-errors.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
+import { SEARCH_OPTION_KEYS } from './search-options.ts';
 
 /** PGLite's single-batch primitives throw a plain `Error` past `DELETE_BATCH_SIZE`; the caller chunks. */
 function checkBatch(member: string, n: number): void {
   if (n > DELETE_BATCH_SIZE) throw new Error(`${member}: input size ${n} exceeds DELETE_BATCH_SIZE=${DELETE_BATCH_SIZE}. Caller must chunk.`);
 }
-
-/** The page read policy keys (`PageReadPolicy`); a key the type gains and this list misses fails to compile. */
-const READ_POLICY_KEYS = ['sourceId', 'sourceIds', 'excludePrivate', 'requireSafeChunks', 'minTrust', 'suppressFlagged',
-  'takesHoldersAllowList'] as const satisfies ReadonlyArray<keyof PageReadPolicy>;
-const READ_POLICY_KEYS_COMPLETE: Exclude<keyof PageReadPolicy, (typeof READ_POLICY_KEYS)[number]> extends never ? true : never = true;
-void READ_POLICY_KEYS_COMPLETE;
 
 /**
  * A `PageReadScope` as the store reads it (`pageReadFilter`, search/read-policy-sql.ts). Any scope object turns on
@@ -42,16 +39,11 @@ void READ_POLICY_KEYS_COMPLETE;
  * `excludePrivate` applies the page policy (private-provenance.ts `storePagePolicy`), a caller's reader identity and
  * private-readable grant included; `minTrust` and `suppressFlagged`
  * apply the page's stored trust tier and its write-gate flag receipts (`pageEligibleSql`). `requireSafeChunks` and
- * `takesHoldersAllowList` change nothing on these reads. Hybrid search passes its whole option object (limit, offset,
- * detail, type...) as the scope; `pageReadFilter` reads only the policy keys, so only those are taken here, and the
- * other keys change nothing but the live filter, as on PGLite.
+ * `takesHoldersAllowList` change nothing on these reads.
  */
-function readScope(member: string, opts: PageReadScope | undefined): Record<string, unknown> {
+function readScope(member: string, opts: PageReadScope | undefined, unread: readonly string[] = []): Record<string, unknown> {
   if (opts === undefined || opts === null) return {};
-  const policy: Record<string, unknown> = {};
-  for (const key of READ_POLICY_KEYS) policy[key] = (opts as PageReadPolicy)[key];
-  const taken = takeOptions(member, policy, ['sourceId', 'sourceIds', 'excludePrivate', 'minTrust', 'suppressFlagged'],
-    ['requireSafeChunks', 'takesHoldersAllowList']);
+  const taken = takeOptions(member, opts, ['sourceId', 'sourceIds', 'excludePrivate', 'minTrust', 'suppressFlagged'], ['requireSafeChunks', 'takesHoldersAllowList', ...unread]);
   return {
     sourceId: taken.sourceId, sourceIds: taken.sourceIds, live: true,
     excludePrivate: storePagePolicy(member, taken.excludePrivate, { callerReaders: true }) ?? null,
@@ -59,6 +51,9 @@ function readScope(member: string, opts: PageReadScope | undefined): Record<stri
     suppressFlagged: taken.suppressFlagged === true,
   };
 }
+
+/** The `WhoknowsOpts` keys and the read-policy holder list that getEffectiveDates is handed but never reads. */
+const WHOKNOWS_UNREAD = ['topic', 'limit', 'explain', 'types', 'onMeta', 'takesHoldersAllowList'] as const;
 
 const reviveDate = (value: unknown): Date => new Date(String(value));
 
@@ -244,6 +239,9 @@ export const listCorpusSample: StoreMember<[opts: CorpusSampleOpts], DomainBankR
   return rows.map(toDomainBankRow);
 };
 
+/** What hybrid search hands the stamp reads as their policy (search-options.ts): its search options and the takes-holder list, which `pageReadFilter` never reads. */
+const HYBRID_UNREAD = [...SEARCH_OPTION_KEYS, 'takesHoldersAllowList'];
+
 /** Page ids as the store reads them: integers only, as Postgres's `int[]` cast requires. */
 function pageIds(member: string, ids: number[]): number[] {
   for (const id of ids) if (!Number.isSafeInteger(id)) throw new TypeError(`${member}: page id ${String(id)} is not an integer`);
@@ -262,7 +260,7 @@ export const getContentFlagsByPageIds: StoreMember<[pageIds: number[], opts?: Pa
   opts,
 ) => {
   if (!ids.length) return new Map();
-  const scope = readScope('getContentFlagsByPageIds', opts);
+  const scope = readScope('getContentFlagsByPageIds', opts, HYBRID_UNREAD);
   const rows: Array<{ id: number; reason: string; detail: string }> = await storeCall({ member: 'getContentFlagsByPageIds' }, () =>
     brain.getContentFlagsByPageIds(pageIds('getContentFlagsByPageIds', ids), scope));
   return new Map(rows.map((r) => [Number(r.id), { reason: r.reason, detail: r.detail }]));
@@ -274,7 +272,7 @@ export const getUnverifiedExtractionPageIds: StoreMember<[pageIds: number[], opt
   opts,
 ) => {
   if (!ids.length) return new Map();
-  const scope = readScope('getUnverifiedExtractionPageIds', opts);
+  const scope = readScope('getUnverifiedExtractionPageIds', opts, HYBRID_UNREAD);
   const rows: Array<{ id: number; status: string; unverified: boolean }> = await storeCall({ member: 'getUnverifiedExtractionPageIds' }, () =>
     brain.getUnverifiedExtractionPageIds(pageIds('getUnverifiedExtractionPageIds', ids), scope));
   return new Map(rows.map((r) => [Number(r.id), { unverified: r.unverified === true, status: r.status }]));
@@ -292,10 +290,43 @@ export const getEffectiveDates: StoreMember<[refs: Array<{ slug: string; source_
   opts,
 ) => {
   if (!refs.length) return new Map();
-  const scope = readScope('getEffectiveDates', opts);
+  // whoknows passes its whole options object (src/commands/whoknows.ts); readEffectiveDates reads only the page scope.
+  const scope = readScope('getEffectiveDates', opts, WHOKNOWS_UNREAD);
   const rows: Array<{ slug: string; source_id: string; ts: string }> = await storeCall({ member: 'getEffectiveDates' }, () =>
     brain.getEffectiveDates(refs.map((r) => ({ slug: r.slug, source_id: r.source_id })), scope));
   return new Map(rows.map((r) => [`${r.source_id}::${r.slug}`, reviveDate(r.ts)]));
+};
+
+/**
+ * The relational recall arm's seed admit read (engine-sql/relational-reads.ts): the refs whose live page `policy`
+ * admits, always under the live filter, as the SQL statement sets it.
+ */
+export const readAdmittedPageRefs: StoreMember<[refs: readonly PageRefRow[], policy: PageReadPolicy], PageRefRow[]> = async (brain, refs, policy) => {
+  if (!refs.length) return [];
+  const scope = readScope('readAdmittedPageRefs', policy ?? {});
+  const rows: PageRefRow[] = await storeCall({ member: 'readAdmittedPageRefs' }, () =>
+    brain.readAdmittedPageRefs(refs.map((r) => ({ source_id: r.source_id, slug: r.slug })), scope));
+  return rows.map((r) => ({ source_id: r.source_id, slug: r.slug }));
+};
+
+/**
+ * The relational recall arm's hydrate read (engine-sql/relational-reads.ts): the refs' pages `policy` admits and the
+ * search visibility clause shows, with the first 65536 code points of the body as `synopsis`.
+ */
+export const readPageSynopses: StoreMember<[refs: readonly PageRefRow[], policy?: PageReadPolicy], RelationalPageRow[]> = async (brain, refs, policy) => {
+  if (!refs.length) return [];
+  const scope = readScope('readPageSynopses', policy ?? {});
+  const rows: RelationalPageRow[] = await storeCall({ member: 'readPageSynopses' }, () =>
+    brain.readPageSynopses(refs.map((r) => ({ source_id: r.source_id, slug: r.slug })), scope));
+  return rows.map((r) => ({
+    page_id: Number(r.page_id), slug: r.slug, source_id: r.source_id, title: r.title, type: r.type, synopsis: r.synopsis ?? null,
+  }));
+};
+
+/** The relational recall arm's title seed (engine-sql/relational-reads.ts): at most two live, unretired typed pages. */
+export const readSeedTitleSlugs: StoreMember<[sourceId: string, types: readonly string[], title: string], string[]> = async (brain, sourceId, types, title) => {
+  if (!types.length) return [];
+  return storeCall({ member: 'readSeedTitleSlugs' }, () => brain.readSeedTitleSlugs(sourceId, [...types], title));
 };
 
 export const revertToVersion: StoreMember<[slug: string, versionId: number, opts?: { sourceId?: string }], void> = async (brain, slug, versionId, opts) => {

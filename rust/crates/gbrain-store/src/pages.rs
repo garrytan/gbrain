@@ -306,6 +306,17 @@ pub struct ReadScope {
     pub preserve_exact_identity: bool,
 }
 
+/// Options of `getTags`: the scope, `liveOnly` (a soft-deleted page has no tags) and the page
+/// policy `excludePrivate` names (a page it hides has no tags), as `engine-sql/tags.ts` reads them.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct TagsQuery {
+    pub source_id: Option<String>,
+    pub source_ids: Option<Vec<String>>,
+    pub live_only: bool,
+    pub exclude_private: Option<crate::facts::PrivacyPolicy>,
+}
+
 /// Options of `addTag` and `addPageTagsById`: the page's source and who claims the tags.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -570,7 +581,8 @@ pub(crate) fn read_page_by_id(read: &dyn KvRead, id: u64) -> Result<Option<PageR
 
 /// Stores a page record and its id key, keeps its origin key (`o`) in step with it, and calls the
 /// page index hook (`page_index::reindex_page`) and the page projection hook
-/// (`page_projection::queue_page_projection`) with the record as stored before and after.
+/// (`page_projection::queue_page_projection`) with the record as stored before and after. It
+/// also sets the sticky member-access flag for a page with `readable_by` (`access_flag`).
 ///
 /// The record's `trust_tier` and `write_origin` are stamped first, as PGLite's
 /// `trust_tier_stamp` trigger stamps every row written to `pages` (see [`stamp_page_trust`]).
@@ -598,6 +610,7 @@ pub(crate) fn write_page(tx: &mut dyn KvWrite, record: &PageRecord) -> Result<()
     tx.put(&keys::page_id(record.id), &key)?;
     index_origin(tx, before.as_ref(), Some(record))?;
     crate::page_index::reindex_page(tx, before.as_ref(), Some(record))?;
+    crate::access_flag::mark_restricted(tx, record)?;
     crate::page_projection::queue_page_projection(tx, before.as_ref(), Some(record))
 }
 
@@ -1597,6 +1610,30 @@ impl Store {
         Ok(tags)
     }
 
+    /// `getTags(slug, { sourceId?, sourceIds?, liveOnly?, excludePrivate? })`, sorted: no tags for
+    /// a page `liveOnly` or the page policy drops.
+    pub fn get_tags_query(&self, slug: &str, query: &TagsQuery) -> Result<Vec<String>> {
+        let read = self.read()?;
+        let page = find_in_scope(
+            &*read,
+            &slug.to_lowercase(),
+            &query.source_id,
+            &query.source_ids,
+            !query.live_only,
+        )?;
+        let Some(page) = page else {
+            return Ok(Vec::new());
+        };
+        if let Some(policy) = &query.exclude_private
+            && crate::facts::page_hidden(&*read, &page, policy)?
+        {
+            return Ok(Vec::new());
+        }
+        let mut tags = page.tags;
+        tags.sort();
+        Ok(tags)
+    }
+
     /// `addTag`: `page_not_found` when the page does not exist. An explicit add claims the tag
     /// (`added`); a `frontmatter` add claims a new tag and adopts only an unclaimed one. A tag the
     /// page has keeps the page revision.
@@ -1716,7 +1753,8 @@ impl Store {
         })
     }
 
-    /// `getVersions(slug, opts)`, newest first.
+    /// `getVersions(slug, opts)`, newest first; under `excludePrivate`, only the versions the page
+    /// and version policies keep.
     pub fn get_versions(&self, slug: &str, options: &VersionsOptions) -> Result<Vec<Value>> {
         let read = self.read()?;
         let slug = slug.to_lowercase();

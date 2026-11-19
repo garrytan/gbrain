@@ -10,7 +10,7 @@
 import type { BrainEngine, RowTrustLookup } from '../engine.ts';
 import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { admitsTrust, compareTrust, minTrust, storedTrustTier, type TrustTier } from '../trust/tier.ts';
-import { chunkFenceMarker, FENCE_TRUST_ORIGIN, fenceTrustMarker, heldRowSql, lowestFenceTrustMarker } from './fence-overlay.ts';
+import { chunkFenceMarker, FENCE_TRUST_ORIGIN, fenceTrustMarker, lowestFenceTrustMarker } from './fence-overlay.ts';
 import { decodeFenceCell, isSeparatorRow, parseRowCells } from '../fence-shared.ts';
 import { needsDataEnvelope, parseContested, renderTrustedText, trustFields, type Contested, type TrustFields } from './labels.ts';
 import { activationSuppressedSql, contestedRefSql } from './sql.ts';
@@ -26,7 +26,8 @@ interface PageRef {
 }
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
-type TrustExec = Pick<BrainEngine, 'executeRaw' | 'readPageTrustRows' | 'readRowTrustRows'>;
+type HeldExec = Pick<BrainEngine, 'listHeldFenceCells'>;
+type TrustExec = Pick<BrainEngine, 'executeRaw' | 'readPageTrustRows' | 'readRowTrustRows' | 'listHeldFenceCells'>;
 
 const key = (source: string | null | undefined, slug: string) => `${source ?? 'default'}\u0000${slug}`;
 
@@ -128,18 +129,15 @@ function holdsText(text: string): boolean {
 /**
  * GST-2891: per row, the line numbers of the facts-fence row lines of its text held from a caller whose fact reads are
  * world-only (heldRowSql: a world cell whose fact is stored narrower, a widening the owner has not accepted), whenever
- * the text was cut. One batched lookup; a failed lookup, or a row that names no source, returns every fence row line
- * (fail closed).
+ * the text was cut. One batched lookup (BrainEngine listHeldFenceCells); a failed lookup, or a row that names no source,
+ * returns every fence row line (fail closed).
  */
-export async function heldFenceLines(engine: Exec, rows: readonly PageRef[]): Promise<Array<Set<number>>> {
+export async function heldFenceLines(engine: HeldExec, rows: readonly PageRef[]): Promise<Array<Set<number>>> {
   const perRow = rows.map(row => typeof row.chunk_text === 'string' ? fenceRowLines(row.chunk_text) : []);
-  const keys = rows.flatMap((row, i) => { const src = row.source_id; return src == null ? [] : perRow[i]!.map(l => [src, row.slug, l.rowNum, l.claim, l.partial] as const); });
+  const keys = rows.flatMap((row, i) => { const src = row.source_id; return src == null ? [] : perRow[i]!.map(l => ({ sourceId: src, slug: row.slug, rowNum: l.rowNum, claim: l.claim, partial: l.partial })); });
   let held: Set<string> | null = new Set();
   if (keys.length) try {
-    const found = await engine.executeRaw<{ source_id: string; slug: string; row_num: number; claim: string }>(
-      `SELECT DISTINCT k.source_id, k.slug, k.row_num, k.claim FROM unnest($1::text[], $2::text[], $3::int[], $4::text[], $5::text[]) AS k(source_id, slug, row_num, claim, partial)
-        WHERE ${heldRowSql('k.source_id', 'k.slug', 'k.row_num', 'k.claim', "k.partial = 't'")}`,
-      [keys.map(k => k[0]), keys.map(k => k[1]), keys.map(k => k[2]), keys.map(k => k[3]), keys.map(k => (k[4] ? 't' : 'f'))]);
+    const found = await engine.listHeldFenceCells(keys);
     held = new Set(found.map(f => `${f.source_id}\u0000${f.slug}\u0000${Number(f.row_num)}\u0000${f.claim}`));
   } catch { held = null; }
   return rows.map((row, i) => new Set(perRow[i]!
@@ -147,7 +145,7 @@ export async function heldFenceLines(engine: Exec, rows: readonly PageRef[]): Pr
 }
 
 /** GST-2891: removes from each row's text the fence row lines held from the caller (heldFenceLines), and drops a row left with nothing to read. */
-export async function dropHeldFenceRows<T extends PageRef>(engine: Exec, rows: T[]): Promise<T[]> {
+export async function dropHeldFenceRows<T extends PageRef>(engine: HeldExec, rows: T[]): Promise<T[]> {
   const drops = await heldFenceLines(engine, rows);
   return rows.filter((row, i) => {
     const drop = drops[i]!;

@@ -185,6 +185,22 @@ export async function listActiveAccessMembers(exec: LegacyUnscopedRead): Promise
   return rows.map(row => row.id);
 }
 
+/**
+ * One `access_tokens` row as `gbrain auth list` reads it. The statement is `SELECT *` so every schema generation reads
+ * (`private_pages`, `private_facts` and `member_id` arrive with their migrations; absent reads as none), so further
+ * columns may be present.
+ */
+export interface AccessTokenRow {
+  id: string; name: string; scopes: string[] | null; created_at: Date | string | null; last_used_at: Date | string | null;
+  revoked_at: Date | string | null; private_pages?: unknown; private_facts?: unknown; member_id?: string | null;
+  [column: string]: unknown;
+}
+
+/** Every legacy access token, revoked ones too, newest first. */
+export async function listAccessTokens(exec: LegacyUnscopedRead): Promise<AccessTokenRow[]> {
+  return exec.executeRaw<AccessTokenRow>('SELECT * FROM access_tokens ORDER BY created_at DESC');
+}
+
 /** `attachSourcePath` options: a non-null `name` replaces the name; a non-null `federated` sets `config.federated`. */
 export interface AttachSourcePathOptions { name?: string | null; federated?: boolean | null }
 

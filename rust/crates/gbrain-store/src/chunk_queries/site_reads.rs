@@ -22,7 +22,7 @@
 //! page_body family's private state, which this family does not read (follow-up
 //! `frozen-hit-manifest-liveness`).
 
-use super::{EMBED_SKIP_KEY, QUARANTINE_KEY, sealed, segmented};
+use super::{EMBED_SKIP_KEY, QUARANTINE_KEY, SAFE_FENCE_CHUNKER_VERSION, sealed, segmented};
 use crate::Store;
 use crate::chunks::{
     ChunkRecord, clear_chunks, delete_chunks_matching, read_chunks, read_segment_view,
@@ -87,6 +87,16 @@ pub struct CodeChunksExistInput {
     pub served: bool,
     pub with_symbol: bool,
     pub scope: ChunkReadScope,
+}
+
+/// `hasUnsealedPages(scope)`: the page read scope, and search's type list and hard-excluded slug
+/// prefixes.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct UnsealedPagesInput {
+    pub scope: ChunkReadScope,
+    pub types: Option<Vec<String>>,
+    pub exclude_slug_prefixes: Vec<String>,
 }
 
 /// `listQualifiedSymbolNames(sourceId, symbol, { match, limit })`.
@@ -472,6 +482,36 @@ impl Store {
         Ok(false)
     }
 
+    /// `hasUnsealedPages(scope)`: a live page in scope whose `chunker_version` is below the
+    /// safe-chunk fence, of one of `types` when given and under none of the excluded slug prefixes
+    /// (`LEFT(p.slug, LENGTH(prefix)) <> prefix`). A record that stores no version counts as 0, as
+    /// the remote reads count it.
+    pub fn has_unsealed_pages(&self, input: &UnsealedPagesInput) -> Result<bool> {
+        if input.scope.source_ids.as_ref().is_some_and(Vec::is_empty) {
+            return Ok(false);
+        }
+        let read = self.read()?;
+        let mut policy = Policy::new(&*read);
+        for page in all_pages(&*read)? {
+            if page.chunker_version.unwrap_or(0) >= SAFE_FENCE_CHUNKER_VERSION
+                || input
+                    .types
+                    .as_ref()
+                    .is_some_and(|types| !types.contains(&page.page_type))
+                || input
+                    .exclude_slug_prefixes
+                    .iter()
+                    .any(|prefix| page.slug.starts_with(prefix.as_str()))
+            {
+                continue;
+            }
+            if policy.passes(&page, &input.scope)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// `listQualifiedSymbolNames(sourceId, symbol, { match, limit })`.
     pub fn list_qualified_symbol_names(&self, input: &QualifiedNamesInput) -> Result<Vec<String>> {
         let read = self.read()?;
@@ -751,6 +791,45 @@ mod tests {
             def_types: vec!["function".into(), "class".into()],
             ..CodeSymbolInput::default()
         }
+    }
+
+    #[test]
+    fn has_unsealed_pages_reads_the_fence_under_the_type_and_slug_prefix_filters() {
+        let store = store();
+        let probe = |value: Value| {
+            store
+                .has_unsealed_pages(&serde_json::from_value::<UnsealedPagesInput>(value).unwrap())
+                .unwrap()
+        };
+        assert!(!probe(json!({})));
+        // A page written without the inline index stays below the fence, as PGLite's putPage leaves it.
+        let unindexed = PutPageOptions {
+            index: Some(false),
+            ..PutPageOptions::default()
+        };
+        let input = PageInput {
+            page_type: "note".into(),
+            title: "draft".into(),
+            compiled_truth: "body".into(),
+            ..PageInput::default()
+        };
+        store.put_page("notes/draft", &input, &unindexed).unwrap();
+        assert!(probe(json!({})));
+        assert!(probe(json!({ "types": ["note"] })));
+        assert!(!probe(json!({ "types": ["concept"] })));
+        assert!(!probe(json!({ "excludeSlugPrefixes": ["notes/"] })));
+        assert!(!probe(json!({ "scope": { "sourceIds": [] } })));
+        assert!(!probe(json!({ "scope": { "sourceId": "other" } })));
+        let chunk = ChunkInput {
+            chunk_text: "body".into(),
+            ..ChunkInput::default()
+        };
+        let seal = UpsertChunksOptions {
+            seal: true,
+            ..UpsertChunksOptions::default()
+        };
+        store.upsert_chunks("notes/draft", &[chunk], &seal).unwrap();
+        assert!(!probe(json!({})));
     }
 
     #[test]

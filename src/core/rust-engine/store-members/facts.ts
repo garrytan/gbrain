@@ -5,13 +5,11 @@
  * pageCollapseFacts, listFenceRetireCandidates).
  *
  * Each member applies the defaults and clamps of src/core/engine-sql/facts.ts, then makes one store call. What the
- * store cannot answer exactly refuses with `engine_capability_missing`: `excludePrivate` for a
+ * store cannot answer exactly refuses with `engine_capability_missing`: a read eligibility policy (except on the four
+ * list reads and `listSupersessions`, which send it to the store), `excludePrivate` for a
  * caller other than the one the store's policy models (private-provenance.ts), the keyword arm in an FTS language other
  * than `english`, a visibility list that the member-page or grant rules widen, and inputs whose PGLite outcome the store cannot reproduce (a non-finite
  * `claim_value`, `row_num` or `superseded_by_row`, a fractional offset, a keyset time in another text form).
- *
- * A read eligibility policy goes to the store on the list reads and `listSupersessions`: it hides the facts of a
- * quarantined provenance page and applies the trust floor and flag suppression (`projectionEligibleSql('facts')`).
  *
  * A vector travels as the literal PGLite inlines (`'[a,b,...]'`); the store casts it to the column's `halfvec` and
  * returns stored vectors as number lists, which become `Float32Array`s here.
@@ -94,8 +92,8 @@ function listQuery(member: string, sourceId: string, opts: FactListOpts | Recall
     fingerprint: o.fingerprint === true,
     limit: clampSearchLimit(o.limit, 50, MAX_SEARCH_LIMIT),
     excludePrivate: factPolicy(member, o.excludePrivate),
-    // eligibilityClause (engine-sql/facts.ts): any policy applies projectionEligibleSql('facts'), the quarantine clause too.
-    eligible: o.eligibility !== undefined,
+    // eligibilityClause (engine-sql/facts.ts): any policy swaps the deleted-page clause for projectionEligibleSql('facts').
+    eligible: Boolean(o.eligibility),
     minTrust: o.eligibility?.floor || null,
     suppressFlagged: o.eligibility?.suppressFlagged === true,
     ...(recall ? {

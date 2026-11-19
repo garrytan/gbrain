@@ -40,6 +40,7 @@ pub mod cycle;
 pub mod doctor;
 mod embedding;
 mod fence;
+mod held_cells;
 pub mod loops;
 mod privacy;
 pub mod purge;
@@ -51,6 +52,7 @@ pub mod trust;
 pub mod trust_reads;
 
 pub use fence::{FenceContext, FenceTarget};
+pub use held_cells::{HeldFenceCellKey, HeldFenceCellsInput, HeldFenceMember};
 use privacy::hidden_by_private_provenance;
 pub use privacy::{OwnerOnlyForm, PrivacyPolicy};
 pub(crate) use privacy::{caller_version_hidden, page_hidden, version_hidden};
@@ -1021,8 +1023,8 @@ pub struct FactQuery {
     pub after: Option<KeysetAfter>,
     /// `excludePrivate`: the private-provenance policy (`facts/privacy.rs`).
     pub exclude_private: Option<PrivacyPolicy>,
-    /// The caller passed a read eligibility: `projectionEligibleSql('facts')` replaces the
-    /// deleted-page clause, so a row whose live provenance page is quarantined is hidden too.
+    /// The caller passed a read eligibility (`eligibilityClause`): `projectionEligibleSql('facts')`
+    /// replaces the deleted-page clause, so a row whose live provenance page is quarantined is hidden too.
     pub eligible: bool,
     /// `eligibility.floor`: `trustFloorSql` over the fact's stored tier; null sets none.
     pub min_trust: Option<String>,
@@ -1327,13 +1329,7 @@ impl FactQuery {
         }
     }
 
-    fn admits(
-        &self,
-        read: &dyn KvRead,
-        row: &FactRecord,
-        now: i64,
-        trust: &TrustPolicy,
-    ) -> Result<bool> {
+    fn admits(&self, read: &dyn KvRead, row: &FactRecord, now: i64) -> Result<bool> {
         let eq = |want: &Option<String>, have: &Option<String>| want.is_none() || want == have;
         if !(eq(&self.entity_slug, &row.entity_slug)
             && eq(&self.source_markdown_slug, &row.source_markdown_slug)
@@ -1355,9 +1351,8 @@ impl FactQuery {
             return Ok(false);
         }
         Ok(!hidden_by_deleted_page(read, row)?
-            && !hidden_by_policy(read, row, &self.exclude_private)?
             && !(self.eligible && hidden_by_quarantine(read, row)?)
-            && trust.admits(read, "facts", row.id, row.tier())?)
+            && !hidden_by_policy(read, row, &self.exclude_private)?)
     }
 
     fn check(&self, op: &str) -> Result<()> {
@@ -1410,7 +1405,11 @@ impl Store {
         let now = self.env.now_micros();
         let mut rows = Vec::new();
         for row in q.candidates(&*read)? {
-            if q.source_id == row.source_id && extra(&row) && q.admits(&*read, &row, now, &trust)? {
+            if q.source_id == row.source_id
+                && extra(&row)
+                && q.admits(&*read, &row, now)?
+                && trust.admits(&*read, "facts", row.id, row.tier())?
+            {
                 rows.push(row);
             }
         }

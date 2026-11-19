@@ -9,7 +9,8 @@ import type { SourceDetailRow, SourceRow } from '../engine.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from '../source-config-sql.ts';
 import { jsonbParam, type SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
-import { sqlFragment, trustedSql } from './fragment.ts';
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
+import { ANY_OWNER_ONLY_SQL } from '../access/owner-only.ts';
 
 export async function listAllSources(exec: LegacyUnscopedRead, opts?: {
   includeArchived?: boolean;
@@ -95,6 +96,20 @@ export async function lockSourceRow(exec: SqlExecutor, sourceId: string): Promis
   return row ?? null;
 }
 
+/**
+ * Whether a writer binding claims the source's current incarnation (classic sync refuses a claimed source while managed
+ * persistence is off). False for an unknown source. The text is the statement sync-authority.ts ran through executeRaw.
+ */
+export const SOURCE_CLAIMED_SQL = `SELECT
+    EXISTS(SELECT 1 FROM persistence_source_bindings WHERE source_id=s.id AND source_incarnation=s.incarnation) AS claimed
+    FROM sources s WHERE s.id=$1`;
+
+/** True when a writer binding claims the source's current incarnation; false when none does or the source is unknown. Unscoped on master. */
+export async function isSourceClaimed(exec: LegacyUnscopedRead, sourceId: string): Promise<boolean> {
+  const [row] = await exec.executeRaw<{ claimed: boolean }>(SOURCE_CLAIMED_SQL, [sourceId]);
+  return row?.claimed === true;
+}
+
 /** The chunker version the source's last full sync stamped, or null. Unscoped on master. */
 export async function readSourceChunkerVersion(exec: LegacyUnscopedRead, sourceId: string): Promise<string | null> {
   const [row] = await exec.executeRaw<{ chunker_version: string | null }>('SELECT chunker_version FROM sources WHERE id = $1', [sourceId]);
@@ -152,6 +167,33 @@ export interface DefaultSourceSplit { defaultPages: number; nonDefaultPages: num
  */
 export async function listLocalPathSources(exec: LegacyUnscopedRead): Promise<LocalPathSourceRow[]> {
   return exec.executeRaw<LocalPathSourceRow>(`SELECT id, local_path, archived FROM sources WHERE local_path IS NOT NULL`);
+}
+
+/** The engine's own executeRaw (or a persistence view's), so access/owner-only.ts runs the same statement on either. */
+export interface OwnerOnlyRead {
+  executeRaw<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<R[]>;
+}
+
+/** Does the brain hold an owner-only source, archived ones included? No row counts as yes (fail closed). */
+export async function readOwnerOnlySourcesPresent(exec: OwnerOnlyRead): Promise<boolean> {
+  const { text, params } = renderFragment(sqlFragment`SELECT ${trustedSql(ANY_OWNER_ONLY_SQL)} AS present`);
+  const [row] = await exec.executeRaw<{ present: boolean }>(text, params);
+  return row?.present !== false;
+}
+
+/** One source's raw `config` for the owner-only test, or null when the source is missing (`sourceIsOwnerOnly`). */
+export async function readOwnerOnlySourceConfig(exec: OwnerOnlyRead, sourceId: string): Promise<{ config: unknown } | null> {
+  const rows = await exec.executeRaw<{ config: unknown }>('SELECT config FROM sources WHERE id = $1', [sourceId]);
+  return rows[0] ?? null;
+}
+
+/** The live (not archived) source a plain-directory sync reads (`plainDirectorySyncRoot`). */
+export interface PlainSyncSourceRow { local_path: string | null; last_commit: string | null; config: { kind?: unknown } | null }
+
+/** The registered path, last commit and config of a source that is not archived, or null. */
+export async function readPlainSyncSource(exec: LegacyUnscopedRead, sourceId: string): Promise<PlainSyncSourceRow | null> {
+  const [row] = await exec.executeRaw<PlainSyncSourceRow>('SELECT local_path,last_commit,config FROM sources WHERE id=$1 AND NOT archived', [sourceId]);
+  return row ?? null;
 }
 
 /**

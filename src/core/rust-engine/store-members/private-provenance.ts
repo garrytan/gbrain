@@ -21,6 +21,15 @@
  * the policy (`readers_allowed` and `orPrivateReadableSource` in privacy.rs). Folder rules, pending coverage,
  * audiences, lineage, owner-only sources, labelled-only grants and relaxed reads still refuse.
  *
+ * A remote read on a brain that holds no member restriction (config access.restrictions_present unset, so
+ * `CallerAccess.restricted` is false) renders the short member-access form `page_readers IS NULL AND
+ * folder_rule_ids IS NULL`: no page that names readers, no origin walk. The member compares such a caller's text with
+ * the forms rendered under `restricted: false` and sends `open` (privacy.rs `readers_allowed`). The store's own flag
+ * then decides: unset, it applies the short form as written; set (the caller's flag read was stale, or an operator
+ * cleared the config row), it applies the short form and the full form's origin walk too, so the read is never wider
+ * than either form. The Rust page write sets the flag (access_flag.rs), so a Rust brain that once held a `readable_by`
+ * page renders the full form unless the caller's read was stale.
+ *
  * The concept-input test is rendered either inline or as a call of `gbrain_concept_inputs_private` (migration v311),
  * by the schema version the context carries. The two forms are the same test, so the comparison reads both as one.
  */
@@ -56,6 +65,13 @@ export interface StorePrivacyPolicy {
    * the fail-closed form (every row hidden while the brain holds an owner-only source). Absent when the text has none.
    */
   ownerOnly?: 'lineage' | 'closed';
+  /** The caller renders the short member-access form (`CallerAccess.restricted` false); the store's flag decides. */
+  open?: boolean;
+}
+
+/** Renders `fn` under the caller's member-access form: the short form for a `restricted: false` caller. */
+function underForm<T>(open: boolean, fn: () => T): T {
+  return open ? withCallerAccess({ restricted: false }, fn) : fn();
 }
 
 /** The owner-only form a rendered policy carries over the row `alias` of `table`, judged by its text. */
@@ -119,10 +135,12 @@ export function storePrivacyPolicy(
   opts: { callerReaders?: boolean } = {},
 ): StorePrivacyPolicy | undefined {
   if (excludePrivate !== true) return undefined;
+  const open = currentCallerAccess().restricted === false;
+  const openFlag = open ? { open: true } : {};
   const text = normalizeConceptInputs(rendered());
   for (const form of FACT_FORMS) {
-    const baseline = withoutCallerAccess(() => form.sql('facts'));
-    if (text === normalizeConceptInputs(baseline)) return factPolicyFlags(baseline);
+    const baseline = withoutCallerAccess(() => underForm(open, () => form.sql('facts')));
+    if (text === normalizeConceptInputs(baseline)) return { ...factPolicyFlags(baseline), ...openFlag };
   }
   if (opts.callerReaders) {
     const access = currentCallerAccess();
@@ -130,11 +148,11 @@ export function storePrivacyPolicy(
     const own = readers.identity.find(p => p.startsWith('member:'))?.slice('member:'.length);
     for (const form of FACT_FORMS) {
       const canonical = withoutCallerAccess(() =>
-        withCallerAccess({ ...readers, hidePrivate: true }, () => form.sql('facts')));
+        withCallerAccess({ ...readers, hidePrivate: true, restricted: !open }, () => form.sql('facts')));
       if (text !== normalizeConceptInputs(canonical)) continue;
       const memberPage = own === undefined ? undefined : `${MEMBER_PAGE_PREFIX}${own}`;
       const judged = form.memberCase && memberPage !== undefined && canonical.includes(`pp.slug = '${memberPage}'`);
-      return { ...factPolicyFlags(canonical), ...readers, ...(judged ? { memberPage } : {}) };
+      return { ...factPolicyFlags(canonical), ...readers, ...(judged ? { memberPage } : {}), ...openFlag };
     }
   }
   refuseMember(member, 'excludePrivate for a caller whose member pages, grants or lineage widen the policy');
@@ -184,26 +202,17 @@ export function storePageTextPolicy(
   rendered: () => string,
   opts: { callerReaders?: boolean } = {},
 ): StorePrivacyPolicy {
+  const open = currentCallerAccess().restricted === false;
+  const openFlag = open ? { open: true } : {};
   const text = normalizeConceptInputs(rendered());
-  const baseline = withoutCallerAccess(() => privatePagesFilterForCaller('p'));
-  if (text === normalizeConceptInputs(baseline)) return pagePolicyFlags(baseline);
+  const baseline = withoutCallerAccess(() => underForm(open, () => privatePagesFilterForCaller('p')));
+  if (text === normalizeConceptInputs(baseline)) return { ...pagePolicyFlags(baseline), ...openFlag };
   if (opts.callerReaders) {
     const access = currentCallerAccess();
     const readers = { identity: [...access.identity], privateReadableSources: [...access.privateReadableSources] };
     const canonical = withoutCallerAccess(() =>
-      withCallerAccess({ ...readers, hidePrivate: true }, () => privatePagesFilterForCaller('p')));
-    if (text === normalizeConceptInputs(canonical)) return { ...pagePolicyFlags(canonical), ...readers };
-    // A remote read on a brain with no access restrictions (CallerAccess.restricted false) renders the open form: a
-    // page passes when it names no readers and no folder rule, whoever the caller is. The store judges that page by
-    // the empty identity, which hides every page that names readers, as the open form does.
-    if (access.restricted === false) {
-      const open = withoutCallerAccess(() => withCallerAccess(
-        { identity: [], privateReadableSources: readers.privateReadableSources, hidePrivate: true, restricted: false },
-        () => privatePagesFilterForCaller('p')));
-      if (text === normalizeConceptInputs(open)) {
-        return { ...pagePolicyFlags(open), identity: [], privateReadableSources: readers.privateReadableSources };
-      }
-    }
+      withCallerAccess({ ...readers, hidePrivate: true, restricted: !open }, () => privatePagesFilterForCaller('p')));
+    if (text === normalizeConceptInputs(canonical)) return { ...pagePolicyFlags(canonical), ...readers, ...openFlag };
   }
   refuseMember(member, 'excludePrivate for a caller whose member pages, grants or lineage widen the policy');
 }

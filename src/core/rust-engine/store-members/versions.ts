@@ -17,7 +17,10 @@ export const createVersion: StoreMember<[slug: string, opts?: { sourceId?: strin
 };
 
 export const getVersions: StoreMember<[slug: string, opts?: GetVersionsOpts<boolean>], PageVersionRows<boolean>> = async (brain, slug, opts) => {
-  const scope = takeOptions('getVersions', opts, ['sourceId', 'sourceIds', 'limit', 'includeBody', 'excludePrivate']);
+  // The SQL reads only these five options; the rest of the read policy the MCP tool passes changes nothing there.
+  const scope = takeOptions('getVersions', opts, ['sourceId', 'sourceIds', 'limit', 'includeBody', 'excludePrivate'],
+    ['requireSafeChunks', 'minTrust', 'suppressFlagged', 'takesHoldersAllowList']);
+  // The page policy judges the page; the store judges each version by the same identity, grant and flags.
   if ('excludePrivate' in scope) scope.excludePrivate = versionsPolicy(scope.excludePrivate) ?? null;
   const rows: PageVersion[] = await storeCall({ member: 'getVersions', slug }, () => brain.getVersions(slug, scope));
   return rows.map((row) => toVersion(row)) as PageVersionRows<boolean>;

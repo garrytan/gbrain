@@ -27,7 +27,7 @@ impl Brain {
         })
     }
 
-    /// `getVersions(slug, { sourceId?, sourceIds?, limit?, includeBody? }?)`: newest first.
+    /// `getVersions(slug, { sourceId?, sourceIds?, limit?, includeBody?, excludePrivate? }?)`: newest first.
     #[napi]
     pub fn get_versions<'env>(
         &self,

@@ -10,10 +10,14 @@ import { ACCESS_ID_RE, hasReaders, normalizePrincipal, normalizeReaders, readers
 import { catalogueError } from '../error-catalogue.ts';
 import { authorizedSlug, type SqlEngine, type WriteAuthority } from './model.ts';
 import type { BrainEngine } from '../engine.ts';
+import type { PagePolicyPart } from '../engine-sql/page-visibility.ts';
 import { noGrantFloorReads } from '../source-resolver.ts';
 import { hasScope } from '../scope.ts';
 import { viewedEngine } from './switches.ts';
 import { ANY_OWNER_ONLY_SQL, ownerOnlySourceSql, ownerOnlySourcesPresent, sourceIsOwnerOnly } from '../access/owner-only.ts';
+
+/** An engine that also reads a stored writer's slug fence (storedOwnerSpeaksForItself and the checks that call it). */
+export type FenceEngine = SqlEngine & Pick<BrainEngine, 'readWriterSlugFence'>;
 
 /** Publication uses fresh policy, independent of the read-side telemetry cache (read through the resolver). */
 export async function excludesPrivateWrites(engine: SqlEngine, remote: boolean): Promise<boolean> {
@@ -36,7 +40,7 @@ export async function excludesPrivateWritesAtAdmission(engine: SqlEngine, remote
  * member disabled or unbound after submission (a queued job, a replay) loses the page before commit, and the
  * member-access part applies even when an operator relaxed privacy.
  */
-export async function authorizePageVisibility(engine: SqlEngine, authority: WriteAuthority, page: string): Promise<void> {
+export async function authorizePageVisibility(engine: FenceEngine, authority: WriteAuthority, page: string): Promise<void> {
   if (!authority.remote) return;
   const slug = authorizedSlug(authority, page);
   // GBRA-108 design 1: a labelled-only writer reads only pages that name it, so the empty-identity shortcut (a page every
@@ -96,7 +100,7 @@ export async function authorizePageVisibility(engine: SqlEngine, authority: Writ
  * `hidePrivate`. No operator hatch relaxes the member-access part. GBRA-108 design 1: a labelled-only writer is held to
  * pages that name it too, the same rule its reads follow.
  */
-export async function writerReadPolicySql(engine: SqlEngine, authority: WriteAuthority, pageAlias: string, hidePrivate: boolean,
+export async function writerReadPolicySql(engine: FenceEngine, authority: WriteAuthority, pageAlias: string, hidePrivate: boolean,
   restricted?: boolean, ownerOnlyPresent?: boolean): Promise<string> {
   restricted ??= (await readRemotePolicyNow(engine)).restricted;
   const identities = restricted ? await writerIdentities(engine, authority) : [[]];
@@ -194,6 +198,11 @@ export async function remoteReadPolicySql(engine: BrainEngine, pageAlias: string
   return await resolveExcludePrivatePages(engine, true) ? privatePagesFilterForCaller(pageAlias) : callerAccessAllowedSql(pageAlias);
 }
 
+/** Which part of the page policy remoteReadPolicySql applies, for the typed visibility reads (engine-sql/page-visibility.ts). */
+async function remoteReadPolicyPart(engine: BrainEngine): Promise<PagePolicyPart> {
+  return await resolveExcludePrivatePages(engine, true) ? 'read' : 'access';
+}
+
 /**
  * Whether an existing page is hidden from the current remote caller (never for a trusted local caller). GBRA-431: the
  * full read policy, so a `visibility: private` page answers like a missing one as well as a page whose readers omit
@@ -201,9 +210,8 @@ export async function remoteReadPolicySql(engine: BrainEngine, pageAlias: string
  */
 export async function remoteTargetHidden(engine: BrainEngine, remote: boolean | undefined, sourceId: string, slug: string, memberAccessOnly = false): Promise<boolean> {
   if (remote === false) return false;
-  const policy = memberAccessOnly ? callerAccessAllowedSql('pages') : await remoteReadPolicySql(engine, 'pages');
-  const rows = await engine.executeRaw(`SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2 AND NOT ${policy} LIMIT 1`, [sourceId, slug]);
-  return rows.length > 0;
+  const policy = memberAccessOnly ? 'access' : await remoteReadPolicyPart(engine);
+  return engine.readPageHiddenFromCaller(sourceId, slug, { policy });
 }
 
 /**
@@ -214,11 +222,7 @@ export async function remoteTargetHidden(engine: BrainEngine, remote: boolean | 
  */
 export async function remotePageAccess(engine: BrainEngine, pages: readonly { source_id: string; slug: string }[]): Promise<{ known: Set<string>; readable: Set<string> }> {
   if (pages.length === 0) return { known: new Set(), readable: new Set() };
-  const policy = await remoteReadPolicySql(engine, 'p');
-  const rows = await engine.executeRaw<{ source_id: string; slug: string; readable: boolean }>(`SELECT p.source_id, p.slug,
-      bool_or(p.deleted_at IS NULL AND ${policy}) AS readable FROM pages p
-    JOIN unnest($1::text[], $2::text[]) AS t(source_id, slug) ON p.source_id = t.source_id AND p.slug = t.slug
-    GROUP BY p.source_id, p.slug`, [pages.map(p => p.source_id), pages.map(p => p.slug)]);
+  const rows = await engine.readCallerPageAccess(pages, { policy: await remoteReadPolicyPart(engine) });
   const key = (r: { source_id: string; slug: string }) => `${r.source_id}\u0000${r.slug}`;
   return { known: new Set(rows.map(key)), readable: new Set(rows.filter(r => r.readable).map(key)) };
 }
@@ -313,12 +317,10 @@ export async function defaultSourceWriterIsOwner(engine: SqlEngine, writer: stri
  * principal's member is the enabled owner now. A credential unbound or fenced, a member disabled or an owner changed after
  * submission is not the owner here.
  */
-export async function storedOwnerSpeaksForItself(engine: SqlEngine, authority: WriteAuthority, member?: string): Promise<boolean> {
+export async function storedOwnerSpeaksForItself(engine: FenceEngine, authority: WriteAuthority, member?: string): Promise<boolean> {
   if (!authority.remote || authority.actingFor || authority.restrictedNamespace || authority.slugPrefixes != null) return false;
   const { principal } = authority;
-  const fence = principal.kind === 'oauth_client' ? 'SELECT bound_slug_prefixes AS prefixes FROM oauth_clients WHERE client_id=$1'
-    : principal.kind === 'local_cli' || principal.kind === 'local_stdio' ? "SELECT grant_ceiling->'slugPrefixes' AS prefixes FROM persistence_local_writers WHERE id=$1::uuid" : null;
-  if (fence && (await engine.executeRaw<{ prefixes: unknown }>(fence, [principal.id]))[0]?.prefixes != null) return false;
+  if (await engine.readWriterSlugFence(principal) != null) return false;
   const bound = (await memberIdentityFor(engine, authority)).find(p => p.startsWith('member:')) ?? null;
   return (member === undefined || bound === member) && defaultSourceWriterIsOwner(engine, bound);
 }
@@ -341,7 +343,7 @@ export async function storedWriterReadsHeld(engine: SqlEngine, authority: WriteA
  * write scope and storedOwnerSpeaksForItself still names the same owner member. Such a write reaches a private page the
  * owner reads; readable_by and folder rules still apply to it, like to every other writer.
  */
-export async function storedOwnerWrite(engine: SqlEngine, authority: WriteAuthority): Promise<boolean> {
+export async function storedOwnerWrite(engine: FenceEngine, authority: WriteAuthority): Promise<boolean> {
   return !!authority.ownerWrite && hasScope(authority.scopes, 'write') && await storedOwnerSpeaksForItself(engine, authority, authority.ownerWrite);
 }
 
