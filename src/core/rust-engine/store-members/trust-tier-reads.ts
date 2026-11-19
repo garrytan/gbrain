@@ -9,8 +9,9 @@
  * already, and `READ ONLY` is not enforced.
  *
  * Refused (`engine_capability_missing`); the members this file does not export refuse as every unserved member does:
- *  - `listCorePageRows` under `excludePrivate` for a caller whose page policy is not the no-caller one (a member
- *    page, a grant, a lineage read, a labelled-only caller), as `storePagePolicy` refuses it;
+ *  - `listCorePageRows` under `excludePrivate` for a caller whose page policy is neither the no-caller one nor the
+ *    canonical one for its reader identity and private-readable sources (the remote floor: for no readers), such as
+ *    a lineage read or a labelled-only, owner or audience caller;
  *  - the trust scan over `takes` and `timeline_entries`, which the store does not stamp yet;
  *  - `readBeliefHistoryRows` and `listVisibleBeliefLifetimes`, always and before any store call: the store keeps no
  *    belief ledger (every `belief_events` and `belief_page_lifetimes` write goes through `executeRaw`), so a read could
@@ -56,7 +57,9 @@ export const listCorePageRows: Member<'listCorePageRows'> = (brain, spec) => {
   const member = 'listCorePageRows';
   requireCount(member, 'limit', spec.limit);
   const policy = spec.excludePrivate
-    ? storePageTextPolicy(member, () => (spec.forCaller ? privatePagesFilterForCaller('p') : remoteReadFloorSql('p')))
+    ? spec.forCaller
+      ? storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true })
+      : storePageTextPolicy(member, () => remoteReadFloorSql('p'), { noReaders: true })
     : null;
   const e = spec.eligibility;
   return storeCall({ member }, () => brain.listCorePageRows({

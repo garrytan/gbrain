@@ -81,7 +81,7 @@ getPage	pages	yes	82	yes	yes	yes	serves
 readPageSnapshot	pages	yes	21	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	365	yes	yes	yes	serves
+putPage	pages	yes	366	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
@@ -579,7 +579,7 @@ listStandingPreferences	facts_trust	yes	1	no	yes	yes	refuses:facts
 listLexicalContestCandidates	facts_trust	yes	1	no	yes	yes	refuses:facts
 listRestatedPrivateCopies	facts_trust	yes	1	no	yes	yes	refuses:facts
 countDerivedFactTaint	facts_trust	yes	1	no	yes	yes	refuses:facts
-listCorePageRows	trust_tier_reads	yes	2	no	yes	yes	serves
+listCorePageRows	trust_tier_reads	yes	3	no	yes	yes	serves
 listTrustScanRows	trust_tier_reads	yes	2	no	yes	yes	serves
 countUnscannedTrustRows	trust_tier_reads	yes	2	no	yes	yes	serves
 readBeliefHistoryRows	trust_tier_reads	yes	1	no	yes	yes	serves

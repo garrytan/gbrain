@@ -10,6 +10,7 @@ test/engine-parity/cli-reads-ops.test.ts	13	5
 test/engine-parity/code-eval-salience.test.ts	13	0
 test/engine-parity/config-ingest.test.ts	8	0
 test/engine-parity/connect-gate.test.ts	6	0
+test/engine-parity/core-page-member-reads.test.ts	1	0
 test/engine-parity/cycle-locks.test.ts	10	0
 test/engine-parity/effect-scans.test.ts	3	0
 test/engine-parity/entity-reads.test.ts	9	0

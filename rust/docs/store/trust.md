@@ -179,6 +179,9 @@ the family adds no key prefix. Versions have no by-id index: the version reads s
 
 - `beginSnapshotRead` has no store method: a store transaction holds the one writer from its start, so its reads see
   one state. It does not enforce `READ ONLY`; a write in that transaction lands.
+- `listCorePageRows` serves a caller with a reader identity or a private-readable grant: with `forCaller` its
+  `excludePrivate` policy carries them (`callerReaders`), and the remote floor is the no-reader policy (`noReaders`).
+  Pinned by `test/engine-parity/core-page-member-reads.test.ts`.
 - `listValidTimeIdentities` serves a caller with a reader identity or a private-readable grant: its `excludePrivate`
   policy carries them (`callerReaders`), and the `world` mark, which never reads the caller's readers, is the
   no-reader policy (`noReaders`). `pickValidTimeEdition` serves the same callers when the caller's snapshot policy is
