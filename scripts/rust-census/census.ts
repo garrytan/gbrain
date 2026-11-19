@@ -41,7 +41,7 @@ import { randomUUID } from 'node:crypto';
 import { detectAddonTarget } from '../../src/core/rust-engine/addon-target.ts';
 import { CLI_CASES, MCP_OVERRIDES, MCP_PARAM_FILL, type CliCase } from './cases.ts';
 import { buildPackages, renderPackages } from './packages.ts';
-import { normalize } from './normalize.ts';
+import { firstDiff, maskedExcerpt, normalize, type FirstDiff } from './normalize.ts';
 import { MEMBER_SERVE_ARGS, MEMBER_SETUP, memberCell, optionRefusals, renderMemberPass, type MemberResult } from './member-pass.ts';
 
 const ROOT = resolve(import.meta.dir, '..', '..');
@@ -93,6 +93,11 @@ interface Row {
   /** The first 600 characters of each arm's output (JSON report only), for reading a differs row without a rerun. */
   rustExcerpt?: string;
   refExcerpt?: string;
+  /** The Postgres arm's output the same way, when the arm ran. */
+  pgExcerpt?: string;
+  /** Where Rust (rustDiff) and Postgres (pgDiff) first differ from the reference, on a row that is not equal. */
+  rustDiff?: FirstDiff;
+  pgDiff?: FirstDiff;
   /** MCP: the run's "(option X)" refusals (member-pass.ts optionRefusals), minus the serve's startup refusals. */
   options?: string[];
   /** MCP: the same tool for the member caller (member-pass.ts); never counted in the totals. */
@@ -343,8 +348,7 @@ function snippet(run: Run): string {
 }
 
 function excerpt(run: Run, b: Brain): string {
-  const text = (run.stdout.trim() || run.stderr.trim());
-  return pathsOf(b).reduce((t, [path, mark]) => t.split(path).join(mark), text).slice(0, 600);
+  return maskedExcerpt(run.stdout.trim() || run.stderr.trim(), pathsOf(b));
 }
 
 function classify(ref: { exit: number; out: unknown }, rust: Run, rustOut: unknown, refRun: Run): { status: Status; note: string; decisive?: string } {
@@ -382,25 +386,33 @@ async function runCliCase(cs: CliCase, i: number, bases: Bases): Promise<Row> {
   for (const [k, b] of Object.entries(arms)) clones[k] = await cloneBrain(b, join(caseDir, k));
   const trace = join(caseDir, 'rust-trace.jsonl');
   const runs: Record<string, Run> = {};
+  const beforeFailed: string[] = [];
   await Promise.all(Object.entries(clones).map(async ([k, b]) => {
     const repo = makeRepo(b.dir); mkdirSync(join(b.dir, 'scratch'), { recursive: true });
+    for (const step of cs.before ?? []) {
+      const r = await spawnCli(b, expand(step.slice(), b.dir, repo));
+      if (r.exitCode !== 0) beforeFailed.push(`${k}: before step \`${labelOf(step)}\` exited ${r.exitCode}`);
+    }
     runs[k] = await spawnCli(b, expand(cs.args.slice(), b.dir, repo), { trace: k === 'rust' ? trace : undefined, stdin: cs.stdin });
   }));
   const refOut = normalize(parseOut(runs.ref!.stdout), pathsOf(clones.ref!));
   const rustOut = normalize(parseOut(runs.rust!.stdout), pathsOf(clones.rust!));
   const verdict = classify({ exit: runs.ref!.exitCode, out: refOut }, runs.rust!, rustOut, runs.ref!);
   const t = readTrace(trace);
-  let pgStatus: Status | undefined;
+  let pgStatus: Status | undefined; let pgDiff: FirstDiff | undefined; let pgExcerpt: string | undefined;
   if (runs.pg) {
     const pgOut = normalize(parseOut(runs.pg.stdout), pathsOf(clones.pg!));
     pgStatus = crashed(runs.pg, runs.ref!) ? 'crash' : runs.pg.exitCode === runs.ref!.exitCode && JSON.stringify(pgOut) === JSON.stringify(refOut) ? 'equal' : 'differs';
+    pgExcerpt = excerpt(runs.pg, clones.pg!);
+    pgDiff = firstDiff({ exit: runs.ref!.exitCode, out: refOut }, { exit: runs.pg.exitCode, out: pgOut }) ?? undefined;
   }
+  const rustDiff = verdict.status === 'equal' ? undefined : firstDiff({ exit: runs.ref!.exitCode, out: refOut }, { exit: runs.rust!.exitCode, out: rustOut }) ?? undefined;
   for (const b of Object.values(clones)) await dropBrain(b);
   rmSync(caseDir, { recursive: true, force: true });
   return { surface: 'cli', name: cs.cmd, invocation: label, status: verdict.status, pgStatus, refExit: runs.ref!.exitCode, rustExit: runs.rust!.exitCode,
     decisive: verdict.decisive, endSite: endSiteOf(t, verdict.decisive, runs.rust!.censusRef), first: t.first, sites: t.all.slice(0, 40).map((x) => `${x.member}@${x.site}`), refusals: t.refusals, members: t.members, raw: t.raw,
-    rustExcerpt: excerpt(runs.rust!, clones.rust!), refExcerpt: excerpt(runs.ref!, clones.ref!),
-    note: [verdict.note, verdict.status !== 'equal' && runs.ref!.exitCode !== 0 ? `reference exit ${runs.ref!.exitCode}: ${snippet(runs.ref!)}` : ''].filter(Boolean).join('; ') };
+    rustExcerpt: excerpt(runs.rust!, clones.rust!), refExcerpt: excerpt(runs.ref!, clones.ref!), pgExcerpt, rustDiff, pgDiff,
+    note: [...beforeFailed.sort(), verdict.note, verdict.status !== 'equal' && runs.ref!.exitCode !== 0 ? `reference exit ${runs.ref!.exitCode}: ${snippet(runs.ref!)}` : ''].filter(Boolean).join('; ') };
 }
 
 function fillParams(tool: { name: string; inputSchema?: any }): Record<string, unknown> {
@@ -464,13 +476,19 @@ async function runMcpTool(tool: { name: string; inputSchema?: any }, i: number, 
   }
   else { status = 'differs'; note = `isError ${rust.exit} vs ${ref.exit}`; }
   if (status !== 'equal' && ref.exit !== 0) note = [note, `reference isError: ${ref.text.replace(/\s+/g, ' ').slice(0, 160)}`].filter(Boolean).join('; ');
-  let pgStatus: Status | undefined;
-  if (runs.pg) { const pg = mcpOut(runs.pg); pgStatus = pg.exit === -1 ? 'crash' : pg.exit === ref.exit && JSON.stringify(normalize(pg.out, pathsOf(clones.pg!))) === JSON.stringify(refN) ? 'equal' : 'differs'; }
+  let pgStatus: Status | undefined; let pgDiff: FirstDiff | undefined; let pgExcerpt: string | undefined;
+  if (runs.pg) {
+    const pg = mcpOut(runs.pg); const pgN = normalize(pg.out, pathsOf(clones.pg!));
+    pgStatus = pg.exit === -1 ? 'crash' : pg.exit === ref.exit && JSON.stringify(pgN) === JSON.stringify(refN) ? 'equal' : 'differs';
+    pgExcerpt = maskedExcerpt(pg.text, pathsOf(clones.pg!));
+    pgDiff = firstDiff({ exit: ref.exit, out: refN }, { exit: pg.exit, out: pgN }) ?? undefined;
+  }
+  const rustDiff = status === 'equal' ? undefined : firstDiff({ exit: ref.exit, out: refN }, { exit: rust.exit, out: rustN }) ?? undefined;
   for (const b of Object.values(clones)) await dropBrain(b);
   rmSync(caseDir, { recursive: true, force: true });
   const options = optionRefusals(t.all.filter((x) => !startup.has(`${x.member}@${x.site}`)).map((x) => `${x.member}@${x.site}`));
   return { surface: 'mcp', name: tool.name, invocation: JSON.stringify(params).slice(0, 120), status, pgStatus, refExit: ref.exit, rustExit: rust.exit, decisive, endSite: endSiteOf(t, decisive, runs.rust!.censusRef), first: t.first, sites: t.all.slice(0, 40).map((x) => `${x.member}@${x.site}`), refusals: t.refusals, members: t.members, raw: t.raw, note, options,
-    rustExcerpt: rust.text.slice(0, 600), refExcerpt: ref.text.slice(0, 600) };
+    rustExcerpt: maskedExcerpt(rust.text, pathsOf(clones.rust!)), refExcerpt: maskedExcerpt(ref.text, pathsOf(clones.ref!)), pgExcerpt, rustDiff, pgDiff };
 }
 
 // ---- report ----------------------------------------------------------------------------------------------------

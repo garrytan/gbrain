@@ -20,12 +20,19 @@ export interface CliCase {
   skip?: string;
   /** Text fed to stdin, when the command reads it. */
   stdin?: string;
+  /** CLI steps run on each arm's copy before the case, untraced (the state the case writes over, such as a member). */
+  before?: string[][];
 }
 
 const PUT_BODY = '---\ntype: note\ntitle: Census put\ntags: [census]\n---\nCensus body that links [[people/alice-example]].\n';
 
 const c = (cmd: string, ...args: string[]): CliCase => ({ cmd, args: [cmd, ...args] });
 const skip = (cmd: string, why: string): CliCase => ({ cmd, args: [cmd], skip: why });
+const after = (before: string[][], cmd: string, ...args: string[]): CliCase => ({ ...c(cmd, ...args), before });
+
+/** The member the access member write cases add, then disable, enable, edit and remove. */
+const ADD_MEMBER = ['access', 'member', 'add', 'census-member', '--name', 'Census Member', '--email', 'member@example.com', '--groups', 'census-team', '--json'];
+const DISABLE_MEMBER = ['access', 'member', 'disable', 'census-member', '--json'];
 
 /** Hot paths first (put, import, sync, search, query, get, links), then every other command A-Z. */
 export const CLI_CASES: CliCase[] = [
@@ -90,6 +97,13 @@ export const CLI_CASES: CliCase[] = [
   c('revert', 'people/alice-example', '1', '--force', '--json'),
   // ---- every other command, A-Z ----
   c('access', 'member', 'list', '--json'),
+  c('access', ...ADD_MEMBER.slice(1)),
+  after([ADD_MEMBER], 'access', ...DISABLE_MEMBER.slice(1)),
+  after([ADD_MEMBER, DISABLE_MEMBER], 'access', 'member', 'enable', 'census-member', '--json'),
+  after([ADD_MEMBER], 'access', 'member', 'set', 'census-member', '--email', 'other@example.com', '--json'),
+  after([ADD_MEMBER], 'access', 'member', 'kind', 'census-member', 'audience', '--json'),
+  after([ADD_MEMBER], 'access', 'member', 'rm', 'census-member', '--json'),
+  after([ADD_MEMBER], 'access', 'member', 'rm', 'census-member', '--yes', '--json'),
   c('advisor', '--json'),
   c('agent', 'logs', '1', '--json'),
   c('anomalies', '--json'),
