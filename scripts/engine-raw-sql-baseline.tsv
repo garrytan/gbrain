@@ -470,7 +470,7 @@ src/core/facts/contested-claims.ts	execute_raw	1
 src/core/facts/conversation-entity-hints.ts	execute_raw	1
 src/core/facts/conversation-incremental.ts	execute_raw	1
 src/core/facts/conversation-memo.ts	execute_raw	4
-src/core/facts/conversation-publication.ts	execute_raw	24
+src/core/facts/conversation-publication.ts	execute_raw	27	GST-3170: storeSlotCloses (read, update) and the clear release share the publication transaction and its page predicates; they move with the area
 src/core/facts/conversation-relink-carry.ts	execute_raw	1
 src/core/facts/conversation-relink.ts	execute_raw	7	GBRA-574 F #9674 (opened before this ratchet): +1 the relink --unbacked read of name-tag rows
 src/core/facts/dead-absorb-retry.ts	execute_raw	2

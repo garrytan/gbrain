@@ -86,7 +86,7 @@ import { applyGateDecision, derivedGateConfig, derivedGateInput } from '../trust
 import { decideFactWrite, recordFlaggedRow } from '../write-gate-store.ts';
 import { sourceWindowKey, type SourceWindow } from '../page-body/derivations.ts';
 import { findCaptureDuplicate } from './capture-dedup.ts';
-import { normalizeSlot } from './slots.ts';
+import { deriveSlotCloses, normalizeSlot, slotCloseEndSql, slotCloseLinkSql, type SlotRow } from './slots.ts';
 import { unbackedEntitySql } from './withdrawal-schema.ts';
 import { CONVERSATION_SLOT_SQL, valueHash } from '../chronicle/ontology.ts';
 
@@ -525,7 +525,7 @@ export async function publishConversationFacts(tx: BrainEngine, sourceId: string
   for (const entry of retire || opts.scope === 'window' || segments ? kept : kept.filter(({ row }) => OUTCOME_SOURCES.has(row.source))) {
     const { row } = entry;
     const [prior] = row.dimension && row.value && row.entity_slug && row.valid_from != null ? await tx.executeRaw<{ value_hash: string }>(`SELECT value_hash FROM facts
-      WHERE source_id=$1 AND entity_slug=$2 AND dimension=$3 AND value_hash IS NOT NULL AND expired_at IS NULL AND superseded_by IS NULL AND ${CONVERSATION_SLOT_SQL}
+      WHERE source_id=$1 AND entity_slug=$2 AND dimension=$3 AND value_hash IS NOT NULL AND expired_at IS NULL AND (superseded_by IS NULL OR ${slotCloseLinkSql('facts')}) AND ${CONVERSATION_SLOT_SQL}
         AND valid_from <= $4::timestamptz ORDER BY valid_from DESC, id DESC LIMIT 1`, [sourceId, row.entity_slug, row.dimension, new Date(row.valid_from).toISOString()]) : [];
     if (OUTCOME_SOURCES.has(row.source) || (prior && prior.value_hash !== valueHash(row.value!)) || !await findCaptureDuplicate(scope, { fact: row.fact, entitySlug: row.entity_slug ?? null,
       visibility: row.visibility ?? 'private', attributedTo: row.attributed_to ?? null })) published.push(entry);
@@ -591,7 +591,37 @@ async function insertConversationFacts(tx: BrainEngine, sourceId: string, slug: 
     throw opError('storage_error', 'A conversation fact insert was lost; the page\'s prior facts were kept.',
       `Only ${inserted} of ${rows.length} fact rows of ${slug} in source ${sourceId} were inserted, so the replacement rolled back. Run the extraction for the page again; report this if it repeats.`);
   }
+  await storeSlotCloses(tx, sourceId, rows.flatMap(row => row.dimension && row.entity_slug ? [{ entity_slug: row.entity_slug, dimension: row.dimension }] : []));
   return { inserted, ids, purged };
+}
+
+type SlotKey = { entity_slug: string; dimension: string };
+
+/**
+ * GST-3170: stores exactly the closes deriveSlotCloses gives for `slots` of the source from their active conversation
+ * slot rows (valid_until and superseded_by; never expired_at); a world row's from the world rows alone, since a private
+ * row never ends a world row at read time either. Only a row that is open (no superseded_by, no valid_until) or carries
+ * a close stored here (slotCloseEndSql) changes, so another writer's end or link is never touched. Runs in the
+ * publication's transaction after every insert and clear, so the stored closes always match the rows present.
+ */
+async function storeSlotCloses(tx: BrainEngine, sourceId: string, slots: readonly SlotKey[]): Promise<void> {
+  if (!slots.length) return;
+  const rows = await tx.executeRaw<SlotRow & { visibility: string; superseded_by: number | string | null; open: boolean; ours: boolean }>(
+    `SELECT f.id, f.source_id, f.entity_slug, f.dimension, f.value_hash, f.valid_from, f.source_markdown_slug, f.fact, f.visibility, f.superseded_by,
+       f.superseded_by IS NULL AND f.valid_until IS NULL AS open, ${slotCloseEndSql('f')} AS ours
+     FROM facts f WHERE f.source_id = $1 AND (f.entity_slug, f.dimension) IN (SELECT * FROM unnest($2::text[], $3::text[]))
+       AND f.expired_at IS NULL AND f.value_hash IS NOT NULL AND COALESCE(f.dim_status, 'active') = 'active' AND ${CONVERSATION_SLOT_SQL}
+       AND (f.superseded_by IS NULL OR ${slotCloseLinkSql('f')})`,
+    [sourceId, slots.map(slot => slot.entity_slug), slots.map(slot => slot.dimension)]);
+  const all = deriveSlotCloses(rows);
+  const world = deriveSlotCloses(rows.filter(row => row.visibility === 'world'));
+  const changes = rows.flatMap(row => {
+    const want = (row.visibility === 'world' ? world : all).get(Number(row.id))?.by ?? null;
+    return (row.open || row.ours) && want !== (row.superseded_by == null ? null : Number(row.superseded_by)) ? [{ id: Number(row.id), succ: want }] : [];
+  });
+  if (!changes.length) return;
+  await tx.executeRaw(`UPDATE facts f SET superseded_by = x.succ, valid_until = s.valid_from
+    FROM unnest($1::bigint[], $2::bigint[]) AS x(id, succ) LEFT JOIN facts s ON s.id = x.succ WHERE f.id = x.id`, [changes.map(c => c.id), changes.map(c => c.succ)]);
 }
 
 /**
@@ -664,6 +694,14 @@ export async function clearConversationFacts(db: BrainEngine, sourceId: string, 
   const referenced = 'EXISTS (SELECT 1 FROM open_loops o WHERE o.fact_id=f.id) OR EXISTS (SELECT 1 FROM facts g WHERE g.superseded_by=f.id)';
   // GBRA-574 B2: a row kept expired gives up its slot, so the replacement can hold the same slot key.
   const unslot = 'dimension=NULL, value=NULL, value_hash=NULL, dim_status=NULL';
+  // GST-3170: release the slot closes stored on or toward the rows cleared, so the clear sees no reference it did not
+  // see before; storeSlotCloses re-derives them from the rows that remain.
+  const slots = await db.executeRaw<SlotKey>(`WITH touched AS (SELECT DISTINCT f.entity_slug, f.dimension FROM facts f
+      WHERE ${page} AND f.expired_at IS NULL AND f.dimension IS NOT NULL AND f.entity_slug IS NOT NULL),
+    released AS (UPDATE facts g SET superseded_by = NULL, valid_until = CASE WHEN ${slotCloseEndSql('g')} THEN NULL ELSE g.valid_until END
+      WHERE g.source_id = $1 AND ${slotCloseLinkSql('g')} AND ((g.entity_slug, g.dimension) IN (SELECT * FROM touched) OR g.superseded_by IN (SELECT f.id FROM facts f WHERE ${page}))
+      RETURNING g.entity_slug, g.dimension)
+    SELECT entity_slug, dimension FROM touched UNION SELECT entity_slug, dimension FROM released`, params);
   await db.executeRaw(`DELETE FROM facts f WHERE ${page} AND f.expired_at IS NOT NULL AND ${RELINKED_DERIVED_ROW} AND NOT (${referenced})`, params);
   await db.executeRaw(`UPDATE facts f SET ${unslot} WHERE ${page} AND f.expired_at IS NOT NULL AND f.dimension IS NOT NULL`, params);
   const [relinked] = await db.executeRaw<{ count: string }>(`WITH up AS (UPDATE facts f SET expired_at=now(), ${unslot}
@@ -673,6 +711,7 @@ export async function clearConversationFacts(db: BrainEngine, sourceId: string, 
   const [deleted] = await db.executeRaw<{ count: string }>(`WITH del AS (DELETE FROM facts f
     WHERE ${page} AND NOT (${referenced}) AND COALESCE(f.context,'') NOT LIKE '%${LABEL_RETIRED_MARKER}%' AND NOT (${RELINKED_DERIVED_ROW}) RETURNING 1)
     SELECT COUNT(*)::text AS count FROM del`, params);
+  await storeSlotCloses(db, sourceId, slots);
   return Number(relinked?.count ?? 0) + Number(expired?.count ?? 0) + Number(deleted?.count ?? 0);
 }
 

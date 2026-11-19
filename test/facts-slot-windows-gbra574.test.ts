@@ -11,7 +11,9 @@
  * findOntologyConflicts keeps its output for ontology rows and ignores conversation rows; a retention purge expires the
  * page's slot rows and clears their slots; an ontology proposal never corroborates into or closes a conversation slot,
  * the ontology-facts repair never lists one, getOntology and the dimension census never read one, and a rename that
- * collides two keeps both facts.
+ * collides two keeps both facts. GST-3170: the publication stores the derived closes (valid_until, superseded_by) in
+ * either order, a republish or clear of the later page leaves none stale, a private row never closes a world row, another
+ * writer's end is never touched, and the facts block and slot history read the same with the closes stored.
  * PGLite (no git), and Postgres through test/e2e/facts-slot-windows-gbra574-postgres.test.ts.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
@@ -204,6 +206,82 @@ for (const backend of testBackends()) {
         expect(lisbon!.expired_at).not.toBeNull();
         expect([lisbon!.dimension, lisbon!.value, lisbon!.value_hash]).toEqual([null, null, null]);
         expect((await engine.getOntology('people/bob-example', { sourceId: 'default' })).map(v => v.value)).toEqual(['founder']);
+      });
+    });
+
+    describe('stored slot closes (GST-3170)', () => {
+      const ACME: Said = { fact: 'Alice Example works at Acme Example.', valid: P1, slot: ['employer', 'Acme Example'] };
+      const BETA: Said = { fact: 'Alice Example joined Beta Example.', valid: P2, slot: ['employer', 'Beta Example'] };
+      const A: Page = { slug: 'meetings/chat-a', title: 'Chat A', date: P1, said: [ACME] };
+      const B: Page = { slug: 'meetings/chat-b', title: 'Chat B', date: P2, said: [BETA] };
+      const CLOSED = [[ACME.fact, P2, BETA.fact], [BETA.fact, null, null]];
+      /** Each active slot row: fact, stored valid_until day, and the fact its superseded_by names (marked when that row is expired). */
+      async function closes() {
+        const rows = await engine.executeRaw<{ fact: string; valid_until: Date | string | null; by: string | null }>(
+          `SELECT f.fact, f.valid_until, s.fact || CASE WHEN s.expired_at IS NULL THEN '' ELSE ' (expired)' END AS by
+             FROM facts f LEFT JOIN facts s ON s.id = f.superseded_by
+            WHERE f.source_id='default' AND f.source LIKE 'cli:extract-conversation-facts%' AND f.dimension IS NOT NULL AND f.expired_at IS NULL
+            ORDER BY f.valid_from, f.id`);
+        return rows.map(r => [r.fact, r.valid_until ? new Date(r.valid_until).toISOString().slice(0, 10) : null, r.by]);
+      }
+
+      test('a job change across two pages stores the derived close on the old row: valid_until and superseded_by, never expired_at', async () => {
+        await putPages([A, B]);
+        await extract([A, B]);
+        expect(await closes()).toEqual(CLOSED);
+      });
+
+      test('publishing the pages in reverse order stores the same closes', async () => {
+        await putPages([A, B]);
+        await extract([B, A]);
+        expect(await closes()).toEqual(CLOSED);
+      });
+
+      test('republishing either page leaves no stale close: the old row names the current successor', async () => {
+        await putPages([A, B]);
+        await extract([A, B]);
+        await extract([B], { force: true });
+        expect(await closes()).toEqual(CLOSED);
+        await extract([A], { force: true });
+        expect(await closes()).toEqual(CLOSED);
+      });
+
+      test('clearing the later page reopens the earlier row', async () => {
+        await putPages([A, B]);
+        await extract([A, B]);
+        await extract([{ ...B, said: [{ fact: 'Alice Example talked about the weather.', valid: P2 }] }], { force: true });
+        expect(await closes()).toEqual([[ACME.fact, null, null]]);
+      });
+
+      test('a private successor never closes a world row in storage', async () => {
+        await engine.setConfig('facts.default_visibility', 'world');
+        await putPages([A, { ...B, extra: 'visibility: private' }]);
+        await extract([A, { ...B, extra: 'visibility: private' }]);
+        expect(await closes()).toEqual([[ACME.fact, null, null], [BETA.fact, null, null]]);
+      });
+
+      test('an end another writer stored is never changed or cleared', async () => {
+        await putPages([A, B]);
+        await extract([A, B]);
+        await engine.executeRaw(`UPDATE facts SET superseded_by = NULL, valid_until = '2025-02-01T00:00:00Z' WHERE source_id='default' AND fact = $1`, [ACME.fact]);
+        await extract([B], { force: true });
+        expect(await closes()).toEqual([[ACME.fact, '2025-02-01', null], [BETA.fact, null, null]]);
+        await extract([{ ...B, said: [{ fact: 'Alice Example talked about the weather.', valid: P2 }] }], { force: true });
+        expect(await closes()).toEqual([[ACME.fact, '2025-02-01', null]]);
+      });
+
+      test('the facts block and slot history read the same with the closes stored as without them', async () => {
+        await engine.setConfig('facts.default_visibility', 'world');
+        await putPages([A, B]);
+        await extract([A, B]);
+        expect(await closes()).toEqual(CLOSED);
+        const read = async () => [await block('Where does Alice Example work?'), await block('Which employers has Alice Example had, oldest first?'),
+          await remoteBlock('Which employers has Alice Example had, oldest first?')];
+        await read();
+        const stored = await read();
+        expect(line(ACME.fact, stored[1] as string[])!.split('\n')[0]).toBe(header(P1, P1, P2));
+        await engine.executeRaw(`UPDATE facts SET superseded_by = NULL, valid_until = NULL WHERE source_id='default' AND source LIKE 'cli:extract-conversation-facts%'`);
+        expect(await read()).toEqual(stored);
       });
     });
 
