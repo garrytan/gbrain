@@ -36,11 +36,12 @@ export const readPageTrustRows: StoreMember<[lookup: PageTrustLookup], PageTrust
   }));
 
 /**
- * Timeline rows read the tier, origin and activation flag their writes stamped. The store keeps no trust tier on a
- * take and no supersede proposals for a fact, so `facts` and `takes` refuse before the store is called.
+ * Timeline and take rows read the tier, origin and activation flag their writes stamped; a take also reads `contested`
+ * from the pending supersede proposals naming it. Fact rows are not served yet, so `facts` refuses before the store is
+ * called.
  */
 export const readRowTrustRows: StoreMember<[lookup: RowTrustLookup], RowTrustRow[]> = async (brain, lookup) => {
-  if (lookup.table !== 'timeline_entries') refuseMember('readRowTrustRows', `table ${lookup.table}`);
+  if (lookup.table !== 'timeline_entries' && lookup.table !== 'takes') refuseMember('readRowTrustRows', `table ${lookup.table}`);
   return storeCall({ member: 'readRowTrustRows' }, () => brain.readRowTrustRows({ table: lookup.table, ids: [...lookup.ids] }));
 };
 

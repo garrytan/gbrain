@@ -12,9 +12,13 @@
 //! A page reads the trust tier and write origin its last write stamped (`pages::write_page`), and
 //! `flagged` is `activationSuppressedSql` over the page's write-gate receipts
 //! (`trust::activation_suppressed`). A timeline row (`readRowTrustRows`) reads the tier and origin
-//! its last write stamped (`timeline::tier`) the same way, and is never contested.
+//! its last write stamped (`timeline::tier`) the same way, and is never contested. A take row reads
+//! the tier and origin its last write stamped (`takes::trust`), the origin in jsonb key order, and
+//! `contested` from the pending supersede proposals naming it (`contestedRefSql`). Fact rows are
+//! not served yet: `readRowTrustRows` refuses the `facts` table.
 //!
-//! Keys: none of its own. It reads the source, page, timeline and write-gate receipt records.
+//! Keys: none of its own. It reads the source, page, timeline, take, trust proposal and write-gate
+//! receipt records.
 
 use crate::env::iso;
 use crate::error::{Result, StoreError};
@@ -274,16 +278,21 @@ impl Store {
         Ok(out)
     }
 
-    /// The trust rows of the timeline entries named by id, in id order; an id with no entry reads
-    /// no row. Entries are keyed by page, so this reads every `E` record once.
+    /// The trust rows of the timeline entries or takes named by id, in id order; an id with no row
+    /// reads no row. Timeline entries are keyed by page, so that table reads every `E` record once;
+    /// a take is read by its id.
     pub fn read_row_trust_rows(&self, lookup: &RowTrustLookup) -> Result<Vec<RowTrustRow>> {
-        if lookup.table != "timeline_entries" {
-            return Err(StoreError::invalid(format!(
-                "readRowTrustRows: table \"{}\" is not served by this store",
-                lookup.table
-            )));
-        }
         let wanted: BTreeSet<u64> = lookup.ids.iter().copied().collect();
+        match lookup.table.as_str() {
+            "timeline_entries" => self.timeline_trust_rows(&wanted),
+            "takes" => self.take_trust_rows(&wanted),
+            other => Err(StoreError::invalid(format!(
+                "readRowTrustRows: table \"{other}\" is not served by this store"
+            ))),
+        }
+    }
+
+    fn timeline_trust_rows(&self, wanted: &BTreeSet<u64>) -> Result<Vec<RowTrustRow>> {
         let read = self.read()?;
         let mut found = Vec::new();
         let mut failure = None;
@@ -319,6 +328,24 @@ impl Store {
                 })
             })
             .collect()
+    }
+
+    fn take_trust_rows(&self, wanted: &BTreeSet<u64>) -> Result<Vec<RowTrustRow>> {
+        let read = self.read()?;
+        let mut out = Vec::new();
+        for id in wanted {
+            let Some(take) = crate::takes::read_take(&*read, *id)? else {
+                continue;
+            };
+            out.push(RowTrustRow {
+                id: take.id,
+                trust_tier: take.trust.tier().as_str().to_owned(),
+                write_origin: take.trust.origin_out(),
+                flagged: crate::takes::trust::flagged(&*read, &take)?,
+                contested: crate::takes::trust::contested(&*read, take.id)?,
+            });
+        }
+        Ok(out)
     }
 
     /// The store clock, `YYYY-MM-DDTHH:MM:SS.ffffffZ` in UTC.

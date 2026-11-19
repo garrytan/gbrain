@@ -233,8 +233,9 @@ describe('engine parity: CLI import reads', () => {
     return { trust, none: await engine.readRowTrustRows({ table: 'timeline_entries', ids: [] }) };
   });
 
-  // The store keeps no trust tier on a take and no supersede proposals for a fact, so the Rust engine refuses those
-  // tables before it reads anything (store-members/cli-reads-import.ts); PGLite and Postgres answer them.
+  // The store does not read a fact's supersede proposals yet, so the Rust engine refuses the facts table before it reads
+  // anything (store-members/cli-reads-import.ts); PGLite and Postgres answer it. Take rows are compared in
+  // take-trust-fields.test.ts.
   parityTest('readRowTrustRows reads fact and take rows by id', { methods: ['putPage', 'insertFact', 'readRowTrustRows'] }, async (engine) => {
     await engine.putPage('people/fact-example', { type: 'person', title: 'F', compiled_truth: 'F', timeline: '' });
     const fact = await engine.insertFact({ fact: 'a fact', entity_slug: 'people/fact-example', visibility: 'world', source: 'test', embedding: null }, { source_id: 'default' });
