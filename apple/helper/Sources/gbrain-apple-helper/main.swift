@@ -139,7 +139,7 @@ case "send-key":
         guard let source = value("--public-key-file") else { fail("send-key add needs --public-key-file <path or ->", code: 64) }
         let data = source == "-" ? FileHandle.standardInput.readDataToEndOfFile() : FileManager.default.contents(atPath: source)
         guard let data, let key = String(data: data, encoding: .utf8) else { fail("could not read the public key", code: 66) }
-        admin(["action": "add_key", "name": keyName, "public_key": key.trimmingCharacters(in: .whitespacesAndNewlines)], timeout: 180)
+        admin(["action": "add_key", "name": keyName, "public_key": key.trimmingCharacters(in: .whitespacesAndNewlines)], timeout: LocalOwnerPresence.wait + 60)
     case "remove":
         admin(["action": "remove_key", "name": keyName])
     default:
@@ -157,7 +157,7 @@ case "send-limits":
         fields[parts[0]] = parts[1]
     }
     guard fields.count > 1 else { fail(usage, code: 64) }
-    admin(fields, timeout: 180)
+    admin(fields, timeout: LocalOwnerPresence.wait + 60)
 
 case "send-audit":
     guard arguments.dropFirst().first == "show", arguments.contains("--redacted") else {

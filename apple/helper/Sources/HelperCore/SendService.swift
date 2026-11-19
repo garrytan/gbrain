@@ -51,13 +51,15 @@ public final class SendService {
     let nonces = NonceCache()
     let queue = DispatchQueue(label: "io.gbrain.apple-helper.send")
     let lock = NSLock()
-    let stateLock = NSRecursiveLock()
+    let stateLock: NSRecursiveLock
     var inflight = Set<String>()
     var lastRetention: Date?
 
     public init(store: SendStateStore, switchedOn: @escaping () -> Bool, audit: SendAudit, messages: MessagesPort, ledger: DeliveryLedger,
-                banner: Banner, presence: OwnerPresence, clock: SendClock = SendClock(), confirmWindow: TimeInterval = 30, pollInterval: TimeInterval = 0.5) {
+                banner: Banner, presence: OwnerPresence, clock: SendClock = SendClock(), confirmWindow: TimeInterval = 30, pollInterval: TimeInterval = 0.5,
+                stateLock: NSRecursiveLock = NSRecursiveLock()) {
         self.store = store
+        self.stateLock = stateLock
         self.switchedOn = switchedOn
         self.audit = audit
         self.messages = messages
@@ -139,6 +141,8 @@ public final class SendService {
     func serially(_ send: SendRequest, key: String, signer: SendKey, peer: UInt32) -> SendReply {
         let limits: SendLimits
         do {
+            stateLock.lock()
+            defer { stateLock.unlock() }
             var state = try store.load() ?? SendState()
             observeKill(&state)
             guard state.enabled, switchedOn() else { return fail(.sendDisabled) }
@@ -342,68 +346,86 @@ public final class SendService {
         guard let fields = StrictJSON.flatObject(request.body), let action = fields["action"] else {
             return .problem(.badParam("the body must be a JSON object with an action"))
         }
-        stateLock.lock()
-        defer { stateLock.unlock() }
+        var automation: String?
+        var banners: Bool?
+        if action == "setup" {
+            switch messages.prepare(askPermission: true) {
+            case .ready: automation = "allowed"
+            case .automationDenied: automation = "denied"
+            case .signedOut: automation = "allowed_signed_out"
+            case .unavailable: automation = "messages_unavailable"
+            case .failed(let number): automation = "error_\(number)"
+            }
+            banners = banner.requestAuthorization()
+        }
         do {
-            var state = try store.load() ?? SendState()
-            observeKill(&state)
-            var automation: String?
-            var banners: Bool?
-            switch action {
-            case "status":
-                break
-            case "setup":
-                switch messages.prepare(askPermission: true) {
-                case .ready: automation = "allowed"
-                case .automationDenied: automation = "denied"
-                case .signedOut: automation = "allowed_signed_out"
-                case .unavailable: automation = "messages_unavailable"
-                case .failed(let number): automation = "error_\(number)"
-                }
-                banners = banner.requestAuthorization()
-                if !state.enabled {
-                    try confirm("turn on sending iMessages for your agent")
-                    state.enabled = true
-                    try store.save(state)
-                }
-            case "off":
-                state.enabled = false
-                try store.save(state)
-            case "add_key":
-                guard let name = fields["name"], !name.isEmpty, name.count <= 64,
-                      name.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "._-".contains($0)) }),
-                      let encoded = fields["public_key"] else {
-                    throw Problem.badParam("add_key needs name (letters, digits, dot, underscore, hyphen) and public_key")
-                }
-                let key = SendKey(name: name, publicKey: Base64URL.encode(Self.publicKeyBytes(encoded) ?? []))
-                guard key.rawKey != nil else { throw Problem.badParam("public_key must be a 32-byte Ed25519 public key in base64 or base64url") }
-                try confirm("add the send key \(name) (\(key.fingerprint)) so it can send iMessages as you")
-                state.keys.removeAll { $0.name == name }
-                state.keys.append(key)
-                try store.save(state)
-            case "remove_key":
-                guard let name = fields["name"], state.keys.contains(where: { $0.name == name }) else { throw Problem.notFound }
-                state.keys.removeAll { $0.name == name }
-                try store.save(state)
-            case "set_limits":
-                var raised = false
-                for (name, text) in fields where name != "action" {
-                    guard let current = state.limits.value(name), let value = Int(text), (0...1000).contains(value) else {
-                        throw Problem.badParam("unknown limit or bad value: \(name)")
-                    }
-                    raised = raised || value > current
-                    state.limits.set(name, value)
-                }
-                if raised { try confirm("raise the limits on iMessages your agent can send") }
-                try store.save(state)
-            default:
-                throw Problem.badParam("unknown action \(action)")
+            let seen = try locked { () throws -> SendState in
+                var state = try store.load() ?? SendState()
+                observeKill(&state)
+                return state
+            }
+            let change = try Self.change(action, fields, seen)
+            if let reason = change.reason { try confirm(reason) }
+            let state = try locked { () throws -> SendState in
+                var current = try store.load() ?? SendState()
+                observeKill(&current)
+                guard current == seen else { throw Problem.overloaded }
+                if change.save { try store.save(change.state) }
+                return change.state
             }
             let status = SendStatus(send: state.enabled && switchedOn() ? "on" : "off", keys: state.keys.map(\.name).sorted(), limits: state.limits,
                                     automation: automation, banners: banners)
             return .ok(.json(200, status))
         } catch {
             return .problem((error as? Problem) ?? .internalError)
+        }
+    }
+
+    func locked<T>(_ body: () throws -> T) rethrows -> T {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return try body()
+    }
+
+    static func change(_ action: String, _ fields: [String: String], _ state: SendState) throws -> (state: SendState, reason: String?, save: Bool) {
+        var next = state
+        switch action {
+        case "status":
+            return (next, nil, false)
+        case "setup":
+            guard !state.enabled else { return (next, nil, false) }
+            next.enabled = true
+            return (next, "turn on sending iMessages for your agent", true)
+        case "off":
+            next.enabled = false
+            return (next, nil, true)
+        case "add_key":
+            guard let name = fields["name"], !name.isEmpty, name.count <= 64,
+                  name.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "._-".contains($0)) }),
+                  let encoded = fields["public_key"] else {
+                throw Problem.badParam("add_key needs name (letters, digits, dot, underscore, hyphen) and public_key")
+            }
+            let key = SendKey(name: name, publicKey: Base64URL.encode(publicKeyBytes(encoded) ?? []))
+            guard key.rawKey != nil else { throw Problem.badParam("public_key must be a 32-byte Ed25519 public key in base64 or base64url") }
+            next.keys.removeAll { $0.name == name }
+            next.keys.append(key)
+            return (next, "add the send key \(name) (\(key.fingerprint)) so it can send iMessages as you", true)
+        case "remove_key":
+            guard let name = fields["name"], state.keys.contains(where: { $0.name == name }) else { throw Problem.notFound }
+            next.keys.removeAll { $0.name == name }
+            return (next, nil, true)
+        case "set_limits":
+            var raised = false
+            for (name, text) in fields where name != "action" {
+                guard let current = state.limits.value(name), let value = Int(text), (0...1000).contains(value) else {
+                    throw Problem.badParam("unknown limit or bad value: \(name)")
+                }
+                raised = raised || value > current
+                next.limits.set(name, value)
+            }
+            return (next, raised ? "raise the limits on iMessages your agent can send" : nil, true)
+        default:
+            throw Problem.badParam("unknown action \(action)")
         }
     }
 
