@@ -136,7 +136,7 @@ import { PageMissingError } from './engine-errors.ts';
 import { EMBED_SKIP_FILTER_FRAGMENT } from './embed-skip.ts';
 import { holdSchemaMigrationSessionLock, holdSchemaMigrationTransactionLock } from './postgres-engine/init-schema-lock.ts';
 import { assertSchemaNotAhead } from './schema-client-behind.ts';
-import { isPipelinableSearchRead, SEARCH_JIT_OFF, withSearchJitOff, withSearchSettings, type SearchSettings } from './postgres-engine/search-settings.ts';
+import { deadlineReadSettings, isPipelinableSearchRead, SEARCH_JIT_OFF, withSearchJitOff, withSearchSettings, type SearchSettings } from './postgres-engine/search-settings.ts';
 import { loadKeywordStatementTimeout } from './postgres-engine/keyword-statement-timeout.ts';
 import { applyPostgresForwardReferenceBootstrap } from './engine-sql/bootstrap.ts';
 import * as factsImpl from './engine-sql/facts.ts';
@@ -468,7 +468,8 @@ export class PostgresEngine implements BrainEngine {
     // Flag off + no pre-existing transaction need: call through on the
     // shared pool exactly as master does. No tx round-trip, no pool slot
     // held for the duration of the read.
-    if (deadlineAt !== undefined && !this.rlsScopeBindingEnabled && !opts?.alwaysTransaction) return await runDeadlineRead(this.sql, deadlineAt, callback, this.checkoutGauge, cancelSettleMs(), readDeadlineSignal());
+    // Under a read deadline a read wanting its own transaction takes the deadline's, its settings inside (search-settings.ts).
+    if (deadlineAt !== undefined && !this.rlsScopeBindingEnabled) return await runDeadlineRead(this.sql, deadlineAt, tx => withSearchSettings(tx, false, deadlineReadSettings(opts, deadlineAt), () => callback(tx)), this.checkoutGauge, cancelSettleMs(), readDeadlineSignal());
     if (!this.rlsScopeBindingEnabled && !opts?.alwaysTransaction) {
       return await callback(this.sql);
     }
@@ -1823,7 +1824,9 @@ export class PostgresEngine implements BrainEngine {
 
   /** #6495: resolve the keyword/title statement bound for this connection at connect (file plane, else the DB plane, else 8000 ms; postgres-engine/keyword-statement-timeout.ts), never from a request or inside a search's transaction. */
   private keywordStatementTimeoutSetting(): Promise<string> {
-    return this.keywordStatementTimeout ??= loadKeywordStatementTimeout(this, this._savedConfig?.keyword_statement_timeout_ms);
+    // Under a preparation deadline the config read takes the deadline, and a load it fails is not kept.
+    if (this.keywordStatementTimeout || this._pageTransaction || readDeadline() === undefined) return this.keywordStatementTimeout ??= loadKeywordStatementTimeout(this, this._savedConfig?.keyword_statement_timeout_ms);
+    return loadKeywordStatementTimeout(this, this._savedConfig?.keyword_statement_timeout_ms, text => this.configRead(sql => sql.unsafe(text))).then(value => this.keywordStatementTimeout ??= Promise.resolve(value));
   }
 
   async keywordBoundedRead<T>(read: (db: Pick<BrainEngine, 'executeRaw'>) => Promise<T>): Promise<T> {

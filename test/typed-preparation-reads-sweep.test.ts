@@ -20,9 +20,10 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { boundedReads, PreparationDeadlineError } from '../src/core/persistence/bounded-reads.ts';
 import { startClaimPhase } from '../src/core/persistence/claim-phase.ts';
 import { makeFakeSql, type FakeSql } from './helpers/fake-postgres-sql.ts';
+import { KEYWORD_STATEMENT_TIMEOUT_CONFIG_SQL } from '../src/core/postgres-engine/keyword-statement-timeout.ts';
 
-/** [member, a fragment of its statement, a call of it that sends the statement] */
-const members: ReadonlyArray<readonly [string, string, (e: BrainEngine) => Promise<unknown>]> = [
+/** [member, a fragment of its statement, a call of it that sends the statement, the engine state the call assumes] */
+const members: ReadonlyArray<readonly [string, string, (e: BrainEngine) => Promise<unknown>, ((e: PostgresEngine) => void)?]> = [
   ['listGuestSourceIds', 'SELECT s.id FROM sources s WHERE s.id = ANY', e => e.listGuestSourceIds(['default'])],
   ['readDatabaseClock', 'clock_timestamp()', e => e.readDatabaseClock()],
   ['listStoredTimelineRowsOrdered', 'FROM timeline_entries WHERE page_id=$1 AND event_page_id IS NULL', e => e.listStoredTimelineRowsOrdered(1)],
@@ -37,28 +38,35 @@ const members: ReadonlyArray<readonly [string, string, (e: BrainEngine) => Promi
   ['getPage', 'WITH chosen AS (', e => e.getPage('a', { sourceId: 'default' })],
   ['findDuplicatePage', 'SELECT id, slug FROM pages', e => e.findDuplicatePage!('default', { hash: 'h' })],
   ['findByTitleFuzzy', 'SELECT slug, similarity(title,', e => e.findByTitleFuzzy('A title', undefined, 0.55, 'default')],
+  // The keyword timeout is resolved once per engine; its own read under a deadline has the test below.
+  ['searchKeyword', 'count(*) OVER () AS bounded_rows', e => e.searchKeyword('a title', { limit: 3, sourceId: 'default' }), keywordTimeoutResolved],
 ];
 const views = [['managed sync (engineReads)', { engineReads: true }], ['page/maintenance preparer', {}]] as const;
 const never = () => new Promise<never>(() => {});
 
-function fakeEngine(fake: FakeSql): PostgresEngine {
+function fakeEngine(fake: FakeSql, setup?: (e: PostgresEngine) => void): PostgresEngine {
   const engine = new PostgresEngine();
   (engine as unknown as { _sql: unknown })._sql = fake.sql;
+  setup?.(engine);
   return engine;
 }
 
+function keywordTimeoutResolved(e: PostgresEngine): void {
+  (e as unknown as { keywordStatementTimeout: Promise<string> }).keywordStatementTimeout = Promise.resolve('8000ms');
+}
+
 describe('typed preparation reads keep the preparation deadline (Postgres)', () => {
-  for (const [name, mark, run] of members) {
+  for (const [name, mark, run, setup] of members) {
     test(`without a deadline ${name} sends its statement as before`, async () => {
       const fake = makeFakeSql();
-      await run(boundedReads(fakeEngine(fake), startClaimPhase())).catch(() => undefined);
+      await run(boundedReads(fakeEngine(fake, setup), startClaimPhase())).catch(() => undefined);
       expect(fake.statements().some(s => s.text.includes(mark))).toBe(true);
     });
 
     for (const [view, opts] of views) {
       test(`${view}: ${name} past the budget is refused before its statement is sent`, async () => {
         const fake = makeFakeSql();
-        const reads = boundedReads(fakeEngine(fake), startClaimPhase(Date.now() - 2_000, undefined, 1_000), opts);
+        const reads = boundedReads(fakeEngine(fake, setup), startClaimPhase(Date.now() - 2_000, undefined, 1_000), opts);
         const error = await run(reads).then(() => null, (e: unknown) => e);
         expect(error).toBeInstanceOf(PreparationDeadlineError);
         expect((error as PreparationDeadlineError).sqlstate).toBeNull();
@@ -79,7 +87,7 @@ describe('typed preparation reads keep the preparation deadline (Postgres)', () 
         const controller = new AbortController();
         const reason = { code: 'preparation_deadline' };
         const clock = startClaimPhase(Date.now(), controller.signal, 60_000);
-        const call = run(boundedReads(fakeEngine(fake), clock, opts));
+        const call = run(boundedReads(fakeEngine(fake, setup), clock, opts));
         setTimeout(() => controller.abort(reason), 20);
         const outcome = await Promise.race([call.then(() => 'resolved', (error: unknown) => error), Bun.sleep(1_000).then(() => 'still pending')]);
         expect(outcome).toBe(reason);
@@ -88,6 +96,29 @@ describe('typed preparation reads keep the preparation deadline (Postgres)', () 
       });
     }
   }
+});
+
+describe('searchKeyword under a preparation deadline: the keyword timeout config read', () => {
+  test('a stalled read of the timeout ends at the clock\'s abort, the failure is not kept, and the timeout stays inside the time left', async () => {
+    let stall = true;
+    const fake = makeFakeSql(stmt => (stmt.text.includes(KEYWORD_STATEMENT_TIMEOUT_CONFIG_SQL) && stall ? never() : undefined));
+    const engine = fakeEngine(fake);
+    const controller = new AbortController();
+    const reason = { code: 'preparation_deadline' };
+    const call = boundedReads(engine, startClaimPhase(Date.now(), controller.signal, 60_000)).searchKeyword('a title', { limit: 3, sourceId: 'default' });
+    setTimeout(() => controller.abort(reason), 20);
+    const outcome = await Promise.race([call.then(() => 'resolved', (error: unknown) => error), Bun.sleep(1_000).then(() => 'still pending')]);
+    expect(outcome).toBe(reason);
+    stall = false;
+    const before = fake.statements().filter(s => s.text.includes(KEYWORD_STATEMENT_TIMEOUT_CONFIG_SQL)).length;
+    await boundedReads(engine, startClaimPhase(Date.now(), undefined, 2_000)).searchKeyword('a title', { limit: 3, sourceId: 'default' });
+    expect(fake.statements().filter(s => s.text.includes(KEYWORD_STATEMENT_TIMEOUT_CONFIG_SQL)).length).toBe(before + 1);
+    const timeouts = fake.statements().filter(s => s.text.includes('set_config') && s.text.includes('statement_timeout'));
+    expect(timeouts.length).toBeGreaterThan(0);
+    const last = timeouts.at(-1)!;
+    const slot = Number(/set_config\('statement_timeout', \$(\d+)/.exec(last.text)![1]);
+    expect(Number(last.params[slot - 1])).toBeLessThanOrEqual(2_000);
+  });
 });
 
 describe('typed preparation reads on PGLite match the raw statements: no preparation deadline', () => {
