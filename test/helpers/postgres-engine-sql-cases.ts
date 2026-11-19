@@ -547,6 +547,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'applyTransactionSettings': OOS.importGuards, 'beginSnapshotRead': OOS.importGuards, 'readLedgerSource': OOS.importGuards, 'isFolderRestricted': OOS.importGuards,
   'listAppliedPolicyRevisions': OOS.callerRawSql,
   'readMayActFor': OOS.callerRawSql,
+  'readAudiencePrincipals': OOS.callerRawSql,
   // the page-write reads and upkeep that belong to no other domain
   'readSourceState': OOS.writeMisc,
   'readAdmissionSource': OOS.writeMisc,
@@ -1303,6 +1304,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
     ['oauth-client', (e) => e.readMayActFor('oauth_client', 'client-a')],
     ['stdio-config', (e) => e.readMayActFor('stdio_config', 'mcp.stdio_may_act_for')],
   ]),
+  ...variants('readAudiencePrincipals', [['members-and-groups', (e) => e.readAudiencePrincipals(['alice-example'], ['team-a'])]]),
   ...variants('readJournalLimitRows', [['default', (e) => e.readJournalLimitRows()]]),
   ...variants('readHeldPageRows', [['default', (e) => e.readHeldPageRows(['1', '2'])]]),
   ...variants('readHeldCoverageRows', [

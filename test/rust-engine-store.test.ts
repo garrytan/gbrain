@@ -393,6 +393,22 @@ describe('MCP dispatch caller access on a Rust brain', () => {
     expect(await dispatch(engine, 'get_stats', stdio('guest'))).toEqual({ isError: true, code: 'on_behalf_of_not_permitted' });
     expect(await dispatch(engine, 'get_stats', stdio())).toEqual({ isError: false, code: undefined });
   });
+
+  withAddon('an audience of members and groups is checked with no raw read: the store has none, so each entry is unknown', async () => {
+    const { engine } = await open();
+    await engine.putPage('notes/a', page);
+    await engine.setConfig('mcp.stdio_may_act_for', 'member:alice-example,group:team-a');
+    const raw: string[] = [];
+    const executeRaw = engine.executeRaw.bind(engine);
+    (engine as unknown as { executeRaw: typeof executeRaw }).executeRaw = (async (sql: string, params?: unknown[]) => {
+      raw.push(sql);
+      return executeRaw(sql as never, params as never);
+    }) as typeof executeRaw;
+    for (const header of ['member:alice-example', 'group:team-a']) {
+      expect(await dispatch(engine, 'get_stats', stdio(header))).toEqual({ isError: true, code: 'on_behalf_of_unknown_member' });
+    }
+    expect(raw).toEqual([]);
+  });
 });
 
 describe('Rust store page codec', () => {

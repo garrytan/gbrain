@@ -4,7 +4,7 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: readSourceState, readAdmissionSource, sharedSkillPackTablePresent,
  *    listSharedSkillPackRoots, getWorktreeBinding, isSourceClaimed, hasExtractedEvents, listActiveAccessMembers, isFolderRestricted,
- *    listAppliedPolicyRevisions, readMayActFor, expireMemoryProposals,
+ *    listAppliedPolicyRevisions, readMayActFor, readAudiencePrincipals, expireMemoryProposals,
  *    listAwaitingMemoryProposals and purgeMemoryProposals return the same observable result on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: a source-state read that differs changes whether page admission, the mirror read-only guard and
@@ -223,6 +223,37 @@ describe('engine parity: write misc', () => {
     };
     expect(lists).toEqual({ live: ['member:alice-example'], revoked: null, bare: null, tokenAsClient: null, clientLive: ['group:team-a'], clientGone: null, clientAsToken: null });
     return lists;
+  });
+
+  parityTest('readAudiencePrincipals reads nothing for an empty audience and finds no member or group on a brain with none', { methods: ['readAudiencePrincipals'] }, async (engine) => {
+    const empty = await engine.readAudiencePrincipals([], []);
+    const absent = await engine.readAudiencePrincipals(['alice-example'], ['team-a']);
+    expect({ empty, absent }).toEqual({ empty: { members: [], groups: [] }, absent: { members: [], groups: [] } });
+    return { empty, absent };
+  });
+
+  // Leak case: only enabled, untombstoned members answer, each with its own groups only, and only existing groups;
+  // a member id never matches as a group or a group id as a member. The Rust store keeps no members or groups (empty
+  // above), so the member write stops on the raw_sql refusal.
+  parityTest('readAudiencePrincipals answers only enabled members with their own groups and only existing groups', { methods: ['readAudiencePrincipals'] }, async (engine, backend) => {
+    const write = await engine.executeRaw(
+      `INSERT INTO access_members (id, disabled_at, tombstoned_at) VALUES
+         ('alice-example', NULL, NULL), ('bob-example', now(), NULL), ('carol-example', NULL, now()), ('dave-example', NULL, NULL)`).then(() => null, (e: unknown) => e);
+    if (backend === 'rust') {
+      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
+      expect(await engine.readAudiencePrincipals(['alice-example'], ['team-a'])).toEqual({ members: [], groups: [] });
+      throw write;
+    }
+    expect(write).toBeNull();
+    await engine.executeRaw(`INSERT INTO access_groups (id) VALUES ('team-a'), ('team-b'), ('team-c')`);
+    await engine.executeRaw(`INSERT INTO access_group_members (group_id, member_id) VALUES
+      ('team-b', 'alice-example'), ('team-a', 'alice-example'), ('team-c', 'dave-example'), ('team-a', 'bob-example')`);
+    const rows = await engine.readAudiencePrincipals(['alice-example', 'bob-example', 'carol-example', 'nobody-example', 'team-a'], ['team-a', 'alice-example', 'team-z']);
+    const view = { members: [...rows.members].sort((a, b) => a.id.localeCompare(b.id)), groups: [...rows.groups].sort() };
+    expect(view).toEqual({ members: [{ id: 'alice-example', groups: ['team-a', 'team-b'] }], groups: ['team-a'] });
+    const lone = await engine.readAudiencePrincipals(['dave-example'], []);
+    expect(lone).toEqual({ members: [{ id: 'dave-example', groups: ['team-c'] }], groups: [] });
+    return { view, lone };
   });
 
   parityTest('getWorktreeBinding is null for a source with no writer binding, on any host', { methods: ['getWorktreeBinding'] }, async (engine, backend) => {

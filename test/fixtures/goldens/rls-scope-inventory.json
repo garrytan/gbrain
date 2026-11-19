@@ -3120,6 +3120,17 @@
           "default"
         ]
       },
+      "readAudiencePrincipals#members-and-groups": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readCapacityForecastInputs#default": {
         "flagOffLanes": [
           "pool"
@@ -5068,6 +5079,7 @@
         "rawTransaction": "none",
         "readAdmissionRate": "none",
         "readAdmissionSource": "none",
+        "readAudiencePrincipals": "none",
         "readBeliefHistoryRows": "none",
         "readCallerPageAccess": "none",
         "readCapacityForecastInputs": "none",

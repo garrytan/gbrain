@@ -42,7 +42,7 @@ import { stdioBindRoute } from './stdio-bind-route.ts';
 import { labelledOnlyFor } from './labelled-only.ts';
 import { isMissingSchemaObject } from '../utils.ts';
 import { transientDatabaseFailure, transientInterruption } from '../persistence/transient-retry.ts';
-import { readMayActFor as readMayActForOver, type MayActForVia } from '../engine-sql/access-control.ts';
+import { readAudiencePrincipals as readAudiencePrincipalsOver, readMayActFor as readMayActForOver, type MayActForVia } from '../engine-sql/access-control.ts';
 
 /** Config key binding a local stdio MCP server to one member. */
 export const STDIO_MEMBER_KEY = 'mcp.stdio_member';
@@ -177,10 +177,10 @@ export async function folderAccessForAll(engine: Pick<BrainEngine, 'executeRaw'>
 }
 
 /**
- * An engine the audience checks read through: an engine (its typed readMayActFor, which a Rust brain serves), or an
- * executeRaw-only handle (a persistence SqlEngine, a test double), which runs the same statements.
+ * An engine the audience checks read through: an engine (its typed readMayActFor and readAudiencePrincipals, which a
+ * Rust brain serves), or an executeRaw-only handle (a persistence SqlEngine, a test double), which runs the same statements.
  */
-export type AudienceEngine = Pick<BrainEngine, 'readMayActFor'> | Pick<BrainEngine, 'executeRaw'>;
+export type AudienceEngine = Pick<BrainEngine, 'readMayActFor' | 'readAudiencePrincipals'> | Pick<BrainEngine, 'executeRaw'>;
 
 /** Who asserts an audience: a verified credential (live call), a stored principal (a queued write or job), or a stdio server. */
 export interface AudienceCaller {
@@ -239,7 +239,7 @@ function audienceUnknown(principal: string) {
  * or an existing group (on_behalf_of_unknown_member). Read on every call, so a revoked permission or a disabled
  * member takes effect at once.
  */
-export async function resolveAudienceIdentities(engine: Pick<BrainEngine, 'executeRaw'>, caller: AudienceCaller, audience: readonly AudiencePrincipal[],
+export async function resolveAudienceIdentities(engine: AudienceEngine, caller: AudienceCaller, audience: readonly AudiencePrincipal[],
   opts: { mayActFor?: 'enforce' | 'owner_room_assessment' } = {}): Promise<string[][]> {
   // GBRA-498: only room.ts passes owner_room_assessment, after it checked that the caller reads as the brain owner or is
   // the trusted local CLI; it marks results for a room and never reads as the room, so neither needs may_act_for for it.
@@ -253,12 +253,9 @@ export async function resolveAudienceIdentities(engine: Pick<BrainEngine, 'execu
   const members = new Map<string, string[]>();
   const groups = new Set<string>();
   try {
-    if (memberIds.length) {
-      for (const row of await engine.executeRaw<{ id: string; groups: string[] }>(MEMBERS_WHERE_SQL('m.id = ANY($1::text[])'), [memberIds])) {
-        members.set(row.id, (row.groups ?? []).filter(g => normalizePrincipal(`group:${g}`) === `group:${g}`));
-      }
-    }
-    if (groupIds.length) for (const row of await engine.executeRaw<{ id: string }>('SELECT id FROM access_groups WHERE id = ANY($1::text[])', [groupIds])) groups.add(row.id);
+    const rows = 'readAudiencePrincipals' in engine ? await engine.readAudiencePrincipals(memberIds, groupIds) : await readAudiencePrincipalsOver(engine, memberIds, groupIds);
+    for (const row of rows.members) members.set(row.id, row.groups.filter(g => normalizePrincipal(`group:${g}`) === `group:${g}`));
+    for (const id of rows.groups) groups.add(id);
   } catch { /* unreadable: every entry reads as unknown below */ }
   return audience.map(p => {
     if (p === GUEST) return [];

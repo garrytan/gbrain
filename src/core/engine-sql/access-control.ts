@@ -61,3 +61,32 @@ export async function readMayActFor(exec: MemberLookupRead, via: MayActForVia, k
   const [row] = await exec.executeRaw<{ may_act_for: unknown }>(MAY_ACT_FOR_SQL[via], [key]);
   return Array.isArray(row?.may_act_for) ? row!.may_act_for as string[] : null;
 }
+
+/** A live (enabled, not tombstoned) access member and its groups, by group id. */
+export interface LiveMemberRow {
+  id: string;
+  groups: string[];
+}
+
+/** The enabled members and the existing groups an asserted audience names. */
+export interface AudiencePrincipalRows {
+  members: LiveMemberRow[];
+  groups: string[];
+}
+
+/** The statements access/caller.ts resolveAudienceIdentities ran through executeRaw: the members, then the groups. */
+export const AUDIENCE_MEMBERS_SQL = `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
+  WHERE m.id = ANY($1::text[]) AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL
+  GROUP BY m.id`;
+export const AUDIENCE_GROUPS_SQL = 'SELECT id FROM access_groups WHERE id = ANY($1::text[])';
+
+/**
+ * Which of `memberIds` are enabled, untombstoned members (each with its groups) and which of `groupIds` are existing
+ * groups. An empty list reads nothing. A failure is thrown unchanged; the caller reads every entry as unknown.
+ */
+export async function readAudiencePrincipals(exec: MemberLookupRead, memberIds: readonly string[], groupIds: readonly string[]): Promise<AudiencePrincipalRows> {
+  const members = memberIds.length ? await exec.executeRaw<LiveMemberRow>(AUDIENCE_MEMBERS_SQL, [memberIds]) : [];
+  const groups = groupIds.length ? (await exec.executeRaw<{ id: string }>(AUDIENCE_GROUPS_SQL, [groupIds])).map(r => r.id) : [];
+  return { members: members.map(r => ({ id: r.id, groups: r.groups ?? [] })), groups };
+}

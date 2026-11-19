@@ -43,6 +43,19 @@ const PINS: Pin[] = [
     case: { method: 'readMayActFor', variant: 'stdio-config', run: e => e.readMayActFor('stdio_config', 'mcp.stdio_may_act_for') },
     texts: ['SELECT value FROM config WHERE key = $1'],
   },
+  {
+    from: 'src/core/access/caller.ts:253 resolveAudienceIdentities (members, then groups)',
+    case: { method: 'readAudiencePrincipals', variant: 'members-and-groups', run: e => e.readAudiencePrincipals(['alice-example'], ['team-a']) },
+    texts: [`SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
+  WHERE m.id = ANY($1::text[]) AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL
+  GROUP BY m.id`, 'SELECT id FROM access_groups WHERE id = ANY($1::text[])'],
+  },
+  {
+    from: 'src/core/access/caller.ts:253 resolveAudienceIdentities (an empty list reads nothing)',
+    case: { method: 'readAudiencePrincipals', variant: 'groups-only', run: e => e.readAudiencePrincipals([], ['team-a']) },
+    texts: ['SELECT id FROM access_groups WHERE id = ANY($1::text[])'],
+  },
 ];
 
 describe('caller raw SQL moved into typed members keeps its Postgres text byte for byte', () => {

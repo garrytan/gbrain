@@ -1,14 +1,14 @@
 /**
  * The page-write reads and upkeep that belong to no other domain (BrainEngine readSourceState through
  * purgeMemoryProposals, attachSourcePath and getWorktreeBinding; SQL in engine-sql/write-misc.ts; isSourceClaimed, SQL in engine-sql/sources.ts), and the folder access read beside the
- * access members (isFolderRestricted, listAppliedPolicyRevisions and readMayActFor; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
+ * access members (isFolderRestricted, listAppliedPolicyRevisions, readMayActFor and readAudiencePrincipals; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
  * gbrain-store `write_misc`; the rest answer for state the store does not keep. What each member answers and why:
  * rust/docs/store/write_misc.md.
  */
 import type {
   AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from '../../engine-sql/write-misc.ts';
-import type { AppliedPolicyRevision, MayActForVia } from '../../engine-sql/access-control.ts';
+import type { AppliedPolicyRevision, AudiencePrincipalRows, MayActForVia } from '../../engine-sql/access-control.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 /**
@@ -92,3 +92,9 @@ export const listAwaitingMemoryProposals: StoreMember<[limit: number], Array<Rec
 
 /** No memory proposals exist on this engine (see expireMemoryProposals), so upkeep purges nothing. */
 export const purgeMemoryProposals: StoreMember<[retentionDays: number], number> = async () => 0;
+
+/**
+ * The store keeps no access members and no groups (see listActiveAccessMembers), so no audience entry names an enabled
+ * member or an existing group: each reads as unknown, as on a brain with none.
+ */
+export const readAudiencePrincipals: StoreMember<[memberIds: readonly string[], groupIds: readonly string[]], AudiencePrincipalRows> = async () => ({ members: [], groups: [] });
