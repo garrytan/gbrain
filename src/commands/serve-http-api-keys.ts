@@ -15,7 +15,6 @@ import type { BrainEngine } from '../core/engine.ts';
 import { cliRenderContext, toAgentError, type Action } from '../core/agent-output.ts';
 import { grantFromTokenRow } from '../core/grants/model.ts';
 import { opError } from '../core/ops/contract.ts';
-import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { ALLOWED_SCOPES_LIST, isScope, localCliOnlyScopeViolation } from '../core/scope.ts';
 import { isValidSourceId } from '../core/source-id.ts';
 import { isValidHolder } from '../core/takes-fence.ts';
@@ -170,7 +169,7 @@ export function mountAdminApiKeys(app: Express, requireAdmin: RequestHandler, en
       return;
     }
     try {
-      res.json({ id, revoked: await revokeLegacyTokenById(sqlQueryForEngine(engine), id) });
+      res.json({ id, revoked: await revokeLegacyTokenById(engine, id) });
     } catch {
       res.status(500).json({ error: 'api_key_revoke_failed', message: 'Revoke failed. Refresh the key list before retrying.' });
     }

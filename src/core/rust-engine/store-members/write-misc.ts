@@ -2,14 +2,19 @@
  * The page-write reads and upkeep that belong to no other domain (BrainEngine readSourceState through
  * purgeMemoryProposals, readMemoryProposal, readPendingProposalSummary, listMemoryProposalRows, listOwnerProposalRows, attachSourcePath,
  * getWorktreeBinding and listAccessTokens; SQL in engine-sql/write-misc.ts; isSourceClaimed, SQL in engine-sql/sources.ts), and the folder access read beside the
- * access members (isFolderRestricted, listAppliedPolicyRevisions, readLiveMember and readFolderAccess; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
+ * access members (isFolderRestricted, listAppliedPolicyRevisions, readFolderAccess, readMayActFor, readAccessCredentials, hasLabelledOnlyMember and listPagesNamingReader;
+ * SQL in engine-sql/access-control.ts and engine-sql/write-misc.ts; the member and group reads are in access-members.ts), and the credential revokes (revokeAccessTokensNamed,
+ * revokeAccessToken and deleteOAuthClient; SQL in engine-sql/access-credentials.ts). The source read, the path attach and the pages naming a reader are served by
  * gbrain-store `write_misc`; the rest answer for state the store does not keep. What each member answers and why:
  * rust/docs/store/write_misc.md.
  */
 import type {
   AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from '../../engine-sql/write-misc.ts';
-import type { AppliedPolicyRevision, FolderAccessRows, LiveMemberRow, MemberBindingVia } from '../../engine-sql/access-control.ts';
+import { readAccessMembers } from './access-members.ts';
+import type { AccessCredentialLookup, AccessCredentialRow, AppliedPolicyRevision, FolderAccessRows, MayActForVia, PageNamingReaderRow } from '../../engine-sql/access-control.ts';
+import { PAGES_NAMING_READER_LIMIT } from '../../engine-sql/access-control.ts';
+import type { DeletedOAuthClient } from '../../engine-sql/access-credentials.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 /**
@@ -72,11 +77,12 @@ export const hasExtractedEvents: StoreMember<[sourceId: string, pageId: number],
  */
 export const listAccessTokens: StoreMember<[], AccessTokenRow[]> = async () => [];
 
-/** The store keeps no access members, so none is active. */
-export const listActiveAccessMembers: StoreMember<[], string[]> = async () => [];
-
-/** The store keeps no access members, so none carries the labelled-only grant and a write skips the labelled-only checks. */
-export const hasLabelledOnlyMember: StoreMember<[], boolean> = async () => false;
+/**
+ * Whether any access member the store keeps, live or not, carries the labelled-only grant: the SQL engines read
+ * `SELECT 1 FROM access_members WHERE labelled_only LIMIT 1`, so a disabled or removed member counts too.
+ */
+export const hasLabelledOnlyMember: StoreMember<[], boolean> = async (brain) =>
+  (await readAccessMembers(brain, { includeRemoved: true })).some(row => row.labelled_only === true);
 
 /**
  * The store keeps no notifier state (a resident notifier refuses to start on this engine, notifier/store.ts), so no
@@ -108,10 +114,11 @@ export const isFolderRestricted: StoreMember<[sourceId: string, slug: string], b
 export const listAppliedPolicyRevisions: StoreMember<[], AppliedPolicyRevision[]> = async () => [];
 
 /**
- * The store keeps no access members (see listActiveAccessMembers), so no key names a live member through any binding:
- * the answer is null, as PGLite answers for a brain with no members. access/caller.ts reads that as unbound.
+ * A stdio server's may_act_for is a config value, which the store keeps. The store keeps no access tokens and no OAuth
+ * clients, so a token or a client has no live row and permits nothing, as a revoked token or a deleted client does.
  */
-export const readLiveMember: StoreMember<[via: MemberBindingVia, key: string], LiveMemberRow | null> = async () => null;
+export const readMayActFor: StoreMember<[via: MayActForVia, key: string], string[] | string | null> = async (brain, via, key) =>
+  via === 'stdio_config' ? storeCall({ member: 'readMayActFor' }, () => brain.getConfig(key)) : null;
 
 /**
  * No folder rule or folder coverage exists on this engine (see isFolderRestricted), so no rule is satisfied and no
@@ -139,3 +146,25 @@ export const listMemoryProposalRows: StoreMember<[query: ProposalListQuery], Arr
 
 /** No memory proposals exist on this engine, so no request id names one: show, approve and deny answer not_found. */
 export const listOwnerProposalRows: StoreMember<[requestId: string], Array<Record<string, unknown>>> = async () => [];
+
+/** The store keeps no access tokens and no OAuth clients (see readMayActFor), so no name or member binding names a live credential. */
+export const readAccessCredentials: StoreMember<[by: AccessCredentialLookup], AccessCredentialRow[]> = async () => [];
+
+/** The store keeps no access tokens (see readAccessCredentials), so no name revokes one: the list of revoked ids is empty. */
+export const revokeAccessTokensNamed: StoreMember<[name: string], string[]> = async () => [];
+
+/** The store keeps no access tokens (see readAccessCredentials), so no id names an active one to revoke. */
+export const revokeAccessToken: StoreMember<[id: string], string | null> = async () => null;
+
+/** The store keeps no OAuth clients (see readAccessCredentials), so no client id names one to delete. */
+export const deleteOAuthClient: StoreMember<[clientId: string], DeletedOAuthClient | null> = async () => null;
+
+/**
+ * The store keeps pages, so this is a real answer: gbrain-store `write_misc` reads every page (soft-deleted ones too, as
+ * the SQL does), keeps those whose normalized readers (`gbrain_access_readers`) name exactly the principal, and returns
+ * them by (source, slug), at most PAGES_NAMING_READER_LIMIT (the SQL's LIMIT 51).
+ */
+export const listPagesNamingReader: StoreMember<[principal: string], PageNamingReaderRow[]> = async (brain, principal) => {
+  const rows = await storeCall({ member: 'listPagesNamingReader' }, () => brain.listPagesNamingReader(principal, PAGES_NAMING_READER_LIMIT)) as PageNamingReaderRow[];
+  return rows.map(r => ({ slug: r.slug, source_id: r.source_id }));
+};

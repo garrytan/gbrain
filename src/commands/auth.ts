@@ -206,13 +206,9 @@ async function list(json: boolean) {
 
 async function revoke(name: string) {
   if (!name) { console.error('Usage: auth revoke <name> | auth revoke --id <uuid>'); process.exit(1); }
-  await withConfiguredSql(async (sql) => {
-    const rows = await sql`
-      UPDATE access_tokens SET revoked_at = now()
-      WHERE name = ${name} AND revoked_at IS NULL
-      RETURNING id
-    `;
-    for (const row of rows) await (await import('../core/wakeshift/forget.ts')).forgetWakePrincipal(sql, { kind: 'legacy_token', id: String(row.id) });
+  await withConfiguredSql(async (_sql, engine) => {
+    const rows = await engine.revokeAccessTokensNamed(name);
+    for (const id of rows) await (await import('../core/wakeshift/forget.ts')).forgetWakePrincipal(engine, { kind: 'legacy_token', id });
     if (rows.length === 0) {
       console.error(`No active token found with name "${name}".`);
       process.exit(1);
@@ -224,27 +220,23 @@ async function revoke(name: string) {
   });
 }
 
-/** #4043: names are not unique — revoke-by-id is the precise path. The
- * revocation semantics are canonical in src/core/token-mint.ts
- * (revokeLegacyTokenById); this CLI wrapper keeps its own UPDATE only to
- * RETURN the name for the confirmation line — keep the two in lockstep. */
+/** #4043: names are not unique — revoke-by-id is the precise path. This CLI
+ * wrapper and src/core/token-mint.ts (revokeLegacyTokenById) send the same
+ * typed revoke (engine.revokeAccessToken), which returns the name for the
+ * confirmation line. */
 async function revokeById(id: string) {
   if (!id || !TOKEN_ID_RE.test(id)) {
     console.error('Usage: auth revoke --id <uuid>   (ids are shown by `gbrain auth list`)');
     process.exit(1);
   }
-  await withConfiguredSql(async (sql) => {
-    const rows = await sql`
-      UPDATE access_tokens SET revoked_at = now()
-      WHERE id = ${id}::uuid AND revoked_at IS NULL
-      RETURNING name
-    `;
-    if (rows.length === 0) {
+  await withConfiguredSql(async (_sql, engine) => {
+    const revoked = await engine.revokeAccessToken(id);
+    if (revoked === null) {
       console.error(`No active token found with id "${id}".`);
       process.exit(1);
     }
-    await (await import('../core/wakeshift/forget.ts')).forgetWakePrincipal(sql, { kind: 'legacy_token', id });
-    console.log(`Token "${rows[0].name}" (${id}) revoked.`);
+    await (await import('../core/wakeshift/forget.ts')).forgetWakePrincipal(engine, { kind: 'legacy_token', id });
+    console.log(`Token "${revoked}" (${id}) revoked.`);
   });
 }
 
@@ -374,20 +366,17 @@ async function revokeClient(clientId: string) {
     process.exit(1);
   }
   try {
-    await withConfiguredSql(async (sql) => {
+    await withConfiguredSql(async (_sql, engine) => {
       // Atomic single-statement delete: no race window between count + delete.
       // Postgres cascades to oauth_tokens and oauth_codes (FK ON DELETE CASCADE
       // declared in src/schema.sql:370,382) before the transaction commits.
-      const rows = await sql`
-        DELETE FROM oauth_clients WHERE client_id = ${clientId}
-        RETURNING client_id, client_name
-      `;
-      if (rows.length === 0) {
+      const deleted = await engine.deleteOAuthClient(clientId);
+      if (deleted === null) {
         console.error(`No client found with id "${clientId}"`);
         process.exit(1);
       }
-      await (await import('../core/wakeshift/forget.ts')).forgetWakePrincipal(sql, { kind: 'oauth_client', id: clientId });
-      console.log(`OAuth client revoked: "${rows[0].client_name}" (${clientId})`);
+      await (await import('../core/wakeshift/forget.ts')).forgetWakePrincipal(engine, { kind: 'oauth_client', id: clientId });
+      console.log(`OAuth client revoked: "${deleted.client_name}" (${clientId})`);
       console.log('Tokens and authorization codes purged via cascade.');
     });
   } catch (e: any) {

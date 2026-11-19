@@ -43,7 +43,7 @@ mod fence;
 mod fence_overlay;
 mod held_cells;
 pub mod loops;
-mod privacy;
+pub(crate) mod privacy;
 pub mod provenance;
 pub mod purge;
 pub mod purge_ledger;

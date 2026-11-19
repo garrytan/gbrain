@@ -5,13 +5,15 @@ import type { WriteContextInput, WriteContextResult } from './engine-sql/transac
 import type { RecentWriterVersionRow, WriterVersionRow } from './engine-sql/writer-versions.ts';
 import type * as EntityIdentitiesSql from './engine-sql/entity-identities.ts';
 import type * as AccessGrantsSql from './engine-sql/access-grants.ts';
+import type * as AccessMembersSql from './engine-sql/access-members.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
 import type * as TrustWriteGateSql from './engine-sql/trust-write-gate.ts';
 import type * as JobsWake from './engine-sql/jobs-wake.ts';
+import type { DeletedOAuthClient } from './engine-sql/access-credentials.ts';
 import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
-import type { AppliedPolicyRevision, FolderAccessRows, LiveMemberRow, MemberBindingVia } from './engine-sql/access-control.ts';
+import type { AccessCredentialLookup, AccessCredentialRow, AccessGroupRow, AccessMemberLookup, PageNamingReaderRow, AccessMemberRow, LiveMemberRow, MemberBindingVia, AppliedPolicyRevision, AudiencePrincipalRows, FolderAccessRows, MayActForVia } from './engine-sql/access-control.ts';
 import type { DeltaSessionRow, SessionCursorRow, SessionStateWrite } from './engine-sql/session-state.ts';
 import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, FenceOverlayIncomingRow, FenceOverlayRow, HeldFenceCellKey, HeldFenceCellRow, RankCoverageRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
 import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
@@ -1461,6 +1463,28 @@ export interface BrainEngine {
   readHealthMemoClock(): Promise<string>;
   /** The live sources whose own contextual-retrieval mode is per_chunk_synopsis, by id (synopsis-sweep.ts). */
   listSynopsisSourceIds(): Promise<string[]>;
+  /** Inserts an access member, creates its missing groups, adds it to each and binds the token, in one transaction (engine-sql/access-members.ts). */
+  insertAccessMember(spec: AccessMembersSql.AccessMemberInsert): Promise<{ groupsCreated: string[] }>;
+  /** Disables an access member (an earlier disable time is kept) or enables it. */
+  setAccessMemberDisabled(id: string, disabled: boolean): Promise<void>;
+  /** Sets (or, with null, clears) the email of a member that is not removed; true when a row changed. */
+  setAccessMemberEmail(id: string, email: string | null): Promise<boolean>;
+  /** Sets the kind of a member that is not removed. */
+  setAccessMemberKind(id: string, kind: AccessMembersSql.AccessMemberKind): Promise<void>;
+  /** Marks a member removed (and disabled), clears its email and drops its group memberships, in one transaction. */
+  tombstoneAccessMember(id: string): Promise<void>;
+  /** Creates the group when missing and adds each member, in one transaction; true when the group was created. */
+  addAccessGroupMembers(groupId: string, memberIds: readonly string[]): Promise<boolean>;
+  /** Drops each named member from the group. */
+  removeAccessGroupMembers(groupId: string, memberIds: readonly string[]): Promise<void>;
+  /** Deletes the group and its memberships. */
+  deleteAccessGroup(id: string): Promise<void>;
+  /** A credential's binding columns locked FOR UPDATE (inside the binding's transaction), or undefined. */
+  readCredentialBindingForUpdate(target: AccessMembersSql.CredentialTarget, opts: { readsUnscoped: boolean }): Promise<AccessMembersSql.CredentialBindingRow | undefined>;
+  /** Writes a credential's member, may_act_for and attest columns. */
+  writeCredentialBinding(target: AccessMembersSql.CredentialTarget, binding: AccessMembersSql.CredentialBinding): Promise<void>;
+  /** Sets a credential's reads_unscoped to now() (true) or clears it (false). */
+  writeCredentialReadsUnscoped(target: AccessMembersSql.CredentialTarget, readsUnscoped: boolean): Promise<void>;
   expireMemoryProposals(reason: string): Promise<number>;
   listAwaitingMemoryProposals(limit: number): Promise<Array<Record<string, unknown>>>;
   /** The memory proposal a principal holds under `requestId` (a uuid), as its stored row, or null. */
@@ -3795,6 +3819,37 @@ export interface BrainEngine {
   /** Keeps the newest `maxRowsPerClient` (a whole number >= 1) session rows of each (source_id, client_id). */
   capSessionStatePerClient(maxRowsPerClient: number): Promise<void>;
 
+  /**
+   * The stored may_act_for of one caller (`via` names where it is stored; `key` is the token id, the client id or the
+   * config key): a live token's or client's list, null when the row is revoked, deleted or absent; the stdio config text as stored.
+   */
+  readMayActFor(via: MayActForVia, key: string): Promise<string[] | string | null>;
+
+  /** Which of `memberIds` are enabled members (with their groups) and which of `groupIds` exist; an empty list reads nothing. */
+  readAudiencePrincipals(memberIds: readonly string[], groupIds: readonly string[]): Promise<AudiencePrincipalRows>;
+
+  /** Access member rows with their groups: one by exact id or by declared email (any status), or all by id, removed ones only when asked. */
+  readAccessMembers(by: AccessMemberLookup): Promise<AccessMemberRow[]>;
+
+  /** Live credentials (active legacy tokens, clients not deleted): the tokens with one exact name, or those bound to one member. */
+  readAccessCredentials(by: AccessCredentialLookup): Promise<AccessCredentialRow[]>;
+
+  /** Revoke every active access token with this exact name; the revoked ids (none on a store that keeps no credentials). */
+  revokeAccessTokensNamed(name: string): Promise<string[]>;
+  /** Revoke the active access token with this id (a UUID); its name, or null when no active token has it. */
+  revokeAccessToken(id: string): Promise<string | null>;
+  /** Delete an OAuth client, its tokens and codes cascading; the deleted client, or null when none has this id. */
+  deleteOAuthClient(clientId: string): Promise<DeletedOAuthClient | null>;
+
+  /** The ids of the enabled, untombstoned audience-kind members, by id. */
+  listAudienceAccessMembers(): Promise<string[]>;
+
+  /** Every access group with its member ids, by id; or the one group with exactly that id (null lists every group). */
+  readAccessGroups(id: string | null): Promise<AccessGroupRow[]>;
+
+  /** The pages, in every source and by (source, slug), whose readers name exactly `principal`; at most 51 of them. */
+  listPagesNamingReader(principal: string): Promise<PageNamingReaderRow[]>;
+
   // Entity and mention reads (engine-sql/entity-reads.ts): the statements the CLI ran through executeRaw.
   /** The newest mention pass time (ISO, UTC, whole seconds) over every source or one source; null when no pass ran. */
   readMentionLastPass(sourceId?: string | null): Promise<string | null>;
@@ -4547,6 +4602,10 @@ export interface BrainEngine {
   settleWakeWatch(settle: JobsWake.WakeWatchSettle): Promise<boolean>;
   /** Queue a Wakeshift forget of a user (once while one is pending); with a member id, only when that member is not removed. */
   queueWakeForget(wakeUser: string, memberId: string | null): Promise<void>;
+  /** A removed member's Wakeshift state: queue a forget of each user it watched under, end its open watches, drop its terms acceptances. */
+  forgetWakeMember(memberId: string): Promise<{ ended: number; queued: number }>;
+  /** A revoked token's or deleted OAuth client's Wakeshift state: queue a forget of each user its member-less watches ran under, end its open watches, drop its terms acceptances. */
+  forgetWakeCredential(kind: JobsWake.WakeCredentialKind, id: string): Promise<{ ended: number; queued: number }>;
   /** Lease up to `limit` due pending forgets. */
   claimWakeForgets(spec: { leaseSeconds: number; limit: number }): Promise<JobsWake.WakeForgetClaim[]>;
   /** Settle a leased forget; false when its lease no longer matches. */

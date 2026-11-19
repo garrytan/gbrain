@@ -227,6 +227,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // #3980 bulk config read, #3776 takes-embedding update, #3674 scoped
   // link removal.
   'getAllConfig', 'getConfigValues', 'readManagedModeRows', 'getSourceStrictness', 'readPersistenceBrainId', 'declarePersistence', 'requireSynchronousCommit', 'readLocalWriterRow', 'insertLocalWriterRow', 'readOAuthClientReceiptGrant', 'readAccessTokenReceiptGrant', 'readOAuthClientMemberGrant', 'readAccessTokenMemberGrant', 'readLocalWriterMemberGrant', 'readSharedSkillServingEpoch', 'readTransactionSettings', 'applyTransactionSettings', 'beginSnapshotRead', 'readCurrentWriteTrust', 'setWriteContext', 'readLedgerSource', 'isFolderRestricted', 'listAppliedPolicyRevisions', 'readLiveMember', 'readFolderAccess', 'readJournalLimitRows', 'readHeldPageRows', 'readHeldCoverageRows', 'listFenceHoldRows', 'readFenceOriginGone', 'lockGenerationKey', 'clearFenceHoldRows', 'readFenceHoldFiles', 'readLiveGenerationRow', 'activateGenerationRows', 'recordHeldGenerationRow', 'readWriteRequest', 'readWriteRequestsByRequestId', 'readWriteRequestById', 'readWriteRequestProgress', 'countOutstandingBySource', 'ownsSchemaTables', 'readOAuthClientWriteGrant', 'readAccessTokenWriteGrant', 'shareLockWriteCredential', 'readCounterRows', 'readAdmissionRate', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'lockWriteRequest', 'completeWriteRow', 'cancelWriteRow', 'insertPublicationEffects', 'insertWithdrawalEffects', 'readMentionLastPass', 'countPagesDueForMentions', 'readIdentitySiblingCandidates', 'findExactSlug', 'readRetirementHop', 'readEntityCardRows', 'readExtractionLagCounts', 'readIgnoredPrivacyLabelPages', 'updateTakeEmbeddings', 'removeLinksByPagesAndSource', 'listWriteRequestRows',
+  'insertAccessMember', 'setAccessMemberDisabled', 'setAccessMemberEmail', 'setAccessMemberKind', 'tombstoneAccessMember', 'addAccessGroupMembers', 'removeAccessGroupMembers', 'deleteAccessGroup', 'readCredentialBindingForUpdate', 'writeCredentialBinding', 'writeCredentialReadsUnscoped', 'readMayActFor', 'readAudiencePrincipals', 'readAccessMembers', 'readAccessCredentials', 'revokeAccessTokensNamed', 'revokeAccessToken', 'deleteOAuthClient', 'listAudienceAccessMembers', 'readAccessGroups', 'listPagesNamingReader',
   // The session_context_state members (engine-sql/session-state.ts): the session cursor, the checkpoint manifest and their garbage collection.
   'upsertSessionState',
   'readSessionCursor',
@@ -280,6 +281,11 @@ const INTERFACE_METHODS: readonly string[] = [
   'addWakeCron', 'removeWakeCron', 'hasWakeCron', 'recordWakeCronRun', 'hasWakeTermsAcceptance', 'recordWakeTermsAcceptance', 'listDueWakeWatches',
   'claimWakeWatch', 'settleWakeWatch', 'queueWakeForget', 'claimWakeForgets', 'settleWakeForget',  // Trust review, the allow-rule list, the freshness notice and page retrievals (trust-review lane 9)
   'listPendingContradictions', 'listTrustAllowRuleRows', 'notifierCoverageRecorded', 'bumpPageRetrievals',
+  'forgetWakeMember', 'forgetWakeCredential',
+  // Op checkpoints, write attribution, the health memo clock and synopsis sources (write-misc).
+  'readOpCheckpointKeys', 'writeOpCheckpointKeys', 'appendOpCheckpointPaths', 'deleteOpCheckpoint', 'deleteOpCheckpointPaths',
+  'readWriteAttributionNames', 'readPageRevisionAttribution', 'readVersionAttributions', 'readOldestVersionAttribution', 'readRowAttribution',
+  'readHealthMemoClock', 'listSynopsisSourceIds',
 ];
 
 /**
@@ -303,6 +309,8 @@ const ENGINE_INTERNAL_HELPERS: readonly string[] = [
   'engineSql',
   // Cycle-lock leases: the engine-sql executor the lease statements run through (the methods themselves are in INTERFACE_METHODS).
   'cycleLockSql',
+  // Write attribution reads: the unscoped engine-sql executor the attribution members run through.
+  'attributionReads',
   // Hybrid search reads: the unscoped engine-sql executor the search-read methods run through.
   'searchRead',
   // Graph and doctor link reads: the unscoped engine-sql executor the link-read methods run through.

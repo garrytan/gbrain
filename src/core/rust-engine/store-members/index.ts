@@ -89,6 +89,7 @@ import * as writeContext from './write-context.ts';
 // The store creates its tables when it opens; initSchema seeds the embedding config rows PGLite's schema text seeds.
 import { initSchema } from './init-schema.ts';
 import * as accessGrants from './access-grants.ts';
+import * as accessMembers from './access-members.ts';
 
 export const STORE_MEMBERS = {
   initSchema,
@@ -144,6 +145,8 @@ export const STORE_MEMBERS = {
   ...accessGrants,
   // The session cursor and checkpoint manifest of context_pack and delta (rust/docs/store/session_state.md).
   ...sessionState,
+  // The access member and group writes and the active-member read (rust/docs/store/access-members.md).
+  ...accessMembers,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

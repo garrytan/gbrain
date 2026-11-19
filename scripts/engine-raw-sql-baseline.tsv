@@ -14,7 +14,7 @@ src/commands/agent-register.ts	execute_raw	2
 src/commands/agent-register.ts	sql_template	7
 src/commands/agent.ts	execute_raw	1
 src/commands/auth.ts	execute_raw	1
-src/commands/auth.ts	sql_template	5
+src/commands/auth.ts	sql_template	2
 src/commands/autopilot-daemon.ts	execute_raw	1
 src/commands/autopilot-dispatch.ts	execute_raw	4
 src/commands/autopilot-fanout.ts	execute_raw	2
@@ -221,13 +221,11 @@ src/commands/trust.ts	execute_raw	1
 src/commands/upgrade.ts	execute_raw	1
 src/core/access/actor.ts	execute_raw	7
 src/core/access/attest-sources.ts	sql_template	8
-src/core/access/caller.ts	execute_raw	5
 src/core/access/federation-exposure.ts	execute_raw	1
 src/core/access/implicit-placement.ts	execute_raw	1	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/core/access/labelled-only.ts	execute_raw	3
 src/core/access/member-facts.ts	execute_raw	2	GST-2897 B (#9670, opened before this ratchet): one access_members lookup to see whether the member a share is about is enabled; no typed engine method exists yet
 src/core/access/member-sources.ts	execute_raw	8
-src/core/access/members.ts	execute_raw	25
 src/core/access/members.ts	sql_template	1
 src/core/access/open-pages.ts	execute_raw	8	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/core/access/open-twins.ts	execute_raw	1
@@ -1016,8 +1014,7 @@ src/core/timeline-dedup-repair.ts	execute_raw	11
 src/core/timeline-extract.ts	execute_raw	9
 src/core/timeline-write-through.ts	execute_raw	1
 src/core/token-mint.ts	execute_raw	2
-src/core/token-mint.ts	sql_template	1
-src/core/transcripts/archive.ts	execute_raw	12
+src/core/transcripts/archive.ts	execute_raw	10
 src/core/transcripts/discover.ts	execute_raw	2
 src/core/transcripts/hermes.ts	driver_call	1
 src/core/transcripts/ingest.ts	execute_raw	3
@@ -1057,7 +1054,6 @@ src/core/verbs/entity-source.ts	execute_raw	1
 src/core/verbs/entity-text-mentions.ts	execute_raw	1
 src/core/verbs/entity-variants.ts	execute_raw	4
 src/core/wakeshift/drain.ts	execute_raw	2
-src/core/wakeshift/forget.ts	sql_template	6
 src/core/write-gate-scan.ts	execute_raw	2
 src/core/write-through.ts	execute_raw	2
 src/eval/brainbench/adapters/codex.ts	execute_raw	1

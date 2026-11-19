@@ -325,6 +325,147 @@ const PINS: Pin[] = [
     case: { method: 'listFactProvenance', variant: 'default', run: e => e.listFactProvenance({ sourceId: 'default', ids: [1, 2] }) },
     texts: ['SELECT id, source FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[])'],
   },
+  {
+    from: 'src/core/access/caller.ts:196 mayActForOf (legacy token)',
+    case: { method: 'readMayActFor', variant: 'legacy-token', run: e => e.readMayActFor('legacy_token', 'tok-1') },
+    texts: ['SELECT may_act_for FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL'],
+  },
+  {
+    from: 'src/core/access/caller.ts:200 mayActForOf (OAuth client)',
+    case: { method: 'readMayActFor', variant: 'oauth-client', run: e => e.readMayActFor('oauth_client', 'client-1') },
+    texts: ['SELECT may_act_for FROM oauth_clients WHERE client_id = $1 AND deleted_at IS NULL'],
+  },
+  {
+    from: 'src/core/access/caller.ts:204 mayActForOf (stdio config)',
+    case: { method: 'readMayActFor', variant: 'stdio-config', run: e => e.readMayActFor('stdio_config', 'mcp.stdio_may_act_for') },
+    texts: ['SELECT value FROM config WHERE key = $1'],
+  },
+  {
+    from: 'src/core/access/caller.ts:253 resolveAudienceIdentities (members, then groups)',
+    case: { method: 'readAudiencePrincipals', variant: 'members-and-groups', run: e => e.readAudiencePrincipals(['alice-example'], ['team-a']) },
+    texts: [`SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
+  WHERE m.id = ANY($1::text[]) AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL
+  GROUP BY m.id`, 'SELECT id FROM access_groups WHERE id = ANY($1::text[])'],
+  },
+  {
+    from: 'src/core/access/caller.ts:253 resolveAudienceIdentities (an empty list reads nothing)',
+    case: { method: 'readAudiencePrincipals', variant: 'groups-only', run: e => e.readAudiencePrincipals([], ['team-a']) },
+    texts: ['SELECT id FROM access_groups WHERE id = ANY($1::text[])'],
+  },
+  {
+    from: 'src/core/access/members.ts:124 getMember (one member by id)',
+    case: { method: 'readAccessMembers', variant: 'by-id', run: e => e.readAccessMembers({ id: 'alice-example' }) },
+    texts: [`SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
+  COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id WHERE m.id = $1 GROUP BY m.id`],
+  },
+  {
+    from: 'src/core/access/members.ts:160 memberByEmail and :143 assertEmailFree (members declaring one email)',
+    case: { method: 'readAccessMembers', variant: 'by-email', run: e => e.readAccessMembers({ email: 'alice@example.com' }) },
+    texts: [`SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
+  COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id WHERE m.email = $1 GROUP BY m.id ORDER BY m.id`],
+  },
+  {
+    from: 'src/core/access/members.ts:129 listMembers (removed members filtered out)',
+    case: { method: 'readAccessMembers', variant: 'live', run: e => e.readAccessMembers({ includeRemoved: false }) },
+    texts: [`SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
+  COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id WHERE m.tombstoned_at IS NULL GROUP BY m.id ORDER BY m.id`],
+  },
+  {
+    from: 'src/core/access/members.ts:129 listMembers (--all)',
+    case: { method: 'readAccessMembers', variant: 'all', run: e => e.readAccessMembers({ includeRemoved: true }) },
+    texts: [`SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
+  COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id GROUP BY m.id ORDER BY m.id`],
+  },
+  {
+    from: 'src/core/access/members.ts:199 legacyTokenByName (active tokens with one name)',
+    case: { method: 'readAccessCredentials', variant: 'token-name', run: e => e.readAccessCredentials({ tokenName: 'laptop' }) },
+    texts: ['SELECT id::text AS id, name FROM access_tokens WHERE name = $1 AND revoked_at IS NULL ORDER BY created_at'],
+  },
+  {
+    from: 'src/core/access/members.ts:305/307 boundCredentials (tokens, then clients)',
+    case: { method: 'readAccessCredentials', variant: 'member', run: e => e.readAccessCredentials({ memberId: 'alice-example' }) },
+    texts: ['SELECT id::text AS id, name FROM access_tokens WHERE member_id = $1 AND revoked_at IS NULL ORDER BY name',
+      "SELECT client_id AS id, client_name AS name FROM oauth_clients WHERE member_id = $1 AND (to_jsonb(oauth_clients)->>'deleted_at') IS NULL ORDER BY client_id"],
+  },
+  {
+    from: 'src/core/access/members.ts:295 audienceMemberIds',
+    case: { method: 'listAudienceAccessMembers', variant: 'default', run: e => e.listAudienceAccessMembers() },
+    texts: ["SELECT id FROM access_members WHERE kind = 'audience' AND disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id"],
+  },
+  {
+    from: 'src/core/access/members.ts:345 listGroups (every group)',
+    case: { method: 'readAccessGroups', variant: 'all', run: e => e.readAccessGroups(null) },
+    texts: [`SELECT g.id, COALESCE(array_agg(gm.member_id ORDER BY gm.member_id) FILTER (WHERE gm.member_id IS NOT NULL), '{}') AS members
+     FROM access_groups g LEFT JOIN access_group_members gm ON gm.group_id = g.id
+      GROUP BY g.id ORDER BY g.id`],
+  },
+  {
+    from: 'src/core/access/members.ts:345 listGroups (one group by id)',
+    case: { method: 'readAccessGroups', variant: 'by-id', run: e => e.readAccessGroups('team-a') },
+    texts: [`SELECT g.id, COALESCE(array_agg(gm.member_id ORDER BY gm.member_id) FILTER (WHERE gm.member_id IS NOT NULL), '{}') AS members
+     FROM access_groups g LEFT JOIN access_group_members gm ON gm.group_id = g.id
+     WHERE g.id = $1 GROUP BY g.id ORDER BY g.id`],
+  },
+  {
+    from: 'src/core/access/members.ts:303 pagesNaming',
+    case: { method: 'listPagesNamingReader', variant: 'default', run: e => e.listPagesNamingReader('member:alice-example') },
+    texts: [`SELECT slug, source_id FROM pages WHERE frontmatter ? 'readable_by' AND gbrain_access_readers(frontmatter) @> ARRAY[$1]::text[]
+     ORDER BY source_id, slug LIMIT 51`],
+  },
+  {
+    from: 'src/core/wakeshift/forget.ts:23 forgetWakePrincipal (member), called from members.ts removeMember',
+    case: { method: 'forgetWakeMember', variant: 'default', run: e => e.forgetWakeMember('alice-example') },
+    texts: [
+      `INSERT INTO wake_forgets (wake_user) SELECT DISTINCT wake_user FROM wake_subscriptions WHERE member_id = $1
+        ON CONFLICT (wake_user) WHERE state = 'pending' DO NOTHING RETURNING id`,
+      `UPDATE wake_subscriptions SET state = 'ended', last_error = 'principal_revoked', lease_until = NULL, updated_at = now()
+        WHERE member_id = $1 AND state = 'open' RETURNING id`,
+      'DELETE FROM wake_terms_acceptances WHERE principal_key = $1',
+    ],
+  },
+  {
+    from: 'src/core/wakeshift/forget.ts forgetWakePrincipal (credential), called from auth.ts revoke/revokeById/revokeClient and token-mint.ts revokeLegacyTokenById',
+    case: { method: 'forgetWakeCredential', variant: 'default', run: e => e.forgetWakeCredential('oauth_client', 'client-a') },
+    texts: [
+      `INSERT INTO wake_forgets (wake_user) SELECT DISTINCT wake_user FROM wake_subscriptions
+      WHERE principal_kind = $1 AND principal_id = $2 AND member_id IS NULL
+      ON CONFLICT (wake_user) WHERE state = 'pending' DO NOTHING RETURNING id`,
+      `UPDATE wake_subscriptions SET state = 'ended', last_error = 'principal_revoked', lease_until = NULL, updated_at = now()
+      WHERE principal_kind = $1 AND principal_id = $2 AND state = 'open' RETURNING id`,
+      'DELETE FROM wake_terms_acceptances WHERE principal_key = $1',
+    ],
+  },
+  {
+    from: 'src/commands/auth.ts revoke (by name)',
+    case: { method: 'revokeAccessTokensNamed', variant: 'default', run: e => e.revokeAccessTokensNamed('laptop') },
+    texts: [`
+      UPDATE access_tokens SET revoked_at = now()
+      WHERE name = $1 AND revoked_at IS NULL
+      RETURNING id
+    `],
+  },
+  {
+    from: 'src/commands/auth.ts revokeById, src/core/token-mint.ts revokeLegacyTokenById',
+    case: { method: 'revokeAccessToken', variant: 'default', run: e => e.revokeAccessToken('00000000-0000-4000-8000-0000000000c1') },
+    texts: [`
+      UPDATE access_tokens SET revoked_at = now()
+      WHERE id = $1::uuid AND revoked_at IS NULL
+      RETURNING name
+    `],
+  },
+  {
+    from: 'src/commands/auth.ts revokeClient',
+    case: { method: 'deleteOAuthClient', variant: 'default', run: e => e.deleteOAuthClient('client-a') },
+    texts: [`
+        DELETE FROM oauth_clients WHERE client_id = $1
+        RETURNING client_id, client_name
+      `],
+  },
 ];
 
 /** entity-card.ts CARD_ROW_COLUMNS at 7470c703ed, verbatim. */
