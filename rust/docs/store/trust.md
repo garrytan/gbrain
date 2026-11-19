@@ -178,7 +178,8 @@ the family adds no key prefix. Versions have no by-id index: the version reads s
 | `readCursorEdition` | `read_cursor_edition` (`trust/valid_time.rs`): whether the page record (deleted or not) is still at the revision, and the newest `V` version record at it; null when the page is gone | `SELECT (p.knowledge_revision::text = $2) AS current, (SELECT max(v.id) …) FROM pages p WHERE p.id = $1` |
 | `pageAwaitsRederive` | none: the store keeps no `needs_rederive` queue (only a raw-SQL purge writes one, and `executeRaw` refuses), so the member answers false | `SELECT count(*)::int AS n FROM pages p WHERE p.id = $1 AND NOT NOT EXISTS (… needs_rederive …)` |
 
-- `beginSnapshotRead` sets no isolation level: a store transaction holds the one writer from its start, so its reads
+- `beginSnapshotRead` needs a store transaction, which a Rust brain does not serve in this landing (a later landing adds
+  it). It sets no isolation level: a store transaction holds the one writer from its start, so its reads
   see one state. With `readOnly` it calls `setTransactionReadOnly` (`transactions.md`), so every later write in the
   transaction refuses with Postgres's SQLSTATE `25006` and leaves nothing.
 - The TypeScript members refuse a caller page policy that is not the no-caller one, the `takes` and

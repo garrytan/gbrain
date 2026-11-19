@@ -71,9 +71,9 @@ judges the caller's own member page (`memory/members/<member>`, the actor's memb
 `hidden_by_private_provenance` reads the identity on that page only (`provenance_identity`). The
 second form has no CASE and sends no `memberPage`. Any other caller (folder rules, audiences,
 lineage, labelled-only members) is refused with
-`engine_capability_missing` (`src/core/rust-engine/store-members/private-provenance.ts`). The store
-has no keyed-slug entity rule (an `entity_slug` with no `/`, judged at a name-key page directory by
-`privateEntityFilterForCaller`).
+`engine_capability_missing` (`src/core/rust-engine/store-members/private-provenance.ts`). A keyed-slug entity
+(an `entity_slug` with no `/`) is judged at the name-key page directories (`NAME_KEY_PAGE_DIRS`) by
+`facts/privacy.rs`, as `privateEntityFilterForCaller` does.
 
 A page read under `excludePrivate` sends the page policy (`storePagePolicy`). A page family that opts in with
 `callerReaders` also sends the caller's reader identity and private-readable grant, when the caller's text equals
@@ -151,8 +151,8 @@ or an unknown action is `invalid_argument`. `linkConversationFact` sets the enti
 context only while the row is still as planned: on the given page with the given text, live
 (not expired, `valid_until` unset or later), with no entity or on the unbacked name key `from`,
 user or unattributed, written by a conversation extractor, and the target page is live. Both
-return false and write nothing when the row does not match. Not modeled: the withdrawal and
-purge triggers of the Postgres `UPDATE`, because their ledgers have no Rust writer.
+return false and write nothing when the row does not match. The withdrawal ledger is modeled: `write_fact` keeps a fact expired when its claim is withdrawn, as the Postgres
+insert trigger does. Not modeled: the purge trigger of the Postgres `UPDATE`, because the purge ledger has no Rust writer.
 
 `listConversationRelinkPages` is the page pick of `gbrain facts relink --conversation`. It reads
 the source's rows in one snapshot and counts, per `source_markdown_slug`, the live rows written by
@@ -279,10 +279,10 @@ that are not `invalid` at their current revision, never-attempted first, then ol
 page delete removes the page's row (`cascade::remove_page_rows` calls `facts::reconcile::remove_page_rows`, the
 `ON DELETE CASCADE`); a soft delete keeps it. `lockReconcileRevision` answers whether the live page `(sourceId, slug)`
 is at `revision` (`facts/reconcile.rs`); a soft-deleted or missing page, or a null revision, answers false. Postgres
-locks the row `FOR SHARE` for the rest of the transaction. On Rust the read runs inside the caller's store transaction
-and sees its writes; that transaction holds the store's single writer from begin to commit, so no other writer changes
-the page before the settle commits. Outside a transaction it reads the last commit. The extract_facts commit step
-(lock, then the `complete` settle, in one transaction) runs whole on Rust.
+locks the row `FOR SHARE` for the rest of the transaction. Once a store transaction is served on Rust (a later landing; `engine.transaction` is a typed refusal in this landing), the
+read runs inside the caller's store transaction and sees its writes; that transaction holds the store's single writer from
+begin to commit, so no other writer changes the page before the settle commits. Outside a transaction it reads the last
+commit.
 `listSingleFactMetadata` is served by `facts/trust_reads.rs` (below), except under the remote provenance floor.
 
 ## Group 5: repair classifiers and loop retirement (`facts/repair.rs`)
@@ -443,5 +443,5 @@ before state (`trust::proposals::held_narrower`, [trust.md](trust.md#trust-propo
 
 ## Not modeled
 
-The withdrawal ledger and the insert/update guards that read it, and the write-attribution trigger. Inputs whose PGLite outcome the store cannot
+The purge-ledger guards and the write-attribution trigger. Inputs whose PGLite outcome the store cannot
 reproduce refuse in the member with `engine_capability_missing`.
