@@ -186,6 +186,60 @@ fn an_inserted_request_has_every_column_and_charges_only_existing_counters() {
 }
 
 #[test]
+fn requests_by_request_id_span_principals_and_stop_at_two() {
+    let dir = TempDir::new("persist-by-request-id");
+    let store = open(&dir);
+    assert!(
+        store
+            .list_write_requests_by_request_id(REQ_1)
+            .unwrap()
+            .is_empty()
+    );
+    let mine = store
+        .insert_write_request(&insert_input(&store, REQ_1, "notes/a", json!({})))
+        .unwrap();
+    let one = store
+        .list_write_requests_by_request_id(&REQ_1.to_uppercase())
+        .unwrap();
+    assert_eq!(one, vec![mine.clone()]);
+    // A second principal admits the same request id: the read is ambiguous and says so.
+    let mut theirs = insert_input(&store, REQ_1, "notes/b", json!({}));
+    theirs.principal_id = "other-writer".into();
+    store.insert_write_request(&theirs).unwrap();
+    let mut third = insert_input(&store, REQ_1, "notes/c", json!({}));
+    third.principal_id = "third-writer".into();
+    store.insert_write_request(&third).unwrap();
+    let rows = store.list_write_requests_by_request_id(REQ_1).unwrap();
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|r| r["request_id"] == REQ_1));
+    assert!(
+        store
+            .list_write_requests_by_request_id(REQ_2)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        store
+            .list_write_requests_by_request_id("nope")
+            .unwrap_err()
+            .code,
+        INVALID_ARGUMENT
+    );
+}
+
+#[test]
+fn the_trust_generation_moves_with_every_commit() {
+    let dir = TempDir::new("persist-trust-generation");
+    let store = open(&dir);
+    let before = store.trust_generation().unwrap();
+    assert_eq!(before, store.commit_version().unwrap().to_string());
+    assert_eq!(store.trust_generation().unwrap(), before);
+    store.lock_persistence_counters(&["brain".into()]).unwrap();
+    let after = store.trust_generation().unwrap();
+    assert!(after.parse::<u64>().unwrap() > before.parse::<u64>().unwrap());
+}
+
+#[test]
 fn an_insert_refuses_what_the_table_constraints_refuse() {
     let dir = TempDir::new("persist-insert-refuse");
     let store = open(&dir);
