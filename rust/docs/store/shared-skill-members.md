@@ -5,10 +5,12 @@ Part of the store contract in [rust/README.md](../../README.md) ("The brain stor
 The membership operations (`join_brain`, `sync_brain_skills`, `leave_brain`, `src/core/shared-skills/membership.ts`)
 and the catalog identity read (`src/core/shared-skills/catalog.ts`) run through the members of
 `src/core/engine-sql/shared-skill-members.ts`. The store keeps the catalog token secret of `shared_skill_state`, the
-`shared_skill_members` table and the `shared_skill_delivery_batches` table. It keeps no shared-skill heads, revisions
-or policies: `listSharedSkillCatalogHeads` reads `[]` and `readSharedSkillPolicyRow` reads no row, so every source has
-the legacy policy (`allow_follow` false) and a join on a Rust brain binds no source. Timestamps leave as ISO strings; the
-TypeScript members turn them into `Date`s.
+`shared_skill_members` table and the `shared_skill_delivery_batches` table, and (`shared_skill_catalog.rs`) the
+publication policies with their audit rows, the heads, the revisions and the delivery leases. `set_skill_policy`
+writes a policy, so a join on a Rust brain binds a source whose policy allows following, as on PGLite. A Rust brain
+cannot activate shared publication, so the engine member `writeSharedSkillRevision` refuses as the SQL publication guard
+refuses on a brain without it (code `42501`, `writer_not_quiesced: shared publication is disabled`); the store method
+serves fixtures that seed a catalog. Timestamps leave as ISO strings; the TypeScript members turn them into `Date`s.
 
 Keys (tag `x`, `keys::ACCESS_MEMBERS`; `0x01`-`0x03` are the access members, [access-members.md](access-members.md)):
 
@@ -17,6 +19,11 @@ Keys (tag `x`, `keys::ACCESS_MEMBERS`; `0x01`-`0x03` are the access members, [ac
 | `x 0x04` | state record: `token_secret` | `shared_skill_state.token_secret` |
 | `x 0x05 <installation id>` | member record: `installation_id`, `principal_kind`, `principal_id`, `adapter`, `brain_id`, `epoch`, `active`, `follow_policy`, `issued_sequence`, `acknowledged_sequence`, `desired_view`, `acknowledged_view`, `joined_at`, `last_seen_at`, `join_window`, `join_count` | `shared_skill_members` |
 | `x 0x06 <installation id> 0x00 <token>` | batch record: `token`, `installation_id`, `epoch`, `sequence`, `view_token`, `authority_digest`, `revisions`, `issued_at`, `acknowledged_at`, `evidence` | `shared_skill_delivery_batches` |
+| `x 0x07 <source> 0x00 <incarnation>` | policy record: `epoch`, `policy`, `updated_at` | `shared_skill_policies` |
+| `x 0x08 <audit id>` | audit record: `source_id`, `source_incarnation`, `principal_kind`, `principal_id`, `previous_epoch`, `epoch`, `policy`, `created_at` | `shared_skill_policy_audit` |
+| `x 0x09 <source> 0x00 <incarnation> 0x00 <pack> 0x00 <name>` | head record: `revision`, `metadata`, `deleted`, `policy_epoch`, `updated_at` | `shared_skill_heads` |
+| `x 0x0a <source> 0x00 <incarnation> 0x00 <pack> 0x00 <name> 0x00 <revision>` | revision record: `metadata`, `files`, `deleted`, `policy_epoch`, `request_id`, `created_at` | `shared_skill_revisions` |
+| `x 0x0b <kind> 0x00 <lease id> 0x00 <source> 0x00 <incarnation> 0x00 <pack> 0x00 <name> 0x00 <revision>` | lease record: `principal_kind`, `principal_id`, `expires_at` | `shared_skill_revision_leases` |
 
 Installation ids and tokens are stored as Postgres prints a `uuid` (lowercase, 8-4-4-4-12). Input follows Postgres
 `uuid_in`; anything else refuses `invalid_argument` with Postgres' `invalid input syntax for type uuid` message, which
@@ -37,10 +44,17 @@ when the store seeds the brain; a brain created before this family mints it on t
 | `issueSharedSkillDeliveryBatch({ installationId, epoch, issuedSequence, viewToken, authorityDigest, revisions, token, retainedBatches })` | `{ batch, created, issuedSequence }` | the six statements of `issueSharedSkillDeliveryBatch`, in their order |
 | `readSharedSkillDeliveryBatch(token, installationId, epoch)` | the batch or null: this member's, this epoch's, issued within 24 hours | the `SELECT ... FOR UPDATE` |
 | `acknowledgeSharedSkillDeliveryBatch({ token, evidence, installationId, advance })` | null | the batch evidence `UPDATE` and, with `advance`, `acknowledged_sequence=GREATEST(...)`, `acknowledged_view` |
+| `writeSharedSkillPolicy({ sourceId, incarnation, epoch, policy, principalKind, principalId, previousEpoch })` | null | the policy upsert and the audit insert of `set_skill_policy`, in one write |
+| `readSharedSkillPolicyRow(sourceId, incarnation)` | `{ epoch, policy }` or null | `readSharedSkillPolicyRow` (one write at a time, so no row lock) |
+| `writeSharedSkillRevision({ sourceId, incarnation, packId, name, revision, metadata, files, deleted, policyEpoch, requestId })` | null; fixtures only | the revision insert and the head upsert of a publication |
+| `readSharedSkillRevision({ sourceId, incarnation, packId, name, revision })` | the revision (not deleted) or null | `readSharedSkillRevision` |
+| `listSharedSkillCatalogHeads({ sourceIds, limit, sourceId, sourceIncarnation, packId, name, hidePrivate })` | heads not deleted of live sources at their incarnation, each with `current_policy` and `current_epoch` (null without a policy), in key byte order, at most `limit` | `listSharedSkillCatalogHeads`; Postgres orders by collation, which agrees for lowercase ids |
 | `listSharedSkillFollowSources(allowed, sourceIds)` | `[{ id, incarnation }]`: sources not archived, in both lists (null matches every source), by id in byte order, at most 65 | `listSharedSkillFollowSources` |
 
-Each write is one `Store::write`. An issue that refuses leaves nothing behind, the prune of old batches included. On
-Postgres outside a transaction the prune is its own statement and stays.
+Each write is one `Store::write`. A new batch leases each revision it names for 24 hours, as the Postgres
+delivery-lease trigger does (`expires_at` keeps the later of the old and the new expiry). An issue that refuses leaves
+nothing behind, the prune of old batches included. On Postgres outside a transaction the prune is its own statement
+and stays.
 
 ## Refusals
 
@@ -49,7 +63,8 @@ Postgres outside a transaction the prune is its own statement and stays.
 | a second installation for one principal and adapter | `shared_skill_members_principal_kind_principal_id_adapter_key` | code `23505` |
 | a batch for an installation with no member | `shared_skill_delivery_batches_installation_id_fkey` | code `23503` |
 | a batch sequence or token already present | `shared_skill_delivery_batches_installation_id_epoch_sequence_key`, `shared_skill_delivery_batches_pkey` | code `23505` |
-| a batch that names a revision (the store retains none) | `shared_skill_delivery_lease`, message `revision_unavailable: delivery revision is no longer retained` | code `23503`, as the Postgres delivery-lease trigger |
+| a duplicate revision | `shared_skill_revisions_pkey` | code `23505` |
+| a batch that names a revision the store does not retain | `shared_skill_delivery_lease`, message `revision_unavailable: delivery revision is no longer retained` | code `23503`, as the Postgres delivery-lease trigger |
 
 Tests: `rust/crates/gbrain-store/tests/shared_skill_members.rs` (including
 `delivery_batch_outside_the_replay_window_is_unread_and_pruned`, the Rust proof of the parity case that needs raw SQL to

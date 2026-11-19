@@ -15,8 +15,9 @@
 //! default builds it. A fresh brain gets it in `seed`; a brain created before this family mints it
 //! on the first read, in one write.
 //!
-//! The store keeps no shared-skill revisions, so a batch that names a revision is refused as the
-//! Postgres delivery-lease trigger refuses one it cannot find (`revision_unavailable`).
+//! A new batch leases each revision it names as the Postgres delivery-lease trigger does
+//! (shared_skill_catalog.rs); a revision the store does not retain refuses the whole issue with
+//! `revision_unavailable`, so the prune before it rolls back too.
 //!
 //! Each method is one `Store::write` or one read, so a multi-statement write of the SQL engines
 //! (`issueSharedSkillDeliveryBatch`, `acknowledgeSharedSkillDeliveryBatch`) commits together or
@@ -157,7 +158,7 @@ pub struct SharedSkillBatchAcknowledge {
     pub advance: Option<SharedSkillAdvance>,
 }
 
-fn refused(constraint: &str, message: String) -> StoreError {
+pub(crate) fn refused(constraint: &str, message: String) -> StoreError {
     StoreError::new(
         CONSTRAINT_VIOLATION,
         format!("{message} (constraint {constraint})"),
@@ -167,7 +168,7 @@ fn refused(constraint: &str, message: String) -> StoreError {
 /// A UUID column value in the form Postgres stores and prints: lowercase, hyphenated 8-4-4-4-12.
 /// Input follows Postgres `uuid_in`: 32 hex digits, a hyphen allowed after any group of four.
 /// Anything else is the `invalid input syntax for type uuid` Postgres raises.
-fn uuid(text: &str) -> Result<String> {
+pub(crate) fn uuid(text: &str) -> Result<String> {
     let mut hex = String::with_capacity(32);
     let mut after_hyphen = false;
     let mut valid = true;
@@ -199,7 +200,7 @@ fn uuid(text: &str) -> Result<String> {
 }
 
 /// `now()` of the write transaction.
-fn now(store: &Store) -> i64 {
+pub(crate) fn now(store: &Store) -> i64 {
     transaction_clock::transaction_now().unwrap_or_else(|| store.env.now_micros())
 }
 
@@ -509,13 +510,14 @@ impl Store {
                         ),
                     ));
                 }
-                // The delivery-lease trigger finds no retained revision: the store keeps none.
-                if !spec.revisions.is_empty() {
-                    return Err(refused(
-                        "shared_skill_delivery_lease",
-                        "revision_unavailable: delivery revision is no longer retained".to_string(),
-                    ));
-                }
+                // The delivery-lease trigger: every named revision is retained, and leased.
+                crate::shared_skill_catalog::lease_delivery_revisions(
+                    tx,
+                    self.brain_id(),
+                    &spec.revisions,
+                    now_us,
+                    now_us,
+                )?;
                 let batch = BatchRecord {
                     token: token.clone(),
                     installation_id: id.clone(),

@@ -28,6 +28,7 @@ mod page_projection;
 pub mod pages;
 pub mod redb_kv;
 pub mod search;
+pub mod shared_skill_catalog;
 pub mod shared_skill_members;
 pub mod sources;
 #[cfg(test)]
