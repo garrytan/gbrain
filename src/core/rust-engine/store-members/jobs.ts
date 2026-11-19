@@ -51,7 +51,7 @@ function admitError(error: unknown, spec: AdmitJobSpec): unknown {
  * The store runs the whole admission in one write and decides coalesce or release itself (same authority: coalesce a
  * live row, release a dead or cancelled one). A row held under another authority comes back as `conflict`, and the
  * caller's `decide` then throws the refusal PGLite throws. A delegated client's lock runs on the delegated policy handle
- * (../delegated-policy-handle.ts), where its grant read refuses; past it the admission still refuses before anything is
+ * (../delegated-policy-handle.ts), where the grant read goes through readOauthClient; past it the admission still refuses before anything is
  * written, because the lock, the capacity count and the insert would be separate store calls.
  */
 export const admitJob: StoreMember<[spec: AdmitJobSpec, policy: AdmitJobPolicy], AdmitJobResult> = async (brain, spec, policy) => {
@@ -115,6 +115,12 @@ export * from './jobs-wake.ts';
 export * from './jobs-insight.ts';
 // Group C: the spend reservations and the lease-pressure log (engine-sql/jobs-spend.ts).
 export * from './jobs-spend.ts';
+// The spend ledger and the client budgets (engine-sql/spend-log.ts).
+export * from './jobs-spend-log.ts';
+// The oauth_clients table (engine-sql/oauth-clients.ts).
+export * from './jobs-oauth-clients.ts';
+// The access_tokens members (engine-sql/access-tokens.ts).
+export * from './jobs-access-tokens.ts';
 // The subagent transcript and tool ledger (engine-sql/jobs-subagent.ts).
 export * from './jobs-subagent.ts';
 

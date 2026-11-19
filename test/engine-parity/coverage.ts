@@ -134,7 +134,14 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'readJobInsight',
     // group C (spend reservations and lease pressure)
     'readJobSpendTree', 'insertSpendReservation', 'expireSpendReservations', 'settleSpendReservation', 'markSpendUsageUnknown',
-    'insertLeasePressure', 'countLeasePressure', 'listRecentLeasePressure'],
+    'insertLeasePressure', 'countLeasePressure', 'listRecentLeasePressure',
+    // spend ledger and client budgets (engine-sql/spend-log.ts)
+    'reserveClientSpend', 'reserveGroupSpend', 'readGroupSpendTotals', 'settleSpendWithLog', 'insertSpendLog', 'sumClientSpendSince',
+    'readClientBudgetUsd', 'insertOauthClient', 'updateOauthClientBudget', 'readAgentClientSpend',
+    // oauth_clients rows (engine-sql/oauth-clients.ts)
+    'readOauthClient', 'listOauthClients', 'patchOauthClient',
+    // access_tokens rows (engine-sql/access-tokens.ts)
+    'insertAccessToken', 'findActiveAccessTokens', 'setAccessTokenMinTrust'],
   // minion_status: lane L5 group B, job counts and last-run reads for the status surfaces (engine-sql/jobs-status.ts)
   minion_status: ['readLastAutopilotCycles', 'countJobsByStatus', 'readWaitingQueueDepths', 'readLastCompletedJobAt', 'countTtlCancelledByName',
     'readWaitingScopeState', 'countRecentCompletedJobs', 'listRecentFailedJobErrors', 'readQueuedPageChars', 'readSourceJobCounts',

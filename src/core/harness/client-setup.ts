@@ -17,7 +17,7 @@ export const CLIENT_INSPECTION_COLUMNS = `client_id, client_name, redirect_uris,
   grant_profile, grant_revision, grant_repair_reasons`;
 
 export async function inspectOAuthClient(engine: BrainEngine, clientId: string) {
-  const [row] = await engine.executeRaw(`SELECT ${CLIENT_INSPECTION_COLUMNS} FROM oauth_clients WHERE client_id = $1`, [clientId]);
+  const row = await engine.readOauthClient(clientId) as Record<string, unknown> | null;
   if (!row) throw new GrantError('client_not_found', 'Client no longer exists; inspect the client list');
   return { client: clientMetadata(row), grant: grantFromRow(row) };
 }

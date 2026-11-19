@@ -4,11 +4,13 @@
 //! resolves plain JSON. Job rows carry timestamps as ISO strings; the shell makes them `Date`s
 //! (rust/docs/store/jobs.md).
 
+mod access_tokens;
 mod checks;
 mod health;
 mod insight;
 mod ops;
 mod spend;
+mod spend_log;
 mod status;
 mod subagent;
 mod wake;

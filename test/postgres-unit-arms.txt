@@ -124,6 +124,7 @@ test/enforced-member-writes-setting.serial.test.ts
 test/enforced-member-writes.serial.test.ts
 test/enforced-member.serial.test.ts
 test/engine-parity/access-flag.test.ts
+test/engine-parity/access-tokens.test.ts
 test/engine-parity/alias-fanout-reads.test.ts
 test/engine-parity/alias-trust.test.ts
 test/engine-parity/chunk-reads.test.ts
@@ -135,6 +136,7 @@ test/engine-parity/code-eval-salience.test.ts
 test/engine-parity/config-ingest.test.ts
 test/engine-parity/connect-gate.test.ts
 test/engine-parity/cycle-locks.test.ts
+test/engine-parity/delegated-grant.test.ts
 test/engine-parity/effect-scans.test.ts
 test/engine-parity/embedding-catalog.test.ts
 test/engine-parity/entity-anchor-reads.test.ts
@@ -169,6 +171,7 @@ test/engine-parity/link-read-options.test.ts
 test/engine-parity/link-reads.test.ts
 test/engine-parity/link-temporal.test.ts
 test/engine-parity/links.test.ts
+test/engine-parity/oauth-clients.test.ts
 test/engine-parity/open-loops.test.ts
 test/engine-parity/page-visibility.test.ts
 test/engine-parity/pages.test.ts
@@ -177,12 +180,14 @@ test/engine-parity/persistence.test.ts
 test/engine-parity/private-page-reads.test.ts
 test/engine-parity/raw-sql.test.ts
 test/engine-parity/remote-policy.test.ts
+test/engine-parity/request-tools-persist.test.ts
 test/engine-parity/restriction-flag-reads.test.ts
 test/engine-parity/retrieval-coverage.test.ts
 test/engine-parity/search-reads.test.ts
 test/engine-parity/search.test.ts
 test/engine-parity/segmented-body.test.ts
 test/engine-parity/source-resolver-reads.test.ts
+test/engine-parity/spend-log.test.ts
 test/engine-parity/stats-vectors.test.ts
 test/engine-parity/stats.test.ts
 test/engine-parity/sync-aliases.test.ts

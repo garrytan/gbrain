@@ -1643,9 +1643,14 @@ The Minion job queue, cycle locks, spend and rate leases, and wake subscriptions
     `expireSpendReservations`, `settleSpendReservation`, `markSpendUsageUnknown`, `insertLeasePressure`,
     `countLeasePressure`, `listRecentLeasePressure`) serve `describeJobs`, the hold's insert, sweep, settle and
     unknown-usage mark, and the lease-pressure audit, `jobs stats` and the `subagent_health` check
-    (`src/core/engine-sql/jobs-spend.ts`, `rust/docs/store/jobs-spend.md`). The statements that need `mcp_spend_log` or
-    `oauth_clients` (`reserve`, the capped group read, the log insert inside `settle`, `getClientDailyCapCents`) stay raw
-    and the Rust engine refuses them. `parity: test/engine-parity/jobs-spend.test.ts`.
+    (`src/core/engine-sql/jobs-spend.ts`, `rust/docs/store/jobs-spend.md`). `parity: test/engine-parity/jobs-spend.test.ts`.
+  - Spend ledger and client budgets. Ten members (`reserveClientSpend`, `reserveGroupSpend`, `readGroupSpendTotals`,
+    `settleSpendWithLog`, `insertSpendLog`, `sumClientSpendSince`, `readClientBudgetUsd`, `insertOauthClient`,
+    `updateOauthClientBudget`, `readAgentClientSpend`) serve `reserve`, `reserveGroup`, `readGroupSpend`, `settle`,
+    `getClientDailyCapCents`, `getTodaySpendCents`, `recordSpend` and the admin agent spend view
+    (`src/core/engine-sql/spend-log.ts`, `rust/docs/store/spend-log.md`). The other `oauth_clients` statements and the
+    delegated admission's `effectiveDelegation` read stay raw and the Rust engine refuses them; no `oauth_clients`
+    writer call site is switched. `parity: test/engine-parity/spend-log.test.ts`.
   - Subagent transcript and tool ledger. Seventeen members (`listSubagentMessages`, `insertSubagentMessage`, `listSubagentToolExecutions`,
     `recordSubagentToolExecutions`, `startSubagentToolExecution`, `completeSubagentToolExecution`, `failSubagentToolExecution`, the
     write-outcome, oneshot-ledger and byte-sum reads, and the dream cycle's provenance reads) serve `subagent_messages` and

@@ -10,6 +10,9 @@
 import * as jobsQueue from '../../src/core/engine-sql/jobs-queue.ts';
 import * as jobsHealth from '../../src/core/engine-sql/jobs-health.ts';
 import * as jobsStatus from '../../src/core/engine-sql/jobs-status.ts';
+import * as spendLog from '../../src/core/engine-sql/spend-log.ts';
+import * as oauthClients from '../../src/core/engine-sql/oauth-clients.ts';
+import * as accessTokens from '../../src/core/engine-sql/access-tokens.ts';
 import * as jobsSpend from '../../src/core/engine-sql/jobs-spend.ts';
 
 const MEMBERS = [
@@ -43,6 +46,18 @@ const SPEND_MEMBERS = [
   'insertLeasePressure', 'countLeasePressure', 'listRecentLeasePressure',
 ] as const satisfies ReadonlyArray<keyof typeof jobsSpend>;
 
+/** The spend ledger and the client budgets (engine-sql/spend-log.ts), added the same way. */
+const SPEND_LOG_MEMBERS = [
+  'reserveClientSpend', 'reserveGroupSpend', 'readGroupSpendTotals', 'settleSpendWithLog', 'insertSpendLog', 'sumClientSpendSince',
+  'readClientBudgetUsd', 'insertOauthClient', 'updateOauthClientBudget', 'readAgentClientSpend',
+] as const satisfies ReadonlyArray<keyof typeof spendLog>;
+
+/** The `oauth_clients` rows (engine-sql/oauth-clients.ts), added the same way. */
+const OAUTH_CLIENT_MEMBERS = ['readOauthClient', 'listOauthClients', 'patchOauthClient'] as const satisfies ReadonlyArray<keyof typeof oauthClients>;
+
+/** The `access_tokens` rows (engine-sql/access-tokens.ts), added the same way. */
+const ACCESS_TOKEN_MEMBERS = ['insertAccessToken', 'findActiveAccessTokens', 'setAccessTokenMinTrust'] as const satisfies ReadonlyArray<keyof typeof accessTokens>;
+
 /** `fake` with every queue member it lacks, each running the shared statement on `fake`. */
 export function withQueueMembers<T extends object>(fake: T): T {
   const target = fake as Record<string, unknown>;
@@ -64,6 +79,21 @@ export function withQueueMembers<T extends object>(fake: T): T {
   for (const name of SPEND_MEMBERS) {
     if (name in target) continue;
     const member = jobsSpend[name] as (tx: unknown, ...args: unknown[]) => unknown;
+    target[name] = (...args: unknown[]) => member(fake, ...args);
+  }
+  for (const name of SPEND_LOG_MEMBERS) {
+    if (name in target) continue;
+    const member = spendLog[name] as (tx: unknown, ...args: unknown[]) => unknown;
+    target[name] = (...args: unknown[]) => member(fake, ...args);
+  }
+  for (const name of OAUTH_CLIENT_MEMBERS) {
+    if (name in target) continue;
+    const member = oauthClients[name] as (tx: unknown, ...args: unknown[]) => unknown;
+    target[name] = (...args: unknown[]) => member(fake, ...args);
+  }
+  for (const name of ACCESS_TOKEN_MEMBERS) {
+    if (name in target) continue;
+    const member = accessTokens[name] as (tx: unknown, ...args: unknown[]) => unknown;
     target[name] = (...args: unknown[]) => member(fake, ...args);
   }
   return fake;
