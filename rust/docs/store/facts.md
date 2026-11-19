@@ -77,9 +77,9 @@ has no keyed-slug entity rule (an `entity_slug` with no `/`, judged at a name-ke
 `privateEntityFilterForCaller`). An anonymous caller on a brain that never named readers (`restricted` false in its
 record, the MCP stdio caller) renders the short member-access form; the member judges a fact read for it under the
 restricted rendering, the full form above, which hides the same rows on such a brain. A caller with a member identity
-there is judged the same way (`judgeWidenedFactCaller`): the identity reaches the policy only through a page's
+there is judged the same way (`judgeWidenedCaller`): the identity reaches the policy only through a page's
 readers, and no page there names readers (`test/engine-parity/unrestricted-fact-list-reads.test.ts`). The page
-families keep `judgeWidenedCaller`, which retries only the anonymous caller.
+families share the same step (`page-visibility.md`).
 
 ## Visibility widening (`facts/widen.rs`)
 
@@ -96,7 +96,7 @@ a private row the same `widen` record admits (`world_admits`):
 
 The member (`src/core/rust-engine/store-members/fact-visibility.ts`) sends the list alone when PGLite renders the
 bare list. Otherwise it sends `widen` only when the caller's text equals the rendering for a record of just its reader
-identity, private-readable grant and private-facts grant (`judgeWidenedFactCaller`), with `member` the member that
+identity, private-readable grant and private-facts grant (`judgeWidenedCaller`), with `member` the member that
 record reads as and `memberPagePolicy` its page policy. Any other caller (an audience, an attested actor whose text
 differs, folder rules, a relaxed read) refuses with `engine_capability_missing`. Covered by
 `test/engine-parity/fact-visibility-widening.test.ts`, `fact-trajectory-widening.test.ts` and

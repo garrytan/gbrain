@@ -29,12 +29,14 @@ member-access part alone (the page's readers, and the origin of a derived page):
   private-readable grant. The capability is `pages`.
 - `readWriteVisibilityProbe(sourceId, slug)` renders `readPolicyFragment('p', [], true)` (the empty identity with
   privacy, which equals the no-caller rendering) and maps it through `storePageTextPolicy`.
-- An anonymous caller (no reader identity) on a brain whose config holds no member-access restriction renders the
-  short member-access form. The page members judge it under the restricted rendering instead, and so does the probe
-  for any unrestricted caller, since its identity is always empty. The restricted rendering only adds conditions, so
-  it never shows a page the short form hides; it hides no more while no page carries `readable_by`, which the
-  store's restriction flag (`access.restrictions_present`, set on the first such write, never cleared) guarantees
-  whenever the config says unrestricted.
+- A caller on a brain whose config holds no member-access restriction renders the short member-access form, anonymous
+  or with a reader identity. The page members judge it under the restricted rendering instead (`judgeWidenedCaller`),
+  and so does the probe for any unrestricted caller, since its identity is always empty. The restricted rendering only
+  adds conditions, so it never shows a page the short form hides; it hides no more while no page carries
+  `readable_by`, which the store's restriction flag (`access.restrictions_present`, set on the first such write, never
+  cleared) guarantees whenever the config says unrestricted. A reader identity reaches the policy only through a
+  page's readers, so the same holds for a member caller
+  (`test/engine-parity/unrestricted-member-page-reads.test.ts`).
 - `readWriterSlugFence(principal)` reads a `local_cli` or `local_stdio` writer's stored grant ceiling
   (`brain.readLocalWriter`) and returns its `slugPrefixes`, or `null`. Another kind, other than an OAuth client,
   carries no fence and reads nothing. The capability is `persistence_journal`.
