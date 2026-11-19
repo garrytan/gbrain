@@ -9,6 +9,7 @@
 - Every engine now refuses a generation context, proposal or completeness whose JSON holds a number past the double range (for example `1e400`), with one clear message. Before, Postgres and PGLite stored it and read it back as `Infinity`, and a Rust brain refused it with a different error. gbrain itself never writes such a number.
 - A Rust brain now restores a fact rows generation and runs the consolidate phase's restored check and tie holds, as Postgres and PGLite do. Before, those steps sent raw SQL and stopped on a Rust brain.
 - A Rust brain now reads the before-state of the takes a takes write deletes or replaces (the take rows generation), as Postgres and PGLite do. Before, that read sent raw SQL and stopped on a Rust brain. Other steps of `gbrain extract takes` still send raw SQL.
+- A Rust brain now reads, numbers and retires the facts that conversation extraction writes to a page (the extracted facts generation), as Postgres and PGLite do. Before, those steps sent raw SQL and stopped on a Rust brain. A source prefix that holds `%`, `_` or `\` now refuses with one clear message on every engine.
 
 ### Changed
 - On Postgres, an empty `gbrain repair generations` preview (nothing to apply) taken before this upgrade, for several sources whose ids sort differently by language rules and by bytes, may refuse its apply as `preview_changed` after it. Preview again and use the new hash; the refusal says so.

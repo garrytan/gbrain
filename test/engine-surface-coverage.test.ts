@@ -159,7 +159,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'listFenceRetireCandidates', 'listFenceFactRows',
   // The fact rows adapter's before-state read and restore (engine-sql/facts.ts) and its consolidation ledger reads
   // (engine-sql/derived-generations.ts).
-  'readFactPreimages', 'restoreFactPreimage', 'readGenerationRestored', 'clearTieHeldGenerationRows',
+  'readFactPreimages', 'restoreFactPreimage', 'listFactIdsBySourcePrefix', 'expireFactRows', 'readGenerationRestored', 'clearTieHeldGenerationRows',
   // The trust decision queue (engine-sql/trust-proposals.ts).
   'insertTrustProposal', 'getTrustProposal', 'listTrustProposals', 'pendingTrustProposalsFor', 'updatePendingTrustProposalAfter',
   'transitionTrustProposal',

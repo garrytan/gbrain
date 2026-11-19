@@ -39,6 +39,16 @@ pub struct FenceTarget {
     pub incoming: String,
 }
 
+/// `listFactIdsBySourcePrefix` input: a page coordinate and the literal prefix of `source` (the TS
+/// member refuses a LIKE wildcard, so `LIKE prefix || '%'` is `starts_with`).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FactSourcePrefix {
+    pub source_id: String,
+    pub slug: String,
+    pub source_prefix: String,
+}
+
 /// What the SQL reads from the transaction: the writer's declared tier by name (`None` or empty:
 /// undeclared, read as `unknown`; a name that is no tier ranks 0, below every tier, as the rank
 /// `CASE` does) and the fact ids `gbrain repair open-facts` opens.
@@ -230,6 +240,57 @@ impl Store {
             }
         }
         Ok(out)
+    }
+
+    /// `listFactIdsBySourcePrefix({ sourceId, slug, sourcePrefix })`: the ids of the page
+    /// coordinate's facts (`source_markdown_slug`) whose `source` starts with the prefix, by id. The
+    /// extracted facts generation reads its own rows with it.
+    pub fn list_fact_ids_by_source_prefix(&self, q: &FactSourcePrefix) -> Result<Vec<u64>> {
+        no_nul(
+            "listFactIdsBySourcePrefix",
+            &[
+                ("sourceId", &q.source_id),
+                ("slug", &q.slug),
+                ("sourcePrefix", &q.source_prefix),
+            ],
+        )?;
+        let read = self.read()?;
+        Ok(page_rows(&*read, &q.source_id, &q.slug)?
+            .iter()
+            .filter(|row| row.source.starts_with(&q.source_prefix))
+            .map(|row| row.id)
+            .collect())
+    }
+
+    /// `expireFactRows(sourceId, ids)`: sets `expired_at` to now on each still-live fact of `ids` in
+    /// the source; nothing else changes. Returns how many it ended. A negative id is no fact.
+    pub fn expire_fact_rows(&self, source_id: &str, ids: &[i64]) -> Result<usize> {
+        no_nul("expireFactRows", &[("sourceId", source_id)])?;
+        let ids: std::collections::BTreeSet<u64> = ids
+            .iter()
+            .filter_map(|id| u64::try_from(*id).ok())
+            .collect();
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let now = self.env.now_micros();
+        let trust = &self.write_trust()?;
+        self.write(|tx| {
+            let mut ended = 0;
+            for id in &ids {
+                let Some(old) = read_fact(&*tx, *id)? else {
+                    continue;
+                };
+                if old.source_id != source_id || old.expired_at_us.is_some() {
+                    continue;
+                }
+                let mut new = old.clone();
+                new.expired_at_us = Some(now);
+                write_fact(tx, trust, Some(&old), &new)?;
+                ended += 1;
+            }
+            Ok(ended)
+        })
     }
 
     /// `restoreFactPreimage(sourceId, preimage)`: puts a fact's recorded before-state back. Sets

@@ -2922,6 +2922,8 @@ export class PostgresEngine implements BrainEngine {
   restoreFactPreimage(sourceId: string, preimage: Record<string, unknown>) {
     return factsImpl.restoreFactPreimage(this.executeRaw.bind(this), sourceId, preimage);
   }
+  listFactIdsBySourcePrefix(sourceId: string, slug: string, sourcePrefix: string) { return factsImpl.listFactIdsBySourcePrefix(this.executeRaw.bind(this), sourceId, slug, sourcePrefix); }
+  expireFactRows(sourceId: string, ids: readonly number[]) { return factsImpl.expireFactRows(this.executeRaw.bind(this), sourceId, ids); }
 
   async findCandidateDuplicates(
     source_id: string,

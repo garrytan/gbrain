@@ -680,6 +680,17 @@
         ],
         "flagOnScopes": []
       },
+      "expireFactRows#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "expireStaleWriteClaims#default": {
         "flagOffLanes": [
           "pool"
@@ -2453,6 +2464,17 @@
         "flagOnScopes": []
       },
       "listEnrichCandidates#sourceIds+reenrich": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listFactIdsBySourcePrefix#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -5703,6 +5725,7 @@
         "executeRaw": "none",
         "executeRawDirect": "none",
         "expireFact": "none",
+        "expireFactRows": "none",
         "expireFactsByWithdrawal": "none",
         "expireMemoryProposals": "none",
         "expireSpendReservations": "none",
@@ -5866,6 +5889,7 @@
         "listExactRescanChunks": "none",
         "listExtractionPendingPages": "none",
         "listExtractorFactsForClassification": "none",
+        "listFactIdsBySourcePrefix": "none",
         "listFactRelinkOutcomes": "none",
         "listFactWithdrawalDates": "none",
         "listFactWithdrawalKeys": "none",

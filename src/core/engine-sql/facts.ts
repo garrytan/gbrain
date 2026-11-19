@@ -986,3 +986,27 @@ export async function restoreFactPreimage(raw: EngineRawRead, sourceId: string, 
     [sourceId, p.id, p.fact, p.expired_at, p.valid_until, p.superseded_by, p.consolidated_at, p.consolidated_into, p.row_num, p.visibility]);
   return rows.length === 1;
 }
+
+/** The extracted facts generation's rows of a page (generations/adapters/extracted-facts.ts): every row of the page coordinate whose `source` starts with the writer's prefix, by id. */
+const FACT_IDS_BY_SOURCE_PREFIX_SQL = `SELECT id FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND COALESCE(source,'') LIKE $3 ORDER BY id`;
+
+/** The extracted facts generation's retire: ends the still-live rows of `ids` in the source now; nothing else changes. */
+const EXPIRE_FACT_ROWS_SQL = 'UPDATE facts SET expired_at = now() WHERE source_id=$1 AND id = ANY($2::bigint[]) AND expired_at IS NULL';
+
+/** A source prefix is matched literally, so it may not hold a LIKE wildcard or escape. */
+export function checkFactSourcePrefix(op: string, prefix: string): void {
+  if (/[%_\\]/.test(prefix)) throw new Error(`${op}: a source prefix must not hold %, _ or \\: ${JSON.stringify(prefix)}`);
+}
+
+/** The ids of the facts of the page coordinate (`source_id`, `source_markdown_slug`) whose `source` starts with `sourcePrefix`, by id. */
+export async function listFactIdsBySourcePrefix(raw: EngineRawRead, sourceId: string, slug: string, sourcePrefix: string): Promise<number[]> {
+  checkFactSourcePrefix('listFactIdsBySourcePrefix', sourcePrefix);
+  return (await raw<{ id: number }>(FACT_IDS_BY_SOURCE_PREFIX_SQL, [sourceId, slug, `${sourcePrefix}%`])).map(row => Number(row.id));
+}
+
+/** Expires the live facts of `ids` in `sourceId` now (`EXPIRE_FACT_ROWS_SQL`), in the caller's transaction. */
+export async function expireFactRows(raw: EngineRawRead, sourceId: string, ids: readonly number[]): Promise<void> {
+  checkFactIds('expireFactRows', ids);
+  if (!ids.length) return;
+  await raw(EXPIRE_FACT_ROWS_SQL, [sourceId, [...ids]]);
+}

@@ -9,7 +9,7 @@ mod memory_env;
 
 use gbrain_store::error::INVALID_ARGUMENT;
 use gbrain_store::facts::{
-    ExpireFactArgs, FactRestore, FenceContext, FenceTarget, InsertFactsArgs,
+    ExpireFactArgs, FactRestore, FactSourcePrefix, FenceContext, FenceTarget, InsertFactsArgs,
 };
 use memory_env::{Brain, brain};
 use serde_json::{Value, json};
@@ -518,4 +518,61 @@ fn fact_restore_puts_a_before_state_back_on_the_same_claim_only() {
         .read_fact_preimages("default", &[i64::try_from(ids[5]).unwrap()])
         .unwrap();
     assert_eq!(a[0]["row_num"], json!(9));
+}
+
+fn by_prefix(source: &str, slug: &str, prefix: &str) -> FactSourcePrefix {
+    FactSourcePrefix {
+        source_id: source.into(),
+        slug: slug.into(),
+        source_prefix: prefix.into(),
+    }
+}
+
+#[test]
+fn fact_ids_by_source_prefix_list_the_page_rows_whose_source_starts_so_by_id() {
+    let b = brain("fence-source-prefix");
+    let ids = page(&b);
+    let list = |source: &str, slug: &str, prefix: &str| {
+        b.list_fact_ids_by_source_prefix(&by_prefix(source, slug, prefix))
+            .unwrap()
+    };
+    // Live and struck rows alike; the other page's row is not listed.
+    assert_eq!(
+        list("default", SLUG, "cli:extract-conversation-facts"),
+        vec![ids[1], ids[2]]
+    );
+    assert_eq!(
+        list("default", SLUG, "fence"),
+        vec![ids[0], ids[3], ids[4], ids[5], ids[7]]
+    );
+    // An empty prefix is every row of the page, the empty source included.
+    assert_eq!(list("default", SLUG, ""), ids[..8].to_vec());
+    assert!(list("other", SLUG, "").is_empty());
+    assert!(list("default", "people/missing", "").is_empty());
+    let err = b
+        .list_fact_ids_by_source_prefix(&by_prefix("default", SLUG, "a\0b"))
+        .unwrap_err();
+    assert_eq!(err.code, INVALID_ARGUMENT, "{err}");
+}
+
+#[test]
+fn expire_fact_rows_ends_only_the_live_rows_of_the_source() {
+    let b = brain("fence-expire-rows");
+    let ids = page(&b);
+    let id = |i: usize| i64::try_from(ids[i]).unwrap();
+    let expired =
+        |i: usize| b.read_fact_preimages("default", &[id(i)]).unwrap()[0]["expired_at"].clone();
+    assert_eq!(b.expire_fact_rows("other", &[id(1)]).unwrap(), 0);
+    assert_eq!(expired(1), Value::Null);
+    assert_eq!(b.expire_fact_rows("default", &[]).unwrap(), 0);
+    // A repeated id, a struck row, a negative id and a missing id end nothing more.
+    let before = expired(0);
+    assert_eq!(
+        b.expire_fact_rows("default", &[id(1), id(1), id(0), -1, 1 << 40])
+            .unwrap(),
+        1
+    );
+    assert_ne!(expired(1), Value::Null);
+    assert_eq!(expired(0), before);
+    assert_eq!(expired(2), Value::Null);
 }

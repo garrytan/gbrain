@@ -107,6 +107,6 @@ export async function publishSinglePage(engine: BrainEngine, request: SinglePage
   const outcome = await publishGeneration(engine, ADAPTERS[kind], { key: { kind, sourceId, ownerKey: singlePageOwnerKey(slug) }, items: [{ key: slug, content: '', identityHash }],
     input: { pin: request.expectedRevision ?? 'absent', size: 0 }, context: { page, derivation: request.derivation }, runId: request.runId,
     ...(request.derivation ? { trust: request.derivation.trust } : {}) });
-  const [row] = await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, slug]);
+  const row = await engine.getPage(slug, { sourceId });
   return { outcome, pageId: row ? Number(row.id) : null };
 }

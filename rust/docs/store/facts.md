@@ -416,6 +416,13 @@ whose claim and visibility still match, and returns whether it did. Every argume
 casts the parameters before it reads a row, and a `superseded_by` that names no fact is the
 `facts_superseded_by_fkey` refusal.
 
+`list_fact_ids_by_source_prefix` (`engine-sql/facts.ts` `listFactIdsBySourcePrefix`, for
+`generations/adapters/extracted-facts.ts` `storedRows`) lists the ids of one page's fact rows whose `source`
+starts with a prefix, in id order, expired rows included (`COALESCE(source,'') LIKE prefix || '%'`). The
+member refuses a prefix that holds `%`, `_` or `\` on every engine, so the match is a plain prefix.
+`expire_fact_rows` (`expireFactRows`, for `retireItems`) sets `expired_at` to now on each still-live row of
+the named ids in that source; another source's row, a struck row and a missing id are left as they are.
+
 What PGLite reads from the transaction, the store takes as a `FenceContext`: the writer's tier
 (`gbrain.write_trust_tier`, undeclared reads as `unknown`, a name that is no tier ranks 0) and the
 opened ids (`gbrain.write_open_facts`). Both napi members take it from the store's write trust context

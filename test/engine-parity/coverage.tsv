@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 745/745
+# covered: 747/747
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -25,7 +25,7 @@
 # takes: 24/24
 # dream: 3/3
 # contradictions: 5/5
-# facts: 17/17
+# facts: 19/19
 # segmented_body: 16/16
 # versions: 3/3
 # stats_ingest: 5/5
@@ -74,15 +74,15 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	79	no	yes	yes	serves
+transaction	lifecycle	yes	80	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	101	yes	yes	yes	serves
+getPage	pages	yes	102	yes	yes	yes	serves
 readPageSnapshot	pages	yes	27	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	402	yes	yes	yes	serves
+putPage	pages	yes	403	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
@@ -303,9 +303,9 @@ getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
 insertFact	facts	yes	42	yes	yes	yes	serves
-insertFacts	facts	yes	51	no	yes	yes	serves
+insertFacts	facts	yes	52	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
-expireFact	facts	yes	28	no	yes	yes	serves
+expireFact	facts	yes	29	no	yes	yes	serves
 listFactsByEntity	facts	yes	19	yes	yes	yes	serves
 listFactsSince	facts	yes	11	yes	yes	yes	serves
 listFactsKeyset	facts	yes	3	no	yes	yes	serves
@@ -313,8 +313,10 @@ listFactsBySession	facts	yes	5	yes	yes	yes	serves
 listSupersessions	facts	yes	6	yes	yes	yes	serves
 countUnconsolidatedFacts	facts	yes	2	yes	yes	yes	serves
 listFenceRetireCandidates	facts	yes	3	no	yes	yes	serves
-readFactPreimages	facts	yes	2	no	yes	yes	serves
+readFactPreimages	facts	yes	3	no	yes	yes	serves
 restoreFactPreimage	facts	yes	1	no	yes	yes	serves
+listFactIdsBySourcePrefix	facts	yes	1	no	yes	yes	serves
+expireFactRows	facts	yes	1	no	yes	yes	serves
 findCandidateDuplicates	facts	yes	6	yes	yes	yes	serves
 consolidateFact	facts	yes	5	no	yes	yes	serves
 findTrajectory	facts	yes	3	yes	yes	yes	serves
@@ -638,7 +640,7 @@ listFactsForPage	facts_cycle	yes	4	no	yes	yes	serves
 countLegacyFactsPending	facts_cycle	yes	1	no	yes	yes	serves
 countUnconsolidatedFactsBySource	facts_cycle	yes	1	no	yes	yes	serves
 findBulkFactDays	facts_cycle	yes	1	no	yes	yes	serves
-maxFenceRowNum	facts_cycle	yes	1	no	yes	yes	serves
+maxFenceRowNum	facts_cycle	yes	2	no	yes	yes	serves
 listStoredFenceFactRows	facts_cycle	yes	1	no	yes	yes	serves
 countWorldFacts	facts_cycle	yes	5	no	yes	yes	serves
 countFactFingerprintLeftovers	facts_purge	yes	1	no	yes	yes	serves

@@ -338,6 +338,8 @@ export const RUST_ENGINE_MEMBERS = {
   listFenceRetireCandidates: 'facts',
   readFactPreimages: 'facts',
   restoreFactPreimage: 'facts',
+  listFactIdsBySourcePrefix: 'facts',
+  expireFactRows: 'facts',
   listFenceFactRows: 'facts',
   listHeldFenceCells: 'facts',
   findCandidateDuplicates: 'facts',

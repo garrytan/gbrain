@@ -3046,6 +3046,8 @@ export class PGLiteEngine implements BrainEngine {
   restoreFactPreimage(sourceId: string, preimage: Record<string, unknown>) {
     return factsImpl.restoreFactPreimage(this.rawRead, sourceId, preimage);
   }
+  listFactIdsBySourcePrefix(sourceId: string, slug: string, sourcePrefix: string) { return factsImpl.listFactIdsBySourcePrefix(this.rawRead, sourceId, slug, sourcePrefix); }
+  expireFactRows(sourceId: string, ids: readonly number[]) { return factsImpl.expireFactRows(this.rawRead, sourceId, ids); }
 
   async findCandidateDuplicates(
     source_id: string,

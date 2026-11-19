@@ -4,7 +4,8 @@
  * never heap order), jsonb number text as Postgres keeps it (`1.0`, `1.50`, `1.00` for `100e-2`) in the text scrub, a
  * JSON `null` held context, proposal or fence as a value (not SQL NULL), an activation id that is not a uuid, a
  * `--since` that is not an ISO instant with a zone, the fact before-states the fact rows adapter records and puts back,
- * the consolidation adapter's restored check and `tie` hold clear, and the take rows adapter's before-states.
+ * the consolidation adapter's restored check and `tie` hold clear, the take rows adapter's before-states, and the
+ * extracted facts adapter's page check, own-row read, next row number and retire.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: each case gives the same answer on PGLite, Postgres (en_US collation) and the Rust engine. Source ids
@@ -32,6 +33,7 @@ import { submissionAuthority } from '../../src/core/persistence/authority.ts';
 import { registerLocalWriter } from '../../src/core/persistence/identity.ts';
 import { admitWrite } from '../../src/core/persistence/journal.ts';
 import { takePreimages } from '../../src/core/generations/adapters/take-rows.ts';
+import { EXTRACTED_FACTS_KIND, extractedFactsAdapter } from '../../src/core/generations/adapters/extracted-facts.ts';
 import { CONSOLIDATION_KIND, clearConsolidationTies, consolidationOwnerKey, consolidationRestored, factPreimages, restoreFactRow }
   from '../../src/core/generations/adapters/fact-rows.ts';
 
@@ -409,6 +411,45 @@ describe('engine parity: generation ledger output', () => {
     expect(answers.none).toEqual({ gone: [], replaced: [] });
     expect(answers.otherPage).toBe(0);
     expect(answers.fraction).toBe('take row numbers must be whole numbers in range: 1.5');
+    return answers;
+  });
+
+  parityTest('the extracted facts adapter reads its own rows of a live page, numbers new rows after the page\'s last, and retires only its live rows', {
+    methods: ['putPage', 'insertFacts', 'expireFact', 'getPage', 'listFactIdsBySourcePrefix', 'readFactPreimages', 'transaction', 'maxFenceRowNum', 'expireFactRows'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other-extracted');
+    const slug = 'conversations/extracted-example';
+    await engine.putPage(slug, { type: 'person', title: 'e', compiled_truth: 'x', timeline: '' });
+    const key = { kind: EXTRACTED_FACTS_KIND, sourceId: 'default', ownerKey: `page:${slug}:conversation` };
+    const input = { pin: 'p', size: 1 };
+    const mk = (fact: string, source: string, extra: Record<string, unknown> = {}) => ({ fact, entity_slug: null, source, source_markdown_slug: slug,
+      kind: 'fact' as const, visibility: 'private' as const, valid_from: new Date('2026-03-01T00:00:00Z'), ...extra });
+    const { ids } = await engine.insertFacts([mk('Own live', 'cli:extract-conversation-facts', { row_num: 4 }), mk('Own gone', 'cli:extract-conversation-facts:run-1'),
+      mk('Backstop', 'backstop:extracted-facts'), mk('Fence', 'fence', { row_num: 7 }), mk('Lookalike', 'cli:extract-conversationXfacts')] as never, { source_id: 'default' });
+    await engine.insertFacts([mk('Elsewhere', 'cli:extract-conversation-facts', { row_num: 9 })] as never, { source_id: 'other-extracted' });
+    expect(await engine.expireFact(ids[1]!, { at: new Date('2026-04-01T00:00:00Z') })).toBe(true);
+    const claims = async () => (await factPreimages(engine, 'default', await engine.listFactIdsBySourcePrefix('default', slug, 'cli:extract-conversation-facts')))
+      .map(row => `${row.fact} ${row.row_num ?? '-'} ${row.expired_at === null ? 'live' : 'expired'}`);
+    const items = await extractedFactsAdapter.readItems(engine, key, []);
+    const answers: Record<string, unknown> = {
+      livePage: await extractedFactsAdapter.readInput(engine, key, { input }),
+      absentPage: await extractedFactsAdapter.readInput(engine, { ...key, ownerKey: 'page:conversations/absent-example:conversation' }, { input }),
+      items: [...items.values()].map(item => item.live).sort(),
+      own: await claims(),
+      backstop: (await engine.listFactIdsBySourcePrefix('default', slug, 'backstop:')).length,
+    };
+    await engine.transaction(tx => extractedFactsAdapter.publishItems(tx, key, [{ key: 'fact:new', identityHash: 'h',
+      content: JSON.stringify({ fact: 'Added', kind: 'fact', visibility: 'private', entity_slug: null, source: 'cli:extract-conversation-facts', valid_from: '2026-05-01T00:00:00.000Z', valid_until: null }) }], { input }));
+    answers.published = await claims();
+    await engine.transaction(tx => extractedFactsAdapter.retireItems(tx, key, [...items.keys()], 'generation-restore'));
+    answers.retired = await claims();
+    await engine.expireFactRows('other-extracted', [ids[3]!]);
+    answers.otherSource = (await factPreimages(engine, 'default', [ids[3]!]))[0]!.expired_at;
+    answers.wildcard = await outcome(() => engine.listFactIdsBySourcePrefix('default', slug, 'cli:%'), /a source prefix must not hold %, _ or \\: "cli:%"/);
+    answers.fraction = await outcome(() => engine.expireFactRows('default', [1.5]), /fact ids must be whole numbers: 1\.5/);
+    expect(answers).toEqual({ livePage: input, absentPage: null, items: [false, true], own: ['Own live 4 live', 'Own gone - expired'], backstop: 1,
+      published: ['Own live 4 live', 'Own gone - expired', 'Added 8 live'], retired: ['Own live 4 expired', 'Own gone - expired', 'Added 8 live'],
+      otherSource: null, wildcard: 'a source prefix must not hold %, _ or \\: "cli:%"', fraction: 'fact ids must be whole numbers: 1.5' });
     return answers;
   });
 });
