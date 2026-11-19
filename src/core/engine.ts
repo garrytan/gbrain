@@ -21,6 +21,7 @@ import type * as ProjectionBacklogSql from './engine-sql/projection-backlog.ts';
 import type * as DoctorAccSql from './engine-sql/doctor-acc.ts';
 import type * as DoctorCheckpointsSql from './engine-sql/doctor-checkpoints.ts';
 import type * as DoctorSourcesSql from './engine-sql/doctor-sources.ts';
+import type * as DoctorTerminalSql from './engine-sql/doctor-terminal.ts';
 import type * as DoctorBrainSql from './engine-sql/doctor-brain.ts';
 import type * as DoctorSyncSql from './engine-sql/doctor-sync.ts';
 import type { FactRelinkAttempt, FactRelinkOutcome, FactRelinkUpsertOpts } from './engine-sql/fact-relink-attempts.ts';
@@ -4483,6 +4484,15 @@ export interface BrainEngine {
   readLatestConnectorReceipt(): Promise<string | null>;
   /** The `facts:absorb` ingest rows of the last 24 hours grouped by source and reason, by source then count. */
   listFactsAbsorbFailureGroups(): Promise<DoctorCheckpointsSql.FactsAbsorbFailureGroup[]>;
+  // Doctor terminal reads: the grouped terminal write failure aggregate, its drill-down batch and the open-pass blocker statements doctor ran through executeRaw
+  /** The terminal receipts of the window and every receipt holding a recovery record, grouped on the columns the classifier reads, with the per-source totals row (`opts` bounds the statement on Postgres). */
+  readTerminalFailureGroups(query: DoctorTerminalSql.TerminalGroupsQuery, opts?: DoctorTerminalSql.TerminalReadOpts): Promise<DoctorTerminalSql.TerminalGroupRow[]>;
+  /** One source's terminal receipts and recovery holders, newest first by sequence, each with the later request that made it moot. */
+  listTerminalFailureBatch(query: DoctorTerminalSql.TerminalBatchQuery, opts?: DoctorTerminalSql.TerminalReadOpts): Promise<DoctorTerminalSql.TerminalBatchRow[]>;
+  /** Non-archived sources whose open pass has its managed-sync checkpoint request pending, with the worktree and checkpoint request. */
+  listOpenPassCheckpointBlockers(passOp: string, sourceIds: readonly string[] | null): Promise<DoctorTerminalSql.OpenPassCheckpoint[]>;
+  /** The recovery rows and pending sync page or checkpoint requests of a worktree that block its pass checkpoint, other than the checkpoint itself. */
+  listWorktreeBlockerRequests(worktreeId: string, checkpoint: string): Promise<DoctorTerminalSql.WorktreeBlockerRequest[]>;
   // Doctor brain reads: the page, tag, fact, source and checkpoint statements the storage, archive, backup, git-hold and connector checks ran through executeRaw
   /** Live stored-object pages outside the shelf that no adoption tag marks, per source (the storage_manifest check's interim count). */
   listInterimStoredObjectCounts(type: string, shelfSourceId: string, prefix: string, adoptedTag: string): Promise<DoctorBrainSql.InterimStoredObjectCount[]>;

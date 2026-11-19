@@ -188,6 +188,7 @@ import type { AtomBacklogQuery } from './engine-sql/atom-backlog.ts';
 import * as projectionBacklogImpl from './engine-sql/projection-backlog.ts';
 import * as doctorAccImpl from './engine-sql/doctor-acc.ts';
 import * as doctorCheckpointsImpl from './engine-sql/doctor-checkpoints.ts';
+import * as doctorTerminalImpl from './engine-sql/doctor-terminal.ts';
 import * as doctorBrainImpl from './engine-sql/doctor-brain.ts';
 import * as doctorSyncImpl from './engine-sql/doctor-sync.ts';
 import * as doctorSourcesImpl from './engine-sql/doctor-sources.ts';
@@ -1336,6 +1337,10 @@ export class PostgresEngine implements BrainEngine {
   readSyncAdmissionSettingRow(key: string, op: string, fingerprint: string) { return doctorCheckpointsImpl.readSyncAdmissionSettingRow(this.executeRaw.bind(this), key, op, fingerprint); }
   readLatestConnectorReceipt() { return doctorCheckpointsImpl.readLatestConnectorReceipt(this.executeRaw.bind(this)); }
   listFactsAbsorbFailureGroups() { return doctorCheckpointsImpl.listFactsAbsorbFailureGroups(this.executeRaw.bind(this)); }
+  readTerminalFailureGroups(query: doctorTerminalImpl.TerminalGroupsQuery, opts?: doctorTerminalImpl.TerminalReadOpts) { return doctorTerminalImpl.readTerminalFailureGroups(this.executeRaw.bind(this), query, opts); }
+  listTerminalFailureBatch(query: doctorTerminalImpl.TerminalBatchQuery, opts?: doctorTerminalImpl.TerminalReadOpts) { return doctorTerminalImpl.listTerminalFailureBatch(this.executeRaw.bind(this), query, opts); }
+  listOpenPassCheckpointBlockers(passOp: string, sourceIds: readonly string[] | null) { return doctorTerminalImpl.listOpenPassCheckpointBlockers(this.executeRaw.bind(this), passOp, sourceIds); }
+  listWorktreeBlockerRequests(worktreeId: string, checkpoint: string) { return doctorTerminalImpl.listWorktreeBlockerRequests(this.executeRaw.bind(this), worktreeId, checkpoint); }
   listInterimStoredObjectCounts(type: string, shelfSourceId: string, prefix: string, adoptedTag: string) { return doctorBrainImpl.listInterimStoredObjectCounts(this.executeRaw.bind(this), type, shelfSourceId, prefix, adoptedTag); }
   readOldestSourceCreatedAt() { return doctorBrainImpl.readOldestSourceCreatedAt(this.executeRaw.bind(this)); }
   readBrainMaturity() { return doctorBrainImpl.readBrainMaturity(this.executeRaw.bind(this)); }

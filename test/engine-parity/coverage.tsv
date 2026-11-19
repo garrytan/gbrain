@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 826/826
+# covered: 830/830
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -51,6 +51,7 @@
 # doctor_checkpoints: 18/18
 # doctor_sync: 3/3
 # doctor_brain: 8/8
+# doctor_terminal: 4/4
 # doctor_sources: 6/6
 # fact_relink_attempts: 3/3
 # fact_relink_writes: 3/3
@@ -377,12 +378,12 @@ countOutstandingBySource	persistence_journal	yes	2	no	yes	yes	serves
 ownsSchemaTables	persistence_journal	yes	1	no	yes	yes	serves
 readCounterRows	persistence_journal	yes	2	no	yes	yes	serves
 readAdmissionRate	persistence_journal	yes	2	no	yes	yes	serves
-lockPersistenceCounters	persistence_journal	yes	20	no	yes	yes	serves
-insertWriteRequest	persistence_journal	yes	20	no	yes	yes	serves
+lockPersistenceCounters	persistence_journal	yes	21	no	yes	yes	serves
+insertWriteRequest	persistence_journal	yes	21	no	yes	yes	serves
 stampWriteClaim	persistence_journal	yes	14	no	yes	yes	serves
 lockWriteRequest	persistence_journal	yes	2	no	yes	yes	serves
-completeWriteRow	persistence_journal	yes	13	no	yes	yes	serves
-readSourceMembership	persistence_journal	yes	21	no	yes	yes	serves
+completeWriteRow	persistence_journal	yes	14	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	22	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	2	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	2	no	yes	yes	serves
 insertTopologyChange	persistence_journal	yes	4	no	yes	yes	serves
@@ -710,6 +711,10 @@ countVisibilityNoncanonicalHolds	doctor_brain	yes	1	no	yes	yes	serves
 listContentBlockedReceipts	doctor_brain	yes	1	no	yes	yes	serves
 listPassAdmittedReceipts	doctor_brain	yes	1	no	yes	yes	serves
 listOrphanConnectorCheckpoints	doctor_brain	yes	1	no	yes	yes	serves
+readTerminalFailureGroups	doctor_terminal	yes	2	no	yes	yes	serves
+listTerminalFailureBatch	doctor_terminal	yes	2	no	yes	yes	serves
+listOpenPassCheckpointBlockers	doctor_terminal	yes	1	no	yes	yes	serves
+listWorktreeBlockerRequests	doctor_terminal	yes	1	no	yes	yes	serves
 readDoctorSources	doctor_sources	yes	1	no	yes	yes	serves
 listGuestSourceRows	doctor_sources	yes	1	no	yes	yes	serves
 listCheckoutRoots	doctor_sources	yes	1	no	yes	yes	serves

@@ -504,6 +504,11 @@ export const RUST_ENGINE_MEMBERS = {
   readSyncAdmissionSettingRow: 'config',
   readLatestConnectorReceipt: 'ingest_log',
   listFactsAbsorbFailureGroups: 'ingest_log',
+  // Doctor terminal reads: the grouped terminal write failure aggregate, its drill-down batch and the open-pass blocker statements doctor ran through executeRaw
+  readTerminalFailureGroups: 'persistence_journal',
+  listTerminalFailureBatch: 'persistence_journal',
+  listOpenPassCheckpointBlockers: 'persistence_journal',
+  listWorktreeBlockerRequests: 'persistence_journal',
   // Doctor brain reads: the page, tag, fact, source and checkpoint statements the storage, archive, backup, git-hold and connector checks ran through executeRaw
   listInterimStoredObjectCounts: 'health',
   readOldestSourceCreatedAt: 'sources',
