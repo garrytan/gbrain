@@ -50,7 +50,7 @@ mod effect_scans;
 mod effects;
 mod housekeeping;
 mod owner_scans;
-mod projection_queue;
+pub(crate) mod projection_queue;
 mod topology;
 mod writer_versions;
 pub use effects::{PublicationEffectsSpec, QueuedEffect};

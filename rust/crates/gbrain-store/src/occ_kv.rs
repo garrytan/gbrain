@@ -42,7 +42,7 @@
 
 use crate::error::{Result, STORE_CLOSED, STORE_CORRUPT, StoreError, WRITE_CONFLICT};
 use crate::kv::{Kv, KvRead, KvWrite};
-use crate::redb_kv::RedbKv;
+use crate::redb_kv::{RedbKv, reject_reserved};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::Bound;
@@ -788,15 +788,6 @@ impl OccTxn {
         }
         Ok(())
     }
-}
-
-fn reject_reserved(key: &[u8]) -> Result<()> {
-    if key.first() == Some(&0) {
-        return Err(StoreError::invalid(
-            "keys starting with byte 0 are reserved",
-        ));
-    }
-    Ok(())
 }
 
 impl KvRead for OccTxn {

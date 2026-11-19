@@ -390,7 +390,8 @@ pub(crate) struct StoredFormat {
 /// schema version config (`getConfig('version')`) and the `default` source.
 /// Upgrades a brain in an older format to `FORMAT_VERSION` in one write transaction, so a crash
 /// leaves either the old brain or the new one. Format 1 to 2 folds the JSON counter records into
-/// the per-counter records (`format.rs`). The format record is re-read inside the transaction:
+/// the per-counter records; 2 to 3 rewrites the projection jobs in their compact form
+/// (`format.rs`). The format record is re-read inside the transaction:
 /// another handle on the same records may have upgraded the brain first.
 fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     let mut tx = kv.begin_write_exclusive()?;
@@ -403,6 +404,9 @@ fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     if stored.format_version == 1 {
         chunks::fold_format_1_stats(&mut *tx)?;
         journal::fold_format_1_counters(&mut *tx)?;
+    }
+    if stored.format_version <= 2 {
+        persistence::projection_queue::compact_format_2_jobs(&mut *tx)?;
     }
     stored.format_version = FORMAT_VERSION;
     put_json(&mut *tx, &keys::meta("format"), &stored)?;

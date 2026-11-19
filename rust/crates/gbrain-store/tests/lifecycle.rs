@@ -369,3 +369,155 @@ fn an_older_build_refuses_a_brain_in_the_new_format() {
     assert_eq!(gbrain_store::FORMAT_VERSIONS.first(), Some(&1));
     assert_eq!(gbrain_store::FORMAT_VERSIONS.last(), Some(&FORMAT_VERSION));
 }
+
+/// Rewrites a closed brain the way store format 2 kept it: JSON projection jobs, the commit
+/// sequence at `\0seq`, and format 2 in both format records.
+fn downgrade_to_format_2(brain: &std::path::Path) {
+    use gbrain_store::keys;
+    use redb::ReadableTable;
+    let table: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new("kv");
+    let db = redb::Database::create(brain.join("records.redb")).unwrap();
+    let tx = db.begin_write().unwrap();
+    {
+        let mut t = tx.open_table(table).unwrap();
+        let seq = t
+            .remove(b"M\0seq".as_slice())
+            .unwrap()
+            .unwrap()
+            .value()
+            .to_vec();
+        t.insert(b"\0seq".as_slice(), seq.as_slice()).unwrap();
+        let jobs: Vec<(Vec<u8>, Vec<u8>)> = t
+            .range(b"d\x04".as_slice()..b"d\x05".as_slice())
+            .unwrap()
+            .map(|item| {
+                let (k, v) = item.unwrap();
+                (k.value().to_vec(), v.value().to_vec())
+            })
+            .collect();
+        assert!(!jobs.is_empty());
+        for (key, value) in jobs {
+            // A trigger job: the compact tag, flags "UUID revision, canonical reason", the time,
+            // the 16 UUID bytes.
+            assert_eq!((value.len(), value[0], value[1]), (26, 1, 3));
+            let stamp = i64::from_be_bytes(value[2..10].try_into().unwrap());
+            let hex: String = value[10..].iter().map(|b| format!("{b:02x}")).collect();
+            let revision = format!(
+                "{}-{}-{}-{}-{}",
+                &hex[..8],
+                &hex[8..12],
+                &hex[12..16],
+                &hex[16..20],
+                &hex[20..]
+            );
+            let json = serde_json::json!({
+                "revision": revision, "reason": "canonical_change", "updated_at_us": stamp,
+            });
+            t.insert(
+                key.as_slice(),
+                serde_json::to_vec(&json).unwrap().as_slice(),
+            )
+            .unwrap();
+        }
+        let format_key = keys::meta("format");
+        let mut format: serde_json::Value =
+            serde_json::from_slice(t.get(format_key.as_slice()).unwrap().unwrap().value()).unwrap();
+        format["format_version"] = 2.into();
+        t.insert(
+            format_key.as_slice(),
+            serde_json::to_vec(&format).unwrap().as_slice(),
+        )
+        .unwrap();
+    }
+    tx.commit().unwrap();
+    let path = brain.join("FORMAT");
+    let mut file: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    file["format_version"] = 2.into();
+    std::fs::write(&path, serde_json::to_vec_pretty(&file).unwrap()).unwrap();
+}
+
+/// The projection window with its read-time high-water mark left out.
+fn window(store: &Store) -> Vec<serde_json::Value> {
+    let cursor: gbrain_store::persistence::ProjectionWindowCursor =
+        serde_json::from_value(serde_json::json!({
+            "after": {"source_incarnation": "00000000-0000-0000-0000-000000000000", "slug": ""},
+        }))
+        .unwrap();
+    let mut rows = store.select_projection_window_jobs(&cursor, false).unwrap();
+    for row in &mut rows {
+        row.as_object_mut().unwrap().remove("high_water");
+    }
+    rows
+}
+
+#[test]
+fn a_format_2_brain_keeps_its_projection_jobs_and_commit_sequence_through_the_upgrade() {
+    use gbrain_store::pages::{PageInput, PutPageOptions};
+    let dir = TempDir::new("format-2-upgrade");
+    let brain = dir.path().join("brain");
+    let (jobs, version) = {
+        let store = open(&dir);
+        for i in 0..3 {
+            let page: PageInput = serde_json::from_value(serde_json::json!({
+                "type": "note", "title": format!("p{i}"), "compiled_truth": format!("body {i}"),
+            }))
+            .unwrap();
+            // Not indexed, so each page keeps its projection job.
+            let options = PutPageOptions {
+                index: Some(false),
+                ..PutPageOptions::default()
+            };
+            store
+                .put_page(&format!("notes/p{i}"), &page, &options)
+                .unwrap();
+        }
+        let answer = (window(&store), store.commit_version().unwrap());
+        store.close();
+        answer
+    };
+    assert_eq!(
+        jobs.len(),
+        6,
+        "three recent rows and three window rows: {jobs:?}"
+    );
+    downgrade_to_format_2(&brain);
+
+    let store = open(&dir);
+    assert_eq!(store.info().format_version, FORMAT_VERSION);
+    const { assert!(FORMAT_VERSION > 2, "the compact jobs need a format after 2") };
+    // The sequence carries over from `\0seq`; the upgrade is one more counted commit.
+    assert_eq!(store.commit_version().unwrap(), version + 1);
+    assert_eq!(window(&store), jobs);
+    store.close();
+    let db = redb::Database::create(brain.join("records.redb")).unwrap();
+    let table: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new("kv");
+    let read = redb::ReadableDatabase::begin_read(&db).unwrap();
+    let t = read.open_table(table).unwrap();
+    assert!(t.get(b"\0seq".as_slice()).unwrap().is_none());
+    assert!(t.get(b"M\0seq".as_slice()).unwrap().is_some());
+    for item in t.range(b"d\x04".as_slice()..b"d\x05".as_slice()).unwrap() {
+        assert_eq!(
+            item.unwrap().1.value().len(),
+            26,
+            "every job is rewritten compact"
+        );
+    }
+}
+
+#[test]
+fn the_commit_sequence_key_is_reserved_and_hidden_from_scans() {
+    let dir = TempDir::new("seq-reserved");
+    let kv = RedbKv::open_path(&dir.path().join("records.redb")).unwrap();
+    let mut tx = kv.begin_write().unwrap();
+    assert!(tx.put(b"M\0seq", b"x").is_err());
+    tx.put(b"Ma", b"1").unwrap();
+    tx.commit().unwrap();
+    let mut tx = kv.begin_write().unwrap();
+    tx.put(b"Mb", b"2").unwrap();
+    tx.commit().unwrap();
+    assert_eq!(kv.version().unwrap(), 2);
+    let all = collect_prefix(&*kv.snapshot().unwrap(), b"M", false, usize::MAX).unwrap();
+    let keys: Vec<&[u8]> = all.iter().map(|(k, _)| k.as_slice()).collect();
+    assert_eq!(keys, vec![b"Ma".as_slice(), b"Mb".as_slice()]);
+}
