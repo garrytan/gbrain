@@ -59,7 +59,10 @@ const GREP_EXAMPLE = { slug: 'notes/acme-example-log', grep: 'widget', context: 
 
 /** The slice a get_page call asks for, or undefined; throws invalid_params on a malformed value or a conflicting param. */
 export function parseSliceRequest(ctx: Pick<OperationContext, 'remote' | 'transport'>, p: Record<string, unknown>): SliceRequest | undefined {
-  const bad = (param: string, message: string, example: unknown) => invalidParam(ctx, 'get_page', param, message, { example });
+  // invalidParam renders `get_page {"<param>": <example>}`, so the example is the one param's value, never a whole call.
+  const bad = (param: string, message: string, example: Record<string, unknown>) => invalidParam(ctx, 'get_page', param, message, {
+    example: param in example ? example[param] : param === 'body' ? 'auto' : param === 'view' ? 'read' : example.grep ?? example.section,
+  });
   if (p.section === undefined && p.grep === undefined) {
     if (p.context !== undefined) throw bad('context', 'get_page: context applies to grep; pass grep with it.', GREP_EXAMPLE);
     return undefined;
