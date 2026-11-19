@@ -90,6 +90,8 @@ interface Reads {
   get: string; mcpGet: string;
   /** The engine reads those surfaces sit on: getPage, readPageSnapshot, listPages (all columns), getVersions. */
   getPage: string; snapshot: string; listPages: string; version: string;
+  /** What createVersion and putPage answer with, read from the write itself. */
+  created: string; put: string;
   exported: string; fact: string; timeline: string; take: string;
 }
 
@@ -122,8 +124,8 @@ async function readBrain(backend: Backend): Promise<Reads> {
     const mcp = mcpJson(await dispatchToolCall(engine, 'get_page', { slug: SLUG }, { remote: false }) as never);
     const mcpGet = order(mcp.refused ? { refused: mcp.refused } : mcp.frontmatter);
     // A version of the page, then a second write, so getVersions has a row holding the frontmatter.
-    await engine.createVersion(SLUG);
-    await engine.putPage(SLUG, { type: 'note', title: 'Order probe', compiled_truth: 'Key order probe, edited.', frontmatter: JSON.parse(FRONTMATTER) });
+    const created = order((await engine.createVersion(SLUG)).frontmatter);
+    const put = order((await engine.putPage(SLUG, { type: 'note', title: 'Order probe', compiled_truth: 'Key order probe, edited.', frontmatter: JSON.parse(FRONTMATTER) })).frontmatter);
     const getPage = order((await engine.getPage(SLUG))!.frontmatter);
     const snapshot = order((await engine.readPageSnapshot(SLUG))!.page.frontmatter);
     const listPages = order((await engine.listPages({ limit: 10 })).find(p => p.slug === SLUG)!.frontmatter);
@@ -143,7 +145,7 @@ async function readBrain(backend: Backend): Promise<Reads> {
     takeId = Number((await engine.listTakes({}))[0]!.id);
     const timeline = await orRefusal(async () => (await engine.readRowTrustRows({ table: 'timeline_entries', ids: [timelineId] }))[0]?.write_origin);
     const take = await orRefusal(async () => (await engine.readRowTrustRows({ table: 'takes', ids: [takeId] }))[0]?.write_origin);
-    return { get, mcpGet, getPage, snapshot, listPages, version, exported, fact: order(fact.write_origin), timeline, take };
+    return { get, mcpGet, getPage, snapshot, listPages, version, created, put, exported, fact: order(fact.write_origin), timeline, take };
   });
 }
 
@@ -166,13 +168,15 @@ describe.skipIf(!HAVE_ADDON)('a Rust brain returns jsonb keys in jsonb order', (
   afterAll(() => { if (root) rmSync(root, { recursive: true, force: true }); });
 
   test('PGLite gives every jsonb value in jsonb order (the reference)', () => {
-    for (const fm of [pglite.get, pglite.mcpGet, pglite.getPage, pglite.snapshot, pglite.listPages, pglite.version]) expect(fm).toBe(PAGE_ORDER);
+    for (const fm of [pglite.get, pglite.mcpGet, pglite.getPage, pglite.snapshot, pglite.listPages, pglite.version, pglite.created, pglite.put]) expect(fm).toBe(PAGE_ORDER);
     for (const origin of [pglite.fact, pglite.timeline, pglite.take]) expect(origin).toBe(ORIGIN_ORDER);
   });
   test('getPage gives the frontmatter keys in jsonb order', () => { expect(rust.getPage).toBe(pglite.getPage); });
   test('readPageSnapshot gives the frontmatter keys in jsonb order', () => { expect(rust.snapshot).toBe(pglite.snapshot); });
   test('listPages gives the frontmatter keys in jsonb order', () => { expect(rust.listPages).toBe(pglite.listPages); });
   test('a page version gives the frontmatter keys in jsonb order', () => { expect(rust.version).toBe(pglite.version); });
+  test('createVersion answers with the frontmatter keys in jsonb order', () => { expect(rust.created).toBe(pglite.created); });
+  test('putPage answers with the frontmatter keys in jsonb order', () => { expect(rust.put).toBe(pglite.put); });
   // CLI get and MCP get_page read through readPageSnapshot with resolveAlias, which the Rust engine refuses today.
   test('CLI get --json refuses on Rust, or gives the frontmatter keys in jsonb order', () => { expectRefusedOrExact(rust.get, pglite.get); });
   test('MCP get_page refuses on Rust, or gives the frontmatter keys in jsonb order', () => { expectRefusedOrExact(rust.mcpGet, pglite.mcpGet); });
