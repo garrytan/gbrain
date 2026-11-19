@@ -647,3 +647,405 @@ fn the_checker_catches_lost_updates_phantoms_and_lost_commits() {
     };
     assert!(check_ids(&h).is_err());
 }
+
+/// Research only (the storage bake-off): the same checks on fjall, built only with the
+/// off-by-default `fjall` feature. fjall does its own file I/O, so the simulated disk cannot
+/// stand under it: there is no torn-write, dropped-cache or failed-fsync run here. In their
+/// place the kill runs stop a real child process with SIGKILL while its writers commit, then
+/// reopen the database. That tests recovery from a process crash (the page cache survives), not
+/// from a power loss.
+#[cfg(feature = "fjall")]
+mod fjall_research {
+    use super::*;
+    use gbrain_store::fjall_kv::FjallKv;
+    use std::collections::HashMap;
+    use std::io::{BufRead, Write as _};
+    use std::path::{Path, PathBuf};
+    use std::process::{Command, Stdio};
+    use std::time::Duration;
+
+    const CHILD_DIR: &str = "GBRAIN_FJALL_KILL_DIR";
+    const CHILD_WRITERS: &str = "GBRAIN_FJALL_KILL_WRITERS";
+
+    fn scratch(label: &str) -> PathBuf {
+        let n = SimRng::new(std::process::id() as u64 ^ label.len() as u64).next_u64();
+        let dir = std::env::temp_dir().join(format!(
+            "gbrain-fjall-research-{label}-{}-{n:x}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    fn open_fjall(dir: &Path) -> Result<OccKv, StoreError> {
+        OccKv::new_fjall(FjallKv::open_dir(dir)?)
+    }
+
+    /// The honest sweep of the redb test, on fjall: the full history replay must hold.
+    #[test]
+    fn fjall_concurrent_writers_leave_a_serializable_history() {
+        for &writers in WRITERS {
+            for seed in seeds(3) {
+                let dir = scratch("honest");
+                let kv = open_fjall(&dir).unwrap();
+                let h = run_writers(&kv, seed, writers);
+                assert!(
+                    h.in_doubt.is_empty() && h.refused.is_empty(),
+                    "a write failed"
+                );
+                check_ids(&h).unwrap();
+                assert_eq!(h.gave_up, 0);
+                let (model, last) = replay_acked(&h.acked)
+                    .unwrap_or_else(|e| panic!("seed {seed}, {writers} writers: {e}"));
+                assert_eq!(kv.version().unwrap(), last);
+                assert_eq!(stored(&kv).unwrap(), model);
+                drop(kv);
+                // Reopen: the state survives a clean close and the sequence goes on.
+                let kv = open_fjall(&dir).unwrap();
+                assert_eq!(kv.version().unwrap(), last);
+                assert_eq!(stored(&kv).unwrap(), model);
+                drop(kv);
+                let _ = std::fs::remove_dir_all(&dir);
+            }
+        }
+    }
+
+    /// The child of a kill run (started by the test below; ignored in a normal run). Its writers
+    /// commit until the process is killed. Before each commit a writer prints the attempt
+    /// (`@@I id id_allocated plan`), and after an acknowledged commit `@@K id sequence`.
+    #[test]
+    #[ignore]
+    fn kill_child() {
+        let Some(dir) = std::env::var_os(CHILD_DIR) else {
+            return;
+        };
+        let writers: usize = std::env::var(CHILD_WRITERS).unwrap().parse().unwrap();
+        let kv = open_fjall(Path::new(&dir)).unwrap();
+        let out = Mutex::new(std::io::stdout());
+        let say = |line: String| {
+            let mut o = out.lock().unwrap();
+            o.write_all(line.as_bytes()).unwrap();
+            o.flush().unwrap();
+        };
+        std::thread::scope(|s| {
+            for thread in 0..writers {
+                let (kv, say) = (&kv, &say);
+                s.spawn(move || {
+                    let mut rng = SimRng::new(0xF1A1).fork(thread as u64 + 1);
+                    for n in 0u64.. {
+                        let id = ((thread as u64) << 32) | n;
+                        let plan = if rng.chance(200) {
+                            None
+                        } else {
+                            let a = rng.below(HOT);
+                            Some((a, (a + 1 + rng.below(HOT - 1)) % HOT))
+                        };
+                        let mut locked = BTreeSet::new();
+                        loop {
+                            let mut tx = if locked.is_empty() {
+                                kv.begin_write().unwrap()
+                            } else {
+                                kv.begin_write_locked(&locked).unwrap()
+                            };
+                            let ran = (|| -> Result<u64, StoreError> {
+                                let allocated = tx.allocate(SEQUENCE, 1)?;
+                                match plan {
+                                    Some((a, b)) => {
+                                        for i in [a, b] {
+                                            let key = register(i);
+                                            let mut list = tx.get(&key)?.unwrap_or_default();
+                                            list.extend_from_slice(&id.to_le_bytes());
+                                            tx.put(&key, &list)?;
+                                        }
+                                    }
+                                    None => {
+                                        let mut rows = 0u64;
+                                        tx.scan(ROWS, ROWS_END, false, &mut |_, _| {
+                                            rows += 1;
+                                            true
+                                        })?;
+                                        let key = format!("p/{id:016x}").into_bytes();
+                                        tx.put(&key, &rows.to_le_bytes())?;
+                                    }
+                                }
+                                tx.add_i64(COUNTER, 1)?;
+                                Ok(allocated)
+                            })();
+                            let allocated = match ran {
+                                Ok(a) => a,
+                                Err(e) if e.code == WRITE_CONFLICT => {
+                                    if let Some(key) = conflict_key(&e) {
+                                        locked.insert(key);
+                                    }
+                                    continue;
+                                }
+                                Err(e) => panic!("{e}"),
+                            };
+                            let shape = match plan {
+                                Some((a, b)) => format!("A {a} {b}"),
+                                None => "R".into(),
+                            };
+                            say(format!("@@I {id} {allocated} {shape}\n"));
+                            match tx.commit() {
+                                Ok(version) => {
+                                    say(format!("@@K {id} {version}\n"));
+                                    break;
+                                }
+                                Err(e) if e.code == WRITE_CONFLICT => {
+                                    if let Some(key) = conflict_key(&e) {
+                                        locked.insert(key);
+                                    }
+                                }
+                                Err(e) => panic!("{e}"),
+                            }
+                        }
+                    }
+                });
+            }
+        });
+    }
+
+    struct Intent {
+        allocated: u64,
+        registers: Option<(usize, usize)>,
+    }
+
+    fn ids_of(list: &[u8]) -> Vec<u64> {
+        list.chunks(8)
+            .map(|c| u64::from_le_bytes(c.try_into().unwrap()))
+            .collect()
+    }
+
+    /// Checks the reopened state against what the killed child said. Returns the number of
+    /// committed transactions found.
+    fn check_recovered(
+        kv: &OccKv,
+        intents: &HashMap<u64, Intent>,
+        acked: &HashMap<u64, u64>,
+    ) -> Result<usize, String> {
+        let state = stored(kv).map_err(|e| e.to_string())?;
+        let version = kv.version().map_err(|e| e.to_string())?;
+        let mut lists: Vec<Vec<u64>> = vec![Vec::new(); HOT];
+        let mut rows: Vec<(u64, u64)> = Vec::new();
+        let mut counter = 0i64;
+        for (k, v) in &state {
+            if let Some(rest) = k.strip_prefix(b"r/") {
+                let i: usize = std::str::from_utf8(rest).unwrap().parse().unwrap();
+                lists[i] = ids_of(v);
+            } else if let Some(rest) = k.strip_prefix(b"p/") {
+                let id = u64::from_str_radix(std::str::from_utf8(rest).unwrap(), 16).unwrap();
+                rows.push((id, u64::from_le_bytes(v.as_slice().try_into().unwrap())));
+            } else if k.as_slice() == COUNTER {
+                counter = i64::from_le_bytes(v.as_slice().try_into().unwrap());
+            }
+        }
+        // The committed transactions, and in which registers each one is.
+        let mut present: BTreeMap<u64, BTreeSet<usize>> = BTreeMap::new();
+        for (i, list) in lists.iter().enumerate() {
+            for id in list {
+                if !present.entry(*id).or_default().insert(i) {
+                    return Err(format!("id {id} appears twice in register {i}"));
+                }
+            }
+        }
+        for (id, _) in &rows {
+            present.entry(*id).or_default();
+        }
+        for (id, regs) in &present {
+            let intent = intents
+                .get(id)
+                .ok_or_else(|| format!("id {id} is in the store but was never attempted"))?;
+            match intent.registers {
+                Some((a, b)) if *regs != BTreeSet::from([a, b]) => {
+                    return Err(format!("transaction {id} is torn: in registers {regs:?}"));
+                }
+                None if !regs.is_empty() || !rows.iter().any(|(r, _)| r == id) => {
+                    return Err(format!("insert {id} is torn"));
+                }
+                _ => {}
+            }
+        }
+        if counter != present.len() as i64 {
+            return Err(format!(
+                "counter is {counter}, {} transactions are in the store",
+                present.len()
+            ));
+        }
+        for (id, seq) in acked {
+            if !present.contains_key(id) {
+                return Err(format!(
+                    "acknowledged commit {id} (sequence {seq}) was lost"
+                ));
+            }
+        }
+        if let Some(max) = acked.values().max()
+            && version < *max
+        {
+            return Err(format!(
+                "sequence {version} is behind an acknowledged {max}"
+            ));
+        }
+        // A phantom-free insert order: the row values are exactly 0, 1, 2, ...
+        let mut values: Vec<u64> = rows.iter().map(|(_, v)| *v).collect();
+        values.sort_unstable();
+        if values.iter().enumerate().any(|(i, v)| *v != i as u64) {
+            return Err(format!("row counts {values:?} are not 0, 1, 2, ..."));
+        }
+        // One serial order must explain every register's append order: no cycle.
+        let mut after: HashMap<u64, BTreeSet<u64>> = HashMap::new();
+        let mut indegree: HashMap<u64, usize> = present.keys().map(|id| (*id, 0)).collect();
+        for list in &lists {
+            for pair in list.windows(2) {
+                if after.entry(pair[0]).or_default().insert(pair[1]) {
+                    *indegree.get_mut(&pair[1]).unwrap() += 1;
+                }
+            }
+        }
+        let mut ready: Vec<u64> = indegree
+            .iter()
+            .filter(|(_, d)| **d == 0)
+            .map(|(id, _)| *id)
+            .collect();
+        let mut ordered = 0;
+        while let Some(id) = ready.pop() {
+            ordered += 1;
+            for next in after.get(&id).into_iter().flatten() {
+                let d = indegree.get_mut(next).unwrap();
+                *d -= 1;
+                if *d == 0 {
+                    ready.push(*next);
+                }
+            }
+        }
+        if ordered != present.len() {
+            return Err("the register orders have a cycle: no serial order exists".into());
+        }
+        // Ids allocated after the reopen are above every recovered one.
+        let mut tx = kv.begin_write().map_err(|e| e.to_string())?;
+        let next = tx.allocate(SEQUENCE, 1).map_err(|e| e.to_string())?;
+        tx.put(b"r/after", b"x").map_err(|e| e.to_string())?;
+        let seq = tx.commit().map_err(|e| e.to_string())?;
+        if seq != version + 1 {
+            return Err(format!("the first write after reopen got sequence {seq}"));
+        }
+        if let Some(max) = present.keys().map(|id| intents[id].allocated).max()
+            && next <= max
+        {
+            return Err(format!("id {next} was handed out again after the reopen"));
+        }
+        Ok(present.len())
+    }
+
+    /// The kill checker must fail on a lost acknowledged commit and on a torn transaction.
+    #[test]
+    fn fjall_the_kill_checker_catches_a_lost_commit_and_a_torn_one() {
+        let dir = scratch("checker");
+        let kv = open_fjall(&dir).unwrap();
+        let mut tx = kv.begin_write().unwrap();
+        let allocated = tx.allocate(SEQUENCE, 1).unwrap();
+        tx.put(&register(0), &7u64.to_le_bytes()).unwrap();
+        tx.add_i64(COUNTER, 1).unwrap();
+        let seq = tx.commit().unwrap();
+        let intent = |registers| Intent {
+            allocated,
+            registers,
+        };
+        // Transaction 7 meant to append to registers 0 and 1, but only register 0 has it.
+        let torn = HashMap::from([(7, intent(Some((0, 1))))]);
+        let err = check_recovered(&kv, &torn, &HashMap::from([(7, seq)])).unwrap_err();
+        assert!(err.contains("torn"), "{err}");
+        // With an intent that matches the store, an acknowledged commit 8 that is missing fails.
+        let whole = HashMap::from([(7, intent(Some((0, 0)))), (8, intent(None))]);
+        let err = check_recovered(&kv, &whole, &HashMap::from([(8, seq)])).unwrap_err();
+        assert!(err.contains("was lost"), "{err}");
+        drop(kv);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Kills a child process at a random point while 4, 16 or 64 writers commit, reopens the
+    /// database and checks it. Set `GBRAIN_FJALL_KILL_RUNS` for more runs per writer count.
+    #[test]
+    fn fjall_a_killed_process_keeps_every_acknowledged_commit_whole() {
+        let runs: u64 = std::env::var("GBRAIN_FJALL_KILL_RUNS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3);
+        let exe = std::env::current_exe().unwrap();
+        for &writers in WRITERS {
+            let (mut acked_total, mut found_total, mut unacked_found) = (0, 0, 0);
+            for run in 0..runs {
+                let dir = scratch("kill");
+                let mut rng = SimRng::new(run ^ ((writers as u64) << 16));
+                let mut child = Command::new(&exe)
+                    .args(["fjall_research::kill_child", "--exact", "--ignored"])
+                    .args(["--nocapture", "--test-threads=1", "-q"])
+                    .env(CHILD_DIR, &dir)
+                    .env(CHILD_WRITERS, writers.to_string())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .unwrap();
+                let stdout = child.stdout.take().unwrap();
+                let reader = std::thread::spawn(move || {
+                    let mut lines = Vec::new();
+                    let mut r = std::io::BufReader::new(stdout);
+                    let mut buf = String::new();
+                    while r.read_line(&mut buf).unwrap_or(0) > 0 {
+                        if buf.ends_with('\n') {
+                            lines.push(std::mem::take(&mut buf));
+                        }
+                        buf.clear();
+                    }
+                    lines
+                });
+                std::thread::sleep(Duration::from_millis(300 + rng.below(700) as u64));
+                child.kill().unwrap(); // SIGKILL
+                child.wait().unwrap();
+                let mut intents = HashMap::new();
+                let mut acked = HashMap::new();
+                for line in reader.join().unwrap() {
+                    let f: Vec<&str> = line.split_whitespace().collect();
+                    match f.as_slice() {
+                        ["@@I", id, alloc, rest @ ..] => {
+                            let registers = match rest {
+                                ["A", a, b] => Some((a.parse().unwrap(), b.parse().unwrap())),
+                                _ => None,
+                            };
+                            intents.insert(
+                                id.parse::<u64>().unwrap(),
+                                Intent {
+                                    allocated: alloc.parse().unwrap(),
+                                    registers,
+                                },
+                            );
+                        }
+                        ["@@K", id, seq] => {
+                            acked.insert(id.parse::<u64>().unwrap(), seq.parse::<u64>().unwrap());
+                        }
+                        _ => {}
+                    }
+                }
+                assert!(
+                    !acked.is_empty(),
+                    "the child acknowledged nothing before the kill"
+                );
+                let kv = open_fjall(&dir).unwrap();
+                let found = check_recovered(&kv, &intents, &acked).unwrap_or_else(|e| {
+                    panic!(
+                        "kill run {run} with {writers} writers ({}): {e}",
+                        dir.display()
+                    )
+                });
+                drop(kv);
+                acked_total += acked.len();
+                found_total += found;
+                unacked_found += found - acked.len();
+                let _ = std::fs::remove_dir_all(&dir);
+            }
+            eprintln!(
+                "fjall kill, {writers} writers, {runs} runs: {acked_total} acknowledged, \
+                 {found_total} recovered ({unacked_found} committed but not yet acknowledged)"
+            );
+        }
+    }
+}
