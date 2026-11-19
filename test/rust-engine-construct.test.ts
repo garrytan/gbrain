@@ -145,7 +145,8 @@ describe('servePersistenceIpcProvider (the serve-path persistence socket)', () =
       expect(touched).toEqual([]);
       expect([...rows.values()].map(row => row.lane).sort()).toEqual(['cli', 'stdio']);
       const brain = 'b0000000-0000-4000-8000-0000000000aa';
-      expect(readdirSync(join(home, '.gbrain', 'persistence')).sort()).toEqual([`${brain}.cli.json`, `${brain}.stdio.json`]);
+      // The registration lock directory (persistence/locks) sits next to the credential files.
+      expect(readdirSync(join(home, '.gbrain', 'persistence')).filter(name => name !== 'locks').sort()).toEqual([`${brain}.cli.json`, `${brain}.stdio.json`]);
       // The registration a remote caller's write and receipt reads run under: readLocalWriter finds it.
       const local = await readLocalWriter(engine, 'stdio');
       expect(rows.has(local.id)).toBe(true);

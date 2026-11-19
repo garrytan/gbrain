@@ -824,18 +824,6 @@
             "textSha256": "0fa43bea9cb63eff28077cd4c1bb3d40eb9b6daed0563f67cbf69eb025862b5f"
           }
         ]
-      },
-      "readHotMemoryWatermark": {
-        "default": [
-          {
-            "lane": "pool",
-            "params": [
-              "string"
-            ],
-            "sql": "SELECT count(*)::int AS n, max(withdrawn_at)::text AS at, (SELECT md5(coalesce(string_agg(source_id || '/' || rule_id || '/' || prefix || '/' || array_to_string(readable_by, ',') || '/' || revision::text, '|' ORDER BY source_id COLLATE \"C\", rule_id COLLATE \"C\"), '')) FROM access_rules) || ':' || (SELECT md5(coalesce(string_agg(source_id || '/' || prefix || '/' || reason || '/' || coalesce(revision::text, ''), '|' ORDER BY source_id COLLATE \"C\", prefix COLLATE \"C\", reason COLLATE \"C\"), '')) FROM access_pending_coverage) AS rules FROM fact_withdrawals WHERE source_id = $1",
-            "textSha256": "beffefe45760e0de27193a5434edc12f53b0fa22655f68f3a006ef65a35cb7e0"
-          }
-        ]
       }
     }
   },
