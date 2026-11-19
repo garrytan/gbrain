@@ -349,6 +349,7 @@ export const RUST_ENGINE_MEMBERS = {
   listEmbeddingStores: 'embeddings',
   hasStoredVectors: 'embeddings',
   countChunkVectorCoverage: 'embeddings',
+  countPageChildOrphans: 'health',
 
   // facts: relink attempts (engine-sql/fact-relink-attempts.ts)
   upsertFactRelinkAttempt: 'facts',

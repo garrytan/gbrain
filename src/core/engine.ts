@@ -11,6 +11,7 @@ import type { AppliedPolicyRevision } from './engine-sql/access-control.ts';
 import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, HeldFenceCellKey, HeldFenceCellRow, RankCoverageRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
 import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
 import type * as EmbeddingCatalogSql from './engine-sql/embedding-catalog.ts';
+import type * as DoctorReadsSql from './engine-sql/doctor-reads.ts';
 import type { FactRelinkAttempt, FactRelinkOutcome, FactRelinkUpsertOpts } from './engine-sql/fact-relink-attempts.ts';
 import type { ConversationFactLink, ConversationRelinkPagesQuery, RelinkPlacement } from './engine-sql/fact-relink-writes.ts';
 import type * as FactsCycleSql from './engine-sql/facts-cycle.ts';
@@ -4168,4 +4169,8 @@ export interface BrainEngine {
   claimWakeForgets(spec: { leaseSeconds: number; limit: number }): Promise<JobsWake.WakeForgetClaim[]>;
   /** Settle a leased forget; false when its lease no longer matches. */
   settleWakeForget(settle: JobsWake.WakeForgetSettle): Promise<boolean>;
+
+  // Doctor reads (engine-sql/doctor-reads.ts): the statements doctor checks ran through executeRaw.
+  /** Rows of a page-child relation (`<table>.<column>`) whose page row is gone; a NULL reference of a SET NULL column is not one. */
+  countPageChildOrphans(target: DoctorReadsSql.PageChildTarget): Promise<number>;
 }

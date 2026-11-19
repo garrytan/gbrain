@@ -4,6 +4,7 @@
 
 mod chunks;
 mod cli_entities;
+mod cli_reads_doctor;
 mod cli_reads_import;
 mod cli_reads_ops;
 mod cli_reads_search_pages;

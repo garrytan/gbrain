@@ -4637,6 +4637,7 @@
         "countOrphanChunks": "none",
         "countOutstandingBySource": "none",
         "countOversizedEmbedSkips": "none",
+        "countPageChildOrphans": "none",
         "countPagesBy": "direct",
         "countPagesDueForMentions": "none",
         "countPendingProjectionPages": "none",

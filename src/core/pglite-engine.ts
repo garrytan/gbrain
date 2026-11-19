@@ -184,6 +184,7 @@ import * as trustProposalsImpl from './engine-sql/trust-proposals.ts';
 import * as cliReadsOpsImpl from './engine-sql/cli-reads-ops.ts';
 import * as factsDoctorImpl from './engine-sql/facts-doctor.ts';
 import * as embeddingCatalogImpl from './engine-sql/embedding-catalog.ts';
+import * as doctorReadsImpl from './engine-sql/doctor-reads.ts';
 import * as factRelinkImpl from './engine-sql/fact-relink-attempts.ts';
 import * as factRelinkWritesImpl from './engine-sql/fact-relink-writes.ts';
 import * as factsCycleImpl from './engine-sql/facts-cycle.ts';
@@ -1521,6 +1522,7 @@ export class PGLiteEngine implements BrainEngine {
   listEmbeddingStores() { return embeddingCatalogImpl.listEmbeddingStores(this.rawRead); }
   hasStoredVectors(store: embeddingCatalogImpl.EmbeddingStore) { return embeddingCatalogImpl.hasStoredVectors(this.rawRead, store); }
   countChunkVectorCoverage(column: embeddingCatalogImpl.FixedVectorColumn) { return embeddingCatalogImpl.countChunkVectorCoverage(this.rawRead, column); }
+  countPageChildOrphans(target: doctorReadsImpl.PageChildTarget) { return doctorReadsImpl.countPageChildOrphans(this.rawRead, target); }
   upsertFactRelinkAttempt(sourceId: string, attempt: factRelinkImpl.FactRelinkAttempt, opts: factRelinkImpl.FactRelinkUpsertOpts = {}) { return factRelinkImpl.upsertFactRelinkAttempt(this.engineSql, sourceId, attempt, opts); }
   listFactRelinkOutcomes(sourceId: string, factIds: number[], outcomes: string[]) { return factRelinkImpl.listFactRelinkOutcomes(this.rawRead, sourceId, factIds, outcomes); }
   deleteFactRelinkMemos(sourceId: string, tier: string, targetSlug: string) { return factRelinkImpl.deleteFactRelinkMemos(this.engineSql, sourceId, tier, targetSlug); }
