@@ -183,6 +183,8 @@ import * as doctorDerivedImpl from './engine-sql/doctor-derived.ts';
 import * as doctorPersistenceImpl from './engine-sql/doctor-persistence.ts';
 import * as doctorPagesImpl from './engine-sql/doctor-pages.ts';
 import * as doctorSearchImpl from './engine-sql/doctor-search.ts';
+import * as atomBacklogImpl from './engine-sql/atom-backlog.ts';
+import type { AtomBacklogQuery } from './engine-sql/atom-backlog.ts';
 import * as projectionBacklogImpl from './engine-sql/projection-backlog.ts';
 import * as doctorAccImpl from './engine-sql/doctor-acc.ts';
 import * as doctorCheckpointsImpl from './engine-sql/doctor-checkpoints.ts';
@@ -1268,6 +1270,9 @@ export class PostgresEngine implements BrainEngine {
   listFactsPageBodies() { return doctorPagesImpl.listFactsPageBodies(this.executeRaw.bind(this)); }
   listBracketPathPages() { return doctorPagesImpl.listBracketPathPages(this.executeRaw.bind(this)); }
   listSlugPathCandidates(sourceIds: string[] | null) { return doctorPagesImpl.listSlugPathCandidates(this.executeRaw.bind(this), sourceIds); }
+  countAtomExtractionBacklog(query: AtomBacklogQuery, opts?: { signal?: AbortSignal }) {
+    return atomBacklogImpl.countAtomExtractionBacklog((sql, params) => this.executeRaw(sql, params, opts?.signal ? { signal: opts.signal } : undefined), query);
+  }
   readProjectionBacklog(scope: PageReadScope) { return projectionBacklogImpl.readProjectionBacklog(this.executeRaw.bind(this), scope); }
   listGitImageHoldCounts(sourceIds: string[]) { return doctorSearchImpl.listGitImageHoldCounts(this.executeRaw.bind(this), sourceIds); }
   listTruncatedMarkdownBodies() { return doctorSearchImpl.listTruncatedMarkdownBodies(this.executeRaw.bind(this)); }

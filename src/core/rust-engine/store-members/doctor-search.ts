@@ -52,3 +52,6 @@ export const readProjectionBacklog: Member<'readProjectionBacklog'> = async (bra
     };
   });
 };
+
+export const countAtomExtractionBacklog: Member<'countAtomExtractionBacklog'> = async (brain, query) =>
+  storeCall({ member: 'countAtomExtractionBacklog' }, async () => Number(await brain.countAtomExtractionBacklog(query)));

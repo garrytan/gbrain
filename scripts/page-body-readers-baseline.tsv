@@ -180,6 +180,10 @@ src/core/embed-consent.ts	estimateEmbedBackfillUsd	sql	META
 src/core/embed-stale-images.ts	embedStaleImages	sql	INLINE	
 src/core/embedding-migration-worst-case.ts	REPROJECTED_PAGE	sql	META	
 src/core/embedding-readiness.ts	countArchivedEmbeddingWork	sql	META	
+src/core/engine-sql/atom-backlog.ts	ATOM_BACKLOG_ALL_CONNECTORS_OUT_SQL	sql	STREAM	moved from extract-atoms.ts countExtractAtomsBacklog (minCompiledTruthChars): octet_length of a NULL body is not true, so a segmented page is never counted (skip until per-segment extraction)
+src/core/engine-sql/atom-backlog.ts	ATOM_BACKLOG_ALL_SQL	sql	STREAM	moved from extract-atoms.ts countExtractAtomsBacklog (minCompiledTruthChars): octet_length of a NULL body is not true, so a segmented page is never counted (skip until per-segment extraction)
+src/core/engine-sql/atom-backlog.ts	ATOM_BACKLOG_SCOPED_CONNECTORS_OUT_SQL	sql	STREAM	moved from extract-atoms.ts countExtractAtomsBacklog (minCompiledTruthChars): octet_length of a NULL body is not true, so a segmented page is never counted (skip until per-segment extraction)
+src/core/engine-sql/atom-backlog.ts	ATOM_BACKLOG_SCOPED_SQL	sql	STREAM	moved from extract-atoms.ts countExtractAtomsBacklog (minCompiledTruthChars): octet_length of a NULL body is not true, so a segmented page is never counted (skip until per-segment extraction)
 src/core/engine-sql/chunk-reads.ts	countOversizedEmbedSkips	sql	META	doctor content-quality's oversized embed-skip count, moved from runContentSanity: octet_length metadata
 src/core/engine-sql/chunks.ts	chunklessPagesWhere	sql	META	lane 1e file: body <> '' predicate
 src/core/engine-sql/chunks.ts	getChunkWindows	sql	STREAM	lane 1e file: ships whole bodies per hit for inline pages; a segmented page ships none (NULL) and its chunks carry occurrence_id + span, read by search/segmented-evidence.ts

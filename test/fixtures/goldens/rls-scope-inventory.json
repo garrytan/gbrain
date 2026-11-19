@@ -4611,6 +4611,7 @@
         "connectedDatabaseUrl": "none",
         "consolidateFact": "none",
         "cosinesByChunkIds": "none",
+        "countAtomExtractionBacklog": "none",
         "countAtomFacts": "none",
         "countChunkVectorCoverage": "none",
         "countChunklessPagesWithContent": "direct",

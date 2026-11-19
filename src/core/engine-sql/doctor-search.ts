@@ -21,6 +21,7 @@ export const DOCTOR_SEARCH_MEMBERS: readonly string[] = [
   'listOrphanedAliasCounts', 'readSoftDeletedAliasCounts', 'listPageTypePairs',
   'listTruncatedMarkdownBodies', 'countSegmentedMarkdownBodies', 'listRecentPageBodies', 'countSegmentedRecentPages',
   'countPagesHiddenByPrefix', 'listGitImageHoldCounts', 'readProjectionBacklog',
+  'countAtomExtractionBacklog',
 ];
 
 /** Rows `listTruncatedMarkdownBodies` reads: the list limit of the markdown_body_completeness check plus one (a full list means a floor). */

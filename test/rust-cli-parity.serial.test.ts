@@ -445,8 +445,11 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // child_table_orphans is gone from this list: countPageChildOrphans counts the orphan rows in the store.
       // canonical_content_writes and raw_provenance are gone too: the first no longer runs (no git source root) and
       // readRawProvenanceGaps counts the gaps in the store.
-      untypedWarnings: ['backup_coverage', 'extract_atoms_backlog', 'fact_take_vectors', 'provenance_stamp_drift',
-        'retrieval_reflex_health', 'sync_failures', 'text_projection_readiness', 'trust_scan'],
+      // extract_atoms_backlog, retrieval_reflex_health and text_projection_readiness are gone from this list: the backlog,
+      // projection-queue and reflex reads are served, so those checks report what PGLite reports. dangling_aliases,
+      // type_proliferation, markdown_body_completeness, link_resolution_opportunity, hidden_by_search_policy and
+      // image_embedding_coverage run on Rust too; person_title_duplicates still warns with its typed refusal (okWhileRefused).
+      untypedWarnings: ['backup_coverage', 'fact_take_vectors', 'provenance_stamp_drift', 'sync_failures', 'trust_scan'],
       // The imported fixture has no embeddings, so both engines score it below 100 and count its chunks stale; the pack
       // reads are served, so the successor notice is the same. embeddings is not here: Rust cannot read the backlog
       // age, so it warns with that typed refusal where PGLite reads the age and passes. default_source_local_path

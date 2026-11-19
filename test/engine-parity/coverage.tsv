@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 814/814
+# covered: 815/815
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -46,7 +46,7 @@
 # doctor_derived: 27/27
 # doctor_persistence: 38/38
 # doctor_pages: 19/19
-# doctor_search: 10/10
+# doctor_search: 11/11
 # doctor_reads_acc: 33/33
 # doctor_checkpoints: 18/18
 # doctor_sources: 6/6
@@ -86,17 +86,17 @@ transaction	lifecycle	yes	57	no	yes	yes	serves
 transactionDirect	lifecycle	yes	2	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	93	yes	yes	yes	serves
+getPage	pages	yes	94	yes	yes	yes	serves
 readPageSnapshot	pages	yes	27	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	428	yes	yes	yes	serves
+putPage	pages	yes	429	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	16	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	133	yes	yes	yes	serves
+softDeletePage	pages	yes	134	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -635,6 +635,7 @@ readImagePageCoverage	doctor_pages	yes	1	no	yes	yes	serves
 listFactsPageBodies	doctor_pages	yes	1	no	yes	yes	serves
 listBracketPathPages	doctor_pages	yes	1	no	yes	yes	serves
 listSlugPathCandidates	doctor_pages	yes	1	no	yes	yes	serves
+countAtomExtractionBacklog	doctor_search	yes	1	no	yes	yes	serves
 readProjectionBacklog	doctor_search	yes	1	no	yes	yes	serves
 listGitImageHoldCounts	doctor_search	yes	1	no	yes	yes	serves
 listTruncatedMarkdownBodies	doctor_search	yes	1	no	yes	yes	serves

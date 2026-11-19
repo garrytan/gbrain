@@ -24,6 +24,7 @@ table the SQL reads, so the answer is what an empty table gives), or refused (th
 | `countPagesHiddenByPrefix(pattern, sourceIds)` | live pages with a chunk, served by search (sealed text, source not archived, no `quarantine` or `pinned_question` key), whose slug matches the escaped `LIKE` pattern, in the sources when given | served | `hidden_by_search_policy` |
 | `listGitImageHoldCounts(sourceIds)` | per source in the list, the `images` count of its current incarnation's `sync-hold-summary` checkpoint (`completed_keys[0].images`); sources with none, or a count of 0, are not listed | empty-no-writer | `image_embedding_coverage` (and the held-files check) |
 | `readProjectionBacklog(scope)` | the projection queue's jobs in a read scope (`sourceId`, `sourceIds`, private-page policy, trust floor, flagged filter) by class: `pending` (text, the Markdown, code and segmented pages) with `failed` (job reason `rebuild_failed`), `sealable` and `reimport` images with `ocr_required` (`chunker_version < 0`), `protected` and `archived`; the age of the oldest job that needs work; the store clock as `YYYY-MM-DD HH:MM:SS.fff+00` | served (an empty queue on a fresh brain; `sealable_with_visual` is always 0, `failed` is 0 until a drain writes that reason) | `text_projection_readiness`, the upgrade notice, the resident's projection status, `gbrain projections drain --dry-run` |
+| `countAtomExtractionBacklog(query)` | the live pages awaiting atom extraction: `sourceId` (or the whole brain), `types`, a compiled truth of at least `minChars` characters, a content hash, no `markdown-greenfield` import or `dream_generated` mark, not a source page holding a `raw` pointer, not a page of `connectorExclusion.pageTypes` in a source of one of its `sourceKinds`, and no live unmanaged atom of the same source whose `source_hash` is the first 16 characters of the page's content hash | served (the held and tombstoned dispositions are not read: the store has no writer of `managed-atoms` checkpoints or `extract_atoms_page_state` rows, so no page is ever excluded by them) | `extract_atoms_backlog`, the extract-atoms drain, `gbrain dream`, the autopilot dispatch |
 
 ## How each read follows the SQL
 
@@ -54,3 +55,8 @@ table the SQL reads, so the answer is what an empty table gives), or refused (th
   modality `image`, shorter than 65536 characters and equal to the body's first 65536 characters (or the title when
   that is empty); any other live image is `reimport`. The store keeps no image vector, so `sealable_with_visual` is 0.
   The Rust writer queues only reason `canonical_change`, so `failed` is 0 until a drain writes `rebuild_failed`.
+- `countAtomExtractionBacklog` scans the pages once (`link_queries/atom_backlog.rs`) and builds the set of (source, `source_hash`)
+  of the live, unmanaged atoms, so each page costs a lookup. A segmented page has a NULL body and never reaches the length
+  floor, as `octet_length(NULL) >= n` is not true. `maxInputChars` is accepted and unused: it only bounds partial dispositions the
+  store never records. The connector lists arrive as arguments (the TypeScript caller owns them), so the store holds no list of
+  connector kinds.

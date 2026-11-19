@@ -443,3 +443,137 @@ fn projection_backlog_counts_the_queue_by_class_in_the_scope() {
     );
     assert_eq!(archived.oldest, None);
 }
+
+/// Writes a page of `source` and returns its content hash.
+fn put_in(s: &Store, source: &str, slug: &str, input: Value) -> String {
+    let mut base = json!({ "type": "note", "title": slug, "compiled_truth": "x".repeat(600) });
+    for (k, v) in input.as_object().unwrap() {
+        base[k] = v.clone();
+    }
+    let input: PageInput = args(base);
+    let options: PutPageOptions = args(json!({ "sourceId": source }));
+    s.put_page(slug, &input, &options).unwrap()["content_hash"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+#[test]
+fn atom_backlog_counts_the_pages_awaiting_extraction() {
+    use gbrain_store::link_queries::AtomBacklogQuery;
+    let s = brain("atom-backlog");
+    s.upsert_source(&args(
+        json!({ "id": "mail", "config": { "kind": "google" } }),
+    ))
+    .unwrap();
+    s.upsert_source(&args(
+        json!({ "id": "repo", "config": { "kind": "checkout" } }),
+    ))
+    .unwrap();
+    let query = |v: Value| -> AtomBacklogQuery {
+        let mut base = json!({ "types": ["note", "email", "source"], "minChars": 500, "maxInputChars": 100000 });
+        for (k, val) in v.as_object().unwrap() {
+            base[k] = val.clone();
+        }
+        args(base)
+    };
+    assert_eq!(
+        s.count_atom_extraction_backlog(&query(json!({}))).unwrap(),
+        0
+    );
+
+    let answered = put_in(&s, "default", "notes/answered", json!({}));
+    put_in(
+        &s,
+        "default",
+        "notes/open",
+        json!({ "compiled_truth": "y".repeat(700) }),
+    );
+    put_in(
+        &s,
+        "default",
+        "notes/short",
+        json!({ "compiled_truth": "short" }),
+    );
+    put_in(
+        &s,
+        "default",
+        "notes/other-type",
+        json!({ "type": "project" }),
+    );
+    put_in(
+        &s,
+        "default",
+        "notes/greenfield",
+        json!({ "frontmatter": { "imported_from": "markdown-greenfield" } }),
+    );
+    put_in(
+        &s,
+        "default",
+        "notes/dreamed",
+        json!({ "frontmatter": { "dream_generated": true } }),
+    );
+    put_in(
+        &s,
+        "default",
+        "sources/raw",
+        json!({ "type": "source", "frontmatter": { "raw": "r.json" } }),
+    );
+    put_in(&s, "default", "sources/plain", json!({ "type": "source" }));
+    put_in(&s, "mail", "mail/one", json!({ "type": "email" }));
+    put_in(&s, "mail", "mail/note", json!({}));
+    put_in(&s, "repo", "repo/mail", json!({ "type": "email" }));
+    let source_hash: String = answered.chars().take(16).collect();
+    put_in(
+        &s,
+        "default",
+        "atoms/answered",
+        json!({ "type": "atom", "compiled_truth": "a", "frontmatter": { "source_hash": source_hash } }),
+    );
+    // Open: notes/open, sources/plain, mail/one, mail/note, repo/mail; not answered, short,
+    // other-type, greenfield, dreamed, the raw holder. The atom itself is not an extractable type.
+    assert_eq!(
+        s.count_atom_extraction_backlog(&query(json!({}))).unwrap(),
+        5
+    );
+    assert_eq!(
+        s.count_atom_extraction_backlog(&query(json!({ "sourceId": "default" })))
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        s.count_atom_extraction_backlog(&query(json!({ "sourceId": "mail" })))
+            .unwrap(),
+        2
+    );
+    // Connector pages opted out: the email of the google source is left out, the checkout's is not.
+    let out = json!({ "connectorExclusion": { "pageTypes": ["email", "meeting"], "sourceKinds": ["google", "github"] } });
+    assert_eq!(
+        s.count_atom_extraction_backlog(&query(out.clone()))
+            .unwrap(),
+        4
+    );
+    let mut mail = out;
+    mail["sourceId"] = json!("mail");
+    assert_eq!(s.count_atom_extraction_backlog(&query(mail)).unwrap(), 1);
+
+    // A managed extraction does not answer its page; a soft-deleted atom does not either.
+    let note_hash = put_in(
+        &s,
+        "default",
+        "notes/managed",
+        json!({ "compiled_truth": "m".repeat(800) }),
+    );
+    let head: String = note_hash.chars().take(16).collect();
+    put_in(
+        &s,
+        "default",
+        "atoms/managed",
+        json!({ "type": "atom", "compiled_truth": "a", "frontmatter": { "source_hash": head, "managed_extraction": true } }),
+    );
+    assert_eq!(
+        s.count_atom_extraction_backlog(&query(json!({ "sourceId": "default" })))
+            .unwrap(),
+        3
+    );
+}

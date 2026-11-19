@@ -57,6 +57,8 @@ pub use link_temporal::{
     RecordMetadataRows, RelationshipEvidence, RelationshipKey, SearchVectorCounts, StaleKeysInput,
     StateWrite,
 };
+mod atom_backlog;
+pub use atom_backlog::{AtomBacklogQuery, ConnectorExclusion};
 mod projection_backlog;
 pub use projection_backlog::ProjectionBacklogRow;
 pub(crate) mod retrieval_coverage;

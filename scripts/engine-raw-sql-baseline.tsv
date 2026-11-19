@@ -298,7 +298,7 @@ src/core/cycle/extract-atoms-generation.ts	execute_raw	4
 src/core/cycle/extract-atoms-input.ts	execute_raw	6
 src/core/cycle/extract-atoms-page-state.ts	execute_raw	4
 src/core/cycle/extract-atoms-stamp.ts	execute_raw	1
-src/core/cycle/extract-atoms.ts	execute_raw	6
+src/core/cycle/extract-atoms.ts	execute_raw	5
 src/core/cycle/extract-facts.ts	execute_raw	11
 src/core/cycle/extract-takes.ts	execute_raw	10
 src/core/cycle/filing-rules.ts	execute_raw	1

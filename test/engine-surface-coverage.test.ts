@@ -169,6 +169,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'countPagesHiddenByPrefix',
   'listGitImageHoldCounts',
   'readProjectionBacklog',
+  'countAtomExtractionBacklog',
   // Doctor reads, second set (engine-sql/doctor-acc.ts; covered by test/engine-parity/doctor-acc.test.ts)
   'listPolicySourceIds',
   'isAccessStateUnreadable',

@@ -437,6 +437,7 @@ export const RUST_ENGINE_MEMBERS = {
   listFactsPageBodies: 'health',
   listBracketPathPages: 'health',
   listSlugPathCandidates: 'health',
+  countAtomExtractionBacklog: 'health',
   readProjectionBacklog: 'health',
   listGitImageHoldCounts: 'health',
   listTruncatedMarkdownBodies: 'health',

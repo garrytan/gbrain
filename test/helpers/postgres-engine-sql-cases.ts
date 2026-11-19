@@ -236,6 +236,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'countPagesHiddenByPrefix': OOS.doctorSearch,
   'listGitImageHoldCounts': OOS.doctorSearch,
   'readProjectionBacklog': OOS.doctorSearch,
+  'countAtomExtractionBacklog': OOS.doctorSearch,
   'listPolicySourceIds': OOS.doctorAcc,
   'isAccessStateUnreadable': OOS.doctorAcc,
   'listRawOnlyRules': OOS.doctorAcc,
