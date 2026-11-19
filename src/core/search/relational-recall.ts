@@ -29,7 +29,7 @@ import type { SearchResult, PageType, RelationalFanoutRow, PageReadPolicy } from
 import { createAuditWriter } from '../audit/audit-writer.ts';
 import { listSources } from '../sources-ops.ts';
 import { ALL_SOURCES } from '../source-id.ts';
-import { resolveEntitySlugWithSource, retiredPageSql } from '../entities/resolve.ts';
+import { resolveEntitySlugWithSource } from '../entities/resolve.ts';
 import { hasReadPolicy, readPolicyOf } from './read-policy-sql.ts';
 import { boundedProjectedPrefix } from '../page-window/document.ts';
 import { overlaidBoundedRows } from '../page-window/bounded-lead.ts';
@@ -149,10 +149,8 @@ async function resolveSeedScoped(
   for (const sid of sources) {
     let r = await resolveEntitySlugWithSource(engine, sid, phrase);
     if (r?.source === 'fallback_slugify' && titleTypes.length) {
-      const titled = await engine.executeRaw<{ slug: string }>(
-        `SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND type = ANY($2::text[])
-           AND lower(title) = lower($3) AND NOT ${retiredPageSql('pages')} LIMIT 2`, [sid, titleTypes, phrase.trim()]);
-      if (titled.length === 1) r = { slug: titled[0].slug, source: 'exact_page' };
+      const titled = await engine.readSeedTitleSlugs(sid, titleTypes, phrase.trim());
+      if (titled.length === 1) r = { slug: titled[0], source: 'exact_page' };
     }
     if (!r || r.source === 'fallback_slugify') continue;
     const key = `${sid}:${r.slug}`;

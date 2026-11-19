@@ -1,16 +1,18 @@
 //! The relational recall arm's page reads (`src/core/engine-sql/relational-reads.ts`): which resolved
 //! seed pages the caller's read policy admits, and the title and bounded body prefix of each page the
-//! walk reached.
+//! walk reached, and the title seed that names a typed page.
 //!
-//! Members: readAdmittedPageRefs, readPageSynopses.
+//! Members: readAdmittedPageRefs, readPageSynopses, readSeedTitleSlugs.
 //!
 //! Keys: this module adds none. It reads page and source records through `pages.rs` and
 //! `sources.rs`, and judges each page by the parent's read scope (`passes_read_scope`).
 
 use super::{PageReadScope, PageRef, passes_read_scope, sources_by_id};
 use crate::Store;
+use crate::cli_reads::pg_text::pg_lower;
+use crate::cli_reads::reads::retired;
 use crate::error::Result;
-use crate::pages::{PageRecord, read_page};
+use crate::pages::{PageRecord, all_pages, read_page};
 use crate::trust::TrustPolicy;
 use serde_json::{Value, json};
 
@@ -108,5 +110,34 @@ impl Store {
             }));
         }
         Ok(out)
+    }
+
+    /// `readSeedTitleSlugs(sourceId, types, title)`: at most two slugs of live pages of `source_id`
+    /// whose type is one of `types`, whose lowered title equals the lowered `title`, and which are
+    /// not retired (`retiredPageSql`). The SQL statement sets no order; this answers in page-key
+    /// order.
+    pub fn read_seed_title_slugs(
+        &self,
+        source_id: &str,
+        types: &[String],
+        title: &str,
+    ) -> Result<Vec<String>> {
+        if types.is_empty() {
+            return Ok(Vec::new());
+        }
+        let read = self.read()?;
+        let wanted = pg_lower(title);
+        Ok(all_pages(&*read)?
+            .into_iter()
+            .filter(|p| {
+                p.source_id == source_id
+                    && p.deleted_at_us.is_none()
+                    && types.contains(&p.page_type)
+                    && pg_lower(&p.title) == wanted
+                    && !retired(&p.frontmatter)
+            })
+            .take(2)
+            .map(|p| p.slug)
+            .collect())
     }
 }

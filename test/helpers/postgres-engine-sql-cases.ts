@@ -326,6 +326,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readStoredBodyBytes': OOS.largePage,
   'readAdmittedPageRefs': OOS.relationalReads,
   'readPageSynopses': OOS.relationalReads,
+  'readSeedTitleSlugs': OOS.relationalReads,
   'hasSegmentStorage': OOS.writeGuards,
   'removeTimelineRows': OOS.pageWriteRows,
   'updateTimelineDetails': OOS.pageWriteRows,

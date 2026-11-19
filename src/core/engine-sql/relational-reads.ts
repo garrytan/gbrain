@@ -7,7 +7,9 @@ import type { PageReadPolicy } from '../types.ts';
 import { pageReadFilter } from '../search/read-policy-sql.ts';
 import { buildVisibilityClause } from '../search/sql-ranking.ts';
 import { boundedBodyPrefixSql } from '../page-window/bounded-lead.ts';
+import { retiredPageSql } from '../entities/resolve.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 
 /** A (source_id, slug) page reference. */
 export interface PageRefRow { source_id: string; slug: string }
@@ -51,4 +53,16 @@ export async function readPageSynopses(exec: LegacyUnscopedRead, refs: readonly 
      WHERE ${filter} ${buildVisibilityClause('p', 's', { excludePrivate: policy?.excludePrivate, requireSafeChunks: false })}`,
     params,
   );
+}
+
+/**
+ * At most two slugs of live, unretired (`retiredPageSql`) pages of `sourceId` whose type is one of `types` and whose
+ * title equals `title` case-insensitively (`lower`), in no set order. The relational arm uses a lone match as the
+ * seed when entity resolution only slugified the phrase.
+ */
+export async function readSeedTitleSlugs(exec: LegacyUnscopedRead, sourceId: string, types: readonly string[], title: string): Promise<string[]> {
+  const { text, params } = renderFragment(sqlFragment`SELECT slug FROM pages WHERE source_id = ${sourceId} AND deleted_at IS NULL AND type = ANY(${[...types]}::text[])
+           AND lower(title) = lower(${title}) AND NOT ${trustedSql(retiredPageSql('pages'))} LIMIT 2`);
+  const rows = await exec.executeRaw<{ slug: string }>(text, params);
+  return rows.map(row => row.slug);
 }

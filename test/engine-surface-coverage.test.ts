@@ -155,6 +155,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // The relational recall arm's page reads (engine-sql/relational-reads.ts).
   'readAdmittedPageRefs',
   'readPageSynopses',
+  'readSeedTitleSlugs',
   // Lane 9's trust review members: page retrievals, notifier coverage, contradiction queue, allow rules.
   'bumpPageRetrievals', 'notifierCoverageRecorded', 'listPendingContradictions', 'listTrustAllowRuleRows',
   // The fence guard's reads of a page's fact rows (engine-sql/facts.ts, engine-sql/trust-fence.ts).

@@ -280,6 +280,20 @@ impl Brain {
         })
     }
 
+    /// `readSeedTitleSlugs(sourceId, types, title)`: at most two slugs.
+    #[napi]
+    pub fn read_seed_title_slugs<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        types: Vec<String>,
+        title: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_seed_title_slugs(&source_id, &types, &title)
+        })
+    }
+
     /// `revertToVersion(slug, versionId, { sourceId? }?)`: `null`.
     #[napi]
     pub fn revert_to_version<'env>(

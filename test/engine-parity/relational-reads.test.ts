@@ -1,13 +1,15 @@
 /**
  * BrainEngine parity — the relational recall arm's page reads (engine-sql/relational-reads.ts): which resolved seed
- * pages the caller's read policy admits, and the title and bounded body prefix of each page the walk reached.
+ * pages the caller's read policy admits, the title and bounded body prefix of each page the walk reached, and the
+ * title seed that names a typed page.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: readAdmittedPageRefs returns the same (source_id, slug) set on every engine arm (PGLite always;
  *    Postgres with DATABASE_URL; the Rust arm through test/engine-parity/harness.ts): only live, unquarantined pages
  *    of an unarchived source that pass the policy's source scope, private-page filter and trust floor.
  *    readPageSynopses returns the same rows under the search visibility clause too: a served text projection and no
- *    pinned question; the synopsis is the first 65536 code points of the body.
+ *    pinned question; the synopsis is the first 65536 code points of the body. readSeedTitleSlugs returns at most two
+ *    slugs of live, unretired pages of one source whose type is listed and whose title matches case-insensitively.
  *  - Regression: an engine that admits a seed the policy hides lets a "who works at" query walk the links of a
  *    private, deleted, quarantined, archived, out-of-scope or below-floor page and name what it links to (a leak).
  *    The Rust engine has no SQL, so the statement has to exist as a typed member.
@@ -148,5 +150,56 @@ describe('engine parity: relational recall page reads', () => {
     expect(answers.floor).toEqual(sorted([open, alice, priv, long, other]));
     expect(answers.empty).toEqual([]);
     return answers;
+  });
+
+  parityTest('readSeedTitleSlugs names at most two live, unretired pages of the listed types whose title matches', {
+    methods: ['putPage', 'softDeletePage', 'readSeedTitleSlugs'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const page = (title: string, type: PageInput['type'] = 'company', frontmatter: Record<string, unknown> = {}): PageInput => ({ ...NOTE, title, type, frontmatter });
+    await engine.putPage('companies/acme', page('Acme Example'));
+    await engine.putPage('people/acme', page('acme example', 'person'));
+    await engine.putPage('companies/widget-a', page('Widget Co'));
+    await engine.putPage('companies/widget-b', page('WIDGET CO'));
+    await engine.putPage('companies/widget-c', page('Widget Co', 'concept'));
+    await engine.putPage('companies/gone', page('Gone Co'));
+    await engine.softDeletePage('companies/gone');
+    await engine.putPage('companies/merged', page('Merged Co', 'company', { merged_into: 'companies/acme' }));
+    await engine.putPage('companies/alias', page('Alias Co', 'company', { status: 'Alias of acme' }));
+    await engine.putPage('companies/aliased', page('Aliased Co', 'company', { status: 'aliased' }));
+    await engine.putPage('companies/noncanon', page('Noncanon Co', 'company', { canonical: 'No' }));
+    await engine.putPage('companies/super', page('Super Co', 'company', { superseded_by: '  ' }));
+    await engine.putPage('companies/elsewhere', page('Elsewhere Co'), { sourceId: 'other' });
+    const read = async (title: string, types = ['company'], sourceId = 'default') => sorted(await engine.readSeedTitleSlugs(sourceId, types, title));
+    const answers = {
+      acme: await read('ACME example'),
+      acmeBoth: await read('acme EXAMPLE', ['company', 'person']),
+      widget: await read('widget co', ['company', 'concept']),
+      gone: await read('Gone Co'),
+      merged: await read('Merged Co'),
+      alias: await read('Alias Co'),
+      aliased: await read('Aliased Co'),
+      noncanon: await read('Noncanon Co'),
+      blankSuperseded: await read('Super Co'),
+      elsewhere: await read('Elsewhere Co'),
+      elsewhereOther: await read('Elsewhere Co', ['company'], 'other'),
+      untrimmed: await read(' Acme Example'),
+      noTypes: await read('Acme Example', []),
+    };
+    expect(answers.acme).toEqual(['companies/acme']);
+    expect(answers.acmeBoth).toEqual(['companies/acme', 'people/acme']);
+    expect(answers.widget).toHaveLength(2);
+    expect(answers.gone).toEqual([]);
+    expect(answers.merged).toEqual([]);
+    expect(answers.alias).toEqual([]);
+    expect(answers.aliased).toEqual(['companies/aliased']);
+    expect(answers.noncanon).toEqual([]);
+    expect(answers.blankSuperseded).toEqual(['companies/super']);
+    expect(answers.elsewhere).toEqual([]);
+    expect(answers.elsewhereOther).toEqual(['companies/elsewhere']);
+    expect(answers.untrimmed).toEqual([]);
+    expect(answers.noTypes).toEqual([]);
+    // Which two of three matching pages answer is unordered; compare only the count across arms.
+    return { ...answers, widget: answers.widget.length };
   });
 });

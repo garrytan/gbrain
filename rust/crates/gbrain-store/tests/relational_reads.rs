@@ -234,3 +234,47 @@ fn the_hydrate_read_shows_only_served_unpinned_pages_with_a_bounded_synopsis() {
     };
     assert_eq!(synopses(&store, &scoped), vec!["other:companies/open:4"]);
 }
+
+#[test]
+fn the_title_seed_names_at_most_two_live_unretired_typed_pages() {
+    let dir = TempDir::new("relational-title-seed");
+    let store = open(&dir);
+    source(&store, "other");
+    let put = |slug: &str, title: &str, page_type: &str, frontmatter: Value| {
+        let input: PageInput = serde_json::from_value(json!({
+            "type": page_type, "title": title, "compiled_truth": "body", "frontmatter": frontmatter
+        }))
+        .unwrap();
+        store
+            .put_page(slug, &input, &PutPageOptions::default())
+            .unwrap();
+    };
+    put("companies/acme", "Acme Example", "company", json!({}));
+    put("people/acme", "acme example", "person", json!({}));
+    put(
+        "companies/merged",
+        "Merged Co",
+        "company",
+        json!({ "merged_into": "companies/acme" }),
+    );
+    put("companies/w1", "Widget Co", "company", json!({}));
+    put("companies/w2", "WIDGET CO", "company", json!({}));
+    put("companies/w3", "Widget Co", "company", json!({}));
+    let types = |t: &[&str]| t.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let seed = |title: &str, t: &[&str]| {
+        store
+            .read_seed_title_slugs("default", &types(t), title)
+            .unwrap()
+    };
+    assert_eq!(seed("ACME example", &["company"]), vec!["companies/acme"]);
+    assert_eq!(seed("acme example", &["company", "person"]).len(), 2);
+    assert!(seed("Merged Co", &["company"]).is_empty());
+    assert_eq!(seed("widget co", &["company"]).len(), 2);
+    assert!(seed("Acme Example", &[]).is_empty());
+    assert!(
+        store
+            .read_seed_title_slugs("other", &types(&["company"]), "Acme Example")
+            .unwrap()
+            .is_empty()
+    );
+}

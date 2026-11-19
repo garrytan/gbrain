@@ -4,7 +4,7 @@
  * Served: readPageSnapshotsBatch, findDuplicatePage, findDuplicatePages, deletePages, purgeDeletedPages, resolveSlugsByPaths,
  * softDeletePages, findPages, countPagesBy, getAllSlugs, listAllPageRefs, listPrefixSampledPages, listCorpusSample,
  * bumpPageRetrievals, getContentFlagsByPageIds, getUnverifiedExtractionPageIds, getPageTimestamps, getEffectiveDates, readAdmittedPageRefs,
- * readPageSynopses, revertToVersion.
+ * readPageSynopses, readSeedTitleSlugs, revertToVersion.
  * deletePages scrubs the eval candidates' retrieved slugs in the delete's transaction, as PGLite does.
  * purgeDeletedPages (also served) keeps the pages PGLite's atom and derived retirement holds keep, reading the `retired_by`
  * stamp on the page row, and removes and scrubs the rest as deletePages does (rust/docs/store/page_ops.md).
@@ -321,6 +321,12 @@ export const readPageSynopses: StoreMember<[refs: readonly PageRefRow[], policy?
   return rows.map((r) => ({
     page_id: Number(r.page_id), slug: r.slug, source_id: r.source_id, title: r.title, type: r.type, synopsis: r.synopsis ?? null,
   }));
+};
+
+/** The relational recall arm's title seed (engine-sql/relational-reads.ts): at most two live, unretired typed pages. */
+export const readSeedTitleSlugs: StoreMember<[sourceId: string, types: readonly string[], title: string], string[]> = async (brain, sourceId, types, title) => {
+  if (!types.length) return [];
+  return storeCall({ member: 'readSeedTitleSlugs' }, () => brain.readSeedTitleSlugs(sourceId, [...types], title));
 };
 
 export const revertToVersion: StoreMember<[slug: string, versionId: number, opts?: { sourceId?: string }], void> = async (brain, slug, versionId, opts) => {

@@ -1,5 +1,5 @@
 /**
- * The relational recall arm's seed admit read and hydrate read (engine-sql/relational-reads.ts) send Postgres the statement
+ * The relational recall arm's seed admit read, hydrate read and title seed read (engine-sql/relational-reads.ts) send Postgres the statement
  * search/relational-recall.ts sent through `executeRaw` before it became a typed member: the same text and the
  * same bound values, for each read policy shape.
  *
@@ -12,6 +12,7 @@ import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import { pageReadFilter } from '../src/core/search/read-policy-sql.ts';
 import { buildVisibilityClause } from '../src/core/search/sql-ranking.ts';
 import { boundedBodyPrefixSql } from '../src/core/page-window/bounded-lead.ts';
+import { retiredPageSql } from '../src/core/entities/resolve.ts';
 import type { PageReadPolicy } from '../src/core/types.ts';
 import { makeFakeSql } from './helpers/fake-postgres-sql.ts';
 
@@ -83,5 +84,14 @@ describe('the relational seed admit read sends the hand-written Postgres stateme
 
   test('readPageSynopses sends nothing for no refs', async () => {
     expect(await sent(e => e.readPageSynopses([], { sourceId: 'default' }))).toEqual([]);
+  });
+
+  test('readSeedTitleSlugs', async () => {
+    const old = await sent(e => e.executeRaw(
+      `SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND type = ANY($2::text[])
+           AND lower(title) = lower($3) AND NOT ${retiredPageSql('pages')} LIMIT 2`, ['default', ['company', 'person'], 'Acme Example']));
+    const typed = await sent(e => e.readSeedTitleSlugs('default', ['company', 'person'], 'Acme Example'));
+    expect(old).toHaveLength(1);
+    expect(typed).toEqual(old);
   });
 });

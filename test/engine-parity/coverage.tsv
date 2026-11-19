@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 678/678
+# covered: 679/679
 # lifecycle: 9/9
 # pages: 40/40
 # search: 7/7
@@ -64,7 +64,7 @@
 # write_guards: 7/7
 # page_visibility: 3/3
 # large_page: 1/1
-# relational_reads: 2/2
+# relational_reads: 3/3
 # trust_fence: 1/1
 # trust_proposals: 7/7
 # connect_gate: 4/4
@@ -83,13 +83,13 @@ getPage	pages	yes	90	yes	yes	yes	serves
 readPageSnapshot	pages	yes	24	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	375	yes	yes	yes	serves
+putPage	pages	yes	376	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	8	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	122	yes	yes	yes	serves
+softDeletePage	pages	yes	123	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -717,6 +717,7 @@ readWriterSlugFence	page_visibility	yes	1	no	yes	yes	serves
 readStoredBodyBytes	large_page	yes	1	no	yes	yes	serves
 readAdmittedPageRefs	relational_reads	yes	1	no	yes	yes	serves
 readPageSynopses	relational_reads	yes	1	no	yes	yes	serves
+readSeedTitleSlugs	relational_reads	yes	1	no	yes	yes	serves
 listFenceFactRows	trust_fence	yes	4	no	yes	yes	serves
 insertTrustProposal	trust_proposals	yes	4	no	yes	yes	serves
 getTrustProposal	trust_proposals	yes	2	no	yes	yes	serves
