@@ -56,14 +56,14 @@ const DERIVED_LINK_SOURCES = ['markdown', 'frontmatter', 'mentions', 'wikilink-r
  */
 export const REBUILD_STORES: Readonly<Record<string, 'stated' | 'derived'>> = {
   facts: 'stated', takes: 'stated', timeline_entries: 'stated', page_aliases: 'stated', slug_aliases: 'stated', tags: 'stated',
-  files: 'stated', raw_data: 'stated', core_edit_notices: 'stated', write_gate_holds: 'stated', write_gate_receipts: 'stated', links: 'stated', labels: 'stated',
+  files: 'stated', raw_data: 'stated', secret_store: 'stated', secret_store_occurrence: 'stated', core_edit_notices: 'stated', write_gate_holds: 'stated', write_gate_receipts: 'stated', links: 'stated', labels: 'stated',
   pages: 'derived', page_versions: 'derived', content_chunks: 'derived', query_cache: 'derived', take_proposals: 'derived', open_loops: 'derived',
   slug_rename_history: 'derived', trust_proposals: 'derived', decide_proposals: 'derived', decide_review_queue: 'derived',
   decide_review_proposals: 'derived', persistence_requests: 'derived', persistence_effects: 'derived', derived_generations: 'derived',
   derived_generation_items: 'derived', retrieval_event_pages: 'derived', retrieval_event_links: 'derived', retrieval_feedback: 'derived',
   retrieval_weights: 'derived', 'eval_candidates.retrieved_slugs': 'derived', mention_gazetteer_entries: 'derived',
   context_volunteer_events: 'derived', op_checkpoints: 'derived', belief_events: 'derived',
-  page_body_manifest: 'derived', page_body_stagings: 'derived', page_segment_texts: 'derived', secret_store: 'derived', secret_store_occurrence: 'derived',
+  page_body_manifest: 'derived', page_body_stagings: 'derived', page_segment_texts: 'derived',
 };
 
 /**
@@ -97,7 +97,8 @@ const DELETED_US = `floor(extract(epoch FROM p.deleted_at)*1000000)::bigint::tex
  * What on or about the concept row `$1` (source `$2`, slug `$3`) synthesis did not write: REBUILD_STORES kinds for rows a
  * person or an agent stated, plus a title other than the slug's, a frontmatter key synthesis does not write, a stored
  * timeline, a file other than `<slug>.md`, dated link transitions, an attached raw_data payload, a person's decision on an
- * edge proposal (rejected, undone or reverted), an entity identity, and a guest mark or promotion.
+ * edge proposal (rejected, undone or reverted), an entity identity, a guest mark or promotion, and a sealed secret original recorded on the page (even one copied
+ * from a live member, until entries can be compared across pages).
  */
 const STATED_SQL = `SELECT array_remove(ARRAY[
   CASE WHEN EXISTS (SELECT 1 FROM facts f WHERE f.source_id = $2 AND (f.entity_slug = $3 OR f.source_markdown_slug = $3) AND NOT ${extractedFromPageSql('f', '$3')}) THEN 'facts' END,
@@ -124,6 +125,7 @@ const STATED_SQL = `SELECT array_remove(ARRAY[
   CASE WHEN EXISTS (SELECT 1 FROM entity_identities i WHERE i.page_id = $1) THEN 'entity_identities' END,
   CASE WHEN EXISTS (SELECT 1 FROM guest_marks g WHERE g.page_id = $1) THEN 'guest_marks' END,
   CASE WHEN EXISTS (SELECT 1 FROM guest_promotions g WHERE g.guest_page_id = $1) THEN 'guest_promotions' END,
+  CASE WHEN EXISTS (SELECT 1 FROM secret_store_occurrence o WHERE o.page_id = $1 AND o.commit_sha IS NULL) THEN 'secret_store_occurrence' END,
   CASE WHEN EXISTS (SELECT 1 FROM page_label_guards g WHERE g.page_id = $1) OR EXISTS (SELECT 1 FROM pages p WHERE p.id = $1
     AND p.frontmatter ?| $5::text[]) THEN 'labels' END
 ], NULL) AS kinds,
