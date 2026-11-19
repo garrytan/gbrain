@@ -5,7 +5,7 @@ import { opError, OperationError, type AuthInfo } from '../ops/contract.ts';
 import { hasScope, operationScopesAllowed } from '../scope.ts';
 import { resolveSourceId } from '../source-resolver.ts';
 import { dispatchToolCall } from '../../mcp/dispatch.ts';
-import { registerLocalWriter, withVerifiedLocalRegistration } from './identity.ts';
+import { readBrainIdentity, registerLocalWriter, withVerifiedLocalRegistration } from './identity.ts';
 import { rustOwnerServesPersistence } from '../rust-engine/owner-ipc/client.ts';
 import { startPersistenceConsumer, assertPersistenceAccepting } from './service.ts';
 import { isWriteErrorCode, isWriteReceipt } from './types.ts';
@@ -47,7 +47,8 @@ export async function createPersistenceIpcProvider(engine: BrainEngine, config: 
       if (!(error instanceof OperationError && error.code === 'permission_denied')) throw error;
     }
   }
-  const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
+  // A typed read, so an engine with no raw SQL (Rust) can serve the persistence socket.
+  const brain = { brain_id: await readBrainIdentity(engine) };
   startPersistenceConsumer(engine, config);
   const projectionStatus = startProjectionStatusCache(engine);
   return { brainId: brain.brain_id, projectionStatus: () => projectionStatus.read(), dispatch: request => withVerifiedLocalRegistration(engine, request.registration, async verified => {
