@@ -407,7 +407,7 @@ All must hold at one pinned commit, on every platform where PGLite would be depr
 
 ## PR sequence
 
-Every PR targets `master`, carries the `rust-engine` label and a `changelog.d/` fragment, gets `full-ci` when its head is final, and lands through a `queue:` comment. "Heads-up" means a `heads-up:` comment before the change, kept in its own small PR. "Yes" names the decision whose quote goes in the PR body. No PR before Phase 8 changes anything for an existing user, so none adds a `behavior-changes.d/` entry until then.
+Every PR targets `master`, carries the `rust-engine` label and a `changelog.d/` fragment, gets `full-ci` when its head is final, and lands through a `queue:` comment. From 2026-11-18, Rust work lands as trunk snapshots instead; "Delivery decisions (2026-11-18)" below amends this paragraph and the table keeps the order of the work. "Heads-up" means a `heads-up:` comment before the change, kept in its own small PR. "Yes" names the decision whose quote goes in the PR body. No PR before Phase 8 changes anything for an existing user, so none adds a `behavior-changes.d/` entry until then.
 
 | # | Plain title | Main paths | Heads-up | Yes |
 |---|---|---|---|---|
@@ -671,6 +671,40 @@ The maintainer asked for a public benchmark of the engines, built alongside the 
 - Upgrades: a release that leaves `rust/` unchanged pins the same digest, so the installed addon keeps working. When the pinned digest changes and a Rust brain exists, `gbrain upgrade` and `self-upgrade` fetch and verify the new addon into its own `<engine_build>/` directory before switching, and keep the previous addon until the new one has opened the brain once. If that fetch fails, the binary upgrade still completes and the Rust brain reports `engine_unavailable` with the install command, as `post-upgrade` does; an upgrade never fails for want of the addon. A raw `bun install -g` upgrade has no staging step: `post-upgrade` fetches the addon, and if that fails the brain reports `engine_unavailable` with the install command and a doctor finding, with no data touched. `gbrain engine status` (and its `--json` document, as additive fields under `schema_version: 1`) reports the target and whether it is a preview target, the addon path (home-relative), its digest and the pinned digest, the store format, the index lag and the capability report. Brains on PGLite or Postgres never trigger a fetch.
 - Platforms: darwin-arm64 and linux-x64-glibc first (the two release binary targets, `.github/workflows/release.yml:128-132`), then linux-arm64-glibc, darwin-x64, musl and Windows, matching the lock addon's target list before PGLite is deprecated on each.
 - The addon size is measured in the bake-off. Embedding it in the compiled release binaries is reconsidered only if it is small enough that every user can carry it.
+
+## Delivery decisions (2026-11-18)
+
+The maintainer approved these on 2026-11-18 ("do it", 5:07 PM PST and 6:08 PM PST). They amend "PR sequence".
+
+### Landing model
+
+- Rust work merges into a trunk branch, `rust-engine/main`, with merge commits only. One owner pushes the trunk. It never rebases or force-pushes.
+- The trunk owner merges `master` into the trunk about every 3 hours and runs the full gate after each merge: typecheck, unit and serial tests, `cargo test`, `cargo clippy -D warnings`, the parity coverage and Rust tally (no file's equal count may drop), the regenerated goldens and the E2E shard budget.
+- About every 8 hours, the trunk owner cuts `rust-engine/land-N` from a green trunk head, merges `master` into it and opens one snapshot PR with the `rust-engine` label. The merge reviewer merges the exact commit it checked.
+- Up to 6 Rust landings a day. Rust goes first when a Rust head and another head are ready at the same time. Stacked Rust PRs land back to back.
+- A landing can have up to 40,000 lines when every file is Rust-engine code (`rust/`, `src/core/rust-engine/` and Rust-only tests). Shared TypeScript stays at about 2,000 lines, the merge reviewer reads it line by line, and the PR body lists every shared file.
+- Each snapshot gets one read-only review. Only these findings block a snapshot: a change that can break a default install, CI or a build machine, or one that exposes a secret. Privacy and data findings inside the engine do not block while no user can select `rust`; they go in "Open engine findings" below.
+- Defaults, settings, error codes, the install path and any change to what a caller reads go to the maintainer first. Snapshots keep them unchanged; the coordinator flags any exception to the merge reviewer.
+
+### Dec 1 scope
+
+- The agent-facing contract on a Rust brain matches Postgres: the CLI commands and their JSON output, the MCP tool names and shapes, and the markdown brain format.
+- `BrainEngine` members off the hot path may keep a typed capability refusal (`engine_capability_missing`) as follow-up work, while the parity suite and gbrain-evals pass.
+
+### Concurrency track
+
+- The owner-process protocol and parallel writers over the redb store run on their own branches. Nothing from them lands without the maintainer's yes.
+- That yes exists (6:08 PM PST 2026-11-18) for the owner-process protocol and, after its hardening is green, for the parallel-writer prototype. Both stay opt-in, behind the `rust` engine selection.
+
+### Open engine findings
+
+The PR that makes `rust` selectable cannot land while any row here is open.
+
+| # | Finding | Where | Status |
+|---|---|---|---|
+| 1 | The Rust store keeps no `derivation_inputs` lineage, so a row that only that table ties to an owner-only row is not hidden by it. | `rust/crates/gbrain-store/src/facts/privacy.rs:28,80,124`, `rust/docs/store/keyword.md:78` | Open |
+| 2 | `owner_only_marks` (migration v322) marks pages only. SQL also marks `derivation_inputs` descendants, takes and timeline rows, facts, and the row-security and unguarded marks. | `rust/crates/gbrain-store/src/owner_only_marks.rs` | Open |
+| 3 | Postgres keyword and chunk search report `stale` as false, while PGLite (and Rust) compute it. A contract gap between the SQL engines, a follow-up for all engines. | `src/core/postgres-engine.ts:1541`, `src/core/postgres-engine.ts:1722` | Open |
 
 ## Decisions needing the maintainer's yes
 
