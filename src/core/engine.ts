@@ -2793,6 +2793,8 @@ export interface BrainEngine {
    * keeps this backlog in lockstep with what the consolidator can read.
    */
   countUnconsolidatedFacts(source_id: string): Promise<number>;
+  /** An opaque token that changes whenever a withdrawal is recorded for the source or a folder rulebook is installed, by any process (facts/meta-hook.ts compares it; only equality has meaning). */
+  readHotMemoryWatermark(sourceId: string): Promise<string>;
 
   /**
    * The facts a page publication's fence projection would retire (engine-sql/facts.ts `listFenceRetireCandidates`): the

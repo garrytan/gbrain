@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 655/655
+# covered: 656/656
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -25,7 +25,7 @@
 # takes: 23/23
 # dream: 3/3
 # contradictions: 5/5
-# facts: 15/15
+# facts: 16/16
 # segmented_body: 15/15
 # versions: 3/3
 # stats_ingest: 5/5
@@ -301,6 +301,7 @@ listFactsKeyset	facts	yes	2	no	yes	yes	serves
 listFactsBySession	facts	yes	3	yes	yes	yes	serves
 listSupersessions	facts	yes	6	yes	yes	yes	serves
 countUnconsolidatedFacts	facts	yes	2	yes	yes	yes	serves
+readHotMemoryWatermark	facts	yes	2	no	yes	yes	serves
 listFenceRetireCandidates	facts	yes	2	no	yes	yes	serves
 findCandidateDuplicates	facts	yes	6	yes	yes	yes	serves
 consolidateFact	facts	yes	4	no	yes	yes	serves
@@ -620,7 +621,7 @@ getRecentSalience	salience_enrich	yes	3	yes	yes	yes	serves
 listEnrichCandidates	salience_enrich	yes	3	yes	yes	yes	serves
 findAnomalies	salience_enrich	yes	4	yes	yes	yes	serves
 hasCoveringFactWithdrawal	trust	yes	1	no	yes	yes	serves
-insertFactWithdrawal	trust	yes	6	no	yes	yes	serves
+insertFactWithdrawal	trust	yes	7	no	yes	yes	serves
 listFactWithdrawalDates	trust	yes	2	no	yes	yes	serves
 moveFactWithdrawalSubject	trust	yes	1	no	yes	yes	serves
 hasFactWithdrawalForSubject	trust	yes	1	no	yes	yes	serves

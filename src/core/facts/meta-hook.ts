@@ -94,16 +94,11 @@ export function invalidateHotMemoryForEngine(engine: object): void {
 
 /**
  * Changes whenever a withdrawal is recorded for the source or (GBRA-218) a folder rulebook is installed, by any process.
- * Read-only embedder engines without raw SQL fall back to the TTL alone.
+ * Embedder engines without the watermark member fall back to the TTL alone.
  */
 async function withdrawalWatermark(engine: OperationContext['engine'], sourceId: string): Promise<string> {
-  if (typeof engine.executeRaw !== 'function') return '';
-  const [row] = await engine.executeRaw<{ n: number; at: string | null; rules: string | null }>(
-    `SELECT count(*)::int AS n, max(withdrawn_at)::text AS at,
-       (SELECT md5(coalesce(string_agg(source_id || '/' || rule_id || '/' || prefix || '/' || array_to_string(readable_by, ',') || '/' || revision::text, '|' ORDER BY source_id, rule_id), '')) FROM access_rules)
-         || ':' || (SELECT md5(coalesce(string_agg(source_id || '/' || prefix || '/' || reason || '/' || coalesce(revision::text, ''), '|' ORDER BY source_id, prefix, reason), '')) FROM access_pending_coverage) AS rules
-     FROM fact_withdrawals WHERE source_id = $1`, [sourceId]);
-  return `${row?.n ?? 0}:${row?.at ?? ''}:${row?.rules ?? ''}`;
+  if (typeof engine.readHotMemoryWatermark !== 'function') return '';
+  return engine.readHotMemoryWatermark(sourceId);
 }
 
 /** Bounded set: evict the oldest-expiry entry when inserting at capacity. */

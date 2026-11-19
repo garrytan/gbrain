@@ -2944,6 +2944,7 @@ export class PGLiteEngine implements BrainEngine {
     return factsImpl.listSupersessions(unscopedExecutor(this.engineSql, 'facts: unscoped on master (EO4 inventory)'), source_id, opts);
   }
 
+  readHotMemoryWatermark(sourceId: string) { return factsImpl.readHotMemoryWatermark(unscopedExecutor(this.engineSql, 'facts: the hot-memory watermark reads the source ledger and the brain-wide rulebook'), sourceId); }
   async countUnconsolidatedFacts(source_id: string): Promise<number> {
     return factsImpl.countUnconsolidatedFacts(unscopedExecutor(this.engineSql, 'facts: unscoped on master (EO4 inventory)'), source_id);
   }
