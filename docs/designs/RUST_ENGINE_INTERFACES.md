@@ -905,6 +905,13 @@ Facts and their supersession chains.
     `test/engine-parity/forget-commit.test.ts` and `test/engine-parity/forget-remember.test.ts`. Still raw on Rust:
     `discoverWithdrawalTargets`, the purge sweep (`facts/purge.ts`), `memberPageWithdrawal` and the non-publication
     statements of `recordFactWithdrawal`.
+  - The purge plan, dry run and `--match` reads are typed (`engine-sql/facts-purge-plan.ts`, 17 members from
+    `hasLivePageSlug` to `listPurgeProbeItems`; statement texts in `facts/purge-plan-statements.ts`). The store serves
+    them in `facts/purge_plan.rs` and `page_body/purge_scan.rs` (rust/docs/store/purge-plan.md); it probes `links`,
+    `timeline_entries`, `raw_data` and `wanted_links`, answers 0 for the tables it keeps no rows of, and refuses the
+    tables it keeps but does not probe yet, bytea probes and naming `raw_data` rows. On Rust a purge plan still stops
+    at `discoverWithdrawalTargets`. Pinned by `test/engine-parity/purge-plan.test.ts` and
+    `test/purge-plan-sql-pin.test.ts`.
   - Held fence cells. The world-only fact read's check of which facts-fence row lines a caller may not see
     (`eligibility/stamp.ts` `heldFenceLines`, under get_page, get_chunks, think and search_exact) is the typed member
     `listHeldFenceCells` (capability `facts`, SQL in `engine-sql/cli-reads-ops.ts`, one statement for PGLite and

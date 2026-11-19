@@ -47,6 +47,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+pub(crate) mod purge_scan;
+
 const TEXT: u8 = 0x01;
 const MANIFEST: u8 = 0x02;
 const STAGING: u8 = 0x03;

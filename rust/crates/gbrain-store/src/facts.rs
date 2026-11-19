@@ -54,6 +54,7 @@ mod page_purges;
 mod privacy;
 pub mod purge;
 pub mod purge_ledger;
+pub mod purge_plan;
 pub mod reconcile;
 pub mod relink;
 pub mod relink_writes;

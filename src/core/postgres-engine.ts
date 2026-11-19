@@ -182,6 +182,7 @@ import * as factRelinkImpl from './engine-sql/fact-relink-attempts.ts';
 import * as factRelinkWritesImpl from './engine-sql/fact-relink-writes.ts';
 import * as factsCycleImpl from './engine-sql/facts-cycle.ts';
 import * as factsPurgeImpl from './engine-sql/facts-purge.ts';
+import * as factsPurgePlanImpl from './engine-sql/facts-purge-plan.ts';
 import * as factsRepairImpl from './engine-sql/facts-repair.ts';
 import * as factsTrustImpl from './engine-sql/facts-trust.ts';
 import type { ExactScanOpts } from './search/exact-scan.ts';
@@ -1216,6 +1217,24 @@ export class PostgresEngine implements BrainEngine {
   listWithdrawalSlugs(sourceId: string, visibility: string, factHash: string, subject: string) { return factsPurgeImpl.listWithdrawalSlugs(this.executeRaw.bind(this), sourceId, visibility, factHash, subject); }
   expireFactsByWithdrawal(sourceId: string, visibility: string, fact: string, subject: string) { return factsPurgeImpl.expireFactsByWithdrawal(this.executeRaw.bind(this), sourceId, visibility, fact, subject); }
   insertFactPurge(row: factsPurgeImpl.FactPurgeInsert) { return factsPurgeImpl.insertFactPurge(this.executeRaw.bind(this), row); }
+  // A fact purge's plan, dry run and --match (engine-sql/facts-purge-plan.ts), through executeRaw as before.
+  hasLivePageSlug(sourceId: string, slug: string) { return factsPurgePlanImpl.hasLivePageSlug(this.executeRaw.bind(this), sourceId, slug); }
+  readPurgeTakePages(sourceId: string, pageIds: readonly number[]) { return factsPurgePlanImpl.readPurgeTakePages(this.executeRaw.bind(this), sourceId, pageIds); }
+  countPurgeCarryingVersions(q: factsPurgePlanImpl.PurgeClaimNeedles) { return factsPurgePlanImpl.countPurgeCarryingVersions(this.executeRaw.bind(this), q); }
+  listStagingsHoldingClaim(q: factsPurgePlanImpl.StagingClaimNeedles) { return factsPurgePlanImpl.listStagingsHoldingClaim(this.executeRaw.bind(this), q); }
+  readStagingPartEdges(sourceId: string, keep: number, afterId: string, afterPart: number) { return factsPurgePlanImpl.readStagingPartEdges(this.executeRaw.bind(this), sourceId, keep, afterId, afterPart); }
+  countPurgeReviewRows(sourceId: string, factIds: readonly number[]) { return factsPurgePlanImpl.countPurgeReviewRows(this.executeRaw.bind(this), sourceId, factIds); }
+  matchPurgeCandidates(sourceId: string, text: string) { return factsPurgePlanImpl.matchPurgeCandidates(this.executeRaw.bind(this), sourceId, text); }
+  listRequestsCarryingClaim(q: factsPurgePlanImpl.PurgeClaimNeedles & { limit: number }) { return factsPurgePlanImpl.listRequestsCarryingClaim(this.executeRaw.bind(this), q); }
+  listRequestsHoldingStagings(sourceId: string, stagingIds: readonly string[]) { return factsPurgePlanImpl.listRequestsHoldingStagings(this.executeRaw.bind(this), sourceId, stagingIds); }
+  listDerivedRowsStep(frontier: ReadonlyArray<{ table: string; id: string }>, limit: number) { return factsPurgePlanImpl.listDerivedRowsStep(this.executeRaw.bind(this), frontier, limit); }
+  listSegmentedPurgeBodies(sourceId: string, store: 'pages' | 'page_versions', limit: number) { return factsPurgePlanImpl.listSegmentedPurgeBodies(this.executeRaw.bind(this), sourceId, store, limit); }
+  countLegacyDerivedPages(sourceId: string) { return factsPurgePlanImpl.countLegacyDerivedPages(this.executeRaw.bind(this), sourceId); }
+  listPageSourcePaths(pageIds: readonly number[]) { return factsPurgePlanImpl.listPageSourcePaths(this.executeRaw.bind(this), pageIds); }
+  listFactNeighbours(q: { embedding: string; sourceId: string; model: string; claim: string }) { return factsPurgePlanImpl.listFactNeighbours(this.executeRaw.bind(this), q); }
+  setPurgeProbeTimeout(statementMs: number) { return factsPurgePlanImpl.setPurgeProbeTimeout(this.executeRaw.bind(this), statementMs); }
+  countPurgeProbe(probe: factsPurgePlanImpl.PurgeProbe, rows: number) { return factsPurgePlanImpl.countPurgeProbe(this.executeRaw.bind(this), probe, rows); }
+  listPurgeProbeItems(probe: factsPurgePlanImpl.PurgeProbe & { kind: 'named' }) { return factsPurgePlanImpl.listPurgeProbeItems(this.executeRaw.bind(this), probe); }
 
   // Facts statements, repair classifiers and loop retirement (engine-sql/facts-repair.ts), through executeRaw as before.
   loopFactDrift(sourceIds: string[], loopId: number | null) { return factsRepairImpl.loopFactDrift(this.executeRaw.bind(this), sourceIds, loopId); }

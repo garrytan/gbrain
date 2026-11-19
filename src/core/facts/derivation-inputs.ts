@@ -55,10 +55,7 @@ export async function derivedRowsFrom(engine: BrainEngine, inputs: readonly Deri
   const rows: DerivedRow[] = [];
   let frontier = inputs.map(refKey);
   for (let depth = 1; frontier.length && depth <= maxDepth; depth++) {
-    const next = await engine.executeRaw<{ derived_table: string; derived_id: string }>(`SELECT DISTINCT d.derived_table,d.derived_id
-      FROM derivation_inputs d JOIN jsonb_to_recordset($1::text::jsonb) AS f(input_table text,input_id text)
-        ON d.input_table=f.input_table AND d.input_id=f.input_id
-      ORDER BY d.derived_table,d.derived_id LIMIT $2`, [JSON.stringify(frontier.map(f => ({ input_table: f.table, input_id: f.id }))), limit + 1]);
+    const next = await engine.listDerivedRowsStep(frontier, limit + 1);
     frontier = [];
     for (const r of next) {
       const key = `${r.derived_table}:${r.derived_id}`;

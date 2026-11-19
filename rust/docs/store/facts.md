@@ -492,6 +492,7 @@ factHash, requestId, actor, reason })` stores a tombstone and answers true, or f
 foreign key does. `purge_fact` (facts/purge.ts) writes its main tombstone through this member; the holding-slug
 tombstones, the take and page purges, the purge epoch and the rest of the purge still run through `executeRaw`, which
 this engine refuses, so a full `purge_fact` does not run on Rust yet.
+The plan, dry run and `--match` reads are typed members: [purge-plan.md](purge-plan.md).
 
 Readers: the fence overlay's `purged`; `isFactPurged` (`is_fact_purged`: point reads for subject `*` and the entity)
 and the purge half of `isFactWithdrawn` ([trust.md](trust.md)), which every fact writer runs before it saves;

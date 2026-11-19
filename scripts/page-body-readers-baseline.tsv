@@ -260,7 +260,7 @@ src/core/facts/proposal-supersede.ts	mirrorBody	field	SEGW	assertInlineBody befo
 src/core/facts/proposal-supersede.ts	prepareProposalMutation	call:serializePageToMarkdown	SEGW	spread of a segmented page throws
 src/core/facts/proposal-supersede.ts	prepareProposalMutation	field	SEGW	segmented page: getter throws page_body_segmented in preparation (nothing written)
 src/core/facts/proposal-supersede.ts	undoUnmanaged	field	SEGW	segmented page: getter throws page_body_segmented
-src/core/facts/purge-verify.ts	carriesClaimSql	sql	STREAM	strpos over NULL never matches a segmented page; withSegmentedProse probes its segment texts
+src/core/facts/purge-plan-statements.ts	carriesClaimSql	sql	STREAM	strpos over NULL never matches a segmented page; withSegmentedProse probes its segment texts
 src/core/facts/purge-verify.ts	verifyPagePurge	sql	STREAM	segmented pages probed through their segment texts (withSegmentedProse)
 src/core/facts/purge.ts	rewritePageBodies	call:contentHash	META	inline pages only (see sql row)
 src/core/facts/purge.ts	rewritePageBodies	field	SEGW	segmented page: getter throws page_body_segmented

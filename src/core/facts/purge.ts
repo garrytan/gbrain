@@ -45,9 +45,9 @@ import { cancelRequestsHoldingStagings, findRequestsCarrying, findRequestsHoldin
 import { withPageTierKept } from '../trust/fence-append.ts';
 import { rebuildPendingPageProjections } from '../page-state/projections.ts';
 import { buildSegmentedProjection } from '../page-body/projection.ts';
-import { liveStagingSql } from '../page-body/schema.ts';
 import { escapeFenceCell } from '../fence-shared.ts';
 import { holdingSlugSql } from '../facts-fence.ts';
+import { SEGMENTED_VERSION_CARRIES, STAGING_PART_BATCH } from './purge-plan-statements.ts';
 import { carriesClaimSql, claimNeedles, purgeCompletion, reasonNeedle, verifyFactPurge, type PurgeReceipt, type StoreCount } from './purge-verify.ts';
 import { noteBelief, withBeliefBatch } from '../belief/ledger.ts';
 import { markBeliefCommits } from '../belief/append.ts';
@@ -109,8 +109,6 @@ async function loadTarget(engine: BrainEngine, id: number, sourceId: string): Pr
 /** @internal Work the cross-part staging scan does, for its bound test: parts visited and bytes read. Counts, not time. */
 export const purgeStagingWork = { parts: 0, bytes: 0 };
 
-const STAGING_PART_BATCH = 1000;
-
 /**
  * Live stagings of the source whose upload parts hold `claim`'s exact bytes across a part boundary (a claim inside one
  * part is matched in SQL). Parts are walked in order per staging carrying the stream's last (claim bytes - 1) bytes,
@@ -124,11 +122,7 @@ async function stagingsWithClaimAcrossParts(engine: BrainEngine, sourceId: strin
   let carry = Buffer.alloc(0);
   let previous: { id: string; part: number } = { id: '00000000-0000-0000-0000-000000000000', part: -1 };
   for (;;) {
-    const parts = await engine.executeRaw<{ id: string; part_no: number; head: Uint8Array; tail: Uint8Array }>(`SELECT pt.staging_id::text AS id,pt.part_no,
-        substring(pt.body from 1 for $2) AS head,substring(pt.body from greatest(1,octet_length(pt.body)-$2+1)) AS tail
-      FROM page_body_staging_parts pt JOIN page_body_stagings s ON s.id=pt.staging_id
-      WHERE s.source_id=$1 AND s.state IN ('open','sealed','prepared') AND (pt.staging_id,pt.part_no)>($3::uuid,$4::int)
-      ORDER BY pt.staging_id,pt.part_no LIMIT ${STAGING_PART_BATCH}`, [sourceId, keep, previous.id, previous.part]);
+    const parts = await engine.readStagingPartEdges(sourceId, keep, previous.id, previous.part);
     for (const part of parts) {
       const head = Buffer.from(part.head), tail = Buffer.from(part.tail);
       purgeStagingWork.parts++;
@@ -150,13 +144,7 @@ async function stagingsWithClaimAcrossParts(engine: BrainEngine, sourceId: strin
  * create refuses cleanly (body_staging_expired) instead of failing on the manifest's text foreign key.
  */
 export async function stagingsHoldingClaim(engine: BrainEngine, sourceId: string, claim: string): Promise<Pick<PurgePlan, 'stagings' | 'held'>> {
-  const stagings = [...new Set([...(await engine.executeRaw<{ id: string }>(`SELECT s.id::text AS id FROM page_body_stagings s
-    WHERE s.source_id=$1 AND ((s.state IN ('open','sealed','prepared') AND (EXISTS (SELECT 1 FROM page_body_manifest m
-        JOIN page_segment_texts t ON t.source_id=m.source_id AND t.sha256=m.sha256 WHERE m.staging_id=s.id AND strpos(lower(convert_from(t.body,'UTF8')),$2)>0)
-      OR EXISTS (SELECT 1 FROM page_body_staging_parts pt WHERE pt.staging_id=s.id AND position(convert_to($3::text,'UTF8') in pt.body)>0)))
-      OR (${liveStagingSql('s')} AND EXISTS (SELECT 1 FROM page_body_staging_texts r JOIN page_segment_texts t ON t.source_id=r.source_id AND t.sha256=r.sha256
-        WHERE r.staging_id=s.id AND (strpos(lower(convert_from(t.body,'UTF8')),$2)>0 OR strpos(lower(convert_from(t.body,'UTF8')),$4)>0))))
-    ORDER BY s.id`, [sourceId, claim.toLowerCase(), claim, escapeFenceCell(claim).toLowerCase()])).map(row => row.id),
+  const stagings = [...new Set([...await engine.listStagingsHoldingClaim({ sourceId, claimLower: claim.toLowerCase(), claim, cellLower: escapeFenceCell(claim).toLowerCase() }),
   ...await stagingsWithClaimAcrossParts(engine, sourceId, claim)])].sort();
   return { stagings, held: await findRequestsHoldingStagings(engine, sourceId, stagings) };
 }
@@ -164,8 +152,7 @@ export async function stagingsHoldingClaim(engine: BrainEngine, sourceId: string
 /** Read-only: everything a purge of `target` would touch. Inside the purge transaction it runs under the source lock. */
 export async function planFactPurge(engine: BrainEngine, target: PurgeTarget, allSubjects: boolean): Promise<PurgePlan> {
   // GBRA-574 A1: a fact on an unbacked name key (no live page) purges source-wide, and every purge of the claim reaches such rows.
-  const unbacked = !allSubjects && !!target.entity_slug && !target.entity_slug.includes('/') && (await engine.executeRaw(
-    'SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL LIMIT 1', [target.source_id, target.entity_slug])).length === 0;
+  const unbacked = !allSubjects && !!target.entity_slug && !target.entity_slug.includes('/') && !(await engine.hasLivePageSlug(target.source_id, target.entity_slug));
   const subject = allSubjects || unbacked ? '*' : target.entity_slug ?? '*';
   const facts = await engine.planFactPurgeIds(target.source_id, target.visibility, target.fact_hash, subject);
   const factIds = facts.map(f => Number(f.id));
@@ -174,12 +161,10 @@ export async function planFactPurge(engine: BrainEngine, target: PurgeTarget, al
     [{ visibility: target.visibility, fact_hash: target.fact_hash, subject, claim: target.fact }]).catch(withdrawalDiscoveryFailure);
   const known = new Set(discovered.map(p => p.page_id));
   const extra = takes.map(t => t.page_id).filter(id => !known.has(id));
-  const takePages = extra.length ? await engine.executeRaw<{ slug: string; page_id: number; revision: string }>(
-    'SELECT slug,id AS page_id,knowledge_revision::text AS revision FROM pages WHERE source_id=$1 AND id=ANY($2::int[])', [target.source_id, extra]) : [];
+  const takePages = extra.length ? await engine.readPurgeTakePages(target.source_id, extra) : [];
   const pages = [...discovered, ...takePages.map(p => ({ ...p, page_id: Number(p.page_id) }))].sort((a, b) => a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0);
-  const [versions] = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM page_versions v JOIN pages p ON p.id=v.page_id
-    WHERE p.source_id=$1 AND (${carriesClaimSql('v', 2)} OR strpos(lower(v.change_reason),$2)>0 OR strpos(lower(v.change_reason),$4)>0
-      OR (v.body_storage='segmented' AND ${SEGMENTED_VERSION_CARRIES}))`, [target.source_id, ...claimNeedles(target.fact), reasonNeedle(target.fact)]);
+  const [claimLower, claimJson] = claimNeedles(target.fact);
+  const versions = await engine.countPurgeCarryingVersions({ sourceId: target.source_id, claimLower, claimJson, reason: reasonNeedle(target.fact) });
   const { stagings, held } = await stagingsHoldingClaim(engine, target.source_id, target.fact);
   // #6511 [R5]: a statement timeout of this unindexable substring search is deterministic on a large journal, not contention: the typed code, not a retry.
   const requests = await faultPoint('purge:carrying_lookup', { sourceId: target.source_id, operation: PURGE_OPERATION })
@@ -192,16 +177,12 @@ export async function planFactPurge(engine: BrainEngine, target: PurgeTarget, al
   });
   const inputs: DerivationRef[] = [...factIds.map(id => ({ table: 'facts', id })), ...takes.map(t => ({ table: 'takes', id: t.id }))];
   const derived = await derivedRowsFrom(engine, inputs);
-  const [counts] = await engine.executeRaw<{ q: number; rp: number; dp: number }>(`SELECT
-    (SELECT count(*)::int FROM decide_review_queue WHERE source_id=$1 AND (a_ref=ANY($2::text[]) OR b_ref=ANY($2::text[]))) AS q,
-    (SELECT count(*)::int FROM decide_review_proposals WHERE source_id=$1 AND (a_ref=ANY($2::text[]) OR b_ref=ANY($2::text[]))) AS rp,
-    (SELECT count(*)::int FROM decide_proposals WHERE source_id=$1 AND (new_fact_id=ANY($3::bigint[]) OR old_fact_id=ANY($3::bigint[]))) AS dp`,
-  [target.source_id, factIds.map(String), factIds]);
-  const review = { decide_review_queue: Number(counts?.q ?? 0), decide_review_proposals: Number(counts?.rp ?? 0), decide_proposals: Number(counts?.dp ?? 0) };
+  const counts = await engine.countPurgeReviewRows(target.source_id, factIds);
+  const review = { decide_review_queue: counts.q, decide_review_proposals: counts.rp, decide_proposals: counts.dp };
   const { createHash } = await import('node:crypto');
   const revision = createHash('sha256').update(JSON.stringify({ subject, factIds, takes: takes.map(t => t.id),
     pages: pages.map(p => [p.page_id, p.revision]), requests: requests.map(r => r.id), stagings })).digest('hex').slice(0, 16);
-  return { subject, factIds, takes, pages, versions: Number(versions?.n ?? 0), requests, stagings, held, derived,
+  return { subject, factIds, takes, pages, versions, requests, stagings, held, derived,
     reviewRows: review.decide_review_queue + review.decide_review_proposals + review.decide_proposals, review, revision };
 }
 
@@ -249,11 +230,6 @@ async function assertNoPendingPublication(tx: BrainEngine, sourceId: string, pag
     { fix: { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'], consent: [], actor: 'agent', requires_exclusive: false,
       why: 'Shows the source\'s pending and recovering writes, read-only.' } });
 }
-
-/** A segmented version (`v`) whose generation's segment texts hold the lowered claim `$2`. */
-const SEGMENTED_VERSION_CARRIES = `EXISTS (SELECT 1 FROM page_body_manifest m JOIN page_segment_texts t ON t.source_id=m.source_id AND t.sha256=m.sha256
-  WHERE m.page_id=v.page_id AND m.staging_id IS NULL AND m.gen_from<=v.body_generation AND (m.gen_to IS NULL OR m.gen_to>v.body_generation)
-    AND strpos(lower(convert_from(t.body,'UTF8')),$2)>0)`;
 
 /** What the body rewrites changed: slugs rewritten, segmented pages touched, and the segment texts they stopped referencing. */
 interface BodyRewrites { rewritten: string[]; segmented: number[]; unsealed: string[]; replaced: Uint8Array[]; derivations: number }
@@ -424,8 +400,7 @@ function parseParams(ctx: OperationContext, params: Record<string, unknown>): Pu
 
 /** `--match`: candidate facts for a text, so the owner picks an id (purge always needs a ref). Owner-only output. */
 async function matchCandidates(engine: BrainEngine, sourceId: string, text: string): Promise<Record<string, unknown>> {
-  const rows = await engine.executeRaw<{ id: number; entity_slug: string | null; visibility: string; expired: boolean; fact: string }>(`SELECT id,entity_slug,visibility,
-    expired_at IS NOT NULL AS expired,left(fact,160) AS fact FROM facts WHERE source_id=$1 AND strpos(lower(fact),lower($2))>0 ORDER BY id LIMIT 25`, [sourceId, text]);
+  const rows = await engine.matchPurgeCandidates(sourceId, text);
   return { action: 'purge_fact', match: true, candidates: rows.map(r => ({ ...r, id: Number(r.id) })),
     next: rows.length ? 'Pick one id and run gbrain forget <id> --purge; --match never purges.' : 'No fact in this source contains that text.' };
 }

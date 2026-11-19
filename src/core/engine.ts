@@ -18,6 +18,7 @@ import type { FactRelinkAttempt, FactRelinkOutcome, FactRelinkUpsertOpts } from 
 import type { ConversationFactLink, ConversationRelinkPagesQuery, RelinkPlacement } from './engine-sql/fact-relink-writes.ts';
 import type * as FactsCycleSql from './engine-sql/facts-cycle.ts';
 import type * as FactsPurgeSql from './engine-sql/facts-purge.ts';
+import type * as FactsPurgePlanSql from './engine-sql/facts-purge-plan.ts';
 import type * as FactsRepairSql from './engine-sql/facts-repair.ts';
 import type * as FactsTrustSql from './engine-sql/facts-trust.ts';
 import type { EngineCapabilities } from './engine-capabilities.ts';
@@ -3354,6 +3355,42 @@ export interface BrainEngine {
   expireFactsByWithdrawal(sourceId: string, visibility: string, fact: string, subject: string): Promise<Array<{ id: number }>>;
   /** Stores a fact purge tombstone; false when the same (source, visibility, subject, fingerprint) one exists. */
   insertFactPurge(row: FactsPurgeSql.FactPurgeInsert): Promise<boolean>;
+
+  // A fact purge's plan, dry run and --match (engine-sql/facts-purge-plan.ts; statements in facts/purge-plan-statements.ts). Each runs the statement its caller ran through executeRaw.
+  /** Whether the source has a live page at `slug` (a purge on an unbacked name key purges source-wide). */
+  hasLivePageSlug(sourceId: string, slug: string): Promise<boolean>;
+  /** The pages `pageIds` of the source with their knowledge revisions as text. */
+  readPurgeTakePages(sourceId: string, pageIds: readonly number[]): Promise<FactsPurgePlanSql.PurgeTakePage[]>;
+  /** The source's page versions whose body, timeline, title, frontmatter, change reason or segmented generation carries the claim. */
+  countPurgeCarryingVersions(q: FactsPurgePlanSql.PurgeClaimNeedles): Promise<number>;
+  /** The live stagings of the source holding the claim within one part, manifest text or recorded staging text, by id. */
+  listStagingsHoldingClaim(q: FactsPurgePlanSql.StagingClaimNeedles): Promise<string[]>;
+  /** The next 1000 live staging parts of the source after (`afterId`, `afterPart`), each with its first and last `keep` bytes. */
+  readStagingPartEdges(sourceId: string, keep: number, afterId: string, afterPart: number): Promise<FactsPurgePlanSql.StagingPartEdge[]>;
+  /** The review queue, review proposal and decide proposal rows of the source that name `factIds`. */
+  countPurgeReviewRows(sourceId: string, factIds: readonly number[]): Promise<FactsPurgePlanSql.PurgeReviewCounts>;
+  /** `forget --purge --match`: up to 25 facts of the source whose text contains `text` (case-insensitive), by id, the fact cut to 160 characters. */
+  matchPurgeCandidates(sourceId: string, text: string): Promise<FactsPurgePlanSql.PurgeMatchRow[]>;
+  /** The source's write requests whose intent, outcome or error text carries the claim, by sequence, up to `limit`. Never returns the text. */
+  listRequestsCarryingClaim(q: FactsPurgePlanSql.PurgeClaimNeedles & { limit: number }): Promise<FactsPurgePlanSql.PurgeRequestTarget[]>;
+  /** The source's unfinished write requests that publish one of `stagingIds`, by sequence. */
+  listRequestsHoldingStagings(sourceId: string, stagingIds: readonly string[]): Promise<FactsPurgePlanSql.PurgeRequestTarget[]>;
+  /** One hop of the derivation walk: the distinct rows derived from `frontier`, by (table, id), up to `limit`. */
+  listDerivedRowsStep(frontier: ReadonlyArray<{ table: string; id: string }>, limit: number): Promise<FactsPurgePlanSql.DerivedRowStep[]>;
+  /** The source's segmented live pages (by id) or segmented page versions (by version id), up to `limit`. */
+  listSegmentedPurgeBodies(sourceId: string, store: 'pages' | 'page_versions', limit: number): Promise<FactsPurgePlanSql.SegmentedPurgeBody[]>;
+  /** The source's live model-derived pages (atoms and dream pages) with no derivation edge. */
+  countLegacyDerivedPages(sourceId: string): Promise<number>;
+  /** The relative, non-empty file paths the pages `pageIds` and their versions recorded, up to 64. */
+  listPageSourcePaths(pageIds: readonly number[]): Promise<string[]>;
+  /** The five facts of the source with the same embedding model nearest `embedding`, with whether each contains the claim. */
+  listFactNeighbours(q: { embedding: string; sourceId: string; model: string; claim: string }): Promise<FactsPurgePlanSql.FactNeighbour[]>;
+  /** Sets the transaction-local statement deadline of the next purge probe. Inside engine.transaction. */
+  setPurgeProbeTimeout(statementMs: number): Promise<void>;
+  /** The rows a purge verification probe finds, at most `rows + 1`. */
+  countPurgeProbe(probe: FactsPurgePlanSql.PurgeProbe, rows: number): Promise<number>;
+  /** The first 20 rows a named purge probe lists (link, timeline and raw data rows still carrying the claim). */
+  listPurgeProbeItems(probe: FactsPurgePlanSql.PurgeProbe & { kind: 'named' }): Promise<string[]>;
 
   // Facts statements, repair classifiers and loop retirement (engine-sql/facts-repair.ts). Each runs the statement its caller ran through executeRaw.
   /** Closed loops whose commitment fact is still active and retirable (same source, no other open loop references it), in id order; `loopId` null is every loop. Reads open_loops. */

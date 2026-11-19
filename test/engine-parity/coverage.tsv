@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 760/760
+# covered: 777/777
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -45,6 +45,7 @@
 # fact_relink_writes: 3/3
 # facts_cycle: 12/12
 # facts_purge: 17/17
+# purge_plan: 17/17
 # facts_repair: 10/10
 # facts_trust: 8/8
 # trust_tier_reads: 13/13
@@ -77,7 +78,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	85	no	yes	yes	serves
+transaction	lifecycle	yes	86	no	yes	yes	serves
 transactionDirect	lifecycle	yes	5	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -210,7 +211,7 @@ markPagesAttendanceBlocked	extraction	yes	2	no	yes	yes	serves
 countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
-addLink	links	yes	106	yes	yes	yes	serves
+addLink	links	yes	107	yes	yes	yes	serves
 addLinksBatch	links	yes	14	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	12	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
@@ -247,7 +248,7 @@ storedTimelineRowsByPageIds	timeline	yes	1	no	yes	yes	serves
 countSegmentedTimelinePages	timeline	yes	1	no	yes	yes	serves
 countTimelineCommentMarkupRows	timeline	yes	1	no	yes	yes	serves
 listTimelineOrphanPages	timeline	yes	1	no	yes	yes	serves
-addTimelineEntry	timeline	yes	36	yes	yes	yes	serves
+addTimelineEntry	timeline	yes	37	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	3	no	yes	yes	serves
 getTimeline	timeline	yes	17	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	6	no	yes	yes	serves
@@ -261,7 +262,7 @@ mergeOntologyFact	ontology	yes	10	no	yes	yes	serves
 getOntology	ontology	yes	5	no	yes	yes	serves
 discoverOntologyDimensions	ontology	yes	1	no	yes	yes	serves
 findOntologyConflicts	ontology	yes	4	no	yes	yes	serves
-putRawData	raw_files	yes	5	yes	yes	yes	serves
+putRawData	raw_files	yes	7	yes	yes	yes	serves
 getRawData	raw_files	yes	5	yes	yes	yes	serves
 upsertFile	raw_files	yes	2	no	yes	yes	serves
 getFile	raw_files	yes	2	no	yes	yes	serves
@@ -297,10 +298,10 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	47	yes	yes	yes	serves
+insertFact	facts	yes	49	yes	yes	yes	serves
 insertFacts	facts	yes	65	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
-expireFact	facts	yes	32	no	yes	yes	serves
+expireFact	facts	yes	33	no	yes	yes	serves
 listFactsByEntity	facts	yes	20	yes	yes	yes	serves
 listFactsSince	facts	yes	11	yes	yes	yes	serves
 listFactsKeyset	facts	yes	3	no	yes	yes	serves
@@ -318,7 +319,7 @@ readSegmentTexts	segmented_body	yes	5	no	yes	yes	serves
 stageManifestRows	segmented_body	yes	6	no	yes	yes	serves
 readManifest	segmented_body	yes	9	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	4	no	yes	yes	serves
-createSegmentedPageShell	segmented_body	yes	11	no	yes	yes	serves
+createSegmentedPageShell	segmented_body	yes	12	no	yes	yes	serves
 flipBodyGeneration	segmented_body	yes	8	no	yes	yes	serves
 sealSegmentedPage	segmented_body	yes	2	no	yes	yes	serves
 openBodyStaging	segmented_body	yes	8	no	yes	yes	serves
@@ -381,13 +382,13 @@ readAccessTokenWriteGrant	persistence_journal	yes	1	no	yes	yes	serves
 shareLockWriteCredential	persistence_journal	yes	1	no	yes	yes	serves
 readCounterRows	persistence_journal	yes	2	no	yes	yes	serves
 readAdmissionRate	persistence_journal	yes	3	no	yes	yes	serves
-lockPersistenceCounters	persistence_journal	yes	25	no	yes	yes	serves
-insertWriteRequest	persistence_journal	yes	30	no	yes	yes	serves
+lockPersistenceCounters	persistence_journal	yes	26	no	yes	yes	serves
+insertWriteRequest	persistence_journal	yes	31	no	yes	yes	serves
 stampWriteClaim	persistence_journal	yes	18	no	yes	yes	serves
 lockWriteRequest	persistence_journal	yes	3	no	yes	yes	serves
 completeWriteRow	persistence_journal	yes	13	no	yes	yes	serves
 insertPublicationEffects	persistence_journal	yes	2	no	yes	yes	serves
-readSourceMembership	persistence_journal	yes	34	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	35	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	2	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	2	no	yes	yes	serves
 insertTopologyChange	persistence_journal	yes	4	no	yes	yes	serves
@@ -608,6 +609,23 @@ listHeldFenceFactRows	facts_purge	yes	1	no	yes	yes	serves
 listWithdrawalSlugs	facts_purge	yes	2	no	yes	yes	serves
 expireFactsByWithdrawal	facts_purge	yes	3	no	yes	yes	serves
 insertFactPurge	facts_purge	yes	5	no	yes	yes	serves
+hasLivePageSlug	purge_plan	yes	1	no	yes	yes	serves
+readPurgeTakePages	purge_plan	yes	1	no	yes	yes	serves
+countPurgeCarryingVersions	purge_plan	yes	2	no	yes	yes	serves
+listStagingsHoldingClaim	purge_plan	yes	1	no	yes	yes	serves
+readStagingPartEdges	purge_plan	yes	1	no	yes	yes	serves
+countPurgeReviewRows	purge_plan	yes	1	no	yes	yes	serves
+matchPurgeCandidates	purge_plan	yes	1	no	yes	yes	serves
+listRequestsCarryingClaim	purge_plan	yes	1	no	yes	yes	serves
+listRequestsHoldingStagings	purge_plan	yes	1	no	yes	yes	serves
+listDerivedRowsStep	purge_plan	yes	1	no	yes	yes	serves
+listSegmentedPurgeBodies	purge_plan	yes	1	no	yes	yes	serves
+countLegacyDerivedPages	purge_plan	yes	1	no	yes	yes	serves
+listPageSourcePaths	purge_plan	yes	1	no	yes	yes	serves
+listFactNeighbours	purge_plan	yes	1	no	yes	yes	serves
+setPurgeProbeTimeout	purge_plan	yes	1	no	yes	yes	serves
+countPurgeProbe	purge_plan	yes	3	no	yes	yes	serves
+listPurgeProbeItems	purge_plan	yes	2	no	yes	yes	serves
 loopFactDrift	facts_repair	yes	2	no	yes	yes	serves
 closedLoopWithActiveFact	facts_repair	yes	2	no	yes	yes	serves
 listSessionFactsForClassification	facts_repair	yes	1	no	yes	yes	serves

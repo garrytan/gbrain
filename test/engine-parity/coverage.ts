@@ -168,6 +168,12 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'countRelinkCandidates', 'listSimilarActiveFacts', 'findActiveSingleFact', 'listSingleFactMetadata', 'listUnfencedFactRows',
     'listHeldFenceFactRows', 'listWithdrawalSlugs', 'expireFactsByWithdrawal', 'insertFactPurge'],
 
+  // purge_plan: a fact purge's plan, dry run and --match reads
+  purge_plan: ['hasLivePageSlug', 'readPurgeTakePages', 'countPurgeCarryingVersions', 'listStagingsHoldingClaim', 'readStagingPartEdges',
+    'countPurgeReviewRows', 'matchPurgeCandidates', 'listRequestsCarryingClaim', 'listRequestsHoldingStagings', 'listDerivedRowsStep',
+    'listSegmentedPurgeBodies', 'countLegacyDerivedPages', 'listPageSourcePaths', 'listFactNeighbours', 'setPurgeProbeTimeout',
+    'countPurgeProbe', 'listPurgeProbeItems'],
+
   // facts_repair: repair classifiers and loop retirement
   facts_repair: ['loopFactDrift', 'closedLoopWithActiveFact', 'listSessionFactsForClassification', 'listSessionFactTwins',
     'listCapturedFactsForClassification', 'countLabelFacts', 'listExtractorFactsForClassification', 'countPurgedPageFacts', 'listUnwithdrawnFacts',

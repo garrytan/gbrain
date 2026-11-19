@@ -47,6 +47,20 @@ fn raw_page_prefix(page_id: u64) -> Vec<u8> {
     key
 }
 
+/// The `raw_data` rows of page `page_id` (a fact purge's dry-run probe reads them; it is read only).
+pub(crate) fn raw_records_of(read: &dyn KvRead, page_id: u64) -> Result<Vec<RawRecord>> {
+    let mut out = Vec::new();
+    let mut failure = None;
+    scan_prefix(read, &raw_page_prefix(page_id), false, &mut |_, v| {
+        match serde_json::from_slice::<RawRecord>(v) {
+            Ok(row) => out.push(row),
+            Err(e) => failure = Some(StoreError::from(e)),
+        }
+        failure.is_none()
+    })?;
+    failure.map_or(Ok(out), Err)
+}
+
 fn raw_key(page_id: u64, source: &str) -> Vec<u8> {
     let mut key = raw_page_prefix(page_id);
     key.extend_from_slice(source.as_bytes());

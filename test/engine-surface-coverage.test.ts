@@ -132,6 +132,9 @@ const INTERFACE_METHODS: readonly string[] = [
   'listExtractorFactsForClassification', 'countPurgedPageFacts', 'listUnwithdrawnFacts', 'listWorldFactsFromPrivateSources', 'listFactsForRelevance',
   'countUncomparableFacts', 'matchSavedFacts', 'readFactForOwnerAction', 'listStandingPreferences', 'listLexicalContestCandidates',
   'listRestatedPrivateCopies', 'countDerivedFactTaint',
+  // Fact purge plan, dry run and --match reads (engine-sql/facts-purge-plan.ts; covered by test/engine-parity/purge-plan.test.ts)
+  'hasLivePageSlug', 'readPurgeTakePages', 'countPurgeCarryingVersions', 'listStagingsHoldingClaim', 'readStagingPartEdges', 'countPurgeReviewRows', 'matchPurgeCandidates', 'listRequestsCarryingClaim', 'listRequestsHoldingStagings',
+  'listDerivedRowsStep', 'listSegmentedPurgeBodies', 'countLegacyDerivedPages', 'listPageSourcePaths', 'listFactNeighbours', 'setPurgeProbeTimeout', 'countPurgeProbe', 'listPurgeProbeItems',
   // Trust tier reads (engine-sql/trust-tier-reads.ts; covered by test/engine-parity/trust-tier-reads.test.ts)
   'listCorePageRows', 'listTrustScanRows', 'countUnscannedTrustRows', 'readBeliefHistoryRows', 'listVisibleBeliefLifetimes',
   'listVersionTrustTiers', 'listVersionReasonWriters', 'listValidTimeIdentities', 'pickValidTimeEdition', 'listAmendmentsNotApplied',
