@@ -14,7 +14,10 @@
 //! | `d 0x02 <op> 0x00 <fingerprint>` | one housekeeping `op_checkpoints` row (`housekeeping.rs`), JSON |
 //! | `d 0x03 <principal_id> 0x00 <request_id>` | one `persistence_topology_changes` row (`topology.rs`), JSON |
 //! | `d 0x04 <source incarnation> 0x00 <slug>` | one `page_projection_jobs` row (`projection_queue.rs`), JSON |
-//! | `d 0x05 <op> 0x00 <fingerprint> 0x00 <path>` | one `op_checkpoint_paths` row (`op_checkpoint.rs`), empty |
+//! | `d 0x07 <op> 0x00 <fingerprint> 0x00 <path>` | one `op_checkpoint_paths` row (`op_checkpoint.rs`), empty |
+//!
+//! `d 0x05` and `d 0x06` are taken by the `persistence_effects` rows and their claim-order index
+//! (`effects.rs`) on the branches that hold them; no other family here uses them.
 //!
 //! A resumable op's checkpoint parent (`op_checkpoint.rs`) is an `op_checkpoints` row, so it is
 //! stored under `d 0x02` with the housekeeping turns, as Postgres keeps both in one table.
@@ -69,7 +72,8 @@ const TOPOLOGY: u8 = 0x03;
 /// The byte after `keys::PERSISTENCE` of a page projection job (persistence/projection_queue.rs).
 const QUEUE: u8 = 0x04;
 /// The byte after `keys::PERSISTENCE` of a resumable op's checkpoint path (persistence/op_checkpoint.rs).
-const CHECKPOINT_PATH: u8 = 0x05;
+/// Not 0x05 or 0x06: those are the `persistence_effects` rows and their claim-order index.
+const CHECKPOINT_PATH: u8 = 0x07;
 
 /// `persistence_requests.state` CHECK (with `deferred`, added by a later migration).
 const REQUEST_STATES: &[&str] = &[

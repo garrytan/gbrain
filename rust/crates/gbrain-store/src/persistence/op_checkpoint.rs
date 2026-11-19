@@ -6,7 +6,9 @@
 //!   `d 0x02 <op> 0x00 <fingerprint>`, the same JSON row as a housekeeping turn
 //!   (`housekeeping::HousekeepingRow`), as Postgres keeps both in one table.
 //! - The children: one `op_checkpoint_paths` row per (op, fingerprint, path), key
-//!   `d 0x05 <op> 0x00 <fingerprint> 0x00 <path>`, empty value.
+//!   `d 0x07 <op> 0x00 <fingerprint> 0x00 <path>`, empty value. Not `d 0x05` or `d 0x06`: those
+//!   hold the `persistence_effects` rows (`d 0x05 <request id> 0x00 <kind>`) and their claim-order
+//!   index.
 //!
 //! Deleting a parent deletes its children, as the Postgres foreign key does (`ON DELETE
 //! CASCADE`). The read lists the children in path order and then the parent's array; Postgres
@@ -37,7 +39,7 @@ fn parent_key(op: &str, fingerprint: &str) -> Result<Vec<u8>> {
     Ok(key)
 }
 
-/// `d 0x05 <op> 0x00 <fingerprint> 0x00`: the prefix of one checkpoint's paths.
+/// `d 0x07 <op> 0x00 <fingerprint> 0x00`: the prefix of one checkpoint's paths.
 fn paths_prefix(op: &str, fingerprint: &str) -> Result<Vec<u8>> {
     let mut key = vec![keys::PERSISTENCE, super::CHECKPOINT_PATH];
     key.extend_from_slice(text(op, "op")?.as_bytes());
@@ -211,8 +213,50 @@ impl Store {
 
 #[cfg(test)]
 mod tests {
+    use crate::keys;
+    use crate::kv::scan_prefix;
     use crate::test_support::store;
     use serde_json::json;
+
+    /// The bytes after `keys::PERSISTENCE` of the `persistence_effects` rows (`d 0x05 <request id>
+    /// 0x00 <kind>`) and their claim-order index (`d 0x06 <id>`), `effects.rs`.
+    const EFFECT_FAMILIES: [u8; 2] = [0x05, 0x06];
+
+    #[test]
+    fn a_checkpoint_path_key_never_falls_in_the_effect_key_range() {
+        // An op and fingerprint spelled as an effect's request id and kind: the path key then has
+        // the same bytes after its family byte as that effect's key.
+        let (op, fingerprint) = ("8f14e45f-ceea-467f-a0e6-f3c1c4a5b6d7", "page_write");
+        let path = super::paths_prefix(op, fingerprint).unwrap();
+        for family in EFFECT_FAMILIES {
+            let mut effect = vec![keys::PERSISTENCE, family];
+            effect.extend_from_slice(op.as_bytes());
+            effect.push(0);
+            effect.extend_from_slice(fingerprint.as_bytes());
+            assert!(
+                !path.starts_with(&[keys::PERSISTENCE, family]),
+                "a checkpoint path key uses the effect family byte {family:#04x}"
+            );
+            assert!(!path.starts_with(&effect) && !effect.starts_with(&path));
+        }
+        let store = store();
+        store
+            .append_op_checkpoint_paths(op, fingerprint, &[String::from("a.md")])
+            .unwrap();
+        let read = store.read().unwrap();
+        for family in EFFECT_FAMILIES {
+            let mut seen = 0;
+            scan_prefix(&*read, &[keys::PERSISTENCE, family], false, &mut |_, _| {
+                seen += 1;
+                true
+            })
+            .unwrap();
+            assert_eq!(
+                seen, 0,
+                "an effect scan of {family:#04x} reads a checkpoint path"
+            );
+        }
+    }
 
     fn strings(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()
