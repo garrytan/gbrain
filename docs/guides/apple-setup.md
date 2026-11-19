@@ -81,8 +81,10 @@ it changed to the folder.
 
 ### What a push carries
 
-A push carries the day files like any other page. With the default `secrets.on_push redact`, a one-time code or
-password in a message is redacted at push time. With `secrets.on_push refuse`, a day whose text looks like a secret
+A push carries the day files like any other page. Push-time redaction (the default `secrets.on_push redact`) catches
+known key and token shapes only, such as API keys and access tokens. A one-time code or password written in a message
+is not redacted and is pushed as written, which is why the folder is written only when the checkout pushes to a
+repository proven private. With `secrets.on_push refuse`, a day whose text matches one of those key or token shapes
 is not committed (`owned_day_secret_held`); it stays searchable in the database and the file committed earlier stays.
 
 ### How to stop it
